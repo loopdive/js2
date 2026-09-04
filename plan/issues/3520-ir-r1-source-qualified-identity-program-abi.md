@@ -236,6 +236,22 @@ loc-budget-allow:
   # `typeIdx` numbering for one contract. The rebased contracts are this
   # module's private state, so the accessor cannot live anywhere else.
   - src/codegen/program-abi-session.ts
+  # W1-G (2026-09-04): +5 lines in `effectiveIrParamTypeNode` — a
+  # `param.parent === undefined` guard plus its three-line comment. The
+  # implicit-derived-constructor pipeline (`lowerImplicitConstructorAstToIr`)
+  # lowers a factory-built `ConstructorDeclaration` whose parameters have no
+  # `parent`; `ts.getJSDocType` walks `parent` and threw
+  # `Cannot read properties of undefined (reading 'kind')` — an
+  # `unexpected-internal-throw` invariant, i.e. a hard compile error.
+  # Measured 11186 -> 11191. The guard MUST live in this function: its own doc
+  # comment states that keeping the param-type lookup in one helper is what
+  # stops the selector and the shared AST-to-IR signature resolver from
+  # disagreeing about the same declaration, so a second copy of the lookup
+  # elsewhere would reintroduce exactly that divergence. Fixing it in the
+  # synthesiser instead (`ts.setParent`) was rejected: it hides the same class
+  # of throw for the next synthetic node rather than making the chokepoint
+  # total.
+  - src/ir/select.ts
 # R1 must resolve exact checker declarations to the one authoritative identity
 # inventory. TypeOracle deliberately does not expose ts.Symbol/ts.Type objects,
 # so these two structural joins remain reviewed raw-checker boundaries until
@@ -4986,3 +5002,528 @@ Tests only; no LOC grant. Disjoint from W1-E (`vec-*.ts`), #5308
 (`legacy-body-audit.ts`, `ir-overlay-outcomes.ts`), #3522 W1-B (landed via
 PR #5552 or in queue). Branch from `origin/main` now. Claim slug
 `3520:w1f-cluster-b`.
+
+### W1-F cluster B — landed (2026-09-04)
+
+Test-only, four tests across three files plus one shared test helper. Base
+`5a55f7f55f` ("Merge pull request #5556"). The plan's red-set table was
+measured at `42a0adf7d4` and W1-D cluster A has landed since, so **every
+number below was re-measured on this base**, not carried over.
+
+**The base is 11 red, not 20/21.** The dispatch brief expected ~20 failing
+names; the measured set at `5a55f7f55f` is **11 failing tests in 9 files** —
+the W1-D cluster-A slice is already on `main` (`closure-host-bridge-abi`,
+`context-integration`, `data-struct-host-bridge-abi`, `date-civil-support-abi`
+and `vec-support-callable-abi` all exit 0). 11 = the 10 rows W1-D listed as
+remaining (2, 7, 8, 9, 10, 11, 12, 13, 14, 15) **plus one row neither table
+contains**: `ir-unit-identity` · *encodes static, instance, accessor, private,
+and computed members as distinct units*. That row is untouched by this slice
+and is reported, not fixed — see "New red not in any table" below.
+
+**Probe (re-measured, `.tmp/probe-3520-b.mts`).** Every figure in the plan's
+row-8 cell reproduces exactly on this base. `functionImportCount = 6`:
+
+| fixture | inventory `arrow-function` units | ABI row `displayName` → slot | legacy `("function","owner__closure_0")` |
+| ------- | -------------------------------- | ---------------------------- | ---------------------------------------- |
+| `lifted-production` | `first` (owner, ordinal 0), `second` (owner, ordinal 1) | `owner` → 6 · `__\0js2_ir_prepared_derived_0` → 8 (typeIdx 7) · `owner__closure_1` → 9 (typeIdx 7) · source `owner__closure_0` → 7 (typeIdx 5) | resolves cleanly to **7**, the SOURCE slot |
+| `lifted-empty-collision` | `callback` (owner, ordinal 0) | `__\0js2_ir_prepared_derived_0` → 8 · source `owner__closure_0` → 7 | resolves cleanly to **7** |
+| `monomorph-production` | `firstIdentity` (0), `secondIdentity` (1) | `owner__closure_0` → 8 · `owner__closure_1` → 9 (no label collision) | n/a |
+| `type-remap` | `identity` (0) | `owner__closure_0` → 7 | n/a |
+
+Four distinct slots (6, 8, 9, 7) with distinct typeIdx — **exactly the
+property row 8 wanted, under a different identity.** The ABI was already
+correct; the tests encoded a scheme that no longer exists. Confirms the plan:
+this is cluster A's shape (stale expectation, not a miscompile), so the slice
+is test-only.
+
+**One measurement the plan's prose did not name.** `IrUnitRecord` already
+carries the provenance the old derived ids encoded: a lifted arrow has
+`terminalOwnerId === owner.id` and `ordinal` 0/1 (measured,
+`.tmp/probe-3520-b2.mts`). So the replacement selector is not "filter by kind
+and take `[0]`/`[1]`" but the same *(enclosing terminal owner, declaration
+ordinal)* pair the old `createDerivedIrUnitId({ parentId, ordinal })` named —
+a one-for-one translation, which is why each test keeps its "by exact
+provenance" title honestly. That selector lives in
+`tests/helpers/ir-identities.ts::liftedArrowUnit`, with the reason for the
+scheme change (the `program-abi-planning.ts` derived-role gate) documented once
+there instead of three times.
+
+**Per-test changes.**
+
+| row | test | change | why it was red |
+| --- | ---- | ------ | -------------- |
+| 8 | `lifted-program-abi` · publishes two lifted closures by exact provenance | lifted ids from `liftedArrowUnit(units, owner.id, 0\|1)`; first arrow's row/slot expect the relabelled `__\0js2_ir_prepared_derived_0`; the ambiguity-throw expectation is replaced by **`legacy.resolveFinalIndex("function","owner__closure_0")` resolving to the SOURCE slot and not to the arrow's** | `createDerivedIrUnitId(owner, "lifted-closure", n)` names no published binding, so `entriesById.get(...)` was `undefined` |
+| 9 | `lifted-program-abi` · does not reuse an empty same-labelled source slot | lifted id from `liftedArrowUnit(units, owner.id, 0)`; both slots additionally pinned **by physical name** (`__\0js2_ir_prepared_derived_0` vs `owner__closure_0`) | same absent binding → `ProgramAbiInvariantError: unknown-binding … was not planned` |
+| 11 | `monomorph-program-abi` · clone ordinal zero beneath two lifted parents | `injectedParentIds` filled from the two arrow units; **clone ids keep `role: "monomorphization-clone"`** (still a registered derived role); provenance-order and signature assertions unchanged | no IR function carried the derived parent ids, so the `vi.mock` injected zero clones and `observedCloneIds` got `[]` |
+| 12 | `program-abi-type-remap` · post-DCE capture-ref signatures | same: parent from the inventory, clone id unchanged | same `[]` |
+
+**Non-vacuity — five mutations, each run once, each RED (exit 1).** Widening
+a check alone would be green-washing, so every rewritten assertion has a
+mutation that breaks it:
+
+| # | mutation | target |
+| - | -------- | ------ |
+| M1 | `RELABELLED_DERIVED_0` → `…derived_0X` | row 8: the relabelled physical name is load-bearing, not a wildcard |
+| M2 | legacy lookup expected at `firstLiftedSlot.finalIndex.index` instead of the source's | row 8: the replacement for the ambiguity-throw actually pins WHICH slot wins |
+| M3 | lifted slot's physical name expected as `owner__closure_0` | row 9: "two different indices" cannot pass by accident |
+| M4 | monomorph parent ordinals swapped (0↔1) | row 11: parents are ordinal-exact, not "any two arrows" |
+| M5 | clone role `monomorphization-clone` → `lifted-closure` | row 12: the surviving derived role is the specific one, and the derived-role gate is what makes it so |
+
+The plan's own suggested check (swap the parent ids back to
+`createDerivedIrUnitId(lifted-closure)`) is the base state and is already
+measured above: all four red.
+
+**Whole set: 11 red → 7 red.** All 62 `tests/issue-3520-*.test.ts`, one file
+per `npx vitest run` invocation, `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, exit
+codes read bare. The failing-name diff base → branch is **exactly the four
+cluster-B rows removed, with nothing added**:
+
+| file (`tests/issue-3520-…`) | before | after |
+| --------------------------- | ------ | ----- |
+| `lifted-program-abi` | 2 failed (exit 1) | 2 passed (exit 0) |
+| `monomorph-program-abi` | 1 failed (exit 1) | 1 passed (exit 0) |
+| `program-abi-type-remap` | 1 failed \| 2 passed (exit 1) | 3 passed (exit 0) |
+
+Remaining 7 red, unchanged and untouched: rows 2 (`compiler-support-abi`, D),
+7 (`date-host-bridge-export-provenance`, F), 10 (`module-init-callable-abi`,
+E — **#5283 owns it**), 13 + 14 (`support-callable-abi`, C), 15
+(`type-class-abi`, C/R3), and the new `ir-unit-identity` row below.
+
+**New red not in any table.** `tests/issue-3520-ir-unit-identity.test.ts` ·
+*encodes static, instance, accessor, private, and computed members as distinct
+units* is red on `5a55f7f55f` and equally red on this branch — it is **not a
+regression from this slice** (the diff touches four test files, none of them
+that one). It is absent from both the 2026-09-03 red-set table (measured at
+`42a0adf7d4`) and the W1-D landed table, so it appeared between those bases
+and this one; the class-member identity subject matter points at the #3522
+lane. Filing/routing is left to the lead — it is named here so the next W1
+measurement does not read it as new damage.
+
+**Byte identity: trivial, and stated as such.** `git diff` touches zero `src/`
+files — `check-loc-budget` and `check-func-budget` both report *"no unallowed
+growth in 0 changed src file(s)"* under `LOC_GATE_BASE=5a55f7f55f`, so emitted
+output cannot differ. Drift detector `check:ir-only --policy=hybrid`: verdict
+**READY**, 41 terminal units, 38 emitted, 0 unsupported, 0 invariants, **0
+legacy body emitted**, 3 non-executable.
+
+**Gates, all exit 0**: `check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports` (bare and
+again with `LOC_GATE_BASE=$(git rev-parse origin/main)`); `check:ir-fallbacks`,
+`check:ir-dialect`, `check:ir-kind-neutrality`, `check:jstag-seam`,
+`check:ir-layering`, `check:host-import-policy`, `check:ir-only --policy=hybrid`,
+`check:standalone-ir-cutover-corpus`, `check:pushraw`, `check:stack-balance`,
+`check:codegen-fallbacks`, `check:any-box-sites`, `check:speculative-rollback`,
+`check:harness-compile-budget`, `check:ir-adoption`, `check:test-vacuity-shapes`,
+`typecheck`, `lint`, `prettier --check` on the four changed files.
+
+**Deliberately unchanged**, per the plan's out-of-scope list: whether
+`__\0js2_ir_prepared_derived_0` — a physical-slot label — should be the ABI
+row's *display* name at all. It is pinned here as the observed behaviour, not
+endorsed; that is a display-only question for R1.
+
+**Scope of the whole-set number, stated precisely.** The 11 → 7 diff was
+measured base `5a55f7f55f` → commit `8bc7c577dd`, both over the 62
+`tests/issue-3520-*.test.ts` files present at that base. `origin/main` was then
+merged in at `be9de98af4`, which lands W1-E (cluster D) and adds a 63rd file,
+`tests/issue-3520-vec-writeback-abi.test.ts`. That merge was **not**
+re-measured as a whole set; what was re-run after it is the three files this
+slice touches (all green) plus every gate listed above (all exit 0). So the
+11 → 7 figure is this slice's own delta, not a claim about the post-merge red
+set — W1-E's landing changes rows 2/16 territory independently.
+
+## Implementation Plan — W1-G cluster C row 15: implicit derived constructor throws on a synthetic parameter (2026-09-04, Fable lane)
+
+Cluster C (rows 13–15 of the `## Measurement 2026-09-03` red-set table) was
+left as "real codegen defects, R3 territory". Re-measured on main `e041f82b1e`
+(`.tmp/probe-3520-c15*.mts`): the three rows are three unrelated defects, and
+row 15 is a one-site fix with a hard-error blast radius, so it goes first.
+
+### Row 15 — reproduced, minimised, root-caused
+
+`tests/issue-3520-type-class-abi.test.ts` › *publishes every retained type
+exactly once and binds class layouts by exact class ID* fails with
+`IR path failed for Child_new: Cannot read properties of undefined (reading 'kind')`
+— an `unexpected-internal-throw` **invariant**, i.e. a hard compile error, not
+a demote. Minimal trigger, both lanes:
+
+```ts
+class Base { value: number; constructor(value: number) { this.value = value; } }
+class Child extends Base { extra: number = 2; sum(): number { return this.value + this.extra; } }
+```
+
+| variant | `Child_new` | sibling |
+| --- | --- | --- |
+| derived, **implicit** ctor, own field initializer, parent ctor has ≥1 param | **invariant** `unexpected-internal-throw` | `Child_sum` `late-preparation-unsupported` (sealed by the ctor) |
+| derived, implicit ctor, no own field | no `Child_new` row at all (not a lowered terminal) | `Child_read` emitted |
+| derived, **explicit** ctor `constructor(v) { super(v) }`, own field | emitted | emitted |
+
+Stack (`outcome.cause.stack`):
+
+```
+TypeError: Cannot read properties of undefined (reading 'kind')
+    at canHaveJSDoc (typescript.js)
+    at getJSDocTagsWorker → getJSDocParameterTagsWorker → getJSDocParameterTags → Object.getJSDocType
+    at effectiveIrParamTypeNode (src/ir/select.ts:2193)
+    at <anonymous> (src/ir/from-ast.ts:1148)          ← fn.parameters.map(...)
+    at lowerFunctionAstToIr (src/ir/from-ast.ts:1121)
+    at lowerImplicitConstructorAstToIr (src/ir/from-ast.ts:1416)
+```
+
+`lowerImplicitConstructorAstToIr` (`from-ast.ts:1407-1417`) synthesises a
+`ConstructorDeclaration` with `ts.factory.createParameterDeclaration(…, "__argN")`
+per parent ctor param. Factory nodes have `pos === -1`, `NodeFlags.Synthesized`
+and **no `parent`** (wrapping them in a factory ctor does not set it — measured
+with `.tmp/probe-jsdoc.mts`). `lowerFunctionAstToIr` then maps every parameter
+through `resolveIrType(effectiveIrParamTypeNode(p), override, …)`
+(`from-ast.ts:1148`), and `effectiveIrParamTypeNode` (`select.ts:2193`) is
+`param.type ?? ts.getJSDocType(param)`. `getJSDocType` walks `param.parent` to
+find JSDoc and dereferences `undefined.kind`. The `paramTypeOverrides` the
+integration walk supplies for ctor members (`integration.ts:3357`) are exactly
+the types this synthetic ctor needs, but the JSDoc lookup runs **before** the
+override is consulted, so the override never gets the chance.
+
+Why the other two variants survive: with no own field there is no
+`class-implicit-constructor` terminal to lower (the parent `_init` is reused
+— confirm and record how, it is the reason this bug hid); an explicit ctor's
+parameters are real AST nodes with parents.
+
+### Fix — S1, one guard, one site
+
+`select.ts:2193`:
+
+```ts
+export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.TypeNode | undefined {
+  if (param.type) return param.type;
+  // A synthesized parameter (factory-built, no parent — the implicit-ctor
+  // pipeline in from-ast) carries no JSDoc; `getJSDocType` walks `parent`
+  // and would throw. Its type comes from `paramTypeOverrides`.
+  if (param.parent === undefined) return undefined;
+  return ts.getJSDocType(param);
+}
+```
+
+`resolveIrType(undefined, override, …)` then resolves from the override, which
+is the parent shape's `constructorParams` — the same types
+`emitClassSuperInit` (`from-ast.ts:1012`) forwards. Do NOT "fix" it by calling
+`ts.setParent` in the synthesiser: that hides the same class of throw for the
+next synthetic node, and `effectiveIrParamTypeNode` is the shared
+selector/lowerer chokepoint its own doc comment says must not diverge.
+
+**S2 — the selector side of the same chokepoint.** Grep every caller of
+`effectiveIrParamTypeNode` and `effectiveIrReturnTypeNode` in `select.ts`; none
+should ever see a synthetic node today (selection walks source AST), but state
+that as a measured fact in the PR, not an assumption.
+
+**S3 — nothing else.** If `resolveIrType` with `undefined` node + a present
+override does not resolve cleanly for a `class`-typed or `string`-typed parent
+param, that is a second defect: report it with the row, do not widen S1.
+
+### Tests — `tests/issue-3520-implicit-derived-ctor-synthetic-param.test.ts`
+
+Through the production `compile`/`generateModule` seam, both lanes:
+
+| # | fixture | expectation | base |
+| --- | --- | --- | --- |
+| a | the minimal trigger | `Child_new` emitted, `Child_sum` emitted, zero hard errors, `new Child(7).sum() === 9` | red (invariant) |
+| b | the type-class-abi fixture (string field + `super.read()`) | `Child_new` emitted; `tests/issue-3520-type-class-abi.test.ts` exits 0 | red |
+| c | parent ctor with **two** params of different types (`number`, `string`) | both synthetic params typed from the override, runtime result equal to node | red |
+| d | parent ctor with **zero** params, own field | emitted (no synthetic param — pins that the fix is not needed there and nothing regresses) | green |
+| e | explicit derived ctor, own field | unchanged | green |
+| f | a JavaScript (`.js`) source whose explicit ctor has `/** @param {number} v */` | JSDoc lookup still happens for real nodes (`getJSDocType` path exercised) | green — pins that S1's guard is narrower than "skip JSDoc" |
+
+Non-vacuity: reverting S1 alone turns a–c red with the exact `reading 'kind'`
+message.
+
+### Rows 13 and 14 — measured, not this slice
+
+- **Row 13** `support-callable-abi` › *resolves a misleading support label…*
+  fails only under the test's own resolver-failure injection
+  (`JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE=planned-support`): the message is
+  `planned support resolver probe did not preserve the exact allocator slot`
+  from `integration.ts:5084`. That is a test-seam contract about the probe
+  surviving a late allocator shift, not a codegen defect; it needs its own
+  reading of the probe protocol. Next after this slice.
+- **Row 14** `support-callable-abi` › *publishes no support callable when a
+  source-name collision demotes the owner*: the owner demotes as expected, but
+  `hof.ts`'s `identical(a, b)` (`a === b` on two `() => number` params)
+  produces a **post-claim** `build` demote — `Phase 1 requires matching
+  operand types for '==='` (`from-ast.ts:13240`). The selector admits `===`
+  on closure-typed operands that the lowerer cannot compare. Fix is a selector
+  arm (refuse or admit-and-lower callable identity); separate slice.
+
+### Gates
+
+Full `quality` list as in W1-E/W1-F, bare and with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`; `select.ts` grows ≈ +5 lines —
+grant in this file's frontmatter with a dated rationale. Byte identity on the
+34-case corpus, all lanes: **expected identical** — no corpus program has a
+derived class with an implicit ctor, an own field initializer and a
+parameterised parent (verify by grep; name any moved row). `tests/issue-3520-*`
+one file per invocation, `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`: failing-name
+diff must be exactly row 15 removed. `tests/issue-3522-*`, `issue-3519-*`,
+`issue-3000-*`: diff empty.
+
+### Acceptance
+
+1. Rows a–c red on base, green after; d–f green on both sides.
+2. `tests/issue-3520-type-class-abi.test.ts` exits 0.
+3. Corpus byte-identical or moved rows named.
+4. `### W1-G cluster C row 15 — landed` appended here with the table and the
+   "why the no-field variant never lowered" fact.
+
+### Claim
+
+```bash
+node scripts/claim-issue.mjs 3520:w1g-implicit-ctor-param ttraenkler/<agent> --branch claude/issue-3520-w1g-implicit-ctor-param
+```
+
+### W1-G cluster C row 15 — landed (2026-09-04)
+
+One guard in `effectiveIrParamTypeNode` (`src/ir/select.ts`), exactly S1 as
+planned. `src/ir/select.ts` 11186 -> 11191 (+5); grant restated in this file's
+frontmatter above. No other source file changed.
+
+**Before / after**, measured with `.tmp/probe-3520-c15.mts` (`analyzeSource` +
+`generateModule({ experimentalIR: true, trackIrOutcomes: true })`), base
+`ac00a24ea9` vs branch, on **both** lanes:
+
+| fixture | base `Child_new` | branch `Child_new` | base sibling | branch sibling |
+| --- | --- | --- | --- | --- |
+| minimal trigger (row a) | `invariant` `unexpected-internal-throw` | `emitted` `class-implicit-constructor` | `Child_sum` `late-preparation-unsupported` | `Child_sum` `emitted` |
+| `type-class-abi` fixture (row b) | `invariant` | `emitted` | `Base_read`/`Child_read` `late-preparation-unsupported` | both `emitted` |
+| two parent params `number`+`string` (row c) | `invariant` | `emitted` | `Child_sum` `late-preparation-unsupported` | `Child_sum` `emitted` |
+| zero-param parent ctor (row d) | `emitted` | `emitted` | — | — |
+| explicit derived ctor (row e) | `emitted` `class-constructor` | unchanged | — | — |
+| JS `@param {number}` JSDoc (row f) | `emitted` | unchanged | — | — |
+| derived, no own field | **no row at all** | **no row at all** | `Child_read` `emitted` | unchanged |
+
+The base stack is the plan's, verbatim: `canHaveJSDoc` -> `getJSDocTagsWorker`
+-> `getJSDocParameterTags` -> `Object.getJSDocType` -> `effectiveIrParamTypeNode`
+(`select.ts:2193`) -> `from-ast.ts:1148` -> `lowerFunctionAstToIr`
+(`from-ast.ts:1121`) -> `lowerImplicitConstructorAstToIr` (`from-ast.ts:1416`).
+
+**Why the no-own-field derived class never lowers a `class-implicit-constructor`
+terminal** (the plan asked for this fact, and its guess was wrong). It is not
+that the parent `_init` is reused. `IrUnitInventoryBuilder` registers the
+implicit constructor **either way**, but the terminal/support classification
+differs: `src/ir/identity.ts:1321` gates the `addTerminalUnit` call on
+`!hasExecutableConstructor && firstInstanceInitializer`, and
+`firstInstanceInitializer` is set (`:1251`) only for a non-static
+`PropertyDeclaration` **with an initializer**. With no own field, control falls
+to the `else if` at `:1349`, which calls `addSupportUnit` for the same
+`class-implicit-constructor` kind. The integration walk lowers **terminals**
+only (`integration.ts:3265`), so `lowerImplicitConstructorAstToIr` — and hence
+the parentless factory node — is never reached. The defect therefore needs the
+conjunction *derived* x *implicit ctor* x *>=1 own field initializer* x *>=1
+parent ctor param*; only the third promotes the unit to a terminal at all, and
+only the fourth produces a synthetic parameter to walk. That is why it hid.
+
+**S2 — measured, not assumed.** `effectiveIrParamTypeNode` has seven callers:
+`select.ts:2003, 2295, 2361, 2380, 10970` and `from-ast.ts:1126, 1148`;
+`effectiveIrReturnTypeNode` has no synthetic-node caller either. Instrumenting
+the guard to dump a stack whenever it fires: **8 hits** across the 14
+fixture x lane compiles (rows a+b+c contribute 4 synthetic params per lane), and
+the immediate caller was `from-ast.ts:1148` — the lowerer's parameter map — in
+**8 of 8**. The only `select.ts` frame in any hit stack is
+`effectiveIrParamTypeNode` itself. Zero hits on the 34-case corpus (102
+compiles, gc/standalone/wasi) and zero on equivalence shard 1. Corroborating:
+the corpus is 102/102 byte-identical base->branch with no throw on either side,
+which by itself entails the guard fired zero times there. So selection never
+observes a synthetic node today; the instrumentation was removed before commit.
+
+**S3 — no second defect.** `resolveIrType(undefined, override, ...)` resolves
+cleanly from `paramTypeOverrides` for every parent-param type probed
+(`.tmp/probe-3520-c15-s3.mts`): `number`, `string`, a `class`-typed param
+(`Box`), and a mixed `(Box, string, number)` triple all emit
+`Child_new` with zero hard errors on both lanes. S1 was not widened.
+
+**Corpus**: byte identity on the 34-case corpus (20 `tests/dogfood/corpus` + 12
+`website/playground/examples` + `tests/fixtures/extern-demo.ts` +
+`tests/fixtures/add.ts`) x gc/standalone/wasi = 102 rows, sha256 per emitted
+binary. **102/102 identical**, no row moved — as predicted, no corpus program
+has a derived class with an implicit ctor, an own field initializer and a
+parameterised parent.
+
+**Tests**: `tests/issue-3520-implicit-derived-ctor-synthetic-param.test.ts`,
+19 tests. On base: **9 red** — rows a/b/c on each lane plus their three runtime
+rows, every one with `Cannot read properties of undefined (reading 'kind')`;
+rows d/e/f and the no-own-field row green. On branch: 19/19 green. Reverting S1
+alone reproduces exactly that red set, so the file is not vacuous.
+`tests/issue-3520-type-class-abi.test.ts` exits 0 (4/4).
+
+**A defect in the first cut of this test, worth recording.** Its "standalone"
+lane was written `{ standalone: true, nativeStrings: true }`. That name is
+declared `never` (#86) precisely because `generateModule` silently ignores it —
+`ctx.standalone` is derived from `target` — so the lane was a second `gc` lane
+and proved nothing. It was caught only because the corpus script used the same
+option against `compile`, which *does* guard it, and 34/34 standalone rows came
+back `throw`. Every standalone measurement above was re-run with
+`{ target: "standalone" }`; the verdicts did not change, but they were not
+evidence until then.
+
+### Rows 13 and 14 — still open after this slice
+
+The `tests/issue-3520-*` failing-name set is **4** on this branch, and the two
+`support-callable-abi` rows in it are the plan's rows 13 and 14, untouched here:
+*resolves a misleading support label...* and *publishes no support callable when
+a source-name collision demotes the owner*. The other two —
+`date-host-bridge-export-provenance` › *keeps provider-created Date publication
+policy...* and `module-init-callable-abi` › *keeps a same-named user function
+distinct from the exact IR-patched initializer* — are equally pre-existing and
+unrelated to this guard.
+## Implementation Plan — W1-H cluster C row 14: strict equality on reference operands is claimed, then demoted post-claim (2026-09-04, Fable lane)
+
+### Measured (main `2ca2591652`, `.tmp/probe-3520-r14.mts`, both lanes identical)
+
+| fixture | outcome | stage |
+| --- | --- | --- |
+| `identical(a: () => number, b: () => number) { return a === b ? 1 : 0 }` | `unsupported` `operand-coercion-unsupported` — `Phase 1 requires matching operand types for '==='` | **build (post-claim)** |
+| same, wrapped in `try/catch` (the `hof.ts` shape of row 14) | same | post-claim |
+| `differ(a, b) { return a !== b }` | same, `'!=='` | post-claim |
+| `same(a: { x: number }, b: { x: number }) { return a === b }` | same | post-claim |
+| `const g = f; return g === f ? 1 : 0` (local function value) | `body-shape-rejected` | select (pre-claim) |
+
+Every row lands in `result.irPostClaimErrors` as `{ kind: "build", func, message }`.
+That is exactly what row 14 asserts to be empty:
+`tests/issue-3520-support-callable-abi.test.ts` › *publishes no support callable
+when a source-name collision demotes the owner* — the owner (`main`) demotes as
+intended, but `hof.ts`'s `identical` is claimed and then demoted post-claim, so
+`irPostClaimErrors` is non-empty. Post-claim demotes are the R9 target-zero
+population (`scripts/check-ir-fallbacks.ts` `postClaim`, every kind target 0);
+this shape simply does not occur in the playground corpus, which is why the
+baseline shows none.
+
+### Root cause — claim and lowering disagree on reference equality
+
+- **Selection** (`src/ir/select.ts`, binary arm → `selectorPrimitiveWrapperOrGenericBinary`,
+  ~L9560): strict/loose equality falls to the generic tail
+  `isPhase1BinaryOp(binOp) && isPhase1Expr(left) && isPhase1Expr(right)`. Two
+  closure-typed or object-typed parameters are Phase-1 identifiers, so the pair
+  is admitted. The selector never asks what the operands ARE; it has
+  `obviousSelectorValueFamily` (`~L8890`, answers `"reference"` for arrow /
+  function expressions, object and array literals, local class values and
+  `knownCallableArity` identifiers) and the checker-backed
+  `currentSelectionOptions.classifyDeclaredPrimitiveExpression` /
+  `classifyPrimitiveExpression` (primitive family or `undefined`).
+- **Lowering** (`src/ir/from-ast.ts` binary path, ~L13231): `asVal(lt)` is
+  undefined for a closure / object carrier, so the operands "mismatch";
+  `checkerProvesBinarySourceCapabilityGap` (`~L12520`) classifies both as
+  `"other"` and answers `true`, and the function demotes with
+  `IrUnsupportedError("operand-coercion-unsupported", "build")`. The IR has no
+  reference-identity instruction (no `ref.eq` in `nodes.ts` / `lower.ts`).
+
+So the lowerer is right to refuse; the defect is that the selector claims first.
+
+### S1 — refuse reference equality at selection, with a named arm
+
+In `selectorPrimitiveWrapperOrGenericBinary`, before the generic tail, for the
+four equality operators (`===`, `!==`, `==`, `!=`):
+
+1. Let `leftFam = obviousSelectorValueFamily(left, scope)`, same for right;
+   `leftDecl = classifyDeclaredPrimitiveExpression?.(left)`, same for right
+   (both `undefined` when the classifier is absent — bare selector callers).
+2. **Refuse** with `capabilityNo("operand-coercion-unsupported",
+   "expr-equality-reference-operands", expr)` when
+   - either operand is positively `"reference"` by `obviousSelectorValueFamily`, or
+   - the classifiers are present and BOTH operands classify to no primitive
+     family (`leftDecl === undefined && rightDecl === undefined`) and neither
+     operand is `null`, an unshadowed `undefined` (already handled by the
+     strict-undefined arm above), or a literal.
+   The parameter-typed case (`a: () => number`) is the second bullet: the
+   checker classifier answers `undefined` for a function type.
+3. Everything else falls through unchanged (number/string/boolean equality,
+   `x === undefined`, `obj === null` if it is admitted today — measure it and
+   keep its verdict).
+
+Pre-claim parity (#3529): the refusal reason is the same
+`operand-coercion-unsupported` the lowerer would have produced, so the
+`check:ir-fallbacks` accounting moves one row from `postClaim.build` to a
+selector reason that is in neither `UNINTENDED` nor `DEFERRED` (tracked, not
+gated). No bucket grows.
+
+### S2 — NOT this slice: `ref.eq` lowering
+
+The value-adding alternative — admit same-carrier reference equality and lower
+it to `ref.eq` (a new `IrInstr` kind, `builder.emitRefEq`, `lower.ts` arm,
+`effects.ts` pure) — is a separate slice: it needs `check:ir-dialect` /
+`check:ir-kind-neutrality` work and a decision about mixed carriers
+(`closure` vs `class` vs `object` vs `dynamic`). Name it in the PR as the
+follow-up; do not start it here.
+
+### Tests — `tests/issue-3520-equality-reference-operands.test.ts`
+
+Both lanes, through `generateModule({ experimentalIR, trackIrOutcomes })`:
+
+| # | fixture | expectation | base |
+| --- | --- | --- | --- |
+| a | `identical` (closure params, `===`) | `unsupported`, stage `select`, arm `expr-equality-reference-operands`, `irPostClaimErrors` empty | red (post-claim) |
+| b | `differ` (`!==`) | same | red |
+| c | `same` (object-typed params) | same | red |
+| d | `n === 1`, `s === "a"`, `b === true` (primitive params) | emitted, unchanged | green |
+| e | `x === undefined` on an externref-shaped operand | unchanged verdict (pin whatever base says) | green |
+| f | row 14 itself: `tests/issue-3520-support-callable-abi.test.ts` › *publishes no support callable…* | green | red |
+
+Row 13 of the same file (the resolver-probe injection) stays red — it is a
+different defect, out of scope; say so in the PR.
+
+Non-vacuity: reverting S1 alone turns a–c and f red again with the post-claim
+`build` row.
+
+### Validation
+
+Full `quality` list as in W1-E/W1-F/W1-G, bare and with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`; `check:ir-fallbacks` must show
+no unintended growth and no post-claim growth (expect zero movement on the
+playground corpus — this shape is absent there; state that). Byte identity on
+the 34-case corpus, all lanes: expected identical. `tests/issue-3520-*` one file
+per invocation: failing-name diff = exactly row 14 removed. `tests/issue-3522-*`,
+`issue-3519-*`, `issue-3000-*`, `issue-3529-*` (pre-claim parity suite): diff
+empty. Equivalence 8 shards, failing set = the 24 known. `select.ts` growth
+≈ +25 lines: grant in this file's frontmatter with a dated rationale.
+
+### Acceptance
+
+1. Rows a–c and f green on both lanes, red on base as recorded; d–e unchanged.
+2. `check:ir-fallbacks`: no bucket grows; the PR body states the corpus
+   post-claim count before/after (expected 0 → 0) and the selector-reason
+   count before/after.
+3. Corpus byte-identical or every moved row named.
+4. `### W1-H cluster C row 14 — landed` appended here; `status:` stays
+   `in-progress`. After W1-H the cluster C residue is row 13 alone.
+
+### Claim
+
+```bash
+node scripts/claim-issue.mjs 3520:w1h-equality-reference-operands ttraenkler/<agent> --branch claude/issue-3520-w1h-equality-reference-operands
+```
+
+## Handover — Fable lane, session ending 2026-09-04 ~07:00Z
+
+Written at the user's request so the next session can resume without the
+transcript. Everything below is on `main` unless marked otherwise.
+
+### Landed this session (all merged through the queue)
+
+| slice | PR | effect on the `tests/issue-3520-*` red set |
+| --- | --- | --- |
+| W1-D cluster A (non-executable row) | #5544 | 5 files green |
+| W1-E cluster D (vec write-back ABI owner, `vec-host-bridge:9/10`) | #5559 | `compiler-support-abi` green |
+| W1-F cluster B (derived-unit tests retargeted, test-only) | #5563 | rows 8/9/11/12 green |
+| ir-unit-identity private-name pin (stale pin after #3522 W1-A) | #5564 | 1 row green |
+| W1-G cluster C row 15 (implicit derived ctor synthetic param) | #5571 | `type-class-abi` green; 14 → 4 failing names |
+
+### What is still red (measured by the W1-G implementer after its merge)
+
+| test | cluster | owner / next step |
+| --- | --- | --- |
+| `support-callable-abi` › *publishes no support callable when a source-name collision demotes the owner* | C row 14 | **W1-H plan above, unclaimed** — claim `3520:w1h-equality-reference-operands` and dispatch; brief = the plan section |
+| `support-callable-abi` › *resolves a misleading support label…* | C row 13 | fails only under `JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE=planned-support`; message from `integration.ts:5084`. Needs a reading of the probe protocol before any plan — not a codegen defect |
+| `date-host-bridge-export-provenance` (35 s timeout) | F | unplanned; likely a performance/ordering issue in the provider-created Date publication test, measure the time split first |
+| `module-init-callable-abi` › *keeps a same-named user function distinct…* | E | owned by #5283's residual (`legacyBodyEmitted` on ambient-only module init) |
+
+### Process facts the next session needs
+
+- **Another Claude session works this repo concurrently** (it landed #5543, #5555 and the `ES2015 standalone` lanes). Before every dispatch: `git ls-remote --heads origin | grep -i <slug>` and scan open PRs; put the same scan in every brief.
+- Plans live in issue files; implementers are Opus subagents (`senior-developer`, `isolation: worktree`), briefs list the full `quality` gate set, trailers `Model: Claude Opus 5 High`, and PR bodies go to the orchestrator's scratchpad because subagents cannot open PRs. The load gate blocks spawns at 1-min load ≥ 2 on this 4-core box.
+- A container restart on 2026-09-04 ~03:30Z killed two agents mid-validation; their worktrees survived and the W1-C implementation was salvaged by `git diff` from the dead worktree. Check `git -C .claude/worktrees/<agent> status` before re-running anything.
+- Claims: every landed slice's claim is completed on `origin/issue-assignments`; live claims at hand-over time are `5312` (opus-5312, running) and `5313` (PR #5572 in CI). `3520:w1h-…` is planned but **not** claimed.

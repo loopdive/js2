@@ -1,10 +1,12 @@
 ---
 id: 5308
 title: "R3 class-member and R4 module-init outcome rows carry NO (prepareAttempts, directBodyEmissions, irBodyEmissions) triple — 13 rows on the 34-case corpus state nothing, so the R9 compile-once ratio is computed over R2 only"
-status: ready
+status: done
 sprint: current
 created: 2026-09-03
 updated: 2026-09-03
+completed: 2026-09-03
+assignee: ttraenkler/opus-5308
 priority: high
 horizon: m
 feasibility: medium
@@ -14,6 +16,18 @@ area: ir
 goal: ir-full-coverage
 related: [5299, 5283, 5263, 3522, 3523, 3518]
 requested_by: ttraenkler/orchestrator
+# (2026-09-03) The R3/R4 receipt index and the shared population/reconciler add
+# ~200 net src LOC across the two files the accounting lives in. Both gates pass
+# without the grant against `merge-base(origin)` and against `origin/main`; the
+# grant is stated so a post-merge baseline refresh on `main` cannot strand it.
+loc-budget-allow:
+  - src/codegen/legacy-body-audit.ts
+  - src/codegen/ir-overlay-outcomes.ts
+func-budget-allow:
+  - src/codegen/legacy-body-audit.ts::IrBodyRouteAuditSession
+  - src/codegen/ir-overlay-outcomes.ts::collectBodyAccountingPopulations
+  - src/codegen/ir-overlay-outcomes.ts::validateDirectFunctionBodyReceipts
+  - src/codegen/ir-overlay-outcomes.ts::reconcileIrOverlayOutcomes
 ---
 
 # The exact body-emission triple stops at the R2 population
@@ -177,3 +191,99 @@ population index), grants in this file's frontmatter. Disjoint from #3522 W1-B
 (`select.ts`, `from-ast.ts`), #3520 W1-E (`vec-access-exports.ts`,
 `vec-define-writeback.ts`). Touches the two files #5283 landed in; branch from
 `origin/main` after PR #5549 (landed 21:59Z). Claim the bare id.
+
+## Implementation notes (2026-09-03, Opus lane)
+
+Landed on `claude/issue-5308-r3-r4-body-accounting`. Two source files
+(`src/codegen/legacy-body-audit.ts`, `src/codegen/ir-overlay-outcomes.ts`), one
+new test file, plus two existing test helpers that had to state the two new
+censuses.
+
+### Three deviations from the plan, each forced by a measurement
+
+**1. A class member's direct body is NOT a `compileFunctionBody` receipt.** The
+plan's step 1 said to count `compileFunctionBody` entries whose unit is a
+`class-member`. `declarations.ts` calls that dispatcher at exactly three sites —
+top-level function declarations, runtime-namespace functions, CJS function
+expressions — and none of them is a class member. Member bodies are emitted
+under `compileClassBodies` (`class-bodies.ts`
+`assertDirectClassBodyAllowed`, one root per member, reached only when
+`skipPreparedClassConstructorBody` / the per-member skip did **not** fire). As
+written the plan's index would have counted zero for every class member,
+forever, and test (a) would have passed vacuously on a fabricated zero. The R3
+index therefore counts `compileClassBodies` roots whose unit is a **terminal**
+`class-member`. Measured 2026-09-03: 7 direct-owned members on
+`tests/dogfood/corpus/classes.js` carry exactly one such root each.
+
+**2. `compileClassBodies` also records a WHOLE-CLASS root, and on a class with
+an implicit constructor it aliases onto that constructor's unit.** The root at
+the top of `compileClassBodies` is recorded against the class declaration node
+and resolves through `nearestInventoryUnit` to the `class-implicit-constructor`
+unit — recorded unconditionally, including when every member is IR-patched. It
+is excluded because that unit is **not terminal** (measured: `terminal=false`,
+`kind="class-implicit-constructor"`). Without that filter every IR-owned
+implicit constructor would have read `(1, 1, 1)` and raised a compile-twice
+invariant on a unit that compiled once — the #5283 inflation in the other
+direction. Pinned by `does not count the whole-class root as the implicit
+constructor's body`.
+
+**3. R4 counts PRESENCE (0/1), not roots.** `compileModuleInitBody` is entered
+once per **pass** — the direct front end compiles module init "more than once
+(discovery and final emission)" by design, and `module-init-pass2` overwrites
+pass 1's context. Measured on the 35-case corpus: 3 gc sources
+(`arrow-params.js`, `generators-async.js`, `objects.js`) and 1 standalone
+(`objects.js`) record **two** roots for **one** emitted body. Counting roots
+would have raised `impossible count 2` on all four. Pinned end-to-end
+(`objects.js` reads `(1, 1, 0)`) and at the session level (two `recordRoot`
+calls ⇒ count 1).
+
+### One stated residual, not a softening
+
+`unsupportedRequiresDirectBody` is `false` for **R4 only**. The R2 arm
+"`unsupported` ⇒ exactly one direct body receipt" is sound where a body is
+guaranteed to exist (R2's population predicate requires `statement.body`; an R3
+terminal is a member with a body). A module-init terminal can exist for a
+source with nothing executable: the #5283 residual, where an ambient `declare
+namespace` is still module-init population, so `tests/fixtures/extern-demo.ts`
+and `tests/dogfood/corpus/import-attributes.module.js` mint a terminal and
+never enter a direct root. #5283 decided those rows state
+`legacyBodyEmitted: false` rather than a defect, and pinned it. Applying the R2
+arm would have contradicted that decision three days later and turned a
+deliberately-deferred residual into a **hard compile error** on two corpus
+files (reconcile diagnostics go through `reportErrorNoNode`). They now read a
+truthful `(1, 0, 0)`, pinned by its own test so the follow-up that splits scan
+roots from the executable population has to come here and say so. Every other
+arm — impossible counts, duplicate receipts, skip-vs-receipt contradiction, and
+both IR-patch bounds — applies to R4 unchanged.
+
+### Measured outcome
+
+| | gc | standalone |
+| --- | --- | --- |
+| rows with a `preparedComponentId` and an absent triple, before | 13 | 13 |
+| …after | **1** (the derived timer-shim row, out of scope) | **1** |
+| R3/R4 terminal rows carrying a counted triple, before → after | 0/39 → **39/39** | 0/36 → **36/36** |
+| new invariant rows / compile failures on the corpus | 0 / 0 | 0 / 0 |
+| sha256 of the emitted binary, per case | 35/35 identical | 35/35 identical |
+
+Shapes after: class-member `emitted` 10 × `(1, 0, 1)`, class-member
+`unsupported` 7 × `(1, 1, 0)`, module-init `emitted` 2 × `(1, 0, 1)`,
+module-init `unsupported` 18 gc / 15 standalone × `(1, 1, 0)` and 2 × `(1, 0, 0)`
+(the two ambient-only terminals). **No R3/R4 row reads `(1, 1, 1)`** — no new
+compile-twice finding. The two `(1, 1, 1)` rows on the corpus
+(`website/playground/examples/benchmarks/helpers.ts::el` and `::bcrd`, gc lane)
+are pre-existing **R2** rows, reproduced identically on base; they are the
+documented #3521 R2-T1 compile-twice shape and carry an `r2Withdrawal` reason.
+
+`check:ir-only` verdict READY on both lanes with a **byte-identical summary**
+to base; `legacyBodyEmittedCeiling: 0` still holds (`legacy body emitted 0` on
+both lanes).
+
+### Corpus note
+
+The corpus is **35** cases, not 34: 20 `tests/dogfood/corpus/*` + **13**
+`website/playground/examples/**/*.ts` + `tests/fixtures/extern-demo.ts` +
+`tests/fixtures/add.ts`. `find` returns 13 playground `.ts` files, one more
+than the plan's 12 (the extra is `benchmarks/helpers.ts`, which is also the
+only source carrying the pre-existing `(1, 1, 1)` R2 rows). The absent-triple
+count reproduced at 13/13 per lane regardless, exactly as the plan predicted.
