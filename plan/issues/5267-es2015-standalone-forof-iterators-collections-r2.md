@@ -1859,3 +1859,43 @@ verified FAILING on the base tree (`expected 28 to be 31` — the two
 **Not done from R3-7:** (b) the `size` gOPD `d.set` read (2 rows) and (c)
 `Map/prototype/set/append-new-values.js` (1 row) — untouched, and the species
 pair stays deferred per the plan.
+
+### Step R3-3(b) — CanBeHeldWeakly moves inside the intrinsic adder (commit 4)
+
+**What changed.** In `emitNativeCollectionCtorIterableDrive`
+(`new-super.ts`) the `isWeak` holdable test is no longer emitted in the
+per-entry body; it is prepended to `directAdd`, the branch that actually calls
+`__map_set` / `__set_add`. §24.3.3.5 step 4 / §24.4.3.1 step 4 put the test
+INSIDE the intrinsic adder, so a user-patched `WeakMap.prototype.set` /
+`WeakSet.prototype.add` must be CALLED first and its own abrupt completion
+wins.
+
+**R3-3(a) was implemented, measured, and REVERTED — it bought nothing.** The
+plan's diagnosis (absent index → `ref.null.extern` → null anyref key → trap in
+`__hash_anyref`) is not what the two remaining rows hit. I added the
+null→`undefined` normalise on both `__extern_get_idx` reads AND a null-guarded
+`Type(nextItem) is Object` test (`__typeof_object`/`__is_truthy` on a null
+externref were the other trap candidate); with both in place
+`Map/iterator-items-are-not-object.js` and
+`WeakMap/iterator-items-keys-cannot-be-held-weakly.js` STILL trapped with the
+identical message (`dereferencing a null pointer in __closure_75() at source
+L46`), and reverting them changed nothing (7 pass / 2 fail either way). Probe
+`t9.js` locates it: `new Map([undefined])` and `new Map([["a",1],2])` both trap
+at module scope, i.e. in the **literal-array seeding path**, not in the
+iterable drive this step edits. Those 2 rows stay open with that pointer; ~40
+lines of unexercised code were not worth shipping for them.
+
+**Measured.**
+
+| corpus | base | lane |
+|---|---|---|
+| 4 claimed rows + 5 named controls | 5 pass / 4 fail | **7 pass / 2 fail** (the 2 above, unchanged error text) |
+| 62 passing `WeakMap`/`WeakSet`/`Map`/`Set` constructor+iterable rows | pass | **62 / 62 pass** |
+
+**Pin.** `tests/issue-5267-r3-3b-weak-ctor-adder-order.test.ts` — 2 cases
+using the rows' own custom-iterable shape (an entry `[]` / a primitive value
+plus a patched adder). Verified FAILING on the base tree (`expected +0 to be
+11` — the patched adder was never called) and passing on the lane. My first
+attempt used `new WeakMap([[1, 1]])` and passed on base too: that literal form
+takes the seeding path, not the drive. Recorded because it is the same trap
+the plan's row list can hide.

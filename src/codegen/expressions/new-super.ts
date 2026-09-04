@@ -4442,25 +4442,31 @@ function emitNativeCollectionCtorIterableDrive(
       { op: "local.set", index: kAny } satisfies Instr,
     );
   }
+  // §CanBeHeldWeakly — a primitive key/value is a TypeError from the adder
+  // (`WeakMap/iterator-items-keys-cannot-be-held-weakly.js`). Symbols are
+  // deliberately NOT admitted here: separating an unregistered symbol from a
+  // `Symbol.for` one needs a registry probe the runtime does not expose, and
+  // every weak row that uses symbol keys reaches the literal seeding path,
+  // not this drive.
+  //
+  // (#5267 R3-3b) The test lives INSIDE the intrinsic adder (§24.3.3.5 step 4 /
+  // §24.4.3.1 step 4), so it must run only on the branch that actually calls
+  // `__map_set` / `__set_add`. Emitted before the test it guarded a
+  // user-patched `WeakMap.prototype.set` / `WeakSet.prototype.add` that the
+  // spec requires to be CALLED first (`*-close-after-{set,add}-failure.js`).
+  const holdableGuard: Instr[] = [];
   if (isWeak) {
-    // §CanBeHeldWeakly — a primitive key/value is a TypeError from the adder
-    // (`WeakMap/iterator-items-keys-cannot-be-held-weakly.js`). Symbols are
-    // deliberately NOT admitted here: separating an unregistered symbol from a
-    // `Symbol.for` one needs a registry probe the runtime does not expose, and
-    // every weak row that uses symbol keys reaches the literal seeding path,
-    // not this drive.
     const holdable = externIsObjectInstrs(ctx, kExt);
     if (holdable !== undefined) {
-      entryBody.push(...holdable, { op: "i32.eqz" }, {
+      holdableGuard.push(...holdable, { op: "i32.eqz" }, {
         op: "if",
         blockType: { kind: "empty" },
-        then: throwTypeError(
-          isWeak && isPairKind ? "Invalid value used as weak map key" : "Invalid value used in weak set",
-        ),
+        then: throwTypeError(isPairKind ? "Invalid value used as weak map key" : "Invalid value used in weak set"),
       } satisfies Instr);
     }
   }
   const directAdd: Instr[] = [
+    ...holdableGuard,
     { op: "local.get", index: collTmp },
     { op: "local.get", index: kAny },
     ...(isPairKind ? ([{ op: "local.get", index: vAny }] satisfies Instr[]) : []),
