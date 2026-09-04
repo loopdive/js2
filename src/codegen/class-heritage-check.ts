@@ -34,6 +34,7 @@
 
 import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { withSpeculativeCompile } from "./context/speculative.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 
 /** Unwrap the parenthesis / assertion wrappers a heritage expression may carry. */
@@ -328,18 +329,21 @@ export function emitStandaloneHeritageCheck(
 ): void {
   const expr = heritageExpressionNeedingRuntimeCheck(ctx, decl);
   if (expr === undefined) return;
-  const before = fctx.body.length;
-  const produced = compileExpression(ctx, fctx, expr);
-  if (typeof (produced as { kind?: unknown } | null)?.kind !== "string") {
-    // The heritage expression did not compile to a droppable value; leave the
-    // module exactly as it was rather than emitting a half-built check.
-    fctx.body.length = before;
-    return;
-  }
-  fctx.body.push({ op: "drop" });
-  fctx.body.push(
-    ...buildThrowJsErrorInstrs(ctx, "TypeError", "Class extends value is not a constructor or null", {
-      forceInModuleCtor: true,
-    }),
-  );
+  // Speculative: compile the heritage expression and keep the emission only if
+  // it produced a droppable value. The #1919 helper rolls back body, locals,
+  // late imports AND diagnostics on decline, so the module is left exactly as
+  // it was rather than carrying a half-built check.
+  withSpeculativeCompile(ctx, fctx, () => {
+    const produced = compileExpression(ctx, fctx, expr);
+    if (typeof (produced as { kind?: unknown } | null)?.kind !== "string") {
+      return { commit: false, value: undefined };
+    }
+    fctx.body.push({ op: "drop" });
+    fctx.body.push(
+      ...buildThrowJsErrorInstrs(ctx, "TypeError", "Class extends value is not a constructor or null", {
+        forceInModuleCtor: true,
+      }),
+    );
+    return { commit: true, value: undefined };
+  });
 }
