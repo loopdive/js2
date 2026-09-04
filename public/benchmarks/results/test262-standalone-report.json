@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-04T06:28:13.289Z",
-  "baseline_generated_at": "2026-09-04T06:28:13.289Z",
-  "baseline_sha": "ae5d2d25d9c69438ad8f877150f5fd2bdb4e3457",
+  "timestamp": "2026-09-04T07:23:00.020Z",
+  "baseline_generated_at": "2026-09-04T07:23:00.021Z",
+  "baseline_sha": "5ff1fdf8c25621b6302ee053854f569587be31e8",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1286,18 +1286,18 @@
           "ES2026": 4441
         },
         "sample_files": [
-          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
+          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
-          "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
+          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
-          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
-          "type_error:TypeError: called value is not a function"
+          "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
+          "other:ReferenceError: Temporal is not defined"
         ]
       },
       {
@@ -1858,17 +1858,17 @@
         },
         "sample_files": [
           "test/language/expressions/class/dstr/async-gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-          "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
           "test/language/expressions/class/dstr/async-private-gen-meth-static-ary-ptrn-elem-ary-empty-init.js",
+          "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
           "test/language/expressions/class/async-gen-method/yield-star-getiter-async-undefined-sync-get-abrupt.js",
-          "test/language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-realm-function-ctor.js"
+          "test/language/expressions/class/elements/async-gen-private-method/yield-star-next-then-non-callable-number-fulfillpromise.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a Test262Error but got a TypeError",
-          "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true",
           "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: Cannot destructure 'null' or 'undefined'",
+          "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true",
           "type_error:TypeError: Cannot read properties of undefined (reading a class field)",
-          "type_error:TypeError: Cannot read properties of undefined (reading 'access')"
+          "other:Test262:AsyncTestFailure:Test262Error: Test262Error: completion closes iter"
         ]
       },
       {
@@ -2537,15 +2537,15 @@
           "test/language/expressions/bitwise-xor/bigint-non-primitive.js",
           "test/language/expressions/unsigned-right-shift/bigint-non-primitive.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
-          "test/built-ins/Atomics/or/bigint/bad-range.js",
-          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js"
+          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js",
+          "test/built-ins/Atomics/or/bigint/bad-range.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot mix BigInt and other types, use explicit conversions",
           "assertion_fail:Test262Error: Object(0b101n) >>> Object(1n) throws TypeError Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Atomics.store requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
-          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone"
+          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone",
+          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)"
         ]
       },
       {

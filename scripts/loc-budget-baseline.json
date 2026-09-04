@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-04",
   "threshold": 1500,
-  "totalCeiling": 824763,
+  "totalCeiling": 824818,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -22,7 +22,7 @@
     "src/codegen/dataview-native.ts": 8675,
     "src/codegen/declarations.ts": 6667,
     "src/codegen/declarations/import-collector.ts": 2255,
-    "src/codegen/declarations/object-shape-widening.ts": 2672,
+    "src/codegen/declarations/object-shape-widening.ts": 2680,
     "src/codegen/declarations/param-return-inference.ts": 1773,
     "src/codegen/destructuring-params.ts": 2776,
     "src/codegen/dyn-read.ts": 1736,
