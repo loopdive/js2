@@ -7706,11 +7706,28 @@ export function classElementIsStatic(member: ts.ClassElement): boolean {
   );
 }
 
+/**
+ * (#3522 W1-B) The name a declared member projects into the class descriptor,
+ * or `null` when it has none (a computed key, whose value is not a compile-time
+ * constant here).
+ *
+ * The one caller-visible addition over the identifier/string/numeric set is the
+ * private one: `#m` projects as `__priv_m`, the spelling `privateMemberMangledName`
+ * mints for the descriptor (W1-A) and that `class-bodies.ts::resolveClassMemberName`
+ * already minted on the legacy side. Both projection lookups below must compare
+ * through THIS function, or a private declaration is invisible to the walk that
+ * resolves the call its own class makes.
+ */
+function classElementProjectionName(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+  if (ts.isPrivateIdentifier(name)) return privateMemberMangledName(name);
+  return null;
+}
+
 function classElementMayName(member: ts.ClassElement, requested: string): boolean {
   if (!member.name) return false;
-  if (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name)) {
-    return member.name.text === requested;
-  }
+  const projected = classElementProjectionName(member.name);
+  if (projected !== null) return projected === requested;
   return computedMemberMayName(member.name, requested);
 }
 
@@ -9608,6 +9625,47 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // enforces that the receiver is a class instance whose shape carries
     // `methodName`. If not, the function falls back to legacy.
     if (ts.isPropertyAccessExpression(expr.expression)) {
+      // (#3522 W1-B) `<recv>.#m(args)` — a call to a PRIVATE method. Its own
+      // dedicated arm, BEFORE the identifier-name gate below, for two reasons:
+      // the gate's bare `return false` is what refused every private call site
+      // (an unattributed shape refusal, which is how W1-A measured it), and no
+      // ambient arm between here and the class arms can carry a private name —
+      // so threading one through them would widen a surface for nothing. A
+      // private name is only ever resolvable against a LOCAL class, which is
+      // exactly the two projections re-used here.
+      if (ts.isPrivateIdentifier(expr.expression.name)) {
+        const methodName = privateMemberMangledName(expr.expression.name);
+        const receiver = expr.expression.expression;
+        // `C.#s()` — the receiver is the class VALUE. Mirrors the static arm
+        // below (a bare unshadowed local class identifier); W1-A leaves static
+        // private methods without a descriptor, so the projection is missing
+        // and the call stays direct-owned. `this` / an instance resolves
+        // through the ordinary instance route.
+        const staticReceiver =
+          ts.isIdentifier(receiver) &&
+          localClassValueIsUnshadowed(receiver.text, scope) &&
+          localClasses.has(receiver.text);
+        const className = staticReceiver
+          ? (receiver as ts.Identifier).text
+          : localClassNameForExpression(receiver, scope);
+        if (className === null) return shapeNo("expr-private-method-receiver", expr);
+        if (localClassHasKnownProjectionGap(className)) {
+          return capabilityNo("class-projection-unsupported", "expr-private-method-shape", expr);
+        }
+        const projection = classMethodProjection(className, methodName, staticReceiver);
+        if (projection.status !== "projected" || projection.arity === undefined) {
+          return capabilityNo("class-member-unsupported", "expr-private-method-member", expr);
+        }
+        if (expr.arguments.length !== projection.arity) {
+          return capabilityNo("call-arity-unsupported", "expr-private-method-arity", expr);
+        }
+        if (!staticReceiver && !isPhase1Expr(receiver, scope, localClasses)) return false;
+        for (const arg of expr.arguments) {
+          if (ts.isSpreadElement(arg)) return shapeNo("expr-private-method-spread", arg);
+          if (!isPhase1Expr(arg, scope, localClasses)) return false;
+        }
+        return true;
+      }
       if (!ts.isIdentifier(expr.expression.name)) return false;
       const standaloneDomCall = standaloneDomOperation(expr);
       if (isDirectStandaloneDomMemberCall(standaloneDomCall)) {

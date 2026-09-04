@@ -120,18 +120,6 @@ function expectIrOwned(result: CompileResult, names: readonly string[]): void {
   }
 }
 
-/**
- * The pre-existing post-claim entry for a class whose implicit constructor
- * cannot seal because a sibling method is a non-candidate terminal. Measured
- * identical on `origin/main` 2510fae02 with this slice reverted, on both lanes.
- */
-function expectPreExistingCtorSealingNote(result: CompileResult): void {
-  const postClaim = result.irPostClaimErrors ?? [];
-  expect(postClaim).toHaveLength(1);
-  expect(postClaim[0]).toMatchObject({ kind: "build", func: "Animal_new" });
-  expect(postClaim[0]!.message).toContain("has incomplete dependencies");
-}
-
 function expectDirectOwned(result: CompileResult, names: readonly string[]): void {
   for (const name of names) {
     expect(outcome(result, name), `${name} must stay on the direct route`).toMatchObject({
@@ -158,8 +146,9 @@ export function run(): number { return new Animal().reveal(); }
 
 // node: 84. The private method is CALLED from a sibling, so its body is what
 // produces the answer — a declaration-only fixture could not prove the IR body
-// RUNS. The caller and the constructor keep their pre-slice deferral (the
-// call-site lowering is the NEXT slice); the callee is IR-owned.
+// RUNS. The caller and the constructor were still deferred when W1-A landed;
+// W1-B claims both, so the only thing this file still asserts about them is
+// that the callee's own body is IR-owned and produces the answer.
 const CALLED_FROM_SIBLING = `class Animal {
   #secret: number = 42;
   #doubled(): number { return this.#secret * 2; }
@@ -278,7 +267,11 @@ describe("#3522 W1-A private instance-method declarations compile once", () => {
     ]);
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
     expectIrOwned(result, ["Animal___priv_doubled"]);
-    expectPreExistingCtorSealingNote(result);
+    // W1-A measured one post-claim entry here: the implicit constructor could
+    // not seal while the calling sibling was a non-candidate terminal. W1-B
+    // claims that call site, which removes the note's cause — so the absence
+    // below is the sealing consequence, not a weakened assertion.
+    expect(result.irPostClaimErrors ?? []).toEqual([]);
 
     // Runtime parity against the legacy compiler for the same program.
     const legacy = await compile(CALLED_FROM_SIBLING, {
@@ -343,18 +336,16 @@ describe("#3522 W1-A private instance-method declarations compile once", () => {
   });
 });
 
-describe("#3522 W1-A call sites stay deferred (the NEXT slice's boundary)", () => {
-  it.each(TARGETS)("keeps the calling sibling and constructor direct on %s", async (target) => {
-    const result = await compilePlain(CALLED_FROM_SIBLING, `w1a-callsite-sibling-${target}.ts`, target);
-    expect(result.success).toBe(true);
-    expect(outcomeCode(result, "Animal___priv_doubled")).toBe("emitted");
-    expect(outcomeCode(result, "Animal_reveal")).toBe("body-shape-rejected");
-    expect(outcomeCode(result, "Animal_new")).toBe("late-preparation-unsupported");
-    expectDirectOwned(result, ["Animal_reveal", "Animal_new"]);
-    expectPreExistingCtorSealingNote(result);
-    expect((await instantiate(result)).run!()).toBe(84);
-  });
-
+// The sibling-call boundary this block used to pin ("keeps the calling sibling
+// and constructor direct") was W1-A's deferral, and W1-B (#3522, the private
+// call-site slice) claims it. Its rows now live in
+// `tests/issue-3522-private-method-call-sites.test.ts`, which asserts the moved
+// state; keeping a duplicate here would only pin one slice's verdict twice.
+// What remains below is the boundary W1-B does NOT move.
+describe("#3522 W1-A the constructor call site stays deferred", () => {
+  // An EXPLICIT constructor that calls an instance method is refused by
+  // `constructorHasIrSafeReceiverSemantics`, name-agnostically — the public
+  // twin is refused identically (measured in the W1-B file).
   it.each(TARGETS)("keeps a constructor that calls a private method direct on %s", async (target) => {
     const result = await compilePlain(CALLED_FROM_CTOR, `w1a-callsite-ctor-${target}.ts`, target);
     expect(result.success).toBe(true);
