@@ -2573,10 +2573,10 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "class.super_call": {
-        // #3000-E: `super.method(args)` — static-dispatch to the PARENT's method
-        // slot (`<parent>_<method>`) with the subclass receiver first, then args.
-        // Resolving against `parentShape` (not the receiver's shape) bypasses any
-        // subclass override.
+        // #3000-E: `super.<member>(args)` — static-dispatch to the PARENT's slot
+        // with the subclass receiver first, then args; resolving against
+        // `parentShape` (not the receiver's shape) bypasses any subclass override.
+        // (#3522) `memberKind` picks the slot, absent means `"method"` as before.
         const cl = resolver.resolveClass?.(instr.parentShape);
         if (!cl) {
           throw new Error(`ir/lower: resolver cannot lower super class ${instr.parentShape.className} (${func.name})`);
@@ -2585,7 +2585,7 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const a of instr.args) emitValue(a, out);
         emitter.pushRaw(out, {
           op: "call",
-          funcIdx: resolver.resolveFunc(cl.memberFunc("method", instr.methodName, instr.target)),
+          funcIdx: resolver.resolveFunc(cl.memberFunc(instr.memberKind ?? "method", instr.methodName, instr.target)),
         });
         return;
       }
