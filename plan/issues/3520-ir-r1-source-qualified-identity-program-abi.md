@@ -5386,3 +5386,34 @@ empty. Equivalence 8 shards, failing set = the 24 known. `select.ts` growth
 ```bash
 node scripts/claim-issue.mjs 3520:w1h-equality-reference-operands ttraenkler/<agent> --branch claude/issue-3520-w1h-equality-reference-operands
 ```
+
+## Handover — Fable lane, session ending 2026-09-04 ~07:00Z
+
+Written at the user's request so the next session can resume without the
+transcript. Everything below is on `main` unless marked otherwise.
+
+### Landed this session (all merged through the queue)
+
+| slice | PR | effect on the `tests/issue-3520-*` red set |
+| --- | --- | --- |
+| W1-D cluster A (non-executable row) | #5544 | 5 files green |
+| W1-E cluster D (vec write-back ABI owner, `vec-host-bridge:9/10`) | #5559 | `compiler-support-abi` green |
+| W1-F cluster B (derived-unit tests retargeted, test-only) | #5563 | rows 8/9/11/12 green |
+| ir-unit-identity private-name pin (stale pin after #3522 W1-A) | #5564 | 1 row green |
+| W1-G cluster C row 15 (implicit derived ctor synthetic param) | #5571 | `type-class-abi` green; 14 → 4 failing names |
+
+### What is still red (measured by the W1-G implementer after its merge)
+
+| test | cluster | owner / next step |
+| --- | --- | --- |
+| `support-callable-abi` › *publishes no support callable when a source-name collision demotes the owner* | C row 14 | **W1-H plan above, unclaimed** — claim `3520:w1h-equality-reference-operands` and dispatch; brief = the plan section |
+| `support-callable-abi` › *resolves a misleading support label…* | C row 13 | fails only under `JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE=planned-support`; message from `integration.ts:5084`. Needs a reading of the probe protocol before any plan — not a codegen defect |
+| `date-host-bridge-export-provenance` (35 s timeout) | F | unplanned; likely a performance/ordering issue in the provider-created Date publication test, measure the time split first |
+| `module-init-callable-abi` › *keeps a same-named user function distinct…* | E | owned by #5283's residual (`legacyBodyEmitted` on ambient-only module init) |
+
+### Process facts the next session needs
+
+- **Another Claude session works this repo concurrently** (it landed #5543, #5555 and the `ES2015 standalone` lanes). Before every dispatch: `git ls-remote --heads origin | grep -i <slug>` and scan open PRs; put the same scan in every brief.
+- Plans live in issue files; implementers are Opus subagents (`senior-developer`, `isolation: worktree`), briefs list the full `quality` gate set, trailers `Model: Claude Opus 5 High`, and PR bodies go to the orchestrator's scratchpad because subagents cannot open PRs. The load gate blocks spawns at 1-min load ≥ 2 on this 4-core box.
+- A container restart on 2026-09-04 ~03:30Z killed two agents mid-validation; their worktrees survived and the W1-C implementation was salvaged by `git diff` from the dead worktree. Check `git -C .claude/worktrees/<agent> status` before re-running anything.
+- Claims: every landed slice's claim is completed on `origin/issue-assignments`; live claims at hand-over time are `5312` (opus-5312, running) and `5313` (PR #5572 in CI). `3520:w1h-…` is planned but **not** claimed.

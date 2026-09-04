@@ -4994,3 +4994,42 @@ identical to the 24 known. `tests/issue-3522-*`, `issue-3519-*`,
 ```bash
 node scripts/claim-issue.mjs 3522:w1c-super-accessor ttraenkler/<agent> --branch claude/issue-3522-w1c-super-accessor
 ```
+
+## Handover — Fable lane, session ending 2026-09-04 ~07:00Z
+
+### Landed this session
+
+| slice | PR |
+| --- | --- |
+| W1-A private-method declaration admitted | #5545 |
+| W1-B private-method call sites (S1/S3/S5; S2/S4 measured unreachable) | #5552 |
+| W1-C `super.<accessor>` read and write (S0–S4; three plan predictions corrected in its landed record) | #5570 |
+
+The annotated `classes.js` twin now compiles every executable unit once
+(`Dog_speak`, `Dog_rename`, both ctors and `Animal_make` emitted); only
+`<module-init>` still refuses at `static-class-initialization`, which is R4's
+(#3523).
+
+### Next, in the order the `### Next cluster` list gives
+
+1. **Computed-name methods (`r05`)** — needs a compile-time constant-key
+   contract before the A2 arm can admit them; unplanned.
+2. A1 `any`-class position → the `any`-carrier lane (#5289 / #3523), not R3.
+3. `static-class-initialization` on `<module-init>` → R4 (#3523).
+
+### Findings recorded this session that need their own issue or triage
+
+- `tests/issue-3522-*` carries **23 pre-existing red names on `main`** (measured
+  independently by the #5308 and #5309 implementers, failing-name diff empty
+  on both PRs). Nobody owns that backlog; triage it by file before the next
+  slice so a slice's "diff empty" claim stays meaningful.
+- **Legacy miscompile**: `super.<string accessor> += "!"` fails to instantiate
+  (`f64.add[0] expected type f64, found block of type externref`), identical
+  with `experimentalIR: false` — direct-route, recorded by W1-C, no issue yet.
+- #5309 (landed, PR #5565) recorded two out-of-scope siblings that need issues:
+  parent instance field vs child method (node 1, js2 2) and a base-typed
+  receiver holding a subclass with a shadowing field (node 2, js2 1) — both
+  need field-before-method precedence in dispatch.
+- #5312 (uninitialised declared field reads as a null ref, not `undefined`) is
+  being implemented by opus-5312 at hand-over time; its PR will carry the
+  decision between read-site mapping and comparison folding.
