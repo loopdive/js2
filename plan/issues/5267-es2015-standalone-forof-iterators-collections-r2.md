@@ -1,7 +1,8 @@
 ---
 id: 5267
 title: "ES2015 standalone: for-of + iterator prototypes + collections — r2 residual pass"
-status: in-progress
+status: done
+completed: 2026-09-04
 sprint: current
 created: 2026-09-01
 updated: 2026-09-03
@@ -2031,3 +2032,46 @@ claimed set, both reproduce identically on the base tree):**
    and lane alike.
 2. `.tmp/p/t6.js` — `for (e of m)` with a PRE-DECLARED assignment-target head
    over a Map yields nothing (`«""»` instead of `«"ab"»`), base and lane alike.
+
+## Handover (2026-09-04, session claude/es6-test262-standalone-g10c7u)
+
+**State.** r3 pass implemented by an Opus-medium lane in
+`.claude/worktrees/wf_9d1e6808-4e2-1` (branch `worktree-wf_9d1e6808-4e2-1`,
+base `a754fc7c96`): steps R3-1, R3-7(a), R3-3(b), R3-4(a) and the metadata
+half of R3-2 are kept (15 rows); **R3-6 is reverted** (commit `fc29ea3c68`,
+3 rows given up) after the adversarial review confirmed, with three
+independent skeptics, that the deleted-`@@iterator` latch it extended to the
+array for-of fast path (a) stays set after `Array.prototype[Symbol.iterator]`
+is restored by assignment, so a plain array for-of throws where node and base
+iterate, (b) fires for for-of over `arguments`, (c) fires for typed arrays
+(own `@@iterator`), and (d) is raised by `delete Array.prototype.values` too.
+The pre-existing #5139 destructuring guard shares all four defects; the
+`tryEmitArrayProtoIteratorDelete` latch in `proto-override.ts` is set and
+never cleared.
+
+**Verified clean by the review** (node / base / lane, host + standalone +
+wasi executed): the 35-case for-of close matrix (R3-4a, per-loop flag),
+sticky Map/Set iterator exhaustion incl. spread/Array.from/destructuring
+consumers, the "@@1" own-property alias (no string leak, descriptor and
+identity match node), the MapIterator/SetIterator brands (27 builtins'
+`toString` tags unchanged), the WeakMap/WeakSet adder order. Standalone
+modules grow by 20 bytes each (the prelude's Map/Set CSV literal now starts
+with "@@1,"); host bytes change for every for-of over a non-array iterable
+(R3-4a is ungated).
+
+**Not done / next pass.** R3-5 (12 rows), the behavioural half of R3-2 (10
+rows), R3-3(a) (root cause is the literal array seeding path, not the
+iterable drive), R3-1(b), R3-4(b)/(c), R3-7(b)/(c), R3-8, R3-9 — all named
+with reasons in the r3 implementation section. Re-doing R3-6 needs: gate on
+a genuine Array receiver (exclude IArguments / typed arrays), clear or re-key
+the flag on an `Array.prototype[Symbol.iterator] = …` assignment, and stop
+mapping the `values` delete onto the `@@iterator` flag — then fix #5139's
+destructuring guard the same way. Pre-existing defects found by the review
+and worth their own issues: `new Map(map)` / `new Set(set)` copies and
+several WeakMap/WeakSet programs emit modules that fail Wasm validation
+(`return_call expected (ref null 6), found anyref`) on standalone and wasi;
+`for await` over a custom async iterable TypeErrors on standalone; a
+labelled continue/break over nested for-of with closures hangs the compiler.
+
+**Rows gated on #2864** (native generator carrier) are not this issue's.
+
