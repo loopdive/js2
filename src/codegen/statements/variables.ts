@@ -52,6 +52,7 @@ import {
 import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-array-host-carrier.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
 import { compileNestedClassDeclaration, emitUnresolvedComputedAccessorNameEffects } from "./nested-declarations.js";
+import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
@@ -103,6 +104,11 @@ function emitHandledClassExpressionBindingEffects(
 ): void {
   if (!ts.isClassExpression(initializer)) return;
   const materializationEnd = fctx.body.length;
+  // (#5195 r3-5) §15.7.14 step 5f, emitted into the EFFECTS half so the splice
+  // below moves it ahead of the class value's materialization — the superclass
+  // is IsConstructor-checked before the class object exists, and before the
+  // computed-key effects that follow it here.
+  emitStandaloneHeritageCheck(ctx, fctx, initializer, compileExpression);
   emitUnresolvedComputedAccessorNameEffects(ctx, fctx, initializer);
   const materialization = fctx.body.splice(materializationStart, materializationEnd - materializationStart);
   const effects = fctx.body.splice(materializationStart);
@@ -953,7 +959,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
       if (objectLiteralForcesHostPath(ctx, init)) return { kind: "externref" };
       if (objectLiteralSpreadTakesHostPath(ctx, init)) return { kind: "externref" };
     }
-    if (isDirectProxyConstruction(init)) return { kind: "externref" };
+    if (isDirectProxyConstruction(init, ctx)) return { kind: "externref" };
     // Representations the var-decl path computes from a decl/receiver-driven
     // inference that diverges from resolveWasmType — defer to the host path.
     if (inferStandaloneRegExpMatchArrayType(ctx, init) !== null) return null;
@@ -1898,7 +1904,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // Array.prototype.* spec walk) still work on a wasm-struct receiver.
     const initIsProxy =
       decl.initializer !== undefined &&
-      isDirectProxyConstruction(decl.initializer) &&
+      isDirectProxyConstruction(decl.initializer, ctx) &&
       ts.isIdentifier(decl.name) &&
       !proxyBindingEscapesToCall(ctx, decl);
     const isProxyTargetBinding = proxyBindingIsTarget(ctx, decl);

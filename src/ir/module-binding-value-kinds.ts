@@ -12,6 +12,15 @@ export interface IrModuleCapabilityExternValueKind {
 export type IrModuleBindingValueKind =
   | { readonly kind: "f64" }
   | { readonly kind: "i32"; readonly semantic: "boolean" }
+  // (#4208 S2 / #5289) A binding whose value is DYNAMIC — an `any`/`unknown`
+  // declaration, or one a `++`/`--` retypes. Deliberately ONE kind for both
+  // LANES (the `fast` flag, not the target): the source-level fact is "this
+  // slot holds a JS value of unproven type", and the physical carrier —
+  // `externref` in compatibility, `(ref null $AnyValue)` in fast — is the
+  // lane's to pick. Both sides of the boundary pick it from `ctx.fast` alone
+  // (`resolveWasmType` allocates the legacy slot, `resolveIrDynamicCarrierType`
+  // resolves the IR one), so `resolveModuleBindingGlobal` arbitrates them as a
+  // real agreement test rather than reinterpreting either.
   | { readonly kind: "dynamic" }
   | { readonly kind: "extern"; readonly className: string }
   | IrModuleCapabilityExternValueKind
@@ -63,6 +72,16 @@ export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boo
  * (unboxed `throw`, numeric method dispatch) whose string lowering was never
  * proven. A site that later earns a proven string lowering should test
  * `valueKind.kind === "string"` at that site rather than widen this predicate.
+ *
+ * (#5289) `dynamic` is deliberately NOT a member, even though both of ITS
+ * carriers are reference-shaped too. The hazard this predicate exists to stop
+ * — a scalar arm claiming a shape whose lowering was never proven — is already
+ * stopped for `dynamic` at the site that matters: `moduleScalarExpressionFamily`
+ * (`src/ir/select.ts`) returns `undefined` for a dynamic binding rather than
+ * falling through to the initializer's static family. That is the "test the
+ * kind at the site" discipline this comment asks for, already applied. Widening
+ * here instead would change every existing #4208 retype binding's consumer
+ * discipline, which this issue did not measure.
  */
 export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind): boolean {
   return (

@@ -510,18 +510,25 @@ export function emitNativeNumberFormat(ctx: CodegenContext, which: Set<string>):
   const extern: ValType = { kind: "externref" };
   const bufType: ValType = { kind: "ref", typeIdx: strDataTypeIdx };
 
-  const needRadix = which.has("number_toString") || which.has("number_toString_radix");
+  // number_toFixed needs number_toString for its |x| >= 1e21 branch (§21.1.3.3
+  // step 5 defers to ToString there), so emit it whenever toFixed/toPrecision is
+  // requested even if the program never calls .toString() directly.
+  const needPrecision = which.has("number_toPrecision");
+  const needFixed = which.has("number_toFixed") || needPrecision;
+  // …and `number_toString` in turn BAILS OUT when `number_toString_radix` is
+  // absent (it delegates the safe-integer regime to it), so the radix helper has
+  // to ride along on `needFixed` too. Omitting that link is what made a module
+  // whose only number formatting was `x.toPrecision()` silently ship WITHOUT
+  // `number_toString`: `emitToString` returned early, and both the toFixed
+  // >= 1e21 branch and the toPrecision no-arg branch then fell back to their
+  // approximations — `(123.456).toPrecision()` rendered "1.234560e+2".
+  const needRadix = which.has("number_toString") || which.has("number_toString_radix") || needFixed;
   if (needRadix && !ctx.funcMap.has("number_toString_radix")) {
     // (#3305) SELF-HOSTED: TS source in src/stdlib/number-format.ts compiled
     // through the compiler's own IR pipeline; legacy (f64,f64)->externref ABI
     // preserved by a thunk. See number-format-selfhost.ts.
     emitSelfHostedToStringRadix(ctx);
   }
-  // number_toFixed needs number_toString for its |x| >= 1e21 branch (§21.1.3.3
-  // step 5 defers to ToString there), so emit it whenever toFixed/toPrecision is
-  // requested even if the program never calls .toString() directly.
-  const needPrecision = which.has("number_toPrecision");
-  const needFixed = which.has("number_toFixed") || needPrecision;
   if ((which.has("number_toString") || needFixed) && !ctx.funcMap.has("number_toString")) {
     emitToString(ctx, strDataTypeIdx, i32, f64, extern, bufType);
   }
@@ -554,7 +561,9 @@ function emitLinkedNumberFormatImports(ctx: CodegenContext, which: Set<string>):
   const needPrecision = which.has("number_toPrecision");
   const needFixed = which.has("number_toFixed") || needPrecision;
   const needExponential = which.has("number_toExponential") || needPrecision;
-  const needRadix = which.has("number_toString") || which.has("number_toString_radix");
+  // Same dependency closure as the native emitter above: number_toString rides
+  // on needFixed, and number_toString_radix rides on number_toString.
+  const needRadix = which.has("number_toString") || which.has("number_toString_radix") || needFixed;
 
   // The provider's fixed/precision implementations delegate through these
   // same named helpers, so retain the dependency closure rather than relying
@@ -1261,11 +1270,11 @@ function emitToExponential(
 
 /**
  * `number_toPrecision(value: f64, precision: f64) -> externref` (§21.1.3.5).
- * NaN sentinel (precision != precision) means "no argument" → behaves like
- * toString. We implement the no-arg case by delegating to a toFixed-style
- * render with enough fractional digits; the with-arg case formats `precision`
- * significant digits, choosing fixed or exponential notation per spec
- * (exponent < -6 or >= precision → exponential).
+ * NaN sentinel (precision != precision) means "no argument", which §21.1.3.5
+ * step 2 defines as `return ! ToString(x)` — so the no-arg case delegates to
+ * `number_toString`, the same Number::toString this lane uses everywhere else.
+ * The with-arg case formats `precision` significant digits, choosing fixed or
+ * exponential notation per spec (exponent < -6 or >= precision → exponential).
  */
 function emitToPrecision(
   ctx: CodegenContext,
@@ -1283,6 +1292,7 @@ function emitToPrecision(
   // already-emitted number_toFixed / number_toExponential helpers.
   const toFixedIdx = ctx.funcMap.get("number_toFixed");
   const toExpIdx = ctx.funcMap.get("number_toExponential");
+  const numToStringIdx = ctx.funcMap.get("number_toString");
 
   // params 0 value 1 precision
   // locals: 2 buf 3 pos 4 tmp 5 neg 6 abs 7 e(i32) 8 m(f64) 9 prec(i32)
@@ -1309,19 +1319,29 @@ function emitToPrecision(
     { op: "local.get", index: L_PRECISION },
     { op: "f64.ne" },
     { op: "local.set", index: L_NOARG },
-    // if noarg: return number_toFixed-style? toString semantics differ, but for
-    // standalone output we approximate via toExponential no-arg (NaN sentinel).
+    // §21.1.3.5 step 2 — an absent precision is `! ToString(x)`, full stop.
+    // This used to delegate to `toExponential(value, NaN)` as an approximation,
+    // which rendered `(123.456).toPrecision()` as "1.23456e+2". Number::toString
+    // is the operation the spec names, and it is the SAME helper the reflective
+    // `Number.prototype.toPrecision` body (#5269 J-1) calls for this case, so the
+    // two spellings of the no-arg call cannot drift apart.
     { op: "local.get", index: L_NOARG },
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [
-        // delegate to toExponential(value, NaN) — close enough for no-arg output
-        { op: "local.get", index: L_VALUE },
-        { op: "f64.const", value: NaN },
-        { op: "call", funcIdx: toExpIdx! },
-        { op: "return" },
-      ],
+      then:
+        numToStringIdx !== undefined
+          ? [{ op: "local.get", index: L_VALUE }, { op: "call", funcIdx: numToStringIdx }, { op: "return" }]
+          : [
+              // Unreachable in practice: `emitNativeNumberFormat` emits
+              // `number_toString` before this helper whenever toPrecision is
+              // requested. Kept so a future caller that skips it still gets a
+              // renderable answer instead of a bad funcIdx.
+              { op: "local.get", index: L_VALUE },
+              { op: "f64.const", value: NaN },
+              { op: "call", funcIdx: toExpIdx! },
+              { op: "return" },
+            ],
     },
     // prec = (i32)precision
     { op: "local.get", index: L_PRECISION },

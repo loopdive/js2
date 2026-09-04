@@ -54,6 +54,8 @@ import {
   nativeStringLiteralInstrs,
   stringConstantExternrefInstrs,
 } from "../native-strings.js";
+import { undefinedSingletonActive } from "../any-helpers.js";
+import { usesNativeJsErrors } from "../js-errors.js";
 import { CARRIER_BAG_HAS } from "../carrier-bag-visibility.js";
 import { ERROR_PROP_GET } from "../error-props.js";
 
@@ -313,6 +315,158 @@ function emitErrorStructConstructor(
     body,
     exported: false,
   });
+}
+
+/**
+ * (#5269 E-2) `__new_SuppressedError_native(error, suppressed, message, options)`
+ * — §20.5.10.1 without a JS host.
+ *
+ * `new SuppressedError(...)` and `SuppressedError(...)` both lowered to the
+ * `env::__new_SuppressedError` host import unconditionally, so the mere PRESENCE
+ * of the `nativeErrors.js` harness shape (a `typeof SuppressedError !==
+ * 'undefined'` guard plus a construction) put an `env` import in a standalone
+ * module and failed it at the host-import leak check (#2961/#5272) before a
+ * single assertion ran.
+ *
+ * The body is the one the dispose driver already builds inline for its LIFO
+ * error nesting (`disposable-runtime.ts` `buildSuppressedError`): an
+ * `$Error_struct` tagged `SuppressedError`, carrying `error` and `suppressed`
+ * on the `$props` sidecar. Sharing the shape is the point — a SuppressedError
+ * raised by `using` and one written by hand must be the same kind of value.
+ *
+ * Spec order is preserved: `suppressed` (step 3), `error` (step 4), `message`
+ * (step 5, only when not undefined), then InstallErrorCause (step 6).
+ *
+ * Returns `undefined` — having emitted NOTHING — when the object runtime's
+ * property helpers are absent, so the caller keeps its existing lowering and
+ * the module stays byte-identical.
+ */
+export function ensureNativeSuppressedErrorCtor(ctx: CodegenContext): number | undefined {
+  const NAME = "__new_SuppressedError_native";
+  const cached = ctx.funcMap.get(NAME);
+  if (cached !== undefined) return cached;
+  if (!usesNativeJsErrors(ctx)) return undefined;
+
+  // The `$props` sidecar is an ordinary `$Object`, so this needs the object
+  // runtime's property helpers. The CALLER ensures that runtime — `registry/`
+  // sits below `object-runtime.ts` and importing it here would close an ESM
+  // cycle (object-runtime-strict-set already imports this module).
+  const newPlainObjIdx = ctx.funcMap.get("__new_plain_object");
+  const externSetIdx = ctx.funcMap.get("__extern_set");
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const externHasIdx = ctx.funcMap.get("__extern_has");
+  if (
+    newPlainObjIdx === undefined ||
+    externSetIdx === undefined ||
+    externGetIdx === undefined ||
+    externHasIdx === undefined
+  ) {
+    return undefined;
+  }
+
+  const externref: ValType = { kind: "externref" };
+  const structIdx = getOrRegisterErrorStructType(ctx);
+  addStringConstantGlobal(ctx, "SuppressedError");
+  addStringConstantGlobal(ctx, "error");
+  addStringConstantGlobal(ctx, "suppressed");
+  addStringConstantGlobal(ctx, "cause");
+
+  const P_ERROR = 0;
+  const P_SUPPRESSED = 1;
+  const P_MESSAGE = 2;
+  const P_OPTIONS = 3;
+  const L_PROPS = 4;
+
+  // `x === undefined` is NOT `ref.is_null` under the #2106 singleton regime: an
+  // omitted argument arrives as a non-null `$undefined` value. Both spec sites
+  // below ("message is not undefined", "options is an Object") need the real
+  // test, or an absent `message` would be stored as a present one.
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const singleton = undefinedSingletonActive(ctx) && isUndefinedIdx !== undefined;
+  const isAbsent = (param: number): Instr[] =>
+    singleton
+      ? [
+          { op: "local.get", index: param },
+          { op: "ref.is_null" },
+          { op: "local.get", index: param },
+          { op: "call", funcIdx: isUndefinedIdx! },
+          { op: "i32.or" },
+        ]
+      : [{ op: "local.get", index: param }, { op: "ref.is_null" }];
+
+  const setOn = (target: number, key: string, value: Instr[]): Instr[] => [
+    { op: "local.get", index: target },
+    ...stringConstantExternrefInstrs(ctx, key),
+    ...value,
+    { op: "call", funcIdx: externSetIdx },
+  ];
+
+  const body: Instr[] = [
+    { op: "call", funcIdx: newPlainObjIdx },
+    { op: "local.set", index: L_PROPS },
+    // Step 3 then step 4 — the spec's order, and the order the dispose driver
+    // writes them in.
+    ...setOn(L_PROPS, "suppressed", [{ op: "local.get", index: P_SUPPRESSED }]),
+    ...setOn(L_PROPS, "error", [{ op: "local.get", index: P_ERROR }]),
+    // Step 6, InstallErrorCause: `cause` is installed when options HAS the
+    // property — not when it is truthy — so an explicit `{ cause: undefined }`
+    // still creates it.
+    ...isAbsent(P_OPTIONS),
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: P_OPTIONS },
+        ...stringConstantExternrefInstrs(ctx, "cause"),
+        { op: "call", funcIdx: externHasIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: setOn(L_PROPS, "cause", [
+            { op: "local.get", index: P_OPTIONS },
+            ...stringConstantExternrefInstrs(ctx, "cause"),
+            { op: "call", funcIdx: externGetIdx },
+          ]),
+        },
+      ],
+    },
+    // $tag
+    { op: "i32.const", value: BUILTIN_TYPE_TAGS.SuppressedError },
+    // $message — step 5 stores it only when it is not undefined. The value is
+    // kept as it arrives, exactly as `__new_Error(msg)` keeps its own argument:
+    // routing one of the two through a ToString the other skips is how the
+    // Error family's `.message` reads would start to disagree.
+    ...isAbsent(P_MESSAGE),
+    {
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: [{ op: "ref.null.extern" }],
+      else: [{ op: "local.get", index: P_MESSAGE }],
+    },
+    // $name
+    ...stringConstantExternrefInstrs(ctx, "SuppressedError"),
+    // $stack — no stack-capture primitive standalone (reads back as undefined).
+    { op: "ref.null.extern" },
+    // $userClassId — -1: a builtin, not a user subclass brand.
+    { op: "i32.const", value: -1 },
+    // $props
+    { op: "local.get", index: L_PROPS },
+    { op: "struct.new", typeIdx: structIdx },
+    { op: "extern.convert_any" },
+  ];
+
+  const typeIdx = addFuncType(ctx, [externref, externref, externref, externref], [externref], `${NAME}_type`);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(NAME, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: NAME,
+    typeIdx,
+    locals: [{ name: "props", type: externref }],
+    body,
+    exported: false,
+  });
+  return funcIdx;
 }
 
 /**
@@ -616,4 +770,150 @@ export function fillExternGetErrorProps(ctx: CodegenContext): void {
   ];
 
   fn.body.splice(0, 0, ...arm);
+}
+
+/**
+ * (#5269 L) `hasOwnProperty(new Error("m"), "message")` — the ONE intrinsic
+ * `$Error_struct` field that is a spec OWN data property.
+ *
+ * §20.5.1.1 step 4: `CreateNonEnumerableDataPropertyOrThrow(O, "message", msg)`
+ * runs only when the argument is not `undefined`, so `new Error()` has NO own
+ * `message` while `new Error("m")` does. In this compiler the value lives in
+ * struct field 1, not in the `$props` bag, so the own-property walk
+ * (`__obj_find`, then the carrier bag) could not see it and
+ * `error.hasOwnProperty("message")` answered false while `error.message` read
+ * `"my-message"` — the exact disagreement `verifyProperty` reports.
+ *
+ * ## Why this is spliced onto `__hasOwnProperty` and yet is NOT #4017
+ *
+ * #4017 widened these two natives GENERICALLY (any carrier, any key, through
+ * the closure side table) and was auto-parked for costing 684 host-free passes:
+ * `propertyHelper.js` reaches `Object.prototype.hasOwnProperty` on every
+ * `built-ins/**\/{name,length}.js` row. The lesson recorded in
+ * `carrier-bag-hasown.ts` is that generality AT THIS POINT is blast radius.
+ *
+ * This arm is the opposite shape: it fires only for a receiver that `ref.test`s
+ * as `$Error_struct` AND a key that flattens equal to `"message"` AND a non-null
+ * field. A null field falls through to the original body, so `new Error()` keeps
+ * today's answer. No other receiver, key, or outcome is reachable.
+ *
+ * The gOPD twin is spliced from the same builder, over the same field, so
+ * presence and the descriptor cannot disagree — measured: with presence alone,
+ * `verifyProperty` moved from "message should be an own property" to
+ * dereferencing the `undefined` `originalDesc`. Write and delete for `message`
+ * are already answered by `error-props.ts`.
+ *
+ * No-op (byte-identical) unless the module registered `$Error_struct`.
+ */
+export function fillErrorStructMessageOwnPropArms(ctx: CodegenContext): void {
+  if (ctx.targetProfile.semanticProviders !== "native-first") return;
+  const errTypeIdx = ctx.errorStructTypeIdx;
+  if (errTypeIdx < 0) return;
+  const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  if (strFlattenIdx === undefined || strEqualsIdx === undefined) return;
+  if (ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0) return;
+
+  // §20.5.1.1: `{ [[Writable]]: true, [[Enumerable]]: false,
+  // [[Configurable]]: true }` — the `__create_descriptor` flag word.
+  const MESSAGE_DESC_FLAGS = 0x01 | 0x04;
+  const createDescriptorIdx = ctx.funcMap.get("__create_descriptor");
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+
+  for (const name of ["__hasOwnProperty", "__object_hasOwn", "__getOwnPropertyDescriptor", "__delete_property"]) {
+    if (name === "__getOwnPropertyDescriptor" && (createDescriptorIdx === undefined || externGetIdx === undefined))
+      continue;
+    const fn = ctx.mod.functions.find((f) => f.name === name);
+    if (!fn) continue;
+    // params 0=obj 1=key; APPEND locals so every baked index keeps its meaning.
+    const anyL = 2 + fn.locals.length;
+    const fkeyL = anyL + 1;
+    fn.locals.push(
+      { name: "__errhas_any", type: { kind: "anyref" } },
+      { name: "__errhas_fkey", type: { kind: "ref_null", typeIdx: ctx.nativeStrTypeIdx } },
+    );
+    // `hasOwnProperty` answers presence; gOPD answers the §20.5.1.1 descriptor
+    // over the SAME field, so the two cannot disagree about `message`.
+    const answer: Instr[] =
+      name === "__getOwnPropertyDescriptor"
+        ? [
+            // The VALUE comes from `__extern_get`, not from the field directly:
+            // a `err.message = x` write lands in the `$props` sidecar, which
+            // `fillExternGetErrorProps` reads BEFORE the field. Reading the
+            // field here would make the descriptor disagree with the read the
+            // moment anything wrote. `__extern_get` already carries the Error
+            // arm, so this is one source of truth, not a second walk.
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: externGetIdx! },
+            { op: "i32.const", value: MESSAGE_DESC_FLAGS },
+            { op: "call", funcIdx: createDescriptorIdx! },
+            { op: "return" },
+          ]
+        : name === "__delete_property"
+          ? [
+              // `[[Configurable]]: true` is only true if the property can
+              // actually be deleted — `verifyProperty` PROVES it by deleting.
+              // `$message` is the one mutable intrinsic field (§20.5.1.1 allows
+              // `error.message = "x"`), so clear it and then FALL THROUGH: a
+              // prior write put a shadowing entry in the `$props` sidecar, and
+              // only the ordinary body removes that. Returning here left the
+              // sidecar entry behind, so `hasOwnProperty` still answered true
+              // after the delete and `isConfigurable` reported false.
+              { op: "local.get", index: anyL },
+              { op: "ref.cast", typeIdx: errTypeIdx },
+              { op: "ref.null.extern" },
+              { op: "struct.set", typeIdx: errTypeIdx, fieldIdx: 1 },
+            ]
+          : [{ op: "i32.const", value: 1 }, { op: "return" }];
+    const arm: Instr[] = [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: anyL },
+      { op: "ref.test", typeIdx: errTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+              { op: "call", funcIdx: strFlattenIdx },
+              { op: "local.set", index: fkeyL },
+              { op: "local.get", index: fkeyL },
+              { op: "ref.as_non_null" },
+              ...nativeStringLiteralInstrs(ctx, "message"),
+              { op: "call", funcIdx: strEqualsIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: anyL },
+                  { op: "ref.cast", typeIdx: errTypeIdx },
+                  { op: "struct.get", typeIdx: errTypeIdx, fieldIdx: 1 },
+                  { op: "ref.is_null" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    // A null `$message` (`new Error()`) has NO own `message` —
+                    // fall through so the answer stays whatever it is today.
+                    then: [],
+                    else: answer,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    fn.body.splice(0, 0, ...arm);
+  }
 }

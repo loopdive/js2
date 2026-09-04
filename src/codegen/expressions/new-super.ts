@@ -86,6 +86,7 @@ import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; /
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpConstructorExpression } from "../regexp-standalone.js";
+import { tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0)
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import type { InnerResult } from "../shared.js";
 import {
@@ -123,6 +124,7 @@ import { canStructurallyProjectRef, coerceType as coerceTypeImpl, pushDefaultVal
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm new Date(str)
 import { compileSpreadCallArgs, emitLazyClassObjectGet, emitRegisterDynamicClassParent } from "./extern.js";
+import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
 import { compileTemporalNewExpression } from "../temporal-native.js";
 import {
   emitThrowReferenceError,
@@ -2941,6 +2943,13 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
     compileNestedClassDeclaration(ctx, fctx, expr, syntheticName);
   }
 
+  // (#5195 r3-5) §15.7.14 step 5f — IsConstructor(superclass) is checked
+  // BEFORE any computed key of the body runs, so this precedes the effects
+  // emitter below. Skipped when `needsInScopeBody` routed through
+  // `compileNestedClassDeclaration`, which already emitted it: the heritage
+  // expression must be evaluated exactly once.
+  if (!needsInScopeBody) emitStandaloneHeritageCheck(ctx, fctx, expr, compileExpression);
+
   // The generic expression route owns ClassDefinitionEvaluation for inline and
   // comma-position classes. Variable-bound singleton materialization bypasses
   // this function and emits the same shared effect in variables.ts.
@@ -3100,10 +3109,14 @@ function tryCompileNativeConstructFromValue(
     ctx.runtimeEvalCallableBoundaryEnabled === true &&
     resolvesToGlobalFunctionAlias(calleeExpr, ctx.oracle);
   const proxyValue = ts.isIdentifier(calleeExpr) && resolvesToNativeProxyValue(ctx, calleeExpr);
+  // (#5196 R3-0) `Proxy` reached as a VALUE also needs the proxy runtime and
+  // the construct driver; the driver's carrier arm does the identity test.
+  const proxyCtorValue = ts.isIdentifier(calleeExpr) && tracesToProxyConstructorValue(ctx, calleeExpr);
   if (
     !runtimeFunctionAlias &&
     !runtimeEvalCallableResult &&
     !proxyValue &&
+    !proxyCtorValue &&
     !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
     !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr)
   )
@@ -3113,8 +3126,10 @@ function tryCompileNativeConstructFromValue(
   // closure struct. Reserve the argv builders + generic apply bridge used by
   // the construct driver's exact marker arm; ordinary function values retain
   // the existing method-dispatch lowering.
-  if (runtimeFunctionAlias || runtimeEvalCallableResult || proxyValue) {
-    if (proxyValue) ensureNativeProxyRuntime(ctx);
+  if (runtimeFunctionAlias || runtimeEvalCallableResult || proxyValue || proxyCtorValue) {
+    if (proxyValue || proxyCtorValue) ensureNativeProxyRuntime(ctx);
+    // (#5196 R3-0) Arm the driver's proxy-carrier identity test for this module.
+    if (proxyCtorValue) ctx.proxyConstructorValueNewSite = true;
     ensureObjVecBuilders(ctx);
     reserveApplyClosure(ctx);
   }
@@ -3158,6 +3173,20 @@ function tryCompileNativeConstructFromValue(
 
   const argLocals: number[] = [];
   for (const arg of args) {
+    // (#5196 R3-0) A `new <Proxy-constructor value>(target, handler)` site must
+    // lower an object-literal argument to an OPEN `$Object`, exactly as the
+    // syntactic `new Proxy` arm does (`new-builtin-globals.ts`): the closed
+    // typed struct an inline literal defaults to hides its fields from
+    // `__extern_get`, so `__proxy_create` reads every trap as null and the
+    // proxy silently behaves as if the handler were empty.
+    if (proxyCtorValue && ts.isObjectLiteralExpression(arg)) {
+      const openTy = compileObjectLiteralAsExternref(ctx, fctx, arg);
+      if (openTy === null) fctx.body.push({ op: "ref.null.extern" });
+      const openLocal = allocLocal(fctx, `__nc_arg${argLocals.length}_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: openLocal });
+      argLocals.push(openLocal);
+      continue;
+    }
     const argTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
     if (argTy && argTy.kind !== "externref") {
       coerceType(ctx, fctx, argTy, { kind: "externref" });
@@ -4442,25 +4471,31 @@ function emitNativeCollectionCtorIterableDrive(
       { op: "local.set", index: kAny } satisfies Instr,
     );
   }
+  // §CanBeHeldWeakly — a primitive key/value is a TypeError from the adder
+  // (`WeakMap/iterator-items-keys-cannot-be-held-weakly.js`). Symbols are
+  // deliberately NOT admitted here: separating an unregistered symbol from a
+  // `Symbol.for` one needs a registry probe the runtime does not expose, and
+  // every weak row that uses symbol keys reaches the literal seeding path,
+  // not this drive.
+  //
+  // (#5267 R3-3b) The test lives INSIDE the intrinsic adder (§24.3.3.5 step 4 /
+  // §24.4.3.1 step 4), so it must run only on the branch that actually calls
+  // `__map_set` / `__set_add`. Emitted before the test it guarded a
+  // user-patched `WeakMap.prototype.set` / `WeakSet.prototype.add` that the
+  // spec requires to be CALLED first (`*-close-after-{set,add}-failure.js`).
+  const holdableGuard: Instr[] = [];
   if (isWeak) {
-    // §CanBeHeldWeakly — a primitive key/value is a TypeError from the adder
-    // (`WeakMap/iterator-items-keys-cannot-be-held-weakly.js`). Symbols are
-    // deliberately NOT admitted here: separating an unregistered symbol from a
-    // `Symbol.for` one needs a registry probe the runtime does not expose, and
-    // every weak row that uses symbol keys reaches the literal seeding path,
-    // not this drive.
     const holdable = externIsObjectInstrs(ctx, kExt);
     if (holdable !== undefined) {
-      entryBody.push(...holdable, { op: "i32.eqz" }, {
+      holdableGuard.push(...holdable, { op: "i32.eqz" }, {
         op: "if",
         blockType: { kind: "empty" },
-        then: throwTypeError(
-          isWeak && isPairKind ? "Invalid value used as weak map key" : "Invalid value used in weak set",
-        ),
+        then: throwTypeError(isPairKind ? "Invalid value used as weak map key" : "Invalid value used in weak set"),
       } satisfies Instr);
     }
   }
   const directAdd: Instr[] = [
+    ...holdableGuard,
     { op: "local.get", index: collTmp },
     { op: "local.get", index: kAny },
     ...(isPairKind ? ([{ op: "local.get", index: vAny }] satisfies Instr[]) : []),

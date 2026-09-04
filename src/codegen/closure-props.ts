@@ -153,17 +153,46 @@ function slottedInstanceCarrierRoots(ctx: CodegenContext): { typeIdx: number; ba
   return out;
 }
 
-/** Build `__extern_get`'s non-object receiver arm. */
-export function buildClosurePropGetMissArm(ctx: CodegenContext, getMiss: () => Instr[]): Instr[] {
+/**
+ * Build `__extern_get`'s non-object receiver arm.
+ *
+ * (#5194 r3 review F2) `explicitReceiverLocal` is `__extern_get`'s consumed
+ * one-shot receiver (param 0 for an ordinary read; the `Reflect.get` / dyn-view
+ * prototype-walk receiver otherwise). For a receiver that is NOT a closure
+ * carrier, `__closure_prop_get` is exactly the receiver-aware companion
+ * consult `__protoidx_get_r(obj, key)` — which runs an inherited accessor with
+ * `this` = `obj`. A `$NativeProto` reached through the walk (`Reflect.get(
+ * Float64Array.prototype, "dbl", view)`, or `view.dbl` inherited) therefore
+ * ran the getter against the PROTOTYPE. Split the two roles: the companion
+ * brand still comes from `obj`, the accessor `this` from the explicit
+ * receiver. Closure carriers keep the bag/prototype-edge route untouched.
+ */
+export function buildClosurePropGetMissArm(
+  ctx: CodegenContext,
+  getMiss: () => Instr[],
+  explicitReceiverLocal?: number,
+): Instr[] {
   const closurePropGetIdx = ctx.funcMap.get(CLOSURE_PROP_GET);
-  return closurePropGetIdx === undefined
-    ? [...getMiss(), { op: "return" }]
-    : [
-        { op: "local.get", index: 0 }, // obj
-        { op: "local.get", index: 1 }, // key
-        { op: "call", funcIdx: closurePropGetIdx },
-        { op: "return" },
-      ];
+  if (closurePropGetIdx === undefined) return [...getMiss(), { op: "return" }];
+  const isClosureIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
+  const receiverAwareConsult =
+    explicitReceiverLocal === undefined || isClosureIdx === undefined
+      ? undefined
+      : protoIndexRecvGetMissInstrs(ctx, 0, 1, explicitReceiverLocal);
+  return [
+    ...(receiverAwareConsult === undefined
+      ? []
+      : ([
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: isClosureIdx! },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: [...receiverAwareConsult, { op: "return" }] },
+        ] satisfies Instr[])),
+    { op: "local.get", index: 0 }, // obj
+    { op: "local.get", index: 1 }, // key
+    { op: "call", funcIdx: closurePropGetIdx },
+    { op: "return" },
+  ];
 }
 
 /** Build `__extern_set`'s non-object receiver arm. */

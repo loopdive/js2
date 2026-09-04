@@ -1288,6 +1288,81 @@ export function fillClosedMethodDispatch(ctx: CodegenContext): void {
       ];
     }
 
+    // (#5194 r3-2) A `$__ta_dyn_view` IS a `$__vec_base` subtype, so without
+    // this the generic arm above claims it and answers with the WRONG
+    // semantics: it reads `__extern_length` (fine) but skips
+    // ValidateTypedArray, ignores the internal-vs-expando length distinction,
+    // and — the visible symptom — leaves `includes` returning the boxed
+    // result of a §23.1 (Array) search rather than the §23.2.3 one. Route a
+    // dynamic view to its own native helper when one was minted at reserve
+    // time; an own expando member of the same name still shadows (§7.3.2),
+    // which is what the `__hasOwnProperty` decline preserves.
+    // Scoped to the search trio: those are the names whose helper this wave
+    // measured. The mutators keep their call-site two-arm and are deliberately
+    // NOT routed here.
+    const taDynIdx = VEC_SEARCH_METHODS.has(methodName) ? ctx.funcMap.get(`__ta_dyn_${methodName}`) : undefined;
+    const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+    if (taDynIdx !== undefined && ctx.taDynViewTypeIdx >= 0) {
+      addStringConstantGlobal(ctx, methodName);
+      const callHelper: Instr[] = [
+        { op: "local.get", index: 0 },
+        // Params are (recv, a1..a_arity); an ABSENT argument must be a null
+        // externref, never `local.get 1` — at arity 0 that index is the
+        // dispatcher's own anyref scratch local, not an argument.
+        arity >= 1 ? { op: "local.get", index: 1 } : { op: "ref.null.extern" },
+        arity >= 2 ? { op: "local.get", index: 2 } : { op: "ref.null.extern" },
+        arity >= 3 ? { op: "local.get", index: 3 } : { op: "ref.null.extern" },
+        { op: "i32.const", value: arity },
+        { op: "call", funcIdx: taDynIdx },
+      ];
+      // The claim test is computed into ONE i32 first so `current` is
+      // referenced exactly once: the same `Instr[]` reachable through two
+      // arms would be visited twice by any later index-shift pass (#1058).
+      //
+      // The shadow test reads the view's EXPANDO side-table directly rather
+      // than calling `__hasOwnProperty(view, name)`: that native does not (yet)
+      // report a dyn view's own keys, so using it silently claimed a call the
+      // program had shadowed — measured, `view.includes = f; view.includes()`
+      // stopped returning `f`'s result the moment the arm went in.
+      const expLocalIdx = arity + 1 + locals.length;
+      locals.push({ name: "__tadynexp", type: { kind: "externref" } });
+      const claims: Instr[] = [
+        { op: "local.get", index: anyLocalIdx },
+        { op: "ref.test", typeIdx: ctx.taDynViewTypeIdx },
+      ];
+      const shadowTest: Instr[] =
+        hasOwnIdx === undefined
+          ? [{ op: "i32.const", value: 1 }]
+          : [
+              { op: "local.get", index: anyLocalIdx },
+              { op: "ref.cast", typeIdx: ctx.taDynViewTypeIdx },
+              { op: "struct.get", typeIdx: ctx.taDynViewTypeIdx, fieldIdx: 4 },
+              { op: "local.tee", index: expLocalIdx },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [{ op: "i32.const", value: 1 }],
+                else: [
+                  { op: "local.get", index: expLocalIdx },
+                  ...stringConstantExternrefInstrs(ctx, methodName),
+                  { op: "call", funcIdx: hasOwnIdx },
+                  { op: "i32.eqz" },
+                ],
+              },
+            ];
+      claims.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: shadowTest,
+        else: [{ op: "i32.const", value: 0 }],
+      });
+      current = [
+        ...claims,
+        { op: "if", blockType: { kind: "val", type: { kind: "externref" } }, then: callHelper, else: current },
+      ];
+    }
+
     // (#2927) `$__vec_base` brand arm for the in-place array MUTATION methods
     // (`push` arity 1 / `pop` arity 0). A genuinely-`any` array receiver is a
     // `$__vec_base`-subtyped struct that matches no `entries` arm; without this

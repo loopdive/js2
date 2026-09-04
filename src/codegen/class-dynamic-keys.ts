@@ -78,13 +78,28 @@ export function dynamicClassKeyGlobalKey(className: string, ordinal: number): st
  * collection.
  */
 export function classHasUnresolvedComputedMemberName(ctx: CodegenContext, decl: ts.ClassLikeDeclaration): boolean {
-  return decl.members.some(
-    (member) =>
-      (ts.isMethodDeclaration(member) || ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) &&
-      member.name !== undefined &&
-      ts.isComputedPropertyName(member.name) &&
-      resolveComputedKeyExpression(ctx, member.name.expression) === undefined,
-  );
+  return decl.members.some((member) => classMemberComputedKeyIsRuntime(ctx, member));
+}
+
+/**
+ * True when this METHOD/ACCESSOR carries a ComputedPropertyName the install
+ * lane must evaluate at runtime, i.e. one that does not fold to a constant.
+ *
+ * (#5195 r3-3, REVERTED by the r3 review, 2026-09-04.) A second arm treated a
+ * key that folds only because `resolveConstantExpression` drops an assignment's
+ * WRITE (`[x = 1]`) as runtime-keyed under standalone. That routed the member
+ * into the `__cmdyn$<n>` install lane, which has never served dotted or static
+ * access: `class C { [x = "m"]() { return 1; } }` went from `new C().m() === 1`
+ * to `null`, and the number-typed key variable took a NaN. Reverted to the
+ * fold; the write is still dropped, exactly as on the base tree, and the one
+ * test262 row the arm flipped is given back.
+ */
+function classMemberComputedKeyIsRuntime(ctx: CodegenContext, member: ts.ClassElement): boolean {
+  if (!ts.isMethodDeclaration(member) && !ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) {
+    return false;
+  }
+  if (member.name === undefined || !ts.isComputedPropertyName(member.name)) return false;
+  return resolveComputedKeyExpression(ctx, member.name.expression) === undefined;
 }
 
 /**

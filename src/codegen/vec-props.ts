@@ -91,8 +91,12 @@ const F_BAG = 2;
  * otherwise the UNCHANGED #3468 closure arm (which itself answers the
  * undefined-read sentinel for every other brand).
  */
-export function buildVecOrClosurePropGetMissArm(ctx: CodegenContext, getMiss: () => Instr[]): Instr[] {
-  const closureArm = buildClosurePropGetMissArm(ctx, getMiss);
+export function buildVecOrClosurePropGetMissArm(
+  ctx: CodegenContext,
+  getMiss: () => Instr[],
+  explicitReceiverLocal?: number,
+): Instr[] {
+  const closureArm = buildClosurePropGetMissArm(ctx, getMiss, explicitReceiverLocal);
   const isVecIdx = ctx.funcMap.get(IS_VEC_PROP_CARRIER);
   const vecGetIdx = ctx.funcMap.get(VEC_PROP_GET);
   if (isVecIdx === undefined || vecGetIdx === undefined) return closureArm;

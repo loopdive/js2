@@ -3,6 +3,12 @@
 # Only allowed in /workspace: git merge --ff-only, authenticated tech lead commits
 # Everything else must happen in worktrees
 
+# The log_event calls below come from the shared logger. Same guarded-source
+# idiom as pre-agent-spawn.sh; without it they are "command not found" on every
+# gate decision this script makes.
+EVENT_LOG="${CLAUDE_PROJECT_DIR:-/workspace}/.claude/hooks/event-log.sh"
+if [ -f "$EVENT_LOG" ]; then source "$EVENT_LOG"; else log_event() { :; }; fi
+
 INPUT=$(cat)
 CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
 if [ -z "$CMD" ]; then
@@ -95,6 +101,29 @@ if [ "$IN_WORKSPACE" = false ]; then
 fi
 
 # In /workspace — only allow specific operations:
+
+# ALLOW: a per-session container checkout that is NOT the shared workspace.
+#
+# This gate exists to keep agents from committing straight into the SHARED
+# /workspace checkout instead of their own worktree. A Claude Code Remote (or
+# any other single-session container) session breaks that premise: the repo is
+# cloned fresh per session, CLAUDE_PROJECT_DIR *is* that clone, and there is no
+# /workspace and no canonical worktree root to move to — check-worktree-path.sh
+# rejects a worktree anywhere else. So the gate fired on a session whose entire
+# checkout is private to it, with no reachable way to comply.
+#
+# Both conditions must hold, so the shared box is unaffected:
+#   - HEAD is not the protected branch (committing onto main from the root
+#     checkout is exactly what this gate is for, container or not), and
+#   - this clone has no other worktrees, i.e. no other agent shares it. The
+#     shared /workspace grows worktrees as soon as agents are dispatched.
+PROTECTED_BRANCH="main"
+CURRENT_BRANCH=$(git -C "$REPO_ROOT" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")
+WORKTREE_COUNT=$(git -C "$REPO_ROOT" worktree list 2>/dev/null | wc -l)
+if [ -n "$CURRENT_BRANCH" ] && [ "$CURRENT_BRANCH" != "$PROTECTED_BRANCH" ] && [ "$WORKTREE_COUNT" -le 1 ]; then
+  log_event "check_cwd_allowed" "reason=solo_container_checkout" "branch=$CURRENT_BRANCH"
+  exit 0
+fi
 
 # ALLOW: git merge --ff-only (merging tested branches to main)
 if echo "$CMD" | grep -q 'git merge.*--ff-only'; then

@@ -10,6 +10,7 @@ import { ts } from "../ts-api.js";
 import { emitIsUndefinedSingletonExternAt, isAnyValue, undefinedSingletonActive } from "./any-helpers.js";
 import { compileNumericBinaryOp } from "./binary-ops.js";
 import { callableToStringLiteral } from "./callable-to-string.js";
+import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "./ta-dyn-proto-methods.js"; // (#5194 r3-2) dyn-view search helpers
 import { reserveClosedMethodDispatch } from "./closed-method-dispatch.js";
 import { getClosureFuncSelfTypeIdx } from "./closures.js";
 import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
@@ -3912,15 +3913,38 @@ export function compileGuardedNativeStringMethodCall(
   // own brand-arm gate; otherwise the plain sentinel is kept.
   const VEC_SEARCH = method === "indexOf" || method === "lastIndexOf" || method === "includes";
   let elseInstrs: Instr[] | undefined;
+  // (#5194 r3-2) `includes` answers a BOOLEAN. Both arms below produce an i32,
+  // and an i32 whose static type is `any` is boxed back as a NUMBER
+  // (`f64.convert_i32_s` + `__box_number`), so `sample.includes(42)` reached
+  // `assert.sameValue(…, true)` as «1». That is the whole of cluster C3's
+  // "answers the number 0/1" symptom — the search itself was fine. Widening the
+  // construct to a boxed boolean, the way the user-method collision arm below
+  // already widens, keeps the booleanness ON THE VALUE instead of relying on
+  // every consumer to re-derive it from a bare i32.
+  let widenSearchResult = false;
   if (
     VEC_SEARCH &&
     (ctx.standalone || ctx.wasi) &&
     (resultType.kind === "i32" || resultType.kind === "f64") &&
-    expr.arguments.length >= 1 &&
+    // (#5194 r3-2) A ZERO-argument `indexOf()` / `includes()` must still answer
+    // -1 / false. Without the dyn-view helper there is nothing for the
+    // dispatcher to answer with, so the arity floor stays 1 and the call keeps
+    // its benign sentinel; with one, arity 0 is exactly the case §23.2.3 says
+    // returns the miss result.
+    expr.arguments.length >= (ctx.moduleUsesDynTaView && hasTaDynProtoMethodHelper(method) ? 0 : 1) &&
     !expr.arguments.some((a) => ts.isSpreadElement(a))
   ) {
     const arity = expr.arguments.length;
     const dispatchIdx = reserveClosedMethodDispatch(ctx, method, arity);
+    // (#5194 r3-2) This is the ONLY reserve site an `any`-receiver
+    // `includes`/`indexOf`/`lastIndexOf` reaches — the string-flavoured
+    // lowering claims the call before `compileReceiverMethodCall` sees it — so
+    // the dyn-view helper the dispatcher's finalize arm needs must be minted
+    // HERE, while function indices are still append-safe. Mint only; the
+    // dispatcher fill only reads `funcMap` (#1719).
+    if (ctx.moduleUsesDynTaView && hasTaDynProtoMethodHelper(method)) {
+      ensureTaDynProtoMethodHelper(ctx, method);
+    }
     flushLateImportShifts(ctx, fctx);
     const unboxNumIdx = ctx.funcMap.get("__unbox_number");
     const unboxBoolIdx = ctx.funcMap.get("__unbox_boolean");
@@ -3935,15 +3959,34 @@ export function compileGuardedNativeStringMethodCall(
         else if (at === null) fctx.body.push({ op: "ref.null.extern" });
       }
       fctx.body.push({ op: "call", funcIdx: dispatchIdx });
-      // Dispatcher returns a boxed externref. Unbox to the string method's
-      // result kind: includes → boolean(i32); indexOf/lastIndexOf → number(f64),
-      // truncated to i32 when the string arm's result is i32.
-      if (method === "includes") {
-        fctx.body.push({ op: "call", funcIdx: unboxBoolIdx! });
-        if (resultType.kind === "f64") fctx.body.push({ op: "f64.convert_i32_s" });
-      } else {
-        fctx.body.push({ op: "call", funcIdx: unboxNumIdx! }); // externref → f64
-        if (resultType.kind === "i32") fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+      // Dispatcher returns a boxed externref.
+      //
+      // (#5194 r3-2) When a dyn-view helper backs this method, KEEP that box
+      // and widen the whole construct instead of unboxing. Two things break
+      // otherwise: `includes` answers an i32 whose static type is `any`, which
+      // is boxed back as a NUMBER — the whole of cluster C3's «1» vs «true»
+      // symptom — and a user method of the same name reached through the
+      // dispatcher has its own return value forced through the wrong unbox
+      // (measured: `view.includes = () => 99; view.includes()` came back as
+      // `true`). Keeping the value boxed lets each producer's own type survive.
+      // Without a helper the arity floor above keeps this arm at 1+ argument
+      // and the historical unbox is preserved byte-for-byte.
+      // Decide widening only when the matching box helper is actually
+      // available: leaving the else-arm boxed while the construct still claims
+      // an i32/f64 result would emit type-invalid Wasm.
+      const widenBoxIdx = method === "includes" ? ctx.funcMap.get("__box_boolean") : ctx.funcMap.get("__box_number");
+      widenSearchResult = ctx.moduleUsesDynTaView && hasTaDynProtoMethodHelper(method) && widenBoxIdx !== undefined;
+      if (!widenSearchResult) {
+        // Unbox to the string method's result kind: includes → boolean(i32);
+        // indexOf/lastIndexOf → number(f64), truncated to i32 when the string
+        // arm's result is i32.
+        if (method === "includes") {
+          fctx.body.push({ op: "call", funcIdx: unboxBoolIdx! });
+          if (resultType.kind === "f64") fctx.body.push({ op: "f64.convert_i32_s" });
+        } else {
+          fctx.body.push({ op: "call", funcIdx: unboxNumIdx! }); // externref → f64
+          if (resultType.kind === "i32") fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+        }
       }
       elseInstrs = fctx.body;
       popBody(fctx, saved);
@@ -4037,6 +4080,37 @@ export function compileGuardedNativeStringMethodCall(
     } else {
       elseInstrs.push({ op: "ref.null.extern" });
     }
+  }
+
+  // Box the string arm to match the (already boxed) dispatcher arm.
+  const boxThenSearch = ((): Instr[] | null => {
+    if (!widenSearchResult) return null;
+    const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+    const boxNumIdx = ctx.funcMap.get("__box_number");
+    if (method === "includes") {
+      if (boxBoolIdx === undefined) return null;
+      if (resultType.kind === "i32") return [{ op: "call", funcIdx: boxBoolIdx }];
+      if (resultType.kind === "f64") return [{ op: "i32.trunc_sat_f64_s" }, { op: "call", funcIdx: boxBoolIdx }];
+      return null;
+    }
+    if (boxNumIdx === undefined) return null;
+    if (resultType.kind === "f64") return [{ op: "call", funcIdx: boxNumIdx }];
+    if (resultType.kind === "i32") return [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumIdx }];
+    return null;
+  })();
+  if (boxThenSearch !== null) {
+    thenInstrs.push(...boxThenSearch);
+    const widened: ValType = { kind: "externref" };
+    fctx.body.push({ op: "local.get", index: recvExt });
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: widened },
+      then: thenInstrs,
+      else: elseInstrs,
+    });
+    return widened;
   }
 
   fctx.body.push({ op: "local.get", index: recvExt });

@@ -15,6 +15,12 @@
 //   * the self-hosted `Math_*` / `__math_reduce_trig` helpers that no intrinsic
 //     provider claimed, because only a DEPENDENT intrinsic was requested.
 //
+// A fifth family, `__vec_set_elem` / `__vec_set_len`, was closed by #3520 W1-E
+// and is listed in the table below for inventory completeness — but it is NOT
+// planned from this file. It lives in `vec-define-writeback.ts`, which observes
+// it into the `vec-host-bridge` role at emission time; see
+// `vecHostBridgeWritebackOrdinal` in `vec-access-exports.ts`.
+//
 // The generic role's derived ordinal is the function's FINAL INDEX, so identity
 // moves whenever an unrelated import or function is added or eliminated. That
 // is a positional label, not an identity. Each family here gets one role whose
@@ -27,6 +33,10 @@
 //   | vec-from-extern     | entry source | position in the sorted PRE-elision |
 //   |                     |              | list of vec STRUCT NAMES           |
 //   | stdlib math helper  | entry source | index in a closed constant table   |
+//   | vec write-back      | entry source | closed table 9 / 10 of the         |
+//   | (#3520 W1-E, in     |              | `vec-host-bridge` role — owned by  |
+//   |  vec-define-        |              | `vec-access-exports.ts`, observed  |
+//   |  writeback.ts)      |              | at emission, not planned here      |
 //
 // Two of those are stronger than a sorted-survivor order and deliberately so
 // (the R1a rule restated by the C34 follow-up: a retained support node keeps the

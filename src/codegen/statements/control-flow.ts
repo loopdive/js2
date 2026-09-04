@@ -77,6 +77,58 @@ function finallyInlineDelta(
   return 0;
 }
 
+/**
+ * (#5270 step 1) The ONE soundness requirement for `return_call` /
+ * `return_call_ref`: the callee's result list must satisfy the CALLER's return
+ * type, because the callee returns straight to the caller's caller.
+ *
+ * Wasm validates `return_call x : [t1* t3*] → [t2*]` for
+ * `C.funcs[x] = [t3*] → [t4*]` with `C.return = [t4*]` — the operand stack
+ * BELOW the callee's arguments is polymorphic, so the CALLER's own parameter
+ * count is irrelevant. The old `typeDef.params.length !== fctx.params.length`
+ * refusal was a proxy for #822 WI1's "not enough arguments on the stack" CE,
+ * but that CE is about the operands the call site actually pushed (which a
+ * well-formed `call` always has) — not about the caller's arity. Dropping it
+ * lets a closure tail-call a lifted body whose leading `self` / capture params
+ * make the counts differ (the `__fn_tramp_*` and `getF()(n-1)` shapes).
+ *
+ * The standalone/wasi `externref` refusal that used to sit here carried no
+ * comment, no issue id and no test pin (`git log -S` finds only the tree
+ * import; #822 / #839 / #1972 are about ARGUMENT types, try/catch and stack
+ * setup, never about an externref RESULT). `return_call` type-checks exactly
+ * like `call` followed by `return`, so an externref result that equals the
+ * caller's externref result is a match like any other. Its only effect was to
+ * refuse every value-returning standalone tail call — including `return
+ * undefined`, which lowers to an externref result — so no standalone JS
+ * function was ever tail-call optimised (cluster A, 11 test262 rows).
+ */
+function tailCallResultsMatch(fctx: FunctionContext, calleeResults: readonly ValType[]): boolean {
+  if (!fctx.returnType) {
+    // Caller is void — callee must also return nothing
+    return calleeResults.length === 0;
+  }
+  // Caller has a return type — callee must return exactly one matching type
+  if (calleeResults.length !== 1) return false;
+  const calleeRet = calleeResults[0]!;
+  const callerRet = fctx.returnType;
+  // (#5270 review N1) `valTypesMatch` compares the heap type too, where the
+  // old `calleeRet.kind === callerRet.kind` test did not: it matched `ref $A`
+  // against an unrelated `ref $B`, and cross-matched `ref` against `ref_null`
+  // in BOTH directions. `return_call` requires the callee's results to satisfy
+  // the CALLER's declared results, so only the widening direction is sound —
+  // a non-null `ref $T` result may flow into a `ref null $T` return, never the
+  // reverse. Nothing reproduced end-to-end (an inserted `ref.cast` makes
+  // `peelToTailCallIdx` decline the shapes that would have differed), but step
+  // 1 removed the param-count filter, so strictly more call sites reach this
+  // check and it should not rest on that accident.
+  if (valTypesMatch(calleeRet, callerRet)) return true;
+  return (
+    calleeRet.kind === "ref" &&
+    callerRet.kind === "ref_null" &&
+    (calleeRet as { typeIdx: number }).typeIdx === (callerRet as { typeIdx: number }).typeIdx
+  );
+}
+
 function canTailCall(ctx: CodegenContext, fctx: FunctionContext, calleeIdx: number): boolean {
   let calleeTypeIdx: number | undefined;
   if (calleeIdx < ctx.numImportFuncs) {
@@ -91,30 +143,7 @@ function canTailCall(ctx: CodegenContext, fctx: FunctionContext, calleeIdx: numb
   if (calleeTypeIdx === undefined) return false;
   const typeDef = ctx.mod.types[calleeTypeIdx];
   if (!typeDef || typeDef.kind !== "func") return false;
-
-  // Parameter count must match — return_call requires the stack to contain
-  // exactly the callee's params, so mismatched counts cause "not enough
-  // arguments" CE (#822 Work Item 1)
-  if (typeDef.params.length !== fctx.params.length) return false;
-
-  // Compare callee results with caller return type
-  const calleeResults = typeDef.results;
-  if (!fctx.returnType) {
-    // Caller is void — callee must also return nothing
-    return calleeResults.length === 0;
-  }
-  // Caller has a return type — callee must return exactly one matching type
-  if (calleeResults.length !== 1) return false;
-  const calleeRet = calleeResults[0]!;
-  const callerRet = fctx.returnType;
-  if ((ctx.standalone || ctx.wasi) && (calleeRet.kind === "externref" || callerRet.kind === "externref")) return false;
-  if (calleeRet.kind === callerRet.kind) return true;
-  if (
-    (calleeRet.kind === "ref" || calleeRet.kind === "ref_null") &&
-    (callerRet.kind === "ref" || callerRet.kind === "ref_null")
-  )
-    return true;
-  return false;
+  return tailCallResultsMatch(fctx, typeDef.results);
 }
 
 /**
@@ -123,23 +152,7 @@ function canTailCall(ctx: CodegenContext, fctx: FunctionContext, calleeIdx: numb
 function canTailCallRef(ctx: CodegenContext, fctx: FunctionContext, typeIdx: number): boolean {
   const typeDef = ctx.mod.types[typeIdx];
   if (!typeDef || typeDef.kind !== "func") return false;
-
-  // Parameter count must match (#822 Work Item 1)
-  if (typeDef.params.length !== fctx.params.length) return false;
-
-  const calleeResults = typeDef.results;
-  if (!fctx.returnType) return calleeResults.length === 0;
-  if (calleeResults.length !== 1) return false;
-  const calleeRet = calleeResults[0]!;
-  const callerRet = fctx.returnType;
-  if ((ctx.standalone || ctx.wasi) && (calleeRet.kind === "externref" || callerRet.kind === "externref")) return false;
-  if (calleeRet.kind === callerRet.kind) return true;
-  if (
-    (calleeRet.kind === "ref" || calleeRet.kind === "ref_null") &&
-    (callerRet.kind === "ref" || callerRet.kind === "ref_null")
-  )
-    return true;
-  return false;
+  return tailCallResultsMatch(fctx, typeDef.results);
 }
 
 function emitLinearU8ArenaResetBeforeReturn(ctx: CodegenContext, fctx: FunctionContext): boolean {

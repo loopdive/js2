@@ -45,6 +45,7 @@ import {
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
 import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
 import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
+import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
 import { classHierarchyHasDynamicMember, dynamicClassKeyGlobalKey } from "../class-dynamic-keys.js"; // (#5195 Step 1 / F1)
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import { ensureNativeArrayFromIterN } from "../iterator-native.js";
@@ -478,6 +479,12 @@ export function compileNestedClassDeclaration(
   // in scope — and register the live parent with the runtime so the host-side
   // constructible class mirror can chain prototype misses through it.
   emitRegisterDynamicClassParent(ctx, fctx, decl, className);
+
+  // (#5195 r3-5) §15.7.14 step 5f: the superclass value is evaluated and
+  // IsConstructor-checked before the class object exists. Standalone only, and
+  // only for a heritage shape with no static parent lane — see
+  // `class-heritage-check.ts`, whose predicate is the safety property here.
+  emitStandaloneHeritageCheck(ctx, fctx, decl, compileExpression);
 
   const isDeferred = ctx.deferredClassBodies.has(className);
   // (#4646) "Already fully compiled" used to be `structMap.has(className)` — a
