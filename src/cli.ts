@@ -142,6 +142,14 @@ Options:
                     'production' sets process.env.NODE_ENV="production" and
                     typeof process / typeof window to "undefined".
                     'development' sets process.env.NODE_ENV="development".
+  --skip-semantic-diagnostics
+                    Skip TypeScript SEMANTIC checking (syntax errors still
+                    fail). Intended for compiling plain JavaScript packages,
+                    where strict-mode type-checking reports a wall of
+                    legitimate-but-irrelevant diagnostics that abort the
+                    compile even though codegen would succeed — e.g. acorn's
+                    'Type null is not assignable to type undefined' (#3717).
+                    Type QUERIES still work; only the diagnostic gate is skipped.
   --ts7             Use TypeScript 7 (the Go-port, GA) as the parser/checker
                     frontend (experimental; full migration tracked in #1029).
                     Equivalent to JS2WASM_TS7=1.
@@ -153,7 +161,9 @@ Output files:
   <name>.wasm       WebAssembly binary
   <name>.wat        WebAssembly text format
   <name>.d.ts       TypeScript declarations
-  <name>.imports.js createImports() helper`);
+  <name>.imports.js createImports() / instantiateBytes() / wrapInstance()
+                    helper — carries the export metadata wrapExports needs, so
+                    a consumer gets marshalled JS values, not opaque handles`);
   process.exit(0);
 }
 
@@ -208,6 +218,12 @@ let emulateExplicit = false;
 // (DOM ambient surface loaded, byte-neutral).
 let platform: "web" | "node" | "deno" | undefined;
 const defines: Record<string, string> = {};
+// Skip TS semantic diagnostics. The option has always existed on the API
+// (`CompileOptions.skipSemanticDiagnostics`) and every dogfood script that
+// compiles a real npm package sets it; the CLI had no way to reach it, so
+// `js2wasm <plain-js-package>` died at the diagnostic gate below on noise that
+// never reaches codegen.
+let skipSemanticDiagnostics = false;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i]!;
@@ -243,6 +259,8 @@ for (let i = 0; i < args.length; i++) {
       console.error(`Unknown allocator: ${a} (expected bump, arena-reset, or analysis-stack)`);
       process.exit(1);
     }
+  } else if (arg === "--skip-semantic-diagnostics") {
+    skipSemanticDiagnostics = true;
   } else if (arg === "--wat") {
     watOnly = true;
   } else if (arg === "--no-wat") {
@@ -442,6 +460,7 @@ const compileOptions = {
   ...(linkedNamespaces.size ? { link: [...linkedNamespaces] } : {}),
   ...(packageLinking !== undefined ? { packageLinking } : {}),
   ...(emulateNode ? { emulateNode: true } : {}),
+  ...(skipSemanticDiagnostics ? { skipSemanticDiagnostics: true } : {}),
   ...(platform ? { platform } : {}),
   fileName: absInput,
   ...(strictNoHostImports !== undefined ? { strictNoHostImports } : {}),

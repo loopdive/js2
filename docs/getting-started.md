@@ -56,11 +56,18 @@ You should now see four files alongside `add.ts`:
 | `add.wasm` | The compiled WebAssembly binary |
 | `add.wat` | WebAssembly text format (human-readable) |
 | `add.d.ts` | TypeScript declarations for the module's exports |
-| `add.imports.js` | A `createImports()` helper that builds the import object |
+| `add.imports.js` | A `createImports()` / `instantiateBytes()` / `wrapInstance()` helper |
 
 The `.imports.js` helper centralises the JavaScript host glue (string builtins,
 boxed-number constructors, host calls). You import it from your loader rather
 than constructing the import object by hand.
+
+It also carries the compile's **export metadata**, so the helper can marshal
+returned values back into plain JS. That matters as soon as an export returns
+anything but a number: a raw `instance.exports.makePoint(1, 2)` hands you an
+opaque WasmGC handle, while `wrapInstance(instance).makePoint(1, 2)` gives you
+`{ x: 1, y: 2 }`. `instantiateBytes` does both steps and returns the wrapped
+`exports` alongside the raw `instance`.
 
 ## 3. Run in Node.js
 
@@ -68,11 +75,21 @@ Create a small loader, `run.mjs`:
 
 ```js
 import { readFile } from "node:fs/promises";
+import { instantiateBytes } from "./add.imports.js";
+
+const { exports } = await instantiateBytes(await readFile("./add.wasm"));
+
+console.log(exports.add(2, 3)); // 5
+```
+
+`instantiateBytes` builds the imports, instantiates, and marshals the exports.
+For a module whose exports are all numbers, `createImports()` plus a plain
+`WebAssembly.instantiate` is equivalent:
+
+```js
 import { createImports } from "./add.imports.js";
 
-const bytes = await readFile("./add.wasm");
 const { instance } = await WebAssembly.instantiate(bytes, createImports());
-
 console.log(instance.exports.add(2, 3)); // 5
 ```
 
