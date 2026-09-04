@@ -5104,3 +5104,13 @@ again with `LOC_GATE_BASE=$(git rev-parse origin/main)`); `check:ir-fallbacks`,
 `__\0js2_ir_prepared_derived_0` — a physical-slot label — should be the ABI
 row's *display* name at all. It is pinned here as the observed behaviour, not
 endorsed; that is a display-only question for R1.
+
+**Scope of the whole-set number, stated precisely.** The 11 → 7 diff was
+measured base `5a55f7f55f` → commit `8bc7c577dd`, both over the 62
+`tests/issue-3520-*.test.ts` files present at that base. `origin/main` was then
+merged in at `be9de98af4`, which lands W1-E (cluster D) and adds a 63rd file,
+`tests/issue-3520-vec-writeback-abi.test.ts`. That merge was **not**
+re-measured as a whole set; what was re-run after it is the three files this
+slice touches (all green) plus every gate listed above (all exit 0). So the
+11 → 7 figure is this slice's own delta, not a claim about the post-merge red
+set — W1-E's landing changes rows 2/16 territory independently.
