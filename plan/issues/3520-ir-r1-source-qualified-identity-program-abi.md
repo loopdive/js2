@@ -4986,3 +4986,131 @@ Tests only; no LOC grant. Disjoint from W1-E (`vec-*.ts`), #5308
 (`legacy-body-audit.ts`, `ir-overlay-outcomes.ts`), #3522 W1-B (landed via
 PR #5552 or in queue). Branch from `origin/main` now. Claim slug
 `3520:w1f-cluster-b`.
+
+### W1-F cluster B — landed (2026-09-04)
+
+Test-only, four tests across three files plus one shared test helper. Base
+`5a55f7f55f` ("Merge pull request #5556"). The plan's red-set table was
+measured at `42a0adf7d4` and W1-D cluster A has landed since, so **every
+number below was re-measured on this base**, not carried over.
+
+**The base is 11 red, not 20/21.** The dispatch brief expected ~20 failing
+names; the measured set at `5a55f7f55f` is **11 failing tests in 9 files** —
+the W1-D cluster-A slice is already on `main` (`closure-host-bridge-abi`,
+`context-integration`, `data-struct-host-bridge-abi`, `date-civil-support-abi`
+and `vec-support-callable-abi` all exit 0). 11 = the 10 rows W1-D listed as
+remaining (2, 7, 8, 9, 10, 11, 12, 13, 14, 15) **plus one row neither table
+contains**: `ir-unit-identity` · *encodes static, instance, accessor, private,
+and computed members as distinct units*. That row is untouched by this slice
+and is reported, not fixed — see "New red not in any table" below.
+
+**Probe (re-measured, `.tmp/probe-3520-b.mts`).** Every figure in the plan's
+row-8 cell reproduces exactly on this base. `functionImportCount = 6`:
+
+| fixture | inventory `arrow-function` units | ABI row `displayName` → slot | legacy `("function","owner__closure_0")` |
+| ------- | -------------------------------- | ---------------------------- | ---------------------------------------- |
+| `lifted-production` | `first` (owner, ordinal 0), `second` (owner, ordinal 1) | `owner` → 6 · `__\0js2_ir_prepared_derived_0` → 8 (typeIdx 7) · `owner__closure_1` → 9 (typeIdx 7) · source `owner__closure_0` → 7 (typeIdx 5) | resolves cleanly to **7**, the SOURCE slot |
+| `lifted-empty-collision` | `callback` (owner, ordinal 0) | `__\0js2_ir_prepared_derived_0` → 8 · source `owner__closure_0` → 7 | resolves cleanly to **7** |
+| `monomorph-production` | `firstIdentity` (0), `secondIdentity` (1) | `owner__closure_0` → 8 · `owner__closure_1` → 9 (no label collision) | n/a |
+| `type-remap` | `identity` (0) | `owner__closure_0` → 7 | n/a |
+
+Four distinct slots (6, 8, 9, 7) with distinct typeIdx — **exactly the
+property row 8 wanted, under a different identity.** The ABI was already
+correct; the tests encoded a scheme that no longer exists. Confirms the plan:
+this is cluster A's shape (stale expectation, not a miscompile), so the slice
+is test-only.
+
+**One measurement the plan's prose did not name.** `IrUnitRecord` already
+carries the provenance the old derived ids encoded: a lifted arrow has
+`terminalOwnerId === owner.id` and `ordinal` 0/1 (measured,
+`.tmp/probe-3520-b2.mts`). So the replacement selector is not "filter by kind
+and take `[0]`/`[1]`" but the same *(enclosing terminal owner, declaration
+ordinal)* pair the old `createDerivedIrUnitId({ parentId, ordinal })` named —
+a one-for-one translation, which is why each test keeps its "by exact
+provenance" title honestly. That selector lives in
+`tests/helpers/ir-identities.ts::liftedArrowUnit`, with the reason for the
+scheme change (the `program-abi-planning.ts` derived-role gate) documented once
+there instead of three times.
+
+**Per-test changes.**
+
+| row | test | change | why it was red |
+| --- | ---- | ------ | -------------- |
+| 8 | `lifted-program-abi` · publishes two lifted closures by exact provenance | lifted ids from `liftedArrowUnit(units, owner.id, 0\|1)`; first arrow's row/slot expect the relabelled `__\0js2_ir_prepared_derived_0`; the ambiguity-throw expectation is replaced by **`legacy.resolveFinalIndex("function","owner__closure_0")` resolving to the SOURCE slot and not to the arrow's** | `createDerivedIrUnitId(owner, "lifted-closure", n)` names no published binding, so `entriesById.get(...)` was `undefined` |
+| 9 | `lifted-program-abi` · does not reuse an empty same-labelled source slot | lifted id from `liftedArrowUnit(units, owner.id, 0)`; both slots additionally pinned **by physical name** (`__\0js2_ir_prepared_derived_0` vs `owner__closure_0`) | same absent binding → `ProgramAbiInvariantError: unknown-binding … was not planned` |
+| 11 | `monomorph-program-abi` · clone ordinal zero beneath two lifted parents | `injectedParentIds` filled from the two arrow units; **clone ids keep `role: "monomorphization-clone"`** (still a registered derived role); provenance-order and signature assertions unchanged | no IR function carried the derived parent ids, so the `vi.mock` injected zero clones and `observedCloneIds` got `[]` |
+| 12 | `program-abi-type-remap` · post-DCE capture-ref signatures | same: parent from the inventory, clone id unchanged | same `[]` |
+
+**Non-vacuity — five mutations, each run once, each RED (exit 1).** Widening
+a check alone would be green-washing, so every rewritten assertion has a
+mutation that breaks it:
+
+| # | mutation | target |
+| - | -------- | ------ |
+| M1 | `RELABELLED_DERIVED_0` → `…derived_0X` | row 8: the relabelled physical name is load-bearing, not a wildcard |
+| M2 | legacy lookup expected at `firstLiftedSlot.finalIndex.index` instead of the source's | row 8: the replacement for the ambiguity-throw actually pins WHICH slot wins |
+| M3 | lifted slot's physical name expected as `owner__closure_0` | row 9: "two different indices" cannot pass by accident |
+| M4 | monomorph parent ordinals swapped (0↔1) | row 11: parents are ordinal-exact, not "any two arrows" |
+| M5 | clone role `monomorphization-clone` → `lifted-closure` | row 12: the surviving derived role is the specific one, and the derived-role gate is what makes it so |
+
+The plan's own suggested check (swap the parent ids back to
+`createDerivedIrUnitId(lifted-closure)`) is the base state and is already
+measured above: all four red.
+
+**Whole set: 11 red → 7 red.** All 62 `tests/issue-3520-*.test.ts`, one file
+per `npx vitest run` invocation, `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, exit
+codes read bare. The failing-name diff base → branch is **exactly the four
+cluster-B rows removed, with nothing added**:
+
+| file (`tests/issue-3520-…`) | before | after |
+| --------------------------- | ------ | ----- |
+| `lifted-program-abi` | 2 failed (exit 1) | 2 passed (exit 0) |
+| `monomorph-program-abi` | 1 failed (exit 1) | 1 passed (exit 0) |
+| `program-abi-type-remap` | 1 failed \| 2 passed (exit 1) | 3 passed (exit 0) |
+
+Remaining 7 red, unchanged and untouched: rows 2 (`compiler-support-abi`, D),
+7 (`date-host-bridge-export-provenance`, F), 10 (`module-init-callable-abi`,
+E — **#5283 owns it**), 13 + 14 (`support-callable-abi`, C), 15
+(`type-class-abi`, C/R3), and the new `ir-unit-identity` row below.
+
+**New red not in any table.** `tests/issue-3520-ir-unit-identity.test.ts` ·
+*encodes static, instance, accessor, private, and computed members as distinct
+units* is red on `5a55f7f55f` and equally red on this branch — it is **not a
+regression from this slice** (the diff touches four test files, none of them
+that one). It is absent from both the 2026-09-03 red-set table (measured at
+`42a0adf7d4`) and the W1-D landed table, so it appeared between those bases
+and this one; the class-member identity subject matter points at the #3522
+lane. Filing/routing is left to the lead — it is named here so the next W1
+measurement does not read it as new damage.
+
+**Byte identity: trivial, and stated as such.** `git diff` touches zero `src/`
+files — `check-loc-budget` and `check-func-budget` both report *"no unallowed
+growth in 0 changed src file(s)"* under `LOC_GATE_BASE=5a55f7f55f`, so emitted
+output cannot differ. Drift detector `check:ir-only --policy=hybrid`: verdict
+**READY**, 41 terminal units, 38 emitted, 0 unsupported, 0 invariants, **0
+legacy body emitted**, 3 non-executable.
+
+**Gates, all exit 0**: `check-loc-budget`, `check-func-budget`,
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports` (bare and
+again with `LOC_GATE_BASE=$(git rev-parse origin/main)`); `check:ir-fallbacks`,
+`check:ir-dialect`, `check:ir-kind-neutrality`, `check:jstag-seam`,
+`check:ir-layering`, `check:host-import-policy`, `check:ir-only --policy=hybrid`,
+`check:standalone-ir-cutover-corpus`, `check:pushraw`, `check:stack-balance`,
+`check:codegen-fallbacks`, `check:any-box-sites`, `check:speculative-rollback`,
+`check:harness-compile-budget`, `check:ir-adoption`, `check:test-vacuity-shapes`,
+`typecheck`, `lint`, `prettier --check` on the four changed files.
+
+**Deliberately unchanged**, per the plan's out-of-scope list: whether
+`__\0js2_ir_prepared_derived_0` — a physical-slot label — should be the ABI
+row's *display* name at all. It is pinned here as the observed behaviour, not
+endorsed; that is a display-only question for R1.
+
+**Scope of the whole-set number, stated precisely.** The 11 → 7 diff was
+measured base `5a55f7f55f` → commit `8bc7c577dd`, both over the 62
+`tests/issue-3520-*.test.ts` files present at that base. `origin/main` was then
+merged in at `be9de98af4`, which lands W1-E (cluster D) and adds a 63rd file,
+`tests/issue-3520-vec-writeback-abi.test.ts`. That merge was **not**
+re-measured as a whole set; what was re-run after it is the three files this
+slice touches (all green) plus every gate listed above (all exit 0). So the
+11 → 7 figure is this slice's own delta, not a claim about the post-merge red
+set — W1-E's landing changes rows 2/16 territory independently.

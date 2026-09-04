@@ -102,6 +102,7 @@ import {
   type ProgramAbiTypeCell,
   type ProgramAbiTypeLayoutRemap,
 } from "../src/codegen/program-abi-session.js";
+import { liftedArrowUnit } from "./helpers/ir-identities.js";
 
 // Register the codegen expression/statement delegates used by generateModule.
 import "../src/codegen/expressions.js";
@@ -301,11 +302,14 @@ describe("#3520 Program ABI callable type remapping", () => {
     );
     if (!owner) throw new Error("missing exact source owner");
 
-    const liftedUnitId = createDerivedIrUnitId({
-      parentId: owner.id,
-      role: "lifted-closure",
-      ordinal: 0,
-    });
+    // The lifted callable is an inventoried `arrow-function` unit keyed by
+    // enclosing terminal owner plus declaration ordinal, NOT a derived
+    // `lifted-closure` unit — see `liftedArrowUnit`. Only the CLONE keeps a
+    // derived id, because `monomorphization-clone` is still a registered
+    // derived role.
+    const liftedUnit = liftedArrowUnit(inventory.allUnits, owner.id, 0);
+    expect(liftedUnit.displayName).toBe("identity");
+    const liftedUnitId = liftedUnit.id;
     const cloneUnitId = createDerivedIrUnitId({
       parentId: liftedUnitId,
       role: "monomorphization-clone",
