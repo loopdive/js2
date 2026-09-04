@@ -38,7 +38,7 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import { isViewRefTestInstrs } from "../dataview-native.js";
 import { ensureReflectIsConstructor } from "../reflect-construct-native.js";
 import { GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES, resolvesToAmbientGlobal } from "./non-constructable.js"; // (#5158)
-import { emitNativeReflectTargetGuard } from "../reflect-target-guard.js";
+import { emitNativeReflectNonObjectGuard, emitNativeReflectTargetGuard } from "../reflect-target-guard.js";
 import { emitNativeDateParse } from "../date-parse-native.js";
 import {
   addUnionImports,
@@ -947,6 +947,15 @@ export function compileNamespaceStaticCall(
         boundaryAdmissionFuncIdx: boundaryReflectInterop ? ctx.funcMap.get("__boundary_object_is_admitted") : undefined,
       });
     };
+    // (#5196 R3 review F2) The §28.1.x step-1 Type(V)-is-Object test for the
+    // arms this change-set ADDS. It rejects only positively-branded non-objects
+    // and admits every unrecognised shape, so an ordinary object flowing
+    // through a representation the object classifiers do not brand keeps its
+    // previous answer instead of becoming a spurious TypeError. The six
+    // pre-existing sites keep `guardNativeReflectTarget` unchanged.
+    const guardReflectTargetIsObject = (targetLocal: number, message: string): void => {
+      emitNativeReflectNonObjectGuard(ctx, fctx, targetLocal, message);
+    };
     // (#5196 R3-2 C5) §7.1.19 ToPropertyKey on the Reflect key argument, in
     // place, AFTER the target guard and BEFORE the native call. An object key
     // with a throwing `toString`/`valueOf` must propagate that abrupt
@@ -1015,7 +1024,7 @@ export function compileNamespaceStaticCall(
         }
         // (#5196 R3-2 C4) §28.1.6 step 1 for EVERY non-Object target — same
         // guard the `deleteProperty`/`ownKeys`/`isExtensible` arms use.
-        guardNativeReflectTarget(targetLocal, "Reflect.get called on non-object");
+        guardReflectTargetIsObject(targetLocal, "Reflect.get called on non-object");
         coerceReflectPropertyKey(argLocals[1]);
 
         // (#2046/#4397) Preserve the optional receiver in Wasm. A native
@@ -1150,7 +1159,7 @@ export function compileNamespaceStaticCall(
         // the Symbol carrier — the same guard `deleteProperty`/`ownKeys`/
         // `isExtensible` already use (it admits closure and expando carriers
         // positively, so an ordinary callable/instance target is unaffected).
-        guardNativeReflectTarget(targetLocal, "Reflect.has called on non-object");
+        guardReflectTargetIsObject(targetLocal, "Reflect.has called on non-object");
         fctx.body.push({ op: "local.get", index: argLocals[0]! });
         fctx.body.push({ op: "local.get", index: argLocals[1]! });
         const funcIdx = ensureLateImport(ctx, "__extern_has", [externRef, externRef], [i32Ty]);
@@ -1330,7 +1339,7 @@ export function compileNamespaceStaticCall(
         if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
         else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
         fctx.body.push({ op: "local.set", index: targetLocal });
-        guardNativeReflectTarget(targetLocal, "Reflect.defineProperty called on non-object");
+        guardReflectTargetIsObject(targetLocal, "Reflect.defineProperty called on non-object");
         releaseTempLocal(fctx, targetLocal);
         const keyType = compileExpression(ctx, fctx, expr.arguments[1]!, externRef);
         if (keyType && keyType.kind !== "externref") coerceType(ctx, fctx, keyType, externRef);
@@ -1716,7 +1725,7 @@ export function compileNamespaceStaticCall(
           releaseReflectArgumentLocals(argLocals);
           return { kind: "externref" };
         }
-        guardNativeReflectTarget(argLocals[2], "Reflect.apply argumentsList is not an object");
+        guardReflectTargetIsObject(argLocals[2], "Reflect.apply argumentsList is not an object");
         const applyIdx = reserveApplyClosure(ctx);
         fctx.body.push({ op: "local.get", index: targetLocal });
         if (argLocals[1] !== undefined) fctx.body.push({ op: "local.get", index: argLocals[1] });

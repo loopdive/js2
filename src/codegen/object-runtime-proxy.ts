@@ -1644,9 +1644,17 @@ export function ensureProxyRuntime(
       // per-instance state the #2896 builtin-fn meta structs carry. Without it
       // `delete revoke.length` silently no-ops and `verifyProperty` reads the
       // property as non-configurable.
+      // (#5196 R3 review F5) BOTH fields carry the `__` prefix that
+      // `exposedClosedStructFieldName` uses to hide a compiler field from
+      // property lookup, `Object.keys`/`getOwnPropertyNames` and host
+      // marshalling. Unprefixed, the revocation function answered
+      // `revoke.bfnstate` / `revoke.proxy` as own data properties and a write
+      // to `revoke.bfnstate` corrupted the deleted-bits mask for its own
+      // `length`/`name` (measured 2026-09-04, standalone). Every access is
+      // POSITIONAL (`fieldIdx`), so the names are free to change.
       const fields: { name: string; type: ValType; mutable: boolean }[] = [
-        { name: "proxy", type: externref, mutable: false },
-        { name: "bfnstate", type: { kind: "i32" }, mutable: true },
+        { name: "__proxy", type: externref, mutable: false },
+        { name: "__bfnstate", type: { kind: "i32" }, mutable: true },
       ];
       ctx.mod.types.push({ kind: "struct", name: revokerName, fields });
       ctx.structMap.set(revokerName, revokerTypeIdx);

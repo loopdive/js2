@@ -7,6 +7,7 @@
 // answered at two different STRENGTHS, and keeping the strengths straight is
 // what makes the analysis safe. See `classifyNonConstructableValue`.
 import { ts } from "../../ts-api.js";
+import { isSingleAssignmentBinding } from "../proxy-value-provenance.js";
 import type { CodegenContext } from "../context/types.js";
 
 /**
@@ -132,7 +133,15 @@ export function classifyNonConstructableValue(ctx: CodegenContext, calleeExpr: t
       ts.isCallExpression(e.expression) &&
       ts.isPropertyAccessExpression(e.expression.expression) &&
       e.expression.expression.name.text === "revocable" &&
-      resolvesToNamedAmbientGlobal(ctx, e.expression.expression.expression, "Proxy")
+      resolvesToNamedAmbientGlobal(ctx, e.expression.expression.expression, "Proxy") &&
+      // (#5196 R3 review F3) …and the binding is PROVABLY single-assignment.
+      // The classification is read off the DECLARATION initializer, so without
+      // this a later `r = K` still produced the §13.3.5.1 static throw: measured
+      // 2026-09-04, standalone, `var r = Proxy.revocable(t,h).revoke; class K{};
+      // r = K; new r()` threw a TypeError where node and the base tree both
+      // construct a `K`. An unproven binding returns "no" — exactly the base
+      // tree's behaviour, since this arm did not exist there.
+      isSingleAssignmentBinding(ctx, calleeExpr)
     ) {
       return "provable";
     }

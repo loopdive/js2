@@ -2747,7 +2747,13 @@ export function compileBuiltinStaticCall(
     ts.isIdentifier(propAccess.expression) &&
     propAccess.expression.text === "Object" &&
     propAccess.name.text === "getOwnPropertyDescriptor" &&
-    expr.arguments.length === 1
+    expr.arguments.length === 1 &&
+    // (#5196 R3 review F6) A SPREAD is not a one-argument call. `Object
+    // .getOwnPropertyDescriptor(...args)` has one argument NODE but an
+    // arity known only at run time, and compiling the spread element as the
+    // receiver produced a module that traps. Decline and let the existing
+    // lowering own it.
+    !ts.isSpreadElement(expr.arguments[0]!)
   ) {
     ensureObjectRuntime(ctx);
     const objType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
