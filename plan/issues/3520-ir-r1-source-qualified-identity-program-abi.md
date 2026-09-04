@@ -5371,3 +5371,159 @@ a source-name collision demotes the owner*. The other two —
 policy...* and `module-init-callable-abi` › *keeps a same-named user function
 distinct from the exact IR-patched initializer* — are equally pre-existing and
 unrelated to this guard.
+## Implementation Plan — W1-H cluster C row 14: strict equality on reference operands is claimed, then demoted post-claim (2026-09-04, Fable lane)
+
+### Measured (main `2ca2591652`, `.tmp/probe-3520-r14.mts`, both lanes identical)
+
+| fixture | outcome | stage |
+| --- | --- | --- |
+| `identical(a: () => number, b: () => number) { return a === b ? 1 : 0 }` | `unsupported` `operand-coercion-unsupported` — `Phase 1 requires matching operand types for '==='` | **build (post-claim)** |
+| same, wrapped in `try/catch` (the `hof.ts` shape of row 14) | same | post-claim |
+| `differ(a, b) { return a !== b }` | same, `'!=='` | post-claim |
+| `same(a: { x: number }, b: { x: number }) { return a === b }` | same | post-claim |
+| `const g = f; return g === f ? 1 : 0` (local function value) | `body-shape-rejected` | select (pre-claim) |
+
+Every row lands in `result.irPostClaimErrors` as `{ kind: "build", func, message }`.
+That is exactly what row 14 asserts to be empty:
+`tests/issue-3520-support-callable-abi.test.ts` › *publishes no support callable
+when a source-name collision demotes the owner* — the owner (`main`) demotes as
+intended, but `hof.ts`'s `identical` is claimed and then demoted post-claim, so
+`irPostClaimErrors` is non-empty. Post-claim demotes are the R9 target-zero
+population (`scripts/check-ir-fallbacks.ts` `postClaim`, every kind target 0);
+this shape simply does not occur in the playground corpus, which is why the
+baseline shows none.
+
+### Root cause — claim and lowering disagree on reference equality
+
+- **Selection** (`src/ir/select.ts`, binary arm → `selectorPrimitiveWrapperOrGenericBinary`,
+  ~L9560): strict/loose equality falls to the generic tail
+  `isPhase1BinaryOp(binOp) && isPhase1Expr(left) && isPhase1Expr(right)`. Two
+  closure-typed or object-typed parameters are Phase-1 identifiers, so the pair
+  is admitted. The selector never asks what the operands ARE; it has
+  `obviousSelectorValueFamily` (`~L8890`, answers `"reference"` for arrow /
+  function expressions, object and array literals, local class values and
+  `knownCallableArity` identifiers) and the checker-backed
+  `currentSelectionOptions.classifyDeclaredPrimitiveExpression` /
+  `classifyPrimitiveExpression` (primitive family or `undefined`).
+- **Lowering** (`src/ir/from-ast.ts` binary path, ~L13231): `asVal(lt)` is
+  undefined for a closure / object carrier, so the operands "mismatch";
+  `checkerProvesBinarySourceCapabilityGap` (`~L12520`) classifies both as
+  `"other"` and answers `true`, and the function demotes with
+  `IrUnsupportedError("operand-coercion-unsupported", "build")`. The IR has no
+  reference-identity instruction (no `ref.eq` in `nodes.ts` / `lower.ts`).
+
+So the lowerer is right to refuse; the defect is that the selector claims first.
+
+### S1 — refuse reference equality at selection, with a named arm
+
+In `selectorPrimitiveWrapperOrGenericBinary`, before the generic tail, for the
+four equality operators (`===`, `!==`, `==`, `!=`):
+
+1. Let `leftFam = obviousSelectorValueFamily(left, scope)`, same for right;
+   `leftDecl = classifyDeclaredPrimitiveExpression?.(left)`, same for right
+   (both `undefined` when the classifier is absent — bare selector callers).
+2. **Refuse** with `capabilityNo("operand-coercion-unsupported",
+   "expr-equality-reference-operands", expr)` when
+   - either operand is positively `"reference"` by `obviousSelectorValueFamily`, or
+   - the classifiers are present and BOTH operands classify to no primitive
+     family (`leftDecl === undefined && rightDecl === undefined`) and neither
+     operand is `null`, an unshadowed `undefined` (already handled by the
+     strict-undefined arm above), or a literal.
+   The parameter-typed case (`a: () => number`) is the second bullet: the
+   checker classifier answers `undefined` for a function type.
+3. Everything else falls through unchanged (number/string/boolean equality,
+   `x === undefined`, `obj === null` if it is admitted today — measure it and
+   keep its verdict).
+
+Pre-claim parity (#3529): the refusal reason is the same
+`operand-coercion-unsupported` the lowerer would have produced, so the
+`check:ir-fallbacks` accounting moves one row from `postClaim.build` to a
+selector reason that is in neither `UNINTENDED` nor `DEFERRED` (tracked, not
+gated). No bucket grows.
+
+### S2 — NOT this slice: `ref.eq` lowering
+
+The value-adding alternative — admit same-carrier reference equality and lower
+it to `ref.eq` (a new `IrInstr` kind, `builder.emitRefEq`, `lower.ts` arm,
+`effects.ts` pure) — is a separate slice: it needs `check:ir-dialect` /
+`check:ir-kind-neutrality` work and a decision about mixed carriers
+(`closure` vs `class` vs `object` vs `dynamic`). Name it in the PR as the
+follow-up; do not start it here.
+
+### Tests — `tests/issue-3520-equality-reference-operands.test.ts`
+
+Both lanes, through `generateModule({ experimentalIR, trackIrOutcomes })`:
+
+| # | fixture | expectation | base |
+| --- | --- | --- | --- |
+| a | `identical` (closure params, `===`) | `unsupported`, stage `select`, arm `expr-equality-reference-operands`, `irPostClaimErrors` empty | red (post-claim) |
+| b | `differ` (`!==`) | same | red |
+| c | `same` (object-typed params) | same | red |
+| d | `n === 1`, `s === "a"`, `b === true` (primitive params) | emitted, unchanged | green |
+| e | `x === undefined` on an externref-shaped operand | unchanged verdict (pin whatever base says) | green |
+| f | row 14 itself: `tests/issue-3520-support-callable-abi.test.ts` › *publishes no support callable…* | green | red |
+
+Row 13 of the same file (the resolver-probe injection) stays red — it is a
+different defect, out of scope; say so in the PR.
+
+Non-vacuity: reverting S1 alone turns a–c and f red again with the post-claim
+`build` row.
+
+### Validation
+
+Full `quality` list as in W1-E/W1-F/W1-G, bare and with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`; `check:ir-fallbacks` must show
+no unintended growth and no post-claim growth (expect zero movement on the
+playground corpus — this shape is absent there; state that). Byte identity on
+the 34-case corpus, all lanes: expected identical. `tests/issue-3520-*` one file
+per invocation: failing-name diff = exactly row 14 removed. `tests/issue-3522-*`,
+`issue-3519-*`, `issue-3000-*`, `issue-3529-*` (pre-claim parity suite): diff
+empty. Equivalence 8 shards, failing set = the 24 known. `select.ts` growth
+≈ +25 lines: grant in this file's frontmatter with a dated rationale.
+
+### Acceptance
+
+1. Rows a–c and f green on both lanes, red on base as recorded; d–e unchanged.
+2. `check:ir-fallbacks`: no bucket grows; the PR body states the corpus
+   post-claim count before/after (expected 0 → 0) and the selector-reason
+   count before/after.
+3. Corpus byte-identical or every moved row named.
+4. `### W1-H cluster C row 14 — landed` appended here; `status:` stays
+   `in-progress`. After W1-H the cluster C residue is row 13 alone.
+
+### Claim
+
+```bash
+node scripts/claim-issue.mjs 3520:w1h-equality-reference-operands ttraenkler/<agent> --branch claude/issue-3520-w1h-equality-reference-operands
+```
+
+## Handover — Fable lane, session ending 2026-09-04 ~07:00Z
+
+Written at the user's request so the next session can resume without the
+transcript. Everything below is on `main` unless marked otherwise.
+
+### Landed this session (all merged through the queue)
+
+| slice | PR | effect on the `tests/issue-3520-*` red set |
+| --- | --- | --- |
+| W1-D cluster A (non-executable row) | #5544 | 5 files green |
+| W1-E cluster D (vec write-back ABI owner, `vec-host-bridge:9/10`) | #5559 | `compiler-support-abi` green |
+| W1-F cluster B (derived-unit tests retargeted, test-only) | #5563 | rows 8/9/11/12 green |
+| ir-unit-identity private-name pin (stale pin after #3522 W1-A) | #5564 | 1 row green |
+| W1-G cluster C row 15 (implicit derived ctor synthetic param) | #5571 | `type-class-abi` green; 14 → 4 failing names |
+
+### What is still red (measured by the W1-G implementer after its merge)
+
+| test | cluster | owner / next step |
+| --- | --- | --- |
+| `support-callable-abi` › *publishes no support callable when a source-name collision demotes the owner* | C row 14 | **W1-H plan above, unclaimed** — claim `3520:w1h-equality-reference-operands` and dispatch; brief = the plan section |
+| `support-callable-abi` › *resolves a misleading support label…* | C row 13 | fails only under `JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE=planned-support`; message from `integration.ts:5084`. Needs a reading of the probe protocol before any plan — not a codegen defect |
+| `date-host-bridge-export-provenance` (35 s timeout) | F | unplanned; likely a performance/ordering issue in the provider-created Date publication test, measure the time split first |
+| `module-init-callable-abi` › *keeps a same-named user function distinct…* | E | owned by #5283's residual (`legacyBodyEmitted` on ambient-only module init) |
+
+### Process facts the next session needs
+
+- **Another Claude session works this repo concurrently** (it landed #5543, #5555 and the `ES2015 standalone` lanes). Before every dispatch: `git ls-remote --heads origin | grep -i <slug>` and scan open PRs; put the same scan in every brief.
+- Plans live in issue files; implementers are Opus subagents (`senior-developer`, `isolation: worktree`), briefs list the full `quality` gate set, trailers `Model: Claude Opus 5 High`, and PR bodies go to the orchestrator's scratchpad because subagents cannot open PRs. The load gate blocks spawns at 1-min load ≥ 2 on this 4-core box.
+- A container restart on 2026-09-04 ~03:30Z killed two agents mid-validation; their worktrees survived and the W1-C implementation was salvaged by `git diff` from the dead worktree. Check `git -C .claude/worktrees/<agent> status` before re-running anything.
+- Claims: every landed slice's claim is completed on `origin/issue-assignments`; live claims at hand-over time are `5312` (opus-5312, running) and `5313` (PR #5572 in CI). `3520:w1h-…` is planned but **not** claimed.
