@@ -1,10 +1,11 @@
 ---
 id: 5306
 title: "check:harness-compile-budget sits 29 traversals under its ceiling on main (150,774 / 150,803) — the next harness-path PR trips a gate that measures drift since 2026-08-20, not its own change"
-status: ready
+status: done
 sprint: current
 created: 2026-09-03
-updated: 2026-09-03
+updated: 2026-09-04
+completed: 2026-09-04
 priority: medium
 horizon: s
 feasibility: easy
@@ -12,8 +13,9 @@ reasoning_effort: low
 task_type: infra
 area: ci
 goal: ir-full-coverage
-related: [3437, 3433, 3374, 5297]
+related: [3437, 3433, 3374, 5297, 5313]
 requested_by: ttraenkler/orchestrator
+assignee: "ttraenkler/opus-5306"
 ---
 
 # The pre-merge compile-work budget has silently used up its margin
@@ -77,3 +79,94 @@ thing to measure.
 - Raising `marginPct`. A wider band hides the same drift longer.
 - Rebanking from a PR branch. The budget is main's number; `--update` runs
   on `origin/main` and the result is reviewed.
+
+## Landed
+
+### Method
+
+`npx tsx scripts/check-harness-compile-budget.ts --json` at each of 100
+detached checkouts on the first-parent chain, ~7 s per measurement. The gate
+script and the `src/ts-api.ts` meter are **unchanged since they were
+introduced** (`bd20d07c11`), so every commit in the window was measured with
+the same fixture and the same counter — the numbers below are comparable
+without normalisation.
+
+The range is `d633020ab9..origin/main` (2026-08-20 rebank → 2026-09-04,
+`5240be0a10`). Of 956 first-parent commits only the **382 that touch `src/`**
+can move the count, so those were the search space: a 21-point sweep at every
+20th, then every commit inside each interval that showed a jump. Result: three
+single commits carry 99.7 % of the growth, and all three are pinned exactly
+(their immediate first-parent predecessor measures the pre-jump number).
+
+Attribution to a named scan was done by patching the meter to record the
+caller frame of every shared-`forEachChild` invocation and diffing the
+per-file profile across each jump commit and its first parent. One full pass
+over the fixture costs **3,919 traversals**, which is why the deltas are near
+multiples of it.
+
+### Bisection
+
+Total: **131,133 → 150,774 = +19,641** (+15.0 %) over 15 days.
+
+| # | commit | date | PR | before → after | delta | share |
+| - | ------ | ---- | -- | -------------- | ----: | ----: |
+| 1 | `523bd0428b` | 2026-08-29 | #5204 `feat(selfhost): compile TypeScript 5 parser graph to Wasm` | 139,016 → 146,863 | **+7,847** | 40.0 % |
+| 2 | `52b61990fe` | 2026-08-26 | #4922 `fix(es5): combine standalone conformance gains` | 131,169 → 139,007 | **+7,838** | 39.9 % |
+| 3 | `e285c0f29d` | 2026-08-31 | #5336 `feat(deno): complete linked runtime bootstrap` | 146,872 → 150,767 | **+3,895** | 19.8 % |
+| — | six others | — | — | — | +61 | 0.3 % |
+
+Named scans, from the per-file caller profile:
+
+- **#5204** — two new whole-program passes, both properly memoized:
+  `prepareIdentityPreservingStructuralParams` in `src/codegen/declarations.ts`
+  (+3,928, cached in `assertedStructuralParamsByContext`) and the new
+  `src/codegen/analysis/mixed-assignment-carrier.ts` (+3,919, cached per scope
+  in `byScope`). Linear, one pass, deliberate.
+- **#4922** — two **unconditional** whole-file walks in
+  `src/codegen/declarations/object-shape-widening.ts`
+  (15,661 → 23,499): `markRealmGlobalWithTargets` inside
+  `collectGrowableObjectLiterals`, and `visit` inside the new
+  `collectRedeclaredWithTargetObjects`. Both exist only to find `with`
+  statements and both run on sources that contain no `with`.
+- **#5336** — `sourceNodeWeight` in the new
+  `src/codegen/module-init-chunks.ts` (+3,895), a `WeakMap`-cached AST node
+  count for module-init chunk planning.
+
+Two commits (not one) cleared the "more than a third" bar in acceptance
+criterion 1. Only one of them is a defect, so only one follow-up was filed:
+**#5313** for #4922's unconditional `with` scans, which are ~7,838 traversals
+bought for a construct almost no source uses and which the existing
+`source-scan-predicates.ts` short-circuit pattern can gate away. #5204's and
+#5336's passes were assessed and deliberately accepted — memoized single
+passes that buy something on every source — and that assessment is recorded
+here rather than as a second issue nobody would action.
+
+None of the three is the #3433 quadratic class: every one is O(file), not
+O(call-sites × file). The gate did its job; the drift is additive cost, not a
+re-explosion.
+
+### Changes
+
+- **Rebanked** `scripts/harness-compile-budget.json` 131,133 → **150,774**,
+  measured on `origin/main` with the tree carrying no `src/` change. Ceiling
+  150,803 → **173,391**; margin 29 (0.02 %) → 22,617 (13.04 %).
+- **Soft-warning band** in `scripts/check-harness-compile-budget.ts`.
+  `evaluateBudget` gained `softCeiling` (= budget × (1 + marginPct/2 %)),
+  `nearCeiling`, `marginLeft` and `marginLeftPct`. Crossing the half-margin
+  line prints a `::warning::` on stderr naming the remaining margin in both
+  traversals and percent; the exit code is untouched and no new required check
+  was added. The warning is emitted **after** the hard checks so a real failure
+  is never softened into a warning, and on stderr so `--json` stdout stays
+  parseable. Every run — pass or warn — now also prints `margin-left=` on the
+  human-readable line, so the drift is visible in `quality` logs even before
+  the band trips.
+- **Provenance** — `--update` now writes a note carrying the rebank date, the
+  measured figure, the fixture call-site count and the margin, replacing the
+  figure-free "post-#3433 main".
+- Eight new cases in `tests/issue-3437-harness-compile-budget.test.ts` cover
+  the band's boundaries (no warn at the soft ceiling, warn one past it, warn at
+  the hard ceiling, **no** warn once over budget), the reported margin, and the
+  note's provenance. 18 tests pass.
+
+Against the pre-rebank budget the band reproduced this issue's own figures
+exactly — `margin-left=29 (0.02%)`, exit 0.
