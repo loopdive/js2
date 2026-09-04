@@ -1816,8 +1816,17 @@ export function compileReceiverMethodCall(
         ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
       );
     }
+    // (#5309) …unless the receiver declares an own instance FIELD of this name,
+    // which shadows every inherited callable. The walk below would otherwise
+    // resolve `b.m()` to the PARENT's body. Not a duplicate of the guard in
+    // `collectClassDeclaration`: dropping the inherited alias fixes private
+    // names (they never reach this walk) but not public ones, because the walk
+    // finds `Parent_m` in `classMethodSet` on its own. Leaving `funcIdx`
+    // undefined hands the call to the callable-struct-field arm below.
+    const receiverFieldShadowsInherited =
+      !receiverIsClassObject && ctx.classFieldShadowedInheritedCallables.has(`${receiverClassName}_${methodName}`);
     // Walk inheritance chain to find the method in a parent class
-    if (funcIdx === undefined && !ts.isPrivateIdentifier(propAccess.name)) {
+    if (funcIdx === undefined && !receiverFieldShadowsInherited && !ts.isPrivateIdentifier(propAccess.name)) {
       let ancestor = ctx.classParentMap.get(receiverClassName);
       while (ancestor && funcIdx === undefined) {
         fullName = `${ancestor}_${methodName}`;

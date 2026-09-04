@@ -1,7 +1,8 @@
 ---
 id: 5309
 title: "Legacy class-body route: a child's callable FIELD is shadowed by the parent's same-named METHOD at call sites (`this.#m()` and `this.m()` alike) — returns 1 where node returns 2"
-status: ready
+status: done
+completed: 2026-09-04
 sprint: current
 created: 2026-09-03
 updated: 2026-09-04
@@ -14,6 +15,23 @@ area: codegen
 goal: core-semantics
 related: [3522, 3518]
 requested_by: ttraenkler/orchestrator
+# 2026-09-04 (S1): a wrong-answer miscompile with TWO independent sources, so the
+# fix needs a registration-side exclusion AND a call-site guard that share one
+# fact. +26 in class-bodies.ts (the `ownInstanceFieldNames` collection loop and
+# the two `classFieldShadowedInheritedCallables` records, plus the comment that
+# names all three consumers of the false alias), +9 in call-receiver-method.ts
+# (the ancestor-walk guard), +12 in context/types.ts (the doc comment on the new
+# set — the whole point of the field is that two distant sites agree, which the
+# declaration has to say), +1 in create-context.ts (the initializer). No
+# behaviour is added: the 60-row emit-identity corpus is byte-IDENTICAL.
+loc-budget-allow:
+  - src/codegen/class-bodies.ts
+  - src/codegen/context/types.ts
+  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/class-bodies.ts::collectClassDeclaration
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/context/create-context.ts::createCodegenContext
 ---
 
 # A wrong-answer miscompile on the direct route, found while measuring #3522 W1-B
@@ -231,3 +249,175 @@ Run the new file on base first and record which rows are red (the plan says
   instance fields, which the direct route does not do for fields. Same
   file-separately rule.
 - The `#m` vs public `__priv_m` mangling collision (already listed).
+
+### S1 — landed
+
+Implemented 2026-09-04 on `claude/issue-5309-child-field-shadow`, base
+`origin/main` `5a55f7f55f` (re-verified against `be9de98af4` at merge time).
+All 14 rows re-run on the branch with `.tmp/probe-5309.mts`
+(`compile()` from `src/index.js`; gc = default options, standalone =
+`{ target: "standalone" }`). Node column re-derived independently with
+`.tmp/probe-5309-node.mjs` rather than copied from the plan.
+
+| # | shape | node | base (gc / sa) | S1 (gc / sa) |
+| --- | --- | --- | --- | --- |
+| 1 | the issue program (child `#m = () => 2`, parent `#m()`) | 2 | **1 / 1** | 2 / 2 |
+| 2 | public twin (child `m = () => 2`, parent `m()`) | 2 | **1 / 1** | 2 / 2 |
+| 3 | child `#m()` shadowing parent `#m()` | 2 | 2 / 2 | 2 / 2 |
+| 4 | child `#m = () => 2`, parent without `#m` | 2 | 2 / 2 | 2 / 2 |
+| 5 | grandparent declares `m()`, child field `m` | 2 | **1 / 1** | 2 / 2 |
+| 6 | child field read then called | 2 | 2 / 2 | 2 / 2 |
+| 7 | child `#m = 5`, parent `#m()`, `return this.#m` | 5 | 5 / 5 | 5 / 5 |
+| 8 | child `#m = () => 2` plus `this.#m = v` | 3 | **traps / traps** | 3 / 3 |
+| 9 | public twin of row 8 | 3 | **1 / 1** | 3 / 3 |
+| 10 | `static m = () => 2` shadowing `static m()` | 2 | 2 / 2 | 2 / 2 |
+| 11 | child field `m` shadowing parent `get m()` | 2 | **1 / 1** ⚠ | 2 / 2 |
+| 12 | `getPrototypeOf(new B()).hasOwnProperty("m")` | false | false / false | false / false |
+| 13 | `b.m()` outside the class, `b: B` | 2 | **1 / 1** | 2 / 2 |
+| 14 | `a.m()` with `a: A` holding a `B` (out of scope) | 2 | 1 / 1 | 1 / 1 |
+
+Every in-scope row (1–13) now matches node on both lanes. Row 14 is unchanged
+by design — see "Out of scope".
+
+#### Two deviations from the plan, both forced by measurement
+
+**(a) Row 11 was NOT already correct.** The plan's table recorded it as `2`
+and called a child field shadowing a parent accessor "a semantic no-op today".
+Re-measured on `5a55f7f55f` it is `1` on both lanes (node: `2`, confirmed
+directly). So the accessor branch of the inherited registration carries the
+same false alias as the method branch, and the plan's instruction to apply the
+exclusion there for *consistency* turns out to fix a real wrong answer. Row 11
+is red on base in the test file.
+
+**(b) S1 as specified is NOT sufficient — the defect has TWO independent
+sources.** With only the `ownInstanceFieldNames` exclusion in
+`collectClassDeclaration`, rows 1, 8 and 11 (the private and accessor shapes)
+went green and rows **2, 5, 9 and 13 — every public-name shape — stayed red**.
+
+The plan's root-cause section is right that private names never reach the
+ancestor walk at `call-receiver-method.ts` L1819 "because the alias already
+answered". The inference it draws — that removing the alias therefore fixes
+every row — does not hold for public names: that walk is guarded by
+`!ts.isPrivateIdentifier(propAccess.name)`, so for a **public** `m` it runs,
+reads `Parent_m` straight out of `ctx.classMethodSet`, and reproduces the exact
+same wrong answer with no alias involved. Dropping the alias removes one of two
+sources; the other is untouched.
+
+The fix therefore records the shadowing fact once and consults it at both
+sites:
+
+- `ctx.classFieldShadowedInheritedCallables` (`src/codegen/context/types.ts`,
+  initialised in `create-context.ts`) — `"Class_member"` for every class with an
+  own instance field whose name is a callable up its chain, populated in the
+  same loop that computes the exclusion.
+- `collectClassDeclaration` refuses the inherited alias (the plan's S1).
+- `compileReceiverMethodCall` refuses the ancestor walk for such a receiver,
+  leaving `funcIdx` undefined so the callable-struct-field arm answers — which
+  rows 4 and 6 already proved correct.
+
+This is the only change outside the plan's named site, and it is the minimum
+that makes the public rows pass.
+
+#### One narrowing the plan did not specify: `declare`
+
+`ownInstanceFieldNames` skips `hasDeclareModifier` members as well as
+`static` ones. `declare m: () => number` is a pure type re-annotation that
+installs no property, so the inherited callable is still the right answer for
+it — but the field-collection loop at L1186 has no `declare` filter, so such a
+member *does* get a struct field, and treating it as a shadow would route the
+call to a never-initialised slot. Measured: with the guard the row stays at
+node's `1`; it is pinned in the test file.
+
+#### Byte identity
+
+`npx tsx scripts/prove-emit-identity.mjs` (default corpus:
+`website/playground/examples` + `scripts/emit-identity-corpus`), base snapshot
+captured on `5a55f7f55f` before the edit: **IDENTICAL — all 60 (file,target)
+emits match**, no row moved.
+
+Note the corpus is **60 rows, not the 34 the plan cites**: 15 `.ts` files ×
+4 targets (`gc`, `standalone`, `wasi`, **`linear`** — the plan named only the
+first three). Byte identity is expected here for a structural reason worth
+recording: exactly one corpus file declares an `extends` class
+(`website/playground/examples/js/classes.ts`), and its `Dog` shadows nothing —
+`#breed` is a field the parent does not declare, `speak()`/`kingdom()` are
+method/static *overrides*, and `Animal`'s `get name`/`get age` never collide
+with a `Dog` field. The corpus cannot exercise this defect, so identity here is
+a no-drift check, not evidence of correctness; the test file carries that load.
+
+#### Suites
+
+`tests/issue-3522-*`, `tests/issue-3520-*`, `tests/issue-5309*` and every
+`tests/*class*` / `tests/*private*` file — **167 files**, run on base and on
+the branch with `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`
+(`pool: "forks"`, `singleFork: false`, so vitest already gives each file its
+own fork process — the sweep was batched rather than one invocation per file,
+which is the same isolation at a fraction of the wall time).
+
+- base: 68 failing test names · branch: 48.
+- **New failures on the branch: none.** The 48 are byte-identical to 48 of the
+  base 68 — all pre-existing on `origin/main`, none in a file this PR touches.
+- The 20-name difference is exactly this PR's own new test file going red→green.
+
+New file `tests/issue-5309-child-field-shadows-parent-method.test.ts`: **20 of
+43 red on base, 43/43 green on the branch.** Red on base were rows 1, 2, 5, 8,
+9, 11 and 13 (the plan predicted all but 11) plus three shapes added here —
+constructor-assigned field, per-class-private isolation, and a child field
+beating an intermediate class's override.
+
+#### Ratchet gates
+
+`check-loc-budget`, `check-func-budget` (both also with
+`LOC_GATE_BASE=origin/main`), `check-coercion-sites`, `check:oracle-ratchet`,
+`check:dead-exports`, `check:ir-fallbacks`, `check:ir-dialect`,
+`check:ir-kind-neutrality`, `check:jstag-seam`, `check:ir-layering`,
+`check:host-import-policy`, `check:ir-only --policy=hybrid` (verdict READY),
+`check:standalone-ir-cutover-corpus`, `check:pushraw`, `check:stack-balance`,
+`check:codegen-fallbacks`, `check:any-box-sites`, `check:speculative-rollback`,
+`check:harness-compile-budget`, `check:ir-adoption`, `typecheck`, `lint`,
+`prettier --check` — all green. LOC/func growth is granted in this file's
+frontmatter with the dated rationale; no `scripts/*-baseline.json` was touched.
+
+Against CI's base the LOC gate additionally reported
+`src/codegen/statements/loops.ts +1`, which this PR does not touch — main's own
+drift, cleared by merging `origin/main` in.
+
+### S1-alt — measured, not shipped
+
+"Skip the inherited alias entirely when the suffix starts with `__priv_`", on
+top of S1, on the grounds that private names can never be inherited.
+
+- 60-row emit corpus: **IDENTICAL**.
+- All 14 probe rows: identical to S1 (rows 1–13 correct, 14 unchanged).
+- 167-file suite sweep: **48 failing names, byte-identical to S1's 48** — no
+  new failure, none fixed.
+
+So the `__priv_*` aliases are indeed dead weight on everything measured here,
+and the narrowing is safe as far as this evidence goes. It is **not shipped**:
+it removes a mechanism rather than correcting one, its whole value is
+simplification, and nothing in the measured set distinguishes it from S1. It
+belongs in its own change where that removal is the point and can be justified
+against test262 rather than as a rider on a wrong-answer fix.
+
+### Additionally found — pre-existing, NOT fixed here
+
+**A declared-but-never-initialised field is not `undefined`.** For
+`class B { m!: () => number }`, `this.m === undefined` does not fold and
+`typeof this.m` does not answer `"undefined"`; the slot holds a null ref, so a
+guarded call traps where node returns the guard's value.
+
+This is independent of #5309 — the control has **no parent method at all** and
+traps identically on base:
+
+```ts
+class A { p() { return 9; } }
+class B extends A { m!: () => number; f() { return this.m === undefined ? 0 : this.m(); } }
+new B().f();   // node 0 · js2 traps, on base AND on the branch
+```
+
+What S1 changes is only that the shadowing variant of this shape stops being
+*masked*: on base it silently called the parent's method and returned `1`,
+which is a wrong answer; now it reaches the same pre-existing trap the control
+already hits. The `typeof` and non-callable read forms (`7` on both sides) do
+not move at all. Pinned as a control in the test file so the family is visible;
+worth its own issue.
