@@ -179,7 +179,16 @@ function directReceiptAudit(
 ): IrDirectFunctionBodyReceiptAudit {
   const sourceId = planned.identityPlan.identityContext.sourceIdBySourceFile.get(planned.sourceFile);
   if (!sourceId) throw new Error(`missing source identity for ${planned.sourceFile.fileName}`);
-  return { sourceId, countsByUnitId, violations };
+  // (#5308) The audit now states three censuses. These fixtures are
+  // function-only sources, so the R3/R4 maps are legitimately empty — stated
+  // rather than omitted, because an omitted census is not a measured zero.
+  return {
+    sourceId,
+    countsByUnitId,
+    classMemberCountsByUnitId: new Map(),
+    moduleInitCountsByUnitId: new Map(),
+    violations,
+  };
 }
 
 function outcomeFor(outcomes: readonly IrObservedOutcome[], unitId: IrUnitId): IrObservedOutcome {

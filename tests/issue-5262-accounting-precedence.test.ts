@@ -100,6 +100,10 @@ function receipts(
   return {
     sourceId: planned.context.sourceIdBySourceFile.get(planned.sourceFile)!,
     countsByUnitId,
+    // (#5308) `owner.ts` is one free function: no class members, no module-init
+    // terminal. Empty is the measured answer, not an omission.
+    classMemberCountsByUnitId: new Map(),
+    moduleInitCountsByUnitId: new Map(),
     violations: [],
   };
 }
