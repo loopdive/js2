@@ -1696,3 +1696,101 @@ checked with a 6-line probe through `probe-one.mts` before and after.
   R3-5 and R3-8; `tests/issue-5267-es2015-forof-iterators-r2.test.ts` 17/17.
 - No edits to `tests/test262-runner.ts`, skip lists, `scripts/*baseline*.json`;
   no new host imports; no `--no-verify`.
+
+## 2026-09-04 r3 implementation (Opus)
+
+Worktree `/home/user/js2/.claude/worktrees/wf_9d1e6808-4e2-1`, branch
+`worktree-wf_9d1e6808-4e2-1`, merge-base `a754fc7c96`. Base tree for every
+measurement below is a `git archive` of that merge-base under
+`.tmp/basetree/` (own node_modules / test262 / .test262-cache symlinks).
+
+Measurement corpus (built once, from
+`.test262-cache/test262-standalone-current.jsonl` stamped 2026-09-04 01:18):
+the 1,586 rows of `language/statements/for-of/**`,
+`built-ins/{Map,Set,WeakMap,WeakSet}/**`,
+`built-ins/{Map,Set}IteratorPrototype/**` split into
+`.tmp/r3/base-pass.txt` (1,396) and `.tmp/r3/base-nonpass.txt` (190).
+A full 1,586-row sweep costs ~2.5 h on this box (measured 5.8 s/row at load
+9-10, three agents sharing 4 cores), so it is NOT re-run per step; per step
+the corpus is (a) the step's claimed rows, (b) the 94 non-pass `built-ins/**`
+rows — the flip detector, and (c) 197 currently-passing
+`{Map,Set}IteratorPrototype/**` + `Map|Set/prototype/{entries,keys,values,forEach,delete,clear,size}/**`
+rows — the regression detector. Deviation from the plan's "whole enclosing
+directories every step" stated here because it is a real reduction in
+coverage: it is a load-and-time decision, not a claim that the rest cannot
+regress.
+
+### Step R3-1 — `map[Symbol.iterator]()` yields the live entries/values record (commit 1)
+
+**What changed.**
+
+- `src/codegen/expressions/call-tail-dispatch.ts`, `compileTailDispatch`'s
+  `@@iterator` arm: a Map/Set receiver (TS symbol name off the ALREADY-computed
+  `receiverType`, no new checker call) whose speculative compile lowers to
+  `ctx.mapTypeIdx` now emits `emitLiveCollectionIterRec(… "entries"|"values")`
+  directly — §24.1.3.12 / §24.2.3.11 make `Map.prototype[@@iterator]` BE
+  `entries` and `Set.prototype[@@iterator]` BE `values`, so the product is by
+  construction the same record `map.entries()` yields. Gated
+  `(ctx.standalone || ctx.wasi) && ctx.nativeStrings`; the probe is a
+  `snapshotSpeculative`/`rollbackSpeculative` transaction so a declining
+  receiver leaves no bytes; extra call arguments are still evaluated and
+  dropped. Plan step R3-1(a).
+- `src/codegen/map-runtime.ts`, `ensureMapHelpers`' `__map_iter_next`: the done
+  branch parks `IT_INDEX` at `0x7fffffff` before returning `{value:null,
+  done:1}`, so a later `set`/`add` that grows `M_ENTRYCOUNT` cannot revive an
+  exhausted cursor (§24.1.5.1). Plan step R3-1(c).
+- `emitLiveCollectionIterRec` exported (was module-private).
+
+**Not done from R3-1: (b), the dynamic `__iterator` ladder root cause.** (a)
+is a static reroute that makes the five claimed rows correct without touching
+the ladder, and it is the deterministic half of the plan's own edit list. The
+ladder is still wrong for a Map reached through a variable holding
+`Map.prototype[Symbol.iterator]` (probe `b2.js` in the r2 census) — that
+closure route is unmeasured here and remains open.
+
+**Measured.**
+
+| corpus | base | lane |
+|---|---|---|
+| 5 claimed rows + 4 named controls (`.tmp/r3/rows-R3-1.txt`) | 4 pass / 5 fail | **9 pass / 0 fail** |
+| 94 non-pass `built-ins/**` rows | 94 non-pass (baseline) | 89 non-pass, **exactly the 5 claimed flipped**, no other movement |
+| 197 passing iterator/collection rows | pass (baseline) | **197 / 197 pass** |
+
+Behaviour probes (`.tmp/p/*.js`, run through the runner's own
+`runTest262File`, so the harness and verdict rules are the real ones):
+
+| probe | node | base standalone | lane standalone |
+|---|---|---|---|
+| `t1` ordinary for-of (array/string/Map/Set/`map.keys()`) | pass | pass | pass |
+| `t2` `map[Symbol.iterator]()` / `set[Symbol.iterator]()` stepping | pass | **fail** (`Cannot access property on null or undefined`) | **pass** |
+| `t3` sticky exhaustion after `add` | pass | **fail** (`«false» «true»`) | **pass** |
+| `t4` labelled break/continue + closures over the loop variable | pass | **HANGS** (>250 s, killed) | HANGS — identical to base, pre-existing, NOT caused here |
+| `t5` `[k,v]` heads + mutation during iteration | pass | pass | pass |
+| `t6` `for (e of m)` with a pre-declared assignment-target head | pass | **fail** (`«""» «"ab"»`) | fail, byte-for-byte the same error — pre-existing |
+
+`t4`'s hang and `t6`'s wrong answer are pre-existing defects the probe set
+found; both reproduce identically on the base tree. They are reported, not
+fixed, and are not in this cluster's claimed set.
+
+Byte identity (`.tmp/p/compile.mts`, sha256 of the emitted binary):
+
+| program | target | base | lane |
+|---|---|---|---|
+| `n1.js` (no Map/Set) | standalone | `cbf5728b3c5a39c0` | **identical** |
+| `n1.js` | wasi | `3f360921a91ac5a2` | **identical** |
+| `n1.js` | js-host | `720c220ab7a44a75` | **identical** |
+| `t2.js` (Map+Set) | js-host | `0734f221a6d8084a` | **identical** — the js-host lane is untouched |
+| `t2.js` | standalone / wasi | differs (19 bytes smaller) | intended |
+
+The wasi lane cannot be EXECUTED by this harness (it instantiates without a
+`wasi_snapshot_preview1` object, so every wasi probe dies at instantiate on
+base and lane alike); wasi is therefore covered here by compile success +
+byte identity of the Map-free control, not by execution.
+
+**Pin.** `tests/issue-5267-r3-1-map-symbol-iterator.test.ts` (3 cases, wasi
+lane, `hostImports` asserted empty). On the base tree **1 of 3 fails** (the
+sticky-exhaustion case); the two `@@iterator` cases PASS on base in the wasi
+lane — i.e. the null-record defect reproduces on the `standalone` target and
+in the test262 wrapping, not in this hand-written wasi shape. Stated plainly
+because it makes those two cases forward regression pins rather than proof of
+the fix; the proof for them is the row table above.
