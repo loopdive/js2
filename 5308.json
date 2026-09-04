@@ -1,10 +1,11 @@
 {
   "id": "5308",
   "assignee": "ttraenkler/opus-5308",
-  "requested_by": "ttraenkler/opus-5308",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5308-r3-r4-body-accounting",
   "claimed_at": "2026-09-03T22:04:33Z",
-  "updated_at": "2026-09-03T22:04:33Z",
-  "write_id": "28251-njo6h5yw"
+  "updated_at": "2026-09-04T02:38:49Z",
+  "write_id": "22249-ae6jy8qq",
+  "released_at": "2026-09-04T02:38:49Z"
 }
