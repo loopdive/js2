@@ -3,6 +3,7 @@
   "codegen/any-eq-helpers.ts": 4,
   "codegen/array-concat-spec.ts": 2,
   "codegen/array-filter-spec-access.ts": 1,
+  "codegen/array-from-native.ts": 3,
   "codegen/array-join-proto-hole.ts": 2,
   "codegen/array-like-native.ts": 2,
   "codegen/array-methods.ts": 20,
