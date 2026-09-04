@@ -18,6 +18,37 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## 2026-09-04 census — 10,079 / 11,704 (86.1%) after #5561
+
+Baseline refetched 2026-09-04 02:45 UTC (`oracle_lane: "honest"`, promoted
+from the merge of PR #5561 — typedarray r3, #5194), same script and edition
+map as the censuses below.
+
+**10,079 pass / 11,704 (86.1%) — 1,625 non-pass** (1,244 fail · 380
+compile_error · 1 compile_timeout): **+41 rows** over the post-#5558 census.
+The rows sum to 1,625.
+
+| Cluster | rows | fail | CE |
+| --- | ---: | ---: | ---: |
+| expressions | 228 | 131 | 96 |
+| typedarray | 201 | 183 | 18 |
+| class | 191 | 135 | 56 |
+| other built-ins | 168 | 160 | 8 |
+| proxy + reflect | 155 | 131 | 24 |
+| regexp | 139 | 129 | 10 |
+| generators | 121 | 75 | 46 |
+| array + object | 121 | 111 | 10 |
+| promise | 101 | 51 | 50 |
+| for-of + collections | 98 | 62 | 36 |
+| statements + lang | 75 | 55 | 20 |
+| module-code | 25 | 19 | 6 |
+| rest | 2 | 2 | 0 |
+
+Day total since the 2026-09-02 census (9,905): **+174 rows** across seven
+PRs. The compile_error count is unchanged at 380 across all of them — every
+wave was `fail` work; the CE mass (expressions 96, class 56, promise 50,
+generators 46, for-of 36) is what the next plans must open.
+
 ## 2026-09-04 census — 10,038 / 11,704 (85.8%) after #5558
 
 Baseline refetched 2026-09-04 01:17 UTC (`oracle_lane: "honest"`, promoted
