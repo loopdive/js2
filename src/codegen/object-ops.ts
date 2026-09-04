@@ -23,7 +23,8 @@ import { isGlobalObjectExpr } from "./global-environment.js"; // (#4394) host gl
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { emitThrowRangeError, emitThrowTypeError } from "./expressions/helpers.js";
-import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#3177 slice 4) defineProperty rejection sentinel → TypeError
+import { buildThrowJsErrorInstrs, noJsHost } from "./js-errors.js"; // (#3177 slice 4) defineProperty rejection sentinel → TypeError
+import { emitEvolvingNullishReceiverGuard, evolvingVarNullishNarrowed } from "./builtin-prototype-brand.js"; // (#5197 review F1)
 import { emitMappedArgReverseSync } from "./expressions/logical-ops.js";
 import { resolveStructName } from "./expressions/misc.js";
 import { widenedStructNameForUse, integrityVarKey } from "./widened-var-key.js";
@@ -4639,9 +4640,18 @@ export function compilePropertyIntrospection(
   // runtime-keyed member lives on the prototype.
   const runtimeKeyedOwnKeys = introspectionReceiverHasRuntimeKeys(ctx, recvExpr);
 
+  // (#5197 round-3 review F1) An evolving `var` the checker narrowed to
+  // `undefined` at this use (`var f; …executor fills f…; f.hasOwnProperty(k)`)
+  // has a NULLISH static type, so the struct-field fold below would answer a
+  // constant `false` without ever reading `f`. The value is runtime state:
+  // take the runtime query, and raise RequireObjectCoercible's TypeError when
+  // the value really is nullish. No-host lanes only — the host lowering never
+  // reaches this fold for the borrowed spelling.
+  const evolvingNullishRecv = (noJsHost(ctx) || ctx.strictNoHostImports) && evolvingVarNullishNarrowed(ctx, recvExpr);
+
   // For externref/any receivers (e.g. Object.create result), delegate to runtime
   // since we can't statically know their properties
-  if (receiverWasm.kind === "externref" || runtimeKeyedOwnKeys) {
+  if (receiverWasm.kind === "externref" || runtimeKeyedOwnKeys || evolvingNullishRecv) {
     const isHOP = propAccess.name.text === "hasOwnProperty";
     const importName = isHOP ? "__hasOwnProperty" : "__propertyIsEnumerable";
     const hopIdx = ensureLateImport(ctx, importName, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -4658,6 +4668,12 @@ export function compilePropertyIntrospection(
       const recvType = compileExpression(ctx, fctx, propAccess.expression);
       if (recvType && recvType.kind !== "externref") {
         coerceType(ctx, fctx, recvType, { kind: "externref" });
+      }
+      if (evolvingNullishRecv) {
+        if (recvType === null) fctx.body.push({ op: "ref.null.extern" });
+        const recvLocal = allocLocal(fctx, `__evolving_recv_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.tee", index: recvLocal });
+        emitEvolvingNullishReceiverGuard(ctx, fctx, propAccess.name.text, recvLocal);
       }
       // Push key argument (or null if missing)
       if (expr.arguments[0]) {

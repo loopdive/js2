@@ -1165,6 +1165,9 @@ export function ensureStandaloneNativeMethodClosure(
     metaName,
     arity,
   );
+  // (#5194 r3 review F3) Remember which meta types carry the refusal body so a
+  // dyn-view inherited [[Get]] can decline to surface them as values.
+  if (useRefusalBody) (ctx.nativeProtoRefusalMetaTypeIdxs ??= new Set()).add(metaTypeIdx);
 
   // (#2193 PR-B / #4664) Every native-proto closure's first user param is the
   // internal receiver (`this`). Methods use that mapping at every reflective

@@ -1,7 +1,8 @@
 ---
 id: 5268
 title: "ES2015 standalone: Array + Object built-ins — r2 residual pass (136 rows)"
-status: in-progress
+status: done
+completed: 2026-09-03
 sprint: current
 created: 2026-09-01
 updated: 2026-09-03
@@ -111,7 +112,15 @@ coercion-sites-allow:
   # the coercion engine's own entry, never a hand-rolled matrix.
   - src/codegen/array-from-native.ts
   - src/codegen/object-runtime-proxy.ts
+# 2026-09-03 (Opus, r3 step R3-5c): `emitToPrimitiveMethodExports` grows by the
+# IsCallable guard OrdinaryToPrimitive step 5.b.i requires — the two closure
+# dispatch modes read a method FIELD and `ref.cast` it unguarded, so a
+# `valueOf: null` slot TRAPPED ("illegal cast in __call_valueOf") instead of
+# being treated as an absent method. The guard is one `ref.test` per mode plus
+# the shared `guardedThen` wrapper; it cannot be lifted out of the recursive
+# `buildDispatch` closure, which is what the +39 lines are.
 func-budget-allow:
+  - src/codegen/index.ts::emitToPrimitiveMethodExports
   - src/codegen/object-ops.ts::compileObjectKeysOrValues
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
@@ -140,6 +149,13 @@ func-budget-allow:
   - src/codegen/carrier-bag-visibility.ts::buildBuiltinFnSetRefusalArm
   - src/codegen/array-like-native.ts::emitArrayLikeNativeMemberBody
   - src/codegen/array-length-define.ts::maybeEmitVecLengthDefine
+  # r3 round-3 review fixes (2026-09-03, F2): the two finalize sequences in
+  # index.ts gain ONE call each — `fillIteratorMethodPresent(ctx)`, the static
+  # arm fill of the new `__iterator_method_present` predicate (defined in
+  # iterator-native.ts). Wiring only (+5 / +1 lines); the predicate lives in
+  # iterator-native.ts.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
   - src/codegen/vec-length-set.ts::fillVecLengthDynamicArms
   - src/codegen/array-methods.ts::tryCompileArrayFlatNativeDepth1
   - src/codegen/index.ts::emitDispatchForMethod
@@ -1879,3 +1895,287 @@ Added to the YAML below with a dated rationale: new files need no grant;
 the listed god-files grow by wiring only. `total` is NOT granted — if the
 change-set's net LOC exceeds the headroom, split the PR, do not widen the
 grant.
+
+## 2026-09-03 implementation (Opus) — step R3-1 (`Array.from` / `Array.of`)
+
+New `src/codegen/array-from-native.ts`: `__array_from_native(C, items, mapFn,
+thisArg, mapFnGiven)` (§23.1.2.1) and `__array_of_native(C, argsVec)`
+(§23.1.2.3), standalone/WASI only. Two wiring sites in
+`src/codegen/expressions/call-builtin-static.ts`: the direct `Array.from(…)`
+arm (which REPLACES the #2169c drain-only lowering and the #3206
+`__array_from_mapped` composition, both removed from that call site) and a new
+arm for the spelled-out `Array.from.call(…)` / `Array.of.call(…)`.
+
+### Measurement (base = branch point `5c8a182901`, materialised with
+`git archive` into `.tmp/basetree`; both trees run with the same runner)
+
+`built-ins/Array/{from,of}/**` — the WHOLE directory, 63 rows, in four batches:
+
+| 63 rows | pass | non-pass |
+| --- | ---: | ---: |
+| base `5c8a182901` | 29 | 34 |
+| this change-set | 49 | 14 |
+
+**20 rows flipped to pass, ZERO new non-pass** (`comm` over both sorted
+non-pass lists: 20 lines base-only, 0 lane-only). Of this issue's own 17-row
+claimed list, **10 pass**; the other 10 fixed rows are `from`/`of` rows the
+census had recorded as failing for the same root cause but outside the r3
+group (e.g. `calling-from-valid-*`, `does-not-use-set-for-indices`,
+`return-abrupt-from-{contructor,setting-length}`).
+
+`.tmp/es2015/arrobj-controls.txt`: **20 / 20**.
+
+### Two regressions found by the directory sweep and fixed before committing
+
+Both were caught only because the sweep covered rows the claimed list never
+mentions — the r2 lesson, reproduced:
+
+- **`Array.from(x, null)` stopped throwing.** An externref null is BOTH "no
+  mapfn argument" and the compiled `null` literal, so a value-shape test could
+  not tell them apart (`mapfn-is-not-callable-typeerror.js`). Fixed by making
+  the arity a fifth `i32` parameter — the decision travels WITH the call
+  instead of being re-derived from the value.
+- **`source-object-iterator-1.js` (a closed-struct literal with an inline
+  `[Symbol.iterator]()`) stopped propagating its iterator's abrupt.** The
+  `@@iterator` property probe answers false for a closed struct (its members
+  are struct fields, not `$Object` entries), so the source fell into the
+  array-like walk and read as length 0. Fixed by also taking the iterator
+  branch when the source has no `length` at all — which is exactly what the
+  pre-change drain-only lowering did for that shape.
+
+### Regression checks beyond the row list
+
+- `built-ins/TypedArray/prototype/map/` (12 rows) + 3 `Array/prototype/concat`
+  rows: **identical pass set on both trees** (9/6, same six names) — the
+  harness's `makeArray = Array.from({length:n}, fn)` still lands the same way.
+- Behaviour control `.tmp/p/ctl2.js` (string / array / Set / Map / generator /
+  `{length}`+mapFn / `Array.of` / spread / an explicit array iterator) printed
+  BYTE-IDENTICAL on both trees for every line that base could reach; base
+  THREW at the array-like line, which is the fix.
+- **JS-host lane byte identity**: an `Array.from`/`Array.of` program and an
+  `Array.from.call(C, …)` program both compile to sha-identical modules on the
+  two trees (`d57eefc224…`, 6994 bytes; `b0d7257138…`, 6256 bytes) — every new
+  arm is behind `noJsHost(ctx)`.
+- No `env::*` import in any standalone probe (asserted in the pin).
+
+### Not done, with the measured reason
+
+- `from/iter-cstm-ctor.js`, `from/source-object-constructor.js` — the
+  CONSTRUCTOR runs (probe: `callCount === 1`, zero args) and `A` is its result,
+  but `result instanceof C` / `result.constructor === C` still answer false:
+  TypeScript types `Array.from.call(C, items)` as `any[]`, so the identity
+  reads fold on the ARRAY type before any runtime value is consulted. A
+  static-type problem, not an algorithm one.
+- `from/source-object-length.js` — `a[2]` for a deleted index answers `NaN`
+  instead of `undefined`; the undefined sentinel is being read back through a
+  number-typed lane.
+- `from/source-array-boundary.js` — the mapper's `thisArg` (`this` at module
+  scope) does not carry through `__apply_closure`.
+- `of/does-not-use-prototype-properties.js` — its FIRST assertion is on the
+  DIRECT `Array.of(true)` (untouched by this change) after
+  `Object.defineProperty(Array.prototype, "0", {set})`; the accessor on the
+  prototype defeats the read.
+- `of/return-abrupt-from-data-property-using-proxy.js` — the constructor
+  returns a Proxy and `__defineProperty_value` does not reach its
+  `defineProperty` trap (cluster E territory).
+- `Array.from(<Set|Map>, mapFn)` still routes to the host `env.__array_from`
+  (the `isNonArrayBuiltinCollection` exclusion is kept deliberately) — same as
+  base, and the reason the first control probe leaked an import on BOTH trees.
+- The VALUE form (`var f = Array.from; f(x)`) deliberately keeps its existing
+  refusal. A closure body cannot see the `.call` receiver — measured: a body
+  that simply returns `__current_this` answers `undefined` for
+  `Array.from.call(C, x)`, because the dispatch goes
+  `__call_m_call_2 → __extern_method_call` and never through a
+  `__call_fn_method_N` that installs it. Reifying the value would therefore
+  have turned a loud refusal into a SILENT wrong answer for
+  `f.call(C, items)`, so the `.call` support is at the (syntactic) call site
+  and the value read is left at base parity.
+
+Pin: `tests/issue-5268-r3-array-from.test.ts` (7 cases, imports asserted
+empty). Verified against the base tree: the base run OOMs the vitest worker on
+the IteratorClose case — the base defect there is an unbounded drain
+("requested new array is too large") — and the other cases are red on base by
+the row/probe evidence above (`alike=` threw on the base control run; every
+`.call` row reported "Array.from is not yet implemented in --target
+standalone"; `iter-map-fn-args` measured `args[0].length` 3).
+
+Gates: all five green, and green again with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`. TS7 typecheck clean.
+
+## 2026-09-03 implementation (Opus) — step R3-5 (concat residuals, partial)
+
+Two of the plan's six concat sub-items landed; the rest are named below with
+what stopped them.
+
+### (d) §23.1.3.1.1 step 3 — a PRESENT falsy `@@isConcatSpreadable`
+
+`array-concat-spec.ts`: the absence test accepted a wasm `ref.null` as
+"absent" and fell back to `IsArray`, so `item[@@isConcatSpreadable] = null`
+spread a two-element array. Step 3 keys on UNDEFINED only. Measured before
+removing the term (`.tmp/p/e1.js`, standalone): `__extern_get` answers the
+UNDEFINED singleton for a key it does not find — on a `$Vec`
+(`[3,4][@@isConcatSpreadable]` prints "undefined") as well as an `$Object` —
+while a stored `null` prints "null", so the null term was pure over-reach.
+Row: `is-concat-spreadable-val-falsey.js`.
+
+### (c, half) OrdinaryToPrimitive step 5.b.i `IsCallable`
+
+`src/codegen/index.ts` `emitToPrimitiveMethodExports`: the `closure-extern`
+and `closure` dispatch modes read the method FIELD and `ref.cast` it to the
+closure struct type unguarded, so a `valueOf: null` slot TRAPPED. Base:
+`illegal cast … at __call_valueOf ← __class_to_primitive ← __to_primitive ←
+__extern_length`. Now `ref.test`-guarded; a non-closure slot takes the same
+`else` an absent entry takes, i.e. the next candidate. Row:
+`Array.prototype.concat_array-like-length-to-string-throws.js`.
+
+**Not done, same item:** `{valueOf: null, toString: null}` must throw a
+TypeError (`concat_array-like-to-length-throws.js`); today `__class_to_primitive`'s
+tail returns the OBJECT unchanged and `__extern_length` reads it as 0. Adding
+the throw there changes every silent ToPrimitive fall-through in the compiler,
+not just this row — it needs its own measurement pass.
+
+### Measurement
+
+`built-ins/Array/prototype/concat/**`, the whole directory, 69 rows, base and
+branch on the same tree in five batches:
+
+| 69 rows | pass | non-pass |
+| --- | ---: | ---: |
+| base `5c8a182901` | 43 | 26 |
+| this change-set | 45 | 24 |
+
+**2 rows flipped, ZERO new non-pass.** `.tmp/es2015/arrobj-controls.txt`
+20 / 20.
+
+The `index.ts` guard is NOT standalone-gated, so the JS-host lane was checked
+directly: a ToPrimitive program (`valueOf` / `toString` / a `valueOf: null`
+length) compiles to a sha-IDENTICAL host module on both trees
+(`43575a2c0a…`, 6666 bytes) and prints identical output on both lanes. Six
+ToPrimitive-adjacent vitest suites A/B'd: 35 passed / 1 failed on this tree,
+and that one failure (`es5-standalone-callable-tostring` — "a function
+declaration does not stringify as [object Object]") is STANDING RED on the
+base tree with the same name.
+
+### Not started in this step
+
+(a) the `arguments` carrier's `__extern_has_idx` vs its `length` override
+(3 rows), (b) the `$Hole` escape, (e) `is-concat-spreadable-get-order` — the
+species prologue already precedes the receiver's spreadable Get in
+`compileArrayConcatNativeSpecFromExprs`, but `ctx.arraySpeciesDirty` is not
+armed by `Object.defineProperty(arr, "constructor", …)`, so no `constructor`
+Get happens at all and the row's expected first log line never appears —
+(f) the two TypedArray rows, (g) `is-concat-spreadable-proxy`.
+
+Pin: `tests/issue-5268-r3-concat.test.ts` (2 cases) — both verified to FAIL on
+the base tree (`.tmp/basetree`).
+
+## 2026-09-03 implementation (Opus) — step R3-9 S (`hasOwnProperty` key order)
+
+`tryBorrowedPrototypeNullishThisThrow` (`builtin-prototype-brand.ts`) compiled
+the call's arguments and DROPPED them before throwing the nullish-receiver
+TypeError. Compiling evaluates the expression but performs no coercion, so
+§20.1.3.2 step 1 (`? ToPropertyKey(V)`, which precedes step 2's
+`ToObject(this)`) never ran. Argument 1 of `hasOwnProperty` /
+`propertyIsEnumerable` now goes through `__to_property_key` and THAT result is
+dropped.
+
+`built-ins/Object/prototype/{hasOwnProperty,propertyIsEnumerable}/**`, all 79
+rows, base vs branch on the same tree: **78 pass → 79 pass**, the flipped row
+being `hasOwnProperty/topropertykey_before_toobject.js`, with zero new
+non-pass.
+
+Behaviour A/B (`.tmp/p/h1.js`, standalone, both trees): five `.call(nullish,
+…)` shapes plus two ordinary calls. Only the intended line moved — base
+"threw TypeError" / `hint=none`, branch "threw RangeError" / `hint=string`
+(node's answer). The other seven lines are byte-identical, including the
+pre-existing base defect `hasOwnProperty.call("ab", "0") === false` (node says
+true), which this change does not touch. The whole arm is behind
+`noJsHost(ctx) || ctx.strictNoHostImports`, so the JS-host lane is untouched.
+
+Pin: `tests/issue-5268-r3-topropertykey.test.ts` (2 cases).
+
+### Round-3 review fixes (2026-09-03)
+
+Three findings from the adversarial review of `d18dd8673f` (each reproduced
+by an independent skeptic against a `git archive` of the merge-base
+`5c8a182901`, node as oracle), plus two the review left unconfirmed.
+Before/after rows below are node / base / lane-before / lane-after unless
+noted; every standalone module carried zero `env::` imports.
+
+**F1 — `Array.from(generator, mapFn)` with an abrupt mapper skipped the
+generator's `finally`** (standalone: node 1 / base 1 / lane 0). Root: the
+`__iterator_return` GENSTATE arm only flipped the frame to `doneState`
+("finally … out of scope"), while for-of `break` resumes the frame with an
+implicit return. Fix — in the PRIMITIVE, not in `Array.from`: the GENSTATE arm
+of `buildIteratorReturnBody` (iterator-native.ts) now does §27.5.3.4
+GeneratorResumeAbrupt the way `closeGenerator`
+(generators-native-consumer.ts) does — state 0 (suspendedStart) or already
+`doneState` ⇒ mark completed; suspended at a yield ⇒ `abrupt := undefined`,
+`mode := 1`, call the producer's resume, drop the result. Every IteratorClose
+caller (`Array.from`, destructuring, `__array_from_iter_n`'s bounded break)
+benefits. After: `fromMap=1`, ordering probe `y1 m1 y2 m2 FIN caught:x` (node
+identical; base had `y1 y2 y3 FIN m1 m2`), a `finally` that itself throws
+propagates the ORIGINAL mapper error (`orig`, node identical; base `fin`), a
+closed generator's later `.next()` answers `done:true`.
+
+**F2 — branch selection could not see closed-struct `@@iterator` members.**
+`Array.from(v)` for a closed-struct iterable that also carried `length`
+walked it as an array-like: `class L2 { length = 2; [Symbol.iterator]… }`
+node `6,7` / base `6,7` / lane `undefined,undefined` (a base-RIGHT →
+lane-WRONG flip); literal-with-`length` shapes turned base's TypeError into
+silent `undefined × length`. Fix: a new reserve-then-fill native
+`__iterator_method_present(v) -> i32` (iterator-native.ts,
+`ensureNativeIteratorMethodPresent` / `fillIteratorMethodPresent`, filled in
+both finalize sequences after `fillLazyIterLadderArms`) — a `ref.test` ladder
+over every shape whose `@@iterator` is a STATIC member (closed structs with a
+`<Struct>_@@iterator` method or an `@@iterator` closure field, driven native
+generator frames, `$LazyIterHelper`, `$__IterRec`, native strings), then
+`HasProperty(v, @@iterator)` for everything else. `Array.from` branches on
+it; the `@@iterator` property probe and the "no `length`" tell are gone.
+After (standalone): isolate probe byte-identical to base on all eight rows
+(class rows `6,7`, closure-field literal rows `TypeError: value is not
+iterable` — the same TypeError base raised, because `__iterator` cannot drive
+a closure-valued `@@iterator` field on either tree); `p07-closed-struct`
+every row equals base. Not fixed (base parity, recorded): closure-field
+literals (`[Symbol.iterator]: function`) still throw where node iterates.
+
+**F4 (unconfirmed by a skeptic; reproduced here) — the `@@iterator` accessor
+fired twice** (node 1 / base 1 / lane 2). The probe was a `[[Get]]`; the
+predicate's dynamic half is now `HasProperty` only, so the single GetMethod
+read is `__iterator`'s. After: `gets=1`.
+
+**F5 — wasi `Array.from.call(C, …)` / `Array.of.call(C, …)`: catchable
+TypeError → uncatchable `illegal cast` trap** in `__extern_set → __obj_find`
+(root: wasi `__extern_set` traps on a plain `o.length = 2` too, both trees —
+not fixed here). Fix: on `ctx.wasi` the constructor lane is DECLINED with a
+catchable TypeError (`usingCtorInstrs`); the default lane
+(`Array.from.call(undefined, [9])` → `9`) is untouched. After (wasi): y3c/y4c
+`caught TypeError … / after`, exit 0 — base printed `caught TypeError … /
+after` too. Given up on wasi: nothing that worked — the constructor lane on
+wasi only ever trapped (p09 subclass/`.call` rows: base TypeError, lane trap).
+
+**F3 (unconfirmed by a skeptic; reproduced, LEFT) — array-like with holes
+reaching a typed position traps.** `var a = Array.from({ length: 3, 1: "m" });
+a.length` → node 3 / base TypeError (array-like unsupported) / lane `illegal
+cast` in the enclosing closure, before AND after this pass. The trap is the
+pre-existing undefined-in-string-lane carrier conversion (`var a =
+Array.from([undefined, "m"])` traps identically on base), reached because the
+array-like branch now exists. Not fixable in `array-from-native.ts`; the
+common idioms `Array.from({length: n}, fn)` and `Array.from({length: n}).map(fn)`
+are unaffected. This is the one row where the lane is worse-in-kind than base.
+
+Regression found and fixed while verifying: with the property probe gone,
+`Array.from("ab", fn)` (a native string source) answered empty (`__extern_has`
+does not reach %String.prototype%) — a native-string arm was added to the
+predicate; `strMap=a0,b1` again.
+
+Rows re-run on the fixed lane (standalone, `scripts/run-test262-paths.mts`):
+`built-ins/Array/{from,of}/**` **50 / 63** (lane-before 49, base 29;
+`from/source-object-without.js` newly passes, ZERO rows lost);
+`.tmp/es2015/arrobj-controls.txt` **20 / 20**; concat group J 2 / 12 and
+`hasOwnProperty/**` 79 / 79 unchanged (code untouched); the four vitest pins
+green. Source-shape matrix (string / Set / Map / generator ± finally ±
+abrupt mapper / arguments / typed array / getter-length array-like /
+closed-struct literal ± length / class ± length / Proxy / infinite iterator /
+subclass / `.call` receivers) on base vs lane: every row equal to or better
+than base except F3 above.

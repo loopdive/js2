@@ -4127,6 +4127,17 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * first ordinary argument, so these cannot share the all-arities method set
    * above. `.call(thisArg)` still consults both sets. */
   nativeProtoAccessorGetterClosureStructTypes?: Set<number>;
+  /**
+   * (#5194 r3 review F3) Meta struct types (`ensureBuiltinFnMetaType`) of the
+   * native-proto closures minted with the `refusalBodyFallback` body — the
+   * "<Builtin>.prototype.<m> is not yet implemented in --target standalone"
+   * throw. The dyn-view [[Get]] prototype walk (`ta-dyn-mop.ts`) answers
+   * `undefined` instead of handing one of these back as a first-class value,
+   * so a stable-wrong `undefined` never escalates into a runtime TypeError on
+   * the value path. Keyed by meta type idx; the `bfnid` field disambiguates
+   * structurally-canonicalized siblings exactly as `fillBuiltinFnMeta` does.
+   */
+  nativeProtoRefusalMetaTypeIdxs?: Set<number>;
   /** (#682) Native standalone RegExp engine hook. Standalone mode currently
    *  enables the reduced literal-substring backend; null means RegExp lowering
    *  must stay on the explicit #1474 refusal path. */

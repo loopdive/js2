@@ -124,6 +124,40 @@ export function vecHostBridgeMaterializerOrdinal(kind: VecHostBridgeMaterializer
   return VEC_HOST_BRIDGE_MATERIALIZER_ORDINALS[kind];
 }
 
+/**
+ * (#3520 W1-E) The third sub-family of the vec host bridge: the `#3116`
+ * array-exotic write-back pair emitted by `vec-define-writeback.ts`.
+ *
+ * They belong here rather than in a role of their own because they share the
+ * bridge's anchor (the entry source), its emission gate family, and its
+ * `externref`-in / `i32`-out host shape. Closing the table at 9/10 is what
+ * makes their identity immovable: the ordinal is a compile-time constant, so —
+ * unlike the positional `retained-module-function` fallback they used to land
+ * on — nothing a program contains can renumber them.
+ *
+ * The pair deliberately does NOT get rows in `VEC_HOST_BRIDGE_DEFINITIONS`.
+ * That table also drives the reserved physical `$v<ordinal>` export namespace
+ * and the six-bridge placeholder allocation; the write-back helpers keep their
+ * logical exports and are emitted only under their own gate.
+ */
+export type VecHostBridgeWritebackKind = "setElem" | "setLen";
+
+const VEC_HOST_BRIDGE_WRITEBACK_ORDINALS: Readonly<Record<VecHostBridgeWritebackKind, number>> = (() => {
+  const firstWritebackOrdinal = Math.max(...Object.values(VEC_HOST_BRIDGE_MATERIALIZER_ORDINALS)) + 1;
+  if (firstWritebackOrdinal !== 9) {
+    throw new Error(`vec host bridge write-back ABI must start at ordinal 9, got ${firstWritebackOrdinal}`);
+  }
+  return Object.freeze({
+    setElem: firstWritebackOrdinal,
+    setLen: firstWritebackOrdinal + 1,
+  });
+})();
+
+/** Program ABI derived ordinal for the vec write-back helper family. */
+export function vecHostBridgeWritebackOrdinal(kind: VecHostBridgeWritebackKind): number {
+  return VEC_HOST_BRIDGE_WRITEBACK_ORDINALS[kind];
+}
+
 const vecHostBridgeAllocations = new WeakMap<CodegenContext, ReadonlyMap<VecHostBridgeKind, VecHostBridgeAllocation>>();
 const vecHostBridgePublishedExports = new WeakMap<CodegenContext, readonly VecHostBridgePublishedExport[]>();
 

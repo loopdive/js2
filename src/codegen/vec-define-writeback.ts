@@ -17,10 +17,61 @@
 // falls back to its previous sidecar-only behaviour. Emission is gated (by the
 // caller in `_emitVecAccessExportsInner`) on a defineProperty import being
 // present so modules that never define properties stay byte-identical.
-import type { Instr, ValType } from "../ir/types.js";
+import type { FuncHandle, Instr, LocalDef, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import { addFuncType, getArrTypeIdxFromVec } from "./registry/types.js";
-import { nativeStrVecElemTypeIdx } from "./vec-access-exports.js";
+import {
+  nativeStrVecElemTypeIdx,
+  VEC_HOST_BRIDGE_ROLE,
+  type VecHostBridgeWritebackKind,
+  vecHostBridgeWritebackOrdinal,
+} from "./vec-access-exports.js";
+
+/**
+ * (#3520 W1-E) Allocate one write-back helper and give it its structural
+ * Program ABI owner.
+ *
+ * Two things are deliberate here.
+ *
+ * **Stable handle, not a live index.** The pair used to mint
+ * `ctx.numImportFuncs + mod.functions.length` and bake that number into
+ * `mod.exports` and `funcMap`. `emitVecAccessExports` runs at
+ * `src/codegen/index.ts:11111`, and `addUnionImports` runs at `:11153` — i.e.
+ * imports can still land AFTER these functions exist, which is exactly the
+ * chased-live-index regime `func-space.ts` documents as unsound (#3909). The
+ * bridge helpers next door already mint stable handles; these now do too.
+ *
+ * **Observation cannot fire `planning-sealed`.** `observeEntrySourceSupports`
+ * throws once retained planning has run, and retained planning happens inside
+ * `eliminateDeadLayoutAndPlanProgramAbi` — `src/codegen/index.ts:11397` in the
+ * main flow and `:6751` in the compile-project flow, both strictly after the
+ * `emitVecAccessExports` call that reaches this emitter (`:11111` / `:5991`).
+ */
+function defineWritebackHelper(
+  ctx: CodegenContext,
+  kind: VecHostBridgeWritebackKind,
+  name: string,
+  typeIdx: number,
+  locals: LocalDef[],
+  body: Instr[],
+): void {
+  const func: WasmFunction = { name, typeIdx, locals, body, exported: true };
+  const funcIdx: FuncHandle = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, func);
+  ctx.mod.exports.push({ name, desc: { kind: "func", index: funcIdx } });
+  ctx.funcMap.set(name, funcIdx);
+  ctx.programAbiCallables?.observeEntrySourceSupports([
+    {
+      role: VEC_HOST_BRIDGE_ROLE,
+      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.vecHostBridge,
+      derivedOrdinal: vecHostBridgeWritebackOrdinal(kind),
+      displayName: name,
+      funcIdx,
+    },
+  ]);
+}
 
 /**
  * Emit the two write-back exports. `mutEntries` is the caller's filtered
@@ -32,8 +83,6 @@ export function emitVecDefineWritebackExports(
   mutEntries: Array<[string, number]>,
   unboxNumIdx: number | undefined,
 ): void {
-  const mod = ctx.mod;
-
   // __vec_set_elem(externref vec, i32 idx, externref value) -> i32 (1 = ok, -1 = unsupported)
   {
     const setElemTypeIdx = addFuncType(
@@ -42,7 +91,6 @@ export function emitVecDefineWritebackExports(
       [{ kind: "i32" }],
       "$__vec_set_elem_type",
     );
-    const setElemFuncIdx = ctx.numImportFuncs + mod.functions.length;
     // params: 0 = vec (externref), 1 = idx (i32), 2 = value (externref)
     const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
     const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 3 }];
@@ -210,15 +258,7 @@ export function emitVecDefineWritebackExports(
     // impossible fallthrough explicit instead of letting the safety net append
     // a lossy default result.
     body.push(...current, { op: "unreachable" });
-    mod.functions.push({
-      name: "__vec_set_elem",
-      typeIdx: setElemTypeIdx,
-      locals,
-      body,
-      exported: true,
-    } as never);
-    mod.exports.push({ name: "__vec_set_elem", desc: { kind: "func", index: setElemFuncIdx } });
-    ctx.funcMap.set("__vec_set_elem", setElemFuncIdx);
+    defineWritebackHelper(ctx, "setElem", "__vec_set_elem", setElemTypeIdx, locals, body);
   }
 
   // __vec_set_len(externref vec, i32 newLen) -> i32 (1 = ok, -1 = unsupported)
@@ -229,7 +269,6 @@ export function emitVecDefineWritebackExports(
       [{ kind: "i32" }],
       "$__vec_set_len_type",
     );
-    const setLenFuncIdx = ctx.numImportFuncs + mod.functions.length;
     // params: 0 = vec (externref), 1 = newLen (i32)
     const locals: { name: string; type: ValType }[] = [{ name: "__any", type: { kind: "anyref" } }];
     const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 2 }];
@@ -304,14 +343,6 @@ export function emitVecDefineWritebackExports(
     // See __vec_set_elem above: all arms return and this marks the impossible
     // fallthrough explicitly for the stack-balance verifier.
     body.push(...current, { op: "unreachable" });
-    mod.functions.push({
-      name: "__vec_set_len",
-      typeIdx: setLenTypeIdx,
-      locals,
-      body,
-      exported: true,
-    } as never);
-    mod.exports.push({ name: "__vec_set_len", desc: { kind: "func", index: setLenFuncIdx } });
-    ctx.funcMap.set("__vec_set_len", setLenFuncIdx);
+    defineWritebackHelper(ctx, "setLen", "__vec_set_len", setLenTypeIdx, locals, body);
   }
 }

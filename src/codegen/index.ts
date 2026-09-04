@@ -308,6 +308,7 @@ import {
   fillAnyIterNext,
   fillIterResultObject,
   fillNativeIteratorLateArms,
+  fillIteratorMethodPresent,
 } from "./iterator-native.js";
 import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
 import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
@@ -385,6 +386,7 @@ import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; 
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
+import { unshiftExternMethodCallTaDynViewArm } from "./ta-dyn-method-call.js"; // (#5194 r3-1) dyn-view receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 import { fillClosurePrototypeEdge, spliceClosurePrototypeEdgeHasOwn } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge; (#4637 A4) its own-property visibility twin
@@ -6062,6 +6064,11 @@ export function generateModule(
     // No-op unless a lazy wrapper was constructed.
     fillLazyIterLadderArms(ctx);
 
+    // (#5268 r3) Prepend the static closed-struct / generator-frame arms to
+    // the `HasIteratorMethod` predicate `Array.from` branches on. After the
+    // ladder fills (its type set is the same one).
+    fillIteratorMethodPresent(ctx);
+
     // (#5147) Fill `__any_iter_next` — source-level `.next()` on a native
     // iterator carrier. MUST run after both fills above: it delegates to the
     // fully-armed `__iterator_next`.
@@ -6372,6 +6379,12 @@ export function generateModule(
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     unshiftExternMethodCallProtoArm(ctx);
+    // (#5194 r3-1) The `$__ta_dyn_view` twin: a `%TypedArray%.prototype` method
+    // called on a dynamically-constructed view reached through an `any`
+    // receiver. Narrow by construction — it claims only names whose native
+    // `__ta_dyn_<m>` helper exists, so every other method keeps its current
+    // path. See ta-dyn-method-call.ts.
+    unshiftExternMethodCallTaDynViewArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -9404,13 +9417,52 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         }
       }
 
+      // (#5268 r3 R3-5c) OrdinaryToPrimitive step 5.b.i is `IsCallable(method)`:
+      // a `valueOf: null` / `toString: null` FIELD is not a method, it is an
+      // absent one. The two closure modes below read that field and
+      // `ref.cast` it to the closure struct type unguarded, so a non-closure
+      // slot TRAPPED ("illegal cast in __call_valueOf") instead of falling
+      // through to the next candidate. Re-read the field and `ref.test` it
+      // first; a miss takes the same `else` an absent entry takes. (The
+      // `closure-eqref-multi` mode already guards, and `standalone` /
+      // `callable-dynamic` cannot hold a non-callable in that slot.)
+      const callableFieldGuard: Instr[] | undefined =
+        entry.mode === "closure-extern"
+          ? [
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx: entry.typeIdx },
+              { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: entry.closureTypeIdx },
+            ]
+          : entry.mode === "closure"
+            ? [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: entry.typeIdx },
+                { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
+                { op: "ref.test", typeIdx: entry.closureTypeIdx },
+              ]
+            : undefined;
+      const guardedThen: Instr[] =
+        callableFieldGuard === undefined
+          ? thenInstrs
+          : [
+              ...callableFieldGuard,
+              {
+                op: "if",
+                blockType: { kind: "val" as const, type: { kind: "externref" as const } },
+                then: thenInstrs,
+                else: buildDispatch(idx + 1),
+              },
+            ];
+
       return [
         { op: "local.get", index: anyLocal },
         { op: "ref.test", typeIdx: entry.typeIdx },
         {
           op: "if",
           blockType: { kind: "val" as const, type: { kind: "externref" as const } },
-          then: thenInstrs,
+          then: guardedThen,
           else: buildDispatch(idx + 1),
         },
       ];
@@ -11002,6 +11054,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     profilePhase("unshift-extern-method-call-proto", () => unshiftExternMethodCallProtoArm(ctx));
+    profilePhase("unshift-extern-method-call-ta-dyn-view", () => unshiftExternMethodCallTaDynViewArm(ctx));
     profilePhase("unshift-extern-get-proto-cache", () => unshiftExternGetProtoCacheArm(ctx));
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -11156,6 +11209,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-native-generator-method-dispatches", () => fillNativeGeneratorMethodDispatches(ctx));
     profilePhase("fill-iter-hof-steppers", () => fillIterHofSteppers(ctx));
     profilePhase("fill-lazy-iter-ladder-arms", () => fillLazyIterLadderArms(ctx));
+    profilePhase("fill-iterator-method-present", () => fillIteratorMethodPresent(ctx));
     profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
     profilePhase("fill-any-iter-next", () => fillAnyIterNext(ctx));
     profilePhase("fill-combinator-to-vec", () => fillCombinatorToVec(ctx));
