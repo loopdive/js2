@@ -110,7 +110,13 @@ function expectedClassUnitKind(declaration: ts.Node): IrUnitKind | null {
   if (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) {
     return "class-implicit-constructor";
   }
-  if (ts.isConstructorDeclaration(declaration)) return "class-constructor";
+  if (ts.isConstructorDeclaration(declaration)) {
+    // (#5195 r3-4, r3 review F2) `static constructor(){}` parses as a
+    // ConstructorDeclaration but is an ordinary static METHOD named
+    // "constructor" (§15.7); the IR inventory classifies it that way, so the
+    // ABI planner has to agree or every such class fails to plan.
+    return hasStaticModifier(declaration) ? "class-static-method" : "class-constructor";
+  }
   if (ts.isMethodDeclaration(declaration)) {
     return hasStaticModifier(declaration) ? "class-static-method" : "class-instance-method";
   }

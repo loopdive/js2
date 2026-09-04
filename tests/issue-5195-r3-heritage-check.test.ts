@@ -12,6 +12,15 @@
 // time is only safe while it declines every heritage the compiler already
 // lowers statically, so each declining shape gets its own control on both
 // lanes.
+//
+// (r3 review F1, 2026-09-04) The predicate is now COMPILE-TIME PROOF ONLY: it
+// admits a heritage only when the source shows it cannot be a constructor (a
+// literal, an arrow, a generator/async function, a `.bind()` of one of those, a
+// `new Proxy` over one of those, or a unique never-written binding of any of
+// them). Everything else — a parameter, an alias, a conditional, a call result
+// — is DECLINED and keeps the base tree's code. The first cut admitted those
+// too and threw unconditionally on them, which broke the mixin-factory idiom;
+// see `tests/issue-5195-r3-review.test.ts`.
 
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
@@ -20,12 +29,21 @@ import { compile } from "../src/index.js";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
 import { runTest262File } from "./test262-runner.js";
 
-/** The eight rows r3-5 flips (all `fail` on base `91d4999050`). */
+/**
+ * The six rows r3-5 flips (all `fail` on base `91d4999050`).
+ *
+ * (r3 review F1, 2026-09-04) Two more rows —
+ * `definition/constructable-but-no-prototype.js` and
+ * `definition/prototype-setter.js` — were listed here after the first cut, but
+ * only ever "passed" because that cut threw on ANY heritage it could not
+ * trace. Both use `function () {}.bind()`, which IS a constructor; their
+ * TypeError comes from the §15.7.14 step 5.g.ii `prototype` lookup, the half
+ * this module deliberately does not implement. They are given back, and fail
+ * exactly as they do on base.
+ */
 const R3_5_ROWS = [
   "language/expressions/class/heritage-arrow-function.js",
   "language/expressions/class/heritage-async-arrow-function.js",
-  "language/statements/class/definition/constructable-but-no-prototype.js",
-  "language/statements/class/definition/prototype-setter.js",
   "language/statements/class/subclass/superclass-arrow-function.js",
   "language/statements/class/subclass/superclass-async-function.js",
   "language/statements/class/subclass/superclass-async-generator-function.js",

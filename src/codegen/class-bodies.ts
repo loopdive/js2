@@ -21,12 +21,7 @@ import { emitStandalonePromiseFromExecutorValue } from "./promise-executor.js"; 
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
-import {
-  classMemberComputedKeyIsRuntime,
-  dynamicClassKeyGlobalKey,
-  dynamicClassMemberName,
-  isDynamicClassMemberName,
-} from "./class-dynamic-keys.js"; // (#5195 Step 1 / F1 / r3-3)
+import { dynamicClassKeyGlobalKey, dynamicClassMemberName, isDynamicClassMemberName } from "./class-dynamic-keys.js"; // (#5195 Step 1 / F1)
 import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.js"; // (#4440)
 import { resolveClassHeritageAlias } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
@@ -731,12 +726,7 @@ export function resolveInstallableClassMemberName(
   member: ts.ClassElement,
 ): string | undefined {
   if (!member.name) return undefined;
-  // (#5195 r3-3) `[x = 1]` folds to the RHS in `resolveConstantExpression`, which
-  // silently drops the WRITE. For a method/accessor the runtime-key lane below
-  // can carry it, so decline the fold here and let the key be evaluated for
-  // real. Fields and object literals keep the fold (see
-  // `ast-modifiers.ts::computedKeyPerformsWrite`).
-  const folded = classMemberComputedKeyIsRuntime(ctx, member) ? undefined : resolveClassMemberName(ctx, member.name);
+  const folded = resolveClassMemberName(ctx, member.name);
   if (folded !== undefined) return folded;
   // Only an unfoldable COMPUTED key gets a synthetic name. A private name is
   // already mangled by `resolveClassMemberName`; anything else that answers

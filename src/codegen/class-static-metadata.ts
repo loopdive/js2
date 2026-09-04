@@ -10,7 +10,8 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { fnInstanceNameOf } from "./function-instance-meta.js";
-import { fnctorAncestorOfClass } from "./class-member-keys.js";
+import { isHostConstructibleBuiltin } from "./builtin-tags.js";
+import { BUILTIN_CONSTRUCTOR_IDENTITY_NAMES } from "./builtin-static-globals.js";
 
 /** The own keys created by a class constructor before static declarations. */
 export const CLASS_CONSTRUCTOR_OWN_KEYS = ["length", "name", "prototype"] as const;
@@ -83,6 +84,70 @@ export function classObjectDisplayName(ctx: CodegenContext, classIdentity: strin
   return "";
 }
 
+/** The `extends` expression of a class declaration, if it has one. */
+function classHeritageExpression(decl: ts.ClassDeclaration | ts.ClassExpression): ts.Expression | undefined {
+  for (const clause of decl.heritageClauses ?? []) {
+    if (clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0) {
+      let bare: ts.Expression = clause.types[0]!.expression;
+      while (
+        ts.isParenthesizedExpression(bare) ||
+        ts.isAsExpression(bare) ||
+        ts.isTypeAssertionExpression(bare) ||
+        ts.isNonNullExpression(bare)
+      ) {
+        bare = bare.expression;
+      }
+      return bare;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * (#5195 r3-7, r3 review F5) True when EVERY link of `className`'s heritage
+ * chain is provably a class (or a builtin constructor, or `extends null`, or
+ * no heritage at all) — the only case in which the §10.2.4 `caller`/
+ * `arguments` poison is justified.
+ *
+ * The first cut declined only a chain whose non-class ancestor was a top-level
+ * function DECLARATION (`fnctorAncestorOfClass`). A `var`-bound function
+ * EXPRESSION — `var Fe = function () {}; class K extends Fe {}` — is neither in
+ * `topLevelFunctionNames` nor in `funcMap`, so the chain read as class-only and
+ * `K.caller` threw where node answers `null` and the base tree answered
+ * `undefined`. Anything the compiler cannot prove to be a class (a parameter,
+ * an alias it did not resolve, a conditional, a call result, a property access,
+ * a function expression) declines instead.
+ */
+function classChainIsProvablyAllClasses(ctx: CodegenContext, className: string): boolean {
+  const seen = new Set<string>();
+  let cls: string | undefined = className;
+  while (cls !== undefined && !seen.has(cls)) {
+    seen.add(cls);
+    const parent = ctx.classParentMap.get(cls);
+    if (parent !== undefined && ctx.classSet.has(parent)) {
+      cls = parent;
+      continue;
+    }
+    const decl = ctx.classDeclarationMap.get(cls);
+    if (decl === undefined) return false;
+    const heritage = classHeritageExpression(decl);
+    // No heritage, or `extends null`: the chain ends at %Function.prototype%,
+    // and a class object is a strict function there.
+    if (heritage === undefined || heritage.kind === ts.SyntaxKind.NullKeyword) return true;
+    if (ts.isClassExpression(heritage)) return true;
+    if (!ts.isIdentifier(heritage)) return false;
+    const resolved = ctx.classExprNameMap.get(heritage.text) ?? heritage.text;
+    if (ctx.classSet.has(resolved)) {
+      cls = resolved;
+      continue;
+    }
+    // A BUILTIN constructor ancestor (`extends Error`/`Array`) does throw in
+    // node, so it keeps the poison; everything else is unproven.
+    return isHostConstructibleBuiltin(heritage.text) || BUILTIN_CONSTRUCTOR_IDENTITY_NAMES.has(heritage.text);
+  }
+  return false;
+}
+
 /**
  * (#5195 r3-7) True when `<Class>.<propName>` names one of the §10.2.4
  * restricted function properties AND the class declares nothing under that
@@ -112,7 +177,7 @@ export function classObjectDisplayName(ctx: CodegenContext, classIdentity: strin
 export function classObjectRestrictedProperty(ctx: CodegenContext, className: string, propName: string): boolean {
   if (ctx.standalone !== true) return false;
   if (propName !== "caller" && propName !== "arguments") return false;
-  if (fnctorAncestorOfClass(ctx, className) !== undefined) return false;
+  if (!classChainIsProvablyAllClasses(ctx, className)) return false;
   // Statics are INHERITED along the class chain, so a `static caller` declared
   // on an ancestor shadows the accessor for every descendant too. Walk the
   // chain over all four declaration surfaces rather than testing the own class
@@ -124,8 +189,10 @@ export function classObjectRestrictedProperty(ctx: CodegenContext, className: st
     if (
       ctx.staticProps.has(`${cls}_${propName}`) ||
       ctx.staticMethodSet.has(`${cls}_${propName}`) ||
-      ctx.staticAccessorSet.has(`${cls}_get_${propName}`) ||
-      ctx.staticAccessorSet.has(`${cls}_set_${propName}`)
+      // (r3 review F4) `staticAccessorSet` is keyed `<Class>_<prop>` at both
+      // add sites (class-bodies.ts) — the `_get_`/`_set_` spelling this used to
+      // test never matched, so a DECLARED `static get caller()` stayed poisoned.
+      ctx.staticAccessorSet.has(`${cls}_${propName}`)
     ) {
       return false;
     }

@@ -4,7 +4,7 @@ title: "ES2015 standalone class — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-03
+updated: 2026-09-04
 priority: medium
 horizon: l
 feasibility: medium
@@ -50,6 +50,14 @@ loc-budget-allow:
   - src/codegen/destructuring-params.ts
   - src/codegen/statements/variables.ts
   - src/codegen/class-static-metadata.ts
+  # (2026-09-04, r3 review F2) `static constructor(){}` is an ordinary static
+  # METHOD (§15.7), not the class's [[Construct]] body. Codegen already skips
+  # it; the IR identity inventory and the ABI planner had to be taught the same
+  # classification or every such class failed to plan ("class callable E_init
+  # has no consistent exact class-implicit-constructor inventory owner"). The
+  # growth is the two classification sites plus the comment that records why.
+  - src/ir/identity.ts
+  - src/codegen/program-abi-class-callable-planning.ts
 coercion-sites-allow:
   - src/codegen/class-proto-lookup.ts
 func-budget-allow:
@@ -2299,3 +2307,66 @@ when the result is neither an object nor null. It was left out here because the
 `undefined` on that read, and getting that wrong turns a working `extends`
 into a spurious throw — the exact failure this step's predicate exists to
 avoid. It is additive to the emitter already in place.
+
+### Round-3 review fixes (2026-09-04)
+
+An adversarial review put the r3 pass (r3-3 / r3-4 / r3-2 / r3-7 / r3-5) on
+hold with five findings; three of them (F1, F2, F3) were independently
+reproduced by a second reviewer who built the merge-base tree himself and used
+node as the oracle. All five are fixed below. Every measurement here is
+lane-vs-a-base-tree I built myself (`git archive 91d4999050` into
+`.tmp/review-5195/base`, verified against the git blobs), with node beside it,
+on **all three targets** — js-host, `{target:"standalone", nativeStrings:true}`
+and `{target:"wasi", nativeStrings:true}`.
+
+**Corrected premise (review note N1), and it changes the measurement plan.**
+`--target wasi` does NOT set `ctx.standalone` —
+`context/create-context.ts`: `standalone: targetProfile.target === "standalone"`.
+So the `ctx.standalone` gates on r3-3, r3-5 and r3-7 reach the **standalone
+lane only**, while **r3-2 and r3-4 are ungated and reach host and wasi too**.
+The r3-4 regression below was therefore a host and wasi compile failure as well,
+which the original "host byte-identical" claim had ruled out a priori.
+
+| Finding | What was wrong | Fix | Given up |
+|---|---|---|---|
+| **F1** (high) | `emitStandaloneHeritageCheck` threw a TypeError for every heritage value that was not an `externref` — i.e. every typed GC ref: a class struct held in a **parameter**, a function-scope **alias**, a **conditional**, an inline function expression. The canonical mixin factory `B => class extends B {}` and `function mk(P) { class D extends P {} }` — both of which base compiles and runs correctly — became unconditional throws. There is no true-positive runtime lane for a class VALUE either: `__reflect_is_constructor` does not recognise a compiled class object. | The predicate is now **compile-time proof only**. `heritageIsProvablyNotConstructor` admits a literal, an arrow, a generator/async function, a `.bind()` of one of those, a `new Proxy` over one of those, and a **unique, never-written** binding of any of them (bounded alias chasing, depth ≤ 4); everything else is declined and keeps the base tree's code. The runtime `__reflect_is_constructor` arm is gone. | 2 rows: `definition/constructable-but-no-prototype.js` and `definition/prototype-setter.js`. Both use `function () {}.bind()`, which **is** a constructor — their TypeError comes from the step 5.g.ii `prototype` lookup, the half this module does not implement. They only ever "passed" because the first cut threw on anything it could not trace. |
+| **F2** (high) | `class E { static constructor() {} }` with no instance constructor became an internal compile error on **host, standalone and wasi**: `class callable E_init has no consistent exact class-implicit-constructor inventory owner`. r3-4 taught codegen that a `static constructor` is not the class's [[Construct]] body, but the IR identity inventory still recorded it as one, so no `class-implicit-constructor` unit existed for the `<Class>_init` allocator codegen emitted. Base compiled and ran the program. | `src/ir/identity.ts` classifies a `static` ConstructorDeclaration as `class-static-method` and no longer sets `hasExecutableConstructor`; `program-abi-class-callable-planning.ts::expectedClassUnitKind` agrees. The r3-4 wins are kept. | nothing |
+| **F3** (medium) | r3-3 routed a fold-that-writes computed key (`[x = "m"]() {}`) into the `__cmdyn$<n>` runtime-key install lane, which has never served dotted or static access. `new C().m()` went **1 → null**, a static went 8 → null, a setter's target 10 → NaN, and a number-typed key variable took NaN where a stable 0 stood. | **r3-3 reverted** to the fold. `classMemberComputedKeyIsRuntime` is back to "the key does not fold", and is now module-local. | r3-3's single test262 row (`cpn-class-decl-…-assignment-expression-assignment`). The key's WRITE is still dropped, exactly as on base. Emitting the write while keeping the static install was measured and rejected: it turns the stable `0` of a number-typed key variable into `NaN`, i.e. a different wrong value, for a row the corpus does not need. |
+| **F4** (medium) | `classObjectRestrictedProperty` looked the static-accessor surface up as `` `${cls}_get_${propName}` `` / `_set_`, but both add sites in `class-bodies.ts` write `` `${className}_${propName}` `` — so a **declared** `static get caller()` never matched and its read threw where node and base answer `1`. | One lookup, `` `${cls}_${propName}` ``, on the same chain walk that already covers the field and method surfaces (so an inherited `static get caller` is covered too). | nothing |
+| **F5** (medium) | The plain-function-ancestor decline went through `fnctorAncestorOfClass`, which only recognises a top-level function **declaration**. `var Fe = function () {}; class K extends Fe {}` was poisoned: `K.caller` threw where node answers `null` and base `undefined`. | New `classChainIsProvablyAllClasses`: the poison applies only when every link of the chain is provably a class, `extends null`, or a builtin constructor. A function expression, a parameter, an unresolved alias, a conditional or a call result declines. | nothing |
+
+**Blast radius, measured.** 47 probes (the reviewer's 40 plus 7 of mine) on all
+three targets, base vs the pre-fix lane `c1a2bf1609` vs the fixed lane:
+
+- **standalone**: 12 modules differ from base, every one of them an r3-2, r3-4
+  or r3-5 improvement; the remaining 35 are **byte-identical** to base. Every
+  probe that the review named as regressing (`h3`, `h8`, `h16`, `h17`, `h18`,
+  `h19`, `ak1`–`ak4`, `rp4`, `rp5`) is now byte-identical to base again.
+- **host** and **wasi**: only the r3-2 (`ce1`–`ce4`) and r3-4 (`sc*`) modules
+  differ; everything else is byte-identical. Every standalone module that
+  compiles carries an empty import list.
+- `h12-nonctor.js` (nine non-constructor heritage shapes) keeps the pre-fix
+  lane's 8/9 answers exactly; base answers 0/9.
+
+**Two residuals worth stating plainly.**
+
+1. `sc1`/`sc5` — a class carrying BOTH `static constructor(){}` and a real
+   constructor, *and* reading `Object.getOwnPropertyNames` / `hasOwnProperty`
+   off the class object — now compiles where base rejected it with the spurious
+   duplicate-constructor early error, and then hits a pre-existing
+   `illegal cast` trap (host/wasi) or needs the pre-existing
+   `js2wasm:runtime-eval` import (standalone). Neither tree runs the program;
+   the trap is in that reflection surface, not in r3-4 (control `ctl-hop.js`
+   is byte-identical on both trees and fails the same way).
+2. Under `--target wasi`, r3-2's newly collected top-level class expressions
+   request `env.__to_property_key`, which strict mode refuses with a warning
+   (no import is emitted). `ce2`/`ce3` already warned on base; `ce1`/`ce4` are
+   new warnings, with output unchanged or better. Pre-existing gap in the
+   dual-mode allowlist, not fixed here.
+
+**Pins.** `tests/issue-5195-r3-review.test.ts` — 12 tests, one control per
+finding plus a win-retention control for each. Verified on three trees:
+**9 of the 12 FAIL on the pre-fix lane `c1a2bf1609`** (F1 ×2, F2 ×4, F3, F4,
+F5) and pass on base; the other 3 are the win controls, which fail on base and
+pass on the lane. `tests/issue-5195-r3-heritage-check.test.ts` drops the two
+given-up rows from `R3_5_ROWS`. All three r3 pin files: 32/32 pass.

@@ -33,7 +33,6 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { resolveComputedKeyExpression } from "./shared.js";
-import { computedKeyPerformsWrite } from "./ast-modifiers.js";
 
 /**
  * The prefix that marks a member registered under a synthetic name because its
@@ -83,27 +82,24 @@ export function classHasUnresolvedComputedMemberName(ctx: CodegenContext, decl: 
 }
 
 /**
- * (#5195 r3-3) True when this METHOD/ACCESSOR carries a ComputedPropertyName the
- * install lane must evaluate at runtime. Single source of truth for
- * {@link classHasUnresolvedComputedMemberName} (which decides whether the class
- * reaches `__module_init` at all) and
- * `class-bodies.ts::resolveInstallableClassMemberName` (which mints the
- * synthetic `__cmdyn$<n>` name). The two MUST agree: a key the name resolver
- * declines but the collector folds is never evaluated, and a key the collector
- * routes but the resolver folds installs under a stale name.
+ * True when this METHOD/ACCESSOR carries a ComputedPropertyName the install
+ * lane must evaluate at runtime, i.e. one that does not fold to a constant.
  *
- * Two ways to be runtime-keyed: the key does not fold at all, or it folds only
- * because {@link resolveConstantExpression} drops an assignment's WRITE
- * (`[x = 1]`) — the second is standalone-only, because that is where the
- * runtime-key install lane exists.
+ * (#5195 r3-3, REVERTED by the r3 review, 2026-09-04.) A second arm treated a
+ * key that folds only because `resolveConstantExpression` drops an assignment's
+ * WRITE (`[x = 1]`) as runtime-keyed under standalone. That routed the member
+ * into the `__cmdyn$<n>` install lane, which has never served dotted or static
+ * access: `class C { [x = "m"]() { return 1; } }` went from `new C().m() === 1`
+ * to `null`, and the number-typed key variable took a NaN. Reverted to the
+ * fold; the write is still dropped, exactly as on the base tree, and the one
+ * test262 row the arm flipped is given back.
  */
-export function classMemberComputedKeyIsRuntime(ctx: CodegenContext, member: ts.ClassElement): boolean {
+function classMemberComputedKeyIsRuntime(ctx: CodegenContext, member: ts.ClassElement): boolean {
   if (!ts.isMethodDeclaration(member) && !ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) {
     return false;
   }
   if (member.name === undefined || !ts.isComputedPropertyName(member.name)) return false;
-  if (resolveComputedKeyExpression(ctx, member.name.expression) === undefined) return true;
-  return ctx.standalone === true && computedKeyPerformsWrite(member.name.expression);
+  return resolveComputedKeyExpression(ctx, member.name.expression) === undefined;
 }
 
 /**
