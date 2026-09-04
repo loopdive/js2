@@ -119,6 +119,23 @@ export function classifyNonConstructableValue(ctx: CodegenContext, calleeExpr: t
           : (e as ts.NonNullExpression).expression;
     }
     if (ts.isArrowFunction(e)) return "provable";
+    // (#5196 R3-4) `var revoke = Proxy.revocable(t, h).revoke` — §28.2.2.1.1
+    // makes the revocation function a built-in function that is NOT a
+    // constructor, so `new revoke()` is a §13.3.5.1 step-5 TypeError. Before
+    // this arm the callee reached no construct path at all and `new revoke()`
+    // evaluated to null with no diagnostic. The `Proxy` receiver is proven an
+    // ambient intrinsic at the same boundary every other arm here uses, so a
+    // user object with its own `revocable` method can never be intercepted.
+    if (
+      ts.isPropertyAccessExpression(e) &&
+      e.name.text === "revoke" &&
+      ts.isCallExpression(e.expression) &&
+      ts.isPropertyAccessExpression(e.expression.expression) &&
+      e.expression.expression.name.text === "revocable" &&
+      resolvesToNamedAmbientGlobal(ctx, e.expression.expression.expression, "Proxy")
+    ) {
+      return "provable";
+    }
     if (ts.isPropertyAccessExpression(e)) {
       const obj = e.expression;
       if (ts.isPropertyAccessExpression(obj) && obj.name.text === "prototype") {

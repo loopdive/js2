@@ -369,6 +369,7 @@ import {
 } from "./object-runtime.js";
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
+import { fillProxyRevokerFnMeta } from "./proxy-revoker-meta.js"; // (#5196) revoker name/length meta arm
 import { fillSymbolAnyToStringArm } from "./symbol-native.js"; // (#4632) $Symbol arm in __any_to_string
 import { fillCallableAnyToStringArm, fillCallableExternToStringArm } from "./callable-any-to-string.js"; // (#4492 wave-5) callable ToString arms
 import { fillMapSetDynDispatchArms } from "./map-runtime.js"; // (#4629) Map/Set any-channel dispatch arms
@@ -6465,6 +6466,11 @@ export function generateModule(
     // is immaterial; no-op unless a `$__ta_ctor` type is registered.
     fillTaCtorGetMetaArm(ctx);
 
+    // (#5196 R3-4) …and the `Proxy.revocable(…).revoke` carrier's `name`/
+    // `length`, on the same disjoint-receiver-guard discipline. No-op unless a
+    // `Proxy.revocable` site compiled.
+    fillProxyRevokerFnMeta(ctx);
+
     // (#4632) `$Symbol` arm in `__any_to_string` — a carrier reaching the
     // generic ToString terminal renders "Symbol(desc)", not "[object Object]".
     fillSymbolAnyToStringArm(ctx);
@@ -11046,6 +11052,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-function-instance-props", () => fillFunctionInstanceProps(ctx));
     profilePhase("fill-builtin-fn-meta", () => fillBuiltinFnMeta(ctx));
     profilePhase("fill-ta-ctor-get-meta-arm", () => fillTaCtorGetMetaArm(ctx));
+    profilePhase("fill-proxy-revoker-fn-meta", () => fillProxyRevokerFnMeta(ctx));
 
     // (#4098) Multi-source parity: the helper bodies were filled above; now
     // splice the native Error reader and publish the optional JS-boundary

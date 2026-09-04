@@ -1407,6 +1407,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       // funcIdx this closure bakes is already post-registration; the
       // `flushLateImportShifts` at the end of this function repairs the rest.
       ensureNativeProxyRuntime(ctx);
+      ctx.proxyRevocableSite = true; // (#5196 R3-4) arm the revoker metadata arms
       const revocableIdx = ctx.funcMap.get("__proxy_revocable");
       if (revocableIdx === undefined) return null;
       closureFctx.body.push({ op: "local.get", index: 1 });

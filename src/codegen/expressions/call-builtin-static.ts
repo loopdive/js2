@@ -3913,6 +3913,7 @@ export function compileBuiltinStaticCall(
     propAccess.name.text === "revocable"
   ) {
     ensureNativeProxyRuntime(ctx);
+    ctx.proxyRevocableSite = true; // (#5196 R3-4) arm the revoker metadata arms
     const compileProxyInput = (arg: ts.Expression | undefined): void => {
       if (arg === undefined) {
         fctx.body.push({ op: "ref.null.extern" });

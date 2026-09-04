@@ -4,7 +4,7 @@ title: "ES2015 standalone proxy — r2 residual pass"
 status: in-progress
 sprint: current
 created: 2026-08-29
-updated: 2026-09-03
+updated: 2026-09-04
 priority: medium
 horizon: m
 feasibility: medium
@@ -66,6 +66,18 @@ loc-budget-allow:
   - src/codegen/builtin-value-read.ts
   - src/codegen/expressions/new-super.ts
   - src/codegen/context/types.ts
+  # 2026-09-04 R3-4 implementation (measured): the revocation function's own
+  # `length`/`name` metadata lives in the NEW module
+  # `src/codegen/proxy-revoker-meta.ts` (one `__builtinfn_get_meta` arm plus the
+  # matching `__builtinfn_delete` / `__builtinfn_push_ownnames` arms), wired by
+  # `index.ts`; `object-runtime-proxy.ts` gains the per-instance deleted-bits
+  # field on `__proxy_revoker`; `typeof-natives-finalize.ts` gains the carrier's
+  # typeof arm; `context/types.ts` gains the `proxyRevocableSite` flag; and
+  # `expressions/non-constructable.ts` gains the `Proxy.revocable(…).revoke`
+  # initializer shape so `new revoke()` throws the §13.3.5.1 TypeError instead
+  # of evaluating to null.
+  - src/codegen/proxy-revoker-meta.ts
+  - src/codegen/expressions/non-constructable.ts
 func-budget-allow:
   # 2026-09-01 r2 plan: arm-ladder / dispatch-builder functions that gain one
   # more arm in the shape their existing arms already have (the step naming
@@ -91,6 +103,13 @@ func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/binary-ops-in.ts::compileInOperator
   - src/codegen/object-ops.ts::compileObjectDefineProperty
+  # 2026-09-04 R3-4: `classifyNonConstructableValue`'s nested `classifyInit`
+  # gains the `Proxy.revocable(…).revoke` shape (one more initializer arm in
+  # the shape its existing arms already have).
+  - src/codegen/expressions/non-constructable.ts::classifyNonConstructableValue
+  # 2026-09-04 R3-4: `generateMultiModule` gains the one `fillProxyRevokerFnMeta`
+  # phase line that `generateModule` already got (multi-source parity).
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 # #5196 — proxy r2: cluster and fix the residual proxy-bucket failures
@@ -1552,3 +1571,117 @@ all eight `fail` on `4fa179f8`.
 **Not done in C:** C1 (Reflect.set proxy bypass), C2/C3 (setPrototypeOf /
 preventExtensions booleans), C6 (ownKeys symbols+order), C8a. Not started —
 budget, not a finding.
+
+## Results — R3-4 (2026-09-04, Opus implementer)
+
+Base for every number: a `git archive` of the merge-base `4fa179f8` materialised
+under `.tmp/basetree`, run by this implementer on the same box, same quickjs
+eval tier. Not inherited from any artifact.
+
+**Claimed: +4 of 4 (`r3-D.txt`) — base 0/4, lane 4/4, standalone.**
+
+| row | base | lane |
+|---|---|---|
+| `Proxy/revocable/revocation-function-length.js` | fail (`length should be an own property`) | **pass** |
+| `Proxy/revocable/revocation-function-name.js` | fail (`name should be an own property`) | **pass** |
+| `Proxy/revocable/revocation-function-property-order.js` | fail (`length comes before name`) | **pass** |
+| `Proxy/revocable/revocation-function-not-a-constructor.js` | fail (`isConstructor invoked with a non-function value`) | **pass** |
+
+### What landed
+
+1. `object-runtime-proxy.ts` — `__proxy_revoker` gains a second field, a mutable
+   `i32` deleted-bits mask (bit 0 `length`, bit 1 `name`), the same per-instance
+   state the #2896 builtin-fn meta structs carry. Grepped: the type has exactly
+   ONE `struct.new` site (this one); `object-runtime.ts:7694` only reads field 0.
+2. `proxy-revoker-meta.ts` (NEW) `fillProxyRevokerFnMeta` — one arm in
+   `__builtinfn_get_meta` (the single question `__builtinfn_gopd`,
+   `__hasOwnProperty` and `__extern_get` all ask, so it answers the value, the
+   descriptor and the has-own test at once), plus the matching
+   `__builtinfn_delete` and `__builtinfn_push_ownnames` arms (`length` before
+   `name` — the creation order `property-order.js` asserts). Splice discipline
+   copied from `fillTaCtorGetMetaArm`: a receiver `ref.test` guard disjoint from
+   every other arm, spliced at body index 0, reading only the params.
+3. `typeof-natives-finalize.ts` — the carrier's `typeof` arm. Before it,
+   `typeof revoke` answered "function" only on the compile-time path and
+   "object" through any indirection (a parameter, an array element, a property
+   read), which is what made the `isConstructor.js` harness throw.
+4. `expressions/non-constructable.ts` — `classifyInit` learns the
+   `Proxy.revocable(…).revoke` initializer shape and returns `"provable"`.
+5. `context/types.ts` + the two call sites (`call-builtin-static.ts`,
+   `builtin-value-read.ts`) — the `proxyRevocableSite` module flag.
+
+### Plan corrections (measured, not predicted)
+
+- **The plan's edit list (a)–(e) targets natives that are not where the answer
+  lives.** `__getOwnPropertyDescriptor` / `__getOwnPropertyNames` / `emitHasOwn`
+  all *delegate* the builtin-function case to `__builtinfn_get_meta` /
+  `__builtinfn_push_ownnames`, so one arm in each of those two answers all
+  three questions; four separate arms would have been four chances to disagree.
+- **Plan edit (e) — "add the revoker to the construct driver's not-a-constructor
+  arm" — does not reach the row.** Measured: `new revoke()` returns **null**,
+  because the callee never reaches `__native_construct_N` at all
+  (`resolvesToConstructableFunctionValue` declines and the dynamic-`new`
+  ladder falls through to `ref.null.extern`). An arm was written in
+  `fillNativeConstructDrivers` and **measured not to fire**; it was reverted in
+  favour of the static classifier above, which is where the existing
+  arrow-function / `Function.prototype.call` shapes are already decided.
+- **`ctx.proxyRevocableSite` is needed because presence is not a gate.**
+  Re-confirmed the R3-0 measurement: the `__proxy_revoker` struct type and the
+  proxy natives exist in EVERY standalone module.
+
+### Never-worse-than-base (all re-run by this implementer)
+
+- **Standalone, `built-ins/Proxy/revocable/` + `language/expressions/new/`, all
+  77 rows, 3 batches:** base **69** pass → lane **73** pass, **zero
+  pass→non-pass**. The base non-pass set is a strict superset of the lane's: the
+  4 claimed rows flipped; `Proxy/revocable/tco-fn-realm.js`,
+  `new/ctorExpr-isCtor-after-args-eval.js`, `new/non-ctor-err-realm.js`,
+  `new/spread-obj-spread-order.js` fail identically on both.
+- **Standalone, function-metadata reflection controls (38 rows:
+  `Function/length/`, `Function/prototype/bind/{name,length}*`,
+  `Object/prototype/hasOwnProperty/`) — the shapes the three `__builtinfn_*`
+  arms could collide with: lane 38/38 pass.** A perfect lane score cannot be
+  worse than any base, so base was not re-run for this set.
+- **JS-host lane, the 4 claimed rows:** base 3/4 → lane 4/4 (base failed
+  `not-a-constructor` with a plain `Error`). The non-constructable classifier is
+  the one target-agnostic edit; it improves host and regresses nothing there.
+- **WASI:** both trees compile the revoker probe and a Proxy-free
+  bound-function probe with **zero imports**; no compile error either side.
+- **Standalone behaviour probe** (`typeof` + `length` + `name` + revoke):
+  base returns 1 (`typeof revoke !== "function"`), lane returns 0. The
+  Proxy-free bound-function probe returns 1 on **both** trees — wrong the same
+  way as base (`bind` length/name is #5268-area, untouched here).
+- `imports-of` equivalent: the vitest pin asserts
+  `WebAssembly.Module.imports(module).length === 0` on the standalone control.
+
+### Honest caveats
+
+- **Byte-identity for a Proxy-free standalone program does NOT hold**, and this
+  step widens the R3-0 caveat rather than repeating it: the `__proxy_revoker`
+  deleted-bits field is added in `ensureProxyRuntime`, which runs in every
+  standalone module, so the type section moves even where `proxyRevocableSite`
+  is false (measured: the bound-function probe's sha differs, `3927941ef9f8c6bd`
+  → `34bcbb558b62707e`, with identical behaviour). Everything that *emits* is
+  flag-gated; the field is not, because `ensureProxyRuntime` can run before the
+  revocable call site is compiled.
+- **`LOC_GATE_BASE=origin/main` reports one failure this change did not cause:**
+  `src/codegen/statements/loops.ts: 4437 > 4436 (+1)`. The branch does not touch
+  that file at all (`git diff origin/main...HEAD -- src/codegen/statements/loops.ts`
+  is empty) — it is a ceiling reset from main's post-merge baseline refresh and
+  belongs to the integrator's `git merge origin/main`, not to a grant here. All
+  five gates pass bare, and `LOC_GATE_BASE` func-budget passes.
+
+### Pin
+
+`tests/issue-5196-r3-4-revoker-fn.test.ts` — one standalone control (zero
+imports; typeof through a parameter, `length`/`name` values, own-ness,
+`getOwnPropertyNames` order, `configurable` descriptor, an effective
+`delete revoke.length`, and that the carrier still revokes afterwards) plus the
+four exact test262 rows. **Verified 5/5 FAIL on `.tmp/basetree` (`4fa179f8`) and
+5/5 pass on the lane.**
+
+### Not done in this pass
+
+R3-1 (§10.5 invariants, 29 rows), R3-3 (define/gOPD routing, 3 rows), R3-5
+(open proxy-TARGET literal, 5 rows), and the R3-2 residue (C1, C2/C3, C6, C8a).
+Not started — budget, not a finding.
