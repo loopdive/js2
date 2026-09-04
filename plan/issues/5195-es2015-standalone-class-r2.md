@@ -2370,3 +2370,30 @@ finding plus a win-retention control for each. Verified on three trees:
 F5) and pass on base; the other 3 are the win controls, which fail on base and
 pass on the lane. `tests/issue-5195-r3-heritage-check.test.ts` drops the two
 given-up rows from `R3_5_ROWS`. All three r3 pin files: 32/32 pass.
+
+**The 783-row sweep, re-run on the fixed lane.** Same corpus as the r3-5 step
+(the 515 non-recursive rows of `language/{statements,expressions}/class` plus
+`statements/class/{definition,subclass}` and `expressions/super`), base
+`91d4999050` vs this lane, standalone, in batches of 30:
+
+| | non-pass |
+|---|---|
+| base `91d4999050` | 289 |
+| this lane | **270** |
+
+**19 rows flip to pass, ZERO new non-pass, and no row that is non-pass on both
+trees changes status class.** The 19: 11 `cpn-class-expr-…` rows (r3-2), the
+two `heritage-{arrow,async-arrow}-function` rows and the four
+`subclass/superclass-{arrow,async,async-generator,generator}-function` rows
+(r3-5), and the two `restricted-properties.js` rows (r3-7).
+
+Against the first cut's claim of 25 flips, the three deliberate give-backs are
+r3-3's one `cpn-class-decl-…-assignment-expression-assignment` row and r3-5's
+`constructable-but-no-prototype.js` / `prototype-setter.js`; the base
+measurement here is 289 rather than the 291 recorded for the first cut, so two
+further rows in that count were already passing on the base tree I built.
+
+Controls: `class-controls.txt` **22/22 pass**, `class-controls-candidates.txt`
+**24/24 pass**. Gates: LOC, function, coercion-sites, oracle-ratchet and
+dead-exports all green, bare and chained, and both budget gates green again
+with `LOC_GATE_BASE=$(git rev-parse origin/main)`.
