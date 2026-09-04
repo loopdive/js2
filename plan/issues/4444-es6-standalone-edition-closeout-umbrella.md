@@ -18,6 +18,35 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## 2026-09-04 census — 10,038 / 11,704 (85.8%) after #5558
+
+Baseline refetched 2026-09-04 01:17 UTC (`oracle_lane: "honest"`, promoted
+from the merge of PR #5558 — promise r3, #5197), same script and edition map.
+
+**10,038 pass / 11,704 (85.8%) — 1,666 non-pass** (1,285 fail · 380
+compile_error · 1 compile_timeout): **+17 rows** over the post-#5550 census.
+The rows sum to 1,666.
+
+| Cluster | rows | fail | CE |
+| --- | ---: | ---: | ---: |
+| typedarray | 242 | 224 | 18 |
+| expressions | 228 | 131 | 96 |
+| class | 191 | 135 | 56 |
+| other built-ins | 168 | 160 | 8 |
+| proxy + reflect | 155 | 131 | 24 |
+| regexp | 139 | 129 | 10 |
+| generators | 121 | 75 | 46 |
+| array + object | 121 | 111 | 10 |
+| promise | 101 | 51 | 50 |
+| for-of + collections | 98 | 62 | 36 |
+| statements + lang | 75 | 55 | 20 |
+| module-code | 25 | 19 | 6 |
+| rest | 2 | 2 | 0 |
+
+Day total since the 2026-09-02 census (9,905): **+133 rows** across #5505,
+#5526, #5527, #5534, #5550 and #5558. The compile_error count has not moved
+(380) — every wave so far was `fail` work; the CE mass is the next frontier.
+
 ## 2026-09-03 late census — 10,021 / 11,704 (85.6%) after #5550
 
 Baseline refetched 2026-09-03 23:31 UTC (`oracle_lane: "honest"`, promoted
