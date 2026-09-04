@@ -245,3 +245,116 @@ describe("#5195 r3 review F5 — a heritage that is not provably a class decline
     expect(await runStandalone(POISON_KEPT_SOURCE, "issue-5195-r3-review-f5b.js")).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Round 2 of the r3 review (2026-09-04). Three more findings of the SAME
+// family: a "proof" that ignores a way the binding can be rebound, so a
+// working program gets a spurious TypeError. Each control asserts the BASE
+// tree's stable answer; all three FAIL on the pre-fix lane `6007e38442`.
+// ---------------------------------------------------------------------------
+
+describe("#5195 r3 review round 2, R1 — every write spelling defeats the heritage proof", () => {
+  // `bindingIsUniqueAndNeverWritten` saw a write only as `BinaryExpression.left`
+  // or a `++`/`--` operand. A for-of head, an array- or object-destructuring
+  // target, and a parenthesised target all read as "never written", so
+  // `var X = () => {}; for (X of [Base]) {}` was "proven" a non-constructor and
+  // threw on a program node runs fine.
+  const WRITE_SPELLINGS_SOURCE = `
+    class Base { m() { return 1; } }
+    var Xa = () => {}; for (Xa of [Base]) {}
+    var Xb = () => {}; [Xb] = [Base];
+    var Xc = () => {}; ({ Xc } = { Xc: Base });
+    var Xd = () => {}; ({ q: Xd } = { q: Base });
+    var Xe = () => {}; (Xe) = Base;
+    var Xf = () => {}; for ([Xf] of [[Base]]) {}
+    function fa() { class D extends Xa {} return new D(); }
+    function fb() { class D extends Xb {} return new D(); }
+    function fc() { class D extends Xc {} return new D(); }
+    function fd() { class D extends Xd {} return new D(); }
+    function fe() { class D extends Xe {} return new D(); }
+    function ff() { class D extends Xf {} return new D(); }
+    export function probe() {
+      let threw = 0;
+      try { fa(); } catch (e) { threw = threw + 1; }
+      try { fb(); } catch (e) { threw = threw + 1; }
+      try { fc(); } catch (e) { threw = threw + 1; }
+      try { fd(); } catch (e) { threw = threw + 1; }
+      try { fe(); } catch (e) { threw = threw + 1; }
+      try { ff(); } catch (e) { threw = threw + 1; }
+      return threw === 0;
+    }
+  `;
+
+  it("standalone: a destructuring or loop-head write declines the check", async () => {
+    expect(await runStandalone(WRITE_SPELLINGS_SOURCE, "issue-5195-r3-review-r1.js")).toBe(1);
+  });
+
+  // The r3-5 win is kept for the shapes that really are provable.
+  const HERITAGE_WIN_KEPT_SOURCE = `
+    var Arrow = () => {};
+    function* Gen() {}
+    export function probe() {
+      let n = 0;
+      try { class D extends Arrow {} new D(); } catch (e) { if (e instanceof TypeError) n = n + 1; }
+      try { class D extends Gen {} new D(); } catch (e) { if (e instanceof TypeError) n = n + 1; }
+      try { class D extends 42 {} new D(); } catch (e) { if (e instanceof TypeError) n = n + 1; }
+      return n === 3;
+    }
+  `;
+
+  it("standalone: a genuinely unwritten non-constructor heritage still throws", async () => {
+    expect(await runStandalone(HERITAGE_WIN_KEPT_SOURCE, "issue-5195-r3-review-r1b.js")).toBe(1);
+  });
+});
+
+describe("#5195 r3 review round 2, R2 — the poison chain resolves bindings, not names", () => {
+  // `classChainIsProvablyAllClasses` matched heritage identifiers by TEXT
+  // against `classSet`, so a function-scope shadow and a reassigned class name
+  // both read as "provably a class" and poisoned `caller`/`arguments`, which
+  // threw where node answers `null` and base answers `undefined`.
+  const REBOUND_CHAIN_SOURCE = `
+    class A { static am() { return 1; } }
+    A = function () {};
+    class K2 extends A {}
+    var L = class {};
+    L = function () {};
+    class K3 extends L {}
+    class B {}
+    function f() { var B = function () {}; class K extends B {} return K; }
+    export function probe() {
+      let threw = 0;
+      try { let t = K2.caller; } catch (e) { threw = threw + 1; }
+      try { let t = K2.arguments; } catch (e) { threw = threw + 1; }
+      try { let t = K3.caller; } catch (e) { threw = threw + 1; }
+      try { let t = f().caller; } catch (e) { threw = threw + 1; }
+      return threw === 0;
+    }
+  `;
+
+  it("standalone: a shadowed or reassigned heritage name declines the poison", async () => {
+    expect(await runStandalone(REBOUND_CHAIN_SOURCE, "issue-5195-r3-review-r2.js")).toBe(1);
+  });
+});
+
+describe("#5195 r3 review round 2, R3 — an inline class heritage is walked, not assumed", () => {
+  // `if (ts.isClassExpression(heritage)) return true;` ended the chain walk as
+  // "proven all classes" without looking at the inline class's OWN heritage, so
+  // `class K extends (class extends F {}) {}` was poisoned even though its
+  // ancestor is a plain function.
+  const INLINE_CLASS_HERITAGE_SOURCE = `
+    function F() {}
+    class K12 extends (class extends F {}) {}
+    class K13 extends class extends F {} {}
+    export function probe() {
+      let threw = 0;
+      try { let t = K12.caller; } catch (e) { threw = threw + 1; }
+      try { let t = K12.arguments; } catch (e) { threw = threw + 1; }
+      try { let t = K13.caller; } catch (e) { threw = threw + 1; }
+      return threw === 0;
+    }
+  `;
+
+  it("standalone: an inline class expression over a function ancestor declines", async () => {
+    expect(await runStandalone(INLINE_CLASS_HERITAGE_SOURCE, "issue-5195-r3-review-r3.js")).toBe(1);
+  });
+});

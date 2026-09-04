@@ -12,6 +12,7 @@ import type { CodegenContext } from "./context/types.js";
 import { fnInstanceNameOf } from "./function-instance-meta.js";
 import { isHostConstructibleBuiltin } from "./builtin-tags.js";
 import { BUILTIN_CONSTRUCTOR_IDENTITY_NAMES } from "./builtin-static-globals.js";
+import { bindingIsUniqueAndNeverWritten } from "./class-heritage-check.js";
 
 /** The own keys created by a class constructor before static declarations. */
 export const CLASS_CONSTRUCTOR_OWN_KEYS = ["length", "name", "prototype"] as const;
@@ -104,48 +105,83 @@ function classHeritageExpression(decl: ts.ClassDeclaration | ts.ClassExpression)
 }
 
 /**
+ * The class declaration a resolved binding stands for, or `undefined` when the
+ * binding is not a class at all. A `var`-bound class EXPRESSION counts; a
+ * `var`-bound function expression, a parameter, an import, a call result do
+ * not.
+ */
+function classDeclarationBehindBinding(
+  declaration: ts.Declaration,
+): ts.ClassDeclaration | ts.ClassExpression | undefined {
+  if (ts.isClassDeclaration(declaration)) return declaration;
+  if (ts.isVariableDeclaration(declaration) && declaration.initializer !== undefined) {
+    let bare: ts.Expression = declaration.initializer;
+    while (
+      ts.isParenthesizedExpression(bare) ||
+      ts.isAsExpression(bare) ||
+      ts.isTypeAssertionExpression(bare) ||
+      ts.isNonNullExpression(bare)
+    ) {
+      bare = bare.expression;
+    }
+    if (ts.isClassExpression(bare)) return bare;
+  }
+  return undefined;
+}
+
+/**
+ * (#5195 r3 review round 2, F2/F3) The chain walk, on DECLARATIONS.
+ *
+ * The first cut resolved each heritage identifier by NAME
+ * (`classExprNameMap.get(text) ?? text`, then `classSet.has`), which is both
+ * scope-blind and reassignment-blind: `class A {}; function f(){ var A =
+ * function(){}; class K extends A {} }` read as a class chain, as did
+ * `class A {} A = function(){}; class K extends A {}`. Both throw on
+ * `K.caller` where node answers `null` and the base tree answered `undefined`.
+ * It also ended the walk at an inline class expression without inspecting that
+ * class's OWN heritage (`class K extends (class extends F {}) {}`).
+ *
+ * So every link now resolves through `ctx.oracle.valueDeclarationOf`, must land
+ * on a class declaration, and must carry the never-written proof before the
+ * walk continues; an inline class expression is recursed into.
+ */
+function classDeclChainIsProvablyAllClasses(
+  ctx: CodegenContext,
+  decl: ts.ClassDeclaration | ts.ClassExpression,
+  seen: Set<ts.Node>,
+): boolean {
+  if (seen.has(decl) || seen.size > 16) return false;
+  seen.add(decl);
+  const heritage = classHeritageExpression(decl);
+  // No heritage, or `extends null`: the chain ends at %Function.prototype%,
+  // and a class object is a strict function there.
+  if (heritage === undefined || heritage.kind === ts.SyntaxKind.NullKeyword) return true;
+  if (ts.isClassExpression(heritage)) return classDeclChainIsProvablyAllClasses(ctx, heritage, seen);
+  if (!ts.isIdentifier(heritage)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(heritage);
+  // A BUILTIN constructor ancestor (`extends Error`/`Array`) does throw in
+  // node, so it keeps the poison; everything else is unproven.
+  if (declaration === undefined || declaration.getSourceFile().isDeclarationFile) {
+    return isHostConstructibleBuiltin(heritage.text) || BUILTIN_CONSTRUCTOR_IDENTITY_NAMES.has(heritage.text);
+  }
+  const parentDecl = classDeclarationBehindBinding(declaration);
+  if (parentDecl === undefined) return false;
+  if (!bindingIsUniqueAndNeverWritten(heritage, declaration)) return false;
+  return classDeclChainIsProvablyAllClasses(ctx, parentDecl, seen);
+}
+
+/**
  * (#5195 r3-7, r3 review F5) True when EVERY link of `className`'s heritage
  * chain is provably a class (or a builtin constructor, or `extends null`, or
  * no heritage at all) — the only case in which the §10.2.4 `caller`/
- * `arguments` poison is justified.
- *
- * The first cut declined only a chain whose non-class ancestor was a top-level
- * function DECLARATION (`fnctorAncestorOfClass`). A `var`-bound function
- * EXPRESSION — `var Fe = function () {}; class K extends Fe {}` — is neither in
- * `topLevelFunctionNames` nor in `funcMap`, so the chain read as class-only and
- * `K.caller` threw where node answers `null` and the base tree answered
- * `undefined`. Anything the compiler cannot prove to be a class (a parameter,
- * an alias it did not resolve, a conditional, a call result, a property access,
- * a function expression) declines instead.
+ * `arguments` poison is justified. Anything the compiler cannot prove to be a
+ * class (a parameter, an alias it did not resolve, a conditional, a call
+ * result, a property access, a function expression, a rebound name) declines.
  */
 function classChainIsProvablyAllClasses(ctx: CodegenContext, className: string): boolean {
-  const seen = new Set<string>();
-  let cls: string | undefined = className;
-  while (cls !== undefined && !seen.has(cls)) {
-    seen.add(cls);
-    const parent = ctx.classParentMap.get(cls);
-    if (parent !== undefined && ctx.classSet.has(parent)) {
-      cls = parent;
-      continue;
-    }
-    const decl = ctx.classDeclarationMap.get(cls);
-    if (decl === undefined) return false;
-    const heritage = classHeritageExpression(decl);
-    // No heritage, or `extends null`: the chain ends at %Function.prototype%,
-    // and a class object is a strict function there.
-    if (heritage === undefined || heritage.kind === ts.SyntaxKind.NullKeyword) return true;
-    if (ts.isClassExpression(heritage)) return true;
-    if (!ts.isIdentifier(heritage)) return false;
-    const resolved = ctx.classExprNameMap.get(heritage.text) ?? heritage.text;
-    if (ctx.classSet.has(resolved)) {
-      cls = resolved;
-      continue;
-    }
-    // A BUILTIN constructor ancestor (`extends Error`/`Array`) does throw in
-    // node, so it keeps the poison; everything else is unproven.
-    return isHostConstructibleBuiltin(heritage.text) || BUILTIN_CONSTRUCTOR_IDENTITY_NAMES.has(heritage.text);
-  }
-  return false;
+  const decl = ctx.classDeclarationMap.get(className);
+  if (decl === undefined) return false;
+  return classDeclChainIsProvablyAllClasses(ctx, decl, new Set<ts.Node>());
 }
 
 /**

@@ -2397,3 +2397,140 @@ Controls: `class-controls.txt` **22/22 pass**, `class-controls-candidates.txt`
 **24/24 pass**. Gates: LOC, function, coercion-sites, oracle-ratchet and
 dead-exports all green, bare and chained, and both budget gates green again
 with `LOC_GATE_BASE=$(git rev-parse origin/main)`.
+
+### Round-3 review fixes, second round (2026-09-04)
+
+A fresh adversarial review of the first fix round (`047864e3d7`) found **two
+more regressions of the same family** — a compile-time "proof" that ignores a
+way the binding can be rebound, so a WORKING program gets a spurious TypeError
+— plus one low. All three are fixed here; both mediums were independently
+reproduced (lane vs a self-built base tree, node as oracle) before the fix.
+
+| | shape | node | base `91d4999050` | pre-fix lane `6007e38442` | this lane |
+|---|---|---|---|---|---|
+| **R1** (was F1) | `var X = () => {}; for (X of [Base]) {}` then `class D extends X {}` | `1` | `null` | **`TypeError`** | `null` |
+| | `[X] = [Base]` · `({X} = o)` · `({q: X} = o)` · `(X) = Base` | `1` | `null` | **`TypeError`** | `null` |
+| **R2** (was F2) | `class A {} A = function(){}; class K2 extends A {}` → `K2.caller` | `null` | `undefined` | **`TypeError`** | `undefined` |
+| | `var L = class {}; L = function(){}; class K extends L {}` → `K.caller` | `null` | `undefined` | **`TypeError`** | `undefined` |
+| | `class A {}; function f(){ var A = function(){}; class K extends A {} }` → `K.caller` | `null` | `undefined` | **`TypeError`** | `undefined` |
+| **R3** (was F3) | `class K12 extends (class extends F {}) {}` → `K12.caller` | `null` | `undefined` | **`TypeError`** | `undefined` |
+
+**R1 — `bindingIsUniqueAndNeverWritten` missed most write spellings**
+(`src/codegen/class-heritage-check.ts`). It recognised a write only as
+`BinaryExpression.left` or a `++`/`--` operand, so a for-of/for-in head, an
+array- or object-destructuring target (shorthand and keyed), a parenthesised
+target, a spread/rest target and a compound assignment through any of those all
+read as "never written". The identifier's *declaration* initializer (an arrow)
+was then taken as proof of the heritage VALUE, and the class threw.
+
+The fix inverts the test: a new `occurrenceIsWriteTarget` walks UP from the
+identifier through every wrapper a destructuring pattern can interpose —
+parentheses, array/object literal patterns, spreads, shorthand and keyed
+property assignments, binding elements — and then asks whether what it arrived
+at sits in a write position (assignment LHS, for-of/for-in initializer,
+`++`/`--` operand, `delete`). Binding-site counting also now covers function and
+class EXPRESSION names and namespace imports, and a file containing `eval` or a
+`with` statement declines outright: either can rebind the name invisibly.
+
+**R2 — `classChainIsProvablyAllClasses` resolved heritages by NAME**
+(`src/codegen/class-static-metadata.ts`). It used
+`classExprNameMap.get(text) ?? text` against `classSet` and trusted the
+statically collected `classParentMap`, which is both scope-blind (a
+function-scope `var A = function(){}` shadowing a top-level `class A {}`) and
+reassignment-blind. The §10.2.4 `caller`/`arguments` poison was then applied to
+a chain whose real ancestor is a plain function — node answers `null` there and
+base answered `undefined`, so the poison turned a stable value into a throw.
+
+The walk is now on DECLARATIONS: each heritage identifier resolves through
+`ctx.oracle.valueDeclarationOf`, must land on a class declaration (or a `var`
+bound to a class EXPRESSION), and must carry R1's never-written proof before
+the walk continues. Anything else declines.
+
+**R3 — the inline class-expression shortcut.** `if (ts.isClassExpression(
+heritage)) return true;` ended the chain as "proven all classes" without
+inspecting the inline class's own `extends`. The walk now recurses into it, so
+`class K extends (class extends F {}) {}` correctly declines. (The
+unparenthesised spelling was saved only by the `__anonClass_n` collection —
+an accident, not a proof.)
+
+**Verification.** Every probe of both review rounds re-run on node / base /
+this lane / the `origin/main` tree, host + standalone + wasi:
+
+- The six F1/F2/F3 repro probes are now **byte-identical to the `origin/main`
+  tree** on standalone (`w1` `dd36e0c5d3a9`, `c1c` `835af27ba680`, `c1h`
+  `03db66cd962b`, `c1i` `81ed9ef6aafd`, `c1f` `0c67cae19b7d`, `c1g`
+  `26e978fb8494`) — the spurious throws are gone with no other codegen change.
+- The r3 wins are retained: `w3-hard-literals` 12/12 and `o3-literal-heritages`
+  8/8 still throw where node throws and base did not; `h12-nonctor` 8/9;
+  `c1d`/`c1e` unchanged; `w4-classexpr-positions` 6/7.
+- `c1b-chain-direct` loses three spurious throws (`k2`, `k12`, `k2a`) and gains
+  none — exactly R2/R3.
+- NEW probes for spellings neither reviewer listed — `&&=`, `??=`, `**=`, `+=`,
+  `[a, ...X] = …`, `({...X} = …)`, `for ([X] of …)`, `for (X in …)`, a labelled
+  write, a catch parameter, a nested-function parameter, sloppy `arguments[0] =
+  …` aliasing, and `eval("X = 1")` — are **base-equal on every row**. On the
+  pre-fix lane four of them threw (`arrrest`, `objrest`, `forofarr`, `forin`).
+- Controls `ctl1`–`ctl5` (class-free / Proxy-free) are **byte-identical to the
+  `origin/main` tree on host, standalone and wasi**, imports included, and
+  every standalone control reports `imports: []`.
+- All 47 earlier probes and the 30 fix-review probes: no row is worse than base
+  on any target; the only differences are improvements or the two
+  base-identical residuals below.
+
+**The 783-row class sweep, re-run.** Same corpus (`language/{statements,
+expressions}/class`, `statements/class/{definition,subclass}`,
+`expressions/super`), standalone, batches of 30. Lane measured here in full;
+the base column is the round-1 artifact
+`.tmp/fix-5195/sweep.base.txt` (base `91d4999050`, 2026-09-04), with **all 19
+differing rows re-run on base by hand** (19/19 `fail`, confirming the artifact)
+plus a 30-row random spot-check of the both-non-pass rows (30/30 agree).
+
+| | non-pass |
+|---|---|
+| base `91d4999050` | 289 |
+| this lane | **270** |
+
+**The same 19 rows kept, ZERO new non-pass, zero status-class changes among
+the 270** — identical to the first fix round, so the second-round give-ups cost
+nothing on the corpus. Kept: 11 `cpn-class-expr-…` (r3-2), two
+`heritage-{arrow,async-arrow}-function` and four
+`subclass/superclass-{arrow,async,async-generator,generator}-function` (r3-5),
+two `restricted-properties.js` (r3-7). Given up, unchanged from round 1: three
+rows (r3-3's `cpn-class-decl-…-assignment-expression-assignment`, r3-5's
+`constructable-but-no-prototype.js` and `prototype-setter.js`).
+
+**Pins.** `tests/issue-5195-r3-review.test.ts` gains four tests (R1 ×2 — one
+regression control, one win-retention — R2, R3). The three regression controls
+**FAIL on the pre-fix lane `6007e38442` and PASS on base `91d4999050`**; the
+win-retention control fails on base and passes here. Whole file 16/16 green;
+`issue-5195-es2015-class-r2` + `issue-5195-r3-heritage-check` +
+`issue-5195-r3-restricted-properties` 96/96; `issue-5270` + `issue-5271` +
+`issue-5272` 101/101.
+
+**Gates.** Typecheck (`tsc.js -p tsconfig.ts7.json`) clean; LOC, function,
+coercion-sites, oracle-ratchet and dead-exports green bare and chained, and
+both budget gates green again with `LOC_GATE_BASE=$(git rev-parse origin/main)`
+(`84692fc94cee`).
+
+**Notes recorded, deliberately NOT fixed here.**
+
+- **N1** The r3-5 heritage check has call sites only in
+  `nested-declarations.ts`, `variables.ts` and `new-super.ts`, so a TOP-LEVEL
+  `class D extends 42 {}`, a top-level `var E = class extends 42 {}` and a
+  `typeof class extends 42 {}` in expression position never throw. The
+  "provably non-constructor heritage throws" claim holds for **function-scope**
+  classes only — which is where test262's `assert.throws` callbacks put them,
+  so the sweep numbers are consistent. Base-identical.
+- **N2** `classMemberLegacyName` names a static `ConstructorDeclaration`
+  `<Class>_new` while the implicit allocator's helper is `<Class>_init`, so
+  user statics named `new`/`init` collide with the allocator
+  (`sc10`/`sc10b`/`sc10c`: `return_call: tail call type error`, and a
+  `local.set` type error). **Pre-existing on base — the identical failure on
+  both trees, only the byte offsets differ.**
+- **N3** `static async constructor(){}` and `static *constructor(){}` are
+  rejected by the early-error pass on both trees alike; and `sc1`/`sc5`
+  (a static `constructor` beside a real one) compile on this lane where base
+  fails outright, but the standalone module then requests a
+  `js2wasm:runtime-eval` import and fails to instantiate. Unchanged by this
+  round (byte-identical pre- and post-fix), so it is a residual of the earlier
+  r3 work, not of these three fixes.
