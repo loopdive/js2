@@ -11,7 +11,7 @@
 
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { ts } from "../../ts-api.js";
-import { captureSourceSlot, pushBoxedTdzFlagRef } from "./capture-source-slot.js";
+import { captureSourceSlot, expectsBoxedCaptureValue, pushBoxedTdzFlagRef } from "./capture-source-slot.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
@@ -231,6 +231,11 @@ function emitMemoizedNestedFnClosure(
       (liveBoxType?.kind === "ref" || liveBoxType?.kind === "ref_null") &&
       liveBoxType.typeIdx === liveBox.refCellTypeIdx &&
       !recordedSlotHasLiveBoxType;
+    // (#5303) The closure ABI wants the box's inner VALUE — asked directly
+    // rather than through the old non-reference proxy, which mis-answered for a
+    // read-only capture whose own value type is a GC reference and forwarded the
+    // raw cell into the closure (`illegal cast` at moment's module init). See
+    // `expectsBoxedCaptureValue`.
     const useLiveImmutableBoxValue =
       !cap.mutable &&
       liveBoxLocalIdx !== undefined &&
@@ -238,9 +243,7 @@ function emitMemoizedNestedFnClosure(
       liveBoxType !== undefined &&
       (liveBoxType.kind === "ref" || liveBoxType.kind === "ref_null") &&
       liveBoxType.typeIdx === liveBox.refCellTypeIdx &&
-      cap.valType !== undefined &&
-      cap.valType.kind !== "ref" &&
-      cap.valType.kind !== "ref_null";
+      expectsBoxedCaptureValue(cap.valType, liveBox);
     if (cap.mutable && cap.valType) {
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
       const boxGlobal = capUnresolvedHere ? ctx.capturedBoxGlobals?.get(cap.name) : undefined;
@@ -314,9 +317,7 @@ function emitMemoizedNestedFnClosure(
         sourceType !== undefined &&
         (sourceType.kind === "ref" || sourceType.kind === "ref_null") &&
         sourceType.typeIdx === liveBox.refCellTypeIdx &&
-        cap.valType !== undefined &&
-        cap.valType.kind !== "ref" &&
-        cap.valType.kind !== "ref_null";
+        expectsBoxedCaptureValue(cap.valType, liveBox);
       fctx.body.push({ op: "local.get", index: capSourceIdx });
       if (sourceIsCanonicalBox) {
         fctx.body.push({ op: "struct.get", typeIdx: liveBox!.refCellTypeIdx, fieldIdx: 0 });

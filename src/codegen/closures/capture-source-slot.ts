@@ -1,5 +1,40 @@
-import type { Instr } from "../../ir/types.js";
+import type { Instr, ValType } from "../../ir/types.js";
 import type { FunctionContext } from "../context/types.js";
+
+/**
+ * (#5303) Does a capture consumer want the ref cell's INNER VALUE rather than
+ * the cell itself?
+ *
+ * A read-only capture has value-copy semantics, so the declaring frame's
+ * `__boxed_<name>` cell — minted for some OTHER nested function that mutates
+ * the same binding — is an implementation detail of that frame, not part of
+ * this consumer's ABI. Both consumers (the direct-call capture prepend in
+ * call-identifier.ts and the closure-reification prepend in
+ * funcref-as-closure.ts) therefore unwrap it with a `struct.get`.
+ *
+ * Until now both asked the question by PROXY: "is the expected type a
+ * non-reference (f64 / i32 / externref)?". That silently answered "no" for a
+ * read-only capture whose value type is itself a GC reference — moment's
+ * `isoDates`, a `(ref $vec-of-vec)` — so the cell was forwarded where the value
+ * was wanted. On the direct-call side the mismatch was then "repaired" into a
+ * guarded `ref.test`/`ref.cast` that can only ever produce null; on the closure
+ * side it reached the callee as a raw cell and trapped (`illegal cast`).
+ *
+ * Ask directly instead: the consumer wants the value exactly when its expected
+ * type IS the box's inner value type. A consumer that genuinely wants the cell
+ * names `refCellTypeIdx`, which is never its own field's type index, so that
+ * arm is unchanged.
+ */
+export function expectsBoxedCaptureValue(
+  expected: ValType | undefined,
+  boxed: { refCellTypeIdx: number; valType: ValType } | undefined,
+): boolean {
+  if (expected === undefined || boxed === undefined) return false;
+  if (expected.kind !== "ref" && expected.kind !== "ref_null") return true;
+  const inner = boxed.valType;
+  if (inner.kind !== "ref" && inner.kind !== "ref_null") return false;
+  return expected.typeIdx === inner.typeIdx;
+}
 
 /**
  * (#4394) Push an EXISTING boxed-TDZ-flag ref (`fctx.boxedTdzFlags` entry),
