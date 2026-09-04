@@ -4737,3 +4737,93 @@ with a dated rationale. Disjoint from #3522 W1-B (`select.ts`, `from-ast.ts`),
 `outcomes.ts`). Independent of W1-D; branch from `origin/main` now. Claim slug
 `3520:w1e-cluster-d`. After it lands, the `tests/issue-3520-*` red set is
 cluster B (4), C (3), E (1), F (1).
+
+## Implementation Plan — W1-F cluster B: the four derived-unit tests pin an identity scheme that no longer exists (2026-09-03, Fable lane)
+
+Measured on `origin/main d387a3bd50` with `.tmp/probe-3520-b.mts` (the
+`issue-3520-lifted-program-abi` fixture compiled through `generateModule`,
+`experimentalIR + trackIrOutcomes`), and by running the three files.
+
+### What the four red tests assert, and what production does today
+
+| row | test | expects | production (measured) |
+| --- | --- | --- | --- |
+| 8 | `lifted-program-abi` · two lifted closures by exact provenance | ABI rows keyed by `createDerivedIrUnitId({ parentId: owner, role: "lifted-closure", ordinal })`, both displaying `owner__closure_0` / `_1`, and `legacy.resolveFinalIndex("function", "owner__closure_0")` **throwing** on the 2-owner ambiguity | the two arrows are **inventoried `arrow-function` units** (`…:top-level-function:0:arrow-function:0` / `:1`, `buildIrUnitInventory` lists them with `displayName` `first` / `second`), published as `origin: "source"` callables. The first arrow's label collides with the source function `owner__closure_0`, so `prepared-closure-support.ts:186` gives it the deterministic physical name `__\0js2_ir_prepared_derived_0`; the source function keeps `owner__closure_0`; the legacy name lookup resolves cleanly. Four distinct slots (6, 8, 9, 7), exactly the property the test wanted — under a different identity. |
+| 9 | `lifted-program-abi` · does not reuse an empty same-labelled slot | `resolveFinalIndex` of the derived `lifted-closure` binding | throws `unknown-binding … was not planned` (`program-abi.ts:833`) because no such binding exists; the arrow's real binding resolves to its own slot |
+| 11 | `monomorph-program-abi` · clone ordinal zero beneath two lifted parents | the test's `vi.mock` of `monomorphize` injects clones for parents whose `unitId` is in `injectedParentIds` — filled with the derived `lifted-closure` ids | no IR function carries those ids, so zero clones are injected and `observedCloneIds` receives `[]` |
+| 12 | `program-abi-type-remap` · post-DCE capture-ref signatures for a lifted callable and its clone | same injected-parent mechanism | same `[]` |
+
+All four are one cause: **the tests were written (2026-07-26/29) against
+lifted closures as `derived` `lifted-closure` units; lifted arrows are now
+inventory `arrow-function` units** (structural identity, `identity.ts:83`;
+the derived role survives only for `ir-async-state` and
+`monomorphization-clone`, see `program-abi-planning.ts:196-203` and
+`integration.ts:500-502`). The ABI itself is complete and correct — this is
+cluster A's shape again (stale expectation, not a miscompile), so the slice
+is **test-only**. The implementer names the commit that moved lifted arrows
+into the inventory (`git log -S "prepared_derived" -- src/ir/prepared-closure-support.ts`,
+and the `arrow-function` inventory kind's introduction) in the PR body.
+
+### Change — tests only
+
+1. **`tests/issue-3520-lifted-program-abi.test.ts`**: take the lifted unit ids
+   from the inventory (`inventory.allUnits.filter(u => u.kind === "arrow-function")`,
+   in source order — `first`, `second`), not from `createDerivedIrUnitId`.
+   Keep every structural assertion: four distinct function slots, the source
+   `owner__closure_0` and the lifted arrow are separate rows with separate
+   `typeIdx`. Replace the ambiguity expectation with the property production
+   now guarantees: the lifted arrow's row displays the relabelled physical
+   name (`__\0js2_ir_prepared_derived_0`) **and** its slot's `func.name`
+   matches that row, while the source function keeps `owner__closure_0` and
+   `legacy.resolveFinalIndex("function", "owner__closure_0")` resolves to the
+   SOURCE slot (pin that it is the source's index, not the arrow's). Row 9:
+   the arrow's real binding and the empty source function resolve to
+   different slots.
+2. **`tests/issue-3520-monomorph-program-abi.test.ts`** and
+   **`tests/issue-3520-program-abi-type-remap.test.ts`**: fill
+   `injectedParentIds` with the arrow-function unit ids from the inventory;
+   keep `createDerivedIrUnitId({ parentId: <arrow id>, role: "monomorphization-clone", ordinal: 0 })`
+   for the clones — that role is still a registered derived role. Keep the
+   provenance-order assertion (`[secondClone, firstClone]`) and the
+   post-DCE signature assertions unchanged; only the parent identities move.
+3. Do NOT change `src/`. If any assertion cannot be satisfied without a
+   source change, stop and report the exact row — that would mean a real
+   defect and a different slice.
+
+### Measurement order
+
+1. Reproduce: the 3 files, 4 red (`expected undefined to match object`,
+   `unknown-binding`, `[]` ×2) on `origin/main`.
+2. Probe (the one above, committed as `.tmp/` scratch only): print, per
+   fixture, inventory units (kind, displayName, id), every `origin: "source"`
+   callable row (displayName, unitId), and the slot each resolves to. Paste
+   the table into the PR body — it is the evidence that the ABI was already
+   right.
+3. Implement; the 3 files go green; run all 62 `tests/issue-3520-*` one file
+   per invocation: failing-name-set diff base → branch must be exactly rows
+   8, 9, 11, 12 removed. After W1-E (cluster D) lands, the remaining red set
+   is C (3), E (1), F (1).
+4. Byte identity is trivial (no `src/` change) — state it; run
+   `check:ir-only` (READY, identical counters) as the drift detector.
+5. Non-vacuity: with the inventory-derived parent ids swapped back to the
+   old `createDerivedIrUnitId(lifted-closure)` ids, all four go red again.
+6. Gates: ratchet chain + `LOC_GATE_BASE`, `check:ir-dialect`,
+   `check:ir-kind-neutrality`, `check:ir-fallbacks`, `check:ir-layering`,
+   `check:test-vacuity-shapes`; `typecheck`, `lint`, `prettier --check`.
+   `quality` runs `test:changed-root`, so all three files enter CI whole.
+
+### Deliberately out of scope
+
+- Whether the relabelled physical name should be the display name of the
+  lifted row (`__\0js2_ir_prepared_derived_0` is a physical-slot label, not
+  a source name). Note it in the PR body as a display-only question for R1;
+  do not change it here.
+- Cluster C (rows 13–15, real codegen defects, R3 territory) and F (row 7,
+  timeout).
+
+### Budget, sequencing, conflict surface
+
+Tests only; no LOC grant. Disjoint from W1-E (`vec-*.ts`), #5308
+(`legacy-body-audit.ts`, `ir-overlay-outcomes.ts`), #3522 W1-B (landed via
+PR #5552 or in queue). Branch from `origin/main` now. Claim slug
+`3520:w1f-cluster-b`.

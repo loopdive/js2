@@ -66,7 +66,6 @@ import { emitForInStaticUnroll } from "./for-in-static-unroll.js"; // (#4561)
 // (#4491 T9) a `new Date()` / `new RegExp()` receiver is a closed STRUCT but not a
 // closed SHAPE — it carries own properties in the #4008 bag, so it must enumerate
 // dynamically rather than unroll its declared (inherited, non-enumerable) members.
-import { forInReceiverIsDynamic } from "../builtin-instance-key-presence.js";
 import { blockLoop, restoreBlockScopedShadows, saveBlockScopedShadows, shiftLoopDepths } from "./shared.js";
 import {
   bodyHasMatchingCharRead,
@@ -95,7 +94,7 @@ import { tryCompileCountedStringAppend } from "./counted-string-append.js";
 import { emitHoleToUndefined } from "../array-holes.js"; // (#2001 S1)
 import { emitF64HoleToUndef, f64HolesActive } from "../vec-f64-hole-presence.js"; // (#4491 T11)
 import { definedFuncAt, nativeStrHelperHandle } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
-import { isOpenForInReceiver } from "../for-in-open-object.js";
+import { forInReceiverNeedsDynamicKeys } from "../for-in-open-object.js";
 
 /** Strip the transparent parentheses used by CoverParenthesizedExpression in a
  * for-of assignment head. The declaration/destructuring paths intentionally
@@ -4086,12 +4085,16 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
   // old static-unroll fallback, which enumerated the receiver's *static* shape
   // and was therefore wrong for a runtime-mutated dynamic object (a key added
   // or deleted at runtime was invisible / stale).
-  let keysIdx = ctx.funcMap.get("__for_in_keys");
-  let lenIdx = ctx.funcMap.get("__for_in_len");
-  let getIdx = ctx.funcMap.get("__for_in_get");
-  let hasIdx = ctx.funcMap.get("__for_in_has");
+  // (#5310) Only a dynamic receiver gets the primitives — see the predicate.
+  const recvWasm = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
+  const needsDynamic = forInReceiverNeedsDynamicKeys(ctx, stmt.expression, recvWasm);
+  let keysIdx = needsDynamic ? ctx.funcMap.get("__for_in_keys") : undefined;
+  let lenIdx = needsDynamic ? ctx.funcMap.get("__for_in_len") : undefined;
+  let getIdx = needsDynamic ? ctx.funcMap.get("__for_in_get") : undefined;
+  let hasIdx = needsDynamic ? ctx.funcMap.get("__for_in_has") : undefined;
 
   if (
+    needsDynamic &&
     (keysIdx === undefined || lenIdx === undefined || getIdx === undefined) &&
     (ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first")
   ) {
@@ -4105,21 +4108,17 @@ export function compileForInStatement(ctx: CodegenContext, fctx: FunctionContext
     // below is shared. A closed WasmGC struct or an array does NOT lower to
     // `$Object` (so `__object_keys` would return empty) — those keep the
     // static-unroll path below, which is exact for a non-mutated closed shape.
-    const recvWasmType = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(stmt.expression));
-    const isDynamicReceiver = isOpenForInReceiver(ctx, stmt.expression) || forInReceiverIsDynamic(ctx, recvWasmType);
-    if (isDynamicReceiver) {
-      ensureObjectRuntime(ctx);
-      // #2964 — for-in must enumerate inherited enumerable keys too, so route
-      // through `__object_keys_forin` (own ordered keys per level + `$proto`
-      // walk with shadow-skip), NOT the OWN-only `__object_keys` (which powers
-      // Object.keys). Same `$ObjVec` return shape, so the loop scaffolding and
-      // the `__extern_length`/`__extern_get_idx`/`__extern_has` accessors below
-      // are unchanged.
-      keysIdx = ctx.funcMap.get("__object_keys_forin");
-      lenIdx = ctx.funcMap.get("__extern_length");
-      getIdx = ctx.funcMap.get("__extern_get_idx");
-      hasIdx = ctx.funcMap.get("__extern_has");
-    }
+    ensureObjectRuntime(ctx);
+    // #2964 — for-in must enumerate inherited enumerable keys too, so route
+    // through `__object_keys_forin` (own ordered keys per level + `$proto`
+    // walk with shadow-skip), NOT the OWN-only `__object_keys` (which powers
+    // Object.keys). Same `$ObjVec` return shape, so the loop scaffolding and
+    // the `__extern_length`/`__extern_get_idx`/`__extern_has` accessors below
+    // are unchanged.
+    keysIdx = ctx.funcMap.get("__object_keys_forin");
+    lenIdx = ctx.funcMap.get("__extern_length");
+    getIdx = ctx.funcMap.get("__extern_get_idx");
+    hasIdx = ctx.funcMap.get("__extern_has");
   }
 
   if (keysIdx === undefined || lenIdx === undefined || getIdx === undefined) {
