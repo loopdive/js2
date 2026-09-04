@@ -77,6 +77,13 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
   // (#3505 harness) A minted $Symbol carrier also needs its typeof arms — a
   // module can box symbols without ever compiling a closure.
   const symbolTypeIdx = ctx.symbolTypeIdx >= 0 ? ctx.symbolTypeIdx : undefined;
+  // (#5196 R3-4) The `Proxy.revocable(…).revoke` carrier is a plain struct, not
+  // a closure wrapper: `typeof revoke` answered "function" only on the
+  // COMPILE-TIME path, and "object" through any indirection (a parameter, an
+  // array element, a property read) — which is what made the test262
+  // `isConstructor` harness throw "invoked with a non-function value". The arm
+  // lives with the TYPE here, so every consumer of these three natives agrees.
+  const revokerTypeIdx = ctx.proxyRevocableSite === true ? ctx.structMap.get("__proxy_revoker") : undefined;
   if (
     baseTypeIdxs.length === 0 &&
     runtimeEvalCallbackTypeIdx === undefined &&
@@ -84,7 +91,8 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
     proxyTypeIdx === undefined &&
     boundaryCallableKindIdx === undefined &&
     taCtorTypeIdx === undefined &&
-    symbolTypeIdx === undefined
+    symbolTypeIdx === undefined &&
+    revokerTypeIdx === undefined
   )
     return;
 
@@ -129,6 +137,13 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
         { op: "local.get", index: anyLocalIdx },
         { op: "ref.test", typeIdx: proxyTypeIdx },
         { op: "if", blockType: { kind: "empty" }, then: proxyAnswer },
+      );
+    }
+    if (revokerTypeIdx !== undefined) {
+      arms.push(
+        { op: "local.get", index: anyLocalIdx },
+        { op: "ref.test", typeIdx: revokerTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: [...onMatch] },
       );
     }
     if (boundaryCallableKindIdx !== undefined) {
@@ -275,6 +290,17 @@ export function fillStandaloneTypeofClosureArms(ctx: CodegenContext): void {
                 then: [...stringConstantExternrefInstrs(ctx, "function"), { op: "return" }],
               },
             ],
+          },
+        );
+      }
+      if (revokerTypeIdx !== undefined) {
+        valueArms.push(
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: revokerTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...stringConstantExternrefInstrs(ctx, "function"), { op: "return" }],
           },
         );
       }

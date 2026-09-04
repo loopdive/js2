@@ -337,31 +337,71 @@ function containsValueReturn(body: ts.Block): boolean {
 }
 
 /**
- * True when `name` is the target of any write (assignment / update) in `file` —
- * i.e. the binding is NOT single-assignment and its value at a later use site is
- * not determined by its initializer. Shared with the `isPrototypeOf` folds.
+ * True when `name` is the target of any write (assignment / update / binding
+ * re-declaration) in `file` — i.e. the binding is NOT single-assignment and its
+ * value at a later use site is not determined by its initializer. Shared with
+ * the `isPrototypeOf` folds, the plain builtin-static alias resolver, and the
+ * Proxy provenance traces.
+ *
+ * (#5196 R3 review F1/F3) Widened from "`<id> = …` or `++`/`--` with the
+ * identifier as the WHOLE operand" to any write POSITION: a destructuring
+ * assignment target (`[P] = [K]`, `({x: P} = o)`) and a `for-in`/`for-of` head
+ * now count. The old shape missed `var P = Proxy; [P] = [K];` entirely.
+ * The declarator's own name is NOT a write — a second declaration of the same
+ * binding is a separate question, answered by declaration COUNT at the one call
+ * site that needs it. Widening can only make a caller DECLINE a fold it would
+ * otherwise take — all eight callers use this as a soundness gate — so it is
+ * safe in the direction that matters.
+ *
+ * The scan counts only identifiers in a REFERENCE position. A member NAME
+ * (`o.P = 1`), a property-assignment key (`{ P: 1 }`) and a declaration's own
+ * name are all skipped: they merely SPELL the word, and counting them would
+ * turn a common unrelated statement into a blanket de-optimisation of every
+ * binding that happens to share the name. The base shape could not see them
+ * either (it required `node.left` to BE the identifier), so this keeps the
+ * widening to genuine write positions and nothing else.
  */
 export function identifierIsWrittenTo(file: ts.SourceFile, name: string): boolean {
+  const contains = (root: ts.Node, candidate: ts.Node): boolean =>
+    candidate.pos >= root.pos && candidate.end <= root.end;
+  /** False for the spelling-only positions described above. */
+  const isReference = (id: ts.Identifier): boolean => {
+    const parent: ts.Node | undefined = id.parent;
+    if (parent === undefined) return true;
+    if (ts.isQualifiedName(parent)) return parent.right !== id;
+    // `ShorthandPropertyAssignment.name` IS the reference (and, inside a
+    // destructuring assignment, the write target), so it stays in.
+    if (ts.isShorthandPropertyAssignment(parent)) return true;
+    return (parent as ts.Node & { name?: ts.Node }).name !== id;
+  };
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (
-      ts.isBinaryExpression(node) &&
-      ts.isIdentifier(node.left) &&
-      node.left.text === name &&
-      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-    ) {
-      found = true;
-      return;
-    }
-    if (
-      (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
-      ts.isIdentifier(node.operand) &&
-      node.operand.text === name
-    ) {
-      found = true;
-      return;
+    if (ts.isIdentifier(node) && node.text === name && isReference(node)) {
+      for (let parent: ts.Node | undefined = node.parent; parent; parent = parent.parent) {
+        if (
+          ts.isBinaryExpression(parent) &&
+          contains(parent.left, node) &&
+          parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+        ) {
+          found = true;
+          return;
+        }
+        if (
+          (ts.isPostfixUnaryExpression(parent) || ts.isPrefixUnaryExpression(parent)) &&
+          contains(parent.operand, node) &&
+          (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+        ) {
+          found = true;
+          return;
+        }
+        if ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && contains(parent.initializer, node)) {
+          found = true;
+          return;
+        }
+        if (ts.isStatement(parent) || ts.isSourceFile(parent)) break;
+      }
     }
     ts.forEachChild(node, visit);
   };

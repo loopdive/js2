@@ -3373,7 +3373,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // binding is handed to a typed/generic consumer: widening it would make the
     // consumer cast a host Proxy externref back to the target struct and trap.
     // The default-on gate is the sole attribution seam; `=0` restores #4931.
-    if (proxy.isDirectProxyConstruction(decl.initializer)) {
+    if (proxy.isDirectProxyConstruction(decl.initializer, ctx)) {
       return !proxyModuleEscapeGateEnabled || !proxy.proxyBindingEscapesToCall(ctx, decl);
     }
     // (#3365) Script top-level `this` is the host global object. The checker

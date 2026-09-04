@@ -86,6 +86,7 @@ import { emitRuntimeEvalConstructOnNull } from "../runtime-eval-construct.js"; /
 import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
 import { emitNativeNumberFormat } from "../number-format-native.js";
 import { compileStandaloneRegExpConstructor, isGlobalRegExpConstructorExpression } from "../regexp-standalone.js";
+import { tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0)
 import { emitStandaloneTest262Error, emitWasiErrorConstructor, isWasiErrorName } from "../registry/error-types.js";
 import type { InnerResult } from "../shared.js";
 import {
@@ -3108,10 +3109,14 @@ function tryCompileNativeConstructFromValue(
     ctx.runtimeEvalCallableBoundaryEnabled === true &&
     resolvesToGlobalFunctionAlias(calleeExpr, ctx.oracle);
   const proxyValue = ts.isIdentifier(calleeExpr) && resolvesToNativeProxyValue(ctx, calleeExpr);
+  // (#5196 R3-0) `Proxy` reached as a VALUE also needs the proxy runtime and
+  // the construct driver; the driver's carrier arm does the identity test.
+  const proxyCtorValue = ts.isIdentifier(calleeExpr) && tracesToProxyConstructorValue(ctx, calleeExpr);
   if (
     !runtimeFunctionAlias &&
     !runtimeEvalCallableResult &&
     !proxyValue &&
+    !proxyCtorValue &&
     !resolvesToConstructableFunctionValue(ctx, calleeExpr) &&
     !resolvesToLateAssignedConstructSignatureValue(ctx, calleeExpr)
   )
@@ -3121,8 +3126,10 @@ function tryCompileNativeConstructFromValue(
   // closure struct. Reserve the argv builders + generic apply bridge used by
   // the construct driver's exact marker arm; ordinary function values retain
   // the existing method-dispatch lowering.
-  if (runtimeFunctionAlias || runtimeEvalCallableResult || proxyValue) {
-    if (proxyValue) ensureNativeProxyRuntime(ctx);
+  if (runtimeFunctionAlias || runtimeEvalCallableResult || proxyValue || proxyCtorValue) {
+    if (proxyValue || proxyCtorValue) ensureNativeProxyRuntime(ctx);
+    // (#5196 R3-0) Arm the driver's proxy-carrier identity test for this module.
+    if (proxyCtorValue) ctx.proxyConstructorValueNewSite = true;
     ensureObjVecBuilders(ctx);
     reserveApplyClosure(ctx);
   }
@@ -3166,6 +3173,20 @@ function tryCompileNativeConstructFromValue(
 
   const argLocals: number[] = [];
   for (const arg of args) {
+    // (#5196 R3-0) A `new <Proxy-constructor value>(target, handler)` site must
+    // lower an object-literal argument to an OPEN `$Object`, exactly as the
+    // syntactic `new Proxy` arm does (`new-builtin-globals.ts`): the closed
+    // typed struct an inline literal defaults to hides its fields from
+    // `__extern_get`, so `__proxy_create` reads every trap as null and the
+    // proxy silently behaves as if the handler were empty.
+    if (proxyCtorValue && ts.isObjectLiteralExpression(arg)) {
+      const openTy = compileObjectLiteralAsExternref(ctx, fctx, arg);
+      if (openTy === null) fctx.body.push({ op: "ref.null.extern" });
+      const openLocal = allocLocal(fctx, `__nc_arg${argLocals.length}_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: openLocal });
+      argLocals.push(openLocal);
+      continue;
+    }
     const argTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
     if (argTy && argTy.kind !== "externref") {
       coerceType(ctx, fctx, argTy, { kind: "externref" });

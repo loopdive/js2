@@ -959,7 +959,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
       if (objectLiteralForcesHostPath(ctx, init)) return { kind: "externref" };
       if (objectLiteralSpreadTakesHostPath(ctx, init)) return { kind: "externref" };
     }
-    if (isDirectProxyConstruction(init)) return { kind: "externref" };
+    if (isDirectProxyConstruction(init, ctx)) return { kind: "externref" };
     // Representations the var-decl path computes from a decl/receiver-driven
     // inference that diverges from resolveWasmType — defer to the host path.
     if (inferStandaloneRegExpMatchArrayType(ctx, init) !== null) return null;
@@ -1904,7 +1904,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // Array.prototype.* spec walk) still work on a wasm-struct receiver.
     const initIsProxy =
       decl.initializer !== undefined &&
-      isDirectProxyConstruction(decl.initializer) &&
+      isDirectProxyConstruction(decl.initializer, ctx) &&
       ts.isIdentifier(decl.name) &&
       !proxyBindingEscapesToCall(ctx, decl);
     const isProxyTargetBinding = proxyBindingIsTarget(ctx, decl);

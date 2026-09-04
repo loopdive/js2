@@ -3541,6 +3541,23 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   moduleUsesDynTaView: boolean;
   /**
+   * (#5196 R3-0) Set when a `new <expr>(…)` site whose callee traces to the
+   * `Proxy` CONSTRUCTOR value (`$262.createRealm().global.Proxy`, an alias of
+   * the bare binding) compiles. It gates the native-construct driver's
+   * proxy-carrier identity arm, which must be byte-inert everywhere else: the
+   * proxy runtime and the `Proxy` carrier global exist in EVERY standalone
+   * module (measured — a Proxy-free program's driver changed bytes when the
+   * arm was gated on their presence instead).
+   */
+  proxyConstructorValueNewSite?: boolean;
+  /**
+   * (#5196 R3-4) Set when a `Proxy.revocable(…)` site compiles (direct call or
+   * namespace-value closure). Gates the revocation function's metadata arms:
+   * the `__proxy_revoker` struct type and the proxy natives exist in EVERY
+   * standalone module, so their presence cannot gate a byte-inert addition.
+   */
+  proxyRevocableSite?: boolean;
+  /**
    * Set by a module pre-scan when a statically named TypedArray constructor is
    * used with an ArrayBuffer backing. This lets an earlier helper that writes
    * through an `any` receiver reserve the runtime-kind `$__ta_view` dispatch
