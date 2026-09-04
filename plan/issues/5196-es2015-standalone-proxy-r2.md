@@ -2211,5 +2211,29 @@ F6 the one-arg gOPD block declines a spread. Corrected in the write-up: the
   guard in `__defineProperty_*` — needs the ~1,750-row floor on both trees),
   the R3-2 residue (C1 Reflect.set bypass, C2/C3 booleans, C6 ownKeys order).
 
+**Merge-group wedge, found and fixed after the PR went green
+(2026-09-04, PR #5576, run 33867389640).** The first `identifierIsWrittenTo`
+widening (F1/F3) used plain containment for the assignment's left side, so
+`X.prop = v`, `X.prop++` and `X[k] = v` counted as writes to X. Every
+test262 row carries `Test262Error.prototype.toString = …` (sta.js), so
+`Test262Error` read as reassigned in every file and the `new` fold declined
+everywhere; on `language/module-code/namespace/internals/is-extensible.js`
+(a module importing itself as a namespace) the dynamic fallback
+(`__fnctor_Test262Error_new` → `__instanceof_dynamic` → `__hasOwnProperty` →
+`__str_equals`, per `--prof`) spun forever. Fixture-graph rows execute
+IN-PROCESS in the vitest fork (`tests/test262-shared.ts`, "fixture tests are
+rare"), outside the compiler pool's 30 s kill, so one such row wedges its
+whole shard: 27 of 50 standalone shards hit the 40-minute job cap, twice,
+with the same shard set (deterministic); the PR-level checks cannot see it
+(no shard matrix on `pull_request`), and the pre-PR 1,200-row sample could
+not either (the row is a baseline `fail`). Fix: the scan now requires the
+identifier to reach the assignment target through PATTERN nodes only
+(`isBindingWritePath`), i.e. the pre-widening semantics plus the intended
+destructuring / for-in-of / default-value targets; a 30-case truth table is
+in the fix commit's probe. Still open, pre-existing: the dynamic
+`instanceof` chain walk itself loops on that namespace object — base never
+reaches it because its fold holds; whoever lifts the fold for a legitimately
+reassigned constructor will hit it.
+
 **Validation** is on the combined session-branch tree (see the PR).
 

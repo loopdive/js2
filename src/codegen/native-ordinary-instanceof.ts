@@ -374,6 +374,45 @@ export function identifierIsWrittenTo(file: ts.SourceFile, name: string): boolea
     if (ts.isShorthandPropertyAssignment(parent)) return true;
     return (parent as ts.Node & { name?: ts.Node }).name !== id;
   };
+  /**
+   * True when `id` reaches `target` (an assignment's left side, an update
+   * operand, or a for-in/of head) only through PATTERN nodes — parentheses,
+   * array-literal elements, spreads, object-literal property values, shorthand
+   * names, and the target side of a pattern default (`[P = 1] = arr`). That is
+   * exactly the set of positions in which the BINDING is what gets written.
+   *
+   * (2026-09-04, #5576 merge-group wedge) The first cut of the widening used
+   * a plain containment test, which counted `X.prop = v`, `X.prop++` and
+   * `X[k] = v` as writes to X. Every test262 row carries
+   * `Test262Error.prototype.toString = …` (sta.js), so `Test262Error` read as
+   * reassigned in every file: the `new` fold for it declined everywhere and,
+   * on `language/module-code/namespace/internals/is-extensible.js`, the
+   * dynamic fallback spun forever inside the in-process fixture lane, capping
+   * 27 of 50 standalone shards. A member write mutates the OBJECT, not the
+   * binding, and is not a write here — same as the pre-widening shape.
+   */
+  const isBindingWritePath = (id: ts.Node, target: ts.Node): boolean => {
+    let cur: ts.Node = id;
+    while (cur !== target) {
+      const p: ts.Node | undefined = cur.parent;
+      if (p === undefined) return false;
+      if (ts.isParenthesizedExpression(p) || ts.isArrayLiteralExpression(p) || ts.isSpreadElement(p)) {
+        // pattern element / rest
+      } else if (ts.isObjectLiteralExpression(p) || ts.isSpreadAssignment(p)) {
+        // pattern property list / rest property
+      } else if (ts.isPropertyAssignment(p)) {
+        if (p.initializer !== cur) return false; // `{ [P]: x } = o` — computed key, not a target
+      } else if (ts.isShorthandPropertyAssignment(p)) {
+        if (p.name !== cur) return false; // `{ x = P } = o` — default value, not a target
+      } else if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        if (p.left !== cur) return false; // `[a = P] = arr` — default value, not a target
+      } else {
+        return false; // property/element access, call, conditional, … — the binding is only READ
+      }
+      cur = p;
+    }
+    return true;
+  };
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
@@ -385,20 +424,29 @@ export function identifierIsWrittenTo(file: ts.SourceFile, name: string): boolea
           parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
           parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
         ) {
-          found = true;
-          return;
+          if (isBindingWritePath(node, parent.left)) {
+            found = true;
+            return;
+          }
+          break; // `X.prop = v`: X is read, and no enclosing assignment can target it either
         }
         if (
           (ts.isPostfixUnaryExpression(parent) || ts.isPrefixUnaryExpression(parent)) &&
           contains(parent.operand, node) &&
           (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
         ) {
-          found = true;
-          return;
+          if (isBindingWritePath(node, parent.operand)) {
+            found = true;
+            return;
+          }
+          break;
         }
         if ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && contains(parent.initializer, node)) {
-          found = true;
-          return;
+          if (isBindingWritePath(node, parent.initializer)) {
+            found = true;
+            return;
+          }
+          break;
         }
         if (ts.isStatement(parent) || ts.isSourceFile(parent)) break;
       }

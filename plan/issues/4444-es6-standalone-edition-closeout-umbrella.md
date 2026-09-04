@@ -84,6 +84,31 @@ compile_error count did not move (380) — every wave was `fail` work.
   (`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, single fork) — including the pre-push
   hook, so push in the background with that variable set. `--target wasi` does
   NOT set `ctx.standalone`; measure each arm on the targets its gate reaches.
+- **CI is node 25, the container is node 22.** A node-oracle assertion
+  (`new Function` in a test) can hold on one and not the other: V8 in node 25
+  no longer gives sloppy functions own `caller`/`arguments`, so a pin that
+  asserted node's answer for `G.caller` (class extending a plain function)
+  failed only in CI. Probe the running engine instead of asserting a fixed
+  answer, and run the changed test files under node 25 before pushing
+  (`npx -p node@25` fetches one; `PATH=<its bin>:$PATH` puts the vitest
+  forks and the compiler pool on it).
+- **A merge-group shard that hits its 40-minute cap with no bot hold is a
+  runtime wedge, not a slow family — and the PR-level checks cannot see it.**
+  Fixture-graph rows (`language/module-code/**` self-imports and
+  `_FIXTURE` graphs, ~200 rows) execute IN-PROCESS in the vitest fork
+  (`tests/test262-shared.ts`), outside the compiler pool's 30 s kill, so one
+  infinite loop caps the whole shard; the pattern is bimodal (13-18 min or
+  40 min) and deterministic per shard set. The 2026-09-04 instance: the
+  widened `identifierIsWrittenTo` counted `X.prop = v` as a write to X, which
+  made `Test262Error` (sta.js assigns its prototype's `toString`) read as
+  reassigned in EVERY row, declined the `new` fold everywhere, and the dynamic
+  fallback looped on `namespace/internals/is-extensible.js`. Diagnose by
+  reproducing one hung shard locally with CI's env (`TEST262_CHUNK_INDEX` /
+  `TEST262_CHUNK_TOTAL` on `tests/test262-chunk-dynamic.test.ts`, the quickjs
+  adapter built for the current bundle — without it eval-dependent rows fail
+  fast and the wedge is invisible), then `node --prof` the single row through
+  `runTest262File`. Artifact downloads from `blob.core.windows.net` are blocked
+  by the container proxy, so the partial shard JSONL is not reachable.
 - **Model attribution**: workflow agents inherit the session model unless the
   script pins `model`; after the `/model` switch, unpinned "Opus" agents ran on
   Fable 5.1 — two `Model:` trailers had to be rewritten (unpublished commits
