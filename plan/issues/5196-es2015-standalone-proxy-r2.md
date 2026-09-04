@@ -1685,3 +1685,46 @@ four exact test262 rows. **Verified 5/5 FAIL on `.tmp/basetree` (`4fa179f8`) and
 R3-1 (§10.5 invariants, 29 rows), R3-3 (define/gOPD routing, 3 rows), R3-5
 (open proxy-TARGET literal, 5 rows), and the R3-2 residue (C1, C2/C3, C6, C8a).
 Not started — budget, not a finding.
+
+## Results — R3-3 E-2 only (2026-09-04, Opus implementer)
+
+Same base tree and protocol as R3-4 above.
+
+**Claimed: +1 of the 3 `r3-E.txt` rows — `Proxy/getOwnPropertyDescriptor/null-handler.js`,
+base `compile_error` → lane `pass` (standalone).**
+
+`Object.getOwnPropertyDescriptor(o)` with ONE argument was refused by the call
+site's `arguments.length >= 2` gate, fell through to `__get_builtin`, and became
+the "#1472 Phase B dynamic-shape" hard COMPILE error — the module did not
+compile, so the row could not even run. §20.1.2.8 needs no second argument:
+step 2 is `ToPropertyKey(undefined)`, the key `"undefined"`. Under
+`ctx.standalone` the 1-argument form now routes straight to the dynamic
+`__getOwnPropertyDescriptor` native with the undefined sentinel as the key, so
+the receiver's own front guards run in their normal place — which is what makes
+the revoked `$Proxy` throw its TypeError.
+
+**Blast radius, measured not assumed:** `grep -rl
+"getOwnPropertyDescriptor([A-Za-z_$][A-Za-z0-9_$.]*)"` over `built-ins/` +
+`language/` returns **exactly one file** — the claimed row. No other test262 row
+can reach the new block, and every such module previously failed to compile
+outright, so no passing row can regress through it. `Object/getOwnPropertyDescriptor/`
+sample (20 rows) is 20/20 on the lane, which cannot be worse than any base.
+Host/gc is untouched by construction (the block is `ctx.standalone`-gated);
+measured anyway: `r3-E.txt` on the host lane is 2 pass / 1 fail on **both**
+trees, same row, same message.
+
+Pin `tests/issue-5196-r3-3-gopd-arity.test.ts` (zero imports; 1-arg on an object
+that lacks and one that owns `"undefined"`, the 2-arg form unchanged, and the
+revoked-proxy TypeError) — **verified 2/2 FAIL on `.tmp/basetree`, 2/2 pass on
+the lane.**
+
+**E-1 NOT started (the other 2 E rows).** `defineProperty/null-handler.js` and
+`defineProperty/call-parameters.js` need the `$Proxy` front guard inside
+`__defineProperty_value` / `__defineProperty_accessor` — the store behind EVERY
+`Object.defineProperty`, `Object.defineProperties`, `Object.create(p, descs)`
+and the builtin-namespace seeding. The plan's own acceptance for it is
+`Object/defineProperty/` (1128 passing rows), `Object/defineProperties/`,
+`Object/create/` (320) and `Object/getOwnPropertyDescriptor/` (310) re-run on
+both trees. At the ~20 s/row this 4-core box measures, that floor alone is many
+hours; starting the edit without it would ship an unmeasured change to the
+hottest store in the object runtime. Deferred deliberately, not forgotten.
