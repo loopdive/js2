@@ -350,8 +350,17 @@ export interface IrOutcomePolicyVerdict {
   readonly blockers: readonly IrObservedOutcome[];
 }
 
-/** Reject partial, impossible, or boolean-inconsistent exact body accounting. */
-function hasMalformedBodyEmissionAccounting(outcome: IrObservedOutcome): boolean {
+/**
+ * Reject partial, impossible, or boolean-inconsistent exact body accounting.
+ *
+ * (#5299) Exported so a producer can reject a malformed triple at the point it
+ * builds the row, instead of publishing it and letting the policy pass report
+ * it as a blocker one whole compile later. An absent triple is deliberately
+ * still well-formed here: a row whose emitter cannot measure the counters
+ * states nothing rather than guessing, and the R9 denominator work tracks that
+ * omission separately.
+ */
+export function hasMalformedBodyEmissionAccounting(outcome: IrObservedOutcome): boolean {
   const values = [outcome.prepareAttempts, outcome.directBodyEmissions, outcome.irBodyEmissions];
   if (values.every((value) => value === undefined)) return false;
   if (values.some((value) => value === undefined)) return true;

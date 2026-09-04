@@ -52,8 +52,33 @@ function isAmbientGlobalIdentifier(ctx: CodegenContext, ident: ts.Identifier): b
 }
 
 /**
+ * (#5196 R3 review F4) The one FIXED-arity static that also resolves here.
+ *
+ * `Proxy.revocable` reifies as a two-`externref` closure, but its TypeScript lib
+ * signature types the handler as `ProxyHandler<T>` — a named object type that
+ * `resolveWasmType` maps to a registered STRUCT. Without an alias the generic
+ * slot-by-slot call path therefore compiled an inline handler literal as that
+ * closed struct, and the trap read off it was not a callable: measured
+ * 2026-09-04, standalone, `var R = Proxy.revocable; R({a:1}, {get(t,k){return 7}})`
+ * then `pr.proxy.a` TRAPPED with `illegal cast` (a handler bound to a `var`
+ * first was fine). A trap is not an acceptable answer anywhere; routing the
+ * call through the closure ABI makes the value spelling construct a real proxy
+ * and print node's `7`.
+ *
+ * Kept as a named exception rather than "every fixed-arity static" for the
+ * reason in the file header: widening the whole set is a separate change with
+ * its own measurement.
+ */
+const FIXED_ARITY_PLAIN_ALIAS_STATICS: ReadonlySet<string> = new Set(["Proxy.revocable"]);
+
+function isFixedArityPlainAliasStatic(builtinName: string, propName: string): boolean {
+  return FIXED_ARITY_PLAIN_ALIAS_STATICS.has(`${builtinName}.${propName}`);
+}
+
+/**
  * Resolve `var f = <Namespace>.<staticMethod>` for the variadic-convention
- * statics. Returns undefined for every other shape.
+ * statics plus {@link FIXED_ARITY_PLAIN_ALIAS_STATICS}. Returns undefined for
+ * every other shape.
  */
 export function resolveVariadicBuiltinStaticPlainAlias(
   ctx: CodegenContext,
@@ -69,7 +94,9 @@ export function resolveVariadicBuiltinStaticPlainAlias(
   if (!ts.isPropertyAccessExpression(init) || !ts.isIdentifier(init.expression)) return undefined;
   const builtinName = init.expression.text;
   const propName = init.name.text;
-  if (!isVariadicValueStatic(builtinName, propName)) return undefined;
+  if (!isVariadicValueStatic(builtinName, propName) && !isFixedArityPlainAliasStatic(builtinName, propName)) {
+    return undefined;
+  }
   if (BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName] === undefined) return undefined;
   if (!isAmbientGlobalIdentifier(ctx, init.expression)) return undefined;
 

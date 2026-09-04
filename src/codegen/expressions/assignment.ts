@@ -145,6 +145,7 @@ import { compileCoercionRhs } from "../char-at-transfer.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js"; // (#4630)
 import { resolveEffectiveStructName } from "../property-access.js";
+import { classObjectRestrictedProperty } from "../class-static-metadata.js"; // (#5195 r3-7)
 import { emitOverlayRoutedElementSet, overlayRouteActive } from "../typed-lane-overlay-route.js"; // (#4159 S5)
 import { buildOverlayArrayLengthSet } from "../array-filter-length-set.js";
 import { isForeignEvalNode } from "./eval-source.js";
@@ -357,6 +358,10 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
   if (maybeCaptureArrayProtoOverride(ctx, fctx, lhs, expr.right)) {
     return { kind: "externref" };
   }
+
+  // (#5269 B-d) A property WRITE whose RECEIVER is a symbol primitive.
+  const symbolReceiverWrite = tryEmitSymbolReceiverPropertyWrite(ctx, fctx, expr, lhs);
+  if (symbolReceiverWrite !== undefined) return symbolReceiverWrite;
 
   if (ts.isIdentifier(expr.left)) {
     const name = expr.left.text;
@@ -3813,6 +3818,54 @@ function emitExternrefBackedOwnFieldWrite(
 }
 
 /**
+ * (#5269 B-d) `sym.a = 0` / `sym["a" + "b"] = 0` / `sym[62] = 0`.
+ *
+ * §6.2.5.6 PutValue on a PRIMITIVE base runs OrdinarySetWithOwnDescriptor
+ * against a THROWAWAY wrapper object, so the write can never be observed: the
+ * follow-up read goes through a fresh wrapper and answers `undefined`. In
+ * STRICT code the failed CreateDataProperty is a TypeError; in sloppy code it
+ * completes as a no-op whose value is the RHS.
+ *
+ * Before this arm the write reached the generic member-set path, which silently
+ * ACCEPTED it — so the strict spelling threw nothing at all.
+ *
+ * Returns `undefined` (nothing emitted) unless the receiver is STATICALLY a
+ * symbol, so no other receiver kind changes.
+ */
+function tryEmitSymbolReceiverPropertyWrite(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  lhs: ts.Expression,
+): InnerResult | undefined {
+  if (expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return undefined;
+  if (!ts.isPropertyAccessExpression(lhs) && !ts.isElementAccessExpression(lhs)) return undefined;
+  if (ctx.oracle.staticJsTypeOf(lhs.expression) !== "symbol") return undefined;
+
+  // §13.15.2 evaluation order: the LHS Reference (base, then key) before the
+  // RHS. Each part still runs for its side effects even though the store is
+  // discarded.
+  const recvType = compileExpression(ctx, fctx, lhs.expression);
+  if (recvType) fctx.body.push({ op: "drop" });
+  if (ts.isElementAccessExpression(lhs)) {
+    const keyType = compileExpression(ctx, fctx, lhs.argumentExpression);
+    if (keyType) fctx.body.push({ op: "drop" });
+  }
+  const rhsType = compileExpression(ctx, fctx, expr.right, { kind: "externref" });
+  if (rhsType === null) return null;
+  if (rhsType.kind !== "externref") coerceType(ctx, fctx, rhsType, { kind: "externref" });
+
+  if (isStrictContext(lhs, ctx.inferModuleStrictArguments)) {
+    fctx.body.push({ op: "drop" });
+    emitThrowTypeError(ctx, fctx, "Cannot create property on a Symbol");
+    return { kind: "externref" };
+  }
+  // Sloppy: the store is dropped, and the assignment expression's value is the
+  // RHS — which is already the single value left on the stack.
+  return { kind: "externref" };
+}
+
+/**
  * (#2681/#2686 A3 — write side) Route a pinned-struct `recv.<field> = v` WRITE
  * through the #2664 deferred `__set_member_<name>` dispatcher
  * (`emitAlternateStructSetDispatch`), so writes hit the native struct slot in
@@ -4514,6 +4567,22 @@ function compilePropertyAssignment(
       if (setterIdx !== undefined) {
         return emitSetterCallWithDummy(ctx, fctx, clsName, setterName, setterIdx, value);
       }
+    }
+    // (#5195 r3-7) §10.2.4: `C.caller = v` / `C.arguments = v` hit the
+    // %ThrowTypeError% accessor inherited from %Function.prototype%, whose
+    // [[Set]] throws. Same predicate as the READ arm in
+    // `property-access-dispatch.ts`, so the two cannot disagree; a class that
+    // DECLARES the name keeps its storage (the checks above already answered).
+    if (classObjectRestrictedProperty(ctx, clsName, propName, target.expression)) {
+      const rhs = compileExpression(ctx, fctx, value);
+      if (rhs) fctx.body.push({ op: "drop" });
+      emitThrowTypeError(
+        ctx,
+        fctx,
+        "'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functions",
+      );
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
     }
     const globalIdx = ctx.staticProps.get(fullName);
     if (globalIdx !== undefined) {

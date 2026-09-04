@@ -668,6 +668,53 @@ export function sourceContainsBindingPattern(sourceFile: ts.SourceFile): boolean
   return found;
 }
 
+/** Per-file memo for {@link sourceContainsWithStatement}. */
+const withStatementCache = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * (#5313) True iff the source contains a `with` statement anywhere.
+ *
+ * Unlike the short-circuiting predicates above, a NEGATIVE answer here costs a
+ * FULL pass — "no `with` anywhere" is only knowable after visiting every node.
+ * That makes the memo and the text pre-filter load-bearing rather than
+ * decorative: the two `with`-target scans in
+ * `declarations/object-shape-widening.ts` that this gates cost 7,838 of the
+ * #3437 harness compile-work budget (two full passes over the 3,919-node
+ * fixture), and gating them on an *unconditional* AST walk would have refunded
+ * only half of that.
+ *
+ * The `text` pre-filter is sound in the one direction it is used: a `with`
+ * statement's source text necessarily contains the keyword, and a reserved word
+ * may not be spelled with a unicode escape (escaping any letter of the keyword
+ * is a SyntaxError, so there is no spelling of the statement that hides from
+ * the substring test). So absence of the substring is DEFINITE absence of the
+ * statement, and the filter can never say "yes" — `withDefaults()`,
+ * `{ writable: true }` in a member name, or the word in a comment all match the
+ * substring, and for those the AST walk remains the authority and answers
+ * false. Same idiom as `collectGlobalObjectPropertyNames`'s `this`/`globalThis`
+ * precondition and `collectHeterogeneouslyAssignedModuleVarNames`.
+ *
+ * Memoized per `ts.SourceFile` so the second and later consumers are free.
+ */
+export function sourceContainsWithStatement(sourceFile: ts.SourceFile): boolean {
+  const cached = withStatementCache.get(sourceFile);
+  if (cached !== undefined) return cached;
+  let found = false;
+  if (sourceFile.text.includes("with")) {
+    const walk = (node: ts.Node): void => {
+      if (found) return;
+      if (ts.isWithStatement(node)) {
+        found = true;
+        return;
+      }
+      forEachChild(node, walk);
+    };
+    walk(sourceFile);
+  }
+  withStatementCache.set(sourceFile, found);
+  return found;
+}
+
 /**
  * (#1719 S1) Whole-program pre-scan for the `ITER_OVERRIDDEN` brand of the
  * array object-value representation track. Returns true iff the source may

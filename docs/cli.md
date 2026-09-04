@@ -210,6 +210,28 @@ Useful for stripping development-only branches at compile time.
 
 ## Frontend flags
 
+### `--skip-semantic-diagnostics`
+
+Skip TypeScript's **semantic** checking. Syntax errors still fail the compile;
+only the type-diagnostic gate is skipped, and type *queries* keep working, so
+codegen is unaffected.
+
+This exists for compiling **plain JavaScript packages**. A real npm package run
+through strict-mode type-checking reports a wall of legitimate-but-irrelevant
+diagnostics that abort the compile even though codegen would have succeeded —
+acorn 8.16.0, for instance, fails on 5 `Type 'null' is not assignable to type
+'undefined'`-style errors under hundreds of `Property does not exist on type`
+warnings (#3717). The option has always existed on the programmatic API
+(`compile(src, { skipSemanticDiagnostics: true })`), and every dogfood harness
+that compiles a real package sets it; this flag is the CLI's way in.
+
+```bash
+js2wasm node_modules/acorn/dist/acorn.mjs --skip-semantic-diagnostics -o dist/
+```
+
+Do not reach for it to silence diagnostics on your own TypeScript — there the
+errors are usually real.
+
 ### `--ts7`
 
 Use `@typescript/native-preview` (TypeScript 7 Go-port) as the parser/checker

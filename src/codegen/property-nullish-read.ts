@@ -11,6 +11,7 @@ import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { receiverIsRealmGlobalObject } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A)
 import { compilePropertyAccess, typeErrorThrowInstrs } from "./property-access.js";
 import { coerceType, compileExpression } from "./shared.js";
+import { readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
 
 function readsCallerFromArgumentsCallee(expr: ts.PropertyAccessExpression): boolean {
   const receiver = expr.expression;
@@ -36,6 +37,13 @@ export function compilePropertyAccessForNullishObservation(
   // the generic host observation path turns that sentinel into ordinary NaN,
   // after which `#field === undefined` can never succeed.
   if (ts.isPrivateIdentifier(expr.name)) return compilePropertyAccess(ctx, fctx, expr);
+  // (#5312) Same argument, one carrier over: a declared-but-never-initialised
+  // field's slot is `ref.null`, and the boxed host route turns that into a
+  // value the `__extern_is_undefined` probe answers `false` for, so
+  // `this.m === undefined` was false and the guarded `this.m()` trapped. Keep
+  // the typed struct read so the null reference itself reaches the comparison,
+  // where the ref arm recognises it as this field's `undefined`.
+  if (readsUninitialisedFieldSlot(ctx, expr)) return compilePropertyAccess(ctx, fctx, expr);
   const externref: ValType = { kind: "externref" };
   const propName = expr.name.text;
   // (#4500 Slice A) `this.p` / `globalThis.p` for a `var`-declared global has ONE

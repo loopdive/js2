@@ -75,6 +75,7 @@ import { generateModule } from "../src/codegen/index.js";
 import { irUnitCallableBindingId } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory, createDerivedIrUnitId, type IrBindingId, type IrUnitId } from "../src/ir/identity.js";
 import type { ValType } from "../src/ir/types.js";
+import { liftedArrowUnit } from "./helpers/ir-identities.js";
 
 // Register the codegen expression/statement delegates used by generateModule.
 import "../src/codegen/expressions.js";
@@ -117,16 +118,16 @@ describe("#3520 production monomorphized-callable Program ABI planning", () => {
       (candidate) => candidate.kind === "top-level-function" && candidate.displayName === "owner",
     );
     if (!owner) throw new Error("missing exact source owner");
-    const firstLiftedUnitId = createDerivedIrUnitId({
-      parentId: owner.id,
-      role: "lifted-closure",
-      ordinal: 0,
-    });
-    const secondLiftedUnitId = createDerivedIrUnitId({
-      parentId: owner.id,
-      role: "lifted-closure",
-      ordinal: 1,
-    });
+    // The monomorphization parents are the two lifted arrows. They are
+    // inventoried `arrow-function` units keyed by enclosing terminal owner plus
+    // declaration ordinal, NOT derived `lifted-closure` units — see
+    // `liftedArrowUnit`. Only the CLONE keeps a derived id below, because
+    // `monomorphization-clone` is still a registered derived role.
+    const firstLifted = liftedArrowUnit(inventory.allUnits, owner.id, 0);
+    const secondLifted = liftedArrowUnit(inventory.allUnits, owner.id, 1);
+    expect([firstLifted.displayName, secondLifted.displayName]).toEqual(["firstIdentity", "secondIdentity"]);
+    const firstLiftedUnitId = firstLifted.id;
+    const secondLiftedUnitId = secondLifted.id;
     const firstCloneUnitId = createDerivedIrUnitId({
       parentId: firstLiftedUnitId,
       role: "monomorphization-clone",

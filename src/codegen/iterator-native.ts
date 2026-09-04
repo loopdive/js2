@@ -93,6 +93,7 @@ import { zeroArgPadInstrs } from "./zero-arg-method-pad.js";
 // `sentinelAwareF64BoxInstrs`, generators-native.ts; inlined here to avoid a
 // module-init-order-sensitive import back into that cycle-heavy module).
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js";
+import { ABRUPT_FIELD, MODE_FIELD } from "./frame-core.js";
 import { walkChildren } from "./walk-instructions.js";
 
 /** Slice-1 IterRec kind tag for a canonical externref `$Vec`. */
@@ -2935,6 +2936,131 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
   }
 }
 
+/** (#5268 r3) funcMap key of the `HasIteratorMethod` predicate. */
+const ITERATOR_METHOD_PRESENT = "__iterator_method_present";
+
+/**
+ * (#5268 r3) The DYNAMIC half of {@link ensureNativeIteratorMethodPresent}:
+ * `HasProperty(v, @@iterator)` (`__extern_has`, §7.3.12 — own AND prototype
+ * chain) — what an open `$Object` / post-hoc `o[Symbol.iterator] = fn`
+ * install answers. Deliberately NOT a `[[Get]]`: the one `GetMethod` read
+ * §23.1.2.1 step 3 makes belongs to `__iterator`, and a probing `[[Get]]`
+ * here fired an `@@iterator` accessor TWICE per call (round-3 review F4). A
+ * present-but-nullish or non-callable method still counts as present — its
+ * TypeError (or, for nullish, the array-like fallback node performs) is
+ * `__iterator`'s to raise, and the previous lowering answered the same way.
+ * `undefined` when the object runtime is not registered.
+ */
+function iteratorMethodProbeInstrs(ctx: CodegenContext): Instr[] | undefined {
+  const externHas = ctx.funcMap.get("__extern_has");
+  const boxSymbol = ctx.funcMap.get("__box_symbol");
+  if (externHas === undefined || boxSymbol === undefined) return undefined;
+  return [
+    { op: "local.get", index: 0 },
+    { op: "i32.const", value: 1 },
+    { op: "call", funcIdx: boxSymbol },
+    { op: "call", funcIdx: externHas },
+  ];
+}
+
+/**
+ * (#5268 r3 F2) Register `__iterator_method_present(v) -> i32` — §23.1.2.1
+ * step 3's `usingIterator = GetMethod(items, @@iterator)` as a PREDICATE, so a
+ * consumer that must choose between the iterator protocol and an array-like
+ * walk (`Array.from`) decides on what the VALUE is, not on a property probe
+ * alone. Reserve-then-fill: the reserve-time body is the dynamic property
+ * probe ({@link iteratorMethodProbeInstrs}); {@link fillIteratorMethodPresent}
+ * prepends the STATIC arms at finalize, once every closed-struct type and
+ * `<Struct>_@@iterator` method is registered. Standalone/WASI only;
+ * `undefined` when the object runtime is missing (the caller keeps its
+ * routing). Idempotent.
+ */
+export function ensureNativeIteratorMethodPresent(ctx: CodegenContext): number | undefined {
+  if (!ctx.standalone && !ctx.wasi) return undefined;
+  const existing = ctx.funcMap.get(ITERATOR_METHOD_PRESENT);
+  if (existing !== undefined) return existing;
+  const probe = iteratorMethodProbeInstrs(ctx);
+  if (!probe) return undefined;
+  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "i32" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.funcMap.set(ITERATOR_METHOD_PRESENT, funcIdx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: ITERATOR_METHOD_PRESENT,
+    typeIdx,
+    locals: [{ name: "any", type: { kind: "anyref" } }],
+    body: [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }], else: [] },
+      ...probe,
+    ],
+    exported: false,
+  });
+  return funcIdx;
+}
+
+/**
+ * (#5268 r3 F2) FINALIZE fill of `__iterator_method_present`: one `ref.test`
+ * per value shape whose `@@iterator` is a STATIC member the property probe
+ * cannot see — a closed struct with a `<Struct>_@@iterator` method (class
+ * instance, literal method) or an `@@iterator`-named closure field (literal
+ * `[Symbol.iterator]: function () {…}`), a driven native sync-generator frame
+ * (`@@iterator` is the identity), the `$LazyIterHelper` wrapper, an
+ * `$__IterRec` (already an iterator) and a native string (%String.prototype%
+ * is not on the `$Object` chain). Everything else falls through to the
+ * dynamic probe. A closed struct admitted here reaches `__iterator`, which
+ * raises its own "value is not iterable" when it cannot drive the shape — a
+ * loud TypeError, never a silent array-like walk. No-op unless reserved.
+ */
+export function fillIteratorMethodPresent(ctx: CodegenContext): void {
+  const funcIdx = ctx.funcMap.get(ITERATOR_METHOD_PRESENT);
+  const fn = funcIdx !== undefined ? definedFuncAt(ctx, funcIdx) : undefined;
+  const probe = fn ? iteratorMethodProbeInstrs(ctx) : undefined;
+  if (!fn || !probe) return;
+  const typeIdxs = new Set<number>();
+  for (const [structName, fields] of ctx.structFields) {
+    if (
+      structName.startsWith("Wrapper") ||
+      structName === "$AnyValue" ||
+      structName.startsWith("__vec_") ||
+      structName.startsWith("__arr_")
+    )
+      continue;
+    const typeIdx = ctx.structMap.get(structName);
+    if (typeIdx === undefined) continue;
+    if (ctx.funcMap.has(`${structName}_@@iterator`) || fields.some((f) => f.name === "@@iterator")) {
+      typeIdxs.add(typeIdx);
+    }
+  }
+  for (const info of ctx.nativeGenerators.values()) {
+    if (info.resumeFuncIdx !== undefined) typeIdxs.add(info.stateTypeIdx);
+  }
+  const lazyHelperTypeIdx = ctx.structMap.get("$LazyIterHelper");
+  if (lazyHelperTypeIdx !== undefined) typeIdxs.add(lazyHelperTypeIdx);
+  if (ctx.funcMap.has("__iterator")) typeIdxs.add(iterRuntimeTypes(ctx).iterRecTypeIdx);
+  // A native string's `@@iterator` lives on %String.prototype%, which the
+  // `$Object` HasProperty walk does not reach (`Array.from("ab", fn)` walked
+  // as an array-like and answered empty); the ladder's string arm drives it.
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) typeIdxs.add(ctx.anyStrTypeIdx);
+  const staticArms: Instr[] = [...typeIdxs]
+    .sort((a, b) => a - b)
+    .flatMap((t): Instr[] => [
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: t },
+      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }], else: [] },
+    ]);
+  fn.body = [
+    { op: "local.get", index: 0 },
+    { op: "ref.is_null" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 0 }, { op: "return" }], else: [] },
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.set", index: 1 },
+    ...staticArms,
+    ...probe,
+  ];
+}
+
 /**
  * (#3100 S5) Closed-struct types that carry an iterator-protocol method —
  * `<Struct>_@@iterator` (an iterable) or `<Struct>_next` (an iterator object).
@@ -2996,12 +3122,22 @@ function buildIteratorReturnBody(
 ): Instr[] {
   const { iterRecTypeIdx } = types;
   const validateClose: Instr[] = closeResultCheck ? closeResultCheck() : [{ op: "drop" }];
-  // (#3164) kind == GENSTATE → IteratorClose marks the sync-generator frame
-  // COMPLETED (`state := doneState`): a subsequent `.next()` then answers
-  // `{value: undefined, done: true}` (§27.5.3.3 — the generator moves to
-  // "completed"). Running a finally block on early close is out of scope
-  // (same boundary as the #2903 iter-hof `close`). Per-producer type-switch;
-  // an unmatched frame falls through (defensive no-op).
+  // (#3164, #5268 r3) kind == GENSTATE → IteratorClose on a driven native
+  // SYNC generator frame — §27.5.3.4 GeneratorResumeAbrupt with a RETURN
+  // completion, the same sequence the for-of consumer inlines on `break`
+  // (`closeGenerator`, generators-native-consumer.ts):
+  //   • state 0 (suspendedStart) or already `doneState` → mark COMPLETED and
+  //     answer without running the body (§27.5.3.4 steps 4-5);
+  //   • suspended at a yield → `abrupt := undefined`, `mode := 1`, RESUME the
+  //     frame so the generator's `finally` blocks run, drop the result.
+  // Before #5268 r3 this arm only flipped the frame to `doneState`, so every
+  // IteratorClose routed through `__iterator_return` (Array.from with an
+  // abrupt mapper, destructuring, `__array_from_iter_n`'s bounded break)
+  // skipped the generator's `finally` while for-of `break` ran it. A throw
+  // out of the resumed `finally` propagates as `$exc` — the caller decides
+  // (§7.4.9 step 5: discarded when the completion being propagated is already
+  // a throw). Per-producer type-switch; an unmatched frame falls through
+  // (defensive no-op).
   const genStateClose: Instr[] = sgDeps
     ? [
         { op: "local.get", index: 1 },
@@ -3013,28 +3149,67 @@ function buildIteratorReturnBody(
           op: "if",
           blockType: { kind: "empty" },
           then: [
-            ...sgDeps.producers.flatMap((p): Instr[] => [
-              { op: "local.get", index: 1 },
-              { op: "ref.cast", typeIdx: iterRecTypeIdx },
-              { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
-              { op: "any.convert_extern" },
-              { op: "ref.test", typeIdx: p.stateTypeIdx },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 1 },
-                  { op: "ref.cast", typeIdx: iterRecTypeIdx },
-                  { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
-                  { op: "any.convert_extern" },
-                  { op: "ref.cast", typeIdx: p.stateTypeIdx },
-                  { op: "i32.const", value: p.doneState },
-                  { op: "struct.set", typeIdx: p.stateTypeIdx, fieldIdx: GENSTATE_STATE_FIELD },
-                  { op: "return" },
-                ],
-                else: [],
-              },
-            ]),
+            ...sgDeps.producers.flatMap((p): Instr[] => {
+              const frame = (): Instr[] => [
+                { op: "local.get", index: 1 },
+                { op: "ref.cast", typeIdx: iterRecTypeIdx },
+                { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+                { op: "any.convert_extern" },
+                { op: "ref.cast", typeIdx: p.stateTypeIdx },
+              ];
+              const state = (): Instr[] => [
+                ...frame(),
+                { op: "struct.get", typeIdx: p.stateTypeIdx, fieldIdx: GENSTATE_STATE_FIELD },
+              ];
+              // The `abrupt` carrier field is externref for the boxed-any
+              // carrier and f64 otherwise (`genCarrierFieldType`); `undefined`
+              // is the null externref / the UNDEF_F64 sentinel.
+              const undefinedCarrier: Instr[] =
+                p.elemValType.kind === "externref"
+                  ? [{ op: "ref.null.extern" }]
+                  : [{ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" }];
+              return [
+                { op: "local.get", index: 1 },
+                { op: "ref.cast", typeIdx: iterRecTypeIdx },
+                { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 },
+                { op: "any.convert_extern" },
+                { op: "ref.test", typeIdx: p.stateTypeIdx },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    ...state(),
+                    { op: "i32.eqz" },
+                    ...state(),
+                    { op: "i32.const", value: p.doneState },
+                    { op: "i32.eq" },
+                    { op: "i32.or" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        ...frame(),
+                        { op: "i32.const", value: p.doneState },
+                        { op: "struct.set", typeIdx: p.stateTypeIdx, fieldIdx: GENSTATE_STATE_FIELD },
+                      ],
+                      else: [
+                        ...frame(),
+                        ...undefinedCarrier,
+                        { op: "struct.set", typeIdx: p.stateTypeIdx, fieldIdx: ABRUPT_FIELD },
+                        ...frame(),
+                        { op: "i32.const", value: 1 },
+                        { op: "struct.set", typeIdx: p.stateTypeIdx, fieldIdx: MODE_FIELD },
+                        ...frame(),
+                        { op: "call", funcIdx: p.resumeIdx },
+                        { op: "drop" },
+                      ],
+                    },
+                    { op: "return" },
+                  ],
+                  else: [],
+                },
+              ];
+            }),
             { op: "return" },
           ],
           else: [],

@@ -80,6 +80,56 @@ import { NATIVE_FUNCTION_SOURCE } from "./callable-to-string.js";
 import { buildOrdinaryToPrimitiveProbe, resolveOrdinaryToPrimitiveProbeDeps } from "./ordinary-to-primitive-probe.js";
 
 /**
+ * (#5269 C-1) The `$Proxy` arm of the callable ToString cascade.
+ *
+ * A Proxy is its own opaque carrier, not a closure struct, so
+ * `installCompiledClosureToStringArm`'s §20.2.3.5 step-3 constant never claimed
+ * it and the value fell through to the helper's ordinary ToPrimitive body —
+ * whose `toString` lookup forwards through the proxy to the TARGET closure,
+ * finds no user-installed method, and renders `"undefined"`. Measured: `"" +
+ * new Proxy(function () {}, {})` was the string `"undefined"` for every
+ * `built-ins/Function/prototype/toString/proxy-*.js` row.
+ *
+ * §20.2.3.5 step 2 makes a callable Object's representation implementation
+ * defined but REQUIRES NativeFunction syntax, which is exactly the constant the
+ * closure arm already answers — so a callable proxy answers the same string as
+ * the function it wraps. The callable bit is the one the Proxy records at
+ * ProxyCreate (field 5), the same bit `__typeof_function` reads, so the two
+ * cannot disagree. A NON-callable proxy is left untouched and keeps the object
+ * cascade.
+ *
+ * `externAbi` selects the caller's ABI: `__extern_toString` takes and returns an
+ * externref (so the receiver is widened and the answer narrowed), while
+ * `__any_to_string` takes an anyref and returns a `ref $AnyString`.
+ *
+ * Returns `[]` when the object runtime has no Proxy type, so the caller's arm is
+ * byte-identical on a module that never mentions `Proxy`.
+ */
+function buildProxyCallableToStringArm(ctx: CodegenContext, receiverLocal: number, externAbi: boolean): Instr[] {
+  const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+  if (proxyTypeIdx === undefined) return [];
+  const answer: Instr[] = [...nativeStringLiteralInstrs(ctx, NATIVE_FUNCTION_SOURCE)];
+  if (externAbi) answer.push({ op: "extern.convert_any" });
+  answer.push({ op: "return" });
+  return [
+    { op: "local.get", index: receiverLocal },
+    ...(externAbi ? ([{ op: "any.convert_extern" }] satisfies Instr[]) : []),
+    { op: "ref.test", typeIdx: proxyTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: receiverLocal },
+        ...(externAbi ? ([{ op: "any.convert_extern" }] satisfies Instr[]) : []),
+        { op: "ref.cast", typeIdx: proxyTypeIdx },
+        { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: 5 }, // [[Call]] at ProxyCreate
+        { op: "if", blockType: { kind: "empty" }, then: answer },
+      ],
+    },
+  ];
+}
+
+/**
  * Prepend the §7.1.17-for-callables arm to the built `__any_to_string`.
  * Idempotent by construction (called once per finalize path); a second call on
  * an already-armed helper would double the arm, so callers must not repeat it.
@@ -144,6 +194,9 @@ export function fillCallableAnyToStringArm(ctx: CodegenContext): void {
           op: "if",
           blockType: { kind: "empty" },
           then: [
+            // (#5269 C-1) A callable Proxy answers the NativeFunction constant
+            // directly — see buildProxyCallableToStringArm.
+            ...buildProxyCallableToStringArm(ctx, 0, false),
             // §7.1.1.1 with hint "string": toString → valueOf, over the shared
             // runtime walk (ordinary-to-primitive-probe.ts).
             ...buildOrdinaryToPrimitiveProbe(ctx, deps, {
@@ -256,7 +309,31 @@ export function fillCallableExternToStringArm(ctx: CodegenContext): void {
       { op: "call", funcIdx: deps.typeofFunctionIdx },
       { op: "i32.eqz" },
       { op: "br_if", depth: 0 },
+      // (#5269 C-1) A callable Proxy answers the NativeFunction constant
+      // directly. It must come BEFORE the walk: the walk's `__extern_get`
+      // forwards through the proxy to its target and finds no user-installed
+      // method, so the arm would fall out of the block and the ordinary
+      // `__to_primitive` body would render `"undefined"`.
+      ...buildProxyCallableToStringArm(ctx, 0, true),
       ...walk,
+      // (#5269 C-1) §20.2.3.5 step 3 terminal — the same one the
+      // `__any_to_string` twin above already carries, and the same constant
+      // `installCompiledClosureToStringArm` answers for a closure struct.
+      //
+      // Without it this arm had NO terminal: it relied on that closure arm, so
+      // a callable that is not a compiled closure STRUCT — a Proxy, a native
+      // method closure such as the `Function.prototype.apply` glue value —
+      // fell out of the block into the helper's ordinary ToPrimitive body and
+      // rendered `"undefined"`. Measured: `"" + fn` inside
+      // `nativeFunctionMatcher.js`'s `assertNativeFunction`, for every
+      // `built-ins/Function/prototype/toString/proxy-*.js` row's second
+      // assertion (`new Proxy(f, { apply() {} }).apply`).
+      //
+      // Reached only when `__typeof_function(v)` already answered true, so no
+      // non-callable value can take it.
+      ...nativeStringLiteralInstrs(ctx, NATIVE_FUNCTION_SOURCE),
+      { op: "extern.convert_any" },
+      { op: "return" },
     ],
   });
 }

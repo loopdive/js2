@@ -52,6 +52,7 @@ import {
   getOrRegisterTaViewType,
   getTaViewName,
   isTaViewTypeIdx,
+  TA_CTOR_BRAND,
   TA_CTOR_BYTES,
   TA_CTOR_KINDS,
   taCtorKindOf,
@@ -3144,6 +3145,7 @@ export function emitDynamicTypedArrayConstructFromAny(
   const descTypeIdx = getOrRegisterTaCtorType(ctx);
   const descLocal = allocLocal(fctx, `__dyn_ta_ctor_${fctx.locals.length}`, { kind: "anyref" } as ValType);
   fctx.body.push({ op: "i32.const", value: kind });
+  fctx.body.push({ op: "i32.const", value: TA_CTOR_BRAND }); // (#5194 r3 F1) shape brand — the SECOND mint site, see getOrRegisterTaCtorType
   fctx.body.push({ op: "struct.new", typeIdx: descTypeIdx });
   fctx.body.push({ op: "local.set", index: descLocal });
   emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
@@ -4488,6 +4490,7 @@ export function getOrRegisterTaCtorSingleton(ctx: CodegenContext, kind: number):
     mutable: false,
     init: [
       { op: "i32.const", value: kind },
+      { op: "i32.const", value: TA_CTOR_BRAND }, // (#5194 r3 F1) shape brand, see getOrRegisterTaCtorType
       { op: "struct.new", typeIdx: taCtorTypeIdx },
     ],
   });
@@ -7321,7 +7324,7 @@ export function ensureTaDynSetHelper(ctx: CodegenContext): number | undefined {
  * results in the passed locals; pushes nothing net. Byte-move methods
  * (copyWithin/reverse) need only these — no per-element decode/encode.
  */
-function pushTaDynMethodPreamble(
+export function pushTaDynMethodPreamble(
   ctx: CodegenContext,
   fctx: FunctionContext,
   dynIdx: number,
@@ -7404,7 +7407,7 @@ function pushTaDynRelativeIndex(
   fctx.body.push({ op: "local.set", index: outLocal });
 }
 
-function makeTaDynHelperFctx(helperName: string, params: { name: string; type: ValType }[]): FunctionContext {
+export function makeTaDynHelperFctx(helperName: string, params: { name: string; type: ValType }[]): FunctionContext {
   return {
     name: helperName,
     params,

@@ -245,24 +245,25 @@ export function readSeed(): number { return seed; }
     expect(new Set(outcomes.map((outcome) => outcome.key)).size).toBe(outcomes.length);
   });
 
-  // ROTTED ON MAIN — skipped, not fixed, and not asserting the rot.
+  // UN-SKIPPED BY #5300 — and it was never the #5262 accounting failure.
   //
-  // Measured 2026-08-31 on pristine `origin/main` (source AND this file taken
-  // from main): these five fail there with the identical cause, so they are not
-  // a regression from #3523 gap 4. The R2 body-emission accounting check
-  // (`functionBodyAccountingFailure`, ir-overlay-outcomes.ts:339) runs last and
-  // OVERWRITES the outcome, so an injected internal throw is reported as
-  // `invariant/body-emission-evidence` instead of the root cause
-  // (`unexpected-internal-throw` / `missing-terminal-outcome`). The row is still
-  // fail-closed — an invariant either way — but the cause is masked.
+  // The block that used to stand here blamed the R2 body-emission accounting
+  // check for masking this test's root cause, alongside the four below. #5262
+  // fixed that masking and the four below now run. This one was a different
+  // cause entirely. Measured 2026-09-03 with #5262's fix applied, it failed
+  // with:
   //
-  // Why skipped rather than fixed: restoring the root-cause code means changing
-  // outcome PRECEDENCE in R2, which is well outside gap 4 and would need its own
-  // measurement. Why skipped rather than re-pointed at the current code: these
-  // tests are named "does not demote ..." — asserting the masked code would turn
-  // a red flag into a green lie. They are left stating what they want, visibly
-  // not running, so the rot stays findable. See the #3523 checkpoint note.
-  it.skip("counts only executable overload implementations and ignores ambient signatures", async () => {
+  //   ir/from-ast: direct call to "overloaded" has no exact AST-site plan in run
+  //   IR-first (#2138): run failed after its legacy body was skipped [unpatched-slot]
+  //   IR outcome invariant [unpatched-slot] for run
+  //
+  // `run` calls an OVERLOADED function; the direct-call resolver refused every
+  // overload set (`imported-functions.ts` `targetForSymbol`,
+  // `functions.length !== 1`), so the call site got no lowering plan, the legacy
+  // slot was already skipped, and the row failed closed as `unpatched-slot`.
+  // Nothing in `functionBodyAccountingFailure` participated. #5300 admits a
+  // compatible overload set as a direct-call target, so this runs again.
+  it("counts only executable overload implementations and ignores ambient signatures", async () => {
     const result = await compile(
       `
 declare function ambient(value: number): number;
@@ -307,20 +308,37 @@ export function answer(): number { return 42; }
       { fileName: "anonymous-class.ts", trackIrOutcomes: true },
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    // (#5283) `legacyBodyEmitted` is now a receipt: it requires a physical
+    // direct-body root, and an anonymous default class records none — the only
+    // audited entry for this source is a `compileDeclarations` root with no
+    // unit identity at all. The direct route almost certainly DID emit these
+    // two bodies, so this is not a claim that it did not; it is the audit
+    // refusing to assert a body it cannot see. Measured before/after: the two
+    // rows read `true` with `missing-legacy-entry-evidence` x2 ("reports a
+    // legacy body without entering an audited direct-body root"), and now read
+    // `false` with `missing-terminal-evidence` x2 ("neither a resolved IR
+    // outcome nor a physical legacy entry"). Same violation count, and the
+    // second label is the honest one: attributing this class's roots is the
+    // #3523 gap-1 unattributed-entry debt, not something this row can fix.
     expect(terminal(result)).toEqual([
       expect.objectContaining({
         displayName: "<anonymous-default-class:0>_new",
         kind: "unsupported",
         code: "anonymous-class",
-        legacyBodyEmitted: true,
+        legacyBodyEmitted: false,
       }),
       expect.objectContaining({
         displayName: "<anonymous-default-class:0>_read",
         kind: "unsupported",
         code: "anonymous-class",
-        legacyBodyEmitted: true,
+        legacyBodyEmitted: false,
       }),
     ]);
+    expect(
+      (result.irBodyRouteAudit?.violations ?? []).filter(
+        (violation) => violation.code === "missing-legacy-entry-evidence",
+      ),
+    ).toEqual([]);
   });
 
   it("records the compiler-injected timer wrapper as an exact IR terminal", async () => {
@@ -429,24 +447,7 @@ export function second(x: number): number { return x + 2; }`,
     ]);
   });
 
-  // ROTTED ON MAIN — skipped, not fixed, and not asserting the rot.
-  //
-  // Measured 2026-08-31 on pristine `origin/main` (source AND this file taken
-  // from main): these five fail there with the identical cause, so they are not
-  // a regression from #3523 gap 4. The R2 body-emission accounting check
-  // (`functionBodyAccountingFailure`, ir-overlay-outcomes.ts:339) runs last and
-  // OVERWRITES the outcome, so an injected internal throw is reported as
-  // `invariant/body-emission-evidence` instead of the root cause
-  // (`unexpected-internal-throw` / `missing-terminal-outcome`). The row is still
-  // fail-closed — an invariant either way — but the cause is masked.
-  //
-  // Why skipped rather than fixed: restoring the root-cause code means changing
-  // outcome PRECEDENCE in R2, which is well outside gap 4 and would need its own
-  // measurement. Why skipped rather than re-pointed at the current code: these
-  // tests are named "does not demote ..." — asserting the masked code would turn
-  // a red flag into a green lie. They are left stating what they want, visibly
-  // not running, so the rot stays findable. See the #3523 checkpoint note.
-  it.skip("turns an actual missing integration terminal into a reconciliation invariant", async () => {
+  it("turns an actual missing integration terminal into a reconciliation invariant", async () => {
     process.env.JS2WASM_TEST_DROP_IR_TERMINAL = "delay";
     const result = await compile(
       `export function delay(ms: number, value: number): Promise<number> {
@@ -466,24 +467,7 @@ export function second(x: number): number { return x + 2; }`,
     ]);
   });
 
-  // ROTTED ON MAIN — skipped, not fixed, and not asserting the rot.
-  //
-  // Measured 2026-08-31 on pristine `origin/main` (source AND this file taken
-  // from main): these five fail there with the identical cause, so they are not
-  // a regression from #3523 gap 4. The R2 body-emission accounting check
-  // (`functionBodyAccountingFailure`, ir-overlay-outcomes.ts:339) runs last and
-  // OVERWRITES the outcome, so an injected internal throw is reported as
-  // `invariant/body-emission-evidence` instead of the root cause
-  // (`unexpected-internal-throw` / `missing-terminal-outcome`). The row is still
-  // fail-closed — an invariant either way — but the cause is masked.
-  //
-  // Why skipped rather than fixed: restoring the root-cause code means changing
-  // outcome PRECEDENCE in R2, which is well outside gap 4 and would need its own
-  // measurement. Why skipped rather than re-pointed at the current code: these
-  // tests are named "does not demote ..." — asserting the masked code would turn
-  // a red flag into a green lie. They are left stating what they want, visibly
-  // not running, so the rot stays findable. See the #3523 checkpoint note.
-  it.skip("routes iterator registration throws through the owning source outcome", async () => {
+  it("routes iterator registration throws through the owning source outcome", async () => {
     process.env.JS2WASM_TEST_INJECT_IR_ITERATOR_REGISTRATION_THROW = "1";
     const result = await compile(
       `export function sum(values: Set<number>): number {
@@ -499,24 +483,7 @@ export function second(x: number): number { return x + 2; }`,
     ]);
   });
 
-  // ROTTED ON MAIN — skipped, not fixed, and not asserting the rot.
-  //
-  // Measured 2026-08-31 on pristine `origin/main` (source AND this file taken
-  // from main): these five fail there with the identical cause, so they are not
-  // a regression from #3523 gap 4. The R2 body-emission accounting check
-  // (`functionBodyAccountingFailure`, ir-overlay-outcomes.ts:339) runs last and
-  // OVERWRITES the outcome, so an injected internal throw is reported as
-  // `invariant/body-emission-evidence` instead of the root cause
-  // (`unexpected-internal-throw` / `missing-terminal-outcome`). The row is still
-  // fail-closed — an invariant either way — but the cause is masked.
-  //
-  // Why skipped rather than fixed: restoring the root-cause code means changing
-  // outcome PRECEDENCE in R2, which is well outside gap 4 and would need its own
-  // measurement. Why skipped rather than re-pointed at the current code: these
-  // tests are named "does not demote ..." — asserting the masked code would turn
-  // a red flag into a green lie. They are left stating what they want, visibly
-  // not running, so the rot stays findable. See the #3523 checkpoint note.
-  it.skip("does not demote an unexpected Promise final-registration throw", async () => {
+  it("does not demote an unexpected Promise final-registration throw", async () => {
     process.env.JS2WASM_TEST_INJECT_IR_PROMISE_REGISTRATION_THROW = "1";
     const result = await compile(
       `export function delay(ms: number, value: number): Promise<number> {
@@ -531,24 +498,7 @@ export function second(x: number): number { return x + 2; }`,
     });
   });
 
-  // ROTTED ON MAIN — skipped, not fixed, and not asserting the rot.
-  //
-  // Measured 2026-08-31 on pristine `origin/main` (source AND this file taken
-  // from main): these five fail there with the identical cause, so they are not
-  // a regression from #3523 gap 4. The R2 body-emission accounting check
-  // (`functionBodyAccountingFailure`, ir-overlay-outcomes.ts:339) runs last and
-  // OVERWRITES the outcome, so an injected internal throw is reported as
-  // `invariant/body-emission-evidence` instead of the root cause
-  // (`unexpected-internal-throw` / `missing-terminal-outcome`). The row is still
-  // fail-closed — an invariant either way — but the cause is masked.
-  //
-  // Why skipped rather than fixed: restoring the root-cause code means changing
-  // outcome PRECEDENCE in R2, which is well outside gap 4 and would need its own
-  // measurement. Why skipped rather than re-pointed at the current code: these
-  // tests are named "does not demote ..." — asserting the masked code would turn
-  // a red flag into a green lie. They are left stating what they want, visibly
-  // not running, so the rot stays findable. See the #3523 checkpoint note.
-  it.skip("does not demote unexpected imported-call planning throws", async () => {
+  it("does not demote unexpected imported-call planning throws", async () => {
     process.env.JS2WASM_TEST_INJECT_IR_IMPORTED_PLAN_THROW = "run";
     const result = await compileMulti(
       {

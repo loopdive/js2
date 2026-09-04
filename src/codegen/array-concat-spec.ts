@@ -202,18 +202,23 @@ function emitConcatSource(
   );
 
   // ── IsConcatSpreadable(E) (§23.1.3.1.1) ──────────────────────────────
-  // spv = Get(E, @@isConcatSpreadable); a null/undefined answer (which also
-  // covers every non-Object E, whose reflective read misses) falls back to
-  // IsArray(E), otherwise ToBoolean(spv).
+  // spv = Get(E, @@isConcatSpreadable); step 3 is "if spv is UNDEFINED, return
+  // IsArray(E)" — every other value, `null` included, goes to ToBoolean.
+  //
+  // (#5268 r3 R3-5d) The absence test used to accept a wasm `ref.null` as
+  // "absent" too, which made a PRESENT `null` spread an array
+  // (`is-concat-spreadable-val-falsey.js`: `item[@@isConcatSpreadable] = null`
+  // must NOT spread). A miss does not need that term: `__extern_get` answers
+  // the UNDEFINED singleton for a key it does not find — measured on both a
+  // `$Vec` and an `$Object` receiver (`[3,4][@@isConcatSpreadable]` prints
+  // "undefined", while a stored `null` prints "null"), which is exactly the
+  // distinction §23.1.3.1.1 step 3 rests on.
   fctx.body.push({ op: "local.get", index: locals.src });
   fctx.body.push({ op: "i32.const", value: SYMBOL_IS_CONCAT_SPREADABLE_ID });
   fctx.body.push({ op: "call", funcIdx: deps.boxSymbolIdx });
   fctx.body.push({ op: "call", funcIdx: deps.externGetIdx });
   fctx.body.push({ op: "local.tee", index: locals.spv });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({ op: "local.get", index: locals.spv });
   fctx.body.push({ op: "call", funcIdx: deps.isUndefinedIdx });
-  fctx.body.push({ op: "i32.or" });
   const toBool: Instr[] = [{ op: "local.get", index: locals.spv }];
   emitToBoolean(ctx, { kind: "externref" }, toBool);
   fctx.body.push({
