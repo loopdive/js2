@@ -2166,3 +2166,136 @@ the base tree.
 **Growth:** `class-static-metadata.ts` +52 · `property-access-dispatch.ts` +16
 · `expressions/assignment.ts` +17. All five ratchet gates green bare, and the
 two budget gates green again with `LOC_GATE_BASE=origin/main`.
+
+### r3-9 — NOT ATTEMPTED: the plan's root cause is wrong, and the real one is not a class defect
+
+The plan says the N group's `«NaN», «undefined»` comes from the class-METHOD
+lane typing the nested `[x, y, z]` element slots as f64, and points at
+`class-bodies.ts:1586 resolveWasmType(ctx, paramType)`. Measured on the lane
+(`--target standalone --wat`), the class method's `x`/`y`/`z` locals are
+already `externref`, so that is not it.
+
+Bisected with three probes (`.tmp/p/n-{a,b,c}.js`), the defect is neither in
+the class lane nor in parameter typing:
+
+```js
+var arr = [7, undefined];
+var y = arr[1];            // standalone: NaN     node: undefined
+```
+
+An array literal with a mixed numeric/`undefined` element list is backed by
+`__vec_f64` and stores the `undefined` as the sNaN sentinel (the design
+`literals.ts:155-161` documents on purpose); the ELEMENT READ does not decode
+that sentinel back to `undefined` for a consumer that wants a value, so every
+read answers NaN. The class rows fail only because their default object
+`{ w: [7, undefined, ] }` contains such a literal.
+
+Consistent with this: `statements/function/dstr/dflt-obj-ptrn-prop-ary.js`
+fails the same way (no class involved), the object-literal-method twin passes
+because its argument array reaches an untyped parameter and takes the
+externref carrier instead, and `function m({ w: [x, y] = [4, 5] }) {}` called
+with `{ w: [7, undefined] }` passes.
+
+So the 4 N rows (and the 4 generator twins) are owned by the numeric-vector
+sentinel-decode lane, not by #5195. Left for a separate issue rather than
+fixed here: widening every such literal to externref would change the carrier
+of a very common shape, and decoding the sentinel on read is a change to the
+numeric element-read path that needs its own measurement across the array
+bucket. Recorded so the next lane does not re-derive it from the plan's
+(incorrect) file/line pointer.
+
+### r3-5 — heritage evaluation and IsConstructor at ClassDefinitionEvaluation (8 rows)
+
+Landed **narrower than the plan wrote it, and at one more call site than the
+plan names.**
+
+**Narrower:** only the §15.7.14 step 5f `IsConstructor(superclass)` half. The
+plan also specified the step 5.g.ii `Get(superclass, "prototype")` lookup and a
+comma-heritage unwrap. Neither landed — see the residuals below.
+
+**One more call site.** The plan names `compileNestedClassDeclaration` and
+`compileClassExpression`. Measured, those two leave
+`var C = class extends (() => {}) {}` unchecked: a variable-BOUND class
+expression bypasses `compileClassExpression` entirely and is materialised by
+`statements/variables.ts::emitHandledClassExpressionBindingEffects`. The check
+is emitted there too, into the EFFECTS half of that function's splice, so it
+lands ahead of the class value's materialization. Without that third site the
+two `heritage-arrow-function` rows do not flip (probe `.tmp/p/h1.js`).
+
+**A CALL heritage is declined, and that decline is a measured correctness
+requirement, not a cosmetic one.** `__reflect_is_constructor` does not
+recognise a compiled class OBJECT — the singleton is a `$C` struct, not one of
+the nominal closure wrappers `fillReflectIsConstructor` tests — so
+`class D extends (pick()) {}` with `pick()` returning a class answered "not a
+constructor" and THREW where the base tree quietly compiled. That is a stable
+value turned into an exception, exactly what the never-worse-than-base rule
+forbids; probe `.tmp/p/h4.js` catches it. A call (and `new`, and a tagged
+template) is the only admitted shape whose value the compiler cannot see, so
+declining it closes the hole and leaves those programs bit-for-bit on their
+base lowering. Two other repairs were tried and rejected on measurement: a
+`ref.test`-against-every-class-struct guard inside the emitter (dropped the F
+group from 9/13 to 3/13) and a whitelist predicate admitting only provable
+non-constructors (also 3/13, for a reason not worth chasing further here).
+
+**Shape.** New leaf `src/codegen/class-heritage-check.ts` exporting
+`heritageExpressionNeedingRuntimeCheck` (the predicate) and
+`emitStandaloneHeritageCheck` (the emitter). Emitted INLINE rather than through
+a minted native — the heritage expression has to be compiled in the enclosing
+scope where its bindings are live, so a native would receive an
+already-evaluated value and the remaining check is three instructions plus a
+throw.
+
+**The predicate is the safety property, not the emitter.** A new throw at
+class-definition time can only make things worse if it fires on a heritage the
+compiler already lowers, so it declines: `extends null`; an inline class
+expression; a PROPERTY-ACCESS heritage (the #4618 React shape, whose silent
+lane is deliberate); an identifier in `classSet`/`classExprNameMap`; an
+identifier naming a builtin constructor; and an identifier bound to a plain
+(non-generator, non-async) function declaration or function expression — the
+fnctor-parent lane, which is a constructor anyway, so declining costs nothing
+and keeps those modules byte-identical.
+
+**Measured against base `91d4999050`, standalone.** The 13-row F list goes
+**1/13 → 9/13**. The wide sweep — the 515 non-recursive rows of the two class
+directories plus `statements/class/{definition,subclass}` and
+`expressions/super`, **783 rows** — goes **291 non-pass → 266**: **25 rows flip
+to pass, ZERO new non-pass, and no row shared by both trees changes status
+class** (a `join` on the two listings reports no differing status). That sweep
+ran against the predicate BEFORE the call-heritage decline; the decline only
+ever REMOVES checks, so no row it covered can newly regress, and all 25
+newly-passing rows were re-run one by one afterwards and still pass. The 25 are
+the 12 r3-2 rows, 1 r3-3 row, the 2 r3-7 rows, the 8 claimed here, and two
+bonus rows r3-5 flips that the plan did not name: `statements/class/cptn-decl.js`
+and `subclass/builtin-objects/Function/super-must-be-called.js`. The 8 that flip: `expressions/class/heritage-{arrow,async-arrow}-function`,
+`definition/constructable-but-no-prototype`, `definition/prototype-setter`,
+`subclass/superclass-{arrow,async,async-generator,generator}-function`.
+(`subclass/superclass-bound-function` already passed on base.)
+
+**Not flipped, and why:**
+
+| Row | Blocker |
+|---|---|
+| `definition/invalid-extends.js` | 2 of its 3 asserts use `class C extends Math.abs {}` — a PROPERTY-ACCESS heritage, which the predicate declines on purpose, and which additionally needs the `prototype` half. |
+| `subclass/builtin-objects/Proxy/no-prototype-throws.js` | `Proxy` IS a constructor; the throw comes from `Proxy.prototype` being `undefined` — the step 5.g.ii half. |
+| `definition/prototype-getter.js` | Needs the `prototype` half AND that accessor to be invoked exactly once. |
+| `definition/side-effects-in-extends.js` | Still a compile error from `ir/planning-identity.ts` on the comma heritage; the plan's edit (3) (comma unwrap + `classHeritagePrefixEffects`) did not land. |
+
+**Order preservation.** 22/22 controls (controls2 unchanged at 7/9 — the two
+`computed-property-names/class/method/{string,symbol}.js` rows fail on base
+too). `ctl-plain`, `ctl-static`, `ctl-fnctor` and `ctl-classexpr` byte-identical
+to base on BOTH lanes. Probes: `extends null`, a class parent, a plain-function
+parent and a builtin parent all keep their answers; a call heritage does not
+throw. `tests/issue-1594b.test.ts` has one failure — present on the base tree
+too, re-measured there, not caused by this step.
+
+**Pin:** `tests/issue-5195-r3-heritage-check.test.ts` — 13 tests, every
+standalone module asserting an empty import list; 9 of them verified to FAIL on
+the base tree.
+
+**Residual for the next lane — the `prototype` half.** Three of the four rows
+above are one mechanism: evaluate `__extern_get(parent, "prototype")` and throw
+when the result is neither an object nor null. It was left out here because the
+"neither Object nor Null" test needs a reliable standalone answer for
+`undefined` on that read, and getting that wrong turns a working `extends`
+into a spurious throw — the exact failure this step's predicate exists to
+avoid. It is additive to the emitter already in place.

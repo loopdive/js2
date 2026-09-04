@@ -123,6 +123,7 @@ import { canStructurallyProjectRef, coerceType as coerceTypeImpl, pushDefaultVal
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm new Date(str)
 import { compileSpreadCallArgs, emitLazyClassObjectGet, emitRegisterDynamicClassParent } from "./extern.js";
+import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
 import { compileTemporalNewExpression } from "../temporal-native.js";
 import {
   emitThrowReferenceError,
@@ -2940,6 +2941,13 @@ function compileClassExpression(ctx: CodegenContext, fctx: FunctionContext, expr
   if (needsInScopeBody) {
     compileNestedClassDeclaration(ctx, fctx, expr, syntheticName);
   }
+
+  // (#5195 r3-5) §15.7.14 step 5f — IsConstructor(superclass) is checked
+  // BEFORE any computed key of the body runs, so this precedes the effects
+  // emitter below. Skipped when `needsInScopeBody` routed through
+  // `compileNestedClassDeclaration`, which already emitted it: the heritage
+  // expression must be evaluated exactly once.
+  if (!needsInScopeBody) emitStandaloneHeritageCheck(ctx, fctx, expr, compileExpression);
 
   // The generic expression route owns ClassDefinitionEvaluation for inline and
   // comma-position classes. Variable-bound singleton materialization bypasses
