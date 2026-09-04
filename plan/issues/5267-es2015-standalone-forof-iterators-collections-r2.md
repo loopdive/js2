@@ -1934,3 +1934,41 @@ characterization test there would pin wrong behaviour).
 **Not done from R3-4:** (b) the `next`-read-once `$__IterRec` field (the
 16-producer change), (c) the §7.4.2 non-Object `next()` result TypeError, and
 the two stretch rows (d)/(e). Untouched.
+
+### Step R3-2 (metadata slice only) — own `next` on the collection iterator prototypes (commit 6)
+
+**What changed.**
+
+- `src/codegen/builtin-brands.ts`: two APPENDED brands, `MapIterator` (+46)
+  and `SetIterator` (+47); `BUILTIN_BRAND_COUNT` 46 → 48. Append-only contract
+  honoured, nothing renumbered.
+- `src/codegen/array-object-proto.ts`:
+  `ensureCollectionIteratorNativeProtoGlue(ctx, "Map"|"Set")` — `makeGlue` with
+  the single member `next` and `memberLength: () => 0`; and
+  `emitIteratorPrototypeSingleton` seeds an own `next` data property
+  (`{w:T, e:F, c:T}`) on the Map/Set singletons via
+  `ensureStandaloneNativeMethodClosure(…, refusalBodyFallback: true)` — the
+  §5099 String-iterator recipe, generalised.
+
+**Scope taken, and what it costs.** The plan's R3-2 is 14 rows and needs a real
+`emitIterRecNextBody` (brand + kind test + `__iter_next_result`) plus an
+`$__IterRec` arm in `__extern_get` so `iterator.next` reads as a VALUE. I
+shipped only the **metadata half**: the descriptor-carrying closure with a
+REFUSAL body. That flips the 4 `{name,length}` rows (G4). The 10
+`this-not-object-throw-*` / `does-not-have-*-internal-slots` rows (G3) are NOT
+flipped — they end with `iterator.next.call(map[Symbol.iterator]())` and
+require the stepping body — and are left open with that pointer. A refusal
+body cannot satisfy them: it throws for every receiver, including the valid one.
+
+**Measured.**
+
+| corpus | base | lane |
+|---|---|---|
+| 4 claimed metadata rows + 7 named controls (String-iterator `next/{name,length}`, both `@@toStringTag` rows, the two `iteration` rows, `Map/prototype/keys/returns-iterator`) | 5 pass / 6 fail | **11 pass / 0 fail** |
+| 94 non-pass `built-ins/**` rows (cumulative over commits 1-6) | 94 non-pass | 81 non-pass — **13 flipped, every one claimed; nothing else moved** |
+| 197 passing iterator/collection rows | pass | **197 / 197 pass** |
+| 40 passing `String`/`Array` iterator-prototype + `Iterator`/`GeneratorPrototype` rows (the brand-table blast radius) | pass | **40 / 40 pass** |
+
+**Pin.** `tests/issue-5267-r3-2-collection-iterator-proto-next.test.ts` — 2
+cases reading the descriptor off `getPrototypeOf(new Map().keys())` /
+`new Set().values()`. Verified FAILING on the base tree (both).

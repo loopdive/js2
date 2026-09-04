@@ -2743,6 +2743,24 @@ export function ensureIteratorNativeProtoGlue(ctx: CodegenContext): number | und
   return brand;
 }
 
+/**
+ * (#5267 R3-2) Register `%MapIteratorPrototype%` / `%SetIteratorPrototype%`
+ * glue (idempotent) and return its brand. The single own member is `next`
+ * (`name: "next"`, `length: 0`, `{w:T, e:F, c:T}`), which is what the
+ * `*IteratorPrototype/next/{name,length}.js` rows read off the prototype.
+ */
+export function ensureCollectionIteratorNativeProtoGlue(ctx: CodegenContext, kind: "Map" | "Set"): number | undefined {
+  const brand = getBuiltinBrand(ctx, `${kind}Iterator`);
+  if (brand === undefined) return undefined;
+  if (!getNativeProtoBuiltinGlue(ctx, brand)) {
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, `${kind}Iterator`, ["next"]),
+      memberLength: () => 0,
+    });
+  }
+  return brand;
+}
+
 /** Register `Map.prototype` glue (idempotent) and return its brand. (S6) */
 export function ensureMapNativeProtoGlue(ctx: CodegenContext): number | undefined {
   const brand = getBuiltinBrand(ctx, "Map");
@@ -3917,6 +3935,29 @@ export function emitIteratorPrototypeSingleton(
   // inspect the prototype without pulling iterator dispatch into this slice.
   // Keep the property off String.prototype's glue CSV: `next` is own only on
   // the iterator prototype, not on the primitive wrapper prototype.
+  // (#5267 R3-2) `%MapIteratorPrototype%` / `%SetIteratorPrototype%` own the
+  // same own `next` data property (§24.1.5.2 / §24.2.5.2). The value is a
+  // descriptor-carrying native method closure, so the prototype's `next.name`
+  // / `next.length` are readable without pulling iterator dispatch onto the
+  // prototype: the records themselves keep the existing native stepping path.
+  if ((kind === "Map" || kind === "Set") && defineValueIdx !== undefined) {
+    const brand = ensureCollectionIteratorNativeProtoGlue(ctx, kind);
+    const closure =
+      brand === undefined
+        ? null
+        : ensureStandaloneNativeMethodClosure(ctx, brand, "next", "method", { refusalBodyFallback: true });
+    if (closure) {
+      initBody.push(
+        { op: "local.get", index: objLocal },
+        ...stringConstantExternrefInstrs(ctx, "next"),
+        ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+        { op: "extern.convert_any" },
+        { op: "f64.const", value: 0x01 | 0x04 }, // writable:true, enumerable:false, configurable:true
+        { op: "call", funcIdx: defineValueIdx },
+        { op: "drop" },
+      );
+    }
+  }
   if (kind === "String" && defineValueIdx !== undefined) {
     const brand = ensureStringNativeProtoGlue(ctx);
     const closure =
