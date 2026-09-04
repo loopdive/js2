@@ -3191,6 +3191,12 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   const doneFlag = allocLocal(fctx, `__forof_done_${fctx.locals.length}`, {
     kind: "i32",
   });
+  // (#5267 R3-4a) 1 while the iterator STEP (`next()` / the `value` getter) is
+  // running. §14.7.5.7: an abrupt completion there returns without
+  // IteratorClose; only a binding/body abrupt closes.
+  const inNextLocal = allocLocal(fctx, `__forof_in_next_${fctx.locals.length}`, {
+    kind: "i32",
+  });
 
   // Iterator close finallyStack entry (#851): inline before return/outer-break/outer-continue.
   // Push BEFORE the for-of break/continue entries so that:
@@ -3252,6 +3258,15 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
   // Call __iterator_next(iter) → (i32 done, externref value) [multi-value].
   // Results are pushed left-to-right, so value (externref) is on top of the
   // stack and done (i32) below it: pop value first, then done.
+  //
+  // (#5267 R3-4a) §14.7.5.7 ForIn/OfBodyEvaluation step 6: an abrupt
+  // completion from IteratorStep / IteratorValue — a throwing `next()` or a
+  // throwing `value` getter — returns WITHOUT IteratorClose (only the BODY's
+  // abrupt completion closes). `inNextLocal` marks the window in which the
+  // throw came from the iterator itself, so the close wrapper below can skip
+  // it (`iterator-next-error.js`, `iterator-next-result-value-attr-error.js`).
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "local.set", index: inNextLocal });
   fctx.body.push({ op: "local.get", index: iterLocal });
   fctx.body.push({ op: "call", funcIdx: nextIdx });
   fctx.body.push({ op: "local.set", index: resultLocal }); // externref value (top)
@@ -3270,6 +3285,10 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
     ],
     else: [],
   });
+  // (#5267 R3-4a) Past the iterator step: any further throw is the binding /
+  // body / close, which DOES close the iterator.
+  fctx.body.push({ op: "i32.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: inNextLocal });
 
   // (#2978) `for await` under the native `$Promise` carrier: Await the element.
   // A REJECTED promise throws its reason; the #1347 try/catch_all wrapper below
@@ -3350,8 +3369,13 @@ function compileForOfIterator(ctx: CodegenContext, fctx: FunctionContext, stmt: 
             catchAll: [], // suppress any error from GetMethod / return() per spec step 6
           };
     const closeOnThrowBody: Instr[] = [
+      // (#5267 R3-4a) close only when the loop is NOT done AND the throw did
+      // not come out of the iterator step itself.
       { op: "local.get", index: doneFlag },
       { op: "i32.eqz" },
+      { op: "local.get", index: inNextLocal },
+      { op: "i32.eqz" },
+      { op: "i32.and" },
       {
         op: "if",
         blockType: { kind: "empty" },

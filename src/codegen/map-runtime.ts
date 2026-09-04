@@ -1272,6 +1272,14 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
         ],
       },
       // done: {value:null, done:1}
+      // (#5267 R3-1c) Exhaustion is STICKY (§24.1.5.1 step 4: once the
+      // [[Map]] slot is cleared the iterator stays done). Park the cursor at
+      // INT32_MAX so a later `map.set` / `set.add` that grows M_ENTRYCOUNT
+      // cannot revive an already-exhausted iterator: the `idx >= entryCount`
+      // test above stays true for every future poll.
+      { op: "local.get", index: 0 },
+      { op: "i32.const", value: 0x7fffffff },
+      { op: "struct.set", typeIdx: ctx.mapIterTypeIdx, fieldIdx: IT_INDEX },
       { op: "ref.null", typeIdx: NONE_HEAP },
       { op: "i32.const", value: 1 },
       { op: "struct.new", typeIdx: ctx.mapIterResultTypeIdx },
@@ -2182,7 +2190,7 @@ export function compileNativeCollectionIterator(
  * Returns `undefined` (caller keeps the vec producer) when the iterator runtime
  * is unavailable or the receiver does not lower to the native `$Map` struct.
  */
-function emitLiveCollectionIterRec(
+export function emitLiveCollectionIterRec(
   ctx: CodegenContext,
   fctx: FunctionContext,
   receiver: ts.Expression,

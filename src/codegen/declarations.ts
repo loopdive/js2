@@ -3373,7 +3373,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // binding is handed to a typed/generic consumer: widening it would make the
     // consumer cast a host Proxy externref back to the target struct and trap.
     // The default-on gate is the sole attribution seam; `=0` restores #4931.
-    if (proxy.isDirectProxyConstruction(decl.initializer)) {
+    if (proxy.isDirectProxyConstruction(decl.initializer, ctx)) {
       return !proxyModuleEscapeGateEnabled || !proxy.proxyBindingEscapesToCall(ctx, decl);
     }
     // (#3365) Script top-level `this` is the host global object. The checker
@@ -4082,7 +4082,26 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ts.isClassExpression(declaration.initializer) &&
           (ctx.classExpressionStaticInitExprs.get(declaration.initializer)?.length ?? 0) > 0,
       );
-      if (hasNonClassDecl || hasClassExpressionStatics || proxy.variableStatementContainsPromiseSubclass(ctx, stmt)) {
+      // (#5195 r3-2) …and so must a binding whose class expression has a member
+      // keyed only at runtime (`let C = class { [k](){} }`), or which INHERITS
+      // one. The historical skip meant the key expression was never evaluated,
+      // the prototype `$Object` and the static sidecar were never force-built,
+      // and `new C()[k]()` folded to `ref.null.extern` — the class-DECLARATION
+      // twin of the same program already worked, because
+      // `collectPreparedTopLevelClassComputedNameEffects` collects it.
+      const hasRuntimeKeyedClassExpression = stmt.declarationList.declarations.some((declaration) => {
+        const init = declaration.initializer;
+        if (init === undefined || !ts.isClassExpression(init)) return false;
+        if (classHasUnresolvedComputedMemberName(ctx, init)) return true;
+        const className = ctx.anonClassExprNames.get(init);
+        return className !== undefined && classHierarchyHasDynamicMember(ctx, className);
+      });
+      if (
+        hasNonClassDecl ||
+        hasClassExpressionStatics ||
+        hasRuntimeKeyedClassExpression ||
+        proxy.variableStatementContainsPromiseSubclass(ctx, stmt)
+      ) {
         ctx.moduleInitStatements.push(stmt);
       }
       continue;

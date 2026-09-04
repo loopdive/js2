@@ -5,7 +5,12 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts } from "../ts-api.js";
-import { findConstructorImplementation, hasDeclareModifier, hasStaticModifier } from "./ast-modifiers.js";
+import {
+  findConstructorImplementation,
+  hasDeclareModifier,
+  hasStaticModifier,
+  isStaticCtorMethod,
+} from "./ast-modifiers.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isUndefinedDefaultOnlyParam, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
@@ -1946,9 +1951,14 @@ export function collectClassDeclaration(
     const seenStatic = new Set<string>();
     for (const member of decl.members) {
       if (!hasStaticModifier(member)) continue;
-      if (!ts.isMethodDeclaration(member)) continue;
-      if (!member.name) continue;
-      const n = resolveClassMemberName(ctx, member.name);
+      // (#5195 r3-4) `static constructor(){}` parses as a ConstructorDeclaration
+      // but is a static METHOD whose PropName is "constructor" (§15.7), so it
+      // owns a key on the class object like any other static method.
+      const n = isStaticCtorMethod(member)
+        ? "constructor"
+        : ts.isMethodDeclaration(member) && member.name
+          ? resolveClassMemberName(ctx, member.name)
+          : undefined;
       if (n === undefined) continue;
       if (seenStatic.has(n)) continue;
       seenStatic.add(n);

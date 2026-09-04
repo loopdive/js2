@@ -2759,6 +2759,48 @@ export function compileBuiltinStaticCall(
     return compileObjectDefineProperties(ctx, fctx, expr);
   }
 
+  // (#5196 R3-3 E-2) `Object.getOwnPropertyDescriptor(o)` — ONE argument.
+  // §20.1.2.8 does not require a second: step 2 is `ToPropertyKey(undefined)`,
+  // i.e. the key `"undefined"`. The `>= 2` gate below declined, so the call fell
+  // to `__get_builtin` and became the "#1472 Phase B dynamic-shape" hard COMPILE
+  // error — the row could not even run. Standalone only: routed straight to the
+  // dynamic native with the undefined sentinel as the key, so the receiver's
+  // own front-guards (a revoked `$Proxy` throws its TypeError there) run first,
+  // exactly as they do in the 2-argument case. Host/gc keeps its existing
+  // lowering, so those bytes are unchanged.
+  if (
+    ctx.standalone &&
+    ts.isIdentifier(propAccess.expression) &&
+    propAccess.expression.text === "Object" &&
+    propAccess.name.text === "getOwnPropertyDescriptor" &&
+    expr.arguments.length === 1 &&
+    // (#5196 R3 review F6) A SPREAD is not a one-argument call. `Object
+    // .getOwnPropertyDescriptor(...args)` has one argument NODE but an
+    // arity known only at run time, and compiling the spread element as the
+    // receiver produced a module that traps. Decline and let the existing
+    // lowering own it.
+    !ts.isSpreadElement(expr.arguments[0]!)
+  ) {
+    ensureObjectRuntime(ctx);
+    const objType = compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "externref" });
+    if (!objType) {
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+    if (objType.kind !== "externref") coerceType(ctx, fctx, objType, { kind: "externref" });
+    emitUndefined(ctx, fctx);
+    const gopdIdx = ensureLateImport(
+      ctx,
+      "__getOwnPropertyDescriptor",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (gopdIdx !== undefined) fctx.body.push({ op: "call", funcIdx: gopdIdx });
+    else fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+
   // Handle Object.getOwnPropertyDescriptor(obj, prop)
   // Fast path: known struct type + string literal prop → inline struct.get + __create_descriptor
   // Fallback: __getOwnPropertyDescriptor host import for dynamic cases
@@ -3939,6 +3981,7 @@ export function compileBuiltinStaticCall(
     propAccess.name.text === "revocable"
   ) {
     ensureNativeProxyRuntime(ctx);
+    ctx.proxyRevocableSite = true; // (#5196 R3-4) arm the revoker metadata arms
     const compileProxyInput = (arg: ts.Expression | undefined): void => {
       if (arg === undefined) {
         fctx.body.push({ op: "ref.null.extern" });

@@ -1,10 +1,11 @@
 ---
 id: 5196
 title: "ES2015 standalone proxy — r2 residual pass"
-status: in-progress
+status: done
+completed: 2026-09-04
 sprint: current
 created: 2026-08-29
-updated: 2026-09-03
+updated: 2026-09-04
 priority: medium
 horizon: m
 feasibility: medium
@@ -53,6 +54,37 @@ loc-budget-allow:
   # refactor — every step adds an arm gated on the proxy runtime being present.
   - src/codegen/statements.ts
   - src/codegen/object-ops.ts
+  # 2026-09-03 R3-0 implementation (measured, not predicted): the `Proxy`-as-a-
+  # VALUE construct path needs (a) `new-super.ts` +21 for the
+  # `tracesToProxyConstructorValue` gate, the open-`$Object` lowering of an
+  # object-literal target/handler at a `new <Proxy ctor value>(…)` site, and the
+  # module flag that arms the driver; (b) `builtin-value-read.ts` +21 for the
+  # `Proxy.revocable` value-closure arm that replaces the "not yet implemented"
+  # thrower; (c) `context/types.ts` +10 for the `proxyConstructorValueNewSite`
+  # flag — the gate the plan proposed (proxy runtime / carrier global present)
+  # was measured to be true in EVERY standalone module, so a module-scoped flag
+  # is the only byte-inert gate available.
+  - src/codegen/builtin-value-read.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/context/types.ts
+  # 2026-09-04 R3-4 implementation (measured): the revocation function's own
+  # `length`/`name` metadata lives in the NEW module
+  # `src/codegen/proxy-revoker-meta.ts` (one `__builtinfn_get_meta` arm plus the
+  # matching `__builtinfn_delete` / `__builtinfn_push_ownnames` arms), wired by
+  # `index.ts`; `object-runtime-proxy.ts` gains the per-instance deleted-bits
+  # field on `__proxy_revoker`; `typeof-natives-finalize.ts` gains the carrier's
+  # typeof arm; `context/types.ts` gains the `proxyRevocableSite` flag; and
+  # `expressions/non-constructable.ts` gains the `Proxy.revocable(…).revoke`
+  # initializer shape so `new revoke()` throws the §13.3.5.1 TypeError instead
+  # of evaluating to null.
+  - src/codegen/proxy-revoker-meta.ts
+  - src/codegen/expressions/non-constructable.ts
+  # 2026-09-04 round-3 review fixes (see "## Round-3 review fixes"): F4's
+  # inline-object-literal argument arm for a statically-known builtin-value
+  # closure lands in `call-identifier.ts` (+27, mostly the measured rationale).
+  # It has to live at the call site because that is where the argument is
+  # compiled — the value closure only ever sees the finished `externref`.
+  - src/codegen/expressions/call-identifier.ts
 func-budget-allow:
   # 2026-09-01 r2 plan: arm-ladder / dispatch-builder functions that gain one
   # more arm in the shape their existing arms already have (the step naming
@@ -78,6 +110,16 @@ func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
   - src/codegen/binary-ops-in.ts::compileInOperator
   - src/codegen/object-ops.ts::compileObjectDefineProperty
+  # 2026-09-04 R3-4: `classifyNonConstructableValue`'s nested `classifyInit`
+  # gains the `Proxy.revocable(…).revoke` shape (one more initializer arm in
+  # the shape its existing arms already have).
+  - src/codegen/expressions/non-constructable.ts::classifyNonConstructableValue
+  # 2026-09-04 R3-4: `generateMultiModule` gains the one `fillProxyRevokerFnMeta`
+  # phase line that `generateModule` already got (multi-source parity).
+  - src/codegen/index.ts::generateMultiModule
+  # 2026-09-04 round-3 review fixes: same F4 arm, same reason — one more
+  # argument-shape branch inside the existing per-argument loop.
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
 ---
 
 # #5196 — proxy r2: cluster and fix the residual proxy-bucket failures
@@ -1437,3 +1479,761 @@ externref accessor path (`ctx.externrefAccessorVars`).
   `p11`) asserting `WebAssembly.Module.imports(module).length === 0`, plus the
   exact test262 rows via `runTest262File`; `node scripts/update-issues.mjs --check`,
   `check-issue-ids.mjs`, `check-issue-spec-coverage.mjs` green.
+
+## Results — R3-0 (2026-09-03, Opus implementer)
+
+Base for every number below: `4fa179f8` (this worktree's HEAD before the first
+edit), standalone lane, quickjs eval tier, run by the implementer.
+
+**Claimed: +11 of `r3-R.txt` (27 rows) — base 0/27 pass, lane 11/27.**
+
+| row | base | lane |
+|---|---|---|
+| `Proxy/{get,set,has,apply,getPrototypeOf,isExtensible,preventExtensions,ownKeys}/trap-is-not-callable-realm.js` | fail | **pass** |
+| `Proxy/{apply,construct,defineProperty}/null-handler-realm.js` | fail | **pass** |
+| the other 16 `*-realm*` rows | fail | fail (unchanged signature) |
+
+What landed:
+
+1. `native-construct.ts` `fillNativeConstructDrivers` — a front arm that
+   `ref.eq`-compares the callee against the `__builtin_Proxy` carrier global and
+   tail-calls `__proxy_create`. The decision is made on the VALUE at runtime, so
+   an alias, a parameter or a property read of the carrier all construct a proxy.
+2. `proxy-value-provenance.ts` `tracesToProxyConstructorValue` — one shared
+   predicate for "this expression IS the `Proxy` constructor" (bare binding,
+   realm-global `.Proxy`, single-initializer alias), oracle-only.
+3. `new-super.ts` — that predicate arms the driver (`ctx.proxyConstructorValueNewSite`),
+   forces `ensureNativeProxyRuntime`, and lowers an object-literal target/handler
+   at such a site to the OPEN `$Object` the syntactic `new Proxy` arm uses.
+4. `analysis/proxy-binding-escape.ts` `isDirectProxyConstruction(expr, ctx?)` —
+   with a ctx, `new <Proxy ctor value>(…)` gets the same externref binding
+   storage as `new Proxy(…)`; the three call sites that have a ctx pass it.
+5. `builtin-value-read.ts` — `Proxy.revocable` as a VALUE now calls
+   `__proxy_revocable` instead of the "not yet implemented" thrower.
+
+**Plan corrections (measured):**
+
+- The plan's expected "+21 immediately" is wrong. The 16 rows still failing are
+  NOT gated on the construct path: with the fix, `new OProxy(t, h)` demonstrably
+  builds a working proxy (a `get` trap fires, a non-callable `get` trap throws),
+  but the `getOwnPropertyDescriptor` / `defineProperty` / `ownKeys` / `construct`
+  operations do not dispatch through the proxy in these shapes. Those are the
+  A (§10.5 invariants) and E (define/gOPD routing) groups, i.e. R3-1/R3-3 work.
+- The plan's byte-inertness gate (`ctx.funcMap.has("__proxy_get_dispatch")`, or
+  the carrier global existing) does NOT work: measured on `4fa179f8`, a program
+  that never mentions `Proxy` already has `__proxy_create`, `__proxy_get_dispatch`
+  and the `__builtin_Proxy` global, and gating on them changed that program's
+  bytes. Hence the module-scoped flag.
+- `proxy-value-provenance.ts` exists but does NOT hold `isNewProxy` for the
+  define path; `object-ops.ts:1006` still has its own syntactic gate (R3-3).
+
+**Never-worse-than-base evidence (all re-run by the implementer on the lane):**
+
+- `built-ins/Proxy/` — all 311 rows, 8 batches: base 184 pass → lane 195 pass,
+  **zero pass→non-pass**.
+- `language/expressions/new/` + `built-ins/Reflect/` — all 212 rows: base 178
+  pass → lane 178 pass, **zero pass→non-pass**, zero new passes.
+- `r3-controls.txt` 70/70 on the lane (two runs: before and after the gate was
+  narrowed).
+- `imports-of` on `Proxy/get/trap-is-not-callable-realm.js` → `[]`.
+
+**Byte-identity caveat (honest):** a standalone program that never mentions
+`Proxy` is NOT byte-identical to base. The construct-driver arm is inert (flag
+gated, verified), but the `Proxy.revocable` value-closure arm changes the
+namespace carrier's `revocable` member in every module where that carrier is
+materialised — which measurement shows is every standalone module. The change
+replaces a thrower with a working native call; the 593 rows re-run above show no
+behavioural regression, but the bytes do move.
+
+## Results — R3-2 C4 + C5 (2026-09-03, Opus implementer)
+
+**Claimed: +8 of `r3-C.txt`.** All eight re-run and seen passing on the lane;
+all eight `fail` on `4fa179f8`.
+
+- C4 (4): `Reflect/{get,has}/target-is-not-object-throws.js` — the shared
+  `guardNativeReflectTarget` (the §Type(V)-is-Object test the
+  `deleteProperty`/`ownKeys`/`isExtensible` arms already use) now runs on the
+  `get` and `has` arms too. `Reflect/apply/target-is-not-callable-throws.js` —
+  the callable ladder gains a POSITIVE `typeof t === "object" && typeof t !==
+  "function"` rejection, so `Reflect.apply({}, …)` throws while every callable
+  carrier (compiled closure, bound function, `$Proxy` over a callable) is
+  admitted exactly as before. `Reflect/apply/arguments-list-is-not-array-like.js`
+  — §7.3.19 step 2: a missing third argument throws at compile time, a
+  primitive/null one through the same Object guard.
+- C5 (4): the four `Reflect/*/return-abrupt-from-property-key.js`. §7.1.19
+  ToPropertyKey now runs at the CALL SITE (after the target guard, before the
+  native call) for `get`, `set`, `getOwnPropertyDescriptor`; the natives coerce
+  internally but swallow a throwing `toString`. `Reflect.defineProperty(t, k)`
+  with two arguments got a new arm — before it hit the "#1472 Phase C" hard
+  COMPILE refusal, so the row could not even run; it now does step 1, step 2
+  (where the throw escapes) and then the step-3 TypeError.
+- `Reflect.set`'s arguments now go through locals instead of straight onto the
+  stack (needed to coerce the key in place). Evaluation order is unchanged.
+
+**Never-worse-than-base (re-run by the implementer on the lane):**
+
+- `language/expressions/new/` + `built-ins/Reflect/` all 212 rows: base 178 pass
+  → lane 186 pass, **zero pass→non-pass**.
+- `built-ins/Proxy/` all 311 rows: base 184 → lane 195, **zero pass→non-pass**
+  (the `apply` guard sits on the path a proxy `apply` trap takes).
+- `r3-controls.txt` 70/70.
+
+**Not done in C:** C1 (Reflect.set proxy bypass), C2/C3 (setPrototypeOf /
+preventExtensions booleans), C6 (ownKeys symbols+order), C8a. Not started —
+budget, not a finding.
+
+## Results — R3-4 (2026-09-04, Opus implementer)
+
+Base for every number: a `git archive` of the merge-base `4fa179f8` materialised
+under `.tmp/basetree`, run by this implementer on the same box, same quickjs
+eval tier. Not inherited from any artifact.
+
+**Claimed: +4 of 4 (`r3-D.txt`) — base 0/4, lane 4/4, standalone.**
+
+| row | base | lane |
+|---|---|---|
+| `Proxy/revocable/revocation-function-length.js` | fail (`length should be an own property`) | **pass** |
+| `Proxy/revocable/revocation-function-name.js` | fail (`name should be an own property`) | **pass** |
+| `Proxy/revocable/revocation-function-property-order.js` | fail (`length comes before name`) | **pass** |
+| `Proxy/revocable/revocation-function-not-a-constructor.js` | fail (`isConstructor invoked with a non-function value`) | **pass** |
+
+### What landed
+
+1. `object-runtime-proxy.ts` — `__proxy_revoker` gains a second field, a mutable
+   `i32` deleted-bits mask (bit 0 `length`, bit 1 `name`), the same per-instance
+   state the #2896 builtin-fn meta structs carry. Grepped: the type has exactly
+   ONE `struct.new` site (this one); `object-runtime.ts:7694` only reads field 0.
+2. `proxy-revoker-meta.ts` (NEW) `fillProxyRevokerFnMeta` — one arm in
+   `__builtinfn_get_meta` (the single question `__builtinfn_gopd`,
+   `__hasOwnProperty` and `__extern_get` all ask, so it answers the value, the
+   descriptor and the has-own test at once), plus the matching
+   `__builtinfn_delete` and `__builtinfn_push_ownnames` arms (`length` before
+   `name` — the creation order `property-order.js` asserts). Splice discipline
+   copied from `fillTaCtorGetMetaArm`: a receiver `ref.test` guard disjoint from
+   every other arm, spliced at body index 0, reading only the params.
+3. `typeof-natives-finalize.ts` — the carrier's `typeof` arm. Before it,
+   `typeof revoke` answered "function" only on the compile-time path and
+   "object" through any indirection (a parameter, an array element, a property
+   read), which is what made the `isConstructor.js` harness throw.
+4. `expressions/non-constructable.ts` — `classifyInit` learns the
+   `Proxy.revocable(…).revoke` initializer shape and returns `"provable"`.
+5. `context/types.ts` + the two call sites (`call-builtin-static.ts`,
+   `builtin-value-read.ts`) — the `proxyRevocableSite` module flag.
+
+### Plan corrections (measured, not predicted)
+
+- **The plan's edit list (a)–(e) targets natives that are not where the answer
+  lives.** `__getOwnPropertyDescriptor` / `__getOwnPropertyNames` / `emitHasOwn`
+  all *delegate* the builtin-function case to `__builtinfn_get_meta` /
+  `__builtinfn_push_ownnames`, so one arm in each of those two answers all
+  three questions; four separate arms would have been four chances to disagree.
+- **Plan edit (e) — "add the revoker to the construct driver's not-a-constructor
+  arm" — does not reach the row.** Measured: `new revoke()` returns **null**,
+  because the callee never reaches `__native_construct_N` at all
+  (`resolvesToConstructableFunctionValue` declines and the dynamic-`new`
+  ladder falls through to `ref.null.extern`). An arm was written in
+  `fillNativeConstructDrivers` and **measured not to fire**; it was reverted in
+  favour of the static classifier above, which is where the existing
+  arrow-function / `Function.prototype.call` shapes are already decided.
+- **`ctx.proxyRevocableSite` is needed because presence is not a gate.**
+  Re-confirmed the R3-0 measurement: the `__proxy_revoker` struct type and the
+  proxy natives exist in EVERY standalone module.
+
+### Never-worse-than-base (all re-run by this implementer)
+
+- **Standalone, `built-ins/Proxy/revocable/` + `language/expressions/new/`, all
+  77 rows, 3 batches:** base **69** pass → lane **73** pass, **zero
+  pass→non-pass**. The base non-pass set is a strict superset of the lane's: the
+  4 claimed rows flipped; `Proxy/revocable/tco-fn-realm.js`,
+  `new/ctorExpr-isCtor-after-args-eval.js`, `new/non-ctor-err-realm.js`,
+  `new/spread-obj-spread-order.js` fail identically on both.
+- **Standalone, function-metadata reflection controls (38 rows:
+  `Function/length/`, `Function/prototype/bind/{name,length}*`,
+  `Object/prototype/hasOwnProperty/`) — the shapes the three `__builtinfn_*`
+  arms could collide with: lane 38/38 pass.** A perfect lane score cannot be
+  worse than any base, so base was not re-run for this set.
+- **JS-host lane, the 4 claimed rows:** base 3/4 → lane 4/4 (base failed
+  `not-a-constructor` with a plain `Error`). The non-constructable classifier is
+  the one target-agnostic edit; it improves host and regresses nothing there.
+- **WASI:** both trees compile the revoker probe and a Proxy-free
+  bound-function probe with **zero imports**; no compile error either side.
+- **Standalone behaviour probe** (`typeof` + `length` + `name` + revoke):
+  base returns 1 (`typeof revoke !== "function"`), lane returns 0. The
+  Proxy-free bound-function probe returns 1 on **both** trees — wrong the same
+  way as base (`bind` length/name is #5268-area, untouched here).
+- `imports-of` equivalent: the vitest pin asserts
+  `WebAssembly.Module.imports(module).length === 0` on the standalone control.
+
+### Honest caveats
+
+- **Byte-identity for a Proxy-free standalone program does NOT hold**, and this
+  step widens the R3-0 caveat rather than repeating it: the `__proxy_revoker`
+  deleted-bits field is added in `ensureProxyRuntime`, which runs in every
+  standalone module, so the type section moves even where `proxyRevocableSite`
+  is false (measured: the bound-function probe's sha differs, `3927941ef9f8c6bd`
+  → `34bcbb558b62707e`, with identical behaviour). Everything that *emits* is
+  flag-gated; the field is not, because `ensureProxyRuntime` can run before the
+  revocable call site is compiled.
+- **`LOC_GATE_BASE=origin/main` reports one failure this change did not cause:**
+  `src/codegen/statements/loops.ts: 4437 > 4436 (+1)`. The branch does not touch
+  that file at all (`git diff origin/main...HEAD -- src/codegen/statements/loops.ts`
+  is empty) — it is a ceiling reset from main's post-merge baseline refresh and
+  belongs to the integrator's `git merge origin/main`, not to a grant here. All
+  five gates pass bare, and `LOC_GATE_BASE` func-budget passes.
+
+### Pin
+
+`tests/issue-5196-r3-4-revoker-fn.test.ts` — one standalone control (zero
+imports; typeof through a parameter, `length`/`name` values, own-ness,
+`getOwnPropertyNames` order, `configurable` descriptor, an effective
+`delete revoke.length`, and that the carrier still revokes afterwards) plus the
+four exact test262 rows. **Verified 5/5 FAIL on `.tmp/basetree` (`4fa179f8`) and
+5/5 pass on the lane.**
+
+### Not done in this pass
+
+R3-1 (§10.5 invariants, 29 rows), R3-3 (define/gOPD routing, 3 rows), R3-5
+(open proxy-TARGET literal, 5 rows), and the R3-2 residue (C1, C2/C3, C6, C8a).
+Not started — budget, not a finding.
+
+## Results — R3-3 E-2 only (2026-09-04, Opus implementer)
+
+Same base tree and protocol as R3-4 above.
+
+**Claimed: +1 of the 3 `r3-E.txt` rows — `Proxy/getOwnPropertyDescriptor/null-handler.js`,
+base `compile_error` → lane `pass` (standalone).**
+
+`Object.getOwnPropertyDescriptor(o)` with ONE argument was refused by the call
+site's `arguments.length >= 2` gate, fell through to `__get_builtin`, and became
+the "#1472 Phase B dynamic-shape" hard COMPILE error — the module did not
+compile, so the row could not even run. §20.1.2.8 needs no second argument:
+step 2 is `ToPropertyKey(undefined)`, the key `"undefined"`. Under
+`ctx.standalone` the 1-argument form now routes straight to the dynamic
+`__getOwnPropertyDescriptor` native with the undefined sentinel as the key, so
+the receiver's own front guards run in their normal place — which is what makes
+the revoked `$Proxy` throw its TypeError.
+
+**Blast radius, measured not assumed:** `grep -rl
+"getOwnPropertyDescriptor([A-Za-z_$][A-Za-z0-9_$.]*)"` over `built-ins/` +
+`language/` returns **exactly one file** — the claimed row. No other test262 row
+can reach the new block, and every such module previously failed to compile
+outright, so no passing row can regress through it. `Object/getOwnPropertyDescriptor/`
+sample (20 rows) is 20/20 on the lane, which cannot be worse than any base.
+Host/gc is untouched by construction (the block is `ctx.standalone`-gated);
+measured anyway: `r3-E.txt` on the host lane is 2 pass / 1 fail on **both**
+trees, same row, same message.
+
+Pin `tests/issue-5196-r3-3-gopd-arity.test.ts` (zero imports; 1-arg on an object
+that lacks and one that owns `"undefined"`, the 2-arg form unchanged, and the
+revoked-proxy TypeError) — **verified 2/2 FAIL on `.tmp/basetree`, 2/2 pass on
+the lane.**
+
+**E-1 NOT started (the other 2 E rows).** `defineProperty/null-handler.js` and
+`defineProperty/call-parameters.js` need the `$Proxy` front guard inside
+`__defineProperty_value` / `__defineProperty_accessor` — the store behind EVERY
+`Object.defineProperty`, `Object.defineProperties`, `Object.create(p, descs)`
+and the builtin-namespace seeding. The plan's own acceptance for it is
+`Object/defineProperty/` (1128 passing rows), `Object/defineProperties/`,
+`Object/create/` (320) and `Object/getOwnPropertyDescriptor/` (310) re-run on
+both trees. At the ~20 s/row this 4-core box measures, that floor alone is many
+hours; starting the edit without it would ship an unmeasured change to the
+hottest store in the object runtime. Deferred deliberately, not forgotten.
+
+## Round-3 review fixes (2026-09-04)
+
+An adversarial review put this lane on hold with four reproduced findings (F1-F4)
+and four lows (F5-F8). Base tree for every measurement below is the r3 merge-base
+`4fa179f8`, extracted with `git archive`; its `src/` tree was verified
+byte-identical to the reviewer's copy at `/home/user/js2/.tmp/rev5196/base`
+before it was reused. Every "base" figure is a run this implementer executed.
+
+### F1 (HIGH) — a REASSIGNED alias of the `Proxy` constructor was claimed
+
+`src/codegen/proxy-value-provenance.ts` `tracesToProxyConstructorValue` followed
+an identifier through `ctx.oracle.variableInitializerOf` with no single-assignment
+proof. That oracle member is documented as "the binding-resolution seam for
+analyses that SEPARATELY PROVE single assignment" (`src/checker/oracle.ts`), and
+without the proof the trace reads a reassigned binding as its DECLARATION
+initializer. `var P = Proxy; class K{…}; P = K; new P(5, 6)` therefore armed
+`ctx.proxyConstructorValueNewSite` and routed the `new` through
+`tryCompileNativeConstructFromValue`.
+
+- Measured, standalone: node `5 true object`, base `5 true object`,
+  lane-HEAD `undefined false object`. A correct answer turned wrong.
+
+**Fix.** The alias hop is taken only under `isSingleAssignmentBinding` (new, in
+the same file): exactly one declaration, a plain initialized `var`/`let`/`const`
+declarator in a variable STATEMENT (so a destructuring binding, a `for…of` head
+and a `catch` parameter all decline), and either `const` or a name that no
+in-file syntax writes. Unproven ⇒ decline ⇒ the base lowering, never a guess.
+
+The write scan reuses `identifierIsWrittenTo` (`native-ordinary-instanceof.ts`),
+**widened** from "`<id> = …` / `++` / `--` with the identifier as the WHOLE
+operand" to any write POSITION — so a destructuring assignment target
+(`[P] = [K]`, `({x: P} = o)`) and a `for-in`/`for-of` head now count. Widening a
+soundness gate can only make a caller DECLINE a fold it would otherwise take, so
+the **eight** pre-existing callers (`add-to-primitive`, `binary-ops-in`,
+`builtin-static-plain-alias` ×2, `expressions/identifiers`,
+`fnctor-instance-prototype`, `native-is-prototype-of`, `native-user-instanceof`)
+are safe by construction. An earlier draft of this paragraph said "three"; that
+was a miscount, corrected here after grepping the callers.
+
+A second declaration of the same binding is deliberately NOT part of it (the
+declarator's own name node would then read as a write and break
+`resolveVariadicBuiltinStaticPlainAlias`); it is answered by declaration COUNT
+at the one call site that needs it.
+
+**Correction applied on resumption (2026-09-04).** The first cut of the widening
+counted ANY identifier of that name whose enclosing statement was an assignment,
+including identifiers that only SPELL the word: a member name (`o.P = 1`), a
+property-assignment key (`{ P: 1 }`), a qualified-name right side. Those are not
+write positions, and the base shape could not see them either (it required
+`node.left` to BE the identifier). Left in, an unrelated `obj.max = 1` anywhere
+in a file would have silently disabled the `Math.max` alias fold for a binding
+named `max` — a blanket de-optimisation reaching well past this change-set, with
+no measurement behind it. The scan now counts only identifiers in a REFERENCE
+position (`isReference`), keeping the widening to genuine writes.
+
+### F2 (HIGH) — the new `Reflect.get` / `Reflect.has` target guard threw on real objects
+
+`emitNativeReflectTargetGuard` is an OR of positive OBJECT brands. A value that
+flows through a mixed array also holding a class instance takes a wrapped
+representation that none of those brands recognise, so the guard threw.
+
+- Measured, standalone, 14 ordinary target kinds (`p/r32/01-get-has-targets-a.js`):
+  base answered `undefined`/`false` for 13 of them (wrong, but stable) and node
+  answers a value for 4; lane-HEAD threw a TypeError for **13 of 14**. A stable
+  wrong value turned into a throw.
+
+**Fix.** A second emitter, `emitNativeReflectNonObjectGuard`, rejects only
+POSITIVELY-branded non-objects — `__typeof_number`, `__typeof_string`,
+`__typeof_boolean`, `__typeof_bigint` and the `$Symbol` carrier — and ADMITS
+every unrecognised shape. This is the `Reflect.apply` arm's own rationale
+(~L1660) applied to the target position. Those brands are `ref.test`s on the BOX
+structs, so a wrapper object (`new Number(1)`) stays admitted, as §28.1.5
+requires.
+
+**`null` and `undefined` are deliberately NOT branded, and that took two
+measured iterations to get right.** A `ref.is_null` arm was in the first cut and
+reproduced the finding one level down: an ordinary object read out of a
+heterogeneous `any[]` comes back as a NULL externref (the pre-existing widening
+defect this file's own `isDirectProxyBinding` comment documents), so
+`Reflect.get(vals[i], "k")` over `[[1,2], new C(), {k:4}]` threw for the array
+and the literal where base answers a stable `undefined`. Dropping `ref.is_null`
+fixed that shape but not the same call read from inside a NESTED function —
+because `__typeof_undefined` answers TRUE for the same nulled value, under the
+undefined-SINGLETON representation as well as the legacy one. Both arms are out.
+
+The cost is bounded and is base-parity: a literal `null` or `undefined` target
+answers `undefined`/`false` instead of throwing — exactly what base does. The
+win that survives is real and is node parity: `Reflect.get(1, "x")`,
+`Reflect.get("ab", "length")`, `Reflect.get(true, "x")` and
+`Reflect.has(1, "x")` throw the §28.1.5/§28.1.8 step-1 TypeError where base
+answered `undefined`/`false`, and `Reflect.get([1,2], "length")` answers `2`
+where base answered `undefined`.
+
+Applied to the FOUR guard sites this change-set added — `Reflect.get`,
+`Reflect.has`, the new 2-argument `Reflect.defineProperty` arm, and the
+`Reflect.apply` argumentsList. The six sites inherited from `origin/main`
+(`deleteProperty` / `ownKeys` / `getOwnPropertyDescriptor` /
+`defineProperty(3-arg)` / `isExtensible` / `preventExtensions`) keep the stricter
+emitter unchanged: their admission behaviour is pre-existing and not this
+review's to widen.
+
+The intended win survives, and was re-measured on 2026-09-04 as the pin control
+`p/pins/f2.js` (the 14-target sweep plus three primitive spellings, reduced to
+two counters):
+
+| | `threw` (of 14 ordinary targets) | `wins` (of 3 primitive rejections) |
+|---|---|---|
+| node | 0 | 3 |
+| base `4fa179f8` | 0 | 0 |
+| lane HEAD `d84b8f14` | **13** | 3 |
+| lane, fixed | 0 | 3 |
+
+**Correction to an earlier draft of this section:** it claimed
+"`Reflect.has(undefined, "x")` still throws". It does **not**, and cannot —
+`undefined` is one of the two values this emitter deliberately declines to
+brand, three paragraphs up. The win covers `Reflect.get(1, "x")`,
+`Reflect.has(1, "x")` and `Reflect.get("ab", "length")`; a `null`/`undefined`
+target answers `undefined`/`false`, which is exactly base's answer, so it is a
+win declined, not a regression. The same wrong sentence was in
+`reflect-target-guard.ts` and is corrected there too.
+
+### F3 (medium) — the "provable" revoker classification was reassignment-blind
+
+`expressions/non-constructable.ts` read the `Proxy.revocable(t,h).revoke` shape
+off the DECLARATION initializer; `new-super.ts` turns `"provable"` into an
+unconditional throw under `noJsHost`.
+
+- Measured, standalone: `var r = Proxy.revocable(t,h).revoke; class K{…}; r = K;
+  new r()` — node and base `ok 7`, lane-HEAD `threw TypeError`.
+
+**Fix.** The revoker arm now also requires `isSingleAssignmentBinding`. An
+unproven binding returns `"no"`, which is precisely the base tree's behaviour
+(the arm did not exist there), so this cannot be worse than base in any spelling.
+
+**The pre-existing arrow arm was deliberately NOT touched.** It has the same
+blindness on BOTH trees (`let f = () => 1; f = K; new f()` throws on base and on
+the lane). Demoting it to `"no"` would remove a spurious throw in one spelling
+and a CORRECT throw in another (`f` reassigned to a second arrow), i.e. it could
+be worse than base. Recorded, not widened.
+
+### F4 (medium) — `Proxy.revocable` as a VALUE with a trap handler TRAPPED
+
+- Measured, standalone: `var R = Proxy.revocable; R({a:1}, {get(t,k){return 7}})`
+  then `pr.proxy.a` — node `7`, base a catchable TypeError
+  ("Proxy.revocable is not yet implemented in --target standalone"),
+  lane-HEAD a wasm **TRAP `illegal cast`**.
+
+Root cause, isolated by bisecting the argument shapes: the handler bound to a
+`var` FIRST worked; only an INLINE object literal at the value call site broke.
+`Proxy.revocable`'s lib signature types the handler as `ProxyHandler<T>`, a named
+object type that `resolveWasmType` maps to a registered closed STRUCT, so the
+generic slot-by-slot call path compiled the literal as that struct and the trap
+read off it was not a callable. The direct `Proxy.revocable(t, h)` arm avoids
+this by compiling an object-literal argument with `compileObjectLiteralAsExternref`.
+
+**Fix, two parts.**
+
+1. `builtin-static-plain-alias.ts` gains a named exception set
+   `FIXED_ARITY_PLAIN_ALIAS_STATICS = {"Proxy.revocable"}` so `var R =
+   Proxy.revocable` resolves to the reified closure's `[externref, externref]`
+   ABI instead of the lib signature. Kept as a named exception rather than
+   "every fixed-arity static", per that file's own header.
+2. `expressions/call-identifier.ts`: an INLINE object literal in an `externref`
+   slot of a statically-known builtin-value closure is built with
+   `compileObjectLiteralAsExternref`. Scope is builtin-alias calls only, and the
+   other members of that set (`Math.max`, `Math.min`, `String.fromCharCode`)
+   never receive an object literal.
+
+Result: the trap is gone and the value spelling constructs a real proxy —
+`pr.proxy.a === 7`, `typeof pr.revoke === "function"`, and a revoked proxy still
+throws. Better than base, which threw.
+
+**One residual, measured precisely — and the earlier draft of this note got the
+mechanism wrong.** `p/b9/02` (`console.log(pr.proxy.a)`) prints nothing on the
+fixed lane where node prints `7`. The earlier draft blamed
+"`console.log(<proxy-get-result>)` on standalone, identical on BASE with
+`new Proxy`". That is false: measured 2026-09-04, standalone,
+`var p = new Proxy({a:1},{get(){return 7}}); console.log(p.a)` prints `7` on
+**both** trees (`p/f4b/01`). The gap is narrower and is specific to a
+**revocable** proxy's `.proxy` field:
+
+| probe | node | base | lane |
+|---|---|---|---|
+| `f4b/01` `new Proxy` → `console.log(p.a)` | `7` | `7` | `7` |
+| `f4b/01` `new Proxy` → `console.log(String(p.a))` | `7` | *(nothing)* | *(nothing)* |
+| `f4b/04` DIRECT `Proxy.revocable(t,h)` → `console.log(pr.proxy.a)` | `7` | *(nothing)* | *(nothing)* |
+| `b9/02` VALUE `R = Proxy.revocable` → `console.log(pr.proxy.a)` | `7` | *throws "not yet implemented"* | *(nothing)* |
+
+So the swallowed line is **pre-existing on base in the direct spelling**
+(`f4b/04`), and the fix makes the value spelling behave exactly like base's
+direct spelling. The value itself is correct and observable —
+`String(pr.proxy.a)` is `7` on the lane (`p/pins/f4.js`), where base could not
+run the program at all.
+
+**Ship-gate honesty on this one row.** In this single spelling the transition is
+base's catchable TypeError → lane's silent missing line, which is a shape the
+ship gate names. It is recorded as a **residual**, not waved away: the program's
+values are right, no trap and no exception, and the missing line reproduces on
+base through the direct spelling, so it is a pre-existing stringification gap
+this change-set surfaces rather than one it introduces. Fixing it means fixing
+`console.log` of a revocable proxy's `.proxy` read on standalone, which is
+outside this review.
+
+### Lows
+
+- **F5 (fixed).** The `__proxy_revoker` carrier's fields were named `proxy` and
+  `bfnstate`, with no `__` prefix, so `exposedClosedStructFieldName` exposed them:
+  `revoke.proxy` read back the inner proxy and a write to `revoke.bfnstate`
+  corrupted the deleted-bits mask for the revoker's own `length`/`name`. Both are
+  now `__proxy` / `__bfnstate`. Every access is POSITIONAL (`fieldIdx`), so the
+  rename is inert to codegen; the synthetic getter `__sget_proxy` disappears from
+  a Proxy-free standalone module, which is the direct measurement of the leak.
+  Node agrees: the revocation function has no own `proxy` property.
+- **F6 (fixed).** The one-argument `Object.getOwnPropertyDescriptor` block gated
+  on `arguments.length === 1` and so accepted `gOPD(...args)`, whose arity is a
+  run-time fact. It now declines a `SpreadElement` and leaves that call to the
+  existing lowering.
+- **F7 (recorded, not fixed).** "A caught one-arg gOPD TypeError on a revoked
+  proxy disarms a later two-arg TypeError on the same proxy." The probe
+  (`p/b12/03-revoked-1arg-then-2arg.js`) is a **COMPILE ERROR on base** — the
+  one-argument form did not compile there at all — so the lane cannot be worse
+  than base in this spelling, and the mechanism was not chased. It is a real
+  residual defect of the R3-3 E-2 arm and belongs to whoever finishes E-1/E-2.
+- **F8 (claim corrected; gating already present).** The write-up's
+  "Everything that *emits* is flag-gated" was too strong and is corrected below.
+
+### Byte-inertness — corrected claim
+
+A standalone program that never mentions `Proxy` is **not** byte-identical to
+base, and the earlier wording ("everything that emits is flag-gated; the field is
+not") understated it. Measured 2026-09-04 on a Proxy-free bind/`length`/`name`
+probe, standalone:
+
+| | base `4fa179f8` | lane |
+|---|---|---|
+| module size | 276,346 B | 276,704 B (+358) |
+| functions | 514 | 513 (`__sget_proxy` gone — the F5 fix) |
+| `__proxy_revoker` type | `(struct (field $proxy externref))` | `(struct (field $__proxy externref) (field $__bfnstate (mut i32)))` |
+| `ref.test` total | 2,399 | 2,429 |
+| `ref.test` on the revoker type | 0 | 0 |
+
+So: the emitted module MOVES for a Proxy-free program, in both directions
+(one function fewer, more bytes). What is flag-gated on `ctx.proxyRevocableSite`
+is the revoker METADATA (`proxy-revoker-meta.ts` returns early;
+`typeof-natives-finalize.ts` resolves the type only under the flag). What is not
+gated is the struct's shape itself, because `ensureProxyRuntime` can run before
+the revocable call site is compiled — and `object-runtime.ts`'s
+`fillApplyClosure` revoker arm, which is **pre-existing on base** and therefore
+not gated here either. No further gating was attempted: with the metadata arms
+already behind the flag, the residue is the type declaration, and moving that
+would mean deferring `ensureProxyRuntime`, which is out of this review's scope.
+
+The reviewer's specific figure — "53 `ref.test` on the revoker type in a
+Proxy-free module vs 8 on base" — did **not** reproduce here: this measurement
+finds zero on both trees. The conclusion it supported (not byte-inert) is
+nevertheless correct and is recorded as such above.
+
+### Resumption record (2026-09-04, second implementer)
+
+The first implementer of this round was killed by a container restart with the
+fixes **uncommitted** in the worktree. This section records what the resuming
+implementer found, kept, changed and re-measured, so the provenance of every
+figure above is traceable to a run someone actually executed.
+
+**Found.** Uncommitted edits to nine `src/codegen` files, the F1-F4 write-ups
+above, and a `tests/issue-5196-r3-review-fixes.test.ts` with four controls.
+Typecheck (`tsc --noEmit -p tsconfig.ts7.json`) was clean on arrival. Its own
+scratch recorded that the 212-row test262 batch had **hung for 80 minutes with
+no output** and was killed, so **no row-set control had actually completed** —
+the row evidence in this round is entirely the resuming implementer's.
+
+**Kept, unchanged.** The F1 single-assignment proof, the F3 revoker arm, the F2
+second emitter and its four call sites, the F4 two-part fix, and the F5/F6 lows.
+Each was re-derived against the finding and re-measured (tables above).
+
+**Changed on resumption.**
+
+1. `identifierIsWrittenTo` gained the reference-position filter described under
+   F1 — the widening as first written would have de-optimised unrelated
+   bindings.
+2. Two claims were wrong and are corrected in place: "`Reflect.has(undefined,
+   "x")` still throws" (it does not, by design) and the caller count "three"
+   (it is eight).
+3. The F4 "honest note" blamed the wrong mechanism for a swallowed
+   `console.log` line; the corrected table under F4 shows the gap is specific to
+   a revocable proxy's `.proxy` read and is **pre-existing on base** in the
+   direct spelling.
+4. **The four pin controls were rewritten**, because two of them did not pin
+   anything. Verified by file-copy A/B against lane HEAD `d84b8f14`: as
+   originally written, F1 and F3 failed on HEAD (good pins) but **F2 and F4
+   PASSED on HEAD** — they wrapped the program in an exported function, and
+   neither finding reproduces in that shape. Both now run the program text as
+   the review harness does (`nativeStrings` + `hostBridge: "always"` +
+   `deferTopLevelInit`, stdout read back through `__stdout_prepare`/
+   `__stdout_char`), and all four now fail on HEAD and pass with the fixes.
+   A control that passes on the tree it is supposed to indict is not a pin, and
+   this one nearly shipped as one.
+
+### Verification on resumption — the review probe corpus, standalone
+
+The full reviewer/skeptic probe corpus (92 programs across `p/r30`, `p/nc`,
+`p/b4`, `p/b9`, `p/b11`-`b13`, `p/r32`, `p/r32b`, `p/gopd`, `p/gopd2`,
+`p/meta`-`meta3`, `p/tof`, `p/free`, plus this round's `p/pins` and `p/f4b`) was
+re-run base-vs-lane on **standalone** with the reviewer's own `ab.sh`/`cmp.mjs`,
+against the final tree. Result:
+
+- **39 of 92 differ from base; every one is lane-better or neutral.**
+- **Zero new failure modes.** No probe carries `lane-TRAP`, `lane-COMPILE_ERROR`,
+  `lane-WASM_INVALID` or `lane-THROW` that base does not carry identically. The
+  three `WASM_INVALID` programs (`free/05-mapset`, `r32/03-keys`,
+  `gopd/01-arity`) fail byte-for-byte the same way on both trees — pre-existing,
+  untouched.
+- The wins are concentrated where the round intended them: `r32b/01` base
+  `2,NaN,…` → lane `2,1,…` (node parity); `r32b/07` base
+  `undefined / no throw / no throw` → lane `1 ts / RangeError / TypeError`
+  (node parity); `nc/06` base `no throw object` → lane `threw TypeError`
+  (node parity); `b4/05` base drops `length,name` → lane keeps them;
+  `tof/01` a `typeof` entry base reports `object` → lane `function`, matching
+  node. The seven `base-COMPILE_ERROR` / `base-THROW` programs (the
+  `Proxy.revocable`-as-value and one-arg-gOPD families) now run.
+- `r32/02` line 2 is the one worth naming explicitly: node throws on all 13
+  entries, base threw on 1, lane throws on 9. Lane is a strict superset of
+  base's correct answers — no entry that base answered goes wrong.
+
+### Verification on resumption — host and WASI probes, and a NEW finding (F9)
+
+The finding-bearing probe directories (`p/pins`, `p/b9`, `p/r30`, `p/nc`,
+`p/r32`, `p/free` — 42 programs) were re-run base-vs-lane on **host** and
+**wasi**.
+
+- **host: zero `BASE!=LANE`.** Every one of the 42 programs behaves identically
+  to base on the JS-host lane, which is the byte-inertness expectation for that
+  target.
+- **wasi: 8 differ.** Six are lane-better or identical-in-kind (the two
+  `WASM_INVALID` programs fail byte-for-byte the same on both trees; `01-alias`
+  and `06-direct-provable` move toward node). Two are a new finding.
+
+#### F9 (NEW, wasi-only) — `Reflect.defineProperty(target, <object key>, desc)` traps
+
+`p/r32/04-topropertykey-order.js` and `p/r32/05-poisoned-key.js` go from
+**base COMPILE_ERROR** ("Reflect.defineProperty not supported in standalone mode
+(#1472 Phase C)") to **lane TRAP `illegal cast`** on `--target wasi`.
+
+Bisected 2026-09-04 to one line — `Reflect.defineProperty(o, key, { value: 1 })`
+where `key` is an ORDINARY OBJECT (the poisoned `toString` is incidental; a
+plain `{ toString() { return "b"; } }` traps identically). Neither the arrow
+wrapper nor the 2-argument arm is involved: the 2-arg arm answers a catchable
+throw, and the same call on `--target standalone` answers node's
+`RangeError:poison` correctly.
+
+**It is base's own defect, reached through a new door.** The 3-argument arm
+delegates to `emitDefinePropertyDescRuntime`, the shared applier that also backs
+`Object.defineProperty`. Measured directly:
+
+| probe, `--target wasi` | node | base `4fa179f8` | lane |
+|---|---|---|---|
+| `Object.defineProperty(o, <object key>, {value:1})` | `ok 1` | **TRAP illegal cast** | **TRAP illegal cast** |
+| `Reflect.defineProperty(o, <object key>, {value:1})` | `ok` | COMPILE_ERROR (#1472 Phase C) | TRAP illegal cast |
+| the same, `--target standalone` | `RangeError:poison` | COMPILE_ERROR | `RangeError:poison` (node parity) |
+
+So the applier has been trapping on a non-primitive property key under WASI on
+**both** trees since before this change-set; the Reflect arm (landed in R3-2,
+`747c88c7` — **before** this fix round, and reproduced here on lane HEAD with
+the round-3 fixes reverted) simply routes a second spelling into it.
+
+**Not fixed here, and the ship-gate consequence is stated plainly.** The
+available one-line "fix" is to decline the 3-argument arm for a non-primitive
+key, which restores base's compile refusal on WASI at the cost of throwing away
+the standalone node-parity win — trading a real correctness gain for the
+appearance of parity while leaving the applier's actual bug untouched. That is
+not a fix, so it was not made. The honest reading of the gate is therefore:
+**`neverWorseThanBase` is FALSE**, on exactly these two WASI programs, for a
+defect that is base's and that the lane makes reachable. It belongs to whoever
+owns `emitDefinePropertyDescRuntime`'s WASI path.
+
+### Verification on resumption — test262 row slices, base vs lane
+
+Run with `scripts/run-test262-paths.mts … --standalone --isolate` (a fresh child
+per row, 120 s cap — the in-process mode is what hung the previous
+implementer's 212-row batch for 80 minutes and was killed at `exit=137`). Base
+is the `git archive` extract of `4fa179f8` at `.tmp/basetree`, its `src/`
+verified byte-identical to the reviewer's copy.
+
+| slice | rows | base pass | lane pass | NEW non-pass on lane |
+|---|---|---|---|---|
+| `built-ins/Reflect/**` | 153 | 122 | **126** | 0 (see the artifact note) |
+| `built-ins/Proxy/**` LP-00 | 50 | 30 | **31** | 0 |
+| `built-ins/Proxy/**` LP-01 | 54 | 34 | **40** | 0 |
+| `built-ins/Proxy/**` LP-02 | 53 | 27 | **32** | 0 |
+| `built-ins/Proxy/**` LP-03 | 49 | 27 | **29** | 0 |
+| `built-ins/Proxy/**` LP-04 | 54 | 31 | **33** | 0 |
+| `built-ins/Proxy/**` LP-05 | 51 | 35 | 35 | 0 |
+| `language/expressions/new/**` + `revocable/` | 59 | 56 | 56 | 0 |
+| **total** | **523** | **362** | **382** | **0** |
+
+**Net +20 passes over 523 rows measured on BOTH trees, zero rows lost.** All 311
+`built-ins/Proxy/**` rows and all 153 `built-ins/Reflect/**` rows are covered.
+The wins are the round's own: four `return-abrupt-from-property-key` rows (the
+C5 ToPropertyKey coercion), `Reflect/apply/target-is-not-callable-throws`, nine
+`trap-is-not-callable-realm` / `null-handler-realm` rows, and the four R3-4
+revoker rows (`revocation-function-name`, `-length`, `-property-order`,
+`-not-a-constructor`) — which is the full set this lane claimed for R3-4.
+
+**Load artifacts, named so they are not mistaken for regressions.** The runs
+shared a 4-core box with three other agents and up to four concurrent isolate
+workers, so twenty rows changed non-pass KIND (`fail` → `error`/`compile_error`)
+with reasons that are all `spawnSync … ETIMEDOUT` or `compilation timeout
+(~15 s)`. Every one was already non-pass on base. The single row the diff called
+a NEW non-pass — `Reflect/getPrototypeOf/target-is-symbol-throws.js`,
+`compile_error compilation timeout (15286.83 ms)` — was **re-run alone on the
+lane and PASSES** (`{ pass: 1 }`). `Reflect.getPrototypeOf` is untouched by this
+change-set.
+
+**Rows given up, honestly.** The 222-row function-metadata control set was NOT
+run on either tree inside this session's budget (isolate mode costs ~15 s/row on
+this box and the two trees double it). It is unmeasured here, not
+measured-and-clean — and it is the set that would most directly exercise the F5
+revoker field rename, whose evidence therefore rests on the four `revocable/`
+rows above, `p/meta*`/`p/tof` probes and the `__sget_proxy` disappearance.
+
+## Handover (2026-09-04, session claude/es6-test262-standalone-g10c7u)
+
+**State.** r3 pass implemented by an Opus-medium lane in
+`.claude/worktrees/wf_16f0b7f5-bf0-3` (branch `worktree-wf_16f0b7f5-bf0-3`,
+merge-base `4fa179f85f`): R3-0 (a real proxy from the Proxy constructor
+VALUE), R3-2 C4+C5 (Reflect target guards + ToPropertyKey at the call site),
+R3-4 (first-class revocation function), R3-3 E-2 (one-argument
+`Object.getOwnPropertyDescriptor`), then an adversarial review (HOLD, ten
+findings) and one Opus-medium fix round — `366d0e0be3` fixes F1–F6,
+`e06f6838b0` records the measurement. Final row table, `--isolate`, base vs
+lane: 523 rows, **362 → 382 pass, zero rows lost** (Reflect/** 122 → 126;
+Proxy/** slices +1/+6/+5/+2/+2/0; new/ + revocable/ 56 → 56).
+
+**Fixed in the review round.** F1 `var P = Proxy; P = K; new P()` — the
+alias hop is taken only under `isSingleAssignmentBinding` (one plain
+initialised declarator, `const` or never written in-file). F2 the
+`Reflect.get`/`has` target guard rejects only positively-branded primitives
+and admits unrecognised shapes (`emitNativeReflectNonObjectGuard`; the six
+guard sites inherited from main keep the stricter emitter). F3 the revoker
+non-constructable classification needs the same single-assignment proof.
+F4 `var R = Proxy.revocable; R(t, {get(){…}})` — a trap became node parity
+(`FIXED_ARITY_PLAIN_ALIAS_STATICS` + object-literal arguments compiled as
+externref). F5 the revoker carrier's fields are `__`-prefixed and hidden.
+F6 the one-arg gOPD block declines a spread. Corrected in the write-up: the
+"byte-inert unless a `Proxy.revocable` site compiled" claim is false
+(+358 B on a Proxy-free program; measured table in the round-3 section).
+
+**Open, recorded — read before touching this area.**
+- **F9 (WASI only, arrived with R3-2 `747c88c75b`)**:
+  `Reflect.defineProperty(o, key, desc)` with an ORDINARY OBJECT key traps
+  `illegal cast` on `--target wasi` where main refused to compile the
+  3-arg form. The trap is in the shared applier `emitDefinePropertyDescRuntime`
+  — `Object.defineProperty(o, <object key>, …)` traps identically on both
+  trees on WASI — reached through the new arm; on standalone the same call
+  is node parity. The one-line option (decline the 3-arg arm for a
+  non-primitive key on WASI) trades a real standalone win for main's compile
+  refusal and leaves the applier bug in place; it was deliberately not taken.
+  Owner: the applier's WASI path.
+- F7: a caught one-arg gOPD TypeError on a revoked proxy disarms a later
+  two-arg TypeError — base could not compile the one-arg form, so not worse
+  than base; mechanism unidentified.
+- The 222-row function-metadata control set was never run on either tree
+  (F5's evidence is the revocable/ rows, the meta/tof probes and the
+  disappearance of the synthetic getter).
+- `Reflect.has(undefined, "x")` answers false (base parity) — `undefined`
+  is deliberately unbranded because ordinary objects nulled by the
+  pre-existing array-widening defect would otherwise throw.
+- Not started: R3-1 (§10.5 invariants, 29 rows + 6), R3-5 (open
+  representation for a proxy TARGET literal, 5), R3-3 E-1 (`$Proxy` front
+  guard in `__defineProperty_*` — needs the ~1,750-row floor on both trees),
+  the R3-2 residue (C1 Reflect.set bypass, C2/C3 booleans, C6 ownKeys order).
+
+**Merge-group wedge, found and fixed after the PR went green
+(2026-09-04, PR #5576, run 33867389640).** The first `identifierIsWrittenTo`
+widening (F1/F3) used plain containment for the assignment's left side, so
+`X.prop = v`, `X.prop++` and `X[k] = v` counted as writes to X. Every
+test262 row carries `Test262Error.prototype.toString = …` (sta.js), so
+`Test262Error` read as reassigned in every file and the `new` fold declined
+everywhere; on `language/module-code/namespace/internals/is-extensible.js`
+(a module importing itself as a namespace) the dynamic fallback
+(`__fnctor_Test262Error_new` → `__instanceof_dynamic` → `__hasOwnProperty` →
+`__str_equals`, per `--prof`) spun forever. Fixture-graph rows execute
+IN-PROCESS in the vitest fork (`tests/test262-shared.ts`, "fixture tests are
+rare"), outside the compiler pool's 30 s kill, so one such row wedges its
+whole shard: 27 of 50 standalone shards hit the 40-minute job cap, twice,
+with the same shard set (deterministic); the PR-level checks cannot see it
+(no shard matrix on `pull_request`), and the pre-PR 1,200-row sample could
+not either (the row is a baseline `fail`). Fix: the scan now requires the
+identifier to reach the assignment target through PATTERN nodes only
+(`isBindingWritePath`), i.e. the pre-widening semantics plus the intended
+destructuring / for-in-of / default-value targets; a 30-case truth table is
+in the fix commit's probe. Still open, pre-existing: the dynamic
+`instanceof` chain walk itself loops on that namespace object — base never
+reaches it because its fold holds; whoever lifts the fold for a legitimately
+reassigned constructor will hit it.
+
+**Validation** is on the combined session-branch tree (see the PR).
+

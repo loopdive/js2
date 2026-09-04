@@ -285,11 +285,20 @@ export function checkHtmlCloseComment(ctx: EarlyErrorContext): void {
  * ES spec: It is a Syntax Error if PrototypePropertyNameList of ClassElementList
  * contains more than one occurrence of "constructor".
  */
+function isStaticCtorMethodMember(member: ts.ClassElement): boolean {
+  // (#5195 r3-4) Local twin of `codegen/ast-modifiers.ts::isStaticCtorMethod`,
+  // kept local so early-errors takes no codegen import. `static constructor(){}`
+  // is a static METHOD named "constructor" (§15.7), not the class's
+  // constructor, so it must not count toward the duplicate-constructor rule.
+  const modifiers = ts.canHaveModifiers(member) ? ts.getModifiers(member) : undefined;
+  return modifiers?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword) ?? false;
+}
+
 export function checkDuplicateConstructors(ctx: EarlyErrorContext): void {
   const checkClass = (classNode: ts.ClassDeclaration | ts.ClassExpression): void => {
     let ctorCount = 0;
     for (const member of classNode.members) {
-      if (ts.isConstructorDeclaration(member)) {
+      if (ts.isConstructorDeclaration(member) && !isStaticCtorMethodMember(member)) {
         // Only count constructors with a body (declarations without bodies are overloads)
         if (member.body) {
           ctorCount++;

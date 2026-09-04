@@ -1639,7 +1639,23 @@ export function ensureProxyRuntime(
     let revokerTypeIdx = ctx.structMap.get(revokerName);
     if (revokerTypeIdx === undefined) {
       revokerTypeIdx = ctx.mod.types.length;
-      const fields = [{ name: "proxy", type: externref, mutable: false }];
+      // (#5196 R3-4) Field 1 is the deleted-bits mask for the revocation
+      // function's own `length` (bit 0) / `name` (bit 1) properties — the same
+      // per-instance state the #2896 builtin-fn meta structs carry. Without it
+      // `delete revoke.length` silently no-ops and `verifyProperty` reads the
+      // property as non-configurable.
+      // (#5196 R3 review F5) BOTH fields carry the `__` prefix that
+      // `exposedClosedStructFieldName` uses to hide a compiler field from
+      // property lookup, `Object.keys`/`getOwnPropertyNames` and host
+      // marshalling. Unprefixed, the revocation function answered
+      // `revoke.bfnstate` / `revoke.proxy` as own data properties and a write
+      // to `revoke.bfnstate` corrupted the deleted-bits mask for its own
+      // `length`/`name` (measured 2026-09-04, standalone). Every access is
+      // POSITIONAL (`fieldIdx`), so the names are free to change.
+      const fields: { name: string; type: ValType; mutable: boolean }[] = [
+        { name: "__proxy", type: externref, mutable: false },
+        { name: "__bfnstate", type: { kind: "i32" }, mutable: true },
+      ];
       ctx.mod.types.push({ kind: "struct", name: revokerName, fields });
       ctx.structMap.set(revokerName, revokerTypeIdx);
       ctx.typeIdxToStructName.set(revokerTypeIdx, revokerName);
@@ -1669,6 +1685,7 @@ export function ensureProxyRuntime(
         { op: "call", funcIdx: proxyCreateIdx },
         { op: "local.set", index: proxyLocal },
         { op: "local.get", index: proxyLocal },
+        { op: "i32.const", value: 0 }, // (#5196) no own property deleted yet
         { op: "struct.new", typeIdx: revokerTypeIdx },
         { op: "extern.convert_any" },
         { op: "local.set", index: revokerLocal },

@@ -1262,7 +1262,17 @@ class SourceInventoryBuilder {
         | ts.GetAccessorDeclaration
         | ts.SetAccessorDeclaration;
       if (!functionalMember.body) continue;
-      if (ts.isConstructorDeclaration(functionalMember)) hasExecutableConstructor = true;
+      // (#5195 r3-4, r3 review F2) `static constructor(){}` parses as a
+      // ConstructorDeclaration but is an ordinary static METHOD whose PropName
+      // is "constructor" (§15.7), NOT the class's [[Construct]] body. Codegen
+      // (`ast-modifiers.ts::findConstructorImplementation`) does not select it
+      // and never compiles its body, so the inventory must not record it as a
+      // constructor either — doing so left the class with no
+      // `class-implicit-constructor` unit while codegen still emitted
+      // `<Class>_init`, and the ABI planner rejected the mismatch outright
+      // ("no consistent exact class-implicit-constructor inventory owner").
+      const staticCtorMethod = isStatic && ts.isConstructorDeclaration(functionalMember);
+      if (ts.isConstructorDeclaration(functionalMember) && !staticCtorMethod) hasExecutableConstructor = true;
       const promoteNestedAccessor =
         directNestedClass &&
         (ts.isGetAccessorDeclaration(functionalMember) || ts.isSetAccessorDeclaration(functionalMember));
@@ -1276,7 +1286,9 @@ class SourceInventoryBuilder {
         topLevelDeclaration || promoteNestedMember
           ? this.addTerminalUnit(
               ts.isConstructorDeclaration(functionalMember)
-                ? "class-constructor"
+                ? staticCtorMethod
+                  ? "class-static-method"
+                  : "class-constructor"
                 : this.classMemberKind(functionalMember),
               classRecord.id,
               member,
@@ -1292,7 +1304,9 @@ class SourceInventoryBuilder {
             )
           : this.addSupportUnit(
               ts.isConstructorDeclaration(functionalMember)
-                ? "class-constructor"
+                ? staticCtorMethod
+                  ? "class-static-method"
+                  : "class-constructor"
                 : this.classMemberKind(functionalMember),
               classRecord.id,
               inheritedTerminalOwnerId,
@@ -1300,7 +1314,7 @@ class SourceInventoryBuilder {
               legacyName,
               memberSyntheticRole,
             );
-      if (ts.isConstructorDeclaration(functionalMember)) {
+      if (ts.isConstructorDeclaration(functionalMember) && !staticCtorMethod) {
         explicitConstructor = unit;
         explicitConstructorDeclaration = functionalMember;
       }
