@@ -14,10 +14,12 @@ import { ProgramAbiCallableRegistry } from "../src/codegen/program-abi-callable-
 import {
   VEC_HOST_BRIDGE_ROLE,
   type VecHostBridgeKind,
+  type VecHostBridgeWritebackKind,
   finalizeVecHostBridgeExports,
   isCoreVecHostBridgePublicName,
   resolveVecHostBridgeHelper,
   vecHostBridgePhysicalExportBase,
+  vecHostBridgeWritebackOrdinal,
 } from "../src/codegen/vec-access-exports.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { STABLE_FUNC_BASE } from "../src/emit/resolve-layout.js";
@@ -43,6 +45,38 @@ const VEC_BRIDGES: readonly {
   { kind: "push", name: "__vec_push", ordinal: 4 },
   { kind: "pop", name: "__vec_pop", ordinal: 5 },
 ];
+
+/**
+ * (#3520 W1-E) The `#3116` write-back pair — the third sub-family of the same
+ * closed `vec-host-bridge` table, at ordinals 9 and 10.
+ */
+const VEC_WRITEBACK_HELPERS: readonly { kind: VecHostBridgeWritebackKind; name: string }[] = [
+  { kind: "setElem", name: "__vec_set_elem" },
+  { kind: "setLen", name: "__vec_set_len" },
+];
+
+/**
+ * (#3520 W1-E) True for the six-bridge RESERVATION batch specifically.
+ *
+ * `observeEntrySourceSupports` is no longer called once per compile: the
+ * write-back pair is observed later, from `vec-define-writeback.ts`, on any
+ * module that emits it. The probes below all want the reservation batch, and a
+ * spy that overwrites its capture on every call silently ends up holding the
+ * write-back batch instead — so the batch is identified by its exact content
+ * rather than by being the only one. This is strictly stronger than the
+ * previous "whatever arrived last": it pins the family's order and ordinals.
+ */
+function isCoreVecBridgeBatch(
+  observations: readonly { readonly displayName: string; readonly derivedOrdinal: number }[],
+): boolean {
+  return (
+    observations.length === VEC_BRIDGES.length &&
+    VEC_BRIDGES.every(
+      (bridge, index) =>
+        observations[index]?.displayName === bridge.name && observations[index]?.derivedOrdinal === bridge.ordinal,
+    )
+  );
+}
 
 function isVecHostBridgePhysicalExport(name: string): boolean {
   return VEC_BRIDGES.some((bridge) => {
@@ -342,12 +376,14 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     const observe = vi
       .spyOn(ProgramAbiCallableRegistry.prototype, "observeEntrySourceSupports")
       .mockImplementation(function (observations) {
-        registry = this;
-        reserved = observations.map((observation) => {
-          const func = definedFuncAt(this.ctx, observation.funcIdx);
-          if (!func) throw new Error(`missing reserved helper ${observation.displayName}`);
-          return func;
-        });
+        if (isCoreVecBridgeBatch(observations)) {
+          registry = this;
+          reserved = observations.map((observation) => {
+            const func = definedFuncAt(this.ctx, observation.funcIdx);
+            if (!func) throw new Error(`missing reserved helper ${observation.displayName}`);
+            return func;
+          });
+        }
         return original.call(this, observations);
       });
     const { result } = generate(ARRAY_SOURCE, "vec-reserve-fill.ts");
@@ -796,21 +832,23 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     const observe = vi
       .spyOn(ProgramAbiCallableRegistry.prototype, "observeEntrySourceSupports")
       .mockImplementation(function (observations) {
-        registry = this;
-        observedImportCount = this.ctx.numImportFuncs;
-        for (const name of ["__vec_len", "$v0", "$v0$$"] as const) {
-          const entry = this.ctx.mod.exports.find(
-            (candidate) => candidate.name === name && candidate.desc.kind === "func",
-          );
-          const func = entry?.desc.kind === "func" ? definedFuncAt(this.ctx, entry.desc.index) : undefined;
-          if (!entry || !func) throw new Error(`missing exact user export ${name} before vec publication`);
-          userExports.set(name, { entry, func });
+        if (isCoreVecBridgeBatch(observations)) {
+          registry = this;
+          observedImportCount = this.ctx.numImportFuncs;
+          for (const name of ["__vec_len", "$v0", "$v0$$"] as const) {
+            const entry = this.ctx.mod.exports.find(
+              (candidate) => candidate.name === name && candidate.desc.kind === "func",
+            );
+            const func = entry?.desc.kind === "func" ? definedFuncAt(this.ctx, entry.desc.index) : undefined;
+            if (!entry || !func) throw new Error(`missing exact user export ${name} before vec publication`);
+            userExports.set(name, { entry, func });
+          }
+          reserved = observations.map((observation) => {
+            const func = definedFuncAt(this.ctx, observation.funcIdx);
+            if (!func) throw new Error(`missing reserved helper ${observation.displayName}`);
+            return func;
+          });
         }
-        reserved = observations.map((observation) => {
-          const func = definedFuncAt(this.ctx, observation.funcIdx);
-          if (!func) throw new Error(`missing reserved helper ${observation.displayName}`);
-          return func;
-        });
         return originalObserve.call(this, observations);
       });
     const handle = vi
@@ -990,7 +1028,51 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
         expect(ownedFunctions.has(helper), `${entry} duplicate vec helper owner`).toBe(false);
         ownedFunctions.add(helper);
       }
-      expect(familyEntries, `${entry} unbounded vec family rows`).toHaveLength(ownedFunctions.size);
+      // (#3520 W1-E) The role is a closed table with three sub-families, of
+      // which the six core bridges above are only the first, so the census can
+      // no longer be "exactly the core rows". Widening it ALONE would let any
+      // unknown row into the family unchallenged — the green-washing move the
+      // W1-D partition widening had to avoid — so every non-core row must
+      // positively identify itself as the `#3116` write-back pair at its own
+      // fixed ordinal, keyed by role+ordinal rather than by display name.
+      const coreRowIds = new Set(
+        VEC_BRIDGES.map((bridge) => {
+          const ref = irSupportFuncRef(entrySource.id, VEC_HOST_BRIDGE_ROLE, bridge.name, bridge.ordinal);
+          if (ref.binding.kind !== "support") throw new Error(`missing ${bridge.name} structural binding`);
+          return ref.binding.bindingId as string;
+        }),
+      );
+      const writebackRowIds = new Set(
+        VEC_WRITEBACK_HELPERS.map((helper) => {
+          const ref = irSupportFuncRef(
+            entrySource.id,
+            VEC_HOST_BRIDGE_ROLE,
+            helper.name,
+            vecHostBridgeWritebackOrdinal(helper.kind),
+          );
+          if (ref.binding.kind !== "support") throw new Error(`missing ${helper.name} structural binding`);
+          return ref.binding.bindingId as string;
+        }),
+      );
+      const nonCoreRows = familyEntries.filter((candidate) => !coreRowIds.has(candidate.id));
+      for (const row of nonCoreRows) {
+        expect(writebackRowIds.has(row.id), `${entry} unexpected vec family row ${row.displayName} (${row.id})`).toBe(
+          true,
+        );
+        // The write-back pair is emitted only under its own gate, so a present
+        // row must resolve to a real, exactly-named helper — not to a slot the
+        // planner invented.
+        const slot = tracked.programAbi!.abi.resolveFinalIndex(row.id);
+        if (!slot || slot.space !== "function") throw new Error(`missing ${entry} ${row.displayName} final locator`);
+        const importCount = tracked.module.imports.filter((candidate) => candidate.desc.kind === "func").length;
+        expect(
+          tracked.module.functions[slot.index - importCount]?.name,
+          `${entry} ${row.displayName} exact helper`,
+        ).toBe(row.displayName);
+      }
+      expect(familyEntries, `${entry} unbounded vec family rows`).toHaveLength(
+        ownedFunctions.size + nonCoreRows.length,
+      );
       corpusOwnedFunctions += ownedFunctions.size;
     }
     expect(corpusOwnedFunctions, "five-entry vec ownership anti-vacuity").toBeGreaterThan(0);
