@@ -1,7 +1,8 @@
 ---
 id: 5196
 title: "ES2015 standalone proxy — r2 residual pass"
-status: in-progress
+status: done
+completed: 2026-09-04
 sprint: current
 created: 2026-08-29
 updated: 2026-09-04
@@ -2157,3 +2158,58 @@ this box and the two trees double it). It is unmeasured here, not
 measured-and-clean — and it is the set that would most directly exercise the F5
 revoker field rename, whose evidence therefore rests on the four `revocable/`
 rows above, `p/meta*`/`p/tof` probes and the `__sget_proxy` disappearance.
+
+## Handover (2026-09-04, session claude/es6-test262-standalone-g10c7u)
+
+**State.** r3 pass implemented by an Opus-medium lane in
+`.claude/worktrees/wf_16f0b7f5-bf0-3` (branch `worktree-wf_16f0b7f5-bf0-3`,
+merge-base `4fa179f85f`): R3-0 (a real proxy from the Proxy constructor
+VALUE), R3-2 C4+C5 (Reflect target guards + ToPropertyKey at the call site),
+R3-4 (first-class revocation function), R3-3 E-2 (one-argument
+`Object.getOwnPropertyDescriptor`), then an adversarial review (HOLD, ten
+findings) and one Opus-medium fix round — `366d0e0be3` fixes F1–F6,
+`e06f6838b0` records the measurement. Final row table, `--isolate`, base vs
+lane: 523 rows, **362 → 382 pass, zero rows lost** (Reflect/** 122 → 126;
+Proxy/** slices +1/+6/+5/+2/+2/0; new/ + revocable/ 56 → 56).
+
+**Fixed in the review round.** F1 `var P = Proxy; P = K; new P()` — the
+alias hop is taken only under `isSingleAssignmentBinding` (one plain
+initialised declarator, `const` or never written in-file). F2 the
+`Reflect.get`/`has` target guard rejects only positively-branded primitives
+and admits unrecognised shapes (`emitNativeReflectNonObjectGuard`; the six
+guard sites inherited from main keep the stricter emitter). F3 the revoker
+non-constructable classification needs the same single-assignment proof.
+F4 `var R = Proxy.revocable; R(t, {get(){…}})` — a trap became node parity
+(`FIXED_ARITY_PLAIN_ALIAS_STATICS` + object-literal arguments compiled as
+externref). F5 the revoker carrier's fields are `__`-prefixed and hidden.
+F6 the one-arg gOPD block declines a spread. Corrected in the write-up: the
+"byte-inert unless a `Proxy.revocable` site compiled" claim is false
+(+358 B on a Proxy-free program; measured table in the round-3 section).
+
+**Open, recorded — read before touching this area.**
+- **F9 (WASI only, arrived with R3-2 `747c88c75b`)**:
+  `Reflect.defineProperty(o, key, desc)` with an ORDINARY OBJECT key traps
+  `illegal cast` on `--target wasi` where main refused to compile the
+  3-arg form. The trap is in the shared applier `emitDefinePropertyDescRuntime`
+  — `Object.defineProperty(o, <object key>, …)` traps identically on both
+  trees on WASI — reached through the new arm; on standalone the same call
+  is node parity. The one-line option (decline the 3-arg arm for a
+  non-primitive key on WASI) trades a real standalone win for main's compile
+  refusal and leaves the applier bug in place; it was deliberately not taken.
+  Owner: the applier's WASI path.
+- F7: a caught one-arg gOPD TypeError on a revoked proxy disarms a later
+  two-arg TypeError — base could not compile the one-arg form, so not worse
+  than base; mechanism unidentified.
+- The 222-row function-metadata control set was never run on either tree
+  (F5's evidence is the revocable/ rows, the meta/tof probes and the
+  disappearance of the synthetic getter).
+- `Reflect.has(undefined, "x")` answers false (base parity) — `undefined`
+  is deliberately unbranded because ordinary objects nulled by the
+  pre-existing array-widening defect would otherwise throw.
+- Not started: R3-1 (§10.5 invariants, 29 rows + 6), R3-5 (open
+  representation for a proxy TARGET literal, 5), R3-3 E-1 (`$Proxy` front
+  guard in `__defineProperty_*` — needs the ~1,750-row floor on both trees),
+  the R3-2 residue (C1 Reflect.set bypass, C2/C3 booleans, C6 ownKeys order).
+
+**Validation** is on the combined session-branch tree (see the PR).
+
