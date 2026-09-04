@@ -101,7 +101,15 @@ export interface BudgetVerdict {
   budget: number;
   marginPct: number;
   ceiling: number;
+  /** Half-margin line (#5306): crossing it warns, it never fails. */
+  softCeiling: number;
   overBudget: boolean;
+  /** Past the half-margin line but still under the ceiling — advisory only. */
+  nearCeiling: boolean;
+  /** Traversals still available before `ceiling` (negative once over budget). */
+  marginLeft: number;
+  /** `marginLeft` as a share of the ceiling, so "how close" reads at a glance. */
+  marginLeftPct: number;
   vacuous: boolean;
   wellBelow: boolean;
 }
@@ -111,6 +119,13 @@ export interface BudgetVerdict {
  * fail (a real slowdown past the margin); `vacuous` is the safety fail (the
  * meter/fixture broke and the gate went blind); `wellBelow` is an advisory to
  * rebank an improvement.
+ *
+ * `nearCeiling` (#5306) is the SOFT band: the gate is a one-PR-regression
+ * detector, but the margin is consumed by every PR cumulatively, so a budget
+ * that is silently 99.98 % spent fails the NEXT harness-path PR for fourteen
+ * days of other people's drift. Warning at the half-margin line makes that
+ * drift visible in every `quality` log long before it fails. Exit code is
+ * deliberately unchanged — no new required check (issue #5306 non-goals).
  */
 export function evaluateBudget(
   measured: number,
@@ -119,12 +134,19 @@ export function evaluateBudget(
   vacuityFloor: number,
 ): BudgetVerdict {
   const ceiling = Math.ceil(budget * (1 + marginPct / 100));
+  const softCeiling = Math.ceil(budget * (1 + marginPct / 2 / 100));
+  const overBudget = measured > ceiling;
+  const marginLeft = ceiling - measured;
   return {
     measured,
     budget,
     marginPct,
     ceiling,
-    overBudget: measured > ceiling,
+    softCeiling,
+    overBudget,
+    nearCeiling: measured > softCeiling && !overBudget,
+    marginLeft,
+    marginLeftPct: ceiling === 0 ? 0 : (marginLeft / ceiling) * 100,
     vacuous: measured < vacuityFloor,
     wellBelow: measured < Math.floor(budget * (1 - marginPct / 100)),
   };
@@ -169,13 +191,19 @@ async function main(): Promise<void> {
   const measured = await measureCompileWork(callSites);
 
   if (isUpdate) {
+    const today = new Date().toISOString().slice(0, 10);
     const budget: Budget = {
       forEachChildCalls: measured,
       marginPct,
       fixtureCallSites: callSites,
-      updated: new Date().toISOString().slice(0, 10),
+      updated: today,
+      // #5306 acceptance #4: the note must carry the rebank DATE and the
+      // MEASURED figure it was banked from. The previous note said only
+      // "post-#3433 main", so a reader could not tell whether the committed
+      // number was measured or picked, nor when.
       note:
-        "Deterministic shared-forEachChild traversal count for the #3437 representative harness " +
+        `Rebanked ${today} from a measured ${measured} shared-forEachChild traversals ` +
+        `(fixtureCallSites=${callSites}, margin ${marginPct}%) for the #3437 representative harness ` +
         "assembly. Reseed with `npx tsx scripts/check-harness-compile-budget.ts --update` when a " +
         "slowdown is intentional and justified. See the script header.",
     };
@@ -200,7 +228,8 @@ async function main(): Promise<void> {
   } else {
     console.log(
       `#3437 harness compile-work: measured=${measured} budget=${existing.forEachChildCalls} ` +
-        `ceiling=${ceiling} (+${marginPct}%) callSites=${callSites}.`,
+        `ceiling=${ceiling} (+${marginPct}%) callSites=${callSites} ` +
+        `margin-left=${verdict.marginLeft} (${verdict.marginLeftPct.toFixed(2)}%).`,
     );
   }
 
@@ -222,6 +251,19 @@ async function main(): Promise<void> {
         `Otherwise fix the added/de-memoized per-file scan. See #3437.`,
     );
     process.exit(1);
+  }
+
+  // #5306 soft band. Emitted AFTER the hard checks so a real failure is never
+  // softened into a warning, and on stderr so `--json` stdout stays parseable.
+  // GitHub renders `::warning::` from either stream.
+  if (verdict.nearCeiling) {
+    console.error(
+      `::warning file=scripts/harness-compile-budget.json::#3437 harness compile work is past the ` +
+        `half-margin line: measured ${measured} vs budget ${existing.forEachChildCalls} ` +
+        `(soft ${verdict.softCeiling}, ceiling ${ceiling}). Margin left: ${verdict.marginLeft} traversals ` +
+        `(${verdict.marginLeftPct.toFixed(2)}% of the ceiling). Drift since the last rebank is cumulative — ` +
+        `bisect it and rebank on main (#5306) rather than letting the next harness-path PR absorb the failure.`,
+    );
   }
 
   if (verdict.wellBelow) {
