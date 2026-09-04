@@ -128,14 +128,22 @@ describe("#5195 r3-7 — a DECLARED static `caller`/`arguments` keeps its value"
   });
 
   // A plain FUNCTION ancestor is the one chain that must NOT be poisoned:
-  // `function F(){}` is sloppy, so V8 gives it own `caller`/`arguments` data
-  // properties valued `null`, and `class G extends F {}` inherits them —
-  // node answers `null`, not a throw. Standalone still answers `undefined`
-  // there (wrong the same way as before this step), so the invariant this
-  // pins is the one the step must not break: reading it does not THROW.
-  // (The derived instance FIELD of a function ancestor is a separate,
-  // pre-existing standalone gap — `new G(3).a` is `undefined` on the base tree
-  // too — so it is deliberately not asserted here.)
+  // `function F(){}` is sloppy, and V8 up to node 22 gives a sloppy function
+  // own `caller`/`arguments` data properties valued `null`, which
+  // `class G extends F {}` inherits — node answers `null`, not a throw.
+  // Standalone still answers `undefined` there (wrong the same way as before
+  // this step), so the invariant this pins is the one the step must not
+  // break: reading it does not THROW. (The derived instance FIELD of a
+  // function ancestor is a separate, pre-existing standalone gap —
+  // `new G(3).a` is `undefined` on the base tree too — so it is deliberately
+  // not asserted here.)
+  //
+  // The node lane is engine-relative: the V8 in node 25 (CI's default) no
+  // longer puts those own properties on sloppy functions, so `G.caller` there
+  // reaches the %ThrowTypeError% accessor and throws — the spec answer. The
+  // probe below asks the running engine which world it is in (the test module
+  // itself is strict, so a sloppy function has to come from `new Function`).
+  const SLOPPY_FUNCTIONS_OWN_CALLER = Object.hasOwn(new Function(""), "caller");
   const FNCTOR_SOURCE = `
     function F(a) { this.a = a; }
     class G extends F {}
@@ -150,7 +158,7 @@ describe("#5195 r3-7 — a DECLARED static `caller`/`arguments` keeps its value"
     expect(await runStandalone(FNCTOR_SOURCE, "probe", "issue-5195-r3-fnctor.js")).toBe(1);
   });
 
-  it("host lane agrees that the function ancestor does not throw", () => {
-    expect(runHost(FNCTOR_SOURCE, "probe")).toBe(true);
+  it("host lane: the function ancestor throws exactly when sloppy functions lack own caller", () => {
+    expect(runHost(FNCTOR_SOURCE, "probe")).toBe(SLOPPY_FUNCTIONS_OWN_CALLER);
   });
 });
