@@ -2026,6 +2026,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   topLevelFunctionDeclarations: Map<string, ts.FunctionDeclaration>;
   /** Map from "ClassName_methodName" → method info for local classes */
   classMethodSet: Set<string>;
+  /**
+   * (#5309) `"ClassName_memberName"` for every class declaring an own INSTANCE
+   * FIELD whose name is also a callable (method or accessor) up its prototype
+   * chain. The field initializers install it on the instance, so it shadows the
+   * inherited callable for `this.m`, `this.m()`, `this.#m()` and `b.m()` alike.
+   * `call-receiver-method.ts` reads this to refuse its ancestor walk, which
+   * finds `Parent_m` in `classMethodSet` on its own and so is NOT fixed by
+   * dropping the inherited alias in `collectClassDeclaration`. `static` and
+   * `declare` fields are excluded — statics go through `staticMethodSet`, and
+   * `declare m: T` installs no property.
+   */
+  classFieldShadowedInheritedCallables: Set<string>;
   /** Classes inside function bodies whose body compilation is deferred */
   deferredClassBodies: Set<string>;
   /** Set of "ClassName_propName" for getter/setter accessor properties */
