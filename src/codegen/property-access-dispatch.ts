@@ -75,6 +75,7 @@ import {
   getFuncRefWrapperRootTypeIdx,
 } from "./closures.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
+import { emitOwnShadowGuardedMethodRead } from "./expressions/own-property-method-shadow.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js"; // (#4394) catch-binding non-$Error read
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
@@ -4141,6 +4142,19 @@ export function finalizeStructAndDynamicMemberGet(
               // strict mode `var fn = c.m; fn();` calls with `this =
               // undefined`, so the lost-binding semantics match spec).
               const objResult = compileExpression(ctx, fctx, expr.expression);
+              // An own property installed at runtime shadows the method for
+              // THIS receiver, and the singleton the arm below returns is
+              // per-method, not per-instance — so the receiver has to be kept
+              // and asked. Only when the file could install such a slot; every
+              // other module still compiles the plain drop-then-read.
+              if (
+                objResult &&
+                emitOwnShadowGuardedMethodRead(ctx, fctx, expr, typeName, propName, objResult, () =>
+                  emitCachedMethodClosureAccess(ctx, fctx, methodFullName, funcIdx, fullStructTypeIdx),
+                )
+              ) {
+                return { kind: "externref" };
+              }
               if (objResult) {
                 fctx.body.push({ op: "drop" });
               }

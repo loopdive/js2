@@ -9765,9 +9765,22 @@ export function compileConditionalCallee(
     }
 
     // If the branch is a property access, try method call
-    if (ts.isPropertyAccessExpression(branchExpr)) {
-      // Create a synthetic call with the property access as callee
-      // PropertyAccessExpression IS a LeftHandSideExpression so no infinite recursion
+    // A CALL or ELEMENT ACCESS branch takes the same route: both are
+    // LeftHandSideExpressions, so `f(x)(args)` / `a[k](args)` is a well-formed
+    // synthetic callee and `compileCallExpression` owns those shapes. Without
+    // this they fell to the value-drop fallback below and the whole call
+    // answered `undefined` — marked's
+    // `(i.hooks ? i.hooks.provideLexer(e) : e ? Lexer.lex : Lexer.lexInline)(src, opts)`
+    // returned undefined for every parse once a hook was registered, which is
+    // why the entire Hooks suite reported unhooked output even after the
+    // hooks themselves ran.
+    if (
+      ts.isPropertyAccessExpression(branchExpr) ||
+      ts.isCallExpression(branchExpr) ||
+      ts.isElementAccessExpression(branchExpr)
+    ) {
+      // Create a synthetic call with the branch as callee.
+      // These are all LeftHandSideExpressions, so no infinite recursion.
       const syntheticCall = ts.factory.createCallExpression(branchExpr, expr.typeArguments, expr.arguments);
       ts.setTextRange(syntheticCall, expr);
       (syntheticCall as any).parent = expr.parent;

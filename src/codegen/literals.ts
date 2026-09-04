@@ -3024,6 +3024,78 @@ function pushStrictMethodLiteralAllocation(
   fctx.body.push(allocation);
 }
 
+/**
+ * Copy every runtime-only spread source (`{ …shaped, …anyTyped }`) onto the
+ * struct just built by {@link compileObjectLiteralForStruct}, which is on the
+ * stack; leaves it there.
+ *
+ * No-op unless the runtime sources form a SUFFIX of the literal's properties
+ * (see the call site for why order forbids anything else) and every helper is
+ * available. Object literals without an unshaped spread source emit nothing.
+ */
+function emitRuntimeSpreadCopy(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ObjectLiteralExpression,
+  structTypeIdx: number,
+  runtimeSpreadSources: { expr: ts.Expression; propIndex: number }[],
+): void {
+  if (runtimeSpreadSources.length === 0) return;
+  const firstRuntime = runtimeSpreadSources[0]!.propIndex;
+  for (let i = firstRuntime; i < expr.properties.length; i++) {
+    if (!runtimeSpreadSources.some((source) => source.propIndex === i)) return;
+  }
+
+  let arrNewName = "__js_array_new";
+  let arrPushName = "__js_array_push";
+  let arrNewIdx: number | undefined;
+  let arrPushIdx: number | undefined;
+  if (ctx.targetProfile.semanticProviders === "native-first") {
+    const builders = ensureObjVecBuilders(ctx);
+    arrNewName = "__objvec_new";
+    arrPushName = "__objvec_push";
+    arrNewIdx = builders.newIdx;
+    arrPushIdx = builders.pushIdx;
+  } else {
+    arrNewIdx = ensureLateImport(ctx, arrNewName, [], [{ kind: "externref" }]);
+    arrPushIdx = ensureLateImport(ctx, arrPushName, [{ kind: "externref" }, { kind: "externref" }], []);
+  }
+  const assignIdx = ensureLateImport(
+    ctx,
+    "__object_assign",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (assignIdx === undefined || arrNewIdx === undefined || arrPushIdx === undefined) return;
+
+  const litType: ValType = { kind: "ref", typeIdx: structTypeIdx };
+  const litLocal = allocLocal(fctx, `__spread_lit_${fctx.locals.length}`, litType);
+  const arrLocal = allocLocal(fctx, `__spread_rt_arr_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: litLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(arrNewName) ?? arrNewIdx });
+  fctx.body.push({ op: "local.set", index: arrLocal });
+  for (const source of runtimeSpreadSources) {
+    fctx.body.push({ op: "local.get", index: arrLocal });
+    const srcType = compileExpression(ctx, fctx, source.expr);
+    if (srcType === null) {
+      // Nothing was produced; unwind the pending array reference so the stack
+      // stays balanced and abandon the copy.
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "local.get", index: litLocal });
+      return;
+    }
+    if (srcType.kind !== "externref") coerceType(ctx, fctx, srcType, { kind: "externref" });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(arrPushName) ?? arrPushIdx });
+  }
+  fctx.body.push({ op: "local.get", index: litLocal });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.get", index: arrLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__object_assign") ?? assignIdx });
+  fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: "local.get", index: litLocal });
+}
+
 export function compileObjectLiteralForStruct(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3048,6 +3120,8 @@ export function compileObjectLiteralForStruct(
     srcFields: { name: string }[];
     propIndex: number;
   }[] = [];
+  /** Spread sources whose own properties are only knowable at runtime. */
+  const runtimeSpreadSources: { expr: ts.Expression; propIndex: number }[] = [];
   for (let propIndex = 0; propIndex < expr.properties.length; propIndex++) {
     const prop = expr.properties[propIndex]!;
     if (ts.isSpreadAssignment(prop)) {
@@ -3078,6 +3152,7 @@ export function compileObjectLiteralForStruct(
         ensureStructForType(ctx, srcType);
         srcStructName = resolveStructName(ctx, srcType);
       }
+      let resolved = false;
       if (srcStructName) {
         const srcStructTypeIdx = ctx.structMap.get(srcStructName);
         const srcFields = ctx.structFields.get(srcStructName);
@@ -3088,8 +3163,17 @@ export function compileObjectLiteralForStruct(
           if (!spreadResult) continue;
           fctx.body.push({ op: "local.set", index: srcLocal });
           spreadSources.push({ local: srcLocal, srcStructTypeIdx, srcFields, propIndex });
+          resolved = true;
         }
       }
+      // A spread source with NO resolvable struct shape (`const s = { ...n }`
+      // for an `any` parameter `n`, then `s.hooks = …`) contributed NOTHING:
+      // it was dropped here, so the assembled struct carried only the fields
+      // the OTHER sources named, and the source was not even evaluated. That
+      // is marked's `this.defaults = { …this.defaults, …s }` — the whole hook
+      // registry vanished. Its own properties only exist at runtime, so they
+      // are copied onto the assembled struct after `struct.new`, below.
+      if (!resolved) runtimeSpreadSources.push({ expr: prop.expression, propIndex });
     }
   }
   // (#4616) The absent-slot fallback below tests externref reads against the
@@ -3630,6 +3714,21 @@ export function compileObjectLiteralForStruct(
   }
 
   pushStrictMethodLiteralAllocation(ctx, fctx, expr, structTypeIdx);
+
+  // Copy the runtime-only spread sources over the assembled struct. §13.2.5.5
+  // CopyDataProperties is a runtime walk of the source's OWN enumerable keys,
+  // which is exactly what `__object_assign` does — and on a struct target it
+  // writes through the host mirror, so a key that matches a declared field
+  // lands in the field and any other key lands in the sidecar where the
+  // dynamic member reads already look.
+  //
+  // Restricted to a SUFFIX of the property list (every property after the
+  // first runtime source is itself a runtime source). Later writers win in
+  // JavaScript, and this copy necessarily happens last; applying it for a
+  // source that some later named property or shaped spread must override
+  // would invert that order. A non-suffix source keeps today's behaviour —
+  // dropped — rather than being silently mis-ordered.
+  emitRuntimeSpreadCopy(ctx, fctx, expr, structTypeIdx, runtimeSpreadSources);
 
   // Register and compile getter/setter accessors on the object literal
   for (const prop of expr.properties) {

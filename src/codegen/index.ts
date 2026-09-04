@@ -311,6 +311,7 @@ import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./datav
 import { fillCombinatorToVec } from "./promise-combinators.js"; // (#2922) dynamic combinator-arg drain fill
 import { fillClosedMethodDispatch, fillPromiseThenableHelpers } from "./closed-method-dispatch.js";
 import { fillDirectCallTrampolines } from "./typed-this.js"; // (#3683 S3) direct-call trampoline fill
+import { fillOwnShadowWrappers } from "./expressions/own-property-method-shadow.js";
 import { noteRetUnboxStats, retUnboxNumericFilterEnabled } from "./ret-unbox-abi.js"; // (#4406) return-ABI funnel census + the Phase-4 admission filter
 import { noteParamUnboxStats } from "./param-unbox-abi.js"; // (#4406 Phase 3) parameter-ABI funnel census
 import { fillSetRecFieldGetters } from "./collections-es2025.js"; // (#3172)
@@ -6260,6 +6261,9 @@ export function generateModule(
     // because a trampoline whose twin did not materialize degrades to that
     // dispatcher. Read-only over funcMap.
     fillDirectCallTrampolines(ctx);
+    // Fill the reserved `__ownshadow_<C>_<m>_<n>` own-property guards. Read-only
+    // over funcMap/stringGlobalMap (deps registered at reserve time).
+    fillOwnShadowWrappers(ctx);
     // (#4406 Phase 0) The return-ABI funnel. A statement, never a condition —
     // inert without `JS2WASM_RET_UNBOX_STATS=1`.
     noteRetUnboxStats(ctx);
@@ -10902,6 +10906,8 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // because a trampoline whose twin did not materialize degrades to that
     // dispatcher. Read-only over funcMap.
     profilePhase("fill-direct-call-trampolines", () => fillDirectCallTrampolines(ctx));
+    // Same guard fill for the multi-source pipeline.
+    profilePhase("fill-own-shadow-wrappers", () => fillOwnShadowWrappers(ctx));
     // (#4406 Phase 0) Same funnel report in the linked lane.
     profilePhase("note-ret-unbox-stats", () => noteRetUnboxStats(ctx));
     profilePhase("note-param-unbox-stats", () => noteParamUnboxStats(ctx));
