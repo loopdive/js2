@@ -5114,3 +5114,149 @@ re-measured as a whole set; what was re-run after it is the three files this
 slice touches (all green) plus every gate listed above (all exit 0). So the
 11 → 7 figure is this slice's own delta, not a claim about the post-merge red
 set — W1-E's landing changes rows 2/16 territory independently.
+
+## Implementation Plan — W1-G cluster C row 15: implicit derived constructor throws on a synthetic parameter (2026-09-04, Fable lane)
+
+Cluster C (rows 13–15 of the `## Measurement 2026-09-03` red-set table) was
+left as "real codegen defects, R3 territory". Re-measured on main `e041f82b1e`
+(`.tmp/probe-3520-c15*.mts`): the three rows are three unrelated defects, and
+row 15 is a one-site fix with a hard-error blast radius, so it goes first.
+
+### Row 15 — reproduced, minimised, root-caused
+
+`tests/issue-3520-type-class-abi.test.ts` › *publishes every retained type
+exactly once and binds class layouts by exact class ID* fails with
+`IR path failed for Child_new: Cannot read properties of undefined (reading 'kind')`
+— an `unexpected-internal-throw` **invariant**, i.e. a hard compile error, not
+a demote. Minimal trigger, both lanes:
+
+```ts
+class Base { value: number; constructor(value: number) { this.value = value; } }
+class Child extends Base { extra: number = 2; sum(): number { return this.value + this.extra; } }
+```
+
+| variant | `Child_new` | sibling |
+| --- | --- | --- |
+| derived, **implicit** ctor, own field initializer, parent ctor has ≥1 param | **invariant** `unexpected-internal-throw` | `Child_sum` `late-preparation-unsupported` (sealed by the ctor) |
+| derived, implicit ctor, no own field | no `Child_new` row at all (not a lowered terminal) | `Child_read` emitted |
+| derived, **explicit** ctor `constructor(v) { super(v) }`, own field | emitted | emitted |
+
+Stack (`outcome.cause.stack`):
+
+```
+TypeError: Cannot read properties of undefined (reading 'kind')
+    at canHaveJSDoc (typescript.js)
+    at getJSDocTagsWorker → getJSDocParameterTagsWorker → getJSDocParameterTags → Object.getJSDocType
+    at effectiveIrParamTypeNode (src/ir/select.ts:2193)
+    at <anonymous> (src/ir/from-ast.ts:1148)          ← fn.parameters.map(...)
+    at lowerFunctionAstToIr (src/ir/from-ast.ts:1121)
+    at lowerImplicitConstructorAstToIr (src/ir/from-ast.ts:1416)
+```
+
+`lowerImplicitConstructorAstToIr` (`from-ast.ts:1407-1417`) synthesises a
+`ConstructorDeclaration` with `ts.factory.createParameterDeclaration(…, "__argN")`
+per parent ctor param. Factory nodes have `pos === -1`, `NodeFlags.Synthesized`
+and **no `parent`** (wrapping them in a factory ctor does not set it — measured
+with `.tmp/probe-jsdoc.mts`). `lowerFunctionAstToIr` then maps every parameter
+through `resolveIrType(effectiveIrParamTypeNode(p), override, …)`
+(`from-ast.ts:1148`), and `effectiveIrParamTypeNode` (`select.ts:2193`) is
+`param.type ?? ts.getJSDocType(param)`. `getJSDocType` walks `param.parent` to
+find JSDoc and dereferences `undefined.kind`. The `paramTypeOverrides` the
+integration walk supplies for ctor members (`integration.ts:3357`) are exactly
+the types this synthetic ctor needs, but the JSDoc lookup runs **before** the
+override is consulted, so the override never gets the chance.
+
+Why the other two variants survive: with no own field there is no
+`class-implicit-constructor` terminal to lower (the parent `_init` is reused
+— confirm and record how, it is the reason this bug hid); an explicit ctor's
+parameters are real AST nodes with parents.
+
+### Fix — S1, one guard, one site
+
+`select.ts:2193`:
+
+```ts
+export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.TypeNode | undefined {
+  if (param.type) return param.type;
+  // A synthesized parameter (factory-built, no parent — the implicit-ctor
+  // pipeline in from-ast) carries no JSDoc; `getJSDocType` walks `parent`
+  // and would throw. Its type comes from `paramTypeOverrides`.
+  if (param.parent === undefined) return undefined;
+  return ts.getJSDocType(param);
+}
+```
+
+`resolveIrType(undefined, override, …)` then resolves from the override, which
+is the parent shape's `constructorParams` — the same types
+`emitClassSuperInit` (`from-ast.ts:1012`) forwards. Do NOT "fix" it by calling
+`ts.setParent` in the synthesiser: that hides the same class of throw for the
+next synthetic node, and `effectiveIrParamTypeNode` is the shared
+selector/lowerer chokepoint its own doc comment says must not diverge.
+
+**S2 — the selector side of the same chokepoint.** Grep every caller of
+`effectiveIrParamTypeNode` and `effectiveIrReturnTypeNode` in `select.ts`; none
+should ever see a synthetic node today (selection walks source AST), but state
+that as a measured fact in the PR, not an assumption.
+
+**S3 — nothing else.** If `resolveIrType` with `undefined` node + a present
+override does not resolve cleanly for a `class`-typed or `string`-typed parent
+param, that is a second defect: report it with the row, do not widen S1.
+
+### Tests — `tests/issue-3520-implicit-derived-ctor-synthetic-param.test.ts`
+
+Through the production `compile`/`generateModule` seam, both lanes:
+
+| # | fixture | expectation | base |
+| --- | --- | --- | --- |
+| a | the minimal trigger | `Child_new` emitted, `Child_sum` emitted, zero hard errors, `new Child(7).sum() === 9` | red (invariant) |
+| b | the type-class-abi fixture (string field + `super.read()`) | `Child_new` emitted; `tests/issue-3520-type-class-abi.test.ts` exits 0 | red |
+| c | parent ctor with **two** params of different types (`number`, `string`) | both synthetic params typed from the override, runtime result equal to node | red |
+| d | parent ctor with **zero** params, own field | emitted (no synthetic param — pins that the fix is not needed there and nothing regresses) | green |
+| e | explicit derived ctor, own field | unchanged | green |
+| f | a JavaScript (`.js`) source whose explicit ctor has `/** @param {number} v */` | JSDoc lookup still happens for real nodes (`getJSDocType` path exercised) | green — pins that S1's guard is narrower than "skip JSDoc" |
+
+Non-vacuity: reverting S1 alone turns a–c red with the exact `reading 'kind'`
+message.
+
+### Rows 13 and 14 — measured, not this slice
+
+- **Row 13** `support-callable-abi` › *resolves a misleading support label…*
+  fails only under the test's own resolver-failure injection
+  (`JS2WASM_TEST_INJECT_IR_RESOLVER_FAILURE=planned-support`): the message is
+  `planned support resolver probe did not preserve the exact allocator slot`
+  from `integration.ts:5084`. That is a test-seam contract about the probe
+  surviving a late allocator shift, not a codegen defect; it needs its own
+  reading of the probe protocol. Next after this slice.
+- **Row 14** `support-callable-abi` › *publishes no support callable when a
+  source-name collision demotes the owner*: the owner demotes as expected, but
+  `hof.ts`'s `identical(a, b)` (`a === b` on two `() => number` params)
+  produces a **post-claim** `build` demote — `Phase 1 requires matching
+  operand types for '==='` (`from-ast.ts:13240`). The selector admits `===`
+  on closure-typed operands that the lowerer cannot compare. Fix is a selector
+  arm (refuse or admit-and-lower callable identity); separate slice.
+
+### Gates
+
+Full `quality` list as in W1-E/W1-F, bare and with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`; `select.ts` grows ≈ +5 lines —
+grant in this file's frontmatter with a dated rationale. Byte identity on the
+34-case corpus, all lanes: **expected identical** — no corpus program has a
+derived class with an implicit ctor, an own field initializer and a
+parameterised parent (verify by grep; name any moved row). `tests/issue-3520-*`
+one file per invocation, `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`: failing-name
+diff must be exactly row 15 removed. `tests/issue-3522-*`, `issue-3519-*`,
+`issue-3000-*`: diff empty.
+
+### Acceptance
+
+1. Rows a–c red on base, green after; d–f green on both sides.
+2. `tests/issue-3520-type-class-abi.test.ts` exits 0.
+3. Corpus byte-identical or moved rows named.
+4. `### W1-G cluster C row 15 — landed` appended here with the table and the
+   "why the no-field variant never lowered" fact.
+
+### Claim
+
+```bash
+node scripts/claim-issue.mjs 3520:w1g-implicit-ctor-param ttraenkler/<agent> --branch claude/issue-3520-w1g-implicit-ctor-param
+```
