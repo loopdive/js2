@@ -1,7 +1,8 @@
 ---
 id: 5194
 title: "ES2015 standalone typedarray — r2 residual pass (post-#5188 clustering)"
-status: in-progress
+status: done
+completed: 2026-09-03
 pr: 5300
 sprint: current
 created: 2026-08-29
@@ -46,15 +47,29 @@ loc-budget-allow:
   - src/codegen/builtin-value-read.ts
   - src/codegen/native-proto-value-read.ts
   - src/codegen/ta-ctor-meta.ts
+  # 2026-09-03 r3 implementation (Opus). r3-1 is ONE runtime mechanism, so the
+  # growth is two new files plus three splice points; r3-2 puts its helper
+  # bodies in the new `ta-dyn-proto-methods.ts` rather than in the 8.6k-line
+  # `dataview-native.ts`.
+  - src/codegen/ta-dyn-method-call.ts
+  - src/codegen/ta-dyn-proto-methods.ts
+  # one import + one finalize call + the profiled twin.
+  - src/codegen/index.ts
+  # r3-2: the reserve-time mint for the search trio and the boolean widening
+  # both live at the ONE site an `any`-receiver includes/indexOf/lastIndexOf
+  # reaches — the string-flavoured lowering, which claims the call before
+  # `compileReceiverMethodCall` sees it.
+  - src/codegen/string-ops.ts
+  # 2026-09-03 round-3 review fixes. F3 needs one ctx field (the set of
+  # refusal-minted native-proto meta types) and its 11-line docstring in the
+  # context type; the field is read at finalize by the dyn-view walk.
+  - src/codegen/context/types.ts
   # 2026-09-03 r3 plan — dyn-view method resolution + per-method native
   # helpers (see "Implementation Plan — r3 (2026-09-03)" → "Budget rationale").
   # Two NEW files carry the mechanism so dataview-native.ts / call-receiver-
   # method.ts do not absorb ~1,000 lines; the rest are splices into existing
   # ladders (prototype walk, closure bodies, one finalize call, species /
   # re-validate / ctor arms, 2-arg mapper, Symbol pre-test, $IterRec proto arm).
-  - src/codegen/ta-dyn-method-call.ts
-  - src/codegen/ta-dyn-proto-methods.ts
-  - src/codegen/index.ts
 func-budget-allow:
   - src/codegen/dataview-native.ts::ensureTaDynSetHelper
   - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
@@ -82,11 +97,23 @@ func-budget-allow:
   # §23.2.6.2 `prototype` get_meta + gOPD arm pair (one splice ladder over one
   # native, so the arms belong in it rather than in a parallel filler).
   - src/codegen/ta-ctor-meta.ts::fillTaCtorGetMetaArm
+  # 2026-09-03 r3: the prototype walk in the dyn-view MOP string-key arm, the
+  # reserve-time mint hook, and the finalize call — each an arm spliced into an
+  # existing ladder.
+  - src/codegen/ta-dyn-mop.ts::fillTaDynViewMopArms
+  - src/codegen/ta-dyn-mop.ts::buildStringKeyArm
+  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/ta-dyn-method-call.ts::unshiftExternMethodCallTaDynViewArm
+  - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynSearchHelper
+  # 2026-09-03 round-3 review F2: `__extern_get`'s chain-exhausted companion
+  # consult now hands the accessor the explicit receiver (4 lines: the call
+  # moved below `explicitReceiverLocal` and gained that argument).
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
   # 2026-09-03 r3 plan — wasm-body emitters in the two new files exceed the
   # 300-line ceiling the way ensureTaDynSetHelper does; the existing functions
   # below gain one spliced arm each (rationale per step in the r3 section).
-  - src/codegen/ta-dyn-method-call.ts::unshiftExternMethodCallTaDynViewArm
-  - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynSearchHelper
   - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynHofHelper
   - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynSortHelper
   - src/codegen/ta-dyn-proto-methods.ts::ensureTaDynIteratorHelper
@@ -2033,3 +2060,232 @@ ctor arms, from-arraylike), `iterator-native.ts` (2-arg mapper),
 `object-runtime.ts` (`$IterRec` prototype arm if missing). The frontmatter
 lists exactly these; r2's entries that r3 no longer touches are left in place
 (the gate only reads presence).
+
+## 2026-09-03 r3 implementation — steps r3-1 and r3-2 (Opus)
+
+Worktree `/home/user/js2/.claude/worktrees/wf_16f0b7f5-bf0-1`, base
+`4a0ed71a39` (= `origin/main` at dispatch). Every number below is a run in this
+worktree against a `git archive` copy of that base in `.tmp/basetree`, one
+compile process at a time, `npx tsx scripts/run-test262-paths.mts <list>
+--standalone`. Probe sources are in `.tmp/probes/`; node is the oracle for each.
+
+### Plan corrections (facts the r3 plan got wrong)
+
+1. **The r3 section was never in this file.** It existed only as
+   `.tmp/census0903/r3-section.md`; it is appended above verbatim now.
+2. **Step r3-1.3's reserve hook is at the wrong site for the search trio.** The
+   plan puts the mint in `compileReceiverMethodCall` next to `taFillIdx`.
+   Traced with a debug print: an `any`-receiver `sample.includes(42)` NEVER
+   reaches that function — `string-ops.ts:compileGuardedNativeStringMethodCall`
+   claims the call first (the string-flavoured lowering the plan itself
+   identifies in cluster C5, at a different site than it expected). The mint
+   for `includes`/`indexOf`/`lastIndexOf` therefore lives at
+   `string-ops.ts` L~3925. The `call-receiver-method.ts` hook is kept for the
+   shapes that do reach it.
+3. **`__extern_method_call` is not the convergence point for these three.**
+   The plan's step r3-1.2 arm is real and shipped, but for the search trio the
+   call converges one level earlier, on the closed dispatcher
+   `__call_m_<m>_<arity>` — whose generic `$__vec_base` arm claims a dyn view
+   before `__extern_method_call` is ever reached (a `$__ta_dyn_view` IS a
+   `$__vec_base` subtype). The dispatch arm for them is therefore in
+   `fillClosedMethodDispatch`, ahead of that vec arm.
+4. **Cluster C3's "answers the NUMBER 0/1" is not a search defect at all.**
+   r2 leftover 2 recorded the symptom and could not find the producer. It is a
+   REPRESENTATION defect: both arms of the string-flavoured lowering produce a
+   bare `i32`, and an `i32` whose static type is `any` is boxed back as a
+   NUMBER (`f64.convert_i32_s` + `__box_number`), so `sample.includes(42)`
+   reached `assert.sameValue(…, true)` as «1». Fixing the search without fixing
+   the representation left 12 of 22 rows red; keeping the dispatcher's box and
+   widening the construct to `externref` fixed all of them. This is the
+   "carry the decision on the VALUE" rule: the booleanness has to survive the
+   call, not be re-derived by each consumer.
+5. **`for (x of view)` and `[...view]` do NOT currently pass** on the base tree
+   (measured, `.tmp/probes/p-behave.mjs`, both kinds) — the r3-4 acceptance
+   notes list them as at-risk passing shapes. They are pre-existing failures,
+   unchanged by this wave.
+6. **`__hasOwnProperty(view, key)` does not report a dyn view's own expando
+   keys.** The shadow test in the dispatcher arm therefore reads the expando
+   field directly. Using the plan's obvious spelling silently claimed calls the
+   program had shadowed — caught by probe, not by any row.
+
+### What landed
+
+Commit 1 (r3-1) — `ta-dyn-mop.ts:buildStringKeyArm` walks
+`__getPrototypeOf(recv)` on the ordinary STRING-key miss for `get`/`has`, with
+an own-expando `__hasOwnProperty` test in front of it (delegating a miss to the
+expando answered from `Object.prototype` and hid `%TypedArray%.prototype`
+entirely); new `ta-dyn-method-call.ts` unshifts a `$__ta_dyn_view` arm onto
+`__extern_method_call`, a `ref.eq` ladder over interned names that claims only
+methods whose `__ta_dyn_<m>` helper exists.
+
+Commit 2 (r3-2) — new `ta-dyn-proto-methods.ts` with
+`ensureTaDynSearchHelper` (`includes`/`indexOf`/`lastIndexOf`, §23.2.3.16–.18:
+validate → internal length → empty-before-fromIndex → Symbol/abrupt/±∞/−0
+handling in f64 → SameValueZero vs strict → boxed boolean/number); the reserve
+mint and the boxed-result widening in `string-ops.ts`; the dyn-view arm ahead
+of the `$__vec_base` search arm in `fillClosedMethodDispatch`; the zero-argument
+call now reaches the dispatcher instead of the arity-gate sentinel.
+
+### Numbers
+
+| scope | base (4a0ed71a39) | lane |
+|---|---|---|
+| `HasProperty/{inherited-property,key-is-not-canonical-index}.js` | 0 / 2 | **2 / 2** |
+| `ta-cl-C3-search.txt` (22 rows) | 0 / 22 | **22 / 22** |
+| `ta-passing-all.txt` (the 84 r2 flips) | 84 / 84 | **84 / 84** |
+| `ta-controls.txt` (21) | 21 / 21 | **21 / 21** |
+| `arrobj-controls.txt` (20) | 20 / 20 | **20 / 20** |
+
+Probes, all standalone with ZERO `env::` imports, base / lane / node:
+
+- `p-shapes` (13 resolution facts) 8148 / **8191** / 8191
+- `p-search` (32 search facts, two kinds) −1762681105 / **−134217729** / −134217729
+- `p-bool` (12 boolean-consumer facts incl. plain-array and string `includes`)
+  4095 / **4095** / 4095
+- `p-behave` (37 already-passing shapes) 132741297151 / **132741297151** / —
+  (six of the 37 are the pre-existing `for-of` / spread / `hasOwnProperty("0")`
+  gaps of item 5 above; identical on both trees)
+- `p-armfill`, `p-exp` unchanged between trees.
+
+### Residual / not done
+
+- Steps r3-3 … r3-11 are **not started**.
+- The three `detached-buffer.js` rows of the search trio and the three
+  `invoked-as-method.js` rows were not measured (they sit in `ta-cl-E` /
+  `ta-cl-C5`, not in the C3 list).
+- The dispatcher arm is scoped to the search trio; the four #2872 mutators keep
+  their call-site two-arm and are deliberately not routed through it.
+- A method name built at runtime (a rope) misses the `ref.eq` ladder in
+  `ta-dyn-method-call.ts` and keeps today's behaviour — documented residual.
+- **An own dyn-view member reached WITH an argument still loses to the builtin
+  lowering** (`view.includes = f; view.includes(1)`). Measured identical on
+  base and lane (`.tmp/probes/p-shadow.mjs`, both trees answer the builtin), so
+  this wave neither caused nor fixed it. The zero-argument form DOES honour the
+  shadow, and the dispatcher arm declines correctly — the loss happens earlier,
+  in the string-flavoured lowering that claims the call. Pinned as a comment in
+  `tests/issue-5194-es2015-typedarray-r3.test.ts`.
+- The final two safety edits (the widen-only-if-box-helper-exists guard and the
+  `arity >= 1` guard on the helper's first argument slot) landed AFTER the
+  22/22 + 84/84 sweep. Both are decline/degenerate-case guards; all six probes
+  were re-run after them with identical results, but the corpus sweep itself
+  measures the tree one commit-worth of guards earlier.
+
+### Round-3 review fixes (2026-09-03)
+
+Three findings from the adversarial review of r3-1/r3-2 (one reviewer, three
+independent skeptics, each with a `git archive` base at `4a0ed71a39` and node
+as oracle). All three reproduced; all three are fixed on this branch. Every
+number below is node / base / lane-after, standalone (`nativeStrings`),
+re-run on the skeptics' own probes (`/home/user/js2/.tmp/skeptic-5194-f1/`,
+`/home/user/js2/.tmp/skeptic-f2/`, `/home/user/js2/.tmp/f3-probe/`).
+
+**F1 (high) — the boolean box classified as a Function.** The r3-2 widening
+hands consumers the `__box_boolean_struct` singleton, a `(struct (field i32))`.
+WasmGC canonicalizes that with `$__ta_ctor {kind: i32}`, and
+`__typeof_function` ref.tests the ctor carrier first, so every boxed boolean in
+a module holding a TA constructor value was a "function".
+*Skeptic corrections that decided the fix:* (1) the type collision PRE-EXISTS
+on base — `id(true) instanceof Function` was 1 on BOTH trees in a dyn-TA
+module; the lane's contribution was routing every `includes` result into it,
+gated on the module-level `moduleUsesDynTaView` flag; (2) the widening is
+correct in intent (`=== true`, `typeof`, `String()`, JSON, wasi `r+""`), so
+reverting it re-breaks those. *Fix:* `getOrRegisterTaCtorType` gives
+`$__ta_ctor` a second immutable `brand` field (`TA_CTOR_BRAND`, never read);
+the one `struct.new` site (`getOrRegisterTaCtorSingleton`) pushes it. wasm-dis
+of the lane binary: `$19 (struct (field i32) (field i32))` is the only type of
+that shape and `__typeof_function` tests `$19`, not the `$18 (struct (field
+i32))` boolean box. Rows: probe1 20/20 node-equal (was 9 wrong); `r instanceof
+Function` 0/0/0; `typeof r === "function"` 0/0/0; `toString.call(r)`
+"[object Boolean]" (base "[object Number]"); CASCADE `callIfFn(r)` 7/7/7 (was
+a thrown WebAssembly.Exception); probe3 `id(true) instanceof Function` 0/**1**/0
+and `(id(true)+"").length` 4/**29**/4 — the base defect is fixed too. wasi:
+all 7 rows node-equal. Host: byte-identical. Modules with no dyn-TA construct
+(probe2/probe4 × standalone/host/wasi): 6/6 byte-identical base vs lane.
+Unchanged on both trees: `[r].map(String)` traps `dereferencing a null
+pointer` (probe5 row 7) — not this finding.
+
+**F2 (medium) — inherited accessors ran with `this` = the prototype.** The
+walk recursed as `__extern_get(proto, key)`. Two fixes were needed, because
+arming the one-shot receiver globals alone did NOT reach the getter: a
+`$NativeProto` receiver's non-seeded key falls to `__extern_get`'s non-object
+arm, `__closure_prop_get(obj, key)` → `__protoidx_get_r(obj, key)`, which runs
+the companion accessor with `obj`. (a) `buildStringKeyArm` recurses through
+`__reflect_get_receiver(proto, key, param0)` — the save/restore wrapper — unless
+an outer `Reflect.get(view, k, recv)` already has a receiver pending (this arm
+sits before the prelude that consumes it), and the pre-existing
+`constructorLookup` proto path uses the same call. (b) `protoIndexRecvGetMissInstrs`
+takes an optional accessor-receiver local: the brand still comes from the
+object the walk stands on, the getter's `this` from `explicitReceiverLocal`;
+`__extern_get` passes it at the chain-exhausted tail and (via
+`buildClosurePropGetMissArm`) on the non-closure-carrier route. Ordinary reads
+are unchanged (both locals are param 0). This also fixes base's
+`Reflect.get(Float64Array.prototype, "dbl", view)` (was `this` = prototype).
+Rows: `dbl` (`this.length*2`) 6/NaN/6; `tri` 9/NaN/9; `me === v` 1/0/1;
+Object.prototype getter 103/NaN/103; `this[0]+10` 13/NaN/13; `byteLength` 24/NaN/24;
+`instanceof`, `getPrototypeOf(this)`, sum 1/1/6; `this.subarray(0).length`
+3/NaN/**0** (no longer a TypeError — `subarray` on a dyn view is the r3-3+
+gap, wrong value not exception); marker lands on the instance 1/1/1, and
+`v.marker === 1` 1/0/1; memoising getter 31/NaN/31; inherited `constructor`
+getter observing `this` 1/0/1. Host: unchanged, node-equal. Wrong the same
+way as base, kept: `this instanceof Float64Array` 1/NaN/0, `v.__proto__ ===
+TA.prototype` 1/0/0, static-typed `(s as any).dbl` NaN/NaN.
+
+**F3 (medium) — the walk surfaced the refusal closure on the value path.** A
+string-key miss now walks [[Prototype]], so an inherited member with no native
+body resolved to the r2-seeded refusal closure (`native-proto.ts`
+`refusalBodyFallback`), and the closed dispatch a same-name `.m = function`
+assignment forces module-wide — or `__extern_method_call`'s proto arm for a
+helper-less method like `sort` — CALLED it: "%TypedArray%.prototype.<m> is not
+yet implemented in --target standalone" where base answered `null` / a silent
+no-op. *Fix (no per-method list):* `ensureStandaloneNativeMethodClosure`
+records each refusal-minted meta type in `ctx.nativeProtoRefusalMetaTypeIdxs`;
+the dyn-view `get` walk tests its result against those types (family
+`ref.test` + `bfnid` identity, the `fillBuiltinFnMeta` discipline, grouped per
+wrapper family) and answers `undefined` for a match. The loud refusal stays
+where it is intended: a read off the prototype object itself
+(`TypedArray.prototype.sort`) and the direct call. Rows: probe1 `s.join("-")`
+with a same-name expando elsewhere: 8/null/null (was TypeError); sortB
+`s.sort(); s[0]` 42/44/44 (was TypeError); seedT/probe6/probe3/probe2/blast2:
+base == lane on every row except `"sort" in s` 1/0/1 (kept). wasi probe1: base
+== lane except the indexOf fix. Host: node-equal.
+
+**Given up (deliberately, to satisfy never-worse-than-base):** the r3-1 value
+facts `typeof sample.includes === "function"`, `sample.includes ===
+TypedArray.prototype.includes`, `typeof sample.sort === "function"` on
+standalone read `undefined` again, as on base; `"includes" in sample` stays
+true. The r3 test now pins the F3 contract (value is a real function or
+`undefined`, never a callable that throws) and adds a REVIEW_SOURCE control for
+F1/F2/F3 on both lanes. A method-value closure that dispatches to the dyn-view
+helper (so `sample.includes` is a callable that works) is r3-3+ work.
+
+**Controls re-run after all three fixes (standalone, this tree):** the 84 r2
+flips (pa1/pa2/pa3) 84/84; `ta-controls.txt` 21/21; `arrobj-controls.txt`
+20/20; `ta-cl-C3-search.txt` 22/22; the two HasProperty rows 2/2 — 149/149
+kept, 0 given up. `tests/issue-5194-es2015-typedarray-r3.test.ts` 10/10,
+`…-r2.test.ts` 11/11.
+
+**Gates:** typecheck clean; loc/func/coercion/oracle/dead-exports green bare
+and with `LOC_GATE_BASE=origin/main`; two new grants above
+(`context/types.ts`, `ensureObjectRuntime`).
+
+
+### Integration fix (2026-09-03, Fable lane) — F1's brand missed the second mint site
+
+The round-3 F1 fix added a `brand` field to `$__ta_ctor` and updated the
+mint in `getOrRegisterTaCtorSingleton` ("the single struct.new site"). It is
+not the single site: `dataview-native.ts` also mints a `$__ta_ctor` inline
+for a dynamic `new <TA>(anyArg)` (the `descTypeIdx` carrier that feeds
+`emitTaDynCtorConstructFromLocals`), and that site still pushed one operand.
+Every module taking that path failed Wasm validation — `not enough arguments
+on the stack for struct.new (need 2, got 1)` — which is a compile_error on
+every such test262 row, not a wrong answer. Caught on the integrated tree by
+`tests/issue-5194-es2015-typedarray-set-r2.test.ts` (3 of its 59 controls,
+all using `new Float64Array(identity([...]))`; 59/59 on both a pre-#5550 and
+a post-#5550 archive of main), i.e. by a suite the lane's own control lists
+did not include. Fix: push `TA_CTOR_BRAND` at that site too; a grep for
+`struct.new` against `getOrRegisterTaCtorType` / `taCtorTypeIdx` /
+`descTypeIdx` now finds exactly the two branded sites. Lesson recorded in
+the wave pipeline: "the single site" claims get grepped, not trusted, and the
+targeted step runs every `issue-<id>*.test.ts` file at the CI fork heap
+(`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, single fork), since the set suite
+OOMs at the 512 MB default and reads as a false failure.
