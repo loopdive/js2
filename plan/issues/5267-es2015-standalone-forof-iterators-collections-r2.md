@@ -1794,3 +1794,43 @@ lane — i.e. the null-record defect reproduces on the `standalone` target and
 in the test262 wrapping, not in this hand-written wasi shape. Stated plainly
 because it makes those two cases forward regression pins rather than proof of
 the fix; the proof for them is the row table above.
+
+### Step R3-6 — for-of over an ARRAY honours `delete Array.prototype[Symbol.iterator]` (commit 2)
+
+**What changed.** `emitArrayIteratorDeletedGuard` (the #5139 guard, previously
+private to `destructuring-params.ts` and wired into binding patterns only) is
+exported and called from `compileForOfArray` right after the vec type is
+confirmed. It emits ZERO bytes for a module without such a delete — the flag
+global is rooted only by the pre-scan that sees one. `preVec` receivers
+(Map/Set projections, not arrays) are not guarded.
+
+**Gated on `ctx.standalone`, NOT on wasi — deliberately, and this is a real
+narrowing of the plan.** Measured 2026-09-04: the TypeError this guard raises
+is caught by a COMPILED `try { … } catch (e) { … }` on the `standalone` target
+(probe `t7.js`: base `"ran"` → lane `"TypeError"`), and on the `wasi` target
+the same source lets a raw Wasm exception escape to the embedder instead
+(the vitest pin failed there with a `Function<Exception>` object, not a
+TypeError). Enabling the guard on wasi would therefore turn a silently-wrong
+loop into an UNCATCHABLE module-level throw — worse than base by the ship
+gate's own rule. The wasi exception-tag gap is pre-existing and out of scope;
+wasi keeps base behaviour and stays byte-identical.
+
+**Measured.**
+
+| corpus | base | lane |
+|---|---|---|
+| 3 claimed rows, `--isolate` | 3 fail (`Expected a TypeError … no exception`) | **3 pass** |
+| all 53 currently-passing `*array-prototype*` rows in the standalone baseline, `--isolate` | pass | **53 / 53 pass** |
+| 30 passing `language/statements/for-of/*.js` rows | pass | **30 / 30 pass** |
+| `n1.js` (array for-of, no delete) sha256, standalone / wasi / js-host | `cbf5728b…` / `3f360921…` / `720c220a…` | **identical on all three** |
+
+**Pin.** `tests/issue-5267-r3-6-forof-array-iterator-deleted.test.ts` — 2
+cases on the `standalone` target (positive: catchable TypeError; negative: a
+module without the delete still iterates). Verified **FAILING on the base
+tree** (`expected 6 to be 42`) and passing on the lane.
+
+**Note for a later lane.** The delete must be written verbatim as
+`delete Array.prototype[Symbol.iterator]` — `arrayProtoIteratorOverrideKeyFromTarget`
+matches the exact AST, so `delete (Array.prototype as any)[Symbol.iterator]`
+(the TS-typechecking form) roots no flag and the guard never fires. That is
+why the pin compiles with `allowJs` + `skipSemanticDiagnostics`.
