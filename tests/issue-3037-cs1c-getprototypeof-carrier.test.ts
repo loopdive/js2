@@ -74,23 +74,34 @@ async function runStandalone(source: string): Promise<number> {
   return (instance.exports as Record<string, () => number>).run();
 }
 
-describe("#3037 CS1c — plain/array proto is NULL in standalone (case (d) is a null comparison)", () => {
-  it("Object.getPrototypeOf([1]) === null [1]", async () => {
+// (#5270 step 2) The two pins below recorded the standalone `[[Prototype]]`
+// answer for a plain object and an array as **null** — the state the header
+// above describes ("Object.prototype is not modeled as a `$Object`
+// standalone"). That state is gone: `__getPrototypeOf` now distinguishes an
+// explicitly null prototype (OBJ_FLAG_NULL_PROTO) from an ordinary object whose
+// implicit `%Object.prototype%` terminal is simply not stored, and answers the
+// canonical carrier for the latter. Both cases now give the SPEC answer, so the
+// regression lock pins that instead — the surface it exists to guard is still
+// pinned, at the value the surface now has. The identity/carrier findings the
+// rest of this suite records are untouched: case (d) below still compares two
+// reads of the same prototype and still answers 1.
+describe("#3037 CS1c — plain/array prototypes in standalone (#5270: no longer null)", () => {
+  it("Object.getPrototypeOf([1]) === Array.prototype [1]", async () => {
     expect(
       await runStandalone(`export function run(): number {
         const a: any = [1];
         const p: any = Object.getPrototypeOf(a);
-        return (p === null) ? 1 : 0;
+        return (p === Array.prototype && p !== null) ? 1 : 0;
       }`),
     ).toBe(1);
   });
 
-  it("Object.getPrototypeOf({z:1}) === null [1]", async () => {
+  it("Object.getPrototypeOf({z:1}) === Object.prototype [1]", async () => {
     expect(
       await runStandalone(`export function run(): number {
         const o: any = { z: 1 };
         const p: any = Object.getPrototypeOf(o);
-        return (p === null) ? 1 : 0;
+        return (p === Object.prototype && p !== null) ? 1 : 0;
       }`),
     ).toBe(1);
   });

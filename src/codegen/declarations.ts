@@ -85,7 +85,7 @@ import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.j
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
-import { noJsHost } from "./js-errors.js";
+import { emitThrowJsError, noJsHost } from "./js-errors.js";
 import {
   addArrayIteratorImports,
   addForInImports,
@@ -1397,7 +1397,7 @@ function jsArrayParamNeedsOpenObjectCarrier(
  * sentinel path evaluates the initializer in the callee, so widening those
  * parameters would change a proven numeric default ABI for no semantic gain.
  */
-function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
+export function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
   const jsdocType = ts.getJSDocType(param);
   const jsdocTags = ts.getJSDocParameterTags(param);
   return (
@@ -2350,6 +2350,26 @@ function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expre
     ctx.funcMap.has(`${className}_set_${key}`) &&
     !bindingHasUnsafeReference(ctx, declaration, root, classDeclaration, className)
   );
+}
+
+/**
+ * (#5271 step 8) 16.1.7 GlobalDeclarationInstantiation step 5.c-d: a SCRIPT's
+ * top-level lexical name that collides with a RESTRICTED GLOBAL - an own,
+ * non-configurable property of the global object - is a SyntaxError thrown at
+ * instantiation time. `undefined`, `NaN` and `Infinity` are the three the spec
+ * mandates.
+ *
+ * Records the first collision; the throw is emitted as the first instruction of
+ * `__module_init`. A MODULE has its own environment record and no such
+ * collision, so a source with an import/export indicator is skipped.
+ */
+function noteRestrictedGlobalLexicalName(ctx: CodegenContext, sourceFile: ts.SourceFile, name: string): void {
+  if (ctx.restrictedGlobalLexicalName !== undefined) return;
+  if (name !== "undefined" && name !== "NaN" && name !== "Infinity") return;
+  if ((sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node }).externalModuleIndicator !== undefined) {
+    return;
+  }
+  ctx.restrictedGlobalLexicalName = name;
 }
 
 /**
@@ -3353,7 +3373,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // binding is handed to a typed/generic consumer: widening it would make the
     // consumer cast a host Proxy externref back to the target struct and trap.
     // The default-on gate is the sole attribution seam; `=0` restores #4931.
-    if (proxy.isDirectProxyConstruction(decl.initializer)) {
+    if (proxy.isDirectProxyConstruction(decl.initializer, ctx)) {
       return !proxyModuleEscapeGateEnabled || !proxy.proxyBindingEscapesToCall(ctx, decl);
     }
     // (#3365) Script top-level `this` is the host global object. The checker
@@ -4042,6 +4062,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           registerModuleGlobal(ctx, decl.name.text, wasmType, decl);
           if (isLetOrConst) {
             ctx.tdzLetConstNames.add(decl.name.text);
+            noteRestrictedGlobalLexicalName(ctx, sourceFile, decl.name.text);
           }
         } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
           registerBindingNames(decl.name, isLetOrConst);
@@ -4061,7 +4082,26 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ts.isClassExpression(declaration.initializer) &&
           (ctx.classExpressionStaticInitExprs.get(declaration.initializer)?.length ?? 0) > 0,
       );
-      if (hasNonClassDecl || hasClassExpressionStatics || proxy.variableStatementContainsPromiseSubclass(ctx, stmt)) {
+      // (#5195 r3-2) …and so must a binding whose class expression has a member
+      // keyed only at runtime (`let C = class { [k](){} }`), or which INHERITS
+      // one. The historical skip meant the key expression was never evaluated,
+      // the prototype `$Object` and the static sidecar were never force-built,
+      // and `new C()[k]()` folded to `ref.null.extern` — the class-DECLARATION
+      // twin of the same program already worked, because
+      // `collectPreparedTopLevelClassComputedNameEffects` collects it.
+      const hasRuntimeKeyedClassExpression = stmt.declarationList.declarations.some((declaration) => {
+        const init = declaration.initializer;
+        if (init === undefined || !ts.isClassExpression(init)) return false;
+        if (classHasUnresolvedComputedMemberName(ctx, init)) return true;
+        const className = ctx.anonClassExprNames.get(init);
+        return className !== undefined && classHierarchyHasDynamicMember(ctx, className);
+      });
+      if (
+        hasNonClassDecl ||
+        hasClassExpressionStatics ||
+        hasRuntimeKeyedClassExpression ||
+        proxy.variableStatementContainsPromiseSubclass(ctx, stmt)
+      ) {
         ctx.moduleInitStatements.push(stmt);
       }
       continue;
@@ -6040,6 +6080,24 @@ export function compileDeclarations(
     const initFctx: FunctionContext = targetFctx ?? createModuleInitFunctionContext();
     const previousFunc = ctx.currentFunc;
     ctx.currentFunc = initFctx;
+
+    // (#5271 step 8) §16.1.7 GlobalDeclarationInstantiation step 5.d — a
+    // top-level lexical declaration whose name is a RESTRICTED GLOBAL
+    // (`undefined`, `NaN`, `Infinity`: own, non-configurable properties of the
+    // global object) is a SyntaxError. The Script goal decides this at
+    // instantiation, i.e. before ANY statement of the script runs, so the throw
+    // is the very first instruction of `__module_init`. The runner accepts a
+    // runtime throw for `negative: { phase: runtime }`; this deliberately is
+    // NOT a compile diagnostic.
+    if (ctx.restrictedGlobalLexicalName !== undefined) {
+      emitThrowJsError(
+        ctx,
+        initFctx,
+        "SyntaxError",
+        `Identifier '${ctx.restrictedGlobalLexicalName}' has already been declared`,
+      );
+      initFctx.body.push({ op: "unreachable" });
+    }
 
     // (#4489, subsuming the #4264 `with`-body seed) §9.1.1.4.18: every
     // module-scope `var` reads as `undefined` before its declaration. Must stay

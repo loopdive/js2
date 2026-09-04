@@ -6,6 +6,7 @@ import { emitToBoolean } from "./coercion-engine.js";
 import {
   emitNativeErrorBoundaryBridge,
   emitWasiErrorConstructor,
+  fillErrorStructMessageOwnPropArms,
   fillExternGetErrorProps,
 } from "./registry/error-types.js";
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
@@ -28,6 +29,7 @@ import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
+import { promoteTrampolineTailCalls } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
@@ -121,6 +123,7 @@ import {
   type BuildIrUnitInventoryOptions,
   type IrBindingId,
   type IrClassId,
+  privateMemberMangledName,
   type IrNestedClassFieldCallAdmission,
   type IrSourceId,
   type IrUnitKind,
@@ -305,6 +308,7 @@ import {
   fillAnyIterNext,
   fillIterResultObject,
   fillNativeIteratorLateArms,
+  fillIteratorMethodPresent,
 } from "./iterator-native.js";
 import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
 import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
@@ -366,8 +370,10 @@ import {
   unshiftExternGetStringExoticArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
+import { fillObjectProtoSingleton } from "./object-runtime-prototype.js"; // (#5270 step 2)
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
+import { fillProxyRevokerFnMeta } from "./proxy-revoker-meta.js"; // (#5196) revoker name/length meta arm
 import { fillSymbolAnyToStringArm } from "./symbol-native.js"; // (#4632) $Symbol arm in __any_to_string
 import { fillCallableAnyToStringArm, fillCallableExternToStringArm } from "./callable-any-to-string.js"; // (#4492 wave-5) callable ToString arms
 import { fillMapSetDynDispatchArms } from "./map-runtime.js"; // (#4629) Map/Set any-channel dispatch arms
@@ -381,6 +387,7 @@ import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; 
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
+import { unshiftExternMethodCallTaDynViewArm } from "./ta-dyn-method-call.js"; // (#5194 r3-1) dyn-view receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 import { fillClosurePrototypeEdge, spliceClosurePrototypeEdgeHasOwn } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge; (#4637 A4) its own-property visibility twin
@@ -659,6 +666,7 @@ import {
 } from "./extern-declarations.js"; // (#3272) extracted verbatim
 import { buildLibDeclIndex } from "./lib-decl-index.js"; // (#4218) syntactic lib walk
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#2071)
+import { typeTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) the consumer-side twin of the literal gate
 
 // ── Re-exports for public API compatibility ─────────────────────────────────
 export {
@@ -1757,9 +1765,13 @@ function buildIrClassShapes(
       if (!ts.isMethodDeclaration(member) || !member.name) continue;
       if (hasStaticModifier(member)) continue; // slice 4 defers static methods
       if (hasAbstractModifier(member)) continue;
-      if (!ts.isIdentifier(member.name)) continue; // computed names → defer
+      // (#3522 W1-A) `#priv()` is admitted under the SAME mangling the legacy
+      // side already uses (`resolveClassMemberName`, and the field
+      // re-derivation above). Computed names still defer: their key is not a
+      // compile-time constant, so no stable descriptor name exists.
+      if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name)) continue;
       if (member.asteriskToken) continue; // generators → defer
-      const methodName = member.name.text;
+      const methodName = ts.isPrivateIdentifier(member.name) ? privateMemberMangledName(member.name) : member.name.text;
       const params: IrType[] = [];
       for (const p of member.parameters) {
         if (!ts.isIdentifier(p.name) || p.dotDotDotToken || p.questionToken || p.initializer) {
@@ -2517,6 +2529,16 @@ function recordObservedIrOutcomes(
     ? ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId))
     : ctx.irOutcomes;
   const directFunctionBodyReceiptAudit = ctx.irBodyRouteAuditSession?.directFunctionBodyReceiptAudit(sourceFile);
+  // (#5263) Units the prepared-callable publication path already owns. Reconcile
+  // cannot see that preparation, so it reached `late-preparation-unsupported`
+  // and then upgraded it to a `body-emission-evidence` invariant over zero
+  // direct receipts — a row the filters below already discarded, while its
+  // diagnostic was reported unconditionally. Excluding the unit up front is
+  // what stops the diagnostic; the filters stay as the row-level guard.
+  const ownedElsewhereUnitIds = new Set<IrUnitId>([
+    ...(ctx.irProgramCallablePreparedUnitIds ?? []),
+    ...(ctx.irProgramPreparedModuleInitUnitId ? [ctx.irProgramPreparedModuleInitUnitId] : []),
+  ]);
   const reconciled = reconcileIrOverlayOutcomes({
     sourceFile,
     identityPlan: plan.identityPlan,
@@ -2527,17 +2549,28 @@ function recordObservedIrOutcomes(
     ...(directFunctionBodyReceiptAudit ? { directFunctionBodyReceiptAudit } : {}),
     ...(ctx.irR2WithdrawalsByUnitId ? { r2WithdrawalsByUnitId: ctx.irR2WithdrawalsByUnitId } : {}),
     ...(ctx.irR2NotAttemptedReason ? { r2NotAttemptedReason: ctx.irR2NotAttemptedReason } : {}),
+    ...(ownedElsewhereUnitIds.size ? { ownedElsewhereUnitIds } : {}),
     report,
     existingOutcomes,
     target,
   });
   const preparedModuleInitUnitId = ctx.irProgramPreparedModuleInitUnitId;
+  // (#5285) The census payload rides on the `<module-init>` row so one corpus
+  // run answers "which categories does this file carry", instead of a log
+  // scrape. The map is written only under `JS2WASM_IR_SHAPE_DIAG=1`, so with the
+  // flag off this is an `undefined` lookup and every row is pushed unchanged.
+  const surveyed = ctx.irModuleBindingRefusalsBySourceFile?.get(sourceFile);
+  const moduleBindingRefusals = surveyed?.length ? surveyed : undefined;
   ctx.irOutcomes.push(
-    ...reconciled.outcomes.filter(
-      (outcome) =>
-        (!outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)) &&
-        outcome.unitId !== preparedModuleInitUnitId,
-    ),
+    ...reconciled.outcomes
+      .filter(
+        (outcome) =>
+          (!outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)) &&
+          outcome.unitId !== preparedModuleInitUnitId,
+      )
+      .map((outcome) =>
+        moduleBindingRefusals && outcome.unitKind === "module-init" ? { ...outcome, moduleBindingRefusals } : outcome,
+      ),
   );
   // (#3523 R4 gap 4) A source whose module init has nothing to do records one
   // truthful "non-executable" row here instead of staying silent. It is pushed
@@ -6032,6 +6065,11 @@ export function generateModule(
     // No-op unless a lazy wrapper was constructed.
     fillLazyIterLadderArms(ctx);
 
+    // (#5268 r3) Prepend the static closed-struct / generator-frame arms to
+    // the `HasIteratorMethod` predicate `Array.from` branches on. After the
+    // ladder fills (its type set is the same one).
+    fillIteratorMethodPresent(ctx);
+
     // (#5147) Fill `__any_iter_next` — source-level `.next()` on a native
     // iterator carrier. MUST run after both fills above: it delegates to the
     // fully-armed `__iterator_next`.
@@ -6342,6 +6380,12 @@ export function generateModule(
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     unshiftExternMethodCallProtoArm(ctx);
+    // (#5194 r3-1) The `$__ta_dyn_view` twin: a `%TypedArray%.prototype` method
+    // called on a dynamically-constructed view reached through an `any`
+    // receiver. Narrow by construction — it claims only names whose native
+    // `__ta_dyn_<m>` helper exists, so every other method keeps its current
+    // path. See ta-dyn-method-call.ts.
+    unshiftExternMethodCallTaDynViewArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -6453,6 +6497,11 @@ export function generateModule(
     // is immaterial; no-op unless a `$__ta_ctor` type is registered.
     fillTaCtorGetMetaArm(ctx);
 
+    // (#5196 R3-4) …and the `Proxy.revocable(…).revoke` carrier's `name`/
+    // `length`, on the same disjoint-receiver-guard discipline. No-op unless a
+    // `Proxy.revocable` site compiled.
+    fillProxyRevokerFnMeta(ctx);
+
     // (#4632) `$Symbol` arm in `__any_to_string` — a carrier reaching the
     // generic ToString terminal renders "Symbol(desc)", not "[object Object]".
     fillSymbolAnyToStringArm(ctx);
@@ -6477,6 +6526,10 @@ export function generateModule(
     // doc in registry/error-types.ts). No-op unless the module constructs
     // native errors (standalone/wasi only) — byte-identical otherwise.
     fillExternGetErrorProps(ctx);
+    // (#5269 L) …and the one intrinsic `$Error_struct` field that is a spec OWN
+    // data property, so `hasOwnProperty(err, "message")` stops disagreeing with
+    // `err.message`. Deliberately narrow — see the fill's doc.
+    fillErrorStructMessageOwnPropArms(ctx);
     emitNativeErrorBoundaryBridge(ctx);
 
     // (#4160) Prototype-index store: fill the reserved `__protoidx_*` helper
@@ -6599,6 +6652,12 @@ export function generateModule(
     // install the identity-guarded standalone view after all competing MOP
     // prefixes have been finalized.
     fillClassObjectNameArms(ctx);
+
+    // (#5270 step 2) Fill the reserved `%Object.prototype%` carrier helper —
+    // `__getPrototypeOf` bakes a `call` to it for a null-`$proto` ordinary
+    // object, and the brand's lazy `$NativeProto` global only exists once the
+    // native-proto glue has been registered.
+    fillObjectProtoSingleton(ctx);
 
     // (#2638) Fill the reserved `__class_to_primitive` driver now that the
     // per-struct `__call_valueOf`/`__call_toString` dispatchers exist (emitted
@@ -6754,6 +6813,9 @@ export function generateModule(
     // Late fixup: repair extern.convert_any applied to non-anyref values.
     // Must run after all other passes since they can introduce invalid coercions.
     profilePhase("finalize/extern-convert-any", () => fixupExternConvertAny(ctx));
+    // (#5270 step 1.3) Last: trampoline `call` → `return_call` against final
+    // types. Nothing after this retypes a function or edits a body.
+    promoteTrampolineTailCalls(ctx);
   } catch (e) {
     recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irPlanningIdentityContext);
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
@@ -7603,7 +7665,16 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
 
     if (entries.length === 0) return;
 
-    const funcIdx = ctx.numImportFuncs + mod.functions.length;
+    // The index is taken AFTER the body is built, immediately before the push.
+    // The vararg arm's body construction calls `ensureVecNewSized` /
+    // `ensureVecElemSet`, and those MINT AND APPEND functions of their own — so
+    // an index computed up here is already stale by the time this bridge is
+    // pushed, and `mod.exports` then published the first helper minted instead
+    // of the bridge. The exported `__class_call_<m>_vararg` therefore had that
+    // helper's `(f64) -> …` signature: the host bridge's
+    // `callFn(receiver, argsArray)` coerced the receiver toward a number and
+    // threw `Cannot convert object to primitive value` at the JS→Wasm boundary,
+    // with no Wasm frame below it. That is marked's whole 0/30.
     const bridgeTypeIdx =
       classMember && classArity === -1
         ? addFuncType(
@@ -7906,6 +7977,7 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
             { name: "__i", type: { kind: "i32" } as const },
           ]
         : [{ name: "__any", type: { kind: "anyref" } as const }];
+    const funcIdx = ctx.numImportFuncs + mod.functions.length;
     mod.functions.push({
       name: exportName,
       typeIdx: bridgeTypeIdx,
@@ -9351,13 +9423,52 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         }
       }
 
+      // (#5268 r3 R3-5c) OrdinaryToPrimitive step 5.b.i is `IsCallable(method)`:
+      // a `valueOf: null` / `toString: null` FIELD is not a method, it is an
+      // absent one. The two closure modes below read that field and
+      // `ref.cast` it to the closure struct type unguarded, so a non-closure
+      // slot TRAPPED ("illegal cast in __call_valueOf") instead of falling
+      // through to the next candidate. Re-read the field and `ref.test` it
+      // first; a miss takes the same `else` an absent entry takes. (The
+      // `closure-eqref-multi` mode already guards, and `standalone` /
+      // `callable-dynamic` cannot hold a non-callable in that slot.)
+      const callableFieldGuard: Instr[] | undefined =
+        entry.mode === "closure-extern"
+          ? [
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx: entry.typeIdx },
+              { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: entry.closureTypeIdx },
+            ]
+          : entry.mode === "closure"
+            ? [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: entry.typeIdx },
+                { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
+                { op: "ref.test", typeIdx: entry.closureTypeIdx },
+              ]
+            : undefined;
+      const guardedThen: Instr[] =
+        callableFieldGuard === undefined
+          ? thenInstrs
+          : [
+              ...callableFieldGuard,
+              {
+                op: "if",
+                blockType: { kind: "val" as const, type: { kind: "externref" as const } },
+                then: thenInstrs,
+                else: buildDispatch(idx + 1),
+              },
+            ];
+
       return [
         { op: "local.get", index: anyLocal },
         { op: "ref.test", typeIdx: entry.typeIdx },
         {
           op: "if",
           blockType: { kind: "val" as const, type: { kind: "externref" as const } },
-          then: thenInstrs,
+          then: guardedThen,
           else: buildDispatch(idx + 1),
         },
       ];
@@ -10949,6 +11060,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     profilePhase("unshift-extern-method-call-proto", () => unshiftExternMethodCallProtoArm(ctx));
+    profilePhase("unshift-extern-method-call-ta-dyn-view", () => unshiftExternMethodCallTaDynViewArm(ctx));
     profilePhase("unshift-extern-get-proto-cache", () => unshiftExternGetProtoCacheArm(ctx));
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -11020,11 +11132,14 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-function-instance-props", () => fillFunctionInstanceProps(ctx));
     profilePhase("fill-builtin-fn-meta", () => fillBuiltinFnMeta(ctx));
     profilePhase("fill-ta-ctor-get-meta-arm", () => fillTaCtorGetMetaArm(ctx));
+    profilePhase("fill-proxy-revoker-fn-meta", () => fillProxyRevokerFnMeta(ctx));
 
     // (#4098) Multi-source parity: the helper bodies were filled above; now
     // splice the native Error reader and publish the optional JS-boundary
     // adapter after native Error/string types are complete.
     profilePhase("fill-extern-get-error-props", () => fillExternGetErrorProps(ctx));
+    // (#5269 L) Multi-source parity with the single-source call above.
+    profilePhase("fill-error-struct-hasown-message", () => fillErrorStructMessageOwnPropArms(ctx));
     profilePhase("emit-native-error-boundary-bridge", () => emitNativeErrorBoundaryBridge(ctx));
     // (#4160) Prototype-index store — multi-source parity with the
     // generateModule call above (same after-the-shape-probing-fills ordering;
@@ -11101,6 +11216,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-native-generator-method-dispatches", () => fillNativeGeneratorMethodDispatches(ctx));
     profilePhase("fill-iter-hof-steppers", () => fillIterHofSteppers(ctx));
     profilePhase("fill-lazy-iter-ladder-arms", () => fillLazyIterLadderArms(ctx));
+    profilePhase("fill-iterator-method-present", () => fillIteratorMethodPresent(ctx));
     profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
     profilePhase("fill-any-iter-next", () => fillAnyIterNext(ctx));
     profilePhase("fill-combinator-to-vec", () => fillCombinatorToVec(ctx));
@@ -11208,6 +11324,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4770) Multi-source parity for the dynamic class-constructor `name`
     // property view; see the single-source placement above.
     profilePhase("fill-class-object-name-arms", () => fillClassObjectNameArms(ctx));
+
+    // (#5270 step 2) Multi-source parity for the `%Object.prototype%` carrier;
+    // see the single-source placement above.
+    profilePhase("fill-object-proto-singleton", () => fillObjectProtoSingleton(ctx));
 
     // (#2358 #10 / #2638) Fill the reserved `__array_to_primitive_string` /
     // `__class_to_primitive` driver bodies now that `__extern_length` /
@@ -12463,6 +12583,20 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
       tsType.getCallSignatures().length === 0 &&
       !!ctx.checker.getIndexInfoOfType(tsType, ts.IndexKind.String)
     ) {
+      return { kind: "externref" };
+    }
+
+    // (#5269 R3-2) An object-literal type carrying `[Symbol.toPrimitive]`.
+    // `objectLiteralForcesHostPath`'s H-1 arm builds that literal as an open
+    // `$Object`; this is where every consumer of the value learns the same
+    // fact. Without it only the three syntactic lockstep callers agreed, so an
+    // alias / property slot / array element / parameter kept the inferred
+    // closed struct and the open object null-cast into it. Standalone-only, in
+    // lockstep with the value-side gate. See `typeTakesToPrimitiveOpenPath` —
+    // it answers for BOTH producer arms: the H-1 member the checker propagates
+    // into every derived type, and the H-2 mutation case, which leaves no
+    // member and is carried by the literal type's own identity.
+    if (ctx.standalone && typeTakesToPrimitiveOpenPath(tsType)) {
       return { kind: "externref" };
     }
 
@@ -13727,6 +13861,103 @@ export function hoistLetConstWithTdz(
   }
   for (const stmt of stmts) {
     walkStmtForLetConst(ctx, fctx, stmt);
+  }
+}
+
+/**
+ * (#5271 step 2.3) Pre-allocate the value slot (and TDZ flag) of a BLOCK's own
+ * direct `let`/`const`/`using` declarations at block ENTRY.
+ *
+ * `hoistLetConstWithTdz` only ever ran for a whole function body, so a block's
+ * lexical binding got its local at the DECLARATION, not at block entry. A
+ * closure built earlier in the same block — `{ p = function(){ return x; };
+ * let x = 'inside'; }` — therefore found no slot named `x` and fell through to
+ * whatever the spelling resolved to outside the block: the enclosing local, or
+ * a same-spelled module global (`__mod_x`). Both are the wrong binding
+ * (§13.2.14: the block's declarative environment is created before ANY of its
+ * statements run), and the module-global case is cluster A of #5271.
+ *
+ * Pass the block's DIRECT statements only. `walkStmtForLetConst` claims a slot
+ * per name and skips names already in `localMap`, so this must run AFTER
+ * `saveBlockScopedShadowsForNames` has hidden the outer entries; it then also
+ * records `preHoistedLetConstSlots`, which is what makes the later
+ * `compileVariableStatement` reuse this slot instead of allocating a second one.
+ */
+export function preallocateBlockScopedSlots(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmts: readonly ts.Statement[],
+): void {
+  // (#5271 step 5) A block that also hoists a FUNCTION DECLARATION as a DIRECT
+  // child is left alone. The hoisted function is materialized before the
+  // block's statements run, so giving it a block-scoped binding to capture
+  // makes it capture a ref cell that is only minted at the DECLARATION — a call
+  // before that point then dereferences null instead of throwing the §13.3.1
+  // ReferenceError. Boxing the value + flag at block entry is the real fix
+  // (#5271 cluster B2, not done); until then this keeps the pre-#5271 lowering
+  // for that shape rather than turning a wrong answer into a trap.
+  for (const stmt of stmts) {
+    if (ts.isFunctionDeclaration(stmt)) return;
+  }
+  for (const stmt of stmts) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    reinstallPreHoistedCapturedSlots(ctx, fctx, stmt);
+    walkStmtForLetConst(ctx, fctx, stmt);
+  }
+}
+
+/**
+ * (#5271 F1) Put back the slot the FUNCTION-ENTRY pre-hoist already claimed for
+ * a block's own `let`/`const`, when a plain nested `function` captures it.
+ *
+ * `hoistFunctionDeclarations` runs at function entry and recurses into nested
+ * `if`/`try`/block statements, PINNING each capture to `fctx.localMap.get(name)`
+ * as it stands then — the slot `hoistLetConstWithTdz` claimed. Block entry then
+ * hides that entry (`saveBlockScopedShadowsForNames`), and without this the
+ * block-entry pre-allocation minted a SECOND slot and overwrote the
+ * `preHoistedLetConstSlots` record, so the declaration wrote slot B while the
+ * hoisted function kept reading slot A (null / 0 / a trap). On the base tree
+ * `compileVariableStatement`'s #2814 Bug-C path realigned the declaration to A;
+ * it is guarded by `!fctx.localMap.has(name)`, so the extra slot silenced it.
+ *
+ * The admission test is deliberately the SAME one that Bug-C path uses — a
+ * capture by a plain (non-async, non-generator) nested function, and a
+ * pre-hoist record for THIS declaration. A declaration the function-entry hoist
+ * skipped (because an outer same-named binding had already claimed the name)
+ * has no record and still gets its own block-fresh slot, which is what makes
+ * `{ p = function(){ return x; }; let x; }` capture the block binding.
+ */
+function reinstallPreHoistedCapturedSlots(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.VariableStatement,
+): void {
+  const records = fctx.preHoistedLetConstSlots;
+  if (records === undefined || records.size === 0) return;
+  const TDZ_FLAGS = ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing;
+  if (!(stmt.declarationList.flags & TDZ_FLAGS)) return;
+  for (const decl of stmt.declarationList.declarations) {
+    if (!ts.isIdentifier(decl.name)) continue;
+    const record = records.get(decl);
+    if (record === undefined || record.valueSlot < fctx.params.length) continue;
+    const name = decl.name.text;
+    if (fctx.localMap.has(name)) continue;
+    let capturedByPlainFn = false;
+    let cpsCaptured = false;
+    for (const [capturerName, caps] of ctx.nestedFuncCaptures) {
+      if (!caps.some((c) => c.name === name)) continue;
+      if ((ctx.asyncFunctions?.has(capturerName) ?? false) || (ctx.generatorFunctions?.has(capturerName) ?? false)) {
+        cpsCaptured = true;
+        break;
+      }
+      capturedByPlainFn = true;
+    }
+    if (!capturedByPlainFn || cpsCaptured) continue;
+    fctx.localMap.set(name, record.valueSlot);
+    if (record.flagSlot !== undefined) {
+      if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
+      fctx.tdzFlagLocals.set(name, record.flagSlot);
+    }
   }
 }
 

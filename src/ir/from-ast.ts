@@ -82,6 +82,7 @@ import { IrFunctionBuilder } from "./builder.js";
 import { irFnctorShapeEquals } from "./fnctor-abi.js";
 import { emitNumberRemainder } from "./remainder-fast-path.js";
 import { sameIrGlobalBinding } from "./abi-bindings.js";
+import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import {
   irImportFuncRef,
   irIntrinsicFuncRef,
@@ -5208,6 +5209,41 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
   }
   const propName = irPrivateFieldName(expr.name);
 
+  // (#3522 W1-C) `super.<accessor>` READ — static-dispatch to the PARENT's
+  // getter slot. Intercepted BEFORE receiver lowering for the same reason the
+  // `super.method()` arm in `lowerMethodCall` is: `super` is a keyword
+  // `lowerExpr` cannot produce a value for. The receiver handed to the parent
+  // getter is `this` (the subclass instance, a WasmGC subtype of the parent),
+  // and the member resolves against `parentShape`, so a subclass override of
+  // the same accessor is bypassed — the defining property of `super`.
+  if (expr.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    const parentShape = requireSuperParentShape(cx);
+    const self = requireThisValue(cx);
+    const getter = findClassMember(parentShape, propName, "getter");
+    if (!getter || getter.returnType === null) {
+      demoteToLegacy(
+        "property-access-unsupported",
+        `ir/from-ast: super.${propName} — parent class ${parentShape.className} has no value-producing getter "${propName}" in ${cx.funcName}`,
+      );
+    }
+    const superGet = cx.builder.emitClassSuperCall(
+      parentShape,
+      self,
+      propName,
+      [],
+      getter.returnType,
+      getter.target,
+      "getter",
+    );
+    if (superGet === null) {
+      // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
+      throw new Error(
+        `ir/from-ast: super getter ${parentShape.className}.${propName} produced no value (${cx.funcName})`,
+      );
+    }
+    return superGet;
+  }
+
   // Receiver type is unknown until we lower it; pass an f64 hint (the
   // numeric default) and inspect the resulting IrType. The hint is
   // advisory — string / object lowerings ignore it.
@@ -7506,10 +7542,16 @@ function tryLowerNativeMapConstruction(expr: ts.NewExpression, cx: LowerCtx): Ir
 }
 
 function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
-  if (!ts.isPropertyAccessExpression(expr.expression) || !ts.isIdentifier(expr.expression.name)) {
+  if (!ts.isPropertyAccessExpression(expr.expression)) {
     demoteToLegacy("method-call-unsupported", `ir/from-ast: malformed method call in ${cx.funcName}`);
   }
-  const methodName = expr.expression.name.text;
+  // (#3522 W1-B) `<recv>.#m(...)`. A `PropertyAccessExpression`'s name is
+  // exactly `Identifier | PrivateIdentifier`, so the name-shape refusal that
+  // used to stand here only ever rejected the private spelling — a POST-CLAIM
+  // demote once the selector admits the call site. `irPrivateFieldName` mints
+  // `__priv_<x>`, the same descriptor key the field reads already use and the
+  // slot W1-A minted, so the class arm below finds it via `findClassMember`.
+  const methodName = irPrivateFieldName(expr.expression.name);
   const receiverIdentifier = ts.isIdentifier(expr.expression.expression) ? expr.expression.expression : undefined;
   const receiverIsDirectModuleBinding =
     receiverIdentifier !== undefined && cx.resolver?.isDirectModuleBinding?.(receiverIdentifier) === true;
@@ -8309,14 +8351,21 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
         // so it cannot cross the boundary a second time. The runtime may
         // therefore skip the identity WeakMap used by the reusable -1 ABI.
         const sentinel = cx.builder.emitConst({ kind: "i32", value: -2 }, irVal({ kind: "i32" }));
+        // (#3526 F3-S1) The maker's import is NAMED by the central capability
+        // record, never spelled here. from-ast runs in Phase 1, before the
+        // runtime manifest freezes, so this reads the STATIC catalogue; the
+        // frozen manifest is what ADMITS the crossing, post-freeze. The binding
+        // KIND stays `import` — pins compare kinds, not names (the S4 lesson).
         const wrapped = cx.builder.emitCall(
-          irImportFuncRef("env", "__make_callback"),
+          irImportFuncRef(HOST_CALLBACK_WRAP_CAPABILITY_RECORD.module, HOST_CALLBACK_WRAP_CAPABILITY_RECORD.field),
           [sentinel, packed],
           irVal({ kind: "externref" }),
         );
         if (wrapped === null) {
           // invariant (producer-promise): a compiler-support/runtime helper declared non-void returned no SSA value — #4502.
-          throw new Error(`ir/from-ast: __make_callback produced no value in ${cx.funcName}`);
+          throw new Error(
+            `ir/from-ast: ${HOST_CALLBACK_WRAP_CAPABILITY_RECORD.field} produced no value in ${cx.funcName}`,
+          );
         }
         args.push(wrapped);
         continue;
@@ -8846,6 +8895,35 @@ function lowerPropertyAssignment(expr: ts.BinaryExpression, cx: LowerCtx): void 
     demoteToLegacy("property-write-unsupported", `ir/from-ast: malformed property assignment LHS in ${cx.funcName}`);
   }
   const fieldName = irPrivateFieldName(lhs.name);
+
+  // (#3522 W1-C) `super.<accessor> = v` WRITE — static-dispatch to the PARENT's
+  // setter slot. Intercepted before receiver lowering (see the read twin in
+  // `lowerPropertyAccess`). The legacy setter is `(self, value) -> []`, so this
+  // is a void `class.super_call` in statement position, exactly like the
+  // `this.prop = v` accessor fallback below; the value-shape obligations are
+  // that arm's, verbatim.
+  if (lhs.expression.kind === ts.SyntaxKind.SuperKeyword) {
+    const parentShape = requireSuperParentShape(cx);
+    const self = requireThisValue(cx);
+    const setter = findClassMember(parentShape, fieldName, "setter");
+    if (!setter || setter.params.length !== 1) {
+      demoteToLegacy(
+        "property-write-unsupported",
+        `ir/from-ast: super.${fieldName} = v — parent class ${parentShape.className} has no one-parameter setter "${fieldName}" in ${cx.funcName}`,
+      );
+    }
+    let superValue = lowerExpr(expr.right, cx, setter.params[0]!);
+    const superValueType = cx.builder.typeOf(superValue);
+    if (setter.params[0]!.kind === "dynamic" && superValueType.kind !== "dynamic")
+      superValue =
+        boxConcreteToDynamic(superValue, superValueType, expr.right, cx) ??
+        demoteToLegacy("property-write-unsupported", "unboxable dynamic super setter value");
+    if (!irTypeAssignable(cx.builder.typeOf(superValue), setter.params[0]!))
+      demoteToLegacy("property-write-unsupported", "super setter value is not assignable");
+    cx.builder.emitClassSuperCall(parentShape, self, fieldName, [superValue], null, setter.target, "setter");
+    return;
+  }
+
   const recv = lowerExpr(lhs.expression, cx, irVal({ kind: "f64" }));
   const recvType = cx.builder.typeOf(recv);
 

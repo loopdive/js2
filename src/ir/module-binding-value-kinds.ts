@@ -12,6 +12,15 @@ export interface IrModuleCapabilityExternValueKind {
 export type IrModuleBindingValueKind =
   | { readonly kind: "f64" }
   | { readonly kind: "i32"; readonly semantic: "boolean" }
+  // (#4208 S2 / #5289) A binding whose value is DYNAMIC — an `any`/`unknown`
+  // declaration, or one a `++`/`--` retypes. Deliberately ONE kind for both
+  // LANES (the `fast` flag, not the target): the source-level fact is "this
+  // slot holds a JS value of unproven type", and the physical carrier —
+  // `externref` in compatibility, `(ref null $AnyValue)` in fast — is the
+  // lane's to pick. Both sides of the boundary pick it from `ctx.fast` alone
+  // (`resolveWasmType` allocates the legacy slot, `resolveIrDynamicCarrierType`
+  // resolves the IR one), so `resolveModuleBindingGlobal` arbitrates them as a
+  // real agreement test rather than reinterpreting either.
   | { readonly kind: "dynamic" }
   | { readonly kind: "extern"; readonly className: string }
   | IrModuleCapabilityExternValueKind
@@ -19,7 +28,16 @@ export type IrModuleBindingValueKind =
   // (#1103a), NOT to an externref host handle. That is a different physical
   // carrier — `(ref null $Map)` vs `externref` — so it remains distinct from
   // both ambient and capability-authenticated externref storage.
-  | { readonly kind: "native-map"; readonly className: "Map" };
+  | { readonly kind: "native-map"; readonly className: "Map" }
+  // (#3523 R4-M1) A `string` module binding. Deliberately ONE kind for both
+  // string backends (#679): the source-level fact is "this slot holds a JS
+  // string", and the physical carrier — `externref` under host strings,
+  // `(ref null $AnyString)` under `nativeStrings` — is the backend's to pick,
+  // exactly as `IrType.string` defers to `IrLowerResolver.resolveString`. The
+  // legacy slot is resolved against the ACTIVE backend's carrier in
+  // `resolveModuleBindingGlobal`, so a lane whose allocation disagrees fails
+  // the storage-agreement check there rather than silently reinterpreting it.
+  | { readonly kind: "string" };
 
 export interface IrModuleCapabilityExternCertification {
   readonly capability: "dom";
@@ -44,10 +62,34 @@ export function isIrModuleMapValueKind(valueKind: IrModuleBindingValueKind): boo
 
 /**
  * True when a binding exposes a reference carrier whose consumers need the
- * conservative extern discipline: ambient/capability externref or native Map.
+ * conservative extern discipline: ambient/capability externref, native Map, or
+ * (#3523 R4-M1) a string.
+ *
+ * A string module binding joins this set because BOTH of its carriers are
+ * reference-shaped and opaque to a shape-only selector — `externref` on the
+ * host lane, `(ref null $AnyString)` on the native one. Admitting it as a
+ * "scalar" instead would let the f64/boolean expression arms claim shapes
+ * (unboxed `throw`, numeric method dispatch) whose string lowering was never
+ * proven. A site that later earns a proven string lowering should test
+ * `valueKind.kind === "string"` at that site rather than widen this predicate.
+ *
+ * (#5289) `dynamic` is deliberately NOT a member, even though both of ITS
+ * carriers are reference-shaped too. The hazard this predicate exists to stop
+ * — a scalar arm claiming a shape whose lowering was never proven — is already
+ * stopped for `dynamic` at the site that matters: `moduleScalarExpressionFamily`
+ * (`src/ir/select.ts`) returns `undefined` for a dynamic binding rather than
+ * falling through to the initializer's static family. That is the "test the
+ * kind at the site" discipline this comment asks for, already applied. Widening
+ * here instead would change every existing #4208 retype binding's consumer
+ * discipline, which this issue did not measure.
  */
 export function isIrModuleReferenceValueKind(valueKind: IrModuleBindingValueKind): boolean {
-  return valueKind.kind === "extern" || valueKind.kind === "capability-extern" || valueKind.kind === "native-map";
+  return (
+    valueKind.kind === "extern" ||
+    valueKind.kind === "capability-extern" ||
+    valueKind.kind === "native-map" ||
+    valueKind.kind === "string"
+  );
 }
 
 export function isCapabilityExternKind(

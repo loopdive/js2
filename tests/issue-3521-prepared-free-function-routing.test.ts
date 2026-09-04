@@ -631,8 +631,11 @@ describe("#3521 prepare-before-emit free-function routing", () => {
 
   it("keeps fast string pass-through signatures direct in every excluded lane", async () => {
     const source = "export function echo(value: string): string { return value; }";
+    // (#3521 R2-F1) The `nativeStrings: true` entry moved out: an all-string
+    // pass-through IS the mixed-carrier predicate's shape once the lane fixes
+    // the native `$anyStr` carrier, so it now prepares. The three lanes left
+    // are the `nativeStrings: false` ones with no string carrier to mirror.
     const excludedLanes = [
-      ["nativeStrings", { nativeStrings: true }],
       ["standalone", { target: "standalone", nativeStrings: false }],
       ["wasi", { target: "wasi", nativeStrings: false, strictNoHostImports: false }],
       ["strictNoHostImports", { strictNoHostImports: true, nativeStrings: false }],
@@ -653,26 +656,36 @@ describe("#3521 prepare-before-emit free-function routing", () => {
     }
   });
 
-  it("accounts an unpoisoned fast native-string pass-through as direct with no prepared owner", async () => {
-    const result = await compile("export function echo(value: string): string { return value; }", {
-      fileName: "prepared-fast-native-string-direct.ts",
-      experimentalIR: true,
-      fast: true,
-      nativeStrings: true,
-      trackIrOutcomes: true,
-    });
+  // (#3521 R2-F1) The inverse of the pin above: a fast NATIVE-string
+  // pass-through is the mixed-carrier predicate's shape, so it prepares before
+  // direct emission instead of landing on the post-direct overlay. Poisoning
+  // the direct body is what makes the flip observable — the former assertion
+  // (direct, no prepared owner) now lives on the `string[]` control in
+  // tests/issue-3521-fast-mixed-signature-admission.test.ts.
+  it("prepares a fast native-string pass-through before direct emission", async () => {
+    const result = await compileWithPoisonedDirectFunctionBodies(
+      "export function echo(value: string): string { return value; }",
+      "echo",
+      {
+        fileName: "prepared-fast-native-string-direct.ts",
+        experimentalIR: true,
+        fast: true,
+        nativeStrings: true,
+        trackIrOutcomes: true,
+      },
+    );
 
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(result.irFirstSkipped ?? []).not.toContain("echo");
+    expect(result.irFirstSkipped).toContain("echo");
     const echoOutcome = outcome(result, "echo");
     expect(echoOutcome).toMatchObject({
       kind: "emitted",
-      stage: "patch",
       prepareAttempts: 1,
-      directBodyEmissions: 1,
+      directBodyEmissions: 0,
       irBodyEmissions: 1,
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
   });
 

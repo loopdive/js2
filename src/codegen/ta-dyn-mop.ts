@@ -51,6 +51,7 @@ import {
 import { addFuncType, TA_CTOR_KINDS } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
+import { BFN_ID_FIELD_IDX } from "./builtin-fn-meta.js"; // (#5194 r3 F3) refusal-closure filter
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 // (#3177 slice 3) per-kind `<View>.prototype` identity — the SAME $NativeProto
 // glue singleton a static `<View>.prototype` value read yields.
@@ -592,10 +593,109 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       aProto = numParams + fn.locals.length;
       fn.locals.push({ name: "__tam_proto", type: { kind: "externref" } });
     }
+    let aBfnId = -1;
     if (mode === "get") {
       aProtoValue = numParams + fn.locals.length;
       fn.locals.push({ name: "__tam_proto_value", type: { kind: "externref" } });
+      aBfnId = numParams + fn.locals.length;
+      fn.locals.push({ name: "__tam_bfnid", type: { kind: "i32" } });
     }
+    // (#5194 r3 review F2) §7.3.2 OrdinaryGet step 3 forwards the ORIGINAL
+    // receiver to the parent's [[Get]]. A bare recursive `__extern_get(proto,
+    // key)` runs an inherited accessor with `this` = the prototype (a getter
+    // reading `this.length` answered 0 instead of the instance's length; one
+    // writing `this.marker = 1` polluted the SHARED prototype). So the walk
+    // recurses through `__reflect_get_receiver(proto, key, param0)` — the
+    // Reflect.get wrapper that arms the one-shot explicit-receiver globals
+    // the ordinary body consumes at entry and RESTORES them on return, so an
+    // armed bit can never leak into an unrelated later read. Exception: this
+    // dyn-view arm sits BEFORE that entry prelude, so an outer `Reflect.get(
+    // view, key, receiver)` still has its receiver pending; then the plain
+    // recursion consumes it and that receiver wins.
+    const moduleGlobalIdx = (name: string): number | undefined => {
+      const i = ctx.mod.globals.findIndex((g) => g.name === name);
+      return i < 0 ? undefined : ctx.numImportGlobals + i;
+    };
+    const recvActiveIdx = mode === "get" ? moduleGlobalIdx("__reflect_get_receiver_active") : undefined;
+    const reflectGetRecvIdx = mode === "get" ? ctx.funcMap.get("__reflect_get_receiver") : undefined;
+    /** `[] -> [externref]`: [[Get]](proto, key) with param 0 as Receiver. */
+    const protoGetWithReceiver = (protoLocal: number, keyLocal: number, fallbackSelfIdx: number): Instr[] =>
+      recvActiveIdx === undefined || reflectGetRecvIdx === undefined
+        ? [
+            { op: "local.get", index: protoLocal },
+            { op: "local.get", index: keyLocal },
+            { op: "call", funcIdx: fallbackSelfIdx },
+          ]
+        : [
+            { op: "global.get", index: recvActiveIdx },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [
+                { op: "local.get", index: protoLocal },
+                { op: "local.get", index: keyLocal },
+                { op: "call", funcIdx: fallbackSelfIdx },
+              ],
+              else: [
+                { op: "local.get", index: protoLocal },
+                { op: "local.get", index: keyLocal },
+                { op: "local.get", index: 0 },
+                { op: "call", funcIdx: reflectGetRecvIdx },
+              ],
+            },
+          ];
+    // (#5194 r3 review F3) The walk must never hand back one of the r2-seeded
+    // REFUSAL closures (`native-proto.ts` `refusalBodyFallback`: a body that
+    // throws "<Builtin>.prototype.<m> is not yet implemented in --target
+    // standalone") as a first-class value. Reached through the value path — the
+    // closed dispatch a same-name `.m = function` assignment anywhere in the
+    // module forces, `__extern_method_call`'s proto arm for a method with no
+    // dyn-view helper — that value gets CALLED and the refusal fires where the
+    // pre-walk answer was a stable `undefined`. A stable wrong value must not
+    // become an exception, so such a result reads back as `undefined` here; the
+    // loud refusal stays on the direct read off the prototype object itself.
+    // Same family-`ref.test` + `bfnid` identity discipline as `fillBuiltinFnMeta`
+    // (meta subtypes of one wrapper canonicalize to one runtime type).
+    const refusalFilter = (valueLocal: number): Instr[] => {
+      const ids = ctx.nativeProtoRefusalMetaTypeIdxs;
+      if (mode !== "get" || !ids || ids.size === 0 || aBfnId < 0) return [];
+      const byFamily = new Map<number, number[]>();
+      for (const idx of Array.from(ids).sort((a, b) => a - b)) {
+        const def = ctx.mod.types[idx];
+        const superIdx = def?.kind === "struct" ? (def.superTypeIdx ?? idx) : idx;
+        const list = byFamily.get(superIdx) ?? [];
+        list.push(idx);
+        byFamily.set(superIdx, list);
+      }
+      const out: Instr[] = [];
+      for (const list of byFamily.values()) {
+        const family = list[0];
+        const isOneOf: Instr[] = [];
+        list.forEach((idx, i) => {
+          isOneOf.push({ op: "local.get", index: aBfnId }, { op: "i32.const", value: idx }, { op: "i32.eq" });
+          if (i > 0) isOneOf.push({ op: "i32.or" });
+        });
+        out.push(
+          { op: "local.get", index: valueLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: family },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: valueLocal },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: family },
+              { op: "struct.get", typeIdx: family, fieldIdx: BFN_ID_FIELD_IDX },
+              { op: "local.set", index: aBfnId },
+              ...isOneOf,
+              { op: "if", blockType: { kind: "empty" }, then: [...undef(), { op: "return" }] },
+            ],
+          },
+        );
+      }
+      return out;
+    };
     // key = __to_property_key(key)
     inner.push({ op: "local.get", index: 1 });
     inner.push({ op: "call", funcIdx: tpkIdx });
@@ -625,7 +725,48 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       { op: "struct.get", typeIdx: dynIdx, fieldIdx: 4 },
       { op: "local.set", index: aExp },
     ];
-    const missInstrs = (): Instr[] => {
+    // (#5194 r3-1) §10.4.5.4 IntegerIndexedElementGet falls back to
+    // OrdinaryGet, whose step 3 walks the [[Prototype]] chain. Before this the
+    // dyn-view arm stopped at the expando side-table, so every inherited
+    // `%TypedArray%.prototype` member — `includes`, `sort`, `keys`, … — read
+    // back `undefined` on an instance even though the prototype graph (r2
+    // step 1) had already seeded them. That is why `typeof sample.includes`
+    // was `"undefined"` and `"includes" in sample` was `false` while
+    // `Object.getPrototypeOf(sample) === TA.prototype` was already `true`.
+    //
+    // Only `get` and `has` walk: `set`/`reflect_set` own the receiver-on-the-
+    // prototype-chain question (r3-10) and `delete` never consults a parent.
+    const inheritedLookup = (fallback: Instr[]): Instr[] => {
+      if (mode !== "get" && mode !== "has") return fallback;
+      if (getProtoIdx === undefined || selfIdx === undefined || aProto < 0) return fallback;
+      return [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: getProtoIdx },
+        { op: "local.set", index: aProto },
+        { op: "local.get", index: aProto },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: fallback },
+        // The prototype is a `$NativeProto` (or an ordinary object a test
+        // installed), never a `$__ta_dyn_view`, so this recursion terminates
+        // in the untouched ordinary body one level down.
+        ...(mode === "get"
+          ? protoGetWithReceiver(aProto, aKey, selfIdx)
+          : [
+              { op: "local.get", index: aProto } as Instr,
+              { op: "local.get", index: aKey } as Instr,
+              { op: "call", funcIdx: selfIdx } as Instr,
+            ]),
+        ...(mode === "get" && aProtoValue >= 0
+          ? [
+              { op: "local.set", index: aProtoValue } as Instr,
+              ...refusalFilter(aProtoValue),
+              { op: "local.get", index: aProtoValue } as Instr,
+            ]
+          : []),
+        { op: "return" },
+      ];
+    };
+    const missInstrs = (inherit = false): Instr[] => {
       const legacyMiss: Instr[] = (() => {
         switch (mode) {
           case "get":
@@ -666,10 +807,24 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
         out.push({ op: "return" });
         return out;
       }
-      // get / has / delete: no expando → legacy miss; else delegate.
+      // get / has / delete: no expando → final miss; else delegate.
+      const finalMiss = inherit ? inheritedLookup(legacyMiss) : legacyMiss;
       out.push({ op: "local.get", index: aExp });
       out.push({ op: "ref.is_null" });
-      out.push({ op: "if", blockType: { kind: "empty" }, then: legacyMiss });
+      out.push({ op: "if", blockType: { kind: "empty" }, then: finalMiss });
+      if (inherit && hasOwnIdx !== undefined) {
+        // §7.3.2 OrdinaryGet step 2: an OWN expando property shadows the
+        // prototype. A miss there must NOT stop the walk — delegating the miss
+        // to `__extern_get(expando, key)` would answer from `Object.prototype`
+        // and hide `%TypedArray%.prototype` entirely.
+        out.push(
+          { op: "local.get", index: aExp },
+          { op: "local.get", index: aKey },
+          { op: "call", funcIdx: hasOwnIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: finalMiss },
+        );
+      }
       out.push({ op: "local.get", index: aExp });
       out.push({ op: "local.get", index: aKey });
       out.push({ op: "call", funcIdx: selfIdx });
@@ -733,9 +888,8 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
           // explicitly own expando value on the earlier path, and preserve
           // non-undefined prototype values (including abrupt getter results).
           out.push(
-            { op: "local.get", index: aProto },
-            { op: "local.get", index: aKey },
-            { op: "call", funcIdx: selfIdx },
+            // (#5194 r3 F2) an inherited `constructor` getter sees the instance
+            ...protoGetWithReceiver(aProto, aKey, selfIdx),
             { op: "local.set", index: aProtoValue },
             { op: "local.get", index: aProtoValue },
             { op: "call", funcIdx: isUndefinedIdx },
@@ -878,7 +1032,10 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       }
     })();
     inner.push({ op: "if", blockType: { kind: "empty" }, then: canonThen });
-    inner.push(...missInstrs());
+    // Ordinary (non-index, non-intrinsic) STRING keys are the only path that
+    // continues onto the prototype chain here; the Symbol/non-string miss above
+    // keeps its expando-only behaviour until a step owns those keys.
+    inner.push(...missInstrs(true));
 
     const arm: Instr[] = [
       { op: "local.get", index: 0 },

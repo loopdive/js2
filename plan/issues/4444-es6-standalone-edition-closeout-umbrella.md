@@ -18,6 +18,382 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## Handover (2026-09-04, session claude/es6-test262-standalone-g10c7u)
+
+### Where the goal stands
+
+ES2015 standalone: **10,079 / 11,704 (86.1%)** on the baseline promoted after
+PR #5561 (02:45 UTC). Day 2026-09-03 → 09-04 landed seven PRs (#5505, #5526,
+#5527, #5534, #5550, #5558, #5561): 9,905 → 10,079, **+174 rows**. The
+compile_error count did not move (380) — every wave was `fail` work.
+
+### What is in flight (this PR and the lanes behind it)
+
+| lane | issue | worktree / branch | state at handover |
+| --- | --- | --- | --- |
+| class | #5195 | `.claude/worktrees/wf_16f0b7f5-bf0-5` / `worktree-wf_16f0b7f5-bf0-5` | **in this PR** — r3-2/4/5/7 kept, r3-3 reverted; three review rounds; 19 rows |
+| proxy + reflect | #5196 | `.claude/worktrees/wf_16f0b7f5-bf0-3` / `worktree-wf_16f0b7f5-bf0-3` | **in this PR** — R3-0/2/4/3-E2 + review fixes F1–F6; +20 rows; F9 (WASI-only trap where main compile-failed) recorded, not fixed |
+| for-of + collections | #5267 | `.claude/worktrees/wf_9d1e6808-4e2-1` / `worktree-wf_9d1e6808-4e2-1` | **in this PR** — five steps kept, R3-6 reverted after review; 15 rows |
+
+### What the next session should do first
+
+1. **Watch the open PR** from `claude/es6-test262-standalone-g10c7u` until the
+   merge queue lands it; a `github-actions[bot]` `hold` is a real merged-baseline
+   regression — diagnose the cited run, fix on the branch, re-enqueue once.
+2. **Refetch the standalone baseline and re-run the census**
+   (`node scripts/fetch-baseline-jsonl.mjs --standalone --force`, then
+   `.tmp/census0903/census.mjs` — the script is not committed; it is a 40-line
+   reader of `test262-file-editions.json` + the baseline JSONL, easy to recreate).
+3. **The CE mass is the next frontier**: expressions 96, class 56, promise 50,
+   generators 46, for-of 36 compile_errors. A compile_error is a refusal to emit,
+   so these need features, not fixes — plan them as such. #2864 (native
+   generator carrier) gates 233 rows across seven clusters and is claimed and
+   live in another lane: never start a parallel implementation.
+4. Lanes handed over unshipped (if any, per the table) resume from their
+   worktree branch: merge `origin/main` first, then the issue's Handover steps.
+
+### Process lessons from this session (load-bearing)
+
+- **A random 1,200-row sample of baseline-passing standalone rows through the
+  CI harness** (`TEST262_PATH_FILTER_FILE` with `test/`-prefixed paths,
+  `run-test262-vitest.sh`, quickjs oracle) **before every wave PR** caught the
+  #5534 merge-queue park that three review rounds and all gates missed. Every
+  flagged row is A/B'd against a `git archive` of `origin/main`; local artifacts
+  to expect: `RegExp/regexp-modifiers/*` compile errors (fail on main too), a
+  `compile_timeout` under load (re-run alone), and a "quickjs provider is not
+  built" failure in a worktree missing the `.test262-cache/quickjs*` links.
+- **Adversarial review with skeptics, repeated on each fix round.** Of ten
+  waves reviewed this way, nine shipped-or-would-have-shipped a confirmed
+  regression the lane's own row list, controls, five gates and 8-shard
+  equivalence run all missed. Fix rounds are new code: review them too (the
+  class lane needed three rounds; a typedarray fix's "single struct.new site"
+  claim missed a second site and every module on that path failed Wasm
+  validation — grep, do not trust).
+- **The failure family to hunt for is "a working program now throws"**: every
+  confirmed regression across the class and proxy lanes was a "provable"
+  predicate (heritage is not a constructor, chain is all classes, alias is the
+  Proxy constructor, revoker is non-constructable) that resolved by NAME or by
+  declaration shape without a single-assignment / shadowing proof. Decline to
+  base unless the proof holds under reassignment, destructuring, loop heads,
+  parameters, `eval`/`with`, and shadowing.
+- **Environment**: worktree `node_modules` / `test262` were symlink CHAINS
+  through sibling worktrees — removing a shipped worktree broke the others.
+  Link them directly to `/home/user/js2/node_modules` and
+  `$(readlink -f /home/user/js2/test262)` before removing any worktree. The
+  vitest fork heap must be 4 GB for suites that link the runtime-eval provider
+  (`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, single fork) — including the pre-push
+  hook, so push in the background with that variable set. `--target wasi` does
+  NOT set `ctx.standalone`; measure each arm on the targets its gate reaches.
+- **CI is node 25, the container is node 22.** A node-oracle assertion
+  (`new Function` in a test) can hold on one and not the other: V8 in node 25
+  no longer gives sloppy functions own `caller`/`arguments`, so a pin that
+  asserted node's answer for `G.caller` (class extending a plain function)
+  failed only in CI. Probe the running engine instead of asserting a fixed
+  answer, and run the changed test files under node 25 before pushing
+  (`npx -p node@25` fetches one; `PATH=<its bin>:$PATH` puts the vitest
+  forks and the compiler pool on it).
+- **A merge-group shard that hits its 40-minute cap with no bot hold is a
+  runtime wedge, not a slow family — and the PR-level checks cannot see it.**
+  Fixture-graph rows (`language/module-code/**` self-imports and
+  `_FIXTURE` graphs, ~200 rows) execute IN-PROCESS in the vitest fork
+  (`tests/test262-shared.ts`), outside the compiler pool's 30 s kill, so one
+  infinite loop caps the whole shard; the pattern is bimodal (13-18 min or
+  40 min) and deterministic per shard set. The 2026-09-04 instance: the
+  widened `identifierIsWrittenTo` counted `X.prop = v` as a write to X, which
+  made `Test262Error` (sta.js assigns its prototype's `toString`) read as
+  reassigned in EVERY row, declined the `new` fold everywhere, and the dynamic
+  fallback looped on `namespace/internals/is-extensible.js`. Diagnose by
+  reproducing one hung shard locally with CI's env (`TEST262_CHUNK_INDEX` /
+  `TEST262_CHUNK_TOTAL` on `tests/test262-chunk-dynamic.test.ts`, the quickjs
+  adapter built for the current bundle — without it eval-dependent rows fail
+  fast and the wedge is invisible), then `node --prof` the single row through
+  `runTest262File`. Artifact downloads from `blob.core.windows.net` are blocked
+  by the container proxy, so the partial shard JSONL is not reachable.
+- **Model attribution**: workflow agents inherit the session model unless the
+  script pins `model`; after the `/model` switch, unpinned "Opus" agents ran on
+  Fable 5.1 — two `Model:` trailers had to be rewritten (unpublished commits
+  only). Pin `model: 'opus'` explicitly when the directive says Opus.
+- **Operational**: never `pkill`/`pgrep` a pattern that appears in your own
+  command line (it killed the integrator shell twice); kill by PID after a
+  cwd check, and only when your own cwd is not that worktree. A test262 batch
+  silent for 15 minutes is a pre-existing compile hang (labelled
+  continue/break over nested for-of with closures) — kill and split it.
+
+## 2026-09-04 census — 10,079 / 11,704 (86.1%) after #5561
+
+Baseline refetched 2026-09-04 02:45 UTC (`oracle_lane: "honest"`, promoted
+from the merge of PR #5561 — typedarray r3, #5194), same script and edition
+map as the censuses below.
+
+**10,079 pass / 11,704 (86.1%) — 1,625 non-pass** (1,244 fail · 380
+compile_error · 1 compile_timeout): **+41 rows** over the post-#5558 census.
+The rows sum to 1,625.
+
+| Cluster | rows | fail | CE |
+| --- | ---: | ---: | ---: |
+| expressions | 228 | 131 | 96 |
+| typedarray | 201 | 183 | 18 |
+| class | 191 | 135 | 56 |
+| other built-ins | 168 | 160 | 8 |
+| proxy + reflect | 155 | 131 | 24 |
+| regexp | 139 | 129 | 10 |
+| generators | 121 | 75 | 46 |
+| array + object | 121 | 111 | 10 |
+| promise | 101 | 51 | 50 |
+| for-of + collections | 98 | 62 | 36 |
+| statements + lang | 75 | 55 | 20 |
+| module-code | 25 | 19 | 6 |
+| rest | 2 | 2 | 0 |
+
+Day total since the 2026-09-02 census (9,905): **+174 rows** across seven
+PRs. The compile_error count is unchanged at 380 across all of them — every
+wave was `fail` work; the CE mass (expressions 96, class 56, promise 50,
+generators 46, for-of 36) is what the next plans must open.
+
+## 2026-09-04 census — 10,038 / 11,704 (85.8%) after #5558
+
+Baseline refetched 2026-09-04 01:17 UTC (`oracle_lane: "honest"`, promoted
+from the merge of PR #5558 — promise r3, #5197), same script and edition map.
+
+**10,038 pass / 11,704 (85.8%) — 1,666 non-pass** (1,285 fail · 380
+compile_error · 1 compile_timeout): **+17 rows** over the post-#5550 census.
+The rows sum to 1,666.
+
+| Cluster | rows | fail | CE |
+| --- | ---: | ---: | ---: |
+| typedarray | 242 | 224 | 18 |
+| expressions | 228 | 131 | 96 |
+| class | 191 | 135 | 56 |
+| other built-ins | 168 | 160 | 8 |
+| proxy + reflect | 155 | 131 | 24 |
+| regexp | 139 | 129 | 10 |
+| generators | 121 | 75 | 46 |
+| array + object | 121 | 111 | 10 |
+| promise | 101 | 51 | 50 |
+| for-of + collections | 98 | 62 | 36 |
+| statements + lang | 75 | 55 | 20 |
+| module-code | 25 | 19 | 6 |
+| rest | 2 | 2 | 0 |
+
+Day total since the 2026-09-02 census (9,905): **+133 rows** across #5505,
+#5526, #5527, #5534, #5550 and #5558. The compile_error count has not moved
+(380) — every wave so far was `fail` work; the CE mass is the next frontier.
+
+## 2026-09-03 late census — 10,021 / 11,704 (85.6%) after #5550
+
+Baseline refetched 2026-09-03 23:31 UTC (`oracle_lane: "honest"`, promoted
+from the merge of PR #5550 — array + object r3, #5268), same script and
+edition map as the two censuses below.
+
+**10,021 pass / 11,704 (85.6%) — 1,683 non-pass** (1,302 fail · 380
+compile_error · 1 compile_timeout): **+15 rows** over the evening census.
+Array + object went 135 → 121 (−14), typedarray 243 → 242 (−1); every other
+cluster is unchanged, and the rows still sum to 1,683.
+
+| Cluster | rows | fail | CE |
+| --- | ---: | ---: | ---: |
+| typedarray | 242 | 224 | 18 |
+| expressions | 228 | 131 | 96 |
+| class | 191 | 135 | 56 |
+| other built-ins | 168 | 160 | 8 |
+| proxy + reflect | 155 | 131 | 24 |
+| regexp | 139 | 129 | 10 |
+| generators | 121 | 75 | 46 |
+| array + object | 121 | 111 | 10 |
+| promise | 118 | 68 | 50 |
+| for-of + collections | 98 | 62 | 36 |
+| statements + lang | 75 | 55 | 20 |
+| module-code | 25 | 19 | 6 |
+| rest | 2 | 2 | 0 |
+
+The lane had measured +21 directory rows on `Array/{from,of}` + `concat` +
+`hasOwnProperty`; the census counts only ES2015-edition rows, which is where
+the difference comes from — no row was lost in the queue (the merge-group
+shards passed and the standalone floor held).
+
+## 2026-09-03 evening census — 10,006 / 11,704 (85.5%), +58 from the day's second wave
+
+Source: the standalone baseline refetched 2026-09-03 20:11 UTC (`node
+scripts/fetch-baseline-jsonl.mjs --standalone --force`, `oracle_lane:
+"honest"`), after PR #5534 (expressions r2, #5270) merged at 19:54; same
+script (`.tmp/census0903/census.mjs`) and edition map as the morning census
+below, so the cluster sizes are comparable with that table only.
+
+**ES2015 standalone: 10,006 pass / 11,704 (85.5%) — 1,698 non-pass**
+(1,317 fail · 380 compile_error · 1 compile_timeout), up from **9,948
+(85.0%)** in the morning: **+58 rows**, from #5527 (built-ins r2, #5269:
+other built-ins 197 → 168) and #5534 (expressions r2, #5270: expressions
+244 → 228). #5534 parked once in the merge queue — a 325-row standalone
+drop from a mint-time `return_call` against placeholder async function
+types, invisible at PR level; the localisation method and fix are recorded
+in #5270 and the lesson is now part of the wave pipeline: a random ~1,200-row
+sample of baseline-passing rows, every flagged row A/B'd against a git
+archive of `origin/main`, runs before each wave PR.
+
+| Cluster | rows | fail | CE | owner / state (evening) |
+| --- | ---: | ---: | ---: | --- |
+| typedarray | 243 | 225 | 18 | #5194 r3 — implemented, round-3 review fixes in flight |
+| expressions | 228 | 131 | 96 | #5270 r2 landed (#5534); residual is mostly CE |
+| class | 191 | 135 | 56 | #5195 r3 — implementer suspended (WIP patch kept), re-dispatch |
+| other built-ins | 168 | 160 | 8 | #5269 r2 landed (#5527); no r3 planned yet |
+| proxy + reflect | 155 | 131 | 24 | #5196 r3 — implementer suspended (WIP patch kept), re-dispatch |
+| regexp | 139 | 129 | 10 | #5198 codex lane (checkpoint PR #5393) |
+| array + object | 135 | 125 | 10 | #5268 r3 — validated, shipping in this PR |
+| generators | 121 | 75 | 46 | #2864 claimed and live; 233 rows across clusters gate on it |
+| promise | 118 | 68 | 50 | #5197 r3 — validated, ships next |
+| for-of + collections | 98 | 62 | 36 | #5267 r3 planned, not yet dispatched |
+| statements + lang | 75 | 55 | 20 | residual unowned |
+| module-code | 25 | 19 | 6 | #4759 codex closeout lane |
+| rest | 2 | 2 | 0 | unowned |
+
+The rows sum to 1,698, so coverage is still complete. The compile_error
+share barely moved (391 → 380): the day's two waves were `fail` work, and the
+CE mass sits in `expressions` (96), `class` (56), `promise` (50),
+`generators` (46) and `for-of + collections` (36) exactly as in the morning.
+
+## 2026-09-03 census — 9,948 / 11,704 (85.0%), full residual coverage
+
+Source: `node scripts/fetch-baseline-jsonl.mjs --standalone --force` fetched
+2026-09-03 08:13 UTC (row timestamps 09:07 UTC, `oracle_lane: "honest"`, i.e.
+post-#5461 so every number is leak-checked), edition map
+`website/public/benchmarks/results/test262-file-editions.json` (`ES2015`).
+Reproduce with `.tmp/census0903/census.mjs`; per-cluster TSVs (path, status,
+truncated error) land in `.tmp/census0903/`.
+
+**ES2015 standalone: 9,948 pass / 11,704 (85.0%) — 1,756 non-pass**
+(1,364 fail · 391 compile_error · 1 compile_timeout), up from **9,905 / 11,704
+(84.6%)** at the 2026-09-02 census: **+43 rows**, from PR #5505 (statements +
+language semantics r2, #5271) and the other lanes that landed overnight.
+
+Note the clustering here is the one in `.tmp/census0903/census.mjs`, which
+differs from the 09-02 census: `class` and `generators` are pulled out of
+`language/expressions` and `language/statements` first, so `expressions` here
+collects what is left of `language/expressions/*`. Compare cluster *sizes*
+across censuses only via that script, not against the 09-02 table.
+
+| Cluster | rows | fail | CE | owner / state |
+| --- | ---: | ---: | ---: | --- |
+| expressions | 244 | 147 | 96 | #5270 — lane complete, in validation |
+| typedarray | 244 | 226 | 18 | #5194 — r2 landed (#5479), r3 planned 09-03 |
+| other built-ins | 197 | 178 | 19 | #5269 — lane complete, in round-3 review |
+| class | 191 | 135 | 56 | #5195 — r2 landed (#5489), r3 planned 09-03 |
+| proxy + reflect | 157 | 133 | 24 | #5196 — **never dispatched**, r3 planned 09-03 |
+| regexp | 140 | 130 | 10 | #5198 codex lane (checkpoint PR #5393) |
+| array + object | 137 | 127 | 10 | #5268 — r2 partial (#5494), r3 planned 09-03 |
+| generators | 121 | 75 | 46 | #680 / #2864 / #1691 codex lane (PR #5063 held) |
+| promise | 118 | 68 | 50 | #5197 — slices B–D landed (#5454), r3 planned 09-03 |
+| for-of + collections | 101 | 65 | 36 | #5267 — r2 landed (#5458), r3 planned 09-03 |
+| statements + lang | 75 | 55 | 20 | #5271 r2 landed (#5505) — residual unowned |
+| module-code | 25 | 19 | 6 | #4759 codex closeout lane |
+| rest | 6 | 6 | 0 | unowned |
+
+The cluster sizes sum to exactly 1,756, so **every non-pass row is accounted
+for**: 948 in the six lanes planned on 09-03, 441 in the two waves in flight,
+286 in codex lanes, and 81 (statements + lang residual, rest) still unowned.
+
+**The 391 compile_errors are the harder half.** They are not spread evenly —
+`expressions` (96), `class` (56), `promise` (50), `generators` (46) and
+`for-of + collections` (36) hold 71% of them, and a compile_error is a refusal
+to emit rather than a wrong answer, so it needs a feature, not a fix. Any plan
+that counts rows without splitting fail from CE is over-promising.
+
+### Cross-cutting blockers — 281 rows no cluster lane can fix
+
+Three defects are not clusters at all: they are single missing capabilities
+whose rows are scattered across other lanes' residual lists. A cluster plan
+that counts them is promising rows it cannot deliver.
+
+| blocker | issue | rows | where they sit |
+| --- | --- | ---: | --- |
+| standalone native generator lowering | #2864 (claimed, live) | 233 | expressions 91 · generators 46 · class 45 · for-of 35 · statements 13 · module-code 2 · proxy 1 |
+| `Reflect.construct` with a distinct NewTarget | #3371 (design checkpoint PR #5400) | 33 | proxy+reflect 11 · typedarray 11 · other built-ins 6 · expressions 2 · promise 2 · array+object 1 |
+| `Reflect.set` with an explicit receiver | #2046 (design checkpoint PR #5397) | 15 | proxy+reflect 7 · typedarray 6 · statements 2 |
+
+**281 rows, 16% of the residual.** Net of them, the six lanes planned today can
+claim at most: typedarray 227, class 146, proxy+reflect 138, array+object 136,
+promise 116, for-of+collections 66. Two caveats on that arithmetic — the 44
+`env::Promise_*` leaks inside the promise cluster and the 3 RegExp-engine
+refusals inside the regexp cluster are *those lanes' own scope*, so they are
+not subtracted; and #3371/#2046 are the proxy+reflect lane's own subject
+matter, held at design checkpoints rather than blocked elsewhere, so #5196's
+plan should treat its 18 as dependent-on-design rather than out of scope.
+
+Reproduce the split with the predicate in the commit that added this section;
+the generator rows are isolated in `.tmp/census0903/_gen.tsv`.
+
+## 2026-09-02 post-wave census — 9,905 / 11,704 (84.6%), +232 rows in one day
+
+Source: `node scripts/fetch-baseline-jsonl.mjs --standalone --force` fetched
+2026-09-02 21:06 UTC (row timestamps 20:27–20:41 UTC, i.e. after PR #5494
+merged at 19:44 UTC, so every wave below is reflected), edition map
+`website/public/benchmarks/results/test262-file-editions.json` (`ES2015`;
+11,778 labelled, 11,704 in the official runner scope).
+
+**ES2015 standalone: 9,905 pass / 11,704 (84.6%) — 1,799 non-pass**
+(1,407 fail · 391 compile_error · 1 compile_timeout), up from
+**9,673 / 11,704 (82.6%)** at the 2026-09-01 evening census: **+232 rows**.
+
+Landed this day (all merged to `main`), in order:
+
+| PR | wave | issue | rows claimed |
+| --- | --- | --- | ---: |
+| #5454 | Promise slices B–D | #5197 | +19 |
+| #5458 | for-of / iterators / collections r2 | #5267 | +37 |
+| #5224 | buffers wave 1 | #5150 | +16 |
+| #5461 | runner: standalone leak check on the in-process path | #5272 | (honesty fix) |
+| #5469 | post-#5224 regression fix (module-global `$__ta_view` pin) | #5150 | (restores 9 host rows) |
+| #5475 | r2 implementation plans (expressions, statements) | #5270/#5271 | (docs) |
+| #5479 | TypedArray r2 | #5194 | +84 |
+| #5489 | class r2 (+ #5194 null-proto follow-up) | #5195 | +28 |
+| #5494 | Array/Object built-ins r2 | #5268 | +21 |
+
+Two process notes worth keeping:
+
+- **#5461 changed what a measurement means.** Before it, the in-process runner
+  (`scripts/run-test262-paths.mts`, every local before/after probe) satisfied a
+  leaked `env::*` import from the JS host and scored the row on what happened
+  next — so a slice could read "fixed" locally while CI scored
+  `host_import_leak`. Every number above is measured with the check in place;
+  the TypedArray lane re-scored its 84 claimed flips afterwards and found no
+  pseudo-pass, but the class lane found one (`constructor-can-be-generator.js`
+  leaks `env::__create_generator`, owned by #680/#2864, now pinned as a leak).
+- **Every wave went through an independent adversarial review before shipping,
+  and five of six had confirmed regressions their own row lists, controls,
+  ratchet gates and equivalence runs all missed** — 13 in total, including two
+  that only appeared on the JS-host lane, one that made a whole class of
+  subclass declarations fail to compile, and one pre-existing defect in the
+  shared carrier-bag key merge (`Reflect.defineProperty` on an existing
+  closed-struct field double-listed the key on `main` too). A row list is not a
+  regression test: none of these shapes were in the cluster lists the planners
+  built, because the lists are drawn from *failing* rows and these broke
+  *passing* behaviour outside the cluster.
+
+Remaining non-pass by cluster (same split as the 09-01 census, so the two are
+comparable):
+
+| Cluster | 09-01 | 09-02 | Δ | Owner |
+| --- | ---: | ---: | ---: | --- |
+| class | 209 | 225 | +16 | #5195 r3 residuals R3-1…R3-7 recorded |
+| typedarray | 300 | 208 | −92 | #5194 residuals (F3/F4 documented) |
+| generators | 318 | 195 | −123 | #680 / #2864 codex lane |
+| array + object | 159 | 179 | +20 | #5268 steps 4/5/7/8/9/10 not started |
+| other built-ins | 150 | 165 | +15 | #5269 in flight (G/H/A/B/L/J/E/D landed) |
+| expressions | 117 | 163 | +46 | #5270 in flight (steps 4–7, 9, 11 open) |
+| proxy + reflect | 157 | 157 | 0 | #5196 not dispatched; #3371 / #2046 blocked |
+| regexp | 148 | 140 | −8 | #5198 codex lane |
+| for-of + collections | 155 | 119 | −36 | #5267 residuals |
+| promise | 140 | 118 | −22 | #5197 slices E–H open |
+| statements + lang | 84 | 79 | −5 | #5271 in flight (0 → 39 of 68 in scope) |
+| module-code | 23 | 24 | +1 | #4759 codex closeout lane |
+| rest | 18 | 27 | +9 | folded into the nearest cluster plan |
+
+The clusters that grew did not regress — the counts move because rows leave a
+cluster when they pass and because this census clusters by path prefix while
+the 09-01 one clustered by the dispatch split; treat the Δ column as a
+direction indicator, not as a per-cluster regression signal. The authoritative
+"no row regressed" evidence is each wave's own before/after on its row list
+plus the merge-group regression gate.
+
 ## 2026-09-01 evening dispatch census at d39779cb — cluster ownership + Fable/Opus fan-out
 
 Source: `node scripts/fetch-baseline-jsonl.mjs --standalone --force` (baselines

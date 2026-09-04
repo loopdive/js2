@@ -73,10 +73,100 @@ export function heterogeneousWidenedModuleGlobalType(
   // same verdict so a conservatively demoted module initializer keeps the
   // representation chosen during selection.
   if (updateRetypesModuleBinding(ctx.oracle, decl)) return { kind: "externref" };
+  // The mirror image of the primitive-slot case below: a REFERENCE-initialized
+  // binding assigned a primitive. See {@link referenceSlotReceivesPrimitive}.
+  if (referenceSlotReceivesPrimitive(ctx.oracle, decl)) return { kind: "externref" };
   const widened = collectHeterogeneouslyAssignedModuleVarNames(ctx.oracle, sourceFile);
   // Deliberately does NOT tag `externrefAccessorVars`: this is a value-carrier
   // widening, not a host-property-access reroute.
   return widened.has(decl.name.text) ? { kind: "externref" } : undefined;
+}
+
+/** Compound assignments whose write-back is always a Number or a BigInt. */
+const NUMERIC_COMPOUND_ASSIGNMENTS: ReadonlySet<ts.SyntaxKind> = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.PlusEqualsToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+]);
+
+/**
+ * The mirror image of the primitive-slot widening above: a module `var`/`let`
+ * whose *reference* initializer pins a concrete struct/vec slot, and which some
+ * assignment stores a *primitive* into.
+ *
+ * `let x = { a: 1 }` types `__mod_x` as `(ref null $obj)` from the initializer,
+ * so a later `x = true` has nowhere to go. `coerceType`'s terminal fallback is
+ * `drop` + `pushDefaultValue`, and the module emits
+ *
+ *     i32.const 1     ;; the boolean
+ *     drop            ;; discarded
+ *     ref.null $obj   ;; stored instead
+ *
+ * which VALIDATES. Every read after the assignment silently answers `null` —
+ * the same class of loss #4204 fixed on the primitive side, in the other
+ * direction. Object, array and `new C()` initializers are all affected;
+ * function-local `let` is not, because only the module-global typer pins the
+ * slot from the initializer.
+ *
+ * Deliberately narrower than {@link assignmentWidens}: it fires only on a tag
+ * disagreement the compiler can PROVE, never on `mixed`. An object slot that
+ * receives an unconstrainable value is the overwhelmingly common shape in real
+ * module code (`let cache = {}; cache = load()`), it is already lowered
+ * correctly, and widening it would be a representation change on a hot path
+ * bought with no evidence. `null` is not a widening trigger either — a nullable
+ * reference already carries it, and `typeof null` is `"object"` so the tag
+ * comparison excludes it on its own.
+ */
+function referenceSlotReceivesPrimitive(ctx: CodegenContext["oracle"], decl: ts.VariableDeclaration): boolean {
+  // An explicit annotation is the representation contract (same rule the
+  // primitive-side collector applies to its own initializer tag).
+  if (decl.type !== undefined || decl.initializer === undefined) return false;
+  if (!ts.isIdentifier(decl.name) || !isModuleScoped(decl)) return false;
+  const list = decl.parent;
+  if (!ts.isVariableDeclarationList(list) || (list.flags & ts.NodeFlags.Const) !== 0) return false;
+  // Only a reference initializer pins a slot that cannot box a primitive. A
+  // `function` tag is excluded on purpose: closure-typed globals already carry
+  // the value correctly today, so widening them would move working code.
+  if (ctx.staticJsTypeOf(decl.initializer) !== "object") return false;
+
+  let receivesPrimitive = false;
+  const writesPrimitive = (assigned: ts.Expression): boolean => {
+    const tag = ctx.staticJsTypeOf(assigned);
+    return tag !== "mixed" && tag !== "object" && tag !== "function";
+  };
+  const targetsThisBinding = (target: ts.Expression): boolean =>
+    ts.isIdentifier(target) && ctx.variableDeclarationOf(target) === decl;
+
+  // The walk crosses nested functions: a callback body writes the same binding.
+  const visit = (node: ts.Node): void => {
+    if (receivesPrimitive) return;
+    if (ts.isBinaryExpression(node) && targetsThisBinding(node.left)) {
+      if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        if (writesPrimitive(node.right)) {
+          receivesPrimitive = true;
+          return;
+        }
+      } else if (NUMERIC_COMPOUND_ASSIGNMENTS.has(node.operatorToken.kind)) {
+        // These write back the result of ToNumeric/ToBigInt by definition. The
+        // logical forms (`||=`, `&&=`, `??=`) are deliberately absent: they
+        // store the right operand unchanged, which may well be a reference.
+        receivesPrimitive = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(decl.getSourceFile());
+  return receivesPrimitive;
 }
 
 /**

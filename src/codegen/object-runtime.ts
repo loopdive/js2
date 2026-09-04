@@ -58,6 +58,7 @@
 import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { classObjectDisplayName } from "./class-static-metadata.js";
 import {
   buildArgumentsToPrimitiveArm,
   buildArgumentsLengthAbsentMiss,
@@ -364,7 +365,12 @@ function classObjectNameMetadata(ctx: CodegenContext): ClassObjectNameMetadata[]
     }
     entries.push({
       className,
-      displayName: ctx.functionNameMap.get(className) ?? className,
+      // (#5271 step 7, G2) A class expression's registry key can be the
+      // synthetic `__anonClass_<n>` id; §10.2.9 says the observable name is the
+      // declared one or, for an anonymous class, the binding it is defined into.
+      displayName: className.startsWith("__anonClass_")
+        ? classObjectDisplayName(ctx, className)
+        : (ctx.functionNameMap.get(className) ?? className),
       structTypeIdx,
       classObjectGlobalIdx,
     });
@@ -2287,13 +2293,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     // shared Instr objects get double-remapped by finalize walks (see
     // `reference_shared_instr_object_dce_double_remap`).
     const getMiss = (): Instr[] => undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
-    const objectProtoIndexGetMiss = protoIndexRecvGetMissInstrs(ctx, 0, 1);
     const HSTR = ctx.hashedStrTypeIdx;
     // (#4194) Scratch externref for the instance-bag consult, appended LAST in
     // the locals list below so no already-baked index moves. Locals 8/9 are the
     // conditional proto-cache pair.
     const ispScratchLocal = protoCacheEnabled ? 10 : 8;
     const explicitReceiverLocal = ispScratchLocal + 1;
+    // (#5194 r3 review F2) The companion consult runs an accessor with the
+    // explicit receiver (param 0 for ordinary reads; the Reflect.get / dyn-view
+    // prototype-walk receiver otherwise), while the brand still comes from
+    // param 0 — the object the chain-exhausted walk is standing on.
+    const objectProtoIndexGetMiss = protoIndexRecvGetMissInstrs(ctx, 0, 1, explicitReceiverLocal);
     const nullProtoRootLocal = objectProtoIndexGetMiss === undefined ? undefined : explicitReceiverLocal + 1;
     const body: Instr[] = [
       // Consume a one-shot explicit receiver. Ordinary [[Get]] calls select
@@ -2405,7 +2415,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // the fnctor walk and the #4176 companion consult are unchanged.
           ...buildInstancePropGetArm(ctx, ispScratchLocal),
           ...(fnctorProtoStartIdx === undefined
-            ? buildVecOrClosurePropGetMissArm(ctx, getMiss)
+            ? buildVecOrClosurePropGetMissArm(ctx, getMiss, explicitReceiverLocal)
             : ([
                 { op: "local.get", index: 0 },
                 { op: "call", funcIdx: fnctorProtoStartIdx },
@@ -2414,7 +2424,7 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: buildVecOrClosurePropGetMissArm(ctx, getMiss),
+                  then: buildVecOrClosurePropGetMissArm(ctx, getMiss, explicitReceiverLocal),
                 },
                 // (#4639/#4637 cross-lane trap, 2026-08-23) TEST before the
                 // cast: `__fnctor_proto_start` answers whatever the S2 store
@@ -5295,7 +5305,20 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
                 { op: "call", funcIdx: objVecNewIdx },
                 { op: "local.set", index: L_ARGS },
                 { op: "local.get", index: L_ARGS },
+                // (#5270 step 8) §7.1.1.1 step 2.b passes the HINT STRING, and
+                // an absent PreferredType is the string `"default"` (step 1),
+                // never the null the internal hint slot uses to encode it.
+                // Passing local 1 raw made a user `@@toPrimitive` method see
+                // `null` where the spec mandates `"default"` (probe p02 logged
+                // `LnullRnull`).
                 { op: "local.get", index: 1 },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "externref" } },
+                  then: stringExtern("default"),
+                  else: [{ op: "local.get", index: 1 }],
+                },
                 { op: "call", funcIdx: objVecPushIdx },
                 { op: "local.get", index: L_METHOD },
                 { op: "local.get", index: 0 },

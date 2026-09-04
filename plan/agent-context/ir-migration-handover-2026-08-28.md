@@ -138,3 +138,42 @@ live truth, superseding the wave-7 table where they differ.
   armed at 22:55Z (`trig_01JYrcPXGySXAfNZpJh21Rnu`) to dispatch when load
   clears, sweep #5181/#5161 to merged, and reconcile claims.
 - Handover PR #5180 merged 21:56Z (this file + diary entry).
+
+## Addendum 2026-09-03 — codex lane retired, spine takeover
+
+- **The parallel codex lane is retired** (project-lead message 2026-09-03).
+  Its R-spine rows R1–R6 (#3520 #3521 #3522 #3523 #3525 #3526) are now on
+  THIS lane's critical path; the "do not duplicate codex work" constraint is
+  lifted. Ledger sweep of the 219 codex claims done at 09:53Z: 214 reconciled
+  (`--complete` where the issue is `done` on main, `--release` otherwise),
+  5 benign refusals on sub-slice slugs of the multi-claim issues #3518/#3529
+  (held by the `-plan` slugs, which were themselves released/completed —
+  verified with `--check`: #3518 released, #3529 done, both read from
+  `origin/issue-assignments`). Scratch trail: session scratchpad
+  `codex-claims-classified.tsv`, `sweep-summary.txt`.
+- **Wave 8/9 status**: #5525 (#5289) released, CLEAN, waiting on the queue;
+  #5528 (#5282) released, CLEAN, in queue; #5530 (#5263+#5262) draft, CI
+  green on `5404b825`, its agent is finishing the final IR-gate re-run —
+  RELEASE on its report (update branch if BEHIND → un-draft → auto-merge).
+  After each merge: `claim-issue.mjs --complete 5289 ttraenkler/opus-5289`,
+  `--complete 5282 ttraenkler/opus-5282`, `--complete 5263 ttraenkler/opus-5263`,
+  `--complete 5262 ttraenkler/opus-5263`. Then claim + dispatch **#5283**
+  (branch `claude/issue-5283-legacy-body-receipt`, plan on main; branch only
+  AFTER #5530 merges).
+- **New issues filed this addendum** (ids from `--allocate --allow-unscanned`,
+  CI `check:issue-ids:against-main` arbitrates): #5297 R4 compat-lane
+  symbolization slice (the real blocker #5525 found; branch after #5525
+  merges); #5298 kind-neutrality line-pinned evidence (tooling, S); #5299
+  prepared-callable rows missing the receipt triple (R9 denominator, branch
+  after #5530); #5300 from-ast overload call-site plan gap.
+- **Spine-takeover audit** (architect `arch-spine-takeover`, output
+  `plan/agent-context/spine-takeover-2026-09-03.md` on
+  `claude/docs-spine-takeover`) — spawn blocked twice on the load gate
+  (≥2 on this 4-core box while wave-9 shards run). Re-spawn when 1-min load
+  < 2; it audits R1–R6 checkpoints, judges whether `opus-3522-f4` on R3 is
+  live, lists the 14 R9 readers with file:line, and proposes a 2-wave
+  dispatch of disjoint slices.
+- **Lesson banked**: the orchestrator owns draft state. The MCP
+  `create_pull_request` result reports `draft:false` even when draft was
+  requested, which led one agent to re-draft an already-released PR; briefs
+  now say "never toggle the draft flag".
