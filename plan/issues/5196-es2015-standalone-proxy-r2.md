@@ -2112,3 +2112,48 @@ not a fix, so it was not made. The honest reading of the gate is therefore:
 **`neverWorseThanBase` is FALSE**, on exactly these two WASI programs, for a
 defect that is base's and that the lane makes reachable. It belongs to whoever
 owns `emitDefinePropertyDescRuntime`'s WASI path.
+
+### Verification on resumption — test262 row slices, base vs lane
+
+Run with `scripts/run-test262-paths.mts … --standalone --isolate` (a fresh child
+per row, 120 s cap — the in-process mode is what hung the previous
+implementer's 212-row batch for 80 minutes and was killed at `exit=137`). Base
+is the `git archive` extract of `4fa179f8` at `.tmp/basetree`, its `src/`
+verified byte-identical to the reviewer's copy.
+
+| slice | rows | base pass | lane pass | NEW non-pass on lane |
+|---|---|---|---|---|
+| `built-ins/Reflect/**` | 153 | 122 | **126** | 0 (see the artifact note) |
+| `built-ins/Proxy/**` LP-00 | 50 | 30 | **31** | 0 |
+| `built-ins/Proxy/**` LP-01 | 54 | 34 | **40** | 0 |
+| `built-ins/Proxy/**` LP-02 | 53 | 27 | **32** | 0 |
+| `built-ins/Proxy/**` LP-03 | 49 | 27 | **29** | 0 |
+| `built-ins/Proxy/**` LP-04 | 54 | 31 | **33** | 0 |
+| `built-ins/Proxy/**` LP-05 | 51 | 35 | 35 | 0 |
+| `language/expressions/new/**` + `revocable/` | 59 | 56 | 56 | 0 |
+| **total** | **523** | **362** | **382** | **0** |
+
+**Net +20 passes over 523 rows measured on BOTH trees, zero rows lost.** All 311
+`built-ins/Proxy/**` rows and all 153 `built-ins/Reflect/**` rows are covered.
+The wins are the round's own: four `return-abrupt-from-property-key` rows (the
+C5 ToPropertyKey coercion), `Reflect/apply/target-is-not-callable-throws`, nine
+`trap-is-not-callable-realm` / `null-handler-realm` rows, and the four R3-4
+revoker rows (`revocation-function-name`, `-length`, `-property-order`,
+`-not-a-constructor`) — which is the full set this lane claimed for R3-4.
+
+**Load artifacts, named so they are not mistaken for regressions.** The runs
+shared a 4-core box with three other agents and up to four concurrent isolate
+workers, so twenty rows changed non-pass KIND (`fail` → `error`/`compile_error`)
+with reasons that are all `spawnSync … ETIMEDOUT` or `compilation timeout
+(~15 s)`. Every one was already non-pass on base. The single row the diff called
+a NEW non-pass — `Reflect/getPrototypeOf/target-is-symbol-throws.js`,
+`compile_error compilation timeout (15286.83 ms)` — was **re-run alone on the
+lane and PASSES** (`{ pass: 1 }`). `Reflect.getPrototypeOf` is untouched by this
+change-set.
+
+**Rows given up, honestly.** The 222-row function-metadata control set was NOT
+run on either tree inside this session's budget (isolate mode costs ~15 s/row on
+this box and the two trees double it). It is unmeasured here, not
+measured-and-clean — and it is the set that would most directly exercise the F5
+revoker field rename, whose evidence therefore rests on the four `revocable/`
+rows above, `p/meta*`/`p/tof` probes and the `__sget_proxy` disappearance.
