@@ -18,6 +18,138 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## Handover (2026-09-04, session claude/es6-test262-standalone-g10c7u)
+
+### Where the goal stands
+
+ES2015 standalone: **10,079 / 11,704 (86.1%)** on the baseline promoted after
+PR #5561 (02:45 UTC). Day 2026-09-03 → 09-04 landed seven PRs (#5505, #5526,
+#5527, #5534, #5550, #5558, #5561): 9,905 → 10,079, **+174 rows**. The
+compile_error count did not move (380) — every wave was `fail` work.
+
+### What is in flight (this PR and the lanes behind it)
+
+| lane | issue | worktree / branch | state at handover |
+| --- | --- | --- | --- |
+| class | #5195 | `.claude/worktrees/wf_16f0b7f5-bf0-5` / `worktree-wf_16f0b7f5-bf0-5` | **in this PR** — r3-2/4/5/7 kept, r3-3 reverted; three review rounds; 19 rows |
+| proxy + reflect | #5196 | `.claude/worktrees/wf_16f0b7f5-bf0-3` / `worktree-wf_16f0b7f5-bf0-3` | **in this PR** — R3-0/2/4/3-E2 + review fixes F1–F6; +20 rows; F9 (WASI-only trap where main compile-failed) recorded, not fixed |
+| for-of + collections | #5267 | `.claude/worktrees/wf_9d1e6808-4e2-1` / `worktree-wf_9d1e6808-4e2-1` | **in this PR** — five steps kept, R3-6 reverted after review; 15 rows |
+
+### What the next session should do first
+
+1. **Watch the open PR** from `claude/es6-test262-standalone-g10c7u` until the
+   merge queue lands it; a `github-actions[bot]` `hold` is a real merged-baseline
+   regression — diagnose the cited run, fix on the branch, re-enqueue once.
+2. **Refetch the standalone baseline and re-run the census**
+   (`node scripts/fetch-baseline-jsonl.mjs --standalone --force`, then
+   `.tmp/census0903/census.mjs` — the script is not committed; it is a 40-line
+   reader of `test262-file-editions.json` + the baseline JSONL, easy to recreate).
+3. **The CE mass is the next frontier**: expressions 96, class 56, promise 50,
+   generators 46, for-of 36 compile_errors. A compile_error is a refusal to emit,
+   so these need features, not fixes — plan them as such. #2864 (native
+   generator carrier) gates 233 rows across seven clusters and is claimed and
+   live in another lane: never start a parallel implementation.
+4. Lanes handed over unshipped (if any, per the table) resume from their
+   worktree branch: merge `origin/main` first, then the issue's Handover steps.
+
+### Process lessons from this session (load-bearing)
+
+- **A random 1,200-row sample of baseline-passing standalone rows through the
+  CI harness** (`TEST262_PATH_FILTER_FILE` with `test/`-prefixed paths,
+  `run-test262-vitest.sh`, quickjs oracle) **before every wave PR** caught the
+  #5534 merge-queue park that three review rounds and all gates missed. Every
+  flagged row is A/B'd against a `git archive` of `origin/main`; local artifacts
+  to expect: `RegExp/regexp-modifiers/*` compile errors (fail on main too), a
+  `compile_timeout` under load (re-run alone), and a "quickjs provider is not
+  built" failure in a worktree missing the `.test262-cache/quickjs*` links.
+- **Adversarial review with skeptics, repeated on each fix round.** Of ten
+  waves reviewed this way, nine shipped-or-would-have-shipped a confirmed
+  regression the lane's own row list, controls, five gates and 8-shard
+  equivalence run all missed. Fix rounds are new code: review them too (the
+  class lane needed three rounds; a typedarray fix's "single struct.new site"
+  claim missed a second site and every module on that path failed Wasm
+  validation — grep, do not trust).
+- **The failure family to hunt for is "a working program now throws"**: every
+  confirmed regression across the class and proxy lanes was a "provable"
+  predicate (heritage is not a constructor, chain is all classes, alias is the
+  Proxy constructor, revoker is non-constructable) that resolved by NAME or by
+  declaration shape without a single-assignment / shadowing proof. Decline to
+  base unless the proof holds under reassignment, destructuring, loop heads,
+  parameters, `eval`/`with`, and shadowing.
+- **Environment**: worktree `node_modules` / `test262` were symlink CHAINS
+  through sibling worktrees — removing a shipped worktree broke the others.
+  Link them directly to `/home/user/js2/node_modules` and
+  `$(readlink -f /home/user/js2/test262)` before removing any worktree. The
+  vitest fork heap must be 4 GB for suites that link the runtime-eval provider
+  (`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, single fork) — including the pre-push
+  hook, so push in the background with that variable set. `--target wasi` does
+  NOT set `ctx.standalone`; measure each arm on the targets its gate reaches.
+- **CI is node 25, the container is node 22.** A node-oracle assertion
+  (`new Function` in a test) can hold on one and not the other: V8 in node 25
+  no longer gives sloppy functions own `caller`/`arguments`, so a pin that
+  asserted node's answer for `G.caller` (class extending a plain function)
+  failed only in CI. Probe the running engine instead of asserting a fixed
+  answer, and run the changed test files under node 25 before pushing
+  (`npx -p node@25` fetches one; `PATH=<its bin>:$PATH` puts the vitest
+  forks and the compiler pool on it).
+- **A merge-group shard that hits its 40-minute cap with no bot hold is a
+  runtime wedge, not a slow family — and the PR-level checks cannot see it.**
+  Fixture-graph rows (`language/module-code/**` self-imports and
+  `_FIXTURE` graphs, ~200 rows) execute IN-PROCESS in the vitest fork
+  (`tests/test262-shared.ts`), outside the compiler pool's 30 s kill, so one
+  infinite loop caps the whole shard; the pattern is bimodal (13-18 min or
+  40 min) and deterministic per shard set. The 2026-09-04 instance: the
+  widened `identifierIsWrittenTo` counted `X.prop = v` as a write to X, which
+  made `Test262Error` (sta.js assigns its prototype's `toString`) read as
+  reassigned in EVERY row, declined the `new` fold everywhere, and the dynamic
+  fallback looped on `namespace/internals/is-extensible.js`. Diagnose by
+  reproducing one hung shard locally with CI's env (`TEST262_CHUNK_INDEX` /
+  `TEST262_CHUNK_TOTAL` on `tests/test262-chunk-dynamic.test.ts`, the quickjs
+  adapter built for the current bundle — without it eval-dependent rows fail
+  fast and the wedge is invisible), then `node --prof` the single row through
+  `runTest262File`. Artifact downloads from `blob.core.windows.net` are blocked
+  by the container proxy, so the partial shard JSONL is not reachable.
+- **Model attribution**: workflow agents inherit the session model unless the
+  script pins `model`; after the `/model` switch, unpinned "Opus" agents ran on
+  Fable 5.1 — two `Model:` trailers had to be rewritten (unpublished commits
+  only). Pin `model: 'opus'` explicitly when the directive says Opus.
+- **Operational**: never `pkill`/`pgrep` a pattern that appears in your own
+  command line (it killed the integrator shell twice); kill by PID after a
+  cwd check, and only when your own cwd is not that worktree. A test262 batch
+  silent for 15 minutes is a pre-existing compile hang (labelled
+  continue/break over nested for-of with closures) — kill and split it.
+
+## 2026-09-04 census — 10,079 / 11,704 (86.1%) after #5561
+
+Baseline refetched 2026-09-04 02:45 UTC (`oracle_lane: "honest"`, promoted
+from the merge of PR #5561 — typedarray r3, #5194), same script and edition
+map as the censuses below.
+
+**10,079 pass / 11,704 (86.1%) — 1,625 non-pass** (1,244 fail · 380
+compile_error · 1 compile_timeout): **+41 rows** over the post-#5558 census.
+The rows sum to 1,625.
+
+| Cluster | rows | fail | CE |
+| --- | ---: | ---: | ---: |
+| expressions | 228 | 131 | 96 |
+| typedarray | 201 | 183 | 18 |
+| class | 191 | 135 | 56 |
+| other built-ins | 168 | 160 | 8 |
+| proxy + reflect | 155 | 131 | 24 |
+| regexp | 139 | 129 | 10 |
+| generators | 121 | 75 | 46 |
+| array + object | 121 | 111 | 10 |
+| promise | 101 | 51 | 50 |
+| for-of + collections | 98 | 62 | 36 |
+| statements + lang | 75 | 55 | 20 |
+| module-code | 25 | 19 | 6 |
+| rest | 2 | 2 | 0 |
+
+Day total since the 2026-09-02 census (9,905): **+174 rows** across seven
+PRs. The compile_error count is unchanged at 380 across all of them — every
+wave was `fail` work; the CE mass (expressions 96, class 56, promise 50,
+generators 46, for-of 36) is what the next plans must open.
+
 ## 2026-09-04 census — 10,038 / 11,704 (85.8%) after #5558
 
 Baseline refetched 2026-09-04 01:17 UTC (`oracle_lane: "honest"`, promoted

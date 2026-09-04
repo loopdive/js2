@@ -19,6 +19,7 @@
  * and stops at a bounded depth.
  */
 import { ts } from "../ts-api.js";
+import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import type { CodegenContext } from "./context/types.js";
 
 const TRACE_DEPTH_LIMIT = 4;
@@ -123,4 +124,93 @@ export function isDirectProxyBinding(ctx: CodegenContext, expr: ts.Expression): 
     if (init && init !== e) return direct(unwrap(init));
   }
   return false;
+}
+
+/**
+ * (#5196 R3 review F1/F3) The single-assignment proof `variableInitializerOf`
+ * demands but does not itself perform.
+ *
+ * `oracle.variableInitializerOf` is documented as "the binding-resolution seam
+ * for analyses that SEPARATELY PROVE single assignment" (`src/checker/oracle.ts`).
+ * An analysis that treats its answer as the binding's value without that proof
+ * reads a REASSIGNED binding as its declaration initializer. Measured
+ * 2026-09-04, standalone: `var P = Proxy; class K {…}; P = K; new P(5, 6)`
+ * routed the `new` through the Proxy constructor path and produced
+ * `undefined false object` where node and the base tree both produce
+ * `5 true object`.
+ *
+ * The proof is `const`, or a `var`/`let` declarator that no in-file syntax
+ * writes. The write scan is over-approximating by NAME (the `cjs-rewrite`
+ * rationale): a same-named binding in another scope can make us DECLINE a
+ * valid claim, which costs only the optimisation, but can never make us accept
+ * a binding that is genuinely written.
+ */
+export function isSingleAssignmentBinding(ctx: CodegenContext, id: ts.Identifier): boolean {
+  // A second declaration of the same binding (`var r = a; var r = b;`) is a
+  // write under another name, and the declarator scan below cannot see it.
+  const decls = ctx.oracle.declarationsOf(id);
+  if (decls.length !== 1) return false;
+  const decl = decls[0]!;
+  if (!ts.isVariableDeclaration(decl) || decl.initializer === undefined) return false;
+  // A destructuring binding, a `for (x of …)` head, or a `catch` parameter is
+  // not a plain single-initializer declarator.
+  if (!ts.isIdentifier(decl.name)) return false;
+  if (!ts.isVariableDeclarationList(decl.parent) || !ts.isVariableStatement(decl.parent.parent)) return false;
+  const sourceFile = decl.getSourceFile();
+  if (sourceFile !== id.getSourceFile()) return false;
+  if ((decl.parent.flags & ts.NodeFlags.Const) !== 0) return true;
+  return !identifierIsWrittenTo(sourceFile, decl.name.text);
+}
+
+/**
+ * (#5196 R3-0) True when `expr` evaluates to the `Proxy` CONSTRUCTOR itself —
+ * the bare `Proxy` binding, a realm-global read of it
+ * (`$262.createRealm().global.Proxy`, the shape every
+ * `built-ins/Proxy/**\/*-realm*` row uses), or a single-initializer alias of
+ * either.
+ *
+ * Distinct from {@link tracesToProxyValue}, which asks whether a value IS a
+ * proxy. This asks whether `new <expr>(t, h)` MAKES one — so a binding
+ * initialized from such a `new` is a proxy carrier and must keep the open
+ * externref representation, exactly as a syntactic `new Proxy(t, h)` does.
+ */
+export function tracesToProxyConstructorValue(ctx: CodegenContext, expr: ts.Expression, depth = 0): boolean {
+  if (depth > TRACE_DEPTH_LIMIT) return false;
+  const e = unwrap(expr);
+  if (ts.isIdentifier(e)) {
+    const init = ctx.oracle.variableInitializerOf(e);
+    // (#5196 R3 review F1) An alias hop is only sound under a single-assignment
+    // proof — otherwise `var P = Proxy; P = K; new P(5, 6)` constructs a proxy
+    // from a binding that no longer holds `Proxy`. A reassigned alias DECLINES
+    // (falls back to the base lowering) rather than claiming the wrong answer.
+    if (init && init !== e) {
+      if (!isSingleAssignmentBinding(ctx, e)) return false;
+      return tracesToProxyConstructorValue(ctx, init, depth + 1);
+    }
+    return e.text === "Proxy";
+  }
+  // A `.Proxy` read is claimed ONLY off a realm global; a `.Proxy` property of
+  // an arbitrary object keeps its existing lowering.
+  if (ts.isPropertyAccessExpression(e) && e.name.text === "Proxy") {
+    return isRealmGlobalExpression(ctx, e.expression, depth + 1);
+  }
+  return false;
+}
+
+/** `globalThis`, `$262.createRealm().global`, or a single-initializer alias. */
+function isRealmGlobalExpression(ctx: CodegenContext, expr: ts.Expression, depth: number): boolean {
+  if (depth > TRACE_DEPTH_LIMIT) return false;
+  const e = unwrap(expr);
+  if (ts.isIdentifier(e)) {
+    const init = ctx.oracle.variableInitializerOf(e);
+    if (init && init !== e) return isRealmGlobalExpression(ctx, init, depth + 1);
+    return e.text === "globalThis";
+  }
+  if (!ts.isPropertyAccessExpression(e) || e.name.text !== "global") return false;
+  const call = unwrap(e.expression);
+  return (
+    ts.isCallExpression(call) &&
+    ts.isPropertyAccessExpression(call.expression) &&
+    call.expression.name.text === "createRealm"
+  );
 }

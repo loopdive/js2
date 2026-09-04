@@ -753,7 +753,7 @@
     {
       "name": "JSON",
       "testCategories": ["built-ins/JSON"],
-      "passCount": 111,
+      "passCount": 112,
       "totalCount": 165,
       "editionSpread": [
         {
@@ -763,7 +763,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 22,
+          "pass": 23,
           "total": 28
         },
         {
@@ -1001,7 +1001,7 @@
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 415,
+      "passCount": 417,
       "totalCount": 440
     },
     {
@@ -1031,7 +1031,7 @@
     {
       "name": "Computed property names",
       "testCategories": ["language/computed-property-names"],
-      "passCount": 91,
+      "passCount": 100,
       "totalCount": 133
     },
     {
@@ -1049,7 +1049,7 @@
         "built-ins/GeneratorFunction",
         "built-ins/GeneratorPrototype"
       ],
-      "passCount": 2121,
+      "passCount": 2122,
       "totalCount": 2486
     },
     {
@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 364,
+      "passCount": 368,
       "totalCount": 461
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1397,
+      "passCount": 1407,
       "totalCount": 1955
     },
     {
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 748,
+      "passCount": 771,
       "totalCount": 1072
     },
     {
@@ -1168,7 +1168,7 @@
         "language/expressions/async-function",
         "language/statements/async-function"
       ],
-      "passCount": 304,
+      "passCount": 305,
       "totalCount": 348
     },
     {
@@ -1216,7 +1216,7 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2456,
+      "passCount": 2457,
       "totalCount": 3812
     },
     {

@@ -200,6 +200,7 @@ import {
   tryEmitPinnedStructMemberGet,
   typeErrorThrowInstrs,
 } from "./property-access.js";
+import { classObjectRestrictedProperty } from "./class-static-metadata.js"; // (#5195 r3-7)
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
@@ -2189,7 +2190,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       }
     }
     if (ctx.classSet.has(resolvedClass) && !bareNameIsNonClass) {
-      const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName);
+      const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName, staticReceiver);
       if (__r !== PA_FALLTHROUGH) return __r;
     }
   }
@@ -2218,6 +2219,10 @@ function emitClassStaticMemberRead(
   fctx: FunctionContext,
   resolvedClass: string,
   propName: string,
+  // (#5195 r3 review round 3, r4-A) The receiver expression this read was
+  // written on, when there is one. `undefined` from the class-EXPRESSION
+  // caller, whose receiver is the class literally.
+  receiver?: ts.Expression,
 ): PADispatchResult {
   const fullName = `${resolvedClass}_${propName}`;
   // #2020: static fields are inherited. `class B extends A {}; B.count`
@@ -2229,6 +2234,21 @@ function emitClassStaticMemberRead(
     fctx.body.push({ op: "global.get", index: globalIdx });
     const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
     return globalDef?.type ?? { kind: "f64" };
+  }
+  // (#5195 r3-7) §10.2.4 AddRestrictedFunctionProperties: a class object is a
+  // strict function, so `C.caller` / `C.arguments` are the %ThrowTypeError%
+  // accessor inherited from %Function.prototype% — READING one throws. Only
+  // when the class declares nothing of that name (a declared `static caller`
+  // shadows the inherited accessor and keeps its value); the static-FIELD
+  // lookup above has already answered in that case.
+  if (classObjectRestrictedProperty(ctx, resolvedClass, propName, receiver)) {
+    emitThrowTypeError(
+      ctx,
+      fctx,
+      "'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functions",
+    );
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
   }
   // ClassName.prototype — return a singleton prototype global (externref)
   // so that Object.getPrototypeOf(instance) === ClassName.prototype holds.
