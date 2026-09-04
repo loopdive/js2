@@ -236,6 +236,22 @@ loc-budget-allow:
   # `typeIdx` numbering for one contract. The rebased contracts are this
   # module's private state, so the accessor cannot live anywhere else.
   - src/codegen/program-abi-session.ts
+  # W1-G (2026-09-04): +5 lines in `effectiveIrParamTypeNode` — a
+  # `param.parent === undefined` guard plus its three-line comment. The
+  # implicit-derived-constructor pipeline (`lowerImplicitConstructorAstToIr`)
+  # lowers a factory-built `ConstructorDeclaration` whose parameters have no
+  # `parent`; `ts.getJSDocType` walks `parent` and threw
+  # `Cannot read properties of undefined (reading 'kind')` — an
+  # `unexpected-internal-throw` invariant, i.e. a hard compile error.
+  # Measured 11186 -> 11191. The guard MUST live in this function: its own doc
+  # comment states that keeping the param-type lookup in one helper is what
+  # stops the selector and the shared AST-to-IR signature resolver from
+  # disagreeing about the same declaration, so a second copy of the lookup
+  # elsewhere would reintroduce exactly that divergence. Fixing it in the
+  # synthesiser instead (`ts.setParent`) was rejected: it hides the same class
+  # of throw for the next synthetic node rather than making the chokepoint
+  # total.
+  - src/ir/select.ts
 # R1 must resolve exact checker declarations to the one authoritative identity
 # inventory. TypeOracle deliberately does not expose ts.Symbol/ts.Type objects,
 # so these two structural joins remain reviewed raw-checker boundaries until
@@ -5261,6 +5277,100 @@ diff must be exactly row 15 removed. `tests/issue-3522-*`, `issue-3519-*`,
 node scripts/claim-issue.mjs 3520:w1g-implicit-ctor-param ttraenkler/<agent> --branch claude/issue-3520-w1g-implicit-ctor-param
 ```
 
+### W1-G cluster C row 15 — landed (2026-09-04)
+
+One guard in `effectiveIrParamTypeNode` (`src/ir/select.ts`), exactly S1 as
+planned. `src/ir/select.ts` 11186 -> 11191 (+5); grant restated in this file's
+frontmatter above. No other source file changed.
+
+**Before / after**, measured with `.tmp/probe-3520-c15.mts` (`analyzeSource` +
+`generateModule({ experimentalIR: true, trackIrOutcomes: true })`), base
+`ac00a24ea9` vs branch, on **both** lanes:
+
+| fixture | base `Child_new` | branch `Child_new` | base sibling | branch sibling |
+| --- | --- | --- | --- | --- |
+| minimal trigger (row a) | `invariant` `unexpected-internal-throw` | `emitted` `class-implicit-constructor` | `Child_sum` `late-preparation-unsupported` | `Child_sum` `emitted` |
+| `type-class-abi` fixture (row b) | `invariant` | `emitted` | `Base_read`/`Child_read` `late-preparation-unsupported` | both `emitted` |
+| two parent params `number`+`string` (row c) | `invariant` | `emitted` | `Child_sum` `late-preparation-unsupported` | `Child_sum` `emitted` |
+| zero-param parent ctor (row d) | `emitted` | `emitted` | — | — |
+| explicit derived ctor (row e) | `emitted` `class-constructor` | unchanged | — | — |
+| JS `@param {number}` JSDoc (row f) | `emitted` | unchanged | — | — |
+| derived, no own field | **no row at all** | **no row at all** | `Child_read` `emitted` | unchanged |
+
+The base stack is the plan's, verbatim: `canHaveJSDoc` -> `getJSDocTagsWorker`
+-> `getJSDocParameterTags` -> `Object.getJSDocType` -> `effectiveIrParamTypeNode`
+(`select.ts:2193`) -> `from-ast.ts:1148` -> `lowerFunctionAstToIr`
+(`from-ast.ts:1121`) -> `lowerImplicitConstructorAstToIr` (`from-ast.ts:1416`).
+
+**Why the no-own-field derived class never lowers a `class-implicit-constructor`
+terminal** (the plan asked for this fact, and its guess was wrong). It is not
+that the parent `_init` is reused. `IrUnitInventoryBuilder` registers the
+implicit constructor **either way**, but the terminal/support classification
+differs: `src/ir/identity.ts:1321` gates the `addTerminalUnit` call on
+`!hasExecutableConstructor && firstInstanceInitializer`, and
+`firstInstanceInitializer` is set (`:1251`) only for a non-static
+`PropertyDeclaration` **with an initializer**. With no own field, control falls
+to the `else if` at `:1349`, which calls `addSupportUnit` for the same
+`class-implicit-constructor` kind. The integration walk lowers **terminals**
+only (`integration.ts:3265`), so `lowerImplicitConstructorAstToIr` — and hence
+the parentless factory node — is never reached. The defect therefore needs the
+conjunction *derived* x *implicit ctor* x *>=1 own field initializer* x *>=1
+parent ctor param*; only the third promotes the unit to a terminal at all, and
+only the fourth produces a synthetic parameter to walk. That is why it hid.
+
+**S2 — measured, not assumed.** `effectiveIrParamTypeNode` has seven callers:
+`select.ts:2003, 2295, 2361, 2380, 10970` and `from-ast.ts:1126, 1148`;
+`effectiveIrReturnTypeNode` has no synthetic-node caller either. Instrumenting
+the guard to dump a stack whenever it fires: **8 hits** across the 14
+fixture x lane compiles (rows a+b+c contribute 4 synthetic params per lane), and
+the immediate caller was `from-ast.ts:1148` — the lowerer's parameter map — in
+**8 of 8**. The only `select.ts` frame in any hit stack is
+`effectiveIrParamTypeNode` itself. Zero hits on the 34-case corpus (102
+compiles, gc/standalone/wasi) and zero on equivalence shard 1. Corroborating:
+the corpus is 102/102 byte-identical base->branch with no throw on either side,
+which by itself entails the guard fired zero times there. So selection never
+observes a synthetic node today; the instrumentation was removed before commit.
+
+**S3 — no second defect.** `resolveIrType(undefined, override, ...)` resolves
+cleanly from `paramTypeOverrides` for every parent-param type probed
+(`.tmp/probe-3520-c15-s3.mts`): `number`, `string`, a `class`-typed param
+(`Box`), and a mixed `(Box, string, number)` triple all emit
+`Child_new` with zero hard errors on both lanes. S1 was not widened.
+
+**Corpus**: byte identity on the 34-case corpus (20 `tests/dogfood/corpus` + 12
+`website/playground/examples` + `tests/fixtures/extern-demo.ts` +
+`tests/fixtures/add.ts`) x gc/standalone/wasi = 102 rows, sha256 per emitted
+binary. **102/102 identical**, no row moved — as predicted, no corpus program
+has a derived class with an implicit ctor, an own field initializer and a
+parameterised parent.
+
+**Tests**: `tests/issue-3520-implicit-derived-ctor-synthetic-param.test.ts`,
+19 tests. On base: **9 red** — rows a/b/c on each lane plus their three runtime
+rows, every one with `Cannot read properties of undefined (reading 'kind')`;
+rows d/e/f and the no-own-field row green. On branch: 19/19 green. Reverting S1
+alone reproduces exactly that red set, so the file is not vacuous.
+`tests/issue-3520-type-class-abi.test.ts` exits 0 (4/4).
+
+**A defect in the first cut of this test, worth recording.** Its "standalone"
+lane was written `{ standalone: true, nativeStrings: true }`. That name is
+declared `never` (#86) precisely because `generateModule` silently ignores it —
+`ctx.standalone` is derived from `target` — so the lane was a second `gc` lane
+and proved nothing. It was caught only because the corpus script used the same
+option against `compile`, which *does* guard it, and 34/34 standalone rows came
+back `throw`. Every standalone measurement above was re-run with
+`{ target: "standalone" }`; the verdicts did not change, but they were not
+evidence until then.
+
+### Rows 13 and 14 — still open after this slice
+
+The `tests/issue-3520-*` failing-name set is **4** on this branch, and the two
+`support-callable-abi` rows in it are the plan's rows 13 and 14, untouched here:
+*resolves a misleading support label...* and *publishes no support callable when
+a source-name collision demotes the owner*. The other two —
+`date-host-bridge-export-provenance` › *keeps provider-created Date publication
+policy...* and `module-init-callable-abi` › *keeps a same-named user function
+distinct from the exact IR-patched initializer* — are equally pre-existing and
+unrelated to this guard.
 ## Implementation Plan — W1-H cluster C row 14: strict equality on reference operands is claimed, then demoted post-claim (2026-09-04, Fable lane)
 
 ### Measured (main `2ca2591652`, `.tmp/probe-3520-r14.mts`, both lanes identical)

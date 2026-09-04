@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-09-03
+updated: 2026-09-04
 assignee: ttraenkler/codex
 branch: codex/3522-f2-owner-aware-direct-calls
 priority: critical
@@ -4995,6 +4995,175 @@ identical to the 24 known. `tests/issue-3522-*`, `issue-3519-*`,
 node scripts/claim-issue.mjs 3522:w1c-super-accessor ttraenkler/<agent> --branch claude/issue-3522-w1c-super-accessor
 ```
 
+### W1-C super accessor — landed (2026-09-04)
+
+Branch `claude/issue-3522-w1c-super-accessor`, base `origin/main` **5c90d7069a**
+(re-merged to **f85b6276d1** before the final push). The plan named five sites;
+**all five shipped**, but three of its predictions were measured false and are
+corrected below. This slice was implemented once, lost to a container restart
+mid-validation, and salvaged from the dead worktree's uncommitted files — every
+number here was re-measured on this branch, not inherited from that run.
+
+| # | site | shipped | change |
+| --- | --- | --- | --- |
+| S0 | `nodes.ts` / `builder.ts` / `lower.ts` — `class.super_call` payload | yes | a `memberKind?: Exclude<IrClassMemberKind, "static">` field, the exact type `class.call` already carries (`nodes.ts:1547`). Absent means `"method"`, so every pre-#3522 producer resolves the identical key; `lower.ts` passes `instr.memberKind ?? "method"` to the same `IrClassLowering.memberFunc` the `this.prop` accessor arm uses. A member kind, not a new op. |
+| S1 | `select.ts::isPhase1Expr`, property-access block | yes | a `SuperKeyword`-receiver arm placed BEFORE any receiver walk, gated on the new `superAccessorProjection` (a parent-chain accessor walk). Returns without recursing into `isPhase1Expr(super)`. |
+| S2 | `select.ts` — `super.<p> = v` write, **three** statement walkers + the compound guard | yes | the plan named two positions; **three** are reachable (see the correction below), plus a named `super-property-compound` refusal in `isPhase1MutableMemberTarget` for `+=` / `++`. |
+| S3 | `from-ast.ts::lowerPropertyAccess` | yes | intercept before receiver lowering, `requireSuperParentShape` + `requireThisValue`, resolve the getter on `parentShape`, emit `class.super_call` with `"getter"`. |
+| S4 | `from-ast.ts::lowerPropertyAssignment` | yes | the setter twin, in statement position, with the `this.prop = v` arm's value-shape obligations verbatim. |
+
+#### Acceptance — the full annotated twin, measured through `generateModule` (both lanes identical)
+
+Acceptance criterion 4. Fixture: the annotated twin of `tests/dogfood/corpus/classes.js`
+(static field, private field, private method, static factory, `get`/`set label`)
+plus the `rename` write twin.
+
+| unit | base `5c90d7069a` | branch |
+| --- | --- | --- |
+| `Dog_speak` (`super.label` read) | `body-shape-rejected` @select, arm `expr-unhandled:SuperKeyword` | **emitted** |
+| `Dog_rename` (`super.label = v` write) | `body-shape-rejected` @select, same arm | **emitted** |
+| `Animal_new` | `late-preparation-unsupported` @resolve | **emitted** |
+| `Dog_new` | `late-preparation-unsupported` @resolve | **emitted** |
+| `Animal_make` (static factory) | `late-preparation-unsupported` @resolve | **emitted** |
+| `Animal_get_label`, `Animal_set_label`, `Animal___priv_privateMethod` | emitted | emitted |
+| `run` | emitted (`legacyBodyEmitted: true`) | **emitted, `legacyBodyEmitted: false`** |
+| `<module-init>` | `static-class-initialization` @select | unchanged |
+
+**All three of q05's sealed rows now emit**, which confirms the plan's diagnosis
+that they were sealing collateral of the two `super` rows and not a constructor
+defect. The one row that does not move is `<module-init>`, refused as
+`static-class-initialization` — "class static initialization is still emitted by
+the direct module-init path", caused by `static species = "generic"`. That is a
+different, already-named boundary, not this slice's.
+
+**Plan correction — the starting-point table understated the base.** The plan's
+`### Measured starting point` recorded the constructors as already `emitted` and
+concluded "q05's ctors were the sealing consequence … not a ctor defect".
+The conclusion is right; the measurement is not. On the full annotated twin all
+three ctor/static rows are `late-preparation-unsupported` on base, so the
+before-state was the sealed one q05 reported.
+
+#### Non-vacuity by revert (file-copy A/B, one site at a time)
+
+28 assertions in `tests/issue-3522-super-accessor.test.ts`; **20 red on base**,
+all 28 green on the branch. Each site reverted alone against the full branch:
+
+| reverted | failing | first rows lost |
+| --- | --- | --- |
+| nothing | **0** | — |
+| S0 | 2 | only the `memberFunc` resolver unit rows (`getter`, `setter`) |
+| S1 | 12 | every read row + the non-tail write + `super.<field>` guard |
+| S2 | 14 | every write row + both compound/update arm pins |
+| S3 | 10 | every read row (selector claims, lowering cannot build) |
+| S4 | 10 | every write row |
+
+**Plan correction — S0 is not observable through the compile seam.** The plan
+predicted that reverting S0 alone would make `Dog_speak` resolve the *method*
+key and fail (`ir/lower` throw → legacy fallback), caught by row h. Measured:
+reverting S0 alone leaves all 24 compile-seam assertions green and **every
+emitted binary byte-identical across 22 compiles** (11 fixtures × 2 lanes,
+including a three-level chain) — because `IrClassLowering.memberFunc` begins
+with `preparedMemberTarget(target)`, which returns the symbolic callable and
+never consults the kind, and every `class.super_call` this slice emits carries
+such a target. S0 still ships: without it the instruction would describe an
+accessor dispatch as a `"method"` dispatch, and `memberFunc`'s name-resolution
+fallback would compute `Animal_label` instead of `Animal_get_label` the moment a
+target is absent. It is therefore pinned at the one seam where it IS observable
+— the resolver call `lower.ts` makes — by four unit rows.
+
+**Plan correction — three write positions, not two.** The plan named the
+assignment-target check and the tail-assign arm. Measured: a leading
+`super.label = v;` in `renameAndRead(v) { super.label = v; return super.label; }`
+stayed on `expr-unhandled:SuperKeyword` with only those two, because a class
+method's leading statements are walked by `isPhase1StatementListInScope`
+(`nontail-` is a POSITION prefix, not a module-level restriction), and a write
+nested in an `if` block is walked by `isPhase1BodyStatement`. All three ship,
+and the two extra positions have their own fixtures (`NON_TAIL_WRITE`,
+`NESTED_WRITE`). The plan's `:3328` "assignment-target check" is
+`isPhase1MutableMemberTarget`, which is the read-modify-write path only — so it
+carries the `super-property-compound` refusal, not a write arm.
+
+#### Guard rows and one arm that no fixture reaches
+
+| row | code | pins |
+| --- | --- | --- |
+| d `super.<field>` read | `class-member-unsupported` | **red on base** (`body-shape-rejected`); arm `super-property-not-accessor` |
+| e `super.<getter-only> = v` | `class-member-unsupported` | green on base via the ordinary property-write preflight; this slice answers first, same code |
+| f `super.x += "!"` / `super.x++` | `body-shape-rejected`, arm `super-property-compound:PropertyAccessExpression` | **red on base** (`expr-unhandled:SuperKeyword`) |
+| g `extends Error` | `class-member-unsupported` | green on base **and with S1 reverted** |
+
+**Plan correction — row g does not pin `super-property-parent-shape`.** The plan
+expected the builtin-parent fixture to land on that arm. Measured: `Boom_info`
+never reaches either super arm — `Boom` itself is non-projecting (`Boom_new` is
+`class-projection-unsupported`) and the member is refused at the class-member
+level first, identically on base and branch. Row g is a genuine guard (a builtin
+parent stays refused, legacy-owned, answer unchanged) but not an arm pin, and
+the test comment now says so. Consequently **`super-property-parent-shape` is
+defensive-only**: a parent that does not project makes the derived class
+non-projecting too, so its members are refused before the arm runs, and no
+fixture constructed for this slice reaches it. It is kept because it is the
+correct refusal if that invariant ever stops holding, and because leaving the
+case unnamed would return the shape to the anonymous bucket.
+
+Acceptance criterion 2 is therefore met for rows d, e and f, and **not** for row
+g, by measurement rather than by omission.
+
+#### Census — 33 files × 2 lanes = 66 compiles, 216 terminal units
+
+**0 of 216 unit rows moved. 66 / 66 sha256-identical binaries.** As the plan
+predicted, `classes.js`'s `Dog.speak` is the only corpus `super.<accessor>` and
+it is A1-blocked (`any`-typed constructor parameter → no descriptor), so it is
+`class-member-unsupported` on both sides and never reaches the new arm.
+
+#### Findings recorded, not fixed
+
+1. **A pre-existing legacy miscompile on `super.<string accessor> += "!"`.** The
+   module fails to instantiate with `f64.add[0] expected type f64, found block of
+   type externref` on both lanes, at byte-identical offsets on base and on this
+   branch, and identically with `experimentalIR: false`. A direct-route defect,
+   not this slice's; the numeric `++` twin carries the behavioural assertion
+   instead.
+2. The standalone lane returns a WasmGC `i16` array rather than a JS string from
+   an exported string-returning function, so the run fixtures read the answer
+   back through `length` / `charCodeAt`. Measured true of `super.method()` on
+   base too — a lane property, not this slice's.
+
+#### Gates
+
+Bare and again with the CI merge base pinned through `LOC_GATE_BASE`:
+`check-loc-budget` (+133 `select.ts`, +64 `from-ast.ts`, +10 `nodes.ts`, +6
+`builder.ts`, all already granted above; **`lower.ts` net 0** — the S0 note was
+folded into the existing comment rather than taking a god-file grant),
+`check-func-budget` (`isPhase1StatementListInScope` 367 → 381, `isPhase1Expr`
+1119 → 1126, both already granted), `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`. Whole `quality` list:
+`check:ir-dialect`, `check:ir-kind-neutrality` (both re-run immediately after
+S0, as the plan asks), `check:jstag-seam`, `check:ir-layering` (**86 / 86,
+unchanged**), `check:ir-fallbacks` (no unintended, post-claim or module-level
+increase), `check:host-import-policy`, `check:ir-only --policy=hybrid`
+(**READY**), `check:standalone-ir-cutover-corpus` (5 sources, 47 units, no
+legacy), `check:pushraw`, `check:stack-balance`, `check:codegen-fallbacks`,
+`check:any-box-sites`, `check:speculative-rollback`,
+`check:harness-compile-budget` (measured 150774 = budget 150774, ceiling 173391,
+**13.04 % margin left** — the figure is unchanged by this slice; main's
+post-merge baseline refresh moved the budget under it mid-validation, so the
+pre-merge run of the same gate read `ceiling 150803`), `check:ir-adoption`,
+`check:linear-ir`; TS7 no-emit, Biome, Prettier. Equivalence: all **8 shards
+exit 0**, 24 failing = exactly the 24 committed known failures, zero
+regressions. `tests/issue-3522-*`, `issue-3519-*`, `issue-3144-*`,
+`issue-3000-*` (31 files, 504 tests): failing-name-set diff vs base is **empty**
+(24 pre-existing on both sides).
+
+Every gate above was run twice — once before merging `origin/main`
+(**5c90d7069a** era) and once after (**f85b6276d1**), because that merge moved
+`src/codegen/class-bodies.ts` and the harness budget. `src/ir/` itself is
+untouched by main across that span, so the file-copy A/B stays exact; the
+census, the annotated twin and the 28 assertions were re-measured on the merged
+tree and reproduce identically.
+
+The next boundary in this family: `super.<accessor>` compound / update forms
+(the two-dispatch read-modify-write named above), and `super.<accessor>` reached
+from a nested or static context.
 ## Handover — Fable lane, session ending 2026-09-04 ~07:00Z
 
 ### Landed this session

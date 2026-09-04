@@ -2190,7 +2190,12 @@ type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | 
  * comment text is parsed and no synthetic annotation is attached to the AST.
  */
 export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.TypeNode | undefined {
-  return param.type ?? ts.getJSDocType(param);
+  if (param.type) return param.type;
+  // A synthesized parameter (factory-built, no parent — the implicit-ctor
+  // pipeline in from-ast) carries no JSDoc; `getJSDocType` walks `parent`
+  // and would throw. Its type comes from `paramTypeOverrides`.
+  if (param.parent === undefined) return undefined;
+  return ts.getJSDocType(param);
 }
 
 /**
@@ -3327,6 +3332,14 @@ function isPhase1MutableMemberTarget(
   if (target.questionDotToken !== undefined) return false;
   if (ts.isPropertyAccessExpression(target)) {
     if (!ts.isIdentifier(target.name) && !ts.isPrivateIdentifier(target.name)) return false;
+    // (#3522 W1-C) `super.x += e` / `super.x++` are OUT of this slice, and are
+    // named here so they stop landing in the anonymous bucket. The desugaring
+    // would need TWO static dispatches (the parent getter, then the parent
+    // setter) around one read-modify-write; W1-C ships the single-dispatch read
+    // and write only.
+    if (target.expression.kind === ts.SyntaxKind.SuperKeyword) {
+      return shapeNo("super-property-compound", target);
+    }
     // A DOM/extern member write is a CALL pair, whose re-entrancy the
     // read-modify-write desugaring does not model. Refuse at selection.
     if (standaloneDomOperation(target) !== undefined) return false;
@@ -3772,6 +3785,20 @@ function isPhase1StatementListInScope(
         // Identifier or (#3000) a PrivateIdentifier (`this.#x = v`).
         if (!ts.isIdentifier(s.expression.left.name) && !ts.isPrivateIdentifier(s.expression.left.name))
           return shapeNo("nontail-assign-computedprop", s.expression);
+        // (#3522 W1-C) `super.<accessor> = v` as a NON-TAIL statement of a
+        // method body — this is the walker a class method's leading statements
+        // actually use (`nontail-` is a POSITION prefix, not a module-level
+        // restriction). Measured: without this arm `renameAndRead(v) {
+        // super.label = v; return super.label; }` stayed on
+        // `expr-unhandled:SuperKeyword` while the tail-only twin already moved.
+        const superNonTailWrite = superAccessorAdmission(s.expression.left, "setter");
+        if (superNonTailWrite !== "not-super") {
+          if (superNonTailWrite === "refused") return false;
+          if (!isPhase1Expr(s.expression.right, scope, localClasses)) {
+            return shapeNo("nontail-super-assign-rhs", s.expression.right);
+          }
+          continue;
+        }
         const standaloneDomSet = standaloneDomOperation(s.expression.left);
         if (standaloneDomSet?.kind === "member-set") {
           if (!isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses)) {
@@ -5061,6 +5088,13 @@ function isPhase1BodyStatement(
           // bodies, in addition to plain-Identifier field writes.
           if (!ts.isIdentifier(stmt.expression.left.name) && !ts.isPrivateIdentifier(stmt.expression.left.name))
             return false;
+          // (#3522 W1-C) `super.<accessor> = v` in NON-tail position. Same
+          // reason as the read arm: `super` never survives the receiver walk
+          // three lines down, so the shape must be settled before it runs.
+          const superBodyWrite = superAccessorAdmission(stmt.expression.left, "setter");
+          if (superBodyWrite !== "not-super") {
+            return superBodyWrite === "admitted" && isPhase1Expr(stmt.expression.right, scope, localClasses);
+          }
           const standaloneDomSet = standaloneDomOperation(stmt.expression.left);
           if (standaloneDomSet?.kind === "member-set") {
             return (
@@ -5352,6 +5386,14 @@ function isPhase1Tail(
     ) {
       if (!ts.isIdentifier(expr.left.name) && !ts.isPrivateIdentifier(expr.left.name))
         return shapeNo("tail-assign-computedprop", expr);
+      // (#3522 W1-C) `super.<accessor> = v` as the void TAIL — the shape of a
+      // `rename(v) { super.label = v; }` forwarder. Mirrors the non-tail arm in
+      // `isPhase1BodyStatement`; from-ast routes both through the same
+      // `lowerPropertyAssignment`, so select↔build parity is preserved.
+      const superTailWrite = superAccessorAdmission(expr.left, "setter");
+      if (superTailWrite !== "not-super") {
+        return superTailWrite === "admitted" && isPhase1Expr(expr.right, scope, localClasses);
+      }
       const standaloneDomSet = standaloneDomOperation(expr.left);
       if (standaloneDomSet?.kind === "member-set") {
         return (
@@ -8110,6 +8152,95 @@ function superParentClassName(): string | null {
   return declaration ? extendsParentName(declaration) : null;
 }
 
+/**
+ * (#3522 W1-C) Does an accessor of `kind` named `propertyName` PROJECT on the
+ * chain rooted at `className`?
+ *
+ * This is the `super.<accessor>` twin of `classPropertyHasKnownProjectionGap` /
+ * `classPropertyWriteHasKnownProjectionGap`, and it deliberately differs from
+ * them in one way: it resolves ONLY an accessor, never a field. `super.<field>`
+ * reads the prototype chain (and is `undefined` in JS for an own instance
+ * field), and `super.<method>` as a value is not a Phase-1 value — so an own
+ * member of the requested name that is NOT the requested accessor SHADOWS any
+ * inherited one and stops the walk, rather than resolving an ancestor slot the
+ * builder would never dispatch.
+ *
+ * Parity with the builder is the point: `from-ast`'s `findClassMember(shape,
+ * name, kind)` walks the same shape chain for the same `memberKind`, so what is
+ * admitted here is exactly what S3 / S4 can lower. This walk is STRICTER (it
+ * stops at a shadowing own member), which can only refuse earlier — never
+ * claim a shape the lowerer would then have to demote after the claim.
+ */
+function superAccessorProjection(className: string, propertyName: string, kind: "getter" | "setter"): boolean {
+  const exactShapes = currentSelectionOptions?.projectedClassShapes;
+  let exactShape = exactShapes?.get(className);
+  let cursor = currentLocalClassDeclarations.get(className);
+  while (cursor) {
+    const ownMembers = cursor.members.filter(
+      (member) => !!member.name && !classElementIsStatic(member) && classElementMayName(member, propertyName),
+    );
+    const accessor = ownMembers.find(kind === "getter" ? ts.isGetAccessorDeclaration : ts.isSetAccessorDeclaration) as
+      | ts.GetAccessorDeclaration
+      | ts.SetAccessorDeclaration
+      | undefined;
+    if (accessor) {
+      if (ts.isComputedPropertyName(accessor.name)) return false;
+      if (exactShapes) {
+        const descriptor = exactShape?.methods.find(
+          (candidate) => candidate.name === propertyName && candidate.memberKind === kind,
+        );
+        if (!descriptor) return false;
+        // Mirror the two lowering-side obligations exactly (from-ast demotes on
+        // either): a getter must produce a value, a setter must take one arg.
+        return kind === "getter" ? descriptor.returnType !== null : descriptor.params.length === 1;
+      }
+      return classAccessorMayProject(accessor, cursor);
+    }
+    if (ownMembers.length > 0) return false;
+    const parent = extendsParentName(cursor);
+    cursor = parent === null ? undefined : currentLocalClassDeclarations.get(parent);
+    exactShape = exactShape?.parent;
+  }
+  return false;
+}
+
+/**
+ * (#3522 W1-C) Shape verdict for a bare `super.<name>` read or write.
+ *
+ * `super` is a KEYWORD, not an expression: the generic receiver checks end in
+ * `isPhase1Expr(access.expression)`, which has no `SuperKeyword` arm and
+ * answers `false` — so before this existed every `super.<accessor>` landed in
+ * the anonymous `body-shape-rejected` bucket under `expr-unhandled:SuperKeyword`
+ * (measured on `origin/main` 5c90d7069a, both lanes). Callers therefore run this
+ * BEFORE any receiver walk and, on `"admitted"`, must NOT recurse into
+ * `isPhase1Expr(super)`.
+ *
+ * `"not-super"` means the receiver is an ordinary expression and the caller
+ * keeps its existing arms untouched.
+ */
+function superAccessorAdmission(
+  access: ts.PropertyAccessExpression,
+  kind: "getter" | "setter",
+): "not-super" | "admitted" | "refused" {
+  if (access.expression.kind !== ts.SyntaxKind.SuperKeyword) return "not-super";
+  // `super.#x` is a syntax error and `super[e]` is an ElementAccess, so the only
+  // non-Identifier name that can reach here is a defensive impossibility.
+  if (!ts.isIdentifier(access.name)) {
+    shapeNo("super-property-computed", access);
+    return "refused";
+  }
+  const parentClass = superParentClassName();
+  if (parentClass === null || localClassHasKnownProjectionGap(parentClass)) {
+    capabilityNo("class-projection-unsupported", "super-property-parent-shape", access);
+    return "refused";
+  }
+  if (!superAccessorProjection(parentClass, access.name.text, kind)) {
+    capabilityNo("class-member-unsupported", "super-property-not-accessor", access);
+    return "refused";
+  }
+  return "admitted";
+}
+
 function projectedConstructorArity(className: string): number | undefined {
   const exactShapes = currentSelectionOptions?.projectedClassShapes;
   if (exactShapes) return exactShapes.get(className)?.constructorParams.length;
@@ -10144,6 +10275,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // the mangled `__priv_x` slot. Non-class receivers with a private name are
     // a TS error and never reach here.
     if (!ts.isIdentifier(expr.name) && !ts.isPrivateIdentifier(expr.name)) return false;
+    // (#3522 W1-C) `super.<accessor>` READ. Recognised BEFORE any receiver walk
+    // for the same reason the `super(...)` and `super.m(...)` call arms above
+    // exist: `super` is a keyword the generic receiver check cannot accept. The
+    // member is resolved against the PARENT's chain, so a subclass override of
+    // the same accessor is bypassed — which is the whole meaning of `super`.
+    const superRead = superAccessorAdmission(expr, "getter");
+    if (superRead !== "not-super") return superRead === "admitted";
     const standaloneDomGet = standaloneDomOperation(expr);
     if (standaloneDomGet?.kind === "member-get") {
       return isPhase1Expr(standaloneDomGet.access.expression, scope, localClasses);

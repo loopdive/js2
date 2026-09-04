@@ -1,7 +1,7 @@
 {
-  "forEachChildCalls": 150774,
+  "forEachChildCalls": 142936,
   "marginPct": 15,
   "fixtureCallSites": 120,
   "updated": "2026-09-04",
-  "note": "Rebanked 2026-09-04 from a measured 150774 shared-forEachChild traversals (fixtureCallSites=120, margin 15%) for the #3437 representative harness assembly. Reseed with `npx tsx scripts/check-harness-compile-budget.ts --update` when a slowdown is intentional and justified. See the script header."
+  "note": "Rebanked 2026-09-04 from a measured 142936 shared-forEachChild traversals (fixtureCallSites=120, margin 15%) for the #3437 representative harness assembly. Reseed with `npx tsx scripts/check-harness-compile-budget.ts --update` when a slowdown is intentional and justified. See the script header."
 }
