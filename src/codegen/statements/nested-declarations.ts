@@ -1332,6 +1332,13 @@ function compileNestedFunctionDeclarationInScope(
     /** Inner value type of the outer cell (when alreadyBoxed) — the depth the
      * lifted body's struct.get/set should produce/consume. */
     boxedValType?: ValType;
+    /**
+     * (#5303) The declaring slot became a ref cell only AFTER this function's
+     * phase-0 pre-registration, and the capture is READ-ONLY. Keep the
+     * pre-registered VALUE type in the lifted signature and let the forwarding
+     * call site unwrap the cell — see `preRegisteredValueForwarding` below.
+     */
+    forwardUnboxed?: boolean;
   }[] = [];
   // A phase-0 pre-registration is the ABI earlier call sites already emit;
   // keep it across an intermediate promotion (see collectPromotedPreRegisteredSlots).
@@ -1453,15 +1460,20 @@ function compileNestedFunctionDeclarationInScope(
     // body derefs to the right depth.
     const outerBoxedEntry = fctx.boxedCaptures?.get(name);
     const alreadyBoxed = !!outerBoxedEntry;
+    // (#5303) Read-only capture whose declaring slot was boxed after phase 0:
+    // keep the pre-registered value type so already-compiled callers stay valid.
+    const forwardUnboxed =
+      !isMutable && preRegisteredValueForwarding(preRegisteredCaptures, name, outerBoxedEntry, type);
     captures.push({
       name,
-      type,
+      type: forwardUnboxed ? outerBoxedEntry!.valType : type,
       localIdx,
       mutable: isMutable,
       hasTdzFlag,
       tdzFlagIdx,
-      alreadyBoxed,
+      alreadyBoxed: forwardUnboxed ? false : alreadyBoxed,
       boxedValType: outerBoxedEntry?.valType,
+      forwardUnboxed,
     });
   }
   reorderToPreRegisteredAbi(captures, preRegisteredCaptures);
@@ -1992,7 +2004,10 @@ function compileNestedFunctionDeclarationInScope(
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
         if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
         liftedFctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type });
-      } else {
+      } else if (!cap.forwardUnboxed) {
+        // (#5303) `forwardUnboxed` means this param carries the cell's VALUE,
+        // not the cell — registering it here would make every body read
+        // `struct.get` a non-cell.
         const outerBoxed = fctx.boxedCaptures?.get(cap.name);
         if (outerBoxed && (cap.type.kind === "ref" || cap.type.kind === "ref_null")) {
           if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
@@ -2735,6 +2750,60 @@ function reorderToPreRegisteredAbi(
   const order = new Map(preRegistered.map((c, i) => [c.name, i] as const));
   if (!captures.every((c) => order.has(c.name))) return;
   captures.sort((a, b) => order.get(a.name)! - order.get(b.name)!);
+}
+
+/**
+ * (#5303) Third arm of the same ABI contract as the two helpers above — this
+ * one covers the capture's TYPE.
+ *
+ * Phase 0 reserves a capturing sibling's signature from the declaring frame's
+ * slot types, and every direct call compiled before the real lift is emitted
+ * against exactly that signature. A LATER sibling's lift can then box that
+ * declaring slot (`promoteAccessorCapturesToGlobals` boxes a name some other
+ * nested function mutates), which re-aims `fctx.localMap` at a `__boxed_<name>`
+ * ref cell. The real lift re-reads the slot, sees the CELL, and — for a
+ * read-only capture, whose lifted param is the slot type verbatim — publishes a
+ * signature the earlier callers never agreed to. The reserved entry is
+ * overwritten in place, so those calls silently become invalid:
+ * `call[13] expected type (ref null 92), found if of type (ref null 84)`
+ * (moment's `createUTC` → `createLocalOrUTC`, every module 0/N).
+ *
+ * The post-pass that normally repairs a drifted call argument
+ * (`fixCallArgTypesInBody`) cannot reach these: its backward walk stops at any
+ * structured `if`, and a ref→ref capture coercion is emitted as exactly that —
+ * a guarded `ref.test`/`ref.cast` `if`.
+ *
+ * A read-only capture has value-copy semantics, so the declaring frame's cell is
+ * an implementation detail of that frame, not part of this function's ABI. Keep
+ * the pre-registered value type and let the forwarding call site unwrap
+ * (`sourceIsCanonicalBox` in call-identifier.ts). Mutable captures are NOT
+ * affected: their param is `getOrRegisterRefCellType(valueType)` either way, and
+ * that memoized type index is the same before and after the promotion — which is
+ * why only the read-only arm drifts.
+ */
+function preRegisteredValueForwarding(
+  preRegistered: PreRegisteredCaptures | undefined,
+  name: string,
+  outerBoxedEntry: { refCellTypeIdx: number; valType: ValType } | undefined,
+  currentSlotType: ValType,
+): boolean {
+  if (!preRegistered || !outerBoxedEntry) return false;
+  // The slot this lift just read must BE the cell. A `boxedCaptures` entry can
+  // outlive the `localMap` binding it was written with (#3024 promotion deletes
+  // it; a same-named shadow can re-aim it), and in those cases the slot already
+  // carries the value — there is nothing to pin and no drift to undo.
+  if (
+    (currentSlotType.kind !== "ref" && currentSlotType.kind !== "ref_null") ||
+    currentSlotType.typeIdx !== outerBoxedEntry.refCellTypeIdx
+  ) {
+    return false;
+  }
+  const recorded = preRegistered.find((c) => c.name === name)?.valType;
+  if (recorded === undefined) return false;
+  // Pinning is only safe when phase 0 published the cell's INNER value type;
+  // if it already published the cell itself, callers agree on the cell and the
+  // current behaviour is the consistent one.
+  return valTypesMatch(recorded, outerBoxedEntry.valType);
 }
 
 function preRegisterCapturingSibling(

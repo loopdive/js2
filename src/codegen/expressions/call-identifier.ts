@@ -9,7 +9,7 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
-import { captureSourceSlot, pushBoxedTdzFlagRef } from "../closures/capture-source-slot.js";
+import { captureSourceSlot, expectsBoxedCaptureValue, pushBoxedTdzFlagRef } from "../closures/capture-source-slot.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
@@ -3633,6 +3633,10 @@ export function compileIdentifierCall(
           const expectedCapType = captureParamTypes?.[capIdx];
           const liveBoxLocalIdx = fctx.localMap.get(cap.name);
           const liveBoxType = liveBoxLocalIdx !== undefined ? getLocalType(fctx, liveBoxLocalIdx) : undefined;
+          // (#5303) "The callee wants the cell's VALUE, not the cell" — asked
+          // directly rather than through the old non-reference proxy. See
+          // `expectsBoxedCaptureValue`.
+          const expectedIsBoxedValue = expectsBoxedCaptureValue(expectedCapType, boxed);
           const liveBoxIsCanonical =
             !cap.mutable &&
             boxed !== undefined &&
@@ -3640,9 +3644,7 @@ export function compileIdentifierCall(
             liveBoxType !== undefined &&
             (liveBoxType.kind === "ref" || liveBoxType.kind === "ref_null") &&
             liveBoxType.typeIdx === boxed.refCellTypeIdx &&
-            expectedCapType !== undefined &&
-            expectedCapType.kind !== "ref" &&
-            expectedCapType.kind !== "ref_null";
+            expectedIsBoxedValue;
           // A read-only nested function can still cross a frame whose copy of
           // the binding is boxed because a sibling/earlier function required a
           // shared cell.  `captureSourceSlot` quite correctly selects that
@@ -3657,9 +3659,7 @@ export function compileIdentifierCall(
             actualType !== undefined &&
             (actualType.kind === "ref" || actualType.kind === "ref_null") &&
             actualType.typeIdx === boxed.refCellTypeIdx &&
-            expectedCapType !== undefined &&
-            expectedCapType.kind !== "ref" &&
-            expectedCapType.kind !== "ref_null";
+            expectedIsBoxedValue;
           const sourceIdx = liveBoxIsCanonical ? liveBoxLocalIdx! : capSourceIdx;
           const sourceIsBox = liveBoxIsCanonical || sourceIsCanonicalBox;
           fctx.body.push({ op: "local.get", index: sourceIdx });
