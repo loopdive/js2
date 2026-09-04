@@ -1972,3 +1972,62 @@ body cannot satisfy them: it throws for every receiver, including the valid one.
 **Pin.** `tests/issue-5267-r3-2-collection-iterator-proto-next.test.ts` — 2
 cases reading the descriptor off `getPrototypeOf(new Map().keys())` /
 `new Set().values()`. Verified FAILING on the base tree (both).
+
+### Whole-pass result (r3, Opus lane, 2026-09-04)
+
+Six commits on `worktree-wf_9d1e6808-4e2-1`, merge-base `a754fc7c96`:
+R3-1 · R3-6 · R3-7(a) · R3-3(b) · R3-4(a) · R3-2 (metadata slice).
+
+**Flips: 18** (plan's bar was ≥ 40 of a claimed 53 — see "what was not done").
+
+| step | rows flipped |
+|---|---|
+| R3-1 (`@@iterator` live record + sticky exhaustion) | 5 |
+| R3-6 (`delete Array.prototype[@@iterator]` in the array for-of) | 3 |
+| R3-7(a) (collection `@@iterator` own-ness) | 2 |
+| R3-3(b) (patched weak adder before CanBeHeldWeakly) | 2 |
+| R3-4(a) (throwing `next()` does not close) | 2 |
+| R3-2 (own `next` metadata on the two iterator prototypes) | 4 |
+
+**Whole-corpus verification (the ship gate).** Every one of the **1,396
+currently-passing rows** of `language/statements/for-of/**`,
+`built-ins/{Map,Set,WeakMap,WeakSet}/**` and
+`built-ins/{Map,Set}IteratorPrototype/**` was re-run on the lane at the final
+tree: **1,396 / 1,396 pass — zero new non-pass.** Of the 190 non-pass rows,
+all 190 were re-run: 18 flipped to pass, 172 stayed non-pass with their
+baseline error text. 40 `String`/`Array`/`Iterator`/`GeneratorPrototype` rows
+covered the brand-table blast radius (40/40). The js-host lane was measured on
+the 18-row close matrix (16 → 18 pass) and pinned byte-identical
+(sha256) for a Map+Set program across R3-1; the R3-4(a) change is
+deliberately not host-gated and improves the host lane by the same 2 rows.
+
+**Caveat, stated because it bounds the claim:** for the 172 rows that were
+already non-pass, I verified the ERROR TEXT is unchanged only for the groups
+each step touched, not row-by-row against a base run of all 172.
+
+**What was NOT done (36 of the 53 claimed rows), with pointers:**
+
+- **R3-5 (12 rows)** — the interleaved assignment-pattern drive. Not started;
+  it is ~220 lines of new emission and did not fit the window.
+- **R3-2's behavioural half (10 rows)** — needs `emitIterRecNextBody` plus an
+  `$__IterRec` arm in `__extern_get`. The brands, the glue and the singleton
+  seeding it builds on are now on the branch, so the remaining work is the
+  body and the value-read arm.
+- **R3-3's 2 trap rows** — root-caused to the LITERAL array seeding path, not
+  the iterable drive (probe `t9.js`: `new Map([undefined])` traps at module
+  scope). The plan's (a) edits do not reach them; see the R3-3 section.
+- **R3-4 (b)/(c) and the two stretch rows (4)** — untouched.
+- **R3-8 (3 rows)** — not started. It is the `$BoxedNumber` `===` classifier;
+  the plan itself flags it as the highest-blast-radius change and it needs the
+  equivalence gate, which does not fit what is left.
+- **R3-9 (1 row)** — not started (needs the bisect the plan describes).
+- **R3-7 (b)/(c) (3 rows)** — not started.
+
+**Two pre-existing defects the probe set found (neither is in this cluster's
+claimed set, both reproduce identically on the base tree):**
+
+1. `.tmp/p/t4.js` — a labelled `continue`/`break` over nested for-of loops with
+   closures **HANGS the compiler** (>250 s, killed) on `standalone`, on base
+   and lane alike.
+2. `.tmp/p/t6.js` — `for (e of m)` with a PRE-DECLARED assignment-target head
+   over a Map yields nothing (`«""»` instead of `«"ab"»`), base and lane alike.
