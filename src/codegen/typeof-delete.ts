@@ -13,6 +13,10 @@ import { reportError } from "./context/errors.js";
 import { elementReadOfRebindWidenedArray } from "./declarations/array-rebind-element-widening.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
+import {
+  emitUninitialisedFieldTypeofComparison,
+  emitUninitialisedFieldTypeofString,
+} from "./uninitialised-field-undefined.js"; // (#5312)
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { overlayRouteActive } from "./typed-lane-overlay-route.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -2048,6 +2052,10 @@ export function compileTypeofExpression(
     // constructor's write, so the fold ignores every OTHER write reaching the
     // field. Killed on a PROVEN write-kind contradiction only.
     if (staticResult !== null && !typeofFoldContradictedByFieldVerdict(ctx, operand, staticResult)) {
+      // (#5312) An uninitialised declared field holds `undefined` until
+      // something writes it, so the fold is only half the answer.
+      const uninitialised = emitUninitialisedFieldTypeofString(ctx, fctx, operand, staticResult);
+      if (uninitialised !== null) return uninitialised;
       return compileStringLiteral(ctx, fctx, staticResult);
     }
   }
@@ -2375,6 +2383,10 @@ export function compileTypeofComparison(
     staticTypeof = null;
   }
   if (staticTypeof !== null) {
+    // (#5312) Same runtime null test as the plain `typeof` arm, reduced to the
+    // boolean the comparison wants.
+    const uninitialised = emitUninitialisedFieldTypeofComparison(ctx, fctx, operand, staticTypeof, stringLiteral, isEq);
+    if (uninitialised !== null) return uninitialised;
     const matches = staticTypeof === stringLiteral;
     const result = isEq ? (matches ? 1 : 0) : matches ? 0 : 1;
     fctx.body.push({ op: "i32.const", value: result });

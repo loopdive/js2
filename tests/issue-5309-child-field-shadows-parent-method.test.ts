@@ -271,17 +271,19 @@ export function main(): number { return new B().callIt(); }`,
     1,
   );
 
-  // A declared-but-never-initialised field is a PRE-EXISTING gap, not #5309's:
-  // the control below has NO parent method at all and traps identically on base.
-  // js2 does not install `undefined` in the slot, so `this.m === undefined` does
-  // not fold and the call hits a null ref. Pinned as the control that proves the
-  // trap is not caused by the shadow fix; node answers 0 for both.
-  it("control: an uninitialised callable field traps even with NO parent method (pre-existing)", async () => {
-    const source = `class A { p() { return 9; } }
+  // A declared-but-never-initialised field was a PRE-EXISTING gap, not #5309's:
+  // the control below has NO parent method at all and trapped identically on
+  // #5309's base, which is what proved the trap was not caused by the shadow
+  // fix. #5312 has since FIXED it — the nullish-comparison and `typeof`
+  // observation sites now recognise the slot's null reference as this field's
+  // `undefined` — so the row is flipped to node's answer (0) rather than
+  // deleted, keeping the #5309 boundary argument on the record. Full analysis:
+  // tests/issue-5312-uninitialised-field-reads-undefined.test.ts.
+  pin(
+    "an uninitialised callable field with NO parent method returns 0 (was a trap; fixed by #5312)",
+    `class A { p() { return 9; } }
 class B extends A { m!: () => number; f() { return this.m === undefined ? 0 : this.m(); } }
-export function main(): number { return new B().f(); }`;
-    for (const lane of ["gc", "standalone"] as const) {
-      await expect(runLane(source, lane)).rejects.toThrow();
-    }
-  }, 60_000);
+export function main(): number { return new B().f(); }`,
+    0,
+  );
 });
