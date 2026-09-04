@@ -4809,3 +4809,188 @@ in place. The constructor test, the negatives and the census test are untouched.
 
 The next boundary in this family: private ACCESSORS (`get #x`), static private
 methods, and the explicit-constructor receiver-call refusal above.
+
+## Implementation Plan — W1-C `super.<accessor>` read and write (2026-09-04, Fable lane)
+
+The `### Next cluster, in order` list above names this as item 2: the remaining
+genuine class gap in the annotated twin. W1-B (PR #5552) left it untouched.
+
+### Measured starting point (main `e041f82b1e`, both lanes identical)
+
+`.tmp/probe-3522-super.mts` — `analyzeSource` + `generateModule({ experimentalIR,
+trackIrOutcomes })` on an annotated twin of `classes.js`'s `Animal`/`Dog` pair
+(typed fields, `get label` / `set label`, `speak() { return super.label + " barks" }`,
+plus a `rename(v) { super.label = v }` write twin):
+
+| unit | gc | standalone |
+| --- | --- | --- |
+| `Animal_new`, `Animal_get_label`, `Animal_set_label`, `Dog_new` | emitted | emitted |
+| `Dog_speak` (`super.label` read) | `body-shape-rejected` @select | same |
+| `Dog_rename` (`super.label = v` write) | `body-shape-rejected` @select | same |
+
+So on this fixture the constructors already emit — q05's
+`late-preparation-unsupported` ctors were the sealing consequence of sibling
+non-candidacy (`Animal_<computed>` + `Dog_speak`), not a ctor defect. The
+implementer re-measures on the full annotated twin (reconstruct from
+`tests/dogfood/corpus/classes.js`; the q05 file lived only in `.tmp`) and
+records which ctor rows move.
+
+### Root cause — a keyword receiver that two arms never expected
+
+`isPhase1Expr` has explicit arms for `super(...)` (`select.ts:9579`) and
+`super.m(...)` (`:9603`) because `super` is a keyword, not an expression the
+generic receiver checks can accept. A **bare** `super.<name>` is a
+`PropertyAccessExpression` and reaches the generic arm at `select.ts:10141`,
+whose last line is `isPhase1Expr(expr.expression, …)` on `SuperKeyword` —
+which has no arm and returns `false`. Same for the write: the assignment-target
+check (`:3328`) and the tail-assign arm (`:5351`) both end in
+`isPhase1Expr(target.expression)`; `preflightClassPropertyWrite` (`:8100`
+region) returns `true` early because `localClassNameForExpression(super)` is
+null, so nothing refuses with a named arm — the row lands in the anonymous
+`body-shape-rejected` bucket.
+
+On the lowering side, `lowerPropertyAccess` (`from-ast.ts:5196`) and
+`lowerPropertyAssignment` (`:8855`) both begin with `lowerExpr(lhs.expression)`,
+which cannot produce a value for `super`. The `super.method()` arm
+(`:7784-7823`) is the template: intercept BEFORE receiver lowering,
+`requireSuperParentShape(cx)` + `requireThisValue(cx)`, resolve the member on
+the **parent** shape (bypassing any subclass override), emit
+`class.super_call`.
+
+`class.super_call` today hard-codes `memberFunc("method", …)` in
+`lower.ts:2588`; `class.call` (`:2552`) already threads `instr.memberKind`, and
+`IrClassLowering.memberFunc` (`integration.ts:10035`) resolves `"getter"` /
+`"setter"` to the legacy `<Class>_get_<p>` / `<Class>_set_<p>` keys (the same
+keys `Animal_get_label` is emitted under, see the descriptor doc in
+`nodes.ts` for `memberKind`). So the op needs a kind, not a new op.
+
+### Changes, in this order
+
+**S0 — `IrInstrClassSuperCall` gains `memberKind`** (`nodes.ts:1584`):
+`readonly memberKind?: IrClassMemberKind` (absent = `"method"`, exactly like
+`class.call`'s pre-#3144 population). `builder.emitClassSuperCall` takes it as a
+trailing optional param; `lower.ts:2588` becomes
+`cl.memberFunc(instr.memberKind ?? "method", …)`. `effects.ts:164/480` and
+`integration.ts:7958` need no change (kind-agnostic). Run `check:ir-dialect`
+and `check:ir-kind-neutrality` right after S0 — a new instr field is exactly
+what those gates inspect.
+
+**S1 — selector, read** (`select.ts`, inside the `isPropertyAccessExpression`
+arm at `:10141`, BEFORE the `localClassNameForExpression` block): when
+`expr.expression.kind === SuperKeyword`:
+- name must be an `Identifier` → else `shapeNo("super-property-computed")`
+  (private `super.#x` is a syntax error; computed is `super[...]`, an
+  ElementAccess, and stays refused by the element arm).
+- `superParentClassName()` (`:8105`) null or
+  `localClassHasKnownProjectionGap(parent)` →
+  `capabilityNo("class-projection-unsupported", "super-property-parent-shape")`.
+- the parent chain must **declare a `get <name>` accessor** that projects.
+  Write `superAccessorProjection(parentClass, name, "getter" | "setter")`:
+  walk `currentLocalClassDeclarations` from the parent upward (same cursor
+  loop as `classPropertyHasKnownProjectionGap`), find the first own
+  non-static member named `name`; if it is a getter/setter of the requested
+  kind, project it with `classAccessorMayProject` (`:8041`) — or, when
+  `projectedClassShapes` is present, require `exactShape.methods` to carry a
+  descriptor with that `memberKind`. If the first named member is a **field**
+  or a **method**, refuse with `capabilityNo("class-member-unsupported",
+  "super-property-not-accessor")`: `super.<field>` reads the prototype chain and
+  is `undefined` in JS, and a method-as-value is not a Phase-1 value — both are
+  deliberately out of scope, and the arm name keeps them out of the anonymous
+  bucket. Return `true` without recursing into `isPhase1Expr(super)`.
+
+**S2 — selector, write**: in the assignment-target check (`:3328`) and the
+tail-assign arm (`:5351`), add the same `SuperKeyword` receiver arm requiring a
+projected **setter** via `superAccessorProjection(parent, name, "setter")`, then
+`isPhase1Expr(expr.right)`; do not call `isPhase1Expr(super)`. Compound
+(`super.x += 1`) and update (`super.x++`) forms stay refused with a named arm
+`super-property-compound` — the read-modify-write desugaring would need two
+static dispatches and is not this slice.
+
+**S3 — lowering, read** (`from-ast.ts:5196`, first lines of
+`lowerPropertyAccess`): `if (expr.expression.kind === SuperKeyword)` →
+`parentShape = requireSuperParentShape(cx)`, `self = requireThisValue(cx)`,
+`getter = findClassMember(parentShape, name, "getter")` (demote
+`property-access-unsupported` with a message naming the parent if absent or
+`returnType === null`), then
+`emitClassSuperCall(parentShape, self, name, [], getter.returnType, getter.target, "getter")`.
+Mirror the null-result invariant from the `this.prop` getter arm (`:5306`).
+
+**S4 — lowering, write** (`from-ast.ts:8855`, before `lowerExpr(lhs.expression)`):
+`setter = findClassMember(parentShape, name, "setter")` with the same
+one-param / dynamic-boxing / assignability checks as the `this.prop = v` arm
+(`:8873-8883`), then
+`emitClassSuperCall(parentShape, self, name, [value], null, setter.target, "setter")`
+in statement position.
+
+**S5 — nothing else.** `referencesSuper` (`select.ts:10576`) and the ctor
+gate are untouched: W1-B measured `super.m()` inside a derived method already
+admitted, so the only refusals are the two arms above.
+
+### What this must NOT change
+
+- `super.method()` and `super(...)` rows: byte-identical emission (S0's
+  default keeps the `"method"` key).
+- A subclass that **overrides** the getter: `super.label` inside `Dog` must
+  call `Animal_get_label`, never `Dog_get_label` — that is the whole point of
+  resolving on `parentShape`. Pin it with a fixture where `Dog` also declares
+  `get label()` returning a different string.
+- `this.label` in the same method keeps the receiver-shape dispatch (unchanged
+  arm).
+- No new `src/ir` → `src/codegen` import (`check:ir-layering` 86/86).
+
+### Tests — `tests/issue-3522-super-accessor.test.ts` (red on base)
+
+Through the production `compile` seam, both lanes:
+
+| # | fixture | expectation | base |
+| --- | --- | --- | --- |
+| a | the measured twin | `Dog_speak`, `Dog_rename` `emitted`; ctors and accessors unchanged | red (`body-shape-rejected`) |
+| b | run: `new Dog("rex")`, `rename("max")`, `speak()` | `"max barks"`, equal to node; direct emitters POISONED, still runs | red |
+| c | `Dog` overrides `get label()` → `"dog"` | `super.label` yields `Animal`'s value, `this.label` yields `"dog"` | red |
+| d | parent declares `label` as a **field**, `super.label` read | refused at select, arm `super-property-not-accessor`; legacy answer unchanged | green — pins the arm name |
+| e | parent has getter only, `super.label = v` | refused, arm `super-property-not-accessor` | green |
+| f | `super.label += "!"` | refused, arm `super-property-compound` | green |
+| g | parent is a builtin/extern class (`extends Error`) | refused, `super-property-parent-shape` | green |
+| h | selector↔lowering parity: every row S1/S2 admits must reach `emitted`, never a POST-CLAIM demote | zero post-claim entries on a–c | red |
+
+Non-vacuity by file-copy revert, one site at a time (S1, S2, S3, S4, S0's
+kind threading): each must turn at least one of a–c red; S0 reverted alone must
+surface as `Dog_speak` calling the **method** key and failing to resolve
+(`ir/lower` throw → clean legacy fallback), which row h catches.
+
+### Byte-identity cohort
+
+The 33-file × 2-lane census from W1-B (66 compiles, 216 terminal units).
+Prediction: **0 rows move, 66/66 identical.** `classes.js`'s `Dog.speak` is the
+only corpus `super.<accessor>` and its class is A1-blocked (`any`-typed ctor
+param), so no descriptor exists and S1 refuses at `super-property-parent-shape`
+or earlier. If a row moves, name it and its cause; a moved row here is a defect
+in the plan, not a win.
+
+### Gates
+
+The full `quality` list as in W1-B (bare, and again with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`), plus `check:ir-dialect` and
+`check:ir-kind-neutrality` immediately after S0. Growth to grant in this
+file's frontmatter with a dated rationale: `select.ts` ≈ +45, `from-ast.ts`
+≈ +50, `nodes.ts`/`builder.ts`/`lower.ts` ≈ +6; `isPhase1Expr` function budget
+(already granted for W1-B) needs a re-stated grant for this slice.
+Equivalence 8 shards, `EQUIVALENCE_FORK_HEAP_MB=4096`, failing-name set
+identical to the 24 known. `tests/issue-3522-*`, `issue-3519-*`,
+`issue-3144-*`, `issue-3000-*`: failing-name diff vs base empty.
+
+### Acceptance criteria
+
+1. Table rows a–c and h green on both lanes, red on base as recorded.
+2. Rows d–g pin their arm names.
+3. Census 66/66 identical or every moved row explained.
+4. The annotated twin re-measured: which of q05's ctor rows now emit, stated
+   with the sealing reason for any that do not.
+5. Issue `status:` stays `in-progress`; `### W1-C super accessor — landed`
+   appended with the before/after tables.
+
+### Claim
+
+```bash
+node scripts/claim-issue.mjs 3522:w1c-super-accessor ttraenkler/<agent> --branch claude/issue-3522-w1c-super-accessor
+```
