@@ -21,6 +21,7 @@ import {
   bindingUsesOnlyIrPlannedOpenObjectOperations,
 } from "./dynamic-with-shape.js";
 import { collectRedeclarationWidenedModuleVarNames } from "./redeclared-var-widening.js";
+import { sourceContainsWithStatement } from "../source-scan-predicates.js"; // (#5313)
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -1102,6 +1103,12 @@ function collectRedeclaredWithTargetObjects(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
+  // (#5313) A pure skip, not a narrowing: the result loop below `continue`s on
+  // `!withTargetSymbols.has(symbol)`, and only a `ts.WithStatement` can populate
+  // that set — so on a `with`-free source this walk provably marks nothing and
+  // the declaration half it also collects is discarded unread. It ran
+  // unconditionally, at a full pass (3,919 traversals on the #3437 fixture).
+  if (!sourceContainsWithStatement(sourceFile)) return;
   const declarationsBySymbol = new Map<ts.Symbol, ts.VariableDeclaration[]>();
   const withTargetSymbols = new Set<ts.Symbol>();
   const visit = (node: ts.Node): void => {
@@ -1224,7 +1231,8 @@ export function collectGrowableObjectLiterals(
     }
     forEachChild(node, markRealmGlobalWithTargets);
   };
-  markRealmGlobalWithTargets(sourceFile);
+  // (#5313) Same pure skip: every effect above is inside the `isWithStatement` test.
+  if (sourceContainsWithStatement(sourceFile)) markRealmGlobalWithTargets(sourceFile);
   collectRepeatedOrdinaryToPrimitiveObjects(ctx, checker, sourceFile);
   collectRedeclaredObjectIdentityLiterals(ctx, checker, sourceFile);
   collectRedeclaredShapeDivergentObjects(ctx, checker, sourceFile); // (#5270 step 3, cluster M)
