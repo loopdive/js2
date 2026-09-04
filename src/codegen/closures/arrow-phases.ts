@@ -171,6 +171,26 @@ function directInitializedLocalBeforeRegion(
   return undefined;
 }
 
+/**
+ * (#2118 mirror) The binding name a `const f = (…) => …` / `let f = …` arrow
+ * refers to itself by. Inside the lifted body that name resolves to `__self`
+ * (lifted param 0), not to any declared parameter — the same predicate
+ * `collectArrowCaptures` uses to route the recursive call.
+ */
+function selfRecursiveArrowBindingName(owner: ts.Node): string | undefined {
+  if (!ts.isArrowFunction(owner) && !(ts.isFunctionExpression(owner) && !owner.name)) return undefined;
+  const declaration = owner.parent;
+  if (
+    declaration &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer === owner &&
+    ts.isIdentifier(declaration.name)
+  ) {
+    return declaration.name.text;
+  }
+  return undefined;
+}
+
 function canBoxBindingInDominatingParent(
   fctx: FunctionContext,
   closure: ts.ArrowFunction | ts.FunctionExpression,
@@ -204,7 +224,22 @@ function canBoxBindingInDominatingParent(
     localIdx < fctx.params.length && sourceParameter !== undefined && sourceParameter.initializer === undefined;
   const safeInitializedLocal =
     localIdx >= fctx.params.length && directInitializedLocalBeforeRegion(ownerBody, region, name) !== undefined;
-  if (!safeSourceParameter && !safeInitializedLocal) return false;
+  // (#2118) The self-recursive arrow binding resolves to `__self`, lifted param
+  // 0 — always live at entry and never written. It has no entry in
+  // `owner.parameters` (the name belongs to the OUTER binding), so the
+  // parameter test cannot see it, and the local test rejects it for being a
+  // param. Without this a nested closure that captures the recursion boxes it
+  // inside whichever conditional arm happens to construct that closure first,
+  // and every LATER recursive reference is re-aimed at that box — reading null
+  // on any path that skipped the arm. Source order alone then decides whether
+  // the function traps.
+  // `localIdx === 0` alone is NOT proof: in a body that was not lifted, slot 0
+  // is the arrow's own FIRST PARAMETER, and boxing that instead of the
+  // recursion is a miscompile (measured: jest's `test.concurrent.each` fixture
+  // went 3/3 → 0/3). Require the synthetic self param by NAME.
+  const safeSelfBinding =
+    localIdx === 0 && fctx.params[0]?.name === "__self" && selfRecursiveArrowBindingName(owner) === name;
+  if (!safeSourceParameter && !safeInitializedLocal && !safeSelfBinding) return false;
 
   // The parent buffer already contains every preceding top-level statement,
   // so writes before `region` are reflected in the value we box there. Refuse
