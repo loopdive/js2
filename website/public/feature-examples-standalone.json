@@ -93,7 +93,7 @@
         "language/expressions/concatenation",
         "language/expressions/relational"
       ],
-      "passCount": 982,
+      "passCount": 989,
       "totalCount": 1083,
       "editionSpread": [
         {
@@ -103,7 +103,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 40,
+          "pass": 47,
           "total": 48
         },
         {
@@ -177,7 +177,7 @@
     {
       "name": "Comma operator",
       "testCategories": ["language/expressions/comma"],
-      "passCount": 5,
+      "passCount": 6,
       "totalCount": 6,
       "editionSpread": [
         {
@@ -187,7 +187,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 0,
+          "pass": 1,
           "total": 1
         }
       ]
@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4308,
+      "passCount": 4315,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -584,7 +584,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 630,
+          "pass": 636,
           "total": 752
         },
         {
@@ -599,12 +599,12 @@
         },
         {
           "edition": "ES2018",
-          "pass": 264,
+          "pass": 263,
           "total": 317
         },
         {
           "edition": "ES2019",
-          "pass": 8,
+          "pass": 9,
           "total": 25
         },
         {
@@ -639,7 +639,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 354,
+          "pass": 355,
           "total": 397
         }
       ]
@@ -753,7 +753,7 @@
     {
       "name": "JSON",
       "testCategories": ["built-ins/JSON"],
-      "passCount": 112,
+      "passCount": 111,
       "totalCount": 165,
       "editionSpread": [
         {
@@ -778,7 +778,7 @@
         },
         {
           "edition": "ES2026",
-          "pass": 15,
+          "pass": 14,
           "total": 21
         },
         {
@@ -839,17 +839,17 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2195,
+      "passCount": 2218,
       "totalCount": 3161,
       "editionSpread": [
         {
           "edition": "ES5",
-          "pass": 223,
+          "pass": 222,
           "total": 223
         },
         {
           "edition": "ES2015",
-          "pass": 166,
+          "pass": 179,
           "total": 263
         },
         {
@@ -889,7 +889,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 1653,
+          "pass": 1664,
           "total": 2250
         }
       ]
@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1677,
+      "passCount": 1674,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -917,17 +917,17 @@
         },
         {
           "edition": "ES2018",
-          "pass": 627,
+          "pass": 626,
           "total": 648
         },
         {
           "edition": "ES2020",
-          "pass": 4,
+          "pass": 3,
           "total": 43
         },
         {
           "edition": "ES2022",
-          "pass": 23,
+          "pass": 22,
           "total": 27
         },
         {
@@ -1001,7 +1001,7 @@
     {
       "name": "Arrow functions",
       "testCategories": ["language/expressions/arrow-function", "language/expressions/async-arrow-function"],
-      "passCount": 414,
+      "passCount": 415,
       "totalCount": 440
     },
     {
@@ -1025,7 +1025,7 @@
     {
       "name": "Default parameters",
       "testCategories": ["language/statements/function/default-parameter"],
-      "passCount": 1474,
+      "passCount": 1475,
       "totalCount": 1552
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1372,
+      "passCount": 1397,
       "totalCount": 1955
     },
     {
@@ -1092,13 +1092,13 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 879,
+      "passCount": 921,
       "totalCount": 1106
     },
     {
       "name": "Modules (import / export)",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 392,
+      "passCount": 389,
       "totalCount": 731,
       "editionSpread": [
         {
@@ -1113,7 +1113,7 @@
         },
         {
           "edition": "ES2022",
-          "pass": 195,
+          "pass": 192,
           "total": 261
         },
         {
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 742,
+      "passCount": 748,
       "totalCount": 1072
     },
     {
@@ -1228,7 +1228,7 @@
     {
       "name": "Nullish coalescing (??)",
       "testCategories": ["language/expressions/coalesce"],
-      "passCount": 20,
+      "passCount": 22,
       "totalCount": 25
     },
     {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 506,
+      "passCount": 532,
       "totalCount": 1048
     },
     {
@@ -1258,7 +1258,7 @@
     {
       "name": "Class fields (public, private, static)",
       "testCategories": ["language/statements/class/fields"],
-      "passCount": 3709,
+      "passCount": 3710,
       "totalCount": 4979
     },
     {
@@ -1276,7 +1276,7 @@
     {
       "name": "Top-level await",
       "testCategories": ["language/module-code/top-level-await"],
-      "passCount": 185,
+      "passCount": 182,
       "totalCount": 257
     },
     {
@@ -1306,13 +1306,13 @@
     {
       "name": "Object.fromEntries",
       "testCategories": ["built-ins/Object/fromEntries"],
-      "passCount": 8,
+      "passCount": 9,
       "totalCount": 25
     },
     {
       "name": "Array.findLast / findLastIndex",
       "testCategories": ["built-ins/Array/prototype/findLast", "built-ins/Array/prototype/findLastIndex"],
-      "passCount": 83,
+      "passCount": 87,
       "totalCount": 109
     },
     {
@@ -1414,7 +1414,7 @@
     {
       "name": "JSON.parse source text access",
       "testCategories": [],
-      "passCount": 15,
+      "passCount": 14,
       "totalCount": 21
     },
     {
