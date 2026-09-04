@@ -1899,3 +1899,38 @@ plus a patched adder). Verified FAILING on the base tree (`expected +0 to be
 attempt used `new WeakMap([[1, 1]])` and passed on base too: that literal form
 takes the seeding path, not the drive. Recorded because it is the same trap
 the plan's row list can hide.
+
+### Step R3-4(a) — a throwing `next()` / `value` getter must NOT close the iterator (commit 5)
+
+**What changed.** `compileForOfIterator` allocates an i32 `__forof_in_next`
+local, sets it to 1 immediately before `call __iterator_next` and back to 0
+right after the done-check, and `closeOnThrowBody`'s condition becomes
+`doneFlag == 0 && in_next == 0`. §14.7.5.7 step 6: only a binding/body abrupt
+completion (and `break`/`return`) runs IteratorClose; an abrupt IteratorStep /
+IteratorValue returns without it.
+
+**NOT standalone-gated** — the close matrix is shared codegen and the fix is
+spec-correct on both lanes. Measured on both (below); the js-host lane flips
+the same two rows and loses none.
+
+**Measured.**
+
+| corpus | base | lane |
+|---|---|---|
+| 2 claimed rows + 16 close-matrix controls, standalone | 16 pass / 2 fail (`Iterator is not closed. «1» «0»`) | **18 pass / 0 fail** |
+| the same 18 rows, **js-host** | 16 pass / 2 fail | **18 pass / 0 fail** |
+| 131 passing `language/statements/for-of/**` rows (every 5th of the 655 base-pass rows) | pass | **131 / 131 pass** |
+| probe `t10.js` (body throw closes once · `next()` throw does not close · `break` closes · normal completion does not) | node pass, **base fail** (`next throw does not close «2» «1»`) | **pass** |
+
+**Pin.** `tests/issue-5267-r3-4a-forof-next-abrupt-no-close.test.ts`, standalone,
+verified on base as `expected 12 to be 1` (base closes after BOTH throws).
+
+**Host-lane finding, reported not fixed.** On the pin's hand-written source the
+js-host lane answers 0 on base AND on this tree — it does not close on a BODY
+throw in that shape either. The real rows do flip on the host lane, so this is
+a separate pre-existing host gap; the pin deliberately does not assert it (a
+characterization test there would pin wrong behaviour).
+
+**Not done from R3-4:** (b) the `next`-read-once `$__IterRec` field (the
+16-producer change), (c) the §7.4.2 non-Object `next()` result TypeError, and
+the two stretch rows (d)/(e). Untouched.
