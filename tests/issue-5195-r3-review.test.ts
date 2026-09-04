@@ -358,3 +358,109 @@ describe("#5195 r3 review round 2, R3 — an inline class heritage is walked, no
     expect(await runStandalone(INLINE_CLASS_HERITAGE_SOURCE, "issue-5195-r3-review-r3.js")).toBe(1);
   });
 });
+
+describe("#5195 r3 review round 3, R4-A — the poison identifies its receiver by DECLARATION", () => {
+  // The r3-7 poison matched its receiver by NAME: the read arm through
+  // `classExprNameMap`/`classSet`, the write arm through a bare
+  // `ctx.classSet.has(target.expression.text)` with no declaration lookup at
+  // all. With a top-level `class A {}` anywhere in the module, EVERY
+  // function-scope binding spelled `A` — a parameter, `var A = {caller: 5}`, a
+  // destructured binding, a catch parameter, a `for (const A of …)` head, an
+  // arrow parameter — had its `.caller` / `.arguments` READ and WRITE turned
+  // into a TypeError. node and the base tree both return the real value.
+  const SHADOWED_RECEIVER_SOURCE = `
+    class A {}
+    function rVar() { var A = { caller: 5 }; return A.caller; }
+    function wVar() { var A = { caller: 5 }; A.caller = 6; return A.caller; }
+    function rParam(A) { return A.caller; }
+    function wParam(A) { A.caller = 1; return A.caller; }
+    function rDestructured(o) { var { A } = o; return A.caller; }
+    function rCatch() { try { throw { caller: 3 }; } catch (A) { return A.caller; } }
+    function rForOf() { for (const A of [{ caller: 4 }]) return A.caller; return 0; }
+    var rArrow = (A) => A.arguments;
+    export function probe() {
+      return rVar() === 5 && wVar() === 6 && rParam({ caller: 2 }) === 2 &&
+        wParam({}) === 1 && rDestructured({ A: { caller: 9 } }) === 9 &&
+        rCatch() === 3 && rForOf() === 4 && rArrow({ arguments: 7 }) === 7;
+    }
+  `;
+
+  it("standalone: a shadowing binding named like a class keeps base's read and write", async () => {
+    expect(await runStandalone(SHADOWED_RECEIVER_SOURCE, "issue-5195-r3-review-r4a.js")).toBe(1);
+  });
+
+  // Member-expression receivers were never the class object and must be left
+  // alone in every position, including `this.A` and a getter named `A`.
+  const MEMBER_RECEIVER_SOURCE = `
+    class A {}
+    function memberRecv() { var obj = { A: { caller: 3, arguments: 4 } }; return obj.A.caller + obj.A.arguments; }
+    function thisRecv() {
+      const o = { A: { caller: 2 }, read() { return this.A.caller; } };
+      return o.read();
+    }
+    function getterRecv() { var o = { get A() { return { caller: 7 }; } }; return o.A.caller; }
+    export function probe() { return memberRecv() === 7 && thisRecv() === 2 && getterRecv() === 7; }
+  `;
+
+  it("standalone: member-expression receivers named like a class are untouched", async () => {
+    expect(await runStandalone(MEMBER_RECEIVER_SOURCE, "issue-5195-r3-review-r4a2.js")).toBe(1);
+  });
+
+  // The r3-7 win is kept where the receiver PROVABLY is the class object: a
+  // uniquely-bound, never-written class declaration read from inside its own
+  // static method still throws, as node does.
+  const CLASS_RECEIVER_WIN_KEPT_SOURCE = `
+    class C {
+      static self() { let n = 0; try { let t = C.caller; } catch (e) { n = n + 1; } return n; }
+    }
+    export function probe() { return C.self(); }
+  `;
+
+  it("standalone: the class object itself still throws on caller", async () => {
+    expect(await runStandalone(CLASS_RECEIVER_WIN_KEPT_SOURCE, "issue-5195-r3-review-r4a3.js")).toBe(1);
+  });
+});
+
+describe("#5195 r3 review round 3, R4-B — the static-shadow walk follows the chain proof", () => {
+  // The chain proof recurses into an INLINE class-expression parent and
+  // answers "all classes", but the static-shadow walk followed
+  // `ctx.classParentMap` BY NAME, which has no entry for an anonymous inline
+  // parent. So `class K extends (class { static caller(){…} }) {}` was poisoned
+  // on `K.caller` even though the declared static shadows the inherited
+  // %ThrowTypeError% accessor — node returns the static, base returned a
+  // stable `null`/`NaN`, the lane threw.
+  const INLINE_PARENT_STATIC_SOURCE = `
+    class F1 extends (class { static caller = 11; }) {}
+    class F2 extends (class { static caller() { return 12; } }) {}
+    class F3 extends (class { static get arguments() { return 13; } }) {}
+    class F4 extends (class extends (class { static caller = 14; }) {}) {}
+    class F5 extends (class { static ["cal" + "ler"] = 15; }) {}
+    export function probe() {
+      let threw = 0;
+      try { let t = F1.caller; } catch (e) { threw = threw + 1; }
+      try { let t = F2.caller; } catch (e) { threw = threw + 1; }
+      try { let t = F3.arguments; } catch (e) { threw = threw + 1; }
+      try { let t = F4.caller; } catch (e) { threw = threw + 1; }
+      try { let t = F5.caller; } catch (e) { threw = threw + 1; }
+      return threw === 0;
+    }
+  `;
+
+  it("standalone: an inline parent declaring the restricted name declines the poison", async () => {
+    expect(await runStandalone(INLINE_PARENT_STATIC_SOURCE, "issue-5195-r3-review-r4b.js")).toBe(1);
+  });
+
+  // …and the poison is kept where the inline parent declares something else.
+  const INLINE_PARENT_UNRELATED_STATIC_SOURCE = `
+    class F6 extends (class { static m() { return 0; } }) {}
+    export function probe() {
+      let threw = 0;
+      try { let t = F6.caller; } catch (e) { threw = threw + 1; }
+      return threw;
+    }
+  `;
+
+  it("standalone: an inline parent with an unrelated static still throws", async () => {
+    expect(await runStandalone(INLINE_PARENT_UNRELATED_STATIC_SOURCE, "issue-5195-r3-review-r4b2.js")).toBe(1);
+  });
+});

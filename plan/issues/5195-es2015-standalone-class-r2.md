@@ -2535,3 +2535,130 @@ both budget gates green again with `LOC_GATE_BASE=$(git rev-parse origin/main)`
   `js2wasm:runtime-eval` import and fails to instantiate. Unchanged by this
   round (byte-identical pre- and post-fix), so it is a residual of the earlier
   r3 work, not of these three fixes.
+
+### Round-3 review fixes, third round (2026-09-04)
+
+Two more spurious-throw defects, both in the **r3-7 restricted-property poison
+itself** rather than in the heritage predicates the previous two rounds fixed.
+Both were independently reproduced (lane vs a self-built base tree, node as
+oracle) before any code was touched.
+
+**Step 0 — the container restart left uncommitted work.** `git diff` at
+`f19825add1` showed edits in `class-static-metadata.ts`,
+`expressions/assignment.ts` and `property-access-dispatch.ts`: a coherent,
+complete implementation of both fixes below. It typechecks clean
+(`tsc.js --noEmit -p tsconfig.ts7.json`, exit 0) and every helper it calls
+(`classHeritageExpression`, `classDeclarationBehindBinding`,
+`bindingIsUniqueAndNeverWritten`, `ctx.classDeclarationMap`,
+`ctx.oracle.valueDeclarationOf`) already existed. It was **kept and finished**,
+not redone. The only caller that still passes no receiver is
+`tryClassExpressionStaticMemberRead` (`property-access-dispatch.ts` ~2381),
+whose receiver **is** the class written in place — so `undefined` there means
+"identity needs no proof", not "unknown receiver". Verified by grep: those are
+the only three call sites.
+
+**r4-A — the poison identified its receiver by NAME.** The read arm
+(`property-access-dispatch.ts` ~2182) excluded only function-like declarations
+before reaching `classObjectRestrictedProperty`; the write arm
+(`expressions/assignment.ts` ~4553) consulted no declaration at all
+(`ctx.classSet.has(target.expression.text)`). With a top-level `class A {}`,
+**every** function-scope binding spelled `A` had its `.caller`/`.arguments`
+read *and* write turned into a TypeError. Both arms now resolve the receiver
+through `ctx.oracle.valueDeclarationOf` and require it to land on the class
+registered in `ctx.classDeclarationMap` (or a `var`-bound class expression
+carrying the round-2 never-written proof); anything else — another
+declaration, an unresolvable identifier, a member-expression receiver —
+declines to base.
+
+| probe (standalone) | node | base | pre-fix lane `f19825add1` | this lane |
+|---|---|---|---|---|
+| `var A = {caller:5}; A.caller` | 5 | 5 | **T:TypeError** | 5 |
+| `var A = {caller:5}; A.caller = 6` | 6 | 6 | **T:TypeError** | 6 |
+| `function s(A){A.caller = 1}` | 1 | 1 | **T:TypeError** | 1 |
+| `var {A} = o; A.caller` | 9 | 9 | **T:TypeError** | 9 |
+| `catch (A) { A.caller }` | 3 | 3 | **T:TypeError** | 3 |
+| `for (const A of …) A.caller` | 4 | 4 | **T:TypeError** | 4 |
+| `(A) => A.arguments` | 1 | 1 | **T:TypeError** | 1 |
+| `A.caller` inside `A`'s own static | T:TypeError | undefined | T:TypeError | T:TypeError (win kept) |
+
+**r4-B — the static-shadow walk disagreed with the chain proof.** The chain
+proof recurses into an inline class-expression parent
+(`class K extends (class { static caller(){…} }) {}`) and answers "all
+classes", but the shadow walk followed `ctx.classParentMap` **by name**, which
+has no entry for an anonymous inline parent — so `K.caller` was poisoned where
+the declared static shadows the inherited accessor. A new
+`chainDeclaresStaticNamed` walks the **same declarations** the chain proof
+walks (fields, methods, getters, setters, and computed keys that fold via
+`foldConstantString`); a computed key that does **not** fold is treated as
+possibly-`caller` and also declines.
+
+| probe (standalone) | node | base | pre-fix lane | this lane |
+|---|---|---|---|---|
+| inline parent `static caller = 11` | 11 | NaN | **T:TypeError** | NaN |
+| inline parent `static caller(){}` | function | function | function | function |
+| inline parent `static get arguments` | 13 | NaN | **T:TypeError** | NaN |
+| two-deep inline parent | 14 | NaN | **T:TypeError** | NaN |
+| inline parent `static ["cal"+"ler"]` | 15 | undefined | undefined | undefined |
+| inline parent, **unrelated** static | T:TypeError | undefined | T:TypeError | T:TypeError (win kept) |
+
+The declines restore **base's** answer (`null`/`NaN`), not node's — the lane
+gives up the poison rather than emitting the declared static. That is a
+deliberate "never worse than base", not a claimed win.
+
+**Probe re-runs — all three review sets, node / base / lane, standalone.**
+41 probes (`.tmp/review-5195/p`), 34 (`.tmp/review-5195-r3/p`), 14
+(`.tmp/review-5195-r4/p`) plus 2 new (`.tmp/review-5195-r4/p2`). Every
+lane-vs-base difference moves **toward node** or replaces a base crash
+(`c1`/`c1b`/`c1d` `RuntimeError: illegal cast`, `rp3`, `sc9` `COMPILE-FAIL`)
+with a running module. **No row is worse than base.** Standalone `imports` is
+`[]` on every probe; a class-free program is **byte-identical** to the
+origin/main tree (`n4-classfree.js` and `smoke.js`, same sha and length).
+Host and wasi are base-identical on all five restricted-property probes — the
+poison is gated on `ctx.standalone`, and the runs confirm it.
+
+**New receiver-identity probes** (`p2/n1-receiver-identity.js`,
+`p2/n3-inline-parent-statics.js`): a parameter named like a class inside a
+nested arrow inside a class METHOD, `this.A`, `obj.A.caller`, a class
+expression assigned to a var named like another class, `A` re-declared with
+`let` in a block and read after it, a getter named `A`, `arguments`, `A.caller`
+inside `A`'s own static method, and the plain class-object read/write. All
+base-identical except the two intended wins.
+
+**Known conservatism, stated plainly.** `bindingIsUniqueAndNeverWritten`
+counts bindings of the name across the whole file, so in a module where `A` is
+*also* used as a parameter somewhere, the genuine `A.caller` on the class
+object declines to base (`undefined`) instead of throwing. That is the safe
+direction and it is why `n1`'s `p9` reads `undefined`; the win is kept wherever
+the name is unambiguous (`p8`, and both `restricted-properties.js` rows).
+
+**783-row class sweep** (`language/{statements,expressions}/class`,
+`expressions/super`), base `91d4999050` vs this lane, batches of 30:
+
+| | non-pass |
+|---|---|
+| base | 289 |
+| this lane | **270** |
+
+**19 rows flip fail→pass, ZERO new non-pass, zero other status changes** —
+byte-for-byte the same result set as the previous round (`diff` of the two lane
+runs is empty), so neither r4 fix costs a corpus row. Kept: 11
+`cpn-class-expr-…`, two `heritage-{arrow,async-arrow}-function`, four
+`subclass/superclass-{arrow,async,async-generator,generator}-function`, two
+`restricted-properties.js`. Given up: the same **3** as before
+(`cpn-class-decl-…-assignment-expression-assignment`,
+`constructable-but-no-prototype.js`, `prototype-setter.js`).
+
+**Pins.** `tests/issue-5195-r3-review.test.ts` gains five tests. The two
+**regression** controls — R4-A "a shadowing binding named like a class keeps
+base's read and write" and R4-B "an inline parent declaring the restricted name
+declines the poison" — **FAIL on the pre-fix lane `f19825add1` and PASS on base
+`91d4999050`** (both measured by file-copy A/B, not asserted). The two
+**win-retention** controls (R4-A3, R4-B2) fail on base and pass here. The fifth
+(member-expression receivers) passes pre-fix too — it is coverage for a path
+the fix must not disturb, not a regression pin. Whole file **21/21 green**.
+
+**Gates.** Typecheck clean. LOC, function, coercion-sites, oracle-ratchet and
+dead-exports all green bare and chained; both budget gates green again with
+`LOC_GATE_BASE=$(git rev-parse origin/main)` (`333360b90031`). No new
+allowance was needed — `src/codegen/class-static-metadata.ts` is already in
+`loc-budget-allow` for this issue and no function crossed its ceiling.

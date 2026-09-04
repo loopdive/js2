@@ -4573,7 +4573,7 @@ function compilePropertyAssignment(
     // [[Set]] throws. Same predicate as the READ arm in
     // `property-access-dispatch.ts`, so the two cannot disagree; a class that
     // DECLARES the name keeps its storage (the checks above already answered).
-    if (classObjectRestrictedProperty(ctx, clsName, propName)) {
+    if (classObjectRestrictedProperty(ctx, clsName, propName, target.expression)) {
       const rhs = compileExpression(ctx, fctx, value);
       if (rhs) fctx.body.push({ op: "drop" });
       emitThrowTypeError(

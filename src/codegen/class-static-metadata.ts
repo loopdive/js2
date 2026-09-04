@@ -184,6 +184,134 @@ function classChainIsProvablyAllClasses(ctx: CodegenContext, className: string):
   return classDeclChainIsProvablyAllClasses(ctx, decl, new Set<ts.Node>());
 }
 
+/** A static member name that folds to a compile-time string, or `undefined`. */
+function staticMemberNameText(name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) return name.text;
+  if (ts.isNumericLiteral(name)) return name.text;
+  if (ts.isPrivateIdentifier(name)) return "__priv_" + name.text.slice(1);
+  if (ts.isComputedPropertyName(name)) {
+    const folded = foldConstantString(name.expression);
+    // A computed key the compiler cannot fold might BE `caller`/`arguments`,
+    // so it is reported as an unknown name that declines the poison.
+    return folded;
+  }
+  return undefined;
+}
+
+/** Fold a string-valued constant expression (`"cal" + "ler"`), or `undefined`. */
+function foldConstantString(expr: ts.Expression): string | undefined {
+  let bare: ts.Expression = expr;
+  while (
+    ts.isParenthesizedExpression(bare) ||
+    ts.isAsExpression(bare) ||
+    ts.isTypeAssertionExpression(bare) ||
+    ts.isNonNullExpression(bare)
+  ) {
+    bare = bare.expression;
+  }
+  if (ts.isStringLiteral(bare) || ts.isNoSubstitutionTemplateLiteral(bare)) return bare.text;
+  if (ts.isBinaryExpression(bare) && bare.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = foldConstantString(bare.left);
+    const right = foldConstantString(bare.right);
+    return left !== undefined && right !== undefined ? left + right : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * (#5195 r3 review round 3, r4-B) True when `decl` — or any class on its
+ * heritage chain, followed through DECLARATIONS the way the chain proof does —
+ * declares a static member named `propName`, or declares a static member whose
+ * name the compiler cannot fold (which might BE that name).
+ *
+ * The name-keyed walk in {@link classObjectRestrictedProperty} follows
+ * `ctx.classParentMap`, which has no entry for an INLINE class-expression
+ * parent (`class K extends (class { static caller(){…} }) {}`). The chain proof
+ * at {@link classDeclChainIsProvablyAllClasses} recurses into that parent and
+ * answers "all classes", so the two disagreed and `K.caller` was poisoned where
+ * node returns the declared static. Walking the same declarations here makes
+ * them agree.
+ */
+function chainDeclaresStaticNamed(
+  ctx: CodegenContext,
+  decl: ts.ClassDeclaration | ts.ClassExpression,
+  propName: string,
+  seen: Set<ts.Node>,
+): boolean {
+  if (seen.has(decl) || seen.size > 16) return true; // unprovable ⇒ decline
+  seen.add(decl);
+  for (const member of decl.members) {
+    const isStatic = ts.canHaveModifiers(member)
+      ? (ts.getModifiers(member) ?? []).some((m) => m.kind === ts.SyntaxKind.StaticKeyword)
+      : false;
+    if (!isStatic) continue;
+    if (
+      !ts.isPropertyDeclaration(member) &&
+      !ts.isMethodDeclaration(member) &&
+      !ts.isGetAccessorDeclaration(member) &&
+      !ts.isSetAccessorDeclaration(member)
+    ) {
+      continue;
+    }
+    const name = staticMemberNameText(member.name);
+    if (name === undefined || name === propName) return true;
+  }
+  const heritage = classHeritageExpression(decl);
+  if (heritage === undefined || heritage.kind === ts.SyntaxKind.NullKeyword) return false;
+  if (ts.isClassExpression(heritage)) return chainDeclaresStaticNamed(ctx, heritage, propName, seen);
+  if (!ts.isIdentifier(heritage)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(heritage);
+  if (declaration === undefined) return false;
+  const parentDecl = classDeclarationBehindBinding(declaration);
+  if (parentDecl === undefined) return false;
+  return chainDeclaresStaticNamed(ctx, parentDecl, propName, seen);
+}
+
+/**
+ * (#5195 r3 review round 3, r4-A) True when `receiver` provably denotes the
+ * class `className` ITSELF.
+ *
+ * The poison used to identify its receiver by NAME — the read arm through
+ * `classExprNameMap`/`classSet`, the write arm through a bare
+ * `ctx.classSet.has(text)` with no declaration lookup at all. With a top-level
+ * `class A {}` in the module, EVERY function-scope binding spelled `A` — a
+ * parameter, `var A = { caller: 5 }`, a destructured binding, a catch
+ * parameter, a `for (const A of …)` head, an arrow parameter — had its
+ * `.caller`/`.arguments` read AND write turned into a TypeError where node and
+ * the base tree return the real value.
+ *
+ * So the receiver is resolved through `ctx.oracle.valueDeclarationOf` and must
+ * land on the class declaration registered for `className` (or a `var`-bound
+ * class expression that carries the round-2 never-written proof). Anything
+ * else — another declaration, an unresolvable identifier, a member-expression
+ * receiver — declines to base.
+ */
+export function restrictedPropertyReceiverIsClass(
+  ctx: CodegenContext,
+  receiver: ts.Expression,
+  className: string,
+): boolean {
+  let bare: ts.Expression = receiver;
+  while (
+    ts.isParenthesizedExpression(bare) ||
+    ts.isAsExpression(bare) ||
+    ts.isTypeAssertionExpression(bare) ||
+    ts.isNonNullExpression(bare)
+  ) {
+    bare = bare.expression;
+  }
+  if (!ts.isIdentifier(bare)) return false;
+  const classDecl = ctx.classDeclarationMap.get(className);
+  if (classDecl === undefined) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(bare);
+  if (declaration === undefined) return false;
+  if (declaration !== classDecl && classDeclarationBehindBinding(declaration) !== classDecl) return false;
+  // A rebound name (`class A {} A = function(){}`) no longer denotes the class
+  // object at the read site, and a duplicate binding makes the resolution
+  // scope-ambiguous; both decline.
+  return bindingIsUniqueAndNeverWritten(bare, declaration);
+}
+
 /**
  * (#5195 r3-7) True when `<Class>.<propName>` names one of the §10.2.4
  * restricted function properties AND the class declares nothing under that
@@ -210,10 +338,23 @@ function classChainIsProvablyAllClasses(ctx: CodegenContext, className: string):
  * the two cannot disagree about which names are poisoned — the failure mode a
  * per-site copy invites.
  */
-export function classObjectRestrictedProperty(ctx: CodegenContext, className: string, propName: string): boolean {
+export function classObjectRestrictedProperty(
+  ctx: CodegenContext,
+  className: string,
+  propName: string,
+  // (r4-A) The receiver expression, when the caller has one. `undefined` means
+  // the receiver IS an in-place class expression (`class { … }.caller`), whose
+  // identity needs no proof.
+  receiver?: ts.Expression,
+): boolean {
   if (ctx.standalone !== true) return false;
   if (propName !== "caller" && propName !== "arguments") return false;
+  if (receiver !== undefined && !restrictedPropertyReceiverIsClass(ctx, receiver, className)) return false;
   if (!classChainIsProvablyAllClasses(ctx, className)) return false;
+  // (r4-B) The DECLARATION walk, which sees an inline class-expression parent
+  // the `classParentMap` name walk below cannot reach.
+  const ownDecl = ctx.classDeclarationMap.get(className);
+  if (ownDecl !== undefined && chainDeclaresStaticNamed(ctx, ownDecl, propName, new Set<ts.Node>())) return false;
   // Statics are INHERITED along the class chain, so a `static caller` declared
   // on an ancestor shadows the accessor for every descendant too. Walk the
   // chain over all four declaration surfaces rather than testing the own class
