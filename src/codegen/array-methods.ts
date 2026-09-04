@@ -110,6 +110,8 @@ import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
 // (#4655) Shared concat carrier/dispatch predicate — see array-concat-carrier.ts.
 import { concatMustConsultPrototypeChain } from "./array-concat-carrier.js";
 import { ensureJoinProtoHoleLocal, joinProtoHoleFallbackInstrs } from "./array-join-proto-hole.js";
+// (#5317 r4) join/toLocaleString separator coercion (§23.1.3.15 step 3).
+import { buildJoinSeparatorToString } from "./join-separator.js";
 // (#4655) `Array.prototype.toLocaleString`'s element Invoke (§23.1.3.32 6.c.i).
 import * as tls from "./array-tolocalestring.js";
 const {
@@ -5457,9 +5459,16 @@ function compileArrayJoinExternNative(
   // never a separator, so `localized` keeps the default and does not compile
   // them at all.
   if (!localized && callExpr.arguments.length >= 1) {
-    const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "externref" });
+    const sepArg = callExpr.arguments[0]!;
+    // (#5317 r4) A string LITERAL keeps the byte-identical cast; every other
+    // separator takes the §23.1.3.15-step-3 coercion (undefined ⇒ ",", Symbol ⇒
+    // TypeError, else ToString) instead of trapping on `ref.cast $AnyString`.
+    const coerce = ts.isStringLiteral(sepArg) ? null : buildJoinSeparatorToString(ctx, fctx, anyStrTypeIdx);
+    const argType = compileExpression(ctx, fctx, sepArg, { kind: "externref" });
     if (argType === null) {
       fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
+    } else if (coerce !== null) {
+      fctx.body.push(...coerce);
     } else {
       fctx.body.push({ op: "any.convert_extern" });
       fctx.body.push({ op: "ref.cast", typeIdx: anyStrTypeIdx });
@@ -5664,10 +5673,16 @@ function compileArrayJoinNative(
   // ",". (#4655) `toLocaleString`'s arguments are locales/options, not a
   // separator — see the module header of array-tolocalestring.ts.
   if (localizedArm === undefined && callExpr.arguments.length >= 1) {
-    const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "externref" });
+    const sepArg = callExpr.arguments[0]!;
+    // (#5317 r4) See the extern lane above — same three spec arms, same
+    // literal-argument byte-identity carve-out.
+    const coerce = ts.isStringLiteral(sepArg) ? null : buildJoinSeparatorToString(ctx, fctx, anyStrTypeIdx);
+    const argType = compileExpression(ctx, fctx, sepArg, { kind: "externref" });
     if (argType === null) {
       // void/undefined arg → default ","
       fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
+    } else if (coerce !== null) {
+      fctx.body.push(...coerce);
     } else {
       // The native string value arrives as externref; convert to ref $AnyString.
       fctx.body.push({ op: "any.convert_extern" });
