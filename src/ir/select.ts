@@ -57,7 +57,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
-import type { IrClassId, IrUnitId } from "./identity.js";
+import { privateMemberMangledName, type IrClassId, type IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
   isUnpreparedAsyncCallee,
@@ -2190,7 +2190,12 @@ type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | 
  * comment text is parsed and no synthetic annotation is attached to the AST.
  */
 export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.TypeNode | undefined {
-  return param.type ?? ts.getJSDocType(param);
+  if (param.type) return param.type;
+  // A synthesized parameter (factory-built, no parent — the implicit-ctor
+  // pipeline in from-ast) carries no JSDoc; `getJSDocType` walks `parent`
+  // and would throw. Its type comes from `paramTypeOverrides`.
+  if (param.parent === undefined) return undefined;
+  return ts.getJSDocType(param);
 }
 
 /**
@@ -3327,6 +3332,14 @@ function isPhase1MutableMemberTarget(
   if (target.questionDotToken !== undefined) return false;
   if (ts.isPropertyAccessExpression(target)) {
     if (!ts.isIdentifier(target.name) && !ts.isPrivateIdentifier(target.name)) return false;
+    // (#3522 W1-C) `super.x += e` / `super.x++` are OUT of this slice, and are
+    // named here so they stop landing in the anonymous bucket. The desugaring
+    // would need TWO static dispatches (the parent getter, then the parent
+    // setter) around one read-modify-write; W1-C ships the single-dispatch read
+    // and write only.
+    if (target.expression.kind === ts.SyntaxKind.SuperKeyword) {
+      return shapeNo("super-property-compound", target);
+    }
     // A DOM/extern member write is a CALL pair, whose re-entrancy the
     // read-modify-write desugaring does not model. Refuse at selection.
     if (standaloneDomOperation(target) !== undefined) return false;
@@ -3772,6 +3785,20 @@ function isPhase1StatementListInScope(
         // Identifier or (#3000) a PrivateIdentifier (`this.#x = v`).
         if (!ts.isIdentifier(s.expression.left.name) && !ts.isPrivateIdentifier(s.expression.left.name))
           return shapeNo("nontail-assign-computedprop", s.expression);
+        // (#3522 W1-C) `super.<accessor> = v` as a NON-TAIL statement of a
+        // method body — this is the walker a class method's leading statements
+        // actually use (`nontail-` is a POSITION prefix, not a module-level
+        // restriction). Measured: without this arm `renameAndRead(v) {
+        // super.label = v; return super.label; }` stayed on
+        // `expr-unhandled:SuperKeyword` while the tail-only twin already moved.
+        const superNonTailWrite = superAccessorAdmission(s.expression.left, "setter");
+        if (superNonTailWrite !== "not-super") {
+          if (superNonTailWrite === "refused") return false;
+          if (!isPhase1Expr(s.expression.right, scope, localClasses)) {
+            return shapeNo("nontail-super-assign-rhs", s.expression.right);
+          }
+          continue;
+        }
         const standaloneDomSet = standaloneDomOperation(s.expression.left);
         if (standaloneDomSet?.kind === "member-set") {
           if (!isPhase1Expr(standaloneDomSet.access.expression, scope, localClasses)) {
@@ -5061,6 +5088,13 @@ function isPhase1BodyStatement(
           // bodies, in addition to plain-Identifier field writes.
           if (!ts.isIdentifier(stmt.expression.left.name) && !ts.isPrivateIdentifier(stmt.expression.left.name))
             return false;
+          // (#3522 W1-C) `super.<accessor> = v` in NON-tail position. Same
+          // reason as the read arm: `super` never survives the receiver walk
+          // three lines down, so the shape must be settled before it runs.
+          const superBodyWrite = superAccessorAdmission(stmt.expression.left, "setter");
+          if (superBodyWrite !== "not-super") {
+            return superBodyWrite === "admitted" && isPhase1Expr(stmt.expression.right, scope, localClasses);
+          }
           const standaloneDomSet = standaloneDomOperation(stmt.expression.left);
           if (standaloneDomSet?.kind === "member-set") {
             return (
@@ -5352,6 +5386,14 @@ function isPhase1Tail(
     ) {
       if (!ts.isIdentifier(expr.left.name) && !ts.isPrivateIdentifier(expr.left.name))
         return shapeNo("tail-assign-computedprop", expr);
+      // (#3522 W1-C) `super.<accessor> = v` as the void TAIL — the shape of a
+      // `rename(v) { super.label = v; }` forwarder. Mirrors the non-tail arm in
+      // `isPhase1BodyStatement`; from-ast routes both through the same
+      // `lowerPropertyAssignment`, so select↔build parity is preserved.
+      const superTailWrite = superAccessorAdmission(expr.left, "setter");
+      if (superTailWrite !== "not-super") {
+        return superTailWrite === "admitted" && isPhase1Expr(expr.right, scope, localClasses);
+      }
       const standaloneDomSet = standaloneDomOperation(expr.left);
       if (standaloneDomSet?.kind === "member-set") {
         return (
@@ -7706,11 +7748,28 @@ export function classElementIsStatic(member: ts.ClassElement): boolean {
   );
 }
 
+/**
+ * (#3522 W1-B) The name a declared member projects into the class descriptor,
+ * or `null` when it has none (a computed key, whose value is not a compile-time
+ * constant here).
+ *
+ * The one caller-visible addition over the identifier/string/numeric set is the
+ * private one: `#m` projects as `__priv_m`, the spelling `privateMemberMangledName`
+ * mints for the descriptor (W1-A) and that `class-bodies.ts::resolveClassMemberName`
+ * already minted on the legacy side. Both projection lookups below must compare
+ * through THIS function, or a private declaration is invisible to the walk that
+ * resolves the call its own class makes.
+ */
+function classElementProjectionName(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text;
+  if (ts.isPrivateIdentifier(name)) return privateMemberMangledName(name);
+  return null;
+}
+
 function classElementMayName(member: ts.ClassElement, requested: string): boolean {
   if (!member.name) return false;
-  if (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name) || ts.isNumericLiteral(member.name)) {
-    return member.name.text === requested;
-  }
+  const projected = classElementProjectionName(member.name);
+  if (projected !== null) return projected === requested;
   return computedMemberMayName(member.name, requested);
 }
 
@@ -8091,6 +8150,95 @@ function superParentClassName(): string | null {
   if (exactShapes) return exactShapes.get(currentClaimClassName)?.parent?.className ?? null;
   const declaration = currentLocalClassDeclarations.get(currentClaimClassName);
   return declaration ? extendsParentName(declaration) : null;
+}
+
+/**
+ * (#3522 W1-C) Does an accessor of `kind` named `propertyName` PROJECT on the
+ * chain rooted at `className`?
+ *
+ * This is the `super.<accessor>` twin of `classPropertyHasKnownProjectionGap` /
+ * `classPropertyWriteHasKnownProjectionGap`, and it deliberately differs from
+ * them in one way: it resolves ONLY an accessor, never a field. `super.<field>`
+ * reads the prototype chain (and is `undefined` in JS for an own instance
+ * field), and `super.<method>` as a value is not a Phase-1 value — so an own
+ * member of the requested name that is NOT the requested accessor SHADOWS any
+ * inherited one and stops the walk, rather than resolving an ancestor slot the
+ * builder would never dispatch.
+ *
+ * Parity with the builder is the point: `from-ast`'s `findClassMember(shape,
+ * name, kind)` walks the same shape chain for the same `memberKind`, so what is
+ * admitted here is exactly what S3 / S4 can lower. This walk is STRICTER (it
+ * stops at a shadowing own member), which can only refuse earlier — never
+ * claim a shape the lowerer would then have to demote after the claim.
+ */
+function superAccessorProjection(className: string, propertyName: string, kind: "getter" | "setter"): boolean {
+  const exactShapes = currentSelectionOptions?.projectedClassShapes;
+  let exactShape = exactShapes?.get(className);
+  let cursor = currentLocalClassDeclarations.get(className);
+  while (cursor) {
+    const ownMembers = cursor.members.filter(
+      (member) => !!member.name && !classElementIsStatic(member) && classElementMayName(member, propertyName),
+    );
+    const accessor = ownMembers.find(kind === "getter" ? ts.isGetAccessorDeclaration : ts.isSetAccessorDeclaration) as
+      | ts.GetAccessorDeclaration
+      | ts.SetAccessorDeclaration
+      | undefined;
+    if (accessor) {
+      if (ts.isComputedPropertyName(accessor.name)) return false;
+      if (exactShapes) {
+        const descriptor = exactShape?.methods.find(
+          (candidate) => candidate.name === propertyName && candidate.memberKind === kind,
+        );
+        if (!descriptor) return false;
+        // Mirror the two lowering-side obligations exactly (from-ast demotes on
+        // either): a getter must produce a value, a setter must take one arg.
+        return kind === "getter" ? descriptor.returnType !== null : descriptor.params.length === 1;
+      }
+      return classAccessorMayProject(accessor, cursor);
+    }
+    if (ownMembers.length > 0) return false;
+    const parent = extendsParentName(cursor);
+    cursor = parent === null ? undefined : currentLocalClassDeclarations.get(parent);
+    exactShape = exactShape?.parent;
+  }
+  return false;
+}
+
+/**
+ * (#3522 W1-C) Shape verdict for a bare `super.<name>` read or write.
+ *
+ * `super` is a KEYWORD, not an expression: the generic receiver checks end in
+ * `isPhase1Expr(access.expression)`, which has no `SuperKeyword` arm and
+ * answers `false` — so before this existed every `super.<accessor>` landed in
+ * the anonymous `body-shape-rejected` bucket under `expr-unhandled:SuperKeyword`
+ * (measured on `origin/main` 5c90d7069a, both lanes). Callers therefore run this
+ * BEFORE any receiver walk and, on `"admitted"`, must NOT recurse into
+ * `isPhase1Expr(super)`.
+ *
+ * `"not-super"` means the receiver is an ordinary expression and the caller
+ * keeps its existing arms untouched.
+ */
+function superAccessorAdmission(
+  access: ts.PropertyAccessExpression,
+  kind: "getter" | "setter",
+): "not-super" | "admitted" | "refused" {
+  if (access.expression.kind !== ts.SyntaxKind.SuperKeyword) return "not-super";
+  // `super.#x` is a syntax error and `super[e]` is an ElementAccess, so the only
+  // non-Identifier name that can reach here is a defensive impossibility.
+  if (!ts.isIdentifier(access.name)) {
+    shapeNo("super-property-computed", access);
+    return "refused";
+  }
+  const parentClass = superParentClassName();
+  if (parentClass === null || localClassHasKnownProjectionGap(parentClass)) {
+    capabilityNo("class-projection-unsupported", "super-property-parent-shape", access);
+    return "refused";
+  }
+  if (!superAccessorProjection(parentClass, access.name.text, kind)) {
+    capabilityNo("class-member-unsupported", "super-property-not-accessor", access);
+    return "refused";
+  }
+  return "admitted";
 }
 
 function projectedConstructorArity(className: string): number | undefined {
@@ -9608,6 +9756,47 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // enforces that the receiver is a class instance whose shape carries
     // `methodName`. If not, the function falls back to legacy.
     if (ts.isPropertyAccessExpression(expr.expression)) {
+      // (#3522 W1-B) `<recv>.#m(args)` — a call to a PRIVATE method. Its own
+      // dedicated arm, BEFORE the identifier-name gate below, for two reasons:
+      // the gate's bare `return false` is what refused every private call site
+      // (an unattributed shape refusal, which is how W1-A measured it), and no
+      // ambient arm between here and the class arms can carry a private name —
+      // so threading one through them would widen a surface for nothing. A
+      // private name is only ever resolvable against a LOCAL class, which is
+      // exactly the two projections re-used here.
+      if (ts.isPrivateIdentifier(expr.expression.name)) {
+        const methodName = privateMemberMangledName(expr.expression.name);
+        const receiver = expr.expression.expression;
+        // `C.#s()` — the receiver is the class VALUE. Mirrors the static arm
+        // below (a bare unshadowed local class identifier); W1-A leaves static
+        // private methods without a descriptor, so the projection is missing
+        // and the call stays direct-owned. `this` / an instance resolves
+        // through the ordinary instance route.
+        const staticReceiver =
+          ts.isIdentifier(receiver) &&
+          localClassValueIsUnshadowed(receiver.text, scope) &&
+          localClasses.has(receiver.text);
+        const className = staticReceiver
+          ? (receiver as ts.Identifier).text
+          : localClassNameForExpression(receiver, scope);
+        if (className === null) return shapeNo("expr-private-method-receiver", expr);
+        if (localClassHasKnownProjectionGap(className)) {
+          return capabilityNo("class-projection-unsupported", "expr-private-method-shape", expr);
+        }
+        const projection = classMethodProjection(className, methodName, staticReceiver);
+        if (projection.status !== "projected" || projection.arity === undefined) {
+          return capabilityNo("class-member-unsupported", "expr-private-method-member", expr);
+        }
+        if (expr.arguments.length !== projection.arity) {
+          return capabilityNo("call-arity-unsupported", "expr-private-method-arity", expr);
+        }
+        if (!staticReceiver && !isPhase1Expr(receiver, scope, localClasses)) return false;
+        for (const arg of expr.arguments) {
+          if (ts.isSpreadElement(arg)) return shapeNo("expr-private-method-spread", arg);
+          if (!isPhase1Expr(arg, scope, localClasses)) return false;
+        }
+        return true;
+      }
       if (!ts.isIdentifier(expr.expression.name)) return false;
       const standaloneDomCall = standaloneDomOperation(expr);
       if (isDirectStandaloneDomMemberCall(standaloneDomCall)) {
@@ -10086,6 +10275,13 @@ function isPhase1Expr(expr: ts.Expression, scope: ReadonlySet<string>, localClas
     // the mangled `__priv_x` slot. Non-class receivers with a private name are
     // a TS error and never reach here.
     if (!ts.isIdentifier(expr.name) && !ts.isPrivateIdentifier(expr.name)) return false;
+    // (#3522 W1-C) `super.<accessor>` READ. Recognised BEFORE any receiver walk
+    // for the same reason the `super(...)` and `super.m(...)` call arms above
+    // exist: `super` is a keyword the generic receiver check cannot accept. The
+    // member is resolved against the PARENT's chain, so a subclass override of
+    // the same accessor is bypassed — which is the whole meaning of `super`.
+    const superRead = superAccessorAdmission(expr, "getter");
+    if (superRead !== "not-super") return superRead === "admitted";
     const standaloneDomGet = standaloneDomOperation(expr);
     if (standaloneDomGet?.kind === "member-get") {
       return isPhase1Expr(standaloneDomGet.access.expression, scope, localClasses);
@@ -10489,14 +10685,20 @@ function phase1PropertyName(name: ts.PropertyName): string | null {
  * member naming surface, where collision with non-Phase-1 members would
  * cause Phase B to patch the wrong slot.
  *
- * Returns null for computed names (`[expr]() {}`) and private identifiers
- * (`#priv() {}`) — Phase A can't form a stable funcMap key for either.
+ * Returns null for computed names (`[expr]() {}`) — Phase A can't form a stable
+ * funcMap key for a key that is only known at run time.
+ *
+ * (#3522 W1-A) A `PrivateIdentifier` IS representable: it mangles to
+ * `__priv_<name>`, the spelling the legacy side already mints at
+ * `class-bodies.ts::resolveClassMemberName` and that the field path in
+ * `buildIrClassShapes` already uses. See {@link privateMemberMangledName}.
  */
 export function phase1MemberName(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name)) return name.text;
   if (ts.isStringLiteral(name)) return name.text;
   if (ts.isNumericLiteral(name)) return name.text;
-  // ComputedPropertyName, PrivateIdentifier — Phase A skips both.
+  if (ts.isPrivateIdentifier(name)) return privateMemberMangledName(name);
+  // ComputedPropertyName — Phase A still skips it.
   return null;
 }
 

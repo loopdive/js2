@@ -104,7 +104,15 @@ export const BUILTIN_BRAND_TABLE: Readonly<Record<string, number>> = {
   // would collapse observable prototype identity.
   AggregateError: BUILTIN_BRAND_BASE + 45,
 
-  // Next free slot: BUILTIN_BRAND_BASE + 46 (append only).
+  // ── #5267 R3-2: the keyed-collection iterator prototypes ─────────────────
+  // Like %GeneratorPrototype% above, these are intrinsics reached only through
+  // `Object.getPrototypeOf(map.keys())`, not through a global constructor's
+  // `.prototype`. They carry one own member, `next`, whose descriptor and
+  // `name`/`length` metadata the `*IteratorPrototype/next/*` rows inspect.
+  MapIterator: BUILTIN_BRAND_BASE + 46,
+  SetIterator: BUILTIN_BRAND_BASE + 47,
+
+  // Next free slot: BUILTIN_BRAND_BASE + 48 (append only).
 };
 
 /**
@@ -112,7 +120,7 @@ export const BUILTIN_BRAND_TABLE: Readonly<Record<string, number>> = {
  * sizes its per-brand companion table off this. Keep in lockstep with the
  * "next free slot" comment above (append-only contract).
  */
-export const BUILTIN_BRAND_COUNT = 46;
+export const BUILTIN_BRAND_COUNT = 48;
 
 /**
  * (#4176) Static brand OFFSET (0-based slot in the brand band) for a builtin

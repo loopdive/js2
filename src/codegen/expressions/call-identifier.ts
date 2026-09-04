@@ -36,7 +36,7 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
-import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
+import { compileArrayConstructorCall, compileObjectLiteralAsExternref, compileSymbolCall } from "../literals.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
@@ -2566,7 +2566,34 @@ export function compileIdentifierCall(
           // biome-ignore lint/complexity/noUselessLoneBlockStatements: groups arg-emit + extras-pack as one logical unit
           {
             for (let i = 0; i < Math.min(expr.arguments.length, cpPositionalCnt); i++) {
-              compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
+              // (#5196 R3 review F4) An INLINE object literal in an `externref`
+              // slot of a statically-known builtin-value closure must be built
+              // as a dynamic object, not as the closed struct its literal type
+              // resolves to. `Proxy.revocable`'s handler is the witness:
+              // `var R = Proxy.revocable; R({a:1}, {get(t,k){return 7}})` then
+              // `pr.proxy.a` TRAPPED with `illegal cast` (measured 2026-09-04,
+              // standalone) because the trap read off the closed struct was not
+              // a callable; the same handler bound to a `var` first was fine.
+              // This is the treatment the DIRECT `Proxy.revocable(t, h)` arm
+              // already applies through `compileProxyInput`. Scope is the
+              // builtin-alias calls only — the other members of that set
+              // (`Math.max`, `Math.min`, `String.fromCharCode`) never receive
+              // an object literal, so nothing else changes shape.
+              const aliasArg = expr.arguments[i]!;
+              if (
+                builtinAliasInfo !== undefined &&
+                matchedClosureInfo.paramTypes[i]?.kind === "externref" &&
+                ts.isObjectLiteralExpression(aliasArg)
+              ) {
+                const literalType = compileObjectLiteralAsExternref(ctx, fctx, aliasArg);
+                if (literalType !== null && literalType.kind !== "externref") {
+                  coerceType(ctx, fctx, literalType, { kind: "externref" });
+                } else if (literalType === null) {
+                  fctx.body.push({ op: "ref.null.extern" });
+                }
+              } else {
+                compileInternalCallArgument(ctx, fctx, aliasArg, matchedClosureInfo.paramTypes[i]);
+              }
               const argLocal = allocLocal(fctx, `__carg_${fctx.locals.length}`, matchedClosureInfo.paramTypes[i]!);
               fctx.body.push({ op: "local.set", index: argLocal });
               argLocals.push(argLocal);

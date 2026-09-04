@@ -113,7 +113,15 @@ import {
 } from "./builtin-static-globals.js";
 import { moduleReadsBareFunctionValue } from "./function-intrinsic-carrier.js";
 import { emitFunctionProtoHasInstanceBody, FUNCTION_PROTO_HAS_INSTANCE_MEMBER } from "./function-proto-has-instance.js";
-import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js"; // (#4776)
+import {
+  ERROR_STACK_GETTER_MEMBER,
+  ERROR_STACK_SETTER_MEMBER,
+  emitErrorStackGetterBody,
+  emitErrorStackSetterBody,
+} from "./error-stack-accessor.js";
+import { emitSymbolProtoValueOfBody } from "./symbol-proto-valueof.js";
+import { emitSymbolProtoToStringBody } from "./symbol-proto-tostring.js"; // (#4776)
+import { emitNumberProtoFormatBody } from "./number-proto-format.js";
 import { emitDateProtoToPrimitiveBody } from "./date-proto-to-primitive.js"; // (#5156)
 import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js";
 import {
@@ -404,6 +412,10 @@ const WEAKSET_PROTO_METHODS = ["add", "delete", "has"] as const;
  * method, so it stays out of the value-read CSV.
  */
 const MAP_PROTO_METHODS = [
+  // (#5267 R3-7a) §24.1.3.12: `Map.prototype[@@iterator]` is an OWN property
+  // whose value IS `Map.prototype.entries`. The `@@<id>` sentinel is the
+  // symbol-cell spelling; `memberAliasOf` below ties the identity.
+  "@@1",
   "clear",
   "delete",
   "entries",
@@ -420,6 +432,9 @@ const MAP_PROTO_METHODS = [
 /** `Set.prototype`'s own method names (ES2024 §24.2.3 + the new set-method
  * proposal). `size` is an accessor getter, kept out of the CSV. */
 const SET_PROTO_METHODS = [
+  // (#5267 R3-7a) §24.2.3.11: `Set.prototype[@@iterator]` is an OWN property
+  // whose value IS `Set.prototype.values`.
+  "@@1",
   "add",
   "clear",
   "delete",
@@ -1944,10 +1959,19 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
     // emits this descriptor when the glue supplies its symbol tag.
     symbolTag: name,
     memberKind: (member) => (member === "size" ? "getter" : "method"),
-    memberLength: (member) => (member === "size" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
+    memberLength: (member) => (member === "size" || member === "@@1" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
     // ES2015 §23.2.3: Set.prototype.keys and .values are the same function
     // object (and Set.prototype[@@iterator] aliases that object as well).
-    memberAliasOf: (member) => (name === "Set" && member === "keys" ? "values" : undefined),
+    memberAliasOf: (member) =>
+      name === "Set" && member === "keys"
+        ? "values"
+        : // (#5267 R3-7a) §24.1.3.12 / §24.2.3.11: `@@iterator` IS `entries`
+          // (Map) / `values` (Set) — the same function object.
+          member === "@@1"
+          ? name === "Map"
+            ? "entries"
+            : "values"
+          : undefined,
     emitMemberBody: (c, fctx, member) =>
       member === "size"
         ? emitCollectionSizeGetterBody(c, fctx, name)
@@ -2369,6 +2393,16 @@ function makeGlue(
           ] as ReadonlyArray<readonly [string, string]>,
         }
       : {}),
+    // (#5269 D-1) `Error.prototype.stack` is an own accessor PAIR on
+    // %Error.prototype% ONLY — every NativeError prototype inherits it, so this
+    // is keyed on the exact name, not on ERROR_PROTO_OWNER_NAMES.
+    ...(name === "Error"
+      ? {
+          accessorProps: [
+            { key: "stack", get: ERROR_STACK_GETTER_MEMBER, set: ERROR_STACK_SETTER_MEMBER },
+          ] as ReadonlyArray<{ readonly key: string; readonly get: string; readonly set: string }>,
+        }
+      : {}),
     // Array/Object.prototype members are all data methods (no accessor getters
     // on the prototype itself; `length` is an own data property of an instance,
     // not the proto).
@@ -2377,11 +2411,18 @@ function makeGlue(
     // only family where `toString` differs from the shared default of 0. Every
     // other family (Array/String/Object/Boolean/Date/…) keeps 0 from the table.
     memberLength: (member) =>
-      name === "Number" && member === "toString"
-        ? 1
-        : name === "String" && (member === "next" || member === "@@1")
-          ? 0
-          : (PROTO_METHOD_LENGTH[member] ?? 1),
+      // (#5269 D-1) The accessor pair's halves: a getter takes nothing, a
+      // setter takes the value. They are not in `memberCsv`, so the table
+      // below would otherwise hand them its default of 1.
+      member === ERROR_STACK_GETTER_MEMBER
+        ? 0
+        : member === ERROR_STACK_SETTER_MEMBER
+          ? 1
+          : name === "Number" && member === "toString"
+            ? 1
+            : name === "String" && (member === "next" || member === "@@1")
+              ? 0
+              : (PROTO_METHOD_LENGTH[member] ?? 1),
     // (#2875 slice 3) String search-family members carry an uncounted optional
     // `position` arg — give their closures a real param slot for it. Non-String
     // families return 0 (= "no override": the slot count falls back to the spec
@@ -2411,7 +2452,27 @@ function makeGlue(
     // (#2875 slice 1) String.prototype.{charAt,at} likewise. Other Array/String
     // members + all Object members still degrade to a catchable TypeError.
     emitMemberBody: (c, fctx, member) =>
+      // (#5269 D-2) The `Error.prototype.stack` accessor pair. First in the
+      // ladder because its member names are synthetic — no other arm can claim
+      // them — and the setter needs the brand to identify its home object.
+      (name === "Error" && member === ERROR_STACK_GETTER_MEMBER ? emitErrorStackGetterBody(c, fctx) : null) ??
+      (name === "Error" && member === ERROR_STACK_SETTER_MEMBER ? emitErrorStackSetterBody(c, fctx, brand) : null) ??
       (name === "Symbol" && member === "valueOf" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
+      // (#5269 B-c) §20.4.3.3 `Symbol.prototype.toString` — SymbolDescriptiveString
+      // of `thisSymbolValue(this)`. Placed with the `valueOf` arm (and BEFORE the
+      // wrapper-brand arms, which do not list Symbol) so the reflective read
+      // answers a real closure instead of the refusal, whose `.call` transfer
+      // returned a NULL externref that trapped at its first use.
+      (name === "Symbol" && member === "toString" ? emitSymbolProtoToStringBody(c, fctx) : null) ??
+      // (#5269 B-c) §20.4.3.5 `Symbol.prototype[@@toPrimitive](hint)` returns
+      // `thisSymbolValue(this)` regardless of the hint — literally `valueOf`'s
+      // body, so it shares it rather than restating the two brand arms.
+      (name === "Symbol" && member === "@@3" ? emitSymbolProtoValueOfBody(c, fctx) : null) ??
+      // (#5269 J-1) §21.1.3.5 `Number.prototype.toPrecision` as a reflective
+      // VALUE. Before this the `Number` brand answered only `valueOf` and
+      // everything else fell to `emitProtoMemberBodyRefusal`, whose TypeError
+      // masked the spec's RangeError for an out-of-range precision.
+      (name === "Number" ? emitNumberProtoFormatBody(c, fctx, member) : null) ??
       // (#5156, §21.4.4.45) `Date.prototype[Symbol.toPrimitive]` — the one
       // builtin whose ToPrimitive prefers `toString` under the "default" hint.
       (name === "Date" && member === "@@3" ? emitDateProtoToPrimitiveBody(c, fctx) : null) ??
@@ -2682,6 +2743,24 @@ export function ensureIteratorNativeProtoGlue(ctx: CodegenContext): number | und
   return brand;
 }
 
+/**
+ * (#5267 R3-2) Register `%MapIteratorPrototype%` / `%SetIteratorPrototype%`
+ * glue (idempotent) and return its brand. The single own member is `next`
+ * (`name: "next"`, `length: 0`, `{w:T, e:F, c:T}`), which is what the
+ * `*IteratorPrototype/next/{name,length}.js` rows read off the prototype.
+ */
+export function ensureCollectionIteratorNativeProtoGlue(ctx: CodegenContext, kind: "Map" | "Set"): number | undefined {
+  const brand = getBuiltinBrand(ctx, `${kind}Iterator`);
+  if (brand === undefined) return undefined;
+  if (!getNativeProtoBuiltinGlue(ctx, brand)) {
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, `${kind}Iterator`, ["next"]),
+      memberLength: () => 0,
+    });
+  }
+  return brand;
+}
+
 /** Register `Map.prototype` glue (idempotent) and return its brand. (S6) */
 export function ensureMapNativeProtoGlue(ctx: CodegenContext): number | undefined {
   const brand = getBuiltinBrand(ctx, "Map");
@@ -2741,7 +2820,10 @@ export function ensureSymbolNativeProtoGlue(ctx: CodegenContext): number | undef
   const brand = getBuiltinBrand(ctx, "Symbol");
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
-    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Symbol", SYMBOL_PROTO_METHODS));
+    // (#5269 B-b) §20.4.3.5 `Symbol.prototype[Symbol.toStringTag]` is an own
+    // data property `"Symbol"` with `{w:false, e:false, c:true}` — the tag
+    // seeder installs it from this argument (WeakMap/WeakSet already pass one).
+    registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Symbol", SYMBOL_PROTO_METHODS, "Symbol"));
   }
   return brand;
 }
@@ -3853,6 +3935,29 @@ export function emitIteratorPrototypeSingleton(
   // inspect the prototype without pulling iterator dispatch into this slice.
   // Keep the property off String.prototype's glue CSV: `next` is own only on
   // the iterator prototype, not on the primitive wrapper prototype.
+  // (#5267 R3-2) `%MapIteratorPrototype%` / `%SetIteratorPrototype%` own the
+  // same own `next` data property (§24.1.5.2 / §24.2.5.2). The value is a
+  // descriptor-carrying native method closure, so the prototype's `next.name`
+  // / `next.length` are readable without pulling iterator dispatch onto the
+  // prototype: the records themselves keep the existing native stepping path.
+  if ((kind === "Map" || kind === "Set") && defineValueIdx !== undefined) {
+    const brand = ensureCollectionIteratorNativeProtoGlue(ctx, kind);
+    const closure =
+      brand === undefined
+        ? null
+        : ensureStandaloneNativeMethodClosure(ctx, brand, "next", "method", { refusalBodyFallback: true });
+    if (closure) {
+      initBody.push(
+        { op: "local.get", index: objLocal },
+        ...stringConstantExternrefInstrs(ctx, "next"),
+        ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+        { op: "extern.convert_any" },
+        { op: "f64.const", value: 0x01 | 0x04 }, // writable:true, enumerable:false, configurable:true
+        { op: "call", funcIdx: defineValueIdx },
+        { op: "drop" },
+      );
+    }
+  }
   if (kind === "String" && defineValueIdx !== undefined) {
     const brand = ensureStringNativeProtoGlue(ctx);
     const closure =

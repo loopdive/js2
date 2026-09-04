@@ -1,9 +1,11 @@
 ---
 id: 5283
 title: "`legacyBodyEmitted: true` on units where NO direct pass ran — 26 of 33 dogfood rows, and it inflates every legacy-body count built on that flag"
-status: ready
+status: done
 created: 2026-09-03
 updated: 2026-09-03
+completed: 2026-09-03
+assignee: ttraenkler/opus-5283
 sprint: current
 priority: high
 horizon: s
@@ -339,3 +341,129 @@ that can move a committed baseline, so it deserves its own reviewable diff.
    guard (pin 3) is not optional.
 5. `npm test -- tests/issue-3523-*` and `tests/issue-3519-ir-outcomes.test.ts`
    green.
+
+---
+
+## Landing record — 2026-09-03 (`ttraenkler/opus-5283`)
+
+Base `origin/main 42a0adf7d4` (after PR #5530 reshaped `reconcileIrOverlayOutcomes`;
+the plan's `:878-879` anchor is now `:898-899`). Shipped: **option (A), the
+receipt**, in `src/codegen/ir-overlay-outcomes.ts` +
+`src/codegen/legacy-body-audit.ts`. `src/ir/module-init.ts` is **unchanged** —
+see "Deliberately not done" below, which is the one substantive departure from
+the plan and it is measured.
+
+### What changed
+
+`legacyBodyEmitted` now requires a PHYSICAL direct-body root for the unit, on
+top of the existing prediction:
+
+```ts
+bodyAccounting?.legacyBodyEmitted ??
+  (unit.legacyBodyAvailable && !skippedBodyUnitIds.has(unit.unitId) && (physicalRootUnitIds?.has(unit.unitId) ?? true))
+```
+
+`physicalRootUnitIds` is a new accessor on `IrDirectFunctionBodyReceiptAudit`
+(`legacy-body-audit.ts`), attributed from EXACT inventory identity, so the
+multi-source whole-program `__module_init` (which resolves to no unit) is
+attributed to nobody — the `snapshot()` `moduleInitRootSourceIds` shape, reused.
+It rides the audit object the caller already passes, so `src/codegen/index.ts`
+is untouched.
+
+**The root is a NECESSARY condition, never a sufficient one.** The pure form the
+plan sketched (`legacyBodyEmitted = physicalRootUnitIds.has(unitId)`) was
+implemented, measured, and rejected: a root attributed to a unit can be the
+dispatcher entering for a sibling obligation. Measured on a class with a static
+block, `compileClassBodies` records a root against the implicit constructor
+`Counter_new` while that constructor's own body is skipped and IR-patched — the
+pure form reported compile-twice on a unit that compiled once (it turned
+`tests/issue-3519-ir-outcomes.test.ts` red). Intersecting with the existing
+skip-awareness means the change can only ever turn a `true` into a `false`.
+
+### Measured — 34-case corpus (20 dogfood + 12 playground + `extern-demo.ts` + `add.ts`), both lanes
+
+| metric | gc before → after | standalone before → after |
+| --- | --- | --- |
+| `legacyBodyEmitted` rows | 45 → **43** | 45 → **43** |
+| `missing-legacy-entry-evidence` | 2 → **0** | 2 → **0** |
+| rows claiming a legacy body with NO physical root | 2 → **0** | 2 → **0** |
+| outcome rows total / `non-executable` | 105 / 12 (unchanged) | 105 / 15 (unchanged) |
+| sha256 of the emitted binary, per row | 34/34 identical | 34/34 identical |
+
+Dogfood-only subset reproduces the plan's acceptance numbers exactly: **33 → 32**
+single-host and **31 → 30** standalone. Four outcome rows change in total (two
+sources × two lanes); the `(prepareAttempts, directBodyEmissions, irBodyEmissions)`
+triple, `kind`, `code` and `stage` are unchanged on every row in the corpus.
+
+### Root cause of both phantom rows — one class of defect, two spellings
+
+Instrumented `buildIrUnitInventory`'s scanned `ts.SourceFile` (temporary dump,
+reverted), which is what the plan asked for and what a raw re-parse cannot show:
+
+| source | scanned statements | module-init population |
+| --- | --- | --- |
+| `tests/fixtures/extern-demo.ts` | `[ModuleDeclaration, FunctionDeclaration ×3]` | `[ModuleDeclaration]` — `declare namespace Host` |
+| `tests/dogfood/corpus/import-attributes.module.js` | `[VariableStatement, ExportDeclaration]` | `[VariableStatement]` — a SYNTHESIZED `declare const data: any;` |
+
+Path 2 is not a different mechanism: the import resolver rewrites the JSON
+import into an ambient `declare const`, which is why re-parsing the file's own
+text shows an empty population while the compile still mints a terminal. **Both
+are ambient declarations counted as executable module-init population.**
+
+### Deliberately NOT done — the population fix, with the measurement that stopped it
+
+Skipping ambient statements in `collectModuleInitPopulation` was implemented and
+measured (both lanes, full corpus): it removed both phantom terminals, replaced
+them with truthful `non-executable` rows (gap-4 shape), took corpus violations
+to **zero of any code**, and moved zero bytes. It was **reverted anyway**,
+because that population is also the **R1 inventory's SCAN list**:
+`identity.ts:896` scans each population statement for nested declarations, and
+the import resolver's wrappers arrive as
+`declare namespace events { class EventEmitter { … } }`. With the skip,
+`inventory.classes` silently lost both synthetic import-wrapper classes and two
+`tests/issue-3520-*` pins went red
+(`tags ambient import classes without inventing executable constructors`,
+`orders transformed unitless import classes beside a member-backed nested class`).
+
+Splitting "executable population" from "scan roots" belongs in
+`src/ir/identity.ts`, which is outside this slice's file scope (W1-C).
+**Follow-up, ready to brief:** give `identity.ts:878` an executable-population
+predicate (ambient statements excluded) while `scanNode` keeps walking the full
+population. Expected effect, already measured on this branch: two dogfood/fixture
+module-init terminals become `non-executable` rows, `nonExecutable` 12 → 14 (gc)
+and 15 → 17 (standalone), zero byte movement.
+
+A second residual, found the same way and also out of scope: an
+**anonymous default class** records no direct-body root at all (its only entry is
+a `compileDeclarations` root with no unit identity), so its two class-member rows
+move from `legacyBodyEmitted: true` + `missing-legacy-entry-evidence` ×2 to
+`false` + `missing-terminal-evidence` ×2. Same violation count, honest label:
+the audit stops asserting a body it cannot see. Attributing those roots is the
+#3523 gap-1 unattributed-entry debt. `tests/issue-3519-ir-outcomes.test.ts` is
+updated with this reasoning in place.
+
+### Acceptance item 4 — baselines and ratchets
+
+Nothing to reseed. `scripts/ir-only-baseline.json` carries
+`legacyBodyEmittedCeiling: 0` for BOTH lanes today (the plan's "standalone is 26"
+is stale — #4577 drove it to 0), and `pnpm run check:ir-only` reports the
+identical lane summary before and after: 41 terminal units / 38 emitted / 0
+unsupported / 0 invariants / **0 legacy body emitted** / 38 IR body emitted / 3
+non-executable, verdict **READY**. `nonExecutableFloor: 3` is untouched because
+the population change is not in this PR. No committed baseline or ratchet floor
+was seeded from an inflated count.
+
+### Correction owed to #3518 (acceptance item 4, second half)
+
+The R9 dogfood figures 33 / 31 (legacy-body) against 7 / 8 (direct-emission)
+are both honest and **not comparable** — different populations, as the plan
+says. The honest post-fix `legacyBodyEmitted` counts are **32 / 30**, and the
+number that actually answers "how much does the direct front end still emit" is
+the **physical-root** count, which nobody reports yet.
+
+### Pre-existing reds, unchanged by this PR (measured on base `42a0adf7d4`)
+
+22 tests across `tests/issue-3520-*`, `tests/issue-3523-module-init-discovery-static`,
+`tests/issue-3525-multi-prepared-module-init`, `tests/issue-4588-*` and
+`tests/standalone-cutover-audit` fail identically with and without this change.
+The failing-name set diff (base → branch) is **empty**.

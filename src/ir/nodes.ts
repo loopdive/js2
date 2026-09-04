@@ -1580,6 +1580,15 @@ export interface IrInstrClassSuperInit extends IrInstrBase {
  * expects `(ref $ParentStruct)` (valid WasmGC subtyping). Lowering emits:
  *   <receiver> <each arg> call $<parent>_<method>
  * Result type: the parent method descriptor's `returnType` (null → void).
+ *
+ * (#3522 W1-C) `memberKind` selects WHICH member slot of the parent is
+ * dispatched, exactly as it does on `class.call`: `"method"` → `<parent>_<name>`,
+ * `"getter"` → `<parent>_get_<name>` (a `super.<accessor>` read, no args),
+ * `"setter"` → `<parent>_set_<name>` (a `super.<accessor> = v` write, one arg,
+ * void). ABSENT means `"method"` — the pre-#3522 population, so every existing
+ * producer keeps its exact slot. The kind never widens the OPERATION: this is
+ * still one static call to a parent slot, which is why the op is shared rather
+ * than split.
  */
 export interface IrInstrClassSuperCall extends IrInstrBase {
   readonly kind: "class.super_call";
@@ -1587,6 +1596,7 @@ export interface IrInstrClassSuperCall extends IrInstrBase {
   readonly receiver: IrValueId;
   readonly target?: IrFuncRef;
   readonly methodName: string;
+  readonly memberKind?: Exclude<IrClassMemberKind, "static">;
   readonly args: readonly IrValueId[];
 }
 

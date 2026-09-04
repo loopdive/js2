@@ -36,6 +36,7 @@ import {
 } from "../async-scheduler.js";
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
+import { collectOpenReceiverCandidates } from "./virtual-candidate-set.js"; // (#5249)
 import {
   buildCallSiteNullishReceiverGuard, // (#4656) callee-reference-before-arguments
   callSiteNullishReceiverGuardApplies,
@@ -71,6 +72,7 @@ import {
   isDataViewAccessor,
   usesNativeDataViewProvider,
 } from "../dataview-native.js";
+import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "../ta-dyn-proto-methods.js"; // (#5194 r3-1.3) dyn-view read-side helpers
 import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped, reserveAnyIterNext } from "../iterator-native.js";
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
@@ -1820,8 +1822,17 @@ export function compileReceiverMethodCall(
         ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
       );
     }
+    // (#5309) …unless the receiver declares an own instance FIELD of this name,
+    // which shadows every inherited callable. The walk below would otherwise
+    // resolve `b.m()` to the PARENT's body. Not a duplicate of the guard in
+    // `collectClassDeclaration`: dropping the inherited alias fixes private
+    // names (they never reach this walk) but not public ones, because the walk
+    // finds `Parent_m` in `classMethodSet` on its own. Leaving `funcIdx`
+    // undefined hands the call to the callable-struct-field arm below.
+    const receiverFieldShadowsInherited =
+      !receiverIsClassObject && ctx.classFieldShadowedInheritedCallables.has(`${receiverClassName}_${methodName}`);
     // Walk inheritance chain to find the method in a parent class
-    if (funcIdx === undefined && !ts.isPrivateIdentifier(propAccess.name)) {
+    if (funcIdx === undefined && !receiverFieldShadowsInherited && !ts.isPrivateIdentifier(propAccess.name)) {
       let ancestor = ctx.classParentMap.get(receiverClassName);
       while (ancestor && funcIdx === undefined) {
         fullName = `${ancestor}_${methodName}`;
@@ -1841,30 +1852,28 @@ export function compileReceiverMethodCall(
     // call the first subclass's method regardless of runtime type.
     let virtualCandidates: { className: string; funcIdx: number; classTag: number }[] | undefined;
     if (funcIdx === undefined && !ts.isPrivateIdentifier(propAccess.name)) {
-      const candidates: { className: string; funcIdx: number; classTag: number }[] = [];
-      const baseClass = fullName.split("_")[0];
-      for (const [childClass, parentClass] of ctx.classParentMap) {
-        if (parentClass === receiverClassName || parentClass === baseClass) {
-          const childFullName = `${childClass}_${methodName}`;
-          const childHasMember = receiverIsClassObject
-            ? ctx.staticMethodSet.has(childFullName)
-            : ctx.classMethodSet.has(childFullName);
-          const childFuncIdx = childHasMember
-            ? ctx.funcMap.get(classMemberFuncKey(ctx, childFullName, receiverMemberKind))
-            : undefined; // (#1983)
-          const childTag = ctx.classTagMap.get(childClass);
-          if (childFuncIdx !== undefined && childTag !== undefined) {
-            candidates.push({ className: childClass, funcIdx: childFuncIdx, classTag: childTag });
-          }
+      // (#5249) The set spans every DESCENDANT, each resolved to its nearest
+      // declaring ancestor — not only direct children that DECLARE the method.
+      // `emitVirtualMethodDispatchByTag` ends its cascade in `unreachable`, so
+      // a descendant with no arm traps at run time on a module that compiled
+      // clean. Declared direct children still come first, in the same order, so
+      // `candidates[0]` — the static fallback and the emitter's result-type
+      // schema — is unchanged wherever the old walk produced one.
+      const openSet = collectOpenReceiverCandidates(
+        ctx,
+        receiverClassName,
+        fullName.split("_")[0],
+        methodName,
+        receiverIsClassObject,
+        receiverMemberKind,
+      );
+      if (openSet !== undefined) {
+        const candidates = openSet.candidates;
+        fullName = `${openSet.implClassName}_${methodName}`;
+        funcIdx = candidates[0]!.funcIdx;
+        if (candidates.length > 1) {
+          virtualCandidates = candidates;
         }
-      }
-      if (candidates.length === 1) {
-        fullName = `${candidates[0]!.className}_${methodName}`;
-        funcIdx = candidates[0]!.funcIdx;
-      } else if (candidates.length > 1) {
-        virtualCandidates = candidates;
-        fullName = `${candidates[0]!.className}_${methodName}`;
-        funcIdx = candidates[0]!.funcIdx;
       }
     } else if (funcIdx !== undefined && !ts.isPrivateIdentifier(propAccess.name)) {
       // Private names are lexically bound and cannot be overridden. Dispatch
@@ -4083,6 +4092,16 @@ export function compileReceiverMethodCall(
           else if (arity <= 3 && methodName === "fill") taFillIdx = ensureTaDynFillHelper(ctx);
           else if (arity <= 3 && methodName === "copyWithin") taFillIdx = ensureTaDynCopyWithinHelper(ctx);
           else if (arity <= 3 && methodName === "reverse") taFillIdx = ensureTaDynReverseHelper(ctx);
+          else if (hasTaDynProtoMethodHelper(methodName)) {
+            // (#5194 r3-1.3) MINT ONLY. The read-side helpers dispatch through
+            // the finalize-time `__extern_method_call` arm
+            // (ta-dyn-method-call.ts), which can only ladder over helpers that
+            // already exist in `funcMap` — and nothing else mints them, because
+            // this call site does not lower to a direct call. The four mutators
+            // above keep their faster call-site two-arm, so their bytes do not
+            // move.
+            ensureTaDynProtoMethodHelper(ctx, methodName);
+          }
         }
         const taDynMethodIdx = taSetIdx ?? taFillIdx;
         if (taDynMethodIdx !== undefined && ctx.taDynViewTypeIdx >= 0) {

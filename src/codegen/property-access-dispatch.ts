@@ -62,6 +62,7 @@ import {
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
+import { emitUndefined } from "./expressions/late-imports.js"; // (#5269 B-d) the canonical `undefined` carrier
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { popBody, pushBody } from "./context/bodies.js";
@@ -200,6 +201,7 @@ import {
   tryEmitPinnedStructMemberGet,
   typeErrorThrowInstrs,
 } from "./property-access.js";
+import { classObjectRestrictedProperty } from "./class-static-metadata.js"; // (#5195 r3-7)
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
@@ -2189,7 +2191,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       }
     }
     if (ctx.classSet.has(resolvedClass) && !bareNameIsNonClass) {
-      const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName);
+      const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName, staticReceiver);
       if (__r !== PA_FALLTHROUGH) return __r;
     }
   }
@@ -2218,6 +2220,10 @@ function emitClassStaticMemberRead(
   fctx: FunctionContext,
   resolvedClass: string,
   propName: string,
+  // (#5195 r3 review round 3, r4-A) The receiver expression this read was
+  // written on, when there is one. `undefined` from the class-EXPRESSION
+  // caller, whose receiver is the class literally.
+  receiver?: ts.Expression,
 ): PADispatchResult {
   const fullName = `${resolvedClass}_${propName}`;
   // #2020: static fields are inherited. `class B extends A {}; B.count`
@@ -2229,6 +2235,21 @@ function emitClassStaticMemberRead(
     fctx.body.push({ op: "global.get", index: globalIdx });
     const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
     return globalDef?.type ?? { kind: "f64" };
+  }
+  // (#5195 r3-7) §10.2.4 AddRestrictedFunctionProperties: a class object is a
+  // strict function, so `C.caller` / `C.arguments` are the %ThrowTypeError%
+  // accessor inherited from %Function.prototype% — READING one throws. Only
+  // when the class declares nothing of that name (a declared `static caller`
+  // shadows the inherited accessor and keeps its value); the static-FIELD
+  // lookup above has already answered in that case.
+  if (classObjectRestrictedProperty(ctx, resolvedClass, propName, receiver)) {
+    emitThrowTypeError(
+      ctx,
+      fctx,
+      "'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functions",
+    );
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
   }
   // ClassName.prototype — return a singleton prototype global (externref)
   // so that Object.getPrototypeOf(instance) === ClassName.prototype holds.
@@ -3716,8 +3737,39 @@ export function tryNamespaceConstantAndSymbolReads(
       return { kind: "externref" };
     }
   }
+
+  // (#5269 B-d) Any OTHER property read on a symbol PRIMITIVE. §6.2.5.5
+  // GetValue on a primitive base resolves against a throwaway wrapper, so only
+  // what `Symbol.prototype` owns can answer; every other name — including one a
+  // sloppy `sym.a = 0` appeared to write — is `undefined`. Before this the read
+  // fell through to a generic member path that answered a NULL externref, which
+  // `assert.sameValue(sym.a, undefined)` reports as `null`, not `undefined`.
+  // The Symbol.prototype own members are excluded so a reflective
+  // `sym.toString` / `sym.valueOf` / `sym.constructor` read keeps its closure.
+  if (
+    ctx.standalone &&
+    (objType.flags & ts.TypeFlags.ESSymbolLike) !== 0 &&
+    !SYMBOL_PROTOTYPE_OWN_MEMBERS.has(propName)
+  ) {
+    const recvType = compileExpression(ctx, fctx, expr.expression);
+    if (recvType) fctx.body.push({ op: "drop" });
+    emitUndefined(ctx, fctx);
+    return { kind: "externref" };
+  }
   return PA_FALLTHROUGH;
 }
+
+/**
+ * (#5269 B-d) The names `%Symbol.prototype%` owns (§20.4.3). A read of any of
+ * these off a symbol receiver resolves to the prototype's own property and must
+ * keep its existing lowering; everything else is `undefined`.
+ */
+const SYMBOL_PROTOTYPE_OWN_MEMBERS: ReadonlySet<string> = new Set([
+  "constructor",
+  "description",
+  "toString",
+  "valueOf",
+]);
 
 export function tryStringLengthIteratorAndExternClassReads(
   ctx: CodegenContext,

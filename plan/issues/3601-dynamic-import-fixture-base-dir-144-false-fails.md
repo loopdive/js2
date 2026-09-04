@@ -108,3 +108,25 @@ directory in as the resolution base.
   (byte-identical verdicts).
 - Regression test `tests/issue-3601.test.ts`: compile+run a tiny
   `import('./fixture.js')` pair from a temp directory far from `scripts/`.
+
+## Harvest re-measurement 2026-09-03 — bucket has GROWN
+
+Source: baselines-repo `test262-current.jsonl`, sha `998a110a`, run `20260903-155044`.
+
+| Date | Rows matching `Cannot find module … _FIXTURE.js` |
+| --- | ---: |
+| 2026-07-24 (this issue's measurement) | 144 |
+| 2026-09-03 | **173** (+29) |
+
+Of those, 64 are the `module-code_FIXTURE.js` specifier specifically, all in
+`language/expressions/dynamic-import/**`. The baked-in absolute path is
+unchanged and still points at the CI worker bundle directory:
+
+```
+Cannot find module '/home/runner/work/js2/js2/scripts/module-code_FIXTURE.js'
+  imported from /home/runner/work/js2/js2/scripts/runtime-bundle.mjs
+```
+
+These remain false FAILs — the compiled dynamic-import machinery never runs.
+Still `status: ready` / `sprint: current`; the growth suggests newly-enabled
+dynamic-import tests are landing straight into this bucket.

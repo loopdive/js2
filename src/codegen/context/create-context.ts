@@ -203,6 +203,7 @@ export function createCodegenContext(
     topLevelFunctionNames: new Set(), // (#1983) for class-member funcMap key collision detection
     topLevelFunctionDeclarations: new Map(),
     classMethodSet: new Set(),
+    classFieldShadowedInheritedCallables: new Set(), // (#5309) own instance field beats an inherited callable
     deferredClassBodies: new Set(),
     classAccessorSet: new Set(),
     structAccessorClosure: new Map(), // (#1888 S5c) struct accessors compiled as host-free closures
@@ -213,6 +214,7 @@ export function createCodegenContext(
     staticInitExprs: [],
     classExpressionStaticInitExprs: new Map(),
     closureCounter: 0,
+    trampolineForwarders: new Set(),
     closureMap: new Map(),
     closureInfoByTypeIdx: new Map(),
     closureMinimumArgumentCountByFuncTypeIdx: new Map(),

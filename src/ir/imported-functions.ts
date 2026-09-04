@@ -183,6 +183,103 @@ function canonicalTargetName(declaration: ts.FunctionDeclaration): string | unde
   return hasModifier(declaration, ts.SyntaxKind.DefaultKeyword) ? "default" : undefined;
 }
 
+/**
+ * (#5300) A comparable key for the part of a FunctionDeclaration's signature
+ * that decides how it lowers, or `undefined` when the declaration is outside
+ * the comparable surface.
+ *
+ * Deliberately SYNTACTIC: two members of one overload set carrying identical
+ * annotation text in the same source file resolve to the same type, so text
+ * equality is a sound conservative proxy for "lowers to the same physical
+ * callable" — and it asks the checker nothing, so it adds no raw type query
+ * that `ctx.oracle` would have to express.  Anything the comparison cannot
+ * certify (an unannotated or `this` parameter, an optional/rest/default
+ * parameter, a missing return annotation, generics, `async`, a generator)
+ * yields `undefined` and therefore refuses the set.
+ */
+function overloadSignatureShape(declaration: ts.FunctionDeclaration): string | undefined {
+  if (
+    declaration.asteriskToken ||
+    (declaration.typeParameters?.length ?? 0) > 0 ||
+    hasModifier(declaration, ts.SyntaxKind.AsyncKeyword)
+  ) {
+    return undefined;
+  }
+  const parameters: string[] = [];
+  for (const parameter of declaration.parameters) {
+    if (
+      !ts.isIdentifier(parameter.name) ||
+      parameter.name.text === "this" ||
+      parameter.questionToken ||
+      parameter.dotDotDotToken ||
+      parameter.initializer
+    ) {
+      return undefined;
+    }
+    const parameterType = parameter.type ?? ts.getJSDocType(parameter);
+    if (!parameterType) return undefined;
+    parameters.push(parameterType.getText());
+  }
+  const returnType = declaration.type ?? ts.getJSDocReturnType(declaration);
+  if (!returnType) return undefined;
+  return `(${parameters.join(",")})=>${returnType.getText()}`;
+}
+
+/**
+ * (#5300) The exact implementation of an admissible OVERLOAD SET, or
+ * `undefined` for every set this slice refuses.
+ *
+ * A direct call to an overloaded function used to resolve to no target at
+ * all (`functions.length !== 1`), so the call site got no lowering plan and
+ * the CALLER — already claimed — demoted post-claim with
+ * `ir/from-ast: direct call to "…" has no exact AST-site plan`, i.e. an
+ * `unpatched-slot` invariant that FAILS the compile outright (measured on
+ * `origin/main` 2026-09-03; see the issue's probe).
+ *
+ * The IR emits ONE callable per unit, keyed on the implementation, so a set
+ * is admissible only when every member describes that same physical
+ * callable.  Each condition below is a way for that to be false:
+ *
+ *  - exactly one member has a body (that is the implementation; the rest are
+ *    bodiless overload signatures);
+ *  - no member is ambient (`declare`) and every member lives in the SAME
+ *    source file as the implementation — a merged ambient signature is not
+ *    part of the executable unit;
+ *  - the symbol's `valueDeclaration` is a member of the set, so a symbol
+ *    merged with a non-function declaration is still refused;
+ *  - every member has the same LOWERING-COMPATIBLE signature shape
+ *    (`overloadSignatureShape`).  A set whose signatures diverge in arity,
+ *    parameter type or return type would let a call TypeScript resolved
+ *    against a narrower overload lower onto the implementation's physical
+ *    signature, so it is refused — returning `undefined` is the same
+ *    supported "not direct-call evidence" outcome every other guard here
+ *    produces, and the call lowers through the ordinary (non-direct) path.
+ */
+function overloadSetImplementation(
+  target: ts.Symbol,
+  functions: readonly ts.FunctionDeclaration[],
+): ts.FunctionDeclaration | undefined {
+  const bodied = functions.filter((declaration) => !!declaration.body);
+  if (bodied.length !== 1) return undefined;
+  const implementation = bodied[0]!;
+  const sourceFile = implementation.getSourceFile();
+  if (target.valueDeclaration && !functions.some((declaration) => declaration === target.valueDeclaration)) {
+    return undefined;
+  }
+  const shape = overloadSignatureShape(implementation);
+  if (shape === undefined) return undefined;
+  for (const declaration of functions) {
+    if (
+      declaration.getSourceFile() !== sourceFile ||
+      hasModifier(declaration, ts.SyntaxKind.DeclareKeyword) ||
+      overloadSignatureShape(declaration) !== shape
+    ) {
+      return undefined;
+    }
+  }
+  return implementation;
+}
+
 function importClauseOfSpecifier(specifier: ts.ImportSpecifier): ts.ImportClause | undefined {
   const named = specifier.parent;
   const clause = named.parent;
@@ -369,11 +466,17 @@ export function makeIrImportedFunctionResolver(
     if (!target || reassigned.has(target)) return undefined;
     const declarations = target.declarations ?? [];
     const functions = declarations.filter(ts.isFunctionDeclaration);
-    // Overload sets and declaration merging are outside this exact slice.  A
-    // single implementation plus one or more overload signatures is still an
-    // overload set, so require exactly one FunctionDeclaration total.
-    if (functions.length !== 1) return undefined;
-    const declaration = functions[0]!;
+    // Declaration merging is still outside this slice, so a single
+    // FunctionDeclaration remains the ordinary admission.  An OVERLOAD SET —
+    // one bodied implementation plus bodiless signatures — is admitted only
+    // under the exact conditions in `overloadSetImplementation` (#5300).
+    const declaration =
+      functions.length === 1
+        ? functions[0]!
+        : functions.length > 1
+          ? overloadSetImplementation(target, functions)
+          : undefined;
+    if (!declaration) return undefined;
     if (
       !declaration.body ||
       declaration.getSourceFile().isDeclarationFile ||
@@ -384,7 +487,11 @@ export function makeIrImportedFunctionResolver(
     }
     // A different valueDeclaration means the symbol is merged/ambiguous even
     // when only one FunctionDeclaration happened to appear in declarations.
-    if (target.valueDeclaration && target.valueDeclaration !== declaration) return undefined;
+    // An overload set never satisfies this: TypeScript records the FIRST
+    // declaration of the set as `valueDeclaration` (measured 2026-09-03 —
+    // the bodiless signature, NOT the implementation), so the set-level
+    // admission checks membership instead (`overloadSetImplementation`).
+    if (functions.length === 1 && target.valueDeclaration && target.valueDeclaration !== declaration) return undefined;
     const targetName = canonicalTargetName(declaration);
     if (!targetName) return undefined;
     return {

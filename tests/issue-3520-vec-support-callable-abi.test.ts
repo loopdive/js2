@@ -14,16 +14,19 @@ import { ProgramAbiCallableRegistry } from "../src/codegen/program-abi-callable-
 import {
   VEC_HOST_BRIDGE_ROLE,
   type VecHostBridgeKind,
+  type VecHostBridgeWritebackKind,
   finalizeVecHostBridgeExports,
   isCoreVecHostBridgePublicName,
   resolveVecHostBridgeHelper,
   vecHostBridgePhysicalExportBase,
+  vecHostBridgeWritebackOrdinal,
 } from "../src/codegen/vec-access-exports.js";
 import { emitBinary } from "../src/emit/binary.js";
 import { STABLE_FUNC_BASE } from "../src/emit/resolve-layout.js";
 import { type CompileResult, compile } from "../src/index.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory } from "../src/ir/identity.js";
+import { type IrObservedOutcome, nonExecutableOutcomeDefect } from "../src/ir/outcomes.js";
 import type { WasmExport, WasmFunction } from "../src/ir/types.js";
 import { buildImports, instantiateWasm, wrapExports } from "../src/runtime.js";
 
@@ -43,11 +46,68 @@ const VEC_BRIDGES: readonly {
   { kind: "pop", name: "__vec_pop", ordinal: 5 },
 ];
 
+/**
+ * (#3520 W1-E) The `#3116` write-back pair — the third sub-family of the same
+ * closed `vec-host-bridge` table, at ordinals 9 and 10.
+ */
+const VEC_WRITEBACK_HELPERS: readonly { kind: VecHostBridgeWritebackKind; name: string }[] = [
+  { kind: "setElem", name: "__vec_set_elem" },
+  { kind: "setLen", name: "__vec_set_len" },
+];
+
+/**
+ * (#3520 W1-E) True for the six-bridge RESERVATION batch specifically.
+ *
+ * `observeEntrySourceSupports` is no longer called once per compile: the
+ * write-back pair is observed later, from `vec-define-writeback.ts`, on any
+ * module that emits it. The probes below all want the reservation batch, and a
+ * spy that overwrites its capture on every call silently ends up holding the
+ * write-back batch instead — so the batch is identified by its exact content
+ * rather than by being the only one. This is strictly stronger than the
+ * previous "whatever arrived last": it pins the family's order and ordinals.
+ */
+function isCoreVecBridgeBatch(
+  observations: readonly { readonly displayName: string; readonly derivedOrdinal: number }[],
+): boolean {
+  return (
+    observations.length === VEC_BRIDGES.length &&
+    VEC_BRIDGES.every(
+      (bridge, index) =>
+        observations[index]?.displayName === bridge.name && observations[index]?.derivedOrdinal === bridge.ordinal,
+    )
+  );
+}
+
 function isVecHostBridgePhysicalExport(name: string): boolean {
   return VEC_BRIDGES.some((bridge) => {
     const base = vecHostBridgePhysicalExportBase(bridge.kind);
     return name.startsWith(base) && /^\$*$/.test(name.slice(base.length));
   });
+}
+
+/**
+ * (#3523 R4 gap 4) The ownership projection of an outcome ledger: every row
+ * that makes an ownership claim, in ledger order. `non-executable` rows are
+ * OBSERVATIONAL — they carry `sourceId` and deliberately no `unitId` — so they
+ * are not part of the kind sequence this file pins. Mirrors the partition in
+ * `scripts/check-ir-only.ts:403-416`.
+ */
+function ownershipKinds(outcomes: readonly IrObservedOutcome[] | undefined): string[] | undefined {
+  return outcomes?.filter((outcome) => outcome.kind !== "non-executable").map((outcome) => outcome.kind);
+}
+
+/**
+ * The positive half of that filter: an observational row excluded from the kind
+ * list must still be restricted by construction, or the exclusion would be a
+ * way to hide a lying row rather than to classify a truthful one.
+ */
+function expectWellFormedObservationalRows(outcomes: readonly IrObservedOutcome[] | undefined): void {
+  for (const outcome of outcomes ?? []) {
+    if (outcome.kind !== "non-executable") continue;
+    expect(outcome.unitId, `${outcome.key} observational unit id`).toBeUndefined();
+    expect(outcome.unitKind, `${outcome.key} observational unit kind`).toBe("module-init");
+    expect(nonExecutableOutcomeDefect(outcome), outcome.key).toBeUndefined();
+  }
 }
 
 const ARRAY_SOURCE = `
@@ -316,12 +376,14 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     const observe = vi
       .spyOn(ProgramAbiCallableRegistry.prototype, "observeEntrySourceSupports")
       .mockImplementation(function (observations) {
-        registry = this;
-        reserved = observations.map((observation) => {
-          const func = definedFuncAt(this.ctx, observation.funcIdx);
-          if (!func) throw new Error(`missing reserved helper ${observation.displayName}`);
-          return func;
-        });
+        if (isCoreVecBridgeBatch(observations)) {
+          registry = this;
+          reserved = observations.map((observation) => {
+            const func = definedFuncAt(this.ctx, observation.funcIdx);
+            if (!func) throw new Error(`missing reserved helper ${observation.displayName}`);
+            return func;
+          });
+        }
         return original.call(this, observations);
       });
     const { result } = generate(ARRAY_SOURCE, "vec-reserve-fill.ts");
@@ -770,21 +832,23 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     const observe = vi
       .spyOn(ProgramAbiCallableRegistry.prototype, "observeEntrySourceSupports")
       .mockImplementation(function (observations) {
-        registry = this;
-        observedImportCount = this.ctx.numImportFuncs;
-        for (const name of ["__vec_len", "$v0", "$v0$$"] as const) {
-          const entry = this.ctx.mod.exports.find(
-            (candidate) => candidate.name === name && candidate.desc.kind === "func",
-          );
-          const func = entry?.desc.kind === "func" ? definedFuncAt(this.ctx, entry.desc.index) : undefined;
-          if (!entry || !func) throw new Error(`missing exact user export ${name} before vec publication`);
-          userExports.set(name, { entry, func });
+        if (isCoreVecBridgeBatch(observations)) {
+          registry = this;
+          observedImportCount = this.ctx.numImportFuncs;
+          for (const name of ["__vec_len", "$v0", "$v0$$"] as const) {
+            const entry = this.ctx.mod.exports.find(
+              (candidate) => candidate.name === name && candidate.desc.kind === "func",
+            );
+            const func = entry?.desc.kind === "func" ? definedFuncAt(this.ctx, entry.desc.index) : undefined;
+            if (!entry || !func) throw new Error(`missing exact user export ${name} before vec publication`);
+            userExports.set(name, { entry, func });
+          }
+          reserved = observations.map((observation) => {
+            const func = definedFuncAt(this.ctx, observation.funcIdx);
+            if (!func) throw new Error(`missing reserved helper ${observation.displayName}`);
+            return func;
+          });
         }
-        reserved = observations.map((observation) => {
-          const func = definedFuncAt(this.ctx, observation.funcIdx);
-          if (!func) throw new Error(`missing reserved helper ${observation.displayName}`);
-          return func;
-        });
         return originalObserve.call(this, observations);
       });
     const handle = vi
@@ -849,13 +913,20 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
     });
     expect(tracked.success, tracked.errors.map((error) => error.message).join("\n")).toBe(true);
     expect(tracked.binary).toEqual(untracked.binary);
-    expect(tracked.irOutcomes?.map((outcome) => outcome.kind)).toEqual(["emitted", "unsupported"]);
+    // The kind list is ORDER-SENSITIVE and pins the ownership rows only. A
+    // `non-executable` row (#3523 R4 gap 4) is observational, carries no
+    // terminal identity, and its ledger POSITION is not a property this test
+    // owns — so it is filtered out here rather than appended to the literal,
+    // and checked for well-formedness by `expectWellFormedObservationalRows`.
+    expect(ownershipKinds(tracked.irOutcomes)).toEqual(["emitted", "unsupported"]);
+    expectWellFormedObservationalRows(tracked.irOutcomes);
     expect(untracked.irOutcomes).toBeUndefined();
 
     const routed = generate(ARRAY_SOURCE, "vec-routing.ts", true).result;
     const unreported = generate(ARRAY_SOURCE, "vec-routing.ts", false).result;
     expect(unreported.irCompiledFuncs).toEqual(routed.irCompiledFuncs);
-    expect(routed.irOutcomes?.map((outcome) => outcome.kind)).toEqual(["emitted", "unsupported"]);
+    expect(ownershipKinds(routed.irOutcomes)).toEqual(["emitted", "unsupported"]);
+    expectWellFormedObservationalRows(routed.irOutcomes);
     expect(unreported.irOutcomes).toBeUndefined();
     expect(unreported.module.functions).toHaveLength(routed.module.functions.length);
 
@@ -899,15 +970,20 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
         checker: trackedAst.checker,
       });
       const outcomes = tracked.irOutcomes ?? [];
-      const outcomeIds = outcomes.map((outcome) => outcome.unitId);
+      // Same partition as `scripts/check-ir-only.ts:403-416`: observational
+      // `non-executable` rows own no terminal unit, so they belong to neither
+      // side of the ownership closure. Well-formedness is asserted right after.
+      const ownershipOutcomes = outcomes.filter((outcome) => outcome.kind !== "non-executable");
+      const ownershipIds = ownershipOutcomes.map((outcome) => outcome.unitId);
       expect(
-        outcomeIds.every((id) => id !== undefined),
+        ownershipIds.every((id) => id !== undefined),
         `${entry} structural outcome ids`,
       ).toBe(true);
-      expect(new Set(outcomeIds).size, `${entry} unique outcome ids`).toBe(outcomes.length);
-      expect([...outcomeIds].sort(), `${entry} terminal outcome closure`).toEqual(
+      expect(new Set(ownershipIds).size, `${entry} unique outcome ids`).toBe(ownershipOutcomes.length);
+      expect([...ownershipIds].sort(), `${entry} terminal outcome closure`).toEqual(
         inventory.terminalUnits.map((unit) => unit.id).sort(),
       );
+      expectWellFormedObservationalRows(outcomes);
       for (const outcome of outcomes) {
         expect(outcome.kind === "emitted" ? outcome.irBodyEmitted : !outcome.irBodyEmitted, outcome.key).toBe(true);
         if (outcome.kind === "unsupported") expect(outcome.legacyBodyEmitted, outcome.key).toBe(true);
@@ -952,7 +1028,51 @@ describe("#3520 vec host-bridge Program ABI ownership", () => {
         expect(ownedFunctions.has(helper), `${entry} duplicate vec helper owner`).toBe(false);
         ownedFunctions.add(helper);
       }
-      expect(familyEntries, `${entry} unbounded vec family rows`).toHaveLength(ownedFunctions.size);
+      // (#3520 W1-E) The role is a closed table with three sub-families, of
+      // which the six core bridges above are only the first, so the census can
+      // no longer be "exactly the core rows". Widening it ALONE would let any
+      // unknown row into the family unchallenged — the green-washing move the
+      // W1-D partition widening had to avoid — so every non-core row must
+      // positively identify itself as the `#3116` write-back pair at its own
+      // fixed ordinal, keyed by role+ordinal rather than by display name.
+      const coreRowIds = new Set(
+        VEC_BRIDGES.map((bridge) => {
+          const ref = irSupportFuncRef(entrySource.id, VEC_HOST_BRIDGE_ROLE, bridge.name, bridge.ordinal);
+          if (ref.binding.kind !== "support") throw new Error(`missing ${bridge.name} structural binding`);
+          return ref.binding.bindingId as string;
+        }),
+      );
+      const writebackRowIds = new Set(
+        VEC_WRITEBACK_HELPERS.map((helper) => {
+          const ref = irSupportFuncRef(
+            entrySource.id,
+            VEC_HOST_BRIDGE_ROLE,
+            helper.name,
+            vecHostBridgeWritebackOrdinal(helper.kind),
+          );
+          if (ref.binding.kind !== "support") throw new Error(`missing ${helper.name} structural binding`);
+          return ref.binding.bindingId as string;
+        }),
+      );
+      const nonCoreRows = familyEntries.filter((candidate) => !coreRowIds.has(candidate.id));
+      for (const row of nonCoreRows) {
+        expect(writebackRowIds.has(row.id), `${entry} unexpected vec family row ${row.displayName} (${row.id})`).toBe(
+          true,
+        );
+        // The write-back pair is emitted only under its own gate, so a present
+        // row must resolve to a real, exactly-named helper — not to a slot the
+        // planner invented.
+        const slot = tracked.programAbi!.abi.resolveFinalIndex(row.id);
+        if (!slot || slot.space !== "function") throw new Error(`missing ${entry} ${row.displayName} final locator`);
+        const importCount = tracked.module.imports.filter((candidate) => candidate.desc.kind === "func").length;
+        expect(
+          tracked.module.functions[slot.index - importCount]?.name,
+          `${entry} ${row.displayName} exact helper`,
+        ).toBe(row.displayName);
+      }
+      expect(familyEntries, `${entry} unbounded vec family rows`).toHaveLength(
+        ownedFunctions.size + nonCoreRows.length,
+      );
       corpusOwnedFunctions += ownedFunctions.size;
     }
     expect(corpusOwnedFunctions, "five-entry vec ownership anti-vacuity").toBeGreaterThan(0);
