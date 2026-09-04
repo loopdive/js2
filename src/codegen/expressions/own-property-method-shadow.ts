@@ -355,10 +355,16 @@ export function fillOwnShadowWrappers(ctx: CodegenContext): void {
   }
 }
 
+/**
+ * Replace a RESERVED wrapper's placeholder body in place. Not a speculative
+ * rollback: the body being discarded is the `unreachable` stub minted at
+ * reserve time (#1719 reserve-then-fill), never a probe compile, so there are
+ * no locals, late imports or errors to unwind with it.
+ */
 function applyBody(fn: WasmFunction, locals: WasmFunction["locals"], body: Instr[]): void {
   fn.locals.length = 0;
   fn.locals.push(...locals);
-  fn.body.length = 0;
+  fn.body.length = 0; // not-a-probe-rollback (#1919)
   fn.body.push(...body);
 }
 
