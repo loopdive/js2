@@ -82,14 +82,28 @@ branch). Declared direct children keep their `classParentMap` order, so
 unchanged wherever the old walk produced one.
 
 **The 123-row family does NOT go green, and this is the honest headline.**
-Measured on the first 39 rows of `family-123.txt` with the provider linked: 0
-pass. The failure MOVES rather than clearing —
-`unreachable in HelperBase_adjustCalendarDate()` becomes
-`illegal cast in HebrewHelper_minMaxMonthLength()` (33 rows) or
-`RangeError: Invalid monthCode: M13` (2 rows). The issue assumed one defect
-gated these rows; there are at least three stacked behind each other. The
-acceptance criterion "the family shrinks substantially" is therefore NOT met by
-this change alone, and no such claim is made.
+Full measurement, all 123 rows, provider linked, on this branch:
+
+| | rows | pass | fail |
+| --- | --- | --- | --- |
+| after (this fix) | 123 | 0 | 123 |
+
+`unreachable in HelperBase_adjustCalendarDate()`: **123 → 0** — the targeted
+trap is gone from every row. But no row turns green; each now fails one layer
+deeper:
+
+| rows | new failure |
+| --- | --- |
+| 120 | `RuntimeError: illegal cast in HebrewHelper_minMaxMonthLength()` |
+| 3 | `RangeError: Invalid monthCode: M13 in ti()` |
+
+The issue assumed one defect gated these rows; there are at least three stacked
+behind each other. The acceptance criterion "the family shrinks substantially"
+is therefore NOT met by this change alone, and no such claim is made. What this
+change does deliver is the removal of a class of silent runtime traps on
+modules the compiler reports as clean.
+
+Equivalence gate: 24 failing / 1718 passing — exactly the baseline.
 
 ### The `HebrewHelper` route — investigated, ruled pre-existing (with its bound)
 
