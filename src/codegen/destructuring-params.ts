@@ -1661,7 +1661,7 @@ export function destructureParamObject(
  * No-op (and no emitted bytes) for every source without such a delete, because
  * the flag global is only rooted by the pre-scan that sees one.
  */
-export function emitArrayIteratorDeletedGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+function emitArrayIteratorDeletedGuard(ctx: CodegenContext, fctx: FunctionContext): void {
   const flagIdx = arrayIteratorDeletedGlobalIdx(ctx);
   if (flagIdx === undefined) return;
   const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "array is not iterable", { flush: fctx });

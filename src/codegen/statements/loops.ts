@@ -31,7 +31,6 @@ import {
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 // (#5271 step 4, C2) `for…in` array-pattern heads destructure the KEY STRING.
 import type { BindingKind } from "../destructuring-params.js";
-import { emitArrayIteratorDeletedGuard } from "../destructuring-params.js"; // (#5267 R3-6)
 import { emitForInKeyArrayDestructure } from "../forin-key-destructure.js";
 import { containsLinearU8Allocation, emitLinearU8ArenaMark, linearU8ArenaResetInstrs } from "../linear-uint8-arena.js";
 import { emitCollectionIteratorVec, ensureMapHelpers, MAP_LAYOUT } from "../map-runtime.js";
@@ -1961,23 +1960,6 @@ function compileForOfArray(
     reportError(ctx, stmt, "for-of requires an array type");
     return;
   }
-  // (#5267 R3-6) §7.4.2 GetIterator: after the receiver is evaluated, the
-  // for-of protocol reads `Array.prototype[Symbol.iterator]`. When the module
-  // contains `delete Array.prototype[Symbol.iterator]` that read is undefined
-  // and GetIterator throws a TypeError — the array fast path iterates the vec
-  // directly and must honour the deletion. Emits ZERO bytes for every source
-  // without such a delete (the flag global is only rooted by the pre-scan).
-  // `preVec` receivers are Map/Set projections, not arrays: not guarded.
-  //
-  // STANDALONE ONLY, deliberately. On the `wasi` lane the TypeError this guard
-  // raises escapes a COMPILED `try { … } catch (e) { … }` as a raw Wasm
-  // exception (measured 2026-09-04: the same source is caught on `standalone`
-  // and escapes to the embedder on `wasi`), so enabling it there would turn a
-  // silently-wrong loop into an uncatchable module-level throw. That exception
-  // -tag gap is pre-existing and out of this issue's scope; the wasi lane keeps
-  // base behaviour (and stays byte-identical) until it is fixed.
-  if (!preVec && ctx.standalone) emitArrayIteratorDeletedGuard(ctx, fctx);
-
   // HeadEvaluation step 4: the receiver TDZ environment ends before the
   // loop's per-iteration binding is installed. The emitted receiver reads
   // retain the temporary locals/flag; only the compiler's active descriptors
