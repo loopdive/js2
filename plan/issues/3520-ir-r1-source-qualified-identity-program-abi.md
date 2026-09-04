@@ -10,7 +10,7 @@ pr: 4733
 last_merged_pr: 4733
 sprint: current
 created: 2026-07-21
-updated: 2026-09-03
+updated: 2026-09-04
 priority: critical
 horizon: l
 complexity: L
@@ -204,6 +204,16 @@ loc-budget-allow:
   # crossed only after merging main (1492 at the slice tip, 1503 after the
   # merge), so the grant is restated in a file this PR touches rather than left
   # stranded.
+  #
+  # W1-E (2026-09-03), restated because a grant that lives only in a file this
+  # PR does not touch is stranded and fails `quality` even though it is listed:
+  # +34 lines closing the vec host bridge's ordinal contract at 9/10 for the
+  # `#3116` write-back pair (`VEC_HOST_BRIDGE_WRITEBACK_ORDINALS` plus its
+  # reader and the contiguity assertion). Measured 1542 -> 1576. The table has
+  # to sit beside `VEC_HOST_BRIDGE_MATERIALIZER_ORDINALS`, which it derives its
+  # first ordinal from: splitting them would let the two halves of one closed
+  # table drift apart, which is precisely the failure the assertion exists to
+  # make impossible.
   - src/codegen/vec-access-exports.ts
   - src/codegen/declarations.ts
   - src/codegen/statements/nested-declarations.ts
@@ -4737,6 +4747,155 @@ with a dated rationale. Disjoint from #3522 W1-B (`select.ts`, `from-ast.ts`),
 `outcomes.ts`). Independent of W1-D; branch from `origin/main` now. Claim slug
 `3520:w1e-cluster-d`. After it lands, the `tests/issue-3520-*` red set is
 cluster B (4), C (3), E (1), F (1).
+
+### W1-E cluster D — landed (2026-09-04)
+
+Base `ddf5f4fe47`. Three source files (+99/−24 lines), one new test file, and
+three adapted assertions in `tests/issue-3520-vec-support-callable-abi.test.ts`.
+Every number below was measured on this base, not carried from the plan (whose
+anchors were taken at `744203f3c7`).
+
+**Anchors re-verified.** All of the plan's cited lines held except the ones
+noted here. `VEC_HOST_BRIDGE_ROLE` `:28`, `VEC_HOST_BRIDGE_DEFINITIONS`
+`:52-101`, the materializer ordinal contract `:105-125`, allocation +
+`observeEntrySourceSupports` `:194-240`, and the write-back emission gate
+`:1160-1198` are all where the plan said. In `index.ts`,
+`emit-vec-access-exports` is `:11111` and `eliminate-dead-layout` `:11397`;
+the second flow is `:5991` / `:6751`. Both orderings confirmed, so the
+`planning-sealed` invariant cannot fire — the two `index.ts` anchors are now
+recorded in a comment on the new helper.
+
+**Reproduced on base.** `tests/issue-3520-compiler-support-abi.test.ts` ›
+*positional fallback* → `expected 2 to be +0` at `:130`, exit 1. The probe over
+the five `SINGLE_HOST_ENTRIES` shows the two rows are on `async.ts` alone:
+
+| entry | defined fns | callable rows | generic rows | vec-host-bridge rows |
+| ----- | ----------- | ------------- | ------------ | -------------------- |
+| `calendar.ts` | 26 | 55 | 0 | 6 |
+| `algorithms.ts` | 14 | 28 | 0 | 6 |
+| `async.ts` | 68 | 102 | **2** | 6 |
+| `builtins.ts` | 19 | 46 | 0 | 6 |
+| `classes.ts` | 14 | 21 | 0 | 0 |
+
+The two rows were `retained-module-function` ordinals **80 and 81, decimal, not
+hex** — the plan wrote them as `0x80`/`0x81`, reading the zero-padded binding-id
+field as hexadecimal. They are the final function indices (14 imports + defined
+positions 66/67 on a 68-function module), so decimal is the only reading that
+matches the layout. Nothing downstream depended on it; recorded so the next
+slice does not re-derive it.
+
+**Change, and which allocation path was taken.** `mintDefinedFunc` +
+`pushDefinedFunc` — the plan's first option; the fallback record path was not
+needed. The emitter runs after body compilation but that is irrelevant to
+minting, which only reserves an ordinal. Taking the stable handle also removes a
+real latent hazard rather than being cosmetic: `emitVecAccessExports` (`:11111`)
+precedes `addUnionImports` (`:11153`), so the old
+`ctx.numImportFuncs + mod.functions.length` baked into `mod.exports` and
+`funcMap` was a live index still being chased across import insertions — the
+exact regime `func-space.ts` documents as unsound (#3909).
+
+**After.** C35 green, 10/10, file untouched. `async.ts` publishes
+`vec-host-bridge:9` (`__vec_set_elem`) and `:10` (`__vec_set_len`); the other
+four entries publish neither. The full ABI entry list, dumped per entry and
+diffed base vs branch, is **252 rows on both sides with exactly two lines
+changed** — the same two functions moving from `retained-module-function:80/81`
+to `vec-host-bridge:9/10`. Nothing else moved.
+
+**Byte identity — measured, and the prediction was wrong.** The plan's earlier
+prose called this slice "not byte-neutral". It is: **34/34 identical on every
+lane** (gc, standalone, wasi — 102 rows, `sha256` per row, base copies captured
+before the first edit). Observation is bookkeeping, and the stable handle
+resolves to the same final position the chased live index did. Not vacuous
+either: **37 of the 102 rows actually emit the pair** (4 gc, 20 standalone, 13
+wasi), so the changed allocation path is exercised by more than a third of the
+cohort.
+
+**Ordinal stability under unrelated growth**, `async.ts` plus one appended
+exported function:
+
+| | `__vec_set_elem` | `__vec_set_len` |
+| --- | --- | --- |
+| base, unmodified | `retained-module-function:80` | `retained-module-function:81` |
+| base, +1 function | `retained-module-function:81` | `retained-module-function:82` |
+| branch, unmodified | `vec-host-bridge:9` | `vec-host-bridge:10` |
+| branch, +1 function | `vec-host-bridge:9` | `vec-host-bridge:10` |
+
+**Non-vacuity.** Reverting the observation call **alone** (keeping the stable
+handle) turns the new (a) and (b) red and puts C35 back to `expected 2 to be
++0`. So the allocation change green-washes nothing and the observation is what
+carries the slice.
+
+**Three assertions had to be adapted — the one deviation from the plan.**
+`tests/issue-3520-vec-support-callable-abi.test.ts` was 19/19 green on base and
+went 16/19 on the branch. One cause, three symptoms: two probes spy on
+`observeEntrySourceSupports` and overwrite their capture on **every** call,
+which was safe only while the compile made exactly one such call; and the
+five-entry census asserted `familyEntries.length === 6`, i.e. that the
+`vec-host-bridge` role contains the core bridges and nothing else. Both are
+assumptions W1-E deliberately invalidates — the role is a three-sub-family
+closed table now.
+
+The repair follows W1-D's rule that widening alone is green-washing:
+
+- the two spies now identify the six-bridge **reservation batch by its exact
+  content** (`isCoreVecBridgeBatch`, pinning names *and* ordinals in order),
+  which is strictly stronger than "whichever batch arrived last";
+- the census admits non-core rows only if each one's binding id is the
+  write-back id derived from role + closed-table ordinal, **and** resolves to a
+  function whose name matches — no display-name matching anywhere.
+
+Mutation check: making the emitter observe `ordinal + 2` turns the census red
+(`unexpected vec family row __vec_set_elem (…:vec-host-bridge:11)`), so the
+positive half is load-bearing rather than decorative. The adapted file is green
+on base as well, which is the correct outcome — it is a compatibility
+adaptation, not a new red-flip.
+
+**Red-set movement, 62 files + the new one, one `npx vitest run` per file.**
+Base 21 failing test names across 12 red files; branch **20** across 11. The
+name-set diff is exactly:
+
+- removed: `compiler-support-abi` › *positional fallback* (row 2, cluster D);
+- added: nothing.
+
+`issue-3520-ir-unit-identity` and the three `issue-1712-*` reds are present on
+**both** sides — pre-existing on this base, not W1-E. `tests/issue-3116.test.ts`
+and `tests/issue-4733.test.ts` are green on both.
+
+**New tests** (`tests/issue-3520-vec-writeback-abi.test.ts`), base → branch:
+
+| test | base | branch |
+| ---- | ---- | ------ |
+| (a) publishes ordinals 9/10, no generic row | red (`no vec-host-bridge row`) | green |
+| (b) both binding ids fixed under unrelated growth | red | green |
+| (c) no ordinal claimed when the pair is not emitted | green (no-over-claim guard) | green |
+| (d) closed-table pin 9/10, role ordinal unchanged | red (`not a function`) | green |
+
+**Equivalence**, 8 shards, `EQUIVALENCE_FORK_HEAP_MB=4096`, sequential, run on
+both sides: **24 failing / 1,718 passing on each, shard-for-shard identical
+(5/4/3/0/2/7/2/1), and the failing NAME sets are identical** — zero diff, 0
+regressions, 0 newly-fixed against the 24-entry baseline.
+
+**Gates**, bare, never piped, all exit 0: `check-loc-budget`,
+`check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`,
+`check:dead-exports` (25 known, 0 new); both budgets re-run with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`. The LOC gate needed the
+`vec-access-exports.ts` grant **restated** in this file — it was already listed,
+but a grant living only in a file the PR does not touch is stranded and fails
+`quality`; the dated W1-E rationale is now in the frontmatter. Whole `quality`
+list also clean: `check:ir-dialect`, `check:ir-kind-neutrality`,
+`check:jstag-seam`, `check:ir-layering`, `check:ir-fallbacks` (no increases),
+`check:host-import-policy`, `check:ir-only --policy=hybrid` (**READY**, same
+five counters as base: terminal units 41 / emitted 38 / unsupported 0 /
+invariants 0 / non-executable 3, both lanes), `check:standalone-ir-cutover-corpus`,
+`check:pushraw`, `check:stack-balance`, `check:codegen-fallbacks`,
+`check:any-box-sites`, `check:speculative-rollback`, `check:harness-compile-budget`
+(measured 150,774 / budget 131,133 / ceiling 150,803 — within, but only by 29),
+`check:ir-adoption`, `check:linear-ir`; `typecheck`, `lint`, `prettier --check`.
+No `scripts/*-baseline.json` is in the diff.
+
+**Still open.** With cluster D closed the `tests/issue-3520-*` red set is
+cluster B (4), C (3), E (1, #5283), F (1) — 9 tests across 7 files, plus the
+pre-existing `ir-unit-identity` red that no cluster currently owns.
 
 ## Implementation Plan — W1-F cluster B: the four derived-unit tests pin an identity scheme that no longer exists (2026-09-03, Fable lane)
 

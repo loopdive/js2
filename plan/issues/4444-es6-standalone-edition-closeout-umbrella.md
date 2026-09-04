@@ -18,6 +18,38 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## 2026-09-03 late census — 10,021 / 11,704 (85.6%) after #5550
+
+Baseline refetched 2026-09-03 23:31 UTC (`oracle_lane: "honest"`, promoted
+from the merge of PR #5550 — array + object r3, #5268), same script and
+edition map as the two censuses below.
+
+**10,021 pass / 11,704 (85.6%) — 1,683 non-pass** (1,302 fail · 380
+compile_error · 1 compile_timeout): **+15 rows** over the evening census.
+Array + object went 135 → 121 (−14), typedarray 243 → 242 (−1); every other
+cluster is unchanged, and the rows still sum to 1,683.
+
+| Cluster | rows | fail | CE |
+| --- | ---: | ---: | ---: |
+| typedarray | 242 | 224 | 18 |
+| expressions | 228 | 131 | 96 |
+| class | 191 | 135 | 56 |
+| other built-ins | 168 | 160 | 8 |
+| proxy + reflect | 155 | 131 | 24 |
+| regexp | 139 | 129 | 10 |
+| generators | 121 | 75 | 46 |
+| array + object | 121 | 111 | 10 |
+| promise | 118 | 68 | 50 |
+| for-of + collections | 98 | 62 | 36 |
+| statements + lang | 75 | 55 | 20 |
+| module-code | 25 | 19 | 6 |
+| rest | 2 | 2 | 0 |
+
+The lane had measured +21 directory rows on `Array/{from,of}` + `concat` +
+`hasOwnProperty`; the census counts only ES2015-edition rows, which is where
+the difference comes from — no row was lost in the queue (the merge-group
+shards passed and the standalone floor held).
+
 ## 2026-09-03 evening census — 10,006 / 11,704 (85.5%), +58 from the day's second wave
 
 Source: the standalone baseline refetched 2026-09-03 20:11 UTC (`node
