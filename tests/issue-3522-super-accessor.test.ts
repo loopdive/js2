@@ -306,7 +306,12 @@ export function run(): number { const d = new Dog(1); return d.grow(); }
 `;
 
 // node: "". The parent is a BUILTIN (`Error`), which has no projected IR class
-// shape at all — the parent-shape arm, not the member arm.
+// shape at all. Measured: this row never REACHES either super arm — `Boom`
+// itself is non-projecting (`Boom_new` is `class-projection-unsupported`) and
+// `Boom_info` is refused at the class-member level first, on base and on this
+// branch alike. It is a GUARD (a builtin parent stays refused and legacy-owned,
+// answer unchanged), not a pin for `super-property-parent-shape`; see the
+// landed note in the issue file for why that arm is defensive-only.
 const EXTERN_PARENT = `class Boom extends Error {
   constructor(m: string) { super(m); }
   info(): string { return super.message; }
@@ -467,7 +472,9 @@ describe("#3522 W1-C guards and out-of-scope boundaries", () => {
   });
 
   // (g) A builtin parent has no projected shape at all. `Boom_info` must stay
-  // refused and legacy-owned; the answer is unchanged from base.
+  // refused and legacy-owned; the answer is unchanged from base. Reverting S1
+  // leaves this green, which is the evidence that the refusal is the
+  // pre-existing class-member one and not this slice's.
   it.each(TARGETS)("refuses a super accessor on a builtin parent on %s", async (target) => {
     const result = await compilePlain(EXTERN_PARENT, `w1c-extern-${target}.ts`, target);
     expect(result.success, result.errors.map((e) => e.message).join("\n")).toBe(true);
