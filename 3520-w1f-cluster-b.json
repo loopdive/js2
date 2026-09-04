@@ -2,10 +2,11 @@
   "id": "3520",
   "slice": "w1f-cluster-b",
   "assignee": "ttraenkler/opus-3520-w1f",
-  "requested_by": "ttraenkler/opus-3520-w1f",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-3520-w1f-derived-unit-tests",
   "claimed_at": "2026-09-03T22:42:32Z",
-  "updated_at": "2026-09-03T22:42:32Z",
-  "write_id": "16296-vi3ww79x"
+  "updated_at": "2026-09-04T02:47:13Z",
+  "write_id": "21934-pkwxu9pd",
+  "released_at": "2026-09-04T02:47:13Z"
 }
