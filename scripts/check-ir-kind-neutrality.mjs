@@ -122,6 +122,36 @@
 //       evidence) requires the baseline to be refreshed and the diff reviewed.
 //
 // ---------------------------------------------------------------------------
+// 3a. WHAT THE BASELINE RECORDS — IDENTITY, NOT POSITION  (#5298)
+// ---------------------------------------------------------------------------
+//
+// R2 is sound: it fails when a QUOTE is gone. The record used to be brittle in a
+// way R2 is not. Every surviving quote was persisted as `file:<current line>`,
+// and `declaredAt` as `file:<current line>` too, so the R4 table comparison
+// diffed POSITIONS. Adding 14 comment lines to `src/ir/integration.ts` (PR
+// #5525) moved the `forof.string` quote from 7347 to 7361 and turned `quality`
+// red on a PR that changed no kind, no verdict and no count.
+//
+// So the persisted table now carries only STABLE KEYS:
+//
+//   declaredAt  `<file>#<InterfaceName>` — the interface name is the identity of
+//               the declaration site; the line is derived from it on every run.
+//   evidence    `<file>#<sha1(quote) first 12 hex>` — a quote that survives
+//               verbatim hashes identically wherever in the file it sits.
+//               Absence claims keep their `(absent from …)` string; they never
+//               had a line.
+//
+// Lines are still COMPUTED, and still PRINTED — `--verbose` shows
+// `file:line` for the declaration and each cite, and the R2 failure message
+// still names the file. They are simply never persisted, so no edit above a
+// citation can move the record. A quote that genuinely disappears still fails
+// R2 exactly as before; that is what the pinned test in
+// `tests/issue-5298-kind-neutrality-stable-evidence.test.ts` asserts.
+//
+// The writer runs its JSON through prettier, so `--update` /
+// `--update-on-decrease` output is committable without a manual format pass.
+//
+// ---------------------------------------------------------------------------
 // 4. USAGE
 // ---------------------------------------------------------------------------
 //
@@ -136,6 +166,7 @@
 //                                                            disk (the PR author
 //                                                            commits the diff)
 
+import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
@@ -850,6 +881,18 @@ function lineOf(text, index) {
   return text.slice(0, index).split("\n").length;
 }
 
+/**
+ * The persisted identity of a quote (#5298): the first 12 hex of sha1(quote).
+ * A quote that survives verbatim hashes identically wherever in the file it
+ * sits, so an edit ABOVE a citation no longer moves the record. Collisions are
+ * irrelevant here — the key is only ever compared against the same gate's own
+ * output for the same kind, and the substring check in R2 is what actually
+ * proves the evidence exists.
+ */
+function quoteKey(quote) {
+  return createHash("sha1").update(quote, "utf8").digest("hex").slice(0, 12);
+}
+
 /** Top-level `export interface`s that declare a `readonly kind: "…"` discriminant. */
 function kindBearingInterfaces(file) {
   const text = read(file);
@@ -1005,7 +1048,8 @@ if (failures.length > 0) die();
 // ── R1 / R3: verdicts ─────────────────────────────────────────────────────
 const inDialect = (file) => path.normalize(file).startsWith(path.normalize(DIALECT_DIR) + path.sep);
 
-const table = {};
+const table = {}; // persisted: stable keys only (#5298)
+const report = {}; // console-only: current file:line for the same kinds
 for (const [kind, info] of [...population.entries()].sort(([a], [b]) => a.localeCompare(b))) {
   const entry = VERDICTS[kind];
   if (!entry) {
@@ -1038,7 +1082,11 @@ for (const [kind, info] of [...population.entries()].sort(([a], [b]) => a.locale
   }
 
   // R2 — the evidence must still exist.
+  // `cites` is what gets PERSISTED (stable quote identity, #5298); `citeLines`
+  // is what gets PRINTED (the current position, useful to a human reading the
+  // report and worthless in a diffed record).
   const cites = [];
+  const citeLines = [];
   for (const cite of entry.evidence ?? []) {
     let text;
     try {
@@ -1056,7 +1104,8 @@ for (const [kind, info] of [...population.entries()].sort(([a], [b]) => a.locale
       );
       continue;
     }
-    cites.push(`${cite.file}:${lineOf(text, at)}`);
+    cites.push(`${cite.file}#${quoteKey(cite.quote)}`);
+    citeLines.push(`${cite.file}:${lineOf(text, at)}`);
   }
   if (cites.length === 0 && !entry.absence) {
     fail(`"${kind}": a verdict needs at least one piece of cited evidence.`);
@@ -1070,18 +1119,21 @@ for (const [kind, info] of [...population.entries()].sort(([a], [b]) => a.locale
           `${entry.absence.note}`,
       );
     }
-    cites.push(`(absent from ${entry.absence.dir}/: ${entry.absence.pattern})`);
+    const absent = `(absent from ${entry.absence.dir}/: ${entry.absence.pattern})`;
+    cites.push(absent);
+    citeLines.push(absent);
   }
 
   table[kind] = {
     verdict: entry.verdict,
     where: dialect ? "dialect" : "core",
-    declaredAt: `${info.file}:${info.line}`,
+    declaredAt: `${info.file}#${info.interface}`,
     why: entry.why,
     evidence: cites,
     ...(entry.settledBy ? { settledBy: entry.settledBy } : {}),
     ...(entry.residual ? { residual: entry.residual } : {}),
   };
+  report[kind] = { declaredAt: `${info.file}:${info.line}`, evidence: citeLines };
 }
 
 for (const kind of Object.keys(VERDICTS)) {
@@ -1128,13 +1180,32 @@ try {
   baseline = null;
 }
 
-const write = (reason) => {
-  writeFileSync(BASELINE, `${JSON.stringify(computed, null, 2)}\n`);
+// The gate owns the FORMAT of the file it writes (#5298). `JSON.stringify`
+// alone emits expanded arrays where the repo's prettier config wants compact
+// ones, so `--update-on-decrease` output used to need a hand `prettier --write`
+// before it was committable — a step that is easy to skip and shows up as a red
+// `format:check` lane. Formatting here makes the writer's output committable
+// as-is. Prettier is already a dev dependency; if it cannot be loaded we write
+// the plain JSON and say so rather than failing the gate over formatting.
+const write = async (reason) => {
+  const raw = `${JSON.stringify(computed, null, 2)}\n`;
+  let text = raw;
+  try {
+    const prettier = await import("prettier");
+    const options = (await prettier.resolveConfig(BASELINE)) ?? {};
+    text = await prettier.format(raw, { ...options, filepath: BASELINE, parser: "json" });
+  } catch (err) {
+    console.warn(
+      `IR kind-neutrality gate: could not format ${BASELINE} with prettier (${err.message}); wrote ` +
+        "unformatted JSON. Run `pnpm exec prettier --write` on it before committing.",
+    );
+  }
+  writeFileSync(BASELINE, text);
   console.log(`IR kind-neutrality gate: wrote ${BASELINE} (${reason}).`);
 };
 
 if (update) {
-  write("--update");
+  await write("--update");
   process.exit(0);
 }
 
@@ -1184,7 +1255,7 @@ const sameTable =
 
 if (!sameTable) {
   if (updateOnDecrease) {
-    write("--update-on-decrease: nothing grew");
+    await write("--update-on-decrease: nothing grew");
   } else {
     fail(
       `the verdict table no longer matches ${BASELINE} (nothing grew, so this is an improvement or a ` +
@@ -1235,9 +1306,10 @@ if (verbose) {
     console.log(`── ${verdict} ──────────────────────────────────────────────`);
     for (const k of kinds.filter((x) => table[x].verdict === verdict)) {
       const t = table[k];
-      console.log(`  ${k}  [${t.where}]  ${t.declaredAt}`);
+      // Positions come from `report` — computed every run, never persisted.
+      console.log(`  ${k}  [${t.where}]  ${report[k].declaredAt}`);
       console.log(`      ${t.why}`);
-      console.log(`      evidence: ${t.evidence.join(" · ")}`);
+      console.log(`      evidence: ${report[k].evidence.join(" · ")}`);
       if (t.settledBy) console.log(`      settled by: ${t.settledBy}`);
       if (t.residual) console.log(`      residual: ${t.residual}`);
     }

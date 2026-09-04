@@ -2026,6 +2026,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   topLevelFunctionDeclarations: Map<string, ts.FunctionDeclaration>;
   /** Map from "ClassName_methodName" → method info for local classes */
   classMethodSet: Set<string>;
+  /**
+   * (#5309) `"ClassName_memberName"` for every class declaring an own INSTANCE
+   * FIELD whose name is also a callable (method or accessor) up its prototype
+   * chain. The field initializers install it on the instance, so it shadows the
+   * inherited callable for `this.m`, `this.m()`, `this.#m()` and `b.m()` alike.
+   * `call-receiver-method.ts` reads this to refuse its ancestor walk, which
+   * finds `Parent_m` in `classMethodSet` on its own and so is NOT fixed by
+   * dropping the inherited alias in `collectClassDeclaration`. `static` and
+   * `declare` fields are excluded — statics go through `staticMethodSet`, and
+   * `declare m: T` installs no property.
+   */
+  classFieldShadowedInheritedCallables: Set<string>;
   /** Classes inside function bodies whose body compilation is deferred */
   deferredClassBodies: Set<string>;
   /** Set of "ClassName_propName" for getter/setter accessor properties */
@@ -2499,6 +2511,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   >;
   /** Counter for generated closure types/functions */
   closureCounter: number;
+  /**
+   * (#5270 step 1.3) Handles of every `__fn_tramp_*` pure forwarder. Read by
+   * `promoteTrampolineTailCalls` at finalize, which upgrades the trailing
+   * `call` to `return_call` only against the FINAL callee type.
+   */
+  trampolineForwarders: Set<number>;
   /**
    * #2928 — true once the module has materialized the canonical eight-slot
    * callable carrier used by the separately linked interpreter runtime.
@@ -4121,6 +4139,17 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * first ordinary argument, so these cannot share the all-arities method set
    * above. `.call(thisArg)` still consults both sets. */
   nativeProtoAccessorGetterClosureStructTypes?: Set<number>;
+  /**
+   * (#5194 r3 review F3) Meta struct types (`ensureBuiltinFnMetaType`) of the
+   * native-proto closures minted with the `refusalBodyFallback` body — the
+   * "<Builtin>.prototype.<m> is not yet implemented in --target standalone"
+   * throw. The dyn-view [[Get]] prototype walk (`ta-dyn-mop.ts`) answers
+   * `undefined` instead of handing one of these back as a first-class value,
+   * so a stable-wrong `undefined` never escalates into a runtime TypeError on
+   * the value path. Keyed by meta type idx; the `bfnid` field disambiguates
+   * structurally-canonicalized siblings exactly as `fillBuiltinFnMeta` does.
+   */
+  nativeProtoRefusalMetaTypeIdxs?: Set<number>;
   /** (#682) Native standalone RegExp engine hook. Standalone mode currently
    *  enables the reduced literal-substring backend; null means RegExp lowering
    *  must stay on the explicit #1474 refusal path. */

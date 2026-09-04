@@ -11,6 +11,7 @@ import type {
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
 import type { IrObservedOutcome, IrPreparationFailure } from "../ir/outcomes.js";
 import { nonExecutableOutcomeDefect } from "../ir/outcomes.js";
+import type { IrObservedOutcomeWithBodyAccountingNote } from "../ir/body-accounting-note.js";
 import type { IrR2Withdrawal } from "../ir/r2-withdrawal.js";
 import type { IrLegacyUnitProjection, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
@@ -63,6 +64,13 @@ export interface ReconcileIrOverlayOutcomesInput {
    * on at all, used only where no per-unit record exists.
    */
   readonly r2NotAttemptedReason?: "multi-source-driver" | "ir-first-disabled";
+  /**
+   * (#5263) Terminals whose ledger row is minted by the prepared-callable
+   * publication path, not here. Reconcile must produce NEITHER a row nor a
+   * diagnostic for them: it cannot see the cross-source preparation, so every
+   * conclusion it reaches about them is stale by construction.
+   */
+  readonly ownedElsewhereUnitIds?: ReadonlySet<IrUnitId>;
   readonly report: IrIntegrationReport;
   readonly existingOutcomes: readonly IrObservedOutcome[];
   readonly target: IrObservedOutcome["target"];
@@ -125,12 +133,81 @@ interface IrFunctionBodyEmissionAccounting {
   readonly irBodyEmissions: number;
   readonly legacyBodyEmitted: boolean;
   readonly irBodyEmitted: boolean;
+  /** (#5308) See `IrBodyAccountingPopulation`. */
+  readonly unsupportedRequiresDirectBody: boolean;
   readonly receiptFailure?: IrPreparationFailure;
 }
 
-interface R2FreeFunctionPopulation {
+/**
+ * (#5308) One physically-emitted body population and its exact direct receipts.
+ *
+ * R2 (top-level free functions), R3 (class members) and R4 (module init) are
+ * disjoint by construction and share one reconciler; they differ only in which
+ * receipt map answers "how many direct bodies", and in whether a row that fell
+ * back to the direct route is REQUIRED to have emitted one.
+ */
+interface IrBodyAccountingPopulation {
+  readonly label: "R2 top-level free-function" | "R3 class-member" | "R4 module-init";
   readonly sourceId: ObservedIrUnit["sourceId"];
   readonly unitIds: ReadonlySet<IrUnitId>;
+  readonly counts: ReadonlyMap<IrUnitId, number>;
+  /**
+   * `true` for **R2 only** — the assertion "a row that fell back to the direct
+   * route emitted exactly one direct body". It holds there because the R2
+   * population predicate itself requires `statement.body` AND the receipt is an
+   * exact `compileFunctionBody` entry for that unit.
+   *
+   * It is `false` for R3 and R4 because the audit demonstrably cannot see every
+   * direct class/module body, and asserting one would be asserting an absence
+   * it cannot observe — with `reportErrorNoNode` turning each such row into a
+   * hard compile error. Three measured populations, all pre-existing and all
+   * tracked elsewhere:
+   *
+   * - **R4, ambient-only module init.** An ambient `declare namespace` is still
+   *   module-init population (#5283 residual, pinned by its own tests), so
+   *   `tests/fixtures/extern-demo.ts` and
+   *   `tests/dogfood/corpus/import-attributes.module.js` mint a terminal for a
+   *   source with nothing to execute and enter no direct root.
+   * - **R3, anonymous default class.** `tests/issue-3519-ir-outcomes.test.ts`
+   *   measures that the only audited entry for such a source is a
+   *   `compileDeclarations` root with NO unit identity; attributing those roots
+   *   is the #3523 gap-1 unattributed-entry debt.
+   * - **R3, directly-emitted implicit constructor.** Its member root carries
+   *   the class declaration and is indistinguishable from class scaffolding —
+   *   see `#indexClassMemberBodyReceipt`.
+   *
+   * Everything else applies to all three unchanged: impossible counts,
+   * duplicate receipts, the skip-vs-receipt contradiction (which is the
+   * compile-twice detector this issue exists to arm for R3/R4), and both
+   * emitted/unsupported IR-patch bounds.
+   */
+  readonly unsupportedRequiresDirectBody: boolean;
+  /**
+   * `true` for **R3 and R4**: where this population has no exact receipt for a
+   * unit, fall back to the #5283 root evidence — "a legacy body was available,
+   * no exact skip receipt was taken, and the unit physically entered an audited
+   * direct-body root".
+   *
+   * This is what keeps the counters and the booleans one contract.
+   * `hasMalformedBodyEmissionAccounting` requires `legacyBodyEmitted ===
+   * (directBodyEmissions === 1)`, so a count that is merely CONSERVATIVE would
+   * not read as conservative — it would LOWER a legacy claim the compiler
+   * already made, and the `evidence.kind === "failed"` arm below turns a
+   * lowered claim into an `unpatched-slot` invariant, i.e. a hard compile
+   * error. Measured 2026-09-03: without this fallback, nine
+   * `tests/issue-3522-*` cases went red on exactly that path while the corpus
+   * (which has no such row) stayed green.
+   *
+   * The fallback is receipt-derived, not a guess — `physicalRootUnitIds` is
+   * physical entry evidence and the skip set is an exact receipt — but it is
+   * COARSER: a class root cannot be told apart from a member-body root, so for
+   * these two populations `directBodyEmissions` is 0/1 evidence rather than a
+   * multiplicity count. It is used only where an exact receipt is absent, so it
+   * never masks one: a SKIPPED unit's fallback is `false` by construction,
+   * which is precisely what leaves the compile-twice detector armed — an exact
+   * member receipt on a skipped unit still reads 1 and still raises.
+   */
+  readonly coarseDirectBodyEvidence: boolean;
 }
 
 interface R2FreeFunctionPopulationIndex {
@@ -138,6 +215,39 @@ interface R2FreeFunctionPopulationIndex {
 }
 
 const r2FreeFunctionPopulationIndexByContext = new WeakMap<IrPlanningIdentityContext, R2FreeFunctionPopulationIndex>();
+
+/**
+ * (#5308) The R3 population, indexed ONCE for the whole graph.
+ *
+ * A per-source `terminalUnits.filter(...)` reads the whole terminal census for
+ * every source, which is a full extra census per source on a multi-source
+ * graph — the complexity `tests/issue-3520-*` "builds the R2 source population
+ * once across a multi-source graph" pins (it went red at 12 sources before this
+ * cache existed). One graph-wide indexing pass is allowed; another per-source
+ * census is not.
+ */
+const r3ClassMemberPopulationIndexByContext = new WeakMap<
+  IrPlanningIdentityContext,
+  ReadonlyMap<IrSourceId, ReadonlySet<IrUnitId>>
+>();
+
+function indexR3ClassMemberPopulations(
+  identityContext: IrPlanningIdentityContext,
+): ReadonlyMap<IrSourceId, ReadonlySet<IrUnitId>> {
+  const cached = r3ClassMemberPopulationIndexByContext.get(identityContext);
+  if (cached) return cached;
+  const unitIdsBySourceId = new Map<IrSourceId, Set<IrUnitId>>();
+  for (const sourceId of identityContext.sourceFileBySourceId.keys()) {
+    unitIdsBySourceId.set(sourceId, new Set());
+  }
+  for (const unit of identityContext.inventory.terminalUnits) {
+    if (unit.observedKind !== "class-member") continue;
+    const unitIds = unitIdsBySourceId.get(unit.sourceId);
+    if (unitIds) unitIds.add(unit.id);
+  }
+  r3ClassMemberPopulationIndexByContext.set(identityContext, unitIdsBySourceId);
+  return unitIdsBySourceId;
+}
 
 interface ValidatedDirectFunctionBodyReceipts {
   readonly countsByUnitId: ReadonlyMap<IrUnitId, number>;
@@ -193,26 +303,64 @@ function indexR2FreeFunctionPopulations(identityContext: IrPlanningIdentityConte
   return indexed;
 }
 
-/** The bounded R2 population is source-local, public, physical free-function terminals only. */
-function collectR2FreeFunctionUnitIds(
+/**
+ * (#5308) The three physically-emitted body populations of one source, each
+ * paired with the receipt map that counts it.
+ *
+ * R2 is source-local, public, physical free-function terminals only. R3 is
+ * every terminal class member of the source. R4 is the source's module-init
+ * terminal, when it owns one.
+ */
+function collectBodyAccountingPopulations(
   sourceFile: ts.SourceFile,
   identityContext: IrPlanningIdentityContext,
-): R2FreeFunctionPopulation {
+  audit: IrDirectFunctionBodyReceiptAudit,
+): readonly IrBodyAccountingPopulation[] {
   const sourceId = identityContext.sourceIdBySourceFile.get(sourceFile);
   if (!sourceId || identityContext.sourceFileBySourceId.get(sourceId) !== sourceFile) {
     throw new Error(
       `IR function-body accounting source ${sourceFile.fileName} is outside the authoritative planning context`,
     );
   }
-  const indexed = indexR2FreeFunctionPopulations(identityContext);
-  const unitIds = indexed.unitIdsBySourceId.get(sourceId);
-  if (!unitIds) {
+  const r2UnitIds = indexR2FreeFunctionPopulations(identityContext).unitIdsBySourceId.get(sourceId);
+  if (!r2UnitIds) {
     throw new Error(`IR function-body accounting source ${sourceId} has no indexed R2 population`);
   }
-  return {
-    sourceId,
-    unitIds,
-  };
+  const moduleInitUnitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
+  const moduleInitTerminal =
+    moduleInitUnitId === undefined ? undefined : identityContext.terminalByUnitId.get(moduleInitUnitId);
+  return [
+    {
+      label: "R2 top-level free-function",
+      sourceId,
+      unitIds: r2UnitIds,
+      counts: audit.countsByUnitId,
+      unsupportedRequiresDirectBody: true,
+      coarseDirectBodyEvidence: false,
+    },
+    {
+      label: "R3 class-member",
+      sourceId,
+      unitIds: indexR3ClassMemberPopulations(identityContext).get(sourceId) ?? new Set<IrUnitId>(),
+      counts: audit.classMemberCountsByUnitId,
+      unsupportedRequiresDirectBody: false,
+      coarseDirectBodyEvidence: true,
+    },
+    {
+      label: "R4 module-init",
+      sourceId,
+      unitIds: new Set(
+        moduleInitUnitId !== undefined &&
+          moduleInitTerminal?.observedKind === "module-init" &&
+          moduleInitTerminal.sourceId === sourceId
+          ? [moduleInitUnitId]
+          : [],
+      ),
+      counts: audit.moduleInitCountsByUnitId,
+      unsupportedRequiresDirectBody: false,
+      coarseDirectBodyEvidence: true,
+    },
+  ];
 }
 
 function bodyEmissionInvariant(detail: string): IrPreparationFailure {
@@ -222,9 +370,9 @@ function bodyEmissionInvariant(detail: string): IrPreparationFailure {
 /** Validate and index the direct receipt census once for one source. */
 function validateDirectFunctionBodyReceipts(input: {
   readonly audit: IrDirectFunctionBodyReceiptAudit;
-  readonly population: R2FreeFunctionPopulation;
+  readonly populations: readonly IrBodyAccountingPopulation[];
 }): ValidatedDirectFunctionBodyReceipts {
-  const countsByUnitId = new Map(input.audit.countsByUnitId);
+  const countsByUnitId = new Map<IrUnitId, number>();
   const failuresByUnitId = new Map<IrUnitId, IrPreparationFailure>();
   let sourceFailure: IrPreparationFailure | undefined;
   const failSource = (detail: string): void => {
@@ -234,11 +382,24 @@ function validateDirectFunctionBodyReceipts(input: {
     failuresByUnitId.set(unitId, bodyEmissionInvariant(detail));
   };
 
-  const { audit, population } = input;
-  if (audit.sourceId !== population.sourceId) {
-    failSource(
-      `direct function-body receipt source ${audit.sourceId} does not match the local R2 source ${population.sourceId}`,
-    );
+  const { audit, populations } = input;
+  const localUnitIds = new Set(populations.flatMap((population) => [...population.unitIds]));
+  for (const population of populations) {
+    if (audit.sourceId !== population.sourceId) {
+      failSource(
+        `direct function-body receipt source ${audit.sourceId} does not match the local ${population.label} source ${population.sourceId}`,
+      );
+    }
+    for (const [receiptUnitId, count] of population.counts) {
+      if (!population.unitIds.has(receiptUnitId)) {
+        failSource(`direct function-body receipt ${receiptUnitId} is outside the local ${population.label} population`);
+        continue;
+      }
+      if (!Number.isSafeInteger(count) || count <= 0 || count > 1) {
+        failUnit(receiptUnitId, `direct function-body receipt ${receiptUnitId} has impossible count ${count}`);
+      }
+      countsByUnitId.set(receiptUnitId, count);
+    }
   }
   if (audit.unattributedViolation) {
     failSource(
@@ -246,22 +407,11 @@ function validateDirectFunctionBodyReceipts(input: {
         audit.unattributedViolation.detail,
     );
   }
-  for (const [receiptUnitId, count] of countsByUnitId) {
-    if (!population.unitIds.has(receiptUnitId)) {
-      failSource(
-        `direct function-body receipt ${receiptUnitId} is outside the local top-level free-function population`,
-      );
-      continue;
-    }
-    if (!Number.isSafeInteger(count) || count <= 0 || count > 1) {
-      failUnit(receiptUnitId, `direct function-body receipt ${receiptUnitId} has impossible count ${count}`);
-    }
-  }
   for (const violation of audit.violations) {
     const detail = `direct function-body receipt violation [${violation.code}]${
       violation.unitId === undefined ? "" : ` for ${violation.unitId}`
     }: ${violation.detail}`;
-    if (violation.unitId === undefined || !population.unitIds.has(violation.unitId)) failSource(detail);
+    if (violation.unitId === undefined || !localUnitIds.has(violation.unitId)) failSource(detail);
     else failUnit(violation.unitId, detail);
   }
   return {
@@ -271,30 +421,39 @@ function validateDirectFunctionBodyReceipts(input: {
   };
 }
 
-/** Index exact terminal patch receipts once; class/module evidence stays out of R2. */
-function indexR2IrTerminalPatchReceipts(
+/** Index exact terminal patch receipts once, for every accounted population. */
+function indexIrTerminalPatchReceipts(
   report: IrIntegrationReport,
-  r2FreeFunctionUnitIds: ReadonlySet<IrUnitId>,
+  accountedUnitIds: ReadonlySet<IrUnitId>,
 ): IndexedIrTerminalPatchReceipts {
   const countsByUnitId = new Map<IrUnitId, number>();
   for (const evidence of report.terminalEvidence ?? []) {
-    if (evidence.kind !== "patched" || !r2FreeFunctionUnitIds.has(evidence.unitId)) continue;
+    if (evidence.kind !== "patched" || !accountedUnitIds.has(evidence.unitId)) continue;
     countsByUnitId.set(evidence.unitId, (countsByUnitId.get(evidence.unitId) ?? 0) + 1);
   }
   return { countsByUnitId };
 }
 
 /**
- * Reconcile the two physical body emitters for one R2 terminal. The direct
- * count comes only from the AST dispatcher receipt; the IR count comes only
- * from exact terminal patch events, never from selector or name telemetry.
+ * Reconcile the two physical body emitters for one accounted terminal. The
+ * direct count comes only from the AST dispatcher receipt; the IR count comes
+ * only from exact terminal patch events, never from selector or name telemetry.
  */
-function reconcileR2FunctionBodyEmissionAccounting(input: {
+function reconcileFunctionBodyEmissionAccounting(input: {
   readonly directReceipts: ValidatedDirectFunctionBodyReceipts;
   readonly irPatchReceipts: IndexedIrTerminalPatchReceipts;
+  readonly population: IrBodyAccountingPopulation;
   readonly unit: ObservedIrUnit;
+  /**
+   * (#5283) "A legacy body was available, no exact skip receipt was taken, and
+   * this unit physically entered an audited direct-body root." Read only where
+   * the population allows coarse evidence AND no exact receipt exists.
+   */
+  readonly coarseDirectRoot: boolean;
 }): IrFunctionBodyEmissionAccounting {
-  const directBodyEmissions = input.directReceipts.countsByUnitId.get(input.unit.unitId) ?? 0;
+  const exactDirectBodyEmissions = input.directReceipts.countsByUnitId.get(input.unit.unitId);
+  const directBodyEmissions =
+    exactDirectBodyEmissions ?? (input.population.coarseDirectBodyEvidence && input.coarseDirectRoot ? 1 : 0);
   const irBodyEmissions = input.irPatchReceipts.countsByUnitId.get(input.unit.unitId) ?? 0;
   const receiptFailure =
     input.directReceipts.failuresByUnitId.get(input.unit.unitId) ??
@@ -308,6 +467,7 @@ function reconcileR2FunctionBodyEmissionAccounting(input: {
     irBodyEmissions,
     legacyBodyEmitted: directBodyEmissions === 1,
     irBodyEmitted: irBodyEmissions === 1,
+    unsupportedRequiresDirectBody: input.population.unsupportedRequiresDirectBody,
     ...(receiptFailure ? { receiptFailure } : {}),
   };
 }
@@ -338,7 +498,11 @@ function functionBodyAccountingFailure(input: {
       `${input.unit.unitId} patched after the direct route without exactly one direct body receipt (observed ${input.accounting.directBodyEmissions})`,
     );
   }
-  if (input.outcome.kind === "unsupported" && input.accounting.directBodyEmissions !== 1) {
+  if (
+    input.outcome.kind === "unsupported" &&
+    input.accounting.unsupportedRequiresDirectBody &&
+    input.accounting.directBodyEmissions !== 1
+  ) {
     return bodyEmissionInvariant(
       `${input.unit.unitId} fell back to direct emission without exactly one direct body receipt (observed ${input.accounting.directBodyEmissions})`,
     );
@@ -348,12 +512,16 @@ function functionBodyAccountingFailure(input: {
       `${input.unit.unitId} fell back to direct emission with ${input.accounting.irBodyEmissions} terminal IR patch receipts`,
     );
   }
-  if (input.outcome.kind === "invariant" && input.accounting.directBodyEmissions !== 0) {
-    return bodyEmissionInvariant(
-      `${input.unit.unitId} reached an R2 invariant after ${input.accounting.directBodyEmissions} direct body receipts; ` +
-        "a fatal prepared owner may retain only zero or one exact IR patch receipt",
-    );
-  }
+  // (#5262) There is deliberately NO arm for `outcome.kind === "invariant"`.
+  // The one that used to live here fired on `directBodyEmissions !== 0`, but its
+  // own message described a bound on IR PATCH receipts ("may retain only zero or
+  // one exact IR patch receipt") — a different quantity, and one already
+  // enforced upstream in `reconcileR2FunctionBodyEmissionAccounting`, which
+  // turns `irBodyEmissions > 1` into a `receiptFailure`. Meanwhile any unit that
+  // reached an invariant after legitimately falling back to the direct route
+  // carries `directBodyEmissions === 1`, so the arm fired on the NORMAL shape
+  // and its only effect was to overwrite the root cause with
+  // `body-emission-evidence`. It added no coverage; deleting it loses no red.
   return undefined;
 }
 
@@ -831,18 +999,27 @@ function selectionFailure(
 export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInput): ReconciledIrOverlayOutcomes {
   const initialUnitIds = collectIrPreparedSelectionUnitIds(input.identityPlan, input.initialSelection);
   const preparedUnitIds = collectIrPreparedSelectionUnitIds(input.identityPlan, input.preparedSelection);
-  const r2FreeFunctionPopulation = input.directFunctionBodyReceiptAudit
-    ? collectR2FreeFunctionUnitIds(input.sourceFile, input.identityPlan.identityContext)
+  const bodyAccountingPopulations = input.directFunctionBodyReceiptAudit
+    ? collectBodyAccountingPopulations(
+        input.sourceFile,
+        input.identityPlan.identityContext,
+        input.directFunctionBodyReceiptAudit,
+      )
     : undefined;
+  const populationByUnitId = new Map<IrUnitId, IrBodyAccountingPopulation>(
+    (bodyAccountingPopulations ?? []).flatMap((population) =>
+      [...population.unitIds].map((unitId) => [unitId, population] as const),
+    ),
+  );
   const directReceipts =
-    input.directFunctionBodyReceiptAudit && r2FreeFunctionPopulation
+    input.directFunctionBodyReceiptAudit && bodyAccountingPopulations
       ? validateDirectFunctionBodyReceipts({
           audit: input.directFunctionBodyReceiptAudit,
-          population: r2FreeFunctionPopulation,
+          populations: bodyAccountingPopulations,
         })
       : undefined;
-  const irPatchReceipts = r2FreeFunctionPopulation
-    ? indexR2IrTerminalPatchReceipts(input.report, r2FreeFunctionPopulation.unitIds)
+  const irPatchReceipts = bodyAccountingPopulations
+    ? indexIrTerminalPatchReceipts(input.report, new Set(populationByUnitId.keys()))
     : undefined;
   const activeOwners = buildIrIntegrationOwnerProjection(input.identityPlan, input.preparedSelection);
   const audit = auditIrIntegrationTerminalEvidence({
@@ -864,19 +1041,52 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
   const diagnostics: string[] = [];
 
   for (const unit of collectObservedIrUnits(input.sourceFile, input.identityPlan.identityContext)) {
+    // (#5263) A prepared-callable terminal is owned by the publication path.
+    // Skip the WHOLE unit, not just the diagnostic push: computing a row that
+    // the caller then discards is exactly the defect this fixes — the row was
+    // thrown away at `recordObservedIrOutcomes` while its diagnostic was
+    // reported anyway, failing every standalone multi-source compile with a
+    // `body-emission-evidence` invariant about receipts the unit correctly
+    // never took.
+    if (input.ownedElsewhereUnitIds?.has(unit.unitId)) continue;
+    const accountingPopulation = populationByUnitId.get(unit.unitId);
+    // (#5283) The root prediction, computed BEFORE the accounting because R3/R4
+    // read it as their coarse direct-body evidence — see
+    // `coarseDirectBodyEvidence`. R2 never reads it: its receipts are exact.
+    const physicalRootUnitIds = input.directFunctionBodyReceiptAudit?.physicalRootUnitIds;
+    const coarseDirectRoot =
+      unit.legacyBodyAvailable &&
+      !input.skippedBodyUnitIds.has(unit.unitId) &&
+      (physicalRootUnitIds?.has(unit.unitId) ?? true);
     const bodyAccounting =
-      directReceipts && irPatchReceipts && r2FreeFunctionPopulation?.unitIds.has(unit.unitId)
-        ? reconcileR2FunctionBodyEmissionAccounting({
+      directReceipts && irPatchReceipts && accountingPopulation
+        ? reconcileFunctionBodyEmissionAccounting({
             directReceipts,
             irPatchReceipts,
+            population: accountingPopulation,
             unit,
+            coarseDirectRoot,
           })
         : undefined;
-    // R2 function rows derive compatibility booleans from exact production
-    // receipts. Class/member and module-init rows retain their established
-    // dispatcher-specific accounting until their own bounded migrations.
-    const legacyBodyEmitted =
-      bodyAccounting?.legacyBodyEmitted ?? (unit.legacyBodyAvailable && !input.skippedBodyUnitIds.has(unit.unitId));
+    // R2/R3/R4 rows derive compatibility booleans from exact production
+    // receipts. Every other unit kind now REQUIRES a physical direct-body root
+    // as well (#5283): "a legacy body was available and we did not skip it" is
+    // a prediction about what the direct front end would do, and it read `true`
+    // on units where no direct pass ran at all — measured on
+    // `tests/fixtures/extern-demo.ts` and
+    // `tests/dogfood/corpus/import-attributes.module.js`, both of which the
+    // route audit already flagged with `missing-legacy-entry-evidence`.
+    //
+    // The root is a NECESSARY condition, not a sufficient one, so this can only
+    // ever turn a `true` into a `false`. A root attributed to a unit can be the
+    // dispatcher entering for a sibling obligation: measured on the implicit
+    // constructor of a class with a static block, `compileClassBodies` records
+    // a root against `Counter_new` while that constructor's own body is skipped
+    // and IR-patched. Reading the root alone would report compile-twice on a
+    // unit that compiled once — the exact inflation this issue is about, in the
+    // other direction. Callers that did not opt into the route audit have no
+    // receipts to read and keep the prediction unchanged.
+    const legacyBodyEmitted = bodyAccounting?.legacyBodyEmitted ?? coarseDirectRoot;
     const base = {
       key: unit.key,
       sourceId: unit.sourceId,
@@ -967,6 +1177,7 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
     }
 
     let accountingFailure: IrPreparationFailure | undefined;
+    let accountingApplied = false;
     if (bodyAccounting) {
       accountingFailure = functionBodyAccountingFailure({
         unit,
@@ -974,17 +1185,42 @@ export function reconcileIrOverlayOutcomes(input: ReconcileIrOverlayOutcomesInpu
         accounting: bodyAccounting,
         outcome,
       });
-      if (accountingFailure) outcome = observedFailure(base, accountingFailure);
+      if (accountingFailure && outcome.kind !== "invariant") {
+        // (#5262) An `emitted` or `unsupported` row that fails accounting took
+        // neither body route or both. These arms are the ONLY detector for that
+        // corruption, so they still REPLACE the outcome — demoting them to a
+        // note would leave the row `unsupported`, drop it out of the invariant
+        // diagnostic push below, and turn a real red into silence.
+        outcome = observedFailure(base, accountingFailure);
+        accountingApplied = true;
+      } else if (accountingFailure) {
+        // (#5262) Root cause wins the `code` slot. The accounting evidence rides
+        // alongside by spread, exactly like `r2Withdrawal` (#3521 R2-T1):
+        // `IrObservedOutcome` is unchanged and no emitter reads the field. The
+        // asymmetry with the branch above is load-bearing — do NOT simplify this
+        // to "attach, never replace".
+        const noted: IrObservedOutcomeWithBodyAccountingNote = {
+          ...outcome,
+          bodyAccountingFailure: accountingFailure,
+        };
+        outcome = noted;
+      }
     }
 
     outcomes.push(outcome);
     const unchangedReportVisibleInvariant =
-      accountingFailure === undefined &&
+      !accountingApplied &&
       evidence?.kind === "failed" &&
       evidence.diagnosticVisibility === "report" &&
       sameInvariantFailure(outcome, evidence.error.outcome);
     if (outcome.kind === "invariant" && !unchangedReportVisibleInvariant) {
       diagnostics.push(`IR outcome invariant [${outcome.code}] for ${unit.matchName}: ${outcome.detail}`);
+    }
+    // (#5262) An accounting failure that lost the `code` slot must not vanish
+    // from the diagnostic channel too — the evidence is still real, it is just
+    // no longer the headline.
+    if (accountingFailure && !accountingApplied) {
+      diagnostics.push(`IR body-emission accounting note for ${unit.matchName}: ${accountingFailure.detail}`);
     }
   }
   return { outcomes, diagnostics };

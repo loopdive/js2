@@ -29,6 +29,7 @@ import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
+import { promoteTrampolineTailCalls } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
 import { fillConstructBoundDriver } from "./construct-bound.js"; // (#4196)
@@ -122,6 +123,7 @@ import {
   type BuildIrUnitInventoryOptions,
   type IrBindingId,
   type IrClassId,
+  privateMemberMangledName,
   type IrNestedClassFieldCallAdmission,
   type IrSourceId,
   type IrUnitKind,
@@ -306,6 +308,7 @@ import {
   fillAnyIterNext,
   fillIterResultObject,
   fillNativeIteratorLateArms,
+  fillIteratorMethodPresent,
 } from "./iterator-native.js";
 import { fillNativeGeneratorMethodDispatches } from "./generators-native-consumer.js";
 import { emitResizableAbExports, inferNativeTaViewCallResultType } from "./dataview-native.js"; // (#3058)
@@ -367,6 +370,7 @@ import {
   unshiftExternGetStringExoticArm,
   unshiftExternGetWrapperCtorArm,
 } from "./object-runtime.js";
+import { fillObjectProtoSingleton } from "./object-runtime-prototype.js"; // (#5270 step 2)
 import { fillVecLengthDynamicArms } from "./vec-length-set.js";
 import { fillTaCtorGetMetaArm } from "./ta-ctor-meta.js"; // `$__ta_ctor` name/length meta arm
 import { fillSymbolAnyToStringArm } from "./symbol-native.js"; // (#4632) $Symbol arm in __any_to_string
@@ -382,6 +386,7 @@ import { unshiftRegExpAccessorSetGuard } from "./regexp-accessor-set-guard.js"; 
 import { unshiftNativeProtoToPrimitiveArm } from "./native-proto-wrapper-primitive.js"; // (#4248) proto [[PrimitiveValue]]
 import { unshiftExternGetProtoMethodArm } from "./native-proto-instance-method-read.js"; // (#4248) inherited method value
 import { unshiftExternMethodCallProtoArm } from "./native-proto-method-call.js"; // (#4619) proto-receiver method CALL
+import { unshiftExternMethodCallTaDynViewArm } from "./ta-dyn-method-call.js"; // (#5194 r3-1) dyn-view receiver method CALL
 import { fillClosurePropHelpers } from "./closure-props.js"; // (#3468 C-core) closure-own-property side table
 import { fillProtoFunctionValue } from "./proto-function-value.js"; // (#4637 A1) function value in a [[Prototype]] slot
 import { fillClosurePrototypeEdge, spliceClosurePrototypeEdgeHasOwn } from "./closure-prototype-edge.js"; // (#2660 M3) function-value → prototype-object edge; (#4637 A4) its own-property visibility twin
@@ -1759,9 +1764,13 @@ function buildIrClassShapes(
       if (!ts.isMethodDeclaration(member) || !member.name) continue;
       if (hasStaticModifier(member)) continue; // slice 4 defers static methods
       if (hasAbstractModifier(member)) continue;
-      if (!ts.isIdentifier(member.name)) continue; // computed names → defer
+      // (#3522 W1-A) `#priv()` is admitted under the SAME mangling the legacy
+      // side already uses (`resolveClassMemberName`, and the field
+      // re-derivation above). Computed names still defer: their key is not a
+      // compile-time constant, so no stable descriptor name exists.
+      if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name)) continue;
       if (member.asteriskToken) continue; // generators → defer
-      const methodName = member.name.text;
+      const methodName = ts.isPrivateIdentifier(member.name) ? privateMemberMangledName(member.name) : member.name.text;
       const params: IrType[] = [];
       for (const p of member.parameters) {
         if (!ts.isIdentifier(p.name) || p.dotDotDotToken || p.questionToken || p.initializer) {
@@ -2519,6 +2528,16 @@ function recordObservedIrOutcomes(
     ? ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId))
     : ctx.irOutcomes;
   const directFunctionBodyReceiptAudit = ctx.irBodyRouteAuditSession?.directFunctionBodyReceiptAudit(sourceFile);
+  // (#5263) Units the prepared-callable publication path already owns. Reconcile
+  // cannot see that preparation, so it reached `late-preparation-unsupported`
+  // and then upgraded it to a `body-emission-evidence` invariant over zero
+  // direct receipts — a row the filters below already discarded, while its
+  // diagnostic was reported unconditionally. Excluding the unit up front is
+  // what stops the diagnostic; the filters stay as the row-level guard.
+  const ownedElsewhereUnitIds = new Set<IrUnitId>([
+    ...(ctx.irProgramCallablePreparedUnitIds ?? []),
+    ...(ctx.irProgramPreparedModuleInitUnitId ? [ctx.irProgramPreparedModuleInitUnitId] : []),
+  ]);
   const reconciled = reconcileIrOverlayOutcomes({
     sourceFile,
     identityPlan: plan.identityPlan,
@@ -2529,6 +2548,7 @@ function recordObservedIrOutcomes(
     ...(directFunctionBodyReceiptAudit ? { directFunctionBodyReceiptAudit } : {}),
     ...(ctx.irR2WithdrawalsByUnitId ? { r2WithdrawalsByUnitId: ctx.irR2WithdrawalsByUnitId } : {}),
     ...(ctx.irR2NotAttemptedReason ? { r2NotAttemptedReason: ctx.irR2NotAttemptedReason } : {}),
+    ...(ownedElsewhereUnitIds.size ? { ownedElsewhereUnitIds } : {}),
     report,
     existingOutcomes,
     target,
@@ -6044,6 +6064,11 @@ export function generateModule(
     // No-op unless a lazy wrapper was constructed.
     fillLazyIterLadderArms(ctx);
 
+    // (#5268 r3) Prepend the static closed-struct / generator-frame arms to
+    // the `HasIteratorMethod` predicate `Array.from` branches on. After the
+    // ladder fills (its type set is the same one).
+    fillIteratorMethodPresent(ctx);
+
     // (#5147) Fill `__any_iter_next` — source-level `.next()` on a native
     // iterator carrier. MUST run after both fills above: it delegates to the
     // fully-armed `__iterator_next`.
@@ -6354,6 +6379,12 @@ export function generateModule(
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     unshiftExternMethodCallProtoArm(ctx);
+    // (#5194 r3-1) The `$__ta_dyn_view` twin: a `%TypedArray%.prototype` method
+    // called on a dynamically-constructed view reached through an `any`
+    // receiver. Narrow by construction — it claims only names whose native
+    // `__ta_dyn_<m>` helper exists, so every other method keeps its current
+    // path. See ta-dyn-method-call.ts.
+    unshiftExternMethodCallTaDynViewArm(ctx);
     unshiftExternGetProtoCacheArm(ctx);
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -6616,6 +6647,12 @@ export function generateModule(
     // prefixes have been finalized.
     fillClassObjectNameArms(ctx);
 
+    // (#5270 step 2) Fill the reserved `%Object.prototype%` carrier helper —
+    // `__getPrototypeOf` bakes a `call` to it for a null-`$proto` ordinary
+    // object, and the brand's lazy `$NativeProto` global only exists once the
+    // native-proto glue has been registered.
+    fillObjectProtoSingleton(ctx);
+
     // (#2638) Fill the reserved `__class_to_primitive` driver now that the
     // per-struct `__call_valueOf`/`__call_toString` dispatchers exist (emitted
     // just above). `__to_primitive`'s standalone class arm baked a `call` to the
@@ -6770,6 +6807,9 @@ export function generateModule(
     // Late fixup: repair extern.convert_any applied to non-anyref values.
     // Must run after all other passes since they can introduce invalid coercions.
     profilePhase("finalize/extern-convert-any", () => fixupExternConvertAny(ctx));
+    // (#5270 step 1.3) Last: trampoline `call` → `return_call` against final
+    // types. Nothing after this retypes a function or edits a body.
+    promoteTrampolineTailCalls(ctx);
   } catch (e) {
     recordWholeSourceFailure(ctx, ast.sourceFile, classifyIrFailure(e, "build"), irPlanningIdentityContext);
     reportErrorNoNode(ctx, `Codegen error: ${e instanceof Error ? e.message : String(e)}`);
@@ -9377,13 +9417,52 @@ function emitToPrimitiveMethodExports(ctx: CodegenContext): void {
         }
       }
 
+      // (#5268 r3 R3-5c) OrdinaryToPrimitive step 5.b.i is `IsCallable(method)`:
+      // a `valueOf: null` / `toString: null` FIELD is not a method, it is an
+      // absent one. The two closure modes below read that field and
+      // `ref.cast` it to the closure struct type unguarded, so a non-closure
+      // slot TRAPPED ("illegal cast in __call_valueOf") instead of falling
+      // through to the next candidate. Re-read the field and `ref.test` it
+      // first; a miss takes the same `else` an absent entry takes. (The
+      // `closure-eqref-multi` mode already guards, and `standalone` /
+      // `callable-dynamic` cannot hold a non-callable in that slot.)
+      const callableFieldGuard: Instr[] | undefined =
+        entry.mode === "closure-extern"
+          ? [
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx: entry.typeIdx },
+              { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: entry.closureTypeIdx },
+            ]
+          : entry.mode === "closure"
+            ? [
+                { op: "local.get", index: anyLocal },
+                { op: "ref.cast", typeIdx: entry.typeIdx },
+                { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.fieldIdx },
+                { op: "ref.test", typeIdx: entry.closureTypeIdx },
+              ]
+            : undefined;
+      const guardedThen: Instr[] =
+        callableFieldGuard === undefined
+          ? thenInstrs
+          : [
+              ...callableFieldGuard,
+              {
+                op: "if",
+                blockType: { kind: "val" as const, type: { kind: "externref" as const } },
+                then: thenInstrs,
+                else: buildDispatch(idx + 1),
+              },
+            ];
+
       return [
         { op: "local.get", index: anyLocal },
         { op: "ref.test", typeIdx: entry.typeIdx },
         {
           op: "if",
           blockType: { kind: "val" as const, type: { kind: "externref" as const } },
-          then: thenInstrs,
+          then: guardedThen,
           else: buildDispatch(idx + 1),
         },
       ];
@@ -10975,6 +11054,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4619) The CALL twin, which delegates to `__extern_get` — so it must
     // run after the read arm above. See native-proto-method-call.ts.
     profilePhase("unshift-extern-method-call-proto", () => unshiftExternMethodCallProtoArm(ctx));
+    profilePhase("unshift-extern-method-call-ta-dyn-view", () => unshiftExternMethodCallTaDynViewArm(ctx));
     profilePhase("unshift-extern-get-proto-cache", () => unshiftExternGetProtoCacheArm(ctx));
 
     // (#4157) Inline `__extern_get`'s cache-hit arm at static-name call sites.
@@ -11129,6 +11209,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("fill-native-generator-method-dispatches", () => fillNativeGeneratorMethodDispatches(ctx));
     profilePhase("fill-iter-hof-steppers", () => fillIterHofSteppers(ctx));
     profilePhase("fill-lazy-iter-ladder-arms", () => fillLazyIterLadderArms(ctx));
+    profilePhase("fill-iterator-method-present", () => fillIteratorMethodPresent(ctx));
     profilePhase("fill-iter-result-object", () => fillIterResultObject(ctx));
     profilePhase("fill-any-iter-next", () => fillAnyIterNext(ctx));
     profilePhase("fill-combinator-to-vec", () => fillCombinatorToVec(ctx));
@@ -11236,6 +11317,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // (#4770) Multi-source parity for the dynamic class-constructor `name`
     // property view; see the single-source placement above.
     profilePhase("fill-class-object-name-arms", () => fillClassObjectNameArms(ctx));
+
+    // (#5270 step 2) Multi-source parity for the `%Object.prototype%` carrier;
+    // see the single-source placement above.
+    profilePhase("fill-object-proto-singleton", () => fillObjectProtoSingleton(ctx));
 
     // (#2358 #10 / #2638) Fill the reserved `__array_to_primitive_string` /
     // `__class_to_primitive` driver bodies now that `__extern_length` /

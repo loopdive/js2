@@ -18,6 +18,107 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## 2026-09-04 census — 10,038 / 11,704 (85.8%) after #5558
+
+Baseline refetched 2026-09-04 01:17 UTC (`oracle_lane: "honest"`, promoted
+from the merge of PR #5558 — promise r3, #5197), same script and edition map.
+
+**10,038 pass / 11,704 (85.8%) — 1,666 non-pass** (1,285 fail · 380
+compile_error · 1 compile_timeout): **+17 rows** over the post-#5550 census.
+The rows sum to 1,666.
+
+| Cluster | rows | fail | CE |
+| --- | ---: | ---: | ---: |
+| typedarray | 242 | 224 | 18 |
+| expressions | 228 | 131 | 96 |
+| class | 191 | 135 | 56 |
+| other built-ins | 168 | 160 | 8 |
+| proxy + reflect | 155 | 131 | 24 |
+| regexp | 139 | 129 | 10 |
+| generators | 121 | 75 | 46 |
+| array + object | 121 | 111 | 10 |
+| promise | 101 | 51 | 50 |
+| for-of + collections | 98 | 62 | 36 |
+| statements + lang | 75 | 55 | 20 |
+| module-code | 25 | 19 | 6 |
+| rest | 2 | 2 | 0 |
+
+Day total since the 2026-09-02 census (9,905): **+133 rows** across #5505,
+#5526, #5527, #5534, #5550 and #5558. The compile_error count has not moved
+(380) — every wave so far was `fail` work; the CE mass is the next frontier.
+
+## 2026-09-03 late census — 10,021 / 11,704 (85.6%) after #5550
+
+Baseline refetched 2026-09-03 23:31 UTC (`oracle_lane: "honest"`, promoted
+from the merge of PR #5550 — array + object r3, #5268), same script and
+edition map as the two censuses below.
+
+**10,021 pass / 11,704 (85.6%) — 1,683 non-pass** (1,302 fail · 380
+compile_error · 1 compile_timeout): **+15 rows** over the evening census.
+Array + object went 135 → 121 (−14), typedarray 243 → 242 (−1); every other
+cluster is unchanged, and the rows still sum to 1,683.
+
+| Cluster | rows | fail | CE |
+| --- | ---: | ---: | ---: |
+| typedarray | 242 | 224 | 18 |
+| expressions | 228 | 131 | 96 |
+| class | 191 | 135 | 56 |
+| other built-ins | 168 | 160 | 8 |
+| proxy + reflect | 155 | 131 | 24 |
+| regexp | 139 | 129 | 10 |
+| generators | 121 | 75 | 46 |
+| array + object | 121 | 111 | 10 |
+| promise | 118 | 68 | 50 |
+| for-of + collections | 98 | 62 | 36 |
+| statements + lang | 75 | 55 | 20 |
+| module-code | 25 | 19 | 6 |
+| rest | 2 | 2 | 0 |
+
+The lane had measured +21 directory rows on `Array/{from,of}` + `concat` +
+`hasOwnProperty`; the census counts only ES2015-edition rows, which is where
+the difference comes from — no row was lost in the queue (the merge-group
+shards passed and the standalone floor held).
+
+## 2026-09-03 evening census — 10,006 / 11,704 (85.5%), +58 from the day's second wave
+
+Source: the standalone baseline refetched 2026-09-03 20:11 UTC (`node
+scripts/fetch-baseline-jsonl.mjs --standalone --force`, `oracle_lane:
+"honest"`), after PR #5534 (expressions r2, #5270) merged at 19:54; same
+script (`.tmp/census0903/census.mjs`) and edition map as the morning census
+below, so the cluster sizes are comparable with that table only.
+
+**ES2015 standalone: 10,006 pass / 11,704 (85.5%) — 1,698 non-pass**
+(1,317 fail · 380 compile_error · 1 compile_timeout), up from **9,948
+(85.0%)** in the morning: **+58 rows**, from #5527 (built-ins r2, #5269:
+other built-ins 197 → 168) and #5534 (expressions r2, #5270: expressions
+244 → 228). #5534 parked once in the merge queue — a 325-row standalone
+drop from a mint-time `return_call` against placeholder async function
+types, invisible at PR level; the localisation method and fix are recorded
+in #5270 and the lesson is now part of the wave pipeline: a random ~1,200-row
+sample of baseline-passing rows, every flagged row A/B'd against a git
+archive of `origin/main`, runs before each wave PR.
+
+| Cluster | rows | fail | CE | owner / state (evening) |
+| --- | ---: | ---: | ---: | --- |
+| typedarray | 243 | 225 | 18 | #5194 r3 — implemented, round-3 review fixes in flight |
+| expressions | 228 | 131 | 96 | #5270 r2 landed (#5534); residual is mostly CE |
+| class | 191 | 135 | 56 | #5195 r3 — implementer suspended (WIP patch kept), re-dispatch |
+| other built-ins | 168 | 160 | 8 | #5269 r2 landed (#5527); no r3 planned yet |
+| proxy + reflect | 155 | 131 | 24 | #5196 r3 — implementer suspended (WIP patch kept), re-dispatch |
+| regexp | 139 | 129 | 10 | #5198 codex lane (checkpoint PR #5393) |
+| array + object | 135 | 125 | 10 | #5268 r3 — validated, shipping in this PR |
+| generators | 121 | 75 | 46 | #2864 claimed and live; 233 rows across clusters gate on it |
+| promise | 118 | 68 | 50 | #5197 r3 — validated, ships next |
+| for-of + collections | 98 | 62 | 36 | #5267 r3 planned, not yet dispatched |
+| statements + lang | 75 | 55 | 20 | residual unowned |
+| module-code | 25 | 19 | 6 | #4759 codex closeout lane |
+| rest | 2 | 2 | 0 | unowned |
+
+The rows sum to 1,698, so coverage is still complete. The compile_error
+share barely moved (391 → 380): the day's two waves were `fail` work, and the
+CE mass sits in `expressions` (96), `class` (56), `promise` (50),
+`generators` (46) and `for-of + collections` (36) exactly as in the morning.
+
 ## 2026-09-03 census — 9,948 / 11,704 (85.0%), full residual coverage
 
 Source: `node scripts/fetch-baseline-jsonl.mjs --standalone --force` fetched

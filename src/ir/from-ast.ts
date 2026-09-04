@@ -7507,10 +7507,16 @@ function tryLowerNativeMapConstruction(expr: ts.NewExpression, cx: LowerCtx): Ir
 }
 
 function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPosition = false): IrValueId | null {
-  if (!ts.isPropertyAccessExpression(expr.expression) || !ts.isIdentifier(expr.expression.name)) {
+  if (!ts.isPropertyAccessExpression(expr.expression)) {
     demoteToLegacy("method-call-unsupported", `ir/from-ast: malformed method call in ${cx.funcName}`);
   }
-  const methodName = expr.expression.name.text;
+  // (#3522 W1-B) `<recv>.#m(...)`. A `PropertyAccessExpression`'s name is
+  // exactly `Identifier | PrivateIdentifier`, so the name-shape refusal that
+  // used to stand here only ever rejected the private spelling — a POST-CLAIM
+  // demote once the selector admits the call site. `irPrivateFieldName` mints
+  // `__priv_<x>`, the same descriptor key the field reads already use and the
+  // slot W1-A minted, so the class arm below finds it via `findClassMember`.
+  const methodName = irPrivateFieldName(expr.expression.name);
   const receiverIdentifier = ts.isIdentifier(expr.expression.expression) ? expr.expression.expression : undefined;
   const receiverIsDirectModuleBinding =
     receiverIdentifier !== undefined && cx.resolver?.isDirectModuleBinding?.(receiverIdentifier) === true;

@@ -1,10 +1,11 @@
 ---
 id: 5270
 title: "ES2015 standalone: expressions — r2 residual pass (89 rows)"
-status: ready
+status: done
 sprint: current
 created: 2026-09-02
-updated: 2026-09-02
+updated: 2026-09-03
+completed: 2026-09-03
 priority: high
 horizon: l
 feasibility: medium
@@ -60,8 +61,20 @@ loc-budget-allow:
   - src/codegen/closure-props.ts
   - src/codegen/function-poison-pill-access.ts
   - src/codegen/statements.ts
+  # 2026-09-03 (round-3 fix, R3-F1): the loose-equality retention guard
+  # (`looseEqualityCoercesAnOperand` + `isNonNullishPrimitiveLiteral`) lives
+  # beside the operator table it qualifies; `statements.ts` imports it so both
+  # halves of the decision cannot drift apart.
+  - src/codegen/module-init-collection.ts
   - src/codegen/index.ts
+  # 2026-09-03 (merge-queue park fix): `ctx.trampolineForwarders` — the set of
+  # `__fn_tramp_*` handles that `promoteTrampolineTailCalls` re-checks against
+  # FINAL callee types at finalize (+6 lines of doc-comment + field).
+  - src/codegen/context/types.ts
 func-budget-allow:
+  # 2026-09-03 (merge-queue park fix): one initialiser line for
+  # `trampolineForwarders` in the context literal (+1).
+  - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/statements/control-flow.ts::canTailCall
   - src/codegen/statements/control-flow.ts::canTailCallRef
   - src/codegen/statements/control-flow.ts::compileReturnStatement
@@ -85,6 +98,24 @@ func-budget-allow:
   - src/codegen/closures.ts::compileArrowAsClosure
   - src/codegen/declarations/object-shape-widening.ts::collectRedeclaredObjectIdentityLiterals
   - src/codegen/function-poison-pill-access.ts::tryCompileFunctionPoisonRead
+  # 2026-09-02 (Opus implementation, step 2): the reserve-then-fill
+  # `__object_proto_singleton` needs one `fillObjectProtoSingleton(ctx)` call in
+  # EACH finalize driver, mirroring the `fillClassObjectNameArms` placement that
+  # sits two lines above it in both. Wiring only — the mechanism itself lives in
+  # `object-runtime-prototype.ts`.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  # 2026-09-02 (Opus implementation, steps 3 and 8): the §7.1.1.1 hint-string
+  # normalisation is 13 lines inside `symbolToPrimitive`, which is nested in
+  # `ensureObjectRuntime`; the cluster-M collector is a sibling function of
+  # `collectRedeclaredWithTargetObjects` plus one call line inside
+  # `collectGrowableObjectLiterals`.
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
+  - src/codegen/declarations/object-shape-widening.ts::collectGrowableObjectLiterals
+  # 2026-09-02 (Opus implementation, step 10 cluster N): the arrow-`prototype`
+  # route is one predicate call plus its comment inside the static-key fold —
+  # it has to sit beside the other route flags it composes with.
+  - src/codegen/binary-ops-in.ts::compileInOperator
 ---
 
 # #5270 — ES2015 standalone: expressions, r2 residual pass
@@ -752,3 +783,784 @@ the reason):
   cluster A (`p21`, `p21b`, `p51`; 2.4 MB each) are not committed — regenerate
   with `npx tsx src/cli.ts <probe.js> --target standalone --wat -o <dir>`
   (the WAT goes to stdout).
+
+## 2026-09-02 implementation (Opus)
+
+Worktree `.claude/worktrees/agent-a7c46b8b6c522fd0e`, branch
+`worktree-agent-a7c46b8b6c522fd0e`, base `77ca8fbaae`.
+
+**Honest base, measured in this worktree** with
+`npx tsx scripts/run-test262-paths.mts .tmp/es2015/expr-head.txt --standalone`
+(89 in-scope rows): **0 pass · 88 fail · 1 compile_error**. Controls
+(`expr-controls.txt`, 20 rows): **20/20 pass**.
+
+### Step 1 — TCO (cluster A, 11 rows): 0 → 8 pass
+
+`expr-cl-A-tco.txt` before **0 pass / 11 fail**, after **8 pass / 3 fail**.
+Flipped: `call/tco-call-args`, `comma/tco-final`, `conditional/tco-cond`,
+`conditional/tco-pos`, `logical-and/tco-right`, `logical-or/tco-right`,
+`tagged-template/tco-call`, `tagged-template/tco-member`.
+
+1.1 **The externref refusal had no reason and is gone.** `git log -S` on
+`calleeRet.kind === "externref"` finds only the 2026-08-30 tree import
+`c882d1b110`; #822 (argument types / stack setup), #839 (constructor stack
+args) and #1972 (try-with-handler) are all about something else. The only pin
+was `tail-call-optimization.test.ts` "keeps only host-free externref
+boundaries as ordinary calls", which **restates the guard** with no rationale
+of its own. Relaxed, and the pin rewritten to what now matters: both lanes
+promote the externref tail, the standalone module still validates, and
+`test()` still answers 42. Its practical reach was total — `return undefined`
+also lowers to an externref result, so NO value-returning standalone JS
+function was ever tail-call optimised.
+
+1.2 **The param-COUNT equality is gone.** Wasm validates
+`return_call x : [t1* t3*] → [t2*]`, i.e. the operand stack below the callee's
+arguments is polymorphic, so the CALLER's arity is irrelevant. #822 WI1's
+"not enough arguments on the stack" is about the operands the call site
+pushed (a well-formed `call` always has them), and the equality was only a
+proxy for it. Both refusals now live in one shared
+`tailCallResultsMatch(fctx, calleeResults)`.
+
+1.3 **`__fn_tramp_*` forwards with `return_call`** (both emitters in
+`closures/funcref-as-closure.ts`), guarded on the callee's result list
+matching the trampoline's. A pure forwarder's frame must not survive; with a
+plain `call` the `f → __fn_tramp_f → f` cycle grew two frames per iteration.
+
+**Not done in step 1 (3 rows), with reasons:**
+
+- `call/tco-non-eval-function` — `var eval = f; return eval(n-1)` inside a
+  strict function. Step 1.3 removed the trampoline frame (the trace went from
+  `__fn_tramp_f_N ← f ← __fn_tramp_f_N` to `f ← f ← f`), but `f`'s own tail
+  call is a BARE call, and `emitBareCallReceiverReset` (`expressions/calls.ts:143`)
+  wraps it in `global.get $__current_this; local.set $prev; ref.null.extern;
+  global.set $__current_this; <call>; local.get $prev; global.set
+  $__current_this`. The restore sits AFTER the call, so `peelToTailCallIdx`
+  cannot reach it, and peeling through it is **not** the same free move as the
+  #1511 `__argc` reset: the restore is what puts the caller's receiver back for
+  code that runs after `f` RETURNS, one frame up. A statically-called
+  `function outer() { return f() + this.x; }` would read a clobbered
+  `__current_this`. Needs a separate design (e.g. proving the enclosing
+  dispatcher restores, which the method dispatcher does at
+  `closure-exports.ts:1805` but a direct `call` does not) — not worth
+  guessing at inside this step.
+- `call/tco-non-eval-global` and `call/tco-non-eval-with` — the two rows the
+  plan already named as stretch (a script-level `eval = f` assignment must
+  shadow the intrinsic for later call sites; `-with` additionally needs #5271
+  D3). Both keep their pre-change signature (`callCount 0`), unchanged by this
+  step.
+
+**Pre-existing red, NOT caused by this step:** `tests/issue-839.test.ts >
+static async private method via this (sub-pattern 2: type mismatch)` fails on
+HEAD `77ca8fbaae` with both touched files reverted to their base content —
+`C_getDollar failed: call[0] expected type f64, found block of type externref`.
+Verified by A/B file copy.
+
+### Step 2 — `[[Prototype]]` of ordinary literals + colon `__proto__` (cluster I, 5 rows): 0 → 4 pass
+
+`expr-cl-I-proto-literal.txt` before **0 pass / 5 fail**, after **4 pass /
+1 fail**. Flipped: `object/__proto__-value-obj`, `__proto__-value-null`,
+`__proto__-value-non-object`, `__proto__-duplicate-computed`.
+
+2.1 `__getPrototypeOf` (`object-runtime-prototype.ts`) now resolves a null
+`$proto`: with `OBJ_FLAG_NULL_PROTO` set it stays JS `null`, otherwise it
+answers the canonical `%Object.prototype%` carrier. The carrier comes from a
+reserved helper `__object_proto_singleton`, minted with the pre-change answer
+(`ref.null.extern`) during `ensureObjectRuntime` and FILLED at finalize by
+`fillObjectProtoSingleton` with `buildLazyNativeProtoGetInstrs(ctx,
+BUILTIN_BRAND_TABLE.Object)` — the `Object` brand's lazy `$NativeProto` global
+does not exist yet at registration time. Wired into BOTH finalize drivers
+(`generateModule`, `generateMultiModule`), beside `fillClassObjectNameArms`.
+A module whose `Object` brand glue was never registered keeps the old answer
+rather than pulling the glue in.
+
+2.2 The `Object.getPrototypeOf(<object literal>)` static folds (direct and
+through a variable initializer, plus `hasProvablyNonNullOrdinaryPrototype`)
+decline when the literal carries a colon-form `__proto__`, via a shared
+`objectLiteralHasColonProto` extracted from `objectLiteralForcesHostPath`.
+
+2.3 `compileObjectLiteralWithAccessors` routes a NON-computed `__proto__:` key
+to `__object_setPrototypeOf(obj, v); drop` instead of `__extern_set`, so
+§B.3.1 holds: [[Prototype]] is set for an Object or Null value, a primitive
+value is silently ignored, and no own property is created. Gated on that
+native's presence, so the JS-host lane keeps its `__extern_set` route
+byte-for-byte.
+
+**Not done in step 2 (1 row), with the measured reason:**
+
+- `object/computed-__proto__` — advanced from failing assertion 1 (prototype)
+  to assertion 9 (`obj.__proto__` for `{ ['__proto__']: undefined }`). Root
+  cause is neither `__proto__` nor the literal representation: the STATIC
+  member-read fold answers a property whose only checker type is `undefined`
+  with an f64 `0`. Measured with `.tmp/es2015/probes/q06-read-fold.js`:
+  `var c = { ['x']: undefined }` gives `String(c.x) === "0"` for the static
+  read but `"undefined"` for the dynamic `c[k]` read, and adding ANY second
+  property (`y: 1`, or an accessor) makes the static read correct too. The
+  broken value still answers `c.x === undefined` and `typeof c.x` correctly —
+  it fails test262's `assert._isSameValue`, which falls through to
+  `1/a === 1/b` because `a !== 0` is false. Routing `__proto__`-keyed literals
+  to the open path was tried and REVERTED: it changes routing without fixing
+  the fold, and the fold is a member-access/type-lowering defect outside every
+  cluster this issue names.
+
+### Step 3 — object-literal representation (clusters J + K + M, 10 rows): 0 → 1 pass
+
+Only cluster **M** landed. J and K were re-measured and the plan's root cause
+is falsified for both; the corrected diagnosis is below so the next pass starts
+from it instead of re-deriving it.
+
+**M — redeclared `var` with two literal shapes (2 rows): 0 → 1.**
+New `collectRedeclaredShapeDivergentObjects` in
+`declarations/object-shape-widening.ts` — the same shape-divergence test
+`collectRedeclaredWithTargetObjects` already performs, WITHOUT its `with`-target
+requirement (which made it apply to almost nothing). A module-scoped `var` with
+≥2 declarations whose object-literal shapes differ (or whose shape is not
+comparable — a method, accessor, computed key, spread, or a non-literal
+initializer) routes every literal declaration through
+`redeclaredObjectIdentityDeclarations` / `…Literals`, i.e. the existing
+externref `$Object` carrier. `p44`, `p09`, `p09b` all flip. Flipped row:
+`object/dstr/meth-dflt-obj-ptrn-empty`.
+Not done: `object/dstr/gen-meth-dflt-obj-ptrn-empty`, whose remaining failure is
+generator machinery (`TypeError: Cannot read properties of undefined (reading
+'next')`) — X4 / #680 territory, not cluster M.
+
+**J — method-shorthand `this` (4 rows): NOT done, plan diagnosis falsified.**
+The plan located this in `emitObjectLiteralMethodFn` →
+`compileArrowAsClosure`, where every `this`-boundary test is
+`ts.isFunctionExpression(arrow)`. WAT of the exact probe shape
+(`.tmp/wat/j01.js`, `--target standalone --wat`) shows the method never reaches
+that path: `{ method() {…} }` is a CLOSED struct, so the method compiles to
+`(func $__anon_0_method (param (ref null 257)))` — a TYPED-`this` function whose
+receiver is the struct — reached through
+`__obj_meth_tramp___anon_0_method_12`, which reads `__current_this`,
+`ref.test`s it against the struct and passes `ref.null 257` when the test fails
+(`closures/method-trampolines.ts:148 buildTrampolineThisSlot`). Hence the
+observed JS `null`. Introducing `isOwnThisFunction` at the
+`ts.isFunctionExpression` sites would not touch this lowering at all.
+The real requirement is that such a method's `this` be an **externref** that can
+carry the §10.4.3 answer (`undefined` strict / `globalThis` sloppy), which the
+struct-typed param cannot represent. Note also that
+`buildTrampolineThisSlot`'s other arm THROWS a TypeError for a genuinely-absent
+receiver when `methodBodyReadsThis` is true — also wrong for these rows, which
+want `undefined`. This is a receiver-representation change, not a predicate
+swap; it needs its own design.
+
+**K — methods invisible to the MOP (4 rows): NOT done, and wider than methods.**
+`delete obj.method` now returns `true` (not `false` as the plan recorded) but
+does not remove the property — and probe `q07-delete-method.js` shows the same
+for a plain DATA property on an open literal: `delete c.data` answers `true`
+while `hasOwnProperty("data")` stays `true`, for both the static `delete o.k`
+and the dynamic `delete o[k]` forms. So the plan's route (a) — route the literal
+to the open path — cannot work as written: the open path's delete is broken too,
+for every property kind, and that is the thing to fix first.
+
+### Step 8 — ToPrimitive hint + bare expression statements (cluster D, 3 rows): 0 → 2 pass
+
+Flipped: `addition/coerce-symbol-to-prim-invocation`,
+`equals/coerce-symbol-to-prim-invocation`.
+
+8.1 `symbolToPrimitive` (`object-runtime.ts`) passed local 1 — the INTERNAL
+hint slot, whose "default" encoding is `null` — straight to the user's
+`@@toPrimitive` method. §7.1.1.1 step 1 says an absent PreferredType IS the
+string `"default"`, and step 2.b passes that string. Now normalised: null →
+the interned `"default"`, otherwise the given `"number"` / `"string"`. Probe
+`p02` went from `LnullRnull` to `LdefaultRdefault`.
+
+8.2 A bare `left + right;` / `0 == y;` statement was DROPPED whole at module
+top level. `expressionRunsUserCode` (`module-init-collection.ts`) already had
+this exact argument for `in` / `instanceof` (#5140 — "METHOD-INVOKING
+relational operators, not inert comparisons"); the ToPrimitive-reaching
+operators (`+ - * / % **`, `== !=`, `< > <= >=`) belong to the same family,
+because any object operand runs `valueOf` / `toString` / `@@toPrimitive`.
+Added there, restricted to operands that are not SYNTACTICALLY primitive so
+`1 + 2;` keeps its previous drop. `compileExpressionStatement`
+(`statements.ts`) additionally compiles such a statement with an `externref`
+expectation: with no expected type the binary lowering picks a scalar carrier
+that unboxes each operand directly and skips ToPrimitive, which is why
+`var r = left + right` invoked both methods while `left + right;` invoked
+neither. Probes `p61`, `p62` flip.
+
+**Not done in step 8 (1 row):** `equals/coerce-symbol-to-prim-return-prim`
+needs the plan's item 3 — the §7.2.15 step 11/12 arm in `__any_eq`
+(`any-eq-helpers.ts`), where exactly one side is tag 6 (object) and the other a
+primitive. Probe `p62b` (`'str' == y`) still answers `false`. Deferred rather
+than guessed at: `__any_eq` operates on the `$AnyValue` tagged union, so the
+arm has to unbox the object side back to an externref, call `__to_primitive`,
+re-box the primitive result and re-enter with a bounded single retry — and it
+was not established in this pass that standalone `'str' == y` even routes
+through `__any_eq` rather than an `__extern_*` equality.
+
+**Separate pre-existing defect found while building the step-8 control, NOT
+fixed here:** `"x" + o` for an object with a user `valueOf` (or `toString`)
+answers `x[object Object]` in BOTH lanes on HEAD — string-concatenation `+`
+does not run OrdinaryToPrimitive on its object operand. It is not part of any
+row in this issue's 89, and it is a different seam from the `@@toPrimitive`
+GetMethod step 8.1 fixes.
+
+### Step 10 — small clusters (F + G + N, 10 rows): 0 → 2 pass
+
+Only cluster **N** landed, 2 of its 3 rows. F and G were measured and are
+recorded below with what actually blocks them.
+
+**N (3 rows): 0 → 2.** Flipped `arrow-function/prototype-rules` and
+`arrow-function/ArrowFunction_restricted-properties`.
+
+- `"prototype" in (() => {})` folded TRUE. `tsTypeHasProperty`
+  (`binary-ops-in.ts`) reads `checker.getApparentType(…).getProperty(key)`, and
+  TypeScript's `Function` interface declares `prototype: any` for EVERY
+  callable — including the ones that have no such own property. An arrow is
+  never a constructor, so a new `receiverIsArrowFunctionValue` route (the
+  literal form, or an identifier whose initializer is one) answers `false`
+  syntactically and also suppresses the `__extern_has` re-ask, which would
+  otherwise reintroduce the wrong answer for an externref-carried arrow.
+- `arrowFn.caller` / `arrowFn.arguments` must throw %ThrowTypeError%
+  (§10.2.4 AddRestrictedFunctionProperties applies to every non-legacy
+  function). `tryCompileFunctionPoisonRead` poisoned only STRICT source
+  functions, bound functions and the `Function("'use strict';")` product; a new
+  `hasRestrictedProperties` predicate adds arrows. #5195 T owns the
+  method/generator/class twin and should reuse this predicate rather than
+  adding a second one.
+
+Not done: `arrow-function/lexical-this`. `function F() { this.af = _ => this; }`
+then `new F().af()` traps with "dereferencing a null pointer" — the
+constructor's `this.af = <arrow>` write never lands on the fnctor instance, so
+the read is null before `this` is ever consulted. That is the fnctor
+instance-write path, not the arrow's lexical-`this` capture the cluster name
+suggests.
+
+**G (5 rows): NOT done — the descriptor is only half of it.**
+Probe `q08-class-name.js` measures HEAD exactly: `xCls = class x {}` and
+`cls = class {}` already answer the right `.name` VALUE ("x" and "cls") through
+the static fold, and the descriptor flags are already right
+(`writable:false, enumerable:false, configurable:true`). Two things are wrong:
+(a) `Object.getOwnPropertyDescriptor(cls, "name").value` answers the SYNTHETIC
+name `__anonClass_cls_1`, because `collectClassDeclaration`
+(`class-bodies.ts`) sets `esName = decl.name ? decl.name.text : (syntheticName ?? "")`
+and `registerClassExpression`'s NamedEvaluation `nameHint` is never threaded
+into it; and (b) every row in this cluster uses `verifyProperty`, whose
+`configurable: true` check does `delete obj.name` and then re-checks
+`hasOwnProperty` — and that delete answers `true` while leaving the property
+present, because the class-object `name` is the #4770 synthetic MOP VIEW, not a
+real own property (the class-object own-property surface is #5195 B). Fixing
+(a) alone flips no row. Left untouched rather than shipping a change with no
+measured row movement.
+
+**F (2 rows): not attempted** — the budget went to the clusters above. The
+plan's `p56` note (a script-level `var eval` declaration drags the compile to
+~17.6 s, which is over the runner's 15 s budget) still needs measuring before
+the rows can be judged cheap.
+
+### Wave result — 89 in-scope rows: 0 → 17 pass
+
+Measured with the CI-equivalent runner and budget
+(`npx tsx scripts/run-test262-paths.mts .tmp/es2015/expr-head.txt --standalone`,
+15 s per row) in this worktree, before and after:
+
+| | before | after |
+|---|---:|---:|
+| pass | 0 | **17** |
+| fail | 88 | 71 |
+| compile_error | 1 | 1 |
+
+The 17 flipped rows, all real `pass` (the runner applies CI's standalone
+host-import leak check, so each is host-import-free):
+
+```
+expressions/addition/coerce-symbol-to-prim-invocation.js
+expressions/arrow-function/ArrowFunction_restricted-properties.js
+expressions/arrow-function/prototype-rules.js
+expressions/call/tco-call-args.js
+expressions/comma/tco-final.js
+expressions/conditional/tco-cond.js
+expressions/conditional/tco-pos.js
+expressions/equals/coerce-symbol-to-prim-invocation.js
+expressions/logical-and/tco-right.js
+expressions/logical-or/tco-right.js
+expressions/object/__proto__-duplicate-computed.js
+expressions/object/__proto__-value-non-object.js
+expressions/object/__proto__-value-null.js
+expressions/object/__proto__-value-obj.js
+expressions/object/dstr/meth-dflt-obj-ptrn-empty.js
+expressions/tagged-template/tco-call.js
+expressions/tagged-template/tco-member.js
+```
+
+No previously-passing row regressed: the base was 0 pass, and the 20-row
+control list (`lists/expr-controls.txt`) is **20/20** after every step and at
+the end. The 39 out-of-scope rows keep their signature: 36 fail + 3
+compile_error, the same three CE paths as the baseline 128-row run
+(`capturing-closure-variables-2`, `concise-generator`,
+`generator-prop-name-yield-expr`) — no new CE and no CE→wrong-answer demotion.
+
+**This is below the plan's target (≥66) and below its floor (45).** Steps
+1, 2, 8, 10-N and the M half of step 3 landed. Steps 4 (H), 5 (L), 6 (C),
+7 (B), 9 (E) and 11 (O/X5) were not started; J, K, G and F were measured and
+are recorded above with what actually blocks each. Three of those measurements
+change what the next pass should do, because the plan's stated root cause is
+falsified: **J** (the method never reaches `compileArrowAsClosure`), **K** (the
+open-path `delete` is broken for plain data properties too), **G** (the `.name`
+VALUE and descriptor FLAGS are already right; the blocker is `verifyProperty`'s
+delete of a synthetic MOP view).
+
+Two defects found in passing that are outside every cluster this issue names,
+recorded so they are not re-derived:
+
+- A static member read of a property whose only checker type is `undefined`
+  answers an f64 `0` (`.tmp/es2015/probes/q06-read-fold.js`). The dynamic read
+  of the same property is correct, and adding any second property to the
+  literal fixes the static one. This is what still fails
+  `object/computed-__proto__`.
+- `"x" + o` for an object with a user `valueOf` / `toString` answers
+  `x[object Object]` in BOTH lanes — string-concatenation `+` does not run
+  OrdinaryToPrimitive on its object operand.
+
+Pre-existing red on `origin/main`, verified by reverting all twelve changed
+source files to `origin/main` and re-running: `tests/issue-839.test.ts`
+(sub-pattern 2), `tests/issue-1472-es5-getprototypeof.test.ts` (the standalone
+intrinsic-identity case), `tests/issue-4429-string-hint-toprimitive-this.test.ts`
+(2 of 5), `tests/issue-4492-builtin-as-value.test.ts` (the `$NativeProto`
+receiver case), `tests/issue-3017-function-poison-pill.test.ts` (4 of 16),
+`tests/issue-2800-toplevel-new-objlit-init-read.test.ts` (the delete-tombstone
+case).
+
+One committed pin was UPDATED rather than kept, because this wave makes its
+subject correct: `tests/issue-3037-cs1c-getprototypeof-carrier.test.ts` pinned
+`Object.getPrototypeOf([1]) === null` and `Object.getPrototypeOf({z:1}) ===
+null` as a regression lock on the standalone prototype surface. Both now answer
+`Array.prototype` and `Object.prototype`; the lock is re-pointed at those
+values, and the identity/carrier findings the rest of that suite records are
+untouched.
+
+### 2026-09-02 adversarial review — F1 fixed, N1 fixed, N2/N3/N4 documented
+
+An adversarial review (~50 probes, both lanes, node as the oracle; probes under
+`.tmp/rev5270/`) cleared steps 1, 2, 3-M and 8 with no finding — `return_call`
+across try/catch still lets the catch run (#1972 guard intact), mutual recursion
+does not grow the stack, and programs touching none of the changed paths are
+byte-identical. One HIGH finding blocked the branch.
+
+**F1 (HIGH, fixed) — `"prototype" in <arrow-bound identifier>` regressed for an
+arrow that HAS a `prototype`.** The cluster-N route folded a hard `false` for
+any identifier whose initializer is an arrow, with **no write check at all**,
+and additionally suppressed the `__extern_has` runtime fallback. Both the fold
+and the fallback were off, so all four write forms answered `false` where node
+AND the base compiler answer `true`:
+
+| probe | node | base | lane (before) | lane (after) |
+|---|---:|---:|---:|---:|
+| `a42` `arrow.prototype = 5` (standalone / host) | 1 | 1 | **0** | 1 |
+| `a44` bitmask, standalone (`defineProperty` \| `["prototype"]=` \| `Object.assign`) | 7 | 7 | **0** | 7 |
+| `a44` bitmask, host | 7 | 3 | **0** | 3 |
+
+The comment's premise was the bug: an arrow's ABSENCE of `prototype` is a fact
+about its CREATION, not its lifetime — it is an ordinary extensible object
+afterwards. Two changes, both in `binary-ops-in.ts`:
+
+1. `receiverIsArrowFunctionValue` now admits an identifier only when
+   `arrowBindingNeverGainsProperties` holds: no member write through the
+   binding (`a.k = …` / `a[k] = …`, any assignment operator, through
+   paren/`as`/`!` wrappers), no appearance as a call or `new` ARGUMENT
+   (`identifierEscapesToCall`, #4765 — this is what covers
+   `Object.defineProperty` and `Object.assign`), and no rebinding of the
+   identifier (`identifierIsWrittenTo`, #4484 D). An arrow LITERAL still folds
+   unconditionally: there is no binding anyone could have written to.
+2. The `!arrowPrototypeRoute` suppression on the runtime route is **removed**,
+   so a folded `false` may once again be re-asked through `__extern_has` — the
+   belt-and-braces half. Verified this does not cost the cluster-N flip:
+   `arrow-function/prototype-rules` still passes.
+
+The `a44` host-lane `Object.assign` bit answers `3` rather than `7` — measured
+by file-copy A/B to be **identical on `origin/main`**, so it is pre-existing and
+outside this issue. The pin for that form is therefore standalone-only, with the
+reason recorded in the test.
+
+Five pins added under `#5270 review F1`; the four regression pins were verified
+to FAIL on the pre-fix tree and the fold-survival control to stay green.
+`tests/in-operator-edge-cases.test.ts` and
+`tests/function-prototype-assignment-descriptor.test.ts` stay green (10/10).
+
+**N1 (low, latent soundness — fixed).** `tailCallResultsMatch`
+(`statements/control-flow.ts`) compared ValType KIND only: it matched `ref $A`
+against an unrelated `ref $B` and cross-matched `ref` ↔ `ref_null` in BOTH
+directions, though `ref null $T` does not satisfy a `ref $T` return. Nothing
+reproduced end-to-end — an inserted `ref.cast` makes `peelToTailCallIdx` decline
+exactly the shapes that would differ — but step 1 removed the param-count
+filter, so strictly more call sites now reach this check and it should not rest
+on that accident. Tightened to `valTypesMatch` (which compares `typeIdx`) plus
+the one sound widening direction, `ref $T` → `ref null $T`. Cluster A holds at
+8/11 and the four TCO suites stay green (24/24).
+
+**N2 (low, documented — measured systemic change).** `ir-inline.ts:603` refuses
+to inline any body containing `return_call`. With the standalone externref
+refusal gone, nearly every value-returning standalone function with a tail call
+is now non-inlinable. No size regression. Two independent
+measurements agree: the reviewer's 400-literal synthetic (lane 715,033 B vs
+base 716,940 B — the lane SMALLER), and my own re-measurement on
+`.tmp/f1/n2-synth.ts` (400 object literals + reads, compiled standalone on this
+merged tree against `origin/main` versions of all twelve changed source files,
+2026-09-02): lane **525,833 B** vs base **525,696 B** — **+137 B, +0.026 %**,
+with both trees answering the same value (79800). The two synthetics disagree
+on the SIGN of a fraction of a percent, which is the point: the effect is
+noise-level either way. Recorded as a known consequence of step 1, not a
+defect: an inliner that understood
+`return_call` would recover the cases, and that belongs to the inliner's own
+issue rather than here.
+
+**N3 (low, inherited — claim narrowed).** The `%Object.prototype%` answer added
+by step 2 lands only inside `__getPrototypeOf`'s `ref.test $Object` arm
+(`object-runtime-prototype.ts`), so a literal carried on a NON-`$Object` carrier
+still answers `null`, and two ordinary literals in one program can disagree.
+Base answered `null` for both, so nothing got worse — but the step-2 claim above
+should be read as "an ordinary `$Object` literal now answers
+`%Object.prototype%`", not "every ordinary literal does".
+
+**N4 (low, inherited — known gap).** A module-scope `var` redeclared with a
+divergent shape PLUS a same-named block `let` in the same function traps at
+runtime; `collectRedeclaredShapeDivergentObjects` does not cover that shape.
+The base compiler traps identically, so this is a pre-existing gap rather than a
+regression — noted because it sits on the exact surface step 3-M claims.
+
+#### Re-validation after the container restart (2026-09-02, merged to `origin/main` `da00bd9569`)
+
+The container restarted mid-validation; the branch was already committed at
+`c4a445126c`. Everything below was re-run on the merged tree, so no number here
+is inherited from the pre-restart session. The merge with `origin/main` — which
+had taken the Array/Object wave (#5494) and the #3521-r2 withdrawal work — was
+CLEAN, no conflicts.
+
+| check | result |
+|---|---|
+| `expr-head.txt` standalone (89 rows) | **17 pass / 71 fail / 1 CE** — byte-identical row set to the pre-restart run |
+| host-import leak CEs | **1**, the pre-existing `tagged-template/call-expression-argument-list-evaluation` (cluster B, step 7 not implemented) |
+| `expr-controls.txt` standalone (20 rows) | **20/20** |
+| `tests/issue-5270-es2015-expressions-r2.test.ts` | **29/29** |
+| F1 A/B on the pre-fix tree (`c4a445126c^`) | all **4** regression pins FAIL, fold-survival control stays green |
+| `in-operator-edge-cases` + `function-prototype-assignment-descriptor` | **10/10** |
+| TCO suites (`tail-call-optimization`, `822`, `1972`, `2554`) | **24/24** — the N1 tightening costs no promotion |
+| `pnpm run typecheck` | clean |
+| five ratchet gates | all green |
+| `pnpm run test:equivalence:gate` | **24 failing / 1718 passing / 24 known-failures in baseline — no new regressions** |
+
+F1 probe parity re-measured on the merged tree, lane vs `origin/main`'s
+`binary-ops-in.ts` by file-copy A/B:
+
+| probe | node | base | lane |
+|---|---:|---:|---:|
+| `a42` standalone / host | 1 | 1 | **1** |
+| `a44` standalone | 7 | 7 | **7** |
+| `a44` host | 7 | 3 | **3** |
+
+The lane matches base exactly everywhere and matches node on standalone. The
+host `a44` bit for `Object.assign(arrow, {prototype: 4})` still answers `3`
+rather than `7` on `origin/main` too — re-confirmed AFTER the Array/Object wave
+landed, so it is pre-existing and outside this issue. That is why its pin is
+standalone-only.
+
+### 2026-09-02 round-2 review — R2-F1b fixed, R2-N2 refuted, R2-N3 documented
+
+Round 2 cleared the R1 fix everywhere else: the alias, object-literal,
+array-element and `Object.defineProperty`-via-alias spellings all come back
+clean (the un-suppressed `__extern_has` rescues them), the #1972 try/catch
+tail-call guard holds, mutual recursion to 400,000 is byte-identical on both
+lanes with no stack growth, and the five playground examples are host-byte-
+identical with only +136–142 B on standalone. One finding blocked.
+
+**R2-F1b (HIGH, fixed) — a REBOUND binding whose initializer was an arrow.**
+`arrowBindingNeverGainsProperties` leaned on `identifierIsWrittenTo`
+(`native-ordinary-instanceof.ts`) for its rebinding guard, and that matcher
+requires a BARE-IDENTIFIER assignment LHS. Three spellings walk past it:
+
+| probe | spelling | node | base | lane (R1) | lane (now) |
+|---|---|---:|---:|---:|---:|
+| `x20` | `[a] = src` (array-pattern LHS) | 1 | 1 | **0** | 1 |
+| `x21` | `for (a of src) {}` (not a BinaryExpression) | 1 | 1 | **0** | 1 |
+| `x22` | `({ a } = src)` (object-pattern LHS) | 1 | 1 | **0** | 1 |
+| `x24` | `const a = () => 1` (fold must SURVIVE) | 0 | — | 0 | 0 |
+
+Identical on BOTH lanes. After any of those rebinds the binding holds a function
+EXPRESSION, which HAS a `prototype`, and the fold still answered `false`. It
+bites hardest exactly there: the receiver stays a typed closure ref rather than
+externref, so the `__extern_has` fallback that R1 correctly un-suppressed never
+fires and the folded `false` is final.
+
+Route taken: **`ctx.oracle.constInitializerOf`** (`oracle.ts` — requires
+`NodeFlags.Const` and a plain identifier name), not an extended spelling list.
+The fold is justified ENTIRELY by the initializer, so it is sound only where the
+binding cannot be rebound, and `const` gives that structurally.
+`variableInitializerOf` deliberately accepts `let`/`var`, which is what let a
+MUTABLE binding qualify for an initializer-justified fold — the root of the
+finding. The incomplete `identifierIsWrittenTo` call is REMOVED, with a comment
+saying why: a guard that enumerates spellings reads as protection it does not
+give. The property-gaining scan stays, because `const` still permits
+`const a = () => 1; a.prototype = 5` — a different question.
+
+**Cost, stated plainly:** a `let`/`var`-bound FRESH arrow now answers `true` for
+`"prototype" in a`. That is what the BASE compiler answers as well (node says
+`false`), so it is a known remaining gap rather than a regression, and it is the
+price of closing the whole rebinding class instead of three of its spellings.
+The cluster-N test262 row `arrow-function/prototype-rules` uses an arrow
+LITERAL, which still folds unconditionally, so the row is unaffected.
+
+Four pins added under `review R2-F1b`, all four spellings on both lanes; three
+verified to FAIL on the pre-fix tree by file-copy A/B. The fourth (the
+bare-identifier rebind) passes there too — it is the one spelling
+`identifierIsWrittenTo` did catch — and is labelled a control rather than
+presented as a regression pin. The R1 write-form pins and the cluster-N binding
+pin were converted from `var` to `const` so they exercise the property-gaining
+scan instead of passing for the wrong reason (declining at the binding kind).
+
+**R2-N2 (refuted — no action beyond this record).** The claim was that removing
+the `!arrowPrototypeRoute` suppression pulls the object-MOP runtime into modules
+that previously folded statically (+96 KB, +287 % on a one-line standalone
+module). It does not stand, for two reasons and one of them is decisive:
+
+- "Previously" is the INTERMEDIATE lane state — step 10-N, which never existed
+  on `main`. The base tree has no `arrowPrototypeRoute` symbol at all, so there
+  is no baseline in which those modules folded statically. The comparison is
+  against a state no released compiler ever had.
+- The byte counts measure **base being wrong**. On the reviewer's `x9`, base
+  answers `1` where node answers `0`; this tree answers `0`. The extra size is
+  the cost of computing a correct answer at runtime instead of folding an
+  incorrect one at compile time.
+
+Recorded here so the next reader does not re-derive it as a regression.
+
+**R2-N3 (documented).** The N1 tightening — `valTypesMatch` (which compares
+`typeIdx`) plus the single sound widening direction `ref $T` → `ref null $T` —
+also refuses a class of promotion that IS sound: a callee returning a SUBTYPE
+`ref $B` into a caller returning `ref $A`. Latent only: the reviewer could not
+make the compiler lose a promotion to it (`t05` is byte-identical on both trees,
+because an intervening `ref.cast` makes `peelToTailCallIdx` decline the shape
+before the result check is ever consulted). The unsound direction
+(`ref null $T` → `ref $T`) is correctly closed, which was the point of N1; the
+subtype direction is a deliberate narrowing, not an oversight, and would need a
+real subtype relation on the module's type graph to widen safely.
+
+### Round-3 fixes (2026-09-03)
+
+Two confirmed defects from the round-3 adversarial review, both fixed here. All
+rows below were re-measured in this pass against a merge-base tree materialised
+by hand (`git archive bee5ddd535`), with **node as the oracle**; the wave's own
+17 claimed rows and its 20-row control list were re-run afterwards.
+
+#### R3-F1 — a bare `objA == objB;` statement newly ran (and could die in) `valueOf`
+
+`binaryOperatorReachesToPrimitive` (`module-init-collection.ts`) and its lowering
+twin `bareBinaryStatementReachesToPrimitive` (`statements.ts`) both listed
+`==`/`!=`, so a bare module-scope `p == q;` was RETAINED and compiled through the
+dynamic carrier. §7.2.15 IsLooselyEqual performs **no** coercion when both
+operands are Objects — it compares references — but this compiler's `==` lowering
+calls ToPrimitive on both regardless. That lowering defect is **pre-existing**
+(base coerces too once the statement is wrapped in `if (true) { … }`); retention
+merely exposed it, and exposed it in the worst place: a poisoned `valueOf` threw
+out of `__module_init`, so every later top-level statement was skipped.
+
+| probe | node | base | lane before | lane now |
+|---|---|---|---|---|
+| `p == q;` with poisoned `valueOf`, then a later statement (`s14`) | reached | reached | **throws, init dies** | reached |
+| invocation log `a == b;` / `var r = (a == b)` / `a != b` / `a === b` (`s11`) | `\|\|false\|\|` | `\|vBvBvAvA\|false\|\|` | `vBvBvAvA\|vBvBvAvA\|false\|vBvBvAvA\|` | `\|vBvBvAvA\|false\|\|` |
+| `o == null` · `o == undefined` · `0 == o` · `o != "x"` · `p == q` (`s20`) | `\|\|vO\|vO\|` | `\|\|\|\|` | — | `\|\|vO\|vO\|` |
+
+**What was chosen, and why not the deeper fix.** The reviewer offered fixing the
+`==` LOWERING instead (skip ToPrimitive when both operands are statically
+Objects) so the retention could stay. Not taken: §7.2.15's Object-vs-Object early
+exit belongs in the loose-equality lowering itself, which every `==` in every
+compiled program goes through, and this wave is on hold for defects — not the
+place to change a hot path with no room to measure it. **Follow-up, unfixed:**
+`objA == objB` still runs ToPrimitive on both operands wherever the statement is
+reached by other means (an `if`/block wrapper, an assignment position). That is
+base behaviour, not a regression from this wave, and it wants its own issue
+against the loose-equality lowering.
+
+**But the plain token removal the reviewer proposed would have cost a row.** The
+review states the retention's corpus exposure is one file, `addition/…`, which
+uses `+`. It is two: `expressions/equals/coerce-symbol-to-prim-invocation.js` is
+literally a bare `0 == y;` statement at module scope, and dropping the tokens
+turned it back to `fail` (re-measured, not inferred). So the guard is narrower
+than a removal instead of wider than the defect:
+
+- `looseEqualityCoercesAnOperand` (new, exported from `module-init-collection.ts`,
+  imported by `statements.ts` so the retention and lowering halves cannot drift)
+  retains a bare `==`/`!=` statement **only when one operand is a literal
+  non-nullish primitive** — the `0 == y;` shape, where ToPrimitive on the object
+  operand is exactly what the spec asks for.
+- Object-vs-Object keeps base's drop. So do `o == null` and `o == undefined`,
+  which §7.2.15 also answers without coercing — a second instance of the same
+  defect the review did not name, and one the lane now gets *right* rather than
+  merely back to base (`s20` above: lane matches node, base does not).
+- The other nine operators are untouched.
+
+#### R3-F2 — the arrow arm of `hasRestrictedProperties` was unconditional
+
+`hasRestrictedProperties` (`function-poison-pill-access.ts`) answered "restricted"
+for EVERY arrow, on both the read path and the write path. §10.2.4's restricted
+accessors are `configurable: true`, so they can legally be replaced, and a
+rebound binding is not the arrow at all. The lane therefore turned two
+wrong-but-stable base answers into THROWS, which is strictly worse — the throw
+kills the rest of the enclosing evaluation.
+
+| probe | node | base | lane before | lane now |
+|---|---|---|---|---|
+| `Object.defineProperty(b,"arguments",{value:7,…}); b.arguments` (`n04`) | `7` | `7` | **TypeError** | `7` |
+| …same for `caller` (`n04`) | `8` | `8` | **TypeError** | `8` |
+| `var f = () => 1; f = function(){}; f.caller` (`n03` r1/r2) | `null` | `undefined` | **TypeError** | `undefined` |
+| `(() => {}).caller` / `.arguments` (`n20` r1/r2) | TypeError | undefined | TypeError | TypeError |
+| `var k = () => 1; k.caller` / `k.caller = {}` (`n20` r3/r4) | TypeError | undefined / set | TypeError | TypeError |
+| `arrow-function/ArrowFunction_restricted-properties.js` | — | fail | pass | **pass** (standalone AND host) |
+
+This is verbatim the reasoning the lane already wrote for the sibling
+`"prototype" in arrow` fold in its R2 review — *an arrow's missing `prototype` is
+a fact about its CREATION, not about its lifetime* — applied to the accessors.
+The unconditional `true` is now earned two ways: an arrow **literal** receiver
+(no binding exists for anyone to rebind or hand to `Object.defineProperty`), or
+an identifier whose **every** appearance in the file is custodial — the receiver
+of a member access, or a direct callee.
+
+That single custodial-use scan replaces three separate guards and is why the win
+row survives. `identifierEscapesToCall` alone would not have been enough and
+`arrowBindingNeverGainsProperties` would have been actively wrong here:
+`ArrowFunction_restricted-properties` writes `arrowFn.caller = {}`, which that
+predicate refuses as a property-gaining write. It is not one — `k.caller = x` and
+`k["caller"] = x` both go through the **inherited poison setter** and throw, so a
+member write can never install an own `caller`/`arguments`. Only
+`Object.defineProperty` can, and that is a call argument, i.e. not custodial. The
+same test also refuses rebinding in every spelling (`f = …`, `[f] = src`,
+`({f} = src)`, `for (f of src)`, `f++`) and aliasing (`var m = k`, `return k`)
+without enumerating any of them — the enumeration hole that bit the R2 cut.
+
+**Given up, deliberately:** the scan is name-based over the whole SourceFile, and
+under the test262 harness that file also contains the harness sources. A
+short-named arrow binding (`var a = () => 1`) therefore collides with harness
+identifiers and loses the fold, falling back to base's `undefined`. Conservative
+in the safe direction — a refusal costs only the fold; a false `true` is a
+spurious throw — and it is the same name-scan weakness the accepted `in` fold
+already carries.
+
+#### R3-F3 — the IIFE / `__module_init` termination sink (NOT fixed here, by design)
+
+In js-host mode a poison-pill TypeError raised inside a module-scope IIFE that
+catches it still terminates `__module_init`, so every later top-level statement
+is skipped and the file **vacuous-passes** — green for the wrong reason. The root
+cause pre-dates this wave: base does the same for a TypeError out of a
+`"use strict"` function. What this wave did was widen the trigger population from
+strict/bound functions to *every arrow in sloppy code*, which made the sink easy
+to hit. Fixing R3-F2 removes the arrow entry into it, and that is all this wave
+owes. The sink itself is a separate defect and deserves its own issue: a
+module-scope IIFE whose own `try`/`catch` handles a throw must not be able to end
+module initialisation, and any test that "passes" because its later assertions
+never ran is not evidence of anything. Worth pairing with a runner-side check
+that `__module_init` ran to completion.
+
+#### Rows kept, and the regression control
+
+All **17** claimed rows re-run on standalone with the CI-equivalent runner:
+17 pass, **0 given up** — including `equals/coerce-symbol-to-prim-invocation.js`,
+which the narrow guard exists to keep. The 20-row control list is 20/20. On the
+js-host lane the same 17 rows go base 9 pass → lane 14 pass, no row backwards.
+
+A 193-row regression control over the families the two fixes touch — the whole
+`equals` and `does-not-equals` families, all of `arrow-function`, all of
+`built-ins/Object/getPrototypeOf`, and every `language/expressions` file with a
+bare `x == …` / `x != …` statement — run base vs lane on BOTH lanes:
+
+| lane | base pass | lane pass | regressions |
+|---|---:|---:|---:|
+| standalone | 155 | **170** | 0 |
+| js-host | 167 | **169** | 0 |
+
+Every standalone transition is `fail → pass`: the ten `Object/getPrototypeOf`
+15.2.3.2-2-* rows, both arrow rows, `equals/coerce-symbol-to-prim-invocation`,
+and two equality rows this wave never claimed (`equals/S11.9.1_A6.1`,
+`does-not-equals/S11.9.2_A6.1`) that the narrowed retention picks up. On host
+the two arrow rows flip and nothing else moves.
+
+`tests/issue-3017-function-poison-pill.test.ts` is 12/16 — the same 4 failures
+this issue already records as pre-existing red on `origin/main`.
+
+Standalone and wasi compiles of the F1/F2 probe shapes carry **no `env::`
+imports**. All five source-ratchet gates pass, including with
+`LOC_GATE_BASE=origin/main`.
+
+### Merge-queue park (2026-09-03) — trampoline `return_call` fails Wasm validation on async shapes
+
+PR #5534 was auto-parked by the `merge_group` re-validation: **Standalone
+pass-count high-water floor (#2097)** measured the merged state at
+**34,508** against mark 34,771 / floor 34,721 (delta −263), while `main`'s own
+promoted baseline (a full run at 15:26 UTC) is **34,833** — so the PR cost
+roughly **325 standalone rows** after three review rounds and a green 8-shard
+equivalence gate. `main` itself was confirmed healthy: #5540's full
+`merge_group` run at 17:32 UTC passed the same floor.
+
+**Localisation.** The merged-report artifact is on a host the container's
+egress proxy blocks, and a full local standalone sweep measured at ~33
+rows/min (~24 h), so a **random 1,200-row sample of baseline-passing rows**
+was run through the CI-equivalent vitest harness instead. In the first 338
+rows it produced exactly one genuine family (5 hits) — every other candidate
+was A/B'd against a clean `main` tree and shown to fail there too (the local
+runner scores `regexp-modifiers` and two async-generator early-error
+negatives differently from CI; those are environment artifacts, not this
+PR's). Four other hypotheses were probed and eliminated first: the
+`testTypedArray.js` harness `Object.getPrototypeOf(Int8Array)` (50/50 pass),
+ES5 `caller`/`arguments` poison rows and `getPrototypeOf` on ordinary
+objects (100/100 pass), harness `var` symbol collisions with the
+shape-widening collector (the harness declares no object-literal `var` at
+all), and compile-time blow-up (median lane/base `compile_ms` ratio 1.08).
+
+**The defect.** Step 1.3 changed the closure trampoline's forwarding
+instruction from `call` to `return_call` whenever `valTypesMatch` said the
+lifted func type's results agreed with the callee's. That decision was made
+at **mint time**, and at mint time an async function's registered type is
+still the `() -> ()` placeholder — `rewriteFuncResultType` rewrites it to
+`() -> externref` only after the body compiles. So the guard compared against
+a type that was not the callee's final type, and the validator rejected the
+module:
+
+```
+test/language/statements/for-await-of/async-func-dstr-const-ary-ptrn-elision-exhausted.js
+  base: pass
+  lane: compile_error — WebAssembly.Module(): Compiling function #106:"__fn_tramp_fn_28"
+        failed: return_call: tail call type error @+116367
+```
+
+The family it hits is `for-await-of` / async destructuring: the baseline has
+**1,554 passing standalone rows** in the async families (for-await-of 735,
+expressions/async-generator 507, statements/async-generator 87,
+expressions/async-function 84, statements/async-function 67,
+async-arrow-function 55, await 13) — all ES2017+, so **none was in any list
+this lane, its plan, or its three adversarial reviews measured**, and the
+equivalence gate has no async rows either. A row list drawn from ES2015
+failures is blind by construction to an ES2018 family that used to pass.
+
+**The fix** (`src/codegen/closures/funcref-as-closure.ts`,
+`promoteTrampolineTailCalls`). The trampoline is emitted with a plain `call`
+and its handle recorded in `ctx.trampolineForwarders`; a finalize pass in
+`generateModule` — after `rewriteFuncResultType`, inlining, late-import
+shifts, `stackBalance` and the `extern.convert_any` repair — re-reads the
+**final** module and rewrites that one trailing opcode to `return_call` only
+when the callee's result list is identical to the trampoline's own declared
+results (same kind, same `typeIdx`, `ref` vs `ref null` distinguished).
+Because the `call` is the last instruction of a body that already validates,
+the operand stack there is exactly the callee's parameters, and `return_call`
+ignores everything below — so identical results make the swap
+type-preserving with no further condition. Anything else keeps the plain
+`call`, exactly as before this wave. The guard is the Wasm tail-call typing
+rule itself; there is deliberately no per-shape exclusion list.
+
+**Verified on the fixed tree** (node oracle, base = `git archive` of
+`origin/main` 2510fae02a):
+
+| check | result |
+| --- | --- |
+| the two repro rows | compile_error → pass; base still pass |
+| all 1,242 baseline-passing rows in `for-await-of/` + `expressions/async-generator/` | **1,240 pass**, 2 early-error negatives fail identically on base (environment) |
+| the 18 baseline-passing `tco-*` rows that motivated step 1.3 | **18/18 pass** — the promotion still lands where it is valid |
+| host lane, 3 closure-heavy programs, sha256 of the emitted binaries | **byte-identical** lane vs base |
+| TS7 typecheck; five ratchet gates; both budget gates with `LOC_GATE_BASE=origin/main` | all green |
+
+**Process note.** This is the seventh reviewed wave and the seventh
+regression that the lane's own measurements could not see, but it is the
+first one the *reviews* also missed — three rounds probed tail calls
+(try/catch, try/finally, iterator close, generators and async functions in
+tail position) and found them "identical to base", because every probe was a
+shape the reviewer wrote, not a corpus family. The random sample of
+baseline-passing rows found it in 78 rows. That sample should run **before**
+the wave PR, not after the park.

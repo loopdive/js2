@@ -1018,6 +1018,78 @@ function collectRedeclaredObjectIdentityLiterals(
 }
 
 /**
+ * (#5270 step 3, cluster M) The SAME hazard as
+ * `collectRedeclaredWithTargetObjects` below, without the `with`-target
+ * requirement that made it apply to almost nothing.
+ *
+ * `var obj = {a: 1}; var obj = {b: 2};` is ONE binding with two differently
+ * shaped initializers. The shared slot takes the first declaration's anonymous
+ * struct, so the second literal's `b` is written into the field the first
+ * literal called `a` — measured on HEAD: `obj.a` reads `2` and `obj.b` reads
+ * `2`, where the spec says `undefined` and `2`. The #4491 T4 redeclaration
+ * widening only widens PRIMITIVE-tag clashes, and
+ * `collectRedeclaredObjectIdentityLiterals` above only admits a literal that
+ * READS a widened binding, so two object literals of different shapes matched
+ * neither.
+ *
+ * Shape divergence is judged by `literalShapeNames`, which answers `null` for
+ * anything but static data/shorthand keys — a METHOD literal, an accessor, a
+ * computed key or a spread. A `null` shape is treated as "not comparable", so
+ * `var obj = Object.defineProperty({}, …); var obj = { method() {} };` also
+ * diverges. Only declarations whose initializer IS an object literal are
+ * marked; a non-literal declaration keeps its own lowering.
+ */
+function collectRedeclaredShapeDivergentObjects(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): void {
+  if (!ctx.standalone) return;
+  const declarationsBySymbol = new Map<ts.Symbol, ts.VariableDeclaration[]>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      isModuleScopedDeclaration(node) &&
+      node.type === undefined &&
+      node.initializer !== undefined
+    ) {
+      const symbol = checker.getSymbolAtLocation(node.name);
+      if (symbol) {
+        const declarations = declarationsBySymbol.get(symbol) ?? [];
+        declarations.push(node);
+        declarationsBySymbol.set(symbol, declarations);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  for (const declarations of declarationsBySymbol.values()) {
+    if (declarations.length < 2) continue;
+    if (!declarations.some((d) => ts.isObjectLiteralExpression(d.initializer!))) continue;
+    const shapes = declarations.map((d) =>
+      ts.isObjectLiteralExpression(d.initializer!) ? literalShapeNames(d.initializer) : null,
+    );
+    const first = shapes[0];
+    const allSame =
+      first !== null &&
+      shapes.every((shape) => shape !== null && shape.size === first.size && [...shape].every((n) => first.has(n)));
+    if (allSame) continue;
+    for (const declaration of declarations) {
+      const initializer = declaration.initializer!;
+      if (!ts.isObjectLiteralExpression(initializer)) continue;
+      ctx.redeclaredObjectIdentityDeclarations.add(declaration);
+      ctx.redeclaredObjectIdentityLiterals.add(initializer);
+      recordOpenObjectConsumerTypes(ctx, checker, declaration, (declaration.name as ts.Identifier).text);
+    }
+  }
+}
+
+/**
  * A module `var` may be redeclared with a differently shaped object literal and
  * then used as a `with` target after each initializer. Both declarations are
  * one binding, so selecting the first declaration's anonymous struct for the
@@ -1155,6 +1227,7 @@ export function collectGrowableObjectLiterals(
   markRealmGlobalWithTargets(sourceFile);
   collectRepeatedOrdinaryToPrimitiveObjects(ctx, checker, sourceFile);
   collectRedeclaredObjectIdentityLiterals(ctx, checker, sourceFile);
+  collectRedeclaredShapeDivergentObjects(ctx, checker, sourceFile); // (#5270 step 3, cluster M)
   collectRedeclaredWithTargetObjects(ctx, checker, sourceFile);
   // Emergency rollback for the closed-outer-table refinement below. Keeping
   // this narrow switch makes the performance claim directly A/B measurable:

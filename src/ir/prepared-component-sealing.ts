@@ -18,6 +18,10 @@ import {
   type PreparedComponentDependencyReport,
   type PreparedInstructionSupportSidecars,
 } from "./prepared-component-dependencies.js";
+import {
+  mergeDynamicInstructionSupport,
+  prepareDynamicInstructionSupportForUnits,
+} from "./prepared-dynamic-support.js";
 import { ProgramAbiInvariantError } from "./program-abi.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiSlotSpace } from "./program-abi.js";
 import type { Import, WasmFunction } from "./types.js";
@@ -563,6 +567,21 @@ export function prepareDependencyCompletePreparedComponents(
       entries.flatMap((entry) => (entry.derivedUnit ? ([[entry.derivedUnit.id, entry.derivedUnit]] as const) : [])),
     ).values(),
   ];
+  // (#5297) The timer-shim sidecar names ONE synthetic unit; this generalizes
+  // the same evidence to every prepared unit carrying the externref dynamic
+  // surface. Populations are disjoint by construction, so an overlap is a
+  // producer change, not a precedence question — fail closed.
+  const dynamicInstructionSupport = mergeDynamicInstructionSupport(
+    input.dynamicInstructionSupport,
+    prepareDynamicInstructionSupportForUnits({ ctx, entries, callableImports: input.callableImports }),
+    (unitId) => {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared dynamic instruction support is claimed twice for ${unitId}`,
+      );
+    },
+  );
   const committedAbi: Pick<PreparedComponentScopeLookup, "get" | "bindingIdsForStructuralReference"> = Object.freeze({
     get: (id: IrBindingId) => session.getDraft(id),
     bindingIdsForStructuralReference: (key: string) => session.bindingIdsForStructuralReference(key),
@@ -580,7 +599,7 @@ export function prepareDependencyCompletePreparedComponents(
       ...(input.closureSupport ? { closureSupport: input.closureSupport } : {}),
       exceptionSupportPrepared: ctx.exnTagIdx >= 0,
       ...(input.classAccessorWritebacks ? { classAccessorWritebacks: input.classAccessorWritebacks } : {}),
-      ...(input.dynamicInstructionSupport ? { dynamicInstructionSupport: input.dynamicInstructionSupport } : {}),
+      ...(dynamicInstructionSupport ? { dynamicInstructionSupport } : {}),
       abi,
     });
   const candidateTerminalUnitIds = new Set(terminalUnitIds);

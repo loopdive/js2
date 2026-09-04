@@ -5,7 +5,12 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts } from "../ts-api.js";
-import { findConstructorImplementation, hasStaticModifier, isStaticCtorMethod } from "./ast-modifiers.js";
+import {
+  findConstructorImplementation,
+  hasDeclareModifier,
+  hasStaticModifier,
+  isStaticCtorMethod,
+} from "./ast-modifiers.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import { isUndefinedDefaultOnlyParam, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
@@ -1773,6 +1778,26 @@ export function collectClassDeclaration(
         if (accName) ownAccessorNames.add(accName);
       }
     }
+    // (#5309) A child's own INSTANCE FIELD shadows a same-named parent method or
+    // accessor — the field initializers install it on the instance, so `this.m`
+    // and `this.#m` are the field. Aliasing `Child_m` → `Parent_m` below is a
+    // PROGRAM-ABI claim that the child HAS that method, and three consumers
+    // believe it: the call site's `classMethodSet` probe, `classifyPrivateMember`
+    // (which reads `classMethodSet` before `structFields`, so `this.#m = v`
+    // raised the §13.15.2 "write to a private method" TypeError), and
+    // `resolveReceiverMethodClassName`. Excluding own field names drops all
+    // three; `#m` mangles to `__priv_m`, matching the alias suffix.
+    //
+    // INSTANCE and non-`declare` only: a static field must not stop an instance
+    // method of the same spelling from being inherited (statics go through
+    // `staticMethodSet`), and `declare m: T` installs no property at all.
+    const ownInstanceFieldNames = new Set<string>();
+    for (const member of decl.members) {
+      if (!ts.isPropertyDeclaration(member) || !member.name) continue;
+      if (hasStaticModifier(member) || hasDeclareModifier(member)) continue;
+      const fieldName = resolveClassMemberName(ctx, member.name);
+      if (fieldName !== undefined) ownInstanceFieldNames.add(fieldName);
+    }
 
     // Walk the parent chain to find all inherited methods and accessors
     // Guard against circular inheritance (e.g., class X extends X)
@@ -1811,7 +1836,10 @@ export function collectClassDeclaration(
           if (getMatch || setMatch) {
             // Accessor inheritance
             const accPropName = (getMatch || setMatch)![1]!;
-            if (!ownAccessorNames.has(accPropName)) {
+            if (ownInstanceFieldNames.has(accPropName) && !ownAccessorNames.has(accPropName)) {
+              ctx.classFieldShadowedInheritedCallables.add(`${className}_${accPropName}`); // (#5309)
+            }
+            if (!ownAccessorNames.has(accPropName) && !ownInstanceFieldNames.has(accPropName)) {
               const childFullName = `${className}_${suffix}`;
               const childKey = classMemberFuncKey(ctx, childFullName); // (#1983)
               if (!ctx.funcMap.has(childKey)) {
@@ -1829,7 +1857,10 @@ export function collectClassDeclaration(
             // including those with underscores like my_method) (#799 WI6)
             const childFullName = `${className}_${suffix}`;
             const childKey = classMemberFuncKey(ctx, childFullName); // (#1983)
-            if (!ownMethodNames.has(suffix) && !ctx.funcMap.has(childKey)) {
+            if (ownInstanceFieldNames.has(suffix) && !ownMethodNames.has(suffix)) {
+              ctx.classFieldShadowedInheritedCallables.add(childFullName); // (#5309)
+            }
+            if (!ownMethodNames.has(suffix) && !ownInstanceFieldNames.has(suffix) && !ctx.funcMap.has(childKey)) {
               setProgramAbiInheritedClassCallableAlias(ctx, decl, childKey, funcIdx);
               ctx.classMethodSet.add(childFullName);
             }

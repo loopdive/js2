@@ -600,8 +600,37 @@ function decoratorExpressions(node: ts.Node): readonly ts.Expression[] {
   return ts.canHaveDecorators(node) ? (ts.getDecorators(node)?.map((decorator) => decorator.expression) ?? []) : [];
 }
 
+/**
+ * (#3522 W1-A) The single spelling for a `PrivateIdentifier`-named class member,
+ * on every naming path: `#secret` → `__priv_secret`.
+ *
+ * This is deliberately NOT a new convention. `resolveClassMemberName`
+ * (`src/codegen/class-bodies.ts`) and the AST field re-derivation in
+ * `buildIrClassShapes` (`src/codegen/index.ts`) already mint exactly this
+ * string, and the legacy `ctx.funcMap` key a selected member has to match is
+ * built from it. The helper exists so the naming sites that must agree — the
+ * display / legacy-match name (`memberBaseName` below), the Phase-1 predicate
+ * (`select.ts::phase1MemberName`) and the method-descriptor loop in
+ * `buildIrClassShapes` — cannot drift apart; a mismatch between any two of them
+ * surfaces as a preparation invariant rather than a clean demote.
+ *
+ * It lives HERE rather than beside `phase1MemberName` purely for the module
+ * graph: `select.ts` already imports `identity.js`, while the reverse edge
+ * would close a cycle through `dom-capability` / `propagate` / `type-evidence`.
+ *
+ * Minting it also closes a pre-existing collision the 2026-09-03 class census
+ * recorded: `memberBaseName` returned `<computed>` for EVERY private member, so
+ * two private methods in one class shared one legacy match name and one entry
+ * in the selection set. Inert while both were refused; a silently lost body the
+ * moment either is admitted.
+ */
+export function privateMemberMangledName(name: ts.PrivateIdentifier): string {
+  return "__priv_" + name.text.slice(1);
+}
+
 function memberBaseName(name: ts.PropertyName | undefined): string {
   if (name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name))) return name.text;
+  if (name && ts.isPrivateIdentifier(name)) return privateMemberMangledName(name);
   return "<computed>";
 }
 
