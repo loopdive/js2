@@ -412,6 +412,10 @@ const WEAKSET_PROTO_METHODS = ["add", "delete", "has"] as const;
  * method, so it stays out of the value-read CSV.
  */
 const MAP_PROTO_METHODS = [
+  // (#5267 R3-7a) §24.1.3.12: `Map.prototype[@@iterator]` is an OWN property
+  // whose value IS `Map.prototype.entries`. The `@@<id>` sentinel is the
+  // symbol-cell spelling; `memberAliasOf` below ties the identity.
+  "@@1",
   "clear",
   "delete",
   "entries",
@@ -428,6 +432,9 @@ const MAP_PROTO_METHODS = [
 /** `Set.prototype`'s own method names (ES2024 §24.2.3 + the new set-method
  * proposal). `size` is an accessor getter, kept out of the CSV. */
 const SET_PROTO_METHODS = [
+  // (#5267 R3-7a) §24.2.3.11: `Set.prototype[@@iterator]` is an OWN property
+  // whose value IS `Set.prototype.values`.
+  "@@1",
   "add",
   "clear",
   "delete",
@@ -1952,10 +1959,19 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
     // emits this descriptor when the glue supplies its symbol tag.
     symbolTag: name,
     memberKind: (member) => (member === "size" ? "getter" : "method"),
-    memberLength: (member) => (member === "size" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
+    memberLength: (member) => (member === "size" || member === "@@1" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
     // ES2015 §23.2.3: Set.prototype.keys and .values are the same function
     // object (and Set.prototype[@@iterator] aliases that object as well).
-    memberAliasOf: (member) => (name === "Set" && member === "keys" ? "values" : undefined),
+    memberAliasOf: (member) =>
+      name === "Set" && member === "keys"
+        ? "values"
+        : // (#5267 R3-7a) §24.1.3.12 / §24.2.3.11: `@@iterator` IS `entries`
+          // (Map) / `values` (Set) — the same function object.
+          member === "@@1"
+          ? name === "Map"
+            ? "entries"
+            : "values"
+          : undefined,
     emitMemberBody: (c, fctx, member) =>
       member === "size"
         ? emitCollectionSizeGetterBody(c, fctx, name)
@@ -2723,6 +2739,24 @@ export function ensureIteratorNativeProtoGlue(ctx: CodegenContext): number | und
   if (brand === undefined) return undefined;
   if (!getNativeProtoBuiltinGlue(ctx, brand)) {
     registerNativeProtoBuiltin(ctx, makeGlue(ctx, brand, "Iterator", ITERATOR_PROTO_METHODS));
+  }
+  return brand;
+}
+
+/**
+ * (#5267 R3-2) Register `%MapIteratorPrototype%` / `%SetIteratorPrototype%`
+ * glue (idempotent) and return its brand. The single own member is `next`
+ * (`name: "next"`, `length: 0`, `{w:T, e:F, c:T}`), which is what the
+ * `*IteratorPrototype/next/{name,length}.js` rows read off the prototype.
+ */
+export function ensureCollectionIteratorNativeProtoGlue(ctx: CodegenContext, kind: "Map" | "Set"): number | undefined {
+  const brand = getBuiltinBrand(ctx, `${kind}Iterator`);
+  if (brand === undefined) return undefined;
+  if (!getNativeProtoBuiltinGlue(ctx, brand)) {
+    registerNativeProtoBuiltin(ctx, {
+      ...makeGlue(ctx, brand, `${kind}Iterator`, ["next"]),
+      memberLength: () => 0,
+    });
   }
   return brand;
 }
@@ -3901,6 +3935,29 @@ export function emitIteratorPrototypeSingleton(
   // inspect the prototype without pulling iterator dispatch into this slice.
   // Keep the property off String.prototype's glue CSV: `next` is own only on
   // the iterator prototype, not on the primitive wrapper prototype.
+  // (#5267 R3-2) `%MapIteratorPrototype%` / `%SetIteratorPrototype%` own the
+  // same own `next` data property (§24.1.5.2 / §24.2.5.2). The value is a
+  // descriptor-carrying native method closure, so the prototype's `next.name`
+  // / `next.length` are readable without pulling iterator dispatch onto the
+  // prototype: the records themselves keep the existing native stepping path.
+  if ((kind === "Map" || kind === "Set") && defineValueIdx !== undefined) {
+    const brand = ensureCollectionIteratorNativeProtoGlue(ctx, kind);
+    const closure =
+      brand === undefined
+        ? null
+        : ensureStandaloneNativeMethodClosure(ctx, brand, "next", "method", { refusalBodyFallback: true });
+    if (closure) {
+      initBody.push(
+        { op: "local.get", index: objLocal },
+        ...stringConstantExternrefInstrs(ctx, "next"),
+        ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+        { op: "extern.convert_any" },
+        { op: "f64.const", value: 0x01 | 0x04 }, // writable:true, enumerable:false, configurable:true
+        { op: "call", funcIdx: defineValueIdx },
+        { op: "drop" },
+      );
+    }
+  }
   if (kind === "String" && defineValueIdx !== undefined) {
     const brand = ensureStringNativeProtoGlue(ctx);
     const closure =
