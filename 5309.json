@@ -1,10 +1,11 @@
 {
   "id": "5309",
   "assignee": "ttraenkler/opus-5309",
-  "requested_by": "ttraenkler/opus-5309",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "claude/issue-5309-child-field-shadow",
   "claimed_at": "2026-09-04T00:24:27Z",
-  "updated_at": "2026-09-04T00:24:27Z",
-  "write_id": "28690-vtkne2te"
+  "updated_at": "2026-09-04T03:20:11Z",
+  "write_id": "19592-ohr0vyba",
+  "released_at": "2026-09-04T03:20:11Z"
 }
