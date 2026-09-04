@@ -2190,7 +2190,12 @@ type ResolvedKind = "f64" | "bool" | "string" | "object" | "void" | "closure" | 
  * comment text is parsed and no synthetic annotation is attached to the AST.
  */
 export function effectiveIrParamTypeNode(param: ts.ParameterDeclaration): ts.TypeNode | undefined {
-  return param.type ?? ts.getJSDocType(param);
+  if (param.type) return param.type;
+  // A synthesized parameter (factory-built, no parent — the implicit-ctor
+  // pipeline in from-ast) carries no JSDoc; `getJSDocType` walks `parent`
+  // and would throw. Its type comes from `paramTypeOverrides`.
+  if (param.parent === undefined) return undefined;
+  return ts.getJSDocType(param);
 }
 
 /**
