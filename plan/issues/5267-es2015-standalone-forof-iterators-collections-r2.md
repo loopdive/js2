@@ -1834,3 +1834,28 @@ tree** (`expected 6 to be 42`) and passing on the lane.
 matches the exact AST, so `delete (Array.prototype as any)[Symbol.iterator]`
 (the TS-typechecking form) roots no flag and the guard never fires. That is
 why the pin compiles with `allowJs` + `skipSemanticDiagnostics`.
+
+### Step R3-7(a) — `Map/Set.prototype[Symbol.iterator]` is an OWN property (commit 3)
+
+**What changed.** `"@@1"` added to `MAP_PROTO_METHODS` and `SET_PROTO_METHODS`
+(`array-object-proto.ts`), and `makeCollectionGlue`'s `memberAliasOf` extended
+so `@@1` aliases `entries` (Map) / `values` (Set) — the Array `@@1` pattern
+verbatim. `memberLength` returns 0 for `@@1` alongside `size`. The value read
+already aliased the right closure; only `hasOwnProperty` was false.
+
+**Measured.**
+
+| corpus | base | lane |
+|---|---|---|
+| 2 claimed rows + 6 named identity/metadata controls | 6 pass / 2 fail (`Symbol() should be an own property`) | **8 pass / 0 fail** |
+| 94 non-pass `built-ins/**` rows (cumulative after R3-1, R3-6, R3-7a) | 94 non-pass | 87 non-pass — **7 flipped, all claimed; nothing else moved** |
+| 197 passing iterator/collection rows | pass | **197 / 197 pass** |
+| probe `t8.js` (no `"@@1"` string key in `getOwnPropertyNames(Map.prototype)` / `Set.prototype`; `@@iterator === entries`/`values`; `Set.keys === Set.values`; `hasOwnProperty` both; a Map still iterates) | — | node **pass**, lane standalone **pass** |
+
+**Pin.** `tests/issue-5267-r3-7a-collection-symbol-iterator-own.test.ts`,
+verified FAILING on the base tree (`expected 28 to be 31` — the two
+`hasOwnProperty` bits are the missing 1+2).
+
+**Not done from R3-7:** (b) the `size` gOPD `d.set` read (2 rows) and (c)
+`Map/prototype/set/append-new-values.js` (1 row) — untouched, and the species
+pair stays deferred per the plan.

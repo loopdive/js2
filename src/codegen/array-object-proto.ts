@@ -412,6 +412,10 @@ const WEAKSET_PROTO_METHODS = ["add", "delete", "has"] as const;
  * method, so it stays out of the value-read CSV.
  */
 const MAP_PROTO_METHODS = [
+  // (#5267 R3-7a) §24.1.3.12: `Map.prototype[@@iterator]` is an OWN property
+  // whose value IS `Map.prototype.entries`. The `@@<id>` sentinel is the
+  // symbol-cell spelling; `memberAliasOf` below ties the identity.
+  "@@1",
   "clear",
   "delete",
   "entries",
@@ -428,6 +432,9 @@ const MAP_PROTO_METHODS = [
 /** `Set.prototype`'s own method names (ES2024 §24.2.3 + the new set-method
  * proposal). `size` is an accessor getter, kept out of the CSV. */
 const SET_PROTO_METHODS = [
+  // (#5267 R3-7a) §24.2.3.11: `Set.prototype[@@iterator]` is an OWN property
+  // whose value IS `Set.prototype.values`.
+  "@@1",
   "add",
   "clear",
   "delete",
@@ -1952,10 +1959,19 @@ function makeCollectionGlue(brand: number, name: "Map" | "Set", members: readonl
     // emits this descriptor when the glue supplies its symbol tag.
     symbolTag: name,
     memberKind: (member) => (member === "size" ? "getter" : "method"),
-    memberLength: (member) => (member === "size" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
+    memberLength: (member) => (member === "size" || member === "@@1" ? 0 : (PROTO_METHOD_LENGTH[member] ?? 1)),
     // ES2015 §23.2.3: Set.prototype.keys and .values are the same function
     // object (and Set.prototype[@@iterator] aliases that object as well).
-    memberAliasOf: (member) => (name === "Set" && member === "keys" ? "values" : undefined),
+    memberAliasOf: (member) =>
+      name === "Set" && member === "keys"
+        ? "values"
+        : // (#5267 R3-7a) §24.1.3.12 / §24.2.3.11: `@@iterator` IS `entries`
+          // (Map) / `values` (Set) — the same function object.
+          member === "@@1"
+          ? name === "Map"
+            ? "entries"
+            : "values"
+          : undefined,
     emitMemberBody: (c, fctx, member) =>
       member === "size"
         ? emitCollectionSizeGetterBody(c, fctx, name)
