@@ -73,6 +73,7 @@ import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/hete
 import { emitIsUndefF64 } from "./value-tags.js";
 import { hasStaticBigIntOperand, usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { objectCoercionBigIntArgumentOf } from "./object-ctor-primitive-receiver.js";
+import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
 
 /**
  * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
@@ -907,6 +908,13 @@ export function compileBinaryExpression(
       const nonNullUnionHasNull =
         nonNullTsType.isUnion() && nonNullTsType.types.some((part) => (part.flags & ts.TypeFlags.Null) !== 0);
 
+      // (#5312) A class field the declaration never initialises. Its slot's
+      // construction default (`ref.null` for a struct carrier, `ref.null.extern`
+      // for the boxed one a function-typed field uses) IS the `undefined` that
+      // `useDefineForClassFields` installs — the declared type just cannot say
+      // so. Fields whose annotation admits `null`, and fields the constructor
+      // assigns, are excluded inside the predicate.
+      const isUninitialisedFieldSlot = readsUninitialisedFieldSlot(ctx, nonNullExpr);
       const valType = compileNullishObservedExpression(ctx, fctx, nonNullExpr);
       if (valType === null) {
         // Void expression (e.g. void function call) compared to null/undefined:
@@ -921,6 +929,12 @@ export function compileBinaryExpression(
         return { kind: "i32" };
       }
       if (valType.kind === "externref") {
+        // (#5312) The uninitialised-field slot, BOXED — the carrier a
+        // function-typed field actually lands on. See the helper for why both
+        // strict arms move.
+        if (isUninitialisedFieldSlot && (isStrictEqOp || isStrictNeqOp)) {
+          return emitUninitialisedFieldStrictNullish(ctx, fctx, nullSideIsNullKeyword, isStrictNeqOp);
+        }
         // Strict equality: null and undefined are distinct types in JS
         if (isStrictEqOp || isStrictNeqOp) {
           if (nullSideIsNullKeyword) {
@@ -1003,9 +1017,20 @@ export function compileBinaryExpression(
         // Preserve strict null-vs-undefined when the static union identifies
         // which nullish value the carrier represents; loose equality accepts
         // either, as required by JavaScript.
+        // (#5312) The third carrier for which `ref.null` IS `undefined`: a class
+        // field the declaration never initialises. `useDefineForClassFields`
+        // installs it holding `undefined`, but the checker reports the declared
+        // type (`() => number`), so without this the strict comparison folded to
+        // `false` and `this.m === undefined ? 0 : this.m()` trapped on the null
+        // slot. The emitted test stays the runtime `ref.is_null` below, so a
+        // field a method assigns later reads correctly on both sides of the
+        // write. Fields whose annotation admits `null` are excluded inside the
+        // predicate — there `ref.null` is ambiguous.
         if (isStrictEqOp || isStrictNeqOp) {
-          const nullRepresentsUndefined = nonNullUnionHasUndefined || isNullableNativeString;
-          const nullRepresentsNull = nonNullUnionHasNull || (!nonNullUnionHasUndefined && !isNullableNativeString);
+          const nullRepresentsUndefined =
+            nonNullUnionHasUndefined || isNullableNativeString || isUninitialisedFieldSlot;
+          const nullRepresentsNull =
+            nonNullUnionHasNull || (!nonNullUnionHasUndefined && !isNullableNativeString && !isUninitialisedFieldSlot);
           const comparesRepresentedNullish = nullSideIsUndefinedId ? nullRepresentsUndefined : nullRepresentsNull;
           if (!comparesRepresentedNullish) {
             fctx.body.push({ op: "drop" });
