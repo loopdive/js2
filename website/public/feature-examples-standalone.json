@@ -1098,7 +1098,7 @@
     {
       "name": "Modules (import / export)",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 385,
+      "passCount": 389,
       "totalCount": 731,
       "editionSpread": [
         {
@@ -1123,7 +1123,7 @@
         },
         {
           "edition": "ES2025",
-          "pass": 3,
+          "pass": 4,
           "total": 30
         },
         {
@@ -1138,12 +1138,12 @@
         },
         {
           "edition": "Unclassified (legacy)",
-          "pass": 0,
+          "pass": 1,
           "total": 1
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 134,
+          "pass": 136,
           "total": 225
         }
       ]

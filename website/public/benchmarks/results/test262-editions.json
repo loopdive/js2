@@ -3263,9 +3263,9 @@
   },
   {
     "edition": "ES2025",
-    "pass": 829,
+    "pass": 830,
     "fail": 150,
-    "ce": 22,
+    "ce": 21,
     "skip": 0,
     "total": 1001,
     "pct": 83,
@@ -3299,12 +3299,12 @@
       },
       {
         "name": "import-attributes",
-        "pass": 48,
+        "pass": 49,
         "fail": 34,
-        "ce": 13,
+        "ce": 12,
         "skip": 0,
         "total": 95,
-        "pct": 51
+        "pct": 52
       },
       {
         "name": "dynamic-import",
@@ -3326,12 +3326,12 @@
       },
       {
         "name": "globalThis",
-        "pass": 11,
+        "pass": 12,
         "fail": 3,
-        "ce": 9,
+        "ce": 8,
         "skip": 0,
         "total": 23,
-        "pct": 48
+        "pct": 52
       },
       {
         "name": "RegExp.escape",
@@ -4295,18 +4295,18 @@
   },
   {
     "edition": "Unclassified (legacy)",
-    "pass": 272,
+    "pass": 273,
     "fail": 0,
-    "ce": 1,
+    "ce": 0,
     "skip": 0,
     "total": 273,
     "pct": 100
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4397,
+    "pass": 4399,
     "fail": 900,
-    "ce": 148,
+    "ce": 146,
     "skip": 0,
     "total": 5445,
     "pct": 81
