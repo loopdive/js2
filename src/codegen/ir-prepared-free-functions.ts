@@ -1557,27 +1557,6 @@ export function selectR2PreparedOwnerComponents(input: {
     freeFunctionCandidates.add(unitId);
   }
 
-  // Issue callable-boundary candidates only after the ordinary admission
-  // predicates have accepted the owner.  The registry binds each candidate to
-  // the exact source allocator and targeted Program ABI draft; a missing
-  // registry/observation provides no positive evidence and therefore leaves
-  // the existing outside-caller withdrawal in place.
-  for (const unitId of freeFunctionCandidates) {
-    // Compiler-owned timer shims have their own exact late-seal transaction.
-    // Keep them on that route; their deferred component does not exist yet at
-    // this generic callable-boundary certification point.
-    if (input.timerShimUnitIds?.has(unitId)) continue;
-    const override = input.overridesByUnitId.get(unitId);
-    if (!override || !hasPositiveCallableBoundary(override)) continue;
-    const candidate = input.ctx.programAbiSourceCallables?.issuePreparedCallableBoundary(unitId, override);
-    if (candidate) pendingCallableBoundaryCandidates.set(unitId, candidate);
-  }
-
-  // Close free functions and class members together. A class-to-free edge is
-  // safe only when both endpoints survive the same bidirectional ownership
-  // fixed point; preparing either family in isolation would leave an exact
-  // source call without a callable plan or retain a legacy caller.
-  const candidates = new Set<IrUnitId>([...freeFunctionCandidates, ...input.classMemberUnitIds]);
   const callEdges = collectLocalCallEdgesByIdentity(input.sourceFile, input.identityPlan.identityContext);
   const callers = new Map<IrUnitId, Set<IrUnitId>>();
   for (const [callerUnitId, calleeUnitIds] of callEdges.callees) {
@@ -1587,6 +1566,35 @@ export function selectR2PreparedOwnerComponents(input: {
       callers.set(calleeUnitId, owners);
     }
   }
+
+  // Issue callable-boundary candidates only after the ordinary admission
+  // predicates have accepted the owner.  The registry binds each candidate to
+  // the exact source allocator and targeted Program ABI draft; a missing
+  // registry/observation provides no positive evidence and therefore leaves
+  // the existing outside-caller withdrawal in place.  An owner whose known
+  // callers are all in this same candidate population has no outside-caller
+  // boundary to certify, so avoid opening a deferred ABI transaction for its
+  // ordinary callable support.
+  for (const unitId of freeFunctionCandidates) {
+    // Compiler-owned timer shims have their own exact late-seal transaction.
+    // Keep them on that route; their deferred component does not exist yet at
+    // this generic callable-boundary certification point.
+    if (input.timerShimUnitIds?.has(unitId)) continue;
+    const override = input.overridesByUnitId.get(unitId);
+    if (!override || !hasPositiveCallableBoundary(override)) continue;
+    const hasPotentialOutsideCaller = [...(callers.get(unitId) ?? [])].some(
+      (callerUnitId) => !freeFunctionCandidates.has(callerUnitId) && !input.classMemberUnitIds.has(callerUnitId),
+    );
+    if (!hasPotentialOutsideCaller) continue;
+    const candidate = input.ctx.programAbiSourceCallables?.issuePreparedCallableBoundary(unitId, override);
+    if (candidate) pendingCallableBoundaryCandidates.set(unitId, candidate);
+  }
+
+  // Close free functions and class members together. A class-to-free edge is
+  // safe only when both endpoints survive the same bidirectional ownership
+  // fixed point; preparing either family in isolation would leave an exact
+  // source call without a callable plan or retain a legacy caller.
+  const candidates = new Set<IrUnitId>([...freeFunctionCandidates, ...input.classMemberUnitIds]);
   // (#4514) Free-function owners whose ABI an outside caller provably cannot
   // observe changing. Computed once, before the fixed point: the inputs are the
   // admission-time override and the already-allocated slot, neither of which
