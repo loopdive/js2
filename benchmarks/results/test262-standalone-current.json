@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-05T14:28:49.213Z",
-  "baseline_generated_at": "2026-09-05T14:28:49.213Z",
-  "baseline_sha": "cd45544246d0048beeb8479a9fbe02ac75ac4083",
+  "timestamp": "2026-09-05T16:51:46.052Z",
+  "baseline_generated_at": "2026-09-05T16:51:46.052Z",
+  "baseline_sha": "62e0e14990fb375401534e852e9d204e3efaffe0",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -12,8 +12,8 @@
     "total": 48232,
     "pass": 34884,
     "fail": 9627,
-    "compile_error": 3694,
-    "compile_timeout": 9,
+    "compile_error": 3693,
+    "compile_timeout": 10,
     "skip": 18,
     "compilable": 44511,
     "host_free_pass": 34884,
@@ -23,8 +23,8 @@
         "total": 47146,
         "pass": 33855,
         "fail": 9590,
-        "compile_error": 3674,
-        "compile_timeout": 9,
+        "compile_error": 3673,
+        "compile_timeout": 10,
         "skip": 18,
         "compilable": 43445,
         "host_free_pass": 33855,
@@ -59,8 +59,8 @@
         "total": 48232,
         "pass": 34884,
         "fail": 9627,
-        "compile_error": 3694,
-        "compile_timeout": 9,
+        "compile_error": 3693,
+        "compile_timeout": 10,
         "skip": 18,
         "compilable": 44511,
         "host_free_pass": 34884,
@@ -71,8 +71,8 @@
         "total": 48735,
         "pass": 35119,
         "fail": 9643,
-        "compile_error": 3850,
-        "compile_timeout": 9,
+        "compile_error": 3849,
+        "compile_timeout": 10,
         "skip": 114,
         "compilable": 44762,
         "host_free_pass": 35119,
@@ -85,8 +85,8 @@
     "total": 48232,
     "pass": 34884,
     "fail": 9627,
-    "compile_error": 3694,
-    "compile_timeout": 9,
+    "compile_error": 3693,
+    "compile_timeout": 10,
     "skip": 18,
     "compilable": 44511,
     "host_free_pass": 34884,
@@ -96,8 +96,8 @@
     "total": 48735,
     "pass": 35119,
     "fail": 9643,
-    "compile_error": 3850,
-    "compile_timeout": 9,
+    "compile_error": 3849,
+    "compile_timeout": 10,
     "skip": 114,
     "compilable": 44762,
     "host_free_pass": 35119,
@@ -107,8 +107,8 @@
     "total": 45721,
     "pass": 32618,
     "fail": 9487,
-    "compile_error": 3590,
-    "compile_timeout": 8,
+    "compile_error": 3589,
+    "compile_timeout": 9,
     "skip": 18,
     "compilable": 42105,
     "host_free_pass": 32618,
@@ -141,8 +141,8 @@
       "total": 47146,
       "pass": 33855,
       "fail": 9590,
-      "compile_error": 3674,
-      "compile_timeout": 9,
+      "compile_error": 3673,
+      "compile_timeout": 10,
       "skip": 18,
       "compilable": 43445,
       "host_free_pass": 33855,
@@ -198,9 +198,9 @@
       "name": "built-ins/Array",
       "path": "built-ins/Array",
       "pass": 2162,
-      "fail": 801,
+      "fail": 800,
       "compile_error": 112,
-      "compile_timeout": 7,
+      "compile_timeout": 8,
       "skip": 0,
       "total": 3082,
       "host_free_pass": 2162
@@ -298,8 +298,8 @@
       "path": "built-ins/Atomics",
       "pass": 64,
       "fail": 63,
-      "compile_error": 261,
-      "compile_timeout": 1,
+      "compile_error": 262,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 389,
       "host_free_pass": 64
@@ -638,8 +638,8 @@
       "name": "built-ins/Promise",
       "path": "built-ins/Promise",
       "pass": 373,
-      "fail": 187,
-      "compile_error": 169,
+      "fail": 188,
+      "compile_error": 168,
       "compile_timeout": 0,
       "skip": 0,
       "total": 729,
@@ -804,8 +804,8 @@
       "path": "built-ins/TypedArray",
       "pass": 902,
       "fail": 532,
-      "compile_error": 12,
-      "compile_timeout": 0,
+      "compile_error": 11,
+      "compile_timeout": 1,
       "skip": 0,
       "total": 1446,
       "host_free_pass": 902
@@ -1197,7 +1197,7 @@
     }
   ],
   "error_categories": {
-    "assertion_fail": 4916,
+    "assertion_fail": 4915,
     "host_import_leak": 2543,
     "illegal_cast": 235,
     "negative_test_fail": 4,
@@ -1281,8 +1281,8 @@
         },
         "error_categories": {
           "assertion_fail": 1257,
-          "host_import_leak": 459,
           "type_error": 1214,
+          "host_import_leak": 459,
           "other": 1501,
           "null_deref": 2
         },
@@ -1291,16 +1291,16 @@
         },
         "sample_files": [
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
+          "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
+          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
-          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "other:ReferenceError: Temporal is not defined"
         ]
       },
@@ -1333,8 +1333,8 @@
         "sample_files": [
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
-          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/instance-extensible.js",
+          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
@@ -1901,15 +1901,15 @@
         },
         "sample_files": [
           "test/language/expressions/class/dstr/async-gen-meth-dflt-obj-ptrn-prop-eval-err.js",
-          "test/language/expressions/class/dstr/async-private-gen-meth-static-ary-ptrn-elem-ary-empty-init.js",
           "test/language/expressions/class/elements/multiple-definitions-rs-static-privatename-identifier-by-classname.js",
+          "test/language/expressions/class/dstr/async-private-gen-meth-static-ary-ptrn-elem-ary-empty-init.js",
           "test/language/expressions/class/async-gen-method/yield-star-getiter-async-undefined-sync-get-abrupt.js",
           "test/language/expressions/class/private-setter-brand-check-multiple-evaluations-of-class-realm-function-ctor.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: Expected a Test262Error but got a TypeError",
-          "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: Cannot destructure 'null' or 'undefined'",
           "assertion_fail:Test262Error: Expected SameValue(«null», «#») to be true",
+          "runtime_error:Test262:AsyncTestFailure:Test262Error: TypeError: Cannot destructure 'null' or 'undefined'",
           "type_error:TypeError: Cannot read properties of undefined (reading a class field)",
           "type_error:TypeError: Cannot read properties of undefined (reading 'access')"
         ]
@@ -1976,20 +1976,20 @@
         "count": 1867,
         "statuses": {
           "pass": 0,
-          "fail": 1649,
-          "compile_error": 211,
-          "compile_timeout": 7,
+          "fail": 1648,
+          "compile_error": 210,
+          "compile_timeout": 9,
           "skip": 0,
           "total": 1867,
           "host_free_pass": 0
         },
         "error_categories": {
-          "assertion_fail": 1198,
+          "assertion_fail": 1197,
           "null_deref": 8,
           "illegal_cast": 176,
           "type_error": 253,
           "host_import_leak": 181,
-          "other": 35,
+          "other": 34,
           "wasm_compile": 4,
           "oob": 5
         },
@@ -2523,19 +2523,19 @@
           "#990"
         ],
         "label": "Eval and `new Function` semantics",
-        "count": 445,
+        "count": 446,
         "statuses": {
           "pass": 0,
-          "fail": 436,
+          "fail": 437,
           "compile_error": 8,
           "compile_timeout": 1,
           "skip": 0,
-          "total": 445,
+          "total": 446,
           "host_free_pass": 0
         },
         "error_categories": {
           "assertion_fail": 260,
-          "other": 153,
+          "other": 154,
           "promise_error": 19,
           "runtime_error": 2,
           "host_import_leak": 7,
@@ -2546,7 +2546,7 @@
           "ES2015": 106,
           "ES2018": 40,
           "ES2020": 86,
-          "ES2021": 35,
+          "ES2021": 36,
           "ES2027": 37,
           "ES2023": 39,
           "Unclassified (untagged)": 76,
@@ -2616,8 +2616,8 @@
         "statuses": {
           "pass": 0,
           "fail": 60,
-          "compile_error": 81,
-          "compile_timeout": 1,
+          "compile_error": 82,
+          "compile_timeout": 0,
           "skip": 0,
           "total": 142,
           "host_free_pass": 0
@@ -2629,6 +2629,7 @@
           "other": 2,
           "syntax_error": 6,
           "illegal_cast": 3,
+          "wasm_compile": 1,
           "range_error": 1,
           "oob": 2
         },
@@ -2641,15 +2642,15 @@
           "test/language/expressions/bitwise-xor/bigint-non-primitive.js",
           "test/language/expressions/unsigned-right-shift/bigint-non-primitive.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
-          "test/built-ins/Atomics/or/bigint/bad-range.js",
-          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js"
+          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js",
+          "test/built-ins/Atomics/or/bigint/bad-range.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot mix BigInt and other types, use explicit conversions",
           "assertion_fail:Test262Error: Object(0b101n) >>> Object(1n) throws TypeError Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Atomics.store requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
-          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone"
+          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone",
+          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)"
         ]
       },
       {
@@ -2715,14 +2716,14 @@
           "#1694"
         ],
         "label": "Promise and async standalone semantics",
-        "count": 228,
+        "count": 227,
         "statuses": {
           "pass": 0,
           "fail": 97,
-          "compile_error": 131,
+          "compile_error": 130,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 228,
+          "total": 227,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -2731,13 +2732,13 @@
           "runtime_error": 2,
           "assertion_fail": 17,
           "promise_error": 20,
-          "wasm_compile": 3,
+          "wasm_compile": 2,
           "type_error": 18,
           "illegal_cast": 3,
           "range_error": 2
         },
         "by_edition": {
-          "ES2021": 32,
+          "ES2021": 31,
           "ES2027": 27,
           "ES2022": 6,
           "ES2024": 44,
@@ -2807,7 +2808,7 @@
           "assertion_fail:Test262Error: Expected true but got false",
           "other:[object WebAssembly.Exception]",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "other:L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or ident"
+          "other:L#:## ':' expected.; L#:## '=>' expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected."
         ]
       },
       {

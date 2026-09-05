@@ -860,19 +860,16 @@ function canonicalReservedCapturePlan(
     }
   }
 
-  // Preserve the published name/order and representation, but refresh the two
-  // declaring-frame locators when the binding is still physically observed.
-  // Promotion-only captures keep their Phase-0 locators; use sites must source
-  // those from the representation-checked global proven above.
-  return canonical.map((planned) => {
-    const live = observedByName.get(planned.name);
-    const merged = cloneNestedFunctionCapturePlan([planned])[0]!;
-    if (live !== undefined) {
-      merged.localIdx = live.localIdx;
-      merged.tdzFlagIdx = live.tdzFlagIdx;
-    }
-    return merged;
-  });
+  // Preserve the published name/ORDER — an earlier sibling baked that vector
+  // into its direct call or cached closure artifact. The per-capture CARRIER
+  // must stay the LIVE one: the guard above already proved both spellings are
+  // one ABI, so publishing Phase-0's `type`/`alreadyBoxed`/`forwardUnboxed`
+  // beside a refreshed `localIdx` mixed two frames' facts into one entry —
+  // "unboxed value at local N" while local N held a cell (#5333: moment 10/10
+  // → 0/10, `call expected (ref null 84), found struct.get of type i32`). Only
+  // a promotion-only capture — no live entry, sourced from the
+  // representation-checked global proven above — keeps its Phase-0 record.
+  return canonical.map((planned) => cloneNestedFunctionCapturePlan([observedByName.get(planned.name) ?? planned])[0]!);
 }
 
 /**
