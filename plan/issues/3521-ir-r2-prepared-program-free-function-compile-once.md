@@ -4527,7 +4527,9 @@ contract hardening is `2af771ad0391b17ae3b63e4529ebfbaff8aa6ab6`. Before
 final validation the branch merged `origin/main` at `b08dd4589c60544e40ab94fdeaae7f6cc186303f`, producing merge
 `1c7db23a4ebf4c00cd9d8fb8fc1fd21125a8d144`. The same-configuration
 pre-change residual probe used the archived `origin/main` snapshot at
-`6d601f91a51993eaa7586299a3f3bde07b49f367`.
+`6d601f91a51993eaa7586299a3f3bde07b49f367`. The nested ValType-brand
+receipt repair and its controls are in signed commit
+`07c8f48836f7a27e321f1b178713dfa5780fce12`.
 
 **Measured ownership change:** the module-init caller
 `apply(f: (v: number) => number, v: number): number` measured
