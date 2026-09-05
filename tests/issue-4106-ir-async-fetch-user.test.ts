@@ -1,11 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** #4106 — first genuinely-suspending source function prepared and emitted through IR. */
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
-import { compile, type CompileResult } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
-import { ASYNC_HOST_ADAPTERS } from "../src/ir/async-runtime-providers.js";
+import { type CompileResult, compile } from "../src/index.js";
 import { isSingleAwaitReturnAsyncCandidate } from "../src/ir/async-prepare.js";
+import { ASYNC_HOST_ADAPTERS } from "../src/ir/async-runtime-providers.js";
+import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 
 const EXACT_SOURCE = `
@@ -35,10 +37,54 @@ const VOID_SOURCE = `
   }
 `;
 
-function expectSuccess(result: CompileResult): void {
+function expectCompileSuccess(result: CompileResult): void {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(result.irPostClaimErrors ?? []).toEqual([]);
+}
+
+function expectSuccess(result: CompileResult): void {
+  expectCompileSuccess(result);
   expect(WebAssembly.validate(result.binary)).toBe(true);
+}
+
+const HOST_FREE_VALIDATE_RUNNER = `
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  const binary = Buffer.concat(chunks);
+  process.stdout.write(WebAssembly.validate(binary) ? "true" : "false");
+`;
+
+/** Validate the exact compiled bytes in a Node process with Wasm exnref enabled. */
+function validateHostFreeBinary(binary: Uint8Array): boolean {
+  const child = spawnSync(
+    process.execPath,
+    ["--experimental-wasm-exnref", "--input-type=module", "--eval", HOST_FREE_VALIDATE_RUNNER],
+    {
+      input: binary,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  const diagnostic = [
+    child.error?.message,
+    child.signal ? `signal: ${child.signal}` : undefined,
+    child.stderr,
+    child.stdout,
+  ]
+    .filter((part) => part !== undefined && part.length > 0)
+    .join("\n");
+  expect(child.error, diagnostic).toBeUndefined();
+  expect(child.signal, diagnostic).toBeNull();
+  expect(child.status, diagnostic).toBe(0);
+
+  const output = child.stdout.trim();
+  expect(output, diagnostic).toMatch(/^(true|false)$/);
+  return output === "true";
+}
+
+function expectHostFreeSuccess(result: CompileResult): void {
+  expectCompileSuccess(result);
+  expect(validateHostFreeBinary(result.binary)).toBe(true);
 }
 
 function parseFunction(body: string): ts.FunctionDeclaration {
@@ -250,7 +296,10 @@ describe("#4106 IR single-await async producer", () => {
       target: "standalone",
       trackIrOutcomes: true,
     });
-    expectSuccess(hostFree);
+    expectHostFreeSuccess(hostFree);
+    const corruptBinary = hostFree.binary.slice();
+    corruptBinary[0] ^= 0xff;
+    expect(validateHostFreeBinary(corruptBinary)).toBe(false);
     expect(hostFree.irFirstSkipped ?? []).not.toContain("fetchUser");
     expect((hostFree.irOutcomes ?? []).find((candidate) => candidate.displayName === "fetchUser")).toMatchObject({
       legacyBodyEmitted: true,
