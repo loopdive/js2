@@ -4547,12 +4547,15 @@ The boundary contract now carries the exact source-qualified unit and binding,
 allocator object and physical signature, scoped ABI lookup, final projected
 signature, and complete prepared support IDs. It snapshots nested callable
 parameter/result semantics, rechecks them at certification and publication,
-rejects multi-result functions instead of collapsing them to a void sentinel,
-and keeps compiler timer shims on their own exact late-seal transaction. The
-contract suite covers real invocation support, missing support, changed
-semantic and physical signatures, foreign or replaced allocators, forged or
-changed receipts, nested mutation after issuance, nested mutation after
-certification, and the multi-result guard: **8/8 tests passed**.
+and its canonical semantic receipt key retains nested `i32.boolean`,
+`i32.symbol`, `i64.bigint`, and `f64.undefSentinel` brands even though their
+outer Wasm carriers are unchanged. It rejects multi-result functions instead
+of collapsing them to a void sentinel and keeps compiler timer shims on their
+own exact late-seal transaction. The contract suite covers real invocation
+support, missing support, changed semantic and physical signatures, foreign or
+replaced allocators, forged or changed receipts, nested mutation after
+issuance, nested mutation after certification, brand mutation after issuance
+and certification, and the multi-result guard: **11/11 tests passed**.
 
 **Required gates:** both `check-ir-only` policies are ready in GC-host and
 standalone: each has 5/5 entries, 41 terminal units, 38 IR-emitted units,

@@ -230,6 +230,49 @@ describe("#3521 R2-B1 prepared callable boundary contract", () => {
     ).toEqual(f.numberType);
   });
 
+  it.each(["boolean", "symbol"] as const)("rejects an in-place nested callable i32.%s mutation", (flag) => {
+    const f = fixture();
+    const mutableCallable = f.callableType as unknown as {
+      signature: { params: IrType[]; returnType: IrType | null };
+    };
+    mutableCallable.signature.params[0] = { kind: "val", val: { kind: "i32" } };
+    const candidate = f.registry.issuePreparedCallableBoundary(f.unitId, {
+      params: [f.callableType, f.numberType],
+      returnType: f.numberType,
+    });
+    if (!candidate) throw new Error("callable-boundary fixture did not issue the flagged candidate");
+
+    const mutableParam = mutableCallable.signature.params[0] as unknown as {
+      val: { kind: "i32"; boolean?: true; symbol?: true };
+    };
+    mutableParam.val[flag] = true;
+    const invocation = invokeRef(createIrBindingId({ ownerId: f.unitId, domain: "support", role: "invoke" }));
+    expect(
+      candidate.certify({
+        fn: f.fn,
+        projectedSignature: projected(),
+        support: support(f, [invocation]),
+        scopeLookup: scope(f),
+      }),
+    ).toBeUndefined();
+    expect(candidate.contract).toBeUndefined();
+  });
+
+  it("rejects an in-place nested callable f64.undefSentinel mutation after certification", () => {
+    const f = fixture();
+    const invocation = invokeRef(createIrBindingId({ ownerId: f.unitId, domain: "support", role: "invoke" }));
+    const contract = certify(f, [invocation]);
+    expect(contract).toBeDefined();
+
+    const mutableNumber = f.numberType as unknown as {
+      val: { kind: "f64"; undefSentinel?: true };
+    };
+    mutableNumber.val.undefSentinel = true;
+
+    expect(() => f.candidate.assertCurrent(f.fn)).toThrow(/semantic signature changed/);
+    expect(() => contract!.assertSupportCurrent(f.fn, support(f, [invocation]))).toThrow(/semantic signature changed/);
+  });
+
   it("does not collapse a multi-result function into the void signature", () => {
     const f = fixture();
     const voidCandidate = f.registry.issuePreparedCallableBoundary(f.unitId, {
