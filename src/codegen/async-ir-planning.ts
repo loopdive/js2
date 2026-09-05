@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { isSingleAwaitReturnAsyncCandidate } from "../ir/async-prepare.js";
+import { preparedIrAsyncLinearSource, type PreparedIrAsyncLinearSource } from "./async-linear-planning.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
@@ -10,6 +11,8 @@ import {
   IR_ASYNC_STRING_CONCAT_5_FN,
 } from "../ir/async-semantic-runtime.js";
 import type { IrFromAstResolver } from "../ir/from-ast.js";
+import type { PreparedAsyncAwaitSite } from "../ir/async-from-ast.js";
+import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
 import { irVal, irVec } from "../ir/nodes.js";
 import type { IrPromiseDelayResolver } from "../ir/promise-delay.js";
 import type { ValType } from "../ir/types.js";
@@ -47,7 +50,8 @@ export type PreparedIrAsyncSourceShape =
       readonly awaitedCalls: readonly [ts.CallExpression, ts.CallExpression];
       readonly dateNowCalls: readonly [ts.CallExpression, ts.CallExpression, ts.CallExpression, ts.CallExpression];
       readonly concatExpressions: readonly [ts.Expression, ts.Expression];
-    };
+    }
+  | PreparedIrAsyncLinearSource;
 
 function hasAsyncModifier(fn: ts.FunctionDeclaration): boolean {
   return fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
@@ -516,31 +520,73 @@ export function preparedIrAsyncSourceShape(
   if (finalMain) return finalMain;
   const plan = analyzeAsyncBody(ctx, fn);
   const split = splitBodyAtAwait(fn, plan);
-  if (!split || !ts.isCallExpression(split.awaitedExpr)) return null;
-  if (isSingleAwaitReturnAsyncCandidate(fn)) {
-    return { kind: "identity", awaitedCall: split.awaitedExpr };
+  if (split && ts.isCallExpression(split.awaitedExpr)) {
+    if (isSingleAwaitReturnAsyncCandidate(fn)) {
+      return { kind: "identity", awaitedCall: split.awaitedExpr };
+    }
+    if (
+      !split.isReturnAwait &&
+      split.resumeBinding &&
+      split.suffix.length > 0 &&
+      isAmbientPromiseAll(ctx, split.awaitedExpr) &&
+      continuationHasNoPreAwaitCapture(ctx, fn, split.prefix, split.suffix)
+    ) {
+      return { kind: "promise-all-continuation", awaitedCall: split.awaitedExpr };
+    }
   }
-  if (
-    split.isReturnAwait ||
-    !split.resumeBinding ||
-    split.suffix.length === 0 ||
-    !isAmbientPromiseAll(ctx, split.awaitedExpr) ||
-    !continuationHasNoPreAwaitCapture(ctx, fn, split.prefix, split.suffix)
-  ) {
-    return null;
+  const linear = preparedIrAsyncLinearSource(ctx, fn);
+  if (linear) {
+    // Keep the historical identity shape for the exact one-await producer;
+    // the generic IR producer is still selected after that producer proves
+    // it cannot handle the lowered block (for example, a live mutable slot).
+    if (isSingleAwaitReturnAsyncCandidate(fn) && linear.awaitedExpressions.length === 1) {
+      const awaited = linear.awaitedExpressions[0];
+      if (ts.isCallExpression(awaited)) return { kind: "identity", awaitedCall: awaited };
+    }
+    return linear;
   }
-  return { kind: "promise-all-continuation", awaitedCall: split.awaitedExpr };
+  return null;
 }
 
 export function preparedIrAsyncSourceCanSuspend(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
   const shape = preparedIrAsyncSourceShape(ctx, fn);
+  const linearPlan = shape?.kind === "linear" ? analyzeAsyncBody(ctx, fn) : undefined;
+  const linearCalleesPrepared =
+    shape?.kind !== "linear" || linearAwaitCalleesArePrepared(ctx, shape.awaitedExpressions);
+  const linearHasSupportedAwaitTypes =
+    shape?.kind !== "linear" ||
+    shape.awaitSites.every(
+      (awaitExpression) =>
+        preparedIrAsyncLinearAwaitResultType(ctx, awaitExpression) !== null &&
+        preparedIrAsyncLinearAwaitOperandCanLower(ctx, awaitExpression),
+    );
+  const linearHasRealSuspension =
+    shape?.kind !== "linear" ||
+    linearPlan!.awaitPoints.some(
+      (awaitExpression) => linearPlan!.awaitedStaticallyResolved.get(awaitExpression) !== true,
+    );
   return (
     shape !== null &&
+    linearCalleesPrepared &&
+    linearHasSupportedAwaitTypes &&
+    linearHasRealSuspension &&
     (shape.kind === "promise-all-continuation" ||
       shape.kind === "sequential-counted-loop" ||
       shape.kind === "final-main" ||
+      shape.kind === "linear" ||
       asyncEngineWouldActivate(ctx, fn))
   );
+}
+
+/** A linear owner may call only async declarations that the same producer can prepare. */
+function linearAwaitCalleesArePrepared(ctx: CodegenContext, expressions: readonly ts.Expression[]): boolean {
+  for (const expression of expressions) {
+    if (!ts.isCallExpression(expression)) continue;
+    const callee = sourceFunctionForCall(ctx, expression);
+    if (!callee || !callee.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) continue;
+    if (!preparedIrAsyncSourceCanSuspend(ctx, callee)) return false;
+  }
+  return true;
 }
 
 const promiseDelayResolverByContext = new WeakMap<CodegenContext, IrPromiseDelayResolver>();
@@ -593,6 +639,39 @@ function exactStandaloneFetchUser(
   );
 }
 
+function standaloneLinearAwaitOperand(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+  active: Set<ts.FunctionDeclaration>,
+): boolean {
+  let candidate = expression;
+  while (
+    ts.isParenthesizedExpression(candidate) ||
+    ts.isAsExpression(candidate) ||
+    ts.isTypeAssertionExpression(candidate) ||
+    ts.isNonNullExpression(candidate)
+  ) {
+    candidate = candidate.expression;
+  }
+  // A settled literal or Promise.resolve form still crosses the retained
+  // await edge; it has no unknown producer to close over.  Native-first
+  // lanes cannot box an f64 operand at this boundary, however, so apply the
+  // same operand admission check as the generic source preflight.
+  if (awaitIsStaticallyResolved(candidate) || staticPromiseResolveSettledExpr(candidate) !== null) {
+    return preparedIrAsyncLinearAwaitOperandCanLower(ctx, expression);
+  }
+  if (ts.isNewExpression(candidate)) {
+    return promiseDelayResolver(ctx)?.resolve(candidate) !== undefined;
+  }
+  if (!ts.isCallExpression(candidate) || !ts.isIdentifier(candidate.expression)) return false;
+  const callee = sourceFunctionForCall(ctx, candidate);
+  if (!callee) return false;
+  return (
+    promiseDelayResolver(ctx)?.resolveOwner(callee) !== undefined ||
+    isExactStandaloneNativeAsyncFamilyOwner(ctx, callee, active)
+  );
+}
+
 /**
  * Keep the first standalone-native projection closed over the exact playground
  * dependency family. The host projection retains the broader certified async
@@ -623,6 +702,9 @@ function isExactStandaloneNativeAsyncFamilyOwner(
         isExactStandaloneNativeAsyncFamilyOwner(ctx, sequential, active) &&
         isExactStandaloneNativeAsyncFamilyOwner(ctx, parallel, active)
       );
+    }
+    if (shape.kind === "linear") {
+      return shape.awaitedExpressions.every((expression) => standaloneLinearAwaitOperand(ctx, expression, active));
     }
     if (fn.name?.text !== "fetchAllParallel") return false;
     const callees = new Set<ts.FunctionDeclaration>();
@@ -657,11 +739,62 @@ export function isPreparedIrPromiseAllCall(ctx: CodegenContext, call: ts.CallExp
   return shape?.kind === "promise-all-continuation" && shape.awaitedCall === call;
 }
 
+function preparedIrAsyncLinearAwaitResultType(
+  ctx: CodegenContext,
+  expression: ts.AwaitExpression,
+): ReturnType<typeof irVal> | null {
+  switch (ctx.oracle.typeFactOf(expression).kind) {
+    case "number":
+      return irVal({ kind: "f64" });
+    default:
+      return null;
+  }
+}
+
+/**
+ * Whether lowering the retained await operand can satisfy the frozen lane
+ * boundary.  A native-first lane has no `js.number.box` provider, so a
+ * settled numeric operand would otherwise make a source owner look closed and
+ * fail only after synthetic helpers have been registered.  Promise-valued
+ * operands remain externref carriers and are admitted normally.
+ */
+function preparedIrAsyncLinearAwaitOperandCanLower(
+  ctx: CodegenContext,
+  expression: ts.AwaitExpression | ts.Expression,
+): boolean {
+  if (!ctx.nativeStrings) return true;
+  const operand = ts.isAwaitExpression(expression) ? expression.expression : expression;
+  const settled = staticPromiseResolveSettledExpr(operand);
+  const candidate = settled !== null && settled !== "undefined" ? settled : operand;
+  return ctx.oracle.typeFactOf(candidate).kind !== "number";
+}
+
+/** Exact prepared await evidence for the generic linear producer. */
+export function preparedIrAsyncAwaitSite(
+  ctx: CodegenContext,
+  expression: ts.AwaitExpression,
+): PreparedAsyncAwaitSite | null {
+  const owner = enclosingFunctionDeclaration(expression);
+  if (!owner) return null;
+  const shape = preparedIrAsyncSourceShape(ctx, owner);
+  if (shape?.kind !== "linear" || !shape.awaitSites.includes(expression)) return null;
+  // The generic B2 producer owns only a source owner whose existing analysis
+  // reports a potentially suspending await. Fully statically-resolved awaits
+  // remain on the established C-1 pass-through route until their separate
+  // cutover: if this evidence escaped that admission proof, from-ast would
+  // retain an await node and async preparation would later try to attach a
+  // frame plan to an owner that the selector never promised.
+  if (!preparedIrAsyncSourceCanSuspend(ctx, owner)) return null;
+  const resultType = preparedIrAsyncLinearAwaitResultType(ctx, expression);
+  return resultType ? { resultType } : null;
+}
+
 /** Exact direct async call whose Promise result is owned by a prepared state. */
 export function isPreparedIrThenableCall(ctx: CodegenContext, call: ts.CallExpression): boolean {
   const owner = enclosingFunctionDeclaration(call);
   if (!owner) return false;
   const shape = preparedIrAsyncSourceShape(ctx, owner);
+  if (shape?.kind === "linear") return shape.awaitedExpressions.includes(call);
   if (shape?.kind === "sequential-counted-loop" || shape?.kind === "final-main") {
     return shape.awaitedCalls.includes(call);
   }
@@ -763,7 +896,8 @@ export function prepareAsyncCallableAbi(
   const shape = preparedIrAsyncSourceShape(ctx, fn);
   const supportedFulfillment =
     (fulfillmentResults.length === 1 && fulfillmentResults[0]?.kind === "f64") ||
-    (shape?.kind === "final-main" && fulfillmentResults.length === 0);
+    (shape?.kind === "final-main" && fulfillmentResults.length === 0) ||
+    (shape?.kind === "linear" && fulfillmentResults.length === 0);
   const usesPromiseAbi =
     ctx.programAbiSession !== undefined &&
     !ctx.wasi &&
@@ -811,6 +945,7 @@ export function preparedIrAsyncFromAstResolver(
   IrFromAstResolver,
   | "preparedAsyncPromiseVectorLocal"
   | "preparedAsyncPromiseAllPlan"
+  | "preparedAsyncAwaitSite"
   | "preparedAsyncThenableResultType"
   | "preparedAsyncDateNowTarget"
   | "preparedAsyncNumberToStringTarget"
@@ -838,6 +973,7 @@ export function preparedIrAsyncFromAstResolver(
       }
       return { target: irImportFuncRef("env", "Promise_all"), resultType: irVec(irVal({ kind: "f64" }), true) };
     },
+    preparedAsyncAwaitSite: (awaitExpression) => preparedIrAsyncAwaitSite(ctx, awaitExpression),
     preparedAsyncThenableResultType: (call) =>
       isPreparedIrThenableCall(ctx, call) ? irVal({ kind: "f64" }) : undefined,
     preparedAsyncDateNowTarget: (call) =>
