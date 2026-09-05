@@ -1,10 +1,11 @@
 {
   "id": "5336",
   "assignee": "ttraenkler/claude",
-  "requested_by": "ttraenkler/claude",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5336-dogfood-validation-floor",
   "claimed_at": "2026-09-05T17:21:42Z",
-  "updated_at": "2026-09-05T17:21:42Z",
-  "write_id": "15417-45q67ol0"
+  "updated_at": "2026-09-05T19:22:02Z",
+  "write_id": "86360-vns759n7",
+  "released_at": "2026-09-05T19:22:02Z"
 }
