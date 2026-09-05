@@ -1,0 +1,11 @@
+{
+  "id": "3518",
+  "slice": "backend-consumption-replay",
+  "assignee": "ttraenkler/claude-fable-ir-backend-c-20260906",
+  "requested_by": "ttraenkler/claude-fable-ir-backend-c-20260906",
+  "status": "in-progress",
+  "branch": "claude/3518-whole-program-c-20260906",
+  "claimed_at": "2026-09-05T22:10:50Z",
+  "updated_at": "2026-09-05T22:10:50Z",
+  "write_id": "35959-9ep78ngq"
+}
