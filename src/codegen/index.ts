@@ -107,6 +107,7 @@ import {
   type IrBackendTargetCapability,
 } from "../ir/backend/legality.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "../ir/module-init.js";
+import { literalComputedInstanceMethodKey } from "../ir/class-method-names.js";
 import { moduleInitChunksRequired } from "./module-init-chunks.js";
 import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
 import {
@@ -1768,11 +1769,19 @@ function buildIrClassShapes(
       if (hasAbstractModifier(member)) continue;
       // (#3522 W1-A) `#priv()` is admitted under the SAME mangling the legacy
       // side already uses (`resolveClassMemberName`, and the field
-      // re-derivation above). Computed names still defer: their key is not a
-      // compile-time constant, so no stable descriptor name exists.
-      if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name)) continue;
+      // re-derivation above). (#3522 W1-D) A direct string-literal computed
+      // method joins this descriptor population only when the syntax-only
+      // bounded-family proof resolves its key.
+      const computedMethodName = literalComputedInstanceMethodKey(member);
+      if (!ts.isIdentifier(member.name) && !ts.isPrivateIdentifier(member.name) && computedMethodName === undefined) {
+        continue;
+      }
       if (member.asteriskToken) continue; // generators → defer
-      const methodName = ts.isPrivateIdentifier(member.name) ? privateMemberMangledName(member.name) : member.name.text;
+      const methodName = ts.isPrivateIdentifier(member.name)
+        ? privateMemberMangledName(member.name)
+        : ts.isComputedPropertyName(member.name)
+          ? computedMethodName!
+          : member.name.text;
       const params: IrType[] = [];
       for (const p of member.parameters) {
         if (!ts.isIdentifier(p.name) || p.dotDotDotToken || p.questionToken || p.initializer) {

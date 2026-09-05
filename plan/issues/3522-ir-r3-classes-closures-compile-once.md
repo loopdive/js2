@@ -28,6 +28,7 @@ files:
   - .github/workflows/test262-sharded.yml
   - .github/workflows/refresh-baseline.yml
   - src/ir/identity.ts
+  - src/ir/class-method-names.ts
   - src/ir/class-accessor-safety.ts
   - src/ir/class-field-call-planning.ts
   - src/ir/class-instance-initializers.ts
@@ -84,6 +85,8 @@ files:
   - tests/issue-3522-ir-cross-owner-free-function.test.ts
   - tests/issue-3522-ir-object-method-call-ownership.test.ts
   - tests/issue-3522-ir-static-class-method.test.ts
+  - tests/issue-3522-computed-literal-method.test.ts
+  - tests/issue-3529-selector-preclaim.test.ts
   - tests/issue-3522-test262-shard-completion.test.ts
   - tests/test262-shared.ts
   - tests/issue-3792-ir-optimization-retirement-gate.test.ts
@@ -153,6 +156,12 @@ func-budget-allow:
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
+  # 2026-09-05 (W1-D, literal computed instance-method names). The shared
+  # class-member selection function grows by one measured line to route the
+  # method-specific descriptor name through the exact-shape arm. Keeping the
+  # wrapper at the existing selector seam preserves the identity and
+  # descriptor proof without widening unrelated member paths.
+  - src/ir/select.ts::planIrCompilation
   - src/ir/select-identity.ts::planIrCompilationByIdentity
   - src/ir/select.ts::isPhase1StatementListInScope
   - src/ir/select.ts::whyNotIrClaimable
@@ -5442,3 +5451,58 @@ Reflect methods, or the binder. First measure the motivating row, then ship
 only this literal family with exact body evidence. Source and test results
 outrank this plan. Keep the epic `in-progress` and return base/head SHAs,
 commands, outcome changes, poison/removal controls, and remaining failures.
+
+## Results — 2026-09-05 W1-D
+
+Developer: **Luna**. Base reproduction used
+`a53b1bd17338c01f4bffe2df6b3463d216990a6b` and the exact `Tagged` fixture
+above on `gc` and `standalone`. Both targets executed to **61** through the
+legacy method bodies. `Tagged_new` was IR-owned, while both instance methods
+were terminal `Tagged_<computed>` refusals with `class-method`, distinct
+`class-instance-method:0000000000000000/0000000000000001` ordinals, and
+`legacyBodyEmitted: true`; `run` remained a direct
+`class-member-unsupported` refusal.
+
+The candidate resolves the two decoded names to `Tagged_tagged` and
+`Tagged_other`, retains those same method ordinals, and emits
+`run`, `Tagged_new`, `Tagged_tagged`, and `Tagged_other` through the IR patch
+on both targets (`legacyBodyEmitted: false`, `irBodyEmitted: true`, no
+post-claim errors). With both direct method bodies poisoned, each target
+still executes to **61**. The forced-direct poison control fails at
+`Tagged_tagged`, while the unpoisoned direct baseline also returns **61**.
+The moved former #3529 literal case is IR-owned as `Greeter_value` and
+returns **42**. Dynamic aliases, effectful keys, unsupported signatures,
+and a mixed ordinary/dynamic class retain refusal and ordinary-method
+ownership; the direct syntax helper also rejects duplicate, reserved,
+numeric/template, static/private/field-bearing, derived, and wider-signature
+shapes.
+
+Focused computed-method plus selector-preclaim coverage passes **80/80**.
+The full affected command passes **154/155** tests; the sole failure is the
+existing W1-B standalone test for a private method with no descriptor, which
+reproduces in isolation as `Invalid opcode 0x1f (enable with
+--experimental-wasm-exnref)` in `__gen_resume_B___priv_m`. The four
+load-bearing identity, selector, descriptor, and codegen seam removals each
+trip the positive ownership/poison test. The exact modern integration path
+uses `classMemberUnitIds`, so its compatibility-only name fallback is not
+reached by that ownership test; the shared helper is nevertheless updated to
+keep that fallback in agreement.
+
+Required checks pass: TypeScript 7 typecheck, IR fallback, hybrid and
+IR-only readiness (each 5/5 entries, 41 units, 38 emitted, 0 unsupported,
+0 invariants, 0 legacy bodies), dialect, kind-neutrality, layering,
+coercion, oracle ratchet, LOC/function budgets, targeted Biome/Prettier, and
+`git diff --check`. For the required A/B emit proof, only the W1-D-owned
+source/test files were copied aside and restored to base
+`a53b1bd17338c01f4bffe2df6b3463d216990a6b`; the base snapshot enumerates
+**15** `.ts` files across four targets (**60** records: 36 successful
+compiles, 24 expected CEs, 0 throws), and the restored candidate check is
+**IDENTICAL for all 60** records. The base file-copy lint run reports the
+same repository diagnostic cap (**1,824** diagnostics across 5,229 files),
+and the W1-B standalone failure reproduces at base with the same exnref
+opcode error. Dead-export checking also reproduces its existing
+space-encoded path failure (`.../Volumes/Archiv%20Mini/...`). The later
+current-main merge (`5da655f286fcd569203cd2012b23dc21bf1c626d`, included in
+candidate merge commit `f8037b04efed8373a7013d400ab4f0588c74645d`) changes
+one unrelated corpus emit (`website/playground/examples/js/async.ts::gc`);
+the W1-D candidate A/B comparison itself was identical before that merge.
