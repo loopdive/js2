@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-09-01
+updated: 2026-09-05
 priority: high
 feasibility: hard
 model: fable
@@ -1516,6 +1516,47 @@ constructor ABI from the filename/symbol/declaration/export-table operations
 already proven independently. Do not rerun the ten-minute authoritative binder
 until a focused discriminator changes that boundary. After binder parity, move
 to the checker TS2322 oracle, then printer/emitter, and only then self-hosting.
+
+### 2026-09-05 current-main sync and resumed frontier
+
+Branch `codex/1058-typescript-binder` is synchronized with loopdive/js2 main at
+`0a5a3e87df074982cc3022a95899fc62ad69b036` by merge commit
+`0c9f00a0f3fb4f`. The two content conflicts were resolved by composition, not
+side selection: module namespace objects retain main's immutable-global and
+Node-builtin re-export entries together with this branch's declaration-aware
+callable-handle refresh, while nested declarations retain main's promoted and
+forwarded pre-registration ABI together with this branch's canonical reserved
+capture plan. The seven conflict-focused suites pass **34/34**.
+
+The sync exposed a TypeScript 5-only source typecheck regression inherited
+from main: TS5's DOM declarations do not yet contain `WebAssembly.Tag`, while
+TS7's do. Commit `45b7d783353d04` describes the feature-detected tag locally by
+the only contract this runtime uses (constructible object identity). Both
+`pnpm run typecheck:ts5` and `pnpm run typecheck:ts7` pass, and the linked
+provider exception-identity suite passes **4/4**. `AGENTS.md` now uses
+repository-relative memory links in commit `d3ff3a70028dd1`, so the documented
+context resolves from every worktree rather than one retired checkout.
+
+Current main also contains the focused discriminator for the prior
+`binder.ts:3133:9` null-constructor hypothesis: a read-only GC-reference capture
+whose declaring slot was boxed later is forwarded as its value instead of the
+ref cell. The capture/constructor regression set passes **12/12**, including
+both TypeScript late-constructor factories. This makes the mainline capture fix
+a credible mover for the old runtime boundary, but it is not yet authoritative
+proof for the full graph.
+
+The first authoritative post-sync binder run used the same **32 source files /
+36 Program files / 312 module-init statements** and remained actively in
+codegen until the probe's 900,000 ms limit. It timed out after **900,044 ms**
+wall / **647,781 ms CPU** (0.72 average cores), peaked at **1,882.5 MiB RSS**,
+and last reported `src/compiler/parser.ts`; it produced no compile diagnostic,
+no module, and therefore no binder invocation result. This is a measured
+compile-time frontier, not evidence that the old runtime null survived. Resume
+with a longer completion budget against this already-prepared pinned checkout,
+then compare both exact binder oracle results. If construction succeeds but
+each result is exactly 65,536 too high, inspect
+`externalModuleIndicator`/`isExternalModule` before changing constructor
+lowering.
 
 The module plan remains capability-based: parser, binder, checker, and
 printer/emitter are separate public roots. A runtime module that is neither
