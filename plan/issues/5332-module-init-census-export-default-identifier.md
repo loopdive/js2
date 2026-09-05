@@ -60,6 +60,15 @@ jest dogfood suite, same machine, same day:
   `packages/jest-config/src/stringToBytes.ts` ends in `export default stringToBytes;`
   and the module no longer compiles at all.
 
+**prettier is worse hit — this is the whole of its remaining collapse.** Measured
+on `b67ab1fc0e` with the #5333 invalid-Wasm fix applied
+(`node --import tsx tests/dogfood/prettier-upstream-suite.mjs`): `compile.validated`
+**3 of 16**, **2/151** admitted tests. Thirteen of the sixteen modules raise this exact
+`terminal-join` error and never produce a binary — `src/common/ast-path.js`,
+`src/document/*`, `src/utils/*`. prettier was **61/151** at `4946cf70fe`. So of
+prettier's 61 → 2 drop, #5333 accounts for none of the residual and this issue
+accounts for all of it.
+
 So this is a **−6 regression on the jest suite by itself**, and it additionally
 **masks** [#5328](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5328-dynamic-dispatch-extern-result-dropped)
 (worth a further +21 on the same file), whose only reproducing shape is exactly
