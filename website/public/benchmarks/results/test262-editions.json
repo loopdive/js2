@@ -1924,8 +1924,8 @@
   {
     "edition": "ES2021",
     "pass": 335,
-    "fail": 135,
-    "ce": 2,
+    "fail": 136,
+    "ce": 1,
     "skip": 0,
     "total": 472,
     "pct": 71,
@@ -1942,8 +1942,8 @@
       {
         "name": "Promise.any",
         "pass": 48,
-        "fail": 43,
-        "ce": 1,
+        "fail": 44,
+        "ce": 0,
         "skip": 0,
         "total": 92,
         "pct": 52
@@ -1978,8 +1978,8 @@
       {
         "name": "arrow-function",
         "pass": 18,
-        "fail": 21,
-        "ce": 1,
+        "fail": 22,
+        "ce": 0,
         "skip": 0,
         "total": 40,
         "pct": 45

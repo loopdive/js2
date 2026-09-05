@@ -8,7 +8,7 @@ import {
   isBoundedPreparedNestedOrdinaryClass,
   isNestedOrdinaryClassFieldCallInventoryCandidate,
 } from "./class-accessor-safety.js";
-import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "./module-init.js";
+import { collectModuleInitPopulation, moduleInitExportAssignment, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 
@@ -907,8 +907,8 @@ class SourceInventoryBuilder {
       }
     }
 
-    if (modulePopulation.length > 0 || firstStaticInitialization) {
-      const anchor = modulePopulation[0] ?? firstStaticInitialization ?? this.sourceFile;
+    const anchor = modulePopulation[0] ?? firstStaticInitialization ?? moduleInitExportAssignment(this.sourceFile);
+    if (anchor) {
       const terminal = this.addTerminalUnit(
         "module-init",
         null,

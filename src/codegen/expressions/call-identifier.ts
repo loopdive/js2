@@ -3268,7 +3268,14 @@ export function compileIdentifierCall(
                   const bridge = dispatchBridgePlan(
                     fc.returnType!,
                     expectedReturn!,
-                    false,
+                    // (#5328) A RESULT is not an ARGUMENT: `expectedReturn` IS this
+                    // call's statically-computed result ValType, so the compiler has
+                    // already committed to reading whatever comes back as f64.
+                    // Refusing the unbox falls through to the dead-arm placeholder
+                    // below, which DROPS a live arm's result and answers the
+                    // undefined sentinel. Still null-safe: `scalarBridgePlan` gives
+                    // up when `__unbox_number` is unregistered, so no late import.
+                    true,
                     canExportCandidateReferenceResult(fc.funcTypeIdx),
                   );
                   if (bridge !== null) {
