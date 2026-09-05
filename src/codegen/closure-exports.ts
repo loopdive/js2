@@ -27,6 +27,12 @@ import { ensureAnyToExternHelper, isAnyValue, undefinedExternInstrs } from "./an
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { buildVecFromExternMaterializer } from "./type-coercion.js";
 import { buildClosureResultBoxing } from "./closures/result-boxing.js";
+import {
+  classifyClosureDispatchRest,
+  closureDispatchSelfTypeIdx,
+  materializeClosureDispatchRest,
+  type ClosureDispatchRestCarrier,
+} from "./closures/closure-dispatch-rest.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 export { buildTransferredCharAtApplyArm } from "./char-at-transfer.js";
@@ -615,96 +621,12 @@ function closureHostArity(info: {
   return info.hasRestParam === true ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
 }
 
-type ClosureDispatchRestInfo =
-  | {
-      kind: "vec";
-      matchTypeIdx: number;
-      vecTypeIdx: number;
-      arrTypeIdx: number;
-      elemType: ValType;
-    }
-  | {
-      kind: "empty-struct";
-      matchTypeIdx: number;
-      vecTypeIdx: number;
-    }
-  | {
-      kind: "externref";
-      matchTypeIdx: number;
-    };
-
 interface ClosureDispatchEntry {
   funcTypeIdx: number;
   returnType: ValType | null;
   selfTypeIdx: number;
   closureArity: number;
-  rest?: ClosureDispatchRestInfo;
-}
-
-/**
- * Recover the concrete carrier needed for a source rest parameter.
- *
- * Most rest parameters lower to the canonical `{ length, data }` vec. A
- * generic rest (`...args: T`, where `T extends unknown[]`) instead resolves to
- * `externref`: the lifted function still has one Wasm rest formal, but the
- * host dispatcher must build the array value that formal represents. Treating
- * that signature as an ordinary arity-0 closure omitted the formal entirely
- * and made every `__call_fn_N`/`__call_fn_method_N` containing it invalid.
- */
-function classifyClosureDispatchRest(
-  ctx: CodegenContext,
-  matchTypeIdx: number,
-  info: ClosureInfo,
-  funcTypeDef: FuncTypeDef | undefined,
-  hostArity: number,
-): ClosureDispatchRestInfo | undefined {
-  if (info.hasRestParam !== true || funcTypeDef === undefined) return undefined;
-  const restParam = funcTypeDef.params[hostArity + 1]; // +1 for closure self
-  if (!restParam) return undefined;
-
-  if (restParam.kind === "externref" || restParam.kind === "ref_extern") {
-    return { kind: "externref", matchTypeIdx };
-  }
-  if (restParam.kind !== "ref" && restParam.kind !== "ref_null") return undefined;
-
-  const vecTypeIdx = restParam.typeIdx;
-  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-  const arrDef = ctx.mod.types[arrTypeIdx];
-  if (arrDef?.kind === "array") {
-    return { kind: "vec", matchTypeIdx, vecTypeIdx, arrTypeIdx, elemType: arrDef.element };
-  }
-  const vecDef = ctx.mod.types[vecTypeIdx];
-  if (vecDef?.kind === "struct" && vecDef.fields.length === 0) {
-    return { kind: "empty-struct", matchTypeIdx, vecTypeIdx };
-  }
-  return undefined;
-}
-
-/** Build the single hidden Wasm argument that implements a source rest array. */
-function materializeClosureDispatchRest(
-  rest: ClosureDispatchRestInfo,
-  dispatcherArity: number,
-  fixedArity: number,
-  externVecTypeIdx: number,
-  externArrTypeIdx: number,
-  emitElement: (argumentIndex: number, elemType: ValType) => Instr[],
-): Instr[] {
-  if (rest.kind === "empty-struct") return [{ op: "struct.new", typeIdx: rest.vecTypeIdx }];
-
-  const restCount = Math.max(0, dispatcherArity - fixedArity);
-  const elemType: ValType = rest.kind === "externref" ? { kind: "externref" } : rest.elemType;
-  const arrTypeIdx = rest.kind === "externref" ? externArrTypeIdx : rest.arrTypeIdx;
-  const vecTypeIdx = rest.kind === "externref" ? externVecTypeIdx : rest.vecTypeIdx;
-  const instrs: Instr[] = [{ op: "i32.const", value: restCount }];
-  for (let i = fixedArity; i < dispatcherArity; i++) {
-    instrs.push(...emitElement(i, elemType));
-  }
-  instrs.push(
-    { op: "array.new_fixed", typeIdx: arrTypeIdx, length: restCount },
-    { op: "struct.new", typeIdx: vecTypeIdx },
-  );
-  if (rest.kind === "externref") instrs.push({ op: "extern.convert_any" });
-  return instrs;
+  rest?: ClosureDispatchRestCarrier;
 }
 
 /**
@@ -814,19 +736,11 @@ function emitClosureCallExportN(ctx: CodegenContext, arity: number): void {
     }
 
     const funcTypeDef = mod.types[info.funcTypeIdx];
-    const selfParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[0] : undefined;
-    const selfTypeIdx =
-      selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
-        ? (selfParam as { typeIdx: number }).typeIdx
-        : typeIdx;
+    const selfTypeIdx = closureDispatchSelfTypeIdx(funcTypeDef?.kind === "func" ? funcTypeDef : undefined, typeIdx);
 
-    const rest = classifyClosureDispatchRest(
-      ctx,
-      typeIdx,
-      info,
-      funcTypeDef?.kind === "func" ? funcTypeDef : undefined,
-      hostArity,
-    );
+    const funcType = funcTypeDef?.kind === "func" ? funcTypeDef : undefined;
+    const rest = classifyClosureDispatchRest(ctx, typeIdx, info, funcType, hostArity);
+    if (rest?.kind === "unsupported") continue; // (#5329) never emit a short call_ref
     if (rest) {
       restEntries.push({
         funcTypeIdx: info.funcTypeIdx,
@@ -1386,19 +1300,11 @@ export function emitClosureMethodCallExportN(ctx: CodegenContext, arity: number)
       baseWrapperIdx = typeIdx;
     }
     const funcTypeDef = mod.types[info.funcTypeIdx];
-    const selfParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[0] : undefined;
-    const selfTypeIdx =
-      selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
-        ? (selfParam as { typeIdx: number }).typeIdx
-        : typeIdx;
+    const selfTypeIdx = closureDispatchSelfTypeIdx(funcTypeDef?.kind === "func" ? funcTypeDef : undefined, typeIdx);
 
-    const rest = classifyClosureDispatchRest(
-      ctx,
-      typeIdx,
-      info,
-      funcTypeDef?.kind === "func" ? funcTypeDef : undefined,
-      hostArity,
-    );
+    const funcType = funcTypeDef?.kind === "func" ? funcTypeDef : undefined;
+    const rest = classifyClosureDispatchRest(ctx, typeIdx, info, funcType, hostArity);
+    if (rest?.kind === "unsupported") continue; // (#5329) never emit a short call_ref
     if (rest) {
       restEntries.push({
         funcTypeIdx: info.funcTypeIdx,
@@ -2023,11 +1929,7 @@ function collectClosureArityEntries(
     if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
     seenFuncTypeIdx.add(info.funcTypeIdx);
     const funcTypeDef = mod.types[info.funcTypeIdx];
-    const selfParam = funcTypeDef?.kind === "func" ? funcTypeDef.params[0] : undefined;
-    const selfTypeIdx =
-      selfParam && (selfParam.kind === "ref" || selfParam.kind === "ref_null")
-        ? (selfParam as { typeIdx: number }).typeIdx
-        : typeIdx;
+    const selfTypeIdx = closureDispatchSelfTypeIdx(funcTypeDef?.kind === "func" ? funcTypeDef : undefined, typeIdx);
     entries.push({ funcTypeIdx: info.funcTypeIdx, selfTypeIdx, closureArity: closureHostArity(info) });
   }
   return entries;

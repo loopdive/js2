@@ -31,6 +31,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
 import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
+import { hasIncompatibleElementCarrier } from "./struct-carrier-inhabits.js"; // (#5327) array-literal element-carrier compatibility proof
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
 import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
@@ -115,7 +116,7 @@ import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
  * Used to emit sNaN sentinels in tuple/array contexts so destructuring
  * default checks trigger correctly (#1024, #1553e).
  */
-function _isUndefinedLike(node: ts.Node): boolean {
+export function _isUndefinedLike(node: ts.Node): boolean {
   // Unwrap transparent expressions so `undefined as any`, `(undefined)`,
   // `<any>undefined`, `undefined satisfies T`, `undefined!` all count.
   // (#1553e — explicit `undefined as any` is the common pattern in test262
@@ -182,7 +183,7 @@ function arrayLiteralHasAnyElementContext(ctx: CodegenContext, arr: ts.ArrayLite
  * literal cannot prove that it shares another literal's closed struct carrier,
  * so an array containing it must use the lossless externref element carrier.
  */
-function staticObjectLiteralDataKeys(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): string[] | null {
+export function staticObjectLiteralDataKeys(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): string[] | null {
   const keys = new Set<string>();
   for (const prop of expr.properties) {
     if (!ts.isPropertyAssignment(prop) && !ts.isShorthandPropertyAssignment(prop)) return null;
@@ -193,7 +194,7 @@ function staticObjectLiteralDataKeys(ctx: CodegenContext, expr: ts.ObjectLiteral
   return [...keys].sort();
 }
 
-function unwrapObjectLiteralElement(expr: ts.Expression): ts.ObjectLiteralExpression | null {
+export function unwrapObjectLiteralElement(expr: ts.Expression): ts.ObjectLiteralExpression | null {
   let current = expr;
   while (
     ts.isParenthesizedExpression(current) ||
@@ -207,39 +208,7 @@ function unwrapObjectLiteralElement(expr: ts.Expression): ts.ObjectLiteralExpres
   return ts.isObjectLiteralExpression(current) ? current : null;
 }
 
-/**
- * Does a first-object array literal contain another element that cannot inhabit
- * the first object's exact closed struct? `compileArrayLiteral` historically
- * keyed the vec to element zero, then guarded-cast every later object to it.
- * Equal property names are not sufficient: `{params: {a: 1}}` and
- * `{params: {b: 2}}` have the same outer key but incompatible nested-field
- * carriers. Compare the resolved closed structs as well as the conservative
- * static key proof before retaining element zero's carrier.
- */
-function hasIncompatibleObjectLiteralCarrier(
-  ctx: CodegenContext,
-  expr: ts.ArrayLiteralExpression,
-  first: ts.Expression,
-): boolean {
-  const firstObject = unwrapObjectLiteralElement(first);
-  if (!firstObject) return false;
-  const firstKeys = staticObjectLiteralDataKeys(ctx, firstObject);
-  if (!firstKeys) return true;
-  const firstCarrier = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(firstObject));
-
-  for (const element of expr.elements) {
-    if (ts.isOmittedExpression(element) || ts.isSpreadElement(element) || _isUndefinedLike(element)) continue;
-    const object = unwrapObjectLiteralElement(element);
-    if (!object) return true;
-    const keys = staticObjectLiteralDataKeys(ctx, object);
-    if (!keys || keys.length !== firstKeys.length || keys.some((key, index) => key !== firstKeys[index])) return true;
-    const carrier = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(object));
-    if (!valTypesMatch(carrier, firstCarrier)) return true;
-  }
-  return false;
-}
-
-function unwrapArrayCarrierExpression(expr: ts.Expression): ts.Expression {
+export function unwrapArrayCarrierExpression(expr: ts.Expression): ts.Expression {
   let current = expr;
   while (
     ts.isParenthesizedExpression(current) ||
@@ -5415,16 +5384,16 @@ export function compileArrayLiteral(
     // (#4289) With no declared common ref carrier, a plain object array is not
     // allowed to assume every element has element zero's exact closed struct.
     // `{a: ...}` and `{d: ...}` are distinct WasmGC structs; coercing the latter
-    // into the former emits `ref.test` → `ref.null` → `ref.as_non_null` and
-    // traps while constructing otherwise valid JavaScript. Preserve every
-    // value in the canonical externref vec when the static field sets differ
-    // (or cannot be proven equal). Homogeneous literals and contextually typed
-    // `Array<T>` carriers retain their closed representation.
+    // into the former emits `ref.test` → `ref.null` → `ref.as_non_null` and traps
+    // while constructing otherwise valid JavaScript. Preserve every value in the
+    // canonical externref vec when the static field sets differ (or cannot be
+    // proven equal); homogeneous and contextually typed `Array<T>` literals keep
+    // their closed rep. (#5327 runs the same proof for a call-produced elem 0.)
     if (
       !hasSpread &&
       !hasContextualRefCarrier &&
       (elemWasm.kind === "ref" || elemWasm.kind === "ref_null") &&
-      hasIncompatibleObjectLiteralCarrier(ctx, expr, firstElem)
+      hasIncompatibleElementCarrier(ctx, expr, firstElem)
     ) {
       elemWasm = { kind: "externref" };
     }

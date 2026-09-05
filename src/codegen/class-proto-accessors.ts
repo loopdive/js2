@@ -77,6 +77,43 @@ const PRIVATE_NAME_PREFIX = "__priv_";
  */
 const ACCESSOR_FLAGS = (1 << 4) | (1 << 5) | (1 << 2);
 
+/**
+ * (#5318 Step 1) …with ONE exception: a RUNTIME-KEYED accessor pair.
+ *
+ * `class C { get [k]() {} set [k](v) {} }` registers its two halves under two
+ * DIFFERENT synthetic names (`__cmdyn$0` / `__cmdyn$1`), because the collector
+ * cannot know at compile time that the two key expressions evaluate to the same
+ * property key — only ClassDefinitionEvaluation does. So the two halves arrive
+ * as two separate `__defineProperty_accessor` calls carrying the SAME runtime
+ * key, and the legacy "both halves specified" reading makes the second install
+ * blank the first: `c[k]` read back `undefined` on every `cpn-class-*-accessors`
+ * row because the trailing `set` erased the `get`.
+ *
+ * §10.1.6.3 is a MERGE for exactly this case — a descriptor that specifies only
+ * `[[Get]]` preserves a live `[[Set]]` — so a dynamic half sets its own
+ * specified bit (8 = `[[Get]]`, 9 = `[[Set]]`) and leaves the other clear. A
+ * statically-named accessor keeps the legacy encoding: its two halves are ONE
+ * entry, so replace-both is already the right answer and the bytes do not move.
+ */
+const ACCESSOR_GET_SPECIFIED = 1 << 8;
+const ACCESSOR_SET_SPECIFIED = 1 << 9;
+
+/**
+ * The `__defineProperty_accessor` flag word for one installable accessor entry.
+ *
+ * Byte-identical to {@link ACCESSOR_FLAGS} for every accessor whose key folds at
+ * compile time; a runtime-keyed half additionally marks WHICH half it defines,
+ * so a sibling half under the same evaluated key merges instead of replacing.
+ */
+export function classAccessorInstallFlags(accessor: InstallableClassAccessor): number {
+  if (dynamicClassMemberOrdinal(accessor.name) === undefined) return ACCESSOR_FLAGS;
+  return (
+    ACCESSOR_FLAGS |
+    (accessor.getterFuncIdx !== undefined ? ACCESSOR_GET_SPECIFIED : 0) |
+    (accessor.setterFuncIdx !== undefined ? ACCESSOR_SET_SPECIFIED : 0)
+  );
+}
+
 /** One installable accessor member and the halves that resolved for it. */
 export interface InstallableClassAccessor {
   /** Spec-visible property key. */
@@ -205,7 +242,7 @@ export function emitClassProtoAccessorInstalls(
       fctx.body.push({ op: "ref.null.extern" });
     }
 
-    fctx.body.push({ op: "f64.const", value: ACCESSOR_FLAGS });
+    fctx.body.push({ op: "f64.const", value: classAccessorInstallFlags(accessor) });
     fctx.body.push({ op: "call", funcIdx: defineAccessorIdx });
     fctx.body.push({ op: "drop" }); // helper returns the target; discard
   }
