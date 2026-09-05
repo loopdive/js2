@@ -578,9 +578,12 @@ export function preparedIrAsyncSourceCanSuspend(ctx: CodegenContext, fn: ts.Func
     linearPlan!.awaitPoints.some(
       (awaitExpression) => linearPlan!.awaitedStaticallyResolved.get(awaitExpression) !== true,
     );
+  const linearCalleesPrepared =
+    shape?.kind !== "linear" || linearAwaitCalleesArePrepared(ctx, shape.awaitedExpressions);
   return (
     shape !== null &&
     linearHasSupportedAwaitTypes &&
+    linearCalleesPrepared &&
     (linearHasRealSuspension || settledOwner !== null) &&
     (shape.kind === "promise-all-continuation" ||
       shape.kind === "sequential-counted-loop" ||
@@ -607,6 +610,17 @@ function sourceFunctionForCall(ctx: CodegenContext, call: ts.CallExpression): ts
   return declaration && ts.isFunctionDeclaration(declaration) && declaration.getSourceFile() === call.getSourceFile()
     ? declaration
     : null;
+}
+
+/** A linear owner may call only async declarations that the same producer can prepare. */
+function linearAwaitCalleesArePrepared(ctx: CodegenContext, expressions: readonly ts.Expression[]): boolean {
+  for (const expression of expressions) {
+    if (!ts.isCallExpression(expression)) continue;
+    const callee = sourceFunctionForCall(ctx, expression);
+    if (!callee || !callee.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) continue;
+    if (!preparedIrAsyncSourceCanSuspend(ctx, callee)) return false;
+  }
+  return true;
 }
 
 function exactStandaloneFetchUser(
