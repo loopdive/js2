@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-30
+updated: 2026-09-05
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -2896,3 +2896,119 @@ asked to compile (eslint's rule definitions, prettier's printers), so this is
 remains a proxy for shape coverage, not for IR representability — it can show a
 corpus is unlike the target, never that a like corpus would pass. Both
 measurements are re-runnable from `.tmp/`; neither is committed as a baseline.
+
+## Completion audit — 2026-09-05
+
+The user has requested completion of the **whole IR migration**. The product
+outcome and all acceptance criteria above remain the definition of completion.
+Landed selector improvements, bounded compile-once cohorts, and green sample
+readiness checks are progress toward that outcome; none closes this epic.
+
+This audit uses canonical upstream `main` commit
+`5da655f286fcd569203cd2012b23dc21bf1c626d`, source tree
+`3ede655c96c89083a65a3c7e96bca3329d29513f`. It is a source and retirement-ledger
+audit, **not a new conformance run**. Earlier measurements in this file retain
+their original commits, lanes, and denominators.
+
+### Acceptance status and required evidence
+
+| Requirement | Current evidence | What is still required |
+| --- | --- | --- |
+| Authoritative IR-only coverage gate | `scripts/check-ir-only.ts` still lists five playground entries and reuses those five for standalone. | Account for the complete declared application and conformance populations, with all terminal outcomes and positive denominator controls, across every required mode. |
+| Full host and standalone Test262 non-regression | No full merge-group outcome comparison was performed in this audit. | A complete final-candidate comparison, including skips, compile errors, runtime failures, timeouts, and fatal runner outcomes. Required checks that skip a shard do not supply its evidence. |
+| One prepared program before either backend | `src/ir/program.ts` declares `reconciliation: "pending-production-wiring"`; its sealed structural census still contains direct and invariant candidates. | Reconcile every supported unit into the production program before emission; remove remaining class, initializer, and multi-source ownership exceptions. |
+| Shared WasmGC and linear frontend/ABI | `src/codegen-linear/index.ts` still compiles declaration statements directly and exports an AST-taking `compileExpression`. `linear-integration.ts` still inspects declarations and the checker. | Both backends consume the same verified semantic bodies and ABI ledger without backend-specific frontend reconstruction. |
+| Lossless validated serialized handoff | A versioned `IrAsyncPlan` and its serializer exist. `PreparedIrProgram` remains a structural census; this audit did not establish a complete production serializer. | Connect the whole prepared semantic program, ABI, effects, and frozen runtime manifest to a lossless codec and reject malformed/incompatible input before artifact side effects. |
+| Differential backend-input proof | No fresh same-snapshot differential run was performed here; the direct linear path remains. | Feed the identical serialized prepared snapshot to both backends and verify equivalent supported behavior and typed incapability without reparsing or reselection. |
+| Explicit stable unsupported results | The equality reference-operand preclaim guard landed through PR 5584, but it addresses one selector boundary. | Account for every unsupported terminal unit, including source location/reason, and remove silent fallback, post-claim withdrawal, skipped slots, and legacy exception recovery. |
+| One production policy | Public `experimentalIR` / `disableIrFirst` options, `JS2WASM_IR_FIRST`, and `JS2WASM_LINEAR_IR` switches remain in production code. | Execute the live retirement inventory in **#4522 — Inventory and retirement plan for IR/direct env kill-switches** at R9, after all supported behavior is owned by IR. |
+| Delete the direct frontend graph | The unchanged reachability audit finds both real direct dispatch roots and substantial surviving graph overlap; details below. | Prove frontend-only survivors reach zero with a fresh **#3090 — Retire direct front-end after IR-only reachability gates close (~59,676 fn-lines)** audit, classify shared runtime separately, and delete the obsolete direct dispatch and handlers. |
+| Preserve behavior and optimizations | The current optimization-retirement ledger has 50 rows, of which 46 are not ready. | Map the full retirement surface and demonstrate behavior plus the required Wasm-shape/performance properties before deleting each implementation. The tracked 50 rows are not a complete handler census. |
+| Final merged validation | This audit is not the final merged candidate, and source blockers remain. | Complete the final equivalence, cross-backend, linear, typecheck, lint/format, LOC/dead-export, full Test262, standalone-floor, and artifact-validity checks against the landed implementation. |
+
+Specific live source evidence at the audited commit:
+
+- `src/ir/program.ts:190–203` describes unvalidated unit candidates and pending
+  production reconciliation. The type name and `sealed` field do not establish
+  the product handoff by themselves.
+- `src/ir/async-plan.ts:179` already owns semantic states, values, handlers,
+  spills, ABI, and runtime intents; `serializeIrAsyncPlan` exists. Async is not
+  starting from zero. Nevertheless, `src/codegen/async-cps.ts:1045` permits AST
+  expression operands, while `src/codegen/async-frame.ts:2093`, `:2117`,
+  `:2251`, `:2284`, and `:2517` still emit AST statements/expressions for resume,
+  await, conditions, and finalizers. These production edges must be replaced.
+- `src/ir/runtime-manifest.ts` already has a substantial fixed-point builder
+  and frozen runtime manifest, including boundaries, strings, callback
+  wrapping, and function-prototype calls. Earlier descriptions of a math-only
+  manifest must not be treated as current scope. Complete runtime ownership
+  still needs production and deletion evidence.
+- `src/codegen-linear/index.ts:665`, `:848`, and `:1781` retain the direct
+  statement/expression route. `src/ir/backend/linear-integration.ts:381`
+  retains its environment escape hatch.
+- `src/compiler.ts:881–887`, `src/index.ts:830–847`, and
+  `src/codegen/index.ts:5685` retain public or environment policy choices;
+  multi-source routing at `src/codegen/index.ts:10324` still has fast/policy
+  eligibility exits.
+
+### Fresh retirement measurements
+
+`node scripts/check-ir-optimization-retirement.mjs --require-ready` exited 1:
+**46 of 50 tracked optimization rows are not ready**. Ledger blob:
+`2310f1ad7037919585419b0bed9112fd404a07bb`. The failing rows include string
+operations, numeric switches/ABI, async frame spills and promises, class and
+closure behavior, regular expressions, parser paths, vector operations, and
+module TDZ. This count measures ledger readiness, not percentage of the
+compiler migrated.
+
+The unmodified `scripts/audit-legacy-reachability.mjs` (blob
+`7767986b14664e8aad58d8354ad7d3c803a1d46e`) reported **806 codegen files**.
+Its graph actually contained both configured dispatch nodes:
+`src/codegen/expressions.ts#compileExpression` (22 function lines) and
+`src/codegen/statements.ts#compileStatement` (24 function lines). This positive
+control checks the analyzed graph, rather than accepting the declared cut list
+as proof that the roots were found.
+
+| Asserted file bucket | Files | Legacy-only function lines | Shared function lines | Unreferenced function lines |
+| --- | ---: | ---: | ---: | ---: |
+| frontend | 109 | 87,121 | 16,141 | 0 |
+| runtime | 61 | 39,952 | 57,406 | 312 |
+| stays | 633 | 39,268 | 166,214 | 198 |
+| deferred | 3 | 2,543 | 2,958 | 0 |
+
+**These are not deletion permissions or an estimate of removable code.** Bucket
+membership is asserted by file-name/prefix rules; reachability is a separate,
+conservative static calculation. Twelve files labelled `frontend` contain more
+shared than legacy-only function lines. The tool roots functions outside
+`src/codegen`, cuts the two dispatchers, and reports codegen functions; it does
+not prove final runtime behavior or complete linear-backend retirement.
+
+The normal audit command currently fails in this checkout because its use of
+`new URL(import.meta.url).pathname` leaves the space in `/Volumes/Archiv Mini`
+encoded as `%20`. The measurement above ran the **same unchanged script and
+source** through a space-free symlink, with Node's
+`--preserve-symlinks-main`. This records a successful workaround, not a repaired
+default CLI. Local evidence is in
+`.tmp/ir-completion-20260905/{optimization-retirement.log,legacy-reachability.log,legacy-reachability.json,summary.json}`;
+the large graph JSON is not committed as a baseline.
+
+### Implementation sequence from the current state
+
+1. Complete and validate the already-dispatched computed-literal class-method
+   identity slice in **#3522 — IR-only R3: compile-once classes, members, and closures**.
+   Preserve the equality preclaim fix already merged through PR 5584.
+2. Implement the new Astra plan in **#3521 — IR-only R2: prepare-before-emit free-function ownership**: authenticate semantic and physical boundary
+   contracts against actual allocator/provider state before claiming bodies.
+   Remove declaration-kind certification as the correctness substitute only
+   where the replacement contract proves the complete boundary.
+3. In parallel, follow the independent prerequisite plan in **#3525 — IR-only R5: whole-program single- and multi-source Prepared ownership**: freeze ordered module-initializer
+   planning before routing/emission, joined by exact source and unit identity.
+   Mixed callable/initializer ownership remains dependent on coherent R2
+   preparation and must not be reported complete by this prerequisite alone.
+4. Continue whole-program ownership, async semantic emission, frozen runtime
+   support, shared linear consumption, and the full prepared-program codec.
+   Preserve existing live slice claims (including module function storage) and
+   ground subsequent implementation plans in current source and measurements.
+5. Retire policy escapes and direct handlers only after the supported-language
+   and optimization obligations are met. Then run the complete final merged
+   validation above. No bounded cohort or five-entry readiness check substitutes
+   for the epic's acceptance criteria.
