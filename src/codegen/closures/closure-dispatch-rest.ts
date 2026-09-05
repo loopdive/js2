@@ -56,6 +56,13 @@ export type ClosureDispatchRestInfo =
     };
 
 /**
+ * (#5329) The subset a dispatch ARM can actually be built from. Callers skip an
+ * `unsupported` classification before an entry is created, so the entry's
+ * carrier is statically one of the buildable kinds.
+ */
+export type ClosureDispatchRestCarrier = Exclude<ClosureDispatchRestInfo, { kind: "unsupported" }>;
+
+/**
  * Recover the concrete carrier needed for a source rest parameter.
  *
  * Most rest parameters lower to the canonical `{ length, data }` vec. A
@@ -112,7 +119,7 @@ export function classifyClosureDispatchRest(
 
 /** Build the single hidden Wasm argument that implements a source rest array. */
 export function materializeClosureDispatchRest(
-  rest: ClosureDispatchRestInfo,
+  rest: ClosureDispatchRestCarrier,
   dispatcherArity: number,
   fixedArity: number,
   externVecTypeIdx: number,
@@ -135,12 +142,6 @@ export function materializeClosureDispatchRest(
     }
     instrs.push({ op: "struct.new", typeIdx: rest.tupleTypeIdx });
     return instrs;
-  }
-  if (rest.kind === "unsupported") {
-    // Unreachable: callers skip an `unsupported` entry before it can reach a
-    // dispatch arm (see `emitClosureCallExportN`). Keep the exhaustive tail so a
-    // future carrier kind cannot silently fall through to the vec path.
-    return [];
   }
 
   const restCount = Math.max(0, dispatcherArity - fixedArity);

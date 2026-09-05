@@ -31,7 +31,7 @@ import {
   classifyClosureDispatchRest,
   closureDispatchSelfTypeIdx,
   materializeClosureDispatchRest,
-  type ClosureDispatchRestInfo,
+  type ClosureDispatchRestCarrier,
 } from "./closures/closure-dispatch-rest.js";
 import { buildMethodDispatchPrologue } from "./closures/method-dispatch-prologue.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
@@ -626,7 +626,7 @@ interface ClosureDispatchEntry {
   returnType: ValType | null;
   selfTypeIdx: number;
   closureArity: number;
-  rest?: ClosureDispatchRestInfo;
+  rest?: ClosureDispatchRestCarrier;
 }
 
 /**
