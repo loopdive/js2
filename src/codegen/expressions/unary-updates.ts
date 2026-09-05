@@ -19,6 +19,7 @@ import {
 } from "../global-environment.js";
 import { tryEmitLinearU8ElementUpdate } from "../linear-uint8-codegen.js";
 import { resolveWidenedVarKey } from "../widened-var-key.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js";
 import { reportError } from "../context/errors.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
@@ -1102,6 +1103,7 @@ function compilePrefixUpdate(
           const boxedPP = fctx.boxedCaptures?.get(ppOperand.text);
           if (boxedPP) {
             // ++x through ref cell (null-guarded #702)
+            emitConditionalCaptureBoxRepair(fctx, ppOperand.text, idx);
             // For non-numeric boxed types (externref, ref_null, i64), coerce to f64
             // before arithmetic to avoid f64.add on non-f64 operand (#816)
             const needsCoerce = boxedPP.valType.kind !== "f64" && boxedPP.valType.kind !== "i32";
@@ -1274,6 +1276,7 @@ function compilePrefixUpdate(
           const boxed = fctx.boxedCaptures?.get(mmOperand.text);
           if (boxed) {
             // ++x / --x through ref cell (null-guarded #702)
+            emitConditionalCaptureBoxRepair(fctx, mmOperand.text, idx);
             // For non-numeric boxed types (externref, ref_null, i64), coerce to f64
             // before arithmetic to avoid f64.sub on non-f64 operand (#816)
             const needsCoerce = boxed.valType.kind !== "f64" && boxed.valType.kind !== "i32";
@@ -1526,6 +1529,7 @@ function compilePostfixUnary(
     // Handle boxed (ref cell) mutable captures for postfix (null-guarded #702)
     const boxedPost = fctx.boxedCaptures?.get(postOperand.text);
     if (boxedPost) {
+      emitConditionalCaptureBoxRepair(fctx, postOperand.text, idx);
       // For non-numeric boxed types (externref, ref_null, i64), coerce to f64
       // before arithmetic to avoid f64.add/sub on non-f64 operand (#816)
       const needsCoerce = boxedPost.valType.kind !== "f64" && boxedPost.valType.kind !== "i32";
