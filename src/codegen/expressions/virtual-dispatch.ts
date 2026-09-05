@@ -137,10 +137,17 @@ function ensureCascadeNumericBoxing(
  * "decline, use the static path", which replaces an invalid module rather than
  * a working one.
  *
- * (#5352) `canBoxNumbers` relaxes the "mixed numeric-and-ref" refusal above:
- * with `__box_number` already registered (see `ensureCascadeNumericBoxing`) an
- * `f64` arm CAN produce the widened `externref`, so that mix unifies instead of
- * declining into a static bind.
+ * (#5352) `canBoxNumbers` OVERTURNS the "mixed numeric-and-ref" half of the
+ * paragraph above. Its reasoning was one step short: the hazard is not emitting
+ * a `call` inside an arm array, it is MINTING an import while doing so. Once
+ * `__box_number` has been registered up front (see `ensureCascadeNumericBoxing`)
+ * an `f64` arm CAN produce the widened `externref`, so that mix unifies instead
+ * of declining. And declining is not the neutral act the paragraph assumes —
+ * the caller's static path binds every receiver to `candidates[0]`, which for
+ * an OPEN receiver is a wrong-body call, not a conservative one. Measured: 120
+ * of 123 Temporal rows.
+ *
+ * Mixed void/value and `funcref` still decline; nothing here changes those.
  *
  * @param proposed the caller's first-candidate/TS-signature guess
  * @param candRets each arm's own Wasm result, `undefined` for a void arm
