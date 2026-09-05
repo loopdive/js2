@@ -127,15 +127,14 @@ function readAuthority(
   ) {
     return undefined;
   }
-
   if (!hasOwn(exports, STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT)) return undefined;
   const bindings = terminalAlias(exports, STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE);
   if (!isExactFuncrefTable(bindings, 1)) return undefined;
-
   if (!hasOwn(exports, STANDALONE_TIMER_CALLBACK_DISPATCH_EXPORT)) return undefined;
   const dispatch = terminalAlias(exports, STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE);
   if (typeof dispatch !== "function") return undefined;
   try {
+    // (#5337) not `===`: JSC splits export/table identities.
     if (!sameExportedFunction(dispatch, bindings.get(0))) return undefined;
   } catch {
     return undefined;
