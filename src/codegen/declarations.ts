@@ -171,7 +171,7 @@ import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-w
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
-import { moduleInitPopulationIsPass2Stable } from "./declarations/module-init-pass2-stable.js";
+import { markModuleInitClosureRegistry, moduleInitPass2IsSkippable } from "./declarations/module-init-pass2-stable.js";
 import {
   applyModuleClosurePreLift,
   DISCOVERY_STATIC_ENABLE_SEAM,
@@ -5920,6 +5920,7 @@ export function compileDeclarations(
   // top-level diagnostic was reported twice. `dedupeDiagnosticsFrom` reconciles
   // them after pass 2 without truncating pass 1's range.
   let pass1DiagnosticMark = 0;
+  let pass1ClosureRegistryMark: number | undefined; // (#5335) see moduleInitPass2IsSkippable
   const runtimeGroupsBySource = new WeakMap<ts.SourceFile, readonly RuntimeModuleDeclarationGroup[]>();
 
   function runtimeModuleGroupForStatement(stmt: ts.Statement): RuntimeModuleDeclarationGroup | undefined {
@@ -6279,6 +6280,7 @@ export function compileDeclarations(
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
     pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
     compiledInitFctx = profilePhase("module-init-pass1", () => compileModuleInitBody());
+    pass1ClosureRegistryMark = markModuleInitClosureRegistry(ctx); // (#5335)
     // Expose the pending init body so fixupModuleGlobalIndices can adjust it
     // when addStringConstantGlobal is called during function body compilation.
     ctx.pendingInitBody = compiledInitFctx.body;
@@ -6476,18 +6478,16 @@ export function compileDeclarations(
   // Only the emitting call needs the recompile; in the other multi-source
   // modes the body it would produce is discarded unread.
   if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody) {
-    // (#3523 R4 gap-1a/1b) A second direct compile can differ from pass 1's
-    // (fixup-maintained) body through exactly two measured mechanisms: the
-    // inlinable-function registry, read only when compiling a call, and closure
-    // re-lifting, which needs a closure to lift. A population missing either
-    // ingredient recompiles to what pass 1 already produced, so pass 1's body
-    // stands and the recompile is skipped. Skipping then also skips
-    // `restorePropOrderState` (nothing recompiles; pass 1's end state is where
-    // pass 2 converged anyway). Fail closed — see
-    // `declarations/module-init-pass2-stable.ts`. An async-graph init always
-    // takes pass 2 (its lowering exists only there), stated explicitly rather
-    // than via the scan's AwaitExpression refusal. The env seam restores the
-    // unconditional recompile so tests can A/B against the two-pass body.
+    // (#3523 R4 gap-1a/1b, #5335) A second direct compile can differ from pass 1's
+    // (fixup-maintained) body through three measured mechanisms, all owned by
+    // `declarations/module-init-pass2-stable.ts` — read it before touching this
+    // condition. Two are syntactic; the third is the closure-info registry the
+    // function bodies just above fill in, which is why the decision also takes
+    // pass 1's mark. Skipping also skips `restorePropOrderState` (pass 1's end
+    // state is where pass 2 converged anyway). Fail closed. An async-graph init
+    // always takes pass 2 (its lowering exists only there), stated explicitly
+    // rather than via the scan's AwaitExpression refusal. The env seam restores
+    // the unconditional recompile so tests can A/B against the two-pass body.
     if (
       process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
       hasAsyncGraphInit ||
@@ -6495,7 +6495,7 @@ export function compileDeclarations(
       // (#3523 R4 gap-6a) With pass 1 skipped this IS the only compile, so it
       // always runs — the pass-2-stability question is about a SECOND compile.
       discoveryStatic ||
-      !moduleInitPopulationIsPass2Stable(ctx)
+      !moduleInitPass2IsSkippable(ctx, pass1ClosureRegistryMark)
     ) {
       // (#2965) Reset the program-order-sensitive property state to its
       // pre-pass-1 value so this recompile does not treat pass 1's own
