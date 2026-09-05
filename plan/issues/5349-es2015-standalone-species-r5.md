@@ -17,6 +17,15 @@ es_edition: ES2015
 goal: standalone-mode
 requested_by: claude.ai@loopdive.com/fable-es6
 related: [5145, 1359, 3575, 4449, 5317, 4444]
+loc-budget-allow:
+  # 2026-09-05 r5 step 5: ArrayBuffer.prototype.slice had no SpeciesConstructor
+  # step at all (§25.1.5.3 steps 13-20). The emitter plus the shared
+  # constructor-value ladder extracted out of `emitTaDynSpeciesCreate` live in
+  # dataview-native.ts; array-species.ts grows by the §10.4.2.3 step-9 null arm
+  # and array-holes.ts by the third pre-scan trigger.
+  - src/codegen/dataview-native.ts
+  - src/codegen/array-species.ts
+  - src/codegen/array-holes.ts
 ---
 
 ## Problem
