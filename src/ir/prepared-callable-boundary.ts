@@ -167,12 +167,57 @@ function snapshotSemanticSignature(
   ) as PreparedCallableBoundarySemanticSignature;
 }
 
-/** Use the repository's canonical recursive serializer as an immutable receipt key. */
+/**
+ * Record the ValType brands nested in one semantic signature.
+ *
+ * `irTypeKey` is authoritative for the structural type shape but deliberately
+ * describes storage-equivalent values, so it omits `i32.boolean`, `i32.symbol`,
+ * `i64.bigint`, and `f64.undefSentinel`.  Keep its recursive handling for all
+ * other IR semantics and add this narrow supplementary walk for the brands.
+ * Physical attachments such as `typeRef`, `carrierRef`, and `layout` are
+ * intentionally not part of this fingerprint; they are checked through the
+ * separate prepared ABI evidence.
+ */
+function semanticValTypeBrandKey(signature: PreparedCallableBoundarySemanticSignature): string {
+  const brands: string[] = [];
+  const optionalFlagKey = (value: unknown): string =>
+    value === undefined ? "absent" : value === true ? "true" : value === false ? "false" : `other:${String(value)}`;
+  const active = new Set<object>();
+  const visit = (value: unknown): void => {
+    if (value === null || typeof value !== "object") return;
+    if (active.has(value)) throw new Error("IR semantic receipt cannot encode a recursive layout");
+    active.add(value);
+    try {
+      if (!Array.isArray(value)) {
+        const candidate = value as { readonly kind?: unknown; readonly val?: unknown };
+        if (candidate.kind === "val" && candidate.val !== null && typeof candidate.val === "object") {
+          const val = candidate.val as ValType;
+          if (val.kind === "i32")
+            brands.push(`i32:boolean=${optionalFlagKey(val.boolean)}:symbol=${optionalFlagKey(val.symbol)}`);
+          if (val.kind === "i64") brands.push(`i64:bigint=${optionalFlagKey(val.bigint)}`);
+          if (val.kind === "f64") brands.push(`f64:undefSentinel=${optionalFlagKey(val.undefSentinel)}`);
+        }
+      }
+      if (Array.isArray(value)) {
+        for (const item of value) visit(item);
+      } else {
+        for (const [, item] of Object.entries(value).sort(([left], [right]) => left.localeCompare(right))) visit(item);
+      }
+    } finally {
+      active.delete(value);
+    }
+  };
+  visit(signature.params);
+  visit(signature.returnType);
+  return brands.join("|");
+}
+
 function semanticSignatureKey(signature: PreparedCallableBoundarySemanticSignature): string | undefined {
   try {
     return JSON.stringify({
       params: signature.params.map((type) => irTypeKey(type)),
       returnType: signature.returnType === null ? null : irTypeKey(signature.returnType),
+      valTypeBrands: semanticValTypeBrandKey(signature),
     });
   } catch {
     // Recursive anonymous layouts have no canonical key.  They cannot cross

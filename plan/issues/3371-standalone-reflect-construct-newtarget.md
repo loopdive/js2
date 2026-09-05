@@ -787,3 +787,51 @@ TypedArray view answers `null` on main; Promise and class-instance
 DataView/TA view traps on main (probe files under `.tmp/q/` in the fix-round
 worktree while it exists; the shapes are one-liners and are described in the
 review-round subsection).
+
+### Review of round 1 — verdict (2026-09-05, single reviewer, 40+ probes)
+
+**No regression against main.** Structurally, `classifyRuntimeNewTargetSite`
+and the second refusal (`applyRuntimeNewTargetPrototype` returning false) sit
+inside the `distinctNewTarget && staticNewTargetProto === undefined` branch,
+which is exactly the branch main refused unconditionally; empirically no probe
+was a compile error on the fix and OK on main. Main's own paths are untouched
+row-for-row: 2-arg `Reflect.construct`, `NT === F`, and the static
+`NT.prototype = …` shape with F an ordinary function, class, Array, Uint8Array,
+Object, Promise, DataView. Byte-identical to the lane on programs without
+`Reflect.construct` on all three targets. Pins 29/29 on node 22 and 25.
+
+**Six over-refusals against the r4 LANE (programs main refused, the lane
+answered correctly, round 1 refuses again).** Conservative losses, not wrong
+answers; they are the round-2 list, cheapest first:
+
+1. `targetReadsNewTarget` descends into nested ordinary function declarations
+   and expressions, whose `new.target` is their own — stop the descent there
+   (arrows and class field initialisers must keep inheriting). Probe
+   `b5_nt_nested_newtarget.js`: node 7, lane 7, round 1 refused.
+2. `UNSETTABLE_PROTOTYPE_CONSTRUCTORS` lists Boolean, String and Symbol by
+   family; measured, those wrapper carriers DO take the prototype patch (lane
+   = node for all three, Symbol's TypeError included). Drop the three; keep
+   Array, Number, Map, Set, RegExp, Function, which were measured to discard it.
+3. `prototypeIsPristine` counts every same-NAME binding in the file with no
+   scope check, so an unrelated parameter named like the NewTarget refuses the
+   site (`m2_shadow.js` vs `m1_control_noshadow.js`). Resolve through the
+   oracle's symbol for the binding instead of `name.text`.
+4. `prototypeIsPristine` treats a MUTATION of `NT.prototype`
+   (`NT.prototype.tag = 9`, `Object.assign(NT.prototype, …)`, and even
+   `Object.defineProperty(NT, "prototype", {value: {…}})`) as replacing the
+   slot; the slot still holds a plain `$Object`, which is what
+   `__native_construct_N`'s `ref.test $Object` accepts. Lane answered all three
+   correctly; the code comment citing the defineProperty shape as the rationale
+   is wrong as written.
+5. In-file function targets the driver declines are refused on the claim that
+   the post-construction prototype patch is a no-op on a closed struct; the
+   same instance shape reached through the `unknown`-target carrier route
+   (`k1_target_param.js`) takes the patch and answers node. The refusal keys on
+   how well the target resolves, not on the carrier property it names.
+6. The §10.1.14 guard comment says it repaired the typed-array carrier too;
+   measured, only DataView changed (17 = node, was 20); the typed-array answer
+   is unchanged (null) because that reader is broken on main.
+
+Probe files: `/home/user/js2/.tmp/rv/p/*.js` with harness `.tmp/rv/cmp.mts`
+(base / lane / fix / node) while the container lives; every shape is a
+one-liner quoted above.
