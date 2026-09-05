@@ -1,10 +1,12 @@
 ---
 id: 5335
 title: "REGRESSION on main: module-init pass-2 skip silently miscompiles nested closures (outer()()() → 0)"
-status: ready
+status: done
 sprint: current
 created: 2026-09-05
 updated: 2026-09-05
+completed: 2026-09-05
+assignee: ttraenkler/claude-senior-dev
 priority: high
 horizon: m
 feasibility: medium
@@ -129,3 +131,168 @@ Only this one corpus file regressed among 120, but the trigger is generic: any
 module-level call into a function that returns or captures through a closure. The dogfood
 `moment` lane is unaffected (10/10 with #5333 fixed). Worth a targeted sweep once the fix
 lands.
+
+---
+
+## Resolution (2026-09-05)
+
+Fixed. Two things filed above turned out to be wrong, and both changed the fix.
+
+### 1. The named root cause was the wrong mechanism
+
+The report said pass 2 *re-lifts* the closure and that the re-lifting "never
+happens". It does not. Reading the emitted WAT both ways (`--wat`, with
+`JS2WASM_IR_INLINE=0` so the inliner does not obscure the call), pass 1's kept
+body for `console.log(outer()()())` ends:
+
+```wat
+call 9            ;; $outer
+drop              ;; its result, thrown away
+ref.null extern
+drop
+ref.null extern
+call 1            ;; __unbox_number  -> 0
+call 0            ;; console_log_number
+```
+
+Each `()` on a non-identifier callee lowered to `drop; ref.null extern`. Pass 2
+emits the real `ref.test` / `call_ref` closure dispatch instead.
+
+The actual mechanism is a **third** between-pass registry the gate did not
+model. `src/codegen/expressions/call-tail-dispatch.ts`'s "Handle
+CallExpression as callee" arm calls `matchClosureInfoBySignature`, which
+iterates **`ctx.closureInfoByTypeIdx`**. That map is filled by lifting closures
+out of the top-level function **bodies**, which are compiled *between* the two
+passes. At pass 1 it is empty, nothing matches, and — because the checker DOES
+give the inner call a signature — the `if (!callSigs || callSigs.length === 0)`
+guard skips the working dynamic-call ladder too, so the arm falls through to a
+tail that evaluates both calls and answers `undefined`.
+
+That distinction matters: mechanisms 1 and 2 produce **different bytes with
+equal runtime values**. Mechanism 3 produces a **wrong answer**. A gate whose
+stated contract is byte identity was never going to catch it.
+
+Corroboration that this was already known elsewhere in the same subsystem:
+`declarations/module-init-closure-prelift.ts` documents the identical failure
+in its own refusal list — *"a nested closure that escapes its parent's lifted
+body … where a between-pass `mk()()` answered `0` instead of `5`"*. The hazard
+was understood on the pass-1-skip route and simply not carried over to the
+pass-2 one.
+
+### 2. The blast radius was larger than filed
+
+Measured on the parent commit, not argued:
+
+| shape | filed as | actually printed |
+| --- | --- | --- |
+| `outer()()()` two-level | broken (`0`) | `0` |
+| `mk()()` one-level | *"a control that already worked"* | **`0`** |
+| `mk()()` one-level, arrow | not considered | **`0`** |
+| `a()()` where `a` → `b` → closure (2 hops) | not considered | **`0`** |
+| 3 hops | not considered | **`0`** |
+| `var m = outer(); var i = m(); i()` | — | `3` (correct) |
+| `mk().v()` | — | `5` (correct) |
+
+Nesting depth is irrelevant; the one-level case is the common one. And the
+two- and three-hop rows are the decisive ones: the **direct** callee is
+syntactically closure-free there, so the issue's fix direction 2 ("refuse on
+any call to a local function whose body is not proven closure-free") answers
+the one-hop case and still miscompiles the rest.
+
+### 3. Which direction was taken, and what was given up
+
+Neither 1, 2, nor 3. Direction 1 (transitive closure reachability) is the
+honest *syntactic* answer, but it needs a whole-program call graph with a
+conservative verdict on recursion, indirect calls, dynamic dispatch and host
+calls — a large amount of machinery to approximate a fact the compiler can look
+up. Direction 3 (revert to gap-1a) throws away a measured-safe optimisation.
+
+Instead the gate stops predicting the cause and **observes the effect**:
+
+* `markModuleInitClosureRegistry(ctx)` records `ctx.closureInfoByTypeIdx.size`
+  when pass 1 returns;
+* `moduleInitPass2IsSkippable(ctx, mark)` skips pass 2 only when the syntactic
+  predicate still holds **and** that size is unchanged — i.e. compiling the
+  function bodies in between did not register a closure.
+
+Two integer reads. It needs no judgement about what a call does (the founding
+principle of this gate), and it cannot be defeated by transitivity, recursion,
+indirect calls or a host callee. `undefined` mark (pass 1 did not run) means
+*no skip* — fail closed.
+
+The mark is taken **after** pass 1, not before: the question is what the
+between-pass work changed, and a population that lifts its own closures is
+already refused syntactically. Measured, that choice keeps 97 corpus fast-path
+hits instead of 96.
+
+**Applied to both halves of the predicate, not just gap-1b.** A call-free
+population provably cannot read the registry, so exempting gap-1a would be
+sound — but it would be *argued* rather than measured, and this gate has now
+been wrong once for exactly that reason.
+
+**What was given up — quantified.** The fast path was narrowed, not deleted:
+
+| corpus | skip fired before | after | retained |
+| --- | --- | --- | --- |
+| `tests/differential/corpus` (120 programs) | 105 | 97 | 92.4 % |
+| lodash `.npm-compat` package sources (1048 modules, 651 module-init populations) | 579 | 526 | 90.8 % |
+
+Both withdrawal sets are almost entirely closure-lifting modules — precisely
+the population at risk. The cost of a withdrawal is one extra module-init
+compile.
+
+**What this does NOT claim:** that `closureInfoByTypeIdx` is the only
+between-pass state a kept pass-1 body can read wrongly. It is the only one
+measured to produce a wrong *answer*. A future mechanism-4 belongs in the same
+mark.
+
+### 4. Evidence
+
+* `tests/issue-5335-module-init-pass2-closure-registry.test.ts` — 11
+  assertions, every one pinning a **value**. **6 fail on the parent commit**,
+  all 11 pass with the fix. Sources are untyped `.js` on purpose: annotating
+  them routes the call through a different dispatcher arm and the whole file
+  then passes identically with the fix reverted.
+* The suite's own anti-vacuity control — *"a module that lifts no closures
+  still skips pass 2"*, asserting `pass1=1, pass2=0` — passes **both** ways, so
+  the file cannot go green by disabling the optimisation.
+* `scripts/diff-test.ts`: **114 → 115 match** (of 120). `closures/06-nested.js`
+  flips `mismatch → match`; no other file moves. The 2 remaining mismatches
+  (`generators/06-closure-state.js`, `object/06-delete.js`) and 3 runtime
+  errors are pre-existing and unchanged.
+* `tests/issue-3523-module-init-single-pass.test.ts` — 15/15 pass, including
+  `pass1=1, pass2=0` for every shape the slice admits and the closure-admit
+  mutation pin. That seam now also bypasses the registry conjunct; it exists to
+  widen admission until the build changes, and a second refusal standing behind
+  it would make the mutation invisible.
+
+### 5. Two findings handed on rather than fixed here
+
+* **A latent codegen fall-through, independent of this gate.** In
+  `call-tail-dispatch.ts`, when the inner call HAS a checker call signature but
+  no registered closure matches it, the arm falls through to a tail that
+  silently answers `undefined`. The untyped twin of that case was already
+  repaired (`tryEmitInlineDynamicCall`, guarded by
+  `callSigs.length === 0`); the typed-but-unmatched case was not. Forcing pass
+  2 avoids reaching it here, but any other route that misses the registry — a
+  host callee, a closure minted in a module compiled later — lands in the same
+  place. Deserves its own issue: a miss should fall back to the dynamic ladder,
+  not to `ref.null extern`.
+* **A stale pin in `tests/issue-3523-module-init-discovery-static.test.ts`**
+  ("(g) WHY it is off"). It asserts two files fail under the `gap-6a` opt-in
+  seam; `decodeURI/S15.1.3.1_A1.2_T1.js` now **passes** under it. Verified
+  pre-existing: the assertion fails identically with this change reverted. The
+  test's own comment anticipates it — *"If a later change makes either of these
+  pass under the seam, that is a real result — re-measure the full corpus
+  before flipping the default."* Not touched here; it belongs to the #3523
+  lane, and it does not gate CI (the test262 submodule is absent there, so the
+  case returns early).
+
+### 6. Follow-ups from the report that remain open
+
+Unchanged and still worth their own tasks: promote `Differential test` to a
+required check, and refresh `benchmarks/results/diff-test-baseline.json` on
+merge to main. The stale baseline (2026-07-19) is what misattributed this
+regression to PR #5620. With this fix `closures/06-nested.js` matches the
+baseline's recorded `3` again, so that particular misattribution stops — but
+the staleness that caused it does not.

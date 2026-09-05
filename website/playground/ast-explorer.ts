@@ -115,6 +115,11 @@ export class AstExplorer {
    */
   showsEditorSource = true;
 
+  /** Host-boundary facts captured at load; surfaced only on a parse failure. */
+  private boundary: { nativeBuiltins: boolean; setInstance: boolean; exportCount: number } | null = null;
+  /** Did a known-good one-token parse round-trip at load? See the canary in `load`. */
+  private boundaryLive = true;
+
   private pendingSource: { code: string; mapsToEditor: boolean } | null = null;
   private lastRendered: { code: string; kind: AstSourceKind; options: AcornOptions } | null = null;
 
@@ -196,7 +201,7 @@ export class AstExplorer {
       ]);
 
       const imports = buildCompiledAdapterImports(manifest);
-      const { instance } = await instantiateWasm(
+      const { instance, nativeBuiltins } = await instantiateWasm(
         bytes,
         imports.env,
         imports.string_constants,
@@ -204,7 +209,22 @@ export class AstExplorer {
       );
       // Exports-backed capabilities (closure wrapping, struct reads) need the
       // instance handed back before anything is called.
+      const wired = typeof imports.setInstance === "function";
       imports.setInstance?.(instance);
+
+      // (#5337) Keep what the host boundary was actually given. On
+      // JavaScriptCore a parse fails with `__call_fn_0 is not available` and
+      // acorn's own "ecmaVersion is required" warning — i.e. the module could
+      // read neither the options object nor its own exports — while the same
+      // build is fine under V8. These three facts separate the candidate
+      // mechanisms (which instantiation branch ran, whether the export set was
+      // published, how large it is), and they are the ones no stack trace
+      // carries. Reported only when a parse throws.
+      this.boundary = {
+        nativeBuiltins,
+        setInstance: wired,
+        exportCount: Object.keys(instance.exports).length,
+      };
 
       const exports = wrapExports(instance, {
         signatures: manifest.exportSignatures,
@@ -215,6 +235,25 @@ export class AstExplorer {
       }
       this.parse = exports.parse as (src: string, opts: AcornOptions) => AstNode;
       this.meta = meta;
+
+      // (#5337) Canary: prove the host boundary is live before the panel trusts
+      // it. An instance whose export set was never published parses ANYWAY, but
+      // wrongly — it cannot read the options object, so acorn falls back to its
+      // defaults and then dies deep inside on a null keyword table. Reproduced
+      // under V8 by skipping `setInstance`: acorn warns "ecmaVersion is
+      // required" and throws "Cannot read properties of null (reading
+      // 'replace')" — the exact pair reported from iOS Safari. Checking a
+      // one-token parse here turns that into a statement about the boundary
+      // instead of a confusing error about the user's source.
+      try {
+        const canary = this.parse("0", { ecmaVersion: 2022, sourceType: "module" }) as {
+          body?: { expression?: { value?: unknown } }[];
+        };
+        this.boundaryLive = canary.body?.[0]?.expression?.value === 0;
+      } catch {
+        this.boundaryLive = false;
+      }
+
       this.setStatus("", "info");
     })();
 
@@ -270,7 +309,23 @@ export class AstExplorer {
       this.lastRendered = null;
       this.treeEl.replaceChildren();
       const message = error instanceof Error ? error.message : String(error);
-      this.setStatus(`Parse error: ${message}`, "error");
+      // A genuine SyntaxError from acorn is about the SOURCE and needs no
+      // machine details; anything else came out of the host boundary, and there
+      // the boundary facts are the whole diagnosis (#5337).
+      const isSyntax = error instanceof Error && error.name === "SyntaxError";
+      const b = this.boundary;
+      const detail =
+        isSyntax || !b
+          ? ""
+          : ` — [${b.nativeBuiltins ? "native js-string" : "js-string polyfill"}, ` +
+            `setInstance ${b.setInstance ? "ok" : "MISSING"}, ${b.exportCount} exports]`;
+      this.setStatus(
+        this.boundaryLive
+          ? `Parse error: ${message}${detail}`
+          : `The compiled parser loaded but its host boundary is not live, so it cannot read ` +
+              `parse options — the error below is a symptom, not your source. ${message}${detail}`,
+        "error",
+      );
       this.renderHeader(null);
       return false;
     }
