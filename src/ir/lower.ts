@@ -394,6 +394,11 @@ export interface IrLoweredBody<S, Slot> {
   readonly exported: boolean;
 }
 
+export interface IrLoweredSignature<Slot> {
+  readonly params: readonly IrLoweredValue<Slot>[];
+  readonly results: readonly (readonly Slot[])[];
+}
+
 function emitPreparedIntrinsic<S>(
   instr: IrInstrIntrinsic,
   out: S,
@@ -490,6 +495,45 @@ function requireExactPhysicalStringParameter(
       `ir/lower: exact physical parameter ${parameterIndex} in ${funcName} is not the canonical native-string carrier/refinement`,
     );
   }
+}
+
+function projectIrFunctionSignatureWithConverter<S, Slot>(
+  func: IrFunction,
+  resolver: IrLowerResolver,
+  emitter: BackendEmitter<S>,
+  typeConverter: TypeConverter<Slot>,
+): IrLoweredSignature<Slot> {
+  const convertSlots = (type: IrType, where: string, parameterIndex?: number): readonly Slot[] => {
+    const physical =
+      parameterIndex === undefined ? undefined : resolver.resolveParamPhysicalType?.(func.unitId, parameterIndex, type);
+    if (physical) {
+      requireExactPhysicalStringParameter(resolver, emitter.backend, func.name, parameterIndex!, type, physical);
+      return [physical.type as unknown as Slot];
+    }
+    const slots = typeConverter.convertType(type);
+    if (slots.length === 0) {
+      throw new Error(`ir/lower: ${emitter.backend} type converter produced no slots for ${where} in ${func.name}`);
+    }
+    return [...slots];
+  };
+  return {
+    params: func.params.map((param, index) => ({
+      name: param.name,
+      slots: convertSlots(param.type, `param ${param.name}`, index),
+    })),
+    results: func.resultTypes.map((type, index) => convertSlots(type, `result ${index}`)),
+  };
+}
+
+/** Project a WasmGC function boundary without emitting body instructions. */
+export function projectIrFunctionSignature(func: IrFunction, resolver: IrLowerResolver): IrLoweredSignature<ValType> {
+  const emitter = new WasmGcEmitter(resolver);
+  return projectIrFunctionSignatureWithConverter(
+    func,
+    resolver,
+    emitter,
+    wasmValueTypeConverter("wasmgc", resolver, func.name),
+  );
 }
 
 function flattenWasmValues(values: readonly IrLoweredValue<ValType>[]): LocalDef[] {
@@ -3940,32 +3984,25 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   }
 
-  const convertSlots = (type: IrType, where: string, parameterIndex?: number): readonly Slot[] => {
-    const physical =
-      parameterIndex === undefined ? undefined : resolver.resolveParamPhysicalType?.(func.unitId, parameterIndex, type);
-    if (physical) {
-      requireExactPhysicalStringParameter(resolver, emitter.backend, func.name, parameterIndex!, type, physical);
-      return [physical.type as unknown as Slot];
-    }
-    const slots = typeConverter.convertType(type);
-    if (slots.length === 0) {
-      throw new Error(`ir/lower: ${emitter.backend} type converter produced no slots for ${where} in ${func.name}`);
-    }
-    return [...slots];
-  };
+  const signature = projectIrFunctionSignatureWithConverter(func, resolver, emitter, typeConverter);
 
   return {
     name: func.name,
     body,
-    params: func.params.map((param, index) => ({
-      name: param.name,
-      slots: convertSlots(param.type, `param ${param.name}`, index),
-    })),
+    params: signature.params,
     locals: locals.map((local) => ({
       name: local.name,
-      slots: convertSlots(local.logicalType, `local ${local.name}`),
+      slots: (() => {
+        const slots = typeConverter.convertType(local.logicalType);
+        if (slots.length === 0) {
+          throw new Error(
+            `ir/lower: ${emitter.backend} type converter produced no slots for local ${local.name} in ${func.name}`,
+          );
+        }
+        return [...slots];
+      })(),
     })),
-    results: func.resultTypes.map((type, index) => convertSlots(type, `result ${index}`)),
+    results: signature.results,
     exported: func.exported,
   };
 }

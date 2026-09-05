@@ -78,6 +78,7 @@ oracle-ratchet-allow:
   - src/codegen/ir-fnctor-parameter-planning.ts
 func-budget-allow:
   - src/codegen/expressions/new-super.ts::compileNewFunctionDeclaration
+  - src/codegen/ir-prepared-free-functions.ts::selectR2PreparedOwnerComponents
   - src/codegen/index.ts::planIrOverlay
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeFromAstResolver
@@ -4514,3 +4515,65 @@ independent. Coordinate any other scope change with the lead before editing.
   to a same-config baseline. No baseline weakening. Full merge-group Test262
   validation remains required for these shared preparation/lowering changes;
   a green small IR corpus is not migration completion.
+
+## Implementation Results — 2026-09-05 — R2-B1
+
+**Status:** in-progress; the issue and epic remain open.
+
+**Source and SHAs:** the implementation worktree started at
+`4946cf70fe82def4bb4ec3e55092153b90b9506b` and retained the signed
+implementation commit `f5f45c792568daedfac60e9533d340d47e6e8526`. The
+contract hardening is `2af771ad0391b17ae3b63e4529ebfbaff8aa6ab6`. Before
+final validation the branch merged `origin/main` at `b08dd4589c60544e40ab94fdeaae7f6cc186303f`, producing merge
+`1c7db23a4ebf4c00cd9d8fb8fc1fd21125a8d144`. The same-configuration
+pre-change residual probe used the archived `origin/main` snapshot at
+`6d601f91a51993eaa7586299a3f3bde07b49f367`.
+
+**Measured ownership change:** the module-init caller
+`apply(f: (v: number) => number, v: number): number` measured
+`(prepareAttempts, directBodyEmissions, irBodyEmissions) = (1, 1, 1)` with
+`fixed-point / outside-caller-uncertified` in both GC-host and standalone on
+the pre-change probe. With R2-B1 it reports `(1, 0, 1)`, a prepared component,
+no withdrawal, and runtime `main() === 2` in both lanes. Poisoning `apply`'s
+direct body leaves the result unchanged, proving that the direct emitter was
+skipped. The `experimentalIR: false` fallback also evaluates `main() === 2`.
+The scalar outside-caller and callable-without-outside-caller controls retain
+`(1, 0, 1)` in both lanes. The storage-terminal control remains
+`(1, 1, 1)` with `fixed-point / storage-terminal-unprepared`, and the
+object-return control remains `(1, 1, 1)` with
+`admission / return-signature-unstable`.
+
+The boundary contract now carries the exact source-qualified unit and binding,
+allocator object and physical signature, scoped ABI lookup, final projected
+signature, and complete prepared support IDs. It snapshots nested callable
+parameter/result semantics, rechecks them at certification and publication,
+rejects multi-result functions instead of collapsing them to a void sentinel,
+and keeps compiler timer shims on their own exact late-seal transaction. The
+contract suite covers real invocation support, missing support, changed
+semantic and physical signatures, foreign or replaced allocators, forged or
+changed receipts, nested mutation after issuance, nested mutation after
+certification, and the multi-result guard: **8/8 tests passed**.
+
+**Required gates:** both `check-ir-only` policies are ready in GC-host and
+standalone: each has 5/5 entries, 41 terminal units, 38 IR-emitted units,
+0 unsupported, 0 invariants, 3 non-executable units, 0 legacy body
+emissions, and 38 IR body emissions. `check-ir-fallbacks` reports no
+unintended, post-claim, or module-level increase. `typecheck`, IR layering,
+IR dialect, IR kind-neutrality, optimization retirement, oracle ratchet, LOC
+budget, function budget, and format checks all pass. The focused R2 matrix is
+**126/127 tests passed**; its only failure is the existing multi-source direct
+receipt census assertion (`unitLookups = 576`, expected `<= 24`).
+
+The changed conversion seam matrix is recorded as **77/95 passed** on the
+final branch: the `#3214` callable ABI suite retains its one wrapper-position
+assertion failure, imported HOF has its overload-set expectation failure, and
+counted-string provenance has 16 failures. An earlier checkpoint briefly
+showed two additional callable-import denominator-seal failures because every
+callable owner opened a deferred transaction; the final selector issues a
+boundary candidate only when a known caller is outside the candidate
+population, restoring the ordinary internal-call path and removing both
+reds. The focused counted-string proof, B2 cutover, and backend contract
+controls pass (13/13, 6/6, and 9/9). The archived `origin/main` snapshot
+reproduces the wrapper-position failure, the imported-HOF failure, the
+receipt-census failure, and the 16 counted-string failures (19 baseline reds).
+Full merge-group Test262 validation remains a CI requirement.
