@@ -141,10 +141,41 @@ function cacheMap(ctx: CodegenContext): WeakMap<object, NamespaceObjectCache> {
   return caches;
 }
 
+/**
+ * (#5330) The module specifier a namespace import names, or `undefined` when it
+ * is not a plain string literal.
+ */
+function namespaceImportSpecifier(declaration: ts.NamespaceImport): string | undefined {
+  const importDeclaration = declaration.parent.parent;
+  if (!ts.isImportDeclaration(importDeclaration)) return undefined;
+  const specifier = importDeclaration.moduleSpecifier;
+  return ts.isStringLiteral(specifier) ? specifier.text : undefined;
+}
+
 function namespaceFunctionExports(
   ctx: CodegenContext,
   declaration: ts.NamespaceImport,
 ): readonly NamespaceExport[] | undefined {
+  // (#5330) `import * as path from 'path'` — a namespace import OF a Node
+  // builtin is served by the host module thunk (`__node_<mod>`), never by a
+  // synthesized object. This optimizer asks the CHECKER for the module's
+  // exports, and with no `@types/node` in the program a BARE builtin specifier
+  // resolves to nothing at all: `getExportsOfModule` answers `[]`, which is an
+  // empty-but-truthy list, so the namespace was materialized as
+  // `__new_plain_object()` with no properties. `path.join` was then genuinely
+  // undefined ("join is not a function"), `path.sep` undefined, and
+  // `String(path)` `[object Object]` — while the module still imported
+  // `__node_path` for nothing. The `node:`-prefixed spelling escaped only by
+  // accident: the injected ambient `declare module "node:path"` gives it ONE
+  // export whose sole declaration lives in a `.d.ts`, which trips the
+  // mutable-value decline below and falls through to the host binding.
+  // Decline for the whole family, up front, for the actual reason.
+  //
+  // This does NOT affect a user module that RE-EXPORTS builtin members
+  // (`export { join } from 'node:path'`): that namespace belongs to the user
+  // module, and its entries keep the `host-member` lowering below.
+  const specifier = namespaceImportSpecifier(declaration);
+  if (specifier !== undefined && isNodeBuiltin(specifier)) return undefined;
   let moduleSymbol = ctx.checker.getSymbolAtLocation(declaration.name);
   if (!moduleSymbol) return undefined;
   if ((moduleSymbol.flags & ts.SymbolFlags.Alias) !== 0) {
