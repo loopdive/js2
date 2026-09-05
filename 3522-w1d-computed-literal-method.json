@@ -2,10 +2,11 @@
   "id": "3522",
   "slice": "w1d-computed-literal-method",
   "assignee": "ttraenkler/luna-ir-computed-method-20260905",
-  "requested_by": "ttraenkler/luna-ir-computed-method-20260905",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3522-w1d-luna-20260905",
   "claimed_at": "2026-09-04T23:56:48Z",
-  "updated_at": "2026-09-04T23:56:48Z",
-  "write_id": "90042-jqtzjk1z"
+  "updated_at": "2026-09-05T09:53:16Z",
+  "write_id": "25460-6ble3g9t",
+  "released_at": "2026-09-05T09:53:16Z"
 }
