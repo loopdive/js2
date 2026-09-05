@@ -739,3 +739,51 @@ green; `issue-5313`'s compile-work budget fails identically on base
 `check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
 `--noEmit`, `lint` — all exit 0, bare and with
 `LOC_GATE_BASE=$(git rev-parse origin/main)`.
+
+## Handoff (2026-09-05, session claude/es6-test262-standalone-g10c7u)
+
+**Shipped in this PR (r1 slice):** the runtime `Get(NT, "prototype")` read for
+`Reflect.construct(F, args, NT)`, the bound-function `[[Construct]]` arm in the
+standalone IsConstructor classifier, the ordinary-`[[Construct]]` driver route,
+and — from review round 1 — the refusal gate `classifyRuntimeNewTargetSite`
+plus the §10.1.14 `Type(proto) is Object` check on the carrier write. Net on the
+owned list: 11 of 23 rows flip compile_error → pass, the positive control
+holds; 218-row control (Reflect/construct, new.target, super,
+Function/prototype/bind) 166 pass vs 156 on main, zero lost, nine collateral
+wins in `Function/prototype/bind`. Pins: `tests/issue-3371-r4-reflect-construct-newtarget.test.ts`
+(29, node 22 and 25). The fix-round review (a second single-reviewer pass,
+attacking over-refusal against base's own 2-arg / `NT === F` / static-assignment
+shapes) was still running at wind-down; its verdict, if it found anything, is
+in this PR's thread or the next session's handover.
+
+**What the review round established, and what it means for the next slice.**
+The arm can *fetch* `NT.prototype` but usually cannot *install* it: only the
+DataView window struct and the ordinary-function driver accept a prototype; a
+class instance, an Array, an ordinary function's closed struct and a
+descriptor-written prototype all swallow the write silently. `C.prototype` on a
+class compiles to `null` in standalone on main (no reified prototype object),
+and `__reflect_is_constructor` has no class arm. So every shape the gate now
+refuses is a shape that needs its own carrier or a reified class prototype —
+not a smaller patch to this arm.
+
+**Residuals — 12 owned rows, in the order to take them:**
+
+1. `new.target` as a runtime VALUE (2 rows: `new.target/value-via-reflect-construct.js`,
+   `super/call-construct-invocation.js`) — today an i32 class-id module global
+   keyed by class name (`src/codegen/new-target.ts`, #2023). Needs an externref
+   carrier and every `new` / `super()` / `Reflect.construct` site writing it;
+   `super()` must forward the derived constructor's own runtime NewTarget. This
+   also unblocks #5316 step 3 (Proxy `[[Construct]]` NewTarget forwarding).
+2. Reified class prototypes in standalone (unblocks class NewTargets — the
+   most common shape users write — and `built-ins/Object/subclass-object-arg.js`).
+3. Post-read re-validation on DataView (`custom-proto-access-detaches-buffer.js`)
+   and read-before-allocation on ArrayBuffer (the 7 PiB row): both need the
+   prototype read moved inside the builtin's own construct path.
+4. The remaining carrier rows listed under "Residuals — 12 rows" above.
+
+Pre-existing and NOT this arm's: `Object.getPrototypeOf` on a dynamically typed
+TypedArray view answers `null` on main; Promise and class-instance
+`getPrototypeOf` are wrong on main; on wasi `getPrototypeOf` on a dynamic
+DataView/TA view traps on main (probe files under `.tmp/q/` in the fix-round
+worktree while it exists; the shapes are one-liners and are described in the
+review-round subsection).
