@@ -2,10 +2,11 @@
   "id": "3525",
   "slice": "m2-p1-ordered-init-census",
   "assignee": "ttraenkler/luna-ir-r5-m2p1-20260905",
-  "requested_by": "ttraenkler/luna-ir-r5-m2p1-20260905",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3525-m2-p1-luna-20260905",
   "claimed_at": "2026-09-05T08:59:18Z",
-  "updated_at": "2026-09-05T08:59:18Z",
-  "write_id": "65118-qsoow8zq"
+  "updated_at": "2026-09-05T12:21:54Z",
+  "write_id": "57506-4zh3gtlm",
+  "released_at": "2026-09-05T12:21:54Z"
 }
