@@ -439,6 +439,23 @@ const UNSETTABLE_PROTOTYPE_CONSTRUCTORS: ReadonlySet<string> = new Set([
   "WeakSet",
 ]);
 
+/**
+ * Does `expr` resolve to an `async function` declared in this file (through at
+ * most `depth` `const x = y` aliases)? Such a target is not a constructor.
+ */
+function resolvesToAsyncFunction(ctx: CodegenContext, expr: ts.Expression, depth = 4): boolean {
+  const isAsync = (node: ts.FunctionDeclaration | ts.FunctionExpression): boolean =>
+    node.modifiers?.some((m: ts.ModifierLike) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+  if (ts.isFunctionExpression(expr)) return isAsync(expr);
+  if (!ts.isIdentifier(expr) || depth <= 0) return false;
+  const declarations = ctx.oracle.declarationsOf(expr);
+  if (declarations.some((d) => ts.isFunctionDeclaration(d) && isAsync(d))) return true;
+  if (declarations.length !== 1) return false;
+  if (!ts.isVariableDeclaration(declarations[0]!)) return false;
+  const initializer = ctx.oracle.variableInitializerOf(expr);
+  return initializer !== undefined && resolvesToAsyncFunction(ctx, initializer, depth - 1);
+}
+
 /** What a value expression provably denotes, for the gate below. */
 type BindingKind =
   | { kind: "class" }
@@ -695,10 +712,47 @@ export function classifyRuntimeNewTargetSite(
   if (driverEligible) return "driver";
 
   const targetKind = resolveBindingKind(ctx, target);
-  // A user function or class instance is a CLOSED struct: the post-construction
-  // prototype patch is a silent no-op on it, so if the driver route did not
-  // take the site, nothing can.
-  if (targetKind.kind === "class" || targetKind.kind === "function") return undefined;
+  // A class instance is a CLOSED struct: the post-construction prototype patch
+  // is a silent no-op on it, so if the driver route did not take the site,
+  // nothing can.
+  if (targetKind.kind === "class") return undefined;
+  // An in-file FUNCTION target the driver declined (r2 step 5). The same
+  // instance shape reached through the `unknown` route below takes the generic
+  // `__object_setPrototypeOf` patch and answers node — `k1_target_param.js`
+  // (node 3) does exactly that on base — so the refusal keyed on how well the
+  // target resolves, not on a property of the carrier.
+  //
+  // But only when the driver declined for a reason that has nothing to do with
+  // the NewTarget's `prototype`. Routing every declined function target here
+  // was measured to turn three refusals into WRONG answers, all of them
+  // NewTarget-prototype declines whose fetched prototype the closed instance
+  // struct then drops: `d1_defineprop_slot.js` 1 vs node 7,
+  // `m5_nt_block_shadow_mutates.js` 1 vs node 3, `d3_setprotoof_nt.js` 1 vs
+  // node 3. Keeping `prototypeIsPristine` as a precondition admits
+  // `j6_reassigned_target.js` (node 3 — the target is a reassigned `let`) and
+  // leaves those three refused.
+  if (targetKind.kind === "function") {
+    if (!ctx.standalone) return undefined;
+    // A target that DOES statically resolve to one unreassigned function
+    // declaration gets the closed-struct `new` lowering, on which the
+    // post-construction patch is a silent no-op — so if the driver declined
+    // such a target (too many arguments, a spread, a non-pristine NewTarget
+    // prototype), nothing can serve it. Measured: `j7_spread_args.js` 0 vs
+    // node 7 and `j8_many_args.js` 1 vs node 3 when admitted.
+    if (isUnreassignedOrdinaryFunction(ctx, target)) return undefined;
+    // A spread argument list on a dynamic function target TRAPS where node
+    // returns a value (`j9_reassigned_target_spread.js`: node 7, exception),
+    // and an over-arity list loses the prototype, so this branch keeps the
+    // driver's argument-shape conditions too.
+    if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
+    if (args.some((a) => ts.isSpreadElement(a))) return undefined;
+    // An `async function` is not a constructor: node throws a TypeError, the
+    // carrier route returns an object (`j11_async_target.js`: node 1, admitted
+    // 0). A generator function target DOES throw correctly there (node 1,
+    // admitted 1) and is not excluded.
+    if (resolvesToAsyncFunction(ctx, target)) return undefined;
+    return prototypeIsPristine(ctx, newTarget) ? "carrier" : undefined;
+  }
   if (targetKind.kind === "foreign") {
     return UNSETTABLE_PROTOTYPE_CONSTRUCTORS.has(targetKind.name) ? undefined : "carrier";
   }
