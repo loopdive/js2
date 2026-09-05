@@ -1,0 +1,7 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+Function.prototype.prototype = '';
+assert.throws(TypeError, function() { [] instanceof Function.prototype; }, 'non-object prototype must throw');

@@ -1,0 +1,2 @@
+language/expressions/object/dstr/meth-dflt-obj-ptrn-empty.js
+language/expressions/object/dstr/gen-meth-dflt-obj-ptrn-empty.js

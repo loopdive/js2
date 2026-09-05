@@ -21,7 +21,9 @@ import type {
   WasmFunction,
   WasmModule,
 } from "../../ir/types.js";
+import type { IrModuleBindingRefusal } from "../../ir/module-bindings.js";
 import type { IrObservedOutcome } from "../../ir/outcomes.js";
+import type { IrR2Withdrawal } from "../../ir/r2-withdrawal.js";
 import type { StandaloneRegExpEngineConfig } from "../regexp-standalone.js";
 import type { ObjectRuntimeTypes } from "../object-runtime.js";
 import type { FallbackCounts } from "../fallback-telemetry.js";
@@ -29,6 +31,22 @@ import type { CompileTargetProfile } from "../../target-profile.js";
 import type { IrRuntimeEvalBoundaryPlan } from "../../ir/runtime-eval-boundary-plan.js";
 import type { StandaloneCapabilityDemandState } from "./capability-state.js";
 import type * as BodyRouteAudit from "./body-route-audit.js";
+
+/**
+ * (#5195 Step 1) One class element whose ComputedPropertyName does not fold to
+ * a compile-time key, carried under a synthetic member name so the ordinary
+ * method / accessor registration machinery can hold it.
+ */
+export interface ClassDynamicMember {
+  /** Index in `decl.members` — the stable half of the synthetic name. */
+  ordinal: number;
+  /** The declaration; its `name` is always a `ts.ComputedPropertyName`. */
+  member: ts.ClassElement;
+  kind: "method" | "get" | "set";
+  isStatic: boolean;
+  /** `__cmdyn$<ordinal>` — the name the member is registered under. */
+  syntheticName: string;
+}
 
 export interface CodegenError {
   message: string;
@@ -136,6 +154,14 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   runtimeProvider?: boolean;
   /** Retain and emit the frozen runtime GC rec group for a core-Wasm link boundary. */
   canonicalRuntimeTypes?: boolean;
+  /**
+   * (#5226) Import the throw/catch exception tag from `env.__exn` instead of
+   * defining a module-local one. Set by the package linker on BOTH sides of a
+   * separately-linked graph so a provider's `throw` and its consumer's `catch`
+   * name the SAME tag — without it every module owns a private tag, the
+   * consumer's `catch` never matches, and the payload is lost in `catch_all`.
+   */
+  sharedExceptionTag?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
@@ -428,6 +454,15 @@ export interface NativeGeneratorInfo {
    * leave this `false` (no synthetic param) — byte-identical to pre-#2571.
    */
   synthesizedThis?: boolean;
+  /**
+   * (#5255) A free generator declaration that reads its own dynamic `this`
+   * carries the call-time receiver in a dedicated native-frame field, then
+   * rehydrates it as the resume body's local `this`. This is deliberately NOT
+   * inferred from `paramNames`: a TypeScript-only `this` parameter and leading
+   * closure/TDZ capture params can both occupy that layout without representing
+   * a property-call receiver.
+   */
+  capturesDynamicThis?: boolean;
   /** Per-generator state struct type index. */
   stateTypeIdx: number;
   /** Shared IteratorResult-like struct type index. */
@@ -706,8 +741,13 @@ export interface FunctionContext {
   evalCompletionLocal?: number; // §13 eval completion register — statements/eval-completion-value.ts
   /** Depth for `return` inside generator body -- adjusted by loop/block nesting */
   generatorReturnDepth?: number;
-  /** Map from variable name → ref cell info (for mutable closure captures) */
-  boxedCaptures?: Map<string, { refCellTypeIdx: number; valType: ValType }>;
+  /** Map from variable name → ref cell info (for mutable closure captures).
+   * (#5320) `rawLocalIdx` names the ORPHANED pre-box slot this frame's cell was
+   * minted from — set only for a NULLABLE cell, whose `struct.new` may sit at a
+   * construction site that does not dominate later uses of the rebound name. It
+   * seeds the lazy repair in `closures/conditional-capture-box.ts`; a cell that
+   * arrives as a capture parameter has no pre-box slot here and leaves it unset. */
+  boxedCaptures?: Map<string, { refCellTypeIdx: number; valType: ValType; rawLocalIdx?: number }>;
   /**
    * Names this lifted nested function receives as leading capture parameters.
    * A sibling-forwarding site must read these names through this function's
@@ -716,6 +756,13 @@ export interface FunctionContext {
   liftedCaptureNames?: Set<string>;
   /** Stable frame slots for leading captures, retained when a body-local shadows the same name. */
   liftedCaptureSlots?: Map<string, number>;
+  /**
+   * (#5323) This frame's CANONICAL `__boxed_<name>` cell for one of its own
+   * leading capture params, recorded only where the cell was minted from
+   * {@link liftedCaptureSlots}`.get(name)` itself — see `recordLiftedCaptureBox`
+   * / `liftedCaptureBoxSlot` in closures/capture-source-slot.ts.
+   */
+  liftedCaptureBoxes?: Map<string, number>;
   /**
    * Source-visible bindings owned by a function whose lexical descendants may
    * perform direct eval. These functions alone promote bindings to the shared
@@ -775,6 +822,16 @@ export interface FunctionContext {
    * re-evaluated after suspension.
    */
   asyncAwaitValueLocals?: Map<ts.AwaitExpression, number>;
+  /**
+   * (#680) Sent values for original bare-yield AST nodes while a native
+   * generator continuation state recompiles its containing expression.
+   */
+  nativeGeneratorYieldValueLocals?: Map<ts.YieldExpression, number>;
+  /**
+   * (#680) One-time pre-yield operand values for original expression AST nodes
+   * while a native generator continuation state recompiles that expression.
+   */
+  nativeGeneratorExpressionValueLocals?: Map<ts.Expression, number>;
   /**
    * (#2865) The `__self` capture-struct layout of a LIFTED CLOSURE body
    * (closures.ts materializes each capture from `__self` field `i+1` into a
@@ -1515,6 +1572,30 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** #3519 — allocated only when `trackIrOutcomes` is requested. */
   irOutcomes?: IrObservedOutcome[];
   /**
+   * (#3521 R2-T1) Per-unit reason the R2 selector withdrew a terminal, recorded
+   * by the admission chain, the ownership fixed point and the unsealed-component
+   * deferral. Read once, in `recordObservedIrOutcomes`, and attached only to
+   * compile-twice function rows. Unit ids are source-qualified, so one map spans
+   * every source of a multi-source compile.
+   */
+  irR2WithdrawalsByUnitId?: Map<IrUnitId, IrR2Withdrawal>;
+  /**
+   * (#3521 R2-T1) Source-level fallback for the routes where the R2 selector
+   * never ran at all, so no per-unit record can exist: the multi-source overlay
+   * driver and an IR-first-disabled compile. "Not attempted" is a stage, not the
+   * absence of a reason — without it those rows would be un-attributed.
+   */
+  irR2NotAttemptedReason?: "multi-source-driver" | "ir-first-disabled";
+  /**
+   * (#5285) Every unrepresentable top-level declaration of a source's
+   * `<module-init>` population, in source order — not just the first, which is
+   * all a fail-fast path can report. Written by `ir/integration.ts` ONLY under
+   * `JS2WASM_IR_SHAPE_DIAG=1`, read once in `recordObservedIrOutcomes`, and
+   * absent on every production compile. Keyed by source file so one map spans a
+   * multi-source compile.
+   */
+  irModuleBindingRefusalsBySourceFile?: Map<ts.SourceFile, readonly IrModuleBindingRefusal[]>;
+  /**
    * #3000 — names of functions/class-members whose slots were actually patched
    * with an IR-lowered body by `compileIrPathFunctions` (its `report.compiled`).
    * A selector CLAIM alone does not imply emission: a claimed class member whose
@@ -1957,6 +2038,18 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   topLevelFunctionDeclarations: Map<string, ts.FunctionDeclaration>;
   /** Map from "ClassName_methodName" → method info for local classes */
   classMethodSet: Set<string>;
+  /**
+   * (#5309) `"ClassName_memberName"` for every class declaring an own INSTANCE
+   * FIELD whose name is also a callable (method or accessor) up its prototype
+   * chain. The field initializers install it on the instance, so it shadows the
+   * inherited callable for `this.m`, `this.m()`, `this.#m()` and `b.m()` alike.
+   * `call-receiver-method.ts` reads this to refuse its ancestor walk, which
+   * finds `Parent_m` in `classMethodSet` on its own and so is NOT fixed by
+   * dropping the inherited alias in `collectClassDeclaration`. `static` and
+   * `declare` fields are excluded — statics go through `staticMethodSet`, and
+   * `declare m: T` installs no property.
+   */
+  classFieldShadowedInheritedCallables: Set<string>;
   /** Classes inside function bodies whose body compilation is deferred */
   deferredClassBodies: Set<string>;
   /** Set of "ClassName_propName" for getter/setter accessor properties */
@@ -2431,6 +2524,12 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** Counter for generated closure types/functions */
   closureCounter: number;
   /**
+   * (#5270 step 1.3) Handles of every `__fn_tramp_*` pure forwarder. Read by
+   * `promoteTrampolineTailCalls` at finalize, which upgrades the trailing
+   * `call` to `return_call` only against the FINAL callee type.
+   */
+  trampolineForwarders: Set<number>;
+  /**
    * #2928 — true once the module has materialized the canonical eight-slot
    * callable carrier used by the separately linked interpreter runtime.
    */
@@ -2663,6 +2762,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   toPrimitiveForkedStructs: Set<string>;
   /** Tag index for the exception tag (-1 if not yet registered) */
   exnTagIdx: number;
+  /**
+   * (#5226) True when this module's exception tag is IMPORTED (`env.__exn`)
+   * rather than module-defined, so every module of one linked graph throws and
+   * catches with the same tag identity. `exnTagIdx` stays an ABSOLUTE tag index
+   * either way (imported tags occupy the low indices).
+   */
+  sharedExnTag: boolean;
   /** Whether union type helper imports have been registered */
   hasUnionImports: boolean;
   /**
@@ -3279,6 +3385,39 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    *  prepended init call on exports) has been applied. */
   moduleInitGuardApplied: boolean;
   /**
+   * (#3523 R4 gap 3) The WASI `__init_done` idempotence guard, reserved at
+   * module-init PREALLOCATION rather than minted by the post-emission splice.
+   *
+   * `applyModuleInitGuard` used to mint this global and prepend an
+   * early-`return` prologue to an ALREADY EMITTED `__module_init`. A Prepared
+   * module-init body cannot take that splice: its identity is sealed at the
+   * preparation snapshot, and the early-`return` form is exactly what
+   * `bodyContainsReturnClassOp` withdraws the IR patch over (#3142/#3168),
+   * because every later epilogue (`finalizeInModuleInitFlag`'s
+   * `__in_module_init = 0` most critically) would become unreachable.
+   *
+   * So the global is reserved here, before body emission, and the prepared
+   * body is CONSTRUCTED around a wrapping `if` — no return-class op, inside
+   * the body at snapshot time. `planted` records the exact instruction
+   * objects so `applyModuleInitGuard` can authenticate the guard by identity
+   * instead of trusting that preparation planted one; a prepared WASI init
+   * that reaches the splice unguarded is an invariant failure, never a
+   * silently unguarded binary.
+   *
+   * `undefined` outside WASI, and outside a prepared module-init compile.
+   */
+  preparedWasiModuleInitGuard?: {
+    /** Module-global index of the reserved `(mut i32) __init_done`. */
+    readonly doneGlobalIdx: number;
+    /**
+     * The three top-level instruction objects planted into the prepared body,
+     * in order. `fixupModuleGlobalIndices` shifts their baked global indices in
+     * place on a late import-global insertion, so identity survives every
+     * legitimate late mutation while a body REPLACEMENT does not.
+     */
+    planted?: { readonly doneGet: Instr; readonly eqz: Instr; readonly guard: Instr };
+  };
+  /**
    * #1984 — freeze-point discipline (child of #2043 Option 3). Set to `true`
    * by `generateModule`/`generateMultiModule` once the module's index spaces
    * are final (right before `stackBalance`, after the last legitimate
@@ -3413,6 +3552,23 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * codec arm and never register the type.
    */
   moduleUsesDynTaView: boolean;
+  /**
+   * (#5196 R3-0) Set when a `new <expr>(…)` site whose callee traces to the
+   * `Proxy` CONSTRUCTOR value (`$262.createRealm().global.Proxy`, an alias of
+   * the bare binding) compiles. It gates the native-construct driver's
+   * proxy-carrier identity arm, which must be byte-inert everywhere else: the
+   * proxy runtime and the `Proxy` carrier global exist in EVERY standalone
+   * module (measured — a Proxy-free program's driver changed bytes when the
+   * arm was gated on their presence instead).
+   */
+  proxyConstructorValueNewSite?: boolean;
+  /**
+   * (#5196 R3-4) Set when a `Proxy.revocable(…)` site compiles (direct call or
+   * namespace-value closure). Gates the revocation function's metadata arms:
+   * the `__proxy_revoker` struct type and the proxy natives exist in EVERY
+   * standalone module, so their presence cannot gate a byte-inert addition.
+   */
+  proxyRevocableSite?: boolean;
   /**
    * Set by a module pre-scan when a statically named TypedArray constructor is
    * used with an ArrayBuffer backing. This lets an earlier helper that writes
@@ -3751,6 +3907,29 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   protoGlobals: Map<string, number>;
   /** Map from class name → own method names (instance methods, for prototype allowlist; see #1047) */
   classMethodNames: Map<string, string[]>;
+  /**
+   * (#5195 Step 1) Class members whose ComputedPropertyName does NOT fold to a
+   * compile-time key (`[x || 1]`, `[ID('d')]`, `[sym]`). They are registered
+   * under the synthetic name `__cmdyn$<ordinal>` so the ordinary method /
+   * accessor machinery carries them, and installed on the prototype `$Object`
+   * with the RUNTIME key held in {@link classDynamicKeyGlobals}. Keyed by class
+   * name; the entries are in `decl.members` order. Standalone only — the host
+   * lane still drops these members.
+   */
+  classDynamicMembers: Map<string, ClassDynamicMember[]>;
+  /**
+   * (#5195 Step 1) `${className}:${ordinal}` → global index of the externref
+   * holding the ToPropertyKey'd value of that member's computed key. Written
+   * once at ClassDefinitionEvaluation, read by the prototype-`$Object` install.
+   */
+  classDynamicKeyGlobals: Map<string, number>;
+  /**
+   * (#5195 Step 2) Class name → global index of the STATIC sidecar `$Object`
+   * (`class-static-sidecar.ts`). The class object itself stays a `$ClassName`
+   * struct (#3976); this parallel object carries its static members so a
+   * runtime-keyed static (`C[x || 1]()`) is reachable at all.
+   */
+  classStaticSidecarGlobals: Map<string, number>;
   /** Map from class name → global idx of the method-name CSV string constant (see #1047) */
   classMethodsCsvGlobal: Map<string, number>;
   /** Map from class name → global index of the class-object externref singleton (#1395). Used so `C` resolves to a real object whose static-method descriptors are queryable. */
@@ -3989,6 +4168,17 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * first ordinary argument, so these cannot share the all-arities method set
    * above. `.call(thisArg)` still consults both sets. */
   nativeProtoAccessorGetterClosureStructTypes?: Set<number>;
+  /**
+   * (#5194 r3 review F3) Meta struct types (`ensureBuiltinFnMetaType`) of the
+   * native-proto closures minted with the `refusalBodyFallback` body — the
+   * "<Builtin>.prototype.<m> is not yet implemented in --target standalone"
+   * throw. The dyn-view [[Get]] prototype walk (`ta-dyn-mop.ts`) answers
+   * `undefined` instead of handing one of these back as a first-class value,
+   * so a stable-wrong `undefined` never escalates into a runtime TypeError on
+   * the value path. Keyed by meta type idx; the `bfnid` field disambiguates
+   * structurally-canonicalized siblings exactly as `fillBuiltinFnMeta` does.
+   */
+  nativeProtoRefusalMetaTypeIdxs?: Set<number>;
   /** (#682) Native standalone RegExp engine hook. Standalone mode currently
    *  enables the reduced literal-substring backend; null means RegExp lowering
    *  must stay on the explicit #1474 refusal path. */
@@ -4162,6 +4352,22 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   directCallTrampolines?: Map<string, import("../typed-this.js").DirectCallTrampoline>;
   /**
+   * `"__ownshadow_<Class>_<method>_<arity>"` → the reserved own-property guard
+   * wrapper for that class method. Reserved at the first static call site whose
+   * file could install an own callable member of that name, and FILLED at
+   * finalize (`fillOwnShadowWrappers`) so the reserve stays index-safe.
+   * See `expressions/own-property-method-shadow.ts`.
+   */
+  ownShadowWrappers?: Map<string, import("../expressions/own-property-method-shadow.js").OwnShadowWrapper>;
+  /**
+   * Method names whose CLOSED dispatcher (`__call_m_<name>_<arity>`) must ask
+   * the receiver for an own slot before running a user-class arm. Recorded at
+   * dispatcher-reserve time, when the call's SourceFile is still in hand — the
+   * finalize fill has no node to scan. See
+   * `expressions/own-property-method-shadow.ts`.
+   */
+  ownShadowDispatchNames?: Set<string>;
+  /**
    * (#3683 S3) `"<F>/<m>"` → the compiled typed TWIN of that prototype method:
    * its wasm function NAME (never a raw index — funcMap is the shift-maintained
    * source of truth) and its exact param/result ValTypes, so the finalize fill
@@ -4297,6 +4503,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   modulePatternTdzBindings: Map<ts.SourceFile, Map<string, ts.BindingElement | null>>;
   /** Set of let/const module global variable names */
   tdzLetConstNames: Set<string>;
+  /**
+   * (#5271 step 8) The first SCRIPT-goal top-level lexical name that collides
+   * with a RESTRICTED GLOBAL (`undefined` / `NaN` / `Infinity`). §16.1.7
+   * GlobalDeclarationInstantiation step 5.d makes that a SyntaxError thrown
+   * before any statement runs, so `__module_init` opens with the throw.
+   */
+  restrictedGlobalLexicalName?: string;
   /** Compile-time property descriptor flags */
   definedPropertyFlags: Map<string, number>;
   /**

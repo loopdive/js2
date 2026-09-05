@@ -1,0 +1,4 @@
+built-ins/Array/isArray/proxy-revoked.js
+built-ins/Array/prototype/filter/create-revoked-proxy.js
+built-ins/Array/prototype/splice/create-revoked-proxy.js
+built-ins/Array/prototype/map/create-revoked-proxy.js

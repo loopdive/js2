@@ -1,0 +1,5 @@
+built-ins/Proxy/defineProperty/desc-realm.js
+built-ins/Reflect/enumerate/undefined.js
+built-ins/Proxy/function-prototype.js
+built-ins/Reflect/getPrototypeOf/return-prototype.js
+built-ins/Reflect/object-prototype.js

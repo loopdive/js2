@@ -9,6 +9,7 @@ import {
   isNestedOrdinaryClassFieldCallInventoryCandidate,
 } from "./class-accessor-safety.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "./module-init.js";
+import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 
 declare const irSourceIdBrand: unique symbol;
@@ -600,8 +601,37 @@ function decoratorExpressions(node: ts.Node): readonly ts.Expression[] {
   return ts.canHaveDecorators(node) ? (ts.getDecorators(node)?.map((decorator) => decorator.expression) ?? []) : [];
 }
 
+/**
+ * (#3522 W1-A) The single spelling for a `PrivateIdentifier`-named class member,
+ * on every naming path: `#secret` → `__priv_secret`.
+ *
+ * This is deliberately NOT a new convention. `resolveClassMemberName`
+ * (`src/codegen/class-bodies.ts`) and the AST field re-derivation in
+ * `buildIrClassShapes` (`src/codegen/index.ts`) already mint exactly this
+ * string, and the legacy `ctx.funcMap` key a selected member has to match is
+ * built from it. The helper exists so the naming sites that must agree — the
+ * display / legacy-match name (`memberBaseName` below), the Phase-1 predicate
+ * (`select.ts::phase1MemberName`) and the method-descriptor loop in
+ * `buildIrClassShapes` — cannot drift apart; a mismatch between any two of them
+ * surfaces as a preparation invariant rather than a clean demote.
+ *
+ * It lives HERE rather than beside `phase1MemberName` purely for the module
+ * graph: `select.ts` already imports `identity.js`, while the reverse edge
+ * would close a cycle through `dom-capability` / `propagate` / `type-evidence`.
+ *
+ * Minting it also closes a pre-existing collision the 2026-09-03 class census
+ * recorded: `memberBaseName` returned `<computed>` for EVERY private member, so
+ * two private methods in one class shared one legacy match name and one entry
+ * in the selection set. Inert while both were refused; a silently lost body the
+ * moment either is admitted.
+ */
+export function privateMemberMangledName(name: ts.PrivateIdentifier): string {
+  return "__priv_" + name.text.slice(1);
+}
+
 function memberBaseName(name: ts.PropertyName | undefined): string {
   if (name && (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name))) return name.text;
+  if (name && ts.isPrivateIdentifier(name)) return privateMemberMangledName(name);
   return "<computed>";
 }
 
@@ -610,7 +640,9 @@ function classMemberLegacyName(className: string, member: ts.ClassElement): stri
   if (!ts.isMethodDeclaration(member) && !ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) {
     return null;
   }
-  const base = memberBaseName(member.name);
+  const base = ts.isMethodDeclaration(member)
+    ? (literalComputedInstanceMethodKey(member) ?? memberBaseName(member.name))
+    : memberBaseName(member.name);
   if (ts.isGetAccessorDeclaration(member)) return `${className}_get_${base}`;
   if (ts.isSetAccessorDeclaration(member)) return `${className}_set_${base}`;
   return `${className}_${base}`;
@@ -1233,7 +1265,17 @@ class SourceInventoryBuilder {
         | ts.GetAccessorDeclaration
         | ts.SetAccessorDeclaration;
       if (!functionalMember.body) continue;
-      if (ts.isConstructorDeclaration(functionalMember)) hasExecutableConstructor = true;
+      // (#5195 r3-4, r3 review F2) `static constructor(){}` parses as a
+      // ConstructorDeclaration but is an ordinary static METHOD whose PropName
+      // is "constructor" (§15.7), NOT the class's [[Construct]] body. Codegen
+      // (`ast-modifiers.ts::findConstructorImplementation`) does not select it
+      // and never compiles its body, so the inventory must not record it as a
+      // constructor either — doing so left the class with no
+      // `class-implicit-constructor` unit while codegen still emitted
+      // `<Class>_init`, and the ABI planner rejected the mismatch outright
+      // ("no consistent exact class-implicit-constructor inventory owner").
+      const staticCtorMethod = isStatic && ts.isConstructorDeclaration(functionalMember);
+      if (ts.isConstructorDeclaration(functionalMember) && !staticCtorMethod) hasExecutableConstructor = true;
       const promoteNestedAccessor =
         directNestedClass &&
         (ts.isGetAccessorDeclaration(functionalMember) || ts.isSetAccessorDeclaration(functionalMember));
@@ -1247,7 +1289,9 @@ class SourceInventoryBuilder {
         topLevelDeclaration || promoteNestedMember
           ? this.addTerminalUnit(
               ts.isConstructorDeclaration(functionalMember)
-                ? "class-constructor"
+                ? staticCtorMethod
+                  ? "class-static-method"
+                  : "class-constructor"
                 : this.classMemberKind(functionalMember),
               classRecord.id,
               member,
@@ -1263,7 +1307,9 @@ class SourceInventoryBuilder {
             )
           : this.addSupportUnit(
               ts.isConstructorDeclaration(functionalMember)
-                ? "class-constructor"
+                ? staticCtorMethod
+                  ? "class-static-method"
+                  : "class-constructor"
                 : this.classMemberKind(functionalMember),
               classRecord.id,
               inheritedTerminalOwnerId,
@@ -1271,7 +1317,7 @@ class SourceInventoryBuilder {
               legacyName,
               memberSyntheticRole,
             );
-      if (ts.isConstructorDeclaration(functionalMember)) {
+      if (ts.isConstructorDeclaration(functionalMember) && !staticCtorMethod) {
         explicitConstructor = unit;
         explicitConstructorDeclaration = functionalMember;
       }

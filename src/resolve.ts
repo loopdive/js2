@@ -165,6 +165,19 @@ export class ModuleResolver {
       return this.resolveCache.get(cacheKey)!;
     }
 
+    // Package `imports` ("#" subpath imports) are invisible to the Node10
+    // resolver this class pins, so `#universal/assert` resolved to null and the
+    // graph walker silently dropped the whole edge. Resolve them here; on a miss
+    // fall through so a tsconfig `paths` entry spelled `#*` still wins.
+    if (specifier.startsWith("#") && !specifier.startsWith("#/") && specifier !== "#") {
+      const resolvedSubpath = this.resolveSubpathImport(specifier, resolutionContainingFile);
+      if (resolvedSubpath !== null) {
+        this.resolveCache.set(cacheKey, resolvedSubpath);
+        this.recordResolvedImport(resolutionContainingFile, specifier, resolvedSubpath);
+        return resolvedSubpath;
+      }
+    }
+
     // Static relative JSON requires are compile-time modules, not filesystem
     // capabilities exposed to Wasm. Handle them before TypeScript's script
     // resolver, which intentionally ignores JSON without resolveJsonModule.
@@ -449,12 +462,113 @@ export class ModuleResolver {
   }
 
   /**
+   * Resolve a Node package-`imports` specifier (`#universal/assert`) against the
+   * nearest enclosing `package.json`.
+   *
+   * Node only honours these inside the package scope that declares them, so the
+   * walk stops at the first `package.json` found above the importer — exactly
+   * Node's LOOKUP_PACKAGE_SCOPE. Returns null when there is no scope, no
+   * `imports` field, no matching key, or the target names no file on disk; the
+   * caller then falls through to ordinary resolution.
+   */
+  private resolveSubpathImport(specifier: string, containingFile: string): string | null {
+    const scopeDir = this.nearestPackageScope(containingFile);
+    if (scopeDir === null) return null;
+    let manifest: unknown;
+    try {
+      manifest = JSON.parse(getFs()!.readFileSync(path.join(scopeDir, "package.json"), "utf-8"));
+    } catch {
+      return null;
+    }
+    const imports = (manifest as { imports?: unknown } | null)?.imports;
+    if (typeof imports !== "object" || imports === null || Array.isArray(imports)) return null;
+    const target = matchSubpathImports(imports as Record<string, unknown>, specifier);
+    if (target === null) return null;
+    // A relative target names a file inside the declaring package; anything else
+    // is an ordinary specifier (`"#deps": "lodash-es"`) and re-enters resolution.
+    if (!target.startsWith("./") && !target.startsWith("../")) {
+      return target.startsWith("#") ? null : this.resolve(target, containingFile);
+    }
+    return this.probeImplementationPath(scopeDir, target.replace(/^\.\//, ""), ["", ".js", ".mjs", ".cjs", ".ts"]);
+  }
+
+  /** Directory of the nearest `package.json` at or above `containingFile`, if any. */
+  private nearestPackageScope(containingFile: string): string | null {
+    let dir = path.dirname(containingFile);
+    const root = path.parse(dir).root;
+    for (;;) {
+      if (this.tryStatFile(path.join(dir, "package.json"))) return dir;
+      const parent = path.dirname(dir);
+      if (dir === root || parent === dir) return null;
+      dir = parent;
+    }
+  }
+
+  /**
    * Check if a specifier refers to an external package.
    */
   isExternal(specifier: string): boolean {
     const pkgName = getBarePackageName(specifier);
     return pkgName !== null && this.externals.has(pkgName);
   }
+}
+
+/**
+ * Export conditions applied to package-`imports` targets, in Node's ESM order.
+ *
+ * The dogfood/native comparison lane executes these graphs under Node, so the
+ * compiled module must pick the SAME branch Node picks — otherwise a package
+ * that ships a `browser` no-op beside its real implementation would silently
+ * run different code in the two lanes and mask real defects.
+ */
+const SUBPATH_IMPORT_CONDITIONS = new Set(["node", "import", "default"]);
+
+/** Resolve a conditions value (string | array | conditions object) to a target. */
+function resolveImportConditions(value: unknown, substitution: string, depth = 0): string | null {
+  if (depth > 8) return null;
+  if (typeof value === "string") return value.replaceAll("*", substitution);
+  if (Array.isArray(value)) {
+    for (const candidate of value) {
+      const resolved = resolveImportConditions(candidate, substitution, depth + 1);
+      if (resolved !== null) return resolved;
+    }
+    return null;
+  }
+  if (typeof value !== "object" || value === null) return null;
+  for (const [condition, branch] of Object.entries(value)) {
+    if (!SUBPATH_IMPORT_CONDITIONS.has(condition)) continue;
+    const resolved = resolveImportConditions(branch, substitution, depth + 1);
+    if (resolved !== null) return resolved;
+  }
+  return null;
+}
+
+/**
+ * Match `specifier` against a package.json `imports` map (Node's
+ * PACKAGE_IMPORTS_EXPORTS_RESOLVE): exact key first, then the single-`*`
+ * pattern key with the longest matching prefix.
+ */
+function matchSubpathImports(imports: Record<string, unknown>, specifier: string): string | null {
+  if (Object.hasOwn(imports, specifier)) {
+    const exact = resolveImportConditions(imports[specifier], "");
+    if (exact !== null) return exact;
+  }
+  let bestPrefix = "";
+  let bestSubstitution = "";
+  let bestValue: unknown;
+  for (const key of Object.keys(imports)) {
+    const star = key.indexOf("*");
+    if (star < 0 || key.indexOf("*", star + 1) >= 0) continue;
+    const prefix = key.slice(0, star);
+    const suffix = key.slice(star + 1);
+    if (!specifier.startsWith(prefix) || !specifier.endsWith(suffix)) continue;
+    if (specifier.length < prefix.length + suffix.length) continue;
+    if (bestValue !== undefined && prefix.length <= bestPrefix.length) continue;
+    bestPrefix = prefix;
+    bestSubstitution = specifier.slice(prefix.length, specifier.length - suffix.length);
+    bestValue = imports[key];
+  }
+  return bestValue === undefined ? null : resolveImportConditions(bestValue, bestSubstitution);
 }
 
 /**

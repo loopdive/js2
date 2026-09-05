@@ -36,6 +36,7 @@ import {
 } from "../async-scheduler.js";
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import { classMemberFuncKey, fnctorAncestorOfClass } from "../class-member-keys.js";
+import { collectOpenReceiverCandidates } from "./virtual-candidate-set.js"; // (#5249)
 import {
   buildCallSiteNullishReceiverGuard, // (#4656) callee-reference-before-arguments
   callSiteNullishReceiverGuardApplies,
@@ -71,6 +72,7 @@ import {
   isDataViewAccessor,
   usesNativeDataViewProvider,
 } from "../dataview-native.js";
+import { ensureTaDynProtoMethodHelper, hasTaDynProtoMethodHelper } from "../ta-dyn-proto-methods.js"; // (#5194 r3-1.3) dyn-view read-side helpers
 import { ensureNativeArrayFromIterN, ensureNativeArrayFromMapped, reserveAnyIterNext } from "../iterator-native.js";
 import { tryCompileNativeGeneratorMethodCall } from "../generators-native.js";
 import { NATIVE_HOF_METHODS } from "../hof-native.js";
@@ -88,7 +90,8 @@ import {
   typedArrayVecStorage,
 } from "../index.js";
 import { isTaViewTypeIdx } from "../registry/types.js";
-import { LAZY_ITER_METHODS } from "../iter-lazy-native.js";
+import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
+import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
 import { ensureStandaloneRegExpCarrierTestHelper } from "../regexp-standalone.js";
@@ -163,6 +166,11 @@ import {
   knownMethodRestInfo,
 } from "./object-method-rest-abi.js";
 import { objectLiteralMethodNeedsCallReceiver } from "../object-literal-method-receiver.js";
+import {
+  noteOwnShadowDispatchCandidate,
+  ownShadowFuncIdx,
+  ownShadowGuardedMethodName,
+} from "./own-property-method-shadow.js";
 import {
   buildThrowJsErrorInstrs,
   canonicalClassExpressionName,
@@ -263,6 +271,7 @@ import {
   resolveAssignedNominalType,
   sourceHasMethodReassignment,
   standaloneThenMissArmCanBeNative,
+  tracesToTypedArrayIntrinsicProto,
   tryEmitAsyncGenNextDispatch,
   tryEmitAsyncGenReturnThrowDispatch,
 } from "./calls.js";
@@ -572,6 +581,92 @@ function tryCompileLateFnctorPrototypeMethodCall(
     } else if (argType === null) {
       fctx.body.push({ op: "ref.null.extern" });
     }
+  }
+  fctx.body.push({ op: "call", funcIdx: dispatchIdx });
+  return { kind: "externref" };
+}
+
+/**
+ * A standalone fnctor subclass can inherit Iterator helpers from the live
+ * prototype installed by the Test262 harness. Static class lookup cannot see
+ * that runtime installation, while the generic fnctor miss uses a host bridge
+ * that standalone deliberately does not provide. Admit only classes whose
+ * compiled class chain exposes the iterator protocol's `next` callable (as a
+ * method or getter), and only helper forms already owned by the closed lazy
+ * iterator dispatcher. Every other fnctor miss keeps the legacy path.
+ */
+function tryCompileStandaloneFnctorLazyMethodMiss(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+  receiverClassName: string,
+  methodName: string,
+): InnerResult | undefined {
+  if (!ctx.standalone || fnctorAncestorOfClass(ctx, receiverClassName) === undefined) return undefined;
+
+  let owner: string | undefined = receiverClassName;
+  let hasCompiledNextMethod = false;
+  let nextGetterIdx: number | undefined;
+  const seen = new Set<string>();
+  while (owner !== undefined && ctx.classSet.has(owner) && !seen.has(owner)) {
+    seen.add(owner);
+    const methodKey = classMemberFuncKey(ctx, `${owner}_next`, "instance");
+    const getterKey = classMemberFuncKey(ctx, `${owner}_get_next`, "instance");
+    if (ctx.funcMap.has(methodKey) || ctx.funcMap.has(`${owner}_next`)) {
+      hasCompiledNextMethod = true;
+      break;
+    }
+    nextGetterIdx = ctx.funcMap.get(getterKey) ?? ctx.funcMap.get(`${owner}_get_next`);
+    if (nextGetterIdx !== undefined) {
+      break;
+    }
+    owner = ctx.classParentMap.get(owner);
+  }
+  if (!hasCompiledNextMethod && nextGetterIdx === undefined) return undefined;
+
+  const dispatchArgs = expr.arguments.some((arg) => ts.isSpreadElement(arg))
+    ? flattenCallArgs(expr.arguments)
+    : [...expr.arguments];
+  if (dispatchArgs === null || !isLazyIterForm(methodName, dispatchArgs.length)) return undefined;
+
+  const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, dispatchArgs.length);
+  const nextCallableTypeIdx = nextGetterIdx === undefined ? undefined : ensureIteratorNextCallableHandle(ctx);
+  if (nextGetterIdx !== undefined && nextCallableTypeIdx === undefined) return undefined;
+  flushLateImportShifts(ctx, fctx);
+
+  if (nextGetterIdx !== undefined && nextCallableTypeIdx !== undefined) {
+    const getterReceiverType = getFuncParamTypes(ctx, nextGetterIdx)?.[0];
+    const recvType = compileExpression(ctx, fctx, propAccess.expression, getterReceiverType);
+    const recvLocalType = getterReceiverType ?? recvType ?? { kind: "externref" as const };
+    if (recvType && !valTypesMatch(recvType, recvLocalType)) coerceType(ctx, fctx, recvType, recvLocalType);
+    else if (recvType === null) fctx.body.push({ op: "ref.null.extern" });
+    const recvLocal = allocLocal(fctx, `__iter_next_getter_recv_${fctx.locals.length}`, recvLocalType);
+    fctx.body.push({ op: "local.set", index: recvLocal });
+
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    fctx.body.push({ op: "call", funcIdx: nextGetterIdx });
+    const getterResultType = getWasmFuncReturnType(ctx, nextGetterIdx);
+    if (getterResultType && getterResultType.kind !== "externref") {
+      coerceType(ctx, fctx, getterResultType, { kind: "externref" });
+    } else if (getterResultType === undefined) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    if (recvLocalType.kind !== "externref") coerceType(ctx, fctx, recvLocalType, { kind: "externref" });
+    fctx.body.push({ op: "struct.new", typeIdx: nextCallableTypeIdx });
+    fctx.body.push({ op: "extern.convert_any" });
+  } else {
+    const recvType = compileExpression(ctx, fctx, propAccess.expression, { kind: "externref" });
+    if (recvType && recvType.kind !== "externref") coerceType(ctx, fctx, recvType, { kind: "externref" });
+    else if (recvType === null) fctx.body.push({ op: "ref.null.extern" });
+  }
+
+  for (const arg of dispatchArgs) {
+    const argType = compileInternalCallArgument(ctx, fctx, arg, { kind: "externref" });
+    if (argType && argType.kind !== "externref") coerceType(ctx, fctx, argType, { kind: "externref" });
+    else if (argType === null) fctx.body.push({ op: "ref.null.extern" });
   }
   fctx.body.push({ op: "call", funcIdx: dispatchIdx });
   return { kind: "externref" };
@@ -1727,8 +1822,17 @@ export function compileReceiverMethodCall(
         ctx.funcMap.get(classMemberFuncKey(ctx, fullName, "instance")),
       );
     }
+    // (#5309) …unless the receiver declares an own instance FIELD of this name,
+    // which shadows every inherited callable. The walk below would otherwise
+    // resolve `b.m()` to the PARENT's body. Not a duplicate of the guard in
+    // `collectClassDeclaration`: dropping the inherited alias fixes private
+    // names (they never reach this walk) but not public ones, because the walk
+    // finds `Parent_m` in `classMethodSet` on its own. Leaving `funcIdx`
+    // undefined hands the call to the callable-struct-field arm below.
+    const receiverFieldShadowsInherited =
+      !receiverIsClassObject && ctx.classFieldShadowedInheritedCallables.has(`${receiverClassName}_${methodName}`);
     // Walk inheritance chain to find the method in a parent class
-    if (funcIdx === undefined && !ts.isPrivateIdentifier(propAccess.name)) {
+    if (funcIdx === undefined && !receiverFieldShadowsInherited && !ts.isPrivateIdentifier(propAccess.name)) {
       let ancestor = ctx.classParentMap.get(receiverClassName);
       while (ancestor && funcIdx === undefined) {
         fullName = `${ancestor}_${methodName}`;
@@ -1748,30 +1852,28 @@ export function compileReceiverMethodCall(
     // call the first subclass's method regardless of runtime type.
     let virtualCandidates: { className: string; funcIdx: number; classTag: number }[] | undefined;
     if (funcIdx === undefined && !ts.isPrivateIdentifier(propAccess.name)) {
-      const candidates: { className: string; funcIdx: number; classTag: number }[] = [];
-      const baseClass = fullName.split("_")[0];
-      for (const [childClass, parentClass] of ctx.classParentMap) {
-        if (parentClass === receiverClassName || parentClass === baseClass) {
-          const childFullName = `${childClass}_${methodName}`;
-          const childHasMember = receiverIsClassObject
-            ? ctx.staticMethodSet.has(childFullName)
-            : ctx.classMethodSet.has(childFullName);
-          const childFuncIdx = childHasMember
-            ? ctx.funcMap.get(classMemberFuncKey(ctx, childFullName, receiverMemberKind))
-            : undefined; // (#1983)
-          const childTag = ctx.classTagMap.get(childClass);
-          if (childFuncIdx !== undefined && childTag !== undefined) {
-            candidates.push({ className: childClass, funcIdx: childFuncIdx, classTag: childTag });
-          }
+      // (#5249) The set spans every DESCENDANT, each resolved to its nearest
+      // declaring ancestor — not only direct children that DECLARE the method.
+      // `emitVirtualMethodDispatchByTag` ends its cascade in `unreachable`, so
+      // a descendant with no arm traps at run time on a module that compiled
+      // clean. Declared direct children still come first, in the same order, so
+      // `candidates[0]` — the static fallback and the emitter's result-type
+      // schema — is unchanged wherever the old walk produced one.
+      const openSet = collectOpenReceiverCandidates(
+        ctx,
+        receiverClassName,
+        fullName.split("_")[0],
+        methodName,
+        receiverIsClassObject,
+        receiverMemberKind,
+      );
+      if (openSet !== undefined) {
+        const candidates = openSet.candidates;
+        fullName = `${openSet.implClassName}_${methodName}`;
+        funcIdx = candidates[0]!.funcIdx;
+        if (candidates.length > 1) {
+          virtualCandidates = candidates;
         }
-      }
-      if (candidates.length === 1) {
-        fullName = `${candidates[0]!.className}_${methodName}`;
-        funcIdx = candidates[0]!.funcIdx;
-      } else if (candidates.length > 1) {
-        virtualCandidates = candidates;
-        fullName = `${candidates[0]!.className}_${methodName}`;
-        funcIdx = candidates[0]!.funcIdx;
       }
     } else if (funcIdx !== undefined && !ts.isPrivateIdentifier(propAccess.name)) {
       // Private names are lexically bound and cannot be overridden. Dispatch
@@ -1851,6 +1953,15 @@ export function compileReceiverMethodCall(
     // in `_fnctorInstanceCtor`, so the host resolves the member through the
     // live prototype chain) instead of falling to the graceful-null tail.
     if (funcIdx === undefined && fnctorAncestorOfClass(ctx, receiverClassName) !== undefined) {
+      const nativeLazyResult = tryCompileStandaloneFnctorLazyMethodMiss(
+        ctx,
+        fctx,
+        expr,
+        propAccess,
+        receiverClassName,
+        methodName,
+      );
+      if (nativeLazyResult !== undefined) return nativeLazyResult;
       const dynResult = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, methodName);
       if (dynResult !== undefined) return dynResult;
     }
@@ -1917,6 +2028,12 @@ export function compileReceiverMethodCall(
         if (wasmFuncReturnsVoid(ctx, finalMethodIdx)) return VOID_RESULT;
         return getWasmFuncReturnType(ctx, finalMethodIdx) ?? expectedType ?? { kind: "externref" };
       }
+      // An own property installed at runtime shadows this prototype method
+      // (`h.pre = (x) => …` over `class H { pre(x){…} }`). Route through the
+      // guard wrapper — same signature, so nothing below changes — which
+      // consults the receiver's own slot before running the static body.
+      // Undefined (the common case) keeps the direct call byte-identical.
+      const ownShadowName0 = ownShadowGuardedMethodName(ctx, expr, receiverClassName, methodName, funcIdx);
       // Push self (the receiver) as first argument, with type hint from method's first param
       const methodParamTypes0 = getFuncParamTypes(ctx, funcIdx);
       // (#2132) A method call on a statically-nullable receiver (`C | null`,
@@ -2051,7 +2168,8 @@ export function compileReceiverMethodCall(
         }
         // Set __argc before the call so the callee knows the actual arg count
         maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, ngParamCount);
-        const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
+        const finalMethodIdx =
+          ownShadowFuncIdx(ctx, ownShadowName0) ?? ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
         fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
         const elseInstrs = fctx.body;
         fctx.body = savedBody;
@@ -2140,7 +2258,8 @@ export function compileReceiverMethodCall(
       // would clobber it back to the un-flattened argument-node count (#5093).
       if (!handledArgvSpreadNn) maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, methodParamCount);
       // Re-lookup funcIdx: argument compilation may trigger addUnionImports
-      const finalMethodIdx = ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
+      const finalMethodIdx =
+        ownShadowFuncIdx(ctx, ownShadowName0) ?? ctx.funcMap.get(classMemberFuncKey(ctx, fullName)) ?? funcIdx; // (#1983)
       fctx.body.push({ op: "call", funcIdx: finalMethodIdx });
 
       // Determine return type
@@ -2211,6 +2330,12 @@ export function compileReceiverMethodCall(
       const directMethodFuncIdx = directObjectMethodFuncIdx(ctx, expr, funcIdx);
       const hasLiteralMethodOverride = directMethodFuncIdx !== undefined && directMethodFuncIdx !== nameMethodFuncIdx;
       if ((funcIdx = directMethodFuncIdx) !== undefined) {
+        // Same own-property guard as the class arm above. A CLASS instance also
+        // reaches this arm — `resolveStructNameForExpr` recovers its wasm
+        // carrier — and it is the arm that actually claims `h.pre("a")` for a
+        // `const h = new H()` binding. Object-literal structs are declined by
+        // the helper's `ctx.classSet` test, so they stay byte-identical.
+        const ownShadowNameS = ownShadowGuardedMethodName(ctx, expr, structTypeName, methodName, funcIdx);
         // Push self (the receiver) as first argument, with type hint from method's first param
         const structMethodPTypes = getFuncParamTypes(ctx, funcIdx);
         const recvType = compileExpression(ctx, fctx, propAccess.expression, structMethodPTypes?.[0]);
@@ -2274,7 +2399,9 @@ export function compileReceiverMethodCall(
           }
           // Set __argc before the call so the callee knows the actual arg count
           maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, smMethodParamCount);
-          const finalStructMethodIdx = hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx);
+          const finalStructMethodIdx =
+            ownShadowFuncIdx(ctx, ownShadowNameS) ??
+            (hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx));
           fctx.body.push({ op: "call", funcIdx: finalStructMethodIdx });
           const elseInstrs = fctx.body;
           fctx.body = savedBody;
@@ -2339,7 +2466,9 @@ export function compileReceiverMethodCall(
         // Set __argc before the call so the callee knows the actual arg count
         maybeSetArgcForKnownCall(ctx, fctx, fullName, expr.arguments.length, nnMethodParamCount);
         // Re-lookup funcIdx: argument compilation may trigger addUnionImports
-        const finalStructMethodIdx = hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx);
+        const finalStructMethodIdx =
+          ownShadowFuncIdx(ctx, ownShadowNameS) ??
+          (hasLiteralMethodOverride ? funcIdx : (ctx.funcMap.get(fullName) ?? funcIdx));
         fctx.body.push({ op: "call", funcIdx: finalStructMethodIdx });
 
         const sig = ctx.checker.getResolvedSignature(expr);
@@ -2497,7 +2626,23 @@ export function compileReceiverMethodCall(
     return { kind: "externref" };
   }
 
+  // (#5194 step 3) `%TypedArray%.prototype.<m>()` invoked ON THE PROTOTYPE must
+  // throw a TypeError (§23.2.3.x step 1 ValidateTypedArray: the receiver has no
+  // [[TypedArrayName]] slot). The receiver is a `$NativeProto`, but the array
+  // ladder below claims `slice`/`join`/`sort`/`keys`/`values`/`entries`/
+  // `indexOf`/… first and lowers it as an ARRAY, which quietly answered
+  // `undefined` for all nine `invoked-as-method.js` rows. Declining here routes
+  // the call to the closed-method dispatcher, whose `__extern_method_call`
+  // `$NativeProto` arm invokes the seeded companion closure — and that
+  // closure's brand cascade raises the spec TypeError. This is exactly why
+  // `subarray/invoked-as-method.js` already passed: `subarray` is not an
+  // `ARRAY_METHODS` name, so it never reached this claim.
+  const receiverIsTypedArrayIntrinsicProto =
+    ctx.standalone &&
+    ts.isPropertyAccessExpression(propAccess) &&
+    tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
   if (
+    !receiverIsTypedArrayIntrinsicProto &&
     !(
       ctx.targetProfile.semanticProviders === "native-first" &&
       (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
@@ -3886,6 +4031,11 @@ export function compileReceiverMethodCall(
         !recvIsBuiltinClass
       ) {
         const arity = dispatchArgs.length;
+        // The dispatcher's fill runs at finalize with no AST in hand, so record
+        // HERE whether this call's file could install an own callable member of
+        // this name — the fill then guards its user-class arms with an own-slot
+        // check. Registers `__hasOwnProperty` while imports are still index-safe.
+        noteOwnShadowDispatchCandidate(ctx, expr, methodName);
         const dispatchIdx = reserveClosedMethodDispatch(ctx, methodName, arity);
         // #3507 — reserve the native RegExp carrier helper while function
         // indices are still append-safe. The dispatcher fill only reads it.
@@ -3942,6 +4092,16 @@ export function compileReceiverMethodCall(
           else if (arity <= 3 && methodName === "fill") taFillIdx = ensureTaDynFillHelper(ctx);
           else if (arity <= 3 && methodName === "copyWithin") taFillIdx = ensureTaDynCopyWithinHelper(ctx);
           else if (arity <= 3 && methodName === "reverse") taFillIdx = ensureTaDynReverseHelper(ctx);
+          else if (hasTaDynProtoMethodHelper(methodName)) {
+            // (#5194 r3-1.3) MINT ONLY. The read-side helpers dispatch through
+            // the finalize-time `__extern_method_call` arm
+            // (ta-dyn-method-call.ts), which can only ladder over helpers that
+            // already exist in `funcMap` — and nothing else mints them, because
+            // this call site does not lower to a direct call. The four mutators
+            // above keep their faster call-site two-arm, so their bytes do not
+            // move.
+            ensureTaDynProtoMethodHelper(ctx, methodName);
+          }
         }
         const taDynMethodIdx = taSetIdx ?? taFillIdx;
         if (taDynMethodIdx !== undefined && ctx.taDynViewTypeIdx >= 0) {

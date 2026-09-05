@@ -29,11 +29,12 @@ import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitHoleSentinel } from "./array-holes.js"; // (#2001 S1)
+import { objectLiteralTakesToPrimitiveOpenPath } from "./to-primitive-open-object.js"; // (#5269 R3-2) shared with the type-level twin in index.ts
 import { bareAnyArrayLiteralNeedsExternref } from "./array-literal-any-carrier.js";
 import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#4491 T11)
 import { ensureStrToCharVecHelper, stringConstantExternrefInstrs } from "./native-strings.js";
-import { emitStandaloneIterableMaterialize } from "./iterator-native.js"; // (#3100 S5)
+import { emitStandaloneIterableMaterialize, recordStrictMethodLiteralAllocation } from "./iterator-native.js"; // (#3100 S5, #5131 provenance)
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { emptyBackingStoreInstrs } from "./empty-vec-store.js"; // (#3921) shared zero-length backing store
@@ -1136,6 +1137,37 @@ function compileObjectLiteralWithAccessors(
           fctx.body.push({ op: "local.set", index: objLocal });
         }
       }
+    } else if (
+      // (#5270 step 2) §B.3.1 `__proto__` Property Names in Object
+      // Initializers: a NON-computed `__proto__:` key is NOT an own property —
+      // it runs `object.[[SetPrototypeOf]](value)` when Type(value) is Object
+      // or Null, and is otherwise silently ignored (no property, no error).
+      // `__extern_set(obj, "__proto__", v)` used to store it as an ordinary own
+      // data property in standalone, so `Object.getPrototypeOf` answered the
+      // literal's own prototype and `getOwnPropertyDescriptor` found a
+      // descriptor where the spec wants `undefined`.
+      //
+      // `__object_setPrototypeOf` already implements the whole rule: it
+      // canonicalizes a CALLABLE value to its `$Object` proto-view, coerces any
+      // other non-`$Object` value to a null field, and sets
+      // `OBJ_FLAG_NULL_PROTO` only for a raw JS `null` — so a number / string /
+      // boolean / symbol / undefined value leaves the fresh literal exactly as
+      // it was, with its implicit `%Object.prototype%` terminal. Gated on the
+      // native's presence, so the JS-host lane keeps its `__extern_set` route
+      // (where the host object's real `__proto__` setter does the same job).
+      ts.isPropertyAssignment(prop) &&
+      !ts.isComputedPropertyName(prop.name) &&
+      resolvePropertyNameText(ctx, prop) === "__proto__" &&
+      ctx.funcMap.get("__object_setPrototypeOf") !== undefined
+    ) {
+      fctx.body.push({ op: "local.get", index: objLocal });
+      const protoType = compileExpression(ctx, fctx, prop.initializer, { kind: "externref" });
+      if (!protoType) fctx.body.push({ op: "ref.null.extern" });
+      else if (protoType.kind !== "externref") coerceType(ctx, fctx, protoType, { kind: "externref" });
+      // Resolved AFTER the value compile: it may have pulled a late import,
+      // which shifts every function index captured before it.
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__object_setPrototypeOf")! });
+      fctx.body.push({ op: "drop" }); // returns `obj`
     } else if (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) {
       // __extern_set(obj, key, value)
       let propName: string | undefined;
@@ -1687,24 +1719,60 @@ function computedOnlyArithmeticLiteralNeedsHostCarrier(ctx: CodegenContext, expr
   return true;
 }
 
+/**
+ * §B.3.1: a NON-computed `__proto__:` key in an object literal is not an own
+ * property at all — it runs `object.[[SetPrototypeOf]](value)` during literal
+ * evaluation. `['__proto__']: v` and `__proto__() {}` are ordinary own
+ * properties and are deliberately excluded.
+ *
+ * (#5270 step 2) Shared so the `Object.getPrototypeOf(<literal>)` static fold
+ * declines exactly the literals whose [[Prototype]] the colon form changes.
+ */
+export function objectLiteralHasColonProto(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
+  return expr.properties.some(
+    (p) =>
+      ts.isPropertyAssignment(p) &&
+      !ts.isComputedPropertyName(p.name) &&
+      resolvePropertyNameText(ctx, p) === "__proto__",
+  );
+}
+
 export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   return (
     expr.properties.length > 0 &&
     (expr.properties.some((p) => ts.isGetAccessorDeclaration(p) || ts.isSetAccessorDeclaration(p)) ||
       _hasDisposalMethod(expr) ||
       _hasRuntimeComputedKey(ctx, expr) ||
+      // (#5269 H-1) STANDALONE ONLY. Both predicates exist for the #5102 probe:
+      // under the native provider a closed struct hides its `[Symbol.toPrimitive]`
+      // member from the runtime walker, so the literal has to become an open
+      // object. On the HOST lane it is not merely unnecessary, it is WRONG —
+      // forcing the host-object path routes the value through the host
+      // `__extern_toString`, which calls `v.toString()` and never consults
+      // @@toPrimitive: `${o}` and `String(o)` answered "[object Object]" instead
+      // of the @@toPrimitive result, `"" + o` got hint "string" rather than
+      // "default", and every host compile of such a file gained env imports.
+      // Host mode's own `_toPrimitive` already handles the closed-struct case.
+      // (#5269 R3-1) REVERTED to `ctx.standalone`. R2-5 widened this to
+      // `standalone || wasi || semanticProviders === "native-first"` on the
+      // reasoning that the #5102 fix was "inert on exactly those targets".
+      // Measured against the merge-base d7f23a80bf, that is factually wrong
+      // for `--target wasi`: base wasi ALREADY answered `String(w)`,
+      // `var v = w; String(v)`, `String(hmod.w)` and `v.x` correctly by a
+      // different route. The widening bought 2 rows there and cost 12 —
+      // including `null` for a plain alias, a TypeError on `v.x`, and a
+      // `dereferencing a null pointer` trap at module init. Widen again only
+      // after the wasi lane is measured to need it and the open-object
+      // consumers on that target are shown to agree.
+      (ctx.standalone && objectLiteralTakesToPrimitiveOpenPath(expr)) ||
       // A colon-form `__proto__` property is not an own data property. It sets
       // the new object's [[Prototype]] while the literal is evaluated. A
       // closed WasmGC struct cannot represent that operation, and exposing the
       // struct to a dynamic consumer makes its fields invisible as ordinary
-      // own properties. Build the open object instead; `__extern_set` performs
-      // the required prototype setter operation in both runtime profiles.
-      expr.properties.some(
-        (p) =>
-          ts.isPropertyAssignment(p) &&
-          !ts.isComputedPropertyName(p.name) &&
-          resolvePropertyNameText(ctx, p) === "__proto__",
-      ) ||
+      // own properties. Build the open object instead; the PropertyAssignment
+      // arm of `compileObjectLiteralWithAccessors` routes it to
+      // `__object_setPrototypeOf` rather than `__extern_set` (#5270 step 2).
+      objectLiteralHasColonProto(ctx, expr) ||
       // (#4616, cookie parseCookie tests) An EMPTY-STRING key (`{ "": "bar" }`
       // — a legal JS property) cannot be a struct field: the field-name
       // plumbing (`__struct_field_names` comma join, `__sget_<name>` exports)
@@ -3013,6 +3081,89 @@ function spreadFieldReadWithAbsentFallback(
   return read;
 }
 
+function pushStrictMethodLiteralAllocation(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ObjectLiteralExpression,
+  structTypeIdx: number,
+): void {
+  const allocation: Instr = { op: "struct.new", typeIdx: structTypeIdx };
+  recordStrictMethodLiteralAllocation(ctx, allocation, expr);
+  fctx.body.push(allocation);
+}
+
+/**
+ * Copy every runtime-only spread source (`{ …shaped, …anyTyped }`) onto the
+ * struct just built by {@link compileObjectLiteralForStruct}, which is on the
+ * stack; leaves it there.
+ *
+ * No-op unless the runtime sources form a SUFFIX of the literal's properties
+ * (see the call site for why order forbids anything else) and every helper is
+ * available. Object literals without an unshaped spread source emit nothing.
+ */
+function emitRuntimeSpreadCopy(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ObjectLiteralExpression,
+  structTypeIdx: number,
+  runtimeSpreadSources: { expr: ts.Expression; propIndex: number }[],
+): void {
+  if (runtimeSpreadSources.length === 0) return;
+  const firstRuntime = runtimeSpreadSources[0]!.propIndex;
+  for (let i = firstRuntime; i < expr.properties.length; i++) {
+    if (!runtimeSpreadSources.some((source) => source.propIndex === i)) return;
+  }
+
+  let arrNewName = "__js_array_new";
+  let arrPushName = "__js_array_push";
+  let arrNewIdx: number | undefined;
+  let arrPushIdx: number | undefined;
+  if (ctx.targetProfile.semanticProviders === "native-first") {
+    const builders = ensureObjVecBuilders(ctx);
+    arrNewName = "__objvec_new";
+    arrPushName = "__objvec_push";
+    arrNewIdx = builders.newIdx;
+    arrPushIdx = builders.pushIdx;
+  } else {
+    arrNewIdx = ensureLateImport(ctx, arrNewName, [], [{ kind: "externref" }]);
+    arrPushIdx = ensureLateImport(ctx, arrPushName, [{ kind: "externref" }, { kind: "externref" }], []);
+  }
+  const assignIdx = ensureLateImport(
+    ctx,
+    "__object_assign",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  if (assignIdx === undefined || arrNewIdx === undefined || arrPushIdx === undefined) return;
+
+  const litType: ValType = { kind: "ref", typeIdx: structTypeIdx };
+  const litLocal = allocLocal(fctx, `__spread_lit_${fctx.locals.length}`, litType);
+  const arrLocal = allocLocal(fctx, `__spread_rt_arr_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: litLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(arrNewName) ?? arrNewIdx });
+  fctx.body.push({ op: "local.set", index: arrLocal });
+  for (const source of runtimeSpreadSources) {
+    fctx.body.push({ op: "local.get", index: arrLocal });
+    const srcType = compileExpression(ctx, fctx, source.expr);
+    if (srcType === null) {
+      // Nothing was produced; unwind the pending array reference so the stack
+      // stays balanced and abandon the copy.
+      fctx.body.push({ op: "drop" });
+      fctx.body.push({ op: "local.get", index: litLocal });
+      return;
+    }
+    if (srcType.kind !== "externref") coerceType(ctx, fctx, srcType, { kind: "externref" });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(arrPushName) ?? arrPushIdx });
+  }
+  fctx.body.push({ op: "local.get", index: litLocal });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.get", index: arrLocal });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__object_assign") ?? assignIdx });
+  fctx.body.push({ op: "drop" });
+  fctx.body.push({ op: "local.get", index: litLocal });
+}
+
 export function compileObjectLiteralForStruct(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -3037,6 +3188,8 @@ export function compileObjectLiteralForStruct(
     srcFields: { name: string }[];
     propIndex: number;
   }[] = [];
+  /** Spread sources whose own properties are only knowable at runtime. */
+  const runtimeSpreadSources: { expr: ts.Expression; propIndex: number }[] = [];
   for (let propIndex = 0; propIndex < expr.properties.length; propIndex++) {
     const prop = expr.properties[propIndex]!;
     if (ts.isSpreadAssignment(prop)) {
@@ -3067,6 +3220,7 @@ export function compileObjectLiteralForStruct(
         ensureStructForType(ctx, srcType);
         srcStructName = resolveStructName(ctx, srcType);
       }
+      let resolved = false;
       if (srcStructName) {
         const srcStructTypeIdx = ctx.structMap.get(srcStructName);
         const srcFields = ctx.structFields.get(srcStructName);
@@ -3077,8 +3231,17 @@ export function compileObjectLiteralForStruct(
           if (!spreadResult) continue;
           fctx.body.push({ op: "local.set", index: srcLocal });
           spreadSources.push({ local: srcLocal, srcStructTypeIdx, srcFields, propIndex });
+          resolved = true;
         }
       }
+      // A spread source with NO resolvable struct shape (`const s = { ...n }`
+      // for an `any` parameter `n`, then `s.hooks = …`) contributed NOTHING:
+      // it was dropped here, so the assembled struct carried only the fields
+      // the OTHER sources named, and the source was not even evaluated. That
+      // is marked's `this.defaults = { …this.defaults, …s }` — the whole hook
+      // registry vanished. Its own properties only exist at runtime, so they
+      // are copied onto the assembled struct after `struct.new`, below.
+      if (!resolved) runtimeSpreadSources.push({ expr: prop.expression, propIndex });
     }
   }
   // (#4616) The absent-slot fallback below tests externref reads against the
@@ -3618,7 +3781,22 @@ export function compileObjectLiteralForStruct(
     }
   }
 
-  fctx.body.push({ op: "struct.new", typeIdx: structTypeIdx });
+  pushStrictMethodLiteralAllocation(ctx, fctx, expr, structTypeIdx);
+
+  // Copy the runtime-only spread sources over the assembled struct. §13.2.5.5
+  // CopyDataProperties is a runtime walk of the source's OWN enumerable keys,
+  // which is exactly what `__object_assign` does — and on a struct target it
+  // writes through the host mirror, so a key that matches a declared field
+  // lands in the field and any other key lands in the sidecar where the
+  // dynamic member reads already look.
+  //
+  // Restricted to a SUFFIX of the property list (every property after the
+  // first runtime source is itself a runtime source). Later writers win in
+  // JavaScript, and this copy necessarily happens last; applying it for a
+  // source that some later named property or shaped spread must override
+  // would invert that order. A non-suffix source keeps today's behaviour —
+  // dropped — rather than being silently mis-ordered.
+  emitRuntimeSpreadCopy(ctx, fctx, expr, structTypeIdx, runtimeSpreadSources);
 
   // Register and compile getter/setter accessors on the object literal
   for (const prop of expr.properties) {
@@ -4930,6 +5108,36 @@ export function compileArrayLiteral(
     const fact = ctx.oracle.typeFactOf(value);
     return fact.kind === "any" || fact.kind === "unknown" || fact.kind === "function";
   });
+  // (#5269 R2-4) An element that is an object literal on the HOST-OBJECT path is
+  // an open `$Object`, not a closed struct — but the first-element heuristic
+  // below still picks a closed `$__anon_N` carrier for it, and the open object
+  // does not fit that slot. The element is silently lost: measured on standalone,
+  // `var g = { get a() { return 1; } }; String([g][0])` answers `undefined` and
+  // `[g,g].join("-")` answers `"-"`, on BOTH this tree and base.
+  //
+  // That is a pre-existing hole — every literal already forced open (an accessor,
+  // a disposal method, a runtime computed key, a colon-form `__proto__`) hits it.
+  // #5269's H-1 predicates made `[Symbol.toPrimitive]` literals join that class,
+  // which is how `[w].join()` regressed from "[object Object]" to "". Widening the
+  // carrier to externref — exactly what `hasDynamicOrCallableElement` already does
+  // for `any`/callable elements — fixes the whole class, not just the new member.
+  //
+  // This is the array-element LOCKSTEP CALLER of `objectLiteralForcesHostPath`;
+  // `statements/variables.ts`, `declarations.ts` and
+  // `statements/nested-declarations.ts` are the same pattern for a binding.
+  const hasHostPathObjectLiteralElement = expr.elements.some((element) => {
+    if (ts.isOmittedExpression(element)) return false;
+    let value: ts.Expression = ts.isSpreadElement(element) ? element.expression : element;
+    // The element is usually the BINDING, not the literal (`var w = {…}; [w]`),
+    // so resolve an identifier to its initializer first — the same resolution
+    // R2-1 needed for the JSON flatness test.
+    if (ts.isIdentifier(value)) {
+      const init = ctx.oracle.variableInitializerOf(value);
+      if (init === undefined) return false;
+      value = init;
+    }
+    return ts.isObjectLiteralExpression(value) && objectLiteralForcesHostPath(ctx, value);
+  });
   let assignmentValue: ts.Expression = expr;
   while (
     ts.isParenthesizedExpression(assignmentValue.parent) ||
@@ -5425,7 +5633,7 @@ export function compileArrayLiteral(
   // coerce every spread value through that primitive representation and can
   // also violate the enclosing callback's `any[]` result ABI. Preserve the
   // source values in the universal carrier, including the spread-first shape.
-  if (hasDynamicOrCallableElement) {
+  if (hasDynamicOrCallableElement || hasHostPathObjectLiteralElement) {
     elemWasm = { kind: "externref" };
   }
   // (#2106 S0) `any[]` element tag-recovery. When the contextual element type is

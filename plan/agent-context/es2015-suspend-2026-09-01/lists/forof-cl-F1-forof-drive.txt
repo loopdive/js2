@@ -1,0 +1,6 @@
+language/statements/for-of/array-key-get-error.js
+language/statements/for-of/iterator-next-error.js
+language/statements/for-of/iterator-next-reference.js
+language/statements/for-of/iterator-next-result-type.js
+language/statements/for-of/iterator-next-result-value-attr-error.js
+language/statements/for-of/throw-from-finally.js

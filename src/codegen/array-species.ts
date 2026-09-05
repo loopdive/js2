@@ -93,6 +93,8 @@ export interface ArraySpeciesDeps {
   objectIs: number | undefined;
   typeofObject: number | undefined;
   typeofFunction: number | undefined;
+  /** (#5268 step 6) §7.2.2 IsArray — step 3's abrupt for a revoked Proxy. */
+  externIsArray: number | undefined;
 }
 
 /**
@@ -181,6 +183,7 @@ export function prepareArraySpeciesDeps(ctx: CodegenContext, fctx: FunctionConte
     objectIs: ctx.funcMap.get("__object_is"),
     typeofObject: ctx.funcMap.get("__typeof_object"),
     typeofFunction: ctx.funcMap.get("__typeof_function"),
+    externIsArray: ctx.funcMap.get("__extern_is_array"),
   };
 }
 
@@ -268,12 +271,27 @@ export function emitArraySpeciesCreate(
   const ctorLocal = allocLocal(fctx, `__spc_c_${fctx.locals.length}`, EXTERNREF);
   const outLocal = allocLocal(fctx, `__spc_out_${fctx.locals.length}`, EXTERNREF);
   const lenLocal = allocLocal(fctx, `__spc_len_${fctx.locals.length}`, F64);
+  const recvLocal = allocLocal(fctx, `__spc_o_${fctx.locals.length}`, EXTERNREF);
 
   fctx.body.push(...lenInstrs, { op: "local.set", index: lenLocal });
   fctx.body.push({ op: "ref.null.extern" }, { op: "local.set", index: outLocal });
+  // The receiver is evaluated ONCE into a local: steps 2 and 4 both read it,
+  // and re-pushing `recvInstrs` would alias the same Instr objects into two
+  // positions, which the finalize walks remap twice (#5188 followUp 4).
+  fctx.body.push(...recvInstrs, { op: "local.set", index: recvLocal });
+
+  // (#5268 step 6) §10.4.2.3 steps 2-3: `isArray = ? IsArray(originalArray)`,
+  // and a false answer returns `ArrayCreate(length)` — this function's DEFAULT
+  // lane, i.e. `outLocal` left null. The step is observable twice over: the
+  // `?` propagates the revoked-Proxy TypeError BEFORE `Get(O, "constructor")`
+  // runs (`{map,filter,splice}/create-revoked-proxy.js` assert `ctorCount ===
+  // 0`), and an array-LIKE non-array receiver must not consult `@@species` at
+  // all. Everything from here to the end of the function is the isArray-true
+  // arm, spliced into a block a false answer branches out of.
+  const speciesArmStart = fctx.body.length;
 
   // C = Get(O, "constructor")
-  fctx.body.push(...recvInstrs);
+  fctx.body.push({ op: "local.get", index: recvLocal });
   fctx.body.push(...stringConstantExternrefInstrs(ctx, "constructor"));
   fctx.body.push({ op: "call", funcIdx: deps.externGet });
   fctx.body.push({ op: "local.set", index: ctorLocal });
@@ -327,6 +345,24 @@ export function emitArraySpeciesCreate(
       { op: "if", blockType: { kind: "empty" }, then: constructArm },
     ],
   });
+
+  // Close the step-2/3 gate around everything emitted since `speciesArmStart`.
+  // The inner `if` bodies carry no `br`, so wrapping them in one more block
+  // leaves every existing relative depth untouched.
+  if (deps.externIsArray !== undefined) {
+    const speciesArm = fctx.body.splice(speciesArmStart);
+    fctx.body.push({
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        { op: "local.get", index: recvLocal },
+        { op: "call", funcIdx: deps.externIsArray },
+        { op: "i32.eqz" },
+        { op: "br_if", depth: 0 },
+        ...speciesArm,
+      ],
+    });
+  }
   return outLocal;
 }
 

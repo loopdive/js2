@@ -919,7 +919,12 @@ describe("#3520 structural IR identity", () => {
       "class-instance-method",
     ]);
     expect(new Set(members.map((unit) => unit.id)).size).toBe(members.length);
-    expect(members.filter((unit) => unit.legacyMatchName === "Shape_<computed>")).toHaveLength(2);
+    // #3522 W1-A (PR #5545): a private member carries its mangled name, so only
+    // the genuinely computed member is `<computed>`. Before that fix every
+    // private member collapsed onto `<computed>` and two members shared one
+    // legacy match name — the collision this pin used to encode.
+    expect(members.filter((unit) => unit.legacyMatchName === "Shape_<computed>")).toHaveLength(1);
+    expect(members.filter((unit) => unit.legacyMatchName === "Shape___priv_secret")).toHaveLength(1);
     expect(new Set(members.map((unit) => unit.legacyKey)).size).toBe(members.length);
   });
 

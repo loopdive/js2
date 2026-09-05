@@ -1,0 +1,6 @@
+var target = { attr: 1 };
+var p = new Proxy(target, {});
+var d = Object.getOwnPropertyDescriptor(p, "attr");
+if (!d || d.value !== 1 || d.configurable !== true) throw new Error("desc = " + JSON.stringify(d));
+var u = Object.getOwnPropertyDescriptor(p, "missing");
+if (u !== undefined) throw new Error("missing should be undefined, got " + u);

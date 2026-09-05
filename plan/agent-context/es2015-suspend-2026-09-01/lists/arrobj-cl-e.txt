@@ -1,0 +1,17 @@
+built-ins/Object/freeze/abrupt-completion.js
+built-ins/Object/freeze/proxy-no-ownkeys-returned-keys-order.js
+built-ins/Object/entries/observable-operations.js
+built-ins/Object/seal/abrupt-completion.js
+built-ins/Object/values/observable-operations.js
+built-ins/Object/freeze/proxy-with-defineProperty-handler.js
+built-ins/Object/defineProperties/proxy-no-ownkeys-returned-keys-order.js
+built-ins/Object/keys/property-traps-order-with-proxied-array.js
+built-ins/Object/seal/proxy-no-ownkeys-returned-keys-order.js
+built-ins/Object/isSealed/proxy-no-ownkeys-returned-keys-order.js
+built-ins/Object/keys/proxy-non-enumerable-prop-invariant-3.js
+built-ins/Object/isFrozen/proxy-no-ownkeys-returned-keys-order.js
+built-ins/Object/keys/proxy-keys.js
+built-ins/Object/prototype/isPrototypeOf/arg-is-proxy.js
+built-ins/Object/getOwnPropertyDescriptors/proxy-undefined-descriptor.js
+built-ins/Object/getOwnPropertyDescriptors/proxy-no-ownkeys-returned-keys-order.js
+built-ins/Object/seal/proxy-with-defineProperty-handler.js

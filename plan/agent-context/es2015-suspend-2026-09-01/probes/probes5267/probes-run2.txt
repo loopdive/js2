@@ -1,0 +1,7 @@
+##### .tmp/es2015/probes5267/p6-weakmap-nonentry.js
+STATUS fail
+REASON TypeError: Iterator value 1 is not an entry object in __module_init() at source L4 | at L6: assert.sameValue(got instanceof TypeError, true, 'instanceof TypeError; got=' + got + ' ctor=' + (got && got.constructor && got.constructor.name));
+##### .tmp/es2015/probes5267/p7-set-custom-iterable.js
+STATUS fail
+REASON TypeError: object is not iterable (cannot read property Symbol(Symbol.iterator)) in __module_init() at source L8 | at L10: assert.sameValue(calls, 2, 'next calls');
+done

@@ -13,6 +13,10 @@ import { reportError } from "./context/errors.js";
 import { elementReadOfRebindWidenedArray } from "./declarations/array-rebind-element-widening.js";
 import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { typeofFoldContradictedByFieldVerdict } from "./fnctor-ctor-param-types.js";
+import {
+  emitUninitialisedFieldTypeofComparison,
+  emitUninitialisedFieldTypeofString,
+} from "./uninitialised-field-undefined.js"; // (#5312)
 import { typeIsForeignReturnFnctorInstance } from "./fnctor-foreign-return.js"; // (#4637 A2) §10.2.1.3 step 13
 import { overlayRouteActive } from "./typed-lane-overlay-route.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -2015,16 +2019,21 @@ export function compileTypeofExpression(
     //   target.then = function(a, b) { resolve = a; };
     //   …; typeof resolve   // narrowed `null` → folded "object"
     // while the runtime value is a host function (test262
-    // `finally/invokes-then-with-function.js` assert #4). Host lane only — the
-    // standalone `__typeof` native is a null stub (#2107), so the fold remains
-    // preferable there. Assignments the SAME function's flow already tracked
-    // re-narrow the type away from null, so this only fires where the fold is
-    // genuinely unsound (closure-crossing or branch-dependent writes) — those
-    // sites trade the fold for a correct runtime `__typeof` call.
+    // `finally/invokes-then-with-function.js` assert #4). Assignments the SAME
+    // function's flow already tracked re-narrow the type away from null, so this
+    // only fires where the fold is genuinely unsound (closure-crossing or
+    // branch-dependent writes) — those sites trade the fold for a correct
+    // runtime `__typeof` call.
+    //
+    // (#5195 Step 3) The guard used to be host-lane-only on the ground that
+    // standalone's `__typeof` is a null stub (#2107). That justification is
+    // stale: `typeof-natives-finalize.ts` materializes a real `__typeof`
+    // whenever `nativeStrTypeIdx >= 0`, which standalone always has. Keeping
+    // the fold there mis-answered the `caught` idiom every super error test
+    // uses (`var caught; function f(){ try{…}catch(e){ caught = e; } }` →
+    // `typeof caught` folded to "undefined").
     if (
       !forceRuntimeTypeof &&
-      ctx.standalone !== true &&
-      ctx.wasi !== true &&
       ts.isIdentifier(bareTdz) &&
       (tsType.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0 &&
       sourceHasIdentifierAssignment(bareTdz.getSourceFile(), bareTdz.text)
@@ -2043,6 +2052,10 @@ export function compileTypeofExpression(
     // constructor's write, so the fold ignores every OTHER write reaching the
     // field. Killed on a PROVEN write-kind contradiction only.
     if (staticResult !== null && !typeofFoldContradictedByFieldVerdict(ctx, operand, staticResult)) {
+      // (#5312) An uninitialised declared field holds `undefined` until
+      // something writes it, so the fold is only half the answer.
+      const uninitialised = emitUninitialisedFieldTypeofString(ctx, fctx, operand, staticResult);
+      if (uninitialised !== null) return uninitialised;
       return compileStringLiteral(ctx, fctx, staticResult);
     }
   }
@@ -2312,10 +2325,10 @@ export function compileTypeofComparison(
   // null/undefined FLOW narrowing over a binding assigned elsewhere (closure-
   // crossing writes the checker can't apply) must not const-fold the
   // comparison — take the runtime `__typeof_*` helper path below instead.
+  // (#5195 Step 3) Applies in every lane; see the twin guard's note on why the
+  // standalone "null stub" exclusion was stale.
   if (
     staticTypeof !== null &&
-    ctx.standalone !== true &&
-    ctx.wasi !== true &&
     ts.isIdentifier(operand) &&
     (tsType.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0 &&
     sourceHasIdentifierAssignment(operand.getSourceFile(), operand.text)
@@ -2370,6 +2383,10 @@ export function compileTypeofComparison(
     staticTypeof = null;
   }
   if (staticTypeof !== null) {
+    // (#5312) Same runtime null test as the plain `typeof` arm, reduced to the
+    // boolean the comparison wants.
+    const uninitialised = emitUninitialisedFieldTypeofComparison(ctx, fctx, operand, staticTypeof, stringLiteral, isEq);
+    if (uninitialised !== null) return uninitialised;
     const matches = staticTypeof === stringLiteral;
     const result = isEq ? (matches ? 1 : 0) : matches ? 0 : 1;
     fctx.body.push({ op: "i32.const", value: result });

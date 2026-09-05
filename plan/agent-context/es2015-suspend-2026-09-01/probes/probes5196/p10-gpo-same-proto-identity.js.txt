@@ -1,0 +1,8 @@
+// getPrototypeOf invariant over a non-extensible target whose proto is Array.prototype
+var target = Object.create(Array.prototype);
+var p = new Proxy(target, { getPrototypeOf: function() { return Array.prototype; } });
+Object.preventExtensions(target);
+var same = Object.getPrototypeOf(target) === Array.prototype;
+var viaProxy;
+try { viaProxy = Object.getPrototypeOf(p) === Array.prototype; } catch (e) { throw new Error("invariant threw although protos agree; direct same=" + same + " " + e); }
+if (!viaProxy) throw new Error("mismatch same=" + same);

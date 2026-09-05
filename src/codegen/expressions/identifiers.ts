@@ -22,6 +22,7 @@ import {
   getFuncSignature,
 } from "../closures.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js";
 import { tryEmitNativeUserCtorInstanceOf } from "../native-user-instanceof.js";
 import { emitLazyClassObjectGet } from "./extern.js";
@@ -479,6 +480,76 @@ export function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip"
     // But only if not in a loop that wraps both (already checked above)
     return "throw";
   }
+}
+
+/**
+ * (#5271 F2) True when a top-level `const` is provably INITIALIZED before any
+ * user code in this module can run, so a read of it — from anywhere, including a
+ * hoisted function declaration — can never be in its temporal dead zone.
+ *
+ * `analyzeTdzAccess` answers "check" for every read whose containing function is
+ * a FunctionDeclaration, because hoisting lets a call precede the declaration.
+ * That is right in general, but it made the constant folders refuse an ordinary
+ * `const NAME = "kern"; function label(n) { return NAME + ":" + n; }` — the
+ * module then emitted a runtime concat plus two flag guards where it used to
+ * emit one folded string constant. Same output, worse code, on ordinary typed
+ * source.
+ *
+ * The proof is positional and cheap: module initialization runs the top-level
+ * statements in order, so if EVERY statement that ends before this declaration
+ * begins is inert — an import, a type-only declaration, a function declaration
+ * (hoisted, not executed), or a variable statement whose initializers cannot
+ * invoke anything — then the first user code to run is at or after the
+ * declaration. An importer cannot run earlier either: a module's body completes
+ * before its exports are used.
+ *
+ * Deliberately conservative. Anything else before the declaration (an expression
+ * statement, a class with static initializers, a control-flow statement) answers
+ * false and the read keeps its runtime check, which is what
+ * `const/global-closure-get-before-initialization` needs.
+ */
+function initializerCannotRunUserCode(node: ts.Node): boolean {
+  let clean = true;
+  const visit = (n: ts.Node): void => {
+    if (!clean) return;
+    if (
+      ts.isCallExpression(n) ||
+      ts.isNewExpression(n) ||
+      ts.isTaggedTemplateExpression(n) ||
+      ts.isPropertyAccessExpression(n) ||
+      ts.isElementAccessExpression(n) ||
+      ts.isFunctionExpression(n) ||
+      ts.isArrowFunction(n) ||
+      ts.isClassExpression(n)
+    ) {
+      clean = false;
+      return;
+    }
+    forEachChild(n, visit);
+  };
+  visit(node);
+  return clean;
+}
+
+export function topLevelConstInitializedBeforeAnyUserCode(decl: ts.Declaration): boolean {
+  if (!ts.isVariableDeclaration(decl)) return false;
+  const list = decl.parent;
+  if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return false;
+  const statement = list.parent;
+  if (!ts.isVariableStatement(statement)) return false;
+  const sourceFile = statement.parent;
+  if (!ts.isSourceFile(sourceFile)) return false;
+  const declStart = statement.getStart(sourceFile);
+  for (const stmt of sourceFile.statements) {
+    if (stmt.getEnd() > declStart) break;
+    if (ts.isImportDeclaration(stmt) || ts.isImportEqualsDeclaration(stmt)) continue;
+    if (ts.isInterfaceDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt)) continue;
+    // A hoisted FunctionDeclaration is created, never executed, at this point.
+    if (ts.isFunctionDeclaration(stmt)) continue;
+    if (ts.isVariableStatement(stmt) && initializerCannotRunUserCode(stmt)) continue;
+    return false;
+  }
+  return true;
 }
 
 /** Walk up to find the nearest containing function (or source file for top-level). */
@@ -1189,6 +1260,10 @@ function compileIdentifierCore(
       // Read through ref cell: local.get → null guard → struct.get $ref_cell 0
       // The ref cell local is ref_null — if the closure capture is uninitialized,
       // the local is null and struct.get would trap (#702).
+      // A cell whose `struct.new` sits in a conditional arm is null on every
+      // path that skipped that arm; the guard below would then read the value
+      // type's DEFAULT rather than the binding. Mint it from the pre-box slot.
+      emitConditionalCaptureBoxRepair(fctx, name, localIdx);
       fctx.body.push({ op: "local.get", index: localIdx });
       emitNullGuardedStructGet(
         ctx,

@@ -1,10 +1,10 @@
 ---
 id: 5150
 title: "ES2015 standalone: buffers conformance wave 1"
-status: ready
+status: in-review
 sprint: current
 created: 2026-08-28
-updated: 2026-08-28
+updated: 2026-09-02
 priority: high
 horizon: l
 feasibility: medium
@@ -14,26 +14,37 @@ es_edition: ES2015
 goal: standalone-mode
 requested_by: claude/fable-es2015
 loc-budget-allow:
-  - src/runtime.ts
+  - src/codegen/array-methods.ts
   - src/codegen/dataview-native.ts
   - src/codegen/builtin-value-read.ts
-  - src/codegen/builtin-fn-meta.ts
+  - src/codegen/property-access.ts
   - src/codegen/property-access-dispatch.ts
-  - src/codegen/expressions/new-super.ts
+  - src/codegen/declarations.ts
+  - src/codegen/closed-method-dispatch.ts
   - src/codegen/expressions/new-indexed.ts
   - src/codegen/expressions/new-builtin-globals.ts
-  - src/codegen/expressions/calls.ts
-  - src/codegen/expressions/call-namespace-static.ts
-  - src/codegen/expressions/call-receiver-method.ts
+func-budget-allow:
+  - src/codegen/array-methods.ts::compileArrayMethodCall
+  - src/codegen/expressions/new-indexed.ts::tryCompileIndexedBuiltinNew
+  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
 ---
 
 # ES2015 standalone: buffers conformance wave 1
 
-LOC-growth allowance rationale (2026-08-28): the clusters below add codegen
-arms (setter-undefined return, ArrayBuffer.prototype.slice SpeciesConstructor,
-ctor argument validation, isView closure body, NewTarget.prototype
-observability) to the files in `loc-budget-allow` — measured growth is
-expected and granted for this change-set.
+LOC/function-growth allowance rationale (2026-09-01, measured on the landed
+change-set): the wave adds codegen arms — the explicit-`undefined` tests and
+the shared `isView` carrier chain (`dataview-native.ts` +128), the DataView
+constructor's brand / detached / bounds validation (`new-indexed.ts` +196 in
+`tryCompileIndexedBuiltinNew`), the module-global `$__ta_view` slot lookups
+(`property-access*.ts`, `declarations.ts`), the `undefined`-singleton argument
+padding (`closed-method-dispatch.ts`) and the `ArrayBuffer.isView` value
+closure (`builtin-value-read.ts`). The `new-indexed.ts` function growth is the
+one that deserves a follow-up: `tryCompileIndexedBuiltinNew` is now 884 lines
+and its DataView arm should be lifted into its own `tryCompileDataViewNew`
+before the next buffer wave adds to it.
 
 ## Problem
 
@@ -380,3 +391,354 @@ flight on the same arm before starting.
   missing-brand-check trap cluster (cluster C.1/D.3 are its buffer cases).
 - #2046 (in-progress) — standalone Reflect spec gaps; #4274 — true realms
   (the two deferred proto-from-ctor-realm tests).
+
+## Suspended Work (2026-09-01T21:56Z — user-requested 2-hour pause)
+
+- **Branch**: local lane branch `worktree-agent-aeeb8b33069f63eff` at `0795f838f`
+  (WIP snapshot on top of base `d153a0882`; NOT pushed — durable copy is
+  `plan/agent-context/es2015-suspend-2026-09-01/patches/lane-5150.mbox`, 4
+  patches: `dd9370a31` clusters A+F (+ cluster C's explicit-`undefined` slice
+  end), `6911a46bb` cluster D, `b615b634d` cluster G, then the snapshot carrying
+  the untracked focused test `tests/issue-5150-es2015-buffers.test.ts` and this
+  file's edits; apply with `git am --3way` onto current main).
+- **Worktree at suspension**: `/home/user/js2/.claude/worktrees/agent-aeeb8b33069f63eff`
+  (treat as gone).
+- **State** (implementer's handoff): clusters A, C (slice end), D, F, G done
+  and committed; Step 2 (cluster B ctor/instance object model), Step 3.3
+  (slice species) and Step 5 (cluster E, #3371) NOT done — B blocks the 3
+  remaining `defined-byteoffset*` rows and the species family.
+- **Verified so far** (implementer's runs, standalone, the 53-row list,
+  `.tmp` runner with a 120 s compile timeout): before 0 pass / 48 fail / 5 CE
+  → after **16 pass / 32 fail / 5 CE — +16, zero regressions**; the 5 CEs are
+  the #3371 refusal. All 16 flipped rows verified host-import clean
+  (`check-leak.mts`). Gates green (loc, func, coercion, oracle-ratchet,
+  dead-exports); `tsc --noEmit` identical to the unmodified checkout; focused
+  test 14/14.
+- **NOT yet verified / next steps**: (1) `git am` + `pnpm run typecheck`; (2)
+  the 20-row TypedArray collateral sample (`lists/ta-sample.txt` if present,
+  else pick 20 currently-passing `TypedArray/prototype/**` rows) in BOTH lanes;
+  (3) `pnpm run test:equivalence:gate`; (4) write the `## 2026-09-01
+  implementation (Opus)` section; (5) Step 2 (cluster B) then 3.3.
+- **Traps**: `scripts/run-test262-paths.mts` uses the runner's hard-coded 15 s
+  compile timeout — under load 33/53 rows falsely read `compilation timeout`;
+  use a runner with a longer timeout (the implementer's `run-rows.mts`) or an
+  idle box. `runTest262File` does not apply the standalone leak check (#5272).
+  Do not A/B by restoring `.tmp/*-new.ts` snapshots (it silently reverted the
+  `isViewRefTestInstrs` taView fix once). Host-lane `ab.slice(1,3).byteLength`
+  fails to compile on unmodified main — pre-existing. `tryCompileIndexedBuiltinNew`
+  is now 884 lines: lift the DataView arm into `tryCompileDataViewNew` before
+  the next wave. #5194 edits neighbouring TypedArray functions in
+  `dataview-native.ts` — reconcile at merge, never rebase.
+
+## 2026-09-01 PR #5224 integration
+
+The draft PR #5224 carried an **unvalidated, interrupted WIP snapshot**
+(`99fdfec26`, 2026-08-28, 11 files, +858/−55) whose base was ~714 commits behind
+`main`. That WIP is the artefact the validated lane later MINED and
+re-implemented on current main. This integration replaces it: the PR branch
+`claude/es2015-buffers-wave1-wip` is now `origin/main` (`813b828b6`) plus the
+four validated `lane-5150.mbox` patches, applied with `git am --3way` — no
+history rewritten, no force-push.
+
+### Merge resolution — every WIP file resolved to MAIN
+
+`git pull --no-rebase origin main` conflicted in 5 files and auto-merged 6.
+All 11 were resolved to **main's** side, because each WIP hunk is an older
+version of something main (or the lane patch applied on top) already has:
+
+| WIP file | Why main wins |
+| --- | --- |
+| `src/codegen/expressions/call-receiver-method.ts` | main already emits `canonicalUndefinedExternInstrs(ctx)` for the DataView-setter expression result (#2864). The WIP diff against main was **comment-only**. |
+| `src/codegen/expressions/calls.ts` | main renamed the arm to the table-driven `tryCompileCollectionCtorCallWithoutNew`; the WIP's separate dispatch site for its own `tryCompileBufferCtorCallWithoutNew` no longer has a slot. |
+| `src/codegen/expressions/new-builtin-globals.ts` | same mechanism, better: the lane adds `ArrayBuffer`/`SharedArrayBuffer`/`DataView` to `CALL_WITHOUT_NEW_COLLECTION_CTORS` instead of adding a fourth near-copy of the throw helper. |
+| `src/codegen/dataview-native.ts` | main already imports and uses `canonicalUndefinedExternInstrs` for the setter return. |
+| `src/codegen/declarations.ts` | main kept `proxyOrTransferredResultNeedsExternref`; the WIP had renamed it to `transferredArrayLikeResultNeedsExternref` on a 714-commit-old tree. The lane adds `inferTaViewType` alongside main's name. |
+| `src/codegen/property-access.ts`, `property-access-dispatch.ts` | the WIP's module-global `$__ta_view` lookups and the lane's are the **same code**; the lane's comments are the refined ones. |
+| `src/codegen/builtin-value-read.ts`, `closed-method-dispatch.ts`, `expressions/new-indexed.ts` | superseded wholesale by lane patches 3, 1 and 2. |
+| `plan/issues/5150-es2015-standalone-buffers-wave1.md` | main's copy; lane patch 4 re-applies the lane's edits. |
+
+The merge commit's tree is therefore byte-identical to `origin/main`; the
+implementation arrives entirely in the four lane commits.
+
+**WIP-only hunks DROPPED** (~56 lines, all superseded — none kept):
+
+- `expressions/new-builtin-globals.ts::tryCompileBufferCtorCallWithoutNew`
+  (+37) and its `expressions/calls.ts` dispatch site (+8) — the lane's
+  table entry covers the identical §25.1.3.1 / §25.3.2.1 step-1 clause, and the
+  two arms would have shadowed each other (the WIP's ran first).
+  Empirically confirmed: `ArrayBuffer/undefined-newtarget-throws.js` and
+  `DataView/newtarget-undefined-throws.js` both flip to `pass` with only the
+  lane's arm present.
+- `expressions/call-receiver-method.ts` (+5/−6) — comment-only against main.
+
+No WIP-only hunk was kept, so the "does a buffers row depend on it" test
+resolved by construction: with all three files at main's version plus the lane
+patches, all 16 rows the wave targets pass.
+
+### Validation on the integrated branch (HEAD `9deedf8fe`)
+
+Measured 2026-09-01/02 in worktree
+`/home/user/js2/.claude/worktrees/wf_27c6d40c-3be-1`.
+
+| Check | Result |
+| --- | --- |
+| 53-row buffers list, `--target standalone`, before (`origin/main`) | **0 pass / 48 fail / 5 compile_error** |
+| 53-row buffers list, after (this branch) | **16 pass / 32 fail / 5 compile_error** |
+| Net | **+16, zero regressions, zero other status transitions** |
+| Host-import check on all 16 flipped rows | **16/16 clean** (compiler `result.imports` empty) |
+| 20-row `built-ins/TypedArray/prototype/**` control sample (standalone, all passing at base) | **20/20 pass** |
+| `pnpm run typecheck` (TS7) | clean |
+| `pnpm run typecheck:ts5` | 2 pre-existing `WebAssembly.Tag` errors in `src/linked-provider-runtime.ts`, a file this branch does not touch |
+| `npx vitest run tests/issue-5150-es2015-buffers.test.ts` | **14/14** |
+| loc / func / coercion / oracle-ratchet / dead-exports | all green (merge-base == `origin/main`, so this is also CI's base) |
+| `pnpm run test:equivalence:gate` | 24 failing / 1718 passing / 24 known-failures — **no new regressions** |
+
+Commands used for the measurement (both runs used a **120 s** compile timeout,
+not the stock probe's hard-coded 15 s — under load on this 4-core box the 15 s
+ceiling falsely reports ~a third of these rows as `compilation timeout`, which
+is the trap recorded in `## Suspended Work`):
+
+```
+# before, in the pristine main checkout (verified src/ byte-identical to origin/main)
+cd /home/user/js2 && npx tsx .tmp/es2015/run-rows.mts \
+  /home/user/js2/.tmp/es2015/buffers-head.txt --standalone --timeout 120000
+# after, in the integration worktree
+npx tsx .tmp/es2015/run-rows.mts .tmp/es2015/buffers-head.txt --standalone --timeout 120000
+```
+
+`buffers-head.txt` was derived from the suspension manifest's
+`lists/buffers-paths.txt` by stripping the leading `test/` (the manifest ships
+no `buffers-head.txt`).
+
+### The 16 flipped rows
+
+```
+built-ins/ArrayBuffer/allocation-limit.js
+built-ins/ArrayBuffer/length-is-too-large-throws.js
+built-ins/ArrayBuffer/prototype/slice/end-default-if-undefined.js
+built-ins/ArrayBuffer/toindex-length.js
+built-ins/ArrayBuffer/undefined-newtarget-throws.js
+built-ins/DataView/buffer-does-not-have-arraybuffer-data-throws.js
+built-ins/DataView/buffer-not-object-throws.js
+built-ins/DataView/detached-buffer.js
+built-ins/DataView/excessive-bytelength-throws.js
+built-ins/DataView/excessive-byteoffset-throws.js
+built-ins/DataView/newtarget-undefined-throws.js
+built-ins/DataView/prototype/setUint8/index-is-out-of-range.js
+built-ins/DataView/prototype/setUint8/negative-byteoffset-throws.js
+built-ins/DataView/prototype/setUint8/no-value-arg.js
+built-ins/DataView/prototype/setUint8/set-values-return-undefined.js
+built-ins/DataView/prototype/setUint8/toindex-byteoffset.js
+```
+
+`ArrayBuffer/isView/invoked-as-a-fn.js` did NOT flip, but its failure moved from
+"`ArrayBuffer.isView` is not yet implemented in --target standalone" to a real
+`isView(<TypedArray>)` value assertion — cluster G lands the closure; the
+remaining half needs the per-kind TypedArray carrier work in #5194.
+
+### Two notes for the reviewer
+
+- **`DataView/detached-buffer.js` links `js2wasm:runtime-eval::*`.** Those four
+  imports are the #2928/#4242 **Wasm-native** eval substrate the standalone lane
+  links on purpose (the row's `$DETACHBUFFER` goes through `eval`), not a JS
+  host import. The compiler's `result.imports` — the manifest CI's
+  `scripts/test262-worker.mjs` (~L1797) actually gates on — is **empty** for
+  this row, so it is not a `host_import_leak`. Worth stating explicitly because
+  a probe that reads `WebAssembly.Module.imports` instead will flag it.
+- **The 5 compile_errors are unchanged and out of scope**: all five are the
+  #3371 refusal, "standalone `Reflect.construct` cannot preserve an arbitrary
+  distinct NewTarget without a statically-resolved NewTarget".
+
+Remaining work is unchanged from `## Suspended Work`: Step 2 (cluster B, the
+ctor/instance object model), Step 3.3 (slice species) and Step 5 (cluster E,
+#3371). `status` stays `in-review` — the PR author is not the merger.
+
+### 2026-09-02 review pass — four findings, three fixed
+
+Two independent reviewers audited the integration at `475d23f4c`. All four
+findings reproduced; the dispositions:
+
+**1 (blocking, FIXED) — the module-global `$__ta_view` pin swallowed a rebind.**
+`moduleGlobalWasmType` (declarations.ts) pinned `var t = new Uint8Array(buf)` to
+the view struct *unconditionally*, so a later `t = new Uint8Array(2)` — a plain
+`$Vec` — no longer fit the slot: the store dropped to null and the next read
+trapped. Standalone, `origin/main` vs `475d23f4c`:
+
+| probe | main | branch @475d23f4c | branch, fixed |
+| --- | --- | --- | --- |
+| `t = new Uint8Array(2)` then `t[0]` | `29` | THROW null-deref | `29` |
+| `t = new Uint8Array([7,8])` then `t[1]` | `28` | THROW null-deref | `28` |
+| `t2 = new Uint8Array(otherBuf)` | compiler crash | `29` | `29` |
+
+The middle column is a real pass→trap flip, i.e. a standalone regression against
+main, and the failure mode is a silent null store. The widening helpers the
+consult sits above (#4428 / #4204 / #4491) cannot catch it — both sides of the
+rebind are objects, so there is no JS-tag disagreement — so the fix is a
+dedicated guard, `taViewGlobalIsRebound` (declarations.ts): the pin survives
+only when every `t = …` in the file assigns a view of the same element type.
+Host/gc lane was byte-identical branch vs main on the same probes, so this was
+standalone-only.
+
+*The same defect exists for FUNCTION LOCALS and is NOT fixed here* — it predates
+this branch (`inferLetConstInitializerWasmType`, #4376, has the identical
+unconditional consult), and the local probe traps on `origin/main` too. Left for
+a follow-up rather than widened into this wave.
+
+**2 (should-fix, FIXED as documentation) — `explicitUndefinedExternTestInstrs`
+docstring.** It justified having no `undefinedSingletonActive` gate by calling
+`undefinedSingleton` "default-off". It is default **TRUE** (create-context.ts:430,
+`process.env.JS2WASM_UNDEF_SINGLETON !== "0"`; #2106 flip). Measured under
+`JS2WASM_UNDEF_SINGLETON=0`, standalone: `new DataView(b,4,undefined).byteLength`
+reads 0 instead of 4, and `dv.setFloat64(0)` with no value argument stops
+storing NaN — i.e. the clauses revert to the legacy answers, they do not
+degrade gracefully.
+No behaviour change was warranted (nothing in `.github` or `scripts/` sets the
+variable, and with the singleton off the helper's `ref.test` correctly answers
+0 by construction), so the comment now states the dependency instead of denying
+it.
+
+**3 (should-fix, RECORDED not fixed) — cluster F stops at the read site.**
+A module-global view passed to a *typed* `Uint8Array` parameter still traps:
+`taViewReceiverTypeIdx` and the `tryLengthAndNameReads` spill both key off the
+identifier at the read site, so the value falls back to the checker-typed vec at
+the call boundary and the parameter slot rejects it. The `any`-typed sibling
+works. **Not a regression** — the same program is a compiler crash on
+`origin/main` ("Cannot read properties of undefined (reading 'slice')"), so no
+row is lost. Cluster F should be read as "direct property/length reads on a
+module-global view", not "module-global views work"; the call-boundary half is
+remaining work alongside Step 2.
+
+**4 (should-fix, FIXED) — `emitArrayBufferSlice` boxed a statically-numeric
+`end`.** The explicit-`undefined` arm routed `args[1]` through externref
+unconditionally, so `ab.slice(2, 6)` dragged `__box_number` and the whole
+ToPrimitive chain into the module. Measured, standalone, same probe both sides:
+
+| | `ab.slice(2,6)` bytes | `__to_primitive` present | compile ms |
+| --- | --- | --- | --- |
+| `origin/main` | 51,101 | no | ~1,755 |
+| branch @`475d23f4c` | 122,604 | yes | ~2,450 |
+| branch, fixed | 51,125 | no | back on main's order |
+
+`ab.slice(2)` and the DataView arms were unaffected, so the whole +71.5 KB was
+that one line. Fixed with the gate the two sibling ToIndex sites already use
+(`ctx.oracle.staticJsTypeOf(arg) === "number"` → compile straight to f64,
+new-indexed.ts:196/499). A statically-numeric argument cannot BE `undefined`, so
+the spec arm is untouched for every other shape.
+
+#### Re-validation after the three fixes
+
+| Check | Result |
+| --- | --- |
+| 53-row buffers list, standalone, 120 s timeout | **16 pass / 32 fail / 5 compile_error** — row-for-row identical to the pre-fix run (`diff` of status+path: no differences) |
+| 20-row `built-ins/TypedArray/prototype/**` control sample, standalone | **20/20 pass** |
+| `npx vitest run tests/issue-5150-es2015-buffers.test.ts` | **14/14** |
+| `pnpm run typecheck` (TS7) | clean |
+| loc / func / coercion / oracle-ratchet / dead-exports | all exit 0 (oracle: "+0 getTypeAtLocation, +0 ctx.checker"; dead-exports: "25 known, 0 new") |
+| loc + func gates re-run with `LOC_GATE_BASE=origin/main` (CI's merge preview) | both exit 0 |
+| `pnpm run test:equivalence:gate` | 24 failing / 1718 passing / 24 known-failures — **no new regressions** |
+| `ab.slice(2,6)` standalone binary | 51,125 bytes, `result.imports` empty, no `__to_primitive` |
+| rebind probes A/B/C/E (standalone) | `29` / `29` / `28` / `10` — A and C back to main's answers, B and E keep the wave's improvement |
+
+## 2026-09-02 post-merge regression fix (PR #5224 → main)
+
+The wave landed as `5dd7a92169` (first parent `985de5b65b`). The merge-group run
+[33593621223](https://github.com/loopdive/js2/actions/runs/33593621223) —
+"check for test262 regressions", JS-HOST lane — then flagged nine rows that the
+PR-level checks could not see, and the lead re-confirmed them on current main.
+
+### Root cause
+
+Cluster F pinned a MODULE-GLOBAL typed-array binding to the type
+`inferTaViewType` answers (`declarations.ts`, `moduleGlobalWasmType`). That
+helper is dual-purpose: on the STANDALONE lane it answers the shared-backing
+`$__ta_view` struct — the thing the wave is about — but on the JS-HOST lane it
+answers **`externref`**, because it doubles as the local-slot chooser for the
+#3097 host construct bridge. Adopting the host answer for a module global is a
+representation change on a lane the wave never measured: a top-level
+`const i32a = new Int32Array(new SharedArrayBuffer(16))` stopped being the
+native element vec the rest of the host lane assumes and became a REAL host
+`Int32Array`. Two consequences, both observed:
+
+- **`Atomics/{notify,wait}` stopped throwing their TypeError** (pass→fail). The
+  pre-wave native vec is not a valid `Atomics` receiver, and that is what
+  produced the TypeError those two rows assert. Handed a genuine host view over
+  a genuine SharedArrayBuffer, `Atomics.wait(i32a, 0, 0, 0)` simply returns.
+- **Seven detached / resizable `TypedArray/**` rows went from an ordinary
+  assertion failure to `RuntimeError: illegal cast in __module_init_chunk_*`** —
+  a downstream read `ref.cast`s the host view to the checker-typed vec. That is
+  the illegal_cast trap growth 28→35 the same run reported.
+
+A **second, standalone-lane** defect of the same pin surfaced while measuring:
+both `$__ta_view` arms in `array-methods.ts::compileArrayMethodCall` (the
+`subarray` sibling-view arm and the #3054 B1 materialise-and-rebind arm) are
+guarded by `fctx.localMap.has(receiver)`, i.e. they only ever ran for a LOCAL
+receiver. With the module-global pin in place, `ta.fill(…)` on a top-level `ta`
+fell through to the generic arm and `ref.cast` the view to the element vec —
+five standalone rows changed trap kind (null-deref / TypeError → illegal cast).
+Minimal repro, `--target standalone`:
+
+```ts
+let rab = new ArrayBuffer(4, { maxByteLength: 8 });
+let ta = new Int8Array(rab);
+export function test(): number { ta.fill(9); return ta[0]; }   // illegal cast
+```
+
+### Fix
+
+1. **`declarations.ts`** — the module-global pin adopts `inferTaViewType`'s
+   answer **only when it is a `$__ta_view` struct** (`isTaViewTypeIdx`). A
+   host-lane global keeps the slot it had before the wave. This is the whole
+   host-lane regression: reverting only this file restores all nine rows
+   verdict-for-verdict.
+2. **`array-methods.ts`** — a `$__ta_view` receiver that is a MODULE GLOBAL is
+   spilled into a synthetic local (the same struct ref, so the shared backing
+   and the #3054 B3 write-through are unaffected) so both existing arms apply
+   unchanged. The synthetic mapping is DELETED after dispatch — restoring it
+   would shadow the global for the rest of the function.
+
+No trap-growth valve, no skip-list edit, no new host import.
+
+### Verdict matrix — the nine flagged rows, 9 × 2 lanes × 3 trees
+
+`pre` = pristine `git archive 985de5b65b` tree, `main` = `5dd7a92169` (current
+main), `fix` = this change. Compile timeout 120 s (the stock 15 s default
+falsely reports a third of these rows as `compilation timeout` on a loaded
+4-core box).
+
+| # | Row | host `pre` | host `main` | host `fix` | sa `pre` | sa `main` | sa `fix` |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | `Atomics/notify/null-bufferdata-throws.js` | **pass** | fail (Expected a TypeError but got a undefined) | **pass** | fail (illegal cast, pre-existing) | fail (illegal cast) | fail (illegal cast, unchanged) |
+| 2 | `Atomics/wait/cannot-suspend-throws.js` | **pass** | fail (Expected a TypeError… no exception at all) | **pass** | fail (illegal cast, pre-existing) | fail (illegal cast) | fail (illegal cast, unchanged) |
+| 3 | `TypedArray/from/…-mapper-detaches-result.js` | fail (TypeError: `%TypedArray%.from` on incompatible receiver) | fail (**illegal cast**) | fail (same TypeError as `pre`) | fail (illegal cast, pre-existing) | fail (illegal cast) | fail (illegal cast, unchanged) |
+| 4 | `TypedArray/from/…-makes-result-out-of-bounds.js` | fail (same TypeError) | fail (**illegal cast**) | fail (same TypeError as `pre`) | fail (Array method called on null/undefined) | fail (**illegal cast**) | fail (TypeError, no trap) |
+| 5 | `TypedArray/out-of-bounds-behaves-like-detached.js` | fail (SameValue «10» vs «undefined») | fail (**illegal cast**) | fail (same assertion as `pre`) | fail (illegal cast, pre-existing) | fail (illegal cast) | fail (illegal cast, unchanged) |
+| 6 | `TypedArray/prototype/fill/absent-indices-computed-from-initial-length.js` | fail (SameValue «1» vs «4») | fail (**illegal cast**) | fail (same assertion as `pre`) | fail (dereferencing a null pointer) | fail (**illegal cast**) | fail (SameValue «1» vs «4» — real assertion) |
+| 7 | `TypedArray/prototype/set/array-arg-value-conversion-resizes-array-buffer.js` | fail (compareArray mismatch) | fail (**illegal cast**) | fail (same assertion as `pre`) | fail (Array method called on null/undefined) | fail (**illegal cast**) | fail (compareArray mismatch — real assertion) |
+| 8 | `TypedArray/prototype/subarray/result-byteOffset-from-out-of-bounds.js` | fail (SameValue «NaN» vs «4») | fail (**illegal cast**) | fail (same assertion as `pre`) | fail (Array method called on null/undefined) | fail (**illegal cast**) | fail (SameValue «0» vs «4» — real assertion) |
+| 9 | `TypedArray/prototype/with/index-validated-against-current-length.js` | fail (array element access out of bounds) | fail (**illegal cast**) | fail (same trap as `pre`) | fail (WebAssembly.Exception) | fail (**illegal cast**) | fail (array element access out of bounds) |
+
+Totals — host: `pre` 2 pass / 7 fail, `main` 0 pass / 9 fail (7 illegal casts),
+`fix` **2 pass / 7 fail, row-for-row identical to `pre`, zero illegal casts**.
+Standalone: no pass/fail movement in any tree; the illegal-cast SET is
+`{1, 2, 3, 5}` in `pre` and exactly `{1, 2, 3, 5}` again in `fix` (it was all
+nine on `main`), so standalone trap growth is back to zero and rows 6/7/8 now
+reach a real assertion instead of any trap.
+
+### Re-validation
+
+| Check | Result |
+| --- | --- |
+| 9 rows, host lane, 120 s | **2 pass / 7 fail**, identical to the pre-PR tree, no `illegal cast` |
+| 9 rows, standalone, 120 s | 9 fail; illegal casts only the 4 that pre-date the wave |
+| 53-row buffers list, standalone, 120 s | **16 pass / 32 fail / 5 compile_error** — same 16 rows as the wave's own run, `diff` of status+path against it: no differences |
+| 20-row `built-ins/TypedArray/prototype/**` control (deterministic every-38th passing row) | **20/20 pass** |
+| 27-row `fill/set/subarray/with/copyWithin/sort/slice/includes/indexOf/join/reverse` control (every-11th passing row) | **27/27 pass** — covers the `array-methods.ts` arm directly |
+| `npx vitest run tests/issue-5150-es2015-buffers.test.ts` | **18/18** (14 + the 4 new guards) |
+| `pnpm run typecheck` (TS7) | clean |
+| loc / func / coercion / oracle-ratchet / dead-exports | all exit 0 |
+| `pnpm run test:equivalence:gate` | no NEW failures |
+
+The four rows above are now IN-PROCESS cases in
+`tests/issue-5150-es2015-buffers.test.ts` (`HOST_ATOMICS_ROWS` must `pass`;
+`HOST_NO_TRAP_ROWS` must not contain `illegal cast`), so this cannot return
+silently — the host lane had no guard at all in the original wave.

@@ -1,0 +1,8 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var empty = Object.create(null); var value;
+var obj = { get ['x' in empty]() { return 'via get'; } };
+assert.sameValue(obj.false, 'via get', 'obj.false=' + String(obj.false));

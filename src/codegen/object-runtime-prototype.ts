@@ -21,6 +21,41 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { FUNCTION_FROM_PROTO, PROTO_FROM_FUNCTION } from "./proto-function-value.js"; // (#4637 A1)
+import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js"; // (#5270 step 2)
+import { buildLazyNativeProtoGetInstrs } from "./native-proto.js"; // (#5270 step 2)
+
+/**
+ * (#5270 step 2) Name of the reserve-then-fill helper that answers the
+ * canonical `%Object.prototype%` carrier.
+ */
+export const OBJECT_PROTO_SINGLETON = "__object_proto_singleton";
+
+/**
+ * (#5270 step 2) `$Object.$proto === null` has TWO meanings — an explicitly
+ * null-prototype object (`Object.create(null)`, `{ __proto__: null }`, flagged
+ * with `OBJ_FLAG_NULL_PROTO`) and an ORDINARY object whose implicit
+ * `%Object.prototype%` terminal is simply not stored. `__getPrototypeOf`
+ * returned the raw field for both, so `Object.getPrototypeOf({a: 1})` answered
+ * `null` while `Object.getPrototypeOf({})` answered `Object.prototype` — one
+ * question, two answers, because the empty-literal case is folded statically
+ * by `expressions/object-get-prototype-of.ts`. Everything else in the runtime
+ * already assumes the implicit terminal (`binary-ops-in.ts:437`, #4491 T4).
+ *
+ * The canonical carrier is the lazily-minted `$NativeProto` singleton for the
+ * `Object` brand, whose global is created by `buildLazyNativeProtoGetInstrs`.
+ * That runs AFTER `ensureObjectRuntime` registers these natives, so the helper
+ * is RESERVED here with a `ref.null.extern` body (the pre-#5270 answer, so a
+ * module that never fills it is unchanged) and FILLED at finalize by
+ * `fillObjectProtoSingleton`.
+ */
+export function fillObjectProtoSingleton(ctx: CodegenContext): void {
+  if (!ctx.standalone && !ctx.wasi) return;
+  const fn = ctx.mod.functions.find((f) => f.name === OBJECT_PROTO_SINGLETON);
+  if (!fn) return;
+  const instrs = buildLazyNativeProtoGetInstrs(ctx, BUILTIN_BRAND_TABLE.Object);
+  if (!instrs) return;
+  fn.body = [...instrs];
+}
 
 /** Everything the prototype-chain block reads from the `ensureObjectRuntime` scope. */
 export interface ObjectPrototypeHelperState {
@@ -44,6 +79,8 @@ export interface ObjectPrototypeHelperState {
   boundaryObjectSetPrototypeIdx?: number;
   INITIAL_CAP: number;
   OBJ_FLAG_NONEXTENSIBLE: number;
+  /** Distinguishes an explicit null [[Prototype]] from the implicit terminal. */
+  OBJ_FLAG_NULL_PROTO: number;
 }
 
 /**
@@ -190,6 +227,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     boundaryObjectSetPrototypeIdx,
     INITIAL_CAP,
     OBJ_FLAG_NONEXTENSIBLE,
+    OBJ_FLAG_NULL_PROTO,
   } = s;
 
   // (#4637 A1) The bag↔callable proto-view map, reserved just above in
@@ -269,6 +307,69 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
   const devirtualizeProtoResult = (): Instr[] =>
     functionFromProtoIdx === undefined ? [] : [{ op: "call", funcIdx: functionFromProtoIdx }];
 
+  // `$Object.$proto === null` has two encodings in the standalone runtime:
+  // an ordinary object whose implicit Object.prototype terminal is omitted, and
+  // an explicitly null-prototype object. Keep the bit checks/final writes as
+  // factories: both writer and status bodies are remapped independently later.
+  const nullPrototypeFlagIsSet = (objectLocal: number): Instr[] => [
+    { op: "local.get", index: objectLocal },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+    { op: "i32.const", value: OBJ_FLAG_NULL_PROTO },
+    { op: "i32.and" },
+  ];
+  const returnIfSameEncodedPrototype = (onSame: () => Instr[]): Instr[] => [
+    { op: "local.get", index: 3 },
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+    { op: "ref.eq" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // With equal encoded references, SameValue also requires the raw
+        // JavaScript null classifications to agree. Otherwise either an
+        // ordinary object must become explicitly null-prototype, or a marked
+        // null-prototype object must clear that marker for a non-null input
+        // which has no `$Object` representation.
+        { op: "local.get", index: 1 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [...nullPrototypeFlagIsSet(2), { op: "if", blockType: { kind: "empty" }, then: onSame() }],
+          else: [
+            ...nullPrototypeFlagIsSet(2),
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: onSame() },
+          ],
+        },
+      ],
+    },
+  ];
+  const updateNullPrototypeFlag = (): Instr[] => [
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    { op: "local.get", index: 2 },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+    { op: "i32.const", value: ~OBJ_FLAG_NULL_PROTO },
+    { op: "i32.and" },
+    // Use the original input, not the canonicalized `$Object` view: only a
+    // JavaScript null request receives the explicit-null-prototype marker.
+    { op: "local.get", index: 1 },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: OBJ_FLAG_NULL_PROTO }],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+    { op: "i32.or" },
+    { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 4 },
+  ];
+
   // ── Prototype-chain ops (#1472 Phase C) ──────────────────────────────────
   //
   // The $Object struct already carries the [[Prototype]] in field 0 ($proto,
@@ -277,9 +378,66 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
   // non-$Object / null receivers return a lenient null/0 (never throw into
   // Wasm — the receiver-dispatch / ToObject checks live at the call site).
 
+  // (#5270 step 2) Reserve the `%Object.prototype%` carrier helper with the
+  // pre-change answer (`null`). `fillObjectProtoSingleton` replaces the body at
+  // finalize, once the `Object` brand's lazy `$NativeProto` global exists.
+  const objectProtoSingletonIdx =
+    ctx.standalone || ctx.wasi
+      ? registerNative(OBJECT_PROTO_SINGLETON, [], [{ kind: "externref" }], [], [{ op: "ref.null.extern" }])
+      : undefined;
+
   // __getPrototypeOf(externref) -> externref (ES §20.1.2.12):
-  //   $Object → extern.convert_any($proto) (may be null); non-$Object → null.
+  //   $Object → extern.convert_any($proto); a null `$proto` means
+  //   `%Object.prototype%` unless OBJ_FLAG_NULL_PROTO marks it explicit
+  //   (#5270 step 2); non-$Object → null.
   {
+    /**
+     * The `$proto` field read, with the null field resolved to the implicit
+     * `%Object.prototype%` terminal. Minted fresh per use — the finalize walks
+     * remap each emitted array independently (#5188 followUp 4).
+     */
+    const protoFieldAnswer = (): Instr[] => {
+      const raw: Instr[] = [
+        { op: "local.get", index: 1 },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+        { op: "extern.convert_any" },
+        // (#4637 A1) `$proto` may be the `$Object` PROTO-VIEW of a function
+        // value (see `proto-function-value.ts`). Answering the view itself
+        // would publish an object the program can never name — a WRONG answer
+        // where the base has a merely missing one — so map it back to the
+        // callable. A non-registered `$Object` maps to itself.
+        ...devirtualizeProtoResult(),
+      ];
+      if (objectProtoSingletonIdx === undefined) return raw;
+      return [
+        { op: "local.get", index: 1 },
+        { op: "ref.cast", typeIdx: objectTypeIdx },
+        { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [
+            // Explicitly null-prototype (`Object.create(null)`,
+            // `{ __proto__: null }`) keeps the JS `null`; an ordinary object
+            // answers the intrinsic it implicitly inherits from.
+            { op: "local.get", index: 1 },
+            { op: "ref.cast", typeIdx: objectTypeIdx },
+            { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+            { op: "i32.const", value: OBJ_FLAG_NULL_PROTO },
+            { op: "i32.and" },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [{ op: "ref.null.extern" }],
+              else: [{ op: "call", funcIdx: objectProtoSingletonIdx }],
+            },
+          ],
+          else: raw,
+        },
+      ];
+    };
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -288,18 +446,7 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
-        then: [
-          { op: "local.get", index: 1 },
-          { op: "ref.cast", typeIdx: objectTypeIdx },
-          { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
-          { op: "extern.convert_any" },
-          // (#4637 A1) `$proto` may be the `$Object` PROTO-VIEW of a function
-          // value (see `proto-function-value.ts`). Answering the view itself
-          // would publish an object the program can never name — a WRONG answer
-          // where the base has a merely missing one — so map it back to the
-          // callable. A non-registered `$Object` maps to itself.
-          ...devirtualizeProtoResult(),
-        ],
+        then: protoFieldAnswer(),
         else: [
           ...fnctorGetPrototypeArm(ctx, 2, devirtualizeProtoResult()), // (#4643) scratch local 2
           ...boundaryGetPrototypeArm(boundaryObjectGetPrototypeIdx),
@@ -317,7 +464,8 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
 
   // __object_create(externref proto) -> externref (ES §20.1.2.2):
   //   fresh empty $Object with $proto = (proto is $Object ? proto : null).
-  //   Object.create(null) passes a null externref → $proto stays null.
+  //   Object.create(null) passes a null externref → $proto stays null and its
+  //   dedicated flag distinguishes that state from the implicit terminal.
   //   (The descriptors second arg is materialised separately by the call site.)
   {
     const body: Instr[] = [
@@ -343,11 +491,19 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         ],
         else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
       },
-      // struct.new $Object {proto, props, count=0, tombstones=0, flags=0, nextSeq=0}
+      // struct.new $Object {proto, props, count=0, tombstones=0,
+      //   flags=(raw proto is null ? NULL_PROTO : 0), nextSeq=0}
       { op: "local.get", index: 2 },
       { op: "i32.const", value: 0 },
       { op: "i32.const", value: 0 },
-      { op: "i32.const", value: 0 },
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [{ op: "i32.const", value: OBJ_FLAG_NULL_PROTO }],
+        else: [{ op: "i32.const", value: 0 }],
+      },
       { op: "i32.const", value: 0 }, // nextSeq (#1837)
       { op: "struct.new", typeIdx: objectTypeIdx },
       { op: "extern.convert_any" },
@@ -451,17 +607,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
       },
       { op: "local.set", index: 3 },
-      // step 2: if SameValue(v, o.$proto) → no-op (return obj)
-      { op: "local.get", index: 3 },
-      { op: "local.get", index: 2 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
-      { op: "ref.eq" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "local.get", index: 0 }, { op: "return" }],
-      },
+      // step 2: SameValue includes the explicit-null-prototype bit when both
+      // encoded proto references are null.
+      ...returnIfSameEncodedPrototype(() => [{ op: "local.get", index: 0 }, { op: "return" }]),
       // step 3: if o.flags & OBJ_FLAG_NONEXTENSIBLE → refuse (return obj, no write)
       { op: "local.get", index: 2 },
       { op: "ref.as_non_null" },
@@ -514,6 +662,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
       { op: "ref.as_non_null" },
       { op: "local.get", index: 3 },
       { op: "struct.set", typeIdx: objectTypeIdx, fieldIdx: 0 },
+      // Keep every unrelated object flag and replace only the explicit-null
+      // classification after the write has passed all refusal checks.
+      ...updateNullPrototypeFlag(),
       // return obj
       { op: "local.get", index: 0 },
     ];
@@ -585,17 +736,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
         else: [{ op: "ref.null", typeIdx: objectTypeIdx }],
       },
       { op: "local.set", index: 3 },
-      // step 2: SameValue(v, o.$proto) → true, regardless of extensibility.
-      { op: "local.get", index: 3 },
-      { op: "local.get", index: 2 },
-      { op: "ref.as_non_null" },
-      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 0 },
-      { op: "ref.eq" },
-      {
-        op: "if",
-        blockType: { kind: "empty" },
-        then: [{ op: "i32.const", value: 1 }, { op: "return" }],
-      },
+      // step 2: SameValue includes the explicit-null-prototype bit when both
+      // encoded proto references are null.
+      ...returnIfSameEncodedPrototype(() => [{ op: "i32.const", value: 1 }, { op: "return" }]),
       // step 3: non-extensible → false.
       { op: "local.get", index: 2 },
       { op: "ref.as_non_null" },

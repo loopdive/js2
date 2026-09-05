@@ -154,6 +154,13 @@ export class ProgramAbiModuleInitCallableRegistry {
   private preparedExactUnitId?: IrUnitId;
   private preparedExactFunction?: WasmFunction;
   private preparedExactHandle?: FuncHandle;
+  /** (#3523 R4 gap 3) The exact source-owned module-init pass, when one exists. */
+  private exactUnitPass?: {
+    readonly bindingId: IrBindingId;
+    readonly handle: FuncHandle;
+    readonly func: WasmFunction;
+    readonly entrySourceId: IrSourceId;
+  };
   private graphGlobalPass?: {
     readonly bindingId: IrBindingId;
     readonly handle: FuncHandle;
@@ -414,7 +421,19 @@ export class ProgramAbiModuleInitCallableRegistry {
     const isExact = (observation: ModuleInitCallableObservation): boolean =>
       exactUnitId !== undefined && exactObservation !== undefined && observation === exactObservation;
     for (const { observation, func } of liveObservations) {
-      if (isExact(observation)) this.planExactUnit(exactUnitId!, func);
+      if (!isExact(observation)) continue;
+      this.planExactUnit(exactUnitId!, func);
+      // (#3523 R4 gap 3) Retain the exact unit's pass shape. Recording it costs
+      // nothing and changes no behavior; `assertGraphGlobalInvocationPolicy`
+      // consults it only under the Prepared WASI policy (see
+      // `preparedInvocationPass`), which is the one case where no adapter check
+      // would otherwise run at all.
+      this.exactUnitPass = Object.freeze({
+        bindingId: irUnitCallableBindingId(exactUnitId!),
+        handle: observation.funcIdx,
+        func,
+        entrySourceId,
+      });
     }
 
     // The graph-global (legacy multi-source) pass is ONE physical initializer
@@ -514,8 +533,43 @@ export class ProgramAbiModuleInitCallableRegistry {
    * are resolved through `func-space`; names and function-array positions are
    * diagnostic labels only, never ownership evidence.
    */
+  /**
+   * (#3523 R4 gap 3) The same authenticated pass, for a Prepared WASI unit.
+   *
+   * `graphGlobalPass` is only ever set for the unitless legacy multi-source
+   * pass, so a Prepared exact unit short-circuits the whole authentication —
+   * which is correct for `wasm-start`/`deferred-export`, where the declaration
+   * emitter's invariant 7 owns the adapter count and the adapter exists by the
+   * time it runs. It is NOT correct for `wasi-start-export`: the one `_start`
+   * adapter is built after declarations, so nothing would check it. Project the
+   * prepared unit into the same pass shape and let the existing case run.
+   *
+   * Deliberately WASI-only: the other two policies keep their exact current
+   * behavior, so this adds no check to any lane it does not own.
+   */
+  private preparedInvocationPass():
+    | {
+        readonly bindingId: IrBindingId;
+        readonly handle: FuncHandle;
+        readonly func: WasmFunction;
+        readonly entrySourceId: IrSourceId;
+        readonly invocation: ModuleInitInvocationPolicy;
+      }
+    | undefined {
+    // Scoped by the guard RECEIPT, not by the target flag: `planted` is set
+    // only when prepared emission actually constructed the body around the
+    // reserved `__init_done` global. So this adds no check to the legacy WASI
+    // lane, whose Unsupported shapes keep their established wiring until the
+    // typed Unsupported policy is retired.
+    if (this.ctx.preparedWasiModuleInitGuard?.planted === undefined) return undefined;
+    if (moduleInitInvocationPolicy(this.ctx) !== "wasi-start-export") return undefined;
+    const pass = this.exactUnitPass;
+    if (!pass) return undefined;
+    return Object.freeze({ ...pass, invocation: "wasi-start-export" as const });
+  }
+
   assertGraphGlobalInvocationPolicy(): void {
-    const pass = this.graphGlobalPass;
+    const pass = this.graphGlobalPass ?? this.preparedInvocationPass();
     const session = this.session;
     if (!pass || !session) return;
     if (definedFuncAt(this.ctx, pass.handle) !== pass.func) {

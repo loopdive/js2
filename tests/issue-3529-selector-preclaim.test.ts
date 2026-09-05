@@ -116,9 +116,10 @@ const PRECLAIM_CASES: ReadonlyArray<{
     export function test(): number { const pair = new Pair(1); return pair.a; }`,
   },
   {
-    name: "computed class member",
+    name: "dynamic computed class member",
     code: "class-member-unsupported",
-    source: `class Greeter { ["value"](): number { return 42; } }
+    source: `const key = "value";
+      class Greeter { [key](): number { return 42; } }
       export function test(): number { const greeter = new Greeter(); return greeter.value(); }`,
   },
   {

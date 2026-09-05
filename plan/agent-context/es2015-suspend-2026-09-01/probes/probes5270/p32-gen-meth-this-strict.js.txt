@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var thisValue = 'unset';
+var method = { *method() { 'use strict'; thisValue = this; } }.method;
+method().next();
+assert.sameValue(thisValue, undefined, 'gen method this: ' + String(thisValue));

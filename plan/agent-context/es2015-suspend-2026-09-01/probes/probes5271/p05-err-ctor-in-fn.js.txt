@@ -1,0 +1,8 @@
+/*---
+description: caught error keeps .constructor inside a function (#5271 probe)
+flags: [noStrict]
+---*/
+function f() { try { throw new SyntaxError('x'); } catch (e) { return e.constructor === SyntaxError; } }
+assert(f(), 'inside function');
+var g; try { throw new SyntaxError('y'); } catch (e) { g = e.constructor === SyntaxError; }
+assert(g, 'at top level');

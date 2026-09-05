@@ -106,7 +106,7 @@ import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { BUILTIN_BRAND_BASE, BUILTIN_BRAND_COUNT, builtinBrandOffsetOf } from "./builtin-brands.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js"; // (#4176) wrapper-slot key at FILL time
-import { nativeProtoSeedersByBrandOffset } from "./native-proto.js"; // (#2175 V2-S3b-1) companion seeding
+import { nativeProtoParentBrands, nativeProtoSeedersByBrandOffset } from "./native-proto.js"; // (#2175 V2-S3b-1) companion seeding
 import { addFuncType } from "./registry/types.js";
 
 /** Reserved helper names (all internal, never exported from the module). */
@@ -325,9 +325,33 @@ export function protoIndexRecvGetMissInstrs(
   ctx: CodegenContext,
   recvLocal: number,
   keyLocal: number,
+  accessorRecvLocal?: number,
 ): Instr[] | undefined {
   const getRIdx = ctx.funcMap.get(PROTOIDX_GET_R);
   if (getRIdx === undefined) return undefined;
+  // (#5194 r3 review F2) §7.3.2 OrdinaryGet step 3 / §6.2.5.5 — the brand
+  // (which companion to consult) comes from the object the walk is ON
+  // (`recvLocal`), but an accessor found there runs with `this` = the
+  // ORIGINAL receiver the [[Get]] started on. `__extern_get` hands its
+  // `explicitReceiverLocal` here (param 0, or the one-shot Reflect.get /
+  // dyn-view-walk receiver); the two coincide for every ordinary read, so
+  // this is `__protoidx_get_r`'s body inlined with the receiver split.
+  const getKIdx = ctx.funcMap.get(PROTOIDX_GET_K);
+  const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
+  if (
+    accessorRecvLocal !== undefined &&
+    accessorRecvLocal !== recvLocal &&
+    getKIdx !== undefined &&
+    brandOffIdx !== undefined
+  ) {
+    return [
+      { op: "local.get", index: accessorRecvLocal },
+      { op: "local.get", index: keyLocal },
+      { op: "local.get", index: recvLocal },
+      { op: "call", funcIdx: brandOffIdx },
+      { op: "call", funcIdx: getKIdx },
+    ];
+  }
   return [
     { op: "local.get", index: recvLocal },
     { op: "local.get", index: keyLocal },
@@ -1023,6 +1047,51 @@ function companionProbeArm(
   ];
 }
 
+/**
+ * (#5194 step 1) The PARENT-level probe spliced between a receiver brand's own
+ * companion and `Object.prototype`'s. `<View>.prototype` owns nothing but
+ * `constructor`/`BYTES_PER_ELEMENT` (§23.2.7), so a dynamic
+ * `uint8ArrayProto.forEach` / `"forEach" in Uint8Array.prototype` has to reach
+ * `%TypedArray%.prototype`'s companion, which sits between the two levels this
+ * two-level store models. Emits one `if firstOff === <off>` arm per registered
+ * `parentBrand` link and nothing at all when no glue declares one, so every
+ * module without a chained prototype keeps a byte-identical body.
+ *
+ * `guard` is invoked once PER ARM and its result prepended inside that arm (the
+ * get body only walks the parent when nothing was found yet); `probe` builds the
+ * probe for a constant parent offset.
+ */
+function parentLevelProbeArms(
+  ctx: CodegenContext,
+  firstOffParam: number,
+  probe: (parentOff: number) => Instr[],
+  // (#5194 review F5) A FACTORY, not an array: the guard is spliced into every
+  // emitted arm (one per declared parent link -- 11 for the TypedArray family),
+  // and spreading one shared `Instr[]` put the SAME objects into all of them.
+  // This file's own discipline is that a spliced sequence is minted fresh per
+  // arm (the #1058 hazard: a later per-arm rewrite -- an index shift, a peephole
+  // -- would silently edit every other arm too).
+  guard?: () => Instr[],
+): Instr[] {
+  const arms: Instr[] = [];
+  const links = [...nativeProtoParentBrands(ctx).entries()].sort((a, b) => a[0] - b[0]);
+  for (const [brand, parentBrand] of links) {
+    const off = brand - BUILTIN_BRAND_BASE;
+    const parentOff = parentBrand - BUILTIN_BRAND_BASE;
+    if (off < 0 || off >= BUILTIN_BRAND_COUNT || parentOff < 0 || parentOff >= BUILTIN_BRAND_COUNT) continue;
+    if (parentOff === OBJ_OFF) continue; // already the implicit chain end
+    arms.push(
+      ...(guard === undefined ? [] : guard()),
+      { op: "local.get", index: firstOffParam },
+      { op: "i32.const", value: off },
+      { op: "i32.eq" },
+      ...(guard === undefined ? [] : [{ op: "i32.and" } satisfies Instr]),
+      { op: "if", blockType: { kind: "empty" }, then: probe(parentOff) },
+    );
+  }
+  return arms;
+}
+
 /** `__protoidx_has_k(key, firstOff) -> i32` — §7.3.12 presence. */
 function fillHasKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   const fn = findFn(ctx, PROTOIDX_HAS_K);
@@ -1034,6 +1103,11 @@ function fillHasKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
     // firstOff companion, then — when firstOff is not Object's — the implicit
     // chain end Object.prototype.
     ...companionProbeArm(deps, [{ op: "local.get", index: 1 }], 0, 2, hit()),
+    // (#5194 step 1) …with the declared PARENT level in between, when the
+    // receiver's brand declares one.
+    ...parentLevelProbeArms(ctx, 1, (parentOff) =>
+      companionProbeArm(deps, [{ op: "i32.const", value: parentOff }], 0, 2, hit()),
+    ),
     { op: "local.get", index: 1 },
     { op: "i32.const", value: OBJ_OFF },
     { op: "i32.ne" },
@@ -1142,6 +1216,14 @@ function fillGetKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   fn.body = [
     // firstOff companion first (the receiver's own proto brand)…
     ...probeInto([{ op: "local.get", index: 2 }]),
+    // (#5194 step 1) …then the declared PARENT level, when nothing was found
+    // there and the receiver's brand declares one (§23.2.7 view prototypes).
+    ...parentLevelProbeArms(
+      ctx,
+      2,
+      (parentOff) => probeInto([{ op: "i32.const", value: parentOff }]),
+      () => [{ op: "local.get", index: 4 }, { op: "ref.is_null" }],
+    ),
     // …then Object.prototype's when nothing was found and firstOff differs.
     { op: "local.get", index: 4 },
     { op: "ref.is_null" },

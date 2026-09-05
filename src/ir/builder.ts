@@ -1079,6 +1079,10 @@ export class IrFunctionBuilder {
    * to the PARENT's `<parent>_<method>` slot with the subclass receiver.
    * `resultType` is the parent method descriptor's `returnType` (`null` for void);
    * returns `null` for void methods (callers in expression position reject null).
+   *
+   * (#3522 W1-C) `memberKind` names the parent slot: omitted (or `"method"`)
+   * keeps `<parent>_<methodName>`; `"getter"` / `"setter"` select the accessor
+   * slots that back `super.<accessor>` reads and writes.
    */
   emitClassSuperCall(
     parentShape: IrClassShape,
@@ -1087,6 +1091,7 @@ export class IrFunctionBuilder {
     args: readonly IrValueId[],
     resultType: IrType | null,
     target?: IrFuncRef,
+    memberKind?: Exclude<IrClassMemberKind, "static">,
   ): IrValueId | null {
     let result: IrValueId | null = null;
     if (resultType !== null) {
@@ -1098,6 +1103,7 @@ export class IrFunctionBuilder {
       parentShape,
       receiver,
       methodName,
+      ...(memberKind ? { memberKind } : {}),
       ...(target ? { target } : {}),
       args: [...args],
       result,

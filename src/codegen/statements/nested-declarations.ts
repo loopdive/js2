@@ -3,7 +3,7 @@
 import { ts } from "../../ts-api.js";
 import { isVoidType, unwrapPromiseType } from "../../checker/type-mapper.js";
 import { needsImplicitArgumentsObject } from "../helpers/body-uses-arguments.js";
-import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
+import { bodyReferencesOwnThis, functionLikeReferencesOwnThis } from "../helpers/body-references-own-this.js";
 import { isStrictFunction, isSimpleParameterList } from "../helpers/is-strict-function.js";
 import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-global.js";
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
@@ -29,7 +29,7 @@ import {
   skipUnobservedHoistedCapture,
 } from "../function-declaration-observation.js";
 import { getOrRegisterArgumentsVecType, reserveArgumentsLengthBrand } from "../arguments-length-brand.js";
-import { recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
+import { recordLiftedCaptureBox, recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
 import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
@@ -44,7 +44,10 @@ import {
   type NativeGeneratorCaptureParam,
 } from "../generators-native.js";
 import { emitThrowReferenceError, emitThrowTypeError, noJsHost } from "../expressions/helpers.js";
-import { emitRegisterDynamicClassParent } from "../expressions/extern.js";
+import { emitToPropertyKeyOnce } from "../expressions/computed-member-reference.js";
+import { emitLazyProtoGet, emitRegisterDynamicClassParent } from "../expressions/extern.js";
+import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
+import { classHierarchyHasDynamicMember, dynamicClassKeyGlobalKey } from "../class-dynamic-keys.js"; // (#5195 Step 1 / F1)
 import { isForeignEvalNode } from "../expressions/eval-source.js";
 import { ensureNativeArrayFromIterN } from "../iterator-native.js";
 import { ensureObjectRuntime } from "../object-runtime.js";
@@ -57,8 +60,10 @@ import {
   hoistLetConstWithTdz,
   hoistVarDeclarations,
   ensureStructForType,
+  resolveInstallableClassMemberName,
   resolveWasmType,
 } from "../index.js";
+import { emitClassStaticSidecar } from "../class-static-sidecar.js"; // (#5195 Step 2)
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "../async-frame.js"; // (#2865) nested async-gen producer
 import { emitAsyncClosureBody, planAsyncClosureActivation } from "../async-activation.js";
 import { asyncBodyHasConditionalSuspension } from "../async-cps.js";
@@ -75,12 +80,14 @@ import {
 import { getVecInfo } from "../type-coercion.js";
 import { widenMixedUndefinedReturn } from "../mixed-return-widening.js";
 import {
+  coerceType,
   compileExpression,
   compileStatement,
   ensureLateImport,
   flushLateImportShifts,
   registerEmitArgumentsObject,
   registerHoistFunctionDeclarations,
+  resolveComputedKeyExpression,
   valTypesMatch,
   VOID_RESULT,
 } from "../shared.js";
@@ -378,54 +385,71 @@ function emitNestedDeclarationStaticInitializers(
 }
 
 /**
- * Emit the runtime evaluation of computed names whose accessor bodies are
- * owned by the exact prepared-IR route.
+ * Emit the runtime evaluation of unresolved computed member names.
  *
- * Class shape preparation resolves the semantic key, but it must never execute
- * the source expression: assignments and other effects belong in the enclosing
- * function at ClassDefinitionEvaluation. The exact skip set is the gate, so a
- * dynamic/unsupported computed name keeps the legacy route untouched. Walking
- * `decl.members` preserves source order and evaluates a getter/setter pair's
- * two computed names independently, as JavaScript requires.
+ * Class shape preparation must never execute the source expression: assignments
+ * and other effects belong in the enclosing function at
+ * ClassDefinitionEvaluation. Both direct and prepared class-body routes share
+ * this emitter, while their distinct evaluation owners invoke it exactly once.
+ * Walking `decl.members` preserves source order and evaluates a getter/setter
+ * pair's two computed names independently, as JavaScript requires.
+ *
+ * (#5195 Step 1) METHODS are walked too — their key expression used to be
+ * dropped on the floor entirely, so `class C { [x = 1]() {} }` left `x` at 0 —
+ * and the ToPropertyKey'd result is STORED into the member's `__cmkey_` global
+ * when one exists (`ctx.classDynamicKeyGlobals`), instead of being dropped. The
+ * prototype-`$Object` install reads it back as the property key. A member whose
+ * key folds is untouched; a member with no key global (the host lane, or a
+ * class whose prototype takes no `$Object`) keeps the evaluate-and-drop
+ * behaviour, which is what makes the effect observable at all.
  */
-export function emitPreparedAccessorComputedNameEffects(
+export function emitUnresolvedComputedAccessorNameEffects(
   ctx: CodegenContext,
   fctx: FunctionContext,
   decl: ts.ClassDeclaration | ts.ClassExpression,
+  className?: string,
 ): void {
-  const routing = ctx.irClassBodyRouting;
-  const identity = ctx.irPlanningIdentityContext;
-  if (!routing?.skipBodyUnitIds || !identity) return;
-  const classId = identity.classIdByDeclaration.get(decl);
-  if (classId === undefined || identity.declarationByClassId.get(classId) !== decl) return;
-
+  const owner = className ?? ctx.anonClassExprNames.get(decl) ?? decl.name?.text;
   for (const member of decl.members) {
     if (
-      (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) ||
-      !ts.isComputedPropertyName(member.name)
+      (!ts.isGetAccessorDeclaration(member) &&
+        !ts.isSetAccessorDeclaration(member) &&
+        !ts.isMethodDeclaration(member)) ||
+      !member.name ||
+      !ts.isComputedPropertyName(member.name) ||
+      resolveComputedKeyExpression(ctx, member.name.expression) !== undefined
     ) {
       continue;
     }
-    const unitId = identity.unitIdByDeclaration.get(member);
-    if (unitId === undefined || routing.skipBodyUnitIds.has(unitId) !== true) continue;
-    const terminal = identity.terminalByUnitId.get(unitId);
-    const callable = ctx.programAbiClassCallables?.functionForUnit(unitId);
-    const accessor =
-      terminal?.kind === "class-instance-getter" ||
-      terminal?.kind === "class-static-getter" ||
-      terminal?.kind === "class-instance-setter" ||
-      terminal?.kind === "class-static-setter";
-    if (
-      !terminal ||
-      !accessor ||
-      terminal.lexicalOwnerId !== classId ||
-      identity.declarationByUnitId.get(unitId) !== member ||
-      !callable
-    ) {
-      throw new Error(`exact prepared computed accessor ${unitId} has no matching class/callable identity`);
+    const keyGlobalIdx =
+      owner === undefined
+        ? undefined
+        : ctx.classDynamicKeyGlobals.get(dynamicClassKeyGlobalKey(owner, decl.members.indexOf(member)));
+    const resultType = compileExpression(ctx, fctx, member.name.expression, { kind: "externref" });
+    if (resultType !== null && resultType !== (VOID_RESULT as unknown as ValType)) {
+      if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, { kind: "externref" });
+      emitToPropertyKeyOnce(ctx, fctx);
+      if (keyGlobalIdx !== undefined) fctx.body.push({ op: "global.set", index: keyGlobalIdx });
+      else fctx.body.push({ op: "drop" });
     }
-    const resultType = compileExpression(ctx, fctx, member.name.expression);
-    if (resultType !== null && resultType !== (VOID_RESULT as unknown as ValType)) fctx.body.push({ op: "drop" });
+  }
+  // The keys are live now, so force the prototype singleton to materialize HERE
+  // rather than at the first `C.prototype` touch — §15.7.14 installs the
+  // elements at ClassDefinitionEvaluation, and a later first-touch would read
+  // keys that a subsequent write had already changed. Only classes that
+  // actually have a runtime-keyed member — or INHERIT one (#5195 F1: a
+  // subclass reaches it only through the prototype chain, whose walk starts at
+  // the subclass's own `$Object`) — pay for this.
+  if (owner !== undefined && classHierarchyHasDynamicMember(ctx, owner)) {
+    if (emitLazyProtoGet(ctx, fctx, owner)) fctx.body.push({ op: "drop" });
+    // (#5195 Step 2) …and the STATIC sidecar, for the same reason: its keys are
+    // the ones just written, and a static member with a runtime key is
+    // unreachable until the object holding it exists.
+    if (
+      emitClassStaticSidecar(ctx, fctx, owner, (member) => resolveInstallableClassMemberName(ctx, owner, decl, member))
+    ) {
+      fctx.body.push({ op: "drop" });
+    }
   }
 }
 
@@ -458,6 +482,12 @@ export function compileNestedClassDeclaration(
   // in scope — and register the live parent with the runtime so the host-side
   // constructible class mirror can chain prototype misses through it.
   emitRegisterDynamicClassParent(ctx, fctx, decl, className);
+
+  // (#5195 r3-5) §15.7.14 step 5f: the superclass value is evaluated and
+  // IsConstructor-checked before the class object exists. Standalone only, and
+  // only for a heritage shape with no static parent lane — see
+  // `class-heritage-check.ts`, whose predicate is the safety property here.
+  emitStandaloneHeritageCheck(ctx, fctx, decl, compileExpression);
 
   const isDeferred = ctx.deferredClassBodies.has(className);
   // (#4646) "Already fully compiled" used to be `structMap.has(className)` — a
@@ -531,7 +561,7 @@ export function compileNestedClassDeclaration(
         }
       }
     }
-    emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
+    if (ts.isClassDeclaration(decl)) emitUnresolvedComputedAccessorNameEffects(ctx, fctx, decl, className);
     emitNestedDeclarationStaticInitializers(ctx, fctx, decl);
     return;
   }
@@ -587,9 +617,10 @@ export function compileNestedClassDeclaration(
       funcByName.set(ctx.mod.functions[i]!.name, i);
     }
 
-    // Computed-name expressions execute in the enclosing frame at runtime,
-    // immediately before this class's prepared bodies are installed/materialized.
-    emitPreparedAccessorComputedNameEffects(ctx, fctx, decl);
+    // A declaration's computed accessor names execute in this enclosing frame
+    // at ClassDefinitionEvaluation. Class-expression owners emit the same
+    // shared effect from their own expression route below.
+    if (ts.isClassDeclaration(decl)) emitUnresolvedComputedAccessorNameEffects(ctx, fctx, decl, className);
 
     // Compile constructor and method bodies
     compileClassBodies(ctx, decl, funcByName, syntheticName, ctx.irClassBodyRouting);
@@ -622,6 +653,8 @@ interface NestedFunctionCapturePlanEntry {
   alreadyBoxed: boolean;
   /** Inner value type of that ref cell. */
   boxedValType?: ValType;
+  /** Keep the phase-0 value ABI when the declaring slot was boxed later. */
+  forwardUnboxed?: boolean;
 }
 
 /**
@@ -1537,6 +1570,16 @@ function compileNestedFunctionDeclarationInScope(
   };
 
   let captures: NestedFunctionCapturePlanEntry[] = [];
+  // A phase-0 pre-registration is the ABI earlier call sites already emit;
+  // keep it across an intermediate promotion (see collectPromotedPreRegisteredSlots).
+  const preRegisteredCaptures = opts.reuseReservedEntry ? ctx.nestedFuncCaptures.get(funcName) : undefined;
+  const promotedPreRegisteredSlots = collectPromotedPreRegisteredSlots(
+    ctx,
+    fctx,
+    preRegisteredCaptures,
+    referencedNames,
+    transitivelyRequiredNames,
+  );
   for (const name of referencedNames) {
     if (captureOwnLocals.has(name) && !transitivelyRequiredNames.has(name)) continue;
     if (skipUnobservedHoistedCapture(fctx, stmt, name, directlyReferencedNames, transitivelyRequiredNames)) continue;
@@ -1563,7 +1606,7 @@ function compileNestedFunctionDeclarationInScope(
     // singleton — so `new Child()` inside the nested fn constructed from
     // null (react's ChildComponent family). Skip the value capture.
     if (ctx.classSet.has(name) && isSiblingClassDeclarationName(stmt, name)) continue;
-    const localIdx = fctx.localMap.get(name);
+    const localIdx = fctx.localMap.get(name) ?? promotedPreRegisteredSlots.get(name);
     if (localIdx === undefined) continue;
     // A real declaring-frame local wins over a same-named module funcMap entry.
     let type =
@@ -1647,17 +1690,23 @@ function compileNestedFunctionDeclarationInScope(
     // body derefs to the right depth.
     const outerBoxedEntry = fctx.boxedCaptures?.get(name);
     const alreadyBoxed = !!outerBoxedEntry;
+    // (#5303) Read-only capture whose declaring slot was boxed after phase 0:
+    // keep the pre-registered value type so already-compiled callers stay valid.
+    const forwardUnboxed =
+      !isMutable && preRegisteredValueForwarding(preRegisteredCaptures, name, outerBoxedEntry, type);
     captures.push({
       name,
-      type,
+      type: forwardUnboxed ? outerBoxedEntry!.valType : type,
       localIdx,
       mutable: isMutable,
       hasTdzFlag,
       tdzFlagIdx,
-      alreadyBoxed,
+      alreadyBoxed: forwardUnboxed ? false : alreadyBoxed,
       boxedValType: outerBoxedEntry?.valType,
+      forwardUnboxed,
     });
   }
+  reorderToPreRegisteredAbi(captures, preRegisteredCaptures);
   if (shouldCaptureEnclosingDirectEvalState(ctx, fctx, stmt, reachesDirectEval)) {
     // Phase 0 only needs a stable slot/type so its reserved signature matches
     // the real compile. Runtime materialization belongs to the real hoist pass,
@@ -1786,7 +1835,7 @@ function compileNestedFunctionDeclarationInScope(
       // passed by reference as an array-HOF callback, which installs the spec
       // `thisArg` into `__current_this`; direct calls retain the null-guarded
       // undefined fallback (#1702).
-      readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
+      readsCurrentThis: functionLikeReferencesOwnThis(stmt),
     };
     if (reachesDirectEval) {
       liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
@@ -2132,7 +2181,7 @@ function compileNestedFunctionDeclarationInScope(
       // into `__current_this` before the `call_ref`. Allow its `this` to read
       // that global; for direct calls the global is null and the null-guarded
       // read (#1702) falls back to `undefined` — behaviour-preserving.
-      readsCurrentThis: stmt.body ? bodyReferencesOwnThis(stmt.body) : false,
+      readsCurrentThis: functionLikeReferencesOwnThis(stmt),
     };
     if (reachesDirectEval) {
       liftedFctx.directEvalBindingNames = collectDirectEvalBindingNames(stmt);
@@ -2191,7 +2240,10 @@ function compileNestedFunctionDeclarationInScope(
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.type);
         if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
         liftedFctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type });
-      } else {
+      } else if (!cap.forwardUnboxed) {
+        // (#5303) `forwardUnboxed` means this param carries the cell's VALUE,
+        // not the cell — registering it here would make every body read
+        // `struct.get` a non-cell.
         const outerBoxed = fctx.boxedCaptures?.get(cap.name);
         if (outerBoxed && (cap.type.kind === "ref" || cap.type.kind === "ref_null")) {
           if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
@@ -2779,6 +2831,7 @@ function emitEagerCaptureBoxes(ctx: CodegenContext, fctx: FunctionContext, funcN
     fctx.localMap.set(cap.name, boxedLocalIdx);
     if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
     fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.valType });
+    recordLiftedCaptureBox(fctx, cap.name, cap.outerLocalIdx, boxedLocalIdx);
   }
 }
 
@@ -2877,12 +2930,126 @@ function emitEagerNestedCallCaptureBoxes(
     liftedFctx.localMap.set(cap.name, boxedLocalIdx);
     if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
     liftedFctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: calleeValType });
+    // (#5323) Publish the cell, or the forwarding call site reads the still-raw
+    // frozen capture slot and mints a SECOND one — the identity split this
+    // pass's own "no second `struct.new`" contract assumes cannot happen.
+    recordLiftedCaptureBox(liftedFctx, cap.name, paramIdx, boxedLocalIdx);
   }
 }
 
 /** Publish a capturing sibling's lifted signature before any sibling body is
  * compiled. Returns true when the declaration must skip the capture-free
  * reservation path (including generators, whose state machine registers it). */
+type PreRegisteredCaptures = NonNullable<ReturnType<CodegenContext["nestedFuncCaptures"]["get"]>>;
+
+/**
+ * A sibling pre-registered in phase 0 (`preRegisterCapturingSibling`) has
+ * already published its capture list as the call-site ABI: every direct call
+ * and closure reification compiled before the real lift prepends EXACTLY that
+ * list. A lift-time transitive promotion run by an EARLIER sibling
+ * (`promoteAccessorCapturesToGlobals` transitive-only mode) can meanwhile move
+ * one of those bindings to a module global — deleting it from `localMap`,
+ * which silently dropped it from the recomputed signature while the earlier
+ * call sites still pushed it (React's ReactDOMServerIntegrationTestUtils shim:
+ * `itRenders` promoted `initModules`; `expectMarkupMatch` then called
+ * `testMarkupMatch` with one capture too many — "type error in fallthru").
+ * Returns the recorded declaring-frame slot of each such binding (promotion
+ * copies the local into the global, it never clears the slot) and re-marks it
+ * as required, so the lifted param list matches what callers already emit.
+ */
+function collectPromotedPreRegisteredSlots(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  preRegistered: PreRegisteredCaptures | undefined,
+  referencedNames: Set<string>,
+  transitivelyRequiredNames: Set<string>,
+): Map<string, number> {
+  const slots = new Map<string, number>();
+  if (!preRegistered) return slots;
+  for (const cap of preRegistered) {
+    if (fctx.localMap.has(cap.name) || !fctx.promotedCaptureNames?.has(cap.name)) continue;
+    if (!ctx.capturedGlobals.has(cap.name)) continue;
+    const slot =
+      cap.outerLocalIdx < fctx.params.length
+        ? fctx.params[cap.outerLocalIdx]
+        : fctx.locals[cap.outerLocalIdx - fctx.params.length];
+    if (slot?.name !== cap.name) continue;
+    slots.set(cap.name, cap.outerLocalIdx);
+    referencedNames.add(cap.name);
+    transitivelyRequiredNames.add(cap.name);
+  }
+  return slots;
+}
+
+/**
+ * Same ABI contract as above: callers prepend the pre-registered captures in
+ * the pre-registered ORDER, so a re-lift publishes that order (names the
+ * pre-registration did not know keep their relative order at the end).
+ */
+function reorderToPreRegisteredAbi(
+  captures: { name: string }[],
+  preRegistered: PreRegisteredCaptures | undefined,
+): void {
+  if (!preRegistered) return;
+  const order = new Map(preRegistered.map((c, i) => [c.name, i] as const));
+  if (!captures.every((c) => order.has(c.name))) return;
+  captures.sort((a, b) => order.get(a.name)! - order.get(b.name)!);
+}
+
+/**
+ * (#5303) Third arm of the same ABI contract as the two helpers above — this
+ * one covers the capture's TYPE.
+ *
+ * Phase 0 reserves a capturing sibling's signature from the declaring frame's
+ * slot types, and every direct call compiled before the real lift is emitted
+ * against exactly that signature. A LATER sibling's lift can then box that
+ * declaring slot (`promoteAccessorCapturesToGlobals` boxes a name some other
+ * nested function mutates), which re-aims `fctx.localMap` at a `__boxed_<name>`
+ * ref cell. The real lift re-reads the slot, sees the CELL, and — for a
+ * read-only capture, whose lifted param is the slot type verbatim — publishes a
+ * signature the earlier callers never agreed to. The reserved entry is
+ * overwritten in place, so those calls silently become invalid:
+ * `call[13] expected type (ref null 92), found if of type (ref null 84)`
+ * (moment's `createUTC` → `createLocalOrUTC`, every module 0/N).
+ *
+ * The post-pass that normally repairs a drifted call argument
+ * (`fixCallArgTypesInBody`) cannot reach these: its backward walk stops at any
+ * structured `if`, and a ref→ref capture coercion is emitted as exactly that —
+ * a guarded `ref.test`/`ref.cast` `if`.
+ *
+ * A read-only capture has value-copy semantics, so the declaring frame's cell is
+ * an implementation detail of that frame, not part of this function's ABI. Keep
+ * the pre-registered value type and let the forwarding call site unwrap
+ * (`sourceIsCanonicalBox` in call-identifier.ts). Mutable captures are NOT
+ * affected: their param is `getOrRegisterRefCellType(valueType)` either way, and
+ * that memoized type index is the same before and after the promotion — which is
+ * why only the read-only arm drifts.
+ */
+function preRegisteredValueForwarding(
+  preRegistered: PreRegisteredCaptures | undefined,
+  name: string,
+  outerBoxedEntry: { refCellTypeIdx: number; valType: ValType } | undefined,
+  currentSlotType: ValType,
+): boolean {
+  if (!preRegistered || !outerBoxedEntry) return false;
+  // The slot this lift just read must BE the cell. A `boxedCaptures` entry can
+  // outlive the `localMap` binding it was written with (#3024 promotion deletes
+  // it; a same-named shadow can re-aim it), and in those cases the slot already
+  // carries the value — there is nothing to pin and no drift to undo.
+  if (
+    (currentSlotType.kind !== "ref" && currentSlotType.kind !== "ref_null") ||
+    currentSlotType.typeIdx !== outerBoxedEntry.refCellTypeIdx
+  ) {
+    return false;
+  }
+  const recorded = preRegistered.find((c) => c.name === name)?.valType;
+  if (recorded === undefined) return false;
+  // Pinning is only safe when phase 0 published the cell's INNER value type;
+  // if it already published the cell itself, callers agree on the cell and the
+  // current behaviour is the consistent one.
+  return valTypesMatch(recorded, outerBoxedEntry.valType);
+}
+
 function preRegisterCapturingSibling(
   ctx: CodegenContext,
   fctx: FunctionContext,

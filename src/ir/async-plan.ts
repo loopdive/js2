@@ -23,6 +23,7 @@ import {
   type AsyncRuntimeFeature,
 } from "./async-runtime-providers.js";
 import { irImportFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
+import { asCallableRuntimeHostCapabilityRecord } from "./runtime-host-capabilities.js";
 import type { IrUnitId } from "./identity.js";
 import {
   collectUses,
@@ -444,7 +445,9 @@ export function assertPreparedIrAsyncRuntimeCurrent(
     }
     for (let index = 0; index < records.length; index++) {
       const adapter = runtime.adapters[index]!;
-      const record = records[index]!;
+      // (#3526 F2-S2) Fail-closed kind guard: the frozen catalogue is now
+      // kind-discriminated, and only a callable record has an import spelling.
+      const record = asCallableRuntimeHostCapabilityRecord(records[index]!);
       assertCanonicalAsyncHostCapabilityRecord(adapter.record);
       const target = irImportFuncRef(record.module, record.field, record.field);
       if (

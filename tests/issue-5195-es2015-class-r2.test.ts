@@ -1,0 +1,876 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+//
+// #5195 — ES2015 class residual pass, round 2. One block per landed step of the
+// plan in `plan/issues/5195-es2015-standalone-class-r2.md`: the exact Test262
+// rows it flipped, plus source-level controls in BOTH lanes that keep the
+// mechanism pinned where the rows cannot reach it. Every standalone
+// control asserts an EMPTY import list — the standalone target must stay
+// host-import-free (#5272 taught the in-process runner CI's host-import leak
+// check; this file enforces the same invariant at the source level).
+
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
+import { restoreHostBuiltins } from "./test262-restore-builtins.js";
+import { runTest262File } from "./test262-runner.js";
+
+/** Step 3 (cluster D1) — the `typeof caught` fold and the read off that binding. */
+const STEP_3_ROWS = [
+  "language/expressions/super/prop-dot-obj-null-proto.js",
+  "language/expressions/super/prop-expr-obj-null-proto.js",
+  "language/expressions/super/prop-expr-obj-unresolvable.js",
+  "language/expressions/super/prop-expr-cls-unresolvable.js",
+] as const;
+
+/** Step 9 K — a computed key that folds to "constructor" is not the constructor. */
+const STEP_9K_ROWS = [
+  "language/computed-property-names/class/method/constructor-can-be-generator.js",
+  "language/computed-property-names/class/method/constructor-can-be-getter.js",
+  "language/computed-property-names/class/method/constructor-can-be-setter.js",
+] as const;
+
+/**
+ * Rows whose class mechanism IS fixed (the host lane passes) but whose body
+ * needs a carrier standalone does not have yet, so CI scores them as a
+ * host-import leak owned by another issue. Pin the exact leak: the row flips
+ * loudly — and this table shrinks — when that lane closes it.
+ */
+const STANDALONE_LEAK_OWNED_ELSEWHERE: Readonly<Record<string, RegExp>> = {
+  // generator method body → native generator carrier (#680 / #2864)
+  "language/computed-property-names/class/method/constructor-can-be-generator.js":
+    /standalone target emitted host imports: env::__create_generator/,
+};
+
+async function runStandalone(source: string, exportName: string, fileName: string): Promise<unknown> {
+  const result = await compile(source, {
+    target: "standalone",
+    allowJs: true,
+    fileName,
+    skipSemanticDiagnostics: true,
+  });
+  expect(result.success, result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n")).toBe(true);
+  expect(result.imports, "#5195 standalone controls must stay host-free").toEqual([]);
+  const { instance } = await WebAssembly.instantiate(result.binary, {});
+  return (instance.exports as Record<string, () => unknown>)[exportName]!();
+}
+
+function runHost(source: string, exportName: string): unknown {
+  const hostSource = source.replace(/\bexport\s+/g, "");
+  return (new Function(`${hostSource}\nreturn ${exportName};`)() as () => unknown)();
+}
+
+/**
+ * Row pins. `lanes` says which targets the row is expected to pass on: the
+ * `super` rows in Step 3 exercise the #4688 object-literal runtime super read,
+ * which exists only in the standalone lowering — the JS-host lane still
+ * resolves `super.x` statically and never throws, so `caught` is never written
+ * and `typeof caught` is legitimately "undefined" there. Pinning host on those
+ * rows would pin a gap that is not this issue's.
+ *
+ * The generous per-test timeout is load, not slack: each row compiles the whole
+ * harness once per lane, and this box runs several agents at a time.
+ */
+function pinRows(step: string, rows: readonly string[], lanes: "standalone" | "both"): void {
+  for (const relativePath of rows) {
+    const file = resolve(process.cwd(), "test262", "test", relativePath);
+    const ownedLeak = STANDALONE_LEAK_OWNED_ELSEWHERE[relativePath];
+    const label = ownedLeak
+      ? "host; standalone pins the leak owned elsewhere"
+      : lanes === "both"
+        ? "host and standalone"
+        : "standalone";
+    it.skipIf(!existsSync(file))(
+      `${step}: ${relativePath} passes in ${label}`,
+      async () => {
+        try {
+          if (lanes === "both") {
+            const host = await runTest262File(file, "issue-5195", 60_000);
+            expect({ status: host.status, error: host.error }).toEqual({ status: "pass", error: undefined });
+          }
+          const standalone = await runTest262File(file, "issue-5195", 60_000, "standalone");
+          if (ownedLeak) {
+            expect(standalone.status).toBe("compile_error");
+            expect(standalone.error).toMatch(ownedLeak);
+          } else {
+            expect({ status: standalone.status, error: standalone.error }).toEqual({
+              status: "pass",
+              error: undefined,
+            });
+          }
+        } finally {
+          restoreHostBuiltins();
+        }
+      },
+      300_000,
+    );
+  }
+}
+
+describe("#5195 Step 3 — closure-written module binding: typeof and member read", () => {
+  pinRows("step 3", STEP_3_ROWS, "standalone");
+
+  // The `caught` idiom: the ONLY write to the module `var` happens inside a
+  // nested function, which TypeScript's flow analysis does not apply to the
+  // outer binding — so its checker type stays `undefined`. Folding `typeof` (or
+  // reading a member) off that type answers "undefined"/null while the runtime
+  // slot holds a real object.
+  const CAUGHT_SOURCE = `
+    var caught;
+    function thrower() {
+      try {
+        throw new TypeError("boom");
+      } catch (err) {
+        caught = err;
+      }
+    }
+    thrower();
+    export function probe() {
+      return (typeof caught === "object") && (caught.constructor === TypeError) && caught.message === "boom";
+    }
+  `;
+
+  it("standalone: typeof and .constructor see the closure-written value", async () => {
+    expect(await runStandalone(CAUGHT_SOURCE, "probe", "issue-5195-caught.js")).toBe(1);
+  });
+
+  it("host lane agrees", () => {
+    expect(runHost(CAUGHT_SOURCE, "probe")).toBe(true);
+  });
+
+  // Order-preservation control: a module binding the checker CAN resolve keeps
+  // its static answer — the guard must not turn every `typeof` into a runtime
+  // call, and the member read must not leave its resolvable lane.
+  const RESOLVED_SOURCE = `
+    var n = 41;
+    var s = "hi";
+    function bump() { n = n + 1; }
+    bump();
+    export function probe() {
+      return (typeof n === "number") && (typeof s === "string") && s.length === 2 && n === 42;
+    }
+  `;
+
+  it("standalone: resolvable bindings keep their static typeof", async () => {
+    expect(await runStandalone(RESOLVED_SOURCE, "probe", "issue-5195-resolved.js")).toBe(1);
+  });
+
+  it("host lane agrees on resolvable bindings", () => {
+    expect(runHost(RESOLVED_SOURCE, "probe")).toBe(true);
+  });
+});
+
+describe("#5195 Step 9K — computed class keys are not the constructor", () => {
+  pinRows("step 9K", STEP_9K_ROWS, "both");
+
+  // §13.2.5.5: PropName of a ComputedPropertyName is EMPTY, so a computed key
+  // that merely FOLDS to "constructor" carries none of the §15.7.1 restrictions
+  // on a method literally named `constructor`.
+  const COMPUTED_CTOR_SOURCE = `
+    class C {
+      get ['constructor']() { return 7; }
+    }
+    class D {
+      set ['constructor'](v) { this.seen = v; }
+    }
+    export function probe() {
+      const d = new D();
+      d.constructor = 5;
+      return new C().constructor === 7 && d.seen === 5;
+    }
+  `;
+
+  it("standalone: computed 'constructor' accessors compile and dispatch", async () => {
+    expect(await runStandalone(COMPUTED_CTOR_SOURCE, "probe", "issue-5195-computed-ctor.js")).toBe(1);
+  });
+
+  it("host lane agrees on computed 'constructor' accessors", () => {
+    expect(runHost(COMPUTED_CTOR_SOURCE, "probe")).toBe(true);
+  });
+
+  // The real restriction must survive: a method literally named `constructor`
+  // still may not be a getter/setter/generator/async.
+  it("a literal `get constructor()` is still an early error", async () => {
+    const result = await compile("class C { get constructor() { return 1; } }", {
+      target: "standalone",
+      allowJs: true,
+      fileName: "issue-5195-literal-ctor-getter.js",
+      skipSemanticDiagnostics: true,
+    });
+    const messages = result.errors.map((error) => error.message).join("\n");
+    expect(messages).toContain("Class constructor may not be a getter");
+  });
+});
+
+describe("#5195 Step 1 — runtime-computed class element keys", () => {
+  // §15.7.14 / §13.2.5.5: the ComputedPropertyName of EVERY class element is
+  // evaluated once, in source order, at ClassDefinitionEvaluation. Before this
+  // step a METHOD's key expression was dropped on the floor entirely (only
+  // accessors got a side-effect-only evaluation, and only for a class nested in
+  // a function), so its assignments and calls never happened.
+  const KEY_EFFECTS_SOURCE = `
+    var log = "";
+    function k(v) { log = log + v; return v; }
+    class C {
+      [k('m')]() { return 1; }
+      get [k('g')]() { return 2; }
+      set [k('s')](v) { this.got = v; }
+      static [k('t')]() { return 3; }
+    }
+    export function probe() { return log === "mgst" ? 1 : 0; }
+  `;
+
+  it("standalone: every computed member key is evaluated once, in source order", async () => {
+    expect(await runStandalone(KEY_EFFECTS_SOURCE, "probe", "issue-5195-key-effects.js")).toBe(1);
+  });
+
+  it("host lane agrees on key evaluation order", () => {
+    expect(runHost(KEY_EFFECTS_SOURCE, "probe")).toBe(1);
+  });
+
+  // The key's VALUE reaches the prototype, as a real own property of the
+  // prototype `$Object` — readable, and ordered after `constructor` (which
+  // §15.7.14 creates before any element).
+  const RUNTIME_KEY_SOURCE = `
+    function ID(x) { return x; }
+    class C {
+      a() { return 'A'; }
+      [ID('d')]() { return 'D'; }
+      get [ID('g')]() { return 'G'; }
+    }
+    export function probe() {
+      const names = Object.getOwnPropertyNames(C.prototype).join(",");
+      return (typeof C.prototype.d === "function") && C.prototype.g === 'G'
+        && names === "constructor,a,d,g" ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a runtime key installs on the prototype in spec order", async () => {
+    expect(await runStandalone(RUNTIME_KEY_SOURCE, "probe", "issue-5195-runtime-key.js")).toBe(1);
+  });
+
+  it("host lane agrees on the runtime-key prototype surface", () => {
+    expect(runHost(RUNTIME_KEY_SOURCE, "probe")).toBe(1);
+  });
+
+  // Order-preservation control: a class whose keys all FOLD keeps every static
+  // lane — dot dispatch, `C.prototype.m` identity, own-key order — untouched.
+  const FOLDED_KEYS_SOURCE = `
+    class C {
+      m() { return 1; }
+      ['n']() { return 2; }
+      get p() { return 3; }
+    }
+    export function probe() {
+      const c = new C();
+      const names = Object.getOwnPropertyNames(C.prototype).join(",");
+      return c.m() === 1 && c.n() === 2 && c.p === 3
+        && c.m === C.prototype.m && names === "constructor,m,n,p" ? 1 : 0;
+    }
+  `;
+
+  // Step 1.7: the member has no source-spellable name, so the only route to it
+  // is the dynamic one — an instance read/call with the key as data. Both the
+  // static-key form (`c[2]`, which const-folds) and the runtime-key form
+  // (`c[k]`) must reach the prototype `$Object`.
+  const INSTANCE_DYNAMIC_SOURCE = `
+    function ID(x) { return x; }
+    class C {
+      a() { return 'A'; }
+      [ID('d')]() { return 'D'; }
+      [ID(2)]() { return 'N'; }
+    }
+    export function probe() {
+      const c = new C();
+      const k = 'd';
+      return c[k]() === 'D' && c['d']() === 'D' && c[2]() === 'N'
+        && typeof c.a === 'function' && c.a() === 'A' ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a runtime-keyed member is reachable through a dynamic instance call", async () => {
+    expect(await runStandalone(INSTANCE_DYNAMIC_SOURCE, "probe", "issue-5195-instance-dynamic.js")).toBe(1);
+  });
+
+  it("host lane agrees on the dynamic instance call", () => {
+    expect(runHost(INSTANCE_DYNAMIC_SOURCE, "probe")).toBe(1);
+  });
+
+  it("standalone: folding keys keep their static lanes", async () => {
+    expect(await runStandalone(FOLDED_KEYS_SOURCE, "probe", "issue-5195-folded-keys.js")).toBe(1);
+  });
+
+  it("host lane agrees on folding keys", () => {
+    expect(runHost(FOLDED_KEYS_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 Step 1.3/1.4 — prototype `constructor` for every class", () => {
+  // §15.7.14 creates `C.prototype.constructor` BEFORE the elements, so it is
+  // the first own key — and it exists even when the class declares no element
+  // at all.
+  const CTOR_PROP_SOURCE = `
+    class Empty {}
+    class WithCtor { constructor() { this.x = 1; } }
+    export function probe() {
+      const d1 = Object.getOwnPropertyDescriptor(Empty.prototype, 'constructor');
+      const d2 = Object.getOwnPropertyDescriptor(WithCtor.prototype, 'constructor');
+      return d1.value === Empty && d1.writable === true && d1.enumerable === false
+        && d1.configurable === true && d2.value === WithCtor ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a member-less class still has an own prototype `constructor`", async () => {
+    expect(await runStandalone(CTOR_PROP_SOURCE, "probe", "issue-5195-ctor-prop.js")).toBe(1);
+  });
+
+  it("host lane agrees on the prototype `constructor` descriptor", () => {
+    expect(runHost(CTOR_PROP_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 Step 1.6 — duplicate accessors are last-definition-wins", () => {
+  // §15.7.14 installs the class elements in source order, so a second accessor
+  // with the same key REPLACES the first. The funcMap guard kept the first
+  // body, which is the opposite answer — and the guard cannot simply go, because
+  // a static and an instance accessor of the same name share that one key.
+  const DUPLICATE_ACCESSOR_SOURCE = `
+    class C {
+      get b() { return 'first'; }
+      get ['b']() { return 'second'; }
+      set c(v) { this.viaFirst = v; }
+      set ['c'](v) { this.viaSecond = v; }
+    }
+    class D {
+      get v() { return 'instance'; }
+      static get v() { return 'static'; }
+    }
+    export function probe() {
+      const c = new C();
+      c.c = 1;
+      return c.b === 'second' && c.viaFirst === undefined && c.viaSecond === 1
+        && new D().v === 'instance' ? 1 : 0;
+    }
+  `;
+
+  it("standalone: the last accessor of a kind wins, and static does not steal instance", async () => {
+    expect(await runStandalone(DUPLICATE_ACCESSOR_SOURCE, "probe", "issue-5195-dup-accessor.js")).toBe(1);
+  });
+
+  it("host lane agrees on duplicate accessors", () => {
+    expect(runHost(DUPLICATE_ACCESSOR_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 Step 9 H/I — accessor writes and the inner class binding", () => {
+  // A top-level `C.staticX = v` / `new C().x = v` calls a SETTER, which is
+  // observable work — but neither writes a named module global, so the whole
+  // statement was dropped from `__module_init` and the setter never ran. The
+  // same write inside a function body always worked.
+  const ACCESSOR_WRITE_SOURCE = `
+    var instanceSeen = 0, staticSeen = 0;
+    class C {
+      set x(v) { instanceSeen = v; }
+      static set y(v) { staticSeen = v; }
+    }
+    new C().x = 5;
+    C.y = 7;
+    export function probe() { return instanceSeen === 5 && staticSeen === 7 ? 1 : 0; }
+  `;
+
+  it("standalone: top-level accessor writes run their setter", async () => {
+    expect(await runStandalone(ACCESSOR_WRITE_SOURCE, "probe", "issue-5195-accessor-write.js")).toBe(1);
+  });
+
+  it("host lane agrees on top-level accessor writes", () => {
+    expect(runHost(ACCESSOR_WRITE_SOURCE, "probe")).toBe(1);
+  });
+
+  // §15.7.14 step 3: the class body sees its own name through an IMMUTABLE
+  // inner binding. The OUTER binding stays mutable, which is the control.
+  const INNER_BINDING_SOURCE = `
+    var thrown = 0;
+    function attempt(f) { try { f(); } catch (e) { if (e instanceof TypeError) thrown++; } }
+    attempt(function () { class A { constructor() { A = 42; } } new A(); });
+    attempt(function () { class B { m() { B = 42; } } new B().m(); });
+    attempt(function () { class C2 { get x() { C2 = 42; } } new C2().x; });
+    attempt(function () { class D2 { set x(_) { D2 = 42; } } new D2().x = 1; });
+    attempt(function () { class E2 { static s() { E2 = 42; } } E2.s(); });
+    // Control: the OUTER binding is not const, so a write to it must not
+    // throw. (Whether the write is then observable is a separate, pre-existing
+    // standalone gap — a top-level class name reads back as the class object —
+    // so this asserts only the half this change governs.)
+    var outerOk = 0;
+    class Outer {}
+    try { Outer = 42; outerOk = 1; } catch (e) { outerOk = -1; }
+    export function probe() { return thrown === 5 && outerOk === 1 ? 1 : 0; }
+  `;
+
+  it("standalone: writing the inner class binding is a TypeError, the outer one is not", async () => {
+    expect(await runStandalone(INNER_BINDING_SOURCE, "probe", "issue-5195-inner-binding.js")).toBe(1);
+  });
+
+  it("host lane agrees on the inner class binding", () => {
+    expect(runHost(INNER_BINDING_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 Step 11 E — derived-constructor return", () => {
+  // §10.2.1.3 step 13: a derived ctor's bare `return;` / `return undefined`
+  // yields `this`; `return null` is a TypeError (null has typeof "object" but
+  // is not an Object). The struct-result derived lane had NO return arm at all,
+  // so the statement fell to the generic value return, pushed `ref.null
+  // <struct>`, and `new Derived()` trapped on a null dereference.
+  const DERIVED_RETURN_SOURCE = `
+    var baseCalls = 0;
+    class Base { constructor() { this.prop = 1; baseCalls++; } }
+    class Empty extends Base { constructor() { super(); return; } }
+    class Undef extends Base { constructor() { super(); return undefined; } }
+    class Nulled extends Base { constructor() { super(); return null; } }
+    export function probe() {
+      const a = new Empty();
+      const b = new Undef();
+      let threw = false;
+      try { new Nulled(); } catch (e) { threw = e instanceof TypeError; }
+      return a.prop === 1 && b.prop === 1 && threw && baseCalls === 3 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: bare and undefined returns yield `this`, null is a TypeError", async () => {
+    expect(await runStandalone(DERIVED_RETURN_SOURCE, "probe", "issue-5195-derived-return.js")).toBe(1);
+  });
+
+  it("host lane agrees on derived-constructor returns", () => {
+    expect(runHost(DERIVED_RETURN_SOURCE, "probe")).toBe(1);
+  });
+
+  // Order-preservation control: a BASE constructor's `return null` is still a
+  // silent discard, not a TypeError.
+  const BASE_RETURN_SOURCE = `
+    class B { constructor() { this.prop = 2; return null; } }
+    export function probe() { return new B().prop === 2 ? 1 : 0; }
+  `;
+
+  it("standalone: a base constructor's `return null` still discards", async () => {
+    expect(await runStandalone(BASE_RETURN_SOURCE, "probe", "issue-5195-base-return.js")).toBe(1);
+  });
+
+  it("host lane agrees on the base-constructor control", () => {
+    expect(runHost(BASE_RETURN_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 Step 2 — static sidecar for runtime-keyed statics", () => {
+  // The class object is a `$ClassName` struct (#3976 blocker), so a static
+  // member installed under a runtime key had nowhere to live and `C[k]()`
+  // folded to `ref.null.extern`. A parallel `$Object` carries it, and the
+  // dynamic lookup is redirected there when the receiver IS the class-object
+  // singleton — instance receivers of the same class still get the PROTOTYPE.
+  const STATIC_SIDECAR_SOURCE = `
+    function ID(x) { return x; }
+    class C {
+      static [ID('d')]() { return 'SD'; }
+      static [ID(2)]() { return 'S2'; }
+      static s() { return 'S'; }
+      [ID('d')]() { return 'ID'; }
+    }
+    export function probe() {
+      const k = 'd';
+      return C.s() === 'S' && C[k]() === 'SD' && C['d']() === 'SD' && C[2]() === 'S2'
+        && new C()[k]() === 'ID' && new C()['d']() === 'ID' ? 1 : 0;
+    }
+  `;
+
+  it("standalone: runtime-keyed statics resolve, and do not shadow the instance member", async () => {
+    expect(await runStandalone(STATIC_SIDECAR_SOURCE, "probe", "issue-5195-static-sidecar.js")).toBe(1);
+  });
+
+  it("host lane agrees on the static sidecar", () => {
+    expect(runHost(STATIC_SIDECAR_SOURCE, "probe")).toBe(1);
+  });
+
+  // Order-preservation control: a class with only FOLDING static keys builds no
+  // sidecar and keeps every static lane it had.
+  const STATIC_FOLDED_SOURCE = `
+    class C {
+      static m() { return 1; }
+      static ['n']() { return 2; }
+      static get g() { return 3; }
+      static p = 4;
+    }
+    export function probe() {
+      return C.m() === 1 && C.n() === 2 && C.g === 3 && C.p === 4 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a class with only folding static keys is unchanged", async () => {
+    expect(await runStandalone(STATIC_FOLDED_SOURCE, "probe", "issue-5195-static-folded.js")).toBe(1);
+  });
+
+  it("host lane agrees on the folding-static control", () => {
+    expect(runHost(STATIC_FOLDED_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 F1 — a subclass of a class with a runtime-keyed member", () => {
+  // The parent's member is registered under a synthetic `__cmdyn$<ordinal>`
+  // name. Aliasing that into the child made the program-ABI planner reject the
+  // whole module ("no complete exact canonical class-member authority"), so
+  // EVERY `class D extends C {}` over such a parent was a hard compile error.
+  // The alias is gone; inheritance is a runtime [[Prototype]] walk instead —
+  // `emitStandaloneClassProtoObject` links the child prototype `$Object` to the
+  // parent's (§15.7.14 step 6) and the static side walks to the parent sidecar.
+  const F1_SHAPES: ReadonlyArray<readonly [string, string]> = [
+    ["method", "class C { [ID('dyn')]() { return 2; } }\nclass D extends C {}\nvar got = new D()[ID('dyn')]();"],
+    ["getter", "class C { get [ID('g')]() { return 2; } }\nclass D extends C {}\nvar got = new D()[ID('g')];"],
+    [
+      // The WRITE through an inherited runtime-keyed setter is F4, still open
+      // (there is no receiver-aware `[[Set]]` chain walk yet — see the issue
+      // file's residual list). What F1 owns is that the subclass COMPILES and
+      // that the member is reachable through D's prototype chain, which is what
+      // this asserts.
+      "setter",
+      "class C { set [ID('s')](v) { this.seen = v; } }\nclass D extends C {}\n" +
+        "var d = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(D.prototype), 's');\n" +
+        "var got = d !== undefined && typeof d.set === 'function' ? 2 : 0;",
+    ],
+    ["static", "class C { static [ID('s')]() { return 2; } }\nclass D extends C {}\nvar got = D[ID('s')]();"],
+    [
+      "two levels",
+      "class C { [ID('dyn')]() { return 2; } }\nclass D extends C {}\nclass E extends D {}\nvar got = new E()[ID('dyn')]();",
+    ],
+    [
+      "child overrides",
+      "class C { [ID('dyn')]() { return 9; } }\nclass D extends C { [ID('dyn')]() { return 2; } }\nvar got = new D()[ID('dyn')]();",
+    ],
+  ];
+
+  for (const [label, body] of F1_SHAPES) {
+    const source = `function ID(x) { return x; }\n${body}\nexport function probe() { return got === 2 ? 1 : 0; }`;
+    const slug = label.replace(/\s+/g, "-");
+    it(`standalone: ${label}`, async () => {
+      expect(await runStandalone(source, "probe", `issue-5195-f1-${slug}.js`)).toBe(1);
+    });
+    it(`host lane agrees: ${label}`, () => {
+      expect(runHost(source, "probe")).toBe(1);
+    });
+  }
+
+  // Order-preservation: a plain member of the same class must still inherit
+  // through the ordinary static alias.
+  const PLAIN_THROUGH_DYNAMIC_PARENT = `
+    function ID(x) { return x; }
+    class C { [ID('dyn')]() { return 2; } plain() { return 5; } }
+    class D extends C {}
+    export function probe() { return new D().plain() === 5 && new D()[ID('dyn')]() === 2 ? 1 : 0; }
+  `;
+
+  it("standalone: a plain inherited member still resolves statically", async () => {
+    expect(await runStandalone(PLAIN_THROUGH_DYNAMIC_PARENT, "probe", "issue-5195-f1-plain.js")).toBe(1);
+  });
+
+  it("host lane agrees on the plain inherited member", () => {
+    expect(runHost(PLAIN_THROUGH_DYNAMIC_PARENT, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 F2 — the class object is not the instance prototype", () => {
+  // `__class_<C>` is itself a `$C` struct, so the lookup's `ref.test` matched
+  // it and handed back the INSTANCE prototype: `C[ID('m')]` answered an
+  // instance method where the spec says `undefined`. The identity test against
+  // the class-object global is now unconditional, and answers the static
+  // sidecar (or nothing) — never the prototype.
+  const CLASS_OBJECT_SOURCE = `
+    function ID(x) { return x; }
+    class C { m() { return 1; } [ID('dyn')]() { return 2; } static [ID('s')]() { return 3; } }
+    export function probe() {
+      return (C[ID('m')] === undefined ? 1 : 0)
+        + (C[ID('dyn')] === undefined ? 2 : 0)
+        + (C[ID('s')]() === 3 ? 4 : 0)
+        + (new C()[ID('dyn')]() === 2 ? 8 : 0);
+    }
+  `;
+
+  it("standalone: instance members are not visible on the class object", async () => {
+    expect(await runStandalone(CLASS_OBJECT_SOURCE, "probe", "issue-5195-f2-class-object.js")).toBe(15);
+  });
+
+  it("host lane agrees on the class object surface", () => {
+    expect(runHost(CLASS_OBJECT_SOURCE, "probe")).toBe(15);
+  });
+
+  // The numeric-key twin: `C[ID(2)]` must miss while `new C()[ID(2)]()` hits.
+  const NUMERIC_KEY_SOURCE = `
+    function ID(x) { return x; }
+    class C { m() { return 1; } [ID(2)]() { return 2; } }
+    export function probe() {
+      return (C[ID(2)] === undefined ? 1 : 0) + (new C()[ID(2)]() === 2 ? 2 : 0);
+    }
+  `;
+
+  it("standalone: a numeric runtime key is an instance member only", async () => {
+    expect(await runStandalone(NUMERIC_KEY_SOURCE, "probe", "issue-5195-f2-numeric.js")).toBe(3);
+  });
+
+  it("host lane agrees on the numeric key", () => {
+    expect(runHost(NUMERIC_KEY_SOURCE, "probe")).toBe(3);
+  });
+});
+
+describe("#5195 F3 — the runtime-keyed call binds its receiver", () => {
+  // The first cut dispatched through `tryEmitInlineDynamicCall`, which invokes
+  // with `this` unbound — so ANY runtime-keyed call into a method that touches
+  // `this` threw, not only the `new C()[k]()` shape. It also built its
+  // candidate set from the closure wrappers registered SO FAR, which made an
+  // INHERITED member's call fold to null or not depending on whether an
+  // unrelated read appeared earlier in source order. Both are gone: the call is
+  // `__apply_closure(__extern_get(recv, key), recv, args)`, with the receiver
+  // compiled exactly once.
+  const RECEIVER_SOURCE = `
+    function ID(x) { return x; }
+    var made = 0;
+    class C {
+      constructor() { made = made + 1; this.x = 41; }
+      [ID('dyn')]() { return this.x + 1; }
+      [ID('add')](a, b) { return this.x + a + b; }
+    }
+    export function probe() {
+      var c = new C();
+      var k = 'dyn';
+      var viaVar = c[ID('dyn')]() === 42;
+      var viaRuntimeKey = c[k]() === 42;
+      var viaNew = new C()[ID('dyn')]() === 42;
+      var withArgs = c[ID('add')](1, 2) === 44;
+      // two constructions: c and the viaNew temporary — i.e. the receiver of
+      // the element call is evaluated exactly once.
+      return viaVar && viaRuntimeKey && viaNew && withArgs && made === 2 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: `this`, arguments and single receiver evaluation", async () => {
+    expect(await runStandalone(RECEIVER_SOURCE, "probe", "issue-5195-f3-receiver.js")).toBe(1);
+  });
+
+  it("host lane agrees on the bound receiver", () => {
+    expect(runHost(RECEIVER_SOURCE, "probe")).toBe(1);
+  });
+
+  // Two unrelated classes with the SAME field shape: WasmGC canonicalizes
+  // struct types structurally, so `ref.test` alone cannot tell them apart and
+  // the first lookup arm swallowed the other's instances. Every arm now tests
+  // the class's `__tag`.
+  const STRUCTURAL_TWINS_SOURCE = `
+    function ID(x) { return x; }
+    class C { constructor() { this.x = 41; } [ID('dyn')]() { return this.x + 1; } }
+    class D { constructor() { this.y = 5; } [ID('add')](a, b) { return this.y + a + b; } }
+    export function probe() {
+      return new C()[ID('dyn')]() === 42 && new D()[ID('add')](1, 2) === 8 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: structurally identical classes keep their own members", async () => {
+    expect(await runStandalone(STRUCTURAL_TWINS_SOURCE, "probe", "issue-5195-f3-twins.js")).toBe(1);
+  });
+
+  it("host lane agrees on the structural twins", () => {
+    expect(runHost(STRUCTURAL_TWINS_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 F4/F5 — `in` and hasOwnProperty over runtime-keyed members", () => {
+  // F4 (partial): `key in obj` on a DYNAMICALLY-typed holder now walks the
+  // class prototype chain. The statically-typed twin and the write side remain
+  // open — see the issue file's residual list, probes `.tmp/es2015/p3/f4-*.js`.
+  const IN_DYNAMIC_SOURCE = `
+    function ID(x) { return x; }
+    class C { [ID('dyn')]() { return 1; } plain() { return 2; } }
+    function box(v) { return v; }
+    var c = box(new C());
+    export function probe() {
+      return (ID('plain') in c ? 1 : 0) + (ID('dyn') in c ? 2 : 0);
+    }
+  `;
+
+  it("standalone: `in` through a dynamic holder sees the prototype chain", async () => {
+    expect(await runStandalone(IN_DYNAMIC_SOURCE, "probe", "issue-5195-f4-in.js")).toBe(3);
+  });
+
+  it("host lane agrees on `in`", () => {
+    expect(runHost(IN_DYNAMIC_SOURCE, "probe")).toBe(3);
+  });
+
+  // F5: the checker cannot enumerate a runtime-keyed own-key set, so the static
+  // `hasOwnProperty` fold answered `false` while `gOPD` found the property —
+  // two answers about one object. The fold now declines for a prototype or
+  // constructor receiver of such a class and lets the runtime answer.
+  const HASOWN_SOURCE = `
+    function ID(x) { return x; }
+    class C { [ID('dyn')]() { return 1; } }
+    export function probe() {
+      var viaGopd = Object.getOwnPropertyDescriptor(C.prototype, 'dyn') !== undefined;
+      var viaHasOwn = C.prototype.hasOwnProperty('dyn');
+      var viaBorrowed = Object.prototype.hasOwnProperty.call(C.prototype, 'dyn');
+      return viaGopd && viaHasOwn && viaBorrowed ? 1 : 0;
+    }
+  `;
+
+  it("standalone: hasOwnProperty and gOPD agree on a runtime key", async () => {
+    expect(await runStandalone(HASOWN_SOURCE, "probe", "issue-5195-f5-hasown.js")).toBe(1);
+  });
+
+  it("host lane agrees on hasOwnProperty", () => {
+    expect(runHost(HASOWN_SOURCE, "probe")).toBe(1);
+  });
+
+  // Order-preservation control: a class with no runtime keys keeps the static
+  // fold, including its prototype-vs-instance discrimination.
+  const HASOWN_CONTROL_SOURCE = `
+    class C { m() { return 1; } get g() { return 2; } constructor() { this.f = 3; } }
+    export function probe() {
+      var c = new C();
+      return C.prototype.hasOwnProperty('m') && C.prototype.hasOwnProperty('g')
+        && !C.prototype.hasOwnProperty('f') && c.hasOwnProperty('f') && !c.hasOwnProperty('m') ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a class with no runtime keys keeps the static fold", async () => {
+    expect(await runStandalone(HASOWN_CONTROL_SOURCE, "probe", "issue-5195-f5-control.js")).toBe(1);
+  });
+
+  it("host lane agrees on the static fold control", () => {
+    expect(runHost(HASOWN_CONTROL_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 R2-1 — `super[k](...)` reads the parent, not the receiver", () => {
+  // Routing `super[k](…)` through the ordinary member-call lowering compiled
+  // `super` as the RECEIVER, i.e. as `this` — so an overriding method calling
+  // `super[k]()` re-entered ITSELF. Unbounded recursion whose stack overflow
+  // escapes the wasm try/catch (measured depth 51 with a guard; base made no
+  // call at all). §13.3.7.1 splits the two roles: the lookup happens on the
+  // home object's [[Prototype]], the invocation on the current `this`.
+  const SUPER_ELEM_SOURCE = `
+    function ID(x) { return x; }
+    var depth = 0;
+    class C { [ID('m')](a) { return 10 + a; } }
+    class E extends C {
+      [ID('m')](a) {
+        depth = depth + 1;
+        if (depth > 50) { throw new RangeError('loop'); }
+        return 100 + super[ID('m')](a);
+      }
+    }
+    export function probe() {
+      depth = 0;
+      var v = new E()[ID('m')](1);
+      return v === 111 && depth === 1 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: an override calling super[k] does not recurse", async () => {
+    expect(await runStandalone(SUPER_ELEM_SOURCE, "probe", "issue-5195-r2-1-super.js")).toBe(1);
+  });
+
+  it("host lane agrees on super[k]", () => {
+    expect(runHost(SUPER_ELEM_SOURCE, "probe")).toBe(1);
+  });
+
+  // Two levels: the middle class's `super[k]` must reach the ROOT, and the
+  // leaf's must reach the middle.
+  const SUPER_CHAIN_SOURCE = `
+    function ID(x) { return x; }
+    class A { [ID('m')]() { return 1; } }
+    class B extends A { [ID('m')]() { return 10 + super[ID('m')](); } }
+    class D extends B { [ID('m')]() { return 100 + super[ID('m')](); } }
+    export function probe() { return new D()[ID('m')]() === 111 ? 1 : 0; }
+  `;
+
+  it("standalone: super[k] walks one level per frame", async () => {
+    expect(await runStandalone(SUPER_CHAIN_SOURCE, "probe", "issue-5195-r2-1-chain.js")).toBe(1);
+  });
+
+  it("host lane agrees on the super[k] chain", () => {
+    expect(runHost(SUPER_CHAIN_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 R2-2 — the static fold still owns constructor receivers", () => {
+  // The F5 decline was too wide: it also sent CONSTRUCTOR receivers to the
+  // runtime `__hasOwnProperty`, which has no arm for a `$ClassName`
+  // class-object's statics — so `C.hasOwnProperty('sm')` / `('sf')` flipped
+  // true → false against base. Only `C.prototype` is the object whose own-key
+  // set moved to a `$Object` the checker cannot enumerate.
+  const CONSTRUCTOR_HASOWN_SOURCE = `
+    function ID(x) { return x; }
+    class C { [ID('dyn')]() { return 2; } static sm() { return 3; } static sf = 4; }
+    class P { m() { return 1; } static sm() { return 3; } static sf = 4; }
+    export function probe() {
+      return C.hasOwnProperty('sm') && C.hasOwnProperty('sf') && !C.hasOwnProperty('nope')
+        && P.hasOwnProperty('sm') && P.hasOwnProperty('sf')
+        && C.prototype.hasOwnProperty('dyn') && !C.prototype.hasOwnProperty('sm')
+        && C.propertyIsEnumerable('sf') && !C.propertyIsEnumerable('sm') ? 1 : 0;
+    }
+  `;
+
+  it("standalone: statics stay visible on the class object", async () => {
+    expect(await runStandalone(CONSTRUCTOR_HASOWN_SOURCE, "probe", "issue-5195-r2-2-ctor-hasown.js")).toBe(1);
+  });
+
+  it("host lane agrees on constructor-receiver hasOwnProperty", () => {
+    expect(runHost(CONSTRUCTOR_HASOWN_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 R2-3 — an inheriting class's prototype is built at definition", () => {
+  // `class D extends C { n(){} }` where only C is runtime-keyed: `__proto_D`
+  // was never force-built, because the top-level collector looked only at the
+  // class's OWN members. So `new D()[ID('n')]` answered `undefined` until
+  // something happened to touch `D.prototype`, and correctly afterwards — an
+  // order-dependent wrong answer. The probe reads BEFORE any such touch.
+  const NO_TOUCH_SOURCE = `
+    function ID(x) { return x; }
+    class C { [ID('d')]() { return 2; } }
+    class D extends C { n() { return 'n'; } }
+    export function probe() {
+      var d = new D();
+      var ownViaRuntimeKey = typeof d[ID('n')] === 'function';
+      var inheritedRuntimeKeyed = d[ID('d')]() === 2;
+      var plainStatic = d.n() === 'n';
+      var called = d[ID('n')]() === 'n';
+      return ownViaRuntimeKey && inheritedRuntimeKeyed && plainStatic && called ? 1 : 0;
+    }
+  `;
+
+  it("standalone: a descendant resolves before anything touches its prototype", async () => {
+    expect(await runStandalone(NO_TOUCH_SOURCE, "probe", "issue-5195-r2-3-notouch.js")).toBe(1);
+  });
+
+  it("host lane agrees on the untouched descendant", () => {
+    expect(runHost(NO_TOUCH_SOURCE, "probe")).toBe(1);
+  });
+});
+
+describe("#5195 R2-5 — the callee is read before the arguments", () => {
+  // §13.3.6.1 evaluates the MemberExpression and performs GetValue on it before
+  // ArgumentListEvaluation. Observable when the member is an accessor (or sits
+  // behind a Proxy `get` trap): its side effects must come first.
+  const ORDER_SOURCE = `
+    function ID(x) { return x; }
+    var order = 0;
+    class C { get [ID('acc')]() { order = order * 10 + 1; return function () { return 7; }; } }
+    function arg() { order = order * 10 + 2; return 0; }
+    export function probe() {
+      order = 0;
+      new C()[ID('acc')](arg());
+      return order === 12 ? 1 : 0;
+    }
+  `;
+
+  it("standalone: an accessor member runs before the argument list", async () => {
+    expect(await runStandalone(ORDER_SOURCE, "probe", "issue-5195-r2-5-order.js")).toBe(1);
+  });
+
+  it("host lane agrees on the evaluation order", () => {
+    expect(runHost(ORDER_SOURCE, "probe")).toBe(1);
+  });
+});

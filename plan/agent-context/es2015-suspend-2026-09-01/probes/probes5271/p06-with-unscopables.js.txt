@@ -1,0 +1,14 @@
+/*---
+description: with + @@unscopables + proxy has trap (#5271 probe)
+includes: [compareArray.js]
+flags: [noStrict]
+---*/
+var env = { x: 1 };
+env[Symbol.unscopables] = { x: true };
+var x = 2;
+with (env) { assert.sameValue(x, 2, 'unscopables blocks x'); }
+var log = [];
+var penv = new Proxy({}, { has: function(t, k) { log.push('has:' + String(k)); return false; } });
+var y = 3;
+with (penv) { y; }
+assert.compareArray(log, ['has:y']);

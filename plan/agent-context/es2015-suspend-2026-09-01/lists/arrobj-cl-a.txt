@@ -1,0 +1,14 @@
+built-ins/Object/prototype/__proto__/set-ordinary-obj.js
+built-ins/Object/prototype/__proto__/get-ordinary-obj.js
+built-ins/Object/prototype/__proto__/set-non-object.js
+built-ins/Object/prototype/__proto__/set-non-extensible.js
+built-ins/Object/prototype/__proto__/set-cycle-shadowed.js
+built-ins/Object/prototype/__proto__/set-non-obj-coercible.js
+built-ins/Object/prototype/__proto__/set-abrupt.js
+built-ins/Object/prototype/__proto__/set-cycle.js
+built-ins/Object/prototype/__proto__/get-abrupt.js
+built-ins/Object/prototype/__proto__/get-fn-name.js
+built-ins/Object/prototype/__proto__/prop-desc.js
+built-ins/Object/prototype/__proto__/set-invalid-value.js
+built-ins/Object/prototype/__proto__/get-to-obj-abrupt.js
+built-ins/Object/prototype/__proto__/set-fn-name.js

@@ -429,12 +429,24 @@ describe("#4104 IR async plan runtime consumer", () => {
     const standalone = prepareForTarget(sourceFunction, "standalone");
     const fn = standalone.functions[0]!;
 
-    // (#3526 F1-S1) The frozen policy always publishes an explicit resolved
-    // number-boundary decision; an async-only preparation resolves it disabled.
+    // (#3526 F1-S1, F1-S2, F1-S4, F2-S1, F2-S3, F2-S4, F2-S6, F2-S8, F3-S1) The frozen policy always
+    // publishes an explicit resolved decision for every value-boundary family;
+    // an async-only preparation resolves them all disabled.
     expect(standalone.manifest.policy).toEqual({
       target: "standalone",
       backend: "wasmgc",
       numberBoundary: { box: "unsupported", unbox: "unsupported" },
+      booleanBoundary: { box: "unsupported" },
+      externIsUndefined: { probe: "unsupported" },
+      generatorNumberBox: { box: "unsupported" },
+      stringCompare: { compare: "unsupported" },
+      stringEq: { eq: "unsupported" },
+      stringLen: { len: "unsupported" },
+      stringConcat: { concat: "unsupported" },
+      stringCharCodeAt: { charCodeAt: "unsupported" },
+      stringConcatMany: { batch: "off" },
+      stringConst: { storage: "unsupported" },
+      hostCallbackWrap: { wrap: "unsupported" },
     });
     expect(standalone.manifest.features).toEqual(ASYNC_RUNTIME_FEATURES);
     expect(standalone.manifest.hostCapabilities).toEqual([]);

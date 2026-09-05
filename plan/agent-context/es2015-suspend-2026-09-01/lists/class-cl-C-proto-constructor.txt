@@ -1,0 +1,2 @@
+language/statements/class/definition/constructor-property.js
+language/statements/class/definition/constructor.js

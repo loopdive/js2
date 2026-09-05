@@ -59,6 +59,29 @@ import {
   flattenCallArgs,
   STANDALONE_TA_SCALAR_HOFS,
 } from "./calls.js";
+
+/**
+ * (#5194 step 3) The non-HOF `%TypedArray%.prototype` members that must also
+ * decline extern-class dispatch on an `any` receiver under `noJsHost`. Every
+ * one of them is declared by at least one ambient TypedArray/extern class in
+ * the lib `.d.ts`, so the first-match loop in {@link tryExternClassMethodOnAny}
+ * binds it to an `env::<Class>_<m>` host import that the standalone runtime
+ * cannot satisfy — a compile-time leak emitted by an arm that never executes.
+ * `subarray`/`slice` are here for the same reason even though their dyn-view
+ * arms already exist: the leak is emitted before the arm is chosen. Kept local
+ * to this module (its only consumer) so the `calls.ts` barrel does not grow.
+ */
+const STANDALONE_TA_DISPATCHED_METHODS: ReadonlySet<string> = new Set([
+  "sort",
+  "keys",
+  "values",
+  "entries",
+  "includes",
+  "at",
+  "toLocaleString",
+  "subarray",
+  "slice",
+]);
 import { tryEmitTransferredNativeProtoMethodCall } from "./transferred-native-proto-call.js";
 import { buildArgcExtrasSetupFromLocals } from "./argc-extras.js";
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
@@ -103,13 +126,22 @@ type FuncCandidate = {
  * `(externref) -> externref`, while a concrete interface field holding it can
  * be called as `(ref Box) -> ref Box`. Both crossings preserve the same GC
  * reference: export the concrete argument and narrow the declared concrete
- * result at the field boundary. `$AnyValue` is a tagged carrier rather than a
- * raw object reference, so it must keep its semantic projection path.
+ * result at the field boundary. In standalone, #5255 admits the analogous
+ * result-only crossing only for a registered native-generator state. `$AnyValue`
+ * is a tagged carrier rather than a raw object reference, so it must keep its
+ * semantic projection path.
  */
 function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
   const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
   if (valTypesMatch(from, to) || (isHostExtern(from) && isHostExtern(to))) return [];
-  if (ctx.standalone || ctx.wasi) return null;
+  if (ctx.standalone || ctx.wasi) {
+    if ((from.kind === "ref" || from.kind === "ref_null") && isHostExtern(to)) {
+      for (const info of ctx.nativeGenerators.values()) {
+        if (info.stateTypeIdx === from.typeIdx) return [{ op: "extern.convert_any" }];
+      }
+    }
+    return null;
+  }
 
   if ((from.kind === "ref" || from.kind === "ref_null") && from.typeIdx !== ctx.anyValueTypeIdx && isHostExtern(to)) {
     return [{ op: "extern.convert_any" }];
@@ -2420,6 +2452,28 @@ export function tryExternClassMethodOnAny(
   // keeps its extern binding byte-identical — the import is satisfiable there.
   if (noJsHost(ctx) && STANDALONE_TA_SCALAR_HOFS.has(methodName)) return null;
 
+  // (#5194 step 3) The rest of the `%TypedArray%.prototype` surface reached on
+  // an `any` receiver. The first-match loop below binds whichever extern class
+  // declares the name first — a TypedArray — so `env::Uint8ClampedArray_keys` /
+  // `env::IDBKeyRange_includes` and friends are emitted at COMPILE time by an
+  // arm that never runs, and the whole standalone module then fails to
+  // instantiate (the runner reports `host_import_leak`, not a wrong value).
+  // Declining sends the call to the #2151 closed-method dispatcher.
+  //
+  // (#5194 review F4) What that dispatcher does with it, precisely — the
+  // earlier wording ("resolves these by runtime shape") claimed more than is
+  // true. It resolves `sort`/`keys`/`values`/`entries` only for the receivers
+  // that HAVE an arm; for an `any`-typed plain array, Map or Set receiver there
+  // is none yet, so the bottom `__extern_method_call` arm now raises a runtime
+  // TypeError in standalone where the base emitted an unsatisfiable import. A
+  // module that never instantiated becoming one that throws when the call is
+  // actually reached is strictly better, and it is not a regression against any
+  // passing row — but it is a REAL residual, recorded in #5194's issue file
+  // rather than papered over here. Same `noJsHost` gate as the scalar-HOF
+  // decline above; the host lane keeps its byte-identical extern binding
+  // because the import IS satisfiable there.
+  if (noJsHost(ctx) && STANDALONE_TA_DISPATCHED_METHODS.has(methodName)) return null;
+
   // (#3309) Collection methods (`get`/`set`/`has`/`add`/`delete`/`clear`) on an
   // `any` receiver under standalone/wasi. The candidate pool below still
   // contains the WeakMap/Set/WeakSet extern classes even in nativeStrings mode
@@ -2529,6 +2583,15 @@ export function tryExternClassMethodOnAny(
     const nativeJoin = compileArrayJoinExtern(ctx, fctx, propAccess, expr);
     if (nativeJoin !== null) return nativeJoin;
   }
+
+  // Host-free targets: every `${Extern}_${method}` binding below is an `env`
+  // import no standalone/WASI instance can satisfy, so a first-match hit
+  // only turns a working dynamic dispatch into a retained host import
+  // (redux's `store.getState()` on an `any` receiver bound lib.dom's
+  // `NavigationHistoryEntry_getState`; the npm-compat standalone lane then
+  // failed with "retained 2 host import(s)"). Fall through to the native
+  // `__extern_method_call` route instead. JS-host lanes are untouched.
+  if (noJsHost(ctx)) return null;
 
   for (const [key, info] of ctx.externClasses) {
     if (key !== info.className) continue;

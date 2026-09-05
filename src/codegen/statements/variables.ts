@@ -49,10 +49,10 @@ import {
   inferNativeTaViewConstructType,
   nativeBufferBuiltinOf,
 } from "../dataview-native.js";
-import { emitLazyClassObjectGet } from "../expressions/extern.js";
 import { typedArrayCtorArgIsArithmeticPrimitive } from "../expressions/typed-array-host-carrier.js";
 import { compileArrayDestructuring, compileObjectDestructuring } from "./destructuring.js";
-import { compileNestedClassDeclaration, emitPreparedAccessorComputedNameEffects } from "./nested-declarations.js";
+import { compileNestedClassDeclaration, emitUnresolvedComputedAccessorNameEffects } from "./nested-declarations.js";
+import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
 import { emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { ensureNativeStringHelpers, flatStringType } from "../native-strings.js";
 import { compileStringBuilderInit } from "../string-builder.js";
@@ -78,7 +78,6 @@ import { tryCompileDerivedAsciiCaseBinding as tryAsciiCase } from "../derived-as
 import { detectNullGuardAlias } from "./null-guard-alias.js"; // (#4555) extraction
 import { reusedVarSlotIndex } from "./var-slot-reuse.js"; // (#4555) §10.5 step 8
 import { emitRealmGlobalPrimitiveMethodWriteback } from "../global-environment.js";
-import { emitClassExpressionStaticsBeforeValue } from "../class-expression-static-init.js";
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
 import {
   tryCompileClassExpressionBindingValue,
@@ -89,6 +88,32 @@ import {
   isStaticRegExpExpression,
   stripInferenceWrapper,
 } from "../regexp-host-match.js";
+
+/**
+ * A class-expression binding fast path emits its value before this caller can
+ * know that it handled the expression. Keep that emitted suffix in the live
+ * body while compiling the unresolved accessor names, so late-import shifts
+ * still reach both instruction groups, then restore ClassDefinitionEvaluation
+ * order: computed names before the handled value materialization.
+ */
+function emitHandledClassExpressionBindingEffects(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  initializer: ts.Expression,
+  materializationStart: number,
+): void {
+  if (!ts.isClassExpression(initializer)) return;
+  const materializationEnd = fctx.body.length;
+  // (#5195 r3-5) §15.7.14 step 5f, emitted into the EFFECTS half so the splice
+  // below moves it ahead of the class value's materialization — the superclass
+  // is IsConstructor-checked before the class object exists, and before the
+  // computed-key effects that follow it here.
+  emitStandaloneHeritageCheck(ctx, fctx, initializer, compileExpression);
+  emitUnresolvedComputedAccessorNameEffects(ctx, fctx, initializer);
+  const materialization = fctx.body.splice(materializationStart, materializationEnd - materializationStart);
+  const effects = fctx.body.splice(materializationStart);
+  fctx.body.push(...effects, ...materialization);
+}
 
 /**
  * (#5148 checkpoint) `boxedCaptures` is NAME-keyed per frame, so a declaration
@@ -934,7 +959,7 @@ export function resolveSpillLocalValType(ctx: CodegenContext, decl: ts.VariableD
       if (objectLiteralForcesHostPath(ctx, init)) return { kind: "externref" };
       if (objectLiteralSpreadTakesHostPath(ctx, init)) return { kind: "externref" };
     }
-    if (isDirectProxyConstruction(init)) return { kind: "externref" };
+    if (isDirectProxyConstruction(init, ctx)) return { kind: "externref" };
     // Representations the var-decl path computes from a decl/receiver-driven
     // inference that diverges from resolveWasmType — defer to the host path.
     if (inferStandaloneRegExpMatchArrayType(ctx, init) !== null) return null;
@@ -1443,12 +1468,6 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         const deferredSynth = ctx.anonClassExprNames.get(decl.initializer);
         if (deferredSynth !== undefined && ctx.deferredClassBodies.has(deferredSynth)) {
           compileNestedClassDeclaration(ctx, fctx, decl.initializer, deferredSynth);
-        } else {
-          // Module-init class expressions were compiled eagerly, but their
-          // computed names still execute here, at runtime, immediately before
-          // the binding value is materialized. Deferred expressions already
-          // emit through compileNestedClassDeclaration above.
-          emitPreparedAccessorComputedNameEffects(ctx, fctx, decl.initializer);
         }
       }
       // (#3045 identity) Materialize a class-expression BINDING as the class's
@@ -1465,9 +1484,15 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       // callable → `proxy-class` broke when this was applied globally). Falls
       // back to `compileExpression` for a class with no singleton (externref-
       // backed builtin subclass) or an unresolved synthetic name.
-      const actualType =
-        tryCompileClassExpressionBindingValue(ctx, fctx, decl.initializer, { kind: "externref" }) ??
-        compileExpression(ctx, fctx, decl.initializer);
+      const materializationStart = fctx.body.length;
+      const handledType = tryCompileClassExpressionBindingValue(ctx, fctx, decl.initializer, { kind: "externref" });
+      let actualType: ValType | null;
+      if (handledType === undefined) {
+        actualType = compileExpression(ctx, fctx, decl.initializer);
+      } else {
+        emitHandledClassExpressionBindingEffects(ctx, fctx, decl.initializer, materializationStart);
+        actualType = handledType;
+      }
       const closureType = actualType ?? { kind: "externref" as const };
 
       // If this is a module-level variable, also store in the module global
@@ -1687,8 +1712,12 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
       if (decl.initializer) {
         const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)];
         const wasmType = globalDef?.type ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(decl));
-        if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined)
+        const materializationStart = fctx.body.length;
+        if (tryEmitPromiseSubclassClassExpressionValue(ctx, fctx, decl.initializer, wasmType) === undefined) {
           compileExpression(ctx, fctx, decl.initializer, wasmType);
+        } else {
+          emitHandledClassExpressionBindingEffects(ctx, fctx, decl.initializer, materializationStart);
+        }
         const initLocal = allocLocal(fctx, `__module_global_init_${fctx.locals.length}`, wasmType);
         fctx.body.push({ op: "local.set", index: initLocal });
         emitRealmGlobalPrimitiveMethodWriteback(ctx, fctx, name, initLocal, wasmType);
@@ -1875,7 +1904,7 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     // Array.prototype.* spec walk) still work on a wasm-struct receiver.
     const initIsProxy =
       decl.initializer !== undefined &&
-      isDirectProxyConstruction(decl.initializer) &&
+      isDirectProxyConstruction(decl.initializer, ctx) &&
       ts.isIdentifier(decl.name) &&
       !proxyBindingEscapesToCall(ctx, decl);
     const isProxyTargetBinding = proxyBindingIsTarget(ctx, decl);

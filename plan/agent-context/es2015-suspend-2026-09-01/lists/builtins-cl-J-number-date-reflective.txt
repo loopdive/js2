@@ -1,0 +1,3 @@
+built-ins/Number/prototype/toPrecision/precision-cannot-be-coerced-to-a-number-in-range.js
+built-ins/Date/prototype/toJSON/to-primitive-symbol.js
+built-ins/Date/prototype/toJSON/to-object.js

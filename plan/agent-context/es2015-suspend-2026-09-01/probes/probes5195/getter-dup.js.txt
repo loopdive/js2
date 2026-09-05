@@ -1,0 +1,6 @@
+/*---
+description: probe .tmp/es2015/probes5195/getter-dup.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class C2 { get b() { throw new Test262Error("first b unreachable"); } get ['b']() { return 'B'; } }
+assert.sameValue(new C2().b, 'B');

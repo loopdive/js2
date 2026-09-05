@@ -16,6 +16,7 @@ import {
   type IrPromiseDelayLoweringPlan,
   type IrPromiseDelayLoweringPlans,
 } from "../ir/promise-delay-lowering.js";
+import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "../ir/runtime-host-capabilities.js";
 import type { IrSelection } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -266,25 +267,36 @@ function closeRetainedIrOwnersByIdentity(
   return retained;
 }
 
-/** Final-context proof for B2's symbolic `__make_callback` dependency. */
+/**
+ * Final-context proof for B2's symbolic `__make_callback` dependency.
+ *
+ * (#3526 F3-S1) The ABI it proves is READ from the central capability record,
+ * not written out here. This function used to carry its own hand-written copy
+ * of `(i32, externref) -> externref`, which made two authorities for one
+ * boundary: a record edit and this check could disagree, and the module would
+ * still be admitted. Now a maker whose physical type drifts from the record is
+ * refused — the record is the single source of the maker ABI, exactly as it
+ * already is for the crossing from-ast emits and the arm the frozen manifest
+ * admits.
+ */
 export function hasExactHostVoidCallbackMakerImport(ctx: CodegenContext): boolean {
   if (process.env.JS2WASM_TEST_INJECT_IR_PREPARED_IMPORT_COLLISION === "callback") return false;
-  const makerIdx = ctx.funcMap.get("__make_callback");
+  const record = HOST_CALLBACK_WRAP_CAPABILITY_RECORD;
+  const makerIdx = ctx.funcMap.get(record.field);
   if (makerIdx === undefined || makerIdx < 0 || makerIdx >= ctx.numImportFuncs) return false;
 
   let functionIndex = 0;
   for (const imported of ctx.mod.imports) {
     if (imported.desc.kind !== "func") continue;
     if (functionIndex++ !== makerIdx) continue;
-    if (imported.module !== "env" || imported.name !== "__make_callback") return false;
+    if (imported.module !== record.module || imported.name !== record.field) return false;
     const type = ctx.mod.types[imported.desc.typeIdx];
+    if (type?.kind !== "func") return false;
     return (
-      type?.kind === "func" &&
-      type.params.length === 2 &&
-      type.params[0]?.kind === "i32" &&
-      type.params[1]?.kind === "externref" &&
-      type.results.length === 1 &&
-      type.results[0]?.kind === "externref"
+      type.params.length === record.params.length &&
+      record.params.every((expected, index) => type.params[index]?.kind === expected) &&
+      type.results.length === record.results.length &&
+      record.results.every((expected, index) => type.results[index]?.kind === expected)
     );
   }
   return false;

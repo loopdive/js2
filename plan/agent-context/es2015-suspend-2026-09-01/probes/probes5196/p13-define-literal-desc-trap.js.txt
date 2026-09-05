@@ -1,0 +1,14 @@
+var log;
+var target = {};
+var handler = { defineProperty: function(t, k, d) { log = d; return true; } };
+var p = new Proxy(target, handler);
+var descriptor = { configurable: true, enumerable: true, writable: true, value: 1 };
+Object.defineProperty(p, "attr", descriptor);
+if (!log) throw new Error("trap not called for a variable descriptor");
+log = undefined;
+Object.defineProperty(p, "attr2", { configurable: true, enumerable: true });
+if (!log) throw new Error("trap not called for an inline value-less descriptor");
+var r = Proxy.revocable({}, handler);
+log = undefined;
+Object.defineProperty(r.proxy, "attr3", { value: 3 });
+if (!log) throw new Error("trap not called through r.proxy");

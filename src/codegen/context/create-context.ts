@@ -203,6 +203,7 @@ export function createCodegenContext(
     topLevelFunctionNames: new Set(), // (#1983) for class-member funcMap key collision detection
     topLevelFunctionDeclarations: new Map(),
     classMethodSet: new Set(),
+    classFieldShadowedInheritedCallables: new Set(), // (#5309) own instance field beats an inherited callable
     deferredClassBodies: new Set(),
     classAccessorSet: new Set(),
     structAccessorClosure: new Map(), // (#1888 S5c) struct accessors compiled as host-free closures
@@ -213,6 +214,7 @@ export function createCodegenContext(
     staticInitExprs: [],
     classExpressionStaticInitExprs: new Map(),
     closureCounter: 0,
+    trampolineForwarders: new Set(),
     closureMap: new Map(),
     closureInfoByTypeIdx: new Map(),
     closureMinimumArgumentCountByFuncTypeIdx: new Map(),
@@ -233,6 +235,11 @@ export function createCodegenContext(
     toPrimitiveSharedClaimed: new Set(),
     toPrimitiveForkedStructs: new Set(),
     exnTagIdx: -1,
+    // (#5226) The shared-tag ABI needs a JS host to own the `WebAssembly.Tag`,
+    // so a wasi/standalone module keeps its module-local tag and its previous
+    // bytes. Only the package linker sets the option.
+    sharedExnTag:
+      options?.sharedExceptionTag === true && targetProfile.target !== "wasi" && targetProfile.target !== "standalone",
     hasUnionImports: false,
     asyncFunctions: new Set(),
     generatorFunctions: new Set(),
@@ -372,6 +379,9 @@ export function createCodegenContext(
     pendingLateImportShift: null,
     protoGlobals: new Map(),
     classMethodNames: new Map(),
+    classDynamicMembers: new Map(),
+    classDynamicKeyGlobals: new Map(),
+    classStaticSidecarGlobals: new Map(),
     classMethodsCsvGlobal: new Map(),
     classObjectGlobals: new Map(),
     classStaticMethodNames: new Map(),

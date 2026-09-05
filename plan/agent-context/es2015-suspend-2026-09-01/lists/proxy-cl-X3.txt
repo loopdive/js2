@@ -1,0 +1,3 @@
+built-ins/Proxy/construct/arguments-realm.js
+built-ins/Proxy/apply/arguments-realm.js
+built-ins/Proxy/revocable/tco-fn-realm.js

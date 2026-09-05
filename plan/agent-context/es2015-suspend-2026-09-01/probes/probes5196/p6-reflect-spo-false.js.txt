@@ -1,0 +1,5 @@
+var p = new Proxy({}, { setPrototypeOf: function(t, v) { return false; } });
+var r = Reflect.setPrototypeOf(p, {});
+if (r !== false) throw new Error("Reflect.setPrototypeOf(proxy) with false trap = " + r);
+var o = Object.preventExtensions({});
+if (Reflect.setPrototypeOf(o, {}) !== false) throw new Error("non-extensible target should be false");

@@ -1,0 +1,3 @@
+language/statements/for-of/dstr/array-elem-init-fn-name-class.js
+language/statements/for-of/dstr/obj-id-init-fn-name-class.js
+language/statements/for-of/dstr/obj-prop-elem-init-fn-name-class.js

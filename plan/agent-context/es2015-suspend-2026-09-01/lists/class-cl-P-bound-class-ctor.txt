@@ -1,0 +1,2 @@
+language/statements/class/subclass/binding.js
+language/statements/class/subclass/default-constructor-2.js

@@ -1286,6 +1286,17 @@ const DYN_VIEW_READ_METHODS = new Set<string>([
   // `env::<TA>_findLast[Index]` from the compiled-but-never-run ELSE arm.
   "findLast",
   "findLastIndex",
+  // (#5194 step 3, cluster C2) The three iterator factories. On a dyn view they
+  // returned a value with no callable `next` and a null prototype: the extern
+  // dispatch bound them to `env::<TA>_keys` (a host import, so the standalone
+  // module never instantiated), and the closed dispatcher had no arm. Routing
+  // them through the two-arm materializes the view into the `$__vec_f64` the
+  // #1320 native iterator bridge already understands, so the THEN arm's
+  // re-entry builds the ordinary `$IterRec` over that vec — same record, same
+  // `%ArrayIteratorPrototype%`, same `next` as `[].values()`.
+  "keys",
+  "values",
+  "entries",
 ]);
 
 /**
@@ -1443,11 +1454,40 @@ function shouldWrapDynViewTwoArm(
     // would move `ta.indexOf()` onto a different lowering, which is a lowering
     // change with its own blast radius and no defect behind it. Deliberately
     // left for whoever needs it — same call #5095 made.
-    (callExpr.arguments.length >= 1 || methodName === "toLocaleString") &&
+    // (#5194 step 3) The four SEARCH/INDEX members named in the note above are
+    // now exempt: they model an absent argument, and keeping them off the
+    // two-arm sent a 0-arg `ta.includes()` / `ta.indexOf()` to the closed
+    // dispatcher's `VEC_SEARCH_METHODS` arm, which reads the view's RAW
+    // `$__vec_base` byte vector — so the answer came from the wrong element
+    // width and `includes()` answered against bytes, not elements
+    // (`includes/no-arg.js`, `indexOf/no-arg.js`, `lastIndexOf/no-arg.js`).
+    // The callback members the clause was written for keep it.
+    (callExpr.arguments.length >= 1 ||
+      methodName === "toLocaleString" ||
+      DYN_VIEW_ABSENT_ARG_SEARCH_METHODS.has(methodName)) &&
     ts.isIdentifier(propAccess.expression) &&
     dynViewReceiverIsExternref(fctx, propAccess.expression.text)
   );
 }
+
+/**
+ * (#5194 step 3) Read-side members whose typed impl models an ABSENT search
+ * argument (`undefined` → `NaN` → the spec's "not found" answer), so a 0-arg
+ * call is safe on the dyn-view two-arm. Everything else in
+ * {@link DYN_VIEW_READ_METHODS} still hard-requires its callback/index.
+ */
+const DYN_VIEW_ABSENT_ARG_SEARCH_METHODS: ReadonlySet<string> = new Set([
+  "at",
+  "includes",
+  "indexOf",
+  "lastIndexOf",
+  // (#5194 step 3, cluster C2) Arity-0 by specification — they take no argument
+  // at all, so the "needs at least one" clause would otherwise keep them off
+  // the two-arm permanently.
+  "keys",
+  "values",
+  "entries",
+]);
 
 const DYN_VIEW_SPECIES_METHODS = new Set<string>(["map", "filter", "slice", "subarray"]);
 
@@ -1851,7 +1891,19 @@ function emitDynViewMethodTwoArm(
   dynViewTwoArmActive.add(callExpr);
   const rElse = compileExpression(ctx, fctx, callExpr, expectedType);
   dynViewTwoArmActive.delete(callExpr);
-  const elseOk = coerceArmToExternref(ctx, fctx, rElse, /* treatNullAsVoid */ true);
+  // (#5194 step 3) The BOOLEAN flag has to reach BOTH arms. It was passed to the
+  // THEN arm only, so a `ta.includes(v)` that took the ELSE re-dispatch (a
+  // statically-carried view, or a 0-arg call before this step) came back as the
+  // f64 `0`/`1` boxed as a NUMBER — `assert.sameValue(ta.includes(x), false)`
+  // then compared «0» against «false» (`includes/samevaluezero.js` and the
+  // per-kind `includes/*` rows).
+  const elseOk = coerceArmToExternref(
+    ctx,
+    fctx,
+    rElse,
+    /* treatNullAsVoid */ true,
+    BOOLEAN_RESULT_METHODS.has(methodName),
+  );
 
   fctx.body = outer;
   fctx.savedBodies.pop(); // elseArm
@@ -1984,6 +2036,11 @@ export function compileArrayMethodCall(
   // receiver identifier; these hold the rebind so we can restore it post-dispatch.
   let taViewRebindName: string | undefined;
   let taViewRebindSaved: number | undefined;
+  // (#5150 follow-up) Set when the `$__ta_view` receiver was a MODULE GLOBAL
+  // spilled into a synthetic local so the two arms below (which are written for
+  // a local receiver) apply. The cleanup DELETES this mapping instead of
+  // restoring it — there was no local binding for this name to go back to.
+  let taViewGlobalSpillName: string | undefined;
   // (#3054 B3) write-through: after a MUTATING method runs on the de-viewed
   // native-vec copy, byte-encode it back into the view's shared buffer. Capture
   // the view typeIdx, the original view local, the native-vec copy local and its
@@ -2054,6 +2111,32 @@ export function compileArrayMethodCall(
       (actualType as { typeIdx: number }).typeIdx !== vecTypeIdx
     ) {
       const actualVecIdx = (actualType as { typeIdx: number }).typeIdx;
+      // (#5150 follow-up) Both `$__ta_view` arms below are written against a
+      // receiver that has a LOCAL slot. Since the module-global view pin landed,
+      // `ta` can be a MODULE GLOBAL carrying the same struct — test262 declares
+      // its bindings at top level — and the locals-only guard sent it to the
+      // generic `else` instead, where the receiver was `ref.cast` to the
+      // checker-typed element vec: `RuntimeError: illegal cast`. Spill the
+      // global into a temp local (the same struct ref, so the shared backing and
+      // the #3054 B3 write-through are unaffected) and let the existing arms run
+      // unchanged. `taViewGlobalSpillName` makes the cleanup below DELETE the
+      // synthetic mapping rather than restore it — leaving it in place would
+      // shadow the global for the rest of the function.
+      if (
+        isTaViewTypeIdx(ctx, actualVecIdx) &&
+        ts.isIdentifier(receiverExpr) &&
+        !fctx.localMap.has(receiverExpr.text) &&
+        ctx.moduleGlobals.has(receiverExpr.text)
+      ) {
+        const spill = allocLocal(fctx, `__tav_grecv_${fctx.locals.length}`, {
+          kind: "ref_null",
+          typeIdx: actualVecIdx,
+        });
+        compileExpression(ctx, fctx, receiverExpr);
+        fctx.body.push({ op: "local.set", index: spill });
+        fctx.localMap.set(receiverExpr.text, spill);
+        taViewGlobalSpillName = receiverExpr.text;
+      }
       // A buffer-backed TypedArray must keep `subarray` on the SAME byte buffer.
       // Materializing it into the ordinary element vec first (the generic method
       // bridge below) makes the subview alias that temporary copy and resets its
@@ -2064,7 +2147,9 @@ export function compileArrayMethodCall(
         ts.isIdentifier(receiverExpr) &&
         fctx.localMap.has(receiverExpr.text)
       ) {
-        return compileTaViewSubarray(ctx, fctx, propAccess, callExpr, actualVecIdx);
+        const subarrayResult = compileTaViewSubarray(ctx, fctx, propAccess, callExpr, actualVecIdx);
+        if (taViewGlobalSpillName !== undefined) fctx.localMap.delete(taViewGlobalSpillName);
+        return subarrayResult;
       }
       // (#3054 B1 Option A) `$__ta_view` receiver: materialize into the native
       // element-typed vec (`vecTypeIdx`, from `resolveArrayInfo`) and rebind the
@@ -2201,6 +2286,9 @@ export function compileArrayMethodCall(
         ...callExpr.arguments.slice(0, symbolIndexArg),
       ])
     ) {
+      // Drop the synthetic module-global mapping before this early return, or
+      // it would shadow the global for the rest of the function.
+      if (taViewGlobalSpillName !== undefined) fctx.localMap.delete(taViewGlobalSpillName);
       return methodName === "includes" ? { kind: "i32" } : { kind: "externref" };
     }
   }
@@ -2551,9 +2639,12 @@ export function compileArrayMethodCall(
   // is still the `$__ta_view` (its buffer aliasing is intact for later element
   // access); only this method call saw the de-viewed copy.
   if (taViewRebindName !== undefined) {
-    if (taViewRebindSaved !== undefined) fctx.localMap.set(taViewRebindName, taViewRebindSaved);
-    else fctx.localMap.delete(taViewRebindName);
+    if (taViewRebindSaved !== undefined && taViewRebindName !== taViewGlobalSpillName) {
+      fctx.localMap.set(taViewRebindName, taViewRebindSaved);
+    } else fctx.localMap.delete(taViewRebindName);
   }
+  // …and drop the synthetic module-global mapping, whichever arm consumed it.
+  if (taViewGlobalSpillName !== undefined) fctx.localMap.delete(taViewGlobalSpillName);
 
   return result;
 }
@@ -6331,6 +6422,56 @@ function resolveDynamicCallbackClosure(
 }
 
 /**
+ * (#5319, generalising #4527 from `map` to the whole single-callback family)
+ * Pick the host bridge for a callback that did NOT resolve to a wasm closure.
+ *
+ * The default fallback bridge is numeric (`__call_1_f64`), so the loop element
+ * is pushed through `__unbox_number` — ToNumber. For a REFERENCE element
+ * (string / object / native-string ref) that is lossy: every value arrives at
+ * the callback as `NaN`. `["x","y"].filter(Boolean)` therefore evaluated
+ * `Boolean(NaN)` twice and returned `[]`. `__call_dyn_1` takes
+ * `(externref callee, externref arg) -> externref` and passes the element LIVE.
+ *
+ * A callback is "unresolved" far more often than the builtin case suggests:
+ * only a syntactically inline arrow / function expression, or a hoisted
+ * function DECLARATION, compiles to a closure. A bare ambient builtin
+ * (`Boolean`, `String`), a `var`-bound function expression, an object member
+ * (`o.keep`) and a cross-module import all land here.
+ *
+ * `consumesResultAsBoolean` — filter/find/findIndex/some/every feed the
+ * callback result to ToBoolean. On the dynamic bridge that result is an opaque
+ * externref, so ToBoolean needs `__is_truthy`. Register it HERE, before the
+ * callback expression and the loop instruction arrays are built: those arrays
+ * bake `call` funcIdx values and are attached to the body only later, so a
+ * late import registered from inside `buildToBooleanInstrs` would shift the
+ * defined-function index space out from under them.
+ */
+function referenceElementBridgeName(
+  ctx: CodegenContext,
+  elemType: ValType,
+  consumesResultAsBoolean: boolean,
+): string | undefined {
+  // Host-free targets keep their own recovery path (`resolveDynamicCallbackClosure`,
+  // #3015): `__call_dyn_1` is a JS-host import and would make the module
+  // non-instantiable standalone.
+  if (noJsHost(ctx)) return undefined;
+  // The import is armed by the `collectFunctionalArrayImports` pre-scan. When it
+  // is absent this call site is not one the pre-scan recognised, and the output
+  // stays byte-identical to before.
+  if (!ctx.funcMap.has("__call_dyn_1")) return undefined;
+  if (
+    elemType.kind !== "externref" &&
+    elemType.kind !== "ref_extern" &&
+    elemType.kind !== "ref" &&
+    elemType.kind !== "ref_null"
+  ) {
+    return undefined;
+  }
+  if (consumesResultAsBoolean) addUnionImports(ctx);
+  return "__call_dyn_1";
+}
+
+/**
  * Compile the callback argument and set up either a closure (call_ref) path
  * or a host bridge fallback. Returns null if setup fails (error pushed).
  *
@@ -6908,6 +7049,12 @@ function buildTruthyCheck(ctx: CodegenContext, setup: ArrayCallbackSetup): Instr
     }
     return buildToBooleanInstrs(ctx, setup.closureInfo.returnType);
   }
+  // (#5319) Reference-preserving `__call_dyn_1` bridge: the result is the
+  // callback's raw host value, so ToBoolean routes through `__is_truthy`. The
+  // f64 ladder below would be a stack type error here, not merely wrong.
+  if (setup.bridgeResultType?.kind === "externref") {
+    return buildToBooleanInstrs(ctx, { kind: "externref" });
+  }
   // #2085 — non-closure (legacy) path: f64 result. Use |x|>0 so NaN/±0 are
   // falsy (the old `f64.ne 0` wrongly treated NaN as truthy), matching
   // `ensureI32Condition`.
@@ -6946,6 +7093,10 @@ function buildFalsyCheck(ctx: CodegenContext, setup: ArrayCallbackSetup): Instr[
     // NaN / boxed 0/""/false are correctly falsy (the old per-kind copy treated
     // NaN-as-truthy and boxed-falsy-as-truthy, the inverse of the #2085 bug).
     return [...buildToBooleanInstrs(ctx, setup.closureInfo.returnType), { op: "i32.eqz" }];
+  }
+  // (#5319) Reference-preserving bridge — see buildTruthyCheck.
+  if (setup.bridgeResultType?.kind === "externref") {
+    return [...buildToBooleanInstrs(ctx, { kind: "externref" }), { op: "i32.eqz" }];
   }
   return ctx.fast
     ? [{ op: "i32.eqz" }]
@@ -7147,7 +7298,8 @@ function compileArrayFilter(
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "filter", "flt", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, true);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "filter", "flt", bridge, 1);
   if (!setup) return null;
 
   const resLen = allocLocal(fctx, `__arr_flt_rl_${fctx.locals.length}`, { kind: "i32" });
@@ -7297,24 +7449,12 @@ function compileArrayMap(
   // `kindOfTest(type)` can call `type.toLowerCase()`. Use the existing dynamic
   // externref bridge for this exact fallback shape; resolved closures stay on
   // call_ref and numeric-element maps keep their compact numeric bridge.
-  const referenceElementBridge =
-    !noJsHost(ctx) &&
-    ctx.funcMap.has("__call_dyn_1") &&
-    (elemType.kind === "externref" ||
-      elemType.kind === "ref_extern" ||
-      elemType.kind === "ref" ||
-      elemType.kind === "ref_null");
+  // (#5319 lifted the predicate into `referenceElementBridgeName` so the rest
+  // of the family shares it; map does not consume the result as a boolean.)
   const savedMapCallbackFirstParamOverride = ctx.arrayMapCallbackFirstParamOverride;
   ctx.arrayMapCallbackFirstParamOverride = elemType;
-  const setup = setupArrayCallback(
-    ctx,
-    fctx,
-    callExpr,
-    "map",
-    "map",
-    referenceElementBridge ? "__call_dyn_1" : undefined,
-    1,
-  );
+  const bridge = referenceElementBridgeName(ctx, elemType, false);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "map", "map", bridge, 1);
   ctx.arrayMapCallbackFirstParamOverride = savedMapCallbackFirstParamOverride;
   if (!setup) return null;
 
@@ -7936,7 +8076,8 @@ function compileArrayForEach(
     return null; // void method
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "forEach", "fe", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, false);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "forEach", "fe", bridge, 1);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fe", receiverIsExternref);
@@ -7990,7 +8131,8 @@ function compileArrayFind(
     return elemType;
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "find", "find", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, true);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "find", "find", bridge, 1);
   if (!setup) return null;
 
   const elemTmpLocal = allocLocal(fctx, `__arr_find_el_${fctx.locals.length}`, elemType);
@@ -8100,7 +8242,8 @@ function compileArrayFindIndex(
     return { kind: "i32" };
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "findIndex", "fi", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, true);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "findIndex", "fi", bridge, 1);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fi", receiverIsExternref);
@@ -8403,7 +8546,8 @@ function compileArraySome(
     return { kind: "i32" };
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "some", "some", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, true);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "some", "some", bridge, 1);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "some", receiverIsExternref);
@@ -8469,7 +8613,8 @@ function compileArrayEvery(
     return { kind: "i32" };
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "every", "evr", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, true);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "every", "evr", bridge, 1);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "evr", receiverIsExternref);

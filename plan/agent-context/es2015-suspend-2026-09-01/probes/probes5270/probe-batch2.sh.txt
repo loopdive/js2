@@ -1,0 +1,7 @@
+#!/bin/bash
+# Batch 2 probes, then the 28 control candidates (one heavy process at a time).
+cd "$(dirname "$0")/../.." || exit 1
+npx tsx .tmp/es2015/probe-one.mts .tmp/es2015/probes5270/p4*.js .tmp/es2015/probes5270/p5*.js > .tmp/es2015/probes5270-b2.out 2>&1
+echo "probes2 exit=$?" >> .tmp/es2015/probes5270-b2.out
+npx tsx scripts/run-test262-paths.mts .tmp/es2015/expr-controls-candidates.txt --standalone > .tmp/es2015/expr-controls.log 2>&1
+echo "controls exit=$?" >> .tmp/es2015/expr-controls.log

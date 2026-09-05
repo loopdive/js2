@@ -1,0 +1,9 @@
+built-ins/Object/prototype/toString/symbol-tag-weakset-builtin.js
+built-ins/Object/prototype/toString/symbol-tag-promise-builtin.js
+built-ins/Object/prototype/toString/symbol-tag-non-str-builtin.js
+built-ins/Object/prototype/toString/symbol-tag-generators-builtin.js
+built-ins/Object/prototype/toString/proxy-array.js
+built-ins/Object/prototype/toString/symbol-tag-override-primitives.js
+built-ins/Object/prototype/toString/symbol-tag-weakmap-builtin.js
+built-ins/Object/prototype/toString/proxy-revoked-during-get-call.js
+built-ins/Object/prototype/toString/get-symbol-tag-err.js

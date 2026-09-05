@@ -1,0 +1,8 @@
+
+=== counts ===
+{ fail: 1 }
+
+=== 1 non-pass (excluding skip) ===
+fail           test/language/expressions/assignment/dstr/array-elem-iter-thrw-close-skip.js
+                 strict rerun: Test262Error: Expected a Test262Error but got a ReferenceError | at L32: throw new Test262Error();
+ctrl-one exit=0

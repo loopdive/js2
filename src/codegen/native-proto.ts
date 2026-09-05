@@ -167,7 +167,37 @@ export interface NativeProtoBuiltinGlue {
    * `{writable:true, enumerable:false, configurable:true}` and answered as a
    * string constant by the static value read.
    */
-  dataProps?: ReadonlyArray<readonly [string, string]>;
+  dataProps?: ReadonlyArray<readonly [string, string | number]>;
+  /**
+   * (#5194 step 1) Brand of this prototype's own `[[Prototype]]` — the parent
+   * level of the builtin prototype CHAIN. `Uint8Array.prototype`'s parent is
+   * `%TypedArray%.prototype` (§23.2.7): the concrete view protos own NOTHING
+   * but `constructor`/`BYTES_PER_ELEMENT` and inherit all 30 methods from the
+   * intrinsic. Declaring it here does three things at once:
+   *   - `$parent` on the materialized `$NativeProto` stops being null, so the
+   *     native `__getPrototypeOf` can answer `getPrototypeOf(TA.prototype)`;
+   *   - the static VALUE read (`native-proto-value-read.ts`) retries an
+   *     own-CSV miss against the parent brand, so `Uint8Array.prototype.forEach
+   *     === TypedArray.prototype.forEach` by closure identity;
+   *   - the dynamic companion walk (`proto-index-store.ts`) probes the parent
+   *     companion between the receiver brand's and `Object.prototype`'s.
+   * Absent (the default) keeps the historical flat, null-parent shape.
+   */
+  parentBrand?: number;
+  /**
+   * (#5269 D-1) String-keyed own ACCESSOR properties — a getter/setter PAIR.
+   * `Error.prototype.stack` is the case this exists for (§ error-stack-accessor
+   * proposal): unlike every `memberKind: "getter"` member, it has a real
+   * setter, so the one-sided getter seeding above cannot express it, and unlike
+   * `dataProps` it is not a value.
+   *
+   * `get` / `set` are member names handed to the same closure factory the
+   * methods use, so both halves are ordinary identity-stable function values
+   * with honest `.name` / `.length` and `isConstructor === false`. They are
+   * deliberately NOT in `memberCsv`: a CSV entry would seed the accessor's own
+   * key a second time, as a method.
+   */
+  accessorProps?: ReadonlyArray<{ readonly key: string; readonly get: string; readonly set: string }>;
   /** Which members are accessor getters (`kind:"getter"`) vs data methods
    *  (`kind:"method"`). `@@<id>` symbol members are always `"method"`. */
   memberKind: (member: string) => "getter" | "method";
@@ -210,6 +240,20 @@ export interface NativeProtoBuiltinGlue {
    */
   memberAliasOf?: (member: string) => string | undefined;
   /**
+   * (#5194 step 2) Cross-BRAND member-identity alias — the same rule as
+   * `memberAliasOf`, one level up. §23.2.3.32 says "The initial value of the
+   * `%TypedArray%.prototype.toString` data property is the same built-in
+   * function object as `Array.prototype.toString`", so the two prototypes must
+   * resolve to ONE closure singleton, which `memberAliasOf` (same-brand only)
+   * cannot express. Returning a brand here routes the closure factory to that
+   * brand's member instead, exactly as `memberAliasOf` routes to another name.
+   *
+   * Only closure IDENTITY moves: the member stays this glue's own CSV entry, so
+   * `hasOwnProperty` / gOPD / `getOwnPropertyNames` still report it as an own
+   * property of THIS prototype.
+   */
+  memberBrandAliasOf?: (ctx: CodegenContext, member: string) => number | undefined;
+  /**
    * Emit a method/getter closure BODY into `fctx`, given the externref `this`
    * already bound to closure-param index 1 and any further args at indices
    * 2.. . The implementation runs the brand-recovery prologue (externref `this`
@@ -240,7 +284,40 @@ export function getNativeProtoBuiltinGlue(ctx: CodegenContext, brand: number): N
   return builtinGlueRegistry(ctx).get(brand);
 }
 
+/**
+ * (#5194 step 1) Every registered `brand → parentBrand` prototype-chain link.
+ * The dynamic companion walk (`proto-index-store.ts`) reads this at FILL time
+ * to splice a parent-level probe between the receiver brand's companion and
+ * `Object.prototype`'s — the runtime twin of the static `parentBrand` retry in
+ * `resolveStandaloneProtoMemberValueClosure`. Empty for every module that
+ * registers no chained glue, which keeps those bodies byte-identical.
+ */
+export function nativeProtoParentBrands(ctx: CodegenContext): ReadonlyMap<number, number> {
+  const out = new Map<number, number>();
+  for (const [brand, glue] of builtinGlueRegistry(ctx)) {
+    if (glue.parentBrand !== undefined && glue.parentBrand !== brand) out.set(brand, glue.parentBrand);
+  }
+  return out;
+}
+
 // ── Lazy `$NativeProto` materializer ──────────────────────────────────────────
+
+/**
+ * (#5194) Brands whose `$parent` link is being emitted right now, per context.
+ * Read by {@link buildLazyNativeProtoGetInstrs} so a cyclic parent declaration
+ * terminates the chain instead of recursing until the compiler's stack blows.
+ * A `WeakMap` keyed on the context cannot outlive the compile.
+ */
+const parentEmitInProgressByCtx = new WeakMap<CodegenContext, Set<number>>();
+
+function parentEmitInProgress(ctx: CodegenContext): Set<number> {
+  let set = parentEmitInProgressByCtx.get(ctx);
+  if (!set) {
+    set = new Set<number>();
+    parentEmitInProgressByCtx.set(ctx, set);
+  }
+  return set;
+}
 
 function nativeProtoGlobalName(brand: number): string {
   return `__native_proto_${brand}`;
@@ -286,7 +363,43 @@ export function buildLazyNativeProtoGetInstrs(ctx: CodegenContext, brand: number
   initBody.push({ op: "i32.const", value: glue.brand }); // $brand
   initBody.push({ op: "i32.const", value: 0 }); // $isClass = 0 (builtin)
   initBody.push({ op: "ref.null.extern" }); // $ctor (S1: not yet linked)
-  initBody.push({ op: "ref.null.extern" }); // $parent (S1: chain walk deferred)
+  // $parent — the builtin prototype CHAIN link (#5194 step 1). A glue that
+  // declares `parentBrand` embeds the PARENT's own lazy singleton read here, so
+  // both levels are the same identity-stable objects every other reader sees.
+  // `buildLazyNativeProtoGetInstrs` is idempotent and append-only, and the
+  // recursion is bounded by the parent chain (one level today: a concrete
+  // TypedArray view proto → `%TypedArray%.prototype`, whose glue declares no
+  // parent). An unregistered parent falls back to null, so every family that
+  // does not declare one is byte-identical to before.
+  //
+  // TERMINATION (#5194, post-#5479 hardening). The self-parent guard alone
+  // (`parentBrand !== brand`) only stops a 1-cycle: a future pair of glues
+  // declaring each other — or any longer cycle — would recurse here until the
+  // COMPILER's own stack overflows ("Maximum call stack size exceeded"), which
+  // is a hard, unhelpful crash rather than a diagnosable refusal. The chain is
+  // therefore walked with an explicit in-progress set, and a cycle terminates
+  // the link at null exactly as an unregistered parent does. This is DEFENSIVE:
+  // no cycle exists today (the only declared links are the 11 view protos →
+  // `%TypedArray%.prototype`, whose glue declares no parent), and the emitted
+  // bytes are unchanged for every currently reachable graph — verified by the
+  // standalone re-run holding at 105/105 with an identical wasm hash for the
+  // rows in `ta-passing-all.txt`.
+  const parentBrand = glue.parentBrand;
+  const inProgress = parentEmitInProgress(ctx);
+  let parentInstrs: Instr[] | null = null;
+  if (parentBrand !== undefined && parentBrand !== brand && !inProgress.has(parentBrand)) {
+    inProgress.add(brand);
+    try {
+      parentInstrs = buildLazyNativeProtoGetInstrs(ctx, parentBrand);
+    } finally {
+      inProgress.delete(brand);
+    }
+  }
+  if (parentInstrs) {
+    for (const instr of parentInstrs) initBody.push(instr);
+  } else {
+    initBody.push({ op: "ref.null.extern" }); // $parent (no declared chain link)
+  }
   // $memberCsv — native string → externref
   for (const instr of stringConstantExternrefInstrs(ctx, glue.memberCsv)) initBody.push(instr);
   pushNativeStringToExternref(initBody);
@@ -466,6 +579,10 @@ export function seededNativeProtoOwnMembersByBrand(ctx: CodegenContext): Readonl
     // (#5156) Seeded string DATA properties are companion entries too, so
     // `delete Error.prototype.message` / a redefinition must be observable.
     for (const [key] of glue.dataProps ?? []) members.push(key);
+    // (#5269 D-1) Same reasoning as dataProps: the accessor lives in the
+    // companion, so `hasOwnProperty` / `delete` / gOPD must see it — but only
+    // once the accessor seeder is actually available.
+    if (accessorSeederAvailable) for (const { key } of glue.accessorProps ?? []) members.push(key);
     if (members.length > 0) out.set(brand, members);
   }
   return out;
@@ -523,6 +640,15 @@ const PROTO_METHOD_DEFINE_FLAGS = 0xbd;
 
 /** §17 attributes for an intrinsic `Symbol.toStringTag` data property. */
 const PROTO_SYMBOL_TAG_DEFINE_FLAGS = 0xbc;
+
+/**
+ * (#5194 step 1) Attributes for a prototype's own numeric CONSTANT —
+ * `<View>.prototype.BYTES_PER_ELEMENT` (§23.2.7.1) is the only one today, and
+ * unlike a §17 method it is `{writable:false, enumerable:false,
+ * configurable:false}`. Same encoding as `PROTO_METHOD_DEFINE_FLAGS` with the
+ * writable (bit 0) and configurable (bit 2) value bits cleared.
+ */
+const PROTO_CONST_DEFINE_FLAGS = 0xb8;
 
 /** §17 accessor attributes in `__defineProperty_accessor`'s flag encoding. */
 const PROTO_ACCESSOR_DEFINE_FLAGS = (1 << 4) | (1 << 5) | (1 << 2);
@@ -627,7 +753,9 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
     // same function object. Seed the alias key with the canonical closure
     // singleton instead of minting a second per-member wrapper.
     const closureMember = glue.name === "Date" && member === "toGMTString" ? "toUTCString" : member;
-    const closure = ensureStandaloneNativeMethodClosure(ctx, brand, closureMember, kind, {
+    // (#5194 step 2) A cross-brand alias mints the OTHER brand's singleton.
+    const closureBrand = glue.memberBrandAliasOf?.(ctx, member) ?? brand;
+    const closure = ensureStandaloneNativeMethodClosure(ctx, closureBrand, closureMember, kind, {
       // Reify un-wired members as throwing function VALUES (#2984 Phase 2 /
       // #3250). The companion is a REFLECTION surface: `typeof p.m ===
       // "function"`, `p.m.name`, `p.m.length` and `isConstructor(p.m) ===
@@ -684,16 +812,52 @@ export function ensureNativeProtoCompanionSeeder(ctx: CodegenContext, brand: num
 
   // (#5156) String-keyed own DATA properties (Error.prototype.name/.message).
   // Same §17 attributes as a proto method, so one shared flag constant.
+  // (#5194 step 1) A NUMERIC value is `<View>.prototype.BYTES_PER_ELEMENT`
+  // (§23.2.7.1), whose attributes are all-false — not §17's — so the numeric
+  // arm boxes the constant and uses `PROTO_CONST_DEFINE_FLAGS`.
   for (const [key, value] of glue.dataProps ?? []) {
     const defineIdx = ctx.funcMap.get("__defineProperty_value") ?? defineValueIdx;
     if (defineIdx === undefined) continue;
+    const boxNumberIdx = typeof value === "number" ? ctx.funcMap.get("__box_number") : undefined;
+    if (typeof value === "number" && boxNumberIdx === undefined) continue;
     const body = seedFctx.body;
     body.push({ op: "local.get", index: 0 });
     addStringConstantGlobal(ctx, key);
     for (const instr of stringConstantExternrefInstrs(ctx, key)) body.push(instr);
-    addStringConstantGlobal(ctx, value);
-    for (const instr of stringConstantExternrefInstrs(ctx, value)) body.push(instr);
-    body.push({ op: "f64.const", value: PROTO_METHOD_DEFINE_FLAGS });
+    if (typeof value === "number") {
+      body.push({ op: "f64.const", value }, { op: "call", funcIdx: boxNumberIdx! });
+    } else {
+      addStringConstantGlobal(ctx, value);
+      for (const instr of stringConstantExternrefInstrs(ctx, value)) body.push(instr);
+    }
+    body.push({
+      op: "f64.const",
+      value: typeof value === "number" ? PROTO_CONST_DEFINE_FLAGS : PROTO_METHOD_DEFINE_FLAGS,
+    });
+    body.push({ op: "call", funcIdx: defineIdx }, { op: "drop" });
+    installed++;
+  }
+
+  // (#5269 D-1) String-keyed own ACCESSOR properties (Error.prototype.stack).
+  // Both halves are minted as real closures — `refusalBodyFallback` is off on
+  // purpose: an accessor whose getter throws on every read would be worse than
+  // the property being absent, so a glue that cannot supply the bodies must
+  // seed nothing at all and leave the prototype as it was.
+  for (const { key, get, set } of glue.accessorProps ?? []) {
+    const defineIdx = ctx.funcMap.get("__defineProperty_accessor") ?? defineAccessorIdx;
+    if (defineIdx === undefined) continue;
+    const getter = ensureStandaloneNativeMethodClosure(ctx, brand, get, "method");
+    const setter = ensureStandaloneNativeMethodClosure(ctx, brand, set, "method");
+    if (!getter || !setter) continue;
+    const body = seedFctx.body;
+    body.push({ op: "local.get", index: 0 });
+    addStringConstantGlobal(ctx, key);
+    for (const instr of stringConstantExternrefInstrs(ctx, key)) body.push(instr);
+    for (const instr of pushBuiltinFnSingletonValueInstrs(ctx, getter)) body.push(instr);
+    body.push({ op: "extern.convert_any" });
+    for (const instr of pushBuiltinFnSingletonValueInstrs(ctx, setter)) body.push(instr);
+    body.push({ op: "extern.convert_any" });
+    body.push({ op: "f64.const", value: PROTO_ACCESSOR_DEFINE_FLAGS });
     body.push({ op: "call", funcIdx: defineIdx }, { op: "drop" });
     installed++;
   }
@@ -1001,6 +1165,9 @@ export function ensureStandaloneNativeMethodClosure(
     metaName,
     arity,
   );
+  // (#5194 r3 review F3) Remember which meta types carry the refusal body so a
+  // dyn-view inherited [[Get]] can decline to surface them as values.
+  if (useRefusalBody) (ctx.nativeProtoRefusalMetaTypeIdxs ??= new Set()).add(metaTypeIdx);
 
   // (#2193 PR-B / #4664) Every native-proto closure's first user param is the
   // internal receiver (`this`). Methods use that mapping at every reflective

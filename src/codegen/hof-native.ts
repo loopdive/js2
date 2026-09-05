@@ -12,6 +12,7 @@ import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
 import { undefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js"; // (#5194 step 4) IsCallable gate
 import { ensureObjectRuntime, reserveApplyClosure } from "./object-runtime.js";
 import { addFuncType } from "./registry/types.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
@@ -42,12 +43,16 @@ import { addUnionImportsViaRegistry } from "./shared.js";
  *    array carrier (same as `Object.keys`/`groupBy` groups; #2379: map results
  *    are heterogeneous, do NOT unbox to f64).
  *  - Truthiness of predicate results via the native `__is_truthy` (ToBoolean).
- *  - BOUNDARY (documented, not silent): `reduce` of an empty array with no
- *    initial value returns `undefined` instead of throwing the spec TypeError
- *    (§23.1.3.24 step 5) — same no-throw discipline as `__apply_closure` S1
- *    (emitting error machinery from a finalize-adjacent helper is the
- *    #1839-class late-registration index-shift hazard). Sparse-array holes are
- *    not skipped (vec/$ObjVec carriers are dense; the `$Hole` mapping is the
+ *  - (#5194 step 4) `reduce`/`reduceRight` of an EMPTY receiver with no initial
+ *    value now throws the spec TypeError (§23.1.3.24 step 5 / §23.2.3.23 step
+ *    6), and a non-callable `callbackfn` throws before the loop. This was a
+ *    documented return-undefined boundary, justified by the #1839-class
+ *    late-registration index-shift hazard — but that hazard does not apply:
+ *    under standalone (the only mode this helper serves)
+ *    `buildThrowJsErrorInstrs` resolves to the IN-MODULE `__new_TypeError`,
+ *    which is an append-only minted defined func, exactly the invariant this
+ *    helper already relies on. Sparse-array holes are still not skipped
+ *    (vec/$ObjVec carriers are dense; the `$Hole` mapping is the
  *    open-`$Object` arm's concern, out of this arm's receiver set).
  *
  * Emitted at RESERVE time (append-only defined funcs — no funcIdx shift, same
@@ -315,7 +320,35 @@ export function ensureNativeArrayHof(
   }
 
   // ── Prologue ──
+  // (#5194 step 4) IsCallable(callbackfn) — §23.1.3.x / §23.2.3.x all check it
+  // BEFORE the iteration and throw a TypeError. The loop simply ran
+  // `__apply_closure` on a non-callable, which answered `undefined` per
+  // iteration and returned a value instead of throwing, so
+  // `<m>/callbackfn-not-callable-throws.js` saw no exception at all. The
+  // length read is not observable on a TypedArray receiver, so the gate goes
+  // first. `__typeof_function` is the canonical standalone callable predicate;
+  // when the module never registered it the guard is omitted and the body is
+  // byte-identical to before (no late import is added here — #1839 discipline).
+  // `ensureNativeArrayHof` is standalone-only, so the throw always resolves to
+  // the IN-MODULE `__new_TypeError` (no host import, nothing to flush).
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  const callableGuard: Instr[] =
+    typeofFunctionIdx === undefined
+      ? []
+      : [
+          { op: "local.get", index: 1 },
+          { op: "call", funcIdx: typeofFunctionIdx },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            // A fresh copy per helper — never share one throw sequence between
+            // two arms (#1058).
+            then: buildThrowJsErrorInstrs(ctx, "TypeError", `${methodName} callbackfn is not a function`),
+          },
+        ];
   const prologue: Instr[] = [
+    ...callableGuard,
     // len = __extern_length(recv)
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: externLengthIdx },
@@ -364,7 +397,8 @@ export function ensureNativeArrayHof(
             op: "loop",
             blockType: { kind: "empty" },
             body: [
-              // out of range → no present element anywhere → undefined boundary
+              // (#5194 step 4) out of range → no present element anywhere →
+              // §23.1.3.24 step 5's TypeError (was: return undefined).
               ...((backward
                 ? [{ op: "local.get", index: L.i }, { op: "f64.const", value: 0 }, { op: "f64.lt" }]
                 : [
@@ -375,7 +409,7 @@ export function ensureNativeArrayHof(
               {
                 op: "if",
                 blockType: { kind: "empty" },
-                then: [...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]), { op: "return" }],
+                then: buildThrowJsErrorInstrs(ctx, "TypeError", "Reduce of empty array with no initial value"),
               },
               // present? → seed found, exit the scan
               { op: "local.get", index: 0 },
@@ -416,14 +450,16 @@ export function ensureNativeArrayHof(
           hasGateIdx !== undefined
             ? reduceSeedScan()
             : [
-                // len <= 0 → return undefined (boundary: spec TypeError, see header)
+                // (#5194 step 4) len <= 0 with no initial value → the spec
+                // TypeError (§23.1.3.24 step 5 / §23.2.3.23 step 6). A fresh
+                // throw sequence, never shared with the gated arm above (#1058).
                 { op: "local.get", index: L.len },
                 { op: "f64.const", value: 0 },
                 { op: "f64.le" },
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: [...undefExtern, { op: "return" }],
+                  then: buildThrowJsErrorInstrs(ctx, "TypeError", "Reduce of empty array with no initial value"),
                 },
                 // acc = first-in-iteration-order element; i = the next one
                 ...((backward

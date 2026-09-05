@@ -1,0 +1,25 @@
+// Direct standalone probe (bypasses the runner's compile timeout): compile a
+// SCRIPT with target=standalone, instantiate via the test262 import object, run
+// __module_init, print the first thrown message (or OK).
+// Usage: npx tsx .tmp/es2015/probe-direct.mts <file.js>
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { compile } from "../../src/index.js";
+import { instantiateTest262Module } from "../../scripts/test262-import-object.mjs";
+import { extractWasmExceptionMessage } from "../../tests/test262-runner.js";
+const file = resolve(process.argv[2]!);
+const source = readFileSync(file, "utf-8");
+const t0 = performance.now();
+const result = await compile(source, { allowJs: true, fileName: "probe.js", skipSemanticDiagnostics: true, target: "standalone", deferTopLevelInit: true });
+console.log(`compile ${Math.round(performance.now() - t0)}ms success=${result.success}`);
+if (!result.success) { console.log(result.errors.map((e) => `L${e.line}: ${e.message}`).join("\n")); process.exit(0); }
+const imports = (result as { imports?: unknown[] }).imports;
+if (imports && imports.length) console.log("IMPORTS:", JSON.stringify(imports).slice(0, 300));
+let instance: WebAssembly.Instance;
+try { instance = await instantiateTest262Module(result.binary, {}, { target: "standalone", providerLabel: "#5194" }); }
+catch (err) { console.log(`instantiate: ${err instanceof Error ? err.message : String(err)}`); process.exit(0); }
+const init = (instance.exports as Record<string, unknown>).__module_init as (() => void) | undefined;
+if (!init) { console.log("no __module_init"); process.exit(0); }
+try { init(); const pr = (instance.exports as Record<string, unknown>).probe as (() => number) | undefined; console.log(pr ? `OK — probe mask=${pr()}` : "OK — no throw"); }
+catch (err) { const d = extractWasmExceptionMessage(err, instance); console.log("THREW:", d || (err instanceof Error ? err.message : String(err))); }
+process.exit(0);

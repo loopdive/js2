@@ -62,6 +62,7 @@ import {
   resolveDeclaringClassForPrivateName,
 } from "./expressions/helpers.js";
 import { canonicalUndefinedExternInstrs, nullishExternTestInstrs } from "./any-helpers.js"; // (#4519) §7.3.2 receiver check: null OR the undefined singleton
+import { emitUndefined } from "./expressions/late-imports.js"; // (#5269 B-d) the canonical `undefined` carrier
 import { receiverIsUndefinedIdentifier } from "./nullish-receiver-coercible.js"; // (#4519) the one decline that guard needs
 import { resolvesToAmbientGlobal } from "./expressions/non-constructable.js";
 import { popBody, pushBody } from "./context/bodies.js";
@@ -75,6 +76,7 @@ import {
   getFuncRefWrapperRootTypeIdx,
 } from "./closures.js";
 import { emitLazyClassObjectGet, emitLazyProtoGet } from "./expressions/extern.js";
+import { emitOwnShadowGuardedMethodRead } from "./expressions/own-property-method-shadow.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { buildCaughtErrorPropFallback } from "./caught-error-prop-fallback.js"; // (#4394) catch-binding non-$Error read
 import { addStringConstantGlobal, localGlobalIdx } from "./registry/imports.js";
@@ -199,6 +201,7 @@ import {
   tryEmitPinnedStructMemberGet,
   typeErrorThrowInstrs,
 } from "./property-access.js";
+import { classObjectRestrictedProperty } from "./class-static-metadata.js"; // (#5195 r3-7)
 import { tryEmitExactStructFieldGet, tryEmitStructuralContractReadFromLocal } from "./property-access-exact-shapes.js";
 import { tryEmitProvenReceiverFieldGet, tryEmitTypedThisFieldGet } from "./typed-this.js"; // (#3683 S2 / #3685 S2) inline field reads
 import { tryEmitFnctorTypedFieldGet } from "./fnctor-typed-reads.js"; // (#4155 Phase 2) struct-typed fnctor receiver
@@ -1821,6 +1824,17 @@ export function tryGlobalThisAndProcessRead(
       // the standard EventEmitter surface (`stdout.on`/`removeListener`) too.
       else if (procProp === "stdout") hostImport = "__get_process_stdout";
       else if (procProp === "stderr") hostImport = "__get_process_stderr";
+      // Standalone has no process to read: `process.env` is the host-free
+      // empty object the JS-host import also answers when no `process` exists
+      // (react's / redux's `process.env.NODE_ENV === "production"` gate kept a
+      // `__get_process_env` import and failed the standalone npm-compat lane).
+      if (ctx.standalone && procProp === "env") {
+        const idx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
+        flushLateImportShifts(ctx, fctx);
+        if (idx !== undefined) fctx.body.push({ op: "call", funcIdx: idx });
+        else fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
       if (hostImport !== undefined) {
         const idx = ensureLateImport(ctx, hostImport, [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, fctx);
@@ -2177,7 +2191,7 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       }
     }
     if (ctx.classSet.has(resolvedClass) && !bareNameIsNonClass) {
-      const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName);
+      const __r = emitClassStaticMemberRead(ctx, fctx, resolvedClass, propName, staticReceiver);
       if (__r !== PA_FALLTHROUGH) return __r;
     }
   }
@@ -2206,6 +2220,10 @@ function emitClassStaticMemberRead(
   fctx: FunctionContext,
   resolvedClass: string,
   propName: string,
+  // (#5195 r3 review round 3, r4-A) The receiver expression this read was
+  // written on, when there is one. `undefined` from the class-EXPRESSION
+  // caller, whose receiver is the class literally.
+  receiver?: ts.Expression,
 ): PADispatchResult {
   const fullName = `${resolvedClass}_${propName}`;
   // #2020: static fields are inherited. `class B extends A {}; B.count`
@@ -2217,6 +2235,21 @@ function emitClassStaticMemberRead(
     fctx.body.push({ op: "global.get", index: globalIdx });
     const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
     return globalDef?.type ?? { kind: "f64" };
+  }
+  // (#5195 r3-7) §10.2.4 AddRestrictedFunctionProperties: a class object is a
+  // strict function, so `C.caller` / `C.arguments` are the %ThrowTypeError%
+  // accessor inherited from %Function.prototype% — READING one throws. Only
+  // when the class declares nothing of that name (a declared `static caller`
+  // shadows the inherited accessor and keeps its value); the static-FIELD
+  // lookup above has already answered in that case.
+  if (classObjectRestrictedProperty(ctx, resolvedClass, propName, receiver)) {
+    emitThrowTypeError(
+      ctx,
+      fctx,
+      "'caller', 'callee', and 'arguments' properties may not be accessed on strict mode functions",
+    );
+    fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
   }
   // ClassName.prototype — return a singleton prototype global (externref)
   // so that Object.getPrototypeOf(instance) === ClassName.prototype holds.
@@ -3228,12 +3261,37 @@ export function tryLengthAndNameReads(
     }
     // Check the actual local type (may differ from TS type, e.g. arguments vec struct)
     if (ts.isIdentifier(expr.expression)) {
-      const localIdx = fctx.localMap.get(expr.expression.text);
+      let localIdx = fctx.localMap.get(expr.expression.text);
+      let spilledGlobalType: ValType | undefined;
+      if (localIdx === undefined) {
+        // (#5150) …or a MODULE GLOBAL holding a `$__ta_view`. test262 declares
+        // its bindings at top level (`var ta = new Uint8Array(buffer, 0)`), and
+        // the locals-only lookup missed them: `ta.length` then fell to the
+        // checker-typed vec arm below, whose `ref.test` fails on the view struct
+        // and answers 0. Spill the global into a temp local so the existing
+        // effective-length lowering applies unchanged.
+        const globalIdx = ctx.moduleGlobals.get(expr.expression.text);
+        const globalType = globalIdx !== undefined ? ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type : undefined;
+        if (
+          (globalType?.kind === "ref" || globalType?.kind === "ref_null") &&
+          globalType.typeIdx !== undefined &&
+          isTaViewTypeIdx(ctx, globalType.typeIdx)
+        ) {
+          const compiled = compileExpression(ctx, fctx, expr.expression);
+          if (compiled) {
+            const tmp = allocLocal(fctx, `__tav_glob_${fctx.locals.length}`, globalType);
+            fctx.body.push({ op: "local.set", index: tmp });
+            localIdx = tmp;
+            spilledGlobalType = globalType;
+          }
+        }
+      }
       if (localIdx !== undefined) {
         const localType =
-          localIdx < fctx.params.length
+          spilledGlobalType ??
+          (localIdx < fctx.params.length
             ? fctx.params[localIdx]!.type
-            : fctx.locals[localIdx - fctx.params.length]?.type;
+            : fctx.locals[localIdx - fctx.params.length]?.type);
         // Vec struct ref local (e.g. `arguments` object) — struct.get field 0 (length)
         // Note: for externref locals (e.g. `obj: any` in filter callbacks), we fall through
         // to the generic externref path below (line ~1731) which uses multi-struct dispatch
@@ -3634,7 +3692,13 @@ export function tryNamespaceConstantAndSymbolReads(
     const symId = getWellKnownSymbolId(propName);
     if (symId !== undefined) {
       fctx.body.push({ op: "i32.const", value: symId });
-      return { kind: "i32" };
+      // (#5267 A-2) Carry the symbol BRAND in the native-symbol lanes, exactly
+      // as `compileSymbolCall` does for `Symbol()` (literals.ts, #4626): an
+      // any-channel coercion then boxes through `__box_symbol` instead of
+      // `__box_number`, so `new WeakSet([Symbol.hasInstance])` stores the
+      // symbol rather than the NUMBER 2 (its well-known id). The js-host lane
+      // stays unbranded for the #4626 index-shift reason recorded there.
+      return usesNativeSymbolProvider(ctx) ? { kind: "i32", symbol: true } : { kind: "i32" };
     }
   }
 
@@ -3673,8 +3737,39 @@ export function tryNamespaceConstantAndSymbolReads(
       return { kind: "externref" };
     }
   }
+
+  // (#5269 B-d) Any OTHER property read on a symbol PRIMITIVE. §6.2.5.5
+  // GetValue on a primitive base resolves against a throwaway wrapper, so only
+  // what `Symbol.prototype` owns can answer; every other name — including one a
+  // sloppy `sym.a = 0` appeared to write — is `undefined`. Before this the read
+  // fell through to a generic member path that answered a NULL externref, which
+  // `assert.sameValue(sym.a, undefined)` reports as `null`, not `undefined`.
+  // The Symbol.prototype own members are excluded so a reflective
+  // `sym.toString` / `sym.valueOf` / `sym.constructor` read keeps its closure.
+  if (
+    ctx.standalone &&
+    (objType.flags & ts.TypeFlags.ESSymbolLike) !== 0 &&
+    !SYMBOL_PROTOTYPE_OWN_MEMBERS.has(propName)
+  ) {
+    const recvType = compileExpression(ctx, fctx, expr.expression);
+    if (recvType) fctx.body.push({ op: "drop" });
+    emitUndefined(ctx, fctx);
+    return { kind: "externref" };
+  }
   return PA_FALLTHROUGH;
 }
+
+/**
+ * (#5269 B-d) The names `%Symbol.prototype%` owns (§20.4.3). A read of any of
+ * these off a symbol receiver resolves to the prototype's own property and must
+ * keep its existing lowering; everything else is `undefined`.
+ */
+const SYMBOL_PROTOTYPE_OWN_MEMBERS: ReadonlySet<string> = new Set([
+  "constructor",
+  "description",
+  "toString",
+  "valueOf",
+]);
 
 export function tryStringLengthIteratorAndExternClassReads(
   ctx: CodegenContext,
@@ -3827,8 +3922,21 @@ export function tryStringLengthIteratorAndExternClassReads(
   if (isIteratorResultType(objType) || isGeneratorIteratorResultLike(ctx, objType, propName)) {
     const nativeResult = tryCompileNativeGeneratorResultProperty(ctx, fctx, expr.expression, propName);
     if (nativeResult !== undefined) return nativeResult;
+    // (#5267 B-6) Resolve the reader FIRST, compile the receiver only once one
+    // exists. Both arms used to push the receiver and then fall through when
+    // their `__gen_result_*` reader was absent — which is the ordinary case in
+    // a standalone module with no generator (those readers are host imports).
+    // The receiver was then left on the stack and the caller re-compiled the
+    // whole read through the dynamic path, so an `IteratorResult`-typed
+    // `.value` / `.done` used as a CALL ARGUMENT pushed one operand too many:
+    // `assert.sameValue(result.value, 'foo')` resolved its callee off the
+    // shifted stack and died with "called value is not a function" — the
+    // #5151 blocker, and every `Map`/`Set` `keys()/values()/entries()` row
+    // (17) once Step B made `.next()` return a real result object. Hoisting the
+    // read into a variable hid it: the statement boundary's #1058 stack repair
+    // absorbed the stray operand. When a reader IS registered the emitted bytes
+    // are unchanged.
     if (propName === "value") {
-      compileExpression(ctx, fctx, expr.expression);
       // Check the expected value type from the IteratorResult<T>. NOTE (#2030):
       // an exhausted result's `.value` is `undefined`; the f64 fast path below
       // runs `Number(undefined)` → NaN, so a string context of the
@@ -3837,23 +3945,23 @@ export function tryStringLengthIteratorAndExternClassReads(
       // intentionally NOT changed here — routing `.value` through externref
       // breaks numeric consumers (illegal cast on the raw-f64 iteration path).
       const valueType = getIteratorResultValueType(ctx, objType);
-      if (valueType && valueType.kind === "f64") {
-        const funcIdx = ctx.funcMap.get("__gen_result_value_f64");
-        if (funcIdx !== undefined) {
-          fctx.body.push({ op: "call", funcIdx });
-          return { kind: "f64" };
-        }
+      const f64Idx = valueType && valueType.kind === "f64" ? ctx.funcMap.get("__gen_result_value_f64") : undefined;
+      if (f64Idx !== undefined) {
+        compileExpression(ctx, fctx, expr.expression);
+        fctx.body.push({ op: "call", funcIdx: f64Idx });
+        return { kind: "f64" };
       }
       const funcIdx = ctx.funcMap.get("__gen_result_value");
       if (funcIdx !== undefined) {
+        compileExpression(ctx, fctx, expr.expression);
         fctx.body.push({ op: "call", funcIdx });
         return { kind: "externref" };
       }
     }
     if (propName === "done") {
-      compileExpression(ctx, fctx, expr.expression);
       const funcIdx = ctx.funcMap.get("__gen_result_done");
       if (funcIdx !== undefined) {
+        compileExpression(ctx, fctx, expr.expression);
         fctx.body.push({ op: "call", funcIdx });
         // #2030: `.done` is a boolean — brand it so string contexts render
         // "true"/"false" rather than the raw i32 "1"/"0".
@@ -4086,6 +4194,19 @@ export function finalizeStructAndDynamicMemberGet(
               // strict mode `var fn = c.m; fn();` calls with `this =
               // undefined`, so the lost-binding semantics match spec).
               const objResult = compileExpression(ctx, fctx, expr.expression);
+              // An own property installed at runtime shadows the method for
+              // THIS receiver, and the singleton the arm below returns is
+              // per-method, not per-instance — so the receiver has to be kept
+              // and asked. Only when the file could install such a slot; every
+              // other module still compiles the plain drop-then-read.
+              if (
+                objResult &&
+                emitOwnShadowGuardedMethodRead(ctx, fctx, expr, typeName, propName, objResult, () =>
+                  emitCachedMethodClosureAccess(ctx, fctx, methodFullName, funcIdx, fullStructTypeIdx),
+                )
+              ) {
+                return { kind: "externref" };
+              }
               if (objResult) {
                 fctx.body.push({ op: "drop" });
               }
@@ -4521,6 +4642,27 @@ export function finalizeStructAndDynamicMemberGet(
               ? fctx.params[localIdx]!.type
               : fctx.locals[localIdx - fctx.params.length]?.type;
           return localType?.kind === "externref";
+        })()) ||
+      // (#5195 Step 3.2) Same rule one scope up, and ONLY where the read would
+      // otherwise fall to the terminal `ref.null.extern`: a MODULE-level
+      // binding whose static type is purely `undefined`/`void` but whose wasm
+      // global slot is externref. The local-slot clause above only sees
+      // function locals, so `var caught; function f(){ …catch(e){ caught = e } }`
+      // — the idiom every `expressions/super/*` error test uses — read
+      // `caught.constructor` as a constant null, even though the write had
+      // physically stored an externref in the global. The slot's representation
+      // is the honest source of truth about the runtime value, exactly as it is
+      // for locals; the checker's flow type (`undefined`, because the only
+      // write is inside a nested closure) is not. Restricted to the
+      // purely-undefined static type so every resolvable receiver keeps its
+      // existing (often struct/fast) lane byte-for-byte.
+      (ts.isIdentifier(expr.expression) &&
+        (objType.flags & ~(ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0 &&
+        fctx.localMap.get(expr.expression.text) === undefined &&
+        (() => {
+          const globalIdx = ctx.moduleGlobals.get(expr.expression!.text);
+          if (globalIdx === undefined) return false;
+          return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type.kind === "externref";
         })());
     if (isExternObj) {
       // These bindings were deliberately placed on the dynamic object carrier

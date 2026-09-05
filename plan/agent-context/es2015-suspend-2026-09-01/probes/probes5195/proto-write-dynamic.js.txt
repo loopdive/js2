@@ -1,0 +1,12 @@
+/*---
+description: probe .tmp/es2015/probes5195/proto-write-dynamic.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class A { ma() {} }
+var p = Object.getPrototypeOf(new A());
+assert.sameValue(p === A.prototype, true, 'gPO(instance) is A.prototype');
+p.x = 'a';
+assert.sameValue(p.x, 'a', 'dynamic receiver read-back');
+assert.sameValue(p.hasOwnProperty('x'), true, 'own after write');
+assert.sameValue(A.prototype.x, 'a', 'typed receiver read-back');
+assert.sameValue(new A().x, 'a', 'instance inherits');

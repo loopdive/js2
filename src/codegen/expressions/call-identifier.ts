@@ -9,7 +9,13 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
-import { captureSourceSlot, pushBoxedTdzFlagRef } from "../closures/capture-source-slot.js";
+import {
+  captureSourceSlot,
+  expectsBoxedCaptureValue,
+  liftedCaptureBoxSlot,
+  pushBoxedTdzFlagRef,
+  recordLiftedCaptureBox,
+} from "../closures/capture-source-slot.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
@@ -36,7 +42,7 @@ import {
   sourceParamCountFromExpanded,
   wasmParamIndexForSourceParam,
 } from "../linear-uint8-signatures.js";
-import { compileArrayConstructorCall, compileSymbolCall } from "../literals.js";
+import { compileArrayConstructorCall, compileObjectLiteralAsExternref, compileSymbolCall } from "../literals.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { tryCompileNodeFsCall } from "../node-fs-api.js";
 import { emitSymbolOperandCoercionThrow } from "../tonumber-symbol-throw.js"; // (#3481)
@@ -58,6 +64,7 @@ import {
   ensureExtrasArgvGlobal,
   maybeSetArgcForKnownCall,
 } from "../statements/nested-declarations.js";
+import { parameterMayBeOmitted } from "../declarations.js";
 import { emitStringExternResultFlatten, emitStringRefResultFlatten } from "../string-materialize.js";
 import { compileStringLiteral, emitBoolToString, emitNativeStringToHostExternref } from "../string-ops.js";
 import { usesNativeNumberFormat } from "../number-format-native.js";
@@ -2038,6 +2045,22 @@ export function compileIdentifierCall(
             sigParamWasmTypes.push({ kind: "externref" });
             continue;
           }
+          // An OMITTABLE parameter (`size?: number`, `@param {number=} size`,
+          // `@param {number} [size]`) is widened to externref by the callee —
+          // see `parameterMayBeOmitted` in declarations.ts, whose whole purpose
+          // is that a caller which omits the argument must deliver `undefined`
+          // and not a padded `0`. This call site builds its wrapper signature
+          // from the DECLARED types, so without the same widening it asks for a
+          // scalar the compiled callee never declared, and the missing-argument
+          // pad below re-introduces the `0` the callee's widening exists to
+          // prevent. Witness: webpack's `formatSize()` answered `"0 bytes"`
+          // instead of `"unknown size"` whenever the function reached a caller
+          // through this path (a default export), while the byte-identical
+          // named export was correct.
+          if (paramDecl && ts.isParameter(paramDecl) && parameterMayBeOmitted(paramDecl)) {
+            sigParamWasmTypes.push({ kind: "externref" });
+            continue;
+          }
           const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
           sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
         }
@@ -2698,7 +2721,34 @@ export function compileIdentifierCall(
           // biome-ignore lint/complexity/noUselessLoneBlockStatements: groups arg-emit + extras-pack as one logical unit
           {
             for (let i = 0; i < Math.min(expr.arguments.length, cpPositionalCnt); i++) {
-              compileInternalCallArgument(ctx, fctx, expr.arguments[i]!, matchedClosureInfo.paramTypes[i]);
+              // (#5196 R3 review F4) An INLINE object literal in an `externref`
+              // slot of a statically-known builtin-value closure must be built
+              // as a dynamic object, not as the closed struct its literal type
+              // resolves to. `Proxy.revocable`'s handler is the witness:
+              // `var R = Proxy.revocable; R({a:1}, {get(t,k){return 7}})` then
+              // `pr.proxy.a` TRAPPED with `illegal cast` (measured 2026-09-04,
+              // standalone) because the trap read off the closed struct was not
+              // a callable; the same handler bound to a `var` first was fine.
+              // This is the treatment the DIRECT `Proxy.revocable(t, h)` arm
+              // already applies through `compileProxyInput`. Scope is the
+              // builtin-alias calls only — the other members of that set
+              // (`Math.max`, `Math.min`, `String.fromCharCode`) never receive
+              // an object literal, so nothing else changes shape.
+              const aliasArg = expr.arguments[i]!;
+              if (
+                builtinAliasInfo !== undefined &&
+                matchedClosureInfo.paramTypes[i]?.kind === "externref" &&
+                ts.isObjectLiteralExpression(aliasArg)
+              ) {
+                const literalType = compileObjectLiteralAsExternref(ctx, fctx, aliasArg);
+                if (literalType !== null && literalType.kind !== "externref") {
+                  coerceType(ctx, fctx, literalType, { kind: "externref" });
+                } else if (literalType === null) {
+                  fctx.body.push({ op: "ref.null.extern" });
+                }
+              } else {
+                compileInternalCallArgument(ctx, fctx, aliasArg, matchedClosureInfo.paramTypes[i]);
+              }
               const argLocal = allocLocal(fctx, `__carg_${fctx.locals.length}`, matchedClosureInfo.paramTypes[i]!);
               fctx.body.push({ op: "local.set", index: argLocal });
               argLocals.push(argLocal);
@@ -3647,8 +3697,13 @@ export function compileIdentifierCall(
             // function still captures the module-level `root`).  The leading
             // capture parameter is the cell we must forward; the name-based
             // localMap entry is the shadow value and has the wrong ABI type.
-            const currentLocalIdx = fctx.liftedCaptureSlots?.has(cap.name)
-              ? captureSourceSlot(fctx, cap)
+            // (#5323) …unless this frame already minted the shared cell for
+            // that very capture param — the frozen slot keeps naming the RAW
+            // param, so reading it here re-mints a SECOND cell and splits the
+            // binding's identity. See `liftedCaptureBoxSlot`.
+            const isLiftedCapture = fctx.liftedCaptureSlots?.has(cap.name) === true;
+            const currentLocalIdx = isLiftedCapture
+              ? (liftedCaptureBoxSlot(fctx, cap.name, refCellTypeIdx) ?? captureSourceSlot(fctx, cap))
               : (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx);
             const refCellType: ValType = { kind: "ref", typeIdx: refCellTypeIdx };
             const sourceType = getLocalType(fctx, currentLocalIdx);
@@ -3673,6 +3728,9 @@ export function compileIdentifierCall(
               fctx.localMap.set(cap.name, boxedLocalIdx);
               if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
               fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.valType });
+              // (#5323) Minted from the frozen capture slot ⇒ this IS the
+              // frame's storage; publish it so later sites converge here.
+              recordLiftedCaptureBox(fctx, cap.name, currentLocalIdx, boxedLocalIdx);
             } else {
               fctx.body.push({ op: "local.get", index: currentLocalIdx });
             }
@@ -3765,6 +3823,10 @@ export function compileIdentifierCall(
           const expectedCapType = captureParamTypes?.[capIdx];
           const liveBoxLocalIdx = fctx.localMap.get(cap.name);
           const liveBoxType = liveBoxLocalIdx !== undefined ? getLocalType(fctx, liveBoxLocalIdx) : undefined;
+          // (#5303) "The callee wants the cell's VALUE, not the cell" — asked
+          // directly rather than through the old non-reference proxy. See
+          // `expectsBoxedCaptureValue`.
+          const expectedIsBoxedValue = expectsBoxedCaptureValue(expectedCapType, boxed);
           const liveBoxIsCanonical =
             !cap.mutable &&
             boxed !== undefined &&
@@ -3772,9 +3834,7 @@ export function compileIdentifierCall(
             liveBoxType !== undefined &&
             (liveBoxType.kind === "ref" || liveBoxType.kind === "ref_null") &&
             liveBoxType.typeIdx === boxed.refCellTypeIdx &&
-            expectedCapType !== undefined &&
-            expectedCapType.kind !== "ref" &&
-            expectedCapType.kind !== "ref_null";
+            expectedIsBoxedValue;
           // A read-only nested function can still cross a frame whose copy of
           // the binding is boxed because a sibling/earlier function required a
           // shared cell.  `captureSourceSlot` quite correctly selects that
@@ -3789,9 +3849,7 @@ export function compileIdentifierCall(
             actualType !== undefined &&
             (actualType.kind === "ref" || actualType.kind === "ref_null") &&
             actualType.typeIdx === boxed.refCellTypeIdx &&
-            expectedCapType !== undefined &&
-            expectedCapType.kind !== "ref" &&
-            expectedCapType.kind !== "ref_null";
+            expectedIsBoxedValue;
           const sourceIdx = liveBoxIsCanonical ? liveBoxLocalIdx! : capSourceIdx;
           const sourceIsBox = liveBoxIsCanonical || sourceIsCanonicalBox;
           fctx.body.push({ op: "local.get", index: sourceIdx });

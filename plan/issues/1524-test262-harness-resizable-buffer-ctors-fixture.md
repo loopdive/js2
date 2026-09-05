@@ -190,3 +190,41 @@ matches this issue's family: `built-ins/TypedArray/prototype` (91),
 `built-ins/Array/prototype` (68).
 
 Original scope was 202 tests; the successor bucket is 224. Filed as **#4364**.
+
+## ⚠ Harvest re-measurement 2026-09-03 — NOT actually fixed (status `done` is wrong)
+
+Source: baselines-repo `test262-current.jsonl`, sha `998a110a`, run `20260903-155044`.
+
+The original symptom is gone, but the tests still fail — the error merely
+changed shape:
+
+| Signature | Count today | Note |
+| --- | ---: | --- |
+| `ctors is not defined` | **0** | the symptom this issue was closed on |
+| `No dependency provided for extern class "ctor"` | **239** | same tests, new message |
+
+Recorded `test262_count` at closure was 259; 239 of those rows are still
+failing. Failing directories are the same resizable-ArrayBuffer family:
+
+| Count | Directory |
+| ---: | --- |
+| 92 | `built-ins/TypedArray/prototype` |
+| 69 | `built-ins/Array/prototype` |
+| 15 | `built-ins/FinalizationRegistry/prototype` |
+| 7 | `built-ins/Proxy/construct` |
+| 5 | `built-ins/Proxy/defineProperty` |
+| 5 | `language/statements/for-of` |
+
+Samples: `test/built-ins/TypedArray/prototype/reverse/resizable-buffer.js`,
+`test/built-ins/Array/prototype/findLastIndex/resizable-buffer.js`,
+`test/built-ins/TypedArray/prototype/reduceRight/resizable-buffer-grow-mid-iteration.js`.
+
+Note the singular `"ctor"` in the new message vs the harness's `var ctors` —
+the fix appears to have made the helper resolvable as a *dependency name*
+while leaving the binding unresolved at the codegen boundary.
+
+The same test family is also the top standalone-lane `illegal cast` bucket
+(244 rows, 105 `TypedArray/prototype` + 80 `Array/prototype`), so this is a
+cross-lane cluster, not a host-lane harness quirk.
+
+**Suggested action:** reopen (`status: ready`) or open a successor issue.

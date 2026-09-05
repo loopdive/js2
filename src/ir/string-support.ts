@@ -155,3 +155,107 @@ export function attachIrStringSupport(fn: IrFunction, providers: IrStringSupport
   });
   return blocks === fn.blocks ? fn : { ...fn, blocks };
 }
+
+/**
+ * (#3526 F2-S8) Attach ONLY the `string.const` storage / materializer.
+ *
+ * The `string.const` arm of {@link attachIrStringSupport}, lifted verbatim — the
+ * same mutual exclusion, the same check-don't-overwrite discipline, the same
+ * error texts. It exists for exactly the reason
+ * {@link attachIrStringLengthProvider} does, and that reason was MEASURED
+ * rather than argued: the omnibus pass's callable arm is unconditional, so
+ * running it a second time to settle one seam re-derives five others it has no
+ * authority over, and getting any of them wrong is a hard error rather than a
+ * no-op (F2-S4 hit exactly that, on four corpus cells the byte matrix could not
+ * see).
+ *
+ * The literal-storage seam settles LATER than the rest — its authority is the
+ * frozen manifest, which is not built when `prepareStrings` runs — so it needs
+ * its own pass for the same structural reason the length seam did.
+ */
+export function attachIrStringConstStorage(
+  fn: IrFunction,
+  storageForConst: (instr: IrInstrStringConst) => IrGlobalRef | undefined,
+  materializerForConst: (instr: IrInstrStringConst) => IrFuncRef | undefined,
+): IrFunction {
+  const mapBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] => mapArray(buffer, mapInstr);
+  const mapInstr = (instr: IrInstr): IrInstr => {
+    const nested = mapNestedBuffers(instr, mapBuffer);
+    if (nested.kind !== "string.const") return nested;
+    const storage = storageForConst(nested);
+    const materializer = materializerForConst(nested);
+    if ((storage && materializer) || (nested.storage && nested.materializer)) {
+      throw new Error("IR string.const cannot carry both prepared storage and a materializer");
+    }
+    if (storage) {
+      if (nested.materializer) {
+        throw new Error("IR string.const materializer conflicts with prepared storage");
+      }
+      if (!nested.storage) return { ...nested, storage };
+      if (irGlobalBindingKey(nested.storage.binding) !== irGlobalBindingKey(storage.binding)) {
+        throw new Error("IR string.const already carries a different prepared storage binding");
+      }
+      return nested;
+    }
+    if (materializer) {
+      if (nested.storage) {
+        throw new Error("IR string.const storage conflicts with a prepared materializer");
+      }
+      if (!nested.materializer) return { ...nested, materializer };
+      if (!sameIrCallableBinding(nested.materializer.binding, materializer.binding)) {
+        throw new Error("IR string.const already carries a different prepared materializer binding");
+      }
+    }
+    return nested;
+  };
+  const blocks = mapArray(fn.blocks, (block) => {
+    const instrs = mapBuffer(block.instrs);
+    return instrs === block.instrs ? block : { ...block, instrs };
+  });
+  return blocks === fn.blocks ? fn : { ...fn, blocks };
+}
+
+/**
+ * (#3526 F2-S4) Attach ONLY the `string.len` provider.
+ *
+ * {@link attachIrStringSupport} is an omnibus pass, and its callable arm is
+ * UNCONDITIONAL: it re-derives the provider for `string.concat`, `.repeat`,
+ * `.eq`, `.char_at`, `.char_code_at` and `forof.string` on every run and
+ * compares the result to whatever is already attached. So a caller that wants
+ * to settle only the LENGTH seam — because the frozen manifest decides that one
+ * later than the rest — cannot reuse it: it would have to re-decide five other
+ * seams it has no authority over, and getting any one of them wrong is a hard
+ * error rather than a no-op.
+ *
+ * Measured, not argued: running the omnibus pass a second time with only
+ * `providerForLength` supplied made `irStringCallableProviderRef` fall back to
+ * the generic `__ir_string_repeat` for instructions the first pass had bound to
+ * the counted-native helper, and every module with a counted native
+ * `string.repeat` failed with "IR string.repeat already carries a different
+ * prepared provider binding" (4 corpus cells, invisible to the 60-cell byte
+ * matrix because no fixture there carries that shape).
+ *
+ * Same discipline as the omnibus pass's own `string.len` arm: an existing
+ * attachment is CHECKED, never overwritten, so repeated preparation is
+ * idempotent and a component cannot seal against one provider then lower
+ * through another.
+ */
+export function attachIrStringLengthProvider(fn: IrFunction, provider: IrStringLengthProvider): IrFunction {
+  const mapBuffer = (buffer: readonly IrInstr[]): readonly IrInstr[] => mapArray(buffer, mapInstr);
+  const mapInstr = (instr: IrInstr): IrInstr => {
+    const nested = mapNestedBuffers(instr, mapBuffer);
+    if (nested.kind !== "string.len") return nested;
+    if (nested.provider) {
+      if (!sameLengthProvider(nested.provider, provider)) {
+        throw new Error("IR string.len already carries a different prepared provider binding");
+      }
+      return nested;
+    }
+    return { ...nested, provider };
+  };
+  const blocks = mapArray(fn.blocks, (block) => {
+    const instrs = mapBuffer(block.instrs);
+    return instrs === block.instrs ? block : { ...block, instrs };
+  });
+  return blocks === fn.blocks ? fn : { ...fn, blocks };
+}

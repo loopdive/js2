@@ -270,6 +270,9 @@ export type {
   IrOutcomePolicyVerdict,
   IrUnsupportedCode,
 } from "./ir/outcomes.js";
+// (#5285) The `<module-init>` row's diagnostic refusal list. Public because the
+// census and the `check:ir-only` lane read it off `CompileResult.irOutcomes`.
+export type { IrModuleBindingRefusal, IrModuleBindingRefusalArm } from "./ir/module-bindings.js";
 // Outcome rows expose these opaque IDs; inventory/ABI construction remains an
 // internal IR seam until later R1 commits wire it into compiler ownership.
 export type { IrSourceId, IrUnitId } from "./ir/identity.js";
@@ -959,6 +962,8 @@ export interface CompileOptions {
   runtimeProvider?: boolean;
   /** Internal package-linker switch for the frozen cross-module runtime type group. */
   canonicalRuntimeTypes?: boolean;
+  /** Internal package-linker switch (#5226): one imported `env.__exn` tag for the whole linked graph. */
+  sharedExceptionTag?: boolean;
   /**
    * Node API emulation (#2603). Opt-in via `--emulate node`. When set, the
    * checker is given an ambient `process` declaration so Node globals js2wasm

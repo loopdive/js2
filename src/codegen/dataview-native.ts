@@ -52,12 +52,13 @@ import {
   getOrRegisterTaViewType,
   getTaViewName,
   isTaViewTypeIdx,
+  TA_CTOR_BRAND,
   TA_CTOR_BYTES,
   TA_CTOR_KINDS,
   taCtorKindOf,
 } from "./registry/types.js";
 import { funcSignatureOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#2872) __ta_dyn_fill minting
-import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js"; // (#2864/#3177) semantic undefined vs null
+import { canonicalUndefinedExternInstrs, ensureAnyValueType, undefinedExternInstrs } from "./any-helpers.js"; // (#2864/#3177) semantic undefined vs null; (#5150) explicit-undefined tests
 import { ensureObjectRuntime } from "./object-runtime.js"; // (#2872) $Object array-like construct arm
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
@@ -305,6 +306,120 @@ export function usesNativeDataViewProvider(ctx: CodegenContext): boolean {
 }
 
 /**
+ * (#5150) §25.1.4.1 `ArrayBuffer.isView(arg)`, decided HOST-FREE: true iff the
+ * value carries a [[ViewedArrayBuffer]] slot. Every TypedArray lowers to some
+ * registered `$Vec` carrier and every DataView to the `$__ta_view`/
+ * `$__dv_window` brand, so the answer is a `ref.test` disjunction over those.
+ *
+ * `anyLocalIdx` must hold the argument already converted with
+ * `any.convert_extern`. Extracted so the direct-call site
+ * (`call-namespace-static.ts`) and the first-class VALUE closure
+ * (`builtin-value-read.ts`) share ONE chain rather than drifting apart — the
+ * value read used to fall to the generic "not yet implemented in --target
+ * standalone" throw (`isView/invoked-as-a-fn.js`).
+ *
+ * KNOWN IMPRECISION, unchanged from the call site: standalone shares the `$Vec`
+ * carrier between `number[]` and TypedArrays, so a plain array reads as a view.
+ * That is the accepted price of not leaking the `__arraybuffer_isView` host
+ * import, which would break the whole module at instantiate.
+ */
+export function isViewRefTestInstrs(ctx: CodegenContext, anyLocalIdx: number): Instr[] {
+  const dvWinTypeIdx = getOrRegisterDvWindowType(ctx);
+  // (#5150) The `$__ta_view` carriers belong here too: a buffer-backed
+  // `new Uint8Array(buffer)` is a shared-backing VIEW struct, not one of the
+  // plain `$Vec`s, so the pre-#5150 chain answered `false` for it whenever the
+  // static type could not decide — which is always, for a first-class value
+  // read. `ref.test` needs no ordering, so a Set keeps the chain duplicate-free.
+  const carriers = new Set<number>([...ctx.vecTypeMap.values(), ...ctx.taViewTypeMap.values(), dvWinTypeIdx]);
+  const out: Instr[] = [];
+  let emitted = false;
+  for (const vi of carriers) {
+    out.push({ op: "local.get", index: anyLocalIdx });
+    out.push({ op: "ref.test", typeIdx: vi });
+    if (emitted) out.push({ op: "i32.or" });
+    emitted = true;
+  }
+  if (!emitted) out.push({ op: "i32.const", value: 0 });
+  return out;
+}
+
+/**
+ * (#5150) i32 test: is the externref in `externIdx` the tag-1 `$AnyValue`
+ * `undefined` singleton — and NOT `null`?
+ *
+ * Several buffer clauses distinguish an EXPLICITLY passed `undefined` (which
+ * means "argument absent", so the clause's default applies) from `null` (an
+ * ordinary value that `ToIntegerOrInfinity` maps to 0):
+ * `ArrayBuffer.prototype.slice(0, undefined)` slices to the end while
+ * `slice(0, null)` slices nothing, and `new DataView(buf, 0, undefined)` views
+ * the whole buffer while `new DataView(buf, 0, null)` views zero bytes.
+ *
+ * Shaped after {@link nullishExternTestInstrs} (any-helpers.ts) — scratch-free,
+ * detached instruction array. Answers a constant 0 when `$AnyValue` is
+ * unavailable (the host lane), where the callers' pre-existing NaN handling
+ * remains in charge.
+ *
+ * There is no `undefinedSingletonActive` gate here because the test IS the
+ * gate: it answers "tag-1 `$AnyValue`", and only the singleton regime produces
+ * one. That regime is the standalone DEFAULT (`undefinedSingleton` is
+ * `process.env.JS2WASM_UNDEF_SINGLETON !== "0"`, create-context.ts — default
+ * TRUE since the #2106 flip), so the clauses work as written. Under the A/B
+ * kill switch `JS2WASM_UNDEF_SINGLETON=0` the missing-argument padding is
+ * `ref.null.extern` again, this test answers 0, and the clauses REVERT to the
+ * pre-#5150 behaviour rather than degrading gracefully: measured on that lever,
+ * `new DataView(b, 4, undefined).byteLength` reads 0 instead of 4. That is the
+ * legacy answer the flag exists to reproduce, not a separate bug — but do not
+ * read this helper as flag-independent.
+ */
+export function explicitUndefinedExternTestInstrs(ctx: CodegenContext, externIdx: number): Instr[] {
+  if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
+  const t = ctx.anyValueTypeIdx;
+  if (t < 0) return [{ op: "i32.const", value: 0 }];
+  return [
+    { op: "local.get", index: externIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: externIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: t },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
+            { op: "local.get", index: externIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: t },
+            { op: "struct.get", typeIdx: t, fieldIdx: 0 },
+            { op: "i32.const", value: 1 },
+            { op: "i32.eq" },
+          ],
+          else: [{ op: "i32.const", value: 0 }],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#5150) i32 test: is the externref in `externIdx` `null` OR the `undefined`
+ * singleton? The BigInt setters' §7.1.13 `ToBigInt(undefined)` TypeError used a
+ * bare `ref.is_null`, which stopped firing the moment the missing-argument
+ * padding became the singleton.
+ */
+export function nullishOrUndefinedExternTestInstrs(ctx: CodegenContext, externIdx: number): Instr[] {
+  return [
+    { op: "local.get", index: externIdx },
+    { op: "ref.is_null" },
+    ...explicitUndefinedExternTestInstrs(ctx, externIdx),
+    { op: "i32.or" },
+  ];
+}
+
+/**
  * #1698 — `ab.slice(begin?, end?)` in no-JS-host mode. Returns a new
  * ArrayBuffer (i32_byte vec struct) holding bytes `[begin, end)` of the
  * source, with the spec §25.1.5.3 negative-offset / clamp / default-end
@@ -378,10 +493,44 @@ export function emitArrayBufferSlice(
   // end (default srcLen). Same clamp/negate.
   const endLocal = allocLocal(fctx, `__abs_end_${fctx.locals.length}`, { kind: "i32" });
   if (args.length >= 2) {
-    compileExpr(args[1]!, { kind: "f64" });
-    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-    fctx.body.push({ op: "local.set", index: endLocal });
-    emitNormalizeIndex(fctx, endLocal, srcLenLocal);
+    // (#5150) §25.1.5.3 step 8: an EXPLICIT `undefined` end means "to the end
+    // of the buffer", not `ToIntegerOrInfinity(undefined)` = 0. Keep the
+    // compiled argument as an externref so the singleton stays distinguishable,
+    // derive the ordinary clamped index from it, then override with srcLen when
+    // it WAS undefined. `null` deliberately still coerces to 0.
+    //
+    // A statically-numeric end cannot BE `undefined`, so it stays on the plain
+    // f64 path — same gate the sibling ToIndex sites use (new-indexed.ts). The
+    // externref detour is not free: routing `ab.slice(2, 6)` through
+    // `__box_number` + the ToPrimitive chokepoint pulled that whole chain into
+    // the module and took the standalone binary from 51,078 to 122,604 bytes
+    // (measured 2026-09-02, this file both sides).
+    if (ctx.oracle.staticJsTypeOf(args[1]!) === "number") {
+      compileExpr(args[1]!, { kind: "f64" });
+      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+      fctx.body.push({ op: "local.set", index: endLocal });
+      emitNormalizeIndex(fctx, endLocal, srcLenLocal);
+    } else {
+      const endExtern = allocLocal(fctx, `__abs_endx_${fctx.locals.length}`, { kind: "externref" });
+      const endTy = compileExpr(args[1]!, { kind: "externref" });
+      if (endTy === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (endTy.kind !== "externref") coerceType(ctx, fctx, endTy, { kind: "externref" });
+      fctx.body.push({ op: "local.tee", index: endExtern });
+      coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+      fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+      fctx.body.push({ op: "local.set", index: endLocal });
+      emitNormalizeIndex(fctx, endLocal, srcLenLocal);
+      fctx.body.push(...explicitUndefinedExternTestInstrs(ctx, endExtern));
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: srcLenLocal },
+          { op: "local.set", index: endLocal },
+        ],
+        else: [],
+      });
+    }
   } else {
     fctx.body.push({ op: "local.get", index: srcLenLocal });
     fctx.body.push({ op: "local.set", index: endLocal });
@@ -1930,13 +2079,15 @@ export function ensureDvAccessorHelper(ctx: CodegenContext, member: string): num
   fctx.body.push({ op: "local.set", index: getIdxLocal });
 
   // Setters: numberValue = ToNumber(value) (a1) — observable, after ToIndex.
-  // (#3173) BigInt setters: §7.1.13 ToBigInt(undefined) throws TypeError — a
-  // MISSING value arrives as a null extern (dispatcher/closure padding).
+  // (#3173/#5150) BigInt setters: §7.1.13 ToBigInt(undefined) throws TypeError.
+  // A MISSING value now arrives as the `undefined` SINGLETON (#5150 changed the
+  // dispatcher/closure padding away from `ref.null.extern`, which made float
+  // setters write 0 where ToNumber(undefined) = NaN is required), so the test
+  // must accept BOTH shapes rather than `ref.is_null` alone.
   const valLocal = acc.kind === "set" ? allocLocal(fctx, "val", { kind: "f64" }) : -1;
   if (acc.kind === "set") {
     if (toBigIntThrow) {
-      fctx.body.push({ op: "local.get", index: 2 });
-      fctx.body.push({ op: "ref.is_null" });
+      fctx.body.push(...nullishOrUndefinedExternTestInstrs(ctx, 2));
       fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: toBigIntThrow, else: [] });
     }
     fctx.body.push({ op: "local.get", index: 2 });
@@ -2080,14 +2231,16 @@ export function emitDataViewProtoMemberBody(
   if (helperIdx === undefined) return null;
   const acc = DV_ACCESSORS[member]!;
   const helperArgs = acc.kind === "get" ? 2 : 3;
-  // this (param 1) + args (params 2..), padded with null extern (undefined).
+  // this (param 1) + args (params 2..), padded with the `undefined` SINGLETON
+  // (#5150 — a `null` pad coerces to 0, so `dv.setFloat32(0)` wrote 0 where
+  // ToNumber(undefined) = NaN is required by `setFloat32/no-value-arg.js`).
   fctx.body.push({ op: "local.get", index: 1 });
   for (let i = 0; i < helperArgs; i++) {
     const paramIdx = 2 + i;
     if (paramIdx < fctx.params.length) {
       fctx.body.push({ op: "local.get", index: paramIdx });
     } else {
-      fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
     }
   }
   fctx.body.push({ op: "call", funcIdx: helperIdx });
@@ -2992,6 +3145,7 @@ export function emitDynamicTypedArrayConstructFromAny(
   const descTypeIdx = getOrRegisterTaCtorType(ctx);
   const descLocal = allocLocal(fctx, `__dyn_ta_ctor_${fctx.locals.length}`, { kind: "anyref" } as ValType);
   fctx.body.push({ op: "i32.const", value: kind });
+  fctx.body.push({ op: "i32.const", value: TA_CTOR_BRAND }); // (#5194 r3 F1) shape brand — the SECOND mint site, see getOrRegisterTaCtorType
   fctx.body.push({ op: "struct.new", typeIdx: descTypeIdx });
   fctx.body.push({ op: "local.set", index: descLocal });
   emitTaDynCtorConstructFromLocals(ctx, fctx, descLocal, argLocals);
@@ -4336,6 +4490,7 @@ export function getOrRegisterTaCtorSingleton(ctx: CodegenContext, kind: number):
     mutable: false,
     init: [
       { op: "i32.const", value: kind },
+      { op: "i32.const", value: TA_CTOR_BRAND }, // (#5194 r3 F1) shape brand, see getOrRegisterTaCtorType
       { op: "struct.new", typeIdx: taCtorTypeIdx },
     ],
   });
@@ -7169,7 +7324,7 @@ export function ensureTaDynSetHelper(ctx: CodegenContext): number | undefined {
  * results in the passed locals; pushes nothing net. Byte-move methods
  * (copyWithin/reverse) need only these — no per-element decode/encode.
  */
-function pushTaDynMethodPreamble(
+export function pushTaDynMethodPreamble(
   ctx: CodegenContext,
   fctx: FunctionContext,
   dynIdx: number,
@@ -7252,7 +7407,7 @@ function pushTaDynRelativeIndex(
   fctx.body.push({ op: "local.set", index: outLocal });
 }
 
-function makeTaDynHelperFctx(helperName: string, params: { name: string; type: ValType }[]): FunctionContext {
+export function makeTaDynHelperFctx(helperName: string, params: { name: string; type: ValType }[]): FunctionContext {
   return {
     name: helperName,
     params,

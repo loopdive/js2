@@ -69,10 +69,141 @@ function publicPhysicalFieldNames(rightType: ts.Type, fields: FieldDef[]): strin
     .filter((name): name is string => name !== undefined && publicPropertyNames.has(name));
 }
 
+/**
+ * (#5270 step 10, cluster N) True when the `in` receiver is provably an ARROW
+ * FUNCTION value — the literal form, or an identifier whose (only) initializer
+ * is one. Arrows are never constructors, so they have no `prototype` own
+ * property; TypeScript's `Function` interface declares `prototype: any` for
+ * every callable, which is why the checker-type fold answered `true`.
+ */
+function receiverIsArrowFunctionValue(ctx: CodegenContext, receiver: ts.Expression): boolean {
+  let expr: ts.Expression = receiver;
+  while (
+    ts.isParenthesizedExpression(expr) ||
+    ts.isAsExpression(expr) ||
+    ts.isNonNullExpression(expr) ||
+    ts.isTypeAssertionExpression(expr)
+  ) {
+    expr = expr.expression;
+  }
+  // An arrow LITERAL has no binding anybody could have written to between its
+  // creation and this `in`, so the syntactic fact is the whole answer.
+  if (ts.isArrowFunction(expr)) return true;
+  if (!ts.isIdentifier(expr)) return false;
+  // (#5270 review R2-F1b) `constInitializerOf`, NOT `variableInitializerOf`.
+  // The fold is justified ENTIRELY by the initializer, so it is sound only for
+  // a binding that cannot be REBOUND — and `const` gives that structurally,
+  // where enumerating rebinding spellings does not. The first cut used
+  // `variableInitializerOf` (which deliberately accepts `let`/`var`) plus a
+  // hand-rolled rebinding guard, and three spellings walked straight past it
+  // because `identifierIsWrittenTo` only matches a BARE-IDENTIFIER assignment
+  // LHS: `[a] = src` (array-pattern LHS), `({ a } = src)` (object-pattern LHS),
+  // and `for (a of src) {}` (not a BinaryExpression at all). After any of those
+  // the binding holds a function EXPRESSION — which HAS a `prototype` — and the
+  // fold still answered `false`. It bit hardest exactly where the runtime
+  // fallback cannot rescue it: the receiver stays a typed closure ref rather
+  // than externref, so `__extern_has` never fires and the folded `false` is
+  // final.
+  const initializer = ctx.oracle.constInitializerOf(expr);
+  if (initializer === undefined || !ts.isArrowFunction(initializer)) return false;
+  // `const` still permits MUTATION of the object it binds
+  // (`const a = () => 1; a.prototype = 5`), so the property-gaining scan below
+  // is still required — the two guards answer different questions.
+  return arrowBindingNeverGainsProperties(expr.getSourceFile(), expr.text);
+}
+
+/**
+ * (#5270 review F1) An arrow's MISSING `prototype` is a fact about its
+ * CREATION, not about its lifetime: the arrow is an ordinary extensible object
+ * afterwards, so `arrow.prototype = 5` gives it one and `"prototype" in arrow`
+ * must then answer true. The first cut of the route above folded a hard `false`
+ * for any identifier whose initializer is an arrow, with no write check — which
+ * regressed all four write forms against the base compiler AND against node
+ * (`arrow.prototype = 5`, `Object.defineProperty(arrow, "prototype", …)`,
+ * `arrow["prototype"] = 9`, `Object.assign(arrow, {prototype: 4})`).
+ *
+ * So the fold now applies only where the binding provably never gains a
+ * property. Deliberately conservative, and cheap — mirrors the reasoning of
+ * `identifierEscapesToCall` (#4765) and `identifierIsWrittenTo` (#4484 D):
+ * being wrong in the PERMISSIVE direction costs only the loss of a fold (the
+ * base answer, which is what the write forms need anyway), while being wrong in
+ * the restrictive direction is a wrong answer.
+ *
+ * Refuses when the file contains, anywhere:
+ *   - a member write through the binding (`a.k = …`, `a[k] = …`, any assignment
+ *     operator) — the `arrow.prototype = 5` / `a2["prototype"] = 9` forms;
+ *   - the binding as a call/new ARGUMENT — `Object.defineProperty(a1, …)` and
+ *     `Object.assign(a3, …)`, and every opaque escape besides.
+ *
+ * REBINDING is deliberately NOT checked here: the caller admits only `const`
+ * bindings (`ctx.oracle.constInitializerOf`), which makes rebinding impossible
+ * by construction. An earlier cut used `identifierIsWrittenTo` for that job and
+ * it did not hold — that matcher requires a bare-identifier assignment LHS, so
+ * `[a] = src`, `({ a } = src)` and `for (a of src)` all slipped past. A guard
+ * that enumerates spellings reads as protection it does not give; `const`
+ * answers the question once, for every spelling.
+ */
+function arrowBindingNeverGainsProperties(file: ts.SourceFile, name: string): boolean {
+  if (identifierEscapesToCall(file, name)) return false;
+  let written = false;
+  const visit = (node: ts.Node): void => {
+    if (written) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left))
+    ) {
+      let base: ts.Expression = node.left.expression;
+      while (
+        ts.isParenthesizedExpression(base) ||
+        ts.isAsExpression(base) ||
+        ts.isNonNullExpression(base) ||
+        ts.isTypeAssertionExpression(base)
+      ) {
+        base = base.expression;
+      }
+      if (ts.isIdentifier(base) && base.text === name) {
+        written = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return !written;
+}
+
+/**
+ * Instance method names the receiver's class (and its ancestors) put on the
+ * prototype. `in` finds them; the physical field list does not carry them.
+ */
+function dynamicKeyMethodNames(ctx: CodegenContext, receiver: ValType | null | undefined): string[] {
+  if (receiver == null || (receiver.kind !== "ref" && receiver.kind !== "ref_null")) return [];
+  let className = ctx.typeIdxToStructName.get(receiver.typeIdx);
+  const names: string[] = [];
+  const seen = new Set<string>();
+  while (className !== undefined && !seen.has(className)) {
+    seen.add(className);
+    for (const name of ctx.classMethodNames.get(className) ?? []) names.push(name);
+    className = ctx.classParentMap.get(className);
+  }
+  return names;
+}
+
 /** Return true for an approved standalone fnctor instance struct. */
 function isFnctorInstanceWasm(ctx: CodegenContext, wasmType: ValType): boolean {
   if (wasmType.kind !== "ref" && wasmType.kind !== "ref_null") return false;
   return ctx.typeIdxToStructName.get(wasmType.typeIdx)?.startsWith("__fnctor_") ?? false;
+}
+
+/** `$Object` values normally flow as externref; retain the direct typed form too. */
+function isMutableObjectRuntimeWasm(ctx: CodegenContext, wasmType: ValType): boolean {
+  if (wasmType.kind === "externref" || wasmType.kind === "anyref") return true;
+  return (
+    (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
+    wasmType.typeIdx === ctx.objectRuntimeTypes?.objectTypeIdx
+  );
 }
 
 /**
@@ -437,6 +568,22 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       ctx.standalone &&
       !hasExplicitNullObjectPrototype(ctx, expr.right) &&
       objectPrototypeInheritsInName(staticKey, inReceiverIsObjectShaped(rightWasm.kind));
+    // (#2175 D5) The fixed Object.prototype name set is a valid positive fold
+    // only for immutable/proven-safe carriers. A mutable `$Object` descendant
+    // (or an approved fnctor's real `$Object` prototype root) can later end
+    // at an explicitly marked null terminal that the syntactic
+    // `hasExplicitNullObjectPrototype` probe cannot see: created children,
+    // ancestor relinks, and cycle-refusal survivors all have this shape.
+    //
+    // Route only those dynamic carriers to the dedicated native answer. It
+    // first preserves a real own/inherited `__extern_has` hit, then classifies
+    // the final reachable terminal without observing a second user property
+    // lookup. Thus an ordinary implicit terminal remains true even with no
+    // Object.prototype proto-index companion, while an explicit null terminal
+    // is false. Its Proxy arm delegates a present has trap exactly once.
+    const terminalAwareObjectPrototypeRoute =
+      inheritsFromObjectPrototype &&
+      (isMutableObjectRuntimeWasm(ctx, rightWasm) || isFnctorInstanceWasm(ctx, rightWasm));
     // (#4765) Host lane: the receiver was handed to a callee the compiler
     // cannot see through, so its compile-time struct shape is no longer a fact
     // about this site — the callee may have DELETED the key and the field list
@@ -447,8 +594,20 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       !ctx.wasi &&
       ts.isIdentifier(expr.right) &&
       identifierEscapesToCall(expr.right.getSourceFile(), expr.right.text);
-    const has =
-      inheritsFromObjectPrototype || (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
+    // (#5270 step 10, cluster N) `"prototype" in (() => {})` folded TRUE
+    // because `tsTypeHasProperty` reads the checker's APPARENT type, and
+    // TypeScript's `Function` interface declares `prototype: any` for every
+    // callable — including the ones that have no `prototype` own property at
+    // all. An arrow is never a constructor (§10.2.4 / §15.3), so it carries no
+    // `prototype`; answering from the syntactic form is exact where the type is
+    // structurally wrong.
+    const arrowPrototypeRoute = staticKey === "prototype" && receiverIsArrowFunctionValue(ctx, expr.right);
+    const has = arrowPrototypeRoute
+      ? false
+      : terminalAwareObjectPrototypeRoute
+        ? false
+        : inheritsFromObjectPrototype ||
+          (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).
@@ -486,16 +645,25 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     const reassignedReceiverRoute = rhsIsReassignedBinding && rightWasm.kind !== "ref" && rightWasm.kind !== "ref_null";
     if (
       !has &&
+      // (#5270 review F1) The suppression that used to sit here
+      // (`!arrowPrototypeRoute`) is GONE. It stopped a folded `false` from
+      // falling through to `__extern_has`, so an arrow that had been GIVEN a
+      // `prototype` still answered false — the fold and the runtime fallback
+      // were both disabled at once. The route above is now gated on the
+      // binding provably never gaining a property, and a `false` fold is once
+      // more allowed to be re-asked at runtime, which is what the base
+      // compiler did.
       (rightWasm.kind === "externref" ||
         rightWasm.kind === "anyref" ||
         vecNamedKeyRoute ||
         reassignedReceiverRoute ||
         escapedReceiverRoute ||
-        fnctorProtoRoute)
+        fnctorProtoRoute ||
+        terminalAwareObjectPrototypeRoute)
     ) {
       const hasIdx = ensureLateImport(
         ctx,
-        "__extern_has",
+        terminalAwareObjectPrototypeRoute ? "__extern_has_with_implicit_object_proto" : "__extern_has",
         [{ kind: "externref" }, { kind: "externref" }],
         [{ kind: "i32" }],
       );
@@ -553,7 +721,31 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     leftKeyWasm.kind === "anyref" ||
     leftKeyWasm.kind === "ref" ||
     leftKeyWasm.kind === "ref_null";
-  if (structFieldNames !== null && structFieldNames.length > 0 && keyIsRefLike) {
+  // §7.3.12 [[HasProperty]] is prototype-INCLUSIVE, but `structFieldNames`
+  // holds only the receiver's physical struct fields — a class's instance
+  // METHODS live on the prototype and have no field, so a dynamic key naming
+  // one compared against nothing and answered `false`. A literal key took the
+  // checker-backed static fold above and answered correctly, which is what hid
+  // it: `"pre" in new P()` was true while `for (const k in src) k in new P()`
+  // was false for the same name.
+  //
+  // marked's `use()` is exactly that loop —
+  //   `for (let i in n.hooks) { if (!(i in r)) throw new Error(...) }`
+  // with `r = new _Hooks()` — so every `marked.use({hooks})` threw
+  // "hook 'preprocess' does not exist" and all 30 of its upstream tests
+  // failed with `Cannot convert object to primitive value` downstream.
+  //
+  // Adding names can only turn a `false` into a `true`, and every name added
+  // is one the prototype genuinely carries, so no currently-correct answer
+  // moves.
+  const inheritedMethodNames = dynamicKeyMethodNames(ctx, structWasm);
+  const dynamicKeyNames =
+    structFieldNames === null
+      ? inheritedMethodNames.length > 0
+        ? inheritedMethodNames
+        : null
+      : [...new Set([...structFieldNames, ...inheritedMethodNames])];
+  if (dynamicKeyNames !== null && dynamicKeyNames.length > 0 && keyIsRefLike) {
     // Compile the key expression (should produce a string/externref)
     const keyType = compileExpression(ctx, fctx, expr.left);
     if (keyType) {
@@ -566,7 +758,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         fctx.body.push({ op: "local.set", index: keyLocal });
         // Start with false (0)
         fctx.body.push({ op: "i32.const", value: 0 });
-        for (const fieldName of structFieldNames) {
+        for (const fieldName of dynamicKeyNames) {
           const strGlobal = ctx.stringGlobalMap.get(fieldName);
           if (strGlobal !== undefined) {
             fctx.body.push({ op: "local.get", index: keyLocal });

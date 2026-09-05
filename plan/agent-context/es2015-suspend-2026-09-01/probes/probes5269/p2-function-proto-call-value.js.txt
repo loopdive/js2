@@ -1,0 +1,6 @@
+var f = function (a) { return this === undefined ? 'u' : this + a; };
+var c = Function.prototype.call;
+var r = c.call(f, 1, 2);
+if (r !== 3) throw new Test262Error('call value: ' + String(r));
+var h = Function.prototype[Symbol.hasInstance];
+if (h.call({}) !== false) throw new Test262Error('hasInstance.call({})');

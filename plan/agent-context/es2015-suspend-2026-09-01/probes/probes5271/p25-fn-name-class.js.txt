@@ -1,0 +1,7 @@
+/*---
+description: let cls = class {} names the class (#5271 probe)
+includes: [propertyHelper.js]
+flags: [noStrict]
+---*/
+let cls = class {};
+verifyProperty(cls, 'name', { value: 'cls', writable: false, enumerable: false, configurable: true });

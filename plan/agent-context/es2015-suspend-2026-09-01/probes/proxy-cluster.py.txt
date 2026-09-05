@@ -1,0 +1,59 @@
+import sys,collections
+P='built-ins/'
+C={}
+def put(cid,*names):
+    for n in names:
+        p=P+n
+        if p in C: print('DUP',p,C[p],cid); sys.exit(1)
+        C[p]=cid
+# X1 #3371 Reflect.construct arm
+put('X1','Proxy/construct/call-parameters-new-target.js','Proxy/construct/trap-is-missing-target-is-proxy.js','Proxy/construct/trap-is-null-target-is-proxy.js','Proxy/construct/trap-is-null.js','Proxy/construct/trap-is-undefined-no-property.js','Proxy/construct/trap-is-undefined-target-is-proxy.js','Proxy/construct/trap-is-undefined.js','Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js','Proxy/get-fn-realm.js','Proxy/get-fn-realm-recursive.js','Proxy/construct/trap-is-undefined-proto-from-newtarget-realm.js','Reflect/construct/return-with-newtarget-argument.js','Reflect/construct/arguments-list-is-not-array-like.js','Reflect/construct/target-is-not-constructor-throws.js')
+# X2 #2046 Reflect.set receiver
+put('X2','Reflect/set/creates-a-data-descriptor.js','Reflect/set/different-property-descriptors.js','Reflect/set/receiver-is-not-object.js','Reflect/set/return-false-if-target-is-not-writable.js','Reflect/set/set-value-on-accessor-descriptor-with-receiver.js','Reflect/set/set-value-on-data-descriptor.js','Reflect/set/symbol-property.js')
+# X4 other owners
+put('X3','Proxy/revocable/tco-fn-realm.js','Proxy/apply/arguments-realm.js','Proxy/construct/arguments-realm.js')
+put('X4','Proxy/apply/trap-is-missing-target-is-proxy.js','Proxy/enumerate/removed-does-not-trigger.js','Proxy/preventExtensions/trap-is-undefined-target-is-proxy.js','Reflect/deleteProperty/delete-properties.js','Reflect/setPrototypeOf/return-true-if-new-prototype-is-set.js','Proxy/ownKeys/call-parameters-object-getownpropertysymbols.js')
+# A invariants
+put('A1','Proxy/defineProperty/targetdesc-configurable-desc-not-configurable.js','Proxy/defineProperty/targetdesc-not-compatible-descriptor.js','Proxy/defineProperty/targetdesc-not-compatible-descriptor-not-configurable-target.js','Proxy/defineProperty/targetdesc-not-configurable-writable-desc-not-writable.js','Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor.js','Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible.js')
+put('A2','Proxy/getOwnPropertyDescriptor/result-is-undefined-target-is-not-extensible.js','Proxy/getOwnPropertyDescriptor/result-is-undefined-targetdesc-is-not-configurable.js','Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined.js','Proxy/getOwnPropertyDescriptor/resultdesc-is-invalid-descriptor.js','Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-not-writable-targetdesc-is-writable.js','Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-targetdesc-is-configurable.js','Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-targetdesc-is-undefined.js')
+put('A3','Proxy/has/return-false-target-not-extensible.js','Proxy/has/return-false-targetdesc-not-configurable.js','Proxy/has/return-false-target-not-extensible-using-with.js','Proxy/has/return-false-targetdesc-not-configurable-using-with.js')
+put('A4','Proxy/get/accessor-get-is-undefined-throws.js','Proxy/get/not-same-value-configurable-false-writable-false-throws.js')
+put('A5','Proxy/set/target-property-is-accessor-not-configurable-set-is-undefined.js','Proxy/set/target-property-is-not-configurable-not-writable-not-equal-to-v.js')
+put('A6','Proxy/deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js','Proxy/deleteProperty/targetdesc-is-not-configurable.js')
+put('A7','Proxy/ownKeys/not-extensible-missing-keys-throws.js','Proxy/ownKeys/not-extensible-new-keys-throws.js','Proxy/ownKeys/return-all-non-configurable-keys.js')
+put('A8','Proxy/getPrototypeOf/not-extensible-same-proto.js','Proxy/getPrototypeOf/instanceof-custom-return-accepted.js','Proxy/getPrototypeOf/instanceof-target-not-extensible-not-same-proto-throws.js')
+# B proxy as [[Prototype]] + receiver threading
+put('B','Proxy/has/call-in-prototype.js','Proxy/has/call-in-prototype-index.js','Proxy/has/call-object-create.js','Proxy/set/call-parameters-prototype.js','Proxy/set/call-parameters-prototype-index.js','Proxy/set/call-parameters-prototype-dunder-proto.js','Proxy/get/trap-is-undefined-receiver.js','Proxy/set/trap-is-null-receiver.js','Proxy/set/trap-is-missing-receiver-multiple-calls.js','Proxy/set/trap-is-missing-receiver-multiple-calls-index.js','Proxy/has/trap-is-undefined-target-is-proxy.js','Proxy/get/trap-is-undefined-target-is-proxy.js')
+# C Reflect arms / call sites
+put('C1','Proxy/set/return-true-target-property-is-not-configurable.js','Proxy/set/trap-is-undefined-target-is-proxy.js')
+put('C2','Proxy/setPrototypeOf/trap-is-missing-target-is-proxy.js','Reflect/setPrototypeOf/return-false-if-target-and-proto-are-the-same.js','Reflect/setPrototypeOf/return-false-if-target-is-not-extensible.js','Reflect/setPrototypeOf/return-false-if-target-is-prototype-of-proto.js','Proxy/setPrototypeOf/toboolean-trap-result-false.js')
+put('C3','Reflect/preventExtensions/return-boolean-from-proxy-object.js','Proxy/preventExtensions/return-false.js','Proxy/preventExtensions/trap-is-missing-target-is-proxy.js')
+put('C4','Reflect/get/target-is-not-object-throws.js','Reflect/has/target-is-not-object-throws.js','Reflect/apply/target-is-not-callable-throws.js','Reflect/apply/arguments-list-is-not-array-like.js','Reflect/apply/call-target.js')
+put('C5','Reflect/get/return-abrupt-from-property-key.js','Reflect/getOwnPropertyDescriptor/return-abrupt-from-property-key.js','Reflect/set/return-abrupt-from-property-key.js','Reflect/defineProperty/return-abrupt-from-property-key.js')
+put('C6','Reflect/ownKeys/return-on-corresponding-order.js','Reflect/ownKeys/return-on-corresponding-order-large-index.js','Reflect/ownKeys/order-after-define-property.js')
+put('C7','Reflect/defineProperty/return-boolean.js')
+put('C8','Proxy/defineProperty/desc-realm.js','Reflect/enumerate/undefined.js','Reflect/object-prototype.js','Proxy/function-prototype.js','Reflect/getPrototypeOf/return-prototype.js')
+# D revoker
+put('D','Proxy/revocable/revocation-function-length.js','Proxy/revocable/revocation-function-name.js','Proxy/revocable/revocation-function-property-order.js','Proxy/revocable/revocation-function-not-a-constructor.js')
+# E trap read / define routing
+put('E','Proxy/setPrototypeOf/return-abrupt-from-get-trap.js','Proxy/defineProperty/null-handler.js','Proxy/defineProperty/call-parameters.js','Proxy/getOwnPropertyDescriptor/null-handler.js')
+# F exotic targets under trap-absent forward
+put('F','Proxy/apply/trap-is-null-target-is-proxy.js','Proxy/defineProperty/trap-is-missing-target-is-proxy.js','Proxy/defineProperty/trap-is-null-target-is-proxy.js','Proxy/defineProperty/trap-is-undefined-target-is-proxy.js','Proxy/deleteProperty/trap-is-null-target-is-proxy.js','Proxy/getOwnPropertyDescriptor/trap-is-missing-target-is-proxy.js','Proxy/getOwnPropertyDescriptor/trap-is-null-target-is-proxy.js','Proxy/getOwnPropertyDescriptor/trap-is-undefined-target-is-proxy.js','Proxy/get/trap-is-null-target-is-proxy.js','Proxy/get/trap-is-missing-target-is-proxy.js','Proxy/has/trap-is-missing-target-is-proxy.js','Proxy/ownKeys/trap-is-missing-target-is-proxy.js','Proxy/set/trap-is-null-target-is-proxy.js','Proxy/set/trap-is-missing-target-is-proxy.js','Proxy/setPrototypeOf/trap-is-null-target-is-proxy.js','Proxy/setPrototypeOf/trap-is-undefined-target-is-proxy.js','Proxy/has/trap-is-undefined.js','Proxy/has/trap-is-undefined-using-with.js')
+# G closed-struct target / static-shape leakage
+put('G','Proxy/deleteProperty/trap-is-undefined-strict.js','Proxy/deleteProperty/trap-is-undefined-not-strict.js','Proxy/has/return-false-target-prop-exists.js','Proxy/getOwnPropertyDescriptor/trap-is-undefined.js','Proxy/setPrototypeOf/not-extensible-target-same-target-prototype.js')
+rows=[l.strip() for l in open('.tmp/es2015/proxy-head.txt') if l.strip()]
+out=collections.defaultdict(list); missing=[]
+for r in rows:
+    cid=C.get(r)
+    if cid is None:
+        if 'realm' in r: cid='R'
+        else: missing.append(r); continue
+    out[cid].append(r)
+extra=[p for p in C if p not in rows]
+print('missing (unclustered):',missing); print('extra (not in list):',extra)
+tot=0
+for cid in sorted(out): print(cid,len(out[cid])); tot+=len(out[cid])
+print('total',tot,'of',len(rows))
+for cid,lst in out.items():
+    open(f'.tmp/es2015/proxy-cl-{cid}.txt','w').write('\n'.join(lst)+'\n')
+open('.tmp/es2015/proxy-clusters.tsv','w').write('\n'.join(f'{r}\t{C.get(r,"R")}' for r in rows)+'\n')

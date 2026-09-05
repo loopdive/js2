@@ -171,6 +171,26 @@ function directInitializedLocalBeforeRegion(
   return undefined;
 }
 
+/**
+ * (#2118 mirror) The binding name a `const f = (…) => …` / `let f = …` arrow
+ * refers to itself by. Inside the lifted body that name resolves to `__self`
+ * (lifted param 0), not to any declared parameter — the same predicate
+ * `collectArrowCaptures` uses to route the recursive call.
+ */
+function selfRecursiveArrowBindingName(owner: ts.Node): string | undefined {
+  if (!ts.isArrowFunction(owner) && !(ts.isFunctionExpression(owner) && !owner.name)) return undefined;
+  const declaration = owner.parent;
+  if (
+    declaration &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer === owner &&
+    ts.isIdentifier(declaration.name)
+  ) {
+    return declaration.name.text;
+  }
+  return undefined;
+}
+
 function canBoxBindingInDominatingParent(
   fctx: FunctionContext,
   closure: ts.ArrowFunction | ts.FunctionExpression,
@@ -204,7 +224,22 @@ function canBoxBindingInDominatingParent(
     localIdx < fctx.params.length && sourceParameter !== undefined && sourceParameter.initializer === undefined;
   const safeInitializedLocal =
     localIdx >= fctx.params.length && directInitializedLocalBeforeRegion(ownerBody, region, name) !== undefined;
-  if (!safeSourceParameter && !safeInitializedLocal) return false;
+  // (#2118) The self-recursive arrow binding resolves to `__self`, lifted param
+  // 0 — always live at entry and never written. It has no entry in
+  // `owner.parameters` (the name belongs to the OUTER binding), so the
+  // parameter test cannot see it, and the local test rejects it for being a
+  // param. Without this a nested closure that captures the recursion boxes it
+  // inside whichever conditional arm happens to construct that closure first,
+  // and every LATER recursive reference is re-aimed at that box — reading null
+  // on any path that skipped the arm. Source order alone then decides whether
+  // the function traps.
+  // `localIdx === 0` alone is NOT proof: in a body that was not lifted, slot 0
+  // is the arrow's own FIRST PARAMETER, and boxing that instead of the
+  // recursion is a miscompile (measured: jest's `test.concurrent.each` fixture
+  // went 3/3 → 0/3). Require the synthetic self param by NAME.
+  const safeSelfBinding =
+    localIdx === 0 && fctx.params[0]?.name === "__self" && selfRecursiveArrowBindingName(owner) === name;
+  if (!safeSourceParameter && !safeInitializedLocal && !safeSelfBinding) return false;
 
   // The parent buffer already contains every preceding top-level statement,
   // so writes before `region` are reflected in the value we box there. Refuse
@@ -1118,7 +1153,20 @@ function pushCaptureCell(ctx: CodegenContext, fctx: FunctionContext, cap: ArrowC
   const boxedLocalIdx = mappedIsCell ? mappedLocalIdx! : cap.localIdx;
   const boxedType = getLocalType(fctx, boxedLocalIdx);
   const valueType = boxed?.valType;
-  const rawLocalIdx = valueType ? findUnboxedCaptureLocal(fctx, cap.name, boxedLocalIdx, valueType) : undefined;
+  // Prefer the slot the box RECORDED over the name+type scan: the scan walks
+  // `fctx.locals` only, so a boxed PARAMETER has no discoverable raw slot and
+  // the repair silently declined for it.
+  const recordedRawIdx = boxed?.rawLocalIdx;
+  const recordedRawType = recordedRawIdx === undefined ? undefined : getLocalType(fctx, recordedRawIdx);
+  const rawLocalIdx =
+    valueType === undefined
+      ? undefined
+      : recordedRawIdx !== undefined &&
+          recordedRawIdx !== boxedLocalIdx &&
+          recordedRawType !== undefined &&
+          valTypesMatch(recordedRawType, valueType)
+        ? recordedRawIdx
+        : findUnboxedCaptureLocal(fctx, cap.name, boxedLocalIdx, valueType);
   const nullableBox =
     boxed !== undefined &&
     valueType !== undefined &&
@@ -1208,7 +1256,11 @@ export function emitClosureConstruction(
         // Re-register the original name to point to the boxed local
         fctx.localMap.set(cap.name, boxedLocalIdx);
         if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
-        fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type });
+        // The rebind is FUNCTION-wide but this `struct.new` runs only where the
+        // closure is constructed. Record the slot it wrapped so the frame's own
+        // reads/writes can mint the cell lazily on a path that skipped this
+        // site — see closures/conditional-capture-box.ts.
+        fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type, rawLocalIdx: cap.localIdx });
       }
     } else {
       if (cap.alreadyBoxed && fctx.boxedCaptures?.has(cap.name)) {

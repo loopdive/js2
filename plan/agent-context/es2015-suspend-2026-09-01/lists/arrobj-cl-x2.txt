@@ -1,0 +1,8 @@
+built-ins/Object/getOwnPropertySymbols/proxy-invariant-duplicate-string-entry.js
+built-ins/Object/getOwnPropertyNames/proxy-invariant-absent-not-configurable-symbol-key.js
+built-ins/Object/getOwnPropertyNames/proxy-invariant-not-extensible-absent-symbol-key.js
+built-ins/Object/getOwnPropertySymbols/proxy-invariant-absent-not-configurable-string-key.js
+built-ins/Object/keys/proxy-non-enumerable-prop-invariant-2.js
+built-ins/Object/getOwnPropertySymbols/proxy-invariant-not-extensible-absent-string-key.js
+built-ins/Object/getOwnPropertySymbols/proxy-invariant-not-extensible-extra-string-key.js
+built-ins/Object/keys/proxy-non-enumerable-prop-invariant-1.js

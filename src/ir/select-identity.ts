@@ -57,6 +57,7 @@ import {
   configureIrStructuralSelectorPredicates,
   extendsParentName,
   localClassHasKnownProjectionGap,
+  phase1MethodName,
   phase1MemberName,
   referencesSuper,
   type IrFallback,
@@ -1282,14 +1283,23 @@ export function planIrCompilationByIdentity(
           continue;
         }
 
-        if (ts.isMethodDeclaration(member) && (!member.name || phase1MemberName(member.name) === null)) {
+        if (ts.isMethodDeclaration(member) && (!member.name || phase1MethodName(member) === null)) {
           if (trackFallbacks) reasons.set(unit.unitId, "class-method");
           continue;
         }
         if (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
           if (
             !member.name ||
-            (!exactAccessorClass && (phase1MemberName(member.name) === null || classElementIsStatic(member)))
+            (!exactAccessorClass &&
+              // (#3522 W1-A) `phase1MemberName` now names a `PrivateIdentifier`,
+              // which admits private METHODS. Private ACCESSORS are a separate,
+              // out-of-scope shape (their descriptor projection has its own
+              // exact-placement rules), so this arm keeps refusing them
+              // explicitly — preserving its pre-slice verdict byte for byte
+              // rather than inheriting the widened predicate.
+              (phase1MemberName(member.name) === null ||
+                ts.isPrivateIdentifier(member.name) ||
+                classElementIsStatic(member)))
           ) {
             if (trackFallbacks) reasons.set(unit.unitId, "class-method");
             continue;
@@ -1302,7 +1312,11 @@ export function planIrCompilationByIdentity(
           (options.projectedClassShapes || options.projectedClassShapesById) &&
           !ts.isConstructorDeclaration(member)
         ) {
-          const descriptorName = member.name ? phase1MemberName(member.name) : null;
+          const descriptorName = ts.isMethodDeclaration(member)
+            ? phase1MethodName(member)
+            : member.name
+              ? phase1MemberName(member.name)
+              : null;
           const descriptorKind = ts.isMethodDeclaration(member)
             ? isStaticMethod
               ? "static"
@@ -1312,6 +1326,7 @@ export function planIrCompilationByIdentity(
               : "setter";
           const exactAccessorMember =
             exactAccessorClass && (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member));
+          const computedMethod = ts.isMethodDeclaration(member) && ts.isComputedPropertyName(member.name);
           const descriptors = exactAccessorMember
             ? exactAccessorDescriptors.get(member as ts.GetAccessorDeclaration | ts.SetAccessorDeclaration)
               ? [exactAccessorDescriptors.get(member as ts.GetAccessorDeclaration | ts.SetAccessorDeclaration)!]
@@ -1322,7 +1337,13 @@ export function planIrCompilationByIdentity(
                   (candidate) =>
                     candidate.name === descriptorName &&
                     (candidate.memberKind ?? "method") === descriptorKind &&
-                    (!nestedClass || candidate.placement?.classId === classId),
+                    (!nestedClass || candidate.placement?.classId === classId) &&
+                    (!computedMethod ||
+                      (candidate.placement?.classId === classId &&
+                        candidate.placement.unitId === unit.unitId &&
+                        candidate.placement.staticClassMember === isStaticMethod &&
+                        candidate.target?.binding.kind === "unit" &&
+                        candidate.target.binding.unitId === unit.unitId)),
                 ) ?? []);
           exactMemberDescriptor = descriptors.length === 1 ? descriptors[0] : undefined;
           if (!exactMemberDescriptor) {

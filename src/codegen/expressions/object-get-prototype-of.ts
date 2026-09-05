@@ -8,11 +8,18 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { emitLazyNativeProtoGet } from "../native-proto.js";
+import {
+  ensureTypedArrayIntrinsicNativeProtoGlue,
+  ensureTypedArrayViewNativeProtoGlue,
+  isTypedArrayViewProtoName,
+} from "../array-object-proto.js";
 import { tryEnsureNativeProtoBrand } from "../property-access.js";
 import { isGlobalBuiltinIdentifier } from "./calls.js";
 import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { integrityVarKey } from "../widened-var-key.js";
+import { objectLiteralHasColonProto } from "../literals.js"; // (#5270 step 2)
+import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
 
 const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
@@ -278,10 +285,91 @@ export function tryCompileEs5GetPrototypeOfValue(
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Error");
   }
 
+  // (#5194 step 1) The TypedArray family, in TWO shapes that the declared-name
+  // map below cannot tell apart — `Uint8Array.prototype` and
+  // `new Uint8Array(0)` both have the TS type `Uint8Array`.
+  //
+  //   `getPrototypeOf(<View>.prototype)` → `%TypedArray%.prototype` (§23.2.7)
+  //   `getPrototypeOf(<view instance>)`  → `<View>.prototype`      (§23.2.5.6)
+  //
+  // The instance arm MUST stay compile-time: a statically typed view lowers to
+  // a packed carrier that several kinds share (`i8_byte` serves Int8Array,
+  // Uint8Array and Uint8ClampedArray; `f64` serves Float64Array AND
+  // `number[]`), so no runtime test can recover the kind. Dynamic views already
+  // resolve at runtime through the `ta-dyn-mop.ts` `__getPrototypeOf` arm, and
+  // both routes land on the same lazily-materialized glue singleton, so the
+  // identity `getPrototypeOf(new Uint8Array(0)) === Uint8Array.prototype` holds
+  // by `ref.eq` either way.
+  if (ctx.standalone || ctx.wasi) {
+    const protoOfName =
+      ts.isPropertyAccessExpression(arg0) && arg0.name.text === "prototype" && ts.isIdentifier(arg0.expression)
+        ? arg0.expression.text
+        : undefined;
+    // (#5194 review F1) `<View>.prototype` only denotes the intrinsic when the
+    // identifier IS the global builtin. Without this gate a program with its own
+    // `class Uint8Array { … }` had `Object.getPrototypeOf(Uint8Array.prototype)`
+    // answer `%TypedArray%.prototype`. Same guard the NativeError arm above uses.
+    if (
+      protoOfName !== undefined &&
+      isTypedArrayViewProtoName(protoOfName) &&
+      ts.isPropertyAccessExpression(arg0) &&
+      ts.isIdentifier(arg0.expression) &&
+      isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
+    ) {
+      const argType = compileExpression(ctx, fctx, arg0);
+      if (argType) fctx.body.push({ op: "drop" });
+      const intrinsicBrand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
+      if (intrinsicBrand !== undefined && emitLazyNativeProtoGet(ctx, fctx, intrinsicBrand)) {
+        return { kind: "externref" };
+      }
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+    // (#5194 review F1) The INSTANCE arm keys on the declared TYPE NAME, and a
+    // user `class Uint8Array { … }` produces exactly the same name — there is no
+    // identifier here to run `isGlobalBuiltinIdentifier` against, so the file's
+    // module-level bindings are the check. Base answered the user class's
+    // prototype correctly; the name-only test regressed it (and minted the whole
+    // TypedArray proto graph into such a program: 405,180 -> 478,540 bytes).
+    const viewName = ctx.oracle.declaredNameOf(arg0) ?? "";
+    if (
+      protoOfName === undefined &&
+      isTypedArrayViewProtoName(viewName) &&
+      !sourceShadowsGlobalName(expr.getSourceFile(), viewName)
+    ) {
+      // (#5194 review F3, DOCUMENTED RESIDUAL — measured, not assumed.) This
+      // fold answers the DECLARED type's prototype, so a SUBCLASS instance in a
+      // base-typed binding (`class Bytes extends Uint8Array {}`;
+      // `const b: Uint8Array = new Bytes(2)`) reports `Uint8Array.prototype`
+      // where the spec says `Bytes.prototype`. Declining the fold for any file
+      // that subclasses the view was tried and REVERTED: it does not move the
+      // work to a better answer, it moves it to a different wrong one — the
+      // runtime arm cannot recover the kind from a statically typed carrier
+      // (`i8_byte` serves Int8/Uint8/Uint8Clamped), so the ORDINARY
+      // `Object.getPrototypeOf(new Uint8Array(1))` in the same file then
+      // answered wrong too (measured: the focused control returned 2). Fixing
+      // this needs a per-binding subclass fact, not a per-file one.
+      const brand = ensureTypedArrayViewNativeProtoGlue(ctx, viewName);
+      if (brand !== undefined) {
+        const argType = compileExpression(ctx, fctx, arg0);
+        if (argType) fctx.body.push({ op: "drop" });
+        if (emitLazyNativeProtoGet(ctx, fctx, brand)) return { kind: "externref" };
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
+    }
+  }
+
   const staticType = ctx.oracle.staticJsTypeOf(arg0);
   if (staticType === "boolean") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Boolean");
   if (staticType === "string") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "String");
   if (staticType === "number") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Number");
+  // (#5269 B-a) §7.1.18 ToObject(symbol) is a Symbol wrapper, whose
+  // [[Prototype]] is `%Symbol.prototype%`. Without this arm the symbol fell to
+  // the declared-name / signature probes below, answered `null`, and every
+  // reflective read off the result (`Symbol.prototype[Symbol.toStringTag]`,
+  // `Object.prototype.toString.call(…)`) then dereferenced a null.
+  if (staticType === "symbol") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Symbol");
 
   const knownPrototypeName = ES5_OBJECT_PROTOTYPES.get(ctx.oracle.declaredNameOf(arg0) ?? "");
   if (knownPrototypeName) {
@@ -293,7 +381,11 @@ export function tryCompileEs5GetPrototypeOfValue(
   if (ts.isArrayLiteralExpression(arg0)) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
   }
-  if (ts.isObjectLiteralExpression(arg0)) {
+  // (#5270 step 2) A colon-form `__proto__` key REPLACES the literal's
+  // [[Prototype]] during evaluation, so folding to `%Object.prototype%` here
+  // would answer the wrong object (`__proto__-value-obj`, `-value-null`). Let
+  // the runtime `__getPrototypeOf` read the field the literal actually wrote.
+  if (ts.isObjectLiteralExpression(arg0) && !objectLiteralHasColonProto(ctx, arg0)) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
   if (ts.isIdentifier(arg0)) {
@@ -304,7 +396,7 @@ export function tryCompileEs5GetPrototypeOfValue(
     if (initializer && ts.isArrayLiteralExpression(initializer)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
     }
-    if (initializer && ts.isObjectLiteralExpression(initializer)) {
+    if (initializer && ts.isObjectLiteralExpression(initializer) && !objectLiteralHasColonProto(ctx, initializer)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
     }
     if (initializer && (ts.isFunctionExpression(initializer) || ts.isArrowFunction(initializer))) {
@@ -365,7 +457,9 @@ function hasProvablyNonNullOrdinaryPrototype(ctx: CodegenContext, expr: ts.Expre
     seen.add(current);
     if (
       isTopLevelThis(current) ||
-      ts.isObjectLiteralExpression(current) ||
+      // (#5270 step 2) `{ __proto__: null }` is an object literal whose
+      // prototype IS null — the one literal shape this fold must not claim.
+      (ts.isObjectLiteralExpression(current) && !objectLiteralHasColonProto(ctx, current)) ||
       ts.isArrayLiteralExpression(current) ||
       ts.isFunctionExpression(current) ||
       ts.isArrowFunction(current)

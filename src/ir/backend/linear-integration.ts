@@ -133,7 +133,20 @@ import { IrInvariantError } from "../outcomes.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
 import { verifyIrFunction } from "../verify.js";
 import { prepareIrRuntimeManifest } from "../intrinsic-support.js";
-import { NUMBER_BOUNDARY_POLICY_DISABLED } from "../runtime-manifest.js";
+import {
+  BOOLEAN_BOUNDARY_POLICY_DISABLED,
+  EXTERN_IS_UNDEFINED_POLICY_DISABLED,
+  GENERATOR_NUMBER_BOX_POLICY_DISABLED,
+  STRING_COMPARE_POLICY_DISABLED,
+  STRING_EQ_POLICY_DISABLED,
+  STRING_LEN_POLICY_DISABLED,
+  STRING_CONCAT_POLICY_DISABLED,
+  STRING_CHAR_CODE_AT_POLICY_DISABLED,
+  STRING_CONCAT_MANY_POLICY_DISABLED,
+  STRING_CONST_POLICY_DISABLED,
+  HOST_CALLBACK_WRAP_POLICY_DISABLED,
+  NUMBER_BOUNDARY_POLICY_DISABLED,
+} from "../runtime-manifest.js";
 import type { TypeConverter } from "./contract.js";
 import { verifyIrBackendLegality } from "./legality.js";
 import { LinearEmitter } from "./linear-emitter.js";
@@ -658,12 +671,28 @@ function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourc
     prepareIrRuntimeManifest({
       functions,
       sourceFile,
-      // (#3526 F1-S1) The linear adapter exposes no f64⇄externref number
-      // boundary: `NUMBER_BOUNDARY_POLICY_DISABLED` resolves both arms to
-      // unsupported, and the backend legality gate independently rejects the
-      // two externref intrinsics, so a linear owner demotes rather than
-      // receiving a provider it cannot lower.
-      policy: { target: "host", backend: "linear", numberBoundary: NUMBER_BOUNDARY_POLICY_DISABLED },
+      // (#3526 F1-S1, F1-S2) The linear adapter exposes no f64⇄externref number
+      // boundary and no i32⇄externref boolean boundary: both DISABLED policies
+      // resolve every arm to unsupported, and the backend legality gate
+      // independently rejects the externref intrinsics (its `intrinsic` arm is
+      // an allowlist), so a linear owner demotes rather than receiving a
+      // provider it cannot lower.
+      policy: {
+        target: "host",
+        backend: "linear",
+        numberBoundary: NUMBER_BOUNDARY_POLICY_DISABLED,
+        booleanBoundary: BOOLEAN_BOUNDARY_POLICY_DISABLED,
+        externIsUndefined: EXTERN_IS_UNDEFINED_POLICY_DISABLED,
+        generatorNumberBox: GENERATOR_NUMBER_BOX_POLICY_DISABLED,
+        stringCompare: STRING_COMPARE_POLICY_DISABLED,
+        stringEq: STRING_EQ_POLICY_DISABLED,
+        stringLen: STRING_LEN_POLICY_DISABLED,
+        stringConcat: STRING_CONCAT_POLICY_DISABLED,
+        stringCharCodeAt: STRING_CHAR_CODE_AT_POLICY_DISABLED,
+        stringConcatMany: STRING_CONCAT_MANY_POLICY_DISABLED,
+        stringConst: STRING_CONST_POLICY_DISABLED,
+        hostCallbackWrap: HOST_CALLBACK_WRAP_POLICY_DISABLED,
+      },
     })?.functions ?? functions
   );
 }
@@ -1532,9 +1561,6 @@ function makeLinearIrResolver(
       return { kind: "i32" };
     },
     stringIsExternref(): boolean {
-      return false;
-    },
-    hasHostBooleanBox(): boolean {
       return false;
     },
     hasHostNumberToString(): boolean {

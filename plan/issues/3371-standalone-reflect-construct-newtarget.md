@@ -1,176 +1,275 @@
 ---
 id: 3371
-title: "standalone: Reflect.construct (with NewTarget) refused — ~160 tests (proto-from-ctor-realm, subclassing) on the #1472 Phase-C refusal path"
-status: done
+title: "standalone: Reflect.construct arbitrary distinct NewTarget still refuses 33 ES2015 rows"
+status: blocked
+blocked_on: [2046]
 created: 2026-07-17
-updated: 2026-07-21
-completed: 2026-07-20
-sprint: 73
-priority: medium
+updated: 2026-09-01
+reopened: 2026-09-01
+sprint: current
+priority: high
 horizon: l
 feasibility: hard
 model: fable
-task_type: feature
+task_type: bugfix
 area: codegen, runtime
 language_feature: reflect, constructors, prototype chain
+es_edition: ES2015
 goal: standalone-mode
 umbrella: 1781
-related: [1781, 1905, 2046, 3240, 1472]
-origin: "2026-07-17 /harvest-errors. Baselines run 20260717-151504 (gitHash 0069df37, 32,139 pass), standalone lane test262-standalone-current.jsonl."
-loc-budget-allow:
-  - src/codegen/expressions/call-namespace-static.ts
-  - src/codegen/property-access-dispatch.ts
-  - src/codegen/expressions/call-identifier.ts
-  - src/codegen/index.ts
-  - src/codegen/dataview-native.ts
-  - src/codegen/expressions/identifiers.ts
-oracle-ratchet-allow:
-  - src/codegen/expressions/call-namespace-static.ts
-  - src/codegen/expressions/identifiers.ts
-  - src/codegen/property-access-dispatch.ts
+related: [1472, 1781, 1905, 2026, 2046, 2618, 3240, 4196, 4661, 5138, 5140, 5143, 5150, 5153, 5154, 5156]
+origin: "2026-09-01 immutable f841 standalone census; reopened because the prior done closure still refuses arbitrary distinct NewTarget."
 ---
 
-# #3371 — Standalone `Reflect.construct` (with NewTarget) refused
+# #3371 — standalone Reflect.construct with arbitrary distinct NewTarget
 
-## Problem
+## Reopen decision
 
-`--target standalone` emits a codegen refusal for every `Reflect.construct`
-call:
+The prior implementation and closure are stale. On the fresh immutable census
+below, 33 ES2015 paths end in the same compile error; this issue is therefore
+**reopened** and must not be treated as done. This planning-only audit makes no
+production or Test262-source change, creates no GitHub issue, and does not run a
+compiler lane.
 
-```text
-Codegen error: Reflect.construct not supported in standalone mode (#1472 Phase C).
-```
+The blocking state is an ownership gate, not a claim that #2046 is the semantic
+prerequisite: active local #2046 currently owns
+src/codegen/expressions/call-namespace-static.ts. Rebase and audit after it
+lands before taking any source edit in that file.
 
-The original `20260717-151504` bucketing attributed **~160 direct failures** to
-this refusal (0 in the default/JS-host lane — the host path handles it, so this
-is a pure standalone gap). The 2026-07-20 preliminary original-harness run
-showed the larger dependency blast: **813 standalone failures**, of which
-**637 corpus tests include `isConstructor.js`**. That helper performs an honest
-three-argument `Reflect.construct(function () {}, [], value)` probe, so the
-single refusal blocks far more tests once the untouched Test262 harness runs.
+## Immutable evidence
 
-The refusal was left deliberately out of scope by **#1905** (native
-`Reflect.get/set/has/deleteProperty`), which states:
+| Item | Value |
+| --- | --- |
+| Source baseline | f841cddc0f0ea665b63700d9944a4372a34a8b57 |
+| Baselines commit | 8a39bd1d4ddf200f8db3751c878ece02aa8688fe |
+| Census artifact | /private/tmp/js2-baseline-census-f841cddc-r1/.test262-cache/test262-standalone-current.jsonl |
+| Artifact SHA-256 | 4426cbf6f305ab4a092468b201cc5854d4470b5fe87edf2fe47ba0195a6e8cbf |
+| Edition mapping | /private/tmp/js2-baseline-census-f841cddc-r1/.test262-cache/es2015-per-file-editions.json |
+| Exact result | 33 ES2015 paths, all compile_error |
 
-> `Reflect.apply` and `Reflect.construct` remain separate call/constructor
-> machinery and are **out of scope here** … `Reflect.construct` remain on the
-> standalone refusal path with the existing `#1472 Phase C` cite.
+The raw signature occurs in 64 all-edition census rows. This issue deliberately
+uses only the 33 rows whose path is explicitly in the ES2015 mapping; the other
+31 are not silently folded into this scope.
 
-Since #1472 is `done`, the refusal self-cites a closed issue and there is **no
-dedicated tracking issue** for actually implementing `Reflect.construct` in
-standalone — this issue fills that gap.
+Every listed row reports:
 
-## Affected tests (by category, 160 total)
+~~~
+Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+~~~
 
-| Count | Category                                                                                 |
-| ----- | ---------------------------------------------------------------------------------------- |
-| 47    | built-ins/TypedArrayConstructors (`proto-from-ctor-realm`, `use-custom-proto-if-object`) |
-| 14    | built-ins/DataView                                                                       |
-| 11    | built-ins/Proxy                                                                          |
-| 8     | built-ins/Function                                                                       |
-| 6     | built-ins/NativeErrors (`proto-from-ctor-realm`)                                         |
-| 6     | built-ins/Reflect                                                                        |
-| 6     | built-ins/ArrayBuffer                                                                    |
-| 6     | built-ins/SharedArrayBuffer                                                              |
-| 4     | built-ins/Date (`subclassing`)                                                           |
-| 4     | built-ins/AsyncDisposableStack                                                           |
-| …     | (Boolean/Number/String/Promise/Map/Set proto-from-ctor tails)                            |
+The refusal is in src/codegen/expressions/call-namespace-static.ts:1620-1627.
+The positive control remains healthy in the same census:
+test/built-ins/Reflect/construct/return-without-newtarget-argument.js
+(pass, reached and executed). Preserve that control while repairing the
+distinct-NewTarget cases.
 
-Sample files:
+## Current mechanism and defect boundary
 
-- `built-ins/TypedArrayConstructors/ctors/buffer-arg/proto-from-ctor-realm.js`
-- `built-ins/TypedArrayConstructors/ctors/buffer-arg/use-default-proto-if-custom-proto-is-not-object.js`
-- `built-ins/DataView/custom-proto-access-throws.js`
-- `built-ins/Date/subclassing.js`
-- `built-ins/NativeErrors/URIError/proto-from-ctor-realm.js`
+The Reflect.construct namespace-static lowering currently recognizes an
+array-literal argument list, builds a NewExpression, and asks
+assignedNewTargetPrototype() to find a syntactic prior
+Identifier.prototype = … assignment. If the scan cannot statically resolve one,
+it emits the refusal above. It is not a runtime Get(newTarget, "prototype"), so
+it cannot faithfully cover ordinary functions/classes, implicit prototypes,
+built-ins, bound functions, proxies, accessors, abrupt completion, realm
+behavior, or target-specific ordering.
 
-## Root cause
+There are already narrow native-view hooks (constructProto for DataView and
+dynamic typed arrays) and the constructor classifier from completed #4661.
+They are inputs to the eventual fix, not evidence that generic arbitrary
+NewTarget is implemented. Do not replace the runtime contract with a broader
+source-text scan.
 
-The dominant pattern is `Reflect.construct(Target, argsList, newTarget)` used to
-exercise §10.1.13 (`GetPrototypeFromConstructor` / `OrdinaryCreateFromConstructor`)
-— the instance's `[[Prototype]]` must come from `newTarget.prototype`, not
-`Target.prototype`. Standalone codegen has no lowering for:
+## Exact ES2015 refusal cluster (33)
 
-1. The `Reflect.construct` call site itself
-   (`src/codegen/expressions/call-namespace-static.ts`, the refusal gate that
-   #1905/#2046 kept fail-loud for construct).
-2. Threading a distinct `newTarget` through native `__new_<Parent>` construction
-   so the prototype is selected from `newTarget.prototype`.
+The paths below are the complete immutable ES2015 intersection. They are grouped
+by the target / NewTarget carrier that determines the prerequisite; the list is
+also the future isolated acceptance set.
 
-## Relationship to existing work
+### View target and accessor ordering — 9
 
-- **#3240** (ready) — native `__new_<Parent>` subclass constructors. That gives
-  the construction substrate but is driven by the `class X extends Parent`/`super()`
-  path, not the explicit `Reflect.construct(...)` API with an arbitrary NewTarget.
-  This issue should build on #3240's native ctors and add the NewTarget-driven
-  prototype-selection path plus the `Reflect.construct` call lowering.
-- **#2046** (in-progress) — Reflect get/set/deleteProperty spec fixes; keeps
-  construct fail-loud. This issue removes that refusal.
-- **#1472 Phase C** (done) — the umbrella whose cite the refusal string still
-  carries; update the cite to this issue when the refusal is retired.
+DataView target with a bound-function accessor NewTarget.prototype:
 
-## Implementation notes
+1. test/built-ins/DataView/byteOffset-validated-against-initial-buffer-length.js
+2. test/built-ins/DataView/custom-proto-access-detaches-buffer.js
+3. test/built-ins/DataView/custom-proto-access-throws.js
 
-The implementation deliberately reuses `compileNewExpression` for construction
-instead of duplicating constructor argument and native carrier semantics. Array
-literal argument lists are synthesized into a `new Target(...args)` expression;
-unresolved array-like and arbitrary carrier shapes remain fail-loud under
-**#3371**.
+Dynamic typed-array target with a bound-function accessor NewTarget:
 
-Ordinary functions use a nominal constructible closure subtype only in
-host-free targets, while arrows and method closures keep the existing
-callable-only wrapper. This gives the host-free `__reflect_is_constructor`
-helper a real runtime discriminator and keeps the Test262 probe honest:
-ordinary functions return true, arrows and `Date.prototype.getYear` return
-false. The JS-host lane keeps its established wrapper ABI; applying the marker
-there changed closure nominal types unnecessarily and caused 29 illegal-cast
-transitions in the merge-group Test262 run.
+4. test/built-ins/TypedArrayConstructors/ctors/length-arg/custom-proto-access-throws.js
+5. test/built-ins/TypedArrayConstructors/ctors/object-arg/custom-proto-access-throws.js
+6. test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/custom-proto-access-throws.js
+7. test/built-ins/TypedArrayConstructors/ctors/no-args/custom-proto-access-throws.js
+8. test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/throw-type-error-before-custom-proto-access.js
+9. test/built-ins/TypedArrayConstructors/ctors/buffer-arg/custom-proto-access-throws.js
 
-DataView and runtime-kinded TypedArray views gained an append-only
-`constructProto` carrier slot. A distinct object-valued `NewTarget.prototype`
-is stored there; a primitive/null prototype leaves the slot null and selects the
-target's intrinsic prototype. Their existing `Object.getPrototypeOf` native MOP
-arms read this override before the intrinsic singleton. The original realm shim
-aliases the current global, so `other[TA.name].prototype` is lowered by the
-TypedArray constructor kind to the same per-kind intrinsic singleton.
+These require real getter/abrupt and detachment ordering; row 8 additionally
+requires the argument TypeError before custom-prototype access. Coordinate with
+#5138 (in review) and #5150 / draft PR #5224 before touching the view carriers.
 
-Unblocking the untouched TypedArray representative exposed a separate call-ABI
-fault: its JSDoc callback typedef has two formals while the actual callback has
-one. Callable-parameter dispatch now pre-registers later callback wrappers,
-accepts shorter runtime signatures, and marshals only that signature's formal
-prefix, matching JavaScript's ignored-surplus-arguments rule.
+### Ordinary / class target — 4
 
-## Verification (2026-07-20)
+10. test/built-ins/Reflect/construct/return-with-newtarget-argument.js
+11. test/language/expressions/new.target/value-via-reflect-construct.js
+12. test/language/expressions/super/call-construct-invocation.js
+13. test/built-ins/Object/subclass-object-arg.js
 
-- Untouched original-harness representatives pass in standalone mode:
-  `annexB/built-ins/Date/prototype/getYear/not-a-constructor.js`,
-  `built-ins/TypedArrayConstructors/ctors/buffer-arg/proto-from-ctor-realm.js`,
-  and `built-ins/DataView/custom-proto-if-object-is-used.js`.
-- Focused tests cover two-argument construction, the honest IsConstructor
-  result matrix, DataView custom prototype selection, all nine dynamic
-  TypedArray intrinsic prototypes, the realm `Function` NewTarget, and the
-  shorter-formal harness callback.
-- Every successful standalone probe validates as Wasm and has zero imports.
-- Unsupported args-list shapes refuse with **#3371** and no `#1472` cite.
+This group covers a function with Array as NewTarget, ordinary custom NewTarget,
+a class/super invocation, and Object with a class NewTarget. Its immediate
+dependencies are the ownership/status audits for #2026 (dynamic class-as-value),
+#5153 (super), and #5154 (new.target).
 
-## Merge-queue follow-up (2026-07-21)
+### Native constructor carrier and ordering — 6
 
-- Bisected the 29 host `illegal_cast` transitions to the constructible-wrapper
-  change in this implementation: 26 existing async/dynamic-import failures had
-  become uncatchable traps and three Annex B function-block-scoping tests had
-  regressed from pass to trap.
-- Scoped constructor-marker wrappers to host-free targets. The exact 29-path
-  cluster now has zero `illegal_cast` rows; all three Annex B regressions pass,
-  while the existing non-pass rows return to ordinary runtime-error categories.
-- The complete focused #3371 suite remains green (15/15), including the three
-  standalone original-harness representatives and host ABI regression probes.
+14. test/built-ins/Date/subclassing.js
+15. test/built-ins/Error/prototype/stack/getter-foreign-new-target.js
+16. test/built-ins/ArrayBuffer/data-allocation-after-object-creation.js
+17. test/built-ins/ArrayBuffer/prototype-from-newtarget.js
+18. test/built-ins/Promise/get-prototype-abrupt.js
+19. test/built-ins/Promise/get-prototype-abrupt-executor-not-callable.js
 
-## Acceptance Criteria
+These cover Date, native Error, ArrayBuffer, and Promise. They must preserve
+each constructor's own allocation / validation order, including the
+non-callable-executor-before-prototype-getter requirement in row 19. Coordinate
+with #3240 (faithful native constructors), #5143 (Promise), #5150 (buffers),
+and #5156 (function/error); do not assume the ordinary slice can implement
+them.
 
-- [x] Representative `proto-from-ctor-realm` / custom-prototype TypedArray and
-      DataView tests compile and run under `target: "standalone"`.
-- [x] A distinct object-valued `NewTarget.prototype` is selected for supported
-      native carriers; primitive prototypes fall back to the target intrinsic.
-- [x] The original-harness Annex B IsConstructor probe observes ordinary versus
-      non-constructible callable values honestly.
-- [x] Any residual refusal cites **#3371**, not the closed #1472.
+### Proxy target or Proxy NewTarget — 10
+
+20. test/built-ins/Proxy/construct/call-parameters-new-target.js
+21. test/built-ins/Proxy/get-fn-realm.js
+22. test/built-ins/Proxy/construct/trap-is-undefined.js
+23. test/built-ins/Proxy/construct/trap-is-null.js
+24. test/built-ins/Proxy/get-fn-realm-recursive.js
+25. test/built-ins/Proxy/construct/trap-is-null-target-is-proxy.js
+26. test/built-ins/Proxy/construct/trap-is-undefined-proto-from-cross-realm-newtarget.js
+27. test/built-ins/Proxy/construct/trap-is-undefined-target-is-proxy.js
+28. test/built-ins/Proxy/construct/trap-is-missing-target-is-proxy.js
+29. test/built-ins/Proxy/construct/trap-is-undefined-no-property.js
+
+Keep this as a separate carrier slice. It needs proxy [[Construct]], trap result
+and forwarding semantics, recursive / cross-realm fallback behavior. #5140 (in
+review) identifies its residual Proxy cluster as out of scope, while #2618 is
+the host Proxy construct-path issue and is blocked on #56. Do not claim these as
+a generic Reflect.construct follow-up without coordinating those owners.
+
+### Bound-function carrier — 4
+
+30. test/built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget-bound.js
+31. test/built-ins/Function/prototype/bind/get-fn-realm-recursive.js
+32. test/built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget.js
+33. test/built-ins/Function/prototype/bind/get-fn-realm.js
+
+Completed #4196 supplies the bound [[Construct]] carrier (construct-bound.ts).
+This slice must compose its actual NewTarget forwarding and realm fallback; it
+must not reimplement or bypass that carrier.
+
+## Ownership and overlap audit
+
+| Scope | State at audit | Required treatment |
+| --- | --- | --- |
+| Local #3371 worktrees | This planning worktree only | No implementation has been started here. |
+| Local #2046 worktree | Active and dirty on codex/2046-reflect-set-receiver-f841-20260901 | It edits call-namespace-static.ts; wait for its landing and re-audit before source edits. |
+| #2046 source overlap | Its current diff is an import plus the Reflect.set arm around lines 896-935; #3371 refusal is around lines 1620-1627 | Semantically separate today, but a shared-file lease remains a merge/conflict risk. |
+| Open remote PR mentioning #3371 | None found | This does not reopen the issue automatically; the local plan is the authoritative handoff. |
+| Open remote PR touching call-namespace-static.ts | None found | Re-check immediately before implementation. |
+| Draft PR #5224 | WIP ES2015 buffers wave 1; changes DataView/buffer support but not call-namespace-static.ts | It does not block the ordinary carrier directly, but it owns adjacent view/buffer substrate for rows 1-9 and 16-17. |
+
+Relevant issue states at this audit: #4661 done; #2026 in progress; #4196 and
+#3240 ready; #5138, #5140, #5143, #5153, #5154, and #5156 in review; #5150 is
+ready with its adjacent WIP #5224. Re-check both issue and worktree ownership,
+not only labels, at the start of each implementation slice.
+
+## Implementation slices and sequencing
+
+Do not make a single patch for all 33 paths.
+
+1. **Release the shared-file gate.** Wait for #2046 to land. Rebase from the
+   then-current upstream, inspect the current ownership of
+   call-namespace-static.ts, and verify whether #2026/#5153/#5154 changed the
+   ordinary construction interfaces. This plan authorizes no source edit until
+   that check succeeds.
+
+2. **Ordinary/class runtime-NewTarget contract (rows 10-13).** This is the
+   first candidate post-#2046 slice. For the narrow ordinary function, class,
+   and Object paths, evaluate target, arguments, and NewTarget once in source
+   order; reuse #4661's IsConstructor machinery; perform the real prototype
+   operation rather than source scanning; and preserve returned objects, fallback
+   behavior, new.target, and super semantics. Exclude native views/buffers,
+   native Promise/Error/Date, bound functions, and proxies from this patch.
+
+3. **View getter / abrupt-order slice (rows 1-9).** Extend the existing
+   DataView and dynamic-typed-array construction-prototype hooks only after
+   coordination with #5138 and #5150/#5224. Preserve each constructor's
+   target-specific validation, detachment, and getter order; a static prototype
+   assignment is not an acceptable substitute.
+
+4. **Native constructor slice (rows 14-19).** Implement per-target
+   GetPrototypeFromConstructor-equivalent ordering only with the owners of
+   #3240, #5143, #5150, and #5156. Keep executor/argument validation and
+   allocation ordering observable before/after the prototype operation exactly
+   as required by each constructor.
+
+5. **Bound carrier slice (rows 30-33).** Integrate with #4196's bound construct
+   path, preserving forwarding and realm behavior instead of adding a second
+   bound-function model.
+
+6. **Proxy carrier slice (rows 20-29).** Wait for a coordinated #5140 and
+   #2618/#56 direction. Preserve trap behavior, recursive/cross-realm fallback,
+   target/newTarget forwarding, and invariant checking in the Proxy construct
+   implementation rather than papering over it in the namespace-static caller.
+
+### Safe first slice after #2046?
+
+**Yes, conditionally.** After #2046 lands and the prescribed fresh ownership
+audit succeeds, the four-row ordinary/class slice is non-overlapping with the
+active #2046 Reflect.set change and does not require the #5224 view/buffer
+files. It is not blanket authorization for all #3371 work: it must still honor
+any newly landed #2026/#5153/#5154 interfaces, and all view, native, bound, and
+Proxy groups remain separately owned.
+
+## Future acceptance and regression gate
+
+Run these only in the later implementation worktree, after acquiring ownership;
+they were intentionally **not** run for this planning audit.
+
+1. Re-fetch the current standalone baseline with the normal project workflow
+   (do not reuse a stale cache) and confirm all 33 paths above are pass, not
+   merely free of this one error signature. Confirm the positive control
+   test/built-ins/Reflect/construct/return-without-newtarget-argument.js
+   remains pass.
+
+2. Put the exact 33 paths above, with the leading test/ removed, in
+   .tmp/3371-es2015-paths.txt, then run the isolated corpus bucket:
+
+   ~~~sh
+   pnpm exec tsx scripts/run-test262-paths.mts \
+     --isolate .tmp/3371-es2015-paths.txt --standalone
+   ~~~
+
+   The isolate is required so a failure cannot be hidden by realm contamination.
+
+3. Run focused unit/host guards (using the repository's root-installed
+   dependencies, not a fresh worktree install):
+
+   ~~~sh
+   PATH="/Users/thomas/Code/js2/node_modules/.bin:$PATH" \
+     pnpm exec vitest run \
+       tests/issue-3371.test.ts \
+       tests/issue-4394-reflect-construct-newtarget.test.ts
+   ~~~
+
+4. Preserve the unit suite's zero-import / valid-Wasm and host ABI assertions.
+   Add focused regressions for any newly implemented carrier, including
+   evaluation order and abrupt completion; do not rebaseline until the true
+   result is understood.
+
+## Handoff
+
+The next owner should begin with slice 1's post-#2046 audit, then implement only
+the four ordinary/class paths if the interfaces are still unowned. Record a fresh
+precise result for all 33 paths after each slice, retain the no-distinct-
+NewTarget positive control, and leave each carrier group as a separate
+coordination decision. This document is the corrected reopen record; it does
+not certify the historical closure or authorize a broad source rewrite.

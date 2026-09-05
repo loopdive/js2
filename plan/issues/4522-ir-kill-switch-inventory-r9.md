@@ -279,3 +279,135 @@ tests, scripts, and plans have a zero census for the retired Math family.
 This checkpoint does not retire the mixed-primitive rollback or any global,
 string-builder, async, object-shape, or multi-prepared R9 switch. Those remain
 live inventory entries until their separately owned policy work lands.
+
+## 2026-09-03 — cross-checked against `src/` for the first time
+
+#3518's R9 row depends on this inventory being complete: R9 removes the escape
+hatches, and a hatch that is not listed is a hatch that survives the flip. That
+check had never been run. It has now been:
+
+```bash
+grep -rohE 'JS2WASM_[A-Z0-9_]+' src/ --include=*.ts | sort -u   # 245
+# vs the vars named in this file's table                        #  24
+```
+
+**No stale rows** — all 24 tabled vars still exist in `src/`. That half is
+clean.
+
+**221 are in `src/` and absent from the table.** Most are legitimately out of
+scope: 54 are `JS2WASM_TEST_*` injectors and 66 are debug/telemetry
+(`*_DEBUG`, `*_STATS`, `TRACE`, `CENSUS`, `DUMP`, `_LOG`, `POISON`, `_DIAG`).
+Those are not R9's business — though the `JS2WASM_TEST_POISON_DIRECT_*_BODY`
+family becomes meaningless once the direct front end is deleted, so they are
+**R10** cleanup and should be named as such somewhere.
+
+**What is left is the real gap.** Filtering the remainder to names suggesting a
+route/admission/ABI gate leaves seven, and three were verified by reading the
+code rather than inferred from the name:
+
+| var | what it actually gates | site |
+| --- | --- | --- |
+| `JS2WASM_ENABLE_MODULE_INIT_DISCOVERY_STATIC` | the #5480 module-init pass-1 skip **seam** — a named `DISCOVERY_STATIC_ENABLE_SEAM` constant | `declarations/module-init-closure-prelift.ts:132` |
+| `JS2WASM_FIXED_ARITY_HOST_CALLS` | `=== "0"` selects **`legacyArrayAbi`**; also drives the fixed-arity host-call path | `closure-exports.ts:1280`, `expressions/host-call-fallback.ts:20` |
+| `JS2WASM_STRICT_FALLBACKS` | strictness of the fallback classifier | `fallback-telemetry.ts:87` |
+
+The remaining five have since been read too, and four of them are rollback
+hatches as well — **two of which the source itself calls a kill-switch**:
+
+| var | what it actually gates | site |
+| --- | --- | --- |
+| `JS2WASM_DIRECT_CALLS` | *"the `JS2WASM_DIRECT_CALLS=0` **kill-switch**, which keeps the S2 …"* — the comment's own words | `typed-this.ts:303,323` |
+| `JS2WASM_PINNED_THIS_DIRECT_CALLS` | `=== "0"` returns `undefined`, disabling the pinned-`this` direct-call path | `typed-this.ts:1730` |
+| `JS2WASM_NUMERIC_ADMISSION` | `=0` / `off` / empty *"restores the …"* prior behaviour — a rollback | `analysis/mixed-assignment-carrier.ts:301,308` |
+| `JS2WASM_PROXY_MODULE_ESCAPE_GATE` | `!== "0"` — an **escape gate**, disableable | `declarations.ts:2540` |
+
+The fifth, `JS2WASM_LINEAR_IR_COVERAGE`, is **not** a hatch: it is opt-in
+(`=== "1"`) coverage instrumentation in `ir/backend/linear-ir-coverage.ts:606`,
+so it belongs with the telemetry family and is correctly out of R9's scope.
+
+**Total: seven verified route/rollback hatches missing from this inventory**,
+and two of the seven are labelled "kill-switch" in the very source this table
+exists to inventory.
+
+**`JS2WASM_FIXED_ARITY_HOST_CALLS` is the one to look at first.** It selects a
+path the source itself calls *legacy*, it is absent from an inventory whose
+purpose is enumerating what R9 retires, and #3526's F3-S2 plan independently
+flagged it as needing a decision ("freeze it as a record axis, or retire the
+knob first — a #3520/#4397 host-import-policy question"). Two separate lines of
+work reached it and neither found it here.
+
+**Consequence for R9.** Its scope is larger than this table by **seven verified
+hatches** — not an estimate; each was read at the site cited above. Before the flip is planned,
+either extend the table to cover every `JS2WASM_*` that can route work away from
+the IR — with the `TEST_`/debug families explicitly excluded *in writing*, so the
+exclusion is a decision rather than an omission — or state that the table covers
+only a named subset and say which.
+
+Method note: the filter is a name heuristic over 221 vars, so it can
+under-report — a var that gates a route without saying so in its name would not
+surface, and nothing here rules that out. All seven rows above were read at
+their sites; what is unbounded is what the heuristic never proposed.
+
+## 2026-09-03 — seven hatches absent from the inventory, each read at its site
+
+The inventory had never been cross-checked against the source it inventories.
+Doing that: **245 `JS2WASM_*` reads in `src/`**; the table above names **24**.
+No row is stale — every one still exists. But seven route/rollback hatches are
+missing, and **R9 removes the escape hatches, so one that is not listed survives
+the flip.**
+
+Each was read at its site, not inferred from its name:
+
+| var | default | site | what the off-value does |
+| --- | --- | --- | --- |
+| `JS2WASM_DIRECT_CALLS` | on | `codegen/typed-this.ts:303,323,768` | `=0` "disables the whole slice (call sites decline before any reservation, so the module is pre-S3 byte-for-byte)" — the file calls it a **kill-switch** twice |
+| `JS2WASM_PINNED_THIS_DIRECT_CALLS` | on | `codegen/typed-this.ts:1730` | `=0` returns `undefined` from the pinned-`this` direct-call path |
+| `JS2WASM_FIXED_ARITY_HOST_CALLS` | on | `codegen/expressions/host-call-fallback.ts:20`, `codegen/closure-exports.ts:1280` | `=== "0"` selects **`legacyArrayAbi`** for the host-call boundary |
+| `JS2WASM_ENABLE_MODULE_INIT_DISCOVERY_STATIC` | off | `codegen/declarations/module-init-closure-prelift.ts:132` (`DISCOVERY_STATIC_ENABLE_SEAM`) | gates #5480's pass-1 module-init discovery skip |
+| `JS2WASM_NUMERIC_ADMISSION` | on | `codegen/analysis/mixed-assignment-carrier.ts:301,308` | `=0`/`off`/empty "restores the" prior mixed-assignment carrier behaviour |
+| `JS2WASM_PROXY_MODULE_ESCAPE_GATE` | on | `codegen/declarations.ts:2560` | `!== "0"`, so `=0` turns the proxy-module escape gate off |
+| `JS2WASM_STRICT_FALLBACKS` | on in CI | `codegen/fallback-telemetry.ts:81,87` | strictness of the fallback classifier; also implied by `CI`, `NODE_ENV=test`, `VITEST` |
+
+### Classification: deliberately incomplete, and why that is the right output
+
+Only two of the seven can be classified from the site alone against this
+table's own criterion (its `retire-at-R9` rows all *restore direct-first
+ownership* or *route a body to the legacy front end*):
+
+- **`JS2WASM_STRICT_FALLBACKS` — retire-at-R9, or rather subsumed by it.** R9
+  *is* "an IR-path failure stops demoting silently," so a knob controlling how
+  strictly fallbacks are classified cannot outlive it. Note it is already
+  effectively on in CI, which means the R9 flip changes less here than the
+  default suggests.
+- **`JS2WASM_ENABLE_MODULE_INIT_DISCOVERY_STATIC` — retire-at-R9**, same shape
+  as the `JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER` row already in the table:
+  a default-off pre-default gate on a module-init route.
+
+The other five sit on an axis this table does not resolve, and **guessing would
+be worse than leaving them open.** `JS2WASM_DIRECT_CALLS` and its pinned-`this`
+sibling gate *devirtualization inside `src/codegen/`* — which is **backend
+lowering**, the axis `docs/architecture/codegen-axes.md` says explicitly stays
+(WasmGC vs linear is a target choice, not something IR replaces). By that
+reading they are not R9's to remove at all. But they are also the two the source
+itself labels "kill-switch", and `JS2WASM_FIXED_ARITY_HOST_CALLS` literally
+selects a variable named `legacyArrayAbi` — so a reader scanning for legacy
+escape hatches will find them and reasonably expect them here.
+
+That tension is the finding. **The five need the axis call from whoever owns
+this table**, and the two candidate answers have opposite consequences:
+
+- *front-end axis* ⇒ they are R9 debt and the retire-at-R9 population is 16, not 14;
+- *backend axis* ⇒ they are permanent and the table should say so explicitly,
+  because their absence is currently indistinguishable from an oversight — which
+  is exactly how this cross-check came to be needed.
+
+Either way the row belongs in the table. An inventory that omits a hatch because
+its classification is unsettled fails at the one job it has.
+
+### Also checked, and correctly out of scope
+
+`JS2WASM_LINEAR_IR_COVERAGE` — opt-in coverage instrumentation, not a route
+gate. The `TEST_*` / debug families (~120 vars) are out of scope as a class,
+with one exception worth carrying forward: **`TEST_POISON_DIRECT_*_BODY`
+becomes meaningless once the direct front end is deleted**, so it is R10
+cleanup, not R9.

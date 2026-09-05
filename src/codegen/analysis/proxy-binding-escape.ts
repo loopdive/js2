@@ -1,12 +1,25 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { forEachChild, ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
+import { tracesToProxyConstructorValue } from "../proxy-value-provenance.js"; // (#5196 R3-0)
 export { variableStatementContainsPromiseSubclass } from "../expressions/promise-subclass.js";
 
-/** The two direct initializer shapes whose result carrier is Proxy-owned. */
-export function isDirectProxyConstruction(expression: ts.Expression): boolean {
+/**
+ * The direct initializer shapes whose result carrier is Proxy-owned.
+ *
+ * (#5196 R3-0) With a `ctx`, `new <Proxy-constructor value>(t, h)` counts too —
+ * `var OProxy = $262.createRealm().global.Proxy; var p = new OProxy(t, h)`
+ * produces exactly the same `$Proxy` carrier as `new Proxy(t, h)`, so the
+ * binding must take the same open externref storage. Without it the closed
+ * struct slot splits the binding from the carrier and later MOP operations on
+ * the binding (`Object.getOwnPropertyDescriptor(p, k)`, `delete p.k`) miss the
+ * proxy. The `ctx`-less overload keeps the pre-#5196 syntactic answer for
+ * callers that have no context to query the oracle with.
+ */
+export function isDirectProxyConstruction(expression: ts.Expression, ctx?: CodegenContext): boolean {
   if (ts.isNewExpression(expression)) {
-    return ts.isIdentifier(expression.expression) && expression.expression.text === "Proxy";
+    if (ts.isIdentifier(expression.expression) && expression.expression.text === "Proxy") return true;
+    return ctx !== undefined && tracesToProxyConstructorValue(ctx, expression.expression);
   }
   return (
     ts.isCallExpression(expression) &&
@@ -292,7 +305,7 @@ export function proxyBindingNeedsExternref(ctx: CodegenContext, declaration: ts.
   const target = proxyBindingIsTarget(ctx, declaration);
   const result =
     declaration.initializer !== undefined &&
-    isDirectProxyConstruction(declaration.initializer) &&
+    isDirectProxyConstruction(declaration.initializer, ctx) &&
     !proxyBindingEscapesToCall(ctx, declaration);
   if (target || result) ctx.externrefAccessorVars.add(declaration.name.text);
   return target || result;

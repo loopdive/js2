@@ -24,7 +24,8 @@ import {
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
-import { rollbackSpeculative } from "../context/speculative.js";
+import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
+import { emitLiveCollectionIterRec } from "../map-runtime.js"; // (#5267 R3-1a)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
 import {
@@ -76,6 +77,7 @@ import { compileCallDispatchTail, tryEmitStoredMemberClosureCall } from "./store
 import { classMemberFuncKey } from "../class-member-keys.js";
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
+import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; // (#5195 F1/F3)
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
 import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
 import { tryDetachedBuiltinPrototypeNullishThisThrow } from "../builtin-prototype-brand.js";
@@ -86,6 +88,7 @@ import {
   compileConditionalCallee,
   compileFunctionBind,
   compileIIFE,
+  elemAccessReceiverClassName,
   elemAccessReceiverIsPlainObject,
   elemAccessReceiverIsUserClass,
   emitBoundFunctionCall,
@@ -760,6 +763,48 @@ export function compileTailDispatch(
         // already native; this closes the `[Symbol.iterator]()` gap. Host/gc mode
         // keeps the existing `__iterator` bridge (byte-inert). Async iterator and
         // non-array receivers fall through unchanged.
+        // (#5267 R3-1a) Standalone/WASI: `Map.prototype[@@iterator]` IS
+        // `Map.prototype.entries` and `Set.prototype[@@iterator]` IS
+        // `Set.prototype.values` (§24.1.3.12 / §24.2.3.11) — the SAME live
+        // `$__IterRec` cursor, not a separate producer. Routing a Map/Set
+        // receiver through the dynamic `__iterator` ladder produced a record
+        // whose `.next()` answered `null`; emit the live record directly so
+        // `map[Symbol.iterator]().next()` is by construction what
+        // `map.entries().next()` is.
+        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && ctx.nativeStrings) {
+          const recvSymName = receiverType.getSymbol()?.name;
+          if (recvSymName === "Map" || recvSymName === "Set") {
+            const isSet = recvSymName === "Set";
+            // Confirm the receiver genuinely lowers to the native `$Map`
+            // struct without leaving code behind (#1919 transactional probe).
+            const snap = snapshotSpeculative(ctx, fctx);
+            const probeType = compileExpression(ctx, fctx, elemAccess.expression);
+            rollbackSpeculative(ctx, fctx, snap);
+            if (
+              probeType &&
+              (probeType.kind === "ref" || probeType.kind === "ref_null") &&
+              probeType.typeIdx === ctx.mapTypeIdx &&
+              ctx.mapTypeIdx >= 0
+            ) {
+              const live = emitLiveCollectionIterRec(
+                ctx,
+                fctx,
+                elemAccess.expression,
+                isSet ? "values" : "entries",
+                isSet,
+              );
+              if (live !== undefined && live !== null && live !== VOID_RESULT) {
+                // Iterator methods take no arguments; evaluate extras for
+                // side effects only (the record is already on the stack).
+                for (const arg of expr.arguments) {
+                  const argType = compileExpression(ctx, fctx, arg);
+                  if (argType) fctx.body.push({ op: "drop" });
+                }
+                return live as ValType;
+              }
+            }
+          }
+        }
         if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
           // (#5147 note) This SNAPSHOT-vec result is why `.next()` on
           // `[1,2][Symbol.iterator]()` still answers null: a vec has no cursor.
@@ -1458,6 +1503,18 @@ export function compileTailDispatch(
       // closure dispatch. The runtime
       // ref.test guards make this safe for a non-closure field value (the
       // default arm reproduces the historical `ref.null.extern`).
+      // (#5195 F1/F3) A class whose hierarchy carries a member installed under a
+      // RUNTIME key (`class C { [ID(2)]() {…} }`) takes the runtime member
+      // dispatch instead: that member has no source-spellable name, so nothing
+      // here can match it, and `__extern_method_call` is the only lowering that
+      // both resolves it through the prototype chain at runtime and binds the
+      // receiver. Placed BEFORE the field arm because a class with such a
+      // member may also have a closure-valued field, and the runtime dispatch
+      // serves that shape correctly too.
+      {
+        const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
+        if (classDyn !== undefined) return classDyn;
+      }
       if (elemAccessReceiverIsUserClass(ctx, elemAccess) && classInstanceHasField(ctx, elemAccess, methodName)) {
         const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
         if (dyn !== null) return dyn;
@@ -1528,6 +1585,12 @@ export function compileTailDispatch(
     // dropped. Route the read + ref.test-guarded dynamic closure dispatch, gated
     // on a user-class-instance receiver so primitive/array receivers keep their
     // historical behaviour. A non-closure read value hits the safe default arm.
+    // (#5195 F1/F3) The runtime-keyed twin of the resolved-key arm above — same
+    // reason, and it must precede the receiver-less dispatch below.
+    {
+      const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
+      if (classDyn !== undefined) return classDyn;
+    }
     if (elemAccessReceiverIsUserClass(ctx, elemAccess)) {
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
       if (dyn !== null) return dyn;

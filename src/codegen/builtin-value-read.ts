@@ -28,6 +28,7 @@ import {
 } from "./shared.js";
 import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
 import { allocLocal } from "./context/locals.js";
+import { isViewRefTestInstrs } from "./dataview-native.js"; // (#5150) ArrayBuffer.isView value closure
 import { reportErrorNoNode } from "./context/errors.js";
 import { ensureRegExpNativeProtoGlue } from "./regexp-standalone.js";
 import {
@@ -80,7 +81,7 @@ import {
 } from "./string-fromcharcode-value-read.js"; // (#4491 wave-5 T6)
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
-import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureNativeProxyRuntime, ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
 import {
   emitStandalonePromiseReject,
   emitStandalonePromiseResolve,
@@ -95,6 +96,7 @@ import {
 } from "./symbol-native.js";
 import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
 import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
+import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
 
 export const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -759,18 +761,34 @@ function tryCompileStandaloneBuiltinProtoMemberMeta(
   if (inner.name.text !== "prototype" || !ts.isIdentifier(inner.expression)) return undefined;
   const builtinName = inner.expression.text;
   if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
-  const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+  // (#5194 review F2) `localMap`/`boxedCaptures` are FUNCTION-scope facts, so
+  // they can never see a MODULE-level `class Int16Array { … }` — and once
+  // `hasBuiltinProtoConstructorCarrier` answered true for all 11 view names by
+  // NAME, `<UserClassNamedLikeAView>.prototype.constructor` resolved to the
+  // builtin `$__ta_ctor` singleton. The file-scope binding check closes that.
+  const isShadowed =
+    fctx.localMap.has(builtinName) ||
+    (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+    sourceShadowsGlobalName(expr.getSourceFile(), builtinName);
   if (isShadowed) return undefined;
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
   if (brand === undefined) return undefined;
-  const glue = getNativeProtoBuiltinGlue(ctx, brand);
-  if (!glue) return undefined;
+  const ownGlue = getNativeProtoBuiltinGlue(ctx, brand);
+  if (!ownGlue) return undefined;
 
   const member = memberAccess.name.text;
   // Only fold for members the glue actually advertises (so a typo / unknown
   // member still routes through the normal path rather than fabricating a 0).
-  if (!glue.memberCsv.split(",").includes(member)) return undefined;
+  // (#5194 step 1) A glue with a declared PARENT owns no methods of its own
+  // (`Uint8Array.prototype.map.length`), so consult the parent level too — the
+  // same one-level walk `resolveStandaloneProtoMemberValueClosure` performs.
+  const glue = ownGlue.memberCsv.split(",").includes(member)
+    ? ownGlue
+    : ownGlue.parentBrand !== undefined && ownGlue.parentBrand !== brand
+      ? getNativeProtoBuiltinGlue(ctx, ownGlue.parentBrand)
+      : undefined;
+  if (!glue || !glue.memberCsv.split(",").includes(member)) return undefined;
 
   if (metaProp === "length") {
     const arity = glue.memberKind(member) === "getter" ? 0 : glue.memberLength(member);
@@ -797,7 +815,15 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   if (!ts.isIdentifier(inner.expression)) return undefined;
   const builtinName = inner.expression.text;
   if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
-  const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+  // (#5194 review F2) `localMap`/`boxedCaptures` are FUNCTION-scope facts, so
+  // they can never see a MODULE-level `class Int16Array { … }` — and once
+  // `hasBuiltinProtoConstructorCarrier` answered true for all 11 view names by
+  // NAME, `<UserClassNamedLikeAView>.prototype.constructor` resolved to the
+  // builtin `$__ta_ctor` singleton. The file-scope binding check closes that.
+  const isShadowed =
+    fctx.localMap.has(builtinName) ||
+    (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+    sourceShadowsGlobalName(expr.getSourceFile(), builtinName);
   if (isShadowed) return undefined;
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
@@ -824,6 +850,13 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   // `$NativeProto` struct trapped with "illegal cast in __module_init".
   const dataProp = getNativeProtoBuiltinGlue(ctx, brand)?.dataProps?.find(([key]) => key === member);
   if (dataProp) {
+    // (#5194 step 1) A NUMERIC own data property is a prototype CONSTANT —
+    // `<View>.prototype.BYTES_PER_ELEMENT` (§23.2.7.1) — folded to its f64
+    // constant, the same value the seeded companion entry carries.
+    if (typeof dataProp[1] === "number") {
+      fctx.body.push({ op: "f64.const", value: dataProp[1] });
+      return { kind: "f64" };
+    }
     const literal = compileStringLiteral(ctx, fctx, dataProp[1]);
     if (literal) return literal;
   }
@@ -1035,6 +1068,15 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // (see the issue's remaining scope). `Reflect.get`/`set` fix the arity at 2/3
     // (no explicit-receiver slot), matching the call path which refuses the
     // receiver form under standalone (#2046).
+    // (#5196 R3-0) `Proxy.revocable` as a VALUE — `$262.createRealm()
+    // .global.Proxy.revocable(t, h)`, the shape the `*-realm*` rows use. The
+    // namespace carrier previously seeded the `genericThrowBody` refusal
+    // closure here ("Proxy.revocable is not yet implemented"), so every such
+    // row threw at the revocable call itself.
+    case "Proxy.revocable":
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
     case "Reflect.get":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
       returnType = { kind: "externref" };
@@ -1184,6 +1226,17 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // natives are standalone-DEFINED funcs (host-free) registered by
     // `addUnionImports`; if the substrate is unavailable, degrade to the generic
     // catchable-TypeError body (identity/meta still hold).
+    // (#5150) `ArrayBuffer.isView` as a first-class VALUE — `isView/
+    // invoked-as-a-fn.js` does `var isView = ArrayBuffer.isView; isView(x)`.
+    // The direct-call site is already host-free (call-namespace-static.ts);
+    // only the value read fell to the generic "not yet implemented in --target
+    // standalone" throw. Same 1-arg boxed-predicate shape as `Number.is*`.
+    case "ArrayBuffer.isView": {
+      if (!noJsHost(ctx)) return null;
+      paramTypes = [{ kind: "externref" }];
+      returnType = BOOLEAN_PREDICATE_RESULT;
+      break;
+    }
     case "Number.isInteger":
     case "Number.isFinite":
     case "Number.isNaN":
@@ -1347,6 +1400,19 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       const integrityIdx = ctx.funcMap.get(helperName);
       if (integrityIdx === undefined) return null;
       closureFctx.body.push({ op: "local.get", index: 1 }, { op: "call", funcIdx: integrityIdx });
+    } else if (key === "Proxy.revocable") {
+      // The SAME native the direct `Proxy.revocable(t, h)` call path uses
+      // (`call-builtin-static.ts`). `ensureNativeProxyRuntime` mints it (and
+      // the trap dispatchers) BEFORE any body instruction is pushed, so the
+      // funcIdx this closure bakes is already post-registration; the
+      // `flushLateImportShifts` at the end of this function repairs the rest.
+      ensureNativeProxyRuntime(ctx);
+      ctx.proxyRevocableSite = true; // (#5196 R3-4) arm the revoker metadata arms
+      const revocableIdx = ctx.funcMap.get("__proxy_revocable");
+      if (revocableIdx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "local.get", index: 2 });
+      closureFctx.body.push({ op: "call", funcIdx: revocableIdx });
     } else if (key === "Reflect.get") {
       // (#2933) Same native the 2-arg standalone `Reflect.get(target, key)` call
       // path uses (calls.ts). The value closure is fixed 2-arg — the optional
@@ -1614,6 +1680,15 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           else: [{ op: "i32.const", value: 0 }],
         },
       );
+    } else if (key === "ArrayBuffer.isView" && !genericThrowBody) {
+      // (#5150) Body = the SAME carrier `ref.test` disjunction the direct call
+      // emits, shared through `isViewRefTestInstrs` so the value and the call
+      // can never answer differently. Params: 0 = self, 1 = the boxed argument.
+      const anyTmp = allocLocal(closureFctx, "isview_any", { kind: "anyref" });
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "any.convert_extern" });
+      closureFctx.body.push({ op: "local.set", index: anyTmp });
+      closureFctx.body.push(...isViewRefTestInstrs(ctx, anyTmp));
     } else if (key === "Object.is" && !genericThrowBody) {
       // (#2963 Tier 2b) Body. Params: 0=self, 1=x, 2=y (both boxed externref).
       const typeofNumIdx = ctx.funcMap.get("__typeof_number");

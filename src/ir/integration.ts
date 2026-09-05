@@ -23,6 +23,8 @@
 // That's the whole point of the symbolic-ref design — spec #1131 §1.2.
 
 import { ts } from "../ts-api.js";
+import type { IrIntegrationOptions } from "./integration-options.js";
+export type { IrIntegrationOptions } from "./integration-options.js";
 import { acceptsStaticNumericArrayParam, staticNumericArrayGlobalMatches } from "./select-vector-slots.js";
 import { makeIrHostDateSnapshotResolver } from "./host-date.js";
 import { ClosureStructRegistry } from "./closure-struct-registry.js";
@@ -256,6 +258,8 @@ import {
   type IrLegacyModuleBindingResolver,
   type IrFnctorArrayMethodPlan,
   type IrModuleBindingIdentity,
+  type IrModuleBindingInspection,
+  type IrModuleBindingRefusal,
   type IrModuleBindingResolver,
   type IrRetainedFunctionMethodPlan,
   type IrStaticNumericArrayPlan,
@@ -317,13 +321,55 @@ import {
 } from "./select.js";
 import { verifyIrFunction } from "./verify.js";
 import { programAbiModuleDeclarations } from "../codegen/program-abi-declared-globals.js";
-import { prepareIrRuntimeManifest, type PreparedIrRuntimeManifest } from "./intrinsic-support.js";
+import {
+  prepareIrRuntimeManifest,
+  preparedGeneratorNumberBoxProvider,
+  preparedHostCallbackWrapProvider,
+  preparedFunctionPrototypeCallProvider,
+  preparedStringCharCodeAtProvider,
+  preparedStringCompareProvider,
+  preparedStringConcatManyProvider,
+  preparedStringConcatProvider,
+  preparedStringConstProvider,
+  preparedStringEqProvider,
+  preparedStringLenProvider,
+  stringConstFeatureFor,
+  type PreparedIrRuntimeManifest,
+} from "./intrinsic-support.js";
 import { attachIrExternSupport } from "./extern-support.js";
-import { attachIrGeneratorSupport, collectAttachedGeneratorProviders } from "./generator-support.js";
-import { isIntrinsicId, type IntrinsicId, type NumberBoundaryIntrinsicId } from "./intrinsics.js";
+import { hasLoneSurrogate } from "../string-surrogate.js";
+import {
+  attachIrGeneratorSupport,
+  collectAttachedGeneratorProviders,
+  irGeneratorNumberBoxDemand,
+} from "./generator-support.js";
+import {
+  isIntrinsicId,
+  type BooleanBoundaryIntrinsicId,
+  type ExternBoundaryIntrinsicId,
+  type IntrinsicId,
+  type NumberBoundaryIntrinsicId,
+} from "./intrinsics.js";
 import { materializePreparedMathProviders, preparedMathProviderIndex } from "./math-runtime-providers.js";
 import { materializePreparedAsyncHostAdapters } from "../codegen/ir-async-runtime-adapters.js";
-import type { NumberBoundaryPolicy, RuntimeProviderPlan } from "./runtime-manifest.js";
+import type {
+  BooleanBoundaryPolicy,
+  ExternIsUndefinedPolicy,
+  FunctionPrototypeCallPolicy,
+  GeneratorNumberBoxPolicy,
+  HostCallbackWrapPolicy,
+  NumberBoundaryPolicy,
+  RuntimeProviderPlan,
+  StringCharCodeAtPolicy,
+  StringComparePolicy,
+  StringConcatManyPolicy,
+  StringConcatPolicy,
+  StringConstPolicy,
+  StringEqPolicy,
+  StringLenPolicy,
+} from "./runtime-manifest.js";
+import { stringConcatManyArityCap } from "./runtime-manifest.js";
+import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilities.js";
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
@@ -386,7 +432,7 @@ import {
 import { emitExternrefDynamicToNumber } from "./dynamic-number-lowering.js";
 import type { PreparedIrPendingPatch } from "./prepared-lowering-patch.js";
 import { attachIrStringCarrier } from "./string-carrier.js";
-import { attachIrStringSupport } from "./string-support.js";
+import { attachIrStringConstStorage, attachIrStringLengthProvider, attachIrStringSupport } from "./string-support.js";
 import { attachIrPhysicalRefTypeRefs } from "./physical-ref-support.js";
 import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
@@ -529,15 +575,6 @@ export interface IrTypeOverrideMap {
   // void-returning function (zero Wasm result types). Plumbs through to
   // `from-ast.ts` so the IR builder can be constructed with `[]` results.
   get(name: string): { readonly params: readonly IrType[]; readonly returnType: IrType | null } | undefined;
-}
-
-export interface IrIntegrationOptions {
-  /**
-   * Derive post-pass R2 components and seal every dependency-complete ABI
-   * component before lowering. Components with still-implicit runtime/layout
-   * support retain the established transitional route.
-   */
-  readonly sealPreparedComponents?: boolean;
 }
 
 interface BuiltFn {
@@ -795,6 +832,541 @@ function integrationNumberBoundaryPolicy(ctx: CodegenContext): NumberBoundaryPol
   });
 }
 
+/**
+ * (#3526 F1-S2) This caller's already-resolved BOOLEAN-boundary policy.
+ *
+ * The EXACT fact the from-ast boolean arm used to read through the
+ * `hasHostBooleanBox` resolver predicate (`!ctx.nativeStrings`), consulted
+ * once, here, before freeze. Boolean values share the host union-import family
+ * with numbers but retain their own boxer, so `true` never crosses an externref
+ * boundary as the number `1`; the family is one-armed because no native
+ * boolean boxer exists to select.
+ */
+function integrationBooleanBoundaryPolicy(ctx: CodegenContext): BooleanBoundaryPolicy {
+  return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("unsupported" as const) });
+}
+
+/**
+ * (#3526 F1-S4) This caller's already-resolved externref UNDEFINED-PROBE policy.
+ *
+ * The EXACT fact the from-ast strict-undefined arm used to read through the
+ * `externIsUndefinedIsNative` resolver predicate (#4461,
+ * `ctx.standalone || ctx.wasi || ctx.nativeStrings`), consulted once, here,
+ * before freeze. Every host-free lane registers `__extern_is_undefined` as a
+ * real Wasm function through `ensureObjectRuntime`, so this truth table is a
+ * THIRD one again: wider than `numberBoundary` (unsupported on native-strings
+ * GC) and wider than `booleanBoundary` (no native arm at all). The three name
+ * different symbols and must not be merged.
+ */
+function integrationExternIsUndefinedPolicy(ctx: CodegenContext): ExternIsUndefinedPolicy {
+  return Object.freeze({
+    probe: ctx.standalone || ctx.wasi || ctx.nativeStrings ? ("native" as const) : ("host" as const),
+  });
+}
+
+/** The first extern-boundary intrinsic in `fn` this policy cannot provide. */
+function unsupportedExternBoundaryIntrinsic(
+  fn: IrFunction,
+  policy: ExternIsUndefinedPolicy,
+): ExternBoundaryIntrinsicId | undefined {
+  if (policy.probe !== "unsupported") return undefined;
+  let found: ExternBoundaryIntrinsicId | undefined;
+  const scan = (buffer: readonly IrInstr[]): void => {
+    for (const root of buffer) {
+      forEachInstrDeep(root, (instr) => {
+        if (found !== undefined || instr.kind !== "intrinsic") return;
+        if (instr.id === "js.extern.is_undefined") found = instr.id;
+      });
+    }
+  };
+  for (const block of fn.blocks) scan(block.instrs);
+  for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  return found;
+}
+
+/**
+ * (#3526 F1-S3) This caller's already-resolved GENERATOR number-box policy.
+ *
+ * The EXACT truth table the `gen.setReturn` seam has always had, consulted
+ * once, here, before freeze: `__box_number` resolves to the `env` union import
+ * on the host lane and to the union-native helper when native strings are on.
+ * That is deliberately WIDER than `integrationNumberBoundaryPolicy`, whose box
+ * arm is host-only by design — the two policies name the same symbol and must
+ * not be merged.
+ */
+function integrationGeneratorNumberBoxPolicy(ctx: CodegenContext): GeneratorNumberBoxPolicy {
+  return Object.freeze({ box: !ctx.nativeStrings ? ("host" as const) : ("native" as const) });
+}
+
+/**
+ * (#3526 F2-S1) This caller's already-resolved STRING-COMPARE policy.
+ *
+ * The EXACT fact the resolve-time provider table read directly off
+ * `ctx.nativeStrings` (integration.ts, the `IR_STRING_COMPARE_FN` arm),
+ * consulted once, here, before freeze. `standalone` and `wasi` both imply
+ * `nativeStrings`, so this one flag is the whole truth table — which is why the
+ * arm is stated as `nativeStrings ? native : host` rather than repeating
+ * `integrationExternIsUndefinedPolicy`'s three-way disjunction.
+ */
+function integrationStringComparePolicy(ctx: CodegenContext): StringComparePolicy {
+  return Object.freeze({ compare: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S1) True when any of `fns` performs a string relational compare.
+ *
+ * The seam carries no `intrinsic` instruction — from-ast emits a plain `call`
+ * through the `IR_STRING_COMPARE_FN` sentinel func-ref — so the demand is read
+ * off the call population directly, the way `irGeneratorNumberBoxDemand` reads
+ * the `gen.setReturn` one. The same predicate answers the freeze request and
+ * the owner-local partition below, so the two can never disagree.
+ */
+function irStringCompareDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (found || instr.kind !== "call") return;
+          const { binding } = instr.target;
+          if (binding.kind === "intrinsic" && binding.symbol === IR_STRING_COMPARE_FN) found = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+    if (found) return true;
+  }
+  return false;
+}
+
+/**
+ * (#3526 F2-S3) This caller's already-resolved STRING-EQUALITY policy.
+ *
+ * The EXACT fact the resolve-time provider table read directly off
+ * `ctx.nativeStrings` (the three-symbol concat/eq arm's single `if`), consulted
+ * once, here, before freeze. Same one-flag truth table as the compare's, for the
+ * same reason: `standalone` and `wasi` both imply `nativeStrings`.
+ */
+function integrationStringEqPolicy(ctx: CodegenContext): StringEqPolicy {
+  return Object.freeze({ eq: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S3) True when any of `fns` compares two strings for equality.
+ *
+ * Simpler than `irStringCompareDemand`: `string.eq` IS an instruction kind, so
+ * the scan is a plain kind test rather than a walk of the `call` population.
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree.
+ */
+function irStringEqDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "string.eq") found = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+    if (found) return true;
+  }
+  return false;
+}
+
+/**
+ * (#3526 F2-S4) This caller's already-resolved STRING-LENGTH policy.
+ *
+ * The EXACT fact `prepareStrings` read directly off `ctx.nativeStrings` when it
+ * built the `IrStringLengthProvider` itself, consulted once, here, before
+ * freeze. Same one-flag truth table as its two family-2 siblings, for the same
+ * reason: `standalone` and `wasi` both imply `nativeStrings`.
+ */
+function integrationStringLenPolicy(ctx: CodegenContext): StringLenPolicy {
+  return Object.freeze({ len: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S4) True when any of `fns` reads a string's `.length`.
+ *
+ * A plain `string.len` instruction-kind scan, the twin of `irStringEqDemand`.
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree — and it is deliberately the same
+ * enumeration `prepareStrings`'s `usesStringLen` scan performs, so the freeze
+ * cannot request a row for a demand the attachment pass will not find.
+ */
+function irStringLenDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "string.len") found = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+    if (found) return true;
+  }
+  return false;
+}
+
+/**
+ * (#3526 F2-S5) This caller's already-resolved STRING-CONCATENATION policy.
+ *
+ * The EXACT fact the resolve-time provider table read directly off
+ * `ctx.nativeStrings` (the two-symbol concat arm's single `if`), consulted once,
+ * here, before freeze. Same one-flag truth table as its three family-2
+ * siblings, for the same reason: `standalone` and `wasi` both imply
+ * `nativeStrings`. The concat MODE is deliberately absent — it selects the
+ * helper on the chosen authority, not the authority, and lives on the feature.
+ */
+function integrationStringConcatPolicy(ctx: CodegenContext): StringConcatPolicy {
+  return Object.freeze({ concat: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S5) Which concat MODES any of `fns` performs.
+ *
+ * A `string.concat` instruction-kind scan like `irStringLenDemand`, but it
+ * returns a PAIR: the seam has two feature rows and the producer maps
+ * `concatMode` onto one of two callable symbols
+ * (`src/ir/string-support.ts`'s `irStringCallableProviderRef`), so this mirrors
+ * that mapping exactly — `instr.concatMode ?? "immutable"`. A module with no
+ * builder loop then freezes no `owned-append` row at all.
+ *
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree.
+ */
+function irStringConcatDemand(fns: readonly IrFunction[]): { readonly immutable: boolean; readonly owned: boolean } {
+  let immutable = false;
+  let owned = false;
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind !== "string.concat") return;
+          if ((instr.concatMode ?? "immutable") === "owned-append") owned = true;
+          else immutable = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return { immutable, owned };
+}
+
+/**
+ * (#3526 F2-S7) This caller's already-resolved guarded-`charCodeAt` policy.
+ *
+ * The EXACT fact the resolve-time table read directly off `ctx.nativeStrings`
+ * (the `IR_STRING_CHAR_CODE_AT_FN` arm's single ternary), consulted once, here,
+ * before freeze — and the same fact `stringMethodPlan` reads at PLAN time to
+ * bake the lane into the intrinsic symbol. Inside `compile()` the two cannot
+ * disagree, because this IS that expression; the resolve arms therefore VERIFY
+ * the plan-time symbol against the frozen row rather than re-deciding it.
+ * Same one-flag truth table as its four family-2 siblings, for the same reason:
+ * `standalone` and `wasi` both imply `nativeStrings`.
+ */
+function integrationStringCharCodeAtPolicy(ctx: CodegenContext): StringCharCodeAtPolicy {
+  return Object.freeze({ charCodeAt: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F2-S8) This caller's already-resolved STRING LITERAL STORAGE policy.
+ *
+ * The EXACT fact `prepareStrings`'s `storageForConst` read directly off
+ * `ctx.nativeStrings` when it decided the binding itself, consulted once, here,
+ * before freeze. Same one-flag truth table as its five family-2 siblings, for
+ * the same reason: `standalone` and `wasi` both imply `nativeStrings`.
+ */
+function integrationStringConstPolicy(ctx: CodegenContext): StringConstPolicy {
+  return Object.freeze({ storage: ctx.nativeStrings ? ("native" as const) : ("host" as const) });
+}
+
+/**
+ * (#3526 F3-S1) This caller's already-resolved HOST CALLBACK MAKER policy.
+ *
+ * The verbatim projection of the two facts the crossing has always been
+ * decided by, consulted once, here, before freeze:
+ *
+ *  * the EXACT standalone-DOM predicate — the same five terms
+ *    `hasStandaloneDomDispatcher` (`src/codegen/index.ts`) and the
+ *    `standaloneDomCapability` gate above spell, plus the `native-first` term
+ *    the latter carries; on that lane the reserved dispatcher owns the
+ *    crossing and no maker exists; and
+ *  * `jsHostExterns`, which is `irTargetProfile.allowHostImports` inlined —
+ *    the exact flag `makeCalendarIrSelectionSupport` gates certification on.
+ *
+ * The two arms are disjoint by construction (the DOM lane has
+ * `environment: "none"`, so it can never be `ambient-js`), and everything else
+ * is `unsupported` — not as a refusal of live traffic but because the selection
+ * gate never certifies an arrow there, so the demand scan below finds nothing
+ * to partition. That is why the disabled arm is unreachable on every real lane
+ * and the migration is byte-neutral.
+ */
+function integrationHostCallbackWrapPolicy(ctx: CodegenContext): HostCallbackWrapPolicy {
+  if (
+    ctx.requiresStandaloneDomInteractionCapability === true &&
+    ctx.standalone &&
+    !ctx.wasi &&
+    ctx.nativeStrings &&
+    ctx.targetProfile.environment === "none" &&
+    ctx.targetProfile.semanticProviders === "native-first"
+  ) {
+    return Object.freeze({ wrap: "native-dispatch" as const });
+  }
+  const jsHostExterns =
+    ctx.targetProfile.environment === "javascript" && ctx.targetProfile.capabilityPolicy === "ambient-js";
+  return Object.freeze({ wrap: jsHostExterns ? ("host" as const) : ("unsupported" as const) });
+}
+
+/**
+ * (#3526 F3-S3) Resolve the `%Function.prototype%` CALL seam's policy, once,
+ * before the freeze.
+ *
+ * The truth table is the resolver arm's own and is reproduced EXACTLY:
+ * `ctx.standalone && !ctx.wasi`. Two neighbouring tables look like it and are
+ * deliberately not folded in:
+ *
+ *  - `ensureFunctionPrototypeCallHelper` mints the helper under the WIDER
+ *    `standalone || wasi`, because the LEGACY direct-AST path emits this call
+ *    on the WASI lane too. Helper presence is therefore not evidence of IR
+ *    support — inferring support from a minted symbol is exactly what F1-S1
+ *    refused — and the measured base census confirms the split: WASI carries
+ *    `__function_prototype_call` while its IR unit is refused.
+ *  - the selector's `standalone-function-prototype-call` backend capability
+ *    (`ir/backend/legality.ts`) answers a DIFFERENT question one stage earlier
+ *    — may Phase 1 select this call shape at all — and on every in-tree lane it
+ *    refuses first, which is why this arm's `unsupported` value is unreachable
+ *    in production and the preregister admission below is an invariant
+ *    backstop rather than a live refusal.
+ *
+ * `ctx.fast` is NOT read here and must not be: it is a different axis, and the
+ * census is identical across `{compat, fast}` in both target cells.
+ */
+function integrationFunctionPrototypeCallPolicy(ctx: CodegenContext): FunctionPrototypeCallPolicy {
+  return Object.freeze({ call: ctx.standalone && !ctx.wasi ? ("native" as const) : ("unsupported" as const) });
+}
+
+/**
+ * (#3526 F3-S1) Which host callback MAKER arms any of `fns` crosses.
+ *
+ * Read off `closure.new`, which is the ONLY lane-free place both arms are
+ * visible: `hostOneShot` is set exclusively by `lowerHostVoidCallbackExpression`
+ * for a certified void callback that is NOT `standaloneDomReusable`, and
+ * `domCallbackAuthority` exclusively for one that is. The maker `call` itself
+ * cannot serve as the demand, because on the exact standalone-DOM lane there is
+ * no call to find — the packed closure goes straight to the DOM import — and a
+ * demand only the host arm can produce would leave the dispatcher lane with no
+ * frozen row for the manifest to admit it by.
+ *
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree.
+ */
+function irHostCallbackWrapDemand(fns: readonly IrFunction[]): {
+  readonly host: boolean;
+  readonly nativeDispatch: boolean;
+} {
+  let host = false;
+  let nativeDispatch = false;
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind !== "closure.new") return;
+          if (instr.hostOneShot === true) host = true;
+          if (instr.domCallbackAuthority !== undefined) nativeDispatch = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return { host, nativeDispatch };
+}
+
+/**
+ * (#3526 F3-S3) Whether any of `fns` calls the `%Function.prototype%` helper.
+ *
+ * Exactly the enumeration the preregister scan below repeats, so a demand the
+ * freeze requests can never be one the admission then refuses. The seam carries
+ * no intrinsic instruction — from-ast emits a plain zero-arg `call` on the
+ * runtime symbol — so this is read off `call`, the only place the use is
+ * visible before the freeze.
+ */
+function irFunctionPrototypeCallDemand(fns: readonly IrFunction[]): boolean {
+  let used = false;
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind !== "call" || instr.target.binding.kind !== "runtime") return;
+          if (instr.target.binding.symbol === FUNCTION_PROTOTYPE_CALL_HELPER) used = true;
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return used;
+}
+
+/**
+ * (#3526 F2-S8) Which literal-storage namespaces any of `fns` needs.
+ *
+ * TWO producers, exactly the enumeration `prepareStrings`' own literal scan
+ * performs: a `string.const` instruction, and an `extern.regex`, whose pattern
+ * and flags lower through two `emitStringConst` calls and DO occupy
+ * `string_constants` globals on the host lane. Counting the regex is what keeps
+ * a regex-only module's frozen `hostCapabilityRecords` truthful about the
+ * namespace it imports — even though its two literals still reach emission
+ * through the no-storage fallback until that seam carries a `storage` of its
+ * own (measured: 2 reaches, REGEX/gc-host, and 0 for `string.const` anywhere).
+ *
+ * `utf16` is the ONE derivation, `hasLoneSurrogate`, shared with the legacy
+ * collector through `src/string-surrogate.ts`. It is a per-literal fact inside
+ * the host arm, never an arm of its own — the pair says which feature ROWS the
+ * module needs, not which authority answers them.
+ */
+function irStringConstDemand(fns: readonly IrFunction[]): { readonly literal: boolean; readonly utf16: boolean } {
+  let literal = false;
+  let utf16 = false;
+  const note = (value: string): void => {
+    literal = true;
+    utf16 ||= hasLoneSurrogate(value);
+  };
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "string.const") note(instr.value);
+          if (instr.kind === "extern.regex") {
+            note(instr.pattern);
+            note(instr.flags);
+          }
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return { literal, utf16 };
+}
+
+/**
+ * (#3526 F2-S7) True when any of `fns` performs a guarded `charCodeAt` read.
+ *
+ * TWO producers reach WasmGC codegen and BOTH are demand — this is the only
+ * scan in the family that is not a single instruction kind:
+ *
+ *  * a `string.char_code_at` instruction, minted by `from-ast` only with
+ *    receiver-encoding evidence; and
+ *  * an `intrinsic` `call` whose symbol is the plan-path pair
+ *    `__jsstr_charCodeAt` / `__str_charCodeAt` — the SAME enumeration the host
+ *    pre-registration scan performs further down, minus the trusted symbol.
+ *
+ * The proof-licensed symbols (`__jsstr_charCodeAt_trusted`, and the
+ * `__str_flatten` + `__str_flat_charCodeAt` preheader pair) are deliberately
+ * NOT demand: they are a different, plan-time-decided feature this slice does
+ * not govern, so a hoisted char-read loop freezes no row and its arms are
+ * untouched.
+ *
+ * The same predicate answers the freeze request and the owner-local partition
+ * below, so the two can never disagree.
+ */
+function irStringCharCodeAtDemand(fns: readonly IrFunction[]): boolean {
+  for (const fn of fns) {
+    let found = false;
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind === "string.char_code_at") {
+            found = true;
+            return;
+          }
+          if (instr.kind !== "call" || instr.target.binding.kind !== "intrinsic") return;
+          if (
+            instr.target.binding.symbol === JSSTR_CHARCODEAT_FN ||
+            instr.target.binding.symbol === NATIVE_CHARCODEAT_FN
+          ) {
+            found = true;
+          }
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+    if (found) return true;
+  }
+  return false;
+}
+
+/**
+ * (#3526 F2-S6) This caller's already-resolved BATCHED many-arity policy.
+ *
+ * The verbatim projection of the two selector predicates the fusion pass used
+ * to compute inline, consulted once, here, before the pass runs — the pass
+ * CREATES the demand, so unlike every sibling in family 2 this decision cannot
+ * wait for a demand scan.
+ *
+ * Every term is load-bearing and none is a simplification of the others. In
+ * particular `wasi` is NOT redundant with `nativeStrings`: `nativeStrings:
+ * false` is an accepted override on target wasi, and such a module compiles on
+ * the host string backend — measured at 1000 bytes with a pairwise
+ * `wasm:js-string.concat` and no `__concat_`. Only the wasi term keeps the
+ * pass off there.
+ */
+function integrationStringConcatManyPolicy(ctx: CodegenContext): StringConcatManyPolicy {
+  if (ctx.nativeStrings) {
+    return Object.freeze({ batch: ctx.standalone && !ctx.wasi ? ("native" as const) : ("off" as const) });
+  }
+  return Object.freeze({
+    batch: ctx.standalone || ctx.wasi || ctx.strictNoHostImports ? ("off" as const) : ("host" as const),
+  });
+}
+
+/**
+ * (#3526 F2-S6) The sorted unique arities any of `fns` concatenates in one
+ * batched call.
+ *
+ * Scanned AFTER the fusion pass, off the BATCHED IR, which is what makes it
+ * different from its four siblings: there is no instruction kind to look for,
+ * only the `call` targets the pass minted. Both producers are covered — the
+ * `string.concat$arityN` family the pass emits, and the fixed
+ * `async.string.concat$arity5` symbol async planning emits for the prepared
+ * final main, which has its own arm with the identical lowering.
+ *
+ * A module with no fused root returns `[]` and freezes no family row.
+ */
+function irStringConcatManyDemand(fns: readonly IrFunction[]): { readonly arities: readonly number[] } {
+  const arities = new Set<number>();
+  for (const fn of fns) {
+    const scan = (buffer: readonly IrInstr[]): void => {
+      for (const root of buffer) {
+        forEachInstrDeep(root, (instr) => {
+          if (instr.kind !== "call" || instr.target.binding.kind !== "intrinsic") return;
+          const symbol = instr.target.binding.symbol;
+          if (symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
+            arities.add(5);
+            return;
+          }
+          const arity = parseIrStringConcatManyArity(symbol);
+          if (arity !== null) arities.add(arity);
+        });
+      }
+    };
+    for (const block of fn.blocks) scan(block.instrs);
+    for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  }
+  return { arities: Object.freeze([...arities].sort((left, right) => left - right)) };
+}
+
 /** The first number-boundary intrinsic in `fn` this policy cannot provide. */
 function unsupportedNumberBoundaryIntrinsic(
   fn: IrFunction,
@@ -815,6 +1387,26 @@ function unsupportedNumberBoundaryIntrinsic(
   return found;
 }
 
+/** The first boolean-boundary intrinsic in `fn` this policy cannot provide. */
+function unsupportedBooleanBoundaryIntrinsic(
+  fn: IrFunction,
+  policy: BooleanBoundaryPolicy,
+): BooleanBoundaryIntrinsicId | undefined {
+  if (policy.box !== "unsupported") return undefined;
+  let found: BooleanBoundaryIntrinsicId | undefined;
+  const scan = (buffer: readonly IrInstr[]): void => {
+    for (const root of buffer) {
+      forEachInstrDeep(root, (instr) => {
+        if (found !== undefined || instr.kind !== "intrinsic") return;
+        if (instr.id === "js.boolean.box") found = instr.id;
+      });
+    }
+  };
+  for (const block of fn.blocks) scan(block.instrs);
+  for (const state of fn.asyncPlan?.states ?? []) scan(state.body);
+  return found;
+}
+
 function prepareBuiltFnRuntimeManifest(
   ctx: CodegenContext,
   sourceFile: string,
@@ -827,7 +1419,65 @@ function prepareBuiltFnRuntimeManifest(
       target: ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : ctx.strictNoHostImports ? "strict-no-host" : "host",
       backend: "wasmgc",
       numberBoundary: integrationNumberBoundaryPolicy(ctx),
+      booleanBoundary: integrationBooleanBoundaryPolicy(ctx),
+      externIsUndefined: integrationExternIsUndefinedPolicy(ctx),
+      generatorNumberBox: integrationGeneratorNumberBoxPolicy(ctx),
+      stringCompare: integrationStringComparePolicy(ctx),
+      stringEq: integrationStringEqPolicy(ctx),
+      stringLen: integrationStringLenPolicy(ctx),
+      stringConcat: integrationStringConcatPolicy(ctx),
+      stringCharCodeAt: integrationStringCharCodeAtPolicy(ctx),
+      stringConcatMany: integrationStringConcatManyPolicy(ctx),
+      stringConst: integrationStringConstPolicy(ctx),
+      hostCallbackWrap: integrationHostCallbackWrapPolicy(ctx),
+      functionPrototypeCall: integrationFunctionPrototypeCallPolicy(ctx),
     },
+    // (#3526 F1-S3) Same predicate, same enumeration the attachment pass runs
+    // later — see `forEachIrGeneratorSetReturn`.
+    generatorNumberBoxDemand: irGeneratorNumberBoxDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S1) Same predicate the partition scan above runs, so a demand
+    // the freeze requests can never be one the partition failed to classify.
+    stringCompareDemand: irStringCompareDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S3) Same predicate the partition scan above runs, for the same
+    // reason: a demand the freeze requests can never be one the partition failed
+    // to classify.
+    stringEqDemand: irStringEqDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S4) Same predicate the partition scan above runs, same reason
+    // again — and here it is load-bearing rather than merely consistent: the
+    // length seam's physical choice lives ONLY on the frozen row, so a
+    // length-only module that froze no manifest would leave
+    // `prepareStringLength` below with nothing to read.
+    stringLenDemand: irStringLenDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S5) Same predicate the partition scan above runs, same reason
+    // again — but a PAIR: the freeze must request exactly the modes the module
+    // uses, or a concat-only module would carry an `owned-append` row nothing
+    // ever calls (and an append-only one would be missing the row it needs).
+    stringConcatDemand: irStringConcatDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S7) Same predicate the partition scan above runs, same reason
+    // again — and it must count BOTH producers, or the 35 plan-path cells would
+    // reach the verify arms with no frozen row to be checked against.
+    stringCharCodeAtDemand: irStringCharCodeAtDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S6) Scanned off the ALREADY-BATCHED functions — the fusion
+    // pass ran on the way to this freeze, so every fused root is visible here
+    // and a module that fused nothing freezes no family row.
+    stringConcatManyDemand: irStringConcatManyDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F2-S8) Same predicate the partition scan above runs, same reason
+    // again — and here the coupling is LOAD-BEARING rather than merely
+    // consistent. `prepareStringConst` runs after the `if (!runtime) return`
+    // early return below, so a module carrying literals that froze no manifest
+    // would attach no storage at all and every literal would fall back to the
+    // raw `stringGlobalMap` lookup: byte-identical on the host lane, and
+    // therefore invisible to a byte matrix. This line is what guarantees a
+    // module with any literal always freezes.
+    stringConstDemand: irStringConstDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F3-S1) Same predicate the partition scan above runs, same reason
+    // again — and it must count BOTH arms, or the exact standalone-DOM lane
+    // (which emits no maker call at all) would freeze no row and the manifest
+    // would not be the authority that admits its dispatcher.
+    hostCallbackWrapDemand: irHostCallbackWrapDemand(entries.map((entry) => entry.fn)),
+    // (#3526 F3-S3) Same scan the preregister admission repeats — see
+    // `irFunctionPrototypeCallDemand`.
+    functionPrototypeCallDemand: irFunctionPrototypeCallDemand(entries.map((entry) => entry.fn)),
   });
   if (!runtime) return { entries };
   const preparedByUnitId = new Map(runtime.functions.map((fn) => [fn.unitId, fn] as const));
@@ -842,9 +1492,186 @@ function prepareBuiltFnRuntimeManifest(
     }
     return fn === entry.fn ? entry : { ...entry, fn };
   });
+  const lengthAttached = prepareStringLength(ctx, preparedEntries, runtime);
+  const constAttached = prepareStringConst(ctx, lengthAttached, runtime);
   materializePreparedMathProviders(ctx, runtime);
   materializePreparedAsyncHostAdapters(ctx, runtime.functions);
-  return { entries: preparedEntries, runtime };
+  return { entries: constAttached, runtime };
+}
+
+/**
+ * (#3526 F2-S4) Attach the frozen string-LENGTH provider to every `string.len`.
+ *
+ * This runs INSIDE the freeze, after `preparedEntries` is built and before the
+ * math/async materializers, and that placement is the one structural edit of
+ * the slice. Every other family-2 seam is materialized at resolve time, where
+ * the prepared manifest is already in scope; `string.len` has no callable
+ * symbol at all, so the `IrStringLengthProvider` carried on the instruction IS
+ * the physical choice — which means the attachment itself has to happen after
+ * the manifest that decides it is frozen.
+ *
+ * Order-preservation: `prepareStrings` used to attach this before the freeze.
+ * Nothing between the two points reads `string.len.provider` —
+ * `prepareIrRuntimeManifest` collects `intrinsic` uses only, and every reader
+ * (lowering, component sealing, `preregisterCallableProviders`) runs later — so
+ * the move is byte-neutral by construction. `attachIrStringLengthProvider` is a
+ * pure structural map that touches ONLY `string.len` and checks rather than
+ * overwrites an existing attachment, so composing it after the intrinsic pass
+ * instead of before it yields identical IR.
+ */
+function prepareStringLength(
+  ctx: CodegenContext,
+  entries: readonly BuiltFn[],
+  runtime: PreparedIrRuntimeManifest,
+): readonly BuiltFn[] {
+  const arm = preparedStringLenProvider(runtime);
+  // No frozen row at all: nothing in this program reads `.length`.
+  if (!arm) return entries;
+  // The Program-ABI type registry is what names the string carrier; without it
+  // `prepareStrings` attaches nothing either, and this pass keeps that skip
+  // rather than inventing a carrier the rest of preparation does not have.
+  const registry = ctx.programAbiTypes;
+  if (!registry) return entries;
+  let provider: IrStringLengthProvider;
+  if (arm.arm === "native") {
+    provider = { kind: "struct-field", ownerType: registry.stringCarrierRef(), fieldIndex: arm.fieldIndex };
+  } else {
+    const target = irImportFuncRef(arm.module, arm.field, arm.field);
+    const structuralReferenceKey = irCallableBindingKey(target.binding);
+    const imported = catalogProgramAbiCallableImports(ctx).get(structuralReferenceKey);
+    if (!imported || imported.desc.kind !== "func") {
+      throw new Error("ir/integration: prepared string.len has no exact wasm:js-string.length import");
+    }
+    provider = { kind: "callable", target };
+  }
+  return entries.map((entry) => {
+    // Length-ONLY. The omnibus `attachIrStringSupport` cannot be reused here:
+    // its callable arm re-derives five other seams' providers on every run, and
+    // this pass has no authority over any of them — see
+    // `attachIrStringLengthProvider`, which records the corpus failure that
+    // proved it.
+    const fn = attachIrStringLengthProvider(entry.fn, provider);
+    return fn === entry.fn ? entry : { ...entry, fn };
+  });
+}
+
+/**
+ * (#3526 F2-S8) Attach the frozen literal-STORAGE decision to every
+ * `string.const`.
+ *
+ * The second attachment to move behind the freeze, and the reason is the same
+ * one `prepareStringLength` records: this seam has no resolve arm and no
+ * callable symbol at all, so the `IrGlobalRef` (or the oversized materializer)
+ * the instruction carries IS the physical choice — which means the attachment
+ * has to happen after the manifest that decides it is frozen.
+ *
+ * **Input is `lengthAttached`, deliberately.** It is the output of BOTH prior
+ * passes — `prepareStrings`, whose first pass bound `string.repeat`, then
+ * `prepareStringLength` — and the exact-binding checks in
+ * {@link attachIrStringConstStorage} check rather than overwrite, so composing
+ * on anything else would trip them.
+ *
+ * **It sits after `prepareBuiltFnRuntimeManifest`'s `if (!runtime)` early
+ * return, so it runs only because `stringConstDemand` is in the freeze-nothing
+ * conjunction.** Break that coupling and every literal silently loses `storage`
+ * and reaches emission through the raw `stringGlobalMap` fallback — the same
+ * bytes on the host lane, so no byte matrix could see it.
+ *
+ * Order-preservation: the host arm reads what `prepareStrings`' pre-registration
+ * already registered and mints nothing; the native arm's
+ * `internNativeStringLiteral` and the oversized `pushDefinedFunc` now run after
+ * `prepareIrRuntimeManifest` + `prepareStringLength`, and nothing in that window
+ * pushes a defined or import global (the oversized `funcIdx` is a late-resolved
+ * handle). `providerRegistry.observe` moves with the pass — still before
+ * `preregisterCallableProviders` and long before `planRetained()` seals the
+ * registry, so no observation ordinal moves.
+ */
+function prepareStringConst(
+  ctx: CodegenContext,
+  entries: readonly BuiltFn[],
+  runtime: PreparedIrRuntimeManifest,
+): readonly BuiltFn[] {
+  // The Program-ABI type registry is what `prepareStrings` requires before it
+  // attaches anything; this pass keeps that skip rather than inventing a
+  // carrier the rest of preparation does not have.
+  if (!ctx.programAbiTypes) return entries;
+  // ONE derivation, shared with the legacy collector through
+  // `src/string-surrogate.ts`: which of the two namespace features a literal
+  // answers to. The split is per-literal, never an arm.
+  const armFor = (value: string): ReturnType<typeof preparedStringConstProvider> =>
+    preparedStringConstProvider(runtime, stringConstFeatureFor(hasLoneSurrogate(value)));
+
+  const nativeMaterializations = new Map<IrInstrStringConst, NativeStringLiteralMaterialization>();
+  const nativeMaterializationFor = (instr: IrInstrStringConst): NativeStringLiteralMaterialization | undefined => {
+    // The lane read that used to guard this is gone: the frozen row's native
+    // arm IS "materialize natively". Only the PHYSICAL skip stays.
+    if (ctx.nativeStrTypeIdx < 0) return undefined;
+    const existing = nativeMaterializations.get(instr);
+    if (existing) return existing;
+    const encoding =
+      ctx.utf8Storage && instr.alloc !== undefined && ctx.allocRegistry
+        ? ctx.allocRegistry.read<StringEncoding>(instr.alloc, ALLOC_NAMESPACES.encoding)
+        : undefined;
+    const materialization = nativeStringLiteralMaterialization(ctx, instr.value, encoding);
+    nativeMaterializations.set(instr, materialization);
+    return materialization;
+  };
+
+  const storageForConst = (instr: IrInstrStringConst): IrGlobalRef | undefined => {
+    const arm = armFor(instr.value);
+    if (!arm) return undefined;
+    if (arm.arm === "host") {
+      const ref = programAbiStringConstantRef(ctx, instr.value);
+      if (!ref) return undefined;
+      // The frozen row named a MODULE; the recovered ref's module is whatever
+      // `addStringConstantGlobals` derived from `hasLoneSurrogate` when it
+      // registered the literal. The two derivations have one source, so a
+      // mismatch is derivation DRIFT, not mis-registration — and it is exactly
+      // the failure a `string_constants16` literal bound to a `string_constants`
+      // record would produce at instantiation.
+      if (ref.binding.kind !== "import" || ref.binding.module !== arm.module) {
+        throw new Error(`ir/integration: prepared string.const has no exact ${arm.module} import global`);
+      }
+      return ref;
+    }
+    if (!ctx.programAbiGlobals) return undefined;
+    const materialization = nativeMaterializationFor(instr);
+    if (!materialization || materialization.kind !== "global") return undefined;
+    const global = ctx.mod.globals[materialization.globalIdx - ctx.numImportGlobals];
+    if (!global) {
+      throw new Error(`ir/integration: native string literal ${JSON.stringify(instr.value)} lost its interned global`);
+    }
+    return ctx.programAbiGlobals.prepareNativeStringLiteral(global);
+  };
+
+  const materializerRefs = new Map<number, IrFuncRef>();
+  const materializerForConst = (instr: IrInstrStringConst): IrFuncRef | undefined => {
+    // The oversized native literal arm — a literal past `ARRAY_NEW_FIXED_MAX`
+    // is materialized by a minted helper rather than an interned global. It is
+    // policy-SILENT by design: no manifest kind can name a function minted per
+    // literal, so the frozen row selects the authority and the size still
+    // selects the shape.
+    const arm = armFor(instr.value);
+    if (!arm || arm.arm !== "native") return undefined;
+    const materialization = nativeMaterializationFor(instr);
+    const providerRegistry = ctx.programAbiCallableProviders;
+    if (!materialization || materialization.kind !== "callable" || !providerRegistry) return undefined;
+    const existing = materializerRefs.get(materialization.funcIdx);
+    if (existing) return existing;
+    const provider = irIntrinsicFuncRef(`${IR_STRING_LITERAL_MATERIALIZE_FN}:${materializerRefs.size}`);
+    providerRegistry.observe(provider, materialization.funcIdx);
+    materializerRefs.set(materialization.funcIdx, provider);
+    return provider;
+  };
+
+  return entries.map((entry) => {
+    // Const-ONLY. The omnibus `attachIrStringSupport` cannot be reused here for
+    // the reason `attachIrStringLengthProvider` records: its callable arm
+    // re-derives five other seams' providers on every run, and this pass has no
+    // authority over any of them.
+    const fn = attachIrStringConstStorage(entry.fn, storageForConst, materializerForConst);
+    return fn === entry.fn ? entry : { ...entry, fn };
+  });
 }
 
 function atomicDeferredValTypeIsAllocatorNeutral(type: ValType): boolean {
@@ -1759,6 +2586,30 @@ export function compileIrPathFunctions(
     selected.moduleInit && selected.moduleInit.reason === null && selected.moduleInit.stmtCount > 0
       ? selected.moduleInit
       : undefined;
+  // (#5285) Census hook, gated on the EXISTING `JS2WASM_IR_SHAPE_DIAG` opt-in
+  // (#2856 Step-1) — read here, at the call site, so a production run never
+  // enters the survey at all and nothing below this line changes with the flag
+  // off.
+  //
+  // Deliberately NOT at the `buildModuleBindingsMap` call site the plan named.
+  // That site sits inside `if (moduleInitClaim && …)`, and a file whose module
+  // init the SELECTOR already refused
+  // (`vardecl-module-storage-unrepresentable`) never reaches it — which is
+  // every file the census is about. Surveying there would report an empty
+  // multiset for exactly the population being measured. Here both the resolver
+  // and the population are in scope whether or not the unit was claimed.
+  if (ctx.irOutcomes !== undefined && process.env.JS2WASM_IR_SHAPE_DIAG === "1") {
+    const refusals = surveyModuleBindingRefusals(
+      integrationPopulation?.moduleInitPopulation ?? collectModuleInitPopulation(sourceFile),
+      moduleBindingResolver,
+      ctx.checker,
+    );
+    // Last write wins: integration can run more than once per source (prepared
+    // route, then the late overlay), and the final pass is the population the
+    // compiler actually concluded with. Measured on `tests/dogfood/corpus`
+    // (2026-09-03): every repeated pass agreed, so this picks no side.
+    (ctx.irModuleBindingRefusalsBySourceFile ??= new Map()).set(sourceFile, refusals);
+  }
   const requireTerminalOwner = (legacyName: string): IrLegacyUnitProjectionEntry => {
     const owner = activeOwnerProjection.getByLegacyName(legacyName);
     if (!owner) {
@@ -3358,6 +4209,9 @@ export function compileIrPathFunctions(
   const readyForLower: BuiltFn[] = [];
   // (#4605/#4608) Re-derive function/global declarations after monomorphization.
   const declsAfterTU = programAbiModuleDeclarations(ctx, modAfterTU);
+  // (#3526 F2-S6) One resolved decision for the whole module, taken before the
+  // pass that creates its demand.
+  const batchPolicy = integrationStringConcatManyPolicy(ctx);
 
   for (const fn of modAfterTU.functions) {
     const before = afterInlineByUnitId.get(fn.unitId);
@@ -3374,13 +4228,13 @@ export function compileIrPathFunctions(
       const changed = before === undefined || fn !== before.fn;
       const hygienic = changed ? runHygienePasses(fn, allocRegistry) : fn;
       // Final synchronous parity pass: fuse only after mono/TU has settled.
-      const hostBatchedConcat = !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
-      const standaloneBatchedConcat = ctx.nativeStrings && ctx.standalone && !ctx.wasi;
-      const batched = hostBatchedConcat
-        ? batchStringConcat(hygienic, allocRegistry)
-        : standaloneBatchedConcat
-          ? batchStringConcat(hygienic, allocRegistry, 8)
-          : hygienic;
+      // (#3526 F2-S6) Under manifest authority. The four-flag selection and the
+      // hand-copied native ceiling are gone: `batch` is the frozen decision and
+      // the ceiling is derived from the provider rows.
+      const batched =
+        batchPolicy.batch === "off"
+          ? hygienic
+          : batchStringConcat(hygienic, allocRegistry, stringConcatManyArityCap(batchPolicy.batch));
       const final = batched === hygienic ? hygienic : runHygienePasses(batched, allocRegistry);
       const verifyErrors = verifyIrFunction(final, undefined, declsAfterTU);
       if (verifyErrors.length > 0) {
@@ -3479,9 +4333,237 @@ export function compileIrPathFunctions(
   // manifest deterministic; structural manifest corruption and late mutation
   // stay fatal for the whole transaction.
   const numberBoundaryPolicy = integrationNumberBoundaryPolicy(ctx);
+  const booleanBoundaryPolicy = integrationBooleanBoundaryPolicy(ctx);
+  const externIsUndefinedPolicy = integrationExternIsUndefinedPolicy(ctx);
+  const generatorNumberBoxPolicy = integrationGeneratorNumberBoxPolicy(ctx);
+  const stringComparePolicy = integrationStringComparePolicy(ctx);
+  const stringEqPolicy = integrationStringEqPolicy(ctx);
+  const stringLenPolicy = integrationStringLenPolicy(ctx);
+  const stringConcatPolicy = integrationStringConcatPolicy(ctx);
+  const stringCharCodeAtPolicy = integrationStringCharCodeAtPolicy(ctx);
+  const stringConcatManyPolicy = integrationStringConcatManyPolicy(ctx);
+  const stringConstPolicy = integrationStringConstPolicy(ctx);
+  const hostCallbackWrapPolicy = integrationHostCallbackWrapPolicy(ctx);
   for (const entry of healthyForLower) {
     const unsupported = unsupportedNumberBoundaryIntrinsic(entry.fn, numberBoundaryPolicy);
-    if (unsupported === undefined) continue;
+    if (unsupported !== undefined) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          `ir/integration: semantic intrinsic ${unsupported} has no provider under number-boundary policy ` +
+            `box=${numberBoundaryPolicy.box}/unbox=${numberBoundaryPolicy.unbox}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F1-S3) The generator return seam partitions on the same rule. It
+    // carries no intrinsic instruction, so the demand is read off the
+    // `gen.setReturn` population directly — the same enumeration the freeze
+    // scan and the attachment pass use.
+    if (generatorNumberBoxPolicy.box === "unsupported" && irGeneratorNumberBoxDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: generator return boxing has no provider under generator-number-box policy " +
+            `box=${generatorNumberBoxPolicy.box}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F1-S4) The externref undefined probe partitions on the same rule,
+    // in the same pass, for the same reason.
+    const unsupportedProbe = unsupportedExternBoundaryIntrinsic(entry.fn, externIsUndefinedPolicy);
+    if (unsupportedProbe !== undefined) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          `ir/integration: semantic intrinsic ${unsupportedProbe} has no provider under extern-is-undefined policy ` +
+            `probe=${externIsUndefinedPolicy.probe}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S1) The string relational compare seam partitions on the same
+    // rule, in the same pass. Like the generator seam it carries no intrinsic
+    // instruction, so the demand is read off the call population directly.
+    if (stringComparePolicy.compare === "unsupported" && irStringCompareDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string relational compare has no provider under string-compare policy " +
+            `compare=${stringComparePolicy.compare}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S3) The string equality seam partitions on the same rule, in
+    // the same pass. Its demand is an instruction kind rather than a call
+    // target, but the classification is identical to the compare's.
+    if (stringEqPolicy.eq === "unsupported" && irStringEqDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string equality has no provider under string-eq policy " + `eq=${stringEqPolicy.eq}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S4) The string length seam partitions on the same rule, in the
+    // same pass. Its demand is an instruction kind, like the equality's.
+    if (stringLenPolicy.len === "unsupported" && irStringLenDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string length has no provider under string-len policy " + `len=${stringLenPolicy.len}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S5) The string concatenation seam partitions on the same rule,
+    // in the same pass. Its demand is an instruction kind like the length's,
+    // but it is a PAIR of modes — EITHER of which is demand, because one
+    // unsupported policy refuses both feature rows at once.
+    const stringConcatDemand = irStringConcatDemand([entry.fn]);
+    if (stringConcatPolicy.concat === "unsupported" && (stringConcatDemand.immutable || stringConcatDemand.owned)) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string concatenation has no provider under string-concat policy " +
+            `concat=${stringConcatPolicy.concat}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S7) The guarded charCodeAt seam partitions on the same rule, in
+    // the same pass. Its demand spans two producers, so an owner whose policy
+    // cannot provide the seam is refused whichever producer minted the read —
+    // the policy refuses, it never re-lowers.
+    if (stringCharCodeAtPolicy.charCodeAt === "unsupported" && irStringCharCodeAtDemand([entry.fn])) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: charCodeAt has no provider under string-char-code-at policy " +
+            `charCodeAt=${stringCharCodeAtPolicy.charCodeAt}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S6) The BATCHED many-arity family partitions on the same rule.
+    // Its demand is neither an instruction kind nor a flag but a set of fused
+    // ARITIES, and it is the concatenation authority — not the pass policy —
+    // that can refuse them: `batch` only decides whether the pass ran.
+    const stringConcatManyDemand = irStringConcatManyDemand([entry.fn]);
+    if (stringConcatPolicy.concat === "unsupported" && stringConcatManyDemand.arities.length > 0) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: batched string concatenation has no provider under string-concat policy " +
+            `concat=${stringConcatPolicy.concat}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F2-S8) The literal STORAGE seam partitions on the same rule, in
+    // the same pass. Its demand is a PAIR of namespaces and EITHER is demand,
+    // because one unsupported policy refuses both feature rows at once.
+    const stringConstDemand = irStringConstDemand([entry.fn]);
+    if (stringConstPolicy.storage === "unsupported" && (stringConstDemand.literal || stringConstDemand.utf16)) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          "ir/integration: string literal storage has no provider under string-const policy " +
+            `storage=${stringConstPolicy.storage}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F3-S1) The host callback MAKER partitions on the same rule, in the
+    // same pass. Its demand is a PAIR of arms and the check is two-sided: an
+    // `unsupported` policy refuses either crossing, and a policy that selected
+    // the OTHER arm refuses too — a `native-dispatch` manifest cannot answer a
+    // maker call, and a `host` manifest cannot license a dispatcher that was
+    // never reserved. In-tree the projections can produce neither mismatch
+    // (the two lane predicates are disjoint and each decides both the policy
+    // and the closure shape), so this guards HAND-BUILT policies and adapters,
+    // which is exactly where a wrong pair would otherwise reach lowering
+    // unchallenged.
+    const hostCallbackWrapDemand = irHostCallbackWrapDemand([entry.fn]);
+    const refusedCallbackArm =
+      hostCallbackWrapDemand.host && hostCallbackWrapPolicy.wrap !== "host"
+        ? "host"
+        : hostCallbackWrapDemand.nativeDispatch && hostCallbackWrapPolicy.wrap !== "native-dispatch"
+          ? "native-dispatch"
+          : undefined;
+    if (refusedCallbackArm !== undefined) {
+      markOwnerFailure(
+        terminalOwnerOf(entry),
+        entry.artifactUnitId,
+        entry.name,
+        new IrUnsupportedError(
+          "late-preparation-unsupported",
+          "resolve",
+          `ir/integration: ${refusedCallbackArm} callback boundary has no provider under host-callback-wrap policy ` +
+            `wrap=${hostCallbackWrapPolicy.wrap}`,
+        ),
+        "resolve",
+      );
+      continue;
+    }
+    // (#3526 F1-S2) The boolean boundary partitions on the SAME rule and in the
+    // same pass, so one demoting owner still cannot fail an unrelated one
+    // through the aggregate manifest below.
+    const unsupportedBoolean = unsupportedBooleanBoundaryIntrinsic(entry.fn, booleanBoundaryPolicy);
+    if (unsupportedBoolean === undefined) continue;
     markOwnerFailure(
       terminalOwnerOf(entry),
       entry.artifactUnitId,
@@ -3489,8 +4571,8 @@ export function compileIrPathFunctions(
       new IrUnsupportedError(
         "late-preparation-unsupported",
         "resolve",
-        `ir/integration: semantic intrinsic ${unsupported} has no provider under number-boundary policy ` +
-          `box=${numberBoundaryPolicy.box}/unbox=${numberBoundaryPolicy.unbox}`,
+        `ir/integration: semantic intrinsic ${unsupportedBoolean} has no provider under boolean-boundary policy ` +
+          `box=${booleanBoundaryPolicy.box}`,
       ),
       "resolve",
     );
@@ -3539,8 +4621,11 @@ export function compileIrPathFunctions(
       // imports exist, then OBSERVE them: prepared-component sealing runs
       // before lowering, so an unobserved provider reads as an unplanned ABI
       // binding and peels the generator back to the compile-twice route.
+      // (#3526 F1-S3) The boxing callable is the frozen manifest's decision,
+      // not a symbol spelled at this seam.
+      const generatorNumberBoxProvider = preparedGeneratorNumberBoxProvider(preparedRuntimeManifest);
       healthyForLower = healthyForLower.map((entry) => {
-        const fn = attachIrGeneratorSupport(entry.fn);
+        const fn = attachIrGeneratorSupport(entry.fn, generatorNumberBoxProvider);
         return fn === entry.fn ? entry : { ...entry, fn };
       });
       if (ctx.programAbiCallableProviders) {
@@ -3556,7 +4641,9 @@ export function compileIrPathFunctions(
     return finishReport();
   }
   if (!runGlobalPreparation(() => preregisterExceptionSupport(ctx, healthyForLower))) return finishReport();
-  if (!runGlobalPreparation(() => preregisterDynamicAndForInSupport(ctx, healthyForLower))) return finishReport();
+  if (!runGlobalPreparation(() => preregisterDynamicAndForInSupport(ctx, healthyForLower, preparedRuntimeManifest))) {
+    return finishReport();
+  }
   if (
     !runGlobalPreparation(() => {
       const registry = ctx.programAbiTypes;
@@ -3614,12 +4701,7 @@ export function compileIrPathFunctions(
   recordOwnerPreparationFailures(
     failures,
     failedOwners,
-    preregisterCallableProviders(
-      ctx,
-      healthyForLower,
-      preparedRuntimeManifest?.providers,
-      fuseNativeNumberFormatCarriers,
-    ),
+    preregisterCallableProviders(ctx, healthyForLower, preparedRuntimeManifest, fuseNativeNumberFormatCarriers),
   );
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
@@ -3967,7 +5049,7 @@ export function compileIrPathFunctions(
       deferredClass,
       unitCallableSlots,
       importedCallableCatalog,
-      preparedRuntimeManifest?.providers,
+      preparedRuntimeManifest,
       fuseNativeNumberFormatCarriers,
       loweringPlans?.fnctorParameterPreselection,
       loweringPlans?.fnctorParameterPreselectionIsCurrent,
@@ -4289,6 +5371,33 @@ export function compileIrPathFunctions(
             "module-init body contains a non-trailing return-class op — appended init epilogues would be skipped; keeping legacy body",
           );
           continue;
+        }
+        // (#3523 R4 gap 3) WASI idempotence, as CONSTRUCTION rather than splice.
+        //
+        // `applyModuleInitGuard` makes `__module_init` re-entrant-safe by
+        // prepending `global.get $done / if(return) / $done = 1` to an already
+        // emitted body. A Prepared body cannot take that: the early `return` is
+        // precisely the return-class op the scan above withdraws the patch over,
+        // and the body identity is sealed at the preparation snapshot.
+        //
+        // The wrapping-`if` form is equivalent and composes: it introduces no
+        // return-class op, so the scan passes and every later epilogue
+        // (`finalizeInModuleInitFlag`'s `__in_module_init = 0` above all) still
+        // executes on the already-initialized path — which the early-`return`
+        // form would skip. `plantPreparedWasiModuleInitGuard` is set only by the
+        // prepared preparation call, so the post-direct overlay never plants a
+        // second guard on the legacy WASI lane.
+        const wasiGuard = options?.plantPreparedWasiModuleInitGuard ? ctx.preparedWasiModuleInitGuard : undefined;
+        if (wasiGuard && wasiGuard.planted === undefined) {
+          const doneGet: Instr = { op: "global.get", index: wasiGuard.doneGlobalIdx };
+          const eqz: Instr = { op: "i32.eqz" };
+          const guardIf: Instr = {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "i32.const", value: 1 }, { op: "global.set", index: wasiGuard.doneGlobalIdx }, ...finalBody],
+          };
+          finalBody = [doneGet, eqz, guardIf];
+          wasiGuard.planted = { doneGet, eqz, guard: guardIf };
         }
       } else {
         finalBody = applyIrTailCalls(ctx, wasmFunc.body, wasmFunc.typeIdx);
@@ -4687,6 +5796,20 @@ function resolveModuleBindingGlobal(
       storageType = { kind: "i32" };
       break;
     case "dynamic":
+      // (#4208 S2 / #5289) The dual-LANE arm, and the exact counterpart of the
+      // `string` arm below. The IR type stays the lane-AGNOSTIC `dynamic`; what
+      // differs per lane is only the legacy GLOBAL's ValType, and BOTH sides of
+      // that boundary derive it from `ctx.fast` alone:
+      //   compatibility → `(mut externref)`
+      //   fast          → `(mut (ref null $AnyValue))`
+      // `resolveWasmType`'s `Any | Unknown` branch allocates the slot;
+      // `resolveIrDynamicCarrierType` resolves the IR one. Measured agreement,
+      // 2026-09-03, `(global $__mod_a …)` out of the emitted WAT with the same
+      // type index on both sides: gc 34/34, standalone 45/45. Naming the ACTIVE
+      // lane's carrier keeps `storageMatches` below a real agreement test — a
+      // lane whose slot was widened for some other reason (a module `var`, which
+      // the admission arm excludes by construction) disagrees loudly instead of
+      // being reinterpreted.
       type = irDynamic();
       storageType = resolveIrDynamicCarrierType(ctx);
       break;
@@ -4717,6 +5840,34 @@ function resolveModuleBindingGlobal(
       }
       storageType = { kind: "ref_null", typeIdx: ctx.mapTypeIdx };
       type = { kind: "val", val: storageType };
+      break;
+    }
+    case "string": {
+      // (#3523 R4-M1 / #679) The dual-backend arm. The IR type stays the
+      // backend-AGNOSTIC `string` — the same marker `IrLowerResolver.
+      // resolveString` answers — so module-init value flow keeps real string
+      // semantics instead of an opaque carrier. What differs per backend is
+      // only the legacy GLOBAL's ValType:
+      //   host strings   → `(mut externref)`
+      //   nativeStrings  → `(mut (ref null $AnyString))`
+      // Both are what `resolveWasmType`'s string arm produced, run through
+      // `registerModuleGlobal`'s `ref` → `ref_null` global-slot relaxation.
+      // Naming the ACTIVE backend's carrier here makes the `storageMatches`
+      // check below a real agreement test: a lane whose slot was widened for
+      // some other reason disagrees loudly rather than being reinterpreted.
+      if (ctx.nativeStrings) {
+        if (ctx.anyStrTypeIdx < 0) {
+          throw new IrInvariantError(
+            "unknown-type-ref",
+            "build",
+            `module-init: native-string binding '${name}' has no registered $AnyString array`,
+          );
+        }
+        storageType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+      } else {
+        storageType = { kind: "externref" };
+      }
+      type = { kind: "string" };
       break;
     }
   }
@@ -4833,6 +5984,86 @@ function buildModuleBindingsMap(
     }
   }
   return map;
+}
+
+/**
+ * (#5285) The non-short-circuiting twin of {@link buildModuleBindingsMap}, and
+ * the ONLY instrument that can answer "which categories does this file carry".
+ *
+ * `buildModuleBindingsMap` above is on the production path and correctly stops
+ * at the first refusal; the `JS2WASM_IR_SHAPE_DIAG` reject-arm recorder in
+ * `select.ts` is first-wins for the same reason. Read as a survey, either one
+ * reports "exactly one blocker" for every file regardless of the corpus — which
+ * is how a 13-file census concluded "no file mixes categories" and a slice
+ * ranking got built on it. This function asks `inspectDirectBinding` the same
+ * question and **records and continues**.
+ *
+ * It is INERT by construction: it never calls `resolveModuleBindingGlobal`, so
+ * it mutates no `ctx`, registers no global, and plans no Program ABI entry. Its
+ * only caller is gated on `JS2WASM_IR_SHAPE_DIAG=1`.
+ *
+ * Refusals come back in SOURCE ORDER. Every historical measurement recorded the
+ * FIRST blocker, so preserving the order is what lets those numbers be
+ * reconciled with these instead of discarded.
+ */
+function surveyModuleBindingRefusals(
+  population: readonly ts.Statement[],
+  resolveModuleBinding: IrModuleBindingResolver,
+  checker: ts.TypeChecker,
+): readonly IrModuleBindingRefusal[] {
+  const refusals: IrModuleBindingRefusal[] = [];
+  const record = (name: string, declaration: ts.VariableDeclaration, arm: IrModuleBindingRefusal["arm"]): void => {
+    let declaredType = "<unresolved>";
+    try {
+      declaredType = checker.typeToString(checker.getTypeAtLocation(declaration.name));
+    } catch {
+      // A census must survive a checker failure; the arm still names the refusal.
+    }
+    refusals.push({
+      name,
+      declaredType,
+      initializerKind: declaration.initializer ? ts.SyntaxKind[declaration.initializer.kind] : undefined,
+      arm,
+    });
+  };
+  for (const stmt of population) {
+    if (!ts.isVariableStatement(stmt)) continue;
+    for (const d of stmt.declarationList.declarations) {
+      if (!ts.isIdentifier(d.name)) {
+        // Same refusal `buildModuleBindingsMap` throws for, kept as a category
+        // rather than a stop: a destructured top-level binding has no
+        // one-to-one legacy global. Leaf `.text` names, never a source slice.
+        record(moduleBindingPatternLabel(d.name), d, "destructuring-pattern");
+        continue;
+      }
+      let inspected: IrModuleBindingInspection;
+      try {
+        inspected = resolveModuleBinding.inspectDirectBinding(d.name);
+      } catch {
+        record(d.name.text, d, "inspection-threw");
+        continue;
+      }
+      if (inspected.kind !== "unsupported") continue;
+      record(d.name.text, d, inspected.arm);
+    }
+  }
+  return refusals;
+}
+
+/** Leaf binding names of a top-level destructuring pattern, in source order. */
+function moduleBindingPatternLabel(pattern: ts.BindingPattern): string {
+  const names: string[] = [];
+  const visit = (node: ts.BindingName): void => {
+    if (ts.isIdentifier(node)) {
+      names.push(node.text);
+      return;
+    }
+    for (const element of node.elements) {
+      if (ts.isBindingElement(element)) visit(element.name);
+    }
+  };
+  visit(pattern);
+  return names.join(",");
 }
 
 /**
@@ -5343,6 +6574,8 @@ function makeFromAstResolver(
   const isAmbientStringBinding = makeAmbientStringBindingPredicate(ctx.checker);
   const supportsBackendCapability = (capability: IrBackendTargetCapability): boolean =>
     supportsIrBackendTargetCapability(projectIrBackendTargetProfile(ctx.targetProfile, { fast: ctx.fast }), capability);
+  // (#3526 F3-S3) Resolved once, pre-freeze: the arm below projects this value.
+  const functionPrototypeCall = integrationFunctionPrototypeCallPolicy(ctx);
   return {
     ...preparedIrAsyncFromAstResolver(ctx),
     hostIndirectEvalTarget() {
@@ -5425,7 +6658,7 @@ function makeFromAstResolver(
       return irImportFuncRef("env", "__defineProperty_desc");
     },
     functionPrototypeCallTarget() {
-      if (!ctx.standalone || ctx.wasi) return null;
+      if (functionPrototypeCall.call !== "native") return null;
       return ensureFunctionPrototypeCallHelper(ctx) === undefined
         ? null
         : irRuntimeFuncRef(FUNCTION_PROTOTYPE_CALL_HELPER);
@@ -5657,15 +6890,6 @@ function makeFromAstResolver(
       if (ctx.mapTypeIdx < 0) return undefined;
       return { kind: "val", val: { kind: "ref_null", typeIdx: ctx.mapTypeIdx } };
     },
-    externIsUndefinedIsNative(): boolean {
-      return ctx.standalone || ctx.wasi || ctx.nativeStrings;
-    },
-    // Boolean values share the host union-import family with numbers, but
-    // retain their own boxer so `true` never crosses an externref boundary as
-    // the number `1`.
-    hasHostBooleanBox(): boolean {
-      return !ctx.nativeStrings;
-    },
     // (#2955 slice 3) Rep predicate: the string carrier is externref (host
     // strings), so string SSA values flow unchanged into externref-expected
     // positions (`coerceToExpectedExtern` host-call args) and take the
@@ -5871,12 +7095,58 @@ function observeNativeRuntimeProvider(ctx: CodegenContext, symbol: string): void
   ctx.programAbiCallableProviders?.observe(irRuntimeFuncRef(symbol), index);
 }
 
+/**
+ * (#3526 F2-S6) The single lowering of a BATCHED many-arity concatenation, for
+ * both of the two symbols that produce one.
+ *
+ * The arm no longer reads `ctx.nativeStrings`: the frozen `stringConcat` policy
+ * already resolved which authority answers, and the family row derives the
+ * concrete import field or helper symbol from the arity. Both routines below
+ * are the same two as before, called with the same arguments, so the migration
+ * is byte-neutral.
+ *
+ * The host arm keeps `ensureLateImport` deliberately — late minting IS the
+ * contract here, not an implementation detail. The emitted bytes depend on the
+ * import's POSITION (measured: `__concat_5` at import index 21 of 27 on the
+ * async fixture, `__concat_N` at index 5 before dead-import elimination on the
+ * small ones), so registering at freeze time would move every batching cell by
+ * design. Its params and results now come from the record rather than being
+ * spelled here.
+ */
+function batchedConcatProviderIndex(
+  ctx: CodegenContext,
+  prepared: PreparedIrRuntimeManifest | undefined,
+  arity: number,
+): number | undefined | null {
+  const arm = preparedStringConcatManyProvider(prepared, arity);
+  if (!arm) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      "batched string concatenation has no frozen provider under the string-concat policy",
+    );
+  }
+  if (arm.arm === "native") return ensureNativeBatchedConcat(ctx, arity);
+  return ensureLateImport(
+    ctx,
+    arm.field,
+    arm.params.map((param) => ({ kind: param }) as ValType),
+    arm.results.map((result) => ({ kind: result }) as ValType),
+    arm.module,
+  );
+}
+
 function resolveAndObserveCallableProvider(
   ctx: CodegenContext,
   ref: IrFuncRef,
-  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  // (#3526 F2-S1) The whole prepared manifest, not just its intrinsic-provider
+  // map: the string-compare arm reads a FEATURE row (`js.string.compare`) that
+  // no intrinsic use ever puts in that map, plus the frozen host-capability
+  // records the host arm's field name comes from.
+  prepared?: PreparedIrRuntimeManifest,
   fuseNativeNumberFormatCarriers = false,
 ): number {
+  const runtimeProviders = prepared?.providers;
   if (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic") {
     throw new TypeError("callable-provider resolution requires a runtime or intrinsic reference");
   }
@@ -5923,24 +7193,12 @@ function resolveAndObserveCallableProvider(
       ? (ctx.funcMap.get(STANDALONE_STDOUT_APPEND_FN) ?? null)
       : ensureLateImport(ctx, "console_log_string", [{ kind: "externref" }], []);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_ASYNC_STRING_CONCAT_5_FN) {
-    index = ctx.nativeStrings
-      ? ensureNativeBatchedConcat(ctx, 5)
-      : ensureLateImport(
-          ctx,
-          "__concat_5",
-          Array.from({ length: 5 }, () => ({ kind: "externref" }) as const),
-          [{ kind: "externref" }],
-        );
+    // (#3526 F2-S6) The prepared final main's fixed five-part concat. Same
+    // family, same frozen row, same two routines — only the arity is a
+    // constant here rather than parsed from the symbol.
+    index = batchedConcatProviderIndex(ctx, prepared, 5);
   } else if (ref.binding.kind === "intrinsic" && parseIrStringConcatManyArity(symbol) !== null) {
-    const arity = parseIrStringConcatManyArity(symbol)!;
-    index = ctx.nativeStrings
-      ? ensureNativeBatchedConcat(ctx, arity)
-      : ensureLateImport(
-          ctx,
-          `__concat_${arity}`,
-          Array.from({ length: arity }, () => ({ kind: "externref" }) as const),
-          [{ kind: "externref" }],
-        );
+    index = batchedConcatProviderIndex(ctx, prepared, parseIrStringConcatManyArity(symbol)!);
   } else if (ref.binding.kind === "runtime" && symbol === "__new_ReferenceError") {
     if (ctx.wasi || ctx.standalone) {
       emitWasiErrorConstructor(ctx, "ReferenceError", 1);
@@ -5980,10 +7238,35 @@ function resolveAndObserveCallableProvider(
     const vecTypeIdx = Number(symbol.slice(VEC_NEW_SIZED_PREFIX.length));
     index = Number.isInteger(vecTypeIdx) ? ensureVecNewSized(ctx, vecTypeIdx) : null;
   } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_FN) {
+    // (#3526 F2-S7) The PLAN path keeps its materializer — `stringMethodPlan`
+    // baked the lane into this symbol before the freeze, and re-deciding it here
+    // would be from-ast-side vocabulary (#2955). What the slice adds is a
+    // fail-closed VERIFY: the frozen row and the plan-time symbol are the same
+    // `ctx.nativeStrings` fact inside `compile()`, so a disagreement can only
+    // come from an adapter that passed a policy AND a demand, and that is an
+    // invariant violation, never a lane fact to re-decide locally.
+    const arm = preparedStringCharCodeAtProvider(prepared);
+    if (!arm || arm.symbol !== symbol) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "plan-time charCodeAt symbol disagrees with the frozen string-char-code-at row",
+      );
+    }
     index = ensureHostCharCodeAtGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_SUBSTRING_FN) {
     index = ensureHostSubstringGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === NATIVE_CHARCODEAT_FN) {
+    // (#3526 F2-S7) The native half of the same plan-path verify — see the host
+    // arm above. Same materializer, same fail-closed check.
+    const arm = preparedStringCharCodeAtProvider(prepared);
+    if (!arm || arm.symbol !== symbol) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "plan-time charCodeAt symbol disagrees with the frozen string-char-code-at row",
+      );
+    }
     index = ensureNativeCharCodeAtHelper(ctx);
   } else if (
     ref.binding.kind === "intrinsic" &&
@@ -6002,28 +7285,89 @@ function resolveAndObserveCallableProvider(
   } else if (ref.binding.kind === "intrinsic" && symbol === JSSTR_CHARCODEAT_TRUSTED_FN) {
     index = ensureHostCharCodeAtTrusted(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_COMPARE_FN) {
-    if (ctx.nativeStrings) {
+    // (#3526 F2-S1) The arm no longer reads `ctx.nativeStrings`: the frozen
+    // manifest's `stringCompare` policy already resolved which authority
+    // answers, and this only materializes it through the SAME two routines as
+    // before. Fail-closed: an owner whose policy cannot provide the seam is
+    // partitioned out before freeze, so a missing row here is an invariant, not
+    // a lane fact to re-decide locally.
+    const arm = preparedStringCompareProvider(prepared);
+    if (!arm) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "string relational compare has no frozen provider under the string-compare policy",
+      );
+    }
+    if (arm.arm === "native") {
       ensureNativeStringHelpers(ctx);
-      index = nativeStrHelperHandle(ctx, "__str_compare");
+      index = nativeStrHelperHandle(ctx, arm.symbol);
     } else {
-      index = ctx.funcMap.get("string_compare");
+      // The host arm names the capability record's field — the `env` BASE
+      // import the legacy collector already minted. Never `ensureLateImport`:
+      // a late registration here would shift every defined funcidx.
+      index = ctx.funcMap.get(arm.field);
+    }
+  } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_EQUALS_FN) {
+    // (#3526 F2-S3) Lifted out of the three-symbol concat/eq branch below and
+    // put under manifest authority. The arm no longer reads `ctx.nativeStrings`:
+    // the frozen `stringEq` policy already resolved which authority answers, and
+    // this only materializes it through the SAME two routines as before. The
+    // lift itself is byte-inert — the three symbols are disjoint, so `else if`
+    // order between them cannot change which branch a symbol takes.
+    const arm = preparedStringEqProvider(prepared);
+    if (!arm) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "string equality has no frozen provider under the string-eq policy",
+      );
+    }
+    if (arm.arm === "native") {
+      ensureNativeStringHelpers(ctx);
+      index = nativeStrHelperHandle(ctx, arm.symbol);
+    } else {
+      // The host arm names the capability record's MODULE and field, and is
+      // located by import-section POSITION — never `ctx.funcMap`, which keys
+      // `wasm:js-string` builtins on the bare field and so is shadowable by a
+      // same-named user function (#1072). Never `ensureLateImport` either: the
+      // five-import block is minted by a base-phase caller long before Phase 3,
+      // and a late registration here would shift every defined funcidx.
+      index = exactCallableImportIndex(ctx, arm.module, arm.field);
     }
   } else if (
     ref.binding.kind === "intrinsic" &&
-    (symbol === IR_STRING_CONCAT_FN || symbol === IR_STRING_CONCAT_OWNED_FN || symbol === IR_STRING_EQUALS_FN)
+    (symbol === IR_STRING_CONCAT_FN || symbol === IR_STRING_CONCAT_OWNED_FN)
   ) {
-    if (ctx.nativeStrings) {
+    // (#3526 F2-S5) Under manifest authority, like the compare and the eq
+    // before it. The arm no longer reads `ctx.nativeStrings`: the frozen
+    // `stringConcat` policy already resolved which authority answers, and the
+    // instruction's concat MODE — recovered here from the intrinsic SYMBOL,
+    // which is all the resolve table receives — picks which helper on that
+    // authority. The two routines below are the same two as before, so the
+    // migration is byte-neutral.
+    const arm = preparedStringConcatProvider(
+      prepared,
+      symbol === IR_STRING_CONCAT_OWNED_FN ? "owned-append" : "immutable",
+    );
+    if (!arm) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "string concatenation has no frozen provider under the string-concat policy",
+      );
+    }
+    if (arm.arm === "native") {
       ensureNativeStringHelpers(ctx);
-      const helper =
-        symbol === IR_STRING_CONCAT_OWNED_FN
-          ? "__str_concat_owned"
-          : symbol === IR_STRING_CONCAT_FN
-            ? "__str_concat"
-            : "__str_equals";
-      index = nativeStrHelperHandle(ctx, helper);
+      index = nativeStrHelperHandle(ctx, arm.symbol);
     } else {
-      const field = symbol === IR_STRING_EQUALS_FN ? "equals" : "concat";
-      index = exactCallableImportIndex(ctx, "wasm:js-string", field);
+      // The host arm names the capability record's MODULE and field and is
+      // located by import-section POSITION — never `ctx.funcMap`, which keys
+      // `wasm:js-string` builtins on the bare field and so is shadowable by a
+      // same-named user function (#1072). Never `ensureLateImport` either: the
+      // five-import block is minted by a base-phase caller long before Phase 3,
+      // and a late registration here would shift every defined funcidx.
+      index = exactCallableImportIndex(ctx, arm.module, arm.field);
     }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_REPEAT_COUNTED_NATIVE_FN) {
     index = ensureIrNativeCountedStringRepeatProvider(ctx);
@@ -6051,7 +7395,28 @@ function resolveAndObserveCallableProvider(
       index = exactCallableImportIndex(ctx, "env", "string_charAt");
     }
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_CHAR_CODE_AT_FN) {
-    index = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
+    // (#3526 F2-S7) THE R6-shaped decision on this seam. The arm no longer reads
+    // `ctx.nativeStrings`: the frozen `stringCharCodeAt` policy already resolved
+    // which authority answers, and this only materializes it through the SAME
+    // two routines as before. Fail-closed: an owner whose policy cannot provide
+    // the seam is partitioned out before freeze, so a missing row here is an
+    // invariant, not a lane fact to re-decide locally.
+    //
+    // Both routines return `number | null`, and a `null` keeps its existing
+    // meaning exactly: it falls to the `unknown-function-ref` invariant below —
+    // a hard compile error — and never registers a late import, which would
+    // shift every defined funcidx. `funcMap.get(arm.symbol)` is never used
+    // either: these are DEFINED helpers a same-named user export shadows
+    // (#1072 / the #3520 pin).
+    const arm = preparedStringCharCodeAtProvider(prepared);
+    if (!arm) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "charCodeAt has no frozen provider under the string-char-code-at policy",
+      );
+    }
+    index = arm.arm === "native" ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
   } else if (ref.binding.kind === "intrinsic" && symbol === IR_STRING_ITERATOR_CHAR_AT_FN) {
     if (ctx.nativeStrings) {
       ensureNativeStringHelpers(ctx);
@@ -6190,7 +7555,7 @@ function makeResolver(
   classResolver: DeferredClassResolver,
   unitCallableSlots: ReadonlyMap<IrUnitId, PreparedIrUnitCallableSlot>,
   importedCallableCatalog: ReadonlyMap<string, Import>,
-  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  preparedRuntimeManifest?: PreparedIrRuntimeManifest,
   fuseNativeNumberFormatCarriers = false,
   fnctorParameterPreselection?: IrFnctorParameterPreselectionPlan,
   fnctorParameterPreselectionIsCurrent?: () => boolean,
@@ -6222,7 +7587,7 @@ function makeResolver(
         return resolvePreparedImportCallable(ctx, ref, importedCallableCatalog, preparedScopeLookup);
       }
       if (ref.binding.kind === "runtime" || ref.binding.kind === "intrinsic") {
-        return resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
+        return resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
       }
       const adapterName = ref.binding.kind === "import" ? ref.binding.field : ref.name;
       const idx = ctx.funcMap.get(adapterName);
@@ -6409,27 +7774,23 @@ function makeResolver(
     ): readonly Instr[] {
       return emitResolvedStringConst(ctx, resolver, value, alloc, storage, materializer);
     },
-    emitStringConcat(_alloc, mode, provider): readonly Instr[] {
+    emitStringConcat(_alloc, _mode, provider): readonly Instr[] {
       if (provider) {
         return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
       }
-      if (ctx.nativeStrings) {
-        // (#3744) `owned-append` — the builder-loop license computed by
-        // `collectOwnedStringAppendSymbols`; see src/ir/string-builder-shape.ts.
-        // Unregistered helper falls through to general concat (correctness first).
-        if (mode === "owned-append") {
-          const ownedIdx = stringBackend.nativeHelpers.get("__str_concat_owned");
-          if (ownedIdx !== undefined) return [{ op: "call", funcIdx: ownedIdx }];
-        }
-        const idx = stringBackend.nativeHelpers.get("__str_concat");
-        if (idx === undefined) {
-          throw new Error("ir/integration: __str_concat helper not registered");
-        }
-        return [{ op: "call", funcIdx: idx }];
-      }
-      const idx = stringBackend.hostImports.get("concat");
-      if (idx === undefined) throw new Error("ir/integration: wasm:js-string concat not registered");
-      return [{ op: "call", funcIdx: idx }];
+      // (#3526 F2-S5) The no-provider fallback is RETIRED. It was the adapter's
+      // own `ctx.nativeStrings` read — a second, independent copy of the lane
+      // decision the frozen manifest now owns, including its own private
+      // mode-to-helper mapping — and it was dead: `attachIrStringSupport` binds
+      // a callable provider to every `string.concat` in every healthy owner. An
+      // owner that reaches lowering with no attachment must demote ALONE rather
+      // than silently mint a body from a locally decided lane. Measured before
+      // removal: zero reaches across the 65-cell byte matrix (which stayed
+      // byte-identical WITH a temporary throw in its place) and 352 passing
+      // tests in 22 string suites. The `_mode` parameter stays because the
+      // `emitStringConcat` contract is shared with the linear backend, which
+      // does dispatch on it.
+      throw new Error("ir/integration: string.concat has no prepared runtime provider");
     },
     emitStringRepeat(_alloc, _inputEncoding, provider, countedStringAppendTripCount): readonly Instr[] {
       if (!provider) throw new Error("ir/integration: string.repeat has no prepared provider");
@@ -6443,19 +7804,21 @@ function makeResolver(
       return ctx.nativeStrings ? [call, { op: "ref.as_non_null" }] : [call];
     },
     emitStringEquals(provider): readonly Instr[] {
-      if (provider) {
-        return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
+      // (#3526 F2-S3) Fail closed rather than re-deciding the lane here. The
+      // retired `ctx.nativeStrings` fallback was the seam's SECOND un-governed
+      // mode read, and it was dead: `attachIrStringSupport` attaches this
+      // provider unconditionally for every `string.eq`
+      // (`string-support.ts` — the kind is in the provider-attaching branch and
+      // `irStringCallableProviderRef` never returns `undefined` for it), and
+      // `prepareStrings` runs that pass over every healthy owner. An owner that
+      // reaches lowering with no attachment must demote ALONE, not silently mint
+      // a body from a locally decided symbol. Measured before removal: zero
+      // reaches across the 55-cell byte matrix and 337 tests in 22 string
+      // suites, with a temporary throw in its place.
+      if (!provider) {
+        throw new Error("ir/integration: string.eq has no prepared runtime provider");
       }
-      if (ctx.nativeStrings) {
-        const idx = stringBackend.nativeHelpers.get("__str_equals");
-        if (idx === undefined) {
-          throw new Error("ir/integration: __str_equals helper not registered");
-        }
-        return [{ op: "call", funcIdx: idx }];
-      }
-      const idx = stringBackend.hostImports.get("equals");
-      if (idx === undefined) throw new Error("ir/integration: wasm:js-string equals not registered");
-      return [{ op: "call", funcIdx: idx }];
+      return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
     },
     emitStringLen(_inputEncoding, provider): readonly Instr[] {
       if (provider?.kind === "callable") {
@@ -6470,14 +7833,16 @@ function makeResolver(
           },
         ];
       }
-      if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) {
-        // AnyString.length is field 0 (matches struct definition in
-        // src/codegen/native-strings.ts).
-        return [{ op: "struct.get", typeIdx: ctx.anyStrTypeIdx, fieldIdx: 0 }];
-      }
-      const idx = stringBackend.hostImports.get("length");
-      if (idx === undefined) throw new Error("ir/integration: wasm:js-string length not registered");
-      return [{ op: "call", funcIdx: idx }];
+      // (#3526 F2-S4) The no-provider fallback is RETIRED. It was the adapter's
+      // own `ctx.nativeStrings` read — a second, independent copy of the lane
+      // decision the frozen manifest now owns — and it was dead:
+      // `prepareStringLength` attaches this provider to every `string.len` in
+      // every healthy owner from the frozen row. An owner that reaches lowering
+      // with no attachment must demote ALONE rather than silently mint a body
+      // from a locally decided lane. Measured before removal: zero reaches
+      // across the 60-cell byte matrix (byte-identical WITH a temporary throw
+      // in its place) and 335 passing tests in 21 string suites.
+      throw new Error("ir/integration: string.len has no prepared runtime provider");
     },
     emitStringCharAt(_alloc, _inputEncoding, provider): readonly Instr[] {
       if (provider) {
@@ -6498,9 +7863,14 @@ function makeResolver(
       if (provider) {
         return [{ op: "call", funcIdx: resolver.resolveFunc(provider) }];
       }
-      const idx = ctx.nativeStrings ? ensureNativeCharCodeAtHelper(ctx) : ensureHostCharCodeAtGuarded(ctx);
-      if (idx === null) throw new Error("ir/integration: guarded charCodeAt helper unavailable");
-      return [{ op: "call", funcIdx: idx }];
+      // (#3526 F2-S7) The seam's second un-governed lane read, RETIRED on a
+      // measurement: `string-support.ts` attaches the semantic provider to every
+      // `string.char_code_at` unconditionally, so this branch was reached zero
+      // times across the 65-cell byte matrix (which stayed byte-identical with a
+      // throw in its place) and across 39 suites / 604 passing tests. An
+      // unattached instruction is now a hard refusal rather than a private
+      // re-decision of the authority the manifest already resolved.
+      throw new Error("ir/integration: string.char_code_at has no prepared runtime provider");
     },
     // -------------------------------------------------------------------
     // Exception handling dispatch (slice 9 — #1169h).
@@ -6607,7 +7977,7 @@ function callableProviderRef(instr: IrInstr): IrFuncRef | undefined {
 function preregisterCallableProviders(
   ctx: CodegenContext,
   fns: readonly BuiltFnRef[],
-  runtimeProviders?: ReadonlyMap<IntrinsicId, RuntimeProviderPlan>,
+  preparedRuntimeManifest?: PreparedIrRuntimeManifest,
   fuseNativeNumberFormatCarriers = false,
 ): ReadonlyMap<IrUnitId, IrOwnerPreparationFailure> {
   const failures = new Map<IrUnitId, IrOwnerPreparationFailure>();
@@ -6640,7 +8010,7 @@ function preregisterCallableProviders(
           const ref = callableProviderRef(instr);
           if (!ref || (ref.binding.kind !== "runtime" && ref.binding.kind !== "intrinsic")) return;
           try {
-            resolveAndObserveCallableProvider(ctx, ref, runtimeProviders, fuseNativeNumberFormatCarriers);
+            resolveAndObserveCallableProvider(ctx, ref, preparedRuntimeManifest, fuseNativeNumberFormatCarriers);
           } catch (error) {
             if (!failures.has(owner.unitId)) {
               failures.set(owner.unitId, { owner, outcome: classifyIrFailure(error, "resolve") });
@@ -6868,68 +8238,28 @@ function prepareStrings(ctx: CodegenContext, fns: BuiltFn[]): BuiltFn[] {
   const registry = ctx.programAbiTypes;
   if (!registry) return fns;
   const carrierRef = registry.stringCarrierRef();
-  let lengthProvider: IrStringLengthProvider | undefined;
-  if (usesStringLen) {
-    if (ctx.nativeStrings) {
-      lengthProvider = { kind: "struct-field", ownerType: carrierRef, fieldIndex: 0 };
-    } else {
-      const target = irImportFuncRef("wasm:js-string", "length", "length");
-      const structuralReferenceKey = irCallableBindingKey(target.binding);
-      const imported = catalogProgramAbiCallableImports(ctx).get(structuralReferenceKey);
-      if (!imported || imported.desc.kind !== "func") {
-        throw new Error("ir/integration: prepared string.len has no exact wasm:js-string.length import");
-      }
-      lengthProvider = { kind: "callable", target };
-    }
-  }
+  // (#3526 F2-S4) The length provider is NOT decided here any more. This pass
+  // still pre-registers the host `wasm:js-string` block that the host arm binds
+  // to (the `usesStringLen` scan above feeds `instrUsesStrings`), but WHICH
+  // authority answers `.length` is the frozen manifest's call, and the
+  // attachment moved with it — see `prepareStringLength`, which runs inside
+  // `prepareBuiltFnRuntimeManifest`.
 
-  const nativeMaterializations = new Map<IrInstrStringConst, NativeStringLiteralMaterialization>();
-  const nativeMaterializationFor = (instr: IrInstrStringConst): NativeStringLiteralMaterialization | undefined => {
-    if (!ctx.nativeStrings || ctx.nativeStrTypeIdx < 0) return undefined;
-    const existing = nativeMaterializations.get(instr);
-    if (existing) return existing;
-    const encoding =
-      ctx.utf8Storage && instr.alloc !== undefined && ctx.allocRegistry
-        ? ctx.allocRegistry.read<StringEncoding>(instr.alloc, ALLOC_NAMESPACES.encoding)
-        : undefined;
-    const materialization = nativeStringLiteralMaterialization(ctx, instr.value, encoding);
-    nativeMaterializations.set(instr, materialization);
-    return materialization;
-  };
-
-  const storageForConst = (instr: IrInstrStringConst): IrGlobalRef | undefined => {
-    if (!ctx.nativeStrings) return programAbiStringConstantRef(ctx, instr.value);
-    if (!ctx.programAbiGlobals || ctx.nativeStrTypeIdx < 0) return undefined;
-    const materialization = nativeMaterializationFor(instr);
-    if (!materialization || materialization.kind !== "global") return undefined;
-    const global = ctx.mod.globals[materialization.globalIdx - ctx.numImportGlobals];
-    if (!global) {
-      throw new Error(`ir/integration: native string literal ${JSON.stringify(instr.value)} lost its interned global`);
-    }
-    return ctx.programAbiGlobals.prepareNativeStringLiteral(global);
-  };
-
-  const materializerRefs = new Map<number, IrFuncRef>();
-  const materializerForConst = (instr: IrInstrStringConst): IrFuncRef | undefined => {
-    const materialization = nativeMaterializationFor(instr);
-    const providerRegistry = ctx.programAbiCallableProviders;
-    if (!materialization || materialization.kind !== "callable" || !providerRegistry) return undefined;
-    const existing = materializerRefs.get(materialization.funcIdx);
-    if (existing) return existing;
-    const provider = irIntrinsicFuncRef(`${IR_STRING_LITERAL_MATERIALIZE_FN}:${materializerRefs.size}`);
-    providerRegistry.observe(provider, materialization.funcIdx);
-    materializerRefs.set(materialization.funcIdx, provider);
-    return provider;
-  };
+  // (#3526 F2-S8) The literal STORAGE decision is NOT taken here any more, for
+  // the same reason F2-S4 moved the length one: `string.const` has no resolve
+  // arm at all, so the `IrGlobalRef` the instruction carries IS the physical
+  // choice, and the frozen manifest is now its authority. This pass keeps the
+  // literal SCAN and the host pre-registration above — registration and import
+  // ORDER are deliberately untouched — and the attachment moved to
+  // `prepareStringConst`, which runs inside `prepareBuiltFnRuntimeManifest`.
 
   let usesString = false;
   const prepared = fns.map((entry) => {
     const attachment = attachIrStringCarrier(entry.fn, carrierRef);
     usesString ||= attachment.usesString;
     const fn = attachIrStringSupport(attachment.function, {
-      storageForConst,
-      materializerForConst,
-      providerForLength: () => lengthProvider,
+      storageForConst: () => undefined,
+      providerForLength: () => undefined,
       providerForRepeat: (instr) =>
         irIntrinsicFuncRef(
           ctx.nativeStrings && instr.countedStringAppendTripCount !== undefined
@@ -7190,10 +8520,14 @@ function preregisterInOperatorSupport(ctx: CodegenContext, fns: readonly BuiltFn
   flushLateImportShifts(ctx, null);
 }
 
-function preregisterDynamicAndForInSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
+function preregisterDynamicAndForInSupport(
+  ctx: CodegenContext,
+  fns: readonly BuiltFnRef[],
+  prepared: PreparedIrRuntimeManifest | undefined,
+): void {
   preregisterForInSupport(ctx, fns);
   preregisterInOperatorSupport(ctx, fns);
-  preregisterDynamicSupport(ctx, fns);
+  preregisterDynamicSupport(ctx, fns, prepared);
 }
 
 /**
@@ -7352,7 +8686,102 @@ function jsTagToStaticType(
  *     like `preregisterStringSupport`.
  * Both are idempotent, so overlapping legacy registration is a no-op.
  */
-function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef[]): void {
+/**
+ * (#3526 F1-S4) Which arm of the externref undefined probe an instruction's
+ * ATTACHED provider names, if any.
+ *
+ * `__extern_is_undefined` is NOT a member of the `addUnionImports` family: on
+ * the host lane it is its own `ensureLateImport` registration, and on the
+ * host-free lanes a real Wasm function `ensureObjectRuntime` owns. Its two
+ * preregistration detectors therefore stay separate from the union ones, and
+ * each must recognise the attached provider target now that the raw `call` they
+ * used to key on is gone (the F1-S1/F1-S2 precedent). This returns only the
+ * classification — the detector FLAGS still decide when each materializer runs,
+ * so the registration order in `preregisterDynamicSupport` is untouched.
+ */
+function attachedExternIsUndefinedArm(instr: IrInstr): "host" | "native" | undefined {
+  if (instr.kind !== "intrinsic" || instr.id !== "js.extern.is_undefined") return undefined;
+  if (instr.provider?.kind !== "callable") return undefined;
+  const { binding } = instr.provider.target;
+  if (binding.kind === "import" && binding.module === "env" && binding.field === "__extern_is_undefined") return "host";
+  if (binding.kind === "runtime" && binding.symbol === "__extern_is_undefined") return "native";
+  return undefined;
+}
+
+/**
+ * (#3526 F3-S1) Admit — or refuse — one attached host callback MAKER crossing.
+ *
+ * It sets NO flag and runs NO materializer, and that is the whole contract: the
+ * `env.__make_callback` import was minted by the legacy pre-pass
+ * (`declarations/import-collector.ts`) long before any IR preparation, so the
+ * crossing already owns its funcMap index and registering anything here would
+ * move import order on the one lane this slice must keep byte-identical.
+ *
+ * What it does instead is ADMIT. The maker is recognised by the FROZEN
+ * provider's own `module`.`field`, never by a name written at this seam, and a
+ * maker call that reaches emission without a `host` arm behind it is refused
+ * rather than lowered. In-tree that refusal is unreachable — the owner-local
+ * partition already demoted such an owner before the freeze — so this is the
+ * invariant backstop for a hand-built policy or an adapter that froze the other
+ * arm. `attachedExternIsUndefinedArm` cannot serve here: it matches only
+ * `intrinsic` instrs, and the maker is a plain `call`.
+ */
+function admitAttachedHostCallbackMaker(
+  instr: IrInstr,
+  arm: ReturnType<typeof preparedHostCallbackWrapProvider>,
+): void {
+  if (instr.kind !== "call" || instr.target.binding.kind !== "import") return;
+  const { module, field } = instr.target.binding;
+  if (arm?.arm === "host" && module === arm.module && field === arm.field) return;
+  if (field !== HOST_CALLBACK_WRAP_CAPABILITY_RECORD.field) return;
+  throw new IrInvariantError(
+    "selection-preparation-mismatch",
+    "resolve",
+    `ir/integration: host callback maker ${module}.${field} has no host arm in the frozen manifest ` +
+      `(arm=${arm?.arm ?? "none"})`,
+  );
+}
+
+/**
+ * (#3526 F3-S3) Admit a scanned `%Function.prototype%` helper call against the
+ * frozen arm, and bind the symbol the arm names.
+ *
+ * A call that reaches emission without a `native` arm behind it is refused
+ * rather than lowered. In-tree that refusal is UNREACHABLE — the selector's
+ * `standalone-function-prototype-call` backend capability already demoted the
+ * unit at Phase-1 SELECT, one stage before the from-ast arm even asks — so this
+ * is the invariant backstop for a hand-built policy or an adapter that froze the
+ * seam off, exactly like `admitAttachedHostCallbackMaker` above.
+ */
+function admitFunctionPrototypeCall(
+  ctx: CodegenContext,
+  used: boolean,
+  arm: ReturnType<typeof preparedFunctionPrototypeCallProvider>,
+): void {
+  if (!used) return;
+  if (arm?.arm !== "native") {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      `ir/integration: ${FUNCTION_PROTOTYPE_CALL_HELPER} has no native arm in the frozen manifest ` +
+        `(arm=${arm?.arm ?? "none"})`,
+    );
+  }
+  // (#3526 F1-S3) Bind the symbol through the observation path, which admits
+  // `runtime` refs only.
+  observeNativeRuntimeProvider(ctx, arm.symbol);
+}
+
+function preregisterDynamicSupport(
+  ctx: CodegenContext,
+  fns: readonly BuiltFnRef[],
+  prepared: PreparedIrRuntimeManifest | undefined,
+): void {
+  // (#3526 F3-S1) The frozen maker arm, read ONCE — see `admitAttachedHostCallbackMaker`.
+  const hostCallbackWrapArm = preparedHostCallbackWrapProvider(prepared);
+  // (#3526 F3-S3) The frozen `%Function.prototype%` call arm, read ONCE.
+  const functionPrototypeCallArm = preparedFunctionPrototypeCallProvider(prepared);
+  let usesFunctionPrototypeCall = false;
   const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
   let usesEq = false;
@@ -7400,35 +8829,47 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
           if (i.kind === "dyn.to_number") usesToNumber = true;
           if (usesDynMemberGet(i)) usesMemberGet = true;
           if (usesDynMemberSet(i)) usesMemberSet = true;
-          // (#3526 F1-S1) The number boundary now reaches Phase 3 as a semantic
-          // `intrinsic` whose frozen provider carries the SAME physical target
-          // the old direct call used. Provider attachment already ran (the
-          // manifest is prepared before this preregistration), so recognizing
-          // the exact attached targets here keeps `addUnionImports` the whole
-          // union family's single materializer — and keeps import membership,
-          // order and indices identical to the legacy control.
-          const numberBoundaryTarget =
+          // (#3526 F1-S1, widened by F1-S2) The number and boolean boundaries
+          // reach Phase 3 as semantic `intrinsic`s whose frozen providers carry
+          // the SAME physical targets the old direct calls used. Provider
+          // attachment already ran (the manifest is prepared at the top of the
+          // preparation sequence, this preregistration later in the same one),
+          // so recognizing the exact attached targets here keeps
+          // `addUnionImports` the whole union family's single materializer —
+          // and keeps import membership, order and indices identical to the
+          // legacy control. No name scanning, no second allocator.
+          const boundaryIntrinsicTarget =
             i.kind === "intrinsic" &&
-            (i.id === "js.number.box" || i.id === "js.number.unbox") &&
+            (i.id === "js.number.box" ||
+              i.id === "js.number.unbox" ||
+              i.id === "js.boolean.box" ||
+              i.id === "js.extern.is_undefined") &&
             i.provider?.kind === "callable"
               ? i.provider.target
               : undefined;
           if (
-            numberBoundaryTarget?.binding.kind === "import" &&
-            numberBoundaryTarget.binding.module === "env" &&
-            UNION_IMPORT_FUNC_NAMES.has(numberBoundaryTarget.binding.field)
+            boundaryIntrinsicTarget?.binding.kind === "import" &&
+            boundaryIntrinsicTarget.binding.module === "env" &&
+            UNION_IMPORT_FUNC_NAMES.has(boundaryIntrinsicTarget.binding.field)
           ) {
             usesNamedUnionImport = true;
           }
           if (
-            numberBoundaryTarget?.binding.kind === "runtime" &&
-            UNION_IMPORT_FUNC_NAMES.has(numberBoundaryTarget.binding.symbol)
+            boundaryIntrinsicTarget?.binding.kind === "runtime" &&
+            UNION_IMPORT_FUNC_NAMES.has(boundaryIntrinsicTarget.binding.symbol)
           ) {
             usesRuntimeUnboxNumber = true;
           }
+          // (#3526 F1-S4) The undefined probe's own arm — see
+          // `attachedExternIsUndefinedArm`.
+          const probeArm = attachedExternIsUndefinedArm(i);
+          if (probeArm === "host") usesExternIsUndefined = true;
+          else if (probeArm === "native") usesNativeExternIsUndefined = true;
           if (i.kind === "call" && i.target.binding.kind === "import" && i.target.binding.module === "env") {
             if (UNION_IMPORT_FUNC_NAMES.has(i.target.binding.field)) usesNamedUnionImport = true;
             else if (i.target.binding.field === "__extern_is_undefined") usesExternIsUndefined = true;
+            // (#3526 F3-S1) The maker's own arm — see `admitAttachedHostCallbackMaker`.
+            else admitAttachedHostCallbackMaker(i, hostCallbackWrapArm);
           }
           if (i.kind === "call" && i.target.binding.kind === "runtime") {
             switch (i.target.binding.symbol) {
@@ -7448,6 +8889,11 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
                 break;
               case "__extern_is_undefined":
                 usesNativeExternIsUndefined = true;
+                break;
+              // (#3526 F3-S3) The `%Function.prototype%` seam's own use — see
+              // the admission after this scan.
+              case FUNCTION_PROTOTYPE_CALL_HELPER:
+                usesFunctionPrototypeCall = true;
                 break;
               case "__new_Boolean":
                 primitiveWrapperConstructors.add("Boolean");
@@ -7517,6 +8963,7 @@ function preregisterDynamicSupport(ctx: CodegenContext, fns: readonly BuiltFnRef
       flushLateImportShifts(ctx, null);
     }
   }
+  admitFunctionPrototypeCall(ctx, usesFunctionPrototypeCall, functionPrototypeCallArm);
   if (usesRuntimeUnboxNumber) addUnionImports(ctx);
   // (#4461) Reserve the native undefined predicate and the `$Map` adapters
   // BEFORE Phase 3. `ensureObjectRuntime` / `ensureIrNativeMapAdapters` are

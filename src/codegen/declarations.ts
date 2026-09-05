@@ -63,6 +63,7 @@ import {
 } from "./async-frame.js";
 import { collectClassDeclaration, compileClassBodies, type ClassBodyCompileRouting } from "./class-bodies.js";
 import { shouldCollectTopLevelClassForRuntimeHeritage } from "./class-expression-identity.js";
+import { classHasUnresolvedComputedMemberName, classHierarchyHasDynamicMember } from "./class-dynamic-keys.js"; // (#5195 Step 1 / R2-3)
 import { routeTopLevelClassBodies } from "./prepared-class-body-cutover.js";
 import {
   collectBindingPatternNames,
@@ -84,7 +85,7 @@ import { mappedFormalNeedsExternref } from "./mapped-arguments-formal-widening.j
 import { markIdentityPreservingStructuralParam } from "./identity-preserving-structural-param.js";
 import { genericCallbackResultDeclaration } from "./generic-callback-result.js";
 import { genericStructFactorySourceResultAbi } from "./generic-struct-factory.js";
-import { noJsHost } from "./js-errors.js";
+import { emitThrowJsError, noJsHost } from "./js-errors.js";
 import {
   addArrayIteratorImports,
   addForInImports,
@@ -111,7 +112,7 @@ import {
   STRING_METHODS,
   unwrapGeneratorYieldType,
 } from "./index.js";
-import { proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
+import { inferTaViewType, proxyOrTransferredResultNeedsExternref } from "./statements/variables.js";
 import {
   ensureAsyncDriveRuntime,
   ensureNativePromiseBoundaryBridge,
@@ -147,11 +148,12 @@ import {
   getOrRegisterHoleyArrayType,
   getOrRegisterTemplateVecType,
   getOrRegisterVecType,
+  isTaViewTypeIdx,
 } from "./registry/types.js";
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
 import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
-import { compileExpression, compileStatement } from "./shared.js";
+import { compileExpression, compileStatement, skipTransparentExpressions } from "./shared.js";
 import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
 import { inferNativeTaViewConstructType } from "./dataview-native.js";
 import { expandLinearU8ParamTypes } from "./linear-uint8-signatures.js";
@@ -169,7 +171,14 @@ import { rebindWidenedArrayVecType } from "./declarations/array-rebind-element-w
 import { heterogeneousWidenedModuleGlobalType } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { redeclarationWidenedModuleGlobalType } from "./declarations/redeclared-var-widening.js";
 import { withBodyHoistedModuleVarNames } from "./declarations/with-body-var-hoisting.js";
-import { moduleInitPopulationIsCallFree } from "./declarations/module-init-call-free.js";
+import { moduleInitPopulationIsPass2Stable } from "./declarations/module-init-pass2-stable.js";
+import {
+  applyModuleClosurePreLift,
+  DISCOVERY_STATIC_ENABLE_SEAM,
+  moduleInitDiscoveryIsStatic,
+  planModuleClosurePreLift,
+  PRELIFT_DISABLE_SEAM,
+} from "./declarations/module-init-closure-prelift.js";
 import {
   MODULE_INIT_CHUNK_MAX_ENTRIES,
   moduleInitChunksRequired,
@@ -254,6 +263,60 @@ const STANDALONE_FN_STATIC_KEEP_EXCLUDED = new Set([
   "caller",
   "arguments",
 ]);
+
+/**
+ * (#5150) Is this module-global typed-array binding ever ASSIGNED a value the
+ * pinned `$__ta_view` slot cannot hold?
+ *
+ * `moduleGlobalWasmType` pins `var t = new Uint8Array(buf)` to the shared-backing
+ * view struct so `t[i]` / `t.length` see the buffer. A later `t = new Uint8Array(2)`
+ * (count constructor) or `t = new Uint8Array([7, 8])` (array literal) builds a
+ * plain `$Vec`, which does not fit that slot: the store is dropped, the global
+ * reads back null and every subsequent access traps. The heterogeneous /
+ * rebind-widening helpers cannot catch it — both sides are objects, so there is
+ * no JS-tag disagreement to detect.
+ *
+ * A rebind to a view of the SAME element type keeps the pin (the value fits);
+ * anything else falls back to the checker-derived vec slot, which is what this
+ * binding had before the pin existed. Binding identity comes from the oracle;
+ * a sloppy-`var` redeclaration makes that lookup return undefined, and the
+ * conservative reading there is "assume it is ours" — losing a pin only costs
+ * the view aliasing, while keeping a wrong one costs a null-pointer trap.
+ */
+function taViewGlobalIsRebound(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  decl: ts.VariableDeclaration,
+  pinned: ValType,
+): boolean {
+  if (!ts.isIdentifier(decl.name)) return false;
+  const name = decl.name.text;
+  const fits = (assigned: ts.Expression): boolean => {
+    const rebindType = inferTaViewType(ctx, assigned);
+    if (rebindType === null || rebindType.kind !== pinned.kind) return false;
+    return rebindType.kind !== "ref_null" || pinned.kind !== "ref_null" || rebindType.typeIdx === pinned.typeIdx;
+  };
+  let rebound = false;
+  const visit = (node: ts.Node): void => {
+    if (rebound) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name &&
+      !fits(node.right)
+    ) {
+      const target = ctx.oracle.variableDeclarationOf(node.left);
+      if (target === undefined || target === decl) {
+        rebound = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return rebound;
+}
 
 /**
  * Emit the narrow JS/Wasm adapter for native `any`/`unknown` boundary values.
@@ -1334,7 +1397,7 @@ function jsArrayParamNeedsOpenObjectCarrier(
  * sentinel path evaluates the initializer in the callee, so widening those
  * parameters would change a proven numeric default ABI for no semantic gain.
  */
-function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
+export function parameterMayBeOmitted(param: ts.ParameterDeclaration): boolean {
   const jsdocType = ts.getJSDocType(param);
   const jsdocTags = ts.getJSDocParameterTags(param);
   return (
@@ -2290,12 +2353,111 @@ function isExactTopLevelClassAccessorWrite(ctx: CodegenContext, target: ts.Expre
 }
 
 /**
+ * (#5271 step 8) 16.1.7 GlobalDeclarationInstantiation step 5.c-d: a SCRIPT's
+ * top-level lexical name that collides with a RESTRICTED GLOBAL - an own,
+ * non-configurable property of the global object - is a SyntaxError thrown at
+ * instantiation time. `undefined`, `NaN` and `Infinity` are the three the spec
+ * mandates.
+ *
+ * Records the first collision; the throw is emitted as the first instruction of
+ * `__module_init`. A MODULE has its own environment record and no such
+ * collision, so a source with an import/export indicator is skipped.
+ */
+function noteRestrictedGlobalLexicalName(ctx: CodegenContext, sourceFile: ts.SourceFile, name: string): void {
+  if (ctx.restrictedGlobalLexicalName !== undefined) return;
+  if (name !== "undefined" && name !== "NaN" && name !== "Infinity") return;
+  if ((sourceFile as ts.SourceFile & { externalModuleIndicator?: ts.Node }).externalModuleIndicator !== undefined) {
+    return;
+  }
+  ctx.restrictedGlobalLexicalName = name;
+}
+
+/**
+ * (#5195 Step 9 H) A top-level `C.staticX = v` or `new C().x = v` whose target
+ * names a declared class ACCESSOR.
+ *
+ * Both shapes call a SETTER, which is observable work — but neither writes a
+ * named module global, so `shouldCollectTopLevelAssignment` dropped the whole
+ * statement from `__module_init` and the setter never ran. The same write
+ * inside a function body has always worked, which is what made the gap look
+ * like a lowering bug rather than a collection one.
+ *
+ * Deliberately narrow: a DECLARED accessor of a class this module compiled, and
+ * only the two receiver shapes that carry no other observable state (a class
+ * identifier, and a `new C(...)` temporary). Everything else keeps its
+ * historical collection decision, so no module without such a write changes.
+ * `isExactTopLevelClassAccessorWrite` above is the ELEMENT-access twin; it stays
+ * as it is because its own admission rules are narrower still.
+ */
+function isTopLevelClassAccessorPropertyWrite(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!ts.isPropertyAccessExpression(target) || !ts.isIdentifier(target.name)) return false;
+  const propName = target.name.text;
+  const receiver = skipTransparentExpressions(target.expression);
+  const classOf = (id: ts.Identifier): string | undefined => {
+    const name = ctx.classExprNameMap.get(id.text) ?? id.text;
+    return ctx.classSet.has(name) ? name : undefined;
+  };
+  if (ts.isIdentifier(receiver)) {
+    const className = classOf(receiver);
+    return className !== undefined && ctx.staticAccessorSet.has(`${className}_${propName}`);
+  }
+  if (ts.isNewExpression(receiver) && ts.isIdentifier(receiver.expression)) {
+    const className = classOf(receiver.expression);
+    if (className === undefined) return false;
+    const accessorKey = `${className}_${propName}`;
+    return ctx.classAccessorSet.has(accessorKey) && !ctx.staticAccessorSet.has(accessorKey);
+  }
+  return false;
+}
+
+/**
  * Top-level class declarations are byte-inert unless computed-accessor or
  * runtime-heritage effects require source-ordered module initialization. The
  * statement emitter consults the final IR skip set.
  */
+/**
+ * (#5195 R2-3) True when this top-level class declaration INHERITS a
+ * runtime-keyed member — its own keys may all fold, but the prototype `$Object`
+ * that starts the chain walk to the inherited one still has to be built at
+ * ClassDefinitionEvaluation.
+ *
+ * Name-keyed, so it needs the class-collection pass to have run; it has, the
+ * same way `isExactTopLevelClassAccessorWrite` above relies on
+ * `ctx.classAccessorSet`. A class with runtime-keyed members of its OWN is
+ * covered by the syntactic check beside this one and does not reach here.
+ */
+function topLevelClassInheritsRuntimeKeys(ctx: CodegenContext, statement: ts.ClassDeclaration): boolean {
+  if (!ctx.standalone) return false;
+  const declaredName = statement.name?.text;
+  if (declaredName === undefined) return false;
+  const className = ctx.anonClassExprNames.get(statement) ?? declaredName;
+  return ctx.classSet.has(className) && classHierarchyHasDynamicMember(ctx, className);
+}
+
 function collectPreparedTopLevelClassComputedNameEffects(ctx: CodegenContext, statement: ts.Statement): boolean {
   if (shouldCollectTopLevelClassForRuntimeHeritage(ctx, statement)) {
+    ctx.moduleInitStatements.push(statement);
+    return true;
+  }
+  // (#5195 Step 1) A class with a METHOD (or an accessor in a body this
+  // collector's accessor-only shape test declines) whose computed key does not
+  // fold has ClassDefinitionEvaluation work of its own: the key expression must
+  // run — once, in source order, in THIS frame — and its value must reach the
+  // prototype install. Collecting the declaration routes it through
+  // `compileNestedClassDeclaration`, which owns that emission. Byte-inert for
+  // every class whose keys fold.
+  // (#5195 R2-3) …and so does a DESCENDANT of such a class, even when its own
+  // keys all fold. Its prototype `$Object` is the start of the chain walk that
+  // reaches the inherited runtime-keyed member, so it must be built at
+  // ClassDefinitionEvaluation too. Without this, `class D extends C { n(){} }`
+  // answered `new D()[ID('n')]` as `undefined` until something happened to
+  // touch `D.prototype`, and correctly afterwards — an order-dependent wrong
+  // answer. (`shouldCollectTopLevelClassForRuntimeHeritage` above cannot cover
+  // it: that predicate is `!ctx.standalone && …`, so it never fires here.)
+  if (
+    ts.isClassDeclaration(statement) &&
+    (classHasUnresolvedComputedMemberName(ctx, statement) || topLevelClassInheritsRuntimeKeys(ctx, statement))
+  ) {
     ctx.moduleInitStatements.push(statement);
     return true;
   }
@@ -2334,6 +2496,7 @@ function shouldCollectTopLevelAssignment(ctx: CodegenContext, target: ts.Express
     // targets only; see top-level-assigned-function-names.ts.
     isAssignmentOverTopLevelFunctionName(target) ||
     (operator === ts.SyntaxKind.EqualsToken && isExactTopLevelClassAccessorWrite(ctx, target)) ||
+    (operator === ts.SyntaxKind.EqualsToken && isTopLevelClassAccessorPropertyWrite(ctx, target)) ||
     createsGlobalObjectBinding(target, ctx.sloppyImplicitGlobals)
   );
 }
@@ -3210,7 +3373,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // binding is handed to a typed/generic consumer: widening it would make the
     // consumer cast a host Proxy externref back to the target struct and trap.
     // The default-on gate is the sole attribution seam; `=0` restores #4931.
-    if (proxy.isDirectProxyConstruction(decl.initializer)) {
+    if (proxy.isDirectProxyConstruction(decl.initializer, ctx)) {
       return !proxyModuleEscapeGateEnabled || !proxy.proxyBindingEscapesToCall(ctx, decl);
     }
     // (#3365) Script top-level `this` is the host global object. The checker
@@ -3456,6 +3619,43 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // predicate the lowering's dispatcher asks, so slot and value cannot
     // disagree — see array-concat-carrier.ts.
     if (concatCallYieldsDynamicCarrier(ctx, decl.initializer)) return { kind: "externref" };
+    // (#5150) `var ta = new Uint8Array(buffer[, byteOffset[, length]])` at
+    // MODULE scope. The constructor lowers to a shared-backing `$__ta_view`
+    // struct (#3054 B1/B2), but the checker-inferred slot is the plain
+    // TypedArray vec, so the value failed the slot's type and the global stayed
+    // null — every later `ta[i]` / `ta.length` threw "Cannot access property on
+    // null or undefined". Function-local `let`/`const` slots already consult
+    // this (#4376, `inferLetConstInitializerWasmType`); module globals did not,
+    // and test262 writes its bindings at top level.
+    // Only when the binding is never REBOUND to something the pinned view
+    // struct cannot hold: `var t = new Uint8Array(buf); t = new Uint8Array(2)`
+    // stores a plain `$Vec` into a `$__ta_view` slot, which drops to null and
+    // traps on the next read. The widening helpers below (#4428/#4204/#4491)
+    // do not cover this — both sides are objects, so no tag disagreement — so
+    // the rebind check has to live with the pin it guards.
+    //
+    // ONLY the `$__ta_view` struct answer is adopted here — the wave's target is
+    // the standalone shared-backing view. `inferTaViewType` ALSO answers
+    // `externref` on the js-host lane (it doubles as the local-slot chooser for
+    // the #3097 host construct bridge), and widening a MODULE GLOBAL that way is
+    // a behaviour change this wave never measured: it swaps the native vec the
+    // rest of the host lane assumes for a real host TypedArray. That flipped
+    // nine host rows on main — `Atomics/{notify,wait}` stopped throwing their
+    // TypeError, and seven detached/resizable `TypedArray/**` rows went from an
+    // ordinary assertion failure to `illegal cast in __module_init_chunk_*`
+    // where a downstream read cast the host view to the checker-typed vec.
+    // A host-lane global keeps the slot it had before this wave.
+    {
+      const taViewGlobalType = inferTaViewType(ctx, decl.initializer);
+      if (
+        taViewGlobalType !== null &&
+        (taViewGlobalType.kind === "ref" || taViewGlobalType.kind === "ref_null") &&
+        isTaViewTypeIdx(ctx, taViewGlobalType.typeIdx) &&
+        !taViewGlobalIsRebound(ctx, sourceFile, decl, taViewGlobalType)
+      ) {
+        return taViewGlobalType;
+      }
+    }
     // #1914 — `var m = re.exec(s)` under standalone gets the precise
     // match-vec ref type so indexed reads stay on the static vec path
     // (externref-widened globals round-trip through __extern_get_idx,
@@ -3686,13 +3886,19 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   }
 
   // A bare identifier expression is normally inert at module-init collection
-  // time, but a reference to a direct CaseBlock lexical name is observable:
-  // outside the switch it must perform the ordinary unresolved-binding lookup
-  // and throw ReferenceError. Keep this narrow to top-level switches with no
-  // same-named top-level binding; an outer `let x` legitimately shadows a
-  // switch-local `let x` after the switch.
+  // time, but two source-local lexical cases are observable:
+  //
+  // - a reference to a direct CaseBlock lexical name outside its switch must
+  //   perform the ordinary unresolved-binding lookup and throw ReferenceError;
+  // - a direct script-level `x; let/const x` read is a statically guaranteed
+  //   TDZ violation once exact binding ownership is proven.
+  //
+  // Keep both exceptions narrow. In particular, an outer `let x` legitimately
+  // shadows a switch-local `let x` after the switch, and ordinary atom
+  // collection remains owned by #3623/#4433.
   const topLevelBoundNames = new Set<string>();
   const topLevelSwitchLexicalNames = new Set<string>();
+  const directTopLevelLexicalDeclarations = new Map<string, ts.VariableDeclaration | null>();
   const addBindingNames = (name: ts.BindingName): void => {
     if (ts.isIdentifier(name)) {
       topLevelBoundNames.add(name.text);
@@ -3705,6 +3911,24 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
   for (const stmt of sourceFile.statements) {
     if (ts.isVariableStatement(stmt)) {
       for (const decl of stmt.declarationList.declarations) addBindingNames(decl.name);
+      // #5253 — record only unambiguous direct runtime `let` / `const`
+      // declarations. The later predicate also requires the checker/oracle to
+      // resolve the read to this exact AST node, so same-spelled bindings from
+      // another source, `var`, patterns, ambient declarations, and duplicate
+      // syntax cannot enter the narrow TDZ-read route.
+      if (
+        !sourceFile.isDeclarationFile &&
+        !hasDeclareModifier(stmt) &&
+        (stmt.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0
+      ) {
+        for (const decl of stmt.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name)) continue;
+          directTopLevelLexicalDeclarations.set(
+            decl.name.text,
+            directTopLevelLexicalDeclarations.has(decl.name.text) ? null : decl,
+          );
+        }
+      }
     } else if (ts.isFunctionDeclaration(stmt) && stmt.name) {
       topLevelBoundNames.add(stmt.name.text);
     } else if (ts.isClassDeclaration(stmt) && stmt.name) {
@@ -3748,6 +3972,20 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
     }
   }
+  const isDirectTopLevelLexicalForwardRead = (identifier: ts.Identifier): boolean => {
+    const declaration = directTopLevelLexicalDeclarations.get(identifier.text);
+    // The expression statement is itself a direct SourceFile child, so this
+    // positional proof is the static TDZ analyser's guaranteed-throw case:
+    // no closure or loop can defer/re-enter the read before initialization.
+    return (
+      declaration !== undefined &&
+      declaration !== null &&
+      identifier.getSourceFile() === sourceFile &&
+      ctx.oracle.valueDeclarationOf(identifier) === declaration &&
+      identifier.getStart(sourceFile) < declaration.getEnd()
+    );
+  };
+  let directTopLevelLexicalForwardReadStatements = 0;
 
   // Var declarations are function-scoped, so a declaration nested in a later
   // top-level `try`/loop/branch is already in scope for earlier statements.
@@ -3824,6 +4062,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           registerModuleGlobal(ctx, decl.name.text, wasmType, decl);
           if (isLetOrConst) {
             ctx.tdzLetConstNames.add(decl.name.text);
+            noteRestrictedGlobalLexicalName(ctx, sourceFile, decl.name.text);
           }
         } else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
           registerBindingNames(decl.name, isLetOrConst);
@@ -3843,7 +4082,26 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
           ts.isClassExpression(declaration.initializer) &&
           (ctx.classExpressionStaticInitExprs.get(declaration.initializer)?.length ?? 0) > 0,
       );
-      if (hasNonClassDecl || hasClassExpressionStatics || proxy.variableStatementContainsPromiseSubclass(ctx, stmt)) {
+      // (#5195 r3-2) …and so must a binding whose class expression has a member
+      // keyed only at runtime (`let C = class { [k](){} }`), or which INHERITS
+      // one. The historical skip meant the key expression was never evaluated,
+      // the prototype `$Object` and the static sidecar were never force-built,
+      // and `new C()[k]()` folded to `ref.null.extern` — the class-DECLARATION
+      // twin of the same program already worked, because
+      // `collectPreparedTopLevelClassComputedNameEffects` collects it.
+      const hasRuntimeKeyedClassExpression = stmt.declarationList.declarations.some((declaration) => {
+        const init = declaration.initializer;
+        if (init === undefined || !ts.isClassExpression(init)) return false;
+        if (classHasUnresolvedComputedMemberName(ctx, init)) return true;
+        const className = ctx.anonClassExprNames.get(init);
+        return className !== undefined && classHierarchyHasDynamicMember(ctx, className);
+      });
+      if (
+        hasNonClassDecl ||
+        hasClassExpressionStatics ||
+        hasRuntimeKeyedClassExpression ||
+        proxy.variableStatementContainsPromiseSubclass(ctx, stmt)
+      ) {
         ctx.moduleInitStatements.push(stmt);
       }
       continue;
@@ -3915,6 +4173,15 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       }
       if (ts.isIdentifier(expr) && topLevelSwitchLexicalNames.has(expr.text) && !topLevelBoundNames.has(expr.text)) {
         ctx.moduleInitStatements.push(stmt);
+        continue;
+      }
+      // #5253 — retain only the exact source-owned direct lexical shape whose
+      // forward source position proves a TDZ throw. Do not generalize the
+      // `expressionRunsUserCode` atom route: unbound/var/post-init/block-local
+      // reads remain outside this collector exception.
+      if (ts.isIdentifier(stmt.expression) && isDirectTopLevelLexicalForwardRead(stmt.expression)) {
+        ctx.moduleInitStatements.push(stmt);
+        directTopLevelLexicalForwardReadStatements += 1;
         continue;
       }
       if (
@@ -4314,6 +4581,10 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
       collectOrRecordUnnamedExpressionStatement(ctx, stmt);
     }
   }
+
+  // #5253 — every source statement retained by the narrow TDZ proof is
+  // reported independently from the aggregate module-init count below.
+  profileCount("module-init-direct-top-level-tdz-forward-read-statements", directTopLevelLexicalForwardReadStatements);
 
   // Export default for module globals (#1108): `export default <variable>` where
   // the variable is a module-level global (e.g. `var add = createMathOperation(fn, 0)`)
@@ -4940,6 +5211,27 @@ export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: t
     initFunc.exported = true;
     ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
     ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
+  }
+
+  // (#3523 R4 gap 3) Reserve the WASI `__init_done` idempotence global HERE,
+  // before any body is emitted, so the prepared body can be constructed around
+  // it rather than spliced afterwards. `applyModuleInitGuard` minted this
+  // global at splice time; a Prepared body has no splice window, so the
+  // reservation moves to the one point that provably precedes body emission.
+  // Only WASI selects the `wasi-start-export` invocation policy, and this
+  // function is reached only on the prepared route, so the reservation is
+  // exactly scoped to the units that can consume it. Preparation may still
+  // fall back — `applyModuleInitGuard` then adopts this same reserved global
+  // for the legacy splice rather than minting a second one.
+  if (ctx.wasi && ctx.preparedWasiModuleInitGuard === undefined) {
+    const doneGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: "__init_done",
+      type: { kind: "i32" },
+      mutable: true,
+      init: [{ op: "i32.const", value: 0 }],
+    });
+    ctx.preparedWasiModuleInitGuard = { doneGlobalIdx };
   }
 }
 
@@ -5789,6 +6081,24 @@ export function compileDeclarations(
     const previousFunc = ctx.currentFunc;
     ctx.currentFunc = initFctx;
 
+    // (#5271 step 8) §16.1.7 GlobalDeclarationInstantiation step 5.d — a
+    // top-level lexical declaration whose name is a RESTRICTED GLOBAL
+    // (`undefined`, `NaN`, `Infinity`: own, non-configurable properties of the
+    // global object) is a SyntaxError. The Script goal decides this at
+    // instantiation, i.e. before ANY statement of the script runs, so the throw
+    // is the very first instruction of `__module_init`. The runner accepts a
+    // runtime throw for `negative: { phase: runtime }`; this deliberately is
+    // NOT a compile diagnostic.
+    if (ctx.restrictedGlobalLexicalName !== undefined) {
+      emitThrowJsError(
+        ctx,
+        initFctx,
+        "SyntaxError",
+        `Identifier '${ctx.restrictedGlobalLexicalName}' has already been declared`,
+      );
+      initFctx.body.push({ op: "unreachable" });
+    }
+
     // (#4489, subsuming the #4264 `with`-body seed) §9.1.1.4.18: every
     // module-scope `var` reads as `undefined` before its declaration. Must stay
     // AHEAD of the function-binding seeds below — rationale, scope and the
@@ -5923,14 +6233,44 @@ export function compileDeclarations(
     !hasModuleScopeUsingEntry(orderedInitEntriesForChunking) &&
     moduleInitChunksRequired(orderedInitEntriesForChunking);
 
+  // (#3523 R4 gap-6a) The pass-1 skip is OPT-IN and OFF by default — see
+  // `declarations/module-init-closure-prelift.ts` for the mechanism, and the
+  // `gap-6a v2 repair record` in `plan/issues/3523-ir-r4-module-init-compile-once.md`
+  // for the six measured regression clusters that put it behind this seam. With
+  // the seam unset every expression below is `false`/`undefined` and this
+  // function takes exactly the two-pass path it took before the slice.
+  const discoveryStaticEnabled = process.env[DISCOVERY_STATIC_ENABLE_SEAM] === "1";
+  const preLift =
+    discoveryStaticEnabled && (hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody
+      ? planModuleClosurePreLift(ctx, { moduleInitMode, sourceFile, hasAsyncGraphInit })
+      : undefined;
+  // `JS2WASM_TEST_FORCE_MODULE_INIT_PASS2=1` means "the unconditional two-pass
+  // build" — the A/B baseline every pin in this family compares against — so it
+  // restores pass 1 as well as pass 2, not just the recompile.
+  const discoveryStatic =
+    preLift !== undefined &&
+    process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 !== "1" &&
+    moduleInitDiscoveryIsStatic(preLift);
+
+  // (#4195) With pass 1 skipped the dedupe MARK is a program POSITION, not a
+  // pass-1 artifact: it records where the initializer's diagnostics start so the
+  // post-pass-2 reconcile never truncates what came before. Taken early ONLY on
+  // the opt-in route, so a discovery-static population still collapses the
+  // duplicate pair measured on `for-in/cptn-decl-itr.js`; the default route
+  // keeps the mark exactly where it has always been, inside the pass-1 branch.
+  if (discoveryStatic) pass1DiagnosticMark = ctx.errors.length;
+
   // Pass 1 seeds closure/setup discovery for the bodies compiled below. It is
-  // skipped only in `"skip"` mode, where an earlier source already ran it over
-  // the same complete statement list.
+  // skipped in `"skip"` mode, where an earlier source already ran it over the
+  // same complete statement list, and — under the opt-in seam only — for a
+  // discovery-static population, where the pre-lift already published what it
+  // would have discovered.
   if (
     (hasModuleInits || hasStaticInits) &&
     moduleInitMode !== "skip" &&
     moduleInitMode !== "prepared" &&
-    !skipModuleInitBody
+    !skipModuleInitBody &&
+    !discoveryStatic
   ) {
     profileCount("module-init-statements", ctx.moduleInitStatements.length);
     pass1DiagnosticMark = ctx.errors.length; // (#4195) see dedupeDiagnosticsFrom
@@ -5938,6 +6278,17 @@ export function compileDeclarations(
     // Expose the pending init body so fixupModuleGlobalIndices can adjust it
     // when addStringConstantGlobal is called during function body compilation.
     ctx.pendingInitBody = compiledInitFctx.body;
+  } else if (discoveryStatic) {
+    profileCount("module-init-statements", ctx.moduleInitStatements.length);
+    profileCount("module-init-discovery-static", 1);
+    // The test-only seam runs the GATE without the registrations, so the suite
+    // can MEASURE that the inventory is load-bearing (h1's body loses its
+    // `call_ref` and falls back to `__call_function_*`) instead of asserting it.
+    if (process.env[PRELIFT_DISABLE_SEAM] !== "1") {
+      profilePhase("module-init-prelift", () =>
+        applyModuleClosurePreLift(ctx, preLift!, createModuleInitFunctionContext()),
+      );
+    }
   }
 
   // (#3419) Last-wins for duplicate top-level function declarations — mirror
@@ -6106,19 +6457,30 @@ export function compileDeclarations(
     }
   }
 
-  // Recompile module init after top-level functions are compiled so call sites
-  // inside module-level code can see the final inlinable-function registry.
+  // Recompile module init after top-level functions are compiled.
+  //
+  // (#3523 R4 gap-1b) The historical comment here said the recompile exists
+  // "so call sites inside module-level code can see the final inlinable-function
+  // registry". Measured 2026-09-01, that is NOT what happens for a DIRECT init
+  // statement: with `JS2WASM_IR_INLINE=0` the two-pass `__module_init` still
+  // emits a plain `call` for a module-level call to a small local function.
+  // Every inlining actually observed there comes from the finalize-time
+  // `ir-inline.ts` pass, which runs after both passes over every function. The
+  // registry reaches only the closure BODIES compiled during init — which is
+  // why the gate below refuses on call-plus-closure and not on calls alone.
   // The first compile above still serves early closure/setup discovery.
-  // Only the emitting call needs the final-registry recompile; in the other
-  // multi-source modes the body it would produce is discarded unread.
+  // Only the emitting call needs the recompile; in the other multi-source
+  // modes the body it would produce is discarded unread.
   if ((hasModuleInits || hasStaticInits) && moduleInitMode === "full" && !skipModuleInitBody) {
-    // (#3523 R4 gap-1a) `ctx.inlinableFunctions` is read only when compiling a
-    // call, so a population with no call anywhere recompiles to the body pass 1
-    // already produced — which the `ctx.pendingInitBody` fixups keep valid to
-    // the end. Skipping then also skips `restorePropOrderState` (nothing
-    // recompiles; pass 1's end state is where pass 2 converged anyway) and
-    // `dedupeDiagnosticsFrom` (no doubled range to reconcile). Fail closed —
-    // see `declarations/module-init-call-free.ts`. An async-graph init always
+    // (#3523 R4 gap-1a/1b) A second direct compile can differ from pass 1's
+    // (fixup-maintained) body through exactly two measured mechanisms: the
+    // inlinable-function registry, read only when compiling a call, and closure
+    // re-lifting, which needs a closure to lift. A population missing either
+    // ingredient recompiles to what pass 1 already produced, so pass 1's body
+    // stands and the recompile is skipped. Skipping then also skips
+    // `restorePropOrderState` (nothing recompiles; pass 1's end state is where
+    // pass 2 converged anyway). Fail closed — see
+    // `declarations/module-init-pass2-stable.ts`. An async-graph init always
     // takes pass 2 (its lowering exists only there), stated explicitly rather
     // than via the scan's AwaitExpression refusal. The env seam restores the
     // unconditional recompile so tests can A/B against the two-pass body.
@@ -6126,7 +6488,10 @@ export function compileDeclarations(
       process.env.JS2WASM_TEST_FORCE_MODULE_INIT_PASS2 === "1" ||
       hasAsyncGraphInit ||
       moduleInitChunkingRequired ||
-      !moduleInitPopulationIsCallFree(ctx)
+      // (#3523 R4 gap-6a) With pass 1 skipped this IS the only compile, so it
+      // always runs — the pass-2-stability question is about a SECOND compile.
+      discoveryStatic ||
+      !moduleInitPopulationIsPass2Stable(ctx)
     ) {
       // (#2965) Reset the program-order-sensitive property state to its
       // pre-pass-1 value so this recompile does not treat pass 1's own
@@ -6266,11 +6631,26 @@ export function compileDeclarations(
     // wiring against the planned policy here and fail closed. Only the Prepared
     // route is asserted: the direct route keeps its established behavior until
     // the typed Unsupported policy is retired.
-    if (skipModuleInitBody && !ctx.wasi) {
+    //
+    // (#3523 R4 gap 3) THIRD ARM — `wasi-start-export`. The `!ctx.wasi` gate
+    // that used to sit here meant a WASI admission would ship with ZERO adapter
+    // reconciliation. Under WASI neither non-WASI adapter is legal: the module
+    // must have no `start` section and no compiler `__module_init` alias, and be
+    // reached only by the `_start` export `addWasiStartExport` builds LATER in
+    // the pipeline. So the count this arm expects is zero, and the positive
+    // half of the WASI contract — exactly one authenticated `_start` adapter
+    // whose first call reaches the init exactly once — is asserted where that
+    // adapter exists, by `assertGraphGlobalInvocationPolicy`'s
+    // `wasi-start-export` case.
+    if (skipModuleInitBody) {
+      const plannedAdapter = ctx.wasi ? "wasi-start-export" : exportModuleInit ? "deferred-export" : "wasm-start";
       if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
-        // Anti-vacuity seam: install the adapter the planned policy did NOT
+        // Anti-vacuity seam: install an adapter the planned policy did NOT
         // choose, so the reconciliation below has a real violation to catch.
+        // Under WASI the start section is exactly the adapter that would make
+        // init run twice (once on instantiation, once from `_start`).
         if (exportModuleInit) ctx.mod.startFuncIdx = initFuncIdx;
+        else if (ctx.wasi) ctx.mod.startFuncIdx = initFuncIdx;
         else ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
       }
       const startsOnInstantiation = ctx.mod.startFuncIdx === initFuncIdx;
@@ -6278,9 +6658,13 @@ export function compileDeclarations(
         (entry) => entry.name === "__module_init" && entry.desc.kind === "func" && entry.desc.index === initFuncIdx,
       ).length;
       const adapters = (startsOnInstantiation ? 1 : 0) + exportedAliases;
-      if (adapters !== 1 || exportedAliases !== (exportModuleInit ? 1 : 0)) {
+      const expectedAdapters = ctx.wasi ? 0 : 1;
+      const expectedAliases = exportModuleInit ? 1 : 0;
+      if (adapters !== expectedAdapters || exportedAliases !== expectedAliases) {
         throw new Error(
-          `prepared module initializer must have exactly one startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${exportModuleInit ? "deferred-export" : "wasm-start"})`,
+          ctx.wasi
+            ? `prepared WASI module initializer must have no declaration-time startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${plannedAdapter})`
+            : `prepared module initializer must have exactly one startup adapter (start=${startsOnInstantiation}, exports=${exportedAliases}, planned=${plannedAdapter})`,
         );
       }
     }

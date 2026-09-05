@@ -1,0 +1,88 @@
+// Batch-2 probes for #5270 (follow-ups raised by batch 1). Same shape as make-probes.mjs.
+import { mkdirSync, writeFileSync } from "node:fs";
+const dir = ".tmp/es2015/probes5270";
+mkdirSync(dir, { recursive: true });
+const fm = (inc = [], flags = "noStrict") => `/*---\ndescription: probe\nincludes: [${inc.join(", ")}]\nflags: [${flags}]\n---*/\n`;
+const P = {
+  "p40-lexical-this-strict-apply": { flags: "onlyStrict", body: `function F() { this.af = _ => { return this; }; }
+var usurper = {}; var f = new F();
+assert.sameValue(f.af(), f, 'direct');
+assert.sameValue(f.af.apply(usurper), f, 'apply');
+assert.sameValue(f.af.call(usurper), f, 'call');
+assert.sameValue(f.af.bind(usurper)(), f, 'bind');` },
+  "p41-sym-key-call-vs-ident": { body: `function ID(x) { return x; }
+var sym2 = Symbol(); var k = ID(sym2);
+var o1 = { [k]: 'D' };
+assert.sameValue(o1[sym2], 'D', 'identifier holding a call result: ' + String(o1[sym2]));
+var o2 = { [ID(sym2)]: 'D' };
+assert.sameValue(o2[sym2], 'D', 'call expression key: ' + String(o2[sym2]));` },
+  "p41b-num-key-call-data": { body: `function ID(x) { return x; }
+var o = { [ID(2)]: 'D', [1]: 'B' };
+assert.sameValue(o[2], 'D', 'o[2]=' + String(o[2]));
+assert.sameValue(o[1], 'B', 'o[1]=' + String(o[1]));` },
+  "p42-open-literal-static-method-call": { body: `function ID(x) { return x; }
+var object = { a() { return 'A'; }, [ID(2)]() { return 'D'; } };
+assert.sameValue(object.a(), 'A', 'static method call on open literal');
+assert.sameValue(object[2](), 'D');` },
+  "p42b-open-literal-static-read": { body: `var s = Symbol();
+var object = { a: 'A', [s]: 'B' };
+assert.sameValue(object.a, 'A', 'static read on open literal: ' + String(object.a));` },
+  "p43-yield-ident-data-key": { body: `var yield = 'propName';
+var obj = { [yield]: 1 };
+assert(Object.prototype.hasOwnProperty.call(obj, 'propName'), 'keys=' + Object.getOwnPropertyNames(obj).join());` },
+  "p43b-ident-computed-key-control": { body: `var k = 'propName';
+var obj = { [k]() {} };
+assert(Object.prototype.hasOwnProperty.call(obj, 'propName'), 'keys=' + Object.getOwnPropertyNames(obj).join());` },
+  "p44-var-redecl-two-shapes": { body: `var obj = { a: 1 };
+var obj = { b: 2 };
+assert.sameValue(obj.b, 2, 'obj.b=' + String(obj.b));
+assert.sameValue(obj.a, undefined, 'obj.a=' + String(obj.a));` },
+  "p45-instanceof-fnproto-plain": { body: `assert.throws(TypeError, function() { [] instanceof Function.prototype; }, 'Function.prototype has no prototype → TypeError');` },
+  "p46-template-raw-frozen": { body: `var t = null;
+(function(p) { t = p; })\`a\${1}b\`;
+assert.sameValue(Object.isFrozen(t), true, 'isFrozen(template)');
+assert.sameValue(Object.isFrozen(t.raw), true, 'isFrozen(raw)');
+assert.sameValue(t.raw[0], 'a');
+assert.sameValue(t.length, 2);` },
+  "p47-tag-member-arguments-length": { body: `var n = -1; var obj = { fn: function() { n = arguments.length; } };
+obj.fn\`x\${1}y\`;
+assert.sameValue(n, 2, 'arguments.length=' + n);` },
+  "p48-tag-callexpr-this-sloppy": { body: `var context = null; var g = (function() { return this; })();
+var fn = function() { return function() { context = this; }; };
+fn()\`x\`;
+assert.sameValue(context, g, 'sloppy this is the global object: ' + String(context));` },
+  "p49-class-name-dstr-default": { body: `var cls;
+({ cls = class {} } = {});
+var d = Object.getOwnPropertyDescriptor(cls, 'name');
+assert.sameValue(d && d.value, 'cls', 'descriptor value=' + String(d && d.value));`, inc: [] },
+  "p50-tco-local-eval-alias": { body: `var callCount = 0;
+(function() {
+  function f(n) { 'use strict'; if (n === 0) { callCount += 1; return; } return eval(n - 1); }
+  var eval = f;
+  f(100000);
+})();
+assert.sameValue(callCount, 1);` },
+  "p51-tco-closure-void": { body: `var callCount = 0;
+var f = function(n) { if (n === 0) { callCount += 1; return; } return f(n - 1); };
+f(100000);
+assert.sameValue(callCount, 1);` },
+  "p52-hasinstance-getter-count": { body: `var F = {}; var n = 0;
+Object.defineProperty(F, Symbol.hasInstance, { get: function() { n++; return function() { return true; }; } });
+assert.sameValue(0 instanceof F, true);
+assert.sameValue(n, 1, 'getter calls=' + n);` },
+  "p53-delete-method-open": { body: `var s = Symbol();
+var obj = { method() {}, [s]: 1 };
+assert.sameValue(delete obj.method, true);
+assert.sameValue(obj.hasOwnProperty('method'), false, 'still own after delete (open literal)');` },
+  "p54-super-literal-path": { body: `var proto = { m() { return 'P'; } };
+var object = { m() { return 'o' + super.m(); }, get [Symbol.toStringTag]() { return 'x'; } };
+Object.setPrototypeOf(object, proto);
+assert.sameValue(object.m(), 'oP', 'super.m() on an accessor-path literal: ' + String(object.m()));` },
+};
+let n = 0;
+for (const [name, spec] of Object.entries(P)) {
+  const inc = spec.inc ?? (/verifyProperty/.test(spec.body) ? ["propertyHelper.js"] : []);
+  writeFileSync(`${dir}/${name}.js`, fm(inc, spec.flags ?? "noStrict") + spec.body + "\n");
+  n++;
+}
+console.log(`wrote ${n} batch-2 probes to ${dir}`);

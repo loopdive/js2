@@ -1,0 +1,15 @@
+language/expressions/assignment/dstr/array-elem-iter-thrw-close.js
+language/expressions/assignment/dstr/array-elem-iter-thrw-close-err.js
+language/expressions/assignment/dstr/array-elem-trlg-iter-list-thrw-close.js
+language/expressions/assignment/dstr/array-elem-trlg-iter-list-thrw-close-err.js
+language/expressions/assignment/dstr/array-elem-trlg-iter-rest-thrw-close.js
+language/expressions/assignment/dstr/array-elem-trlg-iter-rest-thrw-close-err.js
+language/expressions/assignment/dstr/array-rest-iter-thrw-close.js
+language/expressions/assignment/dstr/array-rest-iter-thrw-close-err.js
+language/expressions/assignment/dstr/array-rest-lref.js
+language/expressions/assignment/dstr/array-rest-lref-err.js
+language/expressions/assignment/dstr/array-rest-nested-array-iter-thrw-close-skip.js
+language/expressions/assignment/dstr/array-rest-put-prop-ref-user-err-iter-close-skip.js
+language/expressions/assignment/destructuring/iterator-destructuring-property-reference-target-evaluation-order.js
+language/expressions/assignment/dstr/obj-prop-elem-target-obj-literal-prop-ref-init.js
+language/expressions/assignment/dstr/obj-prop-elem-target-obj-literal-prop-ref-init-active.js

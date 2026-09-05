@@ -310,6 +310,7 @@ import {
   ensureNumberNativeProtoGlue,
   ensureBooleanNativeProtoGlue,
   ensureObjectNativeProtoGlue,
+  ensurePromiseNativeProtoGlue,
   ensureStringNativeProtoGlue,
   ensureGeneratorPrototypeNativeProtoGlue,
   emitTypedArrayIntrinsicCtorObject,
@@ -329,6 +330,7 @@ import {
   ensureObjectProtoToStringClassifierFn,
 } from "../object-proto-tostring-native.js";
 import { emitObjectProtoToStringWithSymbolTag } from "../object-proto-symbol-tag.js";
+import { tryCompileObjectProtoProtoAccessorReflectiveCall } from "../object-proto-proto-accessor.js"; // (#5268 step 1)
 import {
   emitBrandCheckTypeError,
   ensureStandaloneNativeMethodClosure,
@@ -377,7 +379,7 @@ import {
   resolveExternrefVecArg,
   type NativeCombinator,
 } from "../promise-combinators.js";
-import { emitWasiErrorConstructor } from "../registry/error-types.js"; // (#2922) native TypeError for not-iterable reject
+import { emitWasiErrorConstructor, ensureNativeSuppressedErrorCtor } from "../registry/error-types.js"; // (#2922) native TypeError for not-iterable reject; (#5269 E-2) host-free SuppressedError
 import { isSupportedBuiltinStaticProperty, resolveBuiltinNamespaceValueName } from "../builtin-static-globals.js";
 import {
   defaultValueInstrs,
@@ -1328,6 +1330,18 @@ function tryEmitNativeProtoReflectiveCall(
   if (brand === undefined && wrapperWiredMember && ifaceName === "Number") brand = ensureNumberNativeProtoGlue(ctx);
   else if (brand === undefined && wrapperWiredMember && ifaceName === "Boolean")
     brand = ensureBooleanNativeProtoGlue(ctx);
+  // (#5197 Slice C) The same one-member-at-a-time discipline for `Promise`.
+  // `Promise.prototype.catch.call(target, f)` in its DIRECT syntactic form fell
+  // to the legacy `.call` tail, which drops `thisArg` — so the object's own
+  // `then` was never invoked, though §27.2.5.1 is defined as nothing but that
+  // invocation. (The value-erased spelling `var m = Promise.prototype.catch`
+  // already routed here, which is why a hand-probe of the same shape passed.)
+  // Enumerated rather than opening the family: `then` and `catch` now decide
+  // the receiver at runtime, but `finally` still `ref.cast`s it, so routing
+  // `finally` here would turn today's wrong-but-non-throwing answer into a trap.
+  else if (brand === undefined && ifaceName === "Promise" && (member === "then" || member === "catch")) {
+    brand = ensurePromiseNativeProtoGlue(ctx);
+  }
   if (brand === undefined) return undefined;
 
   const glue = getNativeProtoBuiltinGlue(ctx, brand);
@@ -1749,7 +1763,7 @@ export const STANDALONE_TA_MAPFILTER_PACKED_VIEWS: ReadonlySet<string> = new Set
  *   - `Object.getPrototypeOf(Int8Array.prototype).constructor` (the test262-runner
  *     injected shim for the abstract intrinsic — test262-runner.ts ~1823)
  */
-function isTypedArrayIntrinsicCtorExpr(ctx: CodegenContext, expr: ts.Expression): boolean {
+export function isTypedArrayIntrinsicCtorExpr(ctx: CodegenContext, expr: ts.Expression): boolean {
   const e = unwrapTransparent(expr);
   // Object.getPrototypeOf(<wired view ctor>)
   const gpoArg = getProtoOfCallArg(e);
@@ -1860,7 +1874,27 @@ function tryEmitNativeProtoDescriptorAccessorCall(
   if (expr.arguments.length === 0) return undefined; // need at least a thisArg
 
   const resolved = resolveDescriptorAccessorSource(ctx, recv);
-  if (!resolved || resolved.accessorName !== "get") return undefined; // setter synthesis not wired
+  if (!resolved) return undefined;
+
+  // (#5268 step 1) `gOPD(Object.prototype, "__proto__").{get,set}.call(…)` —
+  // the Annex B accessor pair, whose halves are NOT `$NativeProto` members
+  // (the glue models no set-half), so the shared closure-recovery emitter
+  // below cannot reach them. Both halves are plain natives; call them
+  // directly with `thisArg → param 0`, which is observationally identical to
+  // `call_ref`ing the forwarding closure the descriptor carries.
+  {
+    const protoAccessor = tryCompileObjectProtoProtoAccessorReflectiveCall(
+      ctx,
+      fctx,
+      expr,
+      resolved.accessorName,
+      parseBuiltinProtoGopdCall(ctx, fctx, resolved.gopdCall),
+      isCall,
+    );
+    if (protoAccessor !== undefined) return protoAccessor;
+  }
+
+  if (resolved.accessorName !== "get") return undefined; // setter synthesis not wired
 
   const info = parseBuiltinProtoGopdCall(ctx, fctx, resolved.gopdCall);
   if (!info) return undefined;
@@ -1950,6 +1984,18 @@ export function tryEmitJsonStringifyPrimitive(
   // back to `ref.null.extern` which JS sees as `null` — acceptable per
   // the existing helper's documented contract).
   if (flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) {
+    const t = compileExpression(ctx, fctx, arg);
+    if (t) fctx.body.push({ op: "drop" });
+    emitUndefined(ctx, fctx);
+    return { kind: "externref" };
+  }
+
+  // (#5269 G-4) §25.5.2 SerializeJSONProperty step 11 — a Symbol value has no
+  // JSON serialisation, so `JSON.stringify(sym)` is `undefined` (the same
+  // channel as `undefined`, not the string "null"). Without this arm the symbol
+  // reached the dynamic codec, whose value ladder has no `$Symbol` case, and the
+  // root coalesced the "serialises to undefined" null into the literal "null".
+  if (flags & ts.TypeFlags.ESSymbolLike) {
     const t = compileExpression(ctx, fctx, arg);
     if (t) fctx.body.push({ op: "drop" });
     emitUndefined(ctx, fctx);
@@ -2567,6 +2613,33 @@ export function compileFunctionBind(
 }
 
 /**
+ * (#4616 / #5322) Is `fn` a function stored as a MEMBER of an object or class —
+ * something the host can reach and invoke as `receiver.m(...)`? The host
+ * marshals a callback argument through `createNativeFunctionCallbackBridge`, so
+ * such a function's callable parameters routinely arrive as plain JS functions,
+ * not wasm closure structs. These four spellings are ONE construct to a caller:
+ *
+ *   { forEach(cb) {…} }                // #4616 matched only this one
+ *   { forEach: function (cb) {…} }     // PropertyAssignment initializer
+ *   { forEach: (cb) => {…} }           //   "
+ *   class C { forEach = (cb) => {…} }  // PropertyDeclaration initializer
+ *
+ * The other three trapped on `struct.get` of the nulled wrapper cast — an
+ * UNCATCHABLE wasm trap that kills the module, not a catchable TypeError.
+ * Witness: hono `utils/body.test.ts` stubs `formData` with
+ * `({ forEach: (cb) => … }) as FormData` for package code whose receiver is
+ * `any` (0/37, whole-file abort). Free functions keep the #1941 gate.
+ */
+function isHostReachableMemberFunction(fn: ts.Node): boolean {
+  if (ts.isMethodDeclaration(fn)) return true;
+  if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return false;
+  const holder = fn.parent;
+  if (holder === undefined) return false;
+  if (ts.isPropertyAssignment(holder)) return holder.initializer === fn;
+  return ts.isPropertyDeclaration(holder) && holder.initializer === fn;
+}
+
+/**
  * (#1712 / #1941) Static gate for the host-callable dispatch fallback.
  *
  * The callable-param dispatch below emits an extra `__call_function` arm so a
@@ -2610,7 +2683,7 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   // wrapper cast and trapped call_ref un-catchably. Method params get the
   // #1712 host arm; plain function params keep the #1941 gate so pure
   // local-closure programs stay host-import-free.
-  if (decl && ts.isParameter(decl) && decl.parent !== undefined && ts.isMethodDeclaration(decl.parent)) {
+  if (decl && ts.isParameter(decl) && decl.parent !== undefined && isHostReachableMemberFunction(decl.parent)) {
     return !ctx.standalone && !ctx.wasi;
   }
 
@@ -4299,7 +4372,10 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
  * aliased via `classExprNameMap`), or `undefined`. Uses the type oracle
  * (#1930) rather than a raw checker query.
  */
-function elemAccessReceiverClassName(ctx: CodegenContext, elemAccess: ts.ElementAccessExpression): string | undefined {
+export function elemAccessReceiverClassName(
+  ctx: CodegenContext,
+  elemAccess: ts.ElementAccessExpression,
+): string | undefined {
   let name = ctx.oracle.declaredNameOf(elemAccess.expression);
   if (name && !ctx.classSet.has(name)) name = ctx.classExprNameMap.get(name) ?? name;
   return name && ctx.classSet.has(name) ? name : undefined;
@@ -7886,6 +7962,22 @@ function compileCallExpression(
   }
   if (ts.isIdentifier(_suppCallee) && _suppCallee.text === "SuppressedError") {
     const args = expr.arguments ?? [];
+    // (#5269 E-2) Standalone has no `env::__new_SuppressedError` to import, and
+    // asking for one is not free: the import lands in `result.imports` and the
+    // module fails the host-import leak check (#2961/#5272) before it runs. Ask
+    // the native constructor FIRST — before any argument is emitted — so a
+    // decline leaves this arm byte-identical to what it was.
+    let nativeSuppressedIdx: number | undefined;
+    if (noJsHost(ctx)) {
+      // The native ctor stores `error`/`suppressed` on the `$props` sidecar, so
+      // it needs the object runtime's property helpers; ensure them here, above
+      // the registry layer that owns the constructor itself. Ensuring a runtime
+      // can register late imports, which renumbers every funcIdx already baked
+      // into this body — flush before emitting anything else.
+      ensureObjectRuntime(ctx);
+      flushLateImportShifts(ctx, fctx);
+      nativeSuppressedIdx = ensureNativeSuppressedErrorCtor(ctx);
+    }
     for (let i = 0; i < 4; i++) {
       if (args.length > i) {
         const t = compileExpression(ctx, fctx, args[i]!, { kind: "externref" });
@@ -7895,6 +7987,10 @@ function compileCallExpression(
       } else {
         fctx.body.push({ op: "ref.null.extern" });
       }
+    }
+    if (nativeSuppressedIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: nativeSuppressedIdx });
+      return { kind: "externref" };
     }
     const funcIdx = ensureLateImport(
       ctx,
@@ -9740,9 +9836,22 @@ export function compileConditionalCallee(
     }
 
     // If the branch is a property access, try method call
-    if (ts.isPropertyAccessExpression(branchExpr)) {
-      // Create a synthetic call with the property access as callee
-      // PropertyAccessExpression IS a LeftHandSideExpression so no infinite recursion
+    // A CALL or ELEMENT ACCESS branch takes the same route: both are
+    // LeftHandSideExpressions, so `f(x)(args)` / `a[k](args)` is a well-formed
+    // synthetic callee and `compileCallExpression` owns those shapes. Without
+    // this they fell to the value-drop fallback below and the whole call
+    // answered `undefined` — marked's
+    // `(i.hooks ? i.hooks.provideLexer(e) : e ? Lexer.lex : Lexer.lexInline)(src, opts)`
+    // returned undefined for every parse once a hook was registered, which is
+    // why the entire Hooks suite reported unhooked output even after the
+    // hooks themselves ran.
+    if (
+      ts.isPropertyAccessExpression(branchExpr) ||
+      ts.isCallExpression(branchExpr) ||
+      ts.isElementAccessExpression(branchExpr)
+    ) {
+      // Create a synthetic call with the branch as callee.
+      // These are all LeftHandSideExpressions, so no infinite recursion.
       const syntheticCall = ts.factory.createCallExpression(branchExpr, expr.typeArguments, expr.arguments);
       ts.setTextRange(syntheticCall, expr);
       (syntheticCall as any).parent = expr.parent;

@@ -295,6 +295,73 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     };
 
     const body: Instr[] = [];
+
+    // (#5196 R3-0) `Proxy` read as a VALUE — `var OProxy =
+    // $262.createRealm().global.Proxy; new OProxy(t, h)` — materialises the
+    // namespace carrier (`builtin-static-globals.ts` `["Proxy", []]`), a plain
+    // `$Object`. Without this arm the driver takes the ordinary
+    // `callee.prototype` + `Object.create` tail and the result is not a proxy
+    // at all (27 `*-realm*` rows). The decision travels with the VALUE: the
+    // test is reference identity against the one carrier global, so EVERY
+    // spelling that reaches this driver holding that reference (an alias, a
+    // parameter, a property read, a realm-global read) constructs a proxy.
+    const proxyCarrierGlobalIdx = ctx.builtinObjectGlobals.get("Proxy");
+    const proxyCreateIdx = ctx.funcMap.get("__proxy_create");
+    // None of `__proxy_create`, `__proxy_get_dispatch` or the carrier global is
+    // a sufficient gate on its own: MEASURED 2026-09-03, all three are present
+    // in a program that never mentions `Proxy` (the object runtime builds the
+    // proxy natives unconditionally and the namespace globals are pre-seeded),
+    // and gating on them changed a Proxy-free program's bytes.
+    // `proxyConstructorValueNewSite` is set only by a `new <Proxy-constructor
+    // value>` site, so every other module stays byte-identical.
+    if (
+      ctx.proxyConstructorValueNewSite === true &&
+      proxyCarrierGlobalIdx !== undefined &&
+      proxyCreateIdx !== undefined
+    ) {
+      const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
+      const argOrNull = (index: number): Instr =>
+        index < arity ? { op: "local.get", index: index + 2 } : { op: "ref.null.extern" };
+      body.push(
+        // Both sides must be `eq` references for `ref.eq`; a null carrier
+        // global (the namespace was never materialised) fails `ref.test` and
+        // the arm simply does not fire.
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        { op: "global.get", index: proxyCarrierGlobalIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "global.get", index: proxyCarrierGlobalIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "ref.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                // §28.2.1.1 ProxyCreate(target, handler): a missing argument
+                // arrives as null, which `__proxy_create`'s `requireObject`
+                // turns into the required TypeError.
+                argOrNull(0),
+                argOrNull(1),
+                { op: "call", funcIdx: proxyCreateIdx },
+                { op: "return" },
+              ],
+            },
+          ],
+        },
+      );
+    }
+
     const canProxyConstruct =
       proxyTypeIdx !== undefined &&
       proxyConstructDispatchIdx !== undefined &&

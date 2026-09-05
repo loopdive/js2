@@ -1,0 +1,13 @@
+built-ins/JSON/stringify/replacer-array-abrupt.js
+built-ins/JSON/stringify/value-symbol.js
+built-ins/JSON/stringify/replacer-array-wrong-type.js
+built-ins/JSON/stringify/value-object-proxy.js
+built-ins/JSON/stringify/replacer-array-proxy.js
+built-ins/JSON/stringify/replacer-array-proxy-revoked.js
+built-ins/JSON/stringify/value-array-abrupt.js
+built-ins/JSON/stringify/value-array-proxy-revoked.js
+built-ins/JSON/stringify/value-array-proxy.js
+built-ins/JSON/parse/text-non-string-primitive.js
+built-ins/JSON/stringify/replacer-wrong-type.js
+built-ins/JSON/parse/revived-proxy.js
+built-ins/JSON/stringify/value-object-proxy-revoked.js

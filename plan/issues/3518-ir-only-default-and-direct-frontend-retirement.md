@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-08-30
+updated: 2026-09-05
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -182,7 +182,7 @@ their order and acceptance boundaries.
 | **R7 — #3527 (blocked)**     | AST-free async suspension plans and canonical Promise ABI                                             | #3522, #3525, #3526                   | Every supported async container uses one verified `IrAsyncPlan` and the existing frame engine; no AST callback/direct async route remains                       |
 | **R8 — #3528 (blocked)**     | Linear consumes the shared Prepared program                                                           | #3525–#3527                          | WasmGC and linear receive the exact same program/ABI/runtime/async plans; `src/codegen-linear/` has no source-AST lowering path                                 |
 | **R9**                       | Fail-closed IR-only default; remove escape hatches                                                    | R3–R8; #2949, #2952, #1373b, #3583   | Default policy is IR-only; hybrid demotion, `experimentalIR: false`, `JS2WASM_IR_FIRST`, `disableIrFirst`, skip allowlists, and compile-twice switches are gone |
-| **R10**                      | Reachability-proven direct-front-end deletion                                                         | R9                                    | Re-run #3090 audit; delete the ~59,676 frontend-only fn-lines and dispatch roots; zero direct AST→Wasm reachability remains                                    |
+| **R10**                      | Reachability-proven direct-front-end deletion                                                         | R9                                    | Re-run #3090 audit; delete the frontend-only fn-lines and dispatch roots; zero direct AST→Wasm reachability remains. **The ~59,676 figure is a July number that today's audit does NOT reproduce (85,609 across 107 frontend files vs 59,676 across 35) — re-derive before scoping; see `#3090`'s 2026-09-03 note**                                    |
 
 R0a and R0b completed on 2026-07-21. R1 remains active while R2 production
 preparation and the first R3 static-method transaction are now in progress.
@@ -2076,3 +2076,939 @@ Acceptance is a clean dead-export check with 23 known entries, zero new rows,
 and no stale-baseline progress notice, plus formatting, issue integrity, LOC
 and function ratchets, and the normal unskipped precommit and prepush hooks.
 Do not remove or reclassify any of the remaining 23 rows in this checkpoint.
+
+## 2026-09-02 — R9 coverage-closure gap, measured
+
+The ladder gap noted above ("R9 needs an explicit coverage-closure dependency")
+now has a number attached. It was measured, not inherited from an artifact.
+
+`pnpm run check:ir-only` reports **READY** on `main`. That verdict is real but
+it is scoped to five entry files hardcoded at `scripts/check-ir-only.ts:14-20`,
+and the script's own comment already says so: *"Wider compiler reachability
+remains a separate R9/R10 requirement."* The playground directory it draws from
+holds **thirteen** `.ts` entries. The other eight have never been in the gate.
+
+Running the gate's own lane observers over those eight (they accept an entries
+override, so no compiler change was needed):
+
+| | gate corpus (5 files) | uncovered (8 files) |
+| --- | --- | --- |
+| terminal units, single-host | 41 | 32 |
+| `emitted` | 38 | 16 |
+| `unsupported` | **0** | **8** (7 `@select`, 1 `@build`) |
+| legacy body emitted | **0** | **10** |
+| terminal units, standalone | 41 | 32 |
+| `emitted` | 38 | 10 |
+| `unsupported` | **0** | **14** (all `@select`) |
+| legacy body emitted | **0** | **14** |
+
+Every one of the eight files has at least one unsupported unit on both lanes;
+`benchmarks.ts` and `benchmarks/helpers.ts` have three each on standalone. So
+this is not one exotic file dragging a corner — the rejection is spread across
+the whole uncovered population.
+
+Three things follow that change what R9 has to do:
+
+1. **The denominator is not 5, and widening it flips the verdict.** Adding the
+   eight to the gate takes it from READY to NOT READY with 10 (single-host) /
+   14 (standalone) direct-body emissions to retire first. R9's fail-closed flip
+   cannot be scheduled off the current READY.
+2. **Standalone is the harder lane by a factor, and the gap is growing in the
+   direction R10 cares about.** 14 unsupported vs 8, and 10 emitted vs 16. The
+   DOM-touching entries (`dom.ts`, `style.ts`, `helpers.ts`) reject wholesale on
+   standalone while emitting on single-host.
+3. **Two single-host units emit BOTH a direct body and an IR body** — the
+   literal compile-once violation, distinct from a clean rejection. They are the
+   only units in the population carrying an `r2Withdrawal` record, and it reads
+   `stage: "not-attempted", reason: "late-feature-preparation"`. Every other
+   legacy-emitting unit has **no withdrawal record at all**, because it never
+   reached R2 admission — it was rejected at `select`. R2 withdrawal telemetry
+   (#3521, landed in #5486) therefore does not explain this population, and a
+   census that reads only withdrawal reasons will report an empty histogram and
+   look clean. That is a trap worth naming for whoever runs the full census.
+
+### Reproducing
+
+The gate exports `observeSingleHostLane(entries?)` / `observeStandaloneLane(entries?)`,
+both of which take an entry-list override. A scratch script that calls them with
+the eight uncovered paths and histograms `kind`, `kind@stage`, `legacyBodyEmitted`
+and `irBodyEmitted` reproduces the table above. Put it in `.tmp/`.
+
+**One correction worth carrying, because it cost a wrong reading here:** the
+outcome field is `kind`, not `status`. A probe that filters on
+`o.status === "unsupported"` returns **zero** for every lane and every file,
+which reads as "nothing is rejected, everything silently falls back" — the
+opposite of the truth. And `legacyBodyEmitted` / `irBodyEmitted` are **not
+mutually exclusive**: a unit can carry both, which is precisely the compile-once
+violation in item 3. Tallying them as if they partitioned the units
+double-counts and hides that case.
+
+### What this does not settle
+
+The playground is still not the whole compiler. Thirteen entry files is the
+bounded population this gate was built around; the true R9 denominator is the
+standalone corpus plus whatever #4522's `retire-at-R9` table enumerates. This
+measurement closes the gap between "5 files" and "the playground", which is the
+first step, not the last. The remaining question for the full census is what the
+denominator is beyond `website/playground/examples/`.
+
+### The denominator beyond the playground — dogfood corpus, measured
+
+The section above closed "five files → the playground" and left open what the
+denominator is beyond `website/playground/examples/`. Measuring the next
+corpus out — `tests/dogfood/corpus`, 20 real JS programs, directly R10-relevant
+because dogfooding is what "the compiler compiles itself" means:
+
+| | playground gate (5 `.ts`) | dogfood (20 `.js`) single-host | dogfood standalone |
+| --- | --- | --- | --- |
+| terminal units | 41 | 35 | 35 |
+| IR bodies emitted | **38** | **1** | **0** |
+| unsupported | 0 | 33 (`@select`) | 31 (30 `@select`, 1 `@build`) |
+| legacy bodies | 0 | 33 | 31 |
+| entries compiling clean | 5/5 | 18/20 | 18/20 |
+
+The IR path covers ~100% of the gate's corpus and **1 of 35 units** on the
+dogfood corpus (0 on standalone). The two entries that fail outright
+(`destructuring.js`, `objects.js`) do so with a fatal diagnostic on both lanes.
+
+**A hypothesis worth stating because it was tested and refuted.** The obvious
+explanation is that the dogfood files are untyped `.js` while the gate corpus is
+annotated `.ts`, and the known IR fallback vocabulary has three type-resolution
+buckets. If that were the cause, type reasons would dominate. They do not —
+exactly **one** of 33 rejections is `return-type-not-resolvable`. The histogram:
+
+| reason | single-host | standalone |
+| --- | --- | --- |
+| `body-shape-rejected` | 19 | 16 |
+| `class-member-unsupported` | 4 | 4 |
+| `class-projection-unsupported` | 2 | 2 |
+| `class-method` | 1 | 1 |
+| `static-class-initialization` | 1 | 1 |
+| `destructuring-param-complex` | 1 | 1 |
+| `async-function` | 1 | 1 |
+| `async-generator` | 1 | 1 |
+| `operand-coercion-unsupported` | 1 | 1 |
+| `param-shape-rejected` | 1 | 1 |
+| `return-type-not-resolvable` | 1 | 1 |
+| `imported-call-planning-unsupported` | — | 1 |
+
+So the wider denominator is gated on **body shape (≈58%) and class coverage
+(8 units across four class reasons)** — that is R3 (#3522) territory plus the
+`body-shape-rejected` bucket the IR fallback budget already flags as
+*unintended* — and **not** on type propagation. A plan that widens the corpus by
+improving TypeMap propagation first would be optimising the 1, not the 19.
+
+**Consequence for the ladder.** R9's fail-closed flip is not a small step past
+the current READY. On the corpus that matters most for R10, IR adoption is
+effectively at zero, and the blocking reasons are the same unintended buckets
+#2855 is already ratcheting. R9 should take an explicit dependency on
+`body-shape-rejected` and the class family reaching zero on a corpus wider than
+the playground, not merely on the current gate staying green.
+
+**Still not settled:** dogfood is 20 files. Neither it nor the playground is the
+full standalone denominator, and #4522's `retire-at-R9` table has not been
+cross-checked against either. Both numbers above are floors on the work, not the
+total.
+
+#### Correction to the section above: the blocker is module-init (R4), not class coverage (R3)
+
+The table above attributed the wider-corpus gap to "body shape (~58%) and class
+coverage — R3 (#3522)". **The class half of that is wrong, and the body-shape
+half was true but uninformative.** Splitting `body-shape-rejected` by unit kind:
+
+| | count |
+| --- | --- |
+| `body-shape-rejected` on `<module-init>` | **17** |
+| `body-shape-rejected` on ordinary functions | 2 (`exportedFn`, `Ctor`) |
+
+So the largest bucket is not scattered function-body shapes at all. It is one
+unit kind, once per file. Grouping every dogfood rejection by unit kind makes
+the split plain:
+
+| lane | module-init units | of those, unsupported | non-module-init unsupported |
+| --- | --- | --- | --- |
+| single-host | 20 | **19** (17 body-shape, 1 static-class-init, 1 operand-coercion) | 14 |
+| standalone | 20 | **16** (14 body-shape, 1 static-class-init, 1 operand-coercion) | 14 |
+
+**Module-init adoption on this corpus is zero of twenty executable units, on
+both lanes.** That is R4 (#3523, module-init compile-once), not R3. The class
+family accounts for 7 of 33 single-host rejections, real but a third the size.
+
+**And this explains why the gate is green rather than merely narrow.** Its five
+entries hold five module-init units: 2 emitted, **3 non-executable**, 0
+unsupported. A non-executable module-init has no body by construction, so the
+gate exercises module-init on exactly two files. The corpus is not just small —
+it is unrepresentative in precisely the dimension that dominates everywhere
+else.
+
+**Revised consequence for the ladder.** R9's coverage-closure dependency is
+first and foremost **R4**. Widening the corpus without module-init compile-once
+converts ~58% of the single-host gap and ~45% of the standalone gap into
+permanent red. The class family is the second dependency, not the first.
+
+**Method note, since this is the second time in one session the same mistake
+shape appeared.** The previous section read a reason histogram and named an
+owner from the reason label alone. `body-shape-rejected` is raised from many
+sites spanning entirely different constructs, so the label identifies a *demote
+path*, not a *feature area*. Grouping by `unitKind` — one extra field already
+present in the telemetry — moved the conclusion from the wrong lane to the right
+one. Any future census over these outcomes should group by `unitKind` before
+assigning an owner.
+
+**Precision correction to the sentence above, added after tracing it.** An
+earlier draft pointed at "~20 sites in `src/ir/from-ast.ts`". Those sites are
+`demoteToLegacy` calls, and `demoteToLegacy` throws at stage **`build`**
+(`src/ir/outcomes.ts:213`). Every module-init rejection measured here is stage
+**`select`**, so it comes from `src/ir/select.ts` instead — sending a reader to
+`from-ast.ts` for these would cost them the search. The per-arm breakdown is
+obtainable with `JS2WASM_IR_SHAPE_DIAG=1` and no source edit (the #2856 Step-1
+reject-arm recorder), and is recorded on `#3523`.
+
+### CORRECTION — "R4 first" was generalised from one corpus; it does not hold on the other
+
+The sections above concluded that R9's coverage-closure dependency is R4. That
+conclusion was drawn entirely from `tests/dogfood/corpus`. Measuring the
+**playground's own uncovered eight** with the same instruments refutes the
+generalisation:
+
+| | dogfood (20 `.js`) | playground-uncovered (8 `.ts`) |
+| --- | --- | --- |
+| module-init units | 20 | 8 |
+| module-init **non-executable** | 1 (sh) / 4 (sa) | **8 / 8 — all of them** |
+| module-init unsupported | 19 (sh) / 16 (sa) | **0 / 0** |
+
+**On the playground's uncovered files, module-init is not a blocker at all** —
+every one of the eight has no executable module-init body. Their blockers are
+elsewhere entirely:
+
+| corpus / lane | dominant blocker | count | plausible owner |
+| --- | --- | --- | --- |
+| dogfood, both lanes | module-init `vardecl-module-storage-unrepresentable` | 11 sh / 9 sa | R4 (#3523) |
+| playground-uncovered, single-host | function `expr-ident-not-in-scope` | 7 of 8 | not R4 |
+| playground-uncovered, standalone | **`host-surface-unavailable`** | **12 of 14** | R6 (#3526), standalone surface |
+
+So `body-shape-rejected` is not even the leading reason on the playground's
+standalone lane — `host-surface-unavailable` is, by 12 to 1.
+
+**What is actually established, stated at the strength the evidence supports:**
+
+- R4 is a real and severe blocker **on module-bearing sources**: zero of twenty
+  executable module-init units on dogfood, on both lanes. That stands.
+- R4 is **not** established as R9's universal first dependency. The two corpora
+  disagree because they differ structurally in exactly the dimension the
+  conclusion keyed on: playground examples are browser scripts whose module-init
+  is non-executable, dogfood files are modules with real top-level code.
+- R9's denominator needs the **union**, so R4 (module-bearing sources) and the
+  standalone host surface (R6) are both dependencies. Their relative weight is
+  **unknown** until a corpus representative of the real target population is
+  defined — which is the open question the census was for, and it is still open.
+
+**Method, since this is the failure I named two sections earlier and then
+committed myself.** That note said a reason label identifies a demote path, not
+a feature area, and to group by `unitKind` before assigning an owner. I did
+group by `unitKind` — and then generalised from a single corpus without checking
+the second, which was one probe away and already on the list of things I had
+flagged as unchecked. Grouping correctly does not rescue a sample of one. The
+standing instruction should be: **name the corpus in the claim, and do not
+promote a per-corpus finding to a ladder dependency until a second corpus
+agrees.**
+
+### The standalone half is a target/corpus mismatch, not compiler work — third correction
+
+The correction above concluded that R4 and "the standalone host surface (R6)"
+**both** gate R9, on the strength of `host-surface-unavailable` being 12 of the
+playground-uncovered standalone lane's 14 rejections. Measuring what those 12
+actually name weakens the second half considerably.
+
+All 12 are **DOM**, and `document` is the *only* host global named anywhere in
+those eight files — 18 occurrences, and zero `window`, `navigator`, `fetch`,
+`localStorage` or `console`. Concretely they are `document.body`,
+`document.createElement`, `.innerHTML`, `.style.cssText` and `.appendChild`.
+Even `benchmarks/fib.ts` — an otherwise pure-math file — has its `main`
+rejected, because `main` renders its result into the page:
+
+```ts
+export function main(): void {
+  const host = document.body;          // ← the rejection
+  host.innerHTML = "";
+  …
+}
+```
+
+`main` is 7 of the 12; the rest are `bench_dom`, `bench_style` and `el`.
+
+**Why this is not R6 work in the ordinary sense.** These are browser demo
+programs whose entire purpose is to render to the page, compiled for the
+**standalone** target, which by definition has no JS host and therefore no DOM.
+A standalone build of a DOM-rendering demo is close to a contradiction in terms;
+`select.ts:203-204` already says this reason is owned by "the target's
+capability policy, not by IR shape coverage". The compiler is not failing to
+lower something it should lower — the corpus is asking a host-free target for a
+host surface. Note the machinery for the tractable part already exists: #4576's
+`standaloneDomOperation` certifies `document.body` and a registered
+`document.createElement(tag)`; these 12 are the uses outside that certified
+slice.
+
+**Consequence, and it is a correction to the section above.** The playground's
+uncovered eight are a **poor standalone denominator**, not evidence of an R6
+gap of comparable weight to R4. Two things follow for whoever defines the real
+R9 denominator:
+
+1. Standalone conformance should be measured on programs that could plausibly
+   *be* standalone. Counting DOM demos against the standalone lane inflates the
+   apparent gap with work nobody intends to do.
+2. R4 therefore looks stronger, not weaker, as the leading dependency — but
+   note this is now the **third** framing of that question in one session, and
+   the honest summary is that the ordering is only as good as the corpus. The
+   dogfood corpus (module-bearing, host-free) is the better standalone
+   population of the two measured here, and its blocker is R4.
+
+**What is still unmeasured:** neither corpus was chosen to represent the R9
+target population, and #4522's `retire-at-R9` table has still not been
+cross-checked against either. Until that is done, every weight in this section
+is a floor on one sample, not an apportionment.
+
+### R9-D1 — implementation plan: put the dogfood corpus under CI as a `baseline` lane
+
+Everything measured above is invisible to CI. `check:ir-only` reports READY on
+five files and nothing watches the rest, so the gap this session found can widen
+again with no signal. The gate already has the mechanism to fix that without
+turning anything red — `IrOnlyLaneReadiness` (`scripts/check-ir-only.ts:48-58`):
+
+> `"baseline"`: the lane is measured and ratcheted against its committed
+> floors/ceilings, but is not asserted to be IR-only. Every anti-vacuity,
+> telemetry-consistency, invariant, and baseline check still applies; only the
+> compile-once assertions are withheld.
+
+That is exactly the shape needed: measure the honest gap, ratchet it so it
+cannot regress, and defer the compile-once assertion until R4 and R6 close it.
+`STANDALONE_ENTRIES` was itself in this mode until #4577 (the comment at `:22-27`
+records the promotion), so there is precedent in this file for both directions.
+
+**Contract.**
+
+1. Add `DOGFOOD_ENTRIES` — the 20 `.js` files under `tests/dogfood/corpus`.
+   Enumerate them explicitly rather than reading the directory: a glob makes the
+   lane's denominator move when someone adds a corpus file, which is the
+   silent-baseline-drift failure this gate exists to prevent.
+2. Add two lanes via the existing `observeLane` — `dogfood-single-host` and
+   `dogfood-standalone` — both `readiness: "baseline"`.
+3. Seed their floors/ceilings with `--policy=hybrid --update`. Today's measured
+   values, which the seed must reproduce or the lane is mis-wired:
+
+   | lane | entries | terminal units | emitted | unsupported | non-executable | IR bodies | legacy (real) |
+   | --- | --: | --: | --: | --: | --: | --: | --: |
+   | `dogfood-single-host` | 20 | 35 | 1 | 33 | 1 | 1 | 7 |
+   | `dogfood-standalone` | 20 | 35 | 0 | 31 | 4 | 0 | 8 |
+
+   **These replace an earlier version of this table that was wrong in four
+   columns.** It carried `16 / 8 / 10` and `10 / 14 / 14` for emitted /
+   unsupported / legacy — those are the **playground-uncovered** figures, pasted
+   under dogfood labels; only `terminal units` and `IR bodies` were right. An
+   implementer following it would have seeded floors that describe a different
+   corpus, and the lane would then ratchet against fiction — the precise failure
+   a baseline gate exists to prevent. Re-measured directly for this table.
+
+   The `legacy (real)` column counts `legacyBodyEmitted === true &&
+   directBodyEmissions > 0`, **not** the raw flag, which is phantom on 26 of 33
+   single-host rows (`#5283`). If the gate's own summariser reads the raw flag,
+   seed what it reads and record the discrepancy in the lane's `notes` — do not
+   silently seed a different number from the one the tool computes.
+
+**The one real obstacle, stated up front.** Seeding writes
+`scripts/ir-only-baseline.json`, and CLAUDE.md says never to edit
+`scripts/*-baseline.json` because main is its sole writer. That rule exists to
+stop a PR banking a regression into a ratchet. Adding a *new lane* is not that —
+no existing floor moves — but it is close enough that the implementer must not
+decide alone. **The "land report-only, seed later" alternative an earlier draft of this plan
+offered does NOT exist — verified in the gate's own code.**
+`evaluateIrOnlyReport` does `const expected = baseline.lanes[lane.name]; if
+(!expected) failures.push(\`${lane.name}: missing committed baseline lane\`)`.
+A lane present in the code and absent from the JSON **fails the gate
+immediately**, so the seed cannot be deferred to a follow-up. The only real
+options are:
+
+1. one seeding commit with the project lead's explicit sign-off, or
+2. don't add the lanes yet.
+
+**Do not hand-edit the JSON to make a gate pass**, and do not attempt the
+deferred-seed route — it was offered here in error and an implementer following
+it would land a red gate.
+
+**Acceptance.** `pnpm run check:ir-only` still reports READY (the two new lanes
+are `baseline`, so they cannot fail the verdict); the two lanes appear in the
+human output with the numbers above; and a deliberate regression in either lane
+— e.g. reverting #5498 — makes the gate fail. That last one is the anti-vacuity
+check: a baseline lane that cannot go red is decoration.
+
+**Why it is worth doing before R4 lands.** When R4-M1's string slice lands it
+should unlock exactly two dogfood files (`escapes-unicode.js`, `templates.js` —
+measured on `#3523`). With these lanes in place that shows up as a ratchet
+movement CI records automatically. Without them it is another number somebody
+has to re-measure by hand, which is how the 59,676 figure became unverifiable.
+
+**Not claimed:** that dogfood is the right R9 denominator. It is a better
+standalone population than the playground (see the corpus-mismatch correction
+above), and it is *a* measured population under CI, which is strictly better
+than none. Choosing the representative corpus remains open.
+
+### CORRECTION — the dogfood legacy-body counts above are inflated ~4x (see `#5283`)
+
+Every "legacy bodies" figure this file quotes for `tests/dogfood/corpus` — 33
+single-host, 31 standalone — is built on `IrObservedOutcome.legacyBodyEmitted`,
+and that flag is set on units where **no direct pass ran**. Counting rows with
+`legacyBodyEmitted === true` and `(directBodyEmissions ?? 0) === 0`:
+
+| corpus / lane | quoted above | of which phantom | real direct emissions |
+| --- | --: | --: | --: |
+| dogfood, single-host | 33 | 26 | **7** |
+| dogfood, standalone | 31 | 23 | **8** |
+| playground uncovered, single-host | 10 | 0 | 10 |
+| playground uncovered, standalone | 14 | 0 | 14 |
+
+**The playground figures stand; the dogfood ones do not.** Filed as `#5283`,
+confirmed on `tests/fixtures/extern-demo.ts` where the row reads
+`legacyBodyEmitted: true` with `directBodyEmissions` **absent**.
+
+**What this does and does not change in the sections above.** It touches only
+the legacy-body rows. Everything else was read from different fields and stands
+unchanged:
+
+- `unsupported` counts (33 / 31 dogfood, 8 / 14 playground) come from `kind` —
+  unaffected.
+- `emitted` / IR-body counts (1 and 0 on dogfood) come from `kind` and
+  `irBodyEmitted` — unaffected.
+- **"module-init adoption is 0 of 20 executable units"** was derived from
+  module-init `kind` (`unsupported` / `non-executable` / `emitted`), not from
+  this flag — **unaffected, and it remains the load-bearing R4 finding.**
+- The reject-arm breakdown (`code`), the per-file blocking-category table, and
+  the `scalarKind` root cause are all independent of it.
+
+So the R4 conclusion survives; what shrinks is the claim about how much the
+direct front end is still *emitting* on that corpus.
+
+**Method, for the fifth time tonight and the sharpest instance.** This was found
+by executing gap-6b's own P4 item — an instruction sitting in this repo to
+"confirm it with one compile and file it as its own issue" — rather than by
+re-reading my own numbers. The telemetry I spent the session counting had a
+field whose name and meaning disagree, and nothing in re-checking my arithmetic
+would ever have surfaced it. **A measurement is only as good as the field it
+reads, and the field is worth one compile of scepticism.**
+
+### Verification pass over every table in this file (2026-09-03)
+
+After two figure errors in one session — the dogfood legacy-body counts
+(`#5283`) and the R9-D1 seed table carrying playground numbers under dogfood
+labels — every headline table here was re-measured against a single fresh run
+rather than re-read. Ground truth:
+
+| corpus / lane | units | emitted | unsupported | non-exec | IR bodies | module-init | of which emitted |
+| --- | --: | --: | --: | --: | --: | --: | --: |
+| gate 5, single-host | 41 | 38 | 0 | 3 | 38 | 5 | 2 |
+| gate 5, standalone | 41 | 38 | 0 | 3 | 38 | 5 | 2 |
+| playground 8, single-host | 32 | 16 | 8 | 8 | 16 | 8 | **0** |
+| playground 8, standalone | 32 | 10 | 14 | 8 | 10 | 8 | **0** |
+| dogfood 20, single-host | 35 | 1 | 33 | 1 | 1 | 20 | **0** |
+| dogfood 20, standalone | 35 | 0 | 31 | 4 | 0 | 20 | **0** |
+
+**Everything above verifies except one denominator**, and it is one this file
+made load-bearing. The phrase "module-init adoption is **0 of 20 executable**
+units" is imprecise: 20 is the module-init *population*, but one of them is
+`non-executable` on single-host and four are on standalone. The accurate
+statement is **0 of 19 executable single-host and 0 of 16 executable
+standalone** — still zero adoption, which is the finding, but the denominator
+was the population rather than the executable subset. Read every "0 of 20"
+above with that correction.
+
+The playground's "all 8 module-init units are non-executable" is confirmed
+exactly (`non-exec` 8 of 8 module-init, 0 emitted), as is the gate corpus's
+"2 emitted, 3 non-executable" — which is why it is green.
+
+## 2026-09-03 — R10's audit discrepancy is ATTRIBUTED (the July tree was reachable after all)
+
+Earlier tonight this file recorded that the 2026-07-16 audit's headline numbers
+do not reproduce, that three explanations fit equally, and that separating them
+needs the Phase-2f JSON (gone) or the July tree — **"this clone is too shallow"**.
+That second claim was wrong, and it was wrong in the cheapest possible way: a
+shallow clone is not a truncated history, it is a *fetch boundary*.
+
+```bash
+git fetch --shallow-since=2026-07-10 origin main     # exit 0, ~seconds
+git worktree add --detach …/r10-july-audit <2026-07-17 sha>
+node scripts/audit-legacy-reachability.mjs
+```
+
+**The script is byte-identical between the two trees** (`git diff` of
+`scripts/audit-legacy-reachability.mjs` July↔today is empty), so the instrument
+is not a variable and the comparison is clean.
+
+### The measurement
+
+| bucket | files (Jul 17 → Sep 3) | legacy-only fn-lines (Jul 17 → Sep 3) |
+| --- | --- | --- |
+| **frontend** | 47 → 107 | **60,126 → 85,823** |
+| deferred | 3 → 3 | 1,731 → 2,543 |
+| runtime | 58 → 61 | 43,403 → 39,791 |
+| stays | 111 → 621 | 18,751 → 37,270 |
+| *`src/codegen` files scanned* | *219 → 792* | |
+
+### Which of the three explanations was right: two of them, on different columns
+
+- **`legacy-only fn-lines` — the recorded figure is SOUND and the growth is
+  REAL.** The July-era tree measures **60,126** against a recorded **59,676**, a
+  0.75% gap across one day of commits. So the metric reproduces, and
+  60,126 → 85,823 is **+42.7% of genuine growth** in seven weeks. The "front end
+  grew 43%" reading I declined to claim is now supported — by a measurement, not
+  by the coincidence that two numbers differ.
+- **`files` — the recorded 35 is an ARTIFACT.** The same-era tree measures
+  **47**, so the old table's `files` column was undercounting (consistent with
+  it having counted only the rows it printed). The eye-catching 35 → 107 is
+  really 47 → 107, and it sits inside a `src/codegen` population that itself
+  went 219 → 792 files.
+
+### What this means for R10, which is the point of measuring it
+
+**The deletion target is growing, and slightly faster than the surface around
+it.** As a share of all legacy-only fn-lines the front end went **48.5% → 51.9%**
+— so R10 is not being eroded by ordinary IR progress; it is being outpaced.
+The one genuinely reassuring cut is share of *total* fn-lines (legacy-only plus
+shared), **31.4% → 25.2%**, but that falls mostly out of the `stays` bucket
+tripling its shared lines, which is growth R10 never had to delete anyway.
+
+Two consequences worth acting on:
+
+1. **R10's cost estimate must be re-derived, not inherited.** Any plan sized
+   against 59,676 is understating by ~26,000 lines.
+2. **This should be a periodic measurement, not a one-off.** The whole reason
+   tonight's re-run was ambiguous is that July left no committed artifact.
+   `plan/log/3090-legacy-reachability-2026-09-03.json` fixes that going forward
+   for one date; a cheap recurring capture would let the *rate* be read directly
+   instead of reconstructed under a fetch boundary.
+
+**Correction to a figure recorded earlier tonight:** the frontend legacy-only
+count appears as 85,609 in the #5509 body and 85,823 here. Both are real —
+`main` advanced between the two runs and this branch merged it. The later number
+is the one measured against the July tree in the same session, so it is the one
+the comparison above uses.
+
+**Method note.** The claim "the July tree is unreachable" was never tested; it
+was inferred from `is-shallow-repository = true`. One `git fetch --shallow-since`
+would have settled it at any point, and the cost of not running it was an
+unattributed number sitting in a PR body as a permanent open question. Same
+family as this session's other corrections: an assumption about an instrument's
+reach, stated as a fact about the world.
+
+### R10 cost estimate, re-derived from the 2026-09-03 audit
+
+The re-measurement above says any estimate sized against 59,676 understates by
+~26,000 lines. Rather than restate the bigger total, here is the **shape** of
+the work, from `.tmp/legacy-reachability.json` (792 files; cut set
+`statements.ts#compileStatement` + `expressions.ts#compileExpression`).
+
+**The headline 85,823 is not one job. It is two, and they are very unequal.**
+
+| | files | legacy-only lines | shared lines that must survive |
+| --- | --: | --: | --: |
+| **A — whole-file deletion** (`sharedLoc == 0`) | **78** | **65,318** | 0 |
+| **B — split required** (`sharedLoc > 0`) | 29 | 20,505 | 15,956 |
+| total (frontend bucket) | 107 | 85,823 | 15,956 |
+
+**76% of the deletion by line count needs no surgery at all** — 78 files contain
+nothing but legacy-only functions, so R10 removes the file. The ten largest are
+each a single-purpose direct-path emitter:
+
+| file | legacy-only |
+| --- | --: |
+| `expressions/calls.ts` | 8,756 |
+| `expressions/new-super.ts` | 6,299 |
+| `expressions/assignment.ts` | 5,799 |
+| `expressions/call-receiver-method.ts` | 4,346 |
+| `expressions/call-builtin-static.ts` | 4,099 |
+| `statements/loops.ts` | 4,049 |
+| `expressions/call-identifier.ts` | 3,751 |
+| `expressions/operator-assignment.ts` | 3,435 |
+| `binary-ops.ts` | 3,391 |
+| `expressions/call-namespace-static.ts` | 3,162 |
+
+**The real work is the 29 mixed files, and it is smaller than it looks but more
+delicate.** They hold 266 shared functions that survive R10 and must be lifted
+out before the surrounding 20,505 legacy-only lines can go. The distribution is
+sharply bimodal — some are almost entirely shared, others almost entirely
+legacy:
+
+| file | shared (fns) | legacy-only | character |
+| --- | --- | --: | --- |
+| `closures.ts` | 3,872 (48) | 125 | nearly all survives — likely re-bucket, not split |
+| `statements/nested-declarations.ts` | 3,157 (47) | 285 | same |
+| `expressions/identifiers.ts` | 1,980 (28) | 873 | genuine split |
+| `expressions/builtins.ts` | 1,488 (10) | 2,197 | genuine split |
+| `literals.ts` | 766 (20) | 4,879 | mostly deletion, 20 fns to lift |
+| `statements/for-of-destructuring.ts` | 660 (**1**) | 2,041 | one function to lift, then delete |
+| *19 more* | 1,963 | 6,891 | |
+
+`closures.ts` and `nested-declarations.ts` together are 7,029 shared lines
+against 410 legacy-only — those two are probably **mis-bucketed rather than
+mixed**, and confirming that is the cheapest single thing that could shrink
+R10's scope. `for-of-destructuring.ts` is the opposite and the ideal early
+slice: lift **one** function, delete 2,041 lines.
+
+**The export surface is the risk, and it is mostly benign.** 929 legacy-only
+functions — 605 module-private, **324 exported**. Of those 324, **232 sit in
+whole-file-deletable files**, so they vanish with their file and only their
+importers matter; 92 are in mixed files and need individual care.
+`check:dead-exports` is a required part of `quality`, so an export left behind
+after its consumers go fails the gate — which makes the ordering explicit:
+**delete callers before definitions, and run `check:dead-exports` between
+slices, not at the end.**
+
+**Sequencing that falls out of the data**
+
+1. Confirm or re-bucket `closures.ts` / `nested-declarations.ts` (7,029 shared
+   lines hinge on it).
+2. Whole-file deletions, largest first — 78 files, 65,318 lines, no splitting,
+   each independently revertable.
+3. Lift-then-delete the low-shared-count mixed files (`for-of-destructuring.ts`
+   at 1 function, `late-imports.ts` at 9, `builtins.ts` at 10).
+4. The genuine splits last: `identifiers.ts`, `literals.ts`, `destructuring.ts`.
+
+**Caveat, stated because the last estimate lacked one.** These are *reachability*
+buckets under one cut set, not a compile-tested deletion plan — the audit proves
+what is reachable only from `compileStatement`/`compileExpression`, not that
+removing it leaves a building compiler. Every count above is a floor on the work
+and an upper bound on the deletion.
+
+### CORRECTION (same session) — the "frontend bucket" is an assertion, not a measurement
+
+Two sections above I wrote that the frontend share of legacy-only fn-lines went
+**48.5% → 51.9%** and concluded "the deletion target is being outpaced." **That
+framing is wrong, and I should have read `bucketOf` before publishing a share.**
+
+```js
+function bucketOf(fileRel) {
+  const short = fileRel.replace("src/codegen/", "");
+  if (BUCKET_FILE[short]) return BUCKET_FILE[short];      // hand-maintained map
+  for (const [pre, b] of BUCKET_PREFIX) if (fileRel.startsWith(pre)) return b;
+  return "stays";
+}
+```
+
+The bucket is a **hardcoded editorial label on the file path**. It takes no
+input from the reachability analysis at all — that analysis independently
+produces the per-function `legacy-only` / `shared` / `unreferenced` classes.
+And two of the six prefixes are directories:
+
+```js
+["src/codegen/expressions/", "frontend"],
+["src/codegen/statements/",  "frontend"],
+```
+
+**So every file added under `expressions/` or `statements/` joins "frontend"
+automatically.** Of today's 107 frontend files, **100 are there by prefix** and
+only **7 by name** (`expressions.ts`, `statements.ts`, `binary-ops.ts`,
+`literals.ts`, `typeof-delete.ts`, `closures.ts`, `new-target.ts`).
+
+What survives and what does not:
+
+- **Survives — the growth is real.** `legacy-only fn-lines` is a per-function
+  reachability class, unaffected by bucketing. 60,126 → 85,823 stands, and so
+  does the conclusion that R10 estimates sized on 59,676 understate.
+- **Withdrawn — the share comparison.** 48.5% → 51.9% compares two boundaries
+  that are *not the same boundary*: the frontend set expanded as
+  `expressions/` and `statements/` grew, so part of that rise is files joining
+  the set rather than the front end outgrowing anything. "The deletion target is
+  being outpaced" is not supported by this instrument. The file-count rise
+  47 → 107 has the same defect, and is mostly those two directories.
+
+**The mis-bucketing hypothesis is confirmed — in the strongest possible form.**
+I had guessed `closures.ts` and `nested-declarations.ts` were "probably
+mis-bucketed rather than mixed." They are, and not by a judgement call:
+
+| file | how it became `frontend` | legacy-only | shared |
+| --- | --- | --: | --: |
+| `closures.ts` | a **hand-written entry** in `BUCKET_FILE` | 125 | 3,872 |
+| `statements/nested-declarations.ts` | the `statements/` **directory prefix** | 285 | 3,157 |
+
+Neither is a front-end file by any measured property. `closures.ts` is 97%
+shared and someone typed it into the frontend list; `nested-declarations.ts` is
+92% shared and was swept in by living in a directory. **7,029 shared lines are
+counted as front-end deletion scope on the strength of a hardcoded string.**
+
+**This does not weaken the R10 sizing in the section above — it sharpens it.**
+That table was built from `sharedLoc == 0`, a measured property, not from the
+bucket. Its A/B split (78 whole-file-deletable / 29 requiring a split) is
+unaffected. What changes is the reading of the 29: some are not "mixed files
+needing surgery" but **files that do not belong in the bucket at all**, and
+re-labelling them is a text edit rather than a refactor.
+
+**Actionable, and cheaper than any code change.** Re-bucket by the measured
+ratio instead of by path — e.g. a file whose `sharedLoc` dominates its
+`legacyLoc` is not a front-end deletion candidate whatever its directory. Until
+then, **quote `legacyLoc`/`sharedLoc`, never bucket totals**, and never a share
+across two dates.
+
+**Method note, third of the night and the same root.** The census was a
+fail-fast path read as a survey; the July tree was a fetch boundary read as
+absent history; this is a hardcoded label read as an analysis result. Each time
+the instrument was assumed to answer the question being asked of it, and each
+time one look at the source settled it in under a minute.
+
+## 2026-09-03 — is the R9 denominator representative? Measured, and the answer is no
+
+The open half of the R9 denominator question was never "how many units fail" but
+"**fail on what corpus, and does that corpus stand for what R9 will actually be
+asked to compile?**" Both numbers this session quotes come from the playground
+examples (13 files) and the dogfood corpus (20 files). Neither had been checked
+against anything.
+
+Method: AST node-kind frequency histograms for each corpus, compared by L1
+distance over the union of kinds (0 = identical shape mix, 2 = disjoint).
+Reference is a deterministic stride sample of test262 — 1,534 files of 47,533
+(`test/language` + `test/built-ins`, stride 31), 147,346 nodes.
+Probe: `.tmp/corpus-representativeness.mjs`.
+
+### Result
+
+| corpus | files | nodes | L1 distance to test262 |
+| --- | --: | --: | --: |
+| playground | 13 | 5,171 | **0.576** |
+| dogfood | 20 | 1,289 | **0.705** |
+| *playground vs dogfood* | | | *0.631* |
+
+**Two things fall out, and the second is the sharper one.**
+
+1. **Neither corpus is close.** 0.58 and 0.71 on a 0–2 scale is a large mismatch
+   in shape mix, not a rounding difference.
+2. **The two corpora disagree with each other about as much as either disagrees
+   with test262** (0.631, sitting between 0.576 and 0.705). So they are not two
+   samples of one population — they are two different populations, and a
+   conclusion measured on one does not transfer to the other. That is the
+   *mechanism* behind this session's earlier "R4 first" retraction, which was
+   generalised from a single corpus and had to be withdrawn: it was not bad
+   luck, it is what these numbers predict.
+
+### Shapes our denominators barely contain
+
+| kind | test262 | playground | dogfood |
+| --- | --: | --: | --: |
+| `PrivateIdentifier` | 4.58% | 0.21% | 0.23% |
+| `PropertyDeclaration` | 4.29% | 0.06% | 0.23% |
+| `PropertyAccessExpression` | 7.22% | 5.92% | 2.79% |
+| `ArrayLiteralExpression` | 1.59% | 0.17% | 0.54% |
+| `PropertyAssignment` | 1.59% | 0.00% | 0.54% |
+| `NewExpression` | 1.31% | 0.12% | 0.47% |
+| `ObjectLiteralExpression` | 1.13% | 0.00% | 0.39% |
+| `FunctionExpression` | 0.87% | **0.00%** | **0.00%** |
+| `ThrowStatement` | 0.76% | 0.00% | 0.08% |
+
+`FunctionExpression` is **exactly zero in both** — an entire syntactic form with
+no coverage in either denominator. `PrivateIdentifier` + `PropertyDeclaration`
+together are **8.9% of test262 nodes against 0.4% of ours**: class bodies are the
+single largest blind spot, by an order of magnitude.
+
+**That has a direct consequence for the blocker ranking.** R3 (classes) is
+already the second-largest blocker in tonight's census — measured on corpora that
+contain almost no class fields. **R3 is very likely under-counted**, and the
+class family's true weight cannot be read off these corpora at all.
+
+### Two corrections this forces, one of them to my own plan
+
+- **R9-D1 proposed the DOGFOOD corpus as the new CI `baseline` lane.** On this
+  measurement dogfood is the *worse* of the two candidates (0.705 vs 0.576).
+  That plan should not be implemented as written; at minimum the lane should
+  carry both corpora, and the choice should be argued rather than inherited.
+- **Every per-corpus figure in this file needs its corpus in the sentence.**
+  Already the standing rule from the earlier retraction; this quantifies why —
+  the corpora are 0.631 apart, so the qualifier is load-bearing, not pedantry.
+
+### Limits, stated plainly
+
+- **Node-kind frequency is a proxy for shape coverage, not for IR
+  representability.** A corpus could match the histogram exactly and still miss
+  every hard case. This says our corpora are *unrepresentative*; it does not say
+  how much conformance R9 would lose.
+- **test262 is not automatically the right target either.** It is an adversarial
+  conformance suite, deliberately unlike application code. If R9's target
+  population is real-world JS, the correct reference is closer to the npm-compat
+  package set than to test262. What the measurement establishes is narrower and
+  still decisive: **the two corpora we are quoting do not agree with each other,
+  so at most one of them can be representative of anything.**
+- The sample is 3.2% of test262 by stride, deterministic and re-runnable; it is
+  not a random sample and directory ordering could bias it.
+
+**Next step this suggests**, ahead of implementing R9-D1: run the same
+comparison against the npm-compat package sources, which are the closest thing
+the repo has to real application code. If playground and dogfood are both far
+from *that* too, the R9 denominator needs to be built rather than chosen.
+
+### The npm-compat comparison (the step the section above called for)
+
+Real library sources from the npm-compat package set — lodash, acorn, axios,
+uuid, cookie, clsx, prettier, eslint — resolved through the pnpm store:
+**2,667 files, 1,078,947 nodes**. Same method, now a full matrix.
+Probe: `.tmp/corpus-vs-npm.mjs`.
+
+| L1 | playground | dogfood | test262 | npm libs |
+| --- | --: | --: | --: | --: |
+| **playground** | — | 0.631 | 0.576 | **0.448** |
+| **dogfood** | 0.631 | — | 0.705 | 0.681 |
+| **test262** | 0.576 | 0.705 | — | 0.575 |
+| **npm libs** | 0.448 | 0.681 | 0.575 | — |
+
+**Three conclusions, and the first two are decisions.**
+
+1. **Dogfood is the worst denominator available, against every reference.** It
+   is the furthest corpus from real libraries (0.681), the furthest from
+   test262 (0.705), and further from libraries than test262 itself is (0.681 vs
+   0.575). It is not a hard case; it is an *unlike* case. **R9-D1's proposal to
+   make the dogfood corpus the CI `baseline` lane should be dropped, not
+   merely re-argued.**
+2. **Playground is the best of what exists** — 0.448 to real libraries, the
+   smallest distance anywhere in the matrix. Still large, but it is the only
+   corpus that is closest-to-something rather than furthest-from-everything.
+3. **test262 and real libraries are themselves 0.575 apart**, so there is no
+   single "R9 target population" to pick. A conformance denominator and an
+   application denominator are different instruments answering different
+   questions, and R9 needs to say which one its fail-closed default is
+   protecting before either number means anything.
+
+**What real library code has that neither corpus does:**
+
+| kind | npm libs | playground | dogfood |
+| --- | --: | --: | --: |
+| `PropertyAssignment` | 2.92% | **0.00%** | 0.54% |
+| `PropertyAccessExpression` | 7.65% | 5.92% | 2.79% |
+| `ThisKeyword` | 1.70% | 0.15% | 0.62% |
+| `AmpersandAmpersandToken` | 1.15% | 0.17% | 0.08% |
+| `ObjectLiteralExpression` | 0.85% | **0.00%** | 0.39% |
+| `BarBarToken` | 0.60% | 0.06% | 0.08% |
+| `Parameter` | 2.01% | 0.95% | 1.55% |
+
+**Object literals and `this` are the shape of real JavaScript, and we barely
+measure them.** `PropertyAssignment` and `ObjectLiteralExpression` are both
+*exactly zero* in the playground corpus. That lands directly on R4: `object` is
+already a blocking storage category in the corrected census, and its weight
+there is measured on corpora that contain essentially no object literals — so,
+like R3/classes, **it is under-counted rather than small**.
+
+**Limits.** Library sources include a great deal of code js2wasm may never be
+asked to compile (eslint's rule definitions, prettier's printers), so this is
+"what real JS looks like", not "what R9 must handle". And node-kind frequency
+remains a proxy for shape coverage, not for IR representability — it can show a
+corpus is unlike the target, never that a like corpus would pass. Both
+measurements are re-runnable from `.tmp/`; neither is committed as a baseline.
+
+## Completion audit — 2026-09-05
+
+The user has requested completion of the **whole IR migration**. The product
+outcome and all acceptance criteria above remain the definition of completion.
+Landed selector improvements, bounded compile-once cohorts, and green sample
+readiness checks are progress toward that outcome; none closes this epic.
+
+This audit uses canonical upstream `main` commit
+`5da655f286fcd569203cd2012b23dc21bf1c626d`, source tree
+`3ede655c96c89083a65a3c7e96bca3329d29513f`. It is a source and retirement-ledger
+audit, **not a new conformance run**. Earlier measurements in this file retain
+their original commits, lanes, and denominators.
+
+### Acceptance status and required evidence
+
+| Requirement | Current evidence | What is still required |
+| --- | --- | --- |
+| Authoritative IR-only coverage gate | `scripts/check-ir-only.ts` still lists five playground entries and reuses those five for standalone. | Account for the complete declared application and conformance populations, with all terminal outcomes and positive denominator controls, across every required mode. |
+| Full host and standalone Test262 non-regression | No full merge-group outcome comparison was performed in this audit. | A complete final-candidate comparison, including skips, compile errors, runtime failures, timeouts, and fatal runner outcomes. Required checks that skip a shard do not supply its evidence. |
+| One prepared program before either backend | `src/ir/program.ts` declares `reconciliation: "pending-production-wiring"`; its sealed structural census still contains direct and invariant candidates. | Reconcile every supported unit into the production program before emission; remove remaining class, initializer, and multi-source ownership exceptions. |
+| Shared WasmGC and linear frontend/ABI | `src/codegen-linear/index.ts` still compiles declaration statements directly and exports an AST-taking `compileExpression`. `linear-integration.ts` still inspects declarations and the checker. | Both backends consume the same verified semantic bodies and ABI ledger without backend-specific frontend reconstruction. |
+| Lossless validated serialized handoff | A versioned `IrAsyncPlan` and its serializer exist. `PreparedIrProgram` remains a structural census; this audit did not establish a complete production serializer. | Connect the whole prepared semantic program, ABI, effects, and frozen runtime manifest to a lossless codec and reject malformed/incompatible input before artifact side effects. |
+| Differential backend-input proof | No fresh same-snapshot differential run was performed here; the direct linear path remains. | Feed the identical serialized prepared snapshot to both backends and verify equivalent supported behavior and typed incapability without reparsing or reselection. |
+| Explicit stable unsupported results | The equality reference-operand preclaim guard landed through PR 5584, but it addresses one selector boundary. | Account for every unsupported terminal unit, including source location/reason, and remove silent fallback, post-claim withdrawal, skipped slots, and legacy exception recovery. |
+| One production policy | Public `experimentalIR` / `disableIrFirst` options, `JS2WASM_IR_FIRST`, and `JS2WASM_LINEAR_IR` switches remain in production code. | Execute the live retirement inventory in **#4522 — Inventory and retirement plan for IR/direct env kill-switches** at R9, after all supported behavior is owned by IR. |
+| Delete the direct frontend graph | The unchanged reachability audit finds both real direct dispatch roots and substantial surviving graph overlap; details below. | Prove frontend-only survivors reach zero with a fresh **#3090 — Retire direct front-end after IR-only reachability gates close (~59,676 fn-lines)** audit, classify shared runtime separately, and delete the obsolete direct dispatch and handlers. |
+| Preserve behavior and optimizations | The current optimization-retirement ledger has 50 rows, of which 46 are not ready. | Map the full retirement surface and demonstrate behavior plus the required Wasm-shape/performance properties before deleting each implementation. The tracked 50 rows are not a complete handler census. |
+| Final merged validation | This audit is not the final merged candidate, and source blockers remain. | Complete the final equivalence, cross-backend, linear, typecheck, lint/format, LOC/dead-export, full Test262, standalone-floor, and artifact-validity checks against the landed implementation. |
+
+Specific live source evidence at the audited commit:
+
+- `src/ir/program.ts:190–203` describes unvalidated unit candidates and pending
+  production reconciliation. The type name and `sealed` field do not establish
+  the product handoff by themselves.
+- `src/ir/async-plan.ts:179` already owns semantic states, values, handlers,
+  spills, ABI, and runtime intents; `serializeIrAsyncPlan` exists. Async is not
+  starting from zero. Nevertheless, `src/codegen/async-cps.ts:1045` permits AST
+  expression operands, while `src/codegen/async-frame.ts:2093`, `:2117`,
+  `:2251`, `:2284`, and `:2517` still emit AST statements/expressions for resume,
+  await, conditions, and finalizers. These production edges must be replaced.
+- `src/ir/runtime-manifest.ts` already has a substantial fixed-point builder
+  and frozen runtime manifest, including boundaries, strings, callback
+  wrapping, and function-prototype calls. Earlier descriptions of a math-only
+  manifest must not be treated as current scope. Complete runtime ownership
+  still needs production and deletion evidence.
+- `src/codegen-linear/index.ts:665`, `:848`, and `:1781` retain the direct
+  statement/expression route. `src/ir/backend/linear-integration.ts:381`
+  retains its environment escape hatch.
+- `src/compiler.ts:881–887`, `src/index.ts:830–847`, and
+  `src/codegen/index.ts:5685` retain public or environment policy choices;
+  multi-source routing at `src/codegen/index.ts:10324` still has fast/policy
+  eligibility exits.
+
+### Fresh retirement measurements
+
+`node scripts/check-ir-optimization-retirement.mjs --require-ready` exited 1:
+**46 of 50 tracked optimization rows are not ready**. Ledger blob:
+`2310f1ad7037919585419b0bed9112fd404a07bb`. The failing rows include string
+operations, numeric switches/ABI, async frame spills and promises, class and
+closure behavior, regular expressions, parser paths, vector operations, and
+module TDZ. This count measures ledger readiness, not percentage of the
+compiler migrated.
+
+The unmodified `scripts/audit-legacy-reachability.mjs` (blob
+`7767986b14664e8aad58d8354ad7d3c803a1d46e`) reported **806 codegen files**.
+Its graph actually contained both configured dispatch nodes:
+`src/codegen/expressions.ts#compileExpression` (22 function lines) and
+`src/codegen/statements.ts#compileStatement` (24 function lines). This positive
+control checks the analyzed graph, rather than accepting the declared cut list
+as proof that the roots were found.
+
+| Asserted file bucket | Files | Legacy-only function lines | Shared function lines | Unreferenced function lines |
+| --- | ---: | ---: | ---: | ---: |
+| frontend | 109 | 87,121 | 16,141 | 0 |
+| runtime | 61 | 39,952 | 57,406 | 312 |
+| stays | 633 | 39,268 | 166,214 | 198 |
+| deferred | 3 | 2,543 | 2,958 | 0 |
+
+**These are not deletion permissions or an estimate of removable code.** Bucket
+membership is asserted by file-name/prefix rules; reachability is a separate,
+conservative static calculation. Twelve files labelled `frontend` contain more
+shared than legacy-only function lines. The tool roots functions outside
+`src/codegen`, cuts the two dispatchers, and reports codegen functions; it does
+not prove final runtime behavior or complete linear-backend retirement.
+
+The normal audit command currently fails in this checkout because its use of
+`new URL(import.meta.url).pathname` leaves the space in `/Volumes/Archiv Mini`
+encoded as `%20`. The measurement above ran the **same unchanged script and
+source** through a space-free symlink, with Node's
+`--preserve-symlinks-main`. This records a successful workaround, not a repaired
+default CLI. Local evidence is in
+`.tmp/ir-completion-20260905/{optimization-retirement.log,legacy-reachability.log,legacy-reachability.json,summary.json}`;
+the large graph JSON is not committed as a baseline.
+
+### Implementation sequence from the current state
+
+1. Complete and validate the already-dispatched computed-literal class-method
+   identity slice in **#3522 — IR-only R3: compile-once classes, members, and closures**.
+   Preserve the equality preclaim fix already merged through PR 5584.
+2. Implement the new Astra plan in **#3521 — IR-only R2: prepare-before-emit free-function ownership**: authenticate semantic and physical boundary
+   contracts against actual allocator/provider state before claiming bodies.
+   Remove declaration-kind certification as the correctness substitute only
+   where the replacement contract proves the complete boundary.
+3. In parallel, follow the independent prerequisite plan in **#3525 — IR-only R5: whole-program single- and multi-source Prepared ownership**: freeze ordered module-initializer
+   planning before routing/emission, joined by exact source and unit identity.
+   Mixed callable/initializer ownership remains dependent on coherent R2
+   preparation and must not be reported complete by this prerequisite alone.
+4. Continue whole-program ownership, async semantic emission, frozen runtime
+   support, shared linear consumption, and the full prepared-program codec.
+   Preserve existing live slice claims (including module function storage) and
+   ground subsequent implementation plans in current source and measurements.
+5. Retire policy escapes and direct handlers only after the supported-language
+   and optimization obligations are met. Then run the complete final merged
+   validation above. No bounded cohort or five-entry readiness check substitutes
+   for the epic's acceptance criteria.

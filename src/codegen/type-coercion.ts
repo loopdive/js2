@@ -2692,6 +2692,7 @@ export function coerceType(
   to: ValType,
   toPrimitiveHint?: "number" | "string" | "default",
   compileStringLiteralFn?: CompileStringLiteralFn,
+  materializeUndefinedVec = false,
 ): void {
   const fromKind = from.kind === "i8" || from.kind === "i16" ? "i32" : from.kind;
   const toKind = to.kind === "i8" || to.kind === "i16" ? "i32" : to.kind;
@@ -3186,7 +3187,7 @@ export function coerceType(
       // materializer builds an EMPTY vec out of nothing. That turns an absent
       // optional array into a TRUTHY zero-length array and loses the JS value's
       // branch identity.
-      if (to.kind === "ref_null") {
+      if (to.kind === "ref_null" && !materializeUndefinedVec) {
         ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
       }
       if (!ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first") {
@@ -3199,7 +3200,8 @@ export function coerceType(
       const materializeVec = buildVecFromExternref(ctx, fctx, tmpExternLocal, toIdx, vecInfo);
       // buildVecFromExternref flushes every late-import shift. Resolve the
       // helpers afterwards so these calls cannot retain stale defined funcIdxs.
-      const isUndefinedIdx = to.kind === "ref_null" ? ctx.funcMap.get("__extern_is_undefined") : undefined;
+      const isUndefinedIdx =
+        to.kind === "ref_null" && !materializeUndefinedVec ? ctx.funcMap.get("__extern_is_undefined") : undefined;
       const copySidecarIdx =
         !ctx.standalone && !ctx.wasi && ctx.targetProfile.semanticProviders !== "native-first"
           ? ctx.funcMap.get("__copy_wasm_struct_sidecar")
@@ -5269,3 +5271,8 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
 
 // Register coerceType so shared.ts callers (closures, statements) can use it
 registerCoerceType(coerceType);
+
+/** Iterator rest always creates an Array, including after exhaustion. */
+export function coerceArrayRestType(ctx: CodegenContext, fctx: FunctionContext, from: ValType, to: ValType): void {
+  coerceType(ctx, fctx, from, to, undefined, undefined, true);
+}

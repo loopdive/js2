@@ -56,6 +56,7 @@ import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime/date-host-method.js";
+import { wasmCarrierBuiltinPrototype } from "./runtime/wasm-carrier-prototype.js"; // (#5325)
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
@@ -110,6 +111,7 @@ import {
 } from "./runtime/standalone-timer-callback-bridge.js";
 import { installAmbientCompatibility } from "./runtime/compatibility-adapter.js";
 import { resolveCompatibilitySemanticImport } from "./runtime/compatibility-semantic-adapter.js";
+import { createStrictIteratorHostRuntime } from "./runtime/strict-iterator-host.js";
 import {
   callResolvedClassPrimitive,
   createClassMemberResolver,
@@ -3178,12 +3180,10 @@ function _drainWasmClosureIterable(
   callbackState?: { getExports: () => Record<string, Function> | undefined },
 ): any[] | null {
   if (obj == null || typeof obj !== "object") return null;
-  let iterFn: any;
-  try {
-    iterFn = obj[Symbol.iterator];
-  } catch {
-    return null;
-  }
+  // A compiled object literal is an opaque WasmGC struct at this boundary;
+  // resolve its computed `@@iterator` field through the callback-aware reader
+  // so host and standalone lanes observe the same method.
+  const iterFn = _safeGet(obj, Symbol.iterator, callbackState) ?? _safeGet(obj, "@@iterator", callbackState);
   const iterWrapper = typeof iterFn === "function" ? _wasmClosureWrapperSource.get(iterFn) : undefined;
   const iterIsRawClosure = iterFn != null && typeof iterFn === "object" && _isWasmStruct(iterFn);
   // Only handle the broken case: an @@iterator that came from a Wasm closure.
@@ -4354,6 +4354,61 @@ function _tupleFieldCount(obj: any, exports: Record<string, Function> | undefine
   if (!names || names.length === 0) return undefined;
   for (const n of names) if (!/^_\d+$/.test(n)) return undefined;
   return names.length;
+}
+
+/**
+ * (#5131) Positive host-boundary discriminator for an empty array carrier.
+ *
+ * Empty tuple structs have no field-name CSV entry, so inferring this shape
+ * from `__struct_field_names === null` would misclassify fieldless classes and
+ * other internal data structs as arrays. The iterator-native finalizer emits
+ * `__is_empty_tuple`, whose concrete `ref.test` chain is the only authority for
+ * this classification. Keep protocol overrides observable: a user-installed
+ * iterator, accessor, or explicit prototype must fall through to ordinary
+ * strict GetIterator rather than being silently replaced by the empty fast
+ * path.
+ */
+function _isEmptyTupleCarrier(
+  obj: any,
+  exports: Record<string, Function> | undefined,
+  callbackState?: { getExports: () => Record<string, Function> | undefined },
+): boolean {
+  if (!exports || !_isWasmStruct(obj)) return false;
+  const isEmptyTuple = exports.__is_empty_tuple as ((value: any) => number) | undefined;
+  if (typeof isEmptyTuple !== "function") return false;
+  try {
+    if (isEmptyTuple(obj) !== 1) return false;
+  } catch {
+    return false;
+  }
+
+  // A tuple's default prototype is opaque/null. Any recorded prototype is a
+  // user semantic change, so let strict GetIterator observe it normally.
+  if (_wasmStructProto.has(obj) || _fnctorInstanceCtor.has(obj as object)) return false;
+  if (_prototypeMethodNames.has(obj) || _staticMethodNames.has(obj)) return false;
+
+  // `_safeGet` intentionally stores well-known symbols under both the real
+  // Symbol and its `@@name` alias. Check presence separately so an explicitly
+  // installed `undefined`/`null` iterator is not mistaken for a missing one.
+  const sidecar = _wasmStructProps.get(obj);
+  if (
+    sidecar &&
+    (_hasOwn(sidecar, Symbol.iterator) ||
+      _hasOwn(sidecar, "@@iterator") ||
+      _hasOwn(sidecar, "__get_@@iterator") ||
+      _hasOwn(sidecar, "__set_@@iterator"))
+  ) {
+    return false;
+  }
+  const accessors = _wasmStructAccessors.get(obj);
+  if (accessors?.has(Symbol.iterator) || accessors?.has("@@iterator")) return false;
+
+  // Probe inherited/recorded protocol values as the final guard. A getter is
+  // deliberately allowed to throw here: strict GetIterator must propagate that
+  // abrupt completion, not retry it through a second path.
+  if (_safeGet(obj, Symbol.iterator, callbackState) !== undefined) return false;
+  if (_safeGet(obj, "@@iterator", callbackState) !== undefined) return false;
+  return true;
 }
 
 function _getStructFieldNames(obj: any, exports: Record<string, Function> | undefined): string[] | null {
@@ -6332,7 +6387,7 @@ function _classObjectPrototypeStruct(obj: any): any {
  * emitRegisterDynamicClassParent). */
 function _registerClassParentHandler(className: any, parentValue: any): void {
   if (typeof className !== "string" || className.length === 0) return;
-  if (parentValue == null) return;
+  // (#5280) A null `parentValue` is `class C extends null` — a real heritage, not a missing one; see registerClassParent.
   classStaticParent.registerClassParent(className, parentValue);
 }
 
@@ -6867,6 +6922,23 @@ function _nativePrimitiveToHost(value: any, exports: Record<string, Function> | 
   }
   return _MISS;
 }
+
+// (#5131) Strict GetIterator/IteratorNext and strict array materialization are
+// isolated from the permissive compatibility bridge. Inject the established
+// runtime operations so the extraction changes neither host ABI nor dispatch.
+const _strictIteratorHostRuntime = createStrictIteratorHostRuntime({
+  nativeIsArray: _nativeIsArray,
+  isWasmStruct: _isWasmStruct,
+  isWasmVec: _isWasmVec,
+  isEmptyTupleCarrier: _isEmptyTupleCarrier,
+  safeGet: _safeGet,
+  stepClosureIterator: _stepClosureIterator,
+  wrapForHost: _wrapForHost,
+  nativePrimitiveToHost: _nativePrimitiveToHost,
+  missingValue: _MISS,
+  maybeWrapCallable: _maybeWrapCallable,
+  marshalExports,
+});
 
 /** Present a Wasm-owned `$Promise` as a real JS Promise at the value boundary. */
 function _nativePromiseToHost(value: any, exports: Record<string, Function> | undefined): any | typeof _MISS {
@@ -11943,7 +12015,8 @@ assert._isSameValue = isSameValue;
       // through the closure's vivified `.prototype` object.
       if (name === "__register_fnctor_instance")
         return (inst: any, ctor: any) => {
-          if (_canBeWeakKey(inst) && ctor != null) _fnctorInstanceCtor.set(inst, ctor);
+          // `ctor` may be the host-callable mirror of the closure (acorn's `new this(...)` in `Parser.parse`); link the RAW closure, whose sidecar holds `.prototype`.
+          if (_canBeWeakKey(inst) && ctor != null) _fnctorInstanceCtor.set(inst, _unwrapForHost(ctor) ?? ctor);
         };
       // (#2743 a) Mark a compiled `arguments` vec as an ordinary Object so the
       // MOP hooks (`__getPrototypeOf` / `__extern_get` / `__hasOwnProperty`)
@@ -13166,215 +13239,8 @@ assert._isSameValue = isSameValue;
           }
           return Object.entries(obj);
         };
-      if (
-        name === "__array_from_iter" ||
-        name === "__array_from_iter_n" ||
-        name === "__array_from_iter_strict" ||
-        name === "__array_from_iter_n_strict"
-      ) {
-        // Cache the original Array.prototype[Symbol.iterator] so we can
-        // detect when user code (e.g. test262 iter-get-err-array-prototype)
-        // has overridden it. When overridden, we must invoke the protocol
-        // rather than fast-pathing the array — otherwise a throwing custom
-        // @@iterator on Array.prototype is silently swallowed (#1454).
-        const _origArrayIter: any = (Array.prototype as any)[Symbol.iterator];
-        // (#3023) Robust iterator-protocol walk for an ITERATOR OBJECT whose
-        // methods may be wasm closures. A compiled object-literal iterator
-        // (`{ next() {…}, return() {…} }`, e.g. from `it[Symbol.iterator] =
-        // function () { return { next, return } }`) lowers to a closed nominal
-        // WasmGC struct: its `.next` / `.return` are NOT native JS properties,
-        // so a plain `iteratorObj.next()` throws "next is not a function".
-        // Resolve each member through native → sidecar (`_safeGet`) → wasm
-        // struct getter (`__sget_*`) → wasm-closure call (`__call_fn_0`),
-        // collect at most `limit` values, and perform §7.4.6 IteratorClose
-        // (`.return()`) ONLY on an abrupt bounded/defensive-cap stop (never on
-        // natural `done:true`, a null result, or a missing `.next`). Shared by
-        // both the wasm-closure-`@@iterator` path and `_drainIterable` (a
-        // native `@@iterator` that RETURNS a wasm-struct iterator).
-        // (#3195) The bounded destructuring walk: consume at most `limit`
-        // IteratorStep calls; §8.5.3 closes the iterator when stopped by a finite
-        // `limit` / the defensive cap (a NormalCompletion stop — `closeOnStop`),
-        // while `limit === Infinity` (rest/spread) drains to natural done WITHOUT
-        // closing. Shares the single step loop with the other two drainers.
-        const _walkWasmIterator = (iteratorObj: any, limit: number): any[] =>
-          _stepClosureIterator(iteratorObj, callbackState?.getExports(), { limit, closeOnStop: true }) as any[];
-        // Materialize an iterable/array-like to a real JS array, consuming AT
-        // MOST `limit` iterator steps. `limit === Infinity` (the unbounded
-        // case, used by rest patterns and spread) is byte-for-byte the legacy
-        // __array_from_iter behavior. A finite `limit` calls the iterator's
-        // .next() at most `limit` times — required for array binding patterns
-        // without a rest element, where the spec (§8.5.3) consumes exactly one
-        // IteratorStep per slot (INCLUDING elision holes), not a full drain
-        // (#1592). Stopping at the bound is a NormalCompletion: it must NOT
-        // trigger IteratorClose (only the defensive MAX_ITER cap does).
-        const _arrayFromIter = (obj: any, limit: number, strictIterator = false): any => {
-          // For proper iterators (e.g. generators) this invokes the iterator
-          // protocol and propagates any throws from .next() — needed for
-          // spec-compliant destructuring of throwing iterators (#1150).
-          if (obj == null) {
-            if (strictIterator) throw new TypeError(`${obj} is not iterable`);
-            return [];
-          }
-          // (#2202) An opaque WasmGC vec ref (e.g. an inline `[1]` spread source
-          // that stayed a native vec instead of being marshaled to a JS array)
-          // is not `Array.isArray` and has no `Symbol.iterator`, so it would fall
-          // through to the array-like length probe and yield an empty/wrong list,
-          // dropping the spread's elements from `arguments`. Materialize it to a
-          // real JS array first via the `__vec_len`/`__vec_get` exports (the same
-          // machinery `__array_from` / `Array.from(wasmVec)` use), then continue.
-          if (typeof obj === "object" && _isWasmStruct(obj)) {
-            const exps = callbackState?.getExports();
-            const vecLen = exps?.__vec_len;
-            const vecGet = exps?.__vec_get;
-            // (#3637) POSITIVE discriminator. Vacuously, every wasm struct was
-            // "a vec of length 0" here, so spreading a plain object produced an
-            // empty list instead of reaching the iterator-protocol handling
-            // below (which raises the spec-mandated TypeError). Measured
-            // pre-fix: `[...{a: 1}]` → `[]`, `var [p] = {a: 1}` → `undefined`,
-            // where the host throws TypeError in both cases.
-            if (typeof vecLen === "function" && typeof vecGet === "function" && _isWasmVec(obj, exps)) {
-              try {
-                const vlen = vecLen(obj) as number;
-                if (typeof vlen === "number" && vlen >= 0) {
-                  const out: any[] = [];
-                  const n = limit < vlen ? limit : vlen;
-                  for (let i = 0; i < n; i++) out.push(vecGet(obj, i));
-                  return out;
-                }
-              } catch {
-                /* (#3637) NOT "not a vec" — that is `_isWasmVec`'s job on the
-                   guard above; `__vec_len` returns 0 instead of throwing. Only
-                   a genuine element-read trap reaches here. */
-              }
-            }
-          }
-          if (_nativeIsArray(obj)) {
-            // #1454: Real arrays normally take a fast path, but if the user has
-            // overridden Array.prototype[Symbol.iterator] (or installed an own
-            // @@iterator on the array), spec §22.1.5 requires going through
-            // the iterator protocol so a throwing getter / non-default iterator
-            // is observable. Read the @@iterator descriptor first (this fires
-            // any accessor) — a throw here propagates as iter-get-err.
-            const ownIter = (obj as any)[Symbol.iterator];
-            if (ownIter !== _origArrayIter) {
-              // Non-default iterator: fall through to the protocol path below
-              // by treating the array as a generic iterable (bounded by limit).
-              return _drainIterable(obj, limit, strictIterator, ownIter);
-            }
-            // Default array iterator: a finite bound just slices the prefix;
-            // the iterator protocol on a default array is side-effect-free so
-            // slicing is observationally identical to stepping `limit` times.
-            return limit < obj.length ? obj.slice(0, limit) : obj;
-          }
-          // Compiled sources that do `iter[Symbol.iterator] = fn` often land the
-          // function under a stringified "Symbol(Symbol.iterator)" key rather
-          // than the real well-known symbol. Array.from would then reject on
-          // "iterator method exists but not callable". Detect that up front and
-          // route around it: when the user installed a callable @@iterator, we
-          // must INVOKE it (so spec-mandated throws from `iter[Symbol.iterator]()`
-          // propagate, e.g. test262 dstr/*-iter-*-err.js); when no callable is
-          // present, fall back to array-like index enumeration so plain non-
-          // iterable objects don't error out.
-          if (typeof obj === "object") {
-            const iterFn = (obj as any)[Symbol.iterator];
-            if (iterFn !== undefined && typeof iterFn !== "function") {
-              // Wasm closures land here as opaque externref objects (typeof
-              // 'object'). Try to invoke them through the closure-call exports
-              // — if the closure throws (e.g. a custom @@iterator that throws
-              // Test262Error), propagate the throw. (#1016)
-              if (_isWasmStruct(iterFn)) {
-                const exps = callbackState?.getExports();
-                const callFn0 = exps?.["__call_fn_0"];
-                if (typeof callFn0 === "function") {
-                  // Invoke the wasm @@iterator closure. If it throws (test262
-                  // dstr/*-init-iter-get-err, *-iter-val-err), propagate so the
-                  // surrounding destructure assertion observes it. If it
-                  // returns an iterator object, walk the standard iterator
-                  // protocol manually — the iterator's `.next` is typically
-                  // ALSO a wasm closure (typeof 'object'), so a plain
-                  // `Array.from(iteratorObj)` would re-enter this fallback and
-                  // miss .next() throws (test262 dstr/*-iter-step-err). (#1016)
-                  const iteratorObj = callFn0(iterFn);
-                  if (iteratorObj != null && typeof iteratorObj === "object") {
-                    // (#3023) Robust protocol walk (bounded materialization +
-                    // §7.4.6 IteratorClose on the abrupt bounded stop). The
-                    // iterator's `.next` is typically ALSO a wasm closure, so a
-                    // plain `Array.from(iteratorObj)` would re-enter this fallback
-                    // and miss .next() throws (test262 dstr/*-iter-step-err).
-                    return _walkWasmIterator(iteratorObj, limit);
-                  }
-                }
-              }
-              if (strictIterator) throw new TypeError("@@iterator is not callable");
-              const out: any[] = [];
-              const lenRaw = typeof (obj as any).length === "number" ? (obj as any).length >>> 0 : 0;
-              const len = Math.min(lenRaw, limit);
-              for (let i = 0; i < len; i++) out.push((obj as any)[i]);
-              return out;
-            }
-            if (typeof iterFn === "function") {
-              return _drainIterable(obj, limit, strictIterator, iterFn);
-            }
-            if (strictIterator) throw new TypeError("value is not iterable");
-          }
-          return _drainIterable(obj, limit, strictIterator);
-        };
-        // Walk a plain iterable's @@iterator protocol, collecting at most
-        // `limit` values. Replaces `Array.from(obj)` so a finite bound can stop
-        // early (Array.from can't be bounded). Throws from @@iterator / .next()
-        // / the .value getter propagate unchanged (#1150/#1454). With
-        // limit === Infinity this matches Array.from's full drain.
-        function _drainIterable(obj: any, limit: number, strictIterator = false, knownIterFn?: any): any[] {
-          const itFn = knownIterFn ?? (obj as any)?.[Symbol.iterator];
-          // No callable @@iterator — let Array.from handle array-likes / the
-          // legacy unbounded shapes exactly as before.
-          if (typeof itFn !== "function") {
-            if (strictIterator) throw new TypeError("@@iterator is not callable");
-            return Array.from(obj);
-          }
-          const it = itFn.call(obj);
-          // (#3023) A native `@@iterator` may still RETURN a wasm-struct
-          // iterator (a compiled object-literal `{ next() {…} }` lowers to a
-          // closed nominal WasmGC struct whose `.next` is not a native JS
-          // property). A plain `it.next()` — or `Array.from(obj)` for the
-          // unbounded rest/spread case — would throw "next is not a function";
-          // route such iterators through the robust walk, which resolves
-          // `.next`/`.value`/`.done`/`.return` via sidecar / `__sget_*` /
-          // `__call_fn_0` and performs §7.4.6 IteratorClose on the bounded stop
-          // (limit === Infinity drains to natural done WITHOUT closing).
-          if (it != null && typeof it === "object" && typeof (it as any).next !== "function") {
-            return _walkWasmIterator(it, limit);
-          }
-          // Plain JS iterator: step the iterator we already obtained. For the
-          // unbounded case this matches `Array.from`'s full drain; a finite
-          // `limit` stops early (Array.from can't be bounded). Throws from
-          // `.next()` / the `.value` getter propagate unchanged (#1150/#1454).
-          const out: any[] = [];
-          while (out.length < limit) {
-            const r = it.next();
-            if (r == null || r.done) break;
-            out.push(r.value);
-          }
-          return out;
-        }
-        if (name === "__array_from_iter") return (obj: any): any => _arrayFromIter(obj, Infinity);
-        if (name === "__array_from_iter_strict") return (obj: any): any => _arrayFromIter(obj, Infinity, true);
-        // (#3643 Slice A) Bounded STRICT drain — the array-binding-pattern
-        // counterpart of `__array_from_iter_strict`. §8.6.2 `BindingPattern :
-        // ArrayBindingPattern` performs GetIterator (§7.4.2) on the RHS, which
-        // throws TypeError for a non-iterable. The non-strict `__array_from_iter_n`
-        // instead falls through to `_drainIterable`'s `Array.from(obj)` array-like
-        // fallback, which answers `[]` for `{a:1}` — so `var [p] = {a:1}` silently
-        // bound `undefined` instead of throwing. Array SPREAD already used the
-        // strict unbounded drain (`[...{b:1}]` threw correctly); destructuring is
-        // the arm that was never wired to it. Kept as a SEPARATE import rather than
-        // a strictness flag on `__array_from_iter_n` because that import is shared
-        // with `__array_from_mapped` (`Array.from(arrayLike, mapFn)`) and
-        // `__iterator_rest`, both of which MUST keep the array-like fallback.
-        if (name === "__array_from_iter_n_strict")
-          return (obj: any, n: number): any => _arrayFromIter(obj, n < 0 ? Infinity : n >>> 0, true);
-        return (obj: any, n: number): any => _arrayFromIter(obj, n < 0 ? Infinity : n >>> 0);
-      }
+      const arrayIterationImport = _strictIteratorHostRuntime.resolveArrayIterationImport(name, callbackState);
+      if (arrayIterationImport) return arrayIterationImport;
       if (name === "__extern_slice")
         return (arr: any, start: number) => {
           if (_nativeIsArray(arr)) return arr.slice(start);
@@ -14053,6 +13919,10 @@ assert._isSameValue = isSameValue;
             // identity, and this second hop must reach Object.prototype rather
             // than misclassifying the struct as a null-prototype dictionary.
             const exports = callbackState?.getExports();
+            // (#5325) A built-in carrier is not an ordinary object — see
+            // runtime/wasm-carrier-prototype.ts for why and for what it declines.
+            const carrierProto = wasmCarrierBuiltinPrototype(obj, exports);
+            if (carrierProto !== undefined) return carrierProto;
             const isDataStruct = exports?.__is_data_struct as ((value: any) => number) | undefined;
             if (typeof isDataStruct === "function") {
               try {
@@ -16684,6 +16554,12 @@ assert._isSameValue = isSameValue;
           }
           return done ? 1 : 0;
         };
+      // (#5131) Strict spread iterator provider. Keep it separate from the
+      // compatibility bridge below: internal GetIteratorFlattenable users
+      // intentionally retain their permissive bare-next/degrade behavior.
+      if (name === "__iterator_strict") return (obj: any) => _strictIteratorHostRuntime.getIterator(obj, callbackState);
+      if (name === "__iterator_next_strict")
+        return (iter: any): [number, any] => _strictIteratorHostRuntime.iteratorNext(iter, callbackState);
       // Iterator protocol: host-delegated iteration for non-array types
       if (name === "__iterator")
         return (obj: any) => {

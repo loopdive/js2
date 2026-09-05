@@ -613,14 +613,58 @@ export interface IrModuleBindingIdentity extends IrLegacyModuleBindingIdentity {
  * node that is no longer the direct declaration the selector assessed is an
  * invariant.
  */
+/**
+ * (#5285) WHICH refusal an `unsupported` inspection came from. Every arm below
+ * is one `return { kind: "unsupported" }` in `inspectDirectBinding`, plus two
+ * the survey itself owns because the resolver is never asked:
+ * `destructuring-pattern` (the name is not an identifier, so there is no
+ * one-to-one legacy slot) and `inspection-threw` (a checker failure, which the
+ * production path deliberately re-raises but a census must not lose).
+ *
+ * The field is recorded, never read by the production path — it exists so the
+ * census can report a per-file category multiset instead of a bare count.
+ */
+export type IrModuleBindingRefusalArm =
+  | "ambient-declaration"
+  | "write-to-immutable"
+  | "heterogeneous-assignment-retype"
+  | "no-value-kind"
+  | "write-value-mismatch"
+  | "destructuring-pattern"
+  | "inspection-threw";
+
+/**
+ * (#5285) One unrepresentable top-level declaration, as reported by
+ * `surveyModuleBindingRefusals` (`ir/integration.ts`). Declared here rather
+ * than beside the survey because `ir/outcomes.ts` carries the list on the
+ * `<module-init>` row and must not take an edge on `ir/integration.ts`.
+ *
+ * `name` is `d.name.text`, never a source slice: the corpus carries a
+ * non-ASCII binding (`const id = café`, `tests/dogfood/corpus/escapes-unicode.js`).
+ */
+export interface IrModuleBindingRefusal {
+  readonly name: string;
+  readonly declaredType: string;
+  readonly initializerKind: string | undefined;
+  readonly arm: IrModuleBindingRefusalArm;
+}
+
 export type IrLegacyModuleBindingInspection =
   | { readonly kind: "supported"; readonly identity: IrLegacyModuleBindingIdentity }
-  | { readonly kind: "unsupported"; readonly declaration: ts.VariableDeclaration }
+  | {
+      readonly kind: "unsupported";
+      readonly declaration: ts.VariableDeclaration;
+      readonly arm: IrModuleBindingRefusalArm;
+    }
   | { readonly kind: "not-direct" };
 
 export type IrModuleBindingInspection =
   | { readonly kind: "supported"; readonly identity: IrModuleBindingIdentity }
-  | { readonly kind: "unsupported"; readonly declaration: ts.VariableDeclaration }
+  | {
+      readonly kind: "unsupported";
+      readonly declaration: ts.VariableDeclaration;
+      readonly arm: IrModuleBindingRefusalArm;
+    }
   | { readonly kind: "not-direct" };
 
 /**
@@ -991,6 +1035,51 @@ function isNativeMapStorageType(
 }
 
 /**
+ * (#3523 R4-M1) Prove a declared type is the plain JS `string`.
+ *
+ * Widening first is load-bearing, not a nicety: `const s = "plain"` has the
+ * LITERAL type `"plain"`, so a bare `StringLike` test on the declared type
+ * would accept it while a `string` annotation and a literal `const` took
+ * different paths. `getBaseTypeOfLiteralType` collapses both to `string`.
+ *
+ * Everything that is merely string-ADJACENT is refused. A union (including
+ * `string | undefined`) is refused because the legacy slot holds exactly one
+ * carrier and the IR has no null-carrying string value; a template-literal or
+ * string-mapping type (`` `a${string}` ``, `Uppercase<T>`) is refused because
+ * it survives widening with its own flag, and admitting it would claim a
+ * storage decision this slice never measured. The residual `String` WRAPPER
+ * object is not `StringLike` at all, so it never reaches here.
+ */
+function isModuleStringStorageType(type: ts.Type, checker: ts.TypeChecker): boolean {
+  if (type.isUnion()) return false;
+  try {
+    return (checker.getBaseTypeOfLiteralType(type).flags & ts.TypeFlags.String) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * (#5289) Prove a declared type is the DYNAMIC one — `any` or `unknown`.
+ *
+ * The predicate deliberately mirrors `resolveWasmType`'s own deciding branch
+ * in `src/codegen/index.ts` (`ctx.fast && tsType.flags & (Any | Unknown)`)
+ * rather than re-deriving a narrower notion of "dynamic". That branch is the
+ * function that ALLOCATES the legacy `__mod_*` slot, so matching it exactly is
+ * what makes `resolveModuleBindingGlobal`'s storage-agreement check a real
+ * agreement test: both sides are answering from the same source fact.
+ *
+ * A union is refused for the same reason the `string` arm refuses one — the
+ * checker's `any` is not a union, so a union reaching here is some other type
+ * that merely contains a dynamic member, and admitting it would claim a
+ * storage decision this issue never measured.
+ */
+function isModuleDynamicStorageType(type: ts.Type): boolean {
+  if (type.isUnion()) return false;
+  return (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
+}
+
+/**
  * (#4461) The one initializer shape a native-`$Map` module binding admits:
  * `new Map()` / `new Map<K, V>()` against the ambient constructor, zero
  * runtime arguments. `new Map(iterable)` needs the `__map_new_from_arr`
@@ -1351,6 +1440,16 @@ function writeValueMatches(
   if (targetKind.kind === "native-map") {
     // The native `$Map` carrier has exactly one producer in this slice.
     return isNativeMapConstruction(checker, valueExpr);
+  }
+  if (targetKind.kind === "string") {
+    // (#3523 R4-M1) REPRESENTATION agreement only, exactly like the `dynamic`
+    // arm above: this asks whether the written value inhabits the slot's
+    // carrier, not whether the write EXPRESSION has an IR lowering. The
+    // latter is the selector's separate `isPhase1Expr` question, and keeping
+    // the two apart is what stops a shape gap from being mis-reported as a
+    // storage gap. The provenance-following classifier is used (not the raw
+    // declared type) so `"x" as string` cannot assert its way into the slot.
+    return classifyPrimitiveExpression(valueExpr) === "string";
   }
   if (bindingValue.isCapabilityExternKind(targetKind))
     return bindingValue.capabilityExternWriteMatches(
@@ -1988,18 +2087,18 @@ export function makeIrLegacyModuleBindingResolver(
       (ts.isVariableStatement(statement) &&
         statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword))
     ) {
-      return { kind: "unsupported", declaration };
+      return { kind: "unsupported", declaration, arm: "ambient-declaration" };
     }
     const isModuleVar = (list.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0;
     const mutable = isModuleVar || (list.flags & ts.NodeFlags.Let) !== 0;
-    if (writeValue !== undefined && !mutable) return { kind: "unsupported", declaration };
+    if (writeValue !== undefined && !mutable) return { kind: "unsupported", declaration, arm: "write-to-immutable" };
 
     // #4204/#4206 — direct codegen widens this binding's compatibility slot
     // to externref. IR cannot yet own the corresponding general dynamic
     // assignment/read boundaries, so reject before claim instead of resolving
     // the same slot as f64/i32 and tripping the Program ABI invariant later.
     if (heterogeneousAssignmentRetypesModuleBinding(options.oracle ?? checker, declaration)) {
-      return { kind: "unsupported", declaration };
+      return { kind: "unsupported", declaration, arm: "heterogeneous-assignment-retype" };
     }
 
     const declaredType = checker.getTypeAtLocation(declaration.name);
@@ -2026,7 +2125,48 @@ export function makeIrLegacyModuleBindingResolver(
     if (!valueKind && !isModuleVar && isNativeMapStorageType(declaredType, checker, options)) {
       valueKind = { kind: "native-map", className: "Map" } as const;
     }
-    if (!valueKind) return { kind: "unsupported", declaration };
+    // (#3523 R4-M1) A `string` module binding. ONE kind for both string
+    // backends: the physical carrier is the backend's choice (`externref` vs
+    // `(ref null $AnyString)`), and `resolveModuleBindingGlobal` resolves the
+    // ACTIVE one against the slot legacy actually allocated.
+    //
+    // `let`/`const` only, deliberately excluding `var`. Every legacy arm that
+    // widens a module slot away from the checker-inferred type for a
+    // STRING-typed declaration is `var`-specific — a `with`-body hoisted
+    // binding that may never be written, and a `var` whose pre-initialization
+    // `undefined` is observed — and both widen to `externref`, which on the
+    // native lane is NOT the string carrier. That disagreement is only
+    // reportable as a hard Program ABI invariant, never as a demote, so the
+    // arm is excluded by construction rather than re-derived here.
+    if (!valueKind && !isModuleVar && isModuleStringStorageType(declaredType, checker)) {
+      valueKind = { kind: "string" } as const;
+    }
+    // (#5289) An `any`/`unknown` module binding. ONE kind for both lanes,
+    // exactly like the `string` arm above — and for a stronger reason than
+    // "the backend picks the spelling": the two carriers here are chosen by
+    // ONE function of ONE flag on BOTH sides of the boundary.
+    //
+    //   legacy allocation  `resolveWasmType`            (src/codegen/index.ts)
+    //     ctx.fast → `(ref null $AnyValue)` · else → externref
+    //   IR resolution      `resolveIrDynamicCarrierType` (src/codegen/any-helpers.ts)
+    //     ctx.fast → `(ref null $AnyValue)` · else → externref
+    //
+    // `resolveModuleBindingGlobal`'s `dynamic` arm already calls the second,
+    // so admitting the binding here does not WIDEN the storage-agreement check
+    // — it makes the check load-bearing for a population it never saw. A lane
+    // whose slot was widened for some other reason (see the `var` exclusion
+    // below) disagrees loudly as an `abi-type-index-mismatch`, never silently.
+    //
+    // `let`/`const` only, deliberately excluding `var`, on the same measured
+    // grounds as R4-M1's string arm: every legacy arm that widens a module
+    // slot away from the checker-inferred type is `var`-specific, and the
+    // widened carrier is `externref`, which in FAST mode is not the dynamic
+    // carrier. That disagreement is only reportable as a hard Program-ABI
+    // invariant, never as a demote, so the arm excludes it by construction.
+    if (!valueKind && !isModuleVar && isModuleDynamicStorageType(declaredType)) {
+      valueKind = { kind: "dynamic" } as const;
+    }
+    if (!valueKind) return { kind: "unsupported", declaration, arm: "no-value-kind" };
     if (
       writeValue !== undefined &&
       !writeValueMatches(
@@ -2039,7 +2179,7 @@ export function makeIrLegacyModuleBindingResolver(
         classifyPrimitiveExpression,
       )
     ) {
-      return { kind: "unsupported", declaration };
+      return { kind: "unsupported", declaration, arm: "write-value-mismatch" };
     }
     return { kind: "supported", identity: { declaration, mutable, valueKind } };
   };
