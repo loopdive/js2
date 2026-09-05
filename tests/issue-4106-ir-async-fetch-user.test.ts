@@ -4,10 +4,10 @@ import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
-import { compile, type CompileResult } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
-import { ASYNC_HOST_ADAPTERS } from "../src/ir/async-runtime-providers.js";
+import { type CompileResult, compile } from "../src/index.js";
 import { isSingleAwaitReturnAsyncCandidate } from "../src/ir/async-prepare.js";
+import { ASYNC_HOST_ADAPTERS } from "../src/ir/async-runtime-providers.js";
+import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 
 const EXACT_SOURCE = `
@@ -23,8 +23,25 @@ const EXACT_SOURCE = `
   }
 `;
 
+const VOID_SOURCE = `
+  function delay(ms: number, value: number): Promise<number> {
+    return new Promise<number>((resolve) => {
+      setTimeout(() => resolve(value), ms);
+    });
+  }
+
+  export async function linearVoid(seed: number): Promise<void> {
+    const resumed = await delay(0, seed);
+    await Promise.resolve(resumed + 1);
+    return;
+  }
+`;
+
 function expectCompileSuccess(result: CompileResult): void {
-  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  expect(
+    result.success,
+    result.errors.map((error) => error.message).join("\n"),
+  ).toBe(true);
   expect(result.irPostClaimErrors ?? []).toEqual([]);
 }
 
@@ -44,7 +61,12 @@ const HOST_FREE_VALIDATE_RUNNER = `
 function validateHostFreeBinary(binary: Uint8Array): boolean {
   const child = spawnSync(
     process.execPath,
-    ["--experimental-wasm-exnref", "--input-type=module", "--eval", HOST_FREE_VALIDATE_RUNNER],
+    [
+      "--experimental-wasm-exnref",
+      "--input-type=module",
+      "--eval",
+      HOST_FREE_VALIDATE_RUNNER,
+    ],
     {
       input: binary,
       encoding: "utf8",
@@ -74,7 +96,13 @@ function expectHostFreeSuccess(result: CompileResult): void {
 }
 
 function parseFunction(body: string): ts.FunctionDeclaration {
-  const source = ts.createSourceFile("issue-4106-candidate.ts", body, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const source = ts.createSourceFile(
+    "issue-4106-candidate.ts",
+    body,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
   const declaration = source.statements.find(ts.isFunctionDeclaration);
   if (!declaration) throw new Error("missing function declaration fixture");
   return declaration;
@@ -87,16 +115,24 @@ function extractFunctionBody(wat: string, name: string): string | null {
   let depth = 0;
   for (let index = start; index < wat.length; index++) {
     if (wat[index] === "(") depth++;
-    else if (wat[index] === ")" && --depth === 0) return wat.slice(start, index + 1);
+    else if (wat[index] === ")" && --depth === 0)
+      return wat.slice(start, index + 1);
   }
   return null;
 }
 
-function functionImportIndex(binary: Uint8Array, module: string, name: string): number | undefined {
+function functionImportIndex(
+  binary: Uint8Array,
+  module: string,
+  name: string,
+): number | undefined {
   let functionIndex = 0;
-  for (const imported of WebAssembly.Module.imports(new WebAssembly.Module(binary))) {
+  for (const imported of WebAssembly.Module.imports(
+    new WebAssembly.Module(binary),
+  )) {
     if (imported.kind !== "function") continue;
-    if (imported.module === module && imported.name === name) return functionIndex;
+    if (imported.module === module && imported.name === name)
+      return functionIndex;
     functionIndex++;
   }
   return undefined;
@@ -105,7 +141,9 @@ function functionImportIndex(binary: Uint8Array, module: string, name: string): 
 async function settled<T>(value: T | Promise<T>, ms = 4000): Promise<T> {
   return Promise.race([
     Promise.resolve(value),
-    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("async result never settled")), ms)),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("async result never settled")), ms),
+    ),
   ]);
 }
 
@@ -135,7 +173,9 @@ describe("#4106 IR single-await async producer", () => {
         return value;
       }`,
     ]) {
-      expect(isSingleAwaitReturnAsyncCandidate(parseFunction(source))).toBe(false);
+      expect(isSingleAwaitReturnAsyncCandidate(parseFunction(source))).toBe(
+        false,
+      );
     }
   });
 
@@ -149,8 +189,12 @@ describe("#4106 IR single-await async producer", () => {
     expectSuccess(result);
 
     expect(result.irFirstSkipped ?? []).toContain("fetchUser");
-    expect(result.irCompiledFuncs ?? []).toEqual(expect.arrayContaining(["fetchUser", "fetchUser__ir_async_state_0"]));
-    const outcome = (result.irOutcomes ?? []).find((candidate) => candidate.displayName === "fetchUser");
+    expect(result.irCompiledFuncs ?? []).toEqual(
+      expect.arrayContaining(["fetchUser", "fetchUser__ir_async_state_0"]),
+    );
+    const outcome = (result.irOutcomes ?? []).find(
+      (candidate) => candidate.displayName === "fetchUser",
+    );
     expect(outcome).toMatchObject({
       kind: "emitted",
       legacyBodyEmitted: false,
@@ -158,25 +202,53 @@ describe("#4106 IR single-await async producer", () => {
       preparedComponentId: expect.stringMatching(/^prepared-component:/),
     });
 
-    const resumeBody = extractFunctionBody(result.wat, "__async_resume_ffetchUser");
+    const resumeBody = extractFunctionBody(
+      result.wat,
+      "__async_resume_ffetchUser",
+    );
     expect(resumeBody, "missing fetchUser resume body").not.toBeNull();
     for (const importedName of ["__box_number", "__unbox_number"]) {
-      const importIndex = functionImportIndex(result.binary, "env", importedName);
-      expect(importIndex, `missing positive-control env.${importedName} import`).toBeDefined();
-      expect(resumeBody).not.toMatch(new RegExp(`\\bcall\\s+${importIndex}\\b`));
+      const importIndex = functionImportIndex(
+        result.binary,
+        "env",
+        importedName,
+      );
+      expect(
+        importIndex,
+        `missing positive-control env.${importedName} import`,
+      ).toBeDefined();
+      expect(resumeBody).not.toMatch(
+        new RegExp(`\\bcall\\s+${importIndex}\\b`),
+      );
     }
 
-    const adapterNames = new Set(ASYNC_HOST_ADAPTERS.map((adapter) => adapter.field));
-    const actualAdapters = WebAssembly.Module.imports(new WebAssembly.Module(result.binary))
-      .filter((entry) => entry.module === "env" && entry.kind === "function" && adapterNames.has(entry.name))
+    const adapterNames = new Set(
+      ASYNC_HOST_ADAPTERS.map((adapter) => adapter.field),
+    );
+    const actualAdapters = WebAssembly.Module.imports(
+      new WebAssembly.Module(result.binary),
+    )
+      .filter(
+        (entry) =>
+          entry.module === "env" &&
+          entry.kind === "function" &&
+          adapterNames.has(entry.name),
+      )
       .map((entry) => entry.name)
       .sort();
-    expect(actualAdapters).toEqual(ASYNC_HOST_ADAPTERS.map((adapter) => adapter.field).sort());
+    expect(actualAdapters).toEqual(
+      ASYNC_HOST_ADAPTERS.map((adapter) => adapter.field).sort(),
+    );
 
     const imports = buildImports(result.imports, undefined, result.stringPool);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+    const { instance } = await WebAssembly.instantiate(
+      result.binary,
+      imports as WebAssembly.Imports,
+    );
     imports.setExports?.(instance.exports as Record<string, Function>);
-    const fetchUser = instance.exports.fetchUser as (id: number) => Promise<number>;
+    const fetchUser = instance.exports.fetchUser as (
+      id: number,
+    ) => Promise<number>;
     await expect(settled(fetchUser(7))).resolves.toBe(70);
   });
 
@@ -190,13 +262,18 @@ describe("#4106 IR single-await async producer", () => {
     expect(result.irFirstSkipped).toBeUndefined();
 
     const imports = buildImports(result.imports, undefined, result.stringPool);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+    const { instance } = await WebAssembly.instantiate(
+      result.binary,
+      imports as WebAssembly.Imports,
+    );
     imports.setExports?.(instance.exports as Record<string, Function>);
-    const fetchUser = instance.exports.fetchUser as (id: number) => Promise<number>;
+    const fetchUser = instance.exports.fetchUser as (
+      id: number,
+    ) => Promise<number>;
     await expect(settled(fetchUser(7))).resolves.toBe(70);
   });
 
-  it("leaves a non-identity post-await tail on the direct route", async () => {
+  it("IR-emits a straight-line post-await tail through the generic producer", async () => {
     const result = await compile(
       EXACT_SOURCE.replace(
         "return value;",
@@ -211,14 +288,61 @@ describe("#4106 IR single-await async producer", () => {
     );
     expectSuccess(result);
 
-    expect(result.irCompiledFuncs ?? []).not.toContain("fetchUser");
-    expect((result.irOutcomes ?? []).find((candidate) => candidate.displayName === "fetchUser")).toMatchObject({
-      kind: "unsupported",
-      stage: "select",
-      code: "async-function",
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
+    expect(result.irFirstSkipped ?? []).toContain("fetchUser");
+    expect(result.irCompiledFuncs ?? []).toEqual(
+      expect.arrayContaining([
+        "fetchUser",
+        "fetchUser__ir_async_state_0",
+        "fetchUser__ir_async_state_1",
+      ]),
+    );
+    expect(
+      (result.irOutcomes ?? []).find(
+        (candidate) => candidate.displayName === "fetchUser",
+      ),
+    ).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
     });
+  });
+
+  it("IR-emits a linear final-void owner with the canonical void ABI", async () => {
+    const result = await compile(VOID_SOURCE, {
+      fileName: "issue-4106-linear-void.ts",
+      target: "gc",
+      trackIrOutcomes: true,
+    });
+    expectSuccess(result);
+
+    expect(result.irFirstSkipped ?? []).toContain("linearVoid");
+    expect(result.irCompiledFuncs ?? []).toEqual(
+      expect.arrayContaining([
+        "linearVoid",
+        "linearVoid__ir_async_state_0",
+        "linearVoid__ir_async_state_1",
+      ]),
+    );
+    expect(
+      (result.irOutcomes ?? []).find(
+        (candidate) => candidate.displayName === "linearVoid",
+      ),
+    ).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(
+      result.binary,
+      imports as WebAssembly.Imports,
+    );
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    const linearVoid = instance.exports.linearVoid as (
+      seed: number,
+    ) => Promise<void>;
+    await expect(settled(linearVoid(7))).resolves.toBeUndefined();
   });
 
   it("keeps an await of a non-prepared async callee on the direct route", async () => {
@@ -237,17 +361,29 @@ describe("#4106 IR single-await async producer", () => {
         trackIrOutcomes: true,
       },
     );
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(
+      result.success,
+      result.errors.map((error) => error.message).join("\n"),
+    ).toBe(true);
     expect(WebAssembly.validate(result.binary)).toBe(true);
     expect(result.irFirstSkipped ?? []).not.toContain("test");
-    expect((result.irOutcomes ?? []).find((candidate) => candidate.displayName === "test")).toMatchObject({
+    expect(
+      (result.irOutcomes ?? []).find(
+        (candidate) => candidate.displayName === "test",
+      ),
+    ).toMatchObject({
       legacyBodyEmitted: true,
     });
 
     const imports = buildImports(result.imports, undefined, result.stringPool);
-    const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+    const { instance } = await WebAssembly.instantiate(
+      result.binary,
+      imports as WebAssembly.Imports,
+    );
     imports.setExports?.(instance.exports as Record<string, Function>);
-    await expect(settled((instance.exports.test as () => Promise<number>)())).resolves.toBe(100);
+    await expect(
+      settled((instance.exports.test as () => Promise<number>)()),
+    ).resolves.toBe(100);
   });
 
   it("keeps host-free and non-numeric ABI owners off the prepared skip route", async () => {
@@ -261,7 +397,11 @@ describe("#4106 IR single-await async producer", () => {
     corruptBinary[0] ^= 0xff;
     expect(validateHostFreeBinary(corruptBinary)).toBe(false);
     expect(hostFree.irFirstSkipped ?? []).not.toContain("fetchUser");
-    expect((hostFree.irOutcomes ?? []).find((candidate) => candidate.displayName === "fetchUser")).toMatchObject({
+    expect(
+      (hostFree.irOutcomes ?? []).find(
+        (candidate) => candidate.displayName === "fetchUser",
+      ),
+    ).toMatchObject({
       legacyBodyEmitted: true,
     });
 
@@ -276,20 +416,38 @@ describe("#4106 IR single-await async producer", () => {
         trackIrOutcomes: true,
       },
     );
-    expect(abiMismatch.success, abiMismatch.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(
+      abiMismatch.success,
+      abiMismatch.errors.map((error) => error.message).join("\n"),
+    ).toBe(true);
     expect(WebAssembly.validate(abiMismatch.binary)).toBe(true);
     // The final async fixed point rejects this ABI before the IR owner is
     // claimed, so it stays on the direct route without a post-claim failure.
     expect(abiMismatch.irPostClaimErrors ?? []).toEqual([]);
     expect(abiMismatch.irFirstSkipped ?? []).not.toContain("fetchFlag");
-    expect((abiMismatch.irOutcomes ?? []).find((candidate) => candidate.displayName === "fetchFlag")).toMatchObject({
+    expect(
+      (abiMismatch.irOutcomes ?? []).find(
+        (candidate) => candidate.displayName === "fetchFlag",
+      ),
+    ).toMatchObject({
       legacyBodyEmitted: true,
     });
 
-    const imports = buildImports(abiMismatch.imports, undefined, abiMismatch.stringPool);
-    const { instance } = await WebAssembly.instantiate(abiMismatch.binary, imports as WebAssembly.Imports);
+    const imports = buildImports(
+      abiMismatch.imports,
+      undefined,
+      abiMismatch.stringPool,
+    );
+    const { instance } = await WebAssembly.instantiate(
+      abiMismatch.binary,
+      imports as WebAssembly.Imports,
+    );
     imports.setExports?.(instance.exports as Record<string, Function>);
-    await expect(settled((instance.exports.fetchFlag as (id: number) => Promise<boolean>)(1))).resolves.toBe(true);
+    await expect(
+      settled(
+        (instance.exports.fetchFlag as (id: number) => Promise<boolean>)(1),
+      ),
+    ).resolves.toBe(true);
   });
 
   it("fails terminally without retrying a skipped owner after preparation starts", async () => {
@@ -303,13 +461,18 @@ describe("#4106 IR single-await async producer", () => {
       });
       expect(result.success).toBe(false);
       expect(result.irFirstSkipped ?? []).toContain("fetchUser");
-      expect((result.irOutcomes ?? []).find((candidate) => candidate.displayName === "fetchUser")).toMatchObject({
+      expect(
+        (result.irOutcomes ?? []).find(
+          (candidate) => candidate.displayName === "fetchUser",
+        ),
+      ).toMatchObject({
         kind: "invariant",
         legacyBodyEmitted: false,
         irBodyEmitted: false,
       });
     } finally {
-      if (previous === undefined) process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW = undefined;
+      if (previous === undefined)
+        process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW = undefined;
       else process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW = previous;
     }
   });
