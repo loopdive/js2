@@ -152,6 +152,7 @@ after Phase 0" for the read-only case.
 | `4946cf70fe` (pre-regression) | 6/6 validated, 10/10 | 61/151 (reported) |
 | `104dc660fb` / `b67ab1fc0e` (main) | 0/6, 0/10 | 2/151 (reported) |
 | main + this fix | **6/6 validated, 10/10** | 3/16 validated, **2/151** |
+| **merged result** (`d5f6acfb28`, branch + `upstream/main` @ `82394ba491`) | **6/6 validated, 10/10** | — |
 
 `node scripts/equivalence-gate.mjs` with the fix: `24 failing, 1718 passing, 24
 known-failures in baseline — no new equivalence regressions`.
@@ -165,8 +166,10 @@ Codegen error: multi-prepared-module-init-census:terminal-join: executable sourc
 ir-source:v1:…src%2Fcommon%2Fast-path.js lost its exact module-init terminal
 ```
 
-Filed as **#5335** (suspect: #5598, unconfirmed — the moment lane never shows this error,
-so prettier was never bisected on its own).
+That is **#5332** — `export default <identifier>;` in a dependency of a multi-file
+project, root-caused there to the #3525 census work (`2c18cd7a6f`, PR #5598). Thirteen of
+prettier's sixteen modules hit it. The measured prettier cost has been added to that
+issue's `## Cost, measured` section.
 
 All 13 of #5390's own regression tests still pass with the fix
 (`issue-1058-reserved-sibling-capture-abi` 7, `issue-1058-function-type-branding` 1,
