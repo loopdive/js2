@@ -149,8 +149,21 @@ export function emitRuntimeNewTargetPrototype(ctx: CodegenContext, fctx: Functio
  * is exactly the prototype the ordinary construction already installed, so
  * skipping the write IS the fix. Without this guard the raw non-object landed
  * in the carrier field and `Object.getPrototypeOf` answered `undefined`
- * (DataView) or `null` (typed array) where node answers the intrinsic
- * prototype; on `--target wasi` the DataView case trapped.
+ * (DataView) where node answers the intrinsic prototype; on `--target wasi`
+ * that case trapped.
+ *
+ * ## Correction (r2 step 6, measured): the guard repaired DataView only.
+ * The comment used to claim the typed-array carrier as well. Measured on the
+ * CURRENT tree, `--target standalone`, oracle node 22 — a bound NewTarget with
+ * no own `prototype`:
+ *
+ *   - `.tmp/p/f1_dv_bind_noproto.js` (DataView): node 3, base 3, here 3 —
+ *     repaired, and the guard is what keeps it repaired.
+ *   - `.tmp/p/f2_ta_bind_noproto.js` (Uint8Array): node 3, base 1, here 1 —
+ *     UNCHANGED. `Object.getPrototypeOf` on a dynamically-typed typed-array
+ *     view answers null on base with no `Reflect.construct` in the program at
+ *     all, so the guard cannot repair what that reader reports. It stays a
+ *     residual of the typed-array carrier, not of this arm.
  */
 export function applyRuntimeNewTargetPrototype(
   ctx: CodegenContext,
