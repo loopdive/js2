@@ -14,6 +14,7 @@ import {
   classElementIsStatic,
   collectModuleInitPopulation,
   MODULE_INIT_UNIT_NAME,
+  phase1MethodName,
   phase1MemberName,
   type IrSelection,
 } from "./select.js";
@@ -136,7 +137,7 @@ function classMemberLegacyName(className: string, member: ts.ClassElement): stri
     return undefined;
   }
   if (!member.body || !member.name) return undefined;
-  const memberName = phase1MemberName(member.name);
+  const memberName = ts.isMethodDeclaration(member) ? phase1MethodName(member) : phase1MemberName(member.name);
   if (memberName === null) return undefined;
   if (ts.isGetAccessorDeclaration(member)) return `${className}_get_${memberName}`;
   if (ts.isSetAccessorDeclaration(member)) return `${className}_set_${memberName}`;

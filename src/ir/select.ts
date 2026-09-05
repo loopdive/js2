@@ -57,6 +57,7 @@
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
+import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import { privateMemberMangledName, type IrClassId, type IrUnitId } from "./identity.js";
 import {
   isAsyncIrReady,
@@ -894,7 +895,7 @@ export function planIrCompilation(
     const methodKindsByName = new Map<string, number>();
     for (const candidate of stmt.members) {
       if (!ts.isMethodDeclaration(candidate) || !candidate.name) continue;
-      const name = phase1MemberName(candidate.name);
+      const name = phase1MethodName(candidate);
       if (name === null) continue;
       const kind = classElementIsStatic(candidate) ? 2 : 1;
       methodKindsByName.set(name, (methodKindsByName.get(name) ?? 0) | kind);
@@ -921,10 +922,11 @@ export function planIrCompilation(
           // MethodDeclaration; the `null` branch is unreachable in practice.
           continue;
         }
-        const methodNameRaw = phase1MemberName(member.name);
+        const methodNameRaw = phase1MethodName(member);
         if (methodNameRaw === null) {
-          // Computed property name (`[expr]() {}`) or private identifier
-          // (`#name() {}`) — Phase A doesn't claim these.
+          // An unproven computed property name (`[expr]() {}`) has no stable
+          // legacy/descriptor key. Private identifiers and bounded literal
+          // computed names are resolved by phase1MethodName above.
           if (trackFallbacks) {
             fallbackReasons.set(`${className}_<computed>`, "class-method");
           }
@@ -984,7 +986,7 @@ export function planIrCompilation(
         (memberNode.modifiers?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword) ?? false);
       const exactShapes = currentSelectionOptions?.projectedClassShapes;
       if (exactShapes && !ts.isConstructorDeclaration(memberNode)) {
-        const descriptorName = memberNode.name ? phase1MemberName(memberNode.name) : null;
+        const descriptorName = classMemberDescriptorName(memberNode);
         const descriptorKind = ts.isMethodDeclaration(memberNode)
           ? isStaticMethod
             ? "static"
@@ -7810,16 +7812,13 @@ function classMethodProjection(className: string, methodName: string, isStatic: 
   while (cursor) {
     const matchingInstanceMethod = cursor.members.some(
       (member) =>
-        ts.isMethodDeclaration(member) &&
-        !classElementIsStatic(member) &&
-        ts.isIdentifier(member.name) &&
-        member.name.text === methodName,
+        ts.isMethodDeclaration(member) && !classElementIsStatic(member) && phase1MethodName(member) === methodName,
     );
     for (const member of cursor.members) {
       if (!ts.isMethodDeclaration(member) || !member.name) continue;
       const memberIsStatic = member.modifiers?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword) ?? false;
       if (memberIsStatic !== isStatic) continue;
-      if (ts.isIdentifier(member.name) && member.name.text === methodName) {
+      if (phase1MethodName(member) === methodName) {
         if (isStatic && matchingInstanceMethod) return { status: "unprojected", declaration: member };
         return classMethodSignatureMayProject(member, cursor)
           ? {
@@ -10700,6 +10699,24 @@ export function phase1MemberName(name: ts.PropertyName): string | null {
   if (ts.isPrivateIdentifier(name)) return privateMemberMangledName(name);
   // ComputedPropertyName — Phase A still skips it.
   return null;
+}
+
+/**
+ * Resolve a method's legacy/descriptor key. Computed names join this path only
+ * when the syntax-only W1-D proof establishes a direct string literal in the
+ * bounded top-level class family; all other methods retain phase1MemberName's
+ * existing acceptance set.
+ */
+export function phase1MethodName(member: ts.MethodDeclaration): string | null {
+  if (ts.isComputedPropertyName(member.name)) return literalComputedInstanceMethodKey(member) ?? null;
+  return phase1MemberName(member.name);
+}
+
+function classMemberDescriptorName(
+  member: ts.MethodDeclaration | ts.ConstructorDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+): string | null {
+  if (ts.isMethodDeclaration(member)) return phase1MethodName(member);
+  return member.name ? phase1MemberName(member.name) : null;
 }
 
 /**
