@@ -161,8 +161,9 @@ Replace `check:linear-ir`'s count ratchet with an exhaustive matrix gate that:
 - Build a deterministic adapter table from IR types/instructions/intrinsics/
   async operations to linear representations and providers. Record exhaustive
   legality before emission.
-- Compare shared versus independently rebuilt IR hashes on the current overlay
-  population; mismatch is visible and blocks ownership.
+- First establish the concrete semantic-body handoff in the implementation
+  plan below. Parity requires one preparation object consumed by both adapters;
+  equal hashes from two independent frontend builds are only diagnostic data.
 
 ### L1 — single-source shared ownership
 
@@ -183,9 +184,10 @@ Replace `check:linear-ir`'s count ratchet with an exhaustive matrix gate that:
 
 ### L3 — strict gate and AST visitor retirement
 
-- Replace `scripts/check-linear-ir.ts` and its baseline with exhaustive
-  zero-unhandled/zero-direct accounting; remove the bare catch and overlay
-  compiled-count semantics.
+- Extend `scripts/check-linear-ir.ts` and its baseline to exhaustive
+  zero-unhandled/zero-direct accounting. Preserve its landed authenticated
+  census and explicit compile/instrumentation failures; replace the remaining
+  overlay compiled-count/rejection-threshold acceptance predicate.
 - Poison and then delete `compileFunctionMulti`, `compileFunction`,
   `compileStatement`, `compileExpression`, class/source scanners, the second
   selector/type-propagation driver, and `JS2WASM_LINEAR_IR` only after
@@ -355,3 +357,293 @@ host. Preserve the registration and the recorded checkpoint; do not prune or
 recreate that path as a cleanup step. Any D1a continuation must first establish
 which recorded changes are available and compare them with current production
 source, rather than treating the historical dirty worktree as a ready artifact.
+
+## Implementation Plan — 2026-09-05: L0-P1 immutable body handoff
+
+**Dispatchable prerequisite, not L0 or R8 completion.** Proposed claim
+`3528:l0-p1-frozen-body-batch`; root verifies/reserves before dispatch. Astra
+plans; Luna Max implements. Source baseline is upstream
+`470ceba797a2822ead2a4060fc65fb78c0b52887`, present in planning head
+`a5fbaa544046f854daba8881d80c72bc56b87bf9`. This section records source analysis
+and required tests, not a newly measured runtime or coverage result.
+
+### Actual boundary and remaining dependencies
+
+`compiler.ts:1092–1101` selects `generateLinearModule`/`generateLinearMultiModule`
+or WasmGC `generateModule`/`generateMultiModule` before any shared semantic
+preparation. Linear's single-source body (`codegen-linear/index.ts:182`) creates
+runtime/context state, prepares the AST-bearing overlay, allocates user slots,
+then calls `compileLinearIrFunctions` (`linear-integration.ts:803`). That
+function independently infers/builds/verifies bodies (`:954–1095`), attaches
+runtime providers (`:1110`), plans memory (`:1128`) and lowers (`:1147`). Its
+multi-source entry still has a separate direct frontend.
+
+WasmGC instead builds/transforms/prepares bodies in `ir/integration.ts`; its
+`lowerIrEntryFunction:505` uses the async adapter or
+`lowerIrFunctionToWasm` (`lower.ts:546`). Both numeric backends already reach
+`lowerIrFunctionBody:585` with different emitters/type converters. Sharing
+that lowering helper does not share their prepared input.
+
+There is no production shared semantic program to pass to linear:
+
+- `PreparedIrProgram.reconciliation` (`program.ts:201`) is still
+  `pending-production-wiring`. Its candidate container cannot certify this
+  handoff merely by accepting an `unknown` IR payload.
+- `IrFunction`/`IrModule` (`nodes.ts:2460/2564`) contain executable semantics,
+  but `readonly` is not runtime ownership. The existing mutable build results
+  are the data this phase must actually capture and consume.
+- `IrFromAstResolver` (`from-ast.ts:383`) still decides string iteration,
+  string/extern coercion and vector representations from backend capabilities.
+  Linear's resolver combines frontend queries and lowering operations
+  (`linear-integration.ts:1373`). This phase does not erase those choices.
+- #4617's landed `semantic-declaration-snapshot.ts` records declaration-query
+  facts, not function bodies. Its unpublished D1a function-value work remains
+  unavailable and must be preserved. The interchange contract in
+  `ir/contract.ts` has a schema/version but no production module serializer.
+
+R2-B1 at PR #5600, exact `2d8741c3332c0928b905bf4948c904e0ee112004`, issues
+`PreparedCallableBoundaryCandidate` through
+`program-abi-source-callable-planning.ts:412`, and certifies final IR, physical
+signature and closure support in `integration.ts:538`. Those authenticated
+module/session receipts are backend evidence, not neutral body data. Reuse that
+distinction; do not serialize its callbacks, allocated function, or handle as
+semantic authority. R5 M2-P1 freezes ordered source/init census; active M2-P2A
+prepares and publishes initializer batches. Neither supplies this missing body
+artifact. L0-P1 does not depend on modifying or completing their transactions.
+
+### Increment: replace the production body handoff
+
+Introduce **`FrozenIrBodyBatch`** in `src/ir/frozen-body-batch.ts`: an owned,
+validated, deeply immutable snapshot of the actual executable `IrModule` and
+its preparation inputs. It is a body-preparation artifact with explicit
+producer/representation provenance, **not** a fully neutral `PreparedIrProgram`
+or a new whole-program ABI seal.
+
+The production producer is a named `prepareLinearIrBodyBatch` extraction from
+`compileLinearIrFunctions`, immediately after the existing
+`prepareLinearIntrinsicFunctions` and `prepareLinearStringRepeatFunctions`
+finish, before `planLinearMemory` and the first body lower. Every successfully
+built owner must cross this handoff; no permanent name, signature, fixture,
+owner-count, or operation-family bypass is allowed. Keep selection and its
+existing Unsupported/rejection records above this boundary.
+
+The artifact must own the following existing data losslessly:
+
+1. The ordered function array; each `unitId`, diagnostic name, params/value IDs,
+   result types, `valueCount`, export/`funcKind`, slots, blocks/block arguments,
+   every nested instruction buffer, all instruction operands/types/source
+   sites/allocation IDs, terminators and branch arguments. Preserve optional
+   closure subtype, generator slot, `asyncPlan` and existing runtime attachments
+   when present. Preserve class/shape identity and all structural callable/global
+   bindings; never replace a binding with its display name. Do not silently
+   omit currently unsupported or newly added fields from a copy or digest.
+2. Exact source/terminal-owner records projected from the authenticated overlay,
+   plus an explicit built/rejected owner census. Snapshot each body's logical
+   signature from its IR params/results, and retain existing declaration tables
+   with their actual completeness. A partial `declaredSignatures` or
+   `declaredGlobals` table stays partial; this is not `ProgramAbiMap` completion.
+   `IrType.val` and slot types may still reflect producer-specific representation.
+   Preserve optional ValType brands (`boolean`, `symbol`, `bigint`,
+   `undefSentinel`) exactly, including absent versus present false; neither
+   `irTypeKey` nor `irTypeEquals` alone proves a lossless copy or fingerprint.
+3. The existing effect facts from `effectsOf`, joined to stable owner/block/
+   nested-buffer/instruction positions, with ordered read/write slot sets.
+   The body graph remains the authority for evaluation order. Reuse the effect
+   model; do not add a second classifier or change an existing effect policy.
+4. The allocation facts consumed by `planLinearMemory`: referenced allocation ID,
+   resolved canonical site/kind/type/origin, ownership/access/stack-candidate
+   evidence, escape result and encoding, including explicit absent/unknown
+   evidence. Capture after the current analysis sequence; preserve explicit
+   live/aliased/retired provenance, and distinguish unobserved evidence from
+   known missing facts. Aliases retain exact ID joins and a live canonical
+   target for every referenced allocation. Add a read-only registry snapshot
+   method if needed; never infer retired versus unknown from `resolve() ===
+   null`. No live registry is retained.
+5. Runtime and representation inputs actually settled by this producer:
+   retain the result/manifest currently discarded by
+   `prepareLinearIntrinsicFunctions:666`, exact structural callable/provider
+   references and attached provider data, the AST-free counted site/owner/source
+   and final-instruction digest projection, and relevant producer policy/version
+   facts. Explicitly record an empty manifest/demand population. Some ordinary
+   string/vector operations still use resolver/layout inputs outside the R6
+   manifest: record that boundary instead of claiming a complete R6 manifest.
+
+`PreparedCountedStringAppendReceipt.plan` contains a `SourceFile` and syntax
+plan (`ast-lowering-plans.ts:345`); it must stay in the upper integration
+sidecar. Preserve its existing exact source/reservation authentication before
+freeze and final successful-owner publication rule. The new artifact retains
+only its data projection and executable instruction evidence. It must not
+contain `PreparedLinearIrOverlay`, `LinearContext`, TS nodes/checkers/oracles,
+AST-keyed maps, resolver closures, a mutable Wasm module, or allocator objects.
+
+Reuse `freezePreparedIrValue`'s defensive ownership rules where suitable
+(`program.ts:292–363`); freezing the outer object or a native `Map` is inadequate.
+The artifact factory validates semantic structure, references and census before
+issuing a private authenticated instance. Its deterministic content digest must
+cover executable data and declared incompleteness, preserve instruction/argument
+order, distinguish missing/null/empty and numeric edge values, and handle the
+existing allowed recursive class shapes by structural identity. This is an
+internal fingerprint, not an implementation or claim of #3030 interchange.
+Hashes never authenticate forged or cross-session objects.
+
+### AST-free consumer and allocation extraction
+
+Create `src/ir/backend/frozen-body-consumer.ts` with one consumer taking the
+exact batch plus a separate backend plan/capability object. Linear production
+must use it for the bodies just captured; leaving the old local `built` map as
+the emitter's authority would make this an unused wrapper. The consumer uses
+existing `lowerIrFunctionBody`, `LinearEmitter`/`WasmGcEmitter` and type converters.
+No new Wasm instruction scheme is needed. Keep the existing linear local-slot,
+vector scratch-local and stack-arena adaptation when extracting the body loop.
+
+The WasmGC consumer for this increment is this same entry driven by the real
+`WasmGcEmitter`, `wasmValueTypeConverter` and Wasm assembly in common-input tests.
+Normal WasmGC production still uses `lowerIrEntryFunction` and does not yet
+receive the new producer's object. Report that limitation explicitly. The
+production linear handoff, rather than a test-only factory, is the deliverable.
+
+Separate preparation facts from physical layout in
+`analysis/linear-memory-plan.ts:462`: extract its initial encoding → ownership →
+escape → stack-candidate analyses into a producer helper, and add a layout-only
+entry consuming frozen allocation facts. Keep a compatibility entry for existing
+callers if needed, but linear production below the new handoff must use the
+frozen-fact entry and must not rerun those analyses against a retained mutable
+registry. Allocator policy, layout selection, physical indices, helper bodies,
+data segments and type conversion belong to the backend plan, outside the
+semantic snapshot. Do not change the R4 module-storage producers.
+
+Backend preparation validates the complete batch before lowering any body:
+
+- Join exact owner IDs to the supplied backend's own slots and semantic/physical
+  signature evidence; reject duplicate/missing/foreign owners. Different
+  backends may use different physical slots without changing the batch.
+- Apply `verifyIrBackendLegality` and the existing runtime/layout policy to the
+  actual frozen instructions, including nested buffers and retained plans.
+  A producer-specific carrier/provider that the requested backend cannot
+  implement is typed, source-located Unsupported before emission. Do not guess
+  another carrier or rebuild the source for that backend.
+- Settle the resolver inputs demanded by this batch before the first body:
+  callable/global/type lookups, supported layouts, provider attachments and
+  helper operations. Use existing provider/layout authorities. Missing promised
+  input, inconsistent signatures, detached receipts or unresolved declared
+  references are Invariants, not fresh Unsupported or a spelling fallback.
+- Authenticate the resulting backend plan to this exact batch and its own
+  compilation/module session. Prepare once, consume once per backend plan;
+  independent backend plans may consume the same immutable batch. Recheck joins
+  before publishing output. Do not import TS or expose a callback that can
+  request source selection, type inference, body construction or runtime intent
+  discovery from the consumer.
+
+Backend attachment and physical adaptation may make owned derived records;
+mutating the batch is forbidden. Produce detached results keyed by owner and
+publish through the existing linear caller only after successful validation.
+Keep intentional pre-ownership policy outcomes and existing rejection buckets
+visible above the consumer. Once a backend plan promises emission, a lowering
+throw or missing adapter is a fatal Invariant; do not catch it into direct
+compilation, an empty module, or a successful report. Do not claim that this
+linear boundary supplies R5's whole-program transaction.
+
+If current runtime/layout APIs cannot provide a required input before lowering,
+identify and extract that exact preplanning operation within this linear scope.
+Do not compensate by widening a catch, silently retaining a mutable producer
+object, excluding more supported source shapes, or describing the body snapshot
+as fully backend-neutral. A need to change R2/P2A/R4 authorities is a dependency
+escalation to the lead, not permission to edit their files.
+
+### Evidence required before landing
+
+Add `tests/issue-3528-frozen-body-handoff.test.ts` and focused allocation-fact
+controls. Measure baseline and candidate on the same source, target options and
+entrypoints, with explicit denominators and real runtime assertions.
+
+- Capture a batch through the real linear production producer. Feed **that same
+  object** to both backend consumers, with separate legitimate module/slot plans;
+  assert object identity and unchanged semantic digest before/after both runs.
+  Include a multi-function numeric call graph, branches/loops/live mutable slots,
+  and nonempty common Math intrinsic demand such as `math.imul`/`math.trunc`.
+  Instantiate both generated binaries and check expected results, including
+  negative/zero/large conversion inputs. Two independent calls to `compile`
+  followed by hash comparison do not satisfy this test.
+- Add an observable ordering case using the same explicit import binding and
+  host trace in both backend plans: two effectful calls with a live intervening
+  value must preserve argument and call order. This can be an additional
+  body-builder control; it does not replace the production-producer test.
+- Cover production linear vectors/objects/strings and counted-string reservation
+  controls. Assert the allocation analyses run before freeze and are poisoned
+  afterward; layout/lowering consume the captured facts. Preserve exact receipt
+  identities/digests and failed-owner non-publication.
+- Poison the second selector, TypeMap/checker queries, AST walks,
+  `lowerFunctionAstToIr` and direct body emitters after the producer has finished.
+  Both consumer invocations still execute the supported common input. Count
+  actual frontend attempts separately from artifact creation: L0-P1 does not
+  erase the earlier fixed point or claim every source function built once.
+- Mutate producer arrays/maps/sets, nested operands, provider data and allocation
+  metadata after capture; the batch and emitted result remain unchanged. Attempt
+  mutation through the consumer, swap another batch with equal bytes, use a
+  stale/cross-session slot plan, duplicate/drop a unit, alter a call signature or
+  required provider, and substitute a same-spelling foreign binding. Each
+  corruption must fail before body publication; missing evidence cannot pass.
+- A genuine unsupported backend carrier or operation has a typed pre-emission
+  outcome and zero body emissions. Deleting an adapter promised by an accepted
+  plan instead raises an Invariant. Assert these are distinguishable and the
+  old direct route cannot turn either consumer outcome into success.
+- Empty/type-only production inputs are explicitly empty and cannot satisfy the
+  positive common-input denominator. Removing a report or a selected owner from
+  the capture fails census validation. Preserve #4550's authenticated complete
+  accounting; do not lower its thresholds or substitute this test for R8's
+  eventual whole-program zero-direct gate.
+
+### Exclusive implementation ownership and gates
+
+One Luna Max worker owns:
+
+- New `src/ir/frozen-body-batch.ts`,
+  `src/ir/backend/frozen-body-consumer.ts`, and, if useful,
+  `src/ir/analysis/prepared-allocation-facts.ts`.
+- `src/ir/backend/linear-integration.ts`: only the runtime-result retention,
+  post-build body producer, AST-free backend-plan projection/consumer call, and
+  resulting report/receipt joins. Preserve its existing selection and from-AST
+  producer policies.
+- `src/ir/analysis/linear-memory-plan.ts`: preparation-fact extraction and the
+  frozen-input layout entry, with focused tests; `src/ir/alloc-registry.ts` only
+  for an owned read-only provenance/metadata snapshot if required. Existing
+  `lower.ts`, emitters, effect analyses and immutable-copy helpers are reused,
+  not redesigned.
+- The new issue test, directly affected linear/allocation tests and this issue's
+  implementation record. Any additional production file requires a concrete
+  source-driven dependency review before widening ownership.
+
+No writes to `ir/integration.ts`, `codegen/index.ts`,
+`codegen/ir-prepared-free-functions.ts`, Program ABI/session/publication modules,
+R5 ordered-init transactions, R4 storage producers, #4617 D1a files, or the
+compiler's backend branch in this phase. Root rechecks live claims/open PRs
+before creating the implementation worktree. Preserve concurrent changes.
+
+Required commands, using the implementer's fresh isolated worktree:
+
+```sh
+pnpm typecheck
+node node_modules/vitest/dist/cli.js run tests/issue-3528-frozen-body-handoff.test.ts tests/linear-ir.test.ts tests/issue-3520-linear-owner-identity.test.ts tests/issue-4550-linear-ir-census.test.ts tests/issue-3518-linear-counted-string-reservation.test.ts tests/issue-3922-linear-string-repeat.test.ts tests/issue-3526-ir-linear-math-intrinsics.test.ts tests/backend-contract.test.ts
+node node_modules/vitest/dist/cli.js run tests/linear-array.test.ts tests/linear-string.test.ts tests/linear-functions.test.ts tests/linear-controlflow.test.ts tests/ir/alloc-registry.test.ts tests/ir/alloc-provenance.test.ts
+node --import tsx scripts/check-linear-ir.ts
+node --import tsx scripts/check-ir-only.ts --json
+node --import tsx scripts/check-ir-fallbacks.ts
+```
+
+Also run the new focused allocation-fact tests and the repository's applicable
+IR layering/kind/dialect checks for the actual changed modules. Record command
+exits, source refs and complete output denominators; do not edit baselines to
+hide new rejection, direct-emission, post-claim or instrumentation failures.
+No pass count is asserted by this plan.
+
+### What remains after L0-P1
+
+The next dependent step must separate the recorded target-dependent builder
+choices into semantic operations and explicit backend policy, then move the
+single producer above `compiler.ts`'s backend branch and make WasmGC production
+consume the same object. R2/R5 must supply reconciled whole-program semantic
+ABI, source/init ownership and atomic publication there; R6 supplies complete
+runtime intents and R7 the same immutable async plans. Only that cutover can
+remove linear's independent selector/from-AST fixed point, followed by its
+multi-source direct frontend and the full R8 retirement gate. All R8 acceptance
+boxes and full #3518 retirement acceptance remain open after this prerequisite.
