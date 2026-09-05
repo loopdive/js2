@@ -64,9 +64,12 @@ export function buildJoinSeparatorToString(
   // byte-identically to base; only a module that separately contained e.g.
   // `String({})` worked. Arming through `ensureLateImport` — the SAME
   // chokepoint every other consumer uses — routes to the Wasm-native
-  // object-runtime provider under standalone/wasi (`imports === []` preserved)
-  // and to the `env::__extern_toString` host import on the JS-host target, so
-  // this grows no second cascade.
+  // object-runtime provider under standalone/wasi (`imports === []` preserved),
+  // so this grows no second cascade. The JS-host target is NOT reached by this
+  // emitter at all — it returns at the `anyStrTypeIdx < 0` check above because
+  // host strings are `wasm:js-string`, not `$AnyString` — so host modules stay
+  // byte-identical to base and a non-string separator still traps there
+  // (review of 2026-09-05, seven host probes; a separate host-lane change).
   //
   // Armed before any funcIdx is read into a JS variable (the #2043 late-shift
   // class): a late import registered afterwards renumbers everything below.
