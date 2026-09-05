@@ -145,6 +145,23 @@ function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolea
   return walk(fn.body);
 }
 
+/**
+ * (#5318 r4 review) The same question {@link methodBodyReadsThis} answers, but
+ * TRI-STATE: `undefined` when the body is not compiled yet, so a caller that
+ * needs "provably does not read the receiver" can tell "no" from "don't know".
+ * The trampoline itself keeps its own conservative not-yet-compiled ⇒ `true`
+ * default; a caller that must DECLINE on doubt (the static sidecar) treats both
+ * `true` and `undefined` as a refusal.
+ */
+export function compiledBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolean | undefined {
+  const fn = definedFuncAt(ctx, methodFuncIdx);
+  // An EMPTY body is "not compiled yet", not "reads nothing" — a minted-but-
+  // unfilled function would otherwise read as receiver-free, which is exactly
+  // the wrong answer a caller gating an install on this must not be given.
+  if (!fn || !Array.isArray(fn.body) || fn.body.length === 0) return undefined;
+  return methodBodyReadsThis(ctx, methodFuncIdx);
+}
+
 function buildTrampolineThisSlot(
   ctx: CodegenContext,
   objStructTypeIdx: number,
