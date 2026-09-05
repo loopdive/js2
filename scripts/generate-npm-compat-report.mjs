@@ -3145,13 +3145,18 @@ if (!reuseStandaloneBinaryPath) assertMeasuredOptimizationReceipts(packages);
 // Successful placements become separate chart rows. Failed or deliberately
 // skipped placements remain visible in the package JSON/cards and are never
 // converted to misleading zero-duration bars.
-const perfRows = npmPerfRows(packages);
+const artifactSourceRevision = currentRevision();
+const perfRows = npmPerfRows(packages).map((row) => ({
+  ...row,
+  generatedAt: summary.generatedAt,
+  sourceRevision: artifactSourceRevision,
+}));
 const perfHistory = mergeNpmPerfHistory(readHistoryArtifact(), [
   ...committedHistoryPoints(),
   npmPerfHistoryPoint(
     packages,
     summary.generatedAt,
-    currentRevision(),
+    artifactSourceRevision,
     summary.performanceMethodology.optimizationLevels,
   ),
 ]);

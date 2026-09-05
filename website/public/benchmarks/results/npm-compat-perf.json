@@ -14,7 +14,9 @@
     "measuredRounds": 9,
     "sampleOp": "validate(uuid) + version(uuid)",
     "harnessPlacement": "js-host",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "acorn · JS host · runtime dynamic",
@@ -31,7 +33,9 @@
     "measuredRounds": 9,
     "sampleOp": "parse(own 226KB dist bundle).body.length",
     "harnessPlacement": "js-host",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "acorn · standalone · compile-time static",
@@ -48,7 +52,9 @@
     "measuredRounds": 9,
     "sampleOp": "parse(own 226KB dist bundle).body.length",
     "harnessPlacement": "standalone",
-    "inputMode": "compile-time-static"
+    "inputMode": "compile-time-static",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "acorn · standalone · runtime dynamic",
@@ -67,7 +73,9 @@
     "measuredRounds": 9,
     "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
     "harnessPlacement": "standalone",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "cookie · JS host · runtime dynamic",
@@ -84,7 +92,9 @@
     "measuredRounds": 9,
     "sampleOp": "parseCookie(8-pair header); verify a/h",
     "harnessPlacement": "js-host",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "cookie · standalone · compile-time static",
@@ -101,7 +111,9 @@
     "measuredRounds": 9,
     "sampleOp": "parseCookie(8-pair header); verify a/h",
     "harnessPlacement": "standalone",
-    "inputMode": "compile-time-static"
+    "inputMode": "compile-time-static",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "cookie · standalone · runtime dynamic",
@@ -120,7 +132,9 @@
     "measuredRounds": 9,
     "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
     "harnessPlacement": "standalone",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "react · JS host · runtime dynamic",
@@ -137,7 +151,9 @@
     "measuredRounds": 9,
     "sampleOp": "react package import + text.length",
     "harnessPlacement": "js-host",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "clsx · JS host · runtime dynamic",
@@ -154,7 +170,9 @@
     "measuredRounds": 9,
     "sampleOp": "op_two_strings.length (host-owned arguments)",
     "harnessPlacement": "js-host",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "clsx · standalone · compile-time static",
@@ -171,7 +189,9 @@
     "measuredRounds": 9,
     "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
     "harnessPlacement": "standalone",
-    "inputMode": "compile-time-static"
+    "inputMode": "compile-time-static",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "clsx · standalone · runtime dynamic",
@@ -188,7 +208,9 @@
     "measuredRounds": 9,
     "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
     "harnessPlacement": "standalone",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "hono · JS host · runtime dynamic",
@@ -205,7 +227,9 @@
     "measuredRounds": 9,
     "sampleOp": "register route + path.length",
     "harnessPlacement": "js-host",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "redux · JS host · runtime dynamic",
@@ -222,7 +246,9 @@
     "measuredRounds": 9,
     "sampleOp": "dispatch(action) + getState().count",
     "harnessPlacement": "js-host",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "redux · standalone · compile-time static",
@@ -241,7 +267,9 @@
     "measuredRounds": 9,
     "sampleOp": "dispatch(action) + getState().count",
     "harnessPlacement": "standalone",
-    "inputMode": "compile-time-static"
+    "inputMode": "compile-time-static",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "redux · standalone · runtime dynamic",
@@ -260,7 +288,9 @@
     "measuredRounds": 9,
     "sampleOp": "dispatch(action) + getState().count",
     "harnessPlacement": "standalone",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "moment · JS host · runtime dynamic",
@@ -277,7 +307,9 @@
     "measuredRounds": 9,
     "sampleOp": "moment(date).format('YYYY-MM-DD').length",
     "harnessPlacement": "js-host",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   },
   {
     "name": "lit · JS host · runtime dynamic",
@@ -294,8 +326,8 @@
     "measuredRounds": 9,
     "sampleOp": "select one of two runtime-owned callbacks",
     "harnessPlacement": "js-host",
-    "inputMode": "runtime-dynamic"
+    "inputMode": "runtime-dynamic",
+    "generatedAt": "2026-09-05T23:43:49.714Z",
+    "sourceRevision": "1840b75c305622de35e1cef283e897d150a77207"
   }
 ]
-
-
