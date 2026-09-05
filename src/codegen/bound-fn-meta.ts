@@ -57,7 +57,11 @@ import type { Instr } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { noJsHost } from "./js-errors.js";
-import { stringConstantExternrefInstrs } from "./native-strings.js";
+import {
+  ensureNativeStringHelpers,
+  nativeStringLiteralInstrs,
+  stringConstantExternrefInstrs,
+} from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 
@@ -85,17 +89,22 @@ const FN_META_FLAGS = 0x04;
  * stack. The local plumbing lives here rather than at the call site so the
  * caller (a god-file) grows by exactly one line.
  */
-export function seedBoundFunctionLengthOnStack(
+export function seedBoundFunctionMetaOnStack(
   ctx: CodegenContext,
   fctx: FunctionContext,
   targetLocal: number,
   boundArgCount: number,
 ): void {
   if (!noJsHost(ctx)) return;
+  // Settle the string helpers BEFORE either seed snapshots a funcMap index —
+  // registering them mid-seed would bake indices taken across a shift.
+  ensureObjectRuntime(ctx);
+  if (ctx.nativeStrings && ctx.anyStrTypeIdx >= 0) ensureNativeStringHelpers(ctx);
   const boundLocal = allocLocal(fctx, `__bindfn_val_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.tee", index: boundLocal });
   fctx.body.push({ op: "drop" });
   seedBoundFunctionLength(ctx, fctx, boundLocal, targetLocal, boundArgCount);
+  seedBoundFunctionName(ctx, fctx, boundLocal, targetLocal);
   fctx.body.push({ op: "local.get", index: boundLocal });
 }
 
@@ -175,6 +184,94 @@ export function seedBoundFunctionLength(
   fctx.body.push(...key());
   fctx.body.push({ op: "local.get", index: numTmp });
   fctx.body.push({ op: "call", funcIdx: boxIdx });
+  fctx.body.push({ op: "f64.const", value: FN_META_FLAGS });
+  fctx.body.push({ op: "call", funcIdx: defineIdx });
+  fctx.body.push({ op: "drop" });
+}
+
+/**
+ * §20.2.3.2 steps 9-11 — the `name` own property of a bound function.
+ *
+ *     9.  Let targetName be ? Get(Target, "name").
+ *     10. If targetName is not a String, set targetName to the empty String.
+ *     11. Perform SetFunctionName(F, targetName, "bound").
+ *
+ * ## Three details the steps hide
+ *
+ *  - **Step 9 is a plain `Get`, not `HasOwnProperty`** — unlike step 5's
+ *    `length` probe. An INHERITED `name` counts, and an accessor `name` RUNS:
+ *    `instance-name-error` installs a throwing getter and requires `bind()`
+ *    itself to propagate that throw. `__extern_get` gives exactly this; the
+ *    non-coercing `__hasOwnProperty` shape used for `length` would be wrong
+ *    here.
+ *  - **Step 10 is a TYPE test, not ToString.** `instance-name-non-string`
+ *    sets `name` to `undefined`, `null`, `true`, a Symbol, `23` and `{}`, and
+ *    every one must answer `"bound "` — the empty string, NOT `"bound 23"` or
+ *    `"bound [object Object]"`, and NOT a TypeError on the Symbol. So the test
+ *    is `__typeof_string`, and the non-string arm substitutes `""`.
+ *  - **SetFunctionName's prefix joins with a SPACE** (§10.2.9 step 4:
+ *    `name` is the string-concatenation of prefix, `" "`, and name), so the
+ *    literal is `"bound "` and chaining composes: `f.bind().bind().name` is
+ *    `"bound bound target"` because the second bind reads the first bind's own
+ *    seeded `name` right back through step 9.
+ *
+ * Attributes are SetFunctionName's `{writable:false, enumerable:false,
+ * configurable:true}` — the same `FN_META_FLAGS` SetFunctionLength uses.
+ *
+ * Native-strings-only: the concatenation is `__str_concat` over
+ * `ref $AnyString`. Off that lane (or with any helper missing) this is a
+ * no-op, leaving the bound function without an own `name` — a miss, not a
+ * wrong answer.
+ */
+export function seedBoundFunctionName(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  boundLocal: number,
+  targetLocal: number,
+): void {
+  if (!noJsHost(ctx)) return;
+  if (!ctx.nativeStrings || ctx.anyStrTypeIdx < 0) return;
+  ensureObjectRuntime(ctx);
+  ensureNativeStringHelpers(ctx);
+  const getIdx = ctx.funcMap.get("__extern_get");
+  const typeofStringIdx = ctx.funcMap.get("__typeof_string");
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  const concatIdx = ctx.nativeStrHelpers.get("__str_concat");
+  if (getIdx === undefined || typeofStringIdx === undefined || defineIdx === undefined || concatIdx === undefined) {
+    return;
+  }
+
+  addStringConstantGlobal(ctx, "name");
+  const key = (): Instr[] => stringConstantExternrefInstrs(ctx, "name").map((i) => ({ ...i }));
+  const nameTmp = allocLocal(fctx, `__bindfn_name_${fctx.locals.length}`, { kind: "externref" });
+
+  // step 9 — a plain Get: a `name` getter runs here and its throw escapes bind.
+  fctx.body.push({ op: "local.get", index: targetLocal });
+  fctx.body.push(...key());
+  fctx.body.push({ op: "call", funcIdx: getIdx });
+  fctx.body.push({ op: "local.set", index: nameTmp });
+
+  // steps 10-11 — "bound " + (typeof targetName === "string" ? targetName : "")
+  fctx.body.push(...nativeStringLiteralInstrs(ctx, "bound "));
+  fctx.body.push({ op: "local.get", index: nameTmp });
+  fctx.body.push({ op: "call", funcIdx: typeofStringIdx });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "ref", typeIdx: ctx.anyStrTypeIdx } },
+    then: [
+      { op: "local.get", index: nameTmp },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+    ],
+    else: nativeStringLiteralInstrs(ctx, ""),
+  });
+  fctx.body.push({ op: "call", funcIdx: concatIdx });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.set", index: nameTmp });
+
+  fctx.body.push({ op: "local.get", index: boundLocal });
+  fctx.body.push(...key());
+  fctx.body.push({ op: "local.get", index: nameTmp });
   fctx.body.push({ op: "f64.const", value: FN_META_FLAGS });
   fctx.body.push({ op: "call", funcIdx: defineIdx });
   fctx.body.push({ op: "drop" });

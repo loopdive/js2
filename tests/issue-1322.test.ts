@@ -56,6 +56,24 @@ async function runWasi(src: string): Promise<{ exports: Record<string, unknown>;
 }
 
 describe("#1322 — Math.random() in WASI mode uses random_get", () => {
+  it("standalone uses a stateful native generator without env.Math_random", async () => {
+    const r = await compile(
+      `
+      export function sample(): number { return Math.random(); }
+    `,
+      { fileName: "t.ts", target: "standalone" },
+    );
+    expect(r.success, JSON.stringify(r.errors)).toBe(true);
+    const module = await WebAssembly.compile(r.binary);
+    const names = WebAssembly.Module.imports(module).map((entry) => `${entry.module}.${entry.name}`);
+    expect(names).not.toContain("env.Math_random");
+    const instance = await WebAssembly.instantiate(module, {});
+    const sample = instance.exports.sample as () => number;
+    const values = Array.from({ length: 20 }, sample);
+    expect(values.every((value) => value >= 0 && value < 1)).toBe(true);
+    expect(new Set(values).size).toBeGreaterThan(15);
+  });
+
   it("returns a float in [0, 1)", async () => {
     const { exports } = await runWasi(`
       export function r(): number { return Math.random(); }

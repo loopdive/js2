@@ -17,7 +17,7 @@
 //                   wrappers, chained-resolution machinery, rejection
 //                   propagation.
 
-import type { Instr, LocalDef, ValType } from "../ir/types.js";
+import type { FieldDef, Instr, LocalDef, ValType } from "../ir/types.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
@@ -31,12 +31,12 @@ import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stab
 // never at module evaluation). The other three are cycle-free leaves relative
 // to this module.
 import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures.js";
-import {
-  CLOSURE_CAPTURE_FIELD_BASE,
-  closureArityField,
-  closureBagField,
-  closureBagInitInstr,
-} from "./closures/funcref-wrapper-types.js";
+import { closureBagField, closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
+// (#5197 Slice B) The settle closures escape to user code as real function
+// objects, so they carry the standard builtin-function metadata subtype rather
+// than a Promise-local imitation. Cycle-free: builtin-fn-meta.ts imports only
+// the closure-header leaf and func-space.
+import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
@@ -45,11 +45,13 @@ import { reserveClosedMethodDispatchVararg } from "./closed-method-dispatch.js";
 // $ObjVec. Cycle-safe: object-runtime.ts does not import this module.
 import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { getFuncRefWrapperRootTypeIdx } from "./closures/funcref-wrapper-types.js";
+import { CARRIER_BAG_HAS } from "./carrier-bag-visibility.js";
 // (#2958, extracted for #3102) The unhandled-rejection substrate lives in its own
 // module; the inline hooks in this file (settle-body note, Promise.reject mint)
 // call these two. `ensureUnhandledRejectionReporter` is imported by index.ts.
 import { ensureUnhandledRejectionTracking, buildNoteUnhandledRejection } from "./unhandled-rejection.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
+import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 
 /**
  * #1326 — Sentinel state values for `$Promise.state`. Match the JS spec
@@ -60,6 +62,45 @@ import { buildTargetTaggedTry } from "../ir/try-table.js";
 export const PROMISE_STATE_PENDING = 0;
 export const PROMISE_STATE_FULFILLED = 1;
 export const PROMISE_STATE_REJECTED = 2;
+
+const DENO_PROMISE_HOOK_DISPATCH = "__v8x_dispatch_promise_hook";
+
+/** v8::PromiseHookType values used by the private Deno graph dispatcher. */
+export const DENO_PROMISE_HOOK_INIT = 0;
+export const DENO_PROMISE_HOOK_BEFORE = 1;
+export const DENO_PROMISE_HOOK_AFTER = 2;
+export const DENO_PROMISE_HOOK_RESOLVE = 3;
+
+/**
+ * Build a direct, same-module Promise-hook dispatch for an app-owned
+ * `$Promise`.  Ordinary JS2 programs do not define the private dispatcher, so
+ * this is byte-inert outside the opted-in Deno graph.
+ *
+ * `promiseInstrs` and `parentInstrs` push concrete WasmGC refs.  They are
+ * lifted to externref because the runtime-seed dispatcher accepts JS values.
+ */
+export function buildDenoPromiseHookCall(
+  ctx: CodegenContext,
+  kind:
+    | typeof DENO_PROMISE_HOOK_INIT
+    | typeof DENO_PROMISE_HOOK_BEFORE
+    | typeof DENO_PROMISE_HOOK_AFTER
+    | typeof DENO_PROMISE_HOOK_RESOLVE,
+  promiseInstrs: Instr[],
+  parentInstrs?: Instr[],
+): Instr[] {
+  const dispatchFuncIdx = ctx.funcMap.get(DENO_PROMISE_HOOK_DISPATCH);
+  if (dispatchFuncIdx === undefined) return [];
+  return [
+    { op: "f64.const", value: kind },
+    ...promiseInstrs,
+    { op: "extern.convert_any" },
+    ...(parentInstrs === undefined
+      ? canonicalUndefinedExternInstrs(ctx)
+      : [...parentInstrs, { op: "extern.convert_any" } satisfies Instr]),
+    { op: "call", funcIdx: dispatchFuncIdx },
+  ];
+}
 
 /**
  * #1326 — Default microtask queue capacity. The Phase 1C-A queue is a pair
@@ -309,11 +350,12 @@ export type CodegenContextWithScheduler = CodegenContext & { asyncScheduler?: As
 
 /**
  * #1326 — Get or register the `$Promise` WasmGC struct type. The struct
- * has three fields:
+ * has four fields:
  *   - state: i32 (0=pending, 1=fulfilled, 2=rejected)
  *   - value: externref (fulfilled value or rejection reason)
  *   - callbacks: externref (nullable `$PromiseCallback` linked list for
  *     pending `.then` continuations)
+ *   - $bag: externref (nullable own-property bag, allocated on first expando)
  *
  * Returns the registered struct's typeIdx, cached for re-use.
  */
@@ -328,6 +370,7 @@ export function getOrRegisterPromiseType(ctx: CodegenContext): number {
       { name: "state", type: { kind: "i32" }, mutable: true },
       { name: "value", type: { kind: "externref" }, mutable: true },
       { name: "callbacks", type: { kind: "externref" }, mutable: true },
+      closureBagField(),
     ],
   });
   // Mirror the bookkeeping that other struct registrations do so the
@@ -338,6 +381,7 @@ export function getOrRegisterPromiseType(ctx: CodegenContext): number {
     { name: "state", type: { kind: "i32" as const }, mutable: true },
     { name: "value", type: { kind: "externref" as const }, mutable: true },
     { name: "callbacks", type: { kind: "externref" as const }, mutable: true },
+    closureBagField(),
   ]);
   state.promiseTypeIdx = typeIdx;
   return typeIdx;
@@ -847,7 +891,7 @@ export function ensurePromiseSettleFunctions(ctx: CodegenContext): void {
     name: "__promise_fulfill",
     typeIdx: settleTypeIdx,
     locals: buildPromiseSettleLocals(callbackTypeIdx),
-    body: buildPromiseSettleBody(state, promiseTypeIdx, callbackTypeIdx, PROMISE_STATE_FULFILLED),
+    body: buildPromiseSettleBody(ctx, state, promiseTypeIdx, callbackTypeIdx, PROMISE_STATE_FULFILLED),
     exported: false,
   });
   ctx.funcMap.set("__promise_fulfill", state.promiseFulfillFuncIdx);
@@ -856,7 +900,7 @@ export function ensurePromiseSettleFunctions(ctx: CodegenContext): void {
     name: "__promise_reject",
     typeIdx: settleTypeIdx,
     locals: buildPromiseSettleLocals(callbackTypeIdx),
-    body: buildPromiseSettleBody(state, promiseTypeIdx, callbackTypeIdx, PROMISE_STATE_REJECTED),
+    body: buildPromiseSettleBody(ctx, state, promiseTypeIdx, callbackTypeIdx, PROMISE_STATE_REJECTED),
     exported: false,
   });
   ctx.funcMap.set("__promise_reject", state.promiseRejectFuncIdx);
@@ -871,7 +915,7 @@ export function ensurePromiseSettleFunctions(ctx: CodegenContext): void {
     name: "__then_identity_fulfill",
     typeIdx: state.microtaskFuncTypeIdx,
     locals: buildIdentityWrapperLocals(capsTypeIdx),
-    body: buildIdentityWrapperBody(capsTypeIdx, state.promiseResolveValueFuncIdx),
+    body: buildIdentityWrapperBody(ctx, capsTypeIdx, state.promiseResolveValueFuncIdx),
     exported: false,
   });
   ctx.funcMap.set("__then_identity_fulfill", state.identityFulfillWrapperFuncIdx);
@@ -880,7 +924,7 @@ export function ensurePromiseSettleFunctions(ctx: CodegenContext): void {
     name: "__then_identity_reject",
     typeIdx: state.microtaskFuncTypeIdx,
     locals: buildIdentityWrapperLocals(capsTypeIdx),
-    body: buildIdentityWrapperBody(capsTypeIdx, state.promiseRejectFuncIdx),
+    body: buildIdentityWrapperBody(ctx, capsTypeIdx, state.promiseRejectFuncIdx),
     exported: false,
   });
   ctx.funcMap.set("__then_identity_reject", state.identityRejectWrapperFuncIdx);
@@ -922,10 +966,55 @@ export interface PromiseExecutorClosures {
   rejectClFuncIdx: number;
   /** The `$__promise_settle_cap` struct typeIdx (subtype of the canonical `(externref)->()` wrapper). */
   capTypeIdx: number;
+  /**
+   * (#5197 Slice B) Field index of the captured `$Promise` inside
+   * `$__promise_settle_cap`. NOT `CLOSURE_CAPTURE_FIELD_BASE`: the cap struct
+   * subtypes the §27.2.1.3 builtin-function METADATA type, whose two extra
+   * header slots (`bfnstate`, `bfnid`) sit between the closure header and the
+   * capture. Every read/write of the capture derives from this, never a literal.
+   */
+  capPromiseFieldIdx: number;
+  /**
+   * (#5197 Slice B) The `$__promise_settle_meta` typeIdx — the shared
+   * builtin-function metadata subtype (`{name: "", length: 1}`) both settle
+   * closures carry, so `resolve`/`reject` escape as real function objects.
+   */
+  capMetaTypeIdx: number;
   /** `$Promise` struct typeIdx. */
   promiseTypeIdx: number;
   /** `__promise_reject(promise, reason) -> reason` funcIdx (used by the executor-throw catch). */
   rejectFuncIdx: number;
+}
+
+/**
+ * (#5197 Slice B) The `struct.new` sequence for one settle closure VALUE
+ * (`resolve` / `reject`), leaving `(ref $__promise_settle_cap)` on the stack.
+ *
+ * A FACTORY, not a shared constant: the three mint sites splice the result into
+ * three different function bodies, and aliasing one `Instr[]` across them would
+ * be double-remapped by the late-import index walks (the `ref.func` operand is
+ * a DEFINED-function index).
+ *
+ * `promiseInstrs` must leave the captured `(ref $Promise)` on the stack.
+ */
+export function buildPromiseSettleClosureInstrs(
+  closures: PromiseExecutorClosures,
+  clFuncIdx: number,
+  promiseInstrs: readonly Instr[],
+): Instr[] {
+  return [
+    { op: "ref.func", funcIdx: clFuncIdx },
+    { op: "i32.const", value: 1 }, // (#3673) $arity — settle fns take 1 arg
+    closureBagInitInstr(), // (#4241) $bag
+    // (#5197) `bfnstate` delete-bits + the `bfnid` metadata anchor, in the
+    // layout `ensureBuiltinFnMetaType` fixed. Both settle functions share ONE
+    // metadata entry because §27.2.1.3.1/.2 give them identical `{name: "",
+    // length: 1}`; the id therefore selects that single entry for both.
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: closures.capMetaTypeIdx },
+    ...promiseInstrs,
+    { op: "struct.new", typeIdx: closures.capTypeIdx },
+  ];
 }
 
 /**
@@ -960,19 +1049,38 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
   const wrapper = getOrCreateFuncRefWrapperTypes(ctx, [{ kind: "externref" }], []);
   if (!wrapper) return null;
 
+  // (#5197 Slice B) §27.2.1.3.1/.2 — a promise resolve/reject function is an
+  // anonymous BUILT-IN function object: `typeof === "function"`,
+  // `[[Prototype]] === %Function.prototype%`, extensible, own `length` (1) then
+  // `name` ("") with `{writable:F, enumerable:F, configurable:T}`, and no
+  // [[Construct]]. All of that is exactly what the repository's builtin-function
+  // metadata carrier already answers (`builtin-fn-meta.ts` + the finalize-time
+  // arms in `fillBuiltinFnMeta` / `prependBuiltinFnObjectSemantics`), so the cap
+  // struct SUBTYPES that carrier instead of introducing a second function-object
+  // representation. Both settle functions share ONE metadata entry: the spec
+  // gives them identical `{name, length}`, and the entry is keyed by
+  // (name,length) identity, not by which of the two is being materialized.
+  const capMetaTypeIdx = ensureBuiltinFnMetaType(
+    ctx,
+    wrapper.structTypeIdx,
+    wrapper.closureInfo,
+    "promise:settle",
+    "",
+    1,
+  );
+  const capMetaFields = (ctx.mod.types[capMetaTypeIdx] as { fields: FieldDef[] }).fields;
+  const capPromiseFieldIdx = capMetaFields.length;
   const capTypeIdx = ctx.mod.types.length;
   ctx.mod.types.push({
     kind: "struct",
     name: "$__promise_settle_cap",
     fields: [
-      // Field 0 is inherited from the wrapper root (funcref); it MUST be
-      // redeclared identically in the subtype — as must the #3673 $arity slot.
-      { name: "func", type: { kind: "funcref" }, mutable: false },
-      closureArityField(),
-      closureBagField(),
+      // The metadata supertype's fields MUST be redeclared verbatim (closure
+      // header + `bfnstate` + `bfnid`); the capture is appended after them.
+      ...capMetaFields.map((f) => ({ ...f })),
       { name: "cap_promise", type: { kind: "ref", typeIdx: promiseTypeIdx }, mutable: false },
     ],
-    superTypeIdx: wrapper.structTypeIdx,
+    superTypeIdx: capMetaTypeIdx,
   });
 
   // Mint both trampolines UP-FRONT (stable-regime handles) before any code
@@ -989,7 +1097,7 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
   const makeBody = (settleFuncIdx: number): Instr[] => [
     { op: "local.get", index: 0 }, // self: (ref $wrapperRoot)
     { op: "ref.cast", typeIdx: capTypeIdx }, // downcast to the cap subtype (non-null)
-    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: CLOSURE_CAPTURE_FIELD_BASE }, // captured (ref $Promise)
+    { op: "struct.get", typeIdx: capTypeIdx, fieldIdx: capPromiseFieldIdx }, // captured (ref $Promise)
     { op: "local.get", index: 1 }, // value: externref
     { op: "call", funcIdx: settleFuncIdx }, // settle -> externref
     { op: "drop" }, // trampoline result type is () — discard the settled value
@@ -1017,6 +1125,8 @@ export function ensurePromiseExecutorClosures(ctx: CodegenContext): PromiseExecu
     resolveClFuncIdx,
     rejectClFuncIdx,
     capTypeIdx,
+    capPromiseFieldIdx,
+    capMetaTypeIdx,
     promiseTypeIdx,
     rejectFuncIdx,
   };
@@ -1144,18 +1254,21 @@ function ensurePromiseThenableSubstrate(
   const promiseLocal = 2;
   const reasonLocal = 3;
   const vecLocal = 4;
+  const capturedThenLocal = 5;
+  // (#5197 R3-5) `__apply_closure(fn, recv, argvec)` — the open closure-call
+  // bridge. Reserved here so the funcIdx is stable before this body bakes it.
+  const applyClosureIdx = reserveApplyClosure(ctx);
   const jobLocals: LocalDef[] = [
     { name: "$promise", type: { kind: "ref_null", typeIdx: state.promiseTypeIdx } },
     { name: "$reason", type: { kind: "externref" } },
     { name: "$argvec", type: { kind: "externref" } },
+    { name: "$capturedThen", type: { kind: "externref" } },
   ];
   const emitSettleCap = (clFuncIdx: number): Instr[] => [
-    { op: "ref.func", funcIdx: clFuncIdx },
-    { op: "i32.const", value: 1 }, // (#3673) $arity — settle callbacks take 1 arg
-    closureBagInitInstr(), // (#4241) $bag
-    { op: "local.get", index: promiseLocal },
-    { op: "ref.as_non_null" },
-    { op: "struct.new", typeIdx: execClosures.capTypeIdx },
+    ...buildPromiseSettleClosureInstrs(execClosures, clFuncIdx, [
+      { op: "local.get", index: promiseLocal },
+      { op: "ref.as_non_null" },
+    ]),
     { op: "extern.convert_any" },
   ];
   const jobTryBody: Instr[] = [
@@ -1172,10 +1285,43 @@ function ensurePromiseThenableSubstrate(
     // res, rej)`. The peel unwraps an `$AnyValue`-boxed resolution so the
     // dispatcher's `ref.test` arms (closed structs / `$Object`) see the RAW
     // object as the receiver.
-    { op: "local.get", index: 1 },
-    { op: "call", funcIdx: peelValueFuncIdx },
-    { op: "local.get", index: vecLocal },
-    { op: "call", funcIdx: varargThenFuncIdx },
+    // (#5197 R3-5) When Resolve captured the `then` FUNCTION (an own `then` on
+    // a native promise), call THAT value — the spec captures `then` at Resolve
+    // time (step 9) and calls it as a job (step 14), so a reassignment between
+    // the two must not change which function runs. Otherwise re-dispatch
+    // through the vararg `then` method dispatcher exactly as before.
+    ...(applyClosureIdx === undefined
+      ? [
+          { op: "local.get", index: 1 } as Instr,
+          { op: "call", funcIdx: peelValueFuncIdx } as Instr,
+          { op: "local.get", index: vecLocal } as Instr,
+          { op: "call", funcIdx: varargThenFuncIdx } as Instr,
+        ]
+      : ([
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: capsTypeIdx },
+          { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 0 },
+          { op: "local.tee", index: capturedThenLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: peelValueFuncIdx },
+              { op: "local.get", index: vecLocal },
+              { op: "call", funcIdx: varargThenFuncIdx },
+            ],
+            else: [
+              { op: "local.get", index: capturedThenLocal },
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: peelValueFuncIdx },
+              { op: "local.get", index: vecLocal },
+              { op: "call", funcIdx: applyClosureIdx },
+            ],
+          },
+        ] satisfies Instr[])),
     { op: "drop" },
   ];
   const thenableJobFuncIdx = mintDefinedFunc(ctx);
@@ -1231,6 +1377,7 @@ function buildPromiseSettleLocals(callbackTypeIdx: number): LocalDef[] {
 }
 
 function buildPromiseSettleBody(
+  ctx: CodegenContext,
   state: AsyncSchedulerState,
   promiseTypeIdx: number,
   callbackTypeIdx: number,
@@ -1244,6 +1391,10 @@ function buildPromiseSettleBody(
   const capsFieldIdx = settledState === PROMISE_STATE_FULFILLED ? 1 : 3;
 
   return [
+    // V8 reports the resolving-function invocation even when the promise has
+    // already settled.  Keep this before the one-shot guard for the same
+    // duplicate-resolution behavior.
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_RESOLVE, [{ op: "local.get", index: promiseLocal }]),
     // Promise settlement is one-shot. If a user callback tries to resolve the
     // same chained promise again, return the attempted value and leave the
     // original state/value intact.
@@ -1329,23 +1480,35 @@ function buildPromiseSettleBody(
 }
 
 function buildIdentityWrapperLocals(capsTypeIdx: number): LocalDef[] {
-  // Params 0/1: (caps, value). Local 2 is the decoded caps struct.
-  return [{ name: "$caps", type: { kind: "ref", typeIdx: capsTypeIdx } }];
+  // Params 0/1: (caps, value). Locals 2/3 are decoded caps + settle result.
+  return [
+    { name: "$caps", type: { kind: "ref", typeIdx: capsTypeIdx } },
+    { name: "$result", type: { kind: "externref" } },
+  ];
 }
 
-function buildIdentityWrapperBody(capsTypeIdx: number, settleFuncIdx: number): Instr[] {
+function buildIdentityWrapperBody(ctx: CodegenContext, capsTypeIdx: number, settleFuncIdx: number): Instr[] {
   const rawCapsLocal = 0;
   const valueLocal = 1;
   const capsLocal = 2;
+  const resultLocal = 3;
+  const chainedPromise = (): Instr[] => [
+    { op: "local.get", index: capsLocal },
+    { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+  ];
   return [
     { op: "local.get", index: rawCapsLocal },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: capsTypeIdx },
     { op: "local.set", index: capsLocal },
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_BEFORE, chainedPromise()),
     { op: "local.get", index: capsLocal },
     { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
     { op: "local.get", index: valueLocal },
     { op: "call", funcIdx: settleFuncIdx },
+    { op: "local.set", index: resultLocal },
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_AFTER, chainedPromise()),
+    { op: "local.get", index: resultLocal },
   ];
 }
 
@@ -1360,6 +1523,8 @@ function buildPromiseResolveValueLocals(promiseTypeIdx: number): LocalDef[] {
     { name: "$reason", type: { kind: "externref" } },
     { name: "$poisoned", type: { kind: "i32" } },
     { name: "$peeled", type: { kind: "externref" } },
+    // (#5197 R3-5) The own `then` read off a native `$Promise` resolution.
+    { name: "$bagThen", type: { kind: "externref" } },
   ];
 }
 
@@ -1521,6 +1686,91 @@ function buildPromiseResolveValueBody(
           { op: "local.set", index: peeledLocal },
         ];
 
+  // (#5197 R3-5) §27.2.1.3.2 steps 8-13 run `Get(resolution, "then")` for EVERY
+  // object, including a native promise. The `$Promise` arm below adopts the
+  // native state directly, so `nativePromise.then = f` was never observed. The
+  // decision rides on the VALUE (does this exact object carry an own `then` in
+  // its carrier bag?), not on the syntax that produced it, so it is taken
+  // identically however the promise reaches Resolve — a variable, a property,
+  // an array element, a call result.
+  //
+  // Absent the carrier-bag natives (a module with no promise expandos at all)
+  // this arm is not emitted and the body is byte-identical to before.
+  const bagThenLocal = 8;
+  const bagHasIdx = ctx.funcMap.get(CARRIER_BAG_HAS);
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  // (#5197 round-3 review F2) IsCallable(thenAction) is the CLASSIFIER's
+  // question, not a single root-wrapper `ref.test`: a bound function
+  // (`$__bound_fn`), the runtime-eval carrier and the boundary callable are
+  // callable and live outside the funcref-wrapper root. `__typeof_function`
+  // is filled at finalize from the shared closure classifier
+  // (closure-classifier.ts / typeof-natives-finalize.ts), so it also sees
+  // callable carriers minted AFTER this body is built. The root test is kept
+  // only as the fallback when the predicate cannot be registered.
+  if (thenable !== null && !ctx.indexSpaceFrozen) {
+    ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  }
+  const typeofFunctionIdx = thenable === null ? undefined : ctx.funcMap.get("__typeof_function");
+  const callableRootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
+  const isCallableThen: Instr[] =
+    typeofFunctionIdx !== undefined
+      ? [
+          { op: "local.get", index: bagThenLocal },
+          { op: "call", funcIdx: typeofFunctionIdx },
+        ]
+      : callableRootTypeIdx === undefined
+        ? []
+        : [
+            { op: "local.get", index: bagThenLocal },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: callableRootTypeIdx },
+          ];
+  const ownThenArm: Instr[] =
+    thenable === null || bagHasIdx === undefined || externGetIdx === undefined || isCallableThen.length === 0
+      ? []
+      : [
+          { op: "local.get", index: peeledLocal },
+          ...stringConstantExternrefInstrs(ctx, "then"),
+          { op: "call", funcIdx: bagHasIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: peeledLocal },
+              ...stringConstantExternrefInstrs(ctx, "then"),
+              { op: "call", funcIdx: externGetIdx },
+              { op: "local.set", index: bagThenLocal },
+              ...isCallableThen,
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  // Callable own `then`: enqueue PromiseResolveThenableJob with
+                  // the function CAPTURED NOW (step 9), so a later reassignment
+                  // of `then` cannot change which function the job calls.
+                  { op: "ref.func", funcIdx: thenable.thenableJobFuncIdx },
+                  { op: "local.get", index: bagThenLocal },
+                  { op: "local.get", index: promiseLocal },
+                  { op: "struct.new", typeIdx: capsTypeIdx },
+                  { op: "extern.convert_any" },
+                  { op: "local.get", index: valueLocal },
+                  { op: "call", funcIdx: state.enqueueFuncIdx },
+                  { op: "local.get", index: valueLocal },
+                  { op: "return" },
+                ],
+                else: [
+                  // Own but NOT callable (step 11): fulfil with the promise
+                  // object itself, do not adopt its state.
+                  { op: "local.get", index: promiseLocal },
+                  { op: "local.get", index: valueLocal },
+                  { op: "call", funcIdx: state.promiseFulfillFuncIdx },
+                  { op: "return" },
+                ],
+              },
+            ],
+          },
+        ];
+
   return [
     ...peelPrelude,
     { op: "local.get", index: peeledLocal },
@@ -1536,6 +1786,7 @@ function buildPromiseResolveValueBody(
         { op: "ref.cast", typeIdx: promiseTypeIdx },
         { op: "local.set", index: innerLocal },
         ...selfCheck,
+        ...ownThenArm,
         // caps = $__then_caps{ callback: null, chained: promise }
         { op: "ref.null.extern" },
         { op: "local.get", index: promiseLocal },
@@ -1702,6 +1953,20 @@ function coerceStackValueToExternref(ctx: CodegenContext, body: Instr[], from: V
       return;
     }
     case "i32": {
+      // (#5197 R3-8) `i32` is overloaded — it backs `number` AND `boolean`
+      // (1/0) — so the box helper is chosen by the value's BRAND, exactly as
+      // the canonical i32→externref rule in type-coercion.ts does. A
+      // type-blind `__box_number` turned a handler returning `true` into the
+      // number 1, which is what `race/resolved-sequence.js` observed. A
+      // symbol-branded i32 cannot reach here: a handler returning a symbol is
+      // already `externref` at this boundary.
+      if (from.boolean === true) {
+        const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+        if (boxBoolIdx !== undefined) {
+          body.push({ op: "call", funcIdx: boxBoolIdx });
+          return;
+        }
+      }
       const boxIdx = ctx.funcMap.get("__box_number");
       if (boxIdx !== undefined) {
         body.push({ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxIdx });
@@ -1762,6 +2027,10 @@ function emitThenWrapperFunction(
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: selfTypeIdx },
     { op: "local.set", index: callbackLocal },
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_BEFORE, [
+      { op: "local.get", index: capLocal },
+      { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+    ]),
   ];
 
   // (#2867 Gap 2) Run the user `.then`/`.catch` handler inside a try/catch: a
@@ -1816,6 +2085,12 @@ function emitThenWrapperFunction(
           { op: "drop" },
         ],
       },
+    ]),
+  );
+  body.push(
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_AFTER, [
+      { op: "local.get", index: capLocal },
+      { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
     ]),
   );
   // Wrapper result (externref) — dropped by the drain; always null now.
@@ -1938,25 +2213,39 @@ function ensureDynamicThenWrapper(ctx: CodegenContext, kind: "fulfill" | "reject
     ),
   ];
 
-  // IsCallable ≈ "is a closure-wrapper struct" — every compiled function value
-  // (user closures, builtin-fn metas, bound functions) subtypes the wrapper
-  // root. When no wrapper root exists yet, a non-null callback is applied
-  // optimistically (`__apply_closure`'s miss arm answers undefined, no trap).
+  // Use the finalized standalone IsCallable predicate when available.  Besides
+  // ordinary closure wrappers it recognizes the deliberately non-subtyping
+  // `$RuntimeEvalInterpretedCallback` carrier used by the runtime-eval
+  // provider, as well as builtin/bound/proxy/AOT callable carriers.  A raw
+  // wrapper-root test would misclassify an interpreted `.then(cb)` handler as
+  // absent and leave its observable side effects pending forever.
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
   const rootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
   const callableArm: Instr[] =
-    rootTypeIdx === undefined
-      ? applyArm
-      : [
+    typeofFunctionIdx !== undefined
+      ? [
           { op: "local.get", index: cbLocal },
-          { op: "any.convert_extern" },
-          { op: "ref.test", typeIdx: rootTypeIdx },
+          { op: "call", funcIdx: typeofFunctionIdx },
           {
             op: "if",
             blockType: { kind: "empty" },
             then: applyArm,
             else: identityArm.map((i) => ({ ...i })),
           },
-        ];
+        ]
+      : rootTypeIdx === undefined
+        ? applyArm
+        : [
+            { op: "local.get", index: cbLocal },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: rootTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: applyArm,
+              else: identityArm.map((i) => ({ ...i })),
+            },
+          ];
 
   const body: Instr[] = [
     { op: "local.get", index: 0 },
@@ -1967,6 +2256,11 @@ function ensureDynamicThenWrapper(ctx: CodegenContext, kind: "fulfill" | "reject
     { op: "ref.as_non_null" },
     { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 0 },
     { op: "local.set", index: cbLocal },
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_BEFORE, [
+      { op: "local.get", index: capLocal },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+    ]),
     { op: "local.get", index: cbLocal },
     { op: "ref.is_null" },
     {
@@ -1975,6 +2269,11 @@ function ensureDynamicThenWrapper(ctx: CodegenContext, kind: "fulfill" | "reject
       then: identityArm,
       else: callableArm,
     },
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_AFTER, [
+      { op: "local.get", index: capLocal },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+    ]),
     { op: "ref.null.extern" },
   ];
 
@@ -2243,7 +2542,7 @@ export function exportPromiseBoundaryIfRegistered(ctx: CodegenContext): void {
  * async frame driver reuses them rather than forking a parallel scheduler.
  */
 export interface AsyncDriveRuntime {
-  /** `$Promise` struct typeIdx (`{state i32, value externref, callbacks externref}`). */
+  /** `$Promise` struct typeIdx (`{state i32, value externref, callbacks externref, $bag externref}`). */
   promiseTypeIdx: number;
   /** `$PromiseCallback` reaction-node typeIdx ({@link getOrRegisterPromiseCallbackTypeIdx}). */
   callbackTypeIdx: number;
@@ -3995,7 +4294,7 @@ export function getRunLoopFuncIdxForWasiStart(ctx: CodegenContext): number | nul
  *   - <valueInstrs>                (value = caller's pushed externref)
  *   - ref.null extern              (callbacks placeholder — Phase 1C-B
  *                                   will upgrade to a typed pending list)
- *   - struct.new $Promise          (consumes 3 stack values)
+ *   - struct.new $Promise          (consumes 4 stack values, including null `$bag`)
  *   - extern.convert_any           (lift (ref $Promise) → externref so
  *                                   downstream consumers keep working)
  *
@@ -4020,6 +4319,7 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
     fctx.body.push({ op: "i32.const", value: PROMISE_STATE_FULFILLED });
     for (const instr of valueInstrs) fctx.body.push(instr);
     fctx.body.push({ op: "ref.null.extern" });
+    fctx.body.push(closureBagInitInstr());
     fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
     fctx.body.push({ op: "extern.convert_any" });
     return;
@@ -4046,8 +4346,10 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
       { op: "i32.const", value: PROMISE_STATE_PENDING },
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
+      closureBagInitInstr(),
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "local.set", index: pLocal },
+      ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]),
       { op: "local.get", index: pLocal },
       { op: "local.get", index: vLocal },
       { op: "call", funcIdx: resolveValueIdx },
@@ -4066,6 +4368,7 @@ export function emitStandalonePromiseResolve(ctx: CodegenContext, fctx: Function
 export function emitStandalonePromiseReject(ctx: CodegenContext, fctx: FunctionContext, reasonInstrs: Instr[]): void {
   const promiseTypeIdx = getOrRegisterPromiseType(ctx);
   const state = getOrInitState(ctx as CodegenContextWithScheduler);
+  const pLocal = allocLocal(fctx, `__preject_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
   // (#2958) Ensure the unhandled-rejection substrate exists (a wasi-gated no-op
   // otherwise). `Promise.reject(x)` mints a REJECTED `$Promise` DIRECTLY, so it
   // never passes through `__promise_reject`'s settle body — record it here.
@@ -4073,15 +4376,19 @@ export function emitStandalonePromiseReject(ctx: CodegenContext, fctx: FunctionC
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_REJECTED });
   for (const instr of reasonInstrs) fctx.body.push(instr);
   fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
+  fctx.body.push({ op: "local.set", index: pLocal });
+  fctx.body.push(
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]),
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_RESOLVE, [{ op: "local.get", index: pLocal }]),
+  );
   if (state.unhandledHeadGlobalIdx >= 0) {
-    const pLocal = allocLocal(fctx, `__preject_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
-    fctx.body.push({ op: "local.set", index: pLocal });
     for (const instr of buildNoteUnhandledRejection(state, [{ op: "local.get", index: pLocal }])) {
       fctx.body.push(instr);
     }
-    fctx.body.push({ op: "local.get", index: pLocal });
   }
+  fctx.body.push({ op: "local.get", index: pLocal });
   fctx.body.push({ op: "extern.convert_any" });
 }
 
@@ -4163,34 +4470,69 @@ export function emitStandalonePromiseThen(
   const rejectedCapsLocal = allocLocal(fctx, `__then_rejected_caps_${fctx.locals.length}`, {
     kind: "externref",
   });
+  const fulfilledArgLocal = allocLocal(fctx, `__then_fulfilled_arg_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  const rejectedArgLocal = allocLocal(fctx, `__then_rejected_arg_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  const overrideLocal = allocLocal(fctx, `__then_override_${fctx.locals.length}`, {
+    kind: "externref",
+  });
 
   for (const instr of promiseInstrs) fctx.body.push(instr);
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: promiseLocal });
 
-  // Chained promise starts pending with no callbacks.
-  fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
-  fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
-  fctx.body.push({ op: "local.set", index: chainedLocal });
-
+  // Evaluate the original handler values exactly once. Besides preserving
+  // ordinary call evaluation, these locals let the own-`then` override branch
+  // receive the same callback values as the native reaction branch without
+  // replaying callback expressions with side effects.
   if (onFulfilled) {
     for (const instr of onFulfilled.instrs) fctx.body.push(instr);
   } else {
     fctx.body.push({ op: "ref.null.extern" });
   }
-  fctx.body.push({ op: "local.get", index: chainedLocal });
-  fctx.body.push({ op: "struct.new", typeIdx: capsTypeIdx });
-  fctx.body.push({ op: "extern.convert_any" });
-  fctx.body.push({ op: "local.set", index: fulfilledCapsLocal });
-
+  fctx.body.push({ op: "local.set", index: fulfilledArgLocal });
   if (onRejected) {
     for (const instr of onRejected.instrs) fctx.body.push(instr);
   } else {
     fctx.body.push({ op: "ref.null.extern" });
   }
+  fctx.body.push({ op: "local.set", index: rejectedArgLocal });
+
+  // Build the existing reaction machinery in a separate arm. The receiver and
+  // handler values above are already materialised, so the custom own-`then`
+  // arm below can dispatch without duplicating any source evaluation.
+  const outerBody = fctx.body;
+  const nativeBody: Instr[] = [];
+  fctx.savedBodies.push(outerBody);
+  fctx.body = nativeBody;
+
+  // Chained promise starts pending with no callbacks.
+  fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
+  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push(closureBagInitInstr());
+  fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
+  fctx.body.push({ op: "local.set", index: chainedLocal });
+  fctx.body.push(
+    ...buildDenoPromiseHookCall(
+      ctx,
+      DENO_PROMISE_HOOK_INIT,
+      [{ op: "local.get", index: chainedLocal }],
+      [{ op: "local.get", index: promiseLocal }],
+    ),
+  );
+
+  fctx.body.push({ op: "local.get", index: fulfilledArgLocal });
+  fctx.body.push({ op: "local.get", index: chainedLocal });
+  fctx.body.push({ op: "struct.new", typeIdx: capsTypeIdx });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.set", index: fulfilledCapsLocal });
+
+  fctx.body.push({ op: "local.get", index: rejectedArgLocal });
   fctx.body.push({ op: "local.get", index: chainedLocal });
   fctx.body.push({ op: "struct.new", typeIdx: capsTypeIdx });
   fctx.body.push({ op: "extern.convert_any" });
@@ -4257,6 +4599,79 @@ export function emitStandalonePromiseThen(
     },
     { op: "local.get", index: chainedLocal },
     { op: "extern.convert_any" },
+  );
+  fctx.savedBodies.pop();
+  fctx.body = outerBody;
+
+  // A native Promise may carry an own `then` assigned by user code. Promise
+  // expandos now live in the carrier's general `$bag`, so discriminate by
+  // own-property presence before reading the value: an own `then = undefined`
+  // must still shadow Promise.prototype.then and take the ordinary call path.
+  // Promise.resolve(p) preserves p by identity, and only a bag miss takes the
+  // compiler's native reaction path above.
+  // Gate BEFORE any ensure: a module that never materialized the carrier-bag
+  // machinery (no promise expandos anywhere) takes the native reaction path
+  // and must not drag in the ObjVec builders — in a native-first JS build
+  // `ensureObjVecBuilders` → `ensureObjectRuntime` registers the entire
+  // `__boundary_object_*` import family (14 host imports the host-import
+  // ratchet counts against every plain async module).
+  if (ctx.funcMap.get("__carrier_bag_has") === undefined || ctx.funcMap.get("__extern_get") === undefined) {
+    fctx.body.push(...nativeBody);
+    return;
+  }
+  const { newIdx: objVecNewIdx, pushIdx: objVecPushIdx } = ensureObjVecBuilders(ctx);
+  const applyClosureIdx = reserveApplyClosure(ctx);
+  // Re-read AFTER the ensures — they can mint imports and shift the space;
+  // funcMap is kept in lockstep by the flush machinery.
+  const carrierBagHasIdx = ctx.funcMap.get("__carrier_bag_has")!;
+  const externGetIdx = ctx.funcMap.get("__extern_get")!;
+  const argsLocal = allocLocal(fctx, `__then_override_args_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  const overrideBody: Instr[] = [
+    { op: "call", funcIdx: objVecNewIdx },
+    { op: "local.set", index: argsLocal },
+  ];
+  if (onFulfilled) {
+    overrideBody.push(
+      { op: "local.get", index: argsLocal },
+      { op: "local.get", index: fulfilledArgLocal },
+      { op: "call", funcIdx: objVecPushIdx },
+    );
+  }
+  if (onRejected) {
+    overrideBody.push(
+      { op: "local.get", index: argsLocal },
+      { op: "local.get", index: rejectedArgLocal },
+      { op: "call", funcIdx: objVecPushIdx },
+    );
+  }
+  overrideBody.push(
+    { op: "local.get", index: overrideLocal },
+    { op: "local.get", index: promiseLocal },
+    { op: "extern.convert_any" },
+    { op: "local.get", index: argsLocal },
+    { op: "call", funcIdx: applyClosureIdx },
+  );
+
+  fctx.body.push(
+    { op: "local.get", index: promiseLocal },
+    { op: "extern.convert_any" },
+    ...stringConstantExternrefInstrs(ctx, "then"),
+    { op: "call", funcIdx: carrierBagHasIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        { op: "local.get", index: promiseLocal },
+        { op: "extern.convert_any" },
+        ...stringConstantExternrefInstrs(ctx, "then"),
+        { op: "call", funcIdx: externGetIdx },
+        { op: "local.set", index: overrideLocal },
+        ...overrideBody,
+      ],
+      else: nativeBody,
+    },
   );
 }
 
@@ -4420,8 +4835,10 @@ function ensurePromiseFinallyRuntime(ctx: CodegenContext): void {
       { op: "ref.null.extern" },
       { op: "struct.new", typeIdx: callbackTypeIdx },
       { op: "extern.convert_any" },
+      closureBagInitInstr(),
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "local.set", index: 5 },
+      ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: 5 }]),
       // Resolve(tmp, result) — fires/enqueues the restore reaction.
       { op: "local.get", index: 5 },
       { op: "local.get", index: 0 },
@@ -4470,6 +4887,11 @@ function emitFinallyWrapperFunction(ctx: CodegenContext, info: ClosureInfo, isRe
     { op: "ref.cast", typeIdx: selfTypeIdx },
     { op: "local.set", index: callbackLocal },
   ];
+  const chainedPromise = (): Instr[] => [
+    { op: "local.get", index: capLocal },
+    { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+  ];
+  body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_BEFORE, chainedPromise()));
 
   const exnTag = ensureExnTag(ctx);
   const tryBody: Instr[] = [{ op: "local.get", index: callbackLocal }];
@@ -4509,8 +4931,150 @@ function emitFinallyWrapperFunction(ctx: CodegenContext, info: ClosureInfo, isRe
       },
     ]),
   );
+  body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_AFTER, chainedPromise()));
   body.push({ op: "ref.null.extern" });
 
+  pushDefinedFunc(ctx, funcIdx, {
+    name: wrapperName,
+    typeIdx: state.microtaskFuncTypeIdx,
+    locals,
+    body,
+    exported: false,
+  });
+  ctx.funcMap.set(wrapperName, funcIdx);
+  return funcIdx;
+}
+
+/** Shared runtime-held `Promise.prototype.finally` reaction wrapper.
+ *
+ * Unlike `.then`, `finally` calls its handler with zero arguments and must
+ * preserve the receiver's original value/reason after assimilating the
+ * handler result.  The callback itself can be an interpreted runtime-eval
+ * carrier, so IsCallable and invocation use the same finalized predicate and
+ * `__apply_closure` bridge as dynamic `.then`.
+ */
+function ensureDynamicFinallyWrapper(ctx: CodegenContext, isReject: boolean): number | undefined {
+  ensurePromiseFinallyRuntime(ctx);
+  const state = getOrInitState(ctx as CodegenContextWithScheduler);
+  const wrapperName = isReject ? "__finally_dyn_reject" : "__finally_dyn_fulfill";
+  const existing = ctx.funcMap.get(wrapperName);
+  if (existing !== undefined) return existing;
+
+  ensureObjVecBuilders(ctx);
+  const applyIdx = reserveApplyClosure(ctx);
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  if (applyIdx === undefined || objVecNewIdx === undefined || state.finallyAfterFuncIdx === -1) return undefined;
+
+  const capsTypeIdx = getOrRegisterThenCapsType(ctx);
+  const exnTag = ensureExnTag(ctx);
+  const capLocal = 2;
+  const callbackLocal = 3;
+  const resultLocal = 4;
+  const reasonLocal = 5;
+  const argsLocal = 6;
+  const locals: LocalDef[] = [
+    { name: "$caps", type: { kind: "ref", typeIdx: capsTypeIdx } },
+    { name: "$callback", type: { kind: "externref" } },
+    { name: "$result", type: { kind: "externref" } },
+    { name: "$reason", type: { kind: "externref" } },
+    { name: "$args", type: { kind: "externref" } },
+  ];
+
+  const settleOriginal: Instr[] = [
+    { op: "local.get", index: capLocal },
+    { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+    { op: "local.get", index: 1 },
+    { op: "call", funcIdx: isReject ? state.promiseRejectFuncIdx : state.promiseResolveValueFuncIdx },
+    { op: "drop" },
+  ];
+  const invoke: Instr[] = [
+    buildTargetTaggedTry(
+      ctx,
+      { kind: "empty" },
+      [
+        { op: "call", funcIdx: objVecNewIdx },
+        { op: "local.set", index: argsLocal },
+        { op: "local.get", index: callbackLocal },
+        { op: "ref.null.extern" },
+        { op: "local.get", index: argsLocal },
+        { op: "call", funcIdx: applyIdx },
+        { op: "local.set", index: resultLocal },
+        { op: "local.get", index: resultLocal },
+        { op: "local.get", index: capLocal },
+        { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+        { op: "local.get", index: 1 },
+        { op: "i32.const", value: isReject ? 1 : 0 },
+        { op: "call", funcIdx: state.finallyAfterFuncIdx },
+      ],
+      [
+        {
+          tagIdx: exnTag,
+          body: [
+            { op: "local.set", index: reasonLocal },
+            { op: "local.get", index: capLocal },
+            { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+            { op: "local.get", index: reasonLocal },
+            { op: "call", funcIdx: state.promiseRejectFuncIdx },
+            { op: "drop" },
+          ],
+        },
+      ],
+    ),
+  ];
+
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  const rootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
+  const callable: Instr[] =
+    typeofFunctionIdx !== undefined
+      ? [
+          { op: "local.get", index: callbackLocal },
+          { op: "call", funcIdx: typeofFunctionIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: invoke,
+            else: settleOriginal.map((instr) => ({ ...instr })),
+          },
+        ]
+      : rootTypeIdx === undefined
+        ? invoke
+        : [
+            { op: "local.get", index: callbackLocal },
+            { op: "any.convert_extern" },
+            { op: "ref.test", typeIdx: rootTypeIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: invoke,
+              else: settleOriginal.map((instr) => ({ ...instr })),
+            },
+          ];
+  const chainedPromise = (): Instr[] => [
+    { op: "local.get", index: capLocal },
+    { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
+  ];
+  const body: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: capsTypeIdx },
+    { op: "local.set", index: capLocal },
+    { op: "local.get", index: capLocal },
+    { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 0 },
+    { op: "local.set", index: callbackLocal },
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_BEFORE, chainedPromise()),
+    { op: "local.get", index: callbackLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: settleOriginal,
+      else: callable,
+    },
+    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_AFTER, chainedPromise()),
+    { op: "ref.null.extern" },
+  ];
+
+  const funcIdx = mintDefinedFunc(ctx);
   pushDefinedFunc(ctx, funcIdx, {
     name: wrapperName,
     typeIdx: state.microtaskFuncTypeIdx,
@@ -4536,10 +5100,7 @@ export function emitStandalonePromiseFinally(
   promiseInstrs: Instr[],
   onFinally: StandalonePromiseThenCallback | null,
 ): void {
-  // (#4394) `.finally` has no dynamic-handler wrapper yet — a dynamic marker
-  // (no ClosureInfo) degrades to the absent-handler identity chain, exactly the
-  // pre-#4394 behaviour for a handler the compiler could not resolve.
-  if (onFinally === null || onFinally.closureInfo === undefined) {
+  if (onFinally === null) {
     emitStandalonePromiseThen(ctx, fctx, promiseInstrs, null, null);
     return;
   }
@@ -4552,8 +5113,16 @@ export function emitStandalonePromiseFinally(
 
   // Register the per-site wrappers BEFORE any body emission (funcIdx bake
   // discipline — #1677/#1809).
-  const fulfillWrapperFuncIdx = emitFinallyWrapperFunction(ctx, onFinally.closureInfo, false);
-  const rejectWrapperFuncIdx = emitFinallyWrapperFunction(ctx, onFinally.closureInfo, true);
+  const fulfillWrapperFuncIdx = onFinally.closureInfo
+    ? emitFinallyWrapperFunction(ctx, onFinally.closureInfo, false)
+    : ensureDynamicFinallyWrapper(ctx, false);
+  const rejectWrapperFuncIdx = onFinally.closureInfo
+    ? emitFinallyWrapperFunction(ctx, onFinally.closureInfo, true)
+    : ensureDynamicFinallyWrapper(ctx, true);
+  if (fulfillWrapperFuncIdx === undefined || rejectWrapperFuncIdx === undefined) {
+    emitStandalonePromiseThen(ctx, fctx, promiseInstrs, null, null);
+    return;
+  }
 
   const promiseLocal = allocLocal(fctx, `__finally_promise_${fctx.locals.length}`, {
     kind: "ref",
@@ -4574,8 +5143,17 @@ export function emitStandalonePromiseFinally(
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: chainedLocal });
+  fctx.body.push(
+    ...buildDenoPromiseHookCall(
+      ctx,
+      DENO_PROMISE_HOOK_INIT,
+      [{ op: "local.get", index: chainedLocal }],
+      [{ op: "local.get", index: promiseLocal }],
+    ),
+  );
 
   // ONE caps struct serves both arms (both wrappers read the same closure +
   // chained promise). The closure instrs are spliced exactly ONCE — aliasing

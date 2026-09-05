@@ -140,6 +140,21 @@ const REFUSAL_PROVIDER_SOURCE = `
         return refuse();
       }
 
+      // (#4784) The global-SCRIPT route. The refusal provider must offer the
+      // FULL five-entry \`js2wasm:runtime-eval\` ABI, not a subset: the import is
+      // module-level and every named function is a separate import, so an
+      // absent export is a hard \`LinkError\`
+      // ("function import requires a callable"), not the designed catchable
+      // TypeError. That defeats the whole point of this provider — the file
+      // fails to instantiate and every assertion in it is lost, which is the
+      // exact failure mode the doc comment above says linking it prevents.
+      export function __runtime_script_eval(
+        source: any,
+        globalObject: any
+      ): any {
+        return refuse();
+      }
+
       export function __runtime_direct_eval(
         source: any,
         globalObject: any,
@@ -281,6 +296,22 @@ const PROVIDER_EXPORT_WRAPPER = `
       ): any {
         try {
           const value = executeIndirectEval(parse, source, globalObject);
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
+          return runtimeEvalResult(true, value);
+        } catch (error) {
+          exposeRuntimeEvalGlobalLexicalCells(globalObject);
+          exposeRuntimeEvalObject(globalObject);
+          return runtimeEvalResult(false, error);
+        }
+      }
+
+      export function __runtime_script_eval(
+        source: any,
+        globalObject: any
+      ): any {
+        try {
+          const value = executeGlobalScript(parse, source, globalObject);
           exposeRuntimeEvalGlobalLexicalCells(globalObject);
           exposeRuntimeEvalObject(globalObject);
           return runtimeEvalResult(true, value);
@@ -523,9 +554,20 @@ const PROVIDER_EXPORT_WRAPPER = `
 export function buildRuntimeEvalProviderSource() {
   const { entryModulePath } = setupAcorn();
   const acorn = stripModuleSyntax(readFileSync(entryModulePath, "utf8"));
-  const interpreter = INTERP_FILES.map((name) =>
-    stripModuleSyntax(readFileSync(join(REPO_ROOT, "src", "interp", name), "utf8")),
-  );
+  // The provider is one closed, self-compiled module, so bind its Acorn entry
+  // statically. Rename the injected-parser parameters only in this assembled
+  // source; every remaining `parse` reference then resolves directly to
+  // Acorn's top-level function. An extra parser trampoline is not equivalent:
+  // its large WasmGC result crosses an externref tail-call boundary that
+  // Wasmtime 47 misexecutes in the unoptimized module. The public interpreter
+  // sources keep their injectable parser API.
+  const interpreter = INTERP_FILES.map((name) => {
+    let source = readFileSync(join(REPO_ROOT, "src", "interp", name), "utf8");
+    if (name === "dynamic-function.ts") {
+      source = source.replace(/\bparse(?=\s*:\s*DynamicParser)/g, "__runtime_eval_provider_injected_parse");
+    }
+    return stripModuleSyntax(source);
+  });
   return [acorn, ...interpreter, PROVIDER_EXPORT_WRAPPER].join("\n");
 }
 
@@ -797,6 +839,14 @@ export function instantiateRuntimeEvalNamespace(providerModule) {
   return {
     __runtime_new_function: instance.exports.__runtime_new_function,
     __runtime_indirect_eval: instance.exports.__runtime_indirect_eval,
+    // (#4784) The global-SCRIPT entry, added to the provider ABI by the
+    // annex-B global-lexical work (7d8021e8, 2026-08-26). That commit taught
+    // the real provider and the quickjs adapter to EXPORT it, but this
+    // namespace — the one every import object is actually built from — kept
+    // its four-entry literal. A module importing `__runtime_script_eval` then
+    // failed to LINK ("function import requires a callable") against any
+    // NATIVE provider, refusal or interpreter alike.
+    __runtime_script_eval: instance.exports.__runtime_script_eval,
     __runtime_direct_eval: instance.exports.__runtime_direct_eval,
     __runtime_apply_interpreted: instance.exports.__runtime_apply_interpreted,
   };

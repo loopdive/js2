@@ -1,0 +1,69 @@
+name: Retry transient Test262 baseline failures
+
+# A canonical baseline run fans out across more than one hundred shard jobs.
+# A hosted runner shutdown leaves that run red even when every completed shard
+# is valid, and without a rerun the downstream promotion never executes. Keep
+# recovery in one place for both baseline-producing workflows: rerun only the
+# failed matrix cells, then let their existing merge/promotion jobs continue.
+on:
+  workflow_run:
+    workflows: ["Test262 Sharded", "Baseline Refresh (scheduled + emergency)"]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: retry-test262-baseline-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
+  cancel-in-progress: false
+
+jobs:
+  retry-failed-shards:
+    name: retry transient baseline shard failures
+    if: |
+      github.repository == 'loopdive/js2' &&
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.run_attempt < 3 &&
+      (
+        (github.event.workflow_run.name == 'Test262 Sharded' && github.event.workflow_run.event == 'push') ||
+        (
+          github.event.workflow_run.name == 'Baseline Refresh (scheduled + emergency)' &&
+          (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch')
+        )
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rerun only failed shard cells
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          failed_jobs=$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/jobs?filter=latest&per_page=100" \
+            --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | .name')
+
+          if [ -z "$failed_jobs" ]; then
+            echo "No failed jobs remain on run ${SOURCE_RUN_ID}; nothing to retry."
+            exit 0
+          fi
+
+          retryable=true
+          while IFS= read -r job_name; do
+            if [[ ! "$job_name" =~ ^test262\ (js-host|standalone)\ shard\ [0-9]+$ ]]; then
+              echo "Non-shard failure is not auto-retryable: ${job_name}"
+              retryable=false
+            fi
+          done <<< "$failed_jobs"
+
+          if [ "$retryable" != "true" ]; then
+            echo "Leaving run ${SOURCE_RUN_ID} failed for manual diagnosis."
+            exit 0
+          fi
+
+          printf 'Retrying failed shard jobs from run %s:\n%s\n' "$SOURCE_RUN_ID" "$failed_jobs"
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/rerun-failed-jobs"

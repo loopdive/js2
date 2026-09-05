@@ -10,15 +10,19 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { reportSilentFallback } from "./fallback-telemetry.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { shiftLateImportIndices } from "./expressions/late-imports.js";
+import { emitUndefined, shiftLateImportIndices } from "./expressions/late-imports.js";
 import {
   addUnionImports,
   ensureLetConstBindingPatternTdzFlags,
   ensureStructForType,
   resolveWasmType,
 } from "./index.js";
-import { isUndefWidenedBindingElement, resolveBindingElementType } from "../checker/type-mapper.js";
-import { UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
+import {
+  isUndefWidenedBindingElement,
+  resolveBindingElementType,
+  undefinedPreservingBindingSourceType,
+} from "../checker/type-mapper.js";
+import { boxToAny, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
 import { addImport, addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { usesNativeJsErrors } from "./js-errors.js";
@@ -30,7 +34,15 @@ import { ensureExternRestObject } from "./object-runtime.js";
 import { emitLocalTdzInit } from "./statements/tdz.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { holeToUndefinedInstrs } from "./array-holes.js"; // (#2001 S1)
-import { emitIsUndefinedSingletonExternAt, undefinedExternInstrs, undefinedSingletonActive } from "./any-helpers.js"; // (#2106 S1)
+import {
+  canonicalUndefinedExternInstrs,
+  emitIsUndefinedSingletonExternAt,
+  ensureAnyFromExternHelper,
+  ensureAnyHelpers,
+  isAnyValue,
+  undefinedExternInstrs,
+  undefinedSingletonActive,
+} from "./any-helpers.js"; // (#2106 S1)
 import {
   coerceType,
   compileExpression,
@@ -45,17 +57,74 @@ import {
 } from "./shared.js";
 import { buildVecFromExternref, getVecInfo } from "./type-coercion.js";
 import { ensureNativeArrayFromIterN } from "./iterator-native.js";
-import { arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
-// (#1719 CPR-2) `arrayDstrNeedsIdentity` / `tryEmitArrayProtoIteratorReadDrive` /
-// `syncDestructuredLocalsToGlobals` live in statements/destructuring.ts, which
-// already imports `destructureParamArray` from here — a module cycle. ESM
-// resolves it because these references are used at call time (inside
+// (#4768) Recover a native generator state after it crosses a known closure
+// parameter's externref ABI, then drain only the binding pattern's steps.
+import { emitNativeGeneratorToVec } from "./generators-native.js";
+import { arrayIteratorDeletedGlobalIdx, arrayIteratorOverrideGlobalIdx } from "./expressions/proto-override.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { nestedObjectPatternCarrier } from "./object-literal-carrier.js";
+import { coerceTupleBindingElement, emitExhaustedTupleRest } from "./tuple-rest.js";
+// (#1719 CPR-2) These helpers live in statements/destructuring.ts, which already
+// imports `destructureParamArray` from here. ESM resolves the cycle because the
+// references are used only at call time (inside
 // `destructureParamArray`), never at module-init.
 import {
   arrayDstrNeedsIdentity,
   syncDestructuredLocalsToGlobals,
   tryEmitArrayProtoIteratorReadDrive,
 } from "./statements/destructuring.js";
+
+/**
+ * Preserve the runtime JS tag when a heterogeneous binding local uses the
+ * standalone `$AnyValue` carrier but the source vector stores externrefs.
+ *
+ * `coerceType(externref, $AnyValue)` intentionally keeps the historical
+ * tag-5 wrapper for generic dynamic values.  Array binding is different: its
+ * externref element was already boxed by the literal's static type, so
+ * wrapping a boxed number/boolean again turns it into a string-like tag-5
+ * value.  Null also needs an explicit tag-0 box because `null` is represented
+ * by a null externref at this boundary.  This is the narrow bridge used by
+ * `destructureParamArray`; all other externref→AnyValue coercions retain their
+ * existing policy.
+ */
+export function coerceArrayBindingExternrefToAnyValue(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  from: ValType,
+  to: ValType,
+): boolean {
+  if (
+    !ctx.unionAnyRep ||
+    !(ctx.standalone || ctx.wasi) ||
+    from.kind !== "externref" ||
+    !isAnyValue(to, ctx) ||
+    ctx.anyValueTypeIdx < 0
+  ) {
+    return false;
+  }
+
+  addUnionImports(ctx);
+  ensureAnyHelpers(ctx);
+  const honestIdx = ensureAnyFromExternHelper(ctx, { forceHonest: true });
+  const nullBoxBody: Instr[] = [];
+  const nullBoxed = boxToAny(ctx, { body: nullBoxBody } as FunctionContext, { kind: "externref" }, "null");
+  if (honestIdx === undefined || !nullBoxed) return false;
+
+  const sourceLocal = allocLocal(fctx, `__dparam_any_src_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: sourceLocal });
+  fctx.body.push({ op: "local.get", index: sourceLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "ref_null", typeIdx: ctx.anyValueTypeIdx } },
+    then: [{ op: "local.get", index: sourceLocal }, ...nullBoxBody],
+    else: [
+      { op: "local.get", index: sourceLocal },
+      { op: "call", funcIdx: honestIdx },
+    ],
+  });
+  return true;
+}
 
 /**
  * (#3241/#4397) Emit the native-provider object-rest CopyDataProperties
@@ -344,6 +413,65 @@ function emitBoundsCheckedArrayGetUndef(
 }
 
 /**
+ * (#5158) Bounds-checked read of a PRIMITIVE-element array that answers a real
+ * `undefined` past the end.
+ *
+ * `emitBoundsCheckedArrayGetUndef` early-outs to `emitBoundsCheckedArrayGet`
+ * whenever the backing element is not an externref, and that emitter's
+ * out-of-bounds arm produces the element type's zero — so `let [_, x] = []`
+ * bound `x === 0` where §13.3.3.6 step 5 ("if iteratorRecord.[[done]] is true,
+ * let v be undefined") requires `undefined`. Here the in-bounds arm boxes the
+ * element to externref and the OOB arm yields the `undefined` producer, so the
+ * whole read is externref-typed. The caller must widen the binding local to
+ * match (see `undefWidenedLocals`).
+ *
+ * Returns false — leaving the stack untouched — when neither an `undefined`
+ * producer nor a boxing sequence is available, so the caller keeps the legacy
+ * narrow read.
+ *
+ * Stack: [arrayref, i32 index] → [externref element or undefined]
+ */
+function emitBoundsCheckedArrayGetUndefWidened(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arrTypeIdx: number,
+  elementType: ValType,
+): boolean {
+  if (!ctx.nativeStrings && !ctx.standalone) ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+  const oobElse: Instr[] = canonicalUndefinedExternInstrs(ctx);
+  const boxInstrs = boxToExternref(ctx, elementType.kind, elementType, fctx);
+  // A no-op box would mean the element is already externref — that shape is the
+  // existing emitter's job, not this one.
+  if (boxInstrs.length === 0) return false;
+  flushLateImportShifts(ctx, fctx);
+
+  const idxLocal = allocLocal(fctx, `__undefw_idx_${fctx.locals.length}`, { kind: "i32" });
+  const arrLocal = allocLocal(fctx, `__undefw_arr_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: arrTypeIdx,
+  });
+  fctx.body.push({ op: "local.set", index: idxLocal });
+  fctx.body.push({ op: "local.set", index: arrLocal });
+  fctx.body.push({ op: "local.get", index: idxLocal });
+  fctx.body.push({ op: "local.get", index: arrLocal });
+  fctx.body.push({ op: "array.len" });
+  fctx.body.push({ op: "i32.lt_u" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "externref" } },
+    then: [
+      { op: "local.get", index: arrLocal },
+      { op: "ref.as_non_null" },
+      { op: "local.get", index: idxLocal },
+      { op: "array.get", typeIdx: arrTypeIdx },
+      ...boxInstrs,
+    ],
+    else: oobElse,
+  });
+  return true;
+}
+
+/**
  * (#2844) Destructure an OBJECT binding pattern from a freshly-built rest vec.
  *
  * Per §13.3.3.6 `BindingRestElement : ... BindingPattern`, an array-pattern rest
@@ -410,7 +538,7 @@ export function emitObjectPatternRestFromVec(
       fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 });
       fctx.body.push({ op: "i32.const", value: numKey });
       emitBoundsCheckedArrayGetUndef(ctx, fctx, arrTypeIdx, elemWasmType);
-      coerceType(ctx, fctx, elemWasmType, localType);
+      coerceType(ctx, fctx, undefinedPreservingBindingSourceType(nested, elemWasmType), localType);
       fctx.body.push({ op: "local.set", index: localIdx });
       if (isDecl) emitLocalTdzInit(fctx, localName);
     }
@@ -742,7 +870,7 @@ export function destructureParamObjectExternref(
 
     addStringConstantGlobal(ctx, propNameText);
     const strGlobalIdx = ctx.stringGlobalMap.get(propNameText);
-    if (strGlobalIdx === undefined) continue;
+    if (strGlobalIdx === undefined && !ctx.nativeStrings) continue;
 
     getIdx = ctx.funcMap.get("__extern_get");
     if (getIdx === undefined) continue;
@@ -787,6 +915,20 @@ export function destructureParamObjectExternref(
       let localIdx = fctx.localMap.get(localName);
       if (localIdx === undefined) {
         localIdx = allocLocal(fctx, localName, elemType);
+      }
+      // (#4618) A boxed capture's slot IS the ref cell (a spilled async-frame
+      // binding referenced by a hoisted fn-decl). A plain local.set here would
+      // coerce the extracted VALUE to the cell type — any.convert_extern +
+      // ref.cast on a symbol/object value is a guaranteed trap. Redirect the
+      // element's stores to a scratch local typed as the cell's VALUE type,
+      // then write the result through the cell (the #3396/#1177
+      // boxedForInitStore convention) so captures observe the binding.
+      const boxedDstrCell = fctx.boxedCaptures?.get(localName);
+      const boxedDstrCellLocalIdx = boxedDstrCell !== undefined ? fctx.localMap.get(localName) : undefined;
+      const boxedDstrRedirected =
+        boxedDstrCell !== undefined && boxedDstrCellLocalIdx !== undefined && localIdx === boxedDstrCellLocalIdx;
+      if (boxedDstrRedirected) {
+        localIdx = allocLocal(fctx, `__box_dstr_${localName}_${fctx.locals.length}`, boxedDstrCell.valType);
       }
       const localType = getLocalType(fctx, localIdx);
 
@@ -864,6 +1006,21 @@ export function destructureParamObjectExternref(
         }
         fctx.body.push({ op: "local.set", index: localIdx });
         if (isDecl) emitLocalTdzInit(fctx, localName);
+      }
+      // (#4618) Flush the redirected scratch value through the ref cell.
+      if (boxedDstrRedirected) {
+        fctx.body.push({ op: "local.get", index: boxedDstrCellLocalIdx! });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [],
+          else: [
+            { op: "local.get", index: boxedDstrCellLocalIdx! },
+            { op: "local.get", index: localIdx },
+            { op: "struct.set", typeIdx: boxedDstrCell!.refCellTypeIdx, fieldIdx: 0 },
+          ],
+        });
       }
     } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
       const nestedLocal = allocLocal(fctx, `__ext_dparam_nested_${fctx.locals.length}`, elemType);
@@ -1039,6 +1196,13 @@ export function structHintForBindingPattern(
   pattern: ts.ObjectBindingPattern,
 ): ValType | undefined {
   if (pattern.elements.some((e) => ts.isBindingElement(e) && !!e.dotDotDotToken)) return undefined;
+  // (#5139) An EMPTY pattern (`{} = obj`) binds nothing, so the hint buys no
+  // field read — and it actively harms: the default value is materialized under
+  // a `ref.test (ref $Anon{})` whose FALSE arm yields `ref.null`, so
+  // `method({} = obj)` stored null in the param and the destructure guard threw
+  // "Cannot destructure 'null' or 'undefined'" for any `obj` whose runtime
+  // carrier is not that anonymous struct. Fall back to the plain externref hint.
+  if (pattern.elements.length === 0) return undefined;
   const tsType = ctx.checker.getTypeAtLocation(pattern);
   if (!tsType) return undefined;
   ensureStructForType(ctx, tsType);
@@ -1062,6 +1226,70 @@ export function structHintForBindingPattern(
     if (!fields.some((f) => f.name === propText)) return undefined;
   }
   return { kind: "ref", typeIdx: structTypeIdx };
+}
+
+/**
+ * (#5221) Bind ONE object-pattern element whose property is provably ABSENT
+ * from the source struct.
+ *
+ * The struct fast path below maps each pattern property to a `struct.get`. When
+ * `fields.findIndex(...)` misses, the property does not exist on the source
+ * object, so §13.15.5.6 KeyedBindingInitialization's `GetV(value, name)` yields
+ * **`undefined`** — and, when the element carries an initializer, that
+ * `undefined` is exactly what fires the default (§13.15.5.6 step 3).
+ *
+ * Before this the miss was a bare `continue`, leaving the binding local at its
+ * WASM zero value. For the common `any`/externref local that zero is
+ * `ref.null.extern`, which surfaces to JS as **`null`**, not `undefined` — so
+ * `void 0 === t` answered false, `t ?? d` and `{ t = d }` never defaulted, and
+ * `typeof t` said `"object"`. That is the root cause of #5221: the Temporal
+ * polyfill's `Nn(e)` reads `const { calendar: t } = e; return void 0 === t ?
+ * "iso8601" : kn(t)`, got `null` instead of `undefined` for a plain
+ * `{year,month,day}` argument, and handed `null` to the `%calendarImpl%`
+ * intrinsic — whose lookup then returned nothing and the next field read
+ * dereferenced a null pointer.
+ *
+ * Deliberately narrow: only the `externref`/`anyref` locals (where `undefined`
+ * is representable and the wrong value is observable as `null`) and the
+ * initializer case are corrected. `f64`/`i32`/`ref` locals keep their existing
+ * zero-init — changing a numeric slot's absent value from `0` to a NaN
+ * sentinel is a separate, wider behavioural change with its own blast radius.
+ */
+function emitAbsentStructPropertyBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  element: ts.BindingElement,
+  localName: string,
+  isDecl: boolean,
+): void {
+  const localIdx = fctx.localMap.get(localName);
+  if (localIdx === undefined) return;
+  const localType = getLocalType(fctx, localIdx);
+  if (!localType) return;
+
+  // An absent property is `undefined`, so a binding default ALWAYS fires.
+  if (element.initializer) {
+    const initType = compileExpression(ctx, fctx, element.initializer);
+    if (!initType) return;
+    if (!valTypesMatch(initType, localType)) coerceType(ctx, fctx, initType, localType);
+    fctx.body.push({ op: "local.set", index: localIdx });
+    if (isDecl) emitLocalTdzInit(fctx, localName);
+    return;
+  }
+
+  if (localType.kind === "externref") {
+    emitUndefined(ctx, fctx);
+  } else if (localType.kind === "anyref") {
+    emitUndefined(ctx, fctx);
+    fctx.body.push({ op: "any.convert_extern" });
+  } else {
+    // Numeric / typed-ref slots: leave the zero-init in place (see the note
+    // above). Still emit the TDZ release so `let`/`const` reads don't throw.
+    if (isDecl) emitLocalTdzInit(fctx, localName);
+    return;
+  }
+  fctx.body.push({ op: "local.set", index: localIdx });
+  if (isDecl) emitLocalTdzInit(fctx, localName);
 }
 
 /**
@@ -1094,8 +1322,8 @@ export function destructureParamObject(
       if (pattern.elements.length === 0) return;
 
       const tsType = ctx.checker.getTypeAtLocation(pattern);
-      let structTypeIdx: number | undefined;
-      if (tsType) {
+      let structTypeIdx: number | undefined = nestedObjectPatternCarrier(ctx, pattern);
+      if (structTypeIdx === undefined && tsType) {
         ensureStructForType(ctx, tsType);
         const typeName = ctx.anonTypeMap.get(tsType) ?? tsType.getSymbol()?.name ?? tsType.aliasSymbol?.name;
         structTypeIdx = typeName ? ctx.structMap.get(typeName) : undefined;
@@ -1359,7 +1587,11 @@ export function destructureParamObject(
     const localName = element.name.text;
     const fieldIdx = fields.findIndex((f) => f.name === propKey);
     if (fieldIdx === -1) {
-      // Field not in struct — already pre-allocated by ensureBindingLocals
+      // (#5221) Field not on the struct ⇒ the property is ABSENT, so
+      // `GetV(value, name)` is `undefined` (and any default fires). The local
+      // was pre-allocated by `ensureBindingLocals`; its zero value would read
+      // back as `null`, which is a different JS value.
+      emitAbsentStructPropertyBinding(ctx, fctx, element, localName, isDecl);
       continue;
     }
     const fieldType = fields[fieldIdx]!.type;
@@ -1383,7 +1615,14 @@ export function destructureParamObject(
       // Coerce struct field type to local's declared type if they differ (#658)
       const objLocalType = getLocalType(fctx, localIdx);
       if (objLocalType && !valTypesMatch(fieldType, objLocalType)) {
-        coerceType(ctx, fctx, fieldType, objLocalType);
+        // A closed object struct stores an absent or explicitly-undefined
+        // numeric field as the UNDEF_F64 sentinel.  Destructuring widened the
+        // destination slot to externref (#3315/#3423), so this is the
+        // identity-carrying f64→externref boundary: recover undefined only
+        // for this binding element while ordinary NaN still boxes as a
+        // number.  The generic f64 coercion deliberately cannot do that,
+        // because an arbitrary computed NaN is a real number.
+        coerceType(ctx, fctx, undefinedPreservingBindingSourceType(element, fieldType), objLocalType);
       }
       fctx.body.push({ op: "local.set", index: localIdx });
       if (isDecl) emitLocalTdzInit(fctx, localName);
@@ -1414,6 +1653,20 @@ export function destructureParamObject(
     fctx.body.push(...destructInstrs);
     fctx.savedBodies.pop();
   }
+}
+
+/**
+ * (#5139) Emit the §7.4.2 GetIterator TypeError guard for an array binding
+ * pattern when the program contains `delete Array.prototype[Symbol.iterator]`.
+ * No-op (and no emitted bytes) for every source without such a delete, because
+ * the flag global is only rooted by the pre-scan that sees one.
+ */
+function emitArrayIteratorDeletedGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+  const flagIdx = arrayIteratorDeletedGlobalIdx(ctx);
+  if (flagIdx === undefined) return;
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "array is not iterable", { flush: fctx });
+  fctx.body.push({ op: "global.get", index: flagIdx });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
 }
 
 /**
@@ -1457,6 +1710,13 @@ export function destructureParamArray(
       return;
     }
   }
+
+  // (#5139) §7.4.2 GetIterator step 3: after `delete
+  // Array.prototype[Symbol.iterator]` an array has no `@@iterator` method, so
+  // binding it to an array pattern throws a TypeError BEFORE any element read.
+  // The flag global exists only for a source that contains such a delete, so
+  // this is byte-identical everywhere else.
+  emitArrayIteratorDeletedGuard(ctx, fctx);
 
   if (paramType.kind !== "ref" && paramType.kind !== "ref_null") {
     // externref parameters: convert to vec struct before destructuring (#647)
@@ -1518,6 +1778,70 @@ export function destructureParamArray(
       const dstrDoneLocal = allocLocal(fctx, `__dparam_done_${fctx.locals.length}`, { kind: "i32" });
       fctx.body.push({ op: "i32.const", value: 0 });
       fctx.body.push({ op: "local.set", index: dstrDoneLocal });
+
+      // (#4768) A native generator state can cross a statically known
+      // ordinary call boundary through the closure's externref parameter ABI.
+      // Recover each registered state type before the tuple/host fallback; the
+      // latter cannot iterate a raw WasmGC struct and would silently report
+      // `done` on the first host-protocol step. The bounded drain mirrors
+      // IteratorBindingInitialization: the pattern's elision count is the
+      // maximum number of resume calls, and the caller already returned for
+      // empty-only patterns above (zero steps, no generator execution).
+      const nativeStateStepLimit = patternIteratorStepCount(pattern.elements);
+      // A rest element consumes the iterator to completion. The native state
+      // carrier below is intentionally bounded by the finite prefix, so it
+      // must not claim an unbounded pattern (the sentinel is -1): treating
+      // that sentinel as a limit would stop before the first resume.
+      // Keep the existing tuple/host fallback for rest patterns. It retains
+      // the pre-#4768 behavior until a rest-aware native carrier exists.
+      const nativeStateInfos =
+        nativeStateStepLimit < 0
+          ? []
+          : [...ctx.nativeGenerators.values()].filter(
+              (info, index, values) =>
+                values.findIndex((candidate) => candidate.stateTypeIdx === info.stateTypeIdx) === index,
+            );
+      for (const nativeInfo of nativeStateInfos) {
+        const genElemKind = nativeInfo.elemValType.kind === "externref" ? "externref" : "f64";
+        const genVecTypeIdx = getOrRegisterVecType(ctx, genElemKind);
+        const genArrTypeIdx = getArrTypeIdxFromVec(ctx, genVecTypeIdx);
+        const genVecLocal = allocLocal(fctx, `__dparam_gen_vec_${fctx.locals.length}`, {
+          kind: "ref",
+          typeIdx: genVecTypeIdx,
+        });
+
+        const savedBody = pushBody(fctx);
+        const nativePathInstrs = fctx.body;
+        try {
+          fctx.body.push({ op: "local.get", index: anyTmp });
+          fctx.body.push({ op: "ref.cast", typeIdx: nativeInfo.stateTypeIdx });
+          emitNativeGeneratorToVec(
+            ctx,
+            fctx,
+            nativeInfo,
+            { kind: "ref", typeIdx: nativeInfo.stateTypeIdx },
+            genVecTypeIdx,
+            genArrTypeIdx,
+            true,
+            nativeStateStepLimit,
+          );
+          fctx.body.push({ op: "local.set", index: genVecLocal });
+          destructureParamArray(ctx, fctx, genVecLocal, pattern, { kind: "ref", typeIdx: genVecTypeIdx }, opts);
+          fctx.body.push({ op: "i32.const", value: 1 });
+          fctx.body.push({ op: "local.set", index: dstrDoneLocal });
+        } finally {
+          popBody(fctx, savedBody);
+        }
+
+        fctx.body.push({ op: "local.get", index: anyTmp });
+        fctx.body.push({ op: "ref.test", typeIdx: nativeInfo.stateTypeIdx });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "empty" },
+          then: nativePathInstrs,
+          else: [],
+        });
+      }
 
       for (let ti = 0; ti < ctx.mod.types.length; ti++) {
         const def = ctx.mod.types[ti];
@@ -1964,7 +2288,7 @@ export function destructureParamArray(
       for (let i = 0; i < pattern.elements.length; i++) {
         const element = pattern.elements[i]!;
         if (ts.isOmittedExpression(element)) continue;
-        if (i >= tupleDef.fields.length) break; // more bindings than tuple fields
+        if (emitExhaustedTupleRest(ctx, fctx, element, i >= tupleDef.fields.length)) break;
 
         const fieldType = tupleDef.fields[i]!.type;
 
@@ -1998,6 +2322,23 @@ export function destructureParamArray(
         const localName = element.name.text;
         if (!fctx.localMap.has(localName)) {
           allocLocal(fctx, localName, fieldType);
+        }
+        // (#5158) A decl binding with NO default whose tuple FIELD is externref
+        // must keep the externref representation: an absent element rides that
+        // field as the `undefined` producer, and coercing it into an f64/i32
+        // local unboxes it to 0 — `let [_, x] = []` bound `x === 0` where
+        // §13.3.3.6 step 5 requires `undefined`. Same re-typing shape as #1553d
+        // on the vec lane; param/catch mode keeps its fixed signature type. The
+        // re-alloc must run BEFORE `localIdx` is read: `allocLocal` mints a NEW
+        // slot and remaps the name, so an index captured first would keep writing
+        // the stale narrow slot while every later read saw the (never-written)
+        // widened one.
+        if (isDecl && ts.isBindingElement(element) && !element.initializer && fieldType.kind === "externref") {
+          const existing = getLocalType(fctx, fctx.localMap.get(localName)!);
+          if (existing && existing.kind !== "externref") {
+            allocLocal(fctx, localName, { kind: "externref" });
+            (fctx.undefWidenedLocals ??= new Set()).add(localName);
+          }
         }
         const localIdx = fctx.localMap.get(localName)!;
         const localType = getLocalType(fctx, localIdx);
@@ -2058,10 +2399,7 @@ export function destructureParamArray(
           if (isDecl) emitLocalTdzInit(fctx, localName);
           continue;
         }
-        // Coerce struct field type to local's declared type if they differ (#658)
-        if (localType && !valTypesMatch(fieldType, localType)) {
-          coerceType(ctx, fctx, fieldType, localType);
-        }
+        coerceTupleBindingElement(ctx, fctx, element, fieldType, localType);
         fctx.body.push({ op: "local.set", index: localIdx });
 
         // Handle element-level default initializer (e.g. [x = 23] in destructuring)
@@ -2357,11 +2695,35 @@ export function destructureParamArray(
         allocLocal(fctx, localName, { kind: "externref" });
       }
     }
-    const localIdx = fctx.localMap.get(localName)!;
+    // (#5158) A declaration binding with NO initializer and a primitive element
+    // carrier must still see `undefined` past the source's end (§13.3.3.6 step
+    // 5) — the narrow read below answers the carrier's zero, so `let [_, x] = []`
+    // bound `x === 0`. Widen the read (and the local) to externref for exactly
+    // that shape. Bindings WITH an initializer already run through the externref
+    // default-check arm, and param/catch mode keeps its fixed signature type.
+    const widenUndef =
+      isDecl &&
+      !element.initializer &&
+      elemType.kind !== "externref" &&
+      elemType.kind !== "ref_extern" &&
+      elemType.kind !== "ref" &&
+      elemType.kind !== "ref_null";
     fctx.body.push({ op: "local.get", index: paramIdx });
     fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 }); // get data
     fctx.body.push({ op: "i32.const", value: i });
-    emitBoundsCheckedArrayGetUndef(ctx, fctx, arrTypeIdx, elemType); // #1016a
+    let readType = elemType;
+    if (widenUndef && emitBoundsCheckedArrayGetUndefWidened(ctx, fctx, arrTypeIdx, elemType)) {
+      readType = { kind: "externref" };
+      // Re-alloc BEFORE reading `localIdx` — `allocLocal` mints a fresh slot and
+      // remaps the name, so an index captured earlier would write the stale
+      // narrow slot that nothing reads afterwards.
+      const existing = getLocalType(fctx, fctx.localMap.get(localName)!);
+      if (existing && existing.kind !== "externref") allocLocal(fctx, localName, { kind: "externref" });
+      (fctx.undefWidenedLocals ??= new Set()).add(localName);
+    } else {
+      emitBoundsCheckedArrayGetUndef(ctx, fctx, arrTypeIdx, elemType); // #1016a
+    }
+    const localIdx = fctx.localMap.get(localName)!;
     // Handle default initializer: [x = 23] — use default when element is null/undefined
     if (element.initializer) {
       const dfltTmpLocal = allocLocal(fctx, `__dparam_dflt_${fctx.locals.length}`, elemType);
@@ -2371,8 +2733,10 @@ export function destructureParamArray(
     }
     // Coerce array element type to local's declared type if they differ (#658)
     const vecLocalType = getLocalType(fctx, localIdx);
-    if (vecLocalType && !valTypesMatch(elemType, vecLocalType)) {
-      coerceType(ctx, fctx, elemType, vecLocalType);
+    if (vecLocalType && !valTypesMatch(readType, vecLocalType)) {
+      if (!coerceArrayBindingExternrefToAnyValue(ctx, fctx, readType, vecLocalType)) {
+        coerceType(ctx, fctx, readType, vecLocalType);
+      }
     }
     fctx.body.push({ op: "local.set", index: localIdx });
     if (isDecl) emitLocalTdzInit(fctx, localName);

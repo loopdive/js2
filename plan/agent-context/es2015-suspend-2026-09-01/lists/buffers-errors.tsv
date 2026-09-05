@@ -1,0 +1,53 @@
+test/built-ins/ArrayBuffer/data-allocation-after-object-creation.js	compile_error/runtime_error	L37:3 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/ArrayBuffer/prototype/slice/species-is-undefined.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/DataView/custom-proto-if-not-object-fallbacks-to-default-prototype.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Function]», «[object Function]») to be true
+test/built-ins/DataView/instance-extensibility.js	fail/assertion_fail	Test262Error: confirms extensibility adding a new property
+test/built-ins/ArrayBuffer/prototype/slice/species-is-null.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/ArrayBuffer/Symbol.species/symbol-species.js	fail/assertion_fail	Test262Error: Expected obj[5] NOT to be writable, but was.
+test/built-ins/DataView/prototype/setUint8/no-value-arg.js	fail/type_error	TypeError: Cannot access property on null or undefined at 353:18
+test/built-ins/DataView/prototype/setUint8/index-is-out-of-range.js	fail/type_error	TypeError: Cannot access property on null or undefined at 375:18
+test/built-ins/ArrayBuffer/prototype/slice/species-returns-same-arraybuffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayBuffer/isView/arg-is-typedarray.js	fail/assertion_fail	Test262Error: Expected SameValue(«false», «true») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/ArrayBuffer/prototype/slice/context-is-not-object.js	fail/assertion_fail	Test262Error: `this` value is undefined Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayBuffer/newtarget-prototype-is-not-object.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/ArrayBuffer/isView/invoked-as-a-fn.js	fail/type_error	TypeError: ArrayBuffer.isView is not yet implemented in --target standalone
+test/built-ins/ArrayBuffer/prototype/slice/species-constructor-is-not-object.js	fail/assertion_fail	Test262Error: `constructor` value is null Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayBuffer/prototype/slice/species-constructor-is-undefined.js	fail/type_error	TypeError: Object.prototype.toString is not yet implemented in --target standalone
+test/built-ins/DataView/return-instance.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Function]», «[object Function]») to be true
+test/built-ins/ArrayBuffer/isView/arg-is-dataview-subclass-instance.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/built-ins/ArrayBuffer/undefined-newtarget-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayBuffer/prototype/slice/species-is-not-constructor.js	fail/assertion_fail	Test262Error: `constructor[Symbol.species]` value is Object Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayBuffer/prototype-from-newtarget.js	compile_error/runtime_error	L24:19 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).; L33:19 Codegen error: standalone Reflect.construct cannot preserve an 
+test/built-ins/DataView/custom-proto-access-throws.js	compile_error/runtime_error	L43:3 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/DataView/excessive-byteoffset-throws.js	fail/assertion_fail	Test262Error: 2 Expected a RangeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayBuffer/prop-desc.js	fail/assertion_fail	Test262Error: ArrayBuffer should be an own property
+test/built-ins/DataView/prototype/getInt16/length.js	fail/type_error	TypeError: Cannot access property on null or undefined at 852:1
+test/built-ins/DataView/buffer-not-object-throws.js	compile_error/wasm_compile	L32:3 invalid Wasm binary (WebAssembly.Module(): Compiling function #485:"__cb_2" failed: struct.get[0] expected type (ref null 311), found local.get of type (ref null 6) @+269985) [in __cb_2()] [@+269985] [wat: (func $__cb_2 (type 72) (loc
+test/built-ins/ArrayBuffer/allocation-limit.js	fail/other	requested new array is too large
+test/built-ins/DataView/buffer-does-not-have-arraybuffer-data-throws.js	compile_error/wasm_compile	L26:3 invalid Wasm binary (WebAssembly.Module(): Compiling function #481:"__cb_0" failed: struct.get[0] expected type (ref null 312), found local.get of type (ref null 313) @+281480) [in __cb_0()] [@+281480] [wat: (func $__cb_0 (type 72) (l
+test/built-ins/DataView/defined-byteoffset-undefined-bytelength.js	fail/assertion_fail	Test262Error: sample.byteLength Expected SameValue(«0», «4») to be true
+test/built-ins/DataView/excessive-bytelength-throws.js	fail/assertion_fail	Test262Error: offset: 0, length 4 Expected a RangeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayBuffer/prototype/slice/species-is-not-object.js	fail/assertion_fail	Test262Error: `constructor[Symbol.species]` value is Boolean Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayBuffer/isView/arg-is-typedarray-subclass-instance.js	fail/assertion_fail	Test262Error: Expected true but got false (Testing with Float64Array and makeArray.)
+test/built-ins/DataView/defined-byteoffset.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Function]», «[object Function]») to be true
+test/built-ins/DataView/byteOffset-validated-against-initial-buffer-length.js	compile_error/runtime_error	L43:3 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/ArrayBuffer/prototype/slice/species-returns-smaller-arraybuffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayBuffer/prototype/slice/species-returns-larger-arraybuffer.js	fail/assertion_fail	Test262Error: Expected SameValue(«8», «10») to be true
+test/built-ins/DataView/prototype/setUint8/toindex-byteoffset.js	fail/type_error	TypeError: Cannot access property on null or undefined at 356:18
+test/built-ins/ArrayBuffer/isView/arg-is-typedarray-buffer.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true (Testing with Float64Array and makeArray.)
+test/built-ins/DataView/detached-buffer.js	fail/assertion_fail	Test262Error: throws if buffer is detached Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/ArrayBuffer/prototype/slice/end-default-if-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «2») to be true
+test/built-ins/DataView/proto.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Function]») to be true
+test/built-ins/ArrayBuffer/prototype/slice/context-is-not-arraybuffer-object.js	fail/assertion_fail	Test262Error: `this` value is Object Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/DataView/custom-proto-access-detaches-buffer.js	compile_error/runtime_error	L34:3 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/DataView/newtarget-undefined-throws.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/DataView/prototype/setUint8/negative-byteoffset-throws.js	fail/type_error	TypeError: Cannot access property on null or undefined at 345:18
+test/built-ins/ArrayBuffer/length-is-too-large-throws.js	fail/other	requested new array is too large
+test/built-ins/ArrayBuffer/prototype/slice/species-returns-not-arraybuffer.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/DataView/defined-bytelength-and-byteoffset.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Function]», «[object Function]») to be true
+test/built-ins/ArrayBuffer/prototype/slice/species.js	fail/assertion_fail	Test262Error: Expected SameValue(«,,,,,,,», «undefined») to be true
+test/built-ins/DataView/prototype/setUint8/set-values-return-undefined.js	fail/type_error	TypeError: Cannot access property on null or undefined at 1013:5
+test/built-ins/ArrayBuffer/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 343:44
+test/built-ins/DataView/dataview.js	fail/assertion_fail	Test262Error: DataView should be an own property
+test/built-ins/DataView/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 347:44
+test/built-ins/ArrayBuffer/toindex-length.js	fail/range_error	RangeError: RangeError: Invalid array buffer length

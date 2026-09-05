@@ -32,13 +32,14 @@ describe("#2699 — node:url/module/os destructured-import host-glue", () => {
     const src = `
       const { pathToFileURL, fileURLToPath } = require("node:url");
       const { createRequire } = require("node:module");
-      const { platform, release } = require("node:os");
+      const { platform, release, tmpdir } = require("node:os");
       export function main(): number {
         return (typeof pathToFileURL) === "function" &&
                (typeof fileURLToPath) === "function" &&
                (typeof createRequire) === "function" &&
                (typeof platform) === "function" &&
-               (typeof release) === "function" ? 1 : 0;
+               (typeof release) === "function" &&
+               (typeof tmpdir) === "function" ? 1 : 0;
       }
     `;
     const { result, instance } = await run(src);
@@ -48,6 +49,7 @@ describe("#2699 — node:url/module/os destructured-import host-glue", () => {
     expect(nodefn).toContain("__nodefn__module__createRequire");
     expect(nodefn).toContain("__nodefn__os__platform");
     expect(nodefn).toContain("__nodefn__os__release");
+    expect(nodefn).toContain("__nodefn__os__tmpdir");
     expect((instance.exports.main as () => number)()).toBe(1);
   });
 
@@ -73,6 +75,15 @@ describe("#2699 — node:url/module/os destructured-import host-glue", () => {
     const { instance } = await run(src);
     expect((instance.exports.plen as () => number)()).toBeGreaterThan(0);
     expect((instance.exports.rlen as () => number)()).toBeGreaterThan(0);
+  });
+
+  it("os.tmpdir returns the host temporary directory", async () => {
+    const src = `
+      const { tmpdir } = require("node:os");
+      export function plen(): number { return tmpdir().length; }
+    `;
+    const { instance } = await run(src);
+    expect((instance.exports.plen as () => number)()).toBeGreaterThan(0);
   });
 
   it("module.createRequire returns a callable", async () => {

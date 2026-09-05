@@ -76,6 +76,32 @@ describe("#4206 standalone Tier-2 dynamic `with`", () => {
     ).toBe(1);
   });
 
+  it("throws when a deleted with member is used as a property receiver", async () => {
+    expect(
+      await runStandalone(`
+        export function f(): number {
+          var myObj: any = { p1: { a: "hello" } };
+          with (myObj) { delete p1; }
+          try { myObj.p1.a; return 0; }
+          catch (e) { return e instanceof TypeError ? 1 : 2; }
+        }
+      `),
+    ).toBe(1);
+  });
+
+  it("throws when a deleted with member is used for element access", async () => {
+    expect(
+      await runStandalone(`
+        export function f(): number {
+          var myObj: any = { p1: [1, 2, 3] };
+          with (myObj) { delete p1; }
+          try { myObj.p1[2]; return 0; }
+          catch (e) { return e instanceof TypeError ? 1 : 2; }
+        }
+      `),
+    ).toBe(1);
+  });
+
   it("still reads own fields through the with scope", async () => {
     expect(
       await runStandalone(`

@@ -74,7 +74,10 @@ export const NODE_FS_SHIM_WAT = `(module
 /** Assemble the shim WAT to a validated wasm binary (Uint8Array). */
 export function buildNodeFsShim() {
   const m = binaryen.parseText(NODE_FS_SHIM_WAT);
-  m.setFeatures(binaryen.Features.All);
+  // This shim only uses MVP instructions. Binaryen 132's `Features.All` also
+  // enables CompactImports, causing `emitBinary()` to produce a module that
+  // stock Wasmtime 46 rejects unless that experimental proposal is enabled.
+  m.setFeatures(binaryen.Features.MVP);
   if (!m.validate()) {
     m.dispose();
     throw new Error("node-fs shim: binaryen validation failed");

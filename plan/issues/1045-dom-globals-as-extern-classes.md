@@ -3,7 +3,7 @@ id: 1045
 title: "DOM globals as extern classes (DOM_HOST_GLOBALS, queueMicrotask, requestAnimationFrame)"
 status: ready
 created: 2026-04-11
-updated: 2026-06-19
+updated: 2026-08-25
 priority: high
 feasibility: medium
 reasoning_effort: high
@@ -12,6 +12,8 @@ sprint: Backlog
 parent: 1033
 depends_on: [1041]
 required_by: [1033, 1296]
+loc-budget-allow:
+  - src/codegen/extern-declarations.ts
 ---
 # #1045 — DOM globals as extern classes
 
@@ -71,6 +73,32 @@ For #1033 (react stress test) to get past Tier 3 (reconciler), the compiler must
 - [ ] `queueMicrotask(fn)` compiles to a host import call (callback as externref)
 - [ ] React Tier 2 (hooks) sample (`useState` + `useEffect` toy component) compiles cleanly
 - [ ] `--target wasi` errors cleanly for DOM globals
+
+## 2026-08-25 ambient-redeclaration regression
+
+Current main (`778e4ae0f4c585`) regressed the host-global half of this issue:
+the module-binding shadow pre-pass treated `declare const document: any` as a
+concrete user-owned variable. Because ambient declarations do not allocate a
+runtime cell, that classification suppressed `env.global_document` without
+providing a replacement; the eventual `document.createElement(...)` call
+therefore received a null receiver.
+
+The narrow correction excludes `declare` variable statements from the set of
+concrete module bindings that shadow lib globals. Real function, class,
+variable, and import bindings keep the collision protection added for
+ReactDOM's local `dispatchEvent`. The real-world DOM regression now explicitly
+requires `global_document`, while the adjacent declared-global cache suite
+proves that repeated reads still resolve and cache the supplied host object.
+
+Measured on the npm-compat continuation branch:
+
+- `tests/real-world-web-apis.test.ts`: **9/9 pass** (current main control:
+  **8/9**, with `document` null at `createElement`).
+- `tests/issue-4150-declared-global-cache.test.ts`: **5/5 pass**.
+- the ReactDOM local `dispatchEvent` bind-target regression: **1/1 pass**.
+
+The LOC allowance above is limited to the ambient-global collector where the
+shadow classification is performed.
 
 ## Non-goals
 

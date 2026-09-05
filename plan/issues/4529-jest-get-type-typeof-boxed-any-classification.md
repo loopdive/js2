@@ -1,10 +1,10 @@
 ---
 id: 4529
 title: "jest-get-type: typeof/classification on boxed any returns 'object' for every primitive — 16/32 upstream tests fail"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-08-16
-updated: 2026-08-16
+updated: 2026-08-21
 priority: high
 horizon: m
 feasibility: medium
@@ -80,3 +80,35 @@ node --import tsx tests/dogfood/jest-upstream-suite.mjs --json
       compiled code.
 - [ ] jest-get-type slice ≥ 28/32 Wasm, with the residual (if any) named.
 - [ ] Committed reduction test.
+
+## 2026-08-21 checkpoint
+
+jest pinned suite **107/232 → 113/232** (the suite grew from 32 to 232
+admitted since this issue was filed); getType.test.ts **7/14 → 13/14**.
+
+Three fixes landed:
+
+1. `staticTypeofForType` no longer folds the empty anonymous object type `{}`
+   (TS's narrowing of `unknown` behind nullish guards — it admits every
+   non-nullish value) to "object". This was the actual mechanism behind the
+   getType failures: the fold turned every `typeof value === '…'` compare
+   into constant false.
+2. Host `__typeof` unwraps Wasm-native boxed primitive carriers
+   (`_nativePrimitiveToHost`) before answering, so a boxed number/boolean/
+   bigint no longer reports "object".
+3. `Object(v)` on an `any`/`unknown`-typed argument now routes through a new
+   `__to_object` host helper (real §7.1.18 ToObject, unwrapping native
+   carriers) instead of compiling as identity — `Object(value) !== value`
+   (jest's isPrimitive) now distinguishes primitives. Host lane only;
+   standalone keeps the identity fallback (follow-up).
+4. (With #4530) `inferParamTypeFromCallSites` withdraws a GC-ref narrowing
+   when any call site passes an opaque `any` argument.
+
+Regression tests: `tests/issue-4529-typeof-narrowed-unknown.test.ts`.
+
+**Remaining**: isPrimitive.test.ts is still 0/18 in the harness — its values
+flow through `test.each([mixed array literal])`, the heterogeneous-array
+carrier family (#4531/#4526), not a typeof defect. getType residual 1/14 is
+the `date` arm (constructor identity through the bridge, as predicted in the
+plan). The date/bigint constructor-identity residual and the each-array
+carrier stay open here and in #4531 respectively.

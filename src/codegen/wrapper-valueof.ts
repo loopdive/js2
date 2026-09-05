@@ -63,6 +63,7 @@ import { FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY, ensureObjectRuntime } from "./obj
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { compileExpression } from "./shared.js";
+import { receiverIsPrimitiveWrapper } from "./object-ctor-primitive-receiver.js";
 
 const HELPER = "__dyn_valueOf";
 
@@ -90,7 +91,17 @@ export function tryEmitDynamicValueOfCall(
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
   const fact = ctx.oracle.typeFactOf(propAccess.expression).kind;
-  if (fact !== "any" && fact !== "unknown") return undefined;
+  // (#4491 wave-5 T2) …plus the one receiver whose static type is a LIE about
+  // its shape: `new Object(<primitive>)` types as `Object`, but §20.1.1.1 makes
+  // it a String/Number/Boolean wrapper. `Object(1.1)` types as `any` and has
+  // always come here; `new Object(1.1)` did not, and fell to the caller's
+  // blanket `Object.prototype.valueOf` identity — returning the WRAPPER where
+  // §21.1.3.7 requires its [[NumberData]]. The two spellings are spec-identical,
+  // so this makes the lowering agree with itself. Same predicate #4232 uses to
+  // stand the `.constructor` fold down for these receivers.
+  if (fact !== "any" && fact !== "unknown" && !receiverIsPrimitiveWrapper(ctx, propAccess.expression)) {
+    return undefined;
+  }
   const helperIdx = ensureDynamicValueOfHelper(ctx);
   if (helperIdx < 0) return undefined;
   flushLateImportShifts(ctx, fctx);
@@ -142,6 +153,55 @@ export function ensureDynamicValueOfHelper(ctx: CodegenContext): number {
   // externref — normalize so the `ref.is_null` below sees the miss.
   const nullishIdx = ctx.funcMap.get("__nullish_to_null");
   const normalizeMiss: Instr[] = nullishIdx !== undefined ? [{ op: "call", funcIdx: nullishIdx }] : [];
+
+  // Function-constructor instances are closed WasmGC structs rather than the
+  // open `$Object` carrier.  `Object(x)` preserves such an argument by
+  // identity, so a subsequent `Object(x).valueOf()` must still see an own
+  // `valueOf` field installed by the constructor.  The dynamic helper's
+  // historical `$Object` test skipped these receivers and returned the
+  // receiver itself (Object.prototype.valueOf), even though the same field
+  // call on `x` was lowered by the closed-method dispatcher.  Add only the
+  // fnctor structs that actually carry a callable `valueOf` field; unrelated
+  // closed shapes stay on the existing fallback path.
+  const fnctorApplyClosureIdx = ctx.funcMap.get("__apply_closure");
+  const fnctorValueOfArms: Instr[] = [];
+  if (fnctorApplyClosureIdx !== undefined) {
+    for (const [name, fields] of ctx.structFields) {
+      if (!name.startsWith("__fnctor_")) continue;
+      const typeIdx = ctx.structMap.get(name);
+      const fieldIdx = fields.findIndex((field) => field.name === "valueOf");
+      if (typeIdx === undefined || fieldIdx < 0) continue;
+      const field = fields[fieldIdx]!;
+      if (
+        field.type.kind !== "externref" &&
+        field.type.kind !== "ref" &&
+        field.type.kind !== "ref_null" &&
+        field.type.kind !== "eqref"
+      ) {
+        continue;
+      }
+      fnctorValueOfArms.push(
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx },
+            { op: "struct.get", typeIdx, fieldIdx },
+            ...(field.type.kind === "externref" ? [] : ([{ op: "extern.convert_any" }] satisfies Instr[])),
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: objVecNewIdx },
+            { op: "call", funcIdx: fnctorApplyClosureIdx },
+            { op: "return" },
+          ],
+        },
+      );
+    }
+  }
 
   // Arm 3 → Arm 2: no `valueOf` property. Return the wrapper's
   // [[PrimitiveValue]] slot when the FLAG_INTERNAL entry is present, else the
@@ -208,7 +268,7 @@ export function ensureDynamicValueOfHelper(ctx: CodegenContext): number {
         },
       ],
       // Non-`$Object` receiver — unchanged, exactly the blanket fallback.
-      else: [{ op: "local.get", index: 0 }],
+      else: [...fnctorValueOfArms, { op: "local.get", index: 0 }],
     },
   ];
 

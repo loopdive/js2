@@ -1,0 +1,8 @@
+/*---
+description: probe .tmp/es2015/probes5195/static-accessor-names.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class C { static get staticX() { return 2; } static set staticY(v) {} static sm() {} }
+var d = Object.getOwnPropertyDescriptor(C, 'staticX');
+assert.sameValue(typeof d, 'object', 'gOPD static getter');
+assert.compareArray(Object.getOwnPropertyNames(C), ['length', 'name', 'prototype', 'staticX', 'staticY', 'sm']);

@@ -1,0 +1,11 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+function ID(x) { return x; }
+var sym2 = Symbol(); var k = ID(sym2);
+var o1 = { [k]: 'D' };
+assert.sameValue(o1[sym2], 'D', 'identifier holding a call result: ' + String(o1[sym2]));
+var o2 = { [ID(sym2)]: 'D' };
+assert.sameValue(o2[sym2], 'D', 'call expression key: ' + String(o2[sym2]));

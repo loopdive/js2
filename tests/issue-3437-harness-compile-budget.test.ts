@@ -22,6 +22,8 @@ const BUDGET = JSON.parse(readFileSync(resolve(__dirname, "../scripts/harness-co
   forEachChildCalls: number;
   marginPct: number;
   fixtureCallSites: number;
+  updated: string;
+  note: string;
 };
 const VACUITY_FLOOR = 800;
 
@@ -55,6 +57,64 @@ describe("#3437 evaluateBudget — pure verdict", () => {
 
   it("rounds the ceiling up (Math.ceil), so a fractional margin never under-gates", () => {
     expect(evaluateBudget(0, 97, 15, VACUITY_FLOOR).ceiling).toBe(Math.ceil(97 * 1.15)); // 112
+  });
+});
+
+// #5306 — the soft band. The gate's margin is consumed CUMULATIVELY by every
+// PR, so a 99.98 %-spent budget makes the next harness-path PR fail for two
+// weeks of other people's drift. Warning at the half-margin line surfaces that
+// drift in every `quality` log; it must never change the exit status.
+describe("#5306 evaluateBudget — soft warning band", () => {
+  it("puts the soft ceiling at half the margin", () => {
+    const v = evaluateBudget(1000, 1000, 15, VACUITY_FLOOR);
+    expect(v.softCeiling).toBe(Math.ceil(1000 * 1.075)); // 1075
+    expect(v.ceiling).toBe(1150);
+  });
+
+  it("does not warn at or below the half-margin line", () => {
+    expect(evaluateBudget(1000, 1000, 15, VACUITY_FLOOR).nearCeiling).toBe(false);
+    expect(evaluateBudget(1075, 1000, 15, VACUITY_FLOOR).nearCeiling).toBe(false);
+  });
+
+  it("warns between the soft ceiling and the hard ceiling, without failing", () => {
+    const v = evaluateBudget(1076, 1000, 15, VACUITY_FLOOR);
+    expect(v.nearCeiling).toBe(true);
+    expect(v.overBudget).toBe(false);
+    const atCeiling = evaluateBudget(1150, 1000, 15, VACUITY_FLOOR);
+    expect(atCeiling.nearCeiling).toBe(true);
+    expect(atCeiling.overBudget).toBe(false);
+  });
+
+  it("stops warning once it is a hard failure (a fail is not softened into a warning)", () => {
+    const v = evaluateBudget(1151, 1000, 15, VACUITY_FLOOR);
+    expect(v.overBudget).toBe(true);
+    expect(v.nearCeiling).toBe(false);
+  });
+
+  it("reports the remaining margin in absolute traversals and as a share of the ceiling", () => {
+    // The state this issue was filed from: 150,774 measured against the
+    // 2026-08-20 budget of 131,133 — 29 traversals (0.02 %) of headroom left.
+    const v = evaluateBudget(150_774, 131_133, 15, VACUITY_FLOOR);
+    expect(v.nearCeiling).toBe(true);
+    expect(v.marginLeft).toBe(29);
+    expect(v.marginLeftPct.toFixed(2)).toBe("0.02");
+  });
+
+  it("reports a negative margin once over budget", () => {
+    const v = evaluateBudget(1200, 1000, 15, VACUITY_FLOOR);
+    expect(v.marginLeft).toBe(-50);
+  });
+});
+
+describe("#5306 committed budget carries its provenance", () => {
+  it("the note records the rebank date and the measured figure", () => {
+    expect(BUDGET.note).toContain(BUDGET.updated);
+    expect(BUDGET.note).toContain(String(BUDGET.forEachChildCalls));
+  });
+
+  it("main sits below the soft ceiling, so the band is not pre-tripped", () => {
+    const v = evaluateBudget(BUDGET.forEachChildCalls, BUDGET.forEachChildCalls, BUDGET.marginPct, VACUITY_FLOOR);
+    expect(v.nearCeiling).toBe(false);
   });
 });
 

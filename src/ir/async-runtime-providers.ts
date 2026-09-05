@@ -7,6 +7,17 @@
  * below this boundary in the capability catalogue, where manifest closure can
  * validate and deduplicate them before any backend starts emitting code.
  */
+import {
+  asCallableRuntimeHostCapabilityRecord,
+  assertCanonicalRuntimeHostCapabilityRecord,
+  assertRuntimeHostCapabilityRecord,
+  HOST_CALLBACK_EXCEPTION_POLICY,
+  resolveRuntimeHostCapabilityRecord,
+  RUNTIME_HOST_CAPABILITY_RECORDS,
+  type HostCallbackExceptionPolicy,
+  type RuntimeHostCapabilityFuncRecord,
+  type RuntimeHostCapabilityRecord,
+} from "./runtime-host-capabilities.js";
 import type { RuntimeProviderDefinition, RuntimeProviderImplementation } from "./runtime-manifest.js";
 
 export const ASYNC_RUNTIME_FEATURES = Object.freeze([
@@ -46,6 +57,19 @@ export const ASYNC_HOST_CAPABILITY_IDS = Object.freeze([
 
 export type AsyncHostCapabilityId = (typeof ASYNC_HOST_CAPABILITY_IDS)[number];
 
+const ASYNC_HOST_CAPABILITY_ID_SET: ReadonlySet<string> = new Set(ASYNC_HOST_CAPABILITY_IDS);
+
+export function isAsyncHostCapabilityId(value: string): value is AsyncHostCapabilityId {
+  return ASYNC_HOST_CAPABILITY_ID_SET.has(value);
+}
+
+/**
+ * (#3526 F1-S1) The async projection keeps this NARROWED value-type union on
+ * purpose. `materializePreparedAsyncHostAdapters` maps every non-`i32` row to
+ * externref, so admitting the central `f64` rows here would silently mislower
+ * the number-boundary records. Never re-export the widened central union under
+ * an async name.
+ */
 export type AsyncHostAdapterValueType = "externref" | "i32";
 
 /**
@@ -54,62 +78,76 @@ export type AsyncHostAdapterValueType = "externref" | "i32";
  * this module's exception tag. The host Promise must observe that value, not
  * the Wasm carrier. Foreign tags and runtime traps are deliberately excluded.
  */
-export const ASYNC_CALLBACK_EXCEPTION_POLICY = "module-tag-payload" as const;
-export type AsyncCallbackExceptionPolicy = typeof ASYNC_CALLBACK_EXCEPTION_POLICY;
+export const ASYNC_CALLBACK_EXCEPTION_POLICY = HOST_CALLBACK_EXCEPTION_POLICY;
+export type AsyncCallbackExceptionPolicy = HostCallbackExceptionPolicy;
 
-/** Concrete adapter data, deliberately separate from the semantic manifest. */
-export interface AsyncHostAdapter {
-  readonly capability: AsyncHostCapabilityId;
-  readonly module: "env";
-  readonly field: string;
-  readonly kind: "func";
-  readonly params: readonly AsyncHostAdapterValueType[];
-  readonly results: readonly AsyncHostAdapterValueType[];
-  readonly exceptionPolicy?: AsyncCallbackExceptionPolicy;
+/**
+ * Exact concrete capability record selected by the frozen semantic manifest.
+ *
+ * (#3526 F2-S2) Retargeted to the FUNC arm of the now kind-discriminated
+ * central record. Every async capability is a callable host import; typing the
+ * adapter on the union would have handed `materializePreparedAsyncHostAdapters`
+ * a record with no `params`/`results` at all.
+ */
+export type AsyncHostAdapter = RuntimeHostCapabilityFuncRecord<AsyncHostCapabilityId, AsyncHostAdapterValueType>;
+
+/**
+ * Narrow one central record to the async projection. Fails closed on a
+ * non-async capability, on a non-callable KIND, and on any value type the
+ * async materializer cannot represent, so the narrowing can never become a
+ * silent cast.
+ */
+export function asAsyncHostAdapter(value: RuntimeHostCapabilityRecord): AsyncHostAdapter {
+  if (!isAsyncHostCapabilityId(value.capability)) {
+    throw new Error(`host capability ${value.capability} is not an async capability`);
+  }
+  // (#3526 F2-S2) BEFORE the value-type walk: a global record has no `params`
+  // or `results` to walk, so the kind guard is what makes the loop total.
+  const callable = asCallableRuntimeHostCapabilityRecord(value);
+  for (const entry of [...callable.params, ...callable.results]) {
+    if (entry !== "externref" && entry !== "i32") {
+      throw new Error(`async host capability ${value.capability} cannot carry value type ${entry}`);
+    }
+  }
+  return callable as AsyncHostAdapter;
 }
 
-function adapter(
+/**
+ * The async-only projection of the central catalogue. These are the SAME
+ * frozen objects, so canonical-identity guards accept either view.
+ */
+export const ASYNC_HOST_CAPABILITY_RECORDS: readonly AsyncHostAdapter[] = Object.freeze(
+  RUNTIME_HOST_CAPABILITY_RECORDS.filter((entry) => isAsyncHostCapabilityId(entry.capability)).map(asAsyncHostAdapter),
+);
+
+/** Validate one record against the central closed ABI, then narrow it. */
+export function assertAsyncHostCapabilityRecord(value: unknown): asserts value is AsyncHostAdapter {
+  assertRuntimeHostCapabilityRecord(value);
+  asAsyncHostAdapter(value);
+}
+
+/** Authenticate that an attached record is the exact factory-created object. */
+export function assertCanonicalAsyncHostCapabilityRecord(value: unknown): asserts value is AsyncHostAdapter {
+  assertCanonicalRuntimeHostCapabilityRecord(value);
+  asAsyncHostAdapter(value);
+}
+
+/** Resolve one selected async ID from an already validated catalog, fail-closed. */
+export function resolveAsyncHostCapabilityRecord(
+  records: readonly RuntimeHostCapabilityRecord[],
   capability: AsyncHostCapabilityId,
-  field: string,
-  params: readonly AsyncHostAdapterValueType[],
-  results: readonly AsyncHostAdapterValueType[],
-  exceptionPolicy?: AsyncCallbackExceptionPolicy,
 ): AsyncHostAdapter {
-  return Object.freeze({
-    capability,
-    module: "env",
-    field,
-    kind: "func",
-    params: Object.freeze([...params]),
-    results: Object.freeze([...results]),
-    ...(exceptionPolicy === undefined ? {} : { exceptionPolicy }),
-  });
+  return asAsyncHostAdapter(resolveRuntimeHostCapabilityRecord(records, capability));
 }
 
-/** Exact host adapter surface consumed by the existing async frame engine. */
-export const ASYNC_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.freeze([
-  adapter(
-    "async.callback.wrap",
-    "__make_callback",
-    ["i32", "externref"],
-    ["externref"],
-    ASYNC_CALLBACK_EXCEPTION_POLICY,
-  ),
-  adapter("async.promise.capability.create", "Promise_new_pending", [], ["externref"]),
-  adapter("async.promise.react", "Promise_then2", ["externref", "externref", "externref"], ["externref"]),
-  adapter("async.promise.resolve", "Promise_resolve", ["externref"], ["externref"]),
-  adapter("async.promise.settle.fulfill", "Promise_settle_resolve", ["externref", "externref"], ["externref"]),
-  adapter("async.promise.settle.reject", "Promise_settle_reject", ["externref", "externref"], ["externref"]),
-]);
+/** Mandatory and optional compatibility projections share the same records. */
+export const ASYNC_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.freeze(
+  ASYNC_HOST_CAPABILITY_RECORDS.filter((record) => record.capability !== "async.value.undefined"),
+);
 
-export const ASYNC_OPTIONAL_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.freeze([
-  adapter("async.value.undefined", "__get_undefined", [], ["externref"]),
-]);
-
-export const ALL_ASYNC_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.freeze([
-  ...ASYNC_HOST_ADAPTERS,
-  ...ASYNC_OPTIONAL_HOST_ADAPTERS,
-]);
+export const ASYNC_OPTIONAL_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.freeze(
+  ASYNC_HOST_CAPABILITY_RECORDS.filter((record) => record.capability === "async.value.undefined"),
+);
 
 function capabilities(...ids: readonly AsyncHostCapabilityId[]): readonly AsyncHostCapabilityId[] {
   return Object.freeze([...ids].sort());

@@ -96,3 +96,20 @@ regenerate via `pnpm run dogfood:marked`) for the full diagnostic dump.
       (does not require the FULL package to validate/run correctly yet,
       just to get past the type-checking phase — that's this issue's bar;
       #3716 tracks what's found once compilation succeeds).
+
+## Harness mitigation evidence (2026-08-24)
+
+The pinned `marked@18.0.2` entry was re-run before and after adding
+`skipSemanticDiagnostics: true` to `tests/dogfood/marked-harness.mjs`. This is
+the sanctioned plain-JavaScript dogfood mode already used by the Acorn lanes;
+it suppresses TypeScript checker diagnostics while preserving syntax/spec
+diagnostics. It does **not** implement evolving-array inference and does not
+close this compiler issue.
+
+| | compile | diagnostics | binary | validation | fixture runs |
+|---|---:|---:|---:|---:|---:|
+| before | failed | 64 | 0 bytes | no binary | 0/8 (skipped) |
+| after | passed | 0 | 4,169,367 bytes | valid | 0/8 (all threw) |
+
+The post-mitigation runtime error is `space is not a function`; it is a
+separate runtime/dispatch issue, not evidence that the checker fix landed.

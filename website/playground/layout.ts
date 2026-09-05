@@ -84,7 +84,7 @@ export function getDefaultLayout(): LayoutNode {
             ratio: 0.5,
             children: [
               { type: "leaf", id: "output-left", tabs: ["preview", "console", "errors"], activeTab: "preview" },
-              { type: "leaf", id: "output-right", tabs: ["treemap"], activeTab: "treemap" },
+              { type: "leaf", id: "output-right", tabs: ["treemap", "ast"], activeTab: "treemap" },
             ],
           },
         ],
@@ -108,7 +108,7 @@ export function getMobileDefaultLayout(): LayoutNode {
       {
         type: "leaf",
         id: "output-main",
-        tabs: ["preview", "console", "errors", "treemap"],
+        tabs: ["preview", "console", "errors", "treemap", "ast"],
         activeTab: "preview",
       },
     ],

@@ -22,7 +22,8 @@
  * `random` — a host RNG import, not a dialect gap.
  */
 import type { Instr, ValType } from "../ir/types.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
+import { recordStdlibMathHelper } from "./compiler-support-abi.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 import { emitSelfHostedMathFunc } from "./stdlib-selfhost.js"; // (#3141) self-hosted stdlib driver
@@ -64,6 +65,44 @@ type MathFuncDef = {
 };
 
 /**
+ * Build the host-free standalone Math.random body.
+ *
+ * ECMAScript deliberately leaves the algorithm implementation-defined. A
+ * module-local xorshift64 state gives standalone modules a changing value in
+ * [0, 1) without inventing an entropy capability or retaining env.Math_random.
+ * This is not a cryptographic generator; callers needing entropy must use an
+ * explicit platform capability.
+ */
+function nativeStandaloneRandomBody(ctx: CodegenContext): Instr[] {
+  const stateIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+  ctx.mod.globals.push({
+    name: "__math_random_state",
+    type: { kind: "i64" },
+    mutable: true,
+    init: [{ op: "i64.const", value: 0x123456789abcdefn }],
+  });
+  const mix = (shift: bigint, op: "i64.shl" | "i64.shr_u"): Instr[] => [
+    { op: "global.get", index: stateIdx },
+    { op: "global.get", index: stateIdx },
+    { op: "i64.const", value: shift },
+    { op },
+    { op: "i64.xor" },
+    { op: "global.set", index: stateIdx },
+  ];
+  return [
+    ...mix(13n, "i64.shl"),
+    ...mix(7n, "i64.shr_u"),
+    ...mix(17n, "i64.shl"),
+    { op: "global.get", index: stateIdx },
+    { op: "i64.const", value: 11n },
+    { op: "i64.shr_u" },
+    { op: "f64.convert_i64_s" },
+    f64c(1 / 9007199254740992),
+    mul,
+  ];
+}
+
+/**
  * Emit pure Wasm implementations for the requested Math methods.
  * Methods are added as module functions (not imports) and registered
  * in ctx.funcMap under "Math_<method>".
@@ -100,15 +139,17 @@ export function emitInlineMathFunctions(ctx: CodegenContext, needed: Set<string>
   if (needed.has("random")) {
     const randomGetIdx = ctx.funcMap.get("random_get");
     if (randomGetIdx === undefined) {
-      // collectMathImports / collectMathImports-finalize should have registered
-      // it before we got here. If missing, fall back to a constant 0 — better
-      // than crashing in instantiation, and the test suite will catch it.
+      // A pure standalone module has no entropy provider. Use the native,
+      // implementation-defined PRNG; WASI continues through random_get below.
       addMathFunc({
         name: "Math_random",
         params: [],
         results: f64Result,
         locals: [],
-        body: [f64c(0)],
+        body:
+          ctx.standalone || ctx.targetProfile.semanticProviders === "native-first"
+            ? nativeStandaloneRandomBody(ctx)
+            : [f64c(0)],
       });
     } else {
       // The IR doesn't include `i64.load`, so we read 8 bytes as TWO `i32.load`s
@@ -256,7 +297,7 @@ export function emitInlineMathFunctions(ctx: CodegenContext, needed: Set<string>
   }
 
   // ─── Self-hosted subset (#3141) ───────────────────────────────────
-  // sinh/cosh/tanh, asinh/acosh/atanh, cbrt, expm1 and log1p are no
+  // sinh/cosh/tanh, asinh/acosh/atanh, cbrt, round, sign, expm1 and log1p are no
   // longer hand-emitted `Instr[]`. Their bodies are ordinary TS source
   // in `src/stdlib/math.ts`, compiled through the compiler's own IR
   // pipeline (`stdlib-selfhost.ts`) and registered here, at the same
@@ -268,5 +309,18 @@ export function emitInlineMathFunctions(ctx: CodegenContext, needed: Set<string>
     if (needed.has(method)) {
       addedFuncs.set(builtin.name, emitSelfHostedMathFunc(ctx, builtin));
     }
+  }
+
+  // (#3520 C35) Record the whole emitted family for Program ABI ownership.
+  // Most of these are already owned by an `intrinsic-provider` row, because the
+  // IR asked for the intrinsic by name. The ones that are NOT are the helpers
+  // pulled in as CALLEES of a requested intrinsic — `__math_reduce_trig` behind
+  // `Math.sin`, `Math_atan` behind `Math.atan2` — and those were the last two
+  // Math functions still landing on the positional fallback. Recording the
+  // whole family and letting the planner skip anything already owned keeps that
+  // distinction out of this emitter.
+  for (const [name, funcIdx] of addedFuncs) {
+    const func = definedFuncAt(ctx, funcIdx);
+    if (func) recordStdlibMathHelper(ctx, name, func);
   }
 }

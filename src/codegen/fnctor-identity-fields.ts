@@ -6,6 +6,11 @@ import { presenceWordName } from "./fnctor-presence-bits.js";
 
 export const FNCTOR_CONSTRUCTOR_FIELD = "$constructor";
 
+/** Canonical compiler-owned constructor identity slot for standalone fnctors. */
+export function fnctorConstructorField(): FieldDef {
+  return { name: FNCTOR_CONSTRUCTOR_FIELD, type: { kind: "externref" }, mutable: false };
+}
+
 /**
  * Append compiler-owned fields after every source field. Presence bits remain
  * ahead of the constructor identity so existing source and presence indices
@@ -55,7 +60,7 @@ export function appendFnctorInternalFields(
     fields.push({ name: presenceWordName(word * 32), type: { kind: "i32" }, mutable: true });
   }
   if (ctx.standalone) {
-    fields.push({ name: FNCTOR_CONSTRUCTOR_FIELD, type: { kind: "externref" }, mutable: false });
+    fields.push(fnctorConstructorField());
   }
 }
 

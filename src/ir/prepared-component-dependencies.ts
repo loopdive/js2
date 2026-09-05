@@ -7,6 +7,7 @@ import {
   irTypeBindingKey,
 } from "./abi-bindings.js";
 import { irCallableBindingKey, irUnitCallableBindingId } from "./callable-bindings.js";
+import { IR_STRING_REPEAT_FN } from "./string-runtime.js";
 import type { IrBindingId, IrClassId, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "./identity.js";
 import {
   forEachInstrDeep,
@@ -154,6 +155,11 @@ export interface DerivePreparedComponentDependenciesInput {
   readonly module: IrModule;
   /** Exact R2 candidate denominator. Local calls close components within it. */
   readonly terminalUnitIds: ReadonlySet<IrUnitId>;
+  /**
+   * Keep the caller-certified terminal denominator in one component even when
+   * post-pass IR no longer contains the edge that originally connected it.
+   */
+  readonly atomicTerminalPopulation?: boolean;
   readonly inventory: IrUnitInventory;
   readonly derivedUnits?: readonly ProgramAbiDerivedUnitRecord[];
   readonly closureSupport?: PreparedComponentClosureSupportEvidence;
@@ -323,6 +329,7 @@ function collectIrTypeClasses(type: IrType, classes: Map<IrClassId, IrClassShape
     case "val":
     case "string":
     case "extern":
+    case "fnctor":
     case "dynamic":
       return;
   }
@@ -410,6 +417,9 @@ function recordImplicitTypeRequirement(
     }
     case "object":
       block("IR object shape resolves a backend type without a symbolic Program ABI type ref");
+      return;
+    case "fnctor":
+      block("IR fnctor type requires an exact prepared ABI resolver/layout and cannot use object/class fallback");
       return;
     case "closure":
     case "callable":
@@ -626,6 +636,7 @@ function implicitSupportRequirement(
         ? null
         : `${instr.kind} resolves string globals/types/helpers without an explicit symbolic ref`;
     case "string.concat":
+    case "string.repeat":
     case "string.eq":
     case "string.char_at":
     case "string.char_code_at":
@@ -739,6 +750,9 @@ function implicitSupportRequirement(
     case "labeled.block":
     case "switch":
       return null;
+    case "fnctor.new":
+    case "fnctor.get":
+      return `${instr.kind} requires an explicit fnctor ABI resolver and prepared component support`;
     default: {
       const exhaustive: never = instr;
       return `unknown IR instruction ${(exhaustive as { readonly kind?: unknown }).kind ?? "<missing>"}`;
@@ -1149,7 +1163,21 @@ function recordExternalCallable(
       bindingId: match.id,
       kind: "external-callable",
       structuralReferenceKey: key,
-      expected: (intent) => externalCallableIntentMatches(intent, ref.binding),
+      expected: (intent) =>
+        externalCallableIntentMatches(intent, ref.binding) &&
+        (ref.binding.kind !== "intrinsic" ||
+          ref.binding.symbol !== IR_STRING_REPEAT_FN ||
+          (intent.kind === "callable" &&
+            // Native preparation owns a defined intrinsic provider. The host
+            // route owns an intrinsic alias whose canonical allocator is the
+            // exact env import, so both sides of that alias must satisfy this
+            // same signature predicate.
+            (intent.origin === "intrinsic" || intent.origin === "import") &&
+            intent.signature.params.length === 2 &&
+            intent.signature.params[1] === '{"kind":"f64"}' &&
+            intent.signature.results.length === 1 &&
+            intent.signature.params[0] === intent.signature.results[0] &&
+            stringRepeatCarrierSignatureIsCanonical(intent.signature.params[0]))),
     });
   }
   evidence.externalCallables.set(
@@ -1160,6 +1188,12 @@ function recordExternalCallable(
       programAbiBindingId: match?.id ?? null,
     }),
   );
+}
+
+function stringRepeatCarrierSignatureIsCanonical(type: string): boolean {
+  if (type === '{"kind":"externref"}' || type === '{"kind":"i32"}') return true;
+  const match = /^\{"kind":"(?:ref|ref_null)","typeIdx":(0|[1-9][0-9]*)\}$/.exec(type);
+  return match !== null && Number.isSafeInteger(Number(match[1]));
 }
 
 function recordConstructorNewSupportDependency(
@@ -1493,6 +1527,7 @@ function collectFunctionEvidence(
         }
       } else if (
         (nested.kind === "string.concat" ||
+          nested.kind === "string.repeat" ||
           nested.kind === "string.eq" ||
           nested.kind === "string.char_at" ||
           nested.kind === "string.char_code_at" ||
@@ -1701,6 +1736,13 @@ export function derivePreparedComponentDependencies(
       ) {
         union.connect(item.terminalOwnerUnitId, dependency.terminalOwnerUnitId);
       }
+    }
+  }
+  if (input.atomicTerminalPopulation) {
+    const terminalUnitIds = [...input.terminalUnitIds].sort(compareText);
+    const first = terminalUnitIds[0];
+    if (first !== undefined) {
+      for (const terminalUnitId of terminalUnitIds.slice(1)) union.connect(first, terminalUnitId);
     }
   }
   const terminalsByRoot = new Map<IrUnitId, IrUnitId[]>();

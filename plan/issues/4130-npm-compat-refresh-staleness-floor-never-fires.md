@@ -145,3 +145,22 @@ fast path:
 
 The workflow-shape and validator regressions are pinned in
 `tests/issue-4130-npm-compat-promotion-fast-path.test.ts`.
+
+## 2026-08-22 follow-up — pending-run cancellation audit
+
+The live GitHub URL currently redirects `loopdive/js2wasm` to
+`loopdive/js2`, so the existing `github.repository == 'loopdive/js2'` guards are
+correct and were left unchanged. The remaining cancellation mechanism was the
+concurrency key for scheduled and manual runs: they shared `github.ref`, and
+GitHub keeps only one pending run per group even when
+`cancel-in-progress: false`. A delayed run could therefore be replaced before
+it ever received a runner.
+
+The refresh workflow now keys push runs by immutable commit SHA and scheduled or
+manual runs by `github.run_id`. No refresh run can replace another pending run;
+the existing generatedAt freshness check and force-with-lease promotion protect
+the shared artifact branch when lanes finish concurrently. The matrix remains
+`fail-fast: false`, so a slow ReactDOM row cannot cancel the other package
+measurements. `tests/npm-compat-partials.test.ts` pins the key and matrix
+contract. No npm-compat numbers are generated locally; the next canonical
+workflow run remains the source of truth.

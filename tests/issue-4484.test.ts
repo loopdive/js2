@@ -12,8 +12,22 @@
  * eval-tier hazard in `plan/method/es5-standalone-agent-brief.md` §5). The
  * `instanceof` rows that DO need a runtime eval tier live in test262, not here.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+
+/**
+ * (#4003 CI-LOAD MITIGATION, added by #4621 on 2026-08-23.) Every test here
+ * compiles a standalone module synchronously inside the vitest worker; 27 of
+ * those back to back starve its event loop and the queued birpc reporter calls
+ * miss their deadline, so vitest exits NONZERO with
+ * `[vitest-worker]: Timeout calling "onTaskUpdate"` while every assertion
+ * passes. Two macrotask yields between tests let them drain — the same hook,
+ * measured A/B, in `es5-standalone-harness-selftests.test.ts`.
+ */
+afterEach(async () => {
+  await new Promise((r) => setImmediate(r));
+  await new Promise((r) => setImmediate(r));
+});
 
 /** Compile `src` standalone and run its exported `test`, returning the result. */
 async function runStandalone(src: string): Promise<unknown> {
@@ -283,7 +297,16 @@ describe("#4484 — measured residuals (routed, not fixed)", () => {
   });
 
   // ROUTED TO #4480 as well — same missing edge, reached through `in`.
-  it.fails("`'valueOf' in {}` finds the inherited Object.prototype method", async () => {
+  //
+  // (2026-08-23) HEALED — flipped from `it.fails` to `it`. This residual pin
+  // TRIPPED, which is what such a pin is for. Two lanes (#4621, #4519)
+  // independently verified the heal is on the campaign base, not theirs
+  // (each re-ran with its own diff fully reverted at `04c0d5d42`). They
+  // attribute it differently — #4479 slice 2 (Annex B Object.prototype
+  // accessor surface) vs #4506 (fnctor instances reach the $Object
+  // conversion, supplying the `{}` → Object.prototype edge for `in`); both
+  // merged in the same cycle, so either or both closed the edge.
+  it("`'valueOf' in {}` finds the inherited Object.prototype method", async () => {
     expect(await runStandalone(`const o: any = {}; return ("valueOf" in o) ? 1 : 2;`)).toBe(1);
   });
 

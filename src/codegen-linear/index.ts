@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
 import type { MultiTypedAST, TypedAST } from "../checker/index.js";
+import { createTypeOracle } from "../checker/oracle-backend.js";
 import type { BuildIrUnitInventoryOptions } from "../ir/identity.js";
 import type { FuncTypeDef, Instr, ValType, WasmModule } from "../ir/types.js";
 import {
@@ -15,6 +16,7 @@ import {
 import { createEmptyModule } from "../ir/types.js";
 import { linearAllocatorPolicy, type LinearAllocatorPolicyId } from "../ir/analysis/linear-memory-plan.js";
 import * as linearIr from "../ir/backend/linear-integration.js";
+import * as linearCoverage from "../ir/backend/linear-ir-coverage.js";
 import { compileResolvedArrayPointer, emitResolvedArrayLocal } from "./array-pointer.js";
 import type { CollectionKind, FinallyEntry, LinearContext, LinearFuncContext } from "./context.js";
 import { addLocal } from "./context.js";
@@ -25,7 +27,7 @@ import { finalizeLinearArena } from "./export-arena.js";
 import * as numberFormat from "./number-format.js";
 import { addLinearStackArenaRuntime } from "./runtime-stack-arena.js";
 import { compileLinearStringMethodCall } from "./string-methods.js";
-import { addLinearStringRepeatRuntime, sourceMayUseLinearStringRepeat } from "./string-repeat.js";
+import { reserveLinearStringRepeatProvider, sourceMayUseLinearStringRepeat } from "./string-repeat.js";
 import {
   addArrayRuntime,
   addFmodRuntime,
@@ -52,13 +54,8 @@ import { linearStringLiteralInstrs } from "./string-literals.js";
 const CLASS_TYPE_TAG = 5;
 
 /**
- * Data segment base address — must be below HEAP_START (1024).
- *
- * **Standalone mode only** (#4540). In linked mode the segment is PASSIVE and
- * this value stops being an address: it becomes the base the literal offsets
- * were assigned from, which `__rodata_bias` corrects at runtime. An active
- * segment at 64 would be written at instantiation into the memory owner's
- * shadow stack, before any instruction of ours runs. See ADR-0022.
+ * Standalone data address below HEAP_START. Linked mode uses it only as the
+ * passive-segment offset base corrected by `__rodata_bias`; see ADR-0022.
  */
 const DATA_SEGMENT_BASE = 64;
 
@@ -75,25 +72,16 @@ function sourceMayUseLinearIrStringRuntime(sourceFile: ts.SourceFile): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (ts.isPropertyAccessExpression(node) && (node.name.text === "charAt" || node.name.text === "charCodeAt")) {
-      found = true;
-      return;
-    }
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
-      found = true;
-      return;
-    }
-    forEachChild(node, visit);
+    found =
+      (ts.isPropertyAccessExpression(node) && (node.name.text === "charAt" || node.name.text === "charCodeAt")) ||
+      (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken);
+    if (!found) forEachChild(node, visit);
   };
   visit(sourceFile);
   return found;
 }
 
-/**
- * Extract a 1-based {line, column} from an AST node for diagnostics (#1937).
- * Mirrors the GC backend's extractLocation (src/codegen/context/errors.ts);
- * falls back to {0,0} for synthetic nodes without a source file.
- */
+/** Extract a 1-based diagnostic location, or {0,0} for synthetic nodes (#1937). */
 function nodeLoc(node: ts.Node): { line: number; column: number } {
   try {
     const sf = node.getSourceFile();
@@ -112,16 +100,14 @@ function nodeLoc(node: ts.Node): { line: number; column: number } {
  */
 export interface LinearOptions {
   /**
-   * Enable conservative exported-call reclamation and expose the explicit
-   * arena-management exports `__arena_reset` / `__arena_used`. Only modules
-   * with primitive boundaries and no heap-backed globals are auto-wrapped;
-   * others retain the monotonic arena so escaped pointers stay live.
-   * See {@link import("./runtime.js").ArenaOptions}.
+   * Expose arena management and conservatively reclaim primitive-boundary
+   * exports; heap-backed escapees retain the monotonic arena.
    */
   exposeArenaReset?: boolean;
   /** Shared IR allocation policy. Direct-backend fallbacks remain arena-backed. */
   allocationPolicy?: LinearAllocatorPolicyId;
   irInventoryOptions?: BuildIrUnitInventoryOptions;
+  oracleBackend?: import("../checker/oracle-backend.js").OracleBackend;
   /**
    * External C functions this module calls (#4539). Declared before any
    * defined function so indices are stable; see `declareExternCImports`.
@@ -140,18 +126,8 @@ export interface LinearOptions {
     indexType?: "i32" | "i64";
   };
   /**
-   * Linked-mode heap (#4540) — REQUIRED whenever {@link importMemory} is set.
-   *
-   * Names the extern-C import that provides the host allocator. `__malloc` then
-   * bump-allocates inside chunks carved from it and never calls `memory.grow`,
-   * so the memory's owner stays its only grower.
-   *
-   * It is required rather than optional because the alternative is the measured
-   * failure this option exists to remove: with a memory we do not own and the
-   * standalone arena, `__heap_ptr` starts at 1024 — inside the pinned
-   * artifact's 64 KiB shadow stack — so the first allocation writes through the
-   * engine's stack. Making that combination unrepresentable is the fix; a
-   * default would just move the trap.
+   * Required with imported memory: carve bump chunks from the named host
+   * allocator so this module never grows or overwrites its owner's memory.
    */
   linkedHeap?: {
     /** Name of the extern-C import providing `malloc(size: i32) -> ptr: i32`. */
@@ -160,31 +136,15 @@ export interface LinearOptions {
     chunkBytes?: number;
   };
   /**
-   * Which allocator backs the heap (#4557).
-   *
-   * `"malloc-v1"` emits the real allocator — free lists, boundary tags,
-   * coalescing, in-place `realloc` — and exports `js2wasm_malloc` /
-   * `js2wasm_calloc` / `js2wasm_free` / `js2wasm_realloc` /
-   * `js2wasm_usable_size` so the QuickJS artifact can install them through
-   * `JS_NewRuntime2`. `__malloc` keeps its bump fast path; only the source of
-   * its chunks moves, from the engine's heap to ours.
-   *
-   * Defaults to `"bump"`, which is #4540's shipped fallback and the reason it
-   * was kept: if the measured comparison against the artifact's dlmalloc does
-   * not hold, this option is simply not set.
+   * Heap provider (#4557). `malloc-v1` exports the full allocator API while
+   * preserving `__malloc`'s bump fast path; the measured fallback is `bump`.
    */
   heapAllocator?: "bump" | "malloc-v1";
 }
 
 /**
- * Resolve {@link LinearOptions.linkedHeap} into the runtime's concrete form,
- * and make the catastrophic combination unrepresentable (#4540).
- *
- * `importMemory` without `linkedHeap` is the measured corruption: the arena
- * would start bump-allocating at 1024, inside the memory owner's shadow stack.
- * `linkedHeap` without `importMemory` is meaningless — we own the memory, so
- * there is no host allocator to defer to. Both are refused here, before any
- * bytes exist, rather than diagnosed later from a corrupted heap.
+ * Resolve the linked heap and reject either unsafe half-configuration before
+ * an imported-memory arena can overlap its owner's stack (#4540).
  */
 function resolveLinkedHeap(
   opts: LinearOptions,
@@ -219,25 +179,20 @@ function resolveLinkedHeap(
  * Generate a WasmModule using the linear-memory backend.
  * Compiles TS functions to standard Wasm with i32/f64 values.
  */
-export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): WasmModule {
+function generateLinearModuleBody(
+  ast: TypedAST,
+  opts: LinearOptions,
+  coveragePopulation?: linearIr.PreparedLinearIrCoveragePopulation,
+): WasmModule {
   const mod = createEmptyModule();
-  // #4539 — imports FIRST, before any runtime function exists. A function's
-  // index is `numImportFuncs + position`, so a later import would shift every
-  // index; `declareExternCImports` throws rather than allow that. With no
-  // imports requested this is a no-op and emitted output is unchanged.
+  // #4539 — imports precede every runtime/user function so indices cannot shift.
   if (opts.importMemory) {
     const { module, name, min, max, indexType } = opts.importMemory;
     declareImportedMemory(mod, module, name, min, max, indexType);
   }
   const externImportIndices = declareExternCImports(mod, opts.externImports ?? []);
-  // The index lives here rather than only in funcMap because an ambient
-  // `declare function` of the same name is later registered as a user
-  // function and would overwrite the funcMap entry — silently retargeting the
-  // call at a body-less local slot with a TS-derived (f64) signature. Keeping
-  // the extern binding in its own map makes it authoritative.
-  // Types are RESOLVED through the address model here (#4554) so every later
-  // consumer — the call site's boundary marshalling included — sees concrete
-  // Wasm types and never has to re-decide how wide a handle is.
+  // Keep extern indices outside funcMap so ambient declarations cannot shadow
+  // them; resolve address-model types once for all boundary consumers (#4554).
   const externImportSigs = new Map<string, { index: number; params: ValType[]; results: ValType[] }>();
   for (const spec of opts.externImports ?? []) {
     const index = externImportIndices.get(spec.name);
@@ -264,19 +219,17 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
-  if (sourceMayUseLinearStringRepeat(ast.sourceFile)) addLinearStringRepeatRuntime(mod);
+  const repeatReservation = sourceMayUseLinearStringRepeat(ast.sourceFile)
+    ? reserveLinearStringRepeatProvider(mod)
+    : undefined;
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
   addNumericSetRuntime(mod);
   addFmodRuntime(mod); // #2144 — exact f64 remainder for the `%` arm
-  // #2956 L2: construction needs one value-first indexed store helper.
-  // Register it only for the overlay so the explicit `=0` escape hatch stays
-  // byte-identical to the pre-IR direct backend.
+  // Overlay runtimes precede user slots; source gates preserve direct bytes.
   if (linearIr.linearIrEnabled()) {
     addLinearIrVecRuntime(mod);
-    // The UTF-16 decoder is sizeable and only the charCodeAt plan needs it.
-    // Register before user-slot assignment when the source can request it.
     if (sourceMayUseLinearIrStringRuntime(ast.sourceFile)) addLinearIrStringRuntime(mod);
   }
 
@@ -289,10 +242,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     init: [{ op: "i32.const", value: 0 }],
   });
 
-  // #4540 — linked mode rebases every literal reference through one global.
-  // It must exist BEFORE any function is compiled, because each literal site
-  // reads its index while being emitted. Not created in standalone mode, so
-  // that lane's global layout (and emitted bytes) is untouched.
+  // #4540 — create linked literal rebasing before sites capture its index.
   let roDataBiasGlobalIdx: number | undefined;
   if (linkedHeap !== undefined) {
     roDataBiasGlobalIdx = mod.globals.length;
@@ -307,9 +257,9 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
   const ctx: LinearContext = {
     mod,
     checker: ast.checker,
+    oracle: createTypeOracle(ast.checker, opts.oracleBackend),
     funcMap: new Map(),
-    // #4539 — derived, not hard-coded. Zero when nothing is imported, so
-    // output is unchanged for every existing caller.
+    // #4539 — derived from imports; zero preserves legacy output.
     numImportFuncs: countImportedFuncs(mod),
     currentFunc: null,
     errors: [],
@@ -324,10 +274,17 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     externImportSigs: externImportSigs.size > 0 ? externImportSigs : undefined,
     ...(roDataBiasGlobalIdx !== undefined ? { roDataBiasGlobalIdx } : {}),
   };
+  const preparedLinearIr = linearIr.linearIrEnabled()
+    ? linearIr.prepareLinearIrOverlay(
+        ctx,
+        ast.sourceFile,
+        opts.irInventoryOptions,
+        repeatReservation,
+        coveragePopulation,
+      )
+    : undefined;
 
-  // #4539 — extern imports are callable by name. They occupy indices [0, n),
-  // so registering them here lets the ordinary call path resolve them; the
-  // signature map drives boundary marshalling at each call site.
+  // #4539 — register extern names; their signature map drives marshalling.
   for (const spec of opts.externImports ?? []) {
     const idx = externImportIndices.get(spec.name);
     if (idx !== undefined) ctx.funcMap.set(spec.name, idx);
@@ -386,7 +343,9 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
 
   const runtimeFuncCount = ctx.mod.functions.length;
   const linearIrLegacySlots = [];
-  const isIrTerminal = linearIr.terminalPredicate(ast.sourceFile, ast.checker, opts.irInventoryOptions);
+  const isIrTerminal = preparedLinearIr
+    ? linearIr.terminalPredicateForPreparedOverlay(ctx, ast.sourceFile, preparedLinearIr)
+    : () => false;
   for (let i = 0; i < allFuncEntries.length; i++) {
     const entry = allFuncEntries[i];
     const funcIdx = ctx.numImportFuncs + runtimeFuncCount + i;
@@ -403,12 +362,9 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     compileClassDeclaration(ctx, classDecl);
   }
 
-  // ── #2956: IR overlay for selector-claimed top-level functions ──
-  // Default-on since L4. Run after exact slot registration and module-global
-  // collection, but before top-level body insertion. Demotions retain the
-  // direct path and JS2WASM_LINEAR_IR=0 remains the escape hatch.
-  const linearIrResult = linearIr.linearIrEnabled()
-    ? linearIr.compileLinearIr(ctx, ast.sourceFile, allocationPolicy, linearIrLegacySlots, opts.irInventoryOptions)
+  // #2956 — compile claimed bodies before direct insertion; demotions stay direct.
+  const linearIrResult = preparedLinearIr
+    ? linearIr.compileLinearIr(ctx, allocationPolicy, linearIrLegacySlots, preparedLinearIr)
     : undefined;
 
   // ── Compile top-level function declarations ──
@@ -416,9 +372,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     const irArtifact = linearIrResult?.compiledArtifactFor(decl);
     if (irArtifact) {
       const { func: irFunc, legacySlot } = irArtifact;
-      // Insert the IR-lowered body at this decl's slot position (push order
-      // must match the forward-registered funcMap indices). Mirror
-      // compileFunction's export record.
+      // Preserve the forward-registered slot and mirror direct export records.
       ctx.mod.functions.push(irFunc);
       if (irFunc.exported) {
         ctx.mod.exports.push({
@@ -431,8 +385,7 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
     compileFunction(ctx, decl);
   }
 
-  // Aggregate/ref-cell helpers follow every user slot, keeping funcMap stable
-  // while IR lowering discovers object shapes lazily.
+  // Deferred IR helpers follow user slots so funcMap remains stable.
   for (const helper of linearIrResult?.helpers ?? []) {
     const actualFuncIdx = ctx.numImportFuncs + ctx.mod.functions.length;
     if (actualFuncIdx !== helper.funcIdx) {
@@ -449,32 +402,46 @@ export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): W
 
   emitClosureTable(ctx);
 
-  // #4540 — LAST, so the start function's index is stable: every earlier
-  // finalizer may still append functions, and a start index computed before
-  // them would name someone else's body.
+  // #4540 — finalize linked data last so the start-function index is stable.
   if (roDataBiasGlobalIdx !== undefined) {
     finalizeLinkedDataImage(mod, roDataBiasGlobalIdx, dataSegmentBase);
   }
 
-  // Surface codegen diagnostics so compiler.ts fails the compile rather than
-  // emitting a structurally invalid binary for unsupported constructs (#1868).
+  // Surface unsupported codegen rather than emit invalid bytes (#1868).
   if (ctx.errors.length > 0) mod.codegenErrors = ctx.errors;
 
   return mod;
+}
+
+export function generateLinearModule(ast: TypedAST, opts: LinearOptions = {}): WasmModule {
+  if (!linearCoverage.linearIrCoverageEnabled()) return generateLinearModuleBody(ast, opts);
+  return linearCoverage.runSingleSourceLinearIrCoverageGeneration(
+    () =>
+      linearIr.prepareLinearIrCoveragePopulation(
+        [ast.sourceFile],
+        ast.sourceFile,
+        ast.checker,
+        opts.irInventoryOptions,
+      ),
+    linearIr.resetLastLinearIrReport,
+    linearIr.getLastLinearIrReport,
+    linearIr.linearIrEnabled(),
+    (population) => generateLinearModuleBody(ast, opts, population),
+  );
 }
 
 /**
  * Generate a WasmModule from multiple TS source files using the linear-memory backend.
  * Cross-file imports are resolved by the TypeScript checker; we iterate all source files.
  */
-export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearOptions = {}): WasmModule {
+function generateLinearMultiModuleBody(multiAst: MultiTypedAST, opts: LinearOptions): WasmModule {
   const mod = createEmptyModule();
 
   addRuntime(mod, { exposeArenaReset: opts.exposeArenaReset });
   addUint8ArrayRuntime(mod);
   addArrayRuntime(mod);
   addStringRuntime(mod);
-  if (multiAst.sourceFiles.some(sourceMayUseLinearStringRepeat)) addLinearStringRepeatRuntime(mod);
+  if (multiAst.sourceFiles.some(sourceMayUseLinearStringRepeat)) reserveLinearStringRepeatProvider(mod);
   addMapRuntime(mod);
   addSetRuntime(mod);
   addNumericMapRuntime(mod);
@@ -621,11 +588,19 @@ export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearO
 
   emitClosureTable(ctx);
 
-  // Surface codegen diagnostics so compiler.ts fails the compile rather than
-  // emitting a structurally invalid binary for unsupported constructs (#1868).
+  // Surface unsupported codegen rather than emit invalid bytes (#1868).
   if (ctx.errors.length > 0) mod.codegenErrors = ctx.errors;
 
   return mod;
+}
+
+export function generateLinearMultiModule(multiAst: MultiTypedAST, opts: LinearOptions = {}): WasmModule {
+  if (!linearCoverage.linearIrCoverageEnabled()) return generateLinearMultiModuleBody(multiAst, opts);
+  return linearCoverage.runMultiSourceLinearIrCoverageGeneration(
+    () => linearIr.prepareLinearIrCoveragePopulation(multiAst.sourceFiles, multiAst.entryFile, multiAst.checker),
+    linearIr.resetLastLinearIrReport,
+    () => generateLinearMultiModuleBody(multiAst, opts),
+  );
 }
 
 /** Like compileFunction but only exports if isEntry is true or re-exported */

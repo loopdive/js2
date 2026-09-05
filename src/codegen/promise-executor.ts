@@ -44,12 +44,17 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { buildStandardTryTable } from "../ir/try-table.js";
 import {
   PROMISE_STATE_PENDING,
+  DENO_PROMISE_HOOK_INIT,
+  buildDenoPromiseHookCall,
   // (#3125) `ensurePromiseExecutorClosures` + its interface moved to
   // async-scheduler.ts: the thenable-assimilation job (built inside
   // `ensurePromiseSettleFunctions`) needs the same settle closures, and this
   // module already imports from async-scheduler (the reverse import would be
   // an eval-time cycle).
   ensurePromiseExecutorClosures,
+  // (#5197 Slice B) One factory for the settle-closure `struct.new` sequence —
+  // the metadata slots must agree byte-for-byte across all three mint sites.
+  buildPromiseSettleClosureInstrs,
   isStandalonePromiseActive,
 } from "./async-scheduler.js";
 
@@ -118,24 +123,24 @@ export function emitStandalonePromiseFromExecutor(
     ctx.liveBodies.delete(execInstrs);
     return false;
   }
-  const { resolveClFuncIdx, rejectClFuncIdx, capTypeIdx, promiseTypeIdx, rejectFuncIdx } = closures;
+  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx, rejectFuncIdx } = closures;
 
   // 2. Allocate the pending $Promise: {state: PENDING, value: null, callbacks: null}.
   const pLocal = allocLocal(fctx, `__pexec_p_${fctx.locals.length}`, { kind: "ref", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
+  fctx.body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]));
 
   // 3. Materialise resolve / reject as capturing closure VALUES (externref):
-  //    struct{ func: ref.func $cl, cap_promise: p } upcast to externref.
+  //    struct{ func: ref.func $cl, …builtin-fn metadata…, cap_promise: p }
+  //    upcast to externref. (#5197) The metadata slots make the escaped
+  //    `resolve`/`reject` real §27.2.1.3 function objects.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
-    fctx.body.push({ op: "ref.func", funcIdx: clFuncIdx });
-    fctx.body.push({ op: "i32.const", value: 1 }); // (#3673) $arity — settle fns take 1 arg
-    fctx.body.push(closureBagInitInstr()); // (#4241) $bag
-    fctx.body.push({ op: "local.get", index: pLocal });
-    fctx.body.push({ op: "struct.new", typeIdx: capTypeIdx });
+    fctx.body.push(...buildPromiseSettleClosureInstrs(closures, clFuncIdx, [{ op: "local.get", index: pLocal }]));
     fctx.body.push({ op: "extern.convert_any" });
     fctx.body.push({ op: "local.set", index: dst });
   };
@@ -244,7 +249,7 @@ export function emitStandalonePromiseFromExecutorValue(
   const exnTag = ensureExnTag(ctx);
   const closures = ensurePromiseExecutorClosures(ctx);
   if (!closures) return false;
-  const { resolveClFuncIdx, rejectClFuncIdx, capTypeIdx, promiseTypeIdx, rejectFuncIdx } = closures;
+  const { resolveClFuncIdx, rejectClFuncIdx, promiseTypeIdx, rejectFuncIdx } = closures;
 
   // Open-`any` closure bridge + the boxed-any args vec builders.
   ensureObjectRuntime(ctx);
@@ -265,16 +270,14 @@ export function emitStandalonePromiseFromExecutorValue(
   fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
   fctx.body.push({ op: "ref.null.extern" });
   fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push(closureBagInitInstr());
   fctx.body.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   fctx.body.push({ op: "local.set", index: pLocal });
+  fctx.body.push(...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_INIT, [{ op: "local.get", index: pLocal }]));
 
   // 3. resolve / reject as capturing closure VALUES (externref), capturing p.
   const emitSettleValue = (clFuncIdx: number, dst: number): void => {
-    fctx.body.push({ op: "ref.func", funcIdx: clFuncIdx });
-    fctx.body.push({ op: "i32.const", value: 1 }); // (#3673) $arity — settle fns take 1 arg
-    fctx.body.push(closureBagInitInstr()); // (#4241) $bag
-    fctx.body.push({ op: "local.get", index: pLocal });
-    fctx.body.push({ op: "struct.new", typeIdx: capTypeIdx });
+    fctx.body.push(...buildPromiseSettleClosureInstrs(closures, clFuncIdx, [{ op: "local.get", index: pLocal }]));
     fctx.body.push({ op: "extern.convert_any" });
     fctx.body.push({ op: "local.set", index: dst });
   };

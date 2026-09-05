@@ -82,6 +82,10 @@ export function isSupportedBuiltinNamespace(name: string): boolean {
  * untouched.
  */
 export const BUILTIN_CONSTRUCTOR_IDENTITY_NAMES: ReadonlySet<string> = new Set([
+  // (#4746) Promise's standalone bare value uses the same reified constructor
+  // carrier as the other native constructors, so runtime own-property
+  // reflection sees its spec `length`, `name`, and `prototype` properties.
+  "Promise",
   "Set",
   "Map",
   "WeakMap",
@@ -89,6 +93,12 @@ export const BUILTIN_CONSTRUCTOR_IDENTITY_NAMES: ReadonlySet<string> = new Set([
   "WeakRef",
   "RegExp",
   "FinalizationRegistry",
+  "ArrayBuffer",
+  "BigInt",
+  "DataView",
+  "Date",
+  "Promise",
+  "Symbol",
   "DisposableStack",
   "AsyncDisposableStack",
   "SuppressedError",
@@ -109,6 +119,27 @@ export const BUILTIN_CONSTRUCTOR_IDENTITY_NAMES: ReadonlySet<string> = new Set([
   "Number",
   "String",
   "Boolean",
+  // (#4621 family C) `Date`. #4485's residual named this exactly: the bare
+  // identifier read `null`, so `S10.2.3_A1.{1,2}_T3` failed on `Date === null`
+  // while every other constructor in those files already had a carrier
+  // (`Object`/`Array` namespace objects, the Error family, the #4223 wrappers,
+  // `RegExp` above, `Function` via #4442).
+  //
+  // Safe by the same argument the wrapper block above makes, re-verified for
+  // `Date` specifically: every SYNTACTIC use is intercepted BEFORE identifier
+  // resolution reaches this arm — `new Date(…)` / `Date(…)` at the
+  // construct/call site, `Date.now` / `Date.UTC` / `Date.parse` /
+  // `Date.prototype` at the property-access site, `x instanceof Date` at the
+  // instanceof lowering, `typeof Date` at the typeof fold. Only the BARE-VALUE
+  // read changes, and it changes from `ref.null.extern` — a value no conforming
+  // program can observe as the constructor — to the identity-stable carrier.
+  "Date",
+  // (#4490 wave 2) Int8Array is the first TypedArray constructor migrated to
+  // the real mutable `$Object` carrier.  Its own `length`/`name`/`prototype`
+  // properties therefore share the same state consulted by reads, `in`,
+  // delete, and gOPD; the remaining TypedArray constructors stay on the
+  // `$__ta_ctor` path until their own slices land.
+  "Int8Array",
 ]);
 
 export function isBuiltinConstructorIdentityName(name: string): boolean {
@@ -161,8 +192,8 @@ export function emitBuiltinConstructorIdentity(
 
   // (#2984 ctor-carrier own props) The carrier is materialized through a local
   // so the §17/§20 own data properties (`length`/`name`/`prototype`) can be
-  // installed on it before it is published to the global. Without them the
-  // carrier is an EMPTY `$Object`, and every RUNTIME descriptor query
+  // installed on it before its seed completes. Without them the carrier is an
+  // EMPTY `$Object`, and every RUNTIME descriptor query
   // test262's `verifyProperty` makes through its any-typed harness parameter
   // (`hasOwnProperty`, `gOPD`, for-in, write, delete) answers "absent".
   const objLocal = allocLocal(fctx, `__builtin_ctor_${builtinName}_obj_${fctx.locals.length}`, {
@@ -171,6 +202,11 @@ export function emitBuiltinConstructorIdentity(
   const initBody: Instr[] = [
     { op: "call", funcIdx: newObjectIdx },
     { op: "local.set", index: objLocal },
+    // Publish before seeding: the prototype seed may re-enter this helper via
+    // its native-prototype companion. Leaving the global null until after that
+    // re-entry lets it mint a second carrier, splitting constructor identity.
+    { op: "local.get", index: objLocal },
+    { op: "global.set", index: globalIdx },
   ];
 
   // (#2182 pattern) `savedBody` is detached during the swap; register it in
@@ -178,13 +214,13 @@ export function emitBuiltinConstructorIdentity(
   const savedBody = fctx.body;
   fctx.body = initBody;
   ctx.liveBodies.add(savedBody);
+  ctx.liveBodies.add(initBody);
   try {
     pushBuiltinCtorOwnPropSeed(ctx, fctx, builtinName, objLocal);
-    fctx.body.push({ op: "local.get", index: objLocal });
-    fctx.body.push({ op: "global.set", index: globalIdx });
   } finally {
     fctx.body = savedBody;
     ctx.liveBodies.delete(savedBody);
+    ctx.liveBodies.delete(initBody);
   }
 
   fctx.body.push({ op: "global.get", index: globalIdx });
@@ -407,6 +443,29 @@ function pushJsonNamespaceOwnPropSeed(ctx: CodegenContext, fctx: FunctionContext
   fctx.body.push({ op: "drop" });
 }
 
+/** Seed the ES2015 namespace tags omitted by the generic Math/Reflect carrier. */
+function pushMathReflectNamespaceTagSeed(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  builtinName: string,
+  objLocal: number,
+): void {
+  if ((!ctx.standalone && !ctx.wasi) || (builtinName !== "Math" && builtinName !== "Reflect")) return;
+  const defineIdx = ctx.funcMap.get("__defineProperty_value");
+  if (defineIdx === undefined) return;
+  const boxSymbolIdx = ensureLateImport(ctx, "__box_symbol", [{ kind: "i32" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  if (boxSymbolIdx === undefined) return;
+  fctx.body.push({ op: "local.get", index: objLocal });
+  fctx.body.push({ op: "i32.const", value: 4 }); // Symbol.toStringTag
+  fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+  addStringConstantGlobal(ctx, builtinName);
+  fctx.body.push(...stringConstantExternrefInstrs(ctx, builtinName));
+  fctx.body.push({ op: "f64.const", value: 0x04 });
+  fctx.body.push({ op: "call", funcIdx: defineIdx });
+  fctx.body.push({ op: "drop" });
+}
+
 export function emitBuiltinNamespaceObject(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -454,9 +513,11 @@ export function emitBuiltinNamespaceObject(
   // swap. `emitBuiltinStaticMethodValue` below can trigger a late import (e.g.
   // a host builtin), and `shiftLateImportIndices` only walks `fctx.body` (=
   // initBody here) plus the registered body sets — NOT this raw local. Register
-  // it in `liveBodies` so any `call` funcIdx already accumulated in the outer
-  // body is shifted too; otherwise a late import here would over-shift it.
+  // both arrays in `liveBodies` so a nested closure helper that flushes with
+  // its own FunctionContext still repairs the detached namespace initializer
+  // as well as the outer body.
   ctx.liveBodies.add(savedBody);
+  ctx.liveBodies.add(initBody);
   try {
     for (const prop of props) {
       fctx.body.push({ op: "local.get", index: objLocal });
@@ -474,6 +535,7 @@ export function emitBuiltinNamespaceObject(
     if (builtinName === "JSON") {
       pushJsonNamespaceOwnPropSeed(ctx, fctx, objLocal);
     }
+    pushMathReflectNamespaceTagSeed(ctx, fctx, builtinName, objLocal);
     // (#2984 ctor-carrier own props) The Error-family / `Array` / `Object`
     // carriers are CONSTRUCTOR objects, so they also own `length`/`name`/
     // `prototype`. No-op for the true namespaces (`Math`/`JSON`/`Reflect`),
@@ -484,6 +546,7 @@ export function emitBuiltinNamespaceObject(
   } finally {
     fctx.body = savedBody;
     ctx.liveBodies.delete(savedBody);
+    ctx.liveBodies.delete(initBody);
   }
 
   fctx.body.push({ op: "global.get", index: globalIdx });

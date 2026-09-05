@@ -166,6 +166,20 @@ describe("#4436 — `length` is an own property of a function instance", () => {
     ).toBe(1);
   });
 
+  it("an any-typed direct length read sees the resurrected property", async () => {
+    // Keep an array in the program to exercise the guarded any/string/vec
+    // length dispatcher used by runtime-created host wrappers.
+    expect(
+      await runStandalone(`
+        function f(a,b,c,d,e,g,h,i){}
+        delete f.length;
+        f.length = 8;
+        var carrier: any = ({ value: f } as any).value;
+        var dynamicKey = ["length"][0];
+        return (carrier.length === 8 && carrier[dynamicKey] === 8) ? 1 : 0;`),
+    ).toBe(1);
+  });
+
   it("stays NON-ENUMERABLE — for-in must not list it", async () => {
     expect(
       await runStandalone(`

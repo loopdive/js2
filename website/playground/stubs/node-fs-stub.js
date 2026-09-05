@@ -16,4 +16,18 @@ export function statSync() {
 export function realpathSync(p) {
   return p;
 }
-export default { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, statSync, realpathSync };
+export function mkdtempSync(prefix) {
+  return `${prefix}browser-stub`;
+}
+export function rmSync() {}
+export default {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  realpathSync,
+  mkdtempSync,
+  rmSync,
+};

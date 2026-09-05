@@ -139,6 +139,7 @@ export function attachIrVecLayouts(
       }
       case "string":
       case "extern":
+      case "fnctor":
       case "dynamic":
         mapped = type;
         break;

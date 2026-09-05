@@ -54,6 +54,22 @@ should first check whether the #4384 branch already fixes the capture typing
 name-remapped capture sources", "captures written after a declaration use a
 live cell").
 
+## Fix checkpoint (2026-08-24)
+
+The validation failure was caused by the generic recursive-function-value
+materializer introduced by the ReactDOM closure work. While an outer closure
+was emitting its capture list, materializing an earlier sibling could promote
+the later mutable binding into a ref-cell and update `localMap`. The capture
+descriptor still held the old raw `i32` slot, so `pushCaptureCell` read that slot
+even though the closure field now required the live cell reference.
+
+`pushCaptureCell` now resolves the mapped slot only when its declared type is
+the expected ref-cell type, preserving the descriptor slot for ordinary and
+stale-map cases. A focused regression test compiles the pinned Moment entry
+module and validates the resulting Wasm. The six selected upstream modules now
+all emit and validate (6/6); the runtime slice remains 4/10 because six tests
+still hit the separate null-cell/runtime-body issue tracked by #4384.
+
 ## Reproduction
 
 ```bash
@@ -97,7 +113,9 @@ node --import tsx tests/dogfood/moment-upstream-suite.mjs --json
 
 ## Acceptance criteria
 
-- [ ] All six generated Moment modules validate on main.
-- [ ] The reduced closure-capture shape is a committed regression test.
-- [ ] Moment upstream slice pass count recorded in this file (Node 10/10 must
+- [x] All six generated Moment modules validate on main.
+- [ ] The reduced closure-capture shape is a committed regression test. The
+      pinned entry-module validation test is in place; a smaller source-only
+      fixture can follow if the package compile cost becomes a concern.
+- [x] Moment upstream slice pass count recorded in this file (Node 10/10 must
       hold; Wasm count depends on #4384's unmerged resolver fix).

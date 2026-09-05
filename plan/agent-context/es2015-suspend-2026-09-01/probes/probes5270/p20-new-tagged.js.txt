@@ -1,0 +1,12 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var arg = null; var templateObject;
+function Constructor(x) { arg = x; }
+var tag = function(x) { templateObject = x; return Constructor; };
+var instance = new tag`first`;
+assert(instance instanceof Constructor, 'instance');
+assert.sameValue(templateObject[0], 'first');
+assert.sameValue(arg, undefined);

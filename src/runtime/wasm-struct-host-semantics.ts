@@ -3,6 +3,39 @@
 
 export const NO_GENERATED_FIELD = Symbol("no-generated-field");
 export const PRIMITIVE_STRING_UNDEFINED = Symbol("primitive-string-undefined");
+const CONFIGURABLE_FLAG = 4;
+
+/** Return whether a failed native assignment is a sloppy-mode no-op. */
+export function failedSloppyNativeSetIsNoOp(obj: any, desc: PropertyDescriptor | undefined): boolean {
+  if (desc && (("value" in desc && desc.writable === false) || (!("value" in desc) && !desc.set))) return true;
+  try {
+    return !Object.isExtensible(obj);
+  } catch {
+    return false;
+  }
+}
+
+export function hasUserCallableSidecarProps(
+  sidecar: Record<string | symbol, any> | undefined,
+  hasAccessors: boolean,
+): boolean {
+  return (
+    hasAccessors ||
+    (!!sidecar && Reflect.ownKeys(sidecar).some((key) => key !== "name" && key !== "length" && key !== "prototype"))
+  );
+}
+
+export function ownKeysResult(
+  name: string,
+  result: any,
+  state: any,
+  materialize: (value: any, state: any) => any,
+): any {
+  return name === "ownKeys" ? materialize(result, state) : result;
+}
+
+type CallbackState = { getExports: () => Record<string, Function> | undefined };
+const callableOwners = new WeakMap<Function, CallbackState>();
 const PRIMITIVE_STRING_INTRINSICS: Readonly<Record<string, Function | undefined>> = Object.freeze({
   charAt: String.prototype.charAt,
   charCodeAt: String.prototype.charCodeAt,
@@ -25,6 +58,8 @@ const PRIMITIVE_STRING_INTRINSICS: Readonly<Record<string, Function | undefined>
   toString: String.prototype.toString,
   trim: String.prototype.trim,
   trimEnd: String.prototype.trimEnd,
+  trimLeft: String.prototype.trimLeft,
+  trimRight: String.prototype.trimRight,
   trimStart: String.prototype.trimStart,
   valueOf: String.prototype.valueOf,
 });
@@ -53,6 +88,76 @@ export function readField(
 
 export function ordinaryFields(fields: readonly string[] | null): boolean {
   return fields !== null && !fields.includes("__tag");
+}
+
+export function recordCallableOwner(callable: Function, owner: CallbackState | undefined): void {
+  if (owner) callableOwners.set(callable, owner);
+}
+
+/** Preserve cross-module facades and normalize values returning to their owning module. */
+export function normalizeSandboxValue(
+  receiver: unknown,
+  value: any,
+  key: PropertyKey,
+  sandbox: Record<string, any> | undefined,
+  owner: CallbackState | undefined,
+  // (#5222) `unwrap` receives the READING module's callback state as its second
+  // argument so it can decline to un-marshal a mirror minted by a DIFFERENT
+  // module across the #2527 linked-provider seam. Passed as the state, not as
+  // resolved exports, so the un-marshal never pays `getExports()` on the hot
+  // single-module path.
+  unwrap: (value: any, reader?: CallbackState) => any,
+): any {
+  if (sandbox && receiver === sandbox && typeof value === "function") {
+    const callableOwner = callableOwners.get(value);
+    if (!callableOwner || !owner || callableOwner !== owner) return value;
+  }
+  const normalized = unwrap(value, owner);
+  if (sandbox && key === "constructor" && typeof normalized === "function") {
+    const name = normalized.name;
+    if (name && normalized === (globalThis as any)[name] && sandbox[name] !== undefined) return sandbox[name];
+  }
+  return normalized;
+}
+
+interface StructDeleteState {
+  hasOwn: (obj: object, key: PropertyKey, exports: Record<string, Function> | undefined) => boolean;
+  sidecarDelete: (obj: object, key: PropertyKey) => boolean;
+  propDescs: WeakMap<object, Map<PropertyKey, number>>;
+  accessors: WeakMap<object, Map<PropertyKey, { get?: Function; set?: Function }>>;
+  deletedKeys: WeakMap<object, Set<PropertyKey>>;
+  integrity: readonly [WeakSet<object>, WeakSet<object>];
+}
+
+/** Apply host-proxy deletion semantics to a fixed-shape WasmGC struct. */
+export function deleteStructProperty(
+  obj: object,
+  key: PropertyKey,
+  exports: Record<string, Function> | undefined,
+  state: StructDeleteState,
+): boolean {
+  const normalizedKey = typeof key === "symbol" ? key : String(key);
+  const hasOwn = state.hasOwn(obj, normalizedKey, exports);
+  const descs = state.propDescs.get(obj);
+  const flags = descs?.get(normalizedKey);
+  if (
+    ((hasOwn || exports === undefined) && state.integrity.some((objects) => objects.has(obj))) ||
+    (flags !== undefined && !(flags & CONFIGURABLE_FLAG))
+  ) {
+    return false;
+  }
+  state.sidecarDelete(obj, key);
+  descs?.delete(normalizedKey);
+  if (typeof key === "symbol") state.accessors.get(obj)?.delete(key);
+  if (hasOwn || exports === undefined) {
+    let tombstones = state.deletedKeys.get(obj);
+    if (!tombstones) {
+      tombstones = new Set<PropertyKey>();
+      state.deletedKeys.set(obj, tombstones);
+    }
+    tombstones.add(normalizedKey);
+  }
+  return true;
 }
 
 export function unboxSymbol(cache: Map<number, symbol>, value: unknown): number {
@@ -89,4 +194,38 @@ export function tryPrimitiveStringMethod(
   }
   const value = apply(fn, receiver, args);
   return value === undefined ? PRIMITIVE_STRING_UNDEFINED : value;
+}
+
+/** Preserve IsCallable for WasmGC replacement callbacks before ToString. */
+export function deferStringReplacementArg(
+  value: any,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+  fallback: (value: any) => any,
+  isWasmStruct: (value: any) => boolean,
+  wrapCallable: (value: any, callbackState?: { getExports: () => Record<string, Function> | undefined }) => any,
+): any {
+  if (!isWasmStruct(value)) return fallback(value);
+  const exports = callbackState?.getExports();
+  const isClosure = exports?.__is_closure as ((candidate: any) => number) | undefined;
+  if (typeof isClosure === "function") {
+    try {
+      if (isClosure(value) === 1) return wrapCallable(value, callbackState);
+    } catch {
+      // Keep the ordinary ToPrimitive path when the classifier cannot inspect this value.
+    }
+  }
+  return fallback(value);
+}
+
+export function makeStringReplacementArg(
+  method: string,
+  callbackState: { getExports: () => Record<string, Function> | undefined } | undefined,
+  fallback: (value: any) => any,
+  isWasmStruct: (value: any) => boolean,
+  wrapCallable: (value: any, callbackState?: { getExports: () => Record<string, Function> | undefined }) => any,
+): (value: any) => any {
+  return (value: any): any =>
+    method === "replace" || method === "replaceAll"
+      ? deferStringReplacementArg(value, callbackState, fallback, isWasmStruct, wrapCallable)
+      : fallback(value);
 }

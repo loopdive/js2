@@ -61,6 +61,11 @@ scripts/compiler-bundle.mjs
 scripts/runtime-bundle.mjs
 scripts/main-compiler-bundle.mjs
 scripts/main-runtime-bundle.mjs
+# (#5173) Generated esbuild output, like its siblings above. It was committed by
+# accident and then never regenerated, so the checked-in copy silently rotted
+# months behind tests/test262-runner.ts (it still carried `upsert` as a proposal
+# and had no `strict` field). Nothing imports it; keep it out of the tree.
+scripts/runner-bundle.mjs
 website/public/graph-data.json
 tmp_*.ts
 tmp_*.mts
@@ -81,6 +86,7 @@ tests/dogfood/.marked/
 tests/dogfood/.acorn-test-suite/
 tests/dogfood/.cookie/
 tests/dogfood/.clsx/
+tests/dogfood/.temporal-polyfill/
 tests/dogfood/.eslint/
 tests/dogfood/.eslint-upstream-suite/
 tests/dogfood/.prettier/
@@ -147,6 +153,7 @@ tests/fixtures/*.imports.js
 *.jsonl
 benchmarks/results/runs/
 benchmarks/wasmtime-cold-host/target/
+.js2wasm-cache/
 .playwright-cli/
 vendor/
 docs/publications/

@@ -112,3 +112,44 @@ export function isJsDefaultInferredParamFalsePositive(diag: ts.Diagnostic, check
   if (!paramDecl?.initializer) return false;
   return !ts.getJSDocParameterTags(paramDecl).some((tag) => tag.typeExpression !== undefined);
 }
+
+/**
+ * (#5013) Detect a TS2345 raised on the `searchElement` argument of
+ * `Array.prototype.includes` / `indexOf` / `lastIndexOf`.
+ *
+ * These take an UNRESTRICTED value per spec — §23.1.3.16 compares it with
+ * SameValueZero, §23.1.3.17/18 with IsStrictlyEqual — and simply answer
+ * `false`/`-1` when nothing matches. TypeScript's lib types the parameter as the
+ * element type `T`, which is stricter than the language, so `[42].includes("42")`
+ * is a hard error and the whole program compiles to zero bytes. That is what the
+ * `built-ins/Array/prototype/includes/samevaluezero.js` family reports — as a
+ * COMPILE_ERROR row, not the wrong-answer row its baseline error string suggests.
+ *
+ * Downgrading alone would be a bug, not a fix: the codegen must also refuse to
+ * COERCE the mismatched search value into the element type (see
+ * `emitIncludesSearchValue`), or `"42"` becomes f64 42 and matches.
+ *
+ * Tightly scoped: only a 2345 whose node sits inside the FIRST argument of a
+ * call to one of those three method names. Mirrors the #2616 Proxy-handler-trap
+ * and #2741 `in`-operand downgrades.
+ */
+const ARRAY_SEARCH_METHODS = new Set(["includes", "indexOf", "lastIndexOf"]);
+
+export function isArraySearchElementDiagnostic(diag: ts.Diagnostic): boolean {
+  if (diag.code !== 2345) return false;
+  const file = diag.file;
+  if (!file || diag.start === undefined) return false;
+  let n = findSmallestNodeAtPosition(file, diag.start);
+  while (n) {
+    if (
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      ARRAY_SEARCH_METHODS.has(n.expression.name.text)
+    ) {
+      const searchArg = n.arguments[0];
+      return searchArg !== undefined && diag.start >= searchArg.getStart(file) && diag.start < searchArg.getEnd();
+    }
+    n = n.parent;
+  }
+  return false;
+}

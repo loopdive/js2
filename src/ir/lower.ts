@@ -51,12 +51,20 @@ import type {
   IrClassLowering,
   IrClosureLowering,
   IrDynamicLowering,
+  IrFnctorLowering,
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
   IrVecLowering,
 } from "./backend/handles.js";
 import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
+import {
+  emitWasmInt32Coercion,
+  emitWasmMathClz32,
+  emitWasmMathImul,
+  type WasmInt32CoercionScratch,
+} from "./backend/wasm-int32-coercion.js";
+import { emitWasmMathMinMax, type WasmMathMinMaxScratch } from "./backend/wasm-math-minmax.js";
 import {
   type AllocSiteId,
   type IrBlock,
@@ -68,6 +76,7 @@ import {
   type IrGlobalRef,
   type IrInstr,
   type IrInstrIntrinsic,
+  type IrIntrinsicBackendComposite,
   type IrLabelId,
   type IrObjectShape,
   type IrStringLengthProvider,
@@ -92,6 +101,7 @@ import {
 import { jsTagOf } from "./js-tag-domain.js"; // #3954 — the TagId → JsTag crossings at the frozen IrDynamicLowering contract
 import { IrInvariantError } from "./outcomes.js";
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "./callable-bindings.js";
+import type { IrUnitId } from "./identity.js";
 import { parseIrDateSnapshotGetter } from "./date-runtime.js";
 import { stackifyMovableNestedValues } from "./nested-stackification.js";
 import { createIrDynamicScratchLocals } from "./lowering-dynamic-scratch.js";
@@ -102,6 +112,7 @@ export type {
   IrClassLowering,
   IrClosureLowering,
   IrDynamicLowering,
+  IrFnctorLowering,
   IrObjectStructLowering,
   IrRefCellLowering,
   IrUnionLowering,
@@ -188,6 +199,14 @@ export interface IrLowerResolver {
    * collection pass — that's a selector bug.
    */
   resolveClass?(shape: IrClassShape): IrClassLowering | null;
+  /** Resolve one source/unit-qualified fnctor against finalized ABI state. */
+  resolveFnctor?(shape: import("./fnctor-abi.js").IrFnctorShape): IrFnctorLowering | null;
+  /** Exact semantic-to-physical parameter refinement for a prepared owner. */
+  resolveParamPhysicalType?(
+    unitId: IrUnitId,
+    parameterIndex: number,
+    logicalType: IrType,
+  ): { readonly type: ValType; readonly refineNonNull?: true } | undefined;
   /**
    * Slice 6 (#1169e): resolve a vec struct given its top-level Wasm
    * ValType. The IR carries the vec's value as a `ref`/`ref_null` to a
@@ -275,6 +294,13 @@ export interface IrLowerResolver {
   ): readonly Instr[];
   /** `[call concat]` (host) or `[call __str_concat]` (native). */
   emitStringConcat?(alloc?: AllocSiteId, mode?: IrStringConcatMode, provider?: IrFuncRef): readonly Instr[];
+  /** Full-semantics `(string, f64) -> string` repeat provider call. */
+  emitStringRepeat?(
+    alloc?: AllocSiteId,
+    inputEncoding?: IrStringEncoding,
+    provider?: IrFuncRef,
+    countedStringAppendTripCount?: number,
+  ): readonly Instr[];
   /** `[call equals]` (host) or `[call __str_equals]` (native). */
   emitStringEquals?(provider?: IrFuncRef): readonly Instr[];
   /**
@@ -305,7 +331,7 @@ export interface IrLowerResolver {
   /**
    * #1373b Phase C scaffolding — resolve (and lazily register) the
    * standalone `$Promise` WasmGC struct type. The struct's layout is
-   * `{ state: i32, value: externref, callbacks: externref }` (see
+   * `{ state: i32, value: externref, callbacks: externref, $bag: externref }` (see
    * `src/codegen/async-scheduler.ts` for the canonical registration).
    *
    * Returns the struct's typeIdx. Used by IR's `async.return`,
@@ -368,12 +394,18 @@ export interface IrLoweredBody<S, Slot> {
   readonly exported: boolean;
 }
 
+export interface IrLoweredSignature<Slot> {
+  readonly params: readonly IrLoweredValue<Slot>[];
+  readonly results: readonly (readonly Slot[])[];
+}
+
 function emitPreparedIntrinsic<S>(
   instr: IrInstrIntrinsic,
   out: S,
   emitter: BackendEmitter<S>,
   resolver: IrLowerResolver,
   emitValue: (value: IrValueId, out: S) => void,
+  emitComposite: (operation: IrIntrinsicBackendComposite, out: S) => void,
   funcName: string,
 ): void {
   for (const arg of instr.args) emitValue(arg, out);
@@ -384,8 +416,29 @@ function emitPreparedIntrinsic<S>(
       `ir/lower: semantic intrinsic ${instr.id} has no frozen provider (${funcName})`,
     );
   }
-  if (instr.provider.kind === "backend-op") emitter.emitUnary(instr.provider.opcode, out);
-  else emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
+  if (instr.provider.kind === "backend-op") {
+    emitter.emitUnary(instr.provider.opcode, out);
+    return;
+  }
+  if (instr.provider.kind === "backend-sequence") {
+    switch (instr.provider.sequence) {
+      case "f64.fround":
+        emitter.emitNumericConversion("f32.demote_f64", out);
+        emitter.emitNumericConversion("f64.promote_f32", out);
+        return;
+    }
+    const sequence: never = instr.provider.sequence;
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "lower",
+      `ir/lower: semantic intrinsic ${instr.id} has unsupported backend sequence ${String(sequence)} (${funcName})`,
+    );
+  }
+  if (instr.provider.kind === "backend-composite") {
+    emitComposite(instr.provider.operation, out);
+    return;
+  }
+  emitter.emitCall(resolver.resolveFunc(instr.provider.target), out);
 }
 
 /**
@@ -402,6 +455,85 @@ export function wasmValueTypeConverter(
     backend,
     convertType: (type: IrType): readonly ValType[] => [lowerIrTypeToValType(type, resolver, funcName)],
   };
+}
+
+/**
+ * Validate the one semantic-to-physical parameter exception currently owned by
+ * the linked Parser route. The resolver is the source of the physical slot,
+ * but the lowerer still has to reject a stale or foreign heap type before it
+ * emits `ref.as_non_null` or publishes the function signature. Otherwise a
+ * resolver bug can manufacture a Wasm body whose local and result carriers do
+ * not agree even though both are reference-shaped.
+ */
+function requireExactPhysicalStringParameter(
+  resolver: IrLowerResolver,
+  backend: IrBackendKind,
+  funcName: string,
+  parameterIndex: number,
+  logicalType: IrType,
+  physical: { readonly type: ValType; readonly refineNonNull?: true },
+): void {
+  if (backend !== "wasmgc") {
+    throw new IrInvariantError(
+      "backend-legality-failure",
+      "lower",
+      `ir/lower: exact physical parameter refinement is only supported by WasmGC in ${funcName}`,
+    );
+  }
+  const canonical = resolver.resolveString?.();
+  const physicalType = physical.type;
+  const physicalCarrierMatches =
+    canonical?.kind === "ref" &&
+    (physicalType.kind === "ref" || physicalType.kind === "ref_null") &&
+    physicalType.typeIdx === canonical.typeIdx;
+  const refinementMatches =
+    physicalType.kind === "ref_null" ? physical.refineNonNull === true : physical.refineNonNull !== true;
+  if (logicalType.kind !== "string" || !physicalCarrierMatches || !refinementMatches) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "lower",
+      `ir/lower: exact physical parameter ${parameterIndex} in ${funcName} is not the canonical native-string carrier/refinement`,
+    );
+  }
+}
+
+function projectIrFunctionSignatureWithConverter<S, Slot>(
+  func: IrFunction,
+  resolver: IrLowerResolver,
+  emitter: BackendEmitter<S>,
+  typeConverter: TypeConverter<Slot>,
+): IrLoweredSignature<Slot> {
+  const convertSlots = (type: IrType, where: string, parameterIndex?: number): readonly Slot[] => {
+    const physical =
+      parameterIndex === undefined ? undefined : resolver.resolveParamPhysicalType?.(func.unitId, parameterIndex, type);
+    if (physical) {
+      requireExactPhysicalStringParameter(resolver, emitter.backend, func.name, parameterIndex!, type, physical);
+      return [physical.type as unknown as Slot];
+    }
+    const slots = typeConverter.convertType(type);
+    if (slots.length === 0) {
+      throw new Error(`ir/lower: ${emitter.backend} type converter produced no slots for ${where} in ${func.name}`);
+    }
+    return [...slots];
+  };
+  return {
+    params: func.params.map((param, index) => ({
+      name: param.name,
+      slots: convertSlots(param.type, `param ${param.name}`, index),
+    })),
+    results: func.resultTypes.map((type, index) => convertSlots(type, `result ${index}`)),
+  };
+}
+
+/** Project a WasmGC function boundary without emitting body instructions. */
+export function projectIrFunctionSignature(func: IrFunction, resolver: IrLowerResolver): IrLoweredSignature<ValType> {
+  const emitter = new WasmGcEmitter(resolver);
+  return projectIrFunctionSignatureWithConverter(
+    func,
+    resolver,
+    emitter,
+    wasmValueTypeConverter("wasmgc", resolver, func.name),
+  );
 }
 
 function flattenWasmValues(values: readonly IrLoweredValue<ValType>[]): LocalDef[] {
@@ -424,6 +556,37 @@ function flattenSlots<Slot>(values: readonly (readonly Slot[])[]): Slot[] {
  * does all the work; this only assembles the `WasmFunction` shape from the
  * `Instr[]` sink.
  */
+/**
+ * (#3526 F1-S4) The one authority for a `gen.*` instruction's callable.
+ *
+ * `attachIrGeneratorSupport` attaches `provider` UNCONDITIONALLY for all four
+ * `gen.*` kinds on every generator function, before Phase 3, on the single
+ * production lowering path — so a missing attachment is a preparation defect,
+ * not a lowering case. The retired `?? irRuntimeFuncRef(<spelling>)` fallbacks
+ * re-decided the symbol locally, which is the second authority this family of
+ * slices exists to remove (F1-S3 made exactly this argument for `boxProvider`
+ * and its totality proof covers all four `provider` fields). Failing closed
+ * demotes one owner; the fallback silently produced a body instead.
+ */
+function requirePreparedGeneratorProvider(provider: IrFuncRef | undefined, kind: string, funcName: string): IrFuncRef {
+  if (!provider) {
+    throw new Error(`ir/lower: ${kind} has no prepared runtime provider (${funcName})`);
+  }
+  return provider;
+}
+
+/**
+ * (#3526 F2-S1) The string family's twin of the guard above — same argument,
+ * same failure mode. `forof.string` was the LAST string-op `??` lane fallback
+ * in this file; the `extern.*` quartet below belongs to family 6.
+ */
+function requirePreparedStringProvider(provider: IrFuncRef | undefined, kind: string, funcName: string): IrFuncRef {
+  if (!provider) {
+    throw new Error(`ir/lower: ${kind} has no prepared runtime provider (${funcName})`);
+  }
+  return provider;
+}
+
 export function lowerIrFunctionToWasm(
   func: IrFunction,
   resolver: IrLowerResolver,
@@ -477,7 +640,7 @@ export function lowerIrFunctionBody<S, Slot>(
       `ir/lower: backend contract mismatch for ${func.name}: emitter=${emitter.backend}, type-converter=${typeConverter.backend}`,
     );
   }
-  const legalityErrors = verifyIrBackendLegality(func, emitter.backend);
+  const legalityErrors = verifyIrBackendLegality(func, emitter.backend, resolver);
   if (legalityErrors.length > 0) {
     const shown = legalityErrors.slice(0, 3).map((err) => err.message);
     throw new IrInvariantError(
@@ -1027,6 +1190,7 @@ export function lowerIrFunctionBody<S, Slot>(
   let jsBitwiseRhsIdxF64: number | null = null;
   let jsBitwiseRhsIdxI32: number | null = null;
   let jsBitwiseTmpIdx: number | null = null;
+  let mathMinMaxScratch: WasmMathMinMaxScratch | null = null;
   let dateSnapshotScratch: { timestamp: number; packed: number; year: number } | null = null;
   const ensureDateSnapshotScratch = (): { timestamp: number; packed: number; year: number } => {
     if (dateSnapshotScratch === null) {
@@ -1088,8 +1252,8 @@ export function lowerIrFunctionBody<S, Slot>(
   // (#3739) Lazily-allocated i64 scratch pool for `emitJsToInt32`'s fast
   // bit-manipulation path (WasmGC/linear only — see that function). Kept
   // separate from `jsBitwiseTmpIdx` (f64) since the fast path doesn't use it.
-  let jsBitwiseI64Scratch: { bits: number; e: number; significand: number; magnitude: number } | null = null;
-  const ensureJsBitwiseI64Scratch = (): { bits: number; e: number; significand: number; magnitude: number } => {
+  let jsBitwiseI64Scratch: WasmInt32CoercionScratch | null = null;
+  const ensureJsBitwiseI64Scratch = (): WasmInt32CoercionScratch => {
     if (jsBitwiseI64Scratch === null) {
       const alloc = (name: string): number => {
         const idx = func.params.length + locals.length;
@@ -1099,22 +1263,25 @@ export function lowerIrFunctionBody<S, Slot>(
       };
       jsBitwiseI64Scratch = {
         bits: alloc("$js_bitwise_i64_bits"),
-        e: alloc("$js_bitwise_i64_e"),
+        exponent: alloc("$js_bitwise_i64_e"),
         significand: alloc("$js_bitwise_i64_significand"),
         magnitude: alloc("$js_bitwise_i64_magnitude"),
       };
     }
     return jsBitwiseI64Scratch;
   };
+  const ensureJsBitwiseRhsI32 = (): number => {
+    if (jsBitwiseRhsIdxI32 === null) {
+      jsBitwiseRhsIdxI32 = func.params.length + locals.length;
+      const type: ValType = { kind: "i32" };
+      locals.push({ name: "$js_bitwise_rhs_i32", type, logicalType: { kind: "val", val: type } });
+    }
+    return jsBitwiseRhsIdxI32;
+  };
   const ensureJsBitwiseScratch = (rhsIsI32: boolean): { rhs: number; tmp: number } => {
     const tmp = ensureJsBitwiseTmp();
     if (rhsIsI32) {
-      if (jsBitwiseRhsIdxI32 === null) {
-        jsBitwiseRhsIdxI32 = func.params.length + locals.length;
-        const type: ValType = { kind: "i32" };
-        locals.push({ name: "$js_bitwise_rhs_i32", type, logicalType: { kind: "val", val: type } });
-      }
-      return { rhs: jsBitwiseRhsIdxI32, tmp };
+      return { rhs: ensureJsBitwiseRhsI32(), tmp };
     }
     if (jsBitwiseRhsIdxF64 === null) {
       jsBitwiseRhsIdxF64 = func.params.length + locals.length;
@@ -1122,6 +1289,21 @@ export function lowerIrFunctionBody<S, Slot>(
       locals.push({ name: "$js_bitwise_rhs", type, logicalType: { kind: "val", val: type } });
     }
     return { rhs: jsBitwiseRhsIdxF64, tmp };
+  };
+  const ensureMathMinMaxScratch = (): WasmMathMinMaxScratch => {
+    if (mathMinMaxScratch === null) {
+      const alloc = (name: string): number => {
+        const idx = func.params.length + locals.length;
+        const type: ValType = { kind: "f64" };
+        locals.push({ name, type, logicalType: { kind: "val", val: type } });
+        return idx;
+      };
+      mathMinMaxScratch = {
+        left: alloc("$math_minmax_left"),
+        right: alloc("$math_minmax_right"),
+      };
+    }
+    return mathMinMaxScratch;
   };
   const dynamicScratch = createIrDynamicScratchLocals(func.params.length, locals);
 
@@ -1345,6 +1527,14 @@ export function lowerIrFunctionBody<S, Slot>(
     const pi = paramIdx.get(v);
     if (pi !== undefined) {
       emitter.emitLocalGet(pi, out);
+      const physical = resolver.resolveParamPhysicalType?.(func.unitId, pi, paramTypeOf.get(v)!);
+      if (physical) {
+        requireExactPhysicalStringParameter(resolver, emitter.backend, func.name, pi, paramTypeOf.get(v)!, physical);
+      }
+      if (physical?.refineNonNull) {
+        // pushraw-ok(#3521): exact prepared nullable native-string parameter refinement
+        emitter.pushRaw(out, { op: "ref.as_non_null" });
+      }
       return;
     }
     if (materialized.has(v)) {
@@ -1368,9 +1558,88 @@ export function lowerIrFunctionBody<S, Slot>(
 
   const emitInstrTree = (instr: IrInstr, out: S): void => {
     switch (instr.kind) {
-      case "const":
-        emitter.emitConst(instr, func.name, out);
+      case "const": {
+        // (#5166) `const null` carries a SEMANTIC result type, but every
+        // backend's `emitNull` answers on a ValType. After Program-ABI
+        // preparation `attachIrVecLayouts` maps a physical vec ref BACK to a
+        // logical `IrType.vec`, so the OOB arm of a nested-vec read
+        // (`emitSafeVecGet`'s `ref_null` default for `m[5]` on a
+        // `number[][]`) arrives here as `vec`, not `val`. Resolve it to the
+        // physical carrier first. Without this the emitter throws "cannot
+        // materialize null for IrType 'vec'" — a plain `Error`, so an untyped
+        // INVARIANT and therefore a hard compile error, for a claim that is
+        // otherwise fully lowerable. Scoped to `vec`: every other non-`val`
+        // result type reaches the emitter exactly as it did before.
+        const nullVecType =
+          instr.value.kind === "null" && instr.resultType?.kind === "vec"
+            ? ({ kind: "val", val: lowerIrTypeToValType(instr.resultType, resolver, func.name) } as IrType)
+            : null;
+        emitter.emitConst(nullVecType ? { ...instr, resultType: nullVecType } : instr, func.name, out);
         return;
+      }
+      case "fnctor.new": {
+        const lowering = resolver.resolveFnctor?.(instr.shape);
+        if (
+          !lowering ||
+          !lowering.supportsConstruction ||
+          lowering.resultIsExternref ||
+          lowering.constructorResultType.kind !== "ref"
+        ) {
+          throw new Error(
+            `ir/lower: fnctor.new ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
+          );
+        }
+        if (lowering.hiddenIdentity !== (instr.constructorIdentity !== null)) {
+          throw new Error(`ir/lower: fnctor.new hidden identity disagrees with resolved ABI (${func.name})`);
+        }
+        for (const value of instr.captureArgs) emitValue(value, out);
+        for (const value of instr.args) emitValue(value, out);
+        if (instr.constructorIdentity !== null) emitValue(instr.constructorIdentity, out);
+        if (emitter.backend !== "wasmgc") {
+          throw new Error(
+            `ir/lower: fnctor.new backend ${emitter.backend} has no representation contract (${func.name})`,
+          );
+        }
+        // The validated WasmGC fnctor constructor handle is lowered as a plain call;
+        // non-Wasm backends are rejected above.
+        emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(lowering.constructorFunc) }); // pushraw-ok(#3521): validated fnctor constructor call
+        return;
+      }
+      case "fnctor.get": {
+        const lowering = resolver.resolveFnctor?.(instr.shape);
+        if (
+          !lowering ||
+          !lowering.supportsFieldGet ||
+          lowering.structTypeIdx === undefined ||
+          lowering.instanceCarrierType.kind === "externref"
+        ) {
+          throw new Error(
+            `ir/lower: fnctor.get ${instr.shape.constructorName} has no exact struct ABI resolver (${func.name})`,
+          );
+        }
+        emitValue(instr.value, out);
+        if (emitter.backend !== "wasmgc") {
+          throw new Error(
+            `ir/lower: fnctor.get backend ${emitter.backend} has no representation contract (${func.name})`,
+          );
+        }
+        // struct.get follows the validated nominal layout/field handle and
+        // WasmGC backend checks above.
+        // pushraw-ok(#3521): validated fnctor struct field read
+        const field = lowering.field(instr.fieldName);
+        emitter.pushRaw(out, {
+          op: "struct.get",
+          typeIdx: lowering.structTypeIdx,
+          fieldIdx: field.fieldIdx,
+        });
+        if (field.refinement === "nullable-native-string") {
+          if (field.logicalType.kind !== "string" || field.physicalType.kind !== "ref_null") {
+            throw new Error(`ir/lower: fnctor.get ${instr.fieldName} has an invalid field refinement (${func.name})`);
+          }
+          emitter.pushRaw(out, { op: "ref.as_non_null" }); // pushraw-ok(#3521): exact nullable native-string field refinement
+        }
+        return;
+      }
       case "call": {
         const dateGetter =
           instr.target.binding.kind === "intrinsic"
@@ -1456,7 +1725,48 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "intrinsic": {
-        emitPreparedIntrinsic(instr, out, emitter, resolver, emitValue, func.name);
+        emitPreparedIntrinsic(
+          instr,
+          out,
+          emitter,
+          resolver,
+          emitValue,
+          (operation, compositeOut) => {
+            if (!Array.isArray(compositeOut)) {
+              throw new IrInvariantError(
+                "selection-preparation-mismatch",
+                "lower",
+                `ir/lower: backend ${emitter.backend} cannot emit composite ${operation} (${func.name})`,
+              );
+            }
+            switch (operation) {
+              case "math.clz32":
+                emitWasmMathClz32(compositeOut as Instr[], ensureJsBitwiseI64Scratch());
+                return;
+              case "math.imul":
+                emitWasmMathImul(compositeOut as Instr[], ensureJsBitwiseI64Scratch(), ensureJsBitwiseRhsI32());
+                return;
+              case "math.max":
+              case "math.min":
+                emitWasmMathMinMax(
+                  compositeOut as Instr[],
+                  ensureMathMinMaxScratch(),
+                  operation === "math.max" ? "f64.max" : "f64.min",
+                );
+                return;
+              case "to-uint32":
+                emitWasmInt32Coercion(compositeOut as Instr[], ensureJsBitwiseI64Scratch());
+                return;
+            }
+            const exhaustive: never = operation;
+            throw new IrInvariantError(
+              "selection-preparation-mismatch",
+              "lower",
+              `ir/lower: unsupported backend composite ${String(exhaustive)} (${func.name})`,
+            );
+          },
+          func.name,
+        );
         return;
       }
       case "global.get":
@@ -1994,6 +2304,18 @@ export function lowerIrFunctionBody<S, Slot>(
         emitter.emitStringConcat(instr.alloc, instr.concatMode ?? "immutable", out, instr.provider);
         return;
       }
+      case "string.repeat": {
+        emitValue(instr.value, out);
+        emitValue(instr.count, out);
+        emitter.emitStringRepeat(
+          instr.alloc,
+          instr.encodingEvidence,
+          out,
+          instr.provider,
+          instr.countedStringAppendTripCount,
+        );
+        return;
+      }
       case "string.eq": {
         emitValue(instr.lhs, out);
         emitValue(instr.rhs, out);
@@ -2295,10 +2617,10 @@ export function lowerIrFunctionBody<S, Slot>(
         return;
       }
       case "class.super_call": {
-        // #3000-E: `super.method(args)` — static-dispatch to the PARENT's method
-        // slot (`<parent>_<method>`) with the subclass receiver first, then args.
-        // Resolving against `parentShape` (not the receiver's shape) bypasses any
-        // subclass override.
+        // #3000-E: `super.<member>(args)` — static-dispatch to the PARENT's slot
+        // with the subclass receiver first, then args; resolving against
+        // `parentShape` (not the receiver's shape) bypasses any subclass override.
+        // (#3522) `memberKind` picks the slot, absent means `"method"` as before.
         const cl = resolver.resolveClass?.(instr.parentShape);
         if (!cl) {
           throw new Error(`ir/lower: resolver cannot lower super class ${instr.parentShape.className} (${func.name})`);
@@ -2307,7 +2629,7 @@ export function lowerIrFunctionBody<S, Slot>(
         for (const a of instr.args) emitValue(a, out);
         emitter.pushRaw(out, {
           op: "call",
-          funcIdx: resolver.resolveFunc(cl.memberFunc("method", instr.methodName, instr.target)),
+          funcIdx: resolver.resolveFunc(cl.memberFunc(instr.memberKind ?? "method", instr.methodName, instr.target)),
         });
         return;
       }
@@ -2464,24 +2786,20 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.push requires func.generatorBufferSlot (${func.name})`);
         }
-        const valueT = asVal(typeOf(instr.value));
-        let importName: string;
-        if (valueT?.kind === "f64") {
-          importName = "__gen_push_f64";
-        } else if (valueT?.kind === "i32") {
-          importName = "__gen_push_i32";
-        } else {
-          // ref / ref_null / externref / IrType.string / object / class
-          // / closure all land here. The from-ast lowerer must have
-          // coerced to externref upstream — `coerce.to_externref`
-          // emits an `extern.convert_any` so the value flowing in
-          // has the right Wasm type for the import signature
-          // `(externref, externref) → void`.
-          importName = "__gen_push_ref";
-        }
+        // (#3526 F1-S4) The typed `__gen_push_f64` / `_i32` / `_ref` symbol is
+        // no longer re-derived here: `attachIrGeneratorSupport` derived it from
+        // the SAME value type before freeze, and that attachment is now the
+        // only authority (the local derivation existed solely to feed the
+        // retired `?? irRuntimeFuncRef(importName)` fallback).
+        //
+        // The type READ stays, and is load-bearing: `typeOf` throws for a value
+        // this map cannot type, which demotes the owner. Dropping the read
+        // would silently admit a population lowering previously refused, so it
+        // is kept exactly where it was rather than deleted with its consumer.
+        void typeOf(instr.value);
         // #2951 — prefer the sealed provider so lowering consumes exactly the
         // callable prepared-component dependency discovery proved.
-        const fnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef(importName));
+        const fnIdx = resolver.resolveFunc(requirePreparedGeneratorProvider(instr.provider, "gen.push", func.name));
         // Stack: buffer, value → (void); call __gen_push_*.
         emitter.pushRaw(out, {
           op: "local.get",
@@ -2499,7 +2817,7 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.epilogue requires func.generatorBufferSlot (${func.name})`);
         }
-        const fnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef("__create_generator"));
+        const fnIdx = resolver.resolveFunc(requirePreparedGeneratorProvider(instr.provider, "gen.epilogue", func.name));
         emitter.pushRaw(out, {
           op: "local.get",
           index: slotWasmIdx(func.generatorBufferSlot),
@@ -2519,7 +2837,9 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.yieldStar requires func.generatorBufferSlot (${func.name})`);
         }
-        const fnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef("__gen_yield_star"));
+        const fnIdx = resolver.resolveFunc(
+          requirePreparedGeneratorProvider(instr.provider, "gen.yieldStar", func.name),
+        );
         emitter.pushRaw(out, {
           op: "local.get",
           index: slotWasmIdx(func.generatorBufferSlot),
@@ -2546,9 +2866,26 @@ export function lowerIrFunctionBody<S, Slot>(
         if (func.generatorBufferSlot === undefined) {
           throw new Error(`ir/lower: gen.setReturn requires func.generatorBufferSlot (${func.name})`);
         }
-        const setReturnIdx = resolver.resolveFunc(instr.provider ?? irRuntimeFuncRef("__gen_set_return"));
-        const boxRef = instr.boxProvider ?? irRuntimeFuncRef("__box_number");
+        const setReturnIdx = resolver.resolveFunc(
+          requirePreparedGeneratorProvider(instr.provider, "gen.setReturn", func.name),
+        );
         const valueT = asVal(typeOf(instr.value));
+        // (#3526 F1-S3) The boxing callable has ONE authority — the frozen
+        // runtime manifest, attached by `attachIrGeneratorSupport`. There is no
+        // `?? irRuntimeFuncRef("__box_number")` fallback any more: attachment
+        // was traced total on the only path that reaches here (every generator
+        // owner is attached at `integration.ts` before Phase 3, nothing joins
+        // the lowered set afterwards, and a `gen.setReturn` spliced into a
+        // non-generator owner is already rejected by the buffer-slot guard
+        // above). A missing attachment is therefore a preparation defect, and
+        // failing closed demotes the owner instead of silently re-deciding the
+        // symbol here.
+        const boxRef = (): IrFuncRef => {
+          if (!instr.boxProvider) {
+            throw new Error(`ir/lower: gen.setReturn numeric stash has no prepared boxing provider (${func.name})`);
+          }
+          return instr.boxProvider;
+        };
         // buffer (arg 0)
         emitter.pushRaw(out, {
           op: "local.get",
@@ -2558,11 +2895,11 @@ export function lowerIrFunctionBody<S, Slot>(
         emitValue(instr.value, out);
         if (valueT?.kind === "f64") {
           // pushraw-ok(#2951): plain call op — boxes the f64 return value to externref, mirrors the gen.setReturn contract above
-          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef) });
+          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef()) });
         } else if (valueT?.kind === "i32") {
           emitter.pushRaw(out, { op: "f64.convert_i32_s" });
           // pushraw-ok(#2951): plain call op — boxes the widened i32 return value to externref, same contract as the f64 arm
-          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef) });
+          emitter.pushRaw(out, { op: "call", funcIdx: resolver.resolveFunc(boxRef()) });
         } else if (valueT?.kind === "ref" || valueT?.kind === "ref_null") {
           emitter.emitToExternref(out);
         }
@@ -3091,7 +3428,19 @@ export function lowerIrFunctionBody<S, Slot>(
         // iteration yields code points: a well-formed surrogate pair is ONE
         // 2-code-unit element. The cursor advances by the element's `len`
         // (1, or 2 for a pair) below instead of a fixed +1.
-        const charAtIdx = resolver.resolveFunc(instr.provider ?? irIntrinsicFuncRef(IR_STRING_ITERATOR_CHAR_AT_FN));
+        // (#3526 F2-S1) Fail closed rather than re-deciding the symbol here.
+        // `attachIrStringSupport` attaches this provider UNCONDITIONALLY for
+        // every `forof.string` (`string-support.ts` — the kind is in the
+        // provider-attaching branch and `irStringCallableProviderRef` never
+        // returns `undefined` for it), and `prepareStrings` runs that pass over
+        // every healthy owner. The linear adapter cannot reach this case at all:
+        // `forof.string` is absent from its instruction allowlist
+        // (`backend/legality.ts`), so it demotes at the lowering boundary. The
+        // retired `?? irIntrinsicFuncRef(...)` fallback was therefore dead, and
+        // a missing attachment must demote ONE owner, not silently mint a body.
+        const charAtIdx = resolver.resolveFunc(
+          requirePreparedStringProvider(instr.provider, "forof.string", func.name),
+        );
         // The AnyString struct's `len` field is at index 0 (matches
         // `nativeStringType` in src/codegen/native-strings.ts).
         // We recover the typeIdx from the SSA value's IrType — must be
@@ -3635,26 +3984,25 @@ export function lowerIrFunctionBody<S, Slot>(
     }
   }
 
-  const convertSlots = (type: IrType, where: string): readonly Slot[] => {
-    const slots = typeConverter.convertType(type);
-    if (slots.length === 0) {
-      throw new Error(`ir/lower: ${emitter.backend} type converter produced no slots for ${where} in ${func.name}`);
-    }
-    return [...slots];
-  };
+  const signature = projectIrFunctionSignatureWithConverter(func, resolver, emitter, typeConverter);
 
   return {
     name: func.name,
     body,
-    params: func.params.map((param) => ({
-      name: param.name,
-      slots: convertSlots(param.type, `param ${param.name}`),
-    })),
+    params: signature.params,
     locals: locals.map((local) => ({
       name: local.name,
-      slots: convertSlots(local.logicalType, `local ${local.name}`),
+      slots: (() => {
+        const slots = typeConverter.convertType(local.logicalType);
+        if (slots.length === 0) {
+          throw new Error(
+            `ir/lower: ${emitter.backend} type converter produced no slots for local ${local.name} in ${func.name}`,
+          );
+        }
+        return [...slots];
+      })(),
     })),
-    results: func.resultTypes.map((type, index) => convertSlots(type, `result ${index}`)),
+    results: signature.results,
     exported: func.exported,
   };
 }
@@ -3702,11 +4050,21 @@ function collectIrUses(instr: IrInstr): readonly IrValueId[] {
     case "string.concat":
     case "string.eq":
       return [instr.lhs, instr.rhs];
+    case "string.repeat":
+      return [instr.value, instr.count];
     case "string.len":
       return [instr.value];
     case "string.char_at":
     case "string.char_code_at":
       return [instr.value, instr.index];
+    case "fnctor.new":
+      return [
+        ...instr.captureArgs,
+        ...instr.args,
+        ...(instr.constructorIdentity === null ? [] : [instr.constructorIdentity]),
+      ];
+    case "fnctor.get":
+      return [instr.value];
     case "object.new":
       return instr.values;
     case "object.get":
@@ -4054,6 +4412,13 @@ export function lowerIrTypeToValType(t: IrType, resolver: IrLowerResolver, funcN
     }
     return dyn;
   }
+  if (t.kind === "fnctor") {
+    const lowering = resolver.resolveFnctor?.(t.shape);
+    if (!lowering || lowering.resultIsExternref || lowering.instanceCarrierType.kind === "externref") {
+      throw new Error(`ir/lower: fnctor ${t.shape.constructorName} has no exact struct ABI resolver (${funcName})`);
+    }
+    return lowering.instanceCarrierType;
+  }
   // boxed (refcell)
   // Slice 3 (#1169c): the resolver delegates to the legacy ref-cell
   // registry so legacy and IR ref cells share one WasmGC struct.
@@ -4097,6 +4462,7 @@ function describeIrTypeShallow(t: IrType): string {
   }
   if (t.kind === "class") return `class<${t.shape.className}>`;
   if (t.kind === "extern") return `extern<${t.className}>`;
+  if (t.kind === "fnctor") return `fnctor<${t.shape.constructorName}>`;
   // #1926 — union members / boxed inner are IrTypes; recurse.
   if (t.kind === "union") return `union<${t.members.map(describeIrTypeShallow).join(",")}>`;
   // #2949 — dynamic leaf; render the optional JsTag refinement when present.
@@ -4177,81 +4543,11 @@ function emitJsToInt32<S>(
   emitter: BackendEmitter<S>,
   out: S,
   tmpLocalIdx: number,
-  allocI64Scratch: () => { bits: number; e: number; significand: number; magnitude: number },
+  allocI64Scratch: () => WasmInt32CoercionScratch,
 ): void {
   if (Array.isArray(out)) {
     const wasmOut = out as Instr[];
-    const { bits, e, significand, magnitude } = allocI64Scratch();
-    wasmOut.push({ op: "i64.reinterpret_f64" }, { op: "local.set", index: bits });
-    wasmOut.push(
-      { op: "local.get", index: bits },
-      { op: "i64.const", value: 52n },
-      { op: "i64.shr_u" },
-      { op: "i64.const", value: 0x7ffn },
-      { op: "i64.and" },
-      { op: "i64.const", value: 1023n },
-      { op: "i64.sub" },
-      { op: "local.set", index: e },
-    );
-    wasmOut.push(
-      { op: "local.get", index: bits },
-      { op: "i64.const", value: 0xfffffffffffffn },
-      { op: "i64.and" },
-      { op: "i64.const", value: 0x10000000000000n },
-      { op: "i64.or" },
-      { op: "local.set", index: significand },
-    );
-    const shiftLeft: Instr[] = [
-      { op: "local.get", index: significand },
-      { op: "local.get", index: e },
-      { op: "i64.const", value: 52n },
-      { op: "i64.sub" },
-      { op: "i64.shl" },
-    ];
-    const shiftRight: Instr[] = [
-      { op: "local.get", index: significand },
-      { op: "i64.const", value: 52n },
-      { op: "local.get", index: e },
-      { op: "i64.sub" },
-      { op: "i64.shr_u" },
-    ];
-    wasmOut.push(
-      { op: "local.get", index: e },
-      { op: "i64.const", value: 0n },
-      { op: "i64.ge_s" },
-      { op: "local.get", index: e },
-      { op: "i64.const", value: 83n },
-      { op: "i64.le_s" },
-      { op: "i32.and" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i64" } },
-        then: [
-          { op: "local.get", index: e },
-          { op: "i64.const", value: 52n },
-          { op: "i64.ge_s" },
-          { op: "if", blockType: { kind: "val", type: { kind: "i64" } }, then: shiftLeft, else: shiftRight },
-        ],
-        else: [{ op: "i64.const", value: 0n }],
-      },
-      { op: "local.set", index: magnitude },
-    );
-    wasmOut.push(
-      { op: "local.get", index: bits },
-      { op: "i64.const", value: 0n },
-      { op: "i64.lt_s" },
-      {
-        op: "if",
-        blockType: { kind: "val", type: { kind: "i32" } },
-        then: [
-          { op: "i32.const", value: 0 },
-          { op: "local.get", index: magnitude },
-          { op: "i32.wrap_i64" },
-          { op: "i32.sub" },
-        ],
-        else: [{ op: "local.get", index: magnitude }, { op: "i32.wrap_i64" }],
-      },
-    );
+    emitWasmInt32Coercion(wasmOut, allocI64Scratch());
     return;
   }
   // Stack: [f64]

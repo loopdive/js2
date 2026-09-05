@@ -5,6 +5,7 @@ import { auditIrIntegrationTerminalEvidence } from "../src/codegen/ir-overlay-ou
 import { buildIrUnitInventory, createDerivedIrUnitId, type IrUnitId } from "../src/ir/identity.js";
 import {
   buildIrIntegrationReport,
+  integrationFailure,
   invariantIntegrationFailure,
   IrIntegrationFailureLog,
   type IrIntegrationReport,
@@ -69,6 +70,7 @@ function failedEvidence(current: Fixture, errorFunc = "run"): IrIntegrationTermi
     legacyName: "run",
     error,
     errors: [error],
+    diagnosticVisibility: "report",
   };
 }
 
@@ -148,7 +150,14 @@ describe("#3520 integration report sidecar completeness", () => {
         compiled: [],
         errors: [first, second],
         terminalEvidence: [
-          { kind: "failed", unitId: current.ownerUnitId, legacyName: "run", error: first, errors: [first] },
+          {
+            kind: "failed",
+            unitId: current.ownerUnitId,
+            legacyName: "run",
+            error: first,
+            errors: [first],
+            diagnosticVisibility: "report",
+          },
         ],
       },
       {
@@ -161,6 +170,7 @@ describe("#3520 integration report sidecar completeness", () => {
             legacyName: "run",
             error: first,
             errors: [first, foreign],
+            diagnosticVisibility: "report",
           },
         ],
       },
@@ -286,6 +296,97 @@ describe("#3520 integration report sidecar completeness", () => {
       kind: "invariant",
       code: "duplicate-unit-outcome",
     });
+  });
+
+  it("retains one exact outcome-only withdrawal without publishing a fallback diagnostic", () => {
+    const current = fixture();
+    const failures = new IrIntegrationFailureLog();
+    const failure = integrationFailure("run", {
+      kind: "unsupported",
+      code: "late-preparation-unsupported",
+      stage: "resolve",
+      detail: "prepared component seal was rejected by an authenticated test selector",
+    });
+    failures.recordOutcomeOnly(owner(current), failure);
+
+    const report = buildIrIntegrationReport(
+      [],
+      failures.errors,
+      current.ownerProjection,
+      [],
+      failures.terminalFailureEvents,
+      [],
+    );
+
+    expect(report.errors).toEqual([]);
+    expect(report.terminalEvidence).toEqual([
+      {
+        kind: "failed",
+        unitId: current.ownerUnitId,
+        legacyName: "run",
+        error: failure,
+        errors: [],
+        diagnosticVisibility: "outcome-only",
+      },
+    ]);
+    expect(audit(current, report).invariantByUnitId).toEqual(new Map());
+  });
+
+  it("rejects malformed outcome-only production and forged visibility evidence", () => {
+    const current = fixture();
+    const exact = integrationFailure("run", {
+      kind: "unsupported",
+      code: "late-preparation-unsupported",
+      stage: "resolve",
+      detail: "injected seal rejection",
+    });
+    const failures = new IrIntegrationFailureLog();
+    expect(() =>
+      failures.recordOutcomeOnly(
+        owner(current),
+        invariantIntegrationFailure("run", "verifier-failure", "resolve", "wrong outcome"),
+      ),
+    ).toThrow(/does not match one typed Unsupported event/);
+    expect(() =>
+      failures.recordOutcomeOnly(owner(current), {
+        ...exact,
+        outcome: { ...exact.outcome, code: "dependency-unresolved" },
+      }),
+    ).toThrow(/does not match one typed Unsupported event/);
+    expect(() => failures.recordOutcomeOnly(owner(current), { ...exact, func: "other" })).toThrow(
+      /does not match one typed Unsupported event/,
+    );
+
+    const report = (evidence: unknown, errors: IrIntegrationReport["errors"] = []): IrIntegrationReport => ({
+      compiled: [],
+      errors,
+      terminalEvidence: [evidence as IrIntegrationTerminalEvidence],
+    });
+    const exactEvidence = {
+      kind: "failed",
+      unitId: current.ownerUnitId,
+      legacyName: "run",
+      error: exact,
+      errors: [],
+      diagnosticVisibility: "outcome-only",
+    } as const;
+    const mutations: IrIntegrationReport[] = [
+      report({ ...exactEvidence, diagnosticVisibility: "report" }),
+      report({ ...exactEvidence, errors: [exact] }, [exact]),
+      report({
+        ...exactEvidence,
+        error: invariantIntegrationFailure("run", "verifier-failure", "resolve", "wrong outcome"),
+      }),
+      report({ ...exactEvidence, diagnosticVisibility: "hidden" }),
+      report((({ diagnosticVisibility: _visibility, ...missing }) => missing)(exactEvidence)),
+    ];
+
+    for (const mutation of mutations) {
+      expect(audit(current, mutation).invariantByUnitId.get(current.ownerUnitId)).toMatchObject({
+        kind: "invariant",
+        code: "selection-preparation-mismatch",
+      });
+    }
   });
 
   it("rejects exact evidence whose structural owner and public label disagree", () => {

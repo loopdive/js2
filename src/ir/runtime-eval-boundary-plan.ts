@@ -12,6 +12,8 @@ export type IrRuntimeEvalSiteKind =
   | "indirect-eval"
   | "function-constructor"
   | "intrinsic-value"
+  | "global-eval-property"
+  | "global-script-eval"
   | "provider-definition";
 
 export interface IrRuntimeEvalSite {
@@ -55,6 +57,7 @@ const PROVIDER_NAMES = new Set([
   "__runtime_new_function",
   "__runtime_indirect_eval",
   "__runtime_direct_eval",
+  "__runtime_script_eval",
   "__runtime_apply_interpreted",
 ]);
 
@@ -122,15 +125,54 @@ function isFunctionPrototypeMethodChain(identifier: ts.Identifier): boolean {
   const proto = identifier.parent;
   if (!ts.isPropertyAccessExpression(proto) || proto.expression !== identifier) return false;
   if (proto.name.text !== "prototype") return false;
-  const member = proto.parent;
-  if (ts.isPropertyAccessExpression(member) && member.expression === proto) {
+  // (#5148 checkpoint) Walk out of transparent wrappers so a cast between the
+  // proto read and its member does not defeat the excusal —
+  // `(Function.prototype as any).p = 12` is the same non-escape as
+  // `Function.prototype.p = 12`, but the AsExpression made it an
+  // `intrinsic-value` site, which pulled `js2wasm:runtime-eval` imports into
+  // zero-import standalone modules (the #4563 carrier-walk red).
+  let outer: ts.Node = proto;
+  while (
+    outer.parent !== undefined &&
+    (ts.isParenthesizedExpression(outer.parent) ||
+      ts.isAsExpression(outer.parent) ||
+      ts.isSatisfiesExpression(outer.parent) ||
+      ts.isNonNullExpression(outer.parent) ||
+      ts.isTypeAssertionExpression(outer.parent)) &&
+    outer.parent.expression === outer
+  ) {
+    outer = outer.parent;
+  }
+  const member = outer.parent;
+  if (member !== undefined && ts.isPropertyAccessExpression(member) && member.expression === outer) {
     return member.name.text !== "constructor";
   }
-  if (ts.isElementAccessExpression(member) && member.expression === proto) {
+  if (member !== undefined && ts.isElementAccessExpression(member) && member.expression === outer) {
     const key = unwrapExpression(member.argumentExpression);
     return ts.isStringLiteralLike(key) && key.text !== "constructor";
   }
-  return false;
+  // (#5148 checkpoint) A DESTRUCTURE of the proto object — Deno's
+  // `const { bind, call } = Function.prototype` — is the same member-read
+  // family: safe unless it binds `constructor`.
+  if (
+    member !== undefined &&
+    ts.isVariableDeclaration(member) &&
+    member.initializer === outer &&
+    ts.isObjectBindingPattern(member.name)
+  ) {
+    return member.name.elements.every((element) => {
+      const key = element.propertyName ?? element.name;
+      return !(ts.isIdentifier(key) && key.text === "constructor");
+    });
+  }
+  // The BARE `Function.prototype` VALUE (stored, passed on): the proto object
+  // itself is not eval-capable, and its `.constructor` read is served by the
+  // self-contained `%Function%` arm (function-intrinsic-carrier.ts) exactly
+  // like `<fn>.constructor` — there is no bare `Function` read for it to
+  // disagree with when this excusal fires. Before this, storing the value
+  // linked the provider ABI, and a module whose imports were stubbed threw
+  // during `__module_init` while seeding the companion's `constructor`.
+  return true;
 }
 
 function isDirectCalleeIntrinsicValue(identifier: ts.Identifier): boolean {
@@ -150,6 +192,22 @@ function isDirectCalleeIntrinsicValue(identifier: ts.Identifier): boolean {
     return (ts.isCallExpression(call) || ts.isNewExpression(call)) && unwrapExpression(call.expression) === parent;
   }
   return false;
+}
+
+/**
+ * A small syntactic gate for the realm object's first-class `eval` property.
+ * The global binding is commonly reached as `globalThis.eval`, `this.eval`, or
+ * Node's `global.eval`; the latter also covers the ES5 Test262 row's
+ * `var global = this` alias. A property on an arbitrary object is deliberately
+ * excluded so the global-object seed does not pull the runtime-eval provider
+ * into unrelated `obj.eval` programs.
+ */
+function isLikelyGlobalObjectReceiver(expression: ts.Expression): boolean {
+  const unwrapped = unwrapExpression(expression);
+  return (
+    unwrapped.kind === ts.SyntaxKind.ThisKeyword ||
+    (ts.isIdentifier(unwrapped) && (unwrapped.text === "globalThis" || unwrapped.text === "global"))
+  );
 }
 
 /** Build the single immutable runtime-eval routing authority for a program. */
@@ -195,7 +253,13 @@ export function buildIrRuntimeEvalBoundaryPlan(
     const visit = (node: ts.Node): void => {
       if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
         const callee = unwrapExpression(node.expression);
-        if (ts.isIdentifier(callee) && isGlobalIntrinsic(callee, oracle)) {
+        if (ts.isIdentifier(callee) && callee.text === "__js2wasm_global_script_eval") {
+          const source = node.arguments?.[0];
+          const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
+          addSite(sourceFile, id, node, "global-script-eval", "required", literalSource);
+          if (literalSource !== undefined) dynamicSourceFragments.push(literalSource);
+          else if (source !== undefined) unknownDynamicSource = true;
+        } else if (ts.isIdentifier(callee) && isGlobalIntrinsic(callee, oracle)) {
           if (callee.text === "eval") {
             const source = node.arguments?.[0];
             const literalSource = source && ts.isStringLiteralLike(source) ? source.text : undefined;
@@ -218,6 +282,29 @@ export function buildIrRuntimeEvalBoundaryPlan(
             else if (source !== undefined) unknownDynamicSource = true;
           }
         }
+      }
+
+      // `eval` is normally accounted for by the identifier walk below, but a
+      // realm-object read (`global.eval` / `globalThis.eval`) has the property
+      // name in AST member position and therefore intentionally does not count
+      // as an `intrinsic-value` site. It still needs the provider-backed,
+      // identity-stable wrapper when the compiler seeds the native global
+      // object, so record this narrow demand separately.
+      const elementKey = ts.isElementAccessExpression(node) ? unwrapExpression(node.argumentExpression) : undefined;
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        node.name.text === "eval" &&
+        isLikelyGlobalObjectReceiver(node.expression)
+      ) {
+        addSite(sourceFile, id, node, "global-eval-property", "required");
+      } else if (
+        ts.isElementAccessExpression(node) &&
+        elementKey !== undefined &&
+        ts.isStringLiteralLike(elementKey) &&
+        elementKey.text === "eval" &&
+        isLikelyGlobalObjectReceiver(node.expression)
+      ) {
+        addSite(sourceFile, id, node, "global-eval-property", "required");
       }
 
       if (

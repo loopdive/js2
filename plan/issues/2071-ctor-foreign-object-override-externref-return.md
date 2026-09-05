@@ -1,10 +1,10 @@
 ---
 id: 2071
 title: "constructor returning a foreign plain object cannot override `this` — ctor Wasm return type is (ref $Struct), needs externref-based return ABI"
-status: ready
+status: suspended
 sprint: Backlog
 created: 2026-06-11
-updated: 2026-06-11
+updated: 2026-08-22
 priority: low
 feasibility: hard
 reasoning_effort: high
@@ -189,3 +189,20 @@ apply (`$DONE` does not escape as a value). Worth its own issue; the guard
 would be "withdraw a `__fnctor_*` ref narrowing when some call site passed an
 argument the scan could not type", whose corpus-wide blast radius needs a full
 test262 run to size.
+
+## Suspended Work — ctor foreign-object return (2026-08-22)
+
+Merged via #4723: the `fnctorBodyMayReturnForeignObject` predicate with
+self-construction (`return new F(...)` inside F) treated as obviously
+non-foreign — the fix that stopped sta.js's `Test262Error` guard from poisoning
+every asyncHelpers row.
+
+Still open and unchanged: `new F()` whose constructor RETURNS a function
+(`S13.2.2_A8_T1/T2/T3`, 3 rows). The adjacent split-declaration fnctor
+(`var F; F = function(){}`) was isolated during the campaign — `resolveFnctorSymbol`
+finds a `VariableDeclaration` with no initializer, so the whole #2660 machinery
+declines; admitting it needs a proof that the assignment is the only one
+targeting that binding, and the resolver feeds both the `new F()` lowering and
+the escape gate (wide blast radius, narrow win).
+
+Resume from #4491's "Suspended Work" section.

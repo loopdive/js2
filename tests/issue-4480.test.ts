@@ -164,15 +164,14 @@ describe("#4480 S2 — a `new F()` instance reports the SAME object `F.prototype
 });
 
 describe("#4480 — measured residuals (see the issue file's Residuals section)", () => {
-  it.fails("R5: S2 declines under a whole `F.prototype = p` reassignment (condition 2)", async () => {
-    // Condition 2 in fnctor-instance-prototype.ts: with a reassignment present
-    // the single mutable global no longer models "the value captured at
-    // construction", so the arm must not answer — and it does not. The result
-    // is therefore still the pre-S2 answer (absent), NOT the spec one. Pinned
-    // as an `it.fails` rather than dropped, because the guard is exactly what
-    // stops the arm from becoming wrong on `S13.2.2_A1_T1`-shaped modules, and
-    // a future slice that re-points the slot per construction site should flip
-    // this row rather than delete it.
+  // (#4643, 2026-08-23) FLIPPED POSITIVE — "a future slice … should flip this
+  // row rather than delete it" is what happened, though not the way the note
+  // predicted. The COMPILE-TIME arm still declines under a reassignment, exactly
+  // as condition 2 requires; the answer now comes from the RUNTIME helper
+  // instead: `__getPrototypeOf` learned a chain start for a `__fnctor_<F>`
+  // instance struct (it previously tested `$Object`, missed, and answered null
+  // for every such instance). So the guard is intact and the row is right.
+  it("R5 (fixed by #4643): whole `F.prototype = p` reassignment, answered at runtime", async () => {
     expect(
       await runStandalone(
         `function F(){ this.x = 1; } var p = {}; F.prototype = p; var i = new F(); return Object.getPrototypeOf(i) === p ? 1 : 0;`,
@@ -180,13 +179,13 @@ describe("#4480 — measured residuals (see the issue file's Residuals section)"
     ).toBe(1);
   });
 
-  it.fails("R4: `F.prototype.isPrototypeOf(i)` — blocked by the escape gate, not the walk", async () => {
-    // Instrumented compile (evidence in native-is-prototype-of.ts): writing the
-    // call is itself a dynamic method use on `F`'s prototype, so the #2660
-    // escape gate demotes `F` and `resolveUserFnctorName` declines — the same
-    // module reports `resolve=F` when the read point is `Object.getPrototypeOf`
-    // instead. A `ref.test (ref $__fnctor_F)` arm was written and measured to be
-    // unreachable, so it was removed rather than shipped as dead code.
+  // (#4643, 2026-08-23) FLIPPED POSITIVE. The diagnosis above stands — the
+  // compile-time arm is still unreachable for this shape because the call
+  // demotes `F` — and that is precisely why it now works: the demoted shape
+  // reaches the RUNTIME `__isPrototypeOf`, which this issue taught to start its
+  // walk at a `__fnctor_<F>` instance's per-fnctor prototype instead of
+  // answering 0 for any receiver that is not an `$Object`.
+  it("R4 (fixed by #4643): `F.prototype.isPrototypeOf(i)` via the runtime walk", async () => {
     expect(
       await runStandalone(`function F(){ this.x = 1; } var i = new F(); return F.prototype.isPrototypeOf(i) ? 1 : 0;`),
     ).toBe(1);
@@ -211,11 +210,14 @@ describe("#4480 — measured residuals (see the issue file's Residuals section)"
     expect(await runStandalone(`var G = function(){}; return G.prototype.constructor === G ? 1 : 0;`)).toBe(1);
   });
 
-  it.fails("R3: a FUNCTION-valued prototype cannot be linked to instances", async () => {
-    // `S13.2.2_A1_T1`. `$Object.$proto` is typed `(ref null $Object)`, so a
-    // closure struct simply cannot be stored in it — this is a representation
-    // limit, not a missing arm, and widening the field type perturbs the
-    // canonical rec-group boundary (#2514).
+  // (#4643, 2026-08-23) FLIPPED POSITIVE — and it was ALREADY passing on the
+  // campaign head before this issue's change: #4637 fixed it by canonicalizing
+  // the callable to its own-property bag `$Object` at `__object_create`, which
+  // is the answer to the "representation limit" the note below describes (the
+  // field type never had to widen). Measured both arms of #4643: this row
+  // passes on base too, so its `it.fails` was STALE, not a result of this
+  // change-set. Kept as a positive pin rather than deleted.
+  it("R3 (fixed by #4637, verified by #4643): a FUNCTION-valued prototype IS linked", async () => {
     expect(
       await runStandalone(
         `function P(){} P.type = 1; function F(){} F.prototype = P; var m = new F(); return P.isPrototypeOf(m) ? 1 : 0;`,

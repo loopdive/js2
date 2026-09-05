@@ -115,6 +115,14 @@ Options:
                     console.log / process.std*.write lower to writeSync(1|2, ...),
                     stdin is readSync(0, ...). Off by default — every namespace is
                     inline-lowered into a self-contained module.
+  --package-linking <mode>
+                    npm package output for project compilation: separate
+                    caches and instantiates provider Wasm modules and preserves
+                    linked-consumer compiler errors without a bundled retry;
+                    merge statically combines them with Binaryen wasm-merge;
+                    off retains monolithic source compilation. Project API
+                    calls default to automatic linking with compatibility
+                    fallback.
   --emulate <env>   Emulate a host runtime's globals so they type-check without
                     @types/node. 'node' = ambient process/etc.; 'none' = off.
                     Auto-enabled (type-level only) when the source imports a
@@ -134,6 +142,14 @@ Options:
                     'production' sets process.env.NODE_ENV="production" and
                     typeof process / typeof window to "undefined".
                     'development' sets process.env.NODE_ENV="development".
+  --skip-semantic-diagnostics
+                    Skip TypeScript SEMANTIC checking (syntax errors still
+                    fail). Intended for compiling plain JavaScript packages,
+                    where strict-mode type-checking reports a wall of
+                    legitimate-but-irrelevant diagnostics that abort the
+                    compile even though codegen would succeed — e.g. acorn's
+                    'Type null is not assignable to type undefined' (#3717).
+                    Type QUERIES still work; only the diagnostic gate is skipped.
   --ts7             Use TypeScript 7 (the Go-port, GA) as the parser/checker
                     frontend (experimental; full migration tracked in #1029).
                     Equivalent to JS2WASM_TS7=1.
@@ -145,7 +161,9 @@ Output files:
   <name>.wasm       WebAssembly binary
   <name>.wat        WebAssembly text format
   <name>.d.ts       TypeScript declarations
-  <name>.imports.js createImports() helper`);
+  <name>.imports.js createImports() / instantiateBytes() / wrapInstance()
+                    helper — carries the export metadata wrapExports needs, so
+                    a consumer gets marshalled JS values, not opaque handles`);
   process.exit(0);
 }
 
@@ -188,6 +206,7 @@ let strictNoHostImports: boolean | undefined;
 // alias was removed, not deprecated). WASI only; default empty keeps the
 // self-contained inline path for every namespace.
 const linkedNamespaces = new Set<string>();
+let packageLinking: false | "separate" | "merge" | undefined;
 // #2603 — `--emulate node`: opt into Node API emulation (ambient `process` typing).
 // `emulateExplicit` records that the user passed `--emulate`/`--no-emulate`, so a
 // `node:` import won't auto-enable over an explicit choice.
@@ -199,6 +218,12 @@ let emulateExplicit = false;
 // (DOM ambient surface loaded, byte-neutral).
 let platform: "web" | "node" | "deno" | undefined;
 const defines: Record<string, string> = {};
+// Skip TS semantic diagnostics. The option has always existed on the API
+// (`CompileOptions.skipSemanticDiagnostics`) and every dogfood script that
+// compiles a real npm package sets it; the CLI had no way to reach it, so
+// `js2wasm <plain-js-package>` died at the diagnostic gate below on noise that
+// never reaches codegen.
+let skipSemanticDiagnostics = false;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i]!;
@@ -234,6 +259,8 @@ for (let i = 0; i < args.length; i++) {
       console.error(`Unknown allocator: ${a} (expected bump, arena-reset, or analysis-stack)`);
       process.exit(1);
     }
+  } else if (arg === "--skip-semantic-diagnostics") {
+    skipSemanticDiagnostics = true;
   } else if (arg === "--wat") {
     watOnly = true;
   } else if (arg === "--no-wat") {
@@ -277,6 +304,16 @@ for (let i = 0; i < args.length; i++) {
       process.exit(1);
     }
     linkedNamespaces.add(ns);
+  } else if (arg === "--package-linking" || arg.startsWith("--package-linking=")) {
+    const mode = arg.startsWith("--package-linking=") ? arg.slice("--package-linking=".length) : args[++i];
+    if (mode === "separate" || mode === "merge") {
+      packageLinking = mode;
+    } else if (mode === "off") {
+      packageLinking = false;
+    } else {
+      console.error(`Unknown --package-linking mode: ${mode ?? "(missing)"} (expected separate, merge, or off)`);
+      process.exit(1);
+    }
   } else if (arg === "--emulate" || arg.startsWith("--emulate=")) {
     // #2603 — opt into (or out of) Node API emulation. `--emulate node` gives the
     // checker an ambient `process` typing so Node globals type-check without
@@ -421,7 +458,9 @@ const compileOptions = {
   ...(hostBridge !== "auto" ? { hostBridge } : {}),
   ...(semanticProviders !== "auto" ? { semanticProviders } : {}),
   ...(linkedNamespaces.size ? { link: [...linkedNamespaces] } : {}),
+  ...(packageLinking !== undefined ? { packageLinking } : {}),
   ...(emulateNode ? { emulateNode: true } : {}),
+  ...(skipSemanticDiagnostics ? { skipSemanticDiagnostics: true } : {}),
   ...(platform ? { platform } : {}),
   fileName: absInput,
   ...(strictNoHostImports !== undefined ? { strictNoHostImports } : {}),
@@ -436,9 +475,10 @@ const compileOptions = {
 // relative deps from disk through the TS program AND lowers cross-file
 // `node:fs`/WASI fd IO (compileMultiSource, #2771). Entries with no relative
 // import stay on the single-source path — byte-identical to before.
-const result = entryHasRelativeImports(source)
-  ? await compileProject(absInput, compileOptions)
-  : await compile(source, compileOptions);
+const result =
+  packageLinking !== undefined || entryHasRelativeImports(source)
+    ? await compileProject(absInput, compileOptions)
+    : await compile(source, compileOptions);
 
 if (!result.success) {
   for (const e of result.errors) {

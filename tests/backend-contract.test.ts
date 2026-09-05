@@ -108,7 +108,7 @@ describe("five-part contract surface (#3029-S1)", () => {
 
 describe("IR interchange contract surface (#3030-T1)", () => {
   it("exports the frozen format version", () => {
-    expect(IR_FORMAT_VERSION).toBe("5.1");
+    expect(IR_FORMAT_VERSION).toBe("5.4");
     expect(IR_FORMAT_VERSION).toMatch(/^\d+\.\d+$/);
   });
 
@@ -120,6 +120,52 @@ describe("IR interchange contract surface (#3030-T1)", () => {
     const kinds: string[] = schema.$defs.instrKind.enum;
     // D4: raw.wasm is never serialized.
     expect(kinds).not.toContain("raw.wasm");
+    // v5.2 appended string.repeat; v5.3/v5.4 add only optional counted-proof
+    // fields, so the frozen instruction-kind ordering is unchanged.
+    expect(kinds.slice(-2)).toEqual(["async.throw", "string.repeat"]);
+    expect(kinds.filter((kind) => kind === "string.repeat")).toHaveLength(1);
+    const repeatRule = schema.$defs.instr.allOf.find(
+      (rule: { if?: { properties?: { kind?: { const?: string } } } }) =>
+        rule.if?.properties?.kind?.const === "string.repeat",
+    );
+    expect(repeatRule.then.required).toEqual(["value", "count", "encodingEvidence", "provider", "alloc"]);
+    expect(repeatRule.then.properties.countedStringAppendSite.$ref).toBe("#/$defs/countedStringAppendSiteId");
+    expect(repeatRule.then.properties.countedStringAppendTripCount).toMatchObject({
+      type: "integer",
+      minimum: 2,
+      maximum: 0x7fff_ffff,
+    });
+    expect(schema.$defs.countedStringAppendSiteId).toMatchObject({
+      type: "string",
+      pattern: expect.stringContaining("ir-counted-string-append-site:v1"),
+    });
+    expect(repeatRule.then.required).not.toContain("countedStringAppendSite");
+    expect(repeatRule.then.required).not.toContain("countedStringAppendTripCount");
+    const countedSiteGrammar = new RegExp(schema.$defs.countedStringAppendSiteId.pattern);
+    const canonicalSite =
+      "ir-counted-string-append-site:v1:" +
+      "ir-source%3Av1%3A0000000000000000%3Aentry%3Aentry.ts:" +
+      "ir-unit%3Av1%3Air-source%253Av1%253A0000000000000000%253Aentry%253Aentry.ts%3Aroot%3Atop-level-function%3A0000000000000000:" +
+      "0000000000000017:0000000000000043";
+    expect(countedSiteGrammar.test(canonicalSite)).toBe(true);
+    for (const malformed of [
+      canonicalSite.replace("%3A", "%3a"),
+      canonicalSite.replace("entry.ts", "%41ntry.ts"),
+      canonicalSite.replace("entry.ts", "entry%2Fts"),
+      canonicalSite.replace("entry.ts", "%25ZZ"),
+      canonicalSite.replace("ir-source%3Av1%3A0000000000000000", "ir-source%3Av1%3A000000000000000"),
+      canonicalSite.replace("ir-source%3Av1%3A0000000000000000", "ir-source%3Av1%3A9007199254740992"),
+      canonicalSite.replace("%3Aentry%3Aentry.ts", "%3Aunknown%3Aentry.ts"),
+      canonicalSite.replace("%3Aentry.ts:", "%3A:"),
+      canonicalSite.replace("%3Atop-level-function%3A", "%3Aunknown-unit%3A"),
+      canonicalSite.replace("%3A0000000000000000:0000000000000017", "%3A000000000000000:0000000000000017"),
+      canonicalSite.replace("%3A0000000000000000:0000000000000017", "%3A9007199254740992:0000000000000017"),
+      canonicalSite.replace("ir-unit%3Av1%3Air-source", "ir-unit%3Av1%3Aderived%3Air-source"),
+      canonicalSite.replace(":0000000000000017:", ":17:"),
+      `${canonicalSite}:extra`,
+    ]) {
+      expect(countedSiteGrammar.test(malformed), malformed).toBe(false);
+    }
     // Spot-check the dynamic-boundary trio (D3.4 — the AOT payload).
     expect(kinds).toContain("box");
     expect(kinds).toContain("unbox");

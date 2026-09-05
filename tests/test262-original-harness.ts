@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ITERATOR_BINDING_PREAMBLE, needsIteratorBinding } from "../scripts/test262-iterator-binding.mjs";
 
 interface HarnessMeta {
   flags?: string[];
@@ -194,16 +195,37 @@ function assembleVariant(
 ): OriginalHarnessVariant {
   if (raw) return { source, bodyLineOffset: 0, strict };
 
+  const iteratorBinding = needsIteratorBinding(source) ? ITERATOR_BINDING_PREAMBLE : "";
+
   // Keep this order byte-for-byte equivalent to test262.fyi/data/runner/read.js:
   // strict directive, async helper, metadata includes, runtime shim, assert.js,
-  // sta.js, and finally the untouched upstream test body.
+  // sta.js, any feature-gated local binding, and finally the untouched upstream
+  // test body.
   // (#3427) Our TS front-end rejects the upstream harness's duplicate top-level
   // helper declarations (e.g. `isPrimitive` in both testTypedArray.js + assert.js)
   // that a JS engine tolerates last-wins. Rename all-but-last in place (line-count
   // preserving) so bodyLineOffset below stays exact.
-  const prefix = dedupeTopLevelFunctionDeclarations(
-    (strict ? '"use strict";\n' : "") + assemblePrefixIncludes(meta, async),
+  let prefix = dedupeTopLevelFunctionDeclarations(
+    (strict ? '"use strict";\n' : "") + assemblePrefixIncludes(meta, async) + iteratorBinding,
   );
+  // (#4626) A test that DECLARES its own top-level `$262` (harness
+  // detachArrayBuffer-host-detachArrayBuffer.js: `var $262 = {
+  // detachArrayBuffer() { throw ... } }`) collides with the runtime shim's
+  // `var $262 = {...}` — the compiler does not give the duplicate var
+  // last-assignment-wins semantics, so the test's override never took effect
+  // (its detach shim silently no-op'd; the read even nulled). Rename the SHIM
+  // part's `$262` occurrences (same byte length, line-count preserving, so
+  // bodyLineOffset stays exact); harness includes and the test body then bind
+  // the single remaining `$262` — the test's own, matching a real host where
+  // the test shadows the host object.
+  if (/\b(?:var|let|const)\s+\$262\b/.test(source)) {
+    const shim = cachedSource(RUNTIME_PATH);
+    const idx = prefix.indexOf(shim);
+    if (idx >= 0) {
+      const renamed = shim.replace(/\$262\b/g, () => "$26_");
+      prefix = prefix.slice(0, idx) + renamed + prefix.slice(idx + shim.length);
+    }
+  }
   return {
     source: prefix + source,
     bodyLineOffset: lineCount(prefix),

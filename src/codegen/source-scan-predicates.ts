@@ -9,6 +9,7 @@
 // walk-until-found shape and have no dependency on `CodegenContext`.
 
 import { ts, forEachChild } from "../ts-api.js";
+import { directArrayProtoIteratorAssignment } from "./array-proto-iterator-override-ast.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
@@ -38,14 +39,14 @@ export function sourceContainsClass(sourceFile: ts.SourceFile): boolean {
  * short-circuit unconditionally cost **+3,847** on the #3437 harness
  * compile-work budget (111,568 → 115,415), which meters shared-helper
  * `forEachChild` invocations over a fixture whose prelude is prepended to all
- * ~43k test262 files. Since `memberDeleteReceiverNames` is read only by the
- * STANDALONE arm of the `hasOwnProperty` routing gate, host-mode callers pass
- * `false` and keep main's exact traversal — the budget fixture compiles in host
- * mode and returns to 111,568.
+ * ~43k test262 files. Host-mode callers still pass `false` unless the source
+ * contains the narrow `Reflect.deleteProperty` spelling (#4745), preserving
+ * the baseline traversal for the common case.
  *
- * @returns `any` — a `delete o.a` / `delete o[k]` occurs somewhere (a no-op
- *   `delete x` of a bare identifier does NOT count: it leaves no tombstone for
- *   the inline `struct.get` read fast-path to miss).
+ * @returns `any` — a `delete o.a` / `delete o[k]` or
+ *   `Reflect.deleteProperty(o, k)` occurs somewhere (a no-op `delete x` of a
+ *   bare identifier does NOT count: it leaves no tombstone for the inline
+ *   `struct.get` read fast-path to miss).
  * @returns `receiverNames` — see {@link scanModuleMemberDeletes}; empty
  *   when `collectReceivers` is false. A strict subset of what sets `any`:
  *   `delete a.b.c` and `delete f().x` have no identifier receiver, so they set
@@ -54,9 +55,10 @@ export function sourceContainsClass(sourceFile: ts.SourceFile): boolean {
 function scanMemberDeletes(
   sourceFile: ts.SourceFile,
   collectReceivers: boolean,
-): { any: boolean; receiverNames: Set<string> } {
+): { any: boolean; receiverNames: Set<string>; builtinPrototypeMembers: Set<string> } {
   let anyDelete = false;
   const receiverNames = new Set<string>();
+  const builtinPrototypeMembers = new Set<string>();
   function walk(node: ts.Node): void {
     // Short-circuit only when the names are not wanted — otherwise the walk
     // must run to completion to see every deleted-from receiver.
@@ -67,43 +69,71 @@ function scanMemberDeletes(
         anyDelete = true;
         const receiver = target.expression;
         if (collectReceivers && ts.isIdentifier(receiver)) receiverNames.add(receiver.text);
+        if (collectReceivers && ts.isPropertyAccessExpression(target) && ts.isPropertyAccessExpression(receiver)) {
+          const prototype = receiver;
+          if (
+            prototype.name.text === "prototype" &&
+            ts.isIdentifier(prototype.expression) &&
+            ts.isIdentifier(target.name)
+          ) {
+            builtinPrototypeMembers.add(`${prototype.expression.text}.prototype.${target.name.text}`);
+          }
+        }
         if (!collectReceivers) return;
       }
+    }
+    // Reflect.deleteProperty(target, key) has the same observable tombstone
+    // effect as the delete operator, but its target is the first call
+    // argument rather than a member-expression receiver. Keep it in this
+    // pre-scan so host hasOwnProperty reads do not fold past a Reflect delete.
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      node.expression.name.text === "deleteProperty" &&
+      ts.isIdentifier(node.expression.expression) &&
+      node.expression.expression.text === "Reflect" &&
+      node.arguments.length >= 2
+    ) {
+      anyDelete = true;
+      const receiver = node.arguments[0];
+      if (collectReceivers && ts.isIdentifier(receiver)) receiverNames.add(receiver.text);
+      if (!collectReceivers) return;
     }
     forEachChild(node, walk);
   }
   walk(sourceFile);
-  return { any: anyDelete, receiverNames };
+  return { any: anyDelete, receiverNames, builtinPrototypeMembers };
 }
 
 /**
  * Both member-delete answers from ONE walk — the module-setup entry point.
- * Pass `collectReceivers: false` outside `--target standalone`; nothing reads
- * the names there and the boolean-only walk short-circuits (see
+ * Pass `collectReceivers: false` outside `--target standalone` unless the
+ * source contains `Reflect.deleteProperty`; the host gate needs those target
+ * names, while the common boolean-only walk still short-circuits (see
  * {@link scanMemberDeletes} for the measured cost).
  *
  * ---
  *
- * (#2179) `any` is true when the source contains a `delete` operating on a
- * property or element access (`delete o.a` / `delete o[k]`). `delete x` of a
- * bare identifier and `delete <other expr>` (no-op deletes) do NOT count — only
- * member deletes can leave a runtime tombstone that the inline `struct.get`
- * read fast-path would bypass. Gates the tombstone-aware read routing so
- * delete-free modules emit byte-identical wasm.
+ * (#2179/#4745) `any` is true when the source contains a `delete` operating on
+ * a property or element access (`delete o.a` / `delete o[k]`) or a
+ * `Reflect.deleteProperty(o, k)` call. `delete x` of a bare identifier and
+ * `delete <other expr>` (no-op deletes) do NOT count — only operations that can
+ * leave a runtime tombstone need the tombstone-aware read routing. Delete-free
+ * modules emit byte-identical wasm.
  *
  * ---
  *
- * (#4187) `receiverNames` holds identifier names used as the RECEIVER of a
- * member delete anywhere in the program — `delete r.k` / `delete r[e]` yields
- * `r`.
+ * (#4187/#4745) `receiverNames` holds identifier names used as the RECEIVER of
+ * a member delete anywhere in the program — `delete r.k` / `delete r[e]` yields
+ * `r`; `Reflect.deleteProperty(r, k)` yields the first argument `r`.
  *
- * Consumed by `compilePropertyIntrospection` to decide whether a STANDALONE
- * `r.hasOwnProperty(k)` / `r.propertyIsEnumerable(k)` on a receiver that also
- * saw an `Object.defineProperty` may keep its compile-time constant fold. The
- * fold answers from the (defineProperty-widened) struct SHAPE, which no runtime
- * `delete` can retract, so it and the runtime state diverge for exactly the
- * receivers that appear here — and only for those. Receivers never deleted from
- * keep folding, so the overwhelming majority of modules stay byte-identical.
+ * Consumed by `compilePropertyIntrospection` to decide whether an
+ * `r.hasOwnProperty(k)` / `r.propertyIsEnumerable(k)` on a receiver that may
+ * have been deleted from can keep its compile-time constant fold. The fold
+ * answers from the struct SHAPE, which no runtime delete retracts, so it and
+ * runtime state diverge for exactly the receivers that appear here — and only
+ * for those. Receivers never deleted from keep folding, so the overwhelming
+ * majority of modules stay byte-identical.
  *
  * Why a whole-program PRE-SCAN and not record-as-you-compile: in the canonical
  * repro the first read (`obj.hasOwnProperty("property")`, expected `true`)
@@ -125,7 +155,7 @@ function scanMemberDeletes(
 export function scanModuleMemberDeletes(
   sourceFile: ts.SourceFile,
   collectReceivers: boolean,
-): { any: boolean; receiverNames: Set<string> } {
+): { any: boolean; receiverNames: Set<string>; builtinPrototypeMembers: Set<string> } {
   return scanMemberDeletes(sourceFile, collectReceivers);
 }
 
@@ -248,10 +278,29 @@ export function collectGlobalObjectPropertyNames(
       else aliasDisqualified.add(node.name.text);
       return;
     }
+    // (#4640) `this.y++` / `++this.y` / `this.x += 1` CREATE the property too.
+    // §13.4.4.1 and §13.15.2 both end in PutValue on the same Reference the
+    // plain `this.y = v` form uses, so a missing property is created (with
+    // `NaN`, or the ToNumber'd result) rather than left absent. Only `=` was
+    // collected, so `this.y++; isNaN(y)` — the whole point of
+    // `identifier-resolution/S11.1.2_A1_T1` and `types/reference/S8.7.2_A3` —
+    // left `y` unregistered and the bare read threw `y is not defined`.
+    //
+    // Widening is safe in the same direction the file's header argues: a name
+    // registered here is only ever consulted AFTER locals / captures / module
+    // globals / functions have all missed, and if the write did not actually
+    // run the read gets the runtime `__hasOwnProperty` miss and throws the
+    // ReferenceError the spec asks for anyway.
+    if (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) {
+      if (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken) {
+        pendingTargets.push(node.operand);
+      }
+      return;
+    }
     if (!ts.isBinaryExpression(node)) return;
     const op = node.operatorToken.kind;
     if (op < ts.SyntaxKind.FirstAssignment || op > ts.SyntaxKind.LastAssignment) return;
-    if (op === ts.SyntaxKind.EqualsToken) pendingTargets.push(node.left);
+    pendingTargets.push(node.left);
     // `g = somethingElse` re-points an alias, so a later `g.q = 7` is not
     // provably a write through the global object.
     if (ts.isIdentifier(node.left)) aliasDisqualified.add(node.left.text);
@@ -519,6 +568,85 @@ export function sourceHasDynamicTaConstruct(checker: ts.TypeChecker, sourceFile:
 }
 
 /**
+ * True when a statically named TypedArray constructor receives an
+ * ArrayBuffer/SharedArrayBuffer backing. The view type is registered lazily by
+ * the constructor lowering, but an `any`-receiver indexed-write helper may be
+ * compiled earlier and therefore needs a whole-module demand bit.
+ */
+export function sourceHasStaticTaViewConstruct(checker: ts.TypeChecker, sourceFile: ts.SourceFile): boolean {
+  const unwrap = (expr: ts.Expression): ts.Expression => {
+    let current = expr;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return current;
+  };
+  const nativeBufferCtor = (expr: ts.Expression, seen = new Set<ts.Symbol>()): string | undefined => {
+    const candidate = unwrap(expr);
+    if (ts.isNewExpression(candidate) && ts.isIdentifier(candidate.expression)) {
+      const name = candidate.expression.text;
+      if (name === "ArrayBuffer" || name === "SharedArrayBuffer") return name;
+    }
+    if (ts.isPropertyAccessExpression(candidate) && candidate.name.text === "buffer") {
+      try {
+        const receiverType = checker.getTypeAtLocation(candidate.expression);
+        const receiverSymbol = receiverType.aliasSymbol ?? receiverType.getSymbol?.();
+        const declarations = receiverSymbol?.getDeclarations() ?? [];
+        if (
+          receiverSymbol !== undefined &&
+          (receiverSymbol.name === "DataView" || TYPED_ARRAY_NAMES.has(receiverSymbol.name)) &&
+          declarations.length > 0 &&
+          declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)
+        ) {
+          return "ArrayBuffer";
+        }
+      } catch {
+        // Type resolution failure — keep the pre-scan conservative.
+      }
+    }
+    if (ts.isIdentifier(candidate)) {
+      const symbol = checker.getSymbolAtLocation(candidate);
+      if (symbol && !seen.has(symbol)) {
+        seen.add(symbol);
+        const declarations = symbol.declarations?.filter(ts.isVariableDeclaration) ?? [];
+        if (declarations.length === 1 && declarations[0]!.initializer) {
+          const fromInitializer = nativeBufferCtor(declarations[0]!.initializer!, seen);
+          if (fromInitializer !== undefined) return fromInitializer;
+        }
+      }
+    }
+    try {
+      const type = checker.getTypeAtLocation(candidate);
+      const name = (type.aliasSymbol ?? type.getSymbol?.())?.name;
+      return name === "ArrayBuffer" || name === "SharedArrayBuffer" ? name : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+  let found = false;
+  function walk(node: ts.Node): void {
+    if (found) return;
+    if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && TYPED_ARRAY_NAMES.has(node.expression.text)) {
+      const arg0 = node.arguments?.[0];
+      if (arg0 !== undefined && !ts.isNumericLiteral(arg0)) {
+        if (nativeBufferCtor(arg0) !== undefined) {
+          found = true;
+          return;
+        }
+      }
+    }
+    forEachChild(node, walk);
+  }
+  walk(sourceFile);
+  return found;
+}
+
+/**
  * #1623 — true when the source contains any object/array binding pattern
  * (destructuring) in a parameter, variable declaration, or assignment target.
  * Used to decide whether to pre-emit the WASI/standalone TypeError constructor
@@ -537,6 +665,53 @@ export function sourceContainsBindingPattern(sourceFile: ts.SourceFile): boolean
     forEachChild(node, walk);
   }
   walk(sourceFile);
+  return found;
+}
+
+/** Per-file memo for {@link sourceContainsWithStatement}. */
+const withStatementCache = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * (#5313) True iff the source contains a `with` statement anywhere.
+ *
+ * Unlike the short-circuiting predicates above, a NEGATIVE answer here costs a
+ * FULL pass — "no `with` anywhere" is only knowable after visiting every node.
+ * That makes the memo and the text pre-filter load-bearing rather than
+ * decorative: the two `with`-target scans in
+ * `declarations/object-shape-widening.ts` that this gates cost 7,838 of the
+ * #3437 harness compile-work budget (two full passes over the 3,919-node
+ * fixture), and gating them on an *unconditional* AST walk would have refunded
+ * only half of that.
+ *
+ * The `text` pre-filter is sound in the one direction it is used: a `with`
+ * statement's source text necessarily contains the keyword, and a reserved word
+ * may not be spelled with a unicode escape (escaping any letter of the keyword
+ * is a SyntaxError, so there is no spelling of the statement that hides from
+ * the substring test). So absence of the substring is DEFINITE absence of the
+ * statement, and the filter can never say "yes" — `withDefaults()`,
+ * `{ writable: true }` in a member name, or the word in a comment all match the
+ * substring, and for those the AST walk remains the authority and answers
+ * false. Same idiom as `collectGlobalObjectPropertyNames`'s `this`/`globalThis`
+ * precondition and `collectHeterogeneouslyAssignedModuleVarNames`.
+ *
+ * Memoized per `ts.SourceFile` so the second and later consumers are free.
+ */
+export function sourceContainsWithStatement(sourceFile: ts.SourceFile): boolean {
+  const cached = withStatementCache.get(sourceFile);
+  if (cached !== undefined) return cached;
+  let found = false;
+  if (sourceFile.text.includes("with")) {
+    const walk = (node: ts.Node): void => {
+      if (found) return;
+      if (ts.isWithStatement(node)) {
+        found = true;
+        return;
+      }
+      forEachChild(node, walk);
+    };
+    walk(sourceFile);
+  }
+  withStatementCache.set(sourceFile, found);
   return found;
 }
 
@@ -600,12 +775,25 @@ export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean
   }
   function walk(node: ts.Node): void {
     if (found) return;
+    // Exact direct assignment statements share the same AST-only predicate as
+    // the CPR write arm and checkpoint-2's bounded generator admission seam.
+    if (directArrayProtoIteratorAssignment(node) !== undefined) {
+      found = true;
+      return;
+    }
     // (i) assignment: Array.prototype[Symbol.iterator] = … / Array.prototype.values = …
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       isArrayProtoLHS(node.left)
     ) {
+      found = true;
+      return;
+    }
+    // (iii) (#5154) `delete Array.prototype[Symbol.iterator]` — removing the
+    // method is as much an override of the iterator surface as replacing it,
+    // and §7.4.2 then requires a TypeError at every array-iteration site.
+    if (ts.isDeleteExpression(node) && isArrayProtoLHS(unwrap(node.expression))) {
       found = true;
       return;
     }

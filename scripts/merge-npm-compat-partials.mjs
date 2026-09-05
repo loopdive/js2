@@ -15,14 +15,16 @@ const partialDirectory = process.argv[2];
 if (!partialDirectory) throw new Error("usage: merge-npm-compat-partials.mjs <partial-directory>");
 
 const partialRoot = resolve(partialDirectory);
+mkdirSync(partialRoot, { recursive: true });
 const partialPaths = readdirSync(partialRoot)
   .filter((name) => name.endsWith(".json"))
   .sort()
   .map((name) => join(partialRoot, name));
-if (partialPaths.length === 0) throw new Error(`no npm-compat partial reports found in ${partialRoot}`);
 
 const partials = partialPaths.map((path) => JSON.parse(readFileSync(path, "utf8")));
 const sourceRevision = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+const summaryPath = resolve(ROOT, "benchmarks", "results", "npm-compat.json");
+const existingSummary = existsSync(summaryPath) ? JSON.parse(readFileSync(summaryPath, "utf8")) : null;
 const historyPath = resolve(ROOT, "benchmarks", "results", "npm-compat-history.json");
 const existingHistory = existsSync(historyPath)
   ? JSON.parse(readFileSync(historyPath, "utf8"))
@@ -31,6 +33,16 @@ const existingHistory = existsSync(historyPath)
 const { summary, perfRows, perfHistory } = mergeNpmCompatPartials(partials, {
   sourceRevision,
   existingHistory,
+  existingPackages: existingSummary?.packages ?? [],
+  existingSummaryMeta: existingSummary
+    ? {
+        note: existingSummary.note,
+        popularity: existingSummary.popularity,
+        performanceMethodology: existingSummary.performanceMethodology,
+      }
+    : null,
+  existingGeneratedAt: existingSummary?.generatedAt ?? null,
+  allowStaleFallback: true,
 });
 
 const outputs = [

@@ -55,6 +55,7 @@ import { emitFnctorProtoGet } from "./expressions/fnctor-prototype.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { compileExpression } from "./expressions.js";
 import { allocLocal } from "./context/locals.js";
+import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js";
 import { coerceType } from "./type-coercion.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { ValType } from "../ir/types.js";
@@ -76,11 +77,21 @@ export function tryEmitNativeUserCtorInstanceOf(
   // class instances carry richer identity (brands, builtin parents) that the
   // two arms below do not model, and widening this to classes is separate,
   // separately-measured work.
-  if (!ctx.topLevelFunctionNames.has(ctorName)) return null;
   if (ctx.classSet.has(ctorName)) return null;
+  if (ts.isIdentifier(expr.right) && identifierIsWrittenTo(expr.right.getSourceFile(), ctorName)) return null;
 
   const structTypeIdx = ctx.structMap.get(`__fnctor_${ctorName}`);
   const hasStructArm = typeof structTypeIdx === "number" && structTypeIdx >= 0;
+  // Function expressions (`var F = function(){}`) are registered through the
+  // fnctor escape gate rather than `topLevelFunctionNames`. Their constructor
+  // value still has the same precise struct identity as a declaration, so the
+  // static arm is equally sound. The struct-map fallback also covers modules
+  // where the gate has already been consumed by an earlier lowering pass.
+  const isKnownFnctor =
+    ctx.topLevelFunctionNames.has(ctorName) ||
+    ctx.fnctorEscapeGate?.ctorDeclByName.has(ctorName) === true ||
+    hasStructArm;
+  if (!isKnownFnctor) return null;
 
   // Reserve the proto-walk import BEFORE any operand is compiled, so a late
   // funcIdx shift reaches the already-emitted instructions through currentFunc.

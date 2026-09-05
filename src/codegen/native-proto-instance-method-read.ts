@@ -56,7 +56,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
-import { ensureStandaloneNativeMethodClosure, seededNativeProtoDataMembersByBrand } from "./native-proto.js";
+import { ensureStandaloneNativeMethodClosure, seededNativeProtoOwnMembersByBrand } from "./native-proto.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 
 /** `$PropEntry.$value` field index (object-runtime.ts layout). */
@@ -73,7 +73,9 @@ const WRAPPER_PRIMITIVE_KEY = "[[PrimitiveValue]]";
 const CLOSURE_KEY = /^__proto_method_(-?\d+)_(.+)$/;
 
 /**
- * The already-minted METHOD closures, grouped by brand. Getters are skipped:
+ * The already-minted METHOD closures, grouped by brand. Getters and the
+ * `constructor` data property are skipped: constructor values are served by
+ * the dedicated wrapper-constructor arm, not this inherited-method arm.
  * a plain read of an accessor member must INVOKE it (§22.2.6 and friends), and
  * that decision belongs to the static read site, not to a generic
  * `__extern_get` arm.
@@ -84,7 +86,7 @@ function mintedMethodsByBrand(ctx: CodegenContext): Map<number, string[]> {
     const m = CLOSURE_KEY.exec(name);
     if (!m) continue;
     const member = m[2]!;
-    if (member.startsWith("get_")) continue;
+    if (member.startsWith("get_") || member === "constructor") continue;
     const brand = Number(m[1]);
     if (!Number.isFinite(brand)) continue;
     const list = byBrand.get(brand);
@@ -115,7 +117,7 @@ export function unshiftExternGetProtoMethodArm(ctx: CodegenContext): void {
   if (!fn) return;
 
   const byBrand = mintedMethodsByBrand(ctx);
-  const seededByBrand = seededNativeProtoDataMembersByBrand(ctx);
+  const seededByBrand = seededNativeProtoOwnMembersByBrand(ctx);
   const protoGetIdx = ctx.funcMap.get("__protoidx_get_r");
   if (byBrand.size === 0 && (seededByBrand.size === 0 || protoGetIdx === undefined)) return;
 
@@ -131,7 +133,7 @@ export function unshiftExternGetProtoMethodArm(ctx: CodegenContext): void {
 
   /** For one brand: a `key == <member>` ladder answering the singleton value. */
   const memberLadder = (brand: number): Instr[] => {
-    const seededMembers = new Set(seededByBrand.get(brand) ?? []);
+    const seededMembers = new Set((seededByBrand.get(brand) ?? []).filter((member) => member !== "constructor"));
     const members = new Set(byBrand.get(brand) ?? []);
     if (protoGetIdx !== undefined) {
       for (const member of seededMembers) members.add(member);

@@ -23,6 +23,16 @@ async function instantiate(source: string) {
 }
 
 describe("#1503 — Web Crypto host imports", () => {
+  it("reads the unshadowed Web Crypto global before calling a method", async () => {
+    const source = `
+      export function hasRandomUUID(): number {
+        return typeof crypto.randomUUID === "function" ? 1 : 0;
+      }
+    `;
+    const exp = await instantiate(source);
+    expect(exp.hasRandomUUID()).toBe(1);
+  });
+
   it("crypto.randomUUID() returns a v4 UUID string of length 36", async () => {
     const source = `
       declare const crypto: any;

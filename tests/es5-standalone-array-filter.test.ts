@@ -27,9 +27,15 @@
 // The presence gate is unconditional (both lanes); the overlay-aware element
 // read is gated on the #4159 `vecAccessorDescriptorDirty` pre-scan flag, so a
 // module that never installs a non-data descriptor keeps the dense kernel.
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { resetTest262RuntimeEvalProviderForTest } from "../scripts/test262-import-object.mjs";
+import { runTest262File } from "./test262-runner.js";
+
+const TEST262 = existsSync(join(__dirname, "..", "test262", "harness", "assert.js"));
 
 async function run(src: string, target: "standalone" | "gc"): Promise<unknown> {
   const opts = target === "standalone" ? { target: "standalone" as const } : {};
@@ -46,6 +52,37 @@ async function bothLanes(src: string, expected: unknown): Promise<void> {
   expect(await run(src, "standalone"), "standalone").toStrictEqual(expected);
   expect(await run(src, "gc"), "gc").toStrictEqual(expected);
 }
+
+const FILTER_TEST262_ROOT = join(process.cwd(), "test262", "test", "built-ins", "Array", "prototype", "filter");
+const EXACT_ES5_FILTER_ROWS = ["15.4.4.20-9-b-5.js", "15.4.4.20-9-b-7.js", "15.4.4.20-9-b-11.js"] as const;
+
+describe.skipIf(!TEST262)("§15.4.4.20 exact ES5 standalone residual rows", () => {
+  const previousEvalEngine = process.env.JS2WASM_EVAL_ENGINE;
+  beforeAll(() => {
+    // The exact 5-7 row reaches eval as a callback thisArg. Pin this small
+    // ratchet to the refusal/interpreter provider so a developer checkout
+    // without the optional QuickJS artifact cannot turn it into a link error.
+    process.env.JS2WASM_EVAL_ENGINE = "interpreter";
+    resetTest262RuntimeEvalProviderForTest();
+  });
+  afterAll(() => {
+    if (previousEvalEngine === undefined) Reflect.deleteProperty(process.env, "JS2WASM_EVAL_ENGINE");
+    else process.env.JS2WASM_EVAL_ENGINE = previousEvalEngine;
+    resetTest262RuntimeEvalProviderForTest();
+  });
+
+  for (const file of EXACT_ES5_FILTER_ROWS) {
+    it(`passes the literal Test262 row ${file}`, async () => {
+      const result = await runTest262File(
+        join(FILTER_TEST262_ROOT, file),
+        "built-ins/Array/prototype/filter",
+        120_000,
+        "standalone",
+      );
+      expect(result.status, result.error ?? file).toBe("pass");
+    }, 180_000);
+  }
+});
 
 describe("§15.4.4.20 filter — HasProperty is re-evaluated per index", () => {
   it("skips indices a callback removed by shrinking .length (test262 15.4.4.20-9-4)", async () => {
@@ -101,6 +138,49 @@ describe("§15.4.4.20 filter — HasProperty is re-evaluated per index", () => {
 });
 
 describe("§15.4.4.20 filter — accessor indices installed by defineProperty", () => {
+  it("keeps the captured result length after an accessor shrinks a heterogeneous array", async () => {
+    // The accessor fires while filter is visiting index 0. The captured len is
+    // four, but ArraySetLength leaves indices 0..2 present, so only three
+    // values may be copied into the result.
+    expect(
+      await run(
+        `const arr = [0, 1, 2, "last"];
+        Object.defineProperty(arr, "0", { get: function (): number { arr.length = 3; return 0; }, configurable: true });
+        export function test(): number {
+          return arr.filter(function (): boolean { return true; }).length;
+        }`,
+        "standalone",
+      ),
+    ).toBe(3);
+  });
+
+  it("does not truncate a non-configurable accessor during filter", async () => {
+    // The getter at index 1 requests a shrink to two, but index 2 is
+    // non-configurable. ArraySetLength must stop at three and filter must keep
+    // the captured index 2 in its result.
+    expect(
+      await run(
+        `const arr = [0, 1, 2];
+        Object.defineProperty(arr, "2", { get: function (): string { return "unconfigurable"; }, configurable: false });
+        Object.defineProperty(arr, "1", {
+          get: function (): number {
+            // The test source is an ES module, so catch strict-mode's
+            // TypeError here; the noStrict Test262 variant suppresses it.
+            try {
+              arr.length = 2;
+            } catch (_) {}
+            return 1;
+          },
+          configurable: true,
+        });
+        export function test(): number {
+          return arr.filter(function (): boolean { return true; }).length;
+        }`,
+        "standalone",
+      ),
+    ).toBe(3);
+  });
+
   it("invokes an own accessor over an existing element (standalone overlay route)", async () => {
     expect(
       await run(
@@ -155,4 +235,60 @@ describe("§15.4.4.20 filter — accessor indices installed by defineProperty", 
       ),
     ).toBe(22);
   });
+
+  it("preserves a sparse numeric hole across widening before a prototype add", async () => {
+    // An unannotated literal is widened to the externref carrier because its
+    // accessor makes filter's indexed reads dynamic.  The original f64 hole
+    // must remain an internal `$Hole`, so the callback sees the prototype
+    // accessor added while visiting index 0 rather than a boxed NaN value.
+    expect(
+      await run(
+        `var arr = [0, , 2];
+        Object.defineProperty(arr, "0", { get: function (): number {
+          Object.defineProperty(Array.prototype, "1", { get: function (): number { return 6.99; }, configurable: true });
+          return 0;
+        }, configurable: true });
+        export function test(): number {
+          var out = arr.filter(function (): boolean { return true; });
+          return out.length * 100 + (out[1] === 6.99 ? 1 : 0);
+        }`,
+        "standalone",
+      ),
+    ).toBe(301);
+  });
+
+  it("preserves a sparse numeric hole across widening before a prototype delete", async () => {
+    // The same carrier conversion must not turn the deleted prototype slot
+    // into an own value.  Once the callback removes Array.prototype[1], index
+    // 1 is absent and filter copies only indices 0 and 2.
+    expect(
+      await run(
+        `var arr = [0, , 2];
+        Object.defineProperty(arr, "0", { get: function (): number {
+          delete Array.prototype[1];
+          return 0;
+        }, configurable: true });
+        Array.prototype[1] = 1;
+        export function test(): number {
+          var out = arr.filter(function (): boolean { return true; });
+          return out.length * 10 + (out[1] === 2 ? 1 : 0);
+        }`,
+        "standalone",
+      ),
+    ).toBe(21);
+  });
+});
+
+describe("§15.4.4.20 filter — exact ES5 descriptor rows", () => {
+  for (const file of ["15.4.4.20-9-b-14.js", "15.4.4.20-9-b-16.js"] as const) {
+    it.skipIf(!TEST262)(`${file} passes in full through the Test262 runner`, { timeout: 60_000 }, async () => {
+      const result = await runTest262File(
+        join(__dirname, "..", "test262", "test", "built-ins/Array/prototype/filter", file),
+        "array-filter-exact-rows",
+        30_000,
+        "standalone",
+      );
+      expect(`${result.status}: ${result.error ?? ""}`).toBe("pass: ");
+    });
+  }
 });

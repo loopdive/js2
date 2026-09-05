@@ -42,6 +42,26 @@ import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { pinPerfFlags } from "./helpers/pin-perf-flags.js";
 
+// (#4775) This file went 9/10 RED on main for three days — 2026-08-24 to
+// 2026-08-27 — and every required check stayed green, because nothing gates it.
+// What it caught was real and large: `ad543a660e` gave the struct-receiver
+// resolution a wasm-CARRIER fallback, which incidentally resolved every
+// standalone fnctor local, so `p.inc()` was claimed by an arm ~1400 lines above
+// `tryEmitDirectTwinCall` and route-(c) devirtualization (`recv.m()` on a
+// non-`this` receiver) stopped happening. Priced at 27.8x on the `method` axis.
+//
+// NOT ONE ASSERTION BELOW WAS WRONG. The file was restored to green by fixing
+// the compiler, not by re-grounding a pin — with the offending lowering
+// disabled it was already 10/10, unmodified. Read that as the standard: a shape
+// suite that stops observing its subject is reporting a fact about the
+// compiler, and "re-derive the shape until it passes" would have buried a 27.8x
+// regression under a green run.
+//
+// The acorn corpus could NOT have caught this: its devirtualized sites are all
+// `this.m()` (routes a/b), which never traverse the changed code, so its census
+// is byte-identical either way. A corpus is evidence only for the routes it
+// exercises. See #4780 for the missing floor.
+
 // (#4157) One case asserts the call site literally calls `$__dc_P_inc_0_g`.
 // The IR inliner's adapter rule inlines `__dc_*` trampolines UNCONDITIONALLY
 // (that is rule 3, its cheapest and most reliable win), so the call is gone

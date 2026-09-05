@@ -1,0 +1,4 @@
+built-ins/Proxy/revocable/revocation-function-length.js
+built-ins/Proxy/revocable/revocation-function-property-order.js
+built-ins/Proxy/revocable/revocation-function-not-a-constructor.js
+built-ins/Proxy/revocable/revocation-function-name.js

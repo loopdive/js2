@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrUnitId } from "./identity.js";
+import type { PreparedCountedStringAppendReceipt } from "./ast-lowering-plans.js";
+import { requireValidPreparedCountedStringAppendReceipt } from "./counted-string-append-provenance.js";
 import {
   classifyIrFailure,
   type IrInvariantCode,
@@ -24,7 +26,12 @@ export interface IrIntegrationReport {
    * exact source/synthetic classification lives in compiledArtifactEvidence.
    */
   readonly syntheticCompiledArtifacts?: readonly string[];
+  /** Exact #3518 source/unit/provider receipts finalized over provider-bound IR. */
+  readonly preparedCountedStringAppendReceipts?: readonly PreparedCountedStringAppendReceipt[];
 }
+
+/** Whether one terminal failure is also part of the public fallback channel. */
+export type IrIntegrationDiagnosticVisibility = "report" | "outcome-only";
 
 export type IrIntegrationTerminalEvidence =
   | {
@@ -42,6 +49,8 @@ export type IrIntegrationTerminalEvidence =
       readonly error: IrIntegrationError;
       /** Every public diagnostic object covered by this one logical event. */
       readonly errors?: readonly IrIntegrationError[];
+      /** Exact authority for whether this failure owns public diagnostics. */
+      readonly diagnosticVisibility: IrIntegrationDiagnosticVisibility;
     };
 
 export interface IrIntegrationTerminalFailureEvent {
@@ -50,6 +59,7 @@ export interface IrIntegrationTerminalFailureEvent {
   readonly legacyName: string;
   readonly error: IrIntegrationError;
   readonly errors: readonly IrIntegrationError[];
+  readonly diagnosticVisibility: IrIntegrationDiagnosticVisibility;
 }
 
 export interface IrIntegrationCompiledArtifactEvidence {
@@ -134,7 +144,15 @@ export class IrIntegrationFailureLog {
   readonly errors: IrIntegrationError[] = [];
   readonly terminalFailureEvents: IrIntegrationTerminalFailureEvent[] = [];
 
-  record(owner: IrLegacyUnitProjectionEntry, error: IrIntegrationError): void {
+  record(
+    owner: IrLegacyUnitProjectionEntry,
+    error: IrIntegrationError,
+    diagnosticVisibility: IrIntegrationDiagnosticVisibility = "report",
+  ): void {
+    if (diagnosticVisibility === "outcome-only") {
+      this.recordOutcomeOnly(owner, error);
+      return;
+    }
     if (error.func !== owner.legacyName) {
       throw new TypeError(
         `integration failure owner ${owner.unitId} / ${JSON.stringify(owner.legacyName)} ` +
@@ -147,6 +165,29 @@ export class IrIntegrationFailureLog {
       legacyName: owner.legacyName,
       error,
       errors: [error],
+      diagnosticVisibility: "report",
+    });
+  }
+
+  /** Record exact terminal withdrawal evidence without a public fallback row. */
+  recordOutcomeOnly(owner: IrLegacyUnitProjectionEntry, error: IrIntegrationError): void {
+    if (
+      error.func !== owner.legacyName ||
+      error.outcome.kind !== "unsupported" ||
+      error.outcome.code !== "late-preparation-unsupported" ||
+      error.outcome.stage !== "resolve"
+    ) {
+      throw new TypeError(
+        `outcome-only failure owner ${owner.unitId} / ${JSON.stringify(owner.legacyName)} ` +
+          `does not match one typed Unsupported event`,
+      );
+    }
+    this.terminalFailureEvents.push({
+      unitId: owner.unitId,
+      legacyName: owner.legacyName,
+      error,
+      errors: [],
+      diagnosticVisibility: "outcome-only",
     });
   }
 
@@ -191,6 +232,7 @@ export class IrIntegrationFailureLog {
         legacyName: owner.legacyName,
         error,
         errors: terminalErrors,
+        diagnosticVisibility: "report",
       });
     }
     return error !== undefined;
@@ -213,8 +255,14 @@ export function buildIrIntegrationReport(
   compiledOwners?: readonly string[],
   terminalFailureEvents: readonly (IrIntegrationTerminalFailureEvent | IrIntegrationError)[] = errors,
   compiledArtifactEvidence?: readonly IrIntegrationCompiledArtifactEvidence[],
+  preparedCountedStringAppendReceipts?: readonly PreparedCountedStringAppendReceipt[],
 ): IrIntegrationReport {
-  if (!ownerProjection) return { compiled, errors };
+  if (!ownerProjection) {
+    if (preparedCountedStringAppendReceipts?.length) {
+      throw new TypeError("prepared counted-string receipts require an exact owner projection");
+    }
+    return { compiled, errors };
+  }
   if (!compiledArtifactEvidence) {
     throw new TypeError("exact compiled-artifact evidence is required when an owner projection is supplied");
   }
@@ -267,6 +315,25 @@ export function buildIrIntegrationReport(
   ) {
     throw new TypeError("public compiled-owner labels do not match exact compiled-artifact evidence");
   }
+  const compiledTerminalOwnerUnitIds = new Set(
+    compiledArtifactEvidence
+      .filter((artifact) => artifact.artifactUnitId === artifact.terminalOwnerUnitId)
+      .map((artifact) => artifact.terminalOwnerUnitId),
+  );
+  const receiptSites = new Set<string>();
+  for (const receipt of preparedCountedStringAppendReceipts ?? []) {
+    const identity = requireValidPreparedCountedStringAppendReceipt(receipt);
+    ownerProjection.requireUnit(identity.ownerUnitId);
+    if (!compiledTerminalOwnerUnitIds.has(identity.ownerUnitId) || receiptSites.has(receipt.siteId)) {
+      throw new TypeError(
+        "prepared counted-string receipt site is duplicated or has no exact compiled terminal artifact",
+      );
+    }
+    receiptSites.add(receipt.siteId);
+  }
+  const frozenCountedStringAppendReceipts = preparedCountedStringAppendReceipts?.length
+    ? Object.freeze([...preparedCountedStringAppendReceipts])
+    : undefined;
 
   for (const failureEvent of terminalFailureEvents) {
     const event =
@@ -276,6 +343,7 @@ export function buildIrIntegrationReport(
             ...ownerProjection.requireLegacyName(failureEvent.func),
             error: failureEvent,
             errors: [failureEvent],
+            diagnosticVisibility: "report" as const,
           };
     const owner = ownerProjection.requirePair({
       unitId: event.unitId,
@@ -291,6 +359,7 @@ export function buildIrIntegrationReport(
       legacyName: owner.legacyName,
       error: event.error,
       errors: event.errors,
+      diagnosticVisibility: event.diagnosticVisibility,
     });
   }
   return {
@@ -300,5 +369,8 @@ export function buildIrIntegrationReport(
     terminalEvidence,
     terminalCompiledOwners: structuralCompiledOwners,
     syntheticCompiledArtifacts: structuralSyntheticArtifacts,
+    ...(frozenCountedStringAppendReceipts
+      ? { preparedCountedStringAppendReceipts: frozenCountedStringAppendReceipts }
+      : {}),
   };
 }

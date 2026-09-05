@@ -44,10 +44,8 @@ import type { Instr, ValType } from "../ir/types.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { ensureNativeStringHelpers, stringConstantExternrefInstrs } from "./native-strings.js";
-import { ensureObjectRuntime } from "./object-runtime.js";
-import { addStringConstantGlobal } from "./registry/imports.js";
-import { coerceType } from "./type-coercion.js";
+import { ensureNativeStringHelpers } from "./native-strings.js";
+import { ensureObjectRuntime, ensureWrapperStringValueHelper } from "./object-runtime.js";
 import { compileExpression } from "./shared.js";
 
 /**
@@ -66,23 +64,25 @@ export function emitStringExoticIndexGet(
 ): ValType | null {
   ensureObjectRuntime(ctx);
   ensureNativeStringHelpers(ctx);
-  const toPrimIdx = ctx.funcMap.get("__to_primitive");
+  const slotIdx = ensureWrapperStringValueHelper(ctx);
   const charAtIdx = ctx.nativeStrHelpers.get("__str_charAt");
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
-  if (toPrimIdx === undefined || charAtIdx === undefined || flattenIdx === undefined) return null;
+  if (slotIdx < 0 || charAtIdx === undefined || flattenIdx === undefined) return null;
   if (ctx.anyStrTypeIdx < 0) return null;
   const anyStr = ctx.anyStrTypeIdx;
 
-  // [[StringData]] ← __to_primitive(recv, "string"). For a primitive-string
-  // receiver this is identity (§7.1.1 step 1), so the same emission serves
-  // both receiver shapes — that dual role is inherited from #3304 and is why
-  // the arm has one gate rather than two.
+  // [[StringData]] ← `__wrapper_string_value(recv)`. For a primitive-string
+  // receiver this is identity, so the same emission serves both receiver shapes
+  // — that dual role is inherited from #3304 and is why the arm has one gate
+  // rather than two.
+  //
+  // (#4492 wave-5) It used to be `__to_primitive(recv, "string")`, which was the
+  // same operation only while ToPrimitive ignored a user override. §10.4.3.5
+  // reads the String exotic's [[StringData]], which a `w.toString = …` cannot
+  // move, so the bare slot probe is what this site always meant.
   const strLocal = allocLocal(fctx, `__sxi_s_${fctx.locals.length}`, { kind: "ref_null", typeIdx: anyStr });
   compileExpression(ctx, fctx, recvExpr, { kind: "externref" });
-  addStringConstantGlobal(ctx, "string");
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, "string"));
-  fctx.body.push({ op: "call", funcIdx: toPrimIdx });
-  coerceType(ctx, fctx, { kind: "externref" }, { kind: "ref_null", typeIdx: anyStr });
+  fctx.body.push({ op: "call", funcIdx: slotIdx });
   fctx.body.push({ op: "local.set", index: strLocal });
 
   // Index ONCE into an f64 local: it is read three times below (round-trip

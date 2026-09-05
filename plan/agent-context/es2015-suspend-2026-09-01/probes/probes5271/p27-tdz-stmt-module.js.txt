@@ -1,0 +1,7 @@
+/*---
+description: bare identifier read before let in a module-level block (#5271 probe)
+flags: [noStrict]
+---*/
+var threw = false;
+try { { x; let x; } } catch (e) { threw = e instanceof ReferenceError; }
+assert(threw);

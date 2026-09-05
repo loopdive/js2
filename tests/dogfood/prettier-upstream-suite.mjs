@@ -1,6 +1,6 @@
 // Prettier 3.8.1 original synchronous unit slice against its pinned source.
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -31,6 +31,53 @@ function transformPrettierTest(source, filePath, generatedPath) {
   });
 }
 
+function readPrettierSnapshots(snapshotPath) {
+  const source = readFileSync(snapshotPath, "utf-8");
+  const values = {};
+  const pattern = /exports\[`([^`]*)`\] = `\n([\s\S]*?)\n`;/g;
+  for (const match of source.matchAll(pattern)) {
+    const key = match[1].replace(/ \d+$/, "");
+    values[key] = match[2];
+  }
+  return values;
+}
+
+function buildPrettierSnapshotShim(snapshotPath) {
+  const snapshots = JSON.stringify(readPrettierSnapshots(snapshotPath));
+  return String.raw`
+const __prettierSnapshotValues = ${snapshots};
+function __prettierSnapshotSerialize(value, depth) {
+  if (value === null) return "null";
+  const kind = typeof value;
+  if (kind === "string") return '"' + value + '"';
+  if (kind === "number" || kind === "boolean" || kind === "undefined") return String(value);
+  if (kind !== "object") return String(value);
+  const indent = "  ".repeat(depth);
+  const childIndent = "  ".repeat(depth + 1);
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    let output = "[\n";
+    for (let index = 0; index < value.length; index++) {
+      output += childIndent + __prettierSnapshotSerialize(value[index], depth + 1) + ",\n";
+    }
+    return output + indent + "]";
+  }
+  const keys = Object.keys(value).sort();
+  if (keys.length === 0) return "{}";
+  let output = "{\n";
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index];
+    output += childIndent + '"' + key + '": ' + __prettierSnapshotSerialize(value[key], depth + 1) + ",\n";
+  }
+  return output + indent + "}";
+}
+__upstreamSnapshotMatcher = function (value) {
+  const expected = __prettierSnapshotValues["visitor keys " + __upstreamCurrentTestName];
+  return expected !== undefined && __prettierSnapshotSerialize(value, 0) === expected;
+};
+`;
+}
+
 export async function runHarness({ quiet = false } = {}) {
   const log = quiet ? () => {} : (...values) => console.log(...values);
   const suite = setupPrettierUpstreamSuite();
@@ -41,7 +88,9 @@ export async function runHarness({ quiet = false } = {}) {
     const file = suite.relativePath(filePath);
     const generatedPath = join(GENERATED_ROOT, file.replace(/\.js$/, ".ts"));
     const transformed = transformPrettierTest(readFileSync(filePath, "utf-8"), filePath, generatedPath);
-    const source = `${UPSTREAM_TEST_SHIM}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
+    const snapshotPath = join(suite.root, "tests", "unit", "__snapshots__", `${filePath.split("/").at(-1)}.snap`);
+    const snapshotShim = existsSync(snapshotPath) ? buildPrettierSnapshotShim(snapshotPath) : "";
+    const source = `${UPSTREAM_TEST_SHIM}\n${snapshotShim}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
     const result = await compileAndRunUpstreamModule({ generatedPath, source, timeoutMs: 240_000 });
     runs.push({ file, result });
     log(

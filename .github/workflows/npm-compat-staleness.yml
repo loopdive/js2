@@ -1,0 +1,47 @@
+name: npm-compat staleness guard
+
+# (#4604 S3) The 2026-08-20/21 episode: every npm-compat refresh run died
+# before promotion for >24h, the committed artifact silently kept serving an
+# already-fixed regression, and the only detector was a manual audit. A run
+# that never publishes fails no gate — cancelled and superseded runs do not
+# even notify. This guard asserts the PRODUCT ("the committed artifact is
+# recent"), not any run's own success: it goes red when
+# `benchmarks/results/npm-compat.json` is older than the threshold, which is
+# unreachable while the refresh pipeline works (per-push runs + 6h cron +
+# ~1-2h promotion latency; threshold rationale in
+# scripts/lib/npm-compat-freshness.mjs).
+#
+# Read-only by design: it alerts, it never republishes — recovery belongs to
+# the refresh workflow, and an auto-"fix" here would just hide the next
+# pipeline failure behind fresher-looking data.
+on:
+  schedule:
+    # Every 6h, offset from :00 so it never races the refresh cron's own
+    # window start (project convention: spread crons off the hour).
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    if: github.repository == 'loopdive/js2'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      # Full checkout is unnecessary — only the committed artifact and the
+      # checker script are read.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          submodules: false
+          persist-credentials: false
+          sparse-checkout: |
+            benchmarks/results/npm-compat.json
+            scripts/check-npm-compat-freshness.mjs
+            scripts/lib/npm-compat-freshness.mjs
+          sparse-checkout-cone-mode: false
+
+      - name: Assert the committed npm-compat artifact is fresh
+        run: node scripts/check-npm-compat-freshness.mjs

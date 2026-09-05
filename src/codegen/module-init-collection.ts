@@ -128,6 +128,17 @@ export function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
   return ASSIGNMENT_OPERATORS.has(kind);
 }
 
+/**
+ * Test262 top-level-await bodies are currently compiled synchronously (#1612).
+ * In that parse mode, a source-level `await` followed by a template literal is
+ * represented as a tagged-template call whose tag is the identifier `await`.
+ * It is parser recovery, not a call to a user binding, and compiling it traps
+ * while building the QuickJS eval provider.
+ */
+export function isSynchronousTopLevelAwaitRecovery(expr: ts.Expression): boolean {
+  return ts.isTaggedTemplateExpression(expr) && ts.isIdentifier(expr.tag) && expr.tag.text === "await";
+}
+
 /** Strip parens / casts / non-null assertions from an assignment target. */
 function unwrapTarget(expr: ts.Expression): ts.Expression {
   let cur = expr;
@@ -212,22 +223,115 @@ export function createsGlobalObjectBinding(
  * without invoking a closure is descended — including computed keys, spreads,
  * template substitutions, `extends` clauses and class `static { … }` blocks.
  *
- * Two node kinds are deliberately NOT effectful here, both on measurement
- * rather than principle — each is a residual recorded in the issue file:
+ * One node kind is deliberately NOT effectful here, on measurement rather than
+ * principle — it remains a residual recorded in the issue file:
  *
  *   • `AwaitExpression` / `YieldExpression`. A CALL inside one still counts, via
  *     the CallExpression node; the bare `await x;` form does not.
- *   • `TaggedTemplateExpression`, which really does invoke its tag. Over the
- *     whole `test/language` + `test/built-ins` corpus, collecting it changed
- *     the status of ZERO of the 77 top-level tagged-template statements — and
- *     cost three files. The test262 runner compiles a `top-level-await` body
- *     SYNCHRONOUSLY (#1612), so `await` parses as an ordinary identifier and
- *     ``await `` ;`` becomes a TaggedTemplateExpression tagged `await`.
- *     Collecting that compiles a call to a binding that does not exist.
- *
- * Both should be revisited — the second once TLA is compiled asynchronously, at
- * which point the misparse disappears and the tag call becomes a real one.
+ * Tagged templates invoke user code and are retained by the collector,
+ * including when the tag is an inline function expression and the result is
+ * discarded. The sole exception is the synchronous top-level-await recovery
+ * shape described by `isSynchronousTopLevelAwaitRecovery`.
  */
+/**
+ * (#5270 step 8) Binary operators whose evaluation reaches ToPrimitive
+ * (§7.1.1) and can therefore run a user `valueOf` / `toString` /
+ * `@@toPrimitive` method. `===`/`!==` are absent on purpose: strict equality
+ * never coerces. So are `&&`/`||`/`??`/`,` (no coercion of their own) and the
+ * bitwise/shift operators, which reach ToNumeric on an object — those are a
+ * larger surface and no row in this wave needs them.
+ *
+ * `==`/`!=` are here but are NOT sufficient on their own — see
+ * `looseEqualityCoercesAnOperand`, which the caller ANDs in (#5270 review R3-F1).
+ */
+function binaryOperatorReachesToPrimitive(kind: ts.SyntaxKind): boolean {
+  switch (kind) {
+    case ts.SyntaxKind.PlusToken:
+    case ts.SyntaxKind.MinusToken:
+    case ts.SyntaxKind.AsteriskToken:
+    case ts.SyntaxKind.SlashToken:
+    case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+    case ts.SyntaxKind.LessThanToken:
+    case ts.SyntaxKind.GreaterThanToken:
+    case ts.SyntaxKind.LessThanEqualsToken:
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * (#5270 review R3-F1) §7.2.15 IsLooselyEqual performs NO coercion when BOTH
+ * operands are Objects — it compares references and returns. This compiler's
+ * `==` lowering calls ToPrimitive on both regardless (a PRE-EXISTING defect:
+ * base coerces too once the same statement is wrapped in `if (true) { … }`), so
+ * retaining a bare `objA == objB;` statement newly EXPOSED it — with a poisoned
+ * `valueOf` the throw killed `__module_init` and every later top-level statement
+ * where base ran on. Same shape for `null`/`undefined`, which §7.2.15 answers
+ * without coercing either.
+ *
+ * So a bare loose-equality statement is retained only when one operand is a
+ * LITERAL non-nullish primitive — the `0 == y;` shape the wave actually needs
+ * (`expressions/equals/coerce-symbol-to-prim-invocation`), where ToPrimitive on
+ * the object operand is exactly what the spec requires. Everything else keeps
+ * base's drop. `statements.ts` carries the identical guard for the lowering
+ * half; the two must agree or the statement is retained and then compiled on a
+ * carrier that never coerces.
+ *
+ * Remove this guard only when the loose-equality lowering itself grows
+ * §7.2.15's Object-vs-Object early exit — tracked in the R3-F1 follow-up note
+ * in plan/issues/5270-es2015-standalone-expressions-r2.md.
+ */
+export function looseEqualityCoercesAnOperand(expr: ts.BinaryExpression): boolean {
+  const kind = expr.operatorToken.kind;
+  if (kind !== ts.SyntaxKind.EqualsEqualsToken && kind !== ts.SyntaxKind.ExclamationEqualsToken) return true;
+  return isNonNullishPrimitiveLiteral(expr.left) || isNonNullishPrimitiveLiteral(expr.right);
+}
+
+/** Syntactically a primitive that is neither `null` nor `undefined`. */
+function isNonNullishPrimitiveLiteral(operand: ts.Expression): boolean {
+  switch (operand.kind) {
+    case ts.SyntaxKind.NumericLiteral:
+    case ts.SyntaxKind.BigIntLiteral:
+    case ts.SyntaxKind.StringLiteral:
+    case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+    case ts.SyntaxKind.TrueKeyword:
+    case ts.SyntaxKind.FalseKeyword:
+    case ts.SyntaxKind.TypeOfExpression:
+      return true;
+    default:
+      return false;
+  }
+}
+
+/**
+ * (#5270 step 8) SYNTACTIC "this operand is not provably a primitive". Used
+ * only to keep `1 + 2;`-shaped statements on their existing drop; this module
+ * runs before any type information is available, so anything that is not a
+ * literal primitive counts as possibly-object.
+ */
+function operandMayBeObject(operand: ts.Expression): boolean {
+  switch (operand.kind) {
+    case ts.SyntaxKind.NumericLiteral:
+    case ts.SyntaxKind.BigIntLiteral:
+    case ts.SyntaxKind.StringLiteral:
+    case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+    case ts.SyntaxKind.TrueKeyword:
+    case ts.SyntaxKind.FalseKeyword:
+    case ts.SyntaxKind.NullKeyword:
+      return false;
+    case ts.SyntaxKind.TypeOfExpression:
+    case ts.SyntaxKind.VoidExpression:
+      return false;
+    default:
+      return true;
+  }
+}
+
 export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
@@ -235,6 +339,10 @@ export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
     // Creating a closure runs no body — do not descend. (A CALL to the closure
     // is a CallExpression node OUTSIDE the body and is still seen.)
     if (ts.isFunctionExpression(node) || ts.isArrowFunction(node) || ts.isFunctionDeclaration(node)) return;
+    if (ts.isTaggedTemplateExpression(node)) {
+      if (!isSynchronousTopLevelAwaitRecovery(node)) found = true;
+      return;
+    }
     if (
       ts.isCallExpression(node) ||
       ts.isNewExpression(node) ||
@@ -249,7 +357,26 @@ export function expressionRunsUserCode(rawExpr: ts.Expression): boolean {
       (ts.isPrefixUnaryExpression(node) &&
         (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) ||
       ts.isPostfixUnaryExpression(node) ||
-      (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind))
+      (ts.isBinaryExpression(node) && isAssignmentOperator(node.operatorToken.kind)) ||
+      // (#5140) `in` / `instanceof` are METHOD-INVOKING relational operators, not
+      // inert comparisons: `k in proxy` runs the Proxy `has` trap (§10.5.7) and
+      // `v instanceof C` runs `C[Symbol.hasInstance]` (§7.3.20). A bare
+      // `"attr" in p;` statement therefore observably runs user code, and
+      // dropping it made every `Proxy/has/call-*` test a vacuous pass.
+      (ts.isBinaryExpression(node) &&
+        (node.operatorToken.kind === ts.SyntaxKind.InKeyword ||
+          node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword)) ||
+      // (#5270 step 8) The SAME argument for the ToPrimitive-reaching
+      // operators. `left + right;` and `0 == y;` run `valueOf` / `toString` /
+      // `@@toPrimitive` on any object operand (§7.1.1), so a bare statement of
+      // that shape is observable — measured on HEAD, both were dropped whole
+      // and the two `coerce-symbol-to-prim-invocation` rows counted ZERO
+      // invocations. Restricted to operands that are not SYNTACTICALLY
+      // primitive, so `1 + 2;` keeps its previous drop.
+      (ts.isBinaryExpression(node) &&
+        binaryOperatorReachesToPrimitive(node.operatorToken.kind) &&
+        looseEqualityCoercesAnOperand(node) &&
+        (operandMayBeObject(node.left) || operandMayBeObject(node.right)))
     ) {
       found = true;
       return;
@@ -275,6 +402,16 @@ export function classifyTopLevelExpressionStatement(rawExpr: ts.Expression): Mod
   // ── Observable shapes the collector already handles ─────────────────────
   if (ts.isCallExpression(expr) || ts.isNewExpression(expr)) {
     return { disposition: "keep", shape, reason: "invokes a function" };
+  }
+  if (ts.isTaggedTemplateExpression(expr)) {
+    if (isSynchronousTopLevelAwaitRecovery(expr)) {
+      return {
+        disposition: "unhandled",
+        shape,
+        reason: "not provably inert: synchronous top-level-await parse recovery is not a tag call",
+      };
+    }
+    return { disposition: "keep", shape, reason: "invokes the tagged function" };
   }
   if (ts.isPrefixUnaryExpression(expr) || ts.isPostfixUnaryExpression(expr)) {
     return { disposition: "keep", shape, reason: "++/-- performs a PutValue" };

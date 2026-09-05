@@ -51,6 +51,8 @@ import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 import { isStrictFunction } from "../helpers/is-strict-function.js";
+import { EVAL_SOURCE_FILENAME } from "./eval-source.js";
+import { resolveConstantString } from "./eval-inline.js";
 
 /** Oracle fact kind → the intrinsic whose `new` builds that primitive's wrapper. */
 const WRAPPER_FOR_FACT = new Map<string, string>([
@@ -126,6 +128,44 @@ function resolveSloppyThisReadingCallee(
       const init = resolved.initializer;
       if (ts.isFunctionExpression(init)) declaration = init;
     }
+  } else if (ts.isCallExpression(target) || ts.isNewExpression(target)) {
+    // A constant `Function(...)` expression is also a sloppy function
+    // declaration, but it has no source-level FunctionExpression node for the
+    // ordinary resolver above to find. Parse the constructor's constant
+    // parameter/body strings into the same foreign declaration shape used by
+    // `tryStaticNewFunction`. This lets the receiver rewrite run before the
+    // standalone dynamic-Function reflective bridge claims the call.
+    let ctor: ts.Expression = target.expression;
+    while (ts.isParenthesizedExpression(ctor) || ts.isAsExpression(ctor) || ts.isNonNullExpression(ctor)) {
+      ctor = ctor.expression;
+    }
+    if (!ts.isIdentifier(ctor)) return undefined;
+    const declarations = ctx.oracle.declarationsOf(ctor);
+    if (declarations.some((candidate) => !candidate.getSourceFile().isDeclarationFile)) return undefined;
+
+    const args = target.arguments ?? [];
+    const constants: string[] = [];
+    for (const arg of args) {
+      const value = resolveConstantString(arg);
+      if (value === null) return undefined;
+      constants.push(value);
+    }
+    const body = constants.length > 0 ? constants[constants.length - 1]! : "";
+    const params = constants.slice(0, -1).join(",");
+    const source = "function __sloppy_dynamic_this__(" + params + ") {\n" + body + "\n}";
+    const foreign = ts.createSourceFile(
+      EVAL_SOURCE_FILENAME,
+      source,
+      ts.ScriptTarget.Latest,
+      /* setParentNodes */ true,
+      ts.ScriptKind.JS,
+    );
+    const statement = foreign.statements[0];
+    if (!statement || !ts.isFunctionDeclaration(statement)) return undefined;
+    const parseDiagnostics = (foreign as ts.SourceFile & { parseDiagnostics?: readonly ts.Diagnostic[] })
+      .parseDiagnostics;
+    if (parseDiagnostics && parseDiagnostics.length > 0) return undefined;
+    declaration = statement;
   }
 
   if (declaration === undefined) return undefined;

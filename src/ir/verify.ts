@@ -42,6 +42,14 @@ import { defaultTagDomain } from "./producer.js";
 import type { TagDomain } from "./tag-domain.js";
 import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
 import { verifyIrAsyncPlan } from "./async-plan.js";
+import { irFnctorShapeEquals, validateIrFnctorShape } from "./fnctor-abi.js";
+import {
+  IR_COUNTED_STRING_REPEAT_I32_MAX,
+  IR_STRING_REPEAT_COUNTED_NATIVE_FN,
+  IR_STRING_REPEAT_FN,
+  irCountedStringRepeatFitsNativeKernel,
+} from "./string-runtime.js";
+import { parseIrCountedStringAppendSiteId } from "./counted-string-append-provenance.js";
 // #4418 — shared, cached dominance analysis (formerly a private set-based
 // computation in this file, #1850).
 import { crossCheckDominance, dominanceOf, type DominanceInfo } from "./analysis/dominance.js";
@@ -304,6 +312,7 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
           return;
         } else if (
           (nested.kind === "string.concat" ||
+            nested.kind === "string.repeat" ||
             nested.kind === "string.eq" ||
             nested.kind === "string.char_at" ||
             nested.kind === "string.char_code_at" ||
@@ -446,6 +455,7 @@ export function verifyIrFunction(
 
   // #1924 — per-instruction operand / result / slot type rules.
   verifyInstrTypeRules(func, typeOf, errors, declarations);
+  verifyCountedStringAppendProvenance(func, errors);
 
   // #1798 — defense-in-depth: every `return` terminator's value types must be
   // Wasm-assignment-compatible with the function's declared `resultTypes`.
@@ -533,6 +543,11 @@ export function verifyIrFunction(
  * an unambiguous mismatch.
  */
 function returnTypeAssignable(actual: IrType, declared: IrType): boolean {
+  // Fnctor values are nominal source-qualified instances, never arbitrary
+  // reference-shaped carriers. An exact shape match is required in either
+  // return direction; there is no implicit fnctor↔object/class conversion.
+  if (declared.kind === "fnctor") return actual.kind === "fnctor" && irTypeEquals(actual, declared);
+  if (actual.kind === "fnctor") return false;
   // #2949 slice 3 — R6 HARDENING: a `dynamic` declared result accepts ONLY a
   // dynamic value (bare or tag-refined). Before slice 3 this fell through to
   // the lenient both-reference-shaped arm below, which PASSED a bare
@@ -648,6 +663,104 @@ function verifyInstrStructure(
     if (instr.tests.filter((t) => t === null).length > 1) {
       errors.push({
         message: `switch has more than one default clause`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+
+  // #3521 — nominal function-style constructor operations stay structural
+  // until a backend resolver is installed. Never let a malformed shape or
+  // an arity/field mismatch reach lowering, where it could otherwise become
+  // an ambiguous legacy constructor call.
+  if (instr.kind === "fnctor.new") {
+    const shapeError = validateIrFnctorShape(instr.shape);
+    if (shapeError) {
+      errors.push({ message: `fnctor.new invalid shape: ${shapeError}`, func: func.name, block: block.id as number });
+    }
+    const captureArity = instr.shape.captures.reduce((count, capture) => count + (capture.hasTdzFlag ? 2 : 1), 0);
+    if (instr.captureArgs.length !== captureArity) {
+      errors.push({
+        message: `fnctor.new capture count ${instr.captureArgs.length} != ABI count ${captureArity}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.args.length !== instr.shape.userParamTypes.length) {
+      errors.push({
+        message: `fnctor.new arg count ${instr.args.length} != constructor arity ${instr.shape.userParamTypes.length}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    if (instr.shape.hiddenIdentity !== (instr.constructorIdentity !== null)) {
+      errors.push({
+        message: `fnctor.new hidden identity ${instr.shape.hiddenIdentity ? "must be present" : "must be absent"}`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    // Match the synthesized constructor ABI: every capture value is followed
+    // by the complete TDZ-flag segment, never an interleaved value/flag pair.
+    const expectedCaptureTypes: IrType[] = instr.shape.captures.map((capture) => capture.type);
+    for (const capture of instr.shape.captures) {
+      if (capture.hasTdzFlag) expectedCaptureTypes.push({ kind: "val", val: { kind: "i32" } });
+    }
+    for (let i = 0; i < expectedCaptureTypes.length && i < instr.captureArgs.length; i++) {
+      const actual = operandIrType(func, block, instr.captureArgs[i]!, localDefs);
+      if (actual && !irTypeEquals(actual, expectedCaptureTypes[i]!)) {
+        errors.push({
+          message: `fnctor.new capture ${i} type does not match the nominal capture ABI`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    for (let i = 0; i < instr.args.length && i < instr.shape.userParamTypes.length; i++) {
+      const actual = operandIrType(func, block, instr.args[i]!, localDefs);
+      if (actual && !irTypeEquals(actual, instr.shape.userParamTypes[i]!)) {
+        errors.push({
+          message: `fnctor.new argument ${i} type does not match the nominal constructor ABI`,
+          func: func.name,
+          block: block.id as number,
+        });
+      }
+    }
+    if (
+      instr.resultType === null ||
+      instr.resultType.kind !== "fnctor" ||
+      !irFnctorShapeEquals(instr.resultType.shape, instr.shape)
+    ) {
+      errors.push({
+        message: "fnctor.new resultType must be the exact nominal fnctor shape",
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+  }
+  if (instr.kind === "fnctor.get") {
+    const shapeError = validateIrFnctorShape(instr.shape);
+    if (shapeError) {
+      errors.push({ message: `fnctor.get invalid shape: ${shapeError}`, func: func.name, block: block.id as number });
+    }
+    const field = instr.shape.fields.find((candidate) => candidate.name === instr.fieldName);
+    if (!field) {
+      errors.push({
+        message: `fnctor.get unknown field '${instr.fieldName}'`,
+        func: func.name,
+        block: block.id as number,
+      });
+    } else if (instr.resultType === null || !irTypeEquals(instr.resultType, field.type)) {
+      errors.push({
+        message: `fnctor.get resultType does not match field '${instr.fieldName}'`,
+        func: func.name,
+        block: block.id as number,
+      });
+    }
+    const receiverType = operandIrType(func, block, instr.value, localDefs);
+    if (receiverType && (receiverType.kind !== "fnctor" || !irFnctorShapeEquals(receiverType.shape, instr.shape))) {
+      errors.push({
+        message: "fnctor.get receiver is not the exact nominal fnctor shape",
         func: func.name,
         block: block.id as number,
       });
@@ -1117,11 +1230,21 @@ function collectUses(instr: IrBlock["instrs"][number]): readonly IrValueId[] {
     case "string.concat":
     case "string.eq":
       return [instr.lhs, instr.rhs];
+    case "string.repeat":
+      return [instr.value, instr.count];
     case "string.len":
       return [instr.value];
     case "string.char_at":
     case "string.char_code_at":
       return [instr.value, instr.index];
+    case "fnctor.new":
+      return [
+        ...instr.captureArgs,
+        ...instr.args,
+        ...(instr.constructorIdentity === null ? [] : [instr.constructorIdentity]),
+      ];
+    case "fnctor.get":
+      return [instr.value];
     case "object.new":
       return instr.values;
     case "object.get":
@@ -1637,7 +1760,7 @@ export function typeRuleCategoryOf(status: TypeRuleStatus): TypeRuleCategory | n
 }
 
 export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
-  // --- checked here (32 — 16 from #4523, +16 from #4603) -----------------
+  // --- checked here (33 — 16 from #4523, +16 from #4603, + repeat) --------
   binary: "checked",
   intrinsic: "checked",
   "slot.read": "checked",
@@ -1645,6 +1768,7 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   "string.char_at": "checked",
   "string.char_code_at": "checked",
   "string.concat": "checked",
+  "string.repeat": "checked",
   "string.const": "checked",
   "string.eq": "checked",
   "string.len": "checked",
@@ -1670,6 +1794,12 @@ export const TYPE_RULE_STATUS: Record<IrInstr["kind"], TypeRuleStatus> = {
   "dyn.member_get": { skip: "checked-elsewhere: recv/key/result all-dynamic rules in verifyInstrStructure (#3053 U1)" },
   "dyn.member_set": {
     skip: "checked-elsewhere: recv/key/value dynamic + void-result rules in verifyInstrStructure (#3795)",
+  },
+  "fnctor.new": {
+    skip: "checked-elsewhere: nominal shape, capture/user arity, and fnctor result type in verifyInstrStructure (#3521)",
+  },
+  "fnctor.get": {
+    skip: "checked-elsewhere: nominal receiver/field/result type in verifyInstrStructure (#3521)",
   },
   "while.loop": { skip: "checked-elsewhere: condValue-must-be-i32 rule in verifyInstrStructure (#1980)" },
   "for.loop": { skip: "checked-elsewhere: condValue-must-be-i32 rule in verifyInstrStructure (#1980)" },
@@ -1794,6 +1924,7 @@ export function typeRuleCoverageProblem(kind: IrInstr["kind"], status: TypeRuleS
 interface RoadmapRuleCtx {
   readonly func: IrFunction;
   readonly typeOf: ReadonlyMap<IrValueId, IrType>;
+  readonly definitions: ReadonlyMap<IrValueId, IrInstr>;
   readonly errors: IrVerifyError[];
   /** `func.slots.length` — the bound every `forof.*` slot index must respect. */
   readonly numSlots: number;
@@ -2175,6 +2306,121 @@ function checkSymbolicRefCoherence(instr: RoadmapSymbolicInstr, blockId: number,
   }
 }
 
+function countedStringAppendProvenanceProblem(
+  instr: Extract<IrInstr, { kind: "string.repeat" }>,
+  ownerUnitId: IrFunction["unitId"],
+): string | null {
+  if (instr.countedStringAppendSite === undefined) return null;
+  const countedSite = parseIrCountedStringAppendSiteId(instr.countedStringAppendSite);
+  return !countedSite || countedSite.ownerUnitId !== ownerUnitId
+    ? "string.repeat carries malformed or foreign-owner counted-string provenance"
+    : null;
+}
+
+/** Authenticate the optional semantic site across every executable instruction root. */
+function verifyCountedStringAppendProvenance(func: IrFunction, errors: IrVerifyError[]): void {
+  const visited = new WeakSet<object>();
+  const checkBuffer = (instructions: readonly IrInstr[], location?: string, block?: number): void => {
+    for (const instr of instructions) {
+      forEachInstrDeep(instr, (nested) => {
+        if (visited.has(nested)) return;
+        visited.add(nested);
+        if (nested.kind !== "string.repeat") return;
+        const problem = countedStringAppendProvenanceProblem(nested, func.unitId);
+        if (problem !== null) {
+          errors.push({
+            message: location === undefined ? problem : `${location}: ${problem}`,
+            func: func.name,
+            ...(block === undefined ? {} : { block }),
+          });
+        }
+      });
+    }
+  };
+
+  for (const block of func.blocks) checkBuffer(block.instrs, undefined, block.id as number);
+  for (const state of func.asyncPlan?.states ?? []) checkBuffer(state.body, `asyncPlan state ${state.id}`);
+  for (const state of func.asyncRuntime?.states ?? []) checkBuffer(state.body, `asyncRuntime state ${state.id}`);
+}
+
+/** Full typed contract for the throwing ECMAScript repeat instruction. */
+function checkStringRepeatTypeRule(
+  instr: Extract<IrInstr, { kind: "string.repeat" }>,
+  blockId: number,
+  ctx: RoadmapRuleCtx,
+): void {
+  if (instr.result === null || instr.resultType?.kind !== "string") {
+    roadmapError(ctx, blockId, "string.repeat must produce a string result");
+  }
+  if (instr.alloc === undefined) {
+    roadmapError(ctx, blockId, "string.repeat must carry a string allocation site");
+  }
+  const valueType = ctx.typeOf.get(instr.value);
+  if (valueType && valueType.kind !== "string") {
+    roadmapError(ctx, blockId, `string.repeat value must be string, got ${valueType.kind}`);
+  }
+  const countType = ctx.typeOf.get(instr.count);
+  const countKind = countType ? asVal(countType)?.kind : undefined;
+  if (countType && countKind !== "f64") {
+    roadmapError(ctx, blockId, `string.repeat count must be f64, got ${countKind ?? countType.kind}`);
+  }
+  if (!(["ascii", "utf8-guaranteed", "wtf16"] as readonly unknown[]).includes(instr.encodingEvidence)) {
+    roadmapError(ctx, blockId, `string.repeat has invalid encoding evidence ${String(instr.encodingEvidence)}`);
+  }
+  const providerSymbol = instr.provider?.binding.kind === "intrinsic" ? instr.provider.binding.symbol : undefined;
+  if (
+    instr.provider &&
+    providerSymbol !== IR_STRING_REPEAT_FN &&
+    providerSymbol !== IR_STRING_REPEAT_COUNTED_NATIVE_FN
+  ) {
+    roadmapError(ctx, blockId, "string.repeat carries a non-canonical provider binding");
+  }
+  const exactTripCount = instr.countedStringAppendTripCount;
+  if (exactTripCount === undefined) {
+    if (providerSymbol === IR_STRING_REPEAT_COUNTED_NATIVE_FN) {
+      roadmapError(ctx, blockId, "string.repeat counted-native provider requires an exact counted trip-count proof");
+    }
+    return;
+  }
+  if (instr.countedStringAppendSite === undefined) {
+    roadmapError(ctx, blockId, "string.repeat counted trip-count proof requires counted-loop provenance");
+  }
+  if (
+    !Number.isSafeInteger(exactTripCount) ||
+    exactTripCount < 2 ||
+    exactTripCount > IR_COUNTED_STRING_REPEAT_I32_MAX
+  ) {
+    roadmapError(ctx, blockId, `string.repeat has invalid counted trip-count proof ${String(exactTripCount)}`);
+  }
+  const countDefinition = ctx.definitions.get(instr.count);
+  if (
+    countDefinition?.kind !== "const" ||
+    countDefinition.value.kind !== "f64" ||
+    !Object.is(countDefinition.value.value, exactTripCount)
+  ) {
+    roadmapError(ctx, blockId, "string.repeat counted trip-count proof does not match its exact f64 constant");
+  }
+  const valueDefinition = ctx.definitions.get(instr.value);
+  if (valueDefinition?.kind !== "string.const") {
+    roadmapError(ctx, blockId, "string.repeat counted trip-count proof requires an exact string.const fragment");
+  } else if (!irCountedStringRepeatFitsNativeKernel(exactTripCount, valueDefinition.value.length)) {
+    roadmapError(ctx, blockId, "string.repeat counted trip-count proof exceeds the native result-length bound");
+  }
+}
+
+function collectIrDefinitions(func: IrFunction): ReadonlyMap<IrValueId, IrInstr> {
+  const definitions = new Map<IrValueId, IrInstr>();
+  const collect = (instr: IrInstr): void => {
+    forEachInstrDeep(instr, (nested) => {
+      if (nested.result !== null) definitions.set(nested.result, nested);
+    });
+  };
+  for (const block of func.blocks) for (const instr of block.instrs) collect(instr);
+  for (const state of func.asyncPlan?.states ?? []) for (const instr of state.body) collect(instr);
+  for (const state of func.asyncRuntime?.states ?? []) for (const instr of state.body) collect(instr);
+  return definitions;
+}
+
 function verifyInstrTypeRules(
   func: IrFunction,
   typeOf: ReadonlyMap<IrValueId, IrType>,
@@ -2201,6 +2447,7 @@ function verifyInstrTypeRules(
   const roadmap: RoadmapRuleCtx = {
     func,
     typeOf,
+    definitions: collectIrDefinitions(func),
     errors,
     numSlots,
     callSignatures: new Map(),
@@ -2329,6 +2576,10 @@ function verifyInstrTypeRules(
             });
           }
         }
+        break;
+      }
+      case "string.repeat": {
+        checkStringRepeatTypeRule(instr, blockId, roadmap);
         break;
       }
       case "string.char_code_at": {

@@ -145,14 +145,32 @@ describe("#1539/#3567 standalone/WASI replace narrowed refusals (Phase 2c)", () 
     );
   });
 
-  for (const target of ["standalone", "wasi"] as const) {
-    it(`${target}: refuses direct RegExp @@replace function replacer`, async () => {
-      await expectRefused(
-        `export function f(s: string): string { return /\\d/[Symbol.replace](s, (m: string) => m + m); }`,
-        target,
-      );
-    });
-  }
+  it("wasi: refuses direct RegExp @@replace function replacer", async () => {
+    await expectRefused(
+      `export function f(s: string): string { return /\\d/[Symbol.replace](s, (m: string) => m + m); }`,
+      "wasi",
+    );
+  });
+
+  // (#5142) STANDALONE direct `re[Symbol.replace](str, fn)` now takes the same
+  // #4224 call-site §22.2.6.11 walk as `str.replace(re, fn)` — the guard
+  // upgrades from asserting the refusal to asserting native-equal output, so a
+  // rollback to silent wrong codegen (the failure mode this suite exists for)
+  // still fails loudly here.
+  it("standalone: direct RegExp @@replace function replacer matches native", async () => {
+    const src = `
+      const __r: string = /\\d/g[Symbol.replace]("a1b2", (m: string) => "<" + m + ">");
+      export function len(): number { return __r.length; }
+      export function at(i: number): number { return __r.charCodeAt(i); }
+    `;
+    const r = await compile(src, { fileName: "issue-5142.ts", target: "standalone" });
+    expect(r.success, r.success ? "" : `compile error: ${r.errors?.[0]?.message}`).toBe(true);
+    const { instance } = await WebAssembly.instantiate(r.binary, {});
+    const ex = instance.exports as { len(): number; at(i: number): number };
+    let out = "";
+    for (let i = 0; i < ex.len(); i++) out += String.fromCharCode(ex.at(i));
+    expect(out).toBe("a1b2".replace(/\d/g, (m) => `<${m}>`));
+  });
 
   it("keeps function replacers available in the default host target", async () => {
     const r = await compile(

@@ -21,6 +21,7 @@ import {
 } from "../src/codegen/program-abi-planning.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { buildIrUnitInventory, createIrBindingId } from "../src/ir/identity.js";
+import { nonExecutableOutcomeDefect } from "../src/ir/outcomes.js";
 import { createEmptyModule, type FuncTypeDef, type Import, type WasmFunction } from "../src/ir/types.js";
 import { compile } from "../src/index.js";
 import { buildImports, instantiateWasm, wrapExports } from "../src/runtime.js";
@@ -338,19 +339,29 @@ describe("#3520 C33 data-struct host bridge Program ABI ownership", () => {
     expect((instance.exports.countKeys as (value: unknown) => number)(box)).toBe(2);
   });
 
-  it("moves exactly five census rows without changing functions or terminal routing", () => {
+  /**
+   * Deliberately NOT an absolute-count census (#3520 C35 follow-up).
+   *
+   * This used to pin `definedFunctions: 166`, `genericRows: 45`, `dataRows: 5`,
+   * `closureRows: 26` and the routing tuple `37/30/7/0/37/30`. Every one of those
+   * has since moved while the five corpus FILES are byte-for-byte unchanged, so
+   * the assertion reported compiler evolution rather than the ownership property
+   * it defends. See the issue file's drift table for the measured moves.
+   */
+  it("owns every emitted data-struct bridge across the five host entries", () => {
+    const DATA_BRIDGE_NAMES = new Set(["__is_data_struct", "__struct_field_names"]);
     let definedFunctions = 0;
-    let genericRows = 0;
+    let dataBridgeFunctions = 0;
     let dataRows = 0;
-    let vecRows = 0;
-    let closureRows = 0;
-    let dateRows = 0;
-    let terminalUnits = 0;
+    let genericDataRows = 0;
+    // Counts OUTCOME ROWS, not terminal units: since #3523's `non-executable`
+    // arm a source can contribute an observational row that mints no terminal
+    // unit at all. `scripts/check-ir-only.ts:403-416` draws the same partition.
+    let outcomeRows = 0;
     let emitted = 0;
     let unsupported = 0;
     let invariants = 0;
-    let legacyBodies = 0;
-    let irBodies = 0;
+    let nonExecutable = 0;
 
     for (const entry of SINGLE_HOST_ENTRIES) {
       const source = readFileSync(resolve(entry), "utf8");
@@ -362,38 +373,41 @@ describe("#3520 C33 data-struct host bridge Program ABI ownership", () => {
       const errors = hardErrors(result);
       expect(errors, `${entry}\n${errors.map((error) => error.message).join("\n")}`).toEqual([]);
       definedFunctions += result.module.functions.length;
-      const entries = result.programAbi!.abi.entries();
-      genericRows += entries.filter((candidate) => candidate.id.includes("retained-module-function")).length;
-      dataRows += entries.filter((candidate) => candidate.id.includes(`:${DATA_STRUCT_HOST_BRIDGE_ROLE}:`)).length;
-      vecRows += entries.filter((candidate) => candidate.id.includes(":vec-host-bridge:")).length;
-      closureRows += entries.filter((candidate) => candidate.id.includes(":closure-host-bridge:")).length;
-      dateRows += entries.filter((candidate) => candidate.id.includes(":date-civil-support:")).length;
+      dataBridgeFunctions += result.module.functions.filter((func) => DATA_BRIDGE_NAMES.has(func.name)).length;
+      const callableRows = result
+        .programAbi!.abi.entries()
+        .filter((candidate) => candidate.intent?.kind === "callable");
+      dataRows += callableRows.filter((candidate) => candidate.id.includes(`:${DATA_STRUCT_HOST_BRIDGE_ROLE}:`)).length;
+      genericDataRows += callableRows.filter(
+        (candidate) =>
+          candidate.id.includes(":retained-module-function:") && DATA_BRIDGE_NAMES.has(candidate.displayName ?? ""),
+      ).length;
       for (const outcome of result.irOutcomes ?? []) {
-        terminalUnits++;
+        outcomeRows++;
         if (outcome.kind === "emitted") emitted++;
         if (outcome.kind === "unsupported") unsupported++;
         if (outcome.kind === "invariant") invariants++;
-        if (outcome.legacyBodyEmitted) legacyBodies++;
-        if (outcome.irBodyEmitted) irBodies++;
+        if (outcome.kind === "non-executable") {
+          nonExecutable++;
+          // The widened total below subtracts these rows, so they must be
+          // proven well-formed here: a malformed observational row would
+          // otherwise be excused rather than caught.
+          expect(nonExecutableOutcomeDefect(outcome), `${entry} ${outcome.key}`).toBeUndefined();
+        }
       }
     }
 
-    expect({ definedFunctions, genericRows, dataRows, vecRows, closureRows, dateRows }).toEqual({
-      definedFunctions: 166,
-      genericRows: 45,
-      dataRows: 5,
-      vecRows: 24,
-      closureRows: 26,
-      dateRows: 1,
-    });
-    expect({ terminalUnits, emitted, unsupported, invariants, legacyBodies, irBodies }).toEqual({
-      terminalUnits: 37,
-      emitted: 30,
-      unsupported: 7,
-      invariants: 0,
-      legacyBodies: 37,
-      irBodies: 30,
-    });
+    // Anti-vacuity: the corpus must actually contain data-struct bridges.
+    expect(definedFunctions).toBeGreaterThan(0);
+    expect(dataBridgeFunctions).toBeGreaterThan(0);
+    // One structural callable owner per emitted bridge, none left generic.
+    expect(dataRows).toBe(dataBridgeFunctions);
+    expect(genericDataRows).toBe(0);
+    // Routing stays total and invariant-free; the emitted/unsupported SPLIT is a
+    // corpus denominator owned by `check:ir-only`, not pinned here.
+    expect(outcomeRows).toBeGreaterThan(0);
+    expect(emitted + unsupported + invariants).toBe(outcomeRows - nonExecutable);
+    expect(invariants).toBe(0);
   });
 
   it("preserves data classification and field order through the authenticated helpers", async () => {

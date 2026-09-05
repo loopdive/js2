@@ -56,10 +56,21 @@ node tests/dogfood/typescript-upstream-build-probe.mjs \
   --root /path/to/TypeScript-5.9.3 --mode bundle --timeout-ms 1800000 --heap-mb 4096 --json
 
 node tests/dogfood/typescript-upstream-build-probe.mjs \
-  --root /path/to/TypeScript-5.9.3 --mode source --entry js2-parser-workload.ts \
-  --consumer-driven-barrels --invoke-export runCase \
-  --invoke-string 'export const answer: number = 6 * 7;' \
-  --expected-number 308001 --timeout-ms 300000 --heap-mb 4096 --json
+  --root tests/dogfood/.npm-upstream-suites/typescript --prepare-pinned-typescript --mode source \
+  --entry ../../fixtures/typescript-parser-workload.ts \
+  --consumer-driven-barrels --invoke-export runCase --require-invocations 3 \
+  --invoke-case src/compiler/builderStatePublic.ts=13386537220945 \
+  --invoke-case src/compiler/corePublic.ts=40098163538143 \
+  --invoke-case src/compiler/performanceCore.ts=49645738923599 \
+  --timeout-ms 600000 --heap-mb 4096 --json
+
+node tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root tests/dogfood/.npm-upstream-suites/typescript --prepare-pinned-typescript --mode source \
+  --entry ../../fixtures/typescript-binder-workload.ts \
+  --consumer-driven-barrels --invoke-export runCase --require-invocations 2 \
+  --invoke-case ../../fixtures/typescript-binder/const-local.ts=65792 \
+  --invoke-case ../../fixtures/typescript-binder/duplicate-let.ts=131330 \
+  --timeout-ms 900000 --heap-mb 4096 --json
 ```
 
 `--mode source` selects `src/typescript/typescript.ts`; `--mode bundle`
@@ -68,10 +79,22 @@ narrow upstream-source entry such as a parser workload. The probe defaults to
 a 30-minute budget, a 4 GiB worker heap, and 30-second heartbeats. It reports
 compile and validation separately and never treats elapsed CPU time or a valid
 binary as a package test pass. `--consumer-driven-barrels` is an explicit,
-default-off source-tree specialization experiment. When `--invoke-export` is
-provided, the probe passes `--invoke-string` at runtime and requires the result
-to equal `--expected-number`; a source literal folded during compilation cannot
-satisfy that check.
+default-off source-tree specialization experiment. A one-off runtime oracle can
+use `--invoke-string` plus `--expected-number`. The parser gate instead repeats
+`--invoke-case <path>=<safe-integer>` and sets an explicit
+`--require-invocations` floor: one compiled parser instance must consume every
+unchanged upstream file and match each independently verified structural AST
+fingerprint. A constant result, ignored input, invalid binary, missing case, or
+reported match whose actual value differs all fail the command.
+The binder gate uses the same fail-closed multi-case contract. Its first packed
+count is deliberately only a bounded smoke oracle; the exact tracked input
+files make the two native values reproducible while a later milestone adds a
+sorted locals/exports name-and-flags fingerprint.
+`--prepare-pinned-typescript` verifies the exact v5.9.3 checkout, runs
+TypeScript's checked-in `processDiagnosticMessages.mjs` generator, and verifies
+both generated diagnostic artifacts against pinned SHA-256 digests before the
+compiler worker starts. This keeps `Diagnostics` in the source graph even from
+a fresh upstream checkout.
 
 The original package-specific harnesses, plus the deeper Acorn conformance
 check, are:
@@ -134,7 +157,7 @@ then compares its result with the same operation in native Node.
 | **webpack upstream suite**              | #3995 | `lib/util/*.js`         | pinned original utility callbacks; complete top-level unit inventory tracked |
 | **jest upstream suite**                 | #3995 | `jest-get-type/src/index.ts` | pinned original get-type callbacks; complete monorepo unit inventory tracked |
 | **tailwindcss upstream suite**          | #3995 | `src/utils/{segment,to-key-path}.ts` | pinned original utility callbacks; complete package test inventory tracked |
-| **typescript upstream suite**           | #3995 | `unittests/base64.ts`   | pinned original base64 callback; complete compiler-unit inventory tracked |
+| **typescript upstream suite**           | #3995 | 4 original utility-unit files | 14 pinned base64/pseudo-BigInt/comment-scanner callbacks; all 256 files / 1,761 registrations inventoried |
 | **redux** (state container)             | #3996 | `dist/redux.mjs`          | consumed store/reducer/subscription/action-creator API workload             |
 
 ## uuid v14.0.1 upstream suite (#3995)
@@ -772,3 +795,48 @@ regression floor (`equal >= 18` at `total === 21`).
 
 This harness does **not** fix any compiler bug — pure tooling, same as the
 other harnesses' scope notes above.
+
+## @js-temporal/polyfill — spike harness (#4628)
+
+Unlike every other harness here, this one is a **spike instrument, not a
+regression gate**. It exists to answer one question for
+[#4628](https://js2wasm.loopdive.com/dashboard/issue.html?slug=4628-temporal-runtime-object-spike):
+can js2wasm compile `@js-temporal/polyfill` well enough to install a real
+`Temporal` global? So it runs the **compile + validate** lane only — the cheap
+half — with no differential-execution lane and, deliberately, **no pass/fail
+floor** in the vitest wrapper.
+
+Two pins, not one: the polyfill's published ESM bundle is **not**
+self-contained. `dist/index.esm.js` carries exactly one import against
+`jsbi@^4.3.0`, so `jsbi-4.3.0.tgz` is pinned alongside it and the harness links
+them into a single module (jsbi's `export default JSBI;` dropped, the import
+rewritten to `const e=JSBI;`). Both edits are asserted, so an upstream bump that
+changes the bundle shape fails loudly instead of quietly measuring something
+else.
+
+```bash
+# slice lane — split at top-level statement boundaries, compile chunk by chunk
+node tests/dogfood/temporal-polyfill-harness.mjs --no-umd --no-whole --slices=25
+# whole-bundle lane (see the caveat below)
+JS2WASM_COMPILE_PROFILE=stream node tests/dogfood/temporal-polyfill-harness.mjs --no-umd
+# vitest contract wrapper (cheap acquisition/link lane always runs)
+DOGFOOD_TEMPORAL_POLYFILL=1 pnpm test -- tests/dogfood/temporal-polyfill.test.ts
+```
+
+Report: `tests/dogfood/report/temporal-polyfill-surface.json` (gitignored). Pin:
+`temporal-polyfill-pin.json`.
+
+**Current state (2026-08-23):** the slice lane compiles **342 / 342 top-level
+statements with zero compile errors**, but 5 of 14 slices emit a binary that
+fails `WebAssembly.compile()` (all one family: a call thunk pushing one operand
+fewer than the callee's declared arity). The **whole-bundle lane does not
+terminate** — 157 KB in one module ran 45 minutes without finishing, while the
+same statements sliced up sum to ~24 seconds. Per the rule at the top of this
+file, a compile timeout is an unverified workload, never a pass. Full
+measurements, the scaling curve and the Option A / Option B decision are in the
+issue.
+
+The `--slices=N` mode is the reusable part: when a whole-module compile will not
+terminate, it still yields a bucketed cause list, and it **reports coverage**
+(slices run / skipped, statements covered / total) so partial results can never
+be mistaken for a whole-bundle number.

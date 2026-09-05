@@ -44,6 +44,7 @@ import {
   hasAsyncModifier,
   hasDeclareModifier,
   parseRegExpLiteral,
+  resolveWasmType,
 } from "../index.js";
 import { isPlainNamedMethodDeclaration, objectLiteralSpreadTakesHostPath } from "../literals.js";
 import { ensureNativeStringHelpers } from "../native-strings.js";
@@ -118,6 +119,8 @@ interface UnifiedCollectorState {
   // -- collectFunctionalArrayImports --
   funcArrayNeed1: boolean;
   funcArrayNeed2: boolean;
+  /** Reference-valued Array.map callback needs the externref-preserving bridge. */
+  funcArrayNeedDyn1: boolean;
   // -- collectUnionImports --
   unionFound: boolean;
   // -- collectGeneratorImports --
@@ -204,6 +207,7 @@ export function createUnifiedCollectorState(sourceFile: ts.SourceFile): UnifiedC
     asyncHostDriveFound: false,
     funcArrayNeed1: false,
     funcArrayNeed2: false,
+    funcArrayNeedDyn1: false,
     unionFound: false,
     generatorFound: false,
     asyncGenDrivableStems: new Set(),
@@ -320,6 +324,77 @@ function objectLiteralMethodNeedsGetterBridge(ctx: CodegenContext, node: ts.Node
   if (!node.properties.some((p) => ts.isSpreadAssignment(p))) return false;
   if (!node.properties.some((p) => isPlainNamedMethodDeclaration(p))) return false;
   return objectLiteralSpreadTakesHostPath(ctx, node);
+}
+
+/**
+ * Whether an array-like receiver's TypeScript element arguments lower to a
+ * reference carrier. This is deliberately a pre-scan predicate: the dynamic
+ * callback import must exist before callback closures are emitted, otherwise a
+ * late import can shift the closure's embedded function index (#4527).
+ */
+function arrayReceiverMayCarryReferenceElements(ctx: CodegenContext, receiver: ts.Expression): boolean {
+  const refLike = (fact: import("../../checker/oracle.js").TypeFact): boolean => {
+    if (fact.kind === "union") return fact.parts.some(refLike);
+    return !(
+      fact.kind === "number" ||
+      fact.kind === "boolean" ||
+      fact.kind === "bigint" ||
+      fact.kind === "undefined" ||
+      fact.kind === "null" ||
+      fact.kind === "void" ||
+      fact.kind === "unresolvable"
+    );
+  };
+
+  const elementFact = ctx.oracle.elementFactOf(receiver);
+  if (elementFact.kind !== "unresolvable") return refLike(elementFact);
+
+  // Context-free array literals may not expose a TypeReference yet. Their
+  // element expressions still provide the same generic carrier proof.
+  if (ts.isArrayLiteralExpression(receiver)) {
+    return receiver.elements.some(
+      (element) => !ts.isOmittedExpression(element) && refLike(ctx.oracle.typeFactOf(element)),
+    );
+  }
+  return false;
+}
+
+/**
+ * (#5319, generalising #4527) The single-callback array HOFs whose unresolved
+ * callback must reach the element through the reference-preserving
+ * `__call_dyn_1` bridge rather than the numeric `__call_1_f64` one. #4527 armed
+ * `map` alone; every other member of this family lowered the SAME
+ * `setupArrayCallback` fallback and therefore applied ToNumber to a reference
+ * element — `["x","y"].filter(Boolean)` dropped every entry.
+ *
+ * `reduce`/`reduceRight` are deliberately absent: they take a 2-arg callback and
+ * there is no `__call_dyn_2` bridge yet.
+ */
+const DYNAMIC_ELEMENT_BRIDGE_METHODS = new Set(["map", "filter", "forEach", "find", "findIndex", "some", "every"]);
+
+function collectFunctionalArrayImports(ctx: CodegenContext, state: UnifiedCollectorState, node: ts.Node): void {
+  if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
+  const method = node.expression.name.text;
+  if (FUNCTIONAL_ARRAY_METHODS.has(method)) {
+    if (method === "reduce" || method === "reduceRight") state.funcArrayNeed2 = true;
+    else state.funcArrayNeed1 = true;
+    if (
+      DYNAMIC_ELEMENT_BRIDGE_METHODS.has(method) &&
+      !ctx.standalone &&
+      !ctx.wasi &&
+      node.arguments.length > 0 &&
+      !ts.isArrowFunction(node.arguments[0]!) &&
+      !ts.isFunctionExpression(node.arguments[0]!) &&
+      arrayReceiverMayCarryReferenceElements(ctx, node.expression.expression)
+    ) {
+      state.funcArrayNeedDyn1 = true;
+    }
+  }
+  if (method !== "call" || !ts.isPropertyAccessExpression(node.expression.expression)) return;
+  const innerMethod = node.expression.expression.name.text;
+  if (!FUNCTIONAL_ARRAY_METHODS.has(innerMethod)) return;
+  if (innerMethod === "reduce" || innerMethod === "reduceRight") state.funcArrayNeed2 = true;
+  else state.funcArrayNeed1 = true;
 }
 
 /** Single-pass visitor called on every AST node */
@@ -739,6 +814,20 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       } catch {
         // type resolution may fail — skip (a runtime ToString path still applies)
       }
+      // (#4616) A DYNAMIC arg (any/unknown/union-with-string) takes the
+      // runtime string-vs-ToNumber dispatch in new-builtin-globals.ts, whose
+      // string arm calls __date_parse_host — register it up-front too.
+      if (!state.dateParseHostNeeded) {
+        const fact = ctx.oracle.typeFactOf(node.arguments[0]!);
+        if (
+          fact.kind === "any" ||
+          fact.kind === "unknown" ||
+          fact.kind === "unresolvable" ||
+          (fact.kind === "union" && fact.parts.some((p) => p.kind === "string"))
+        ) {
+          state.dateParseHostNeeded = true;
+        }
+      }
     }
   }
 
@@ -1084,26 +1173,7 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
   }
 
   // ── collectFunctionalArrayImports ──
-  if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
-    const method = node.expression.name.text;
-    if (FUNCTIONAL_ARRAY_METHODS.has(method)) {
-      if (method === "reduce" || method === "reduceRight") {
-        state.funcArrayNeed2 = true;
-      } else {
-        state.funcArrayNeed1 = true;
-      }
-    }
-    if (method === "call" && ts.isPropertyAccessExpression(node.expression.expression)) {
-      const innerMethod = node.expression.expression.name.text;
-      if (FUNCTIONAL_ARRAY_METHODS.has(innerMethod)) {
-        if (innerMethod === "reduce" || innerMethod === "reduceRight") {
-          state.funcArrayNeed2 = true;
-        } else {
-          state.funcArrayNeed1 = true;
-        }
-      }
-    }
-  }
+  collectFunctionalArrayImports(ctx, state, node);
 
   // ── collectUnionImports ──
   if (!state.unionFound) {
@@ -1631,6 +1701,8 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       "trim",
       "trimStart",
       "trimEnd",
+      "trimLeft",
+      "trimRight",
       "repeat",
       "padStart",
       "padEnd",
@@ -1683,7 +1755,7 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       // already registered EARLY by registerWasiImports (before any defined
       // functions) so adding it here doesn't shift indices of helpers like
       // `__str_copy_tree`.
-      if (ctx.wasi) {
+      if (ctx.wasi || ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
         ctx.pendingMathMethods.add(method);
       } else {
         const typeIdx = addFuncType(ctx, [], [{ kind: "f64" }]);
@@ -2015,6 +2087,11 @@ export function finalizeUnifiedCollector(ctx: CodegenContext, state: UnifiedColl
       const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "f64" }]);
       addImport(ctx, "env", "__call_1_f64", { kind: "func", typeIdx });
     }
+  }
+  if (state.funcArrayNeedDyn1 && !ctx.funcMap.has("__call_dyn_1")) {
+    const externref: ValType = { kind: "externref" };
+    const typeIdx = addFuncType(ctx, [externref, externref], [externref]);
+    addImport(ctx, "env", "__call_dyn_1", { kind: "func", typeIdx });
   }
   if (state.funcArrayNeed2) {
     if (ctx.fast) {

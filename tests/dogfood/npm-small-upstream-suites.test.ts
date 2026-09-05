@@ -282,15 +282,15 @@ describe("small npm package upstream suites", () => {
     const report = await run("jest");
     expect(report.extraction).toMatchObject({
       filesSeen: 241,
-      filesSelected: 12,
-      filesDeferred: 229,
-      testsRegistered: 234,
-      nativePassed: 232,
+      filesSelected: 32,
+      filesDeferred: 209,
+      testsRegistered: 351,
+      nativePassed: 349,
       nativeFailed: 2,
     });
-    expect(report.extraction.unavailableInfra).toBe(3054);
-    expect(report.compile).toMatchObject({ modules: 12, succeeded: 12, validated: 12 });
-    expect(report.results).toMatchObject({ scored: 232, passed: 113, failed: 119, runtimeFailed: 0 });
+    expect(report.extraction.unavailableInfra).toBe(2937);
+    expect(report.compile).toMatchObject({ modules: 32, succeeded: 32, validated: 31 });
+    expect(report.results).toMatchObject({ scored: 349, passed: 245, failed: 104, runtimeFailed: 0 });
   });
 
   const uuidHeavy = process.env.DOGFOOD_UUID_UPSTREAM_SUITE === "1" ? it : it.skip;
@@ -334,6 +334,8 @@ describe("small npm package upstream suites", () => {
     });
     expect(report.extraction.unavailableInfra).toBe(1750);
     expect(report.compile).toMatchObject({ modules: 3, succeeded: 3, validated: 3 });
-    expect(report.results.scored).toBe(11);
+    expect(report.results).toMatchObject({ scored: 11, passed: 11, failed: 0, runtimeFailed: 0 });
+    expect(report.results.tests).toHaveLength(11);
+    expect(report.results.tests.every((test: { status: string }) => test.status === "passed")).toBe(true);
   });
 });

@@ -116,4 +116,25 @@ describe("#1586 — AllocSiteRegistry", () => {
     expect(live).not.toContain(b);
     expect(live).not.toContain(c);
   });
+
+  it("snapshots every provenance state and distinguishes missing metadata from undefined", () => {
+    const r = new AllocSiteRegistry();
+    const aliased = r.fresh("string", STR);
+    const live = r.fresh("string", STR);
+    const retired = r.fresh("object", F64);
+    r.annotate(aliased, "encoding", undefined);
+    r.alias(aliased, live);
+    r.retire(retired);
+
+    const snapshot = r.snapshot();
+    expect(snapshot.size).toBe(3);
+    expect(snapshot.entries.map((entry) => entry.state)).toEqual(["aliased", "live", "retired"]);
+    expect(snapshot.metadata).toEqual([
+      {
+        id: live,
+        entries: [["encoding", undefined]],
+      },
+    ]);
+    expect(snapshot.metadata.find((row) => row.id === retired)).toBeUndefined();
+  });
 });

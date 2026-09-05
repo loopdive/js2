@@ -3,6 +3,7 @@
 import type { FieldDef, FuncHandle, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt } from "./func-space.js";
+import { UNDEF_F64_BITS } from "./value-tags.js";
 
 export interface AstFreeClassConstructorNewWrapperInput {
   readonly className: string;
@@ -76,7 +77,12 @@ function astFreeClassConstructorNewWrapperPlan(
     if (field.name === "__tag") {
       body.push({ op: "i32.const", value: ctx.classTagMap.get(className) ?? 0 });
     } else if (field.type.kind === "f64") {
-      body.push({ op: "f64.const", value: 0 });
+      if (field.undefinedDefault) {
+        body.push({ op: "i64.const", value: UNDEF_F64_BITS });
+        body.push({ op: "f64.reinterpret_i64" });
+      } else {
+        body.push({ op: "f64.const", value: 0 });
+      }
     } else if (field.type.kind === "i32") {
       body.push({ op: "i32.const", value: 0 });
     } else if (field.type.kind === "externref") {

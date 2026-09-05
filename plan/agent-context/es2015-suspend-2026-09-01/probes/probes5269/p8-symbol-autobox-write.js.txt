@@ -1,0 +1,7 @@
+"use strict";
+var threw = false;
+try { var sym = Symbol('66'); sym.a = 0; } catch (e) { threw = e instanceof TypeError; }
+if (!threw) throw new Test262Error('sym.a = 0 did not throw');
+var threw2 = false;
+try { Symbol.keyFor('1'); } catch (e) { threw2 = e instanceof TypeError; }
+if (!threw2) throw new Test262Error('keyFor(string) did not throw');

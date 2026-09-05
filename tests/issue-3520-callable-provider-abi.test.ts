@@ -9,9 +9,10 @@ import {
   catalogProgramAbiCallableImports,
   planProgramAbiCallableImports,
 } from "../src/codegen/program-abi-import-planning.js";
+import { PROGRAM_ABI_CALLABLE_ROLE } from "../src/codegen/program-abi-planning.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { irCallableBindingKey, irIntrinsicFuncRef, irRuntimeFuncRef } from "../src/ir/callable-bindings.js";
-import { buildIrUnitInventory } from "../src/ir/identity.js";
+import { buildIrUnitInventory, createIrBindingId } from "../src/ir/identity.js";
 import { IR_STRING_COMPARE_FN } from "../src/ir/from-ast.js";
 import { ProgramAbiInvariantError } from "../src/ir/program-abi.js";
 import {
@@ -47,6 +48,85 @@ function fixture(module: WasmModule) {
   return { ctx, providers, session };
 }
 
+type CallableProviderRegistry = ReturnType<typeof fixture>["providers"];
+type PreparedProviderDescriptor = ReturnType<CallableProviderRegistry["describePrepared"]>;
+type CallableImportRegistry = NonNullable<ReturnType<typeof fixture>["ctx"]["programAbiCallableImports"]>;
+type PreparedImportDescriptor = ReturnType<CallableImportRegistry["describePrepared"]>;
+
+function sessionPublicationCardinalities(session: ProgramAbiSession) {
+  const state = session as unknown as Record<string, ReadonlyMap<unknown, unknown>>;
+  return [
+    "drafts",
+    "draftOrderOwners",
+    "locators",
+    "locatorOwners",
+    "structuralReferenceKeys",
+    "callableTypeContracts",
+  ].map((key) => state[key]!.size);
+}
+
+function providerPublicationSnapshot(registry: CallableProviderRegistry, session: ProgramAbiSession) {
+  const state = registry as unknown as {
+    readonly observed: ReadonlyMap<string, unknown>;
+    readonly observationOrder: readonly string[] | undefined;
+    readonly appendedOrder: readonly string[];
+    readonly plannedByKey: ReadonlyMap<string, unknown>;
+    readonly plannedValue: ReadonlyMap<string, unknown> | undefined;
+  };
+  return {
+    observedKeys: [...state.observed.keys()],
+    observationOrder: state.observationOrder ? [...state.observationOrder] : null,
+    appendedOrder: [...state.appendedOrder],
+    plannedKeys: [...state.plannedByKey.keys()],
+    plannedValueSize: state.plannedValue?.size ?? null,
+    session: sessionPublicationCardinalities(session),
+  };
+}
+
+function callableImportPublicationSnapshot(registry: CallableImportRegistry, session: ProgramAbiSession) {
+  const state = registry as unknown as {
+    readonly sealedEntries: readonly unknown[] | undefined;
+    readonly plannedByImport: ReadonlyMap<Import, unknown>;
+    readonly plannedValue: ReadonlyMap<string, unknown> | undefined;
+  };
+  return {
+    sealedEntryCount: state.sealedEntries?.length ?? null,
+    plannedImports: [...state.plannedByImport.keys()],
+    plannedValueSize: state.plannedValue?.size ?? null,
+    session: sessionPublicationCardinalities(session),
+  };
+}
+
+function withoutProviderPublication<T>(
+  registry: CallableProviderRegistry,
+  session: ProgramAbiSession,
+  action: () => T,
+): T {
+  const before = providerPublicationSnapshot(registry, session);
+  try {
+    return action();
+  } finally {
+    expect(providerPublicationSnapshot(registry, session)).toEqual(before);
+  }
+}
+
+function describePreparedProvidersWithoutPublishing(
+  registry: CallableProviderRegistry,
+  session: ProgramAbiSession,
+  keys: ReadonlySet<string>,
+  exactImportDescriptor?: Parameters<CallableProviderRegistry["describePrepared"]>[1],
+): PreparedProviderDescriptor {
+  return withoutProviderPublication(registry, session, () => registry.describePrepared(keys, exactImportDescriptor));
+}
+
+function expectPreparedProviderFailureWithoutPublishing(
+  registry: CallableProviderRegistry,
+  session: ProgramAbiSession,
+  action: () => unknown,
+): void {
+  expect(() => withoutProviderPublication(registry, session, action)).toThrowError(ProgramAbiInvariantError);
+}
+
 function functionImport(module: string, name: string, typeIdx: number): Import {
   return { module, name, desc: { kind: "func", typeIdx } };
 }
@@ -59,6 +139,54 @@ function definedFunction(name: string, typeIdx: number): WasmFunction {
     body: [{ op: "f64.const", value: 0 }],
     exported: false,
   };
+}
+
+function definedProviderFixture(...names: readonly string[]) {
+  const module = createEmptyModule();
+  module.types.push(F64_TO_F64);
+  const functions = names.map((name) => definedFunction(name, 0));
+  module.functions.push(...functions);
+  return { ...fixture(module), functions, module };
+}
+
+function observeRuntimeProvider(providers: CallableProviderRegistry, name: string, index: number): string {
+  const ref = irRuntimeFuncRef(name);
+  providers.observe(ref, index);
+  return irCallableBindingKey(ref.binding);
+}
+
+function planForeignProviderOrder(session: ProgramAbiSession, derivedOrdinal: number, label: string) {
+  const entrySource = session.inventory.sources.find(({ kind }) => kind === "entry")!;
+  const id = createIrBindingId({
+    ownerId: entrySource.id,
+    domain: "callable",
+    role: `foreign-${label}`,
+    ordinal: derivedOrdinal,
+  });
+  session.plan({
+    id,
+    structuralOrder: session.structuralOrder.forSource(entrySource.id, {
+      domain: "callable",
+      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.callableProvider,
+      derivedOrdinal,
+    }),
+    structuralReferenceKey: `foreign:${label}`,
+    displayName: label,
+    slotPolicy: "required",
+    slotSpace: "function",
+    intent: { kind: "callable", origin: "runtime", signature: { params: [], results: [] } },
+  });
+  return id;
+}
+
+function sealedProviderSuffixFixture() {
+  const result = definedProviderFixture("middle", "z-appended", "a-appended");
+  const middleKey = observeRuntimeProvider(result.providers, "middle", 0);
+  expect(result.providers.planPrepared(new Set())).toEqual(new Map());
+  const sealedSnapshot = providerPublicationSnapshot(result.providers, result.session);
+  const zKey = observeRuntimeProvider(result.providers, "z-appended", 1);
+  const aKey = observeRuntimeProvider(result.providers, "a-appended", 2);
+  return { ...result, aKey, middleKey, sealedSnapshot, zKey };
 }
 
 function providerFixture(reverseObservation: boolean) {
@@ -181,6 +309,310 @@ describe("#3520 runtime/intrinsic callable-provider Program ABI", () => {
     );
   });
 
+  it("keeps an abandoned provider preview out of ordering and matches the unpreviewed control", () => {
+    const run = (preview: boolean) => {
+      const { module, providers, session } = definedProviderFixture("z-provider", "a-provider");
+      const zKey = observeRuntimeProvider(providers, "z-provider", 0);
+      const descriptor = preview
+        ? describePreparedProvidersWithoutPublishing(providers, session, new Set([zKey]))
+        : undefined;
+
+      // If description had sealed the order, this lexically earlier provider
+      // would be appended and the two runs would mint different ordinals.
+      const aKey = observeRuntimeProvider(providers, "a-provider", 1);
+      if (descriptor) {
+        expectPreparedProviderFailureWithoutPublishing(providers, session, () =>
+          providers.publishPreparedDescriptor(descriptor),
+        );
+      }
+      const ids = providers.planRetained();
+      const entries = session.publish(module).abi.entries();
+      return {
+        ids: [...ids],
+        entries,
+        aOrdinal: session.getDraft(ids.get(aKey)!)?.structuralOrder.derivedOrdinal,
+        zOrdinal: session.getDraft(ids.get(zKey)!)?.structuralOrder.derivedOrdinal,
+      };
+    };
+
+    const previewed = run(true);
+    const control = run(false);
+    expect(previewed).toEqual(control);
+    expect(previewed.aOrdinal).toBe(0);
+    expect(previewed.zOrdinal).toBe(1);
+    expect(previewed.ids).toHaveLength(2);
+  });
+
+  it("authenticates provider descriptors without changing provider or session state", () => {
+    const target = definedProviderFixture("target");
+    const targetKey = observeRuntimeProvider(target.providers, "target", 0);
+    const descriptor = describePreparedProvidersWithoutPublishing(
+      target.providers,
+      target.session,
+      new Set([targetKey]),
+    );
+    const forged = Object.freeze({ kind: "prepared-callable-provider-descriptor" }) as PreparedProviderDescriptor;
+
+    const foreign = definedProviderFixture("foreign");
+    const foreignKey = observeRuntimeProvider(foreign.providers, "foreign", 0);
+    const foreignDescriptor = describePreparedProvidersWithoutPublishing(
+      foreign.providers,
+      foreign.session,
+      new Set([foreignKey]),
+    );
+
+    for (const candidate of [forged, foreignDescriptor]) {
+      expectPreparedProviderFailureWithoutPublishing(target.providers, target.session, () =>
+        target.providers.assertPreparedDescriptorCurrent(candidate),
+      );
+      expectPreparedProviderFailureWithoutPublishing(target.providers, target.session, () =>
+        target.providers.publishPreparedDescriptor(candidate),
+      );
+    }
+    target.providers.assertPreparedDescriptorCurrent(descriptor);
+  });
+
+  it("rejects occupied prepared-provider order slots without sealing and tolerates unrelated order", () => {
+    {
+      const { providers, session } = definedProviderFixture("selected");
+      const key = observeRuntimeProvider(providers, "selected", 0);
+      planForeignProviderOrder(session, 0, "before-provider-description");
+      expectPreparedProviderFailureWithoutPublishing(providers, session, () =>
+        providers.describePrepared(new Set([key])),
+      );
+    }
+
+    {
+      const { providers, session } = definedProviderFixture("selected");
+      const key = observeRuntimeProvider(providers, "selected", 0);
+      const descriptor = describePreparedProvidersWithoutPublishing(providers, session, new Set([key]));
+      planForeignProviderOrder(session, 0, "after-provider-description");
+      expectPreparedProviderFailureWithoutPublishing(providers, session, () =>
+        providers.assertPreparedDescriptorCurrent(descriptor),
+      );
+      expectPreparedProviderFailureWithoutPublishing(providers, session, () =>
+        providers.publishPreparedDescriptor(descriptor),
+      );
+    }
+
+    {
+      const { functions, providers, session } = definedProviderFixture("selected");
+      const key = observeRuntimeProvider(providers, "selected", 0);
+      const descriptor = describePreparedProvidersWithoutPublishing(providers, session, new Set([key]));
+      const foreignId = planForeignProviderOrder(session, 1, "unrelated-provider-order");
+      const beforeCurrentness = providerPublicationSnapshot(providers, session);
+      providers.assertPreparedDescriptorCurrent(descriptor);
+      expect(providerPublicationSnapshot(providers, session)).toEqual(beforeCurrentness);
+      const ids = providers.publishPreparedDescriptor(descriptor);
+      expect(session.getDraft(foreignId)?.structuralOrder.derivedOrdinal).toBe(1);
+      expect(session.hasLocator(ids.get(key)!, functions[0])).toBe(true);
+    }
+  });
+
+  it("freezes the sorted provider prefix and retains the appended discovery-order suffix", () => {
+    const { aKey, middleKey, providers, sealedSnapshot, session, zKey } = sealedProviderSuffixFixture();
+    expect(sealedSnapshot).toMatchObject({
+      observationOrder: [middleKey],
+      appendedOrder: [],
+      plannedKeys: [],
+    });
+    const descriptor = describePreparedProvidersWithoutPublishing(providers, session, new Set([middleKey, zKey, aKey]));
+    const beforeCurrentness = providerPublicationSnapshot(providers, session);
+    providers.assertPreparedDescriptorCurrent(descriptor);
+    expect(providerPublicationSnapshot(providers, session)).toEqual(beforeCurrentness);
+    const ids = providers.publishPreparedDescriptor(descriptor);
+
+    expect(session.getDraft(ids.get(middleKey)!)?.structuralOrder.derivedOrdinal).toBe(0);
+    expect(session.getDraft(ids.get(zKey)!)?.structuralOrder.derivedOrdinal).toBe(1);
+    expect(session.getDraft(ids.get(aKey)!)?.structuralOrder.derivedOrdinal).toBe(2);
+    expect(providerPublicationSnapshot(providers, session)).toMatchObject({
+      observationOrder: [middleKey],
+      appendedOrder: [zKey, aKey],
+      plannedKeys: [middleKey, zKey, aKey],
+    });
+  });
+
+  it("rejects an appended suffix reorder and provider contract drift without publishing", () => {
+    {
+      const { providers, session } = definedProviderFixture("present");
+      expectPreparedProviderFailureWithoutPublishing(providers, session, () =>
+        providers.describePrepared(new Set([irCallableBindingKey(irRuntimeFuncRef("missing").binding)])),
+      );
+    }
+
+    {
+      const { aKey, middleKey, providers, session, zKey } = sealedProviderSuffixFixture();
+      const descriptor = describePreparedProvidersWithoutPublishing(
+        providers,
+        session,
+        new Set([middleKey, zKey, aKey]),
+      );
+      const state = providers as unknown as { readonly appendedOrder: string[] };
+      state.appendedOrder.reverse();
+      expectPreparedProviderFailureWithoutPublishing(providers, session, () =>
+        providers.publishPreparedDescriptor(descriptor),
+      );
+    }
+
+    const mutations: readonly [string, (module: WasmModule, providers: CallableProviderRegistry) => void][] = [
+      ["removed locator", (module) => (module.functions = [])],
+      ["replaced locator", (module) => (module.functions[0] = definedFunction("replacement", 0))],
+      ["changed signature", (module) => (module.functions[0]!.typeIdx = 1)],
+      [
+        "changed structural key",
+        (_module, providers) => {
+          const state = providers as unknown as {
+            readonly observed: Map<string, { readonly structuralReferenceKey: string }>;
+          };
+          const [key, row] = [...state.observed.entries()][0]!;
+          state.observed.set(key, Object.freeze({ ...row, structuralReferenceKey: `${key}|drift` }));
+        },
+      ],
+    ];
+    for (const [, mutate] of mutations) {
+      const { module, providers, session } = definedProviderFixture("selected");
+      module.types.push({ kind: "func", params: [{ kind: "i32" }], results: [] });
+      const key = observeRuntimeProvider(providers, "selected", 0);
+      const descriptor = describePreparedProvidersWithoutPublishing(providers, session, new Set([key]));
+      mutate(module, providers);
+      expectPreparedProviderFailureWithoutPublishing(providers, session, () =>
+        providers.publishPreparedDescriptor(descriptor),
+      );
+    }
+  });
+
+  it("closes every same-locator sibling and rejects a sibling discovered after description", () => {
+    const positive = definedProviderFixture("shared");
+    const shared = positive.functions[0]!;
+    const runtimeRef = irRuntimeFuncRef("runtime-shared");
+    const intrinsicRef = irIntrinsicFuncRef("intrinsic-shared");
+    const runtimeKey = irCallableBindingKey(runtimeRef.binding);
+    const intrinsicKey = irCallableBindingKey(intrinsicRef.binding);
+    positive.providers.observe(runtimeRef, 0);
+    positive.providers.observe(intrinsicRef, 0);
+    const descriptor = describePreparedProvidersWithoutPublishing(
+      positive.providers,
+      positive.session,
+      new Set([runtimeKey]),
+    );
+    expect(Object.isFrozen(descriptor)).toBe(true);
+    expect(Object.isFrozen(shared)).toBe(false);
+    expect(Object.isFrozen(positive.module.types[0])).toBe(false);
+    positive.module.imports.unshift(functionImport("late", "index-shift", 0));
+    positive.ctx.numImportFuncs++;
+    const beforeIndexShiftCheck = providerPublicationSnapshot(positive.providers, positive.session);
+    positive.providers.assertPreparedDescriptorCurrent(descriptor);
+    expect(providerPublicationSnapshot(positive.providers, positive.session)).toEqual(beforeIndexShiftCheck);
+    const ids = positive.providers.publishPreparedDescriptor(descriptor);
+    expect([...ids.keys()].sort()).toEqual([intrinsicKey, runtimeKey].sort());
+    const canonicalKey = [intrinsicKey, runtimeKey].sort()[0]!;
+    const aliasKey = canonicalKey === intrinsicKey ? runtimeKey : intrinsicKey;
+    expect(positive.session.hasLocator(ids.get(canonicalKey)!, shared)).toBe(true);
+    expect(positive.session.getDraft(ids.get(aliasKey)!)).toMatchObject({
+      slotPolicy: "alias",
+      aliasOf: ids.get(canonicalKey),
+    });
+
+    const control = definedProviderFixture("shared");
+    control.providers.observe(runtimeRef, 0);
+    control.providers.observe(intrinsicRef, 0);
+    control.module.imports.unshift(functionImport("late", "index-shift", 0));
+    control.ctx.numImportFuncs++;
+    const compatibilityIds = control.providers.planPrepared(new Set([runtimeKey]));
+    expect([...ids]).toEqual([...compatibilityIds]);
+    const retained = control.providers.planRetained();
+    const retainedSnapshot = providerPublicationSnapshot(control.providers, control.session);
+    expect(control.providers.planPrepared(new Set([runtimeKey])).get(runtimeKey)).toBe(retained.get(runtimeKey));
+    expect(providerPublicationSnapshot(control.providers, control.session)).toEqual(retainedSnapshot);
+    expect(positive.session.publish(positive.module).abi.entries()).toEqual(
+      control.session.publish(control.module).abi.entries(),
+    );
+
+    const stale = definedProviderFixture("shared");
+    stale.providers.observe(runtimeRef, 0);
+    const staleDescriptor = describePreparedProvidersWithoutPublishing(
+      stale.providers,
+      stale.session,
+      new Set([runtimeKey]),
+    );
+    stale.providers.observe(intrinsicRef, 0);
+    expectPreparedProviderFailureWithoutPublishing(stale.providers, stale.session, () =>
+      stale.providers.publishPreparedDescriptor(staleDescriptor),
+    );
+  });
+
+  it("requires the exact provisional import owner and rejects its locator drift", () => {
+    const createImportBackedFixture = () => {
+      const module = createEmptyModule();
+      module.types.push(F64_TO_F64);
+      const targetImport = functionImport("env", "runtime_target", 0);
+      const siblingImport = functionImport("env", "sibling", 0);
+      module.imports.push(targetImport, siblingImport);
+      const result = fixture(module);
+      const key = observeRuntimeProvider(result.providers, "runtime_target", 0);
+      catalogProgramAbiCallableImports(result.ctx);
+      const imports = result.ctx.programAbiCallableImports;
+      if (!imports) throw new Error("missing callable-import registry");
+      return { ...result, imports, key, module, siblingImport, targetImport };
+    };
+
+    const positive = createImportBackedFixture();
+    const forgedImportDescriptor = Object.freeze({
+      kind: "prepared-callable-import-descriptor",
+    }) as PreparedImportDescriptor;
+    expectPreparedProviderFailureWithoutPublishing(positive.providers, positive.session, () =>
+      positive.providers.describePrepared(new Set([positive.key]), forgedImportDescriptor),
+    );
+    const foreign = createImportBackedFixture();
+    const foreignImportDescriptor = foreign.imports.describePrepared(new Set([foreign.targetImport]));
+    expectPreparedProviderFailureWithoutPublishing(positive.providers, positive.session, () =>
+      positive.providers.describePrepared(new Set([positive.key]), foreignImportDescriptor),
+    );
+    expectPreparedProviderFailureWithoutPublishing(positive.providers, positive.session, () =>
+      positive.providers.describePrepared(new Set([positive.key])),
+    );
+    const wrongImportBefore = callableImportPublicationSnapshot(positive.imports, positive.session);
+    const wrongImportDescriptor = positive.imports.describePrepared(new Set([positive.siblingImport]));
+    expect(callableImportPublicationSnapshot(positive.imports, positive.session)).toEqual(wrongImportBefore);
+    expectPreparedProviderFailureWithoutPublishing(positive.providers, positive.session, () =>
+      positive.providers.describePrepared(new Set([positive.key]), wrongImportDescriptor),
+    );
+    const importBefore = callableImportPublicationSnapshot(positive.imports, positive.session);
+    const importDescriptor = positive.imports.describePrepared(new Set([positive.targetImport]));
+    expect(callableImportPublicationSnapshot(positive.imports, positive.session)).toEqual(importBefore);
+    const providerDescriptor = describePreparedProvidersWithoutPublishing(
+      positive.providers,
+      positive.session,
+      new Set([positive.key]),
+      importDescriptor,
+    );
+    positive.imports.publishPreparedDescriptor(importDescriptor);
+    const importId = positive.imports.preparedDescriptorBindingId(importDescriptor, positive.targetImport)!;
+    const providerIds = positive.providers.publishPreparedDescriptor(providerDescriptor);
+    const providerId = providerIds.get(positive.key)!;
+    expect(positive.session.getDraft(providerId)).toMatchObject({
+      slotPolicy: "alias",
+      aliasOf: importId,
+    });
+    expect(positive.session.hasLocator(importId, positive.targetImport)).toBe(true);
+    expect(positive.session.hasLocator(providerId)).toBe(false);
+
+    const stale = createImportBackedFixture();
+    const staleImportBefore = callableImportPublicationSnapshot(stale.imports, stale.session);
+    const staleImportDescriptor = stale.imports.describePrepared(new Set([stale.targetImport]));
+    expect(callableImportPublicationSnapshot(stale.imports, stale.session)).toEqual(staleImportBefore);
+    const staleProviderDescriptor = describePreparedProvidersWithoutPublishing(
+      stale.providers,
+      stale.session,
+      new Set([stale.key]),
+      staleImportDescriptor,
+    );
+    stale.module.imports[0] = functionImport("env", "runtime_target", 0);
+    expectPreparedProviderFailureWithoutPublishing(stale.providers, stale.session, () =>
+      stale.providers.publishPreparedDescriptor(staleProviderDescriptor),
+    );
+  });
+
   it("discards a dead import observed only by an IR candidate that later withdrew", () => {
     const module = createEmptyModule();
     module.types.push(F64_TO_F64);
@@ -218,14 +650,14 @@ describe("#3520 runtime/intrinsic callable-provider Program ABI", () => {
     const prepared = providers.planPrepared(new Set([fmodKey]));
     expect([...prepared.keys()]).toEqual([fmodKey]);
     expect(session.hasLocator(prepared.get(fmodKey)!, fmod)).toBe(true);
-    expect(() => providers.observe(irRuntimeFuncRef("__late_provider"), 1)).toThrowError(
-      expect.objectContaining<ProgramAbiInvariantError>({ code: "planning-sealed" }),
-    );
+    const lateRef = irRuntimeFuncRef("__late_provider");
+    const lateKey = irCallableBindingKey(lateRef.binding);
+    expect(providers.observe(lateRef, 1)).toBe(1);
 
     module.imports = [];
     ctx.numImportFuncs = 0;
     expect(planProgramAbiCallableImports(ctx).size).toBe(0);
-    expect([...providers.planRetained().keys()]).toEqual([fmodKey]);
+    expect([...providers.planRetained().keys()].sort()).toEqual([fmodKey, lateKey].sort());
     expect(session.publish(module).abi.resolveFinalIndex(prepared.get(fmodKey)!)).toEqual({
       space: "function",
       index: 0,
@@ -293,7 +725,7 @@ describe("#3520 runtime/intrinsic callable-provider Program ABI", () => {
     expect(result.irPostClaimErrors).toEqual([]);
     expect(result.programAbi).toBeDefined();
 
-    for (const ref of [irRuntimeFuncRef("Math_sin"), irIntrinsicFuncRef("__fmod")]) {
+    for (const ref of [irIntrinsicFuncRef("math.sin"), irIntrinsicFuncRef("__fmod")]) {
       const key = irCallableBindingKey(ref.binding);
       const entries = result.programAbi!.abi.entries().filter((entry) => entry.structuralReferenceKey === key);
       expect(entries).toHaveLength(1);

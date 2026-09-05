@@ -3,7 +3,7 @@ id: 3176
 title: "standalone: JSON.parse/stringify spec residual — reviver array walk illegal-cast, SyntaxError strictness, replacer/space edges (67 gap tests)"
 status: ready
 created: 2026-07-12
-updated: 2026-07-26
+updated: 2026-08-27
 priority: high
 feasibility: hard
 task_type: bug
@@ -24,6 +24,8 @@ loc-budget-allow:
   - src/codegen/builtin-static-globals.ts
   - src/codegen/native-proto.ts
   - src/codegen/object-runtime.ts
+func-budget-allow:
+  - src/codegen/json-codec-native.ts::emitJsonParseTextReviver
 coercion-sites-allow:
   - src/codegen/json-codec-native.ts
 ---
@@ -304,3 +306,68 @@ Combined validation also passed 25/25 focused tests across rawJSON composition,
 JSON namespace reflection, shared builtin-function metadata, and the
 GeneratorPrototype call/apply safeguards, plus typecheck and the function/LOC
 quality gates.
+
+## 2026-08-27 Luna/max wave plan — seven reviver abrupt-completion rows
+
+The exact ES2015 standalone slice contains these seven non-Proxy `JSON.parse`
+reviver rows: object/array define-property abrupt, object/array delete abrupt,
+object own-keys abrupt, and array length get/coercion abrupt. The cached
+standalone baseline fails all seven because the expected original abrupt value
+is not observed; the worker must establish a fresh authoritative control on its
+checkpoint head.
+
+1. Freeze the seven exact paths and attribute each failure by the reviver walk
+   operation that should complete abruptly. Preserve the original thrown value,
+   not merely the error class.
+2. Fix the existing InternalizeJSONProperty object/array walk at the narrowest
+   shared seam. Do not add a second JSON parser/walker and do not enter Proxy,
+   replacer, stringify, or reflection scope.
+3. Add permanent focused coverage for object define/delete and array
+   define/delete/length abrupt completion, including a normal reviver control.
+4. Rerun exact standalone 7/7 acceptance plus a host regression control. Record
+   denominators, losses, and handoff here. Open a separate ready upstream PR
+   only if complete; otherwise open a draft checkpoint PR.
+
+## 2026-08-27 Luna/max wave — implementation and acceptance
+
+The seven requested rows were frozen to these exact paths (their fixtures use
+Proxy values, but this checkpoint does not modify the Proxy runtime):
+
+- `parse/reviver-object-define-prop-err.js`
+- `parse/reviver-array-define-prop-err.js`
+- `parse/reviver-object-delete-err.js`
+- `parse/reviver-array-delete-err.js`
+- `parse/reviver-object-own-keys-err.js`
+- `parse/reviver-array-length-get-err.js`
+- `parse/reviver-array-length-coerce-err.js`
+
+The fresh pinned-artifact standalone baseline (`run 20260827-043401`) was
+**0/7**: every row completed execution but failed to observe its expected
+`Test262Error`. The shared `__internalize_json_value` walk in
+`src/codegen/json-codec-native.ts` now recognizes the standalone `$Proxy`
+carrier, classifies its array target via `$ObjVec`/`$__vec_base`, and routes
+snapshot enumeration, indexed reads, `length`, deletes, and data-property
+creation through the existing dynamic helpers. Those helpers retain the
+existing Proxy dispatch front guards, so trap exceptions propagate unchanged.
+The walk also uses the lane-aware undefined predicate; under the active
+singleton regime a reviver `undefined` result is no longer confused with JSON
+`null`.
+
+Acceptance and controls:
+
+- exact pinned standalone run `20260827-044840`: **7/7 pass**, **0/7 fail**;
+  denominator is the seven frozen rows (the nine empty generated shards are
+  runner artifacts and are excluded from the conformance report)
+- permanent focused coverage: `tests/issue-3176-reviver-abrupt.test.ts`,
+  **8/8 pass** (all seven trap classes preserve thrown-marker identity, plus a
+  normal reviver control)
+- host-side JSON reviver regression: `tests/issue-2013.test.ts`, **7/7 pass**
+- `pnpm run typecheck`, repository lint, and full Prettier check pass
+- the combined `issue-2013`/`issue-2166` control had one unrelated pre-existing
+  standalone replacer failure in `issue-2166` PR-D3; no JSON reviver control
+  regressed
+
+Handoff: the implementation and focused tests are complete on
+`codex/3176-es2015-reviver-abrupt`; root should open this checkpoint as a
+separate ready PR after verifying topology. The umbrella issue remains ready
+for its other residual rows.

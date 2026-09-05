@@ -31,6 +31,11 @@ export const NODE_BUILTIN_MODULES = new Set([
   "buffer",
   "zlib",
   "util",
+  // (#4616) `import {isNativeError} from 'node:util/types'` — jest-util's
+  // isError delegates to it (Error.isError is absent on Node 22). Same
+  // subpath-module pattern as stream/web and fs/promises; the runtime adapter
+  // require()s the specifier verbatim.
+  "util/types",
   "path",
   "process",
   "net",
@@ -224,6 +229,10 @@ const NODE_BUILTIN_FN_TYPED_STUBS: Record<
   os: {
     platform: { params: "", returns: "any", passthrough: "" },
     release: { params: "", returns: "any", passthrough: "" },
+    // Jest's original config defaults unit uses os.tmpdir() while building its
+    // cache directory. Keep the named-import route on the same host adapter as
+    // platform/release instead of exposing a null generic stub.
+    tmpdir: { params: "", returns: "any", passthrough: "" },
   },
 };
 
@@ -862,6 +871,55 @@ function buildTimerShim(used: Set<string>, definedNames: Set<string>): string {
   }
   if (lines.length === 0) return "";
   return `// #1501 timer host-import shim (auto-injected)\n${lines.join("\n")}\n`;
+}
+
+/**
+ * Inject only the timer compatibility declarations into a source file.
+ *
+ * `preprocessImports` also rewrites module imports, which is intentional for
+ * the single-source compiler but cannot be applied to a multi-file graph:
+ * the graph compiler must preserve those imports for TypeScript's resolver.
+ * The graph still needs the callback-aware timer ABI, though; otherwise a
+ * bare `setTimeout` resolves to the raw ambient host function and receives a
+ * Wasm closure that Node cannot invoke.
+ */
+export function injectTimerShimOnly(source: string, opts?: { host?: boolean }): string {
+  if (opts?.host === false) return source;
+  const sf = ts.createSourceFile("__timer_shim__.ts", source, ts.ScriptTarget.Latest, true);
+  const used = detectTimerCallSites(sf);
+  const definedNames = new Set<string>();
+  for (const stmt of sf.statements) {
+    if (ts.isFunctionDeclaration(stmt) && stmt.name) definedNames.add(stmt.name.text);
+    if (ts.isVariableStatement(stmt)) {
+      for (const decl of stmt.declarationList.declarations) {
+        if (ts.isIdentifier(decl.name)) definedNames.add(decl.name.text);
+      }
+    }
+    if (ts.isClassDeclaration(stmt) && stmt.name) definedNames.add(stmt.name.text);
+    if (ts.isImportDeclaration(stmt) && stmt.importClause) {
+      const clause = stmt.importClause;
+      if (clause.name) definedNames.add(clause.name.text);
+      if (clause.namedBindings) {
+        if (ts.isNamespaceImport(clause.namedBindings)) definedNames.add(clause.namedBindings.name.text);
+        else for (const element of clause.namedBindings.elements) definedNames.add(element.name.text);
+      }
+    }
+  }
+  // React's scheduler stores `queueMicrotask` as a first-class value rather
+  // than calling it at the syntax site, so the timer-call scan above cannot
+  // see it. Reuse the callback-aware timeout capability with a zero delay for
+  // that microtask fallback. This is only a JS-host graph shim; standalone /
+  // WASI keep their native timer policies and single-source preprocessing
+  // remains unchanged.
+  const queueUsed = source.includes("queueMicrotask") && !definedNames.has("queueMicrotask");
+  let shim = buildTimerShim(used, definedNames);
+  if (queueUsed) {
+    if (!shim.includes("declare function __timer_set_timeout")) {
+      shim += "declare function __timer_set_timeout(cb: any, ms: any): any;\n";
+    }
+    shim += "function queueMicrotask(cb: () => void): void { __timer_set_timeout(cb, 0); }\n";
+  }
+  return shim ? shim + source : source;
 }
 
 const TIMER_FUNCTION_ROLES: Readonly<Record<string, string>> = {

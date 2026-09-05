@@ -26,7 +26,8 @@
 // to the array's NAMED store: the #3537 expando bag in standalone, the host
 // `__extern_*` bridge in gc. Both spellings route, so they cannot disagree.
 //
-// Scope discipline — COMPILE-TIME CONSTANT keys only, and among those:
+// Scope discipline — compile-time constants use the dedicated fast routes,
+// while dynamic numeric/object keys use the property-key dispatch:
 //   * A numeric constant, a boolean literal, or a string constant whose
 //     `String(Number(s))` round-trips. That last condition is what keeps the
 //     reserved names out: `arr["length"]`, `arr["push"]`, `arr["constructor"]`
@@ -38,16 +39,19 @@
 //   * A key that IS an array index (including `-0`, whose ToString is `"0"`)
 //     returns `undefined` and falls through to the untouched vec path, so a
 //     module with only ordinary indices is byte-identical.
-//   * A non-constant key (`a[i]`, `x[object]` with a user `valueOf`) is
-//     untouched. Deciding index-ness at runtime needs the dispatch inside the
-//     element helper itself; the measured cluster is constant-keyed. Named in
-//     the issue as a known leftover.
+//   * A non-constant key is routed through the property-key dispatch when its
+//     type is numeric or object-like. That keeps runtime values such as
+//     `x[k - 2]` in the same property-key lane as object coercions; the
+//     receiver-specific helper can then preserve sparse array indices without
+//     saturating them to a signed i32.
 import ts from "typescript";
+import type { TypeFact } from "../checker/oracle.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
+import { emitToPropertyKeyOnce } from "./expressions/computed-member-reference.js";
 import {
   coerceType,
   compileExpression,
@@ -57,10 +61,74 @@ import {
 } from "./shared.js";
 import { resolveConstantExpression } from "./literals.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
+import { highArrayIndexLiteralI32 } from "./vec-sparse-index.js";
 import { TYPED_ARRAY_NAMES } from "./index.js";
 import { VEC_PROP_GET, VEC_PROP_SET } from "./vec-props.js";
+import { emitToNumber } from "./coercion-engine.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
+
+/** Whether a type fact can change the property-key lane at runtime. */
+function factNeedsPropertyKeyRuntime(fact: TypeFact): boolean {
+  if (fact.kind === "union") return fact.parts.some(factNeedsPropertyKeyRuntime);
+  return fact.kind !== "number" && fact.kind !== "string";
+}
+
+/**
+ * True when a computed key must stay on the JavaScript property-key path.
+ *
+ * A vec's fast element lane is intentionally numeric, but an object/function,
+ * Symbol, boolean, nullish, or BigInt key is converted with ToPropertyKey — it
+ * must not be coerced to an i32 before the receiver-specific runtime sees it.
+ * Constant spellings are classified by the helpers below first; this predicate
+ * covers the remaining dynamic values (notably `x[object]` from ES5 T9).
+ */
+function isOrdinaryArrayReceiver(ctx: CodegenContext, receiver: ts.Expression): boolean {
+  const receiverFact = ctx.oracle.typeFactOf(receiver);
+  if (receiverFact.kind === "array" || receiverFact.kind === "tuple") return true;
+  const inner = skipTransparentExpressions(receiver);
+  if (ts.isArrayLiteralExpression(inner)) return true;
+  if (ts.isNewExpression(inner) && ts.isIdentifier(inner.expression) && inner.expression.text === "Array") return true;
+  if (!ts.isIdentifier(inner)) return false;
+  const declaration = ctx.oracle.valueDeclarationOf(inner);
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+  const initializer = skipTransparentExpressions(declaration.initializer);
+  return (
+    ts.isArrayLiteralExpression(initializer) ||
+    (ts.isNewExpression(initializer) &&
+      ts.isIdentifier(initializer.expression) &&
+      initializer.expression.text === "Array")
+  );
+}
+
+export function isDynamicPropertyKeyExpression(
+  ctx: CodegenContext,
+  key: ts.Expression,
+  receiver?: ts.Expression,
+): boolean {
+  // Bundlers routinely erase TypedArray annotations from helper parameters,
+  // leaving both the receiver and arithmetic key as `any`. The generic vec
+  // property route is for Array exotics only; an unknown receiver must retain
+  // the established dense element lane so Uint8Array copy loops do not get
+  // captured merely because checker precision was lost.
+  if (receiver !== undefined && !isOrdinaryArrayReceiver(ctx, receiver)) return false;
+  const keyFact = ctx.oracle.typeFactOf(key);
+  if (factNeedsPropertyKeyRuntime(keyFact)) return true;
+  const inner = skipTransparentExpressions(key);
+  // A mutable arithmetic expression cannot be classified as an array index at
+  // compile time. Keep it on the runtime property-key path so values above
+  // i32's signed range (for example `k - 2` at 2^32 - 2) retain their exact
+  // canonical string instead of saturating before the vec dispatch sees them.
+  // Constant numeric expressions and simple variable indices stay on their
+  // existing dense path.
+  if (keyFact.kind === "number") {
+    return ts.isBinaryExpression(inner) && typeof resolveConstantExpression(ctx, inner) !== "number";
+  }
+  // A literal ordinary name (for example `"[object Object]"`) is also a
+  // property key, not a numeric index. Numeric spellings and the historical
+  // named-key constants are handled by their dedicated routes first.
+  return ts.isStringLiteral(inner) && !isArrayIndexString(inner.text) && !isNamedNumericOrBooleanSpelling(inner.text);
+}
 
 /** 2^32 − 1 — the exclusive upper bound on array indices (§10.4.2.2). */
 const MAX_ARRAY_INDEX_EXCLUSIVE = 4294967295;
@@ -229,6 +297,7 @@ export function nonArrayIndexNumericKey(
   ctx: CodegenContext,
   fctx: FunctionContext,
   key: ts.Expression,
+  allowHighArrayIndex = false,
 ): string | undefined {
   // `skipTransparentExpressions` unwraps parens AND the type-only wrappers
   // (`x as any`, `<any>x`, `!`), which carry no runtime meaning — the key
@@ -280,14 +349,18 @@ export function nonArrayIndexNumericKey(
 
   const n = resolveNumericKey(ctx, fctx, key);
   if (n !== undefined) {
-    if (isArrayIndexNumber(n)) return undefined;
+    if (isArrayIndexNumber(n)) return allowHighArrayIndex && n > 0x7fffffff ? String(n) : undefined;
     // `String(n)` IS ECMAScript `ToString(Number)` for every finite and
     // non-finite double, including `"1e+21"` and `"-Infinity"`.
     return String(n);
   }
 
   const s = resolveStringKey(ctx, fctx, key);
-  if (s === undefined || isArrayIndexString(s) || !isNamedNumericOrBooleanSpelling(s)) return undefined;
+  if (s === undefined || !isNamedNumericOrBooleanSpelling(s)) return undefined;
+  if (isArrayIndexString(s)) {
+    const n = Number(s);
+    return allowHighArrayIndex && n > 0x7fffffff ? s : undefined;
+  }
   return s;
 }
 
@@ -380,8 +453,73 @@ export function compileElementIndexI32(ctx: CodegenContext, fctx: FunctionContex
     fctx.body.push({ op: "i32.const", value: idx });
     return { kind: "i32" };
   }
+  // (#4491 lane J) A numeric-literal index above `i32.MAX` — `x[2147483648]`,
+  // `x[4294967294]`. Both the range-proven emitter and the generic f64
+  // fallback SATURATE it to 2147483647, silently renaming the index. Emit the
+  // u32 bit pattern instead; every index comparison on the vec paths is
+  // unsigned. See vec-sparse-index.ts.
+  const highIdx = highArrayIndexLiteralI32(key);
+  if (highIdx !== undefined) {
+    fctx.body.push({ op: "i32.const", value: highIdx });
+    return { kind: "i32" };
+  }
+  // A `for...in` target is stored as an externref because the loop writes
+  // property-key strings, even when TypeScript inferred a numeric index. The
+  // concrete vec path still needs its numeric position; coerce that string
+  // key with the normal ToNumber helper instead of asking compileExpression
+  // for i32 directly (which produces the zero default for an externref).
+  if (ts.isIdentifier(key) && fctx.forInIdentifierVars?.has(key.text)) {
+    const keyType = compileExpression(ctx, fctx, key, EXTERNREF);
+    if (keyType === null) return null;
+    emitToNumber(ctx, fctx, keyType);
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    return { kind: "i32" };
+  }
   if (tryEmitStaticI32Expression(ctx, fctx, key)) return { kind: "i32" };
   return compileExpression(ctx, fctx, key, { kind: "i32" });
+}
+
+/**
+ * Dynamic object-key READ for a vec receiver. The receiver is already on the
+ * stack; canonicalize the key once with ToPropertyKey, then let the existing
+ * standalone/host `__extern_get` dispatch choose element, expando, prototype,
+ * or ordinary-object semantics.
+ */
+export function emitDynamicVecElementGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvType: ValType,
+  key: ts.Expression,
+  compile: (expr: ts.Expression, hint?: ValType) => ValType | null,
+): ValType | null {
+  const recvLocal = allocLocal(fctx, `__dynkey_recv_${fctx.locals.length}`, recvType);
+  fctx.body.push({ op: "local.set", index: recvLocal });
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push({ op: "extern.convert_any" });
+  const keyFact = ctx.oracle.typeFactOf(key);
+  // Numeric expressions can use the indexed helper directly. It formats the
+  // f64 key canonically for the overlay read, avoiding a string round-trip
+  // that would otherwise lose the sparse-tail distinction at i32.max.
+  const numericKey = keyFact.kind === "number";
+  const keyResult = compile(key, numericKey ? { kind: "f64" } : EXTERNREF);
+  if (!keyResult) return null;
+  let getIdx: number | undefined;
+  if (numericKey) {
+    if (keyResult.kind !== "f64") coerceType(ctx, fctx, keyResult, { kind: "f64" });
+    getIdx = ensureLateImport(ctx, "__extern_get_idx", [EXTERNREF, { kind: "f64" }], [EXTERNREF]);
+  } else {
+    emitToPropertyKeyOnce(ctx, fctx);
+    getIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  }
+  flushLateImportShifts(ctx, fctx);
+  if (getIdx === undefined) {
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "drop" });
+    fctx.body.push({ op: "ref.null.extern" });
+    return EXTERNREF;
+  }
+  fctx.body.push({ op: "call", funcIdx: getIdx });
+  return EXTERNREF;
 }
 
 /**
@@ -477,6 +615,41 @@ export function emitNonIndexVecElementGet(ctx: CodegenContext, fctx: FunctionCon
   return EXTERNREF;
 }
 
+/** A non-constant key whose checker type can carry a property-name string. */
+export function isDynamicStringVecKey(ctx: CodegenContext, key: ts.Expression): boolean {
+  const fact = ctx.oracle.typeFactOf(key);
+  if (fact.kind === "string" || fact.kind === "any" || fact.kind === "unknown") return true;
+  return (
+    fact.kind === "union" &&
+    fact.parts.some((member) => member.kind === "string" || member.kind === "any" || member.kind === "unknown")
+  );
+}
+
+/**
+ * Host/gc runtime dispatch for `vec[key]` when `key` is a dynamic string.
+ *
+ * A string can denote either an array index (`"0"`) or a named expando
+ * (`"bar"`), so compiling it eagerly as i32 is unsound (`"bar"` became index
+ * zero). The host's ordinary property operation performs ToPropertyKey and the
+ * array-index classification at runtime. Standalone keeps its existing route
+ * until its native helper gains the full non-canonical index classifier.
+ */
+export function emitDynamicStringVecElementGet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  key: ts.Expression,
+): ValType | null {
+  if (ctx.standalone || ctx.wasi || !isDynamicStringVecKey(ctx, key)) return null;
+  const funcIdx = resolveNamedPropHelper(ctx, fctx, "get");
+  if (funcIdx === undefined) return null;
+  fctx.body.push({ op: "extern.convert_any" });
+  const keyType = compileExpression(ctx, fctx, key, EXTERNREF);
+  if (!keyType) return null;
+  if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, EXTERNREF);
+  fctx.body.push({ op: "call", funcIdx });
+  return EXTERNREF;
+}
+
 /**
  * `arr[<non-index number>] = v` WRITE. The receiver vec ref is already on the
  * stack; `recvType` is its ValType so it can be stashed in a local of the
@@ -516,4 +689,62 @@ export function emitNonIndexVecElementSet(
   // The assignment expression evaluates to the assigned value.
   fctx.body.push({ op: "local.get", index: valLocal });
   return EXTERNREF;
+}
+
+/** Host/gc write twin of {@link emitDynamicStringVecElementGet}. */
+export function emitDynamicStringVecElementSet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvType: ValType,
+  key: ts.Expression,
+  value: ts.Expression,
+  compile: (expr: ts.Expression, hint?: ValType) => ValType | null,
+): ValType | null {
+  if (ctx.standalone || ctx.wasi || !isDynamicStringVecKey(ctx, key)) return null;
+  const funcIdx = resolveNamedPropHelper(ctx, fctx, "set");
+  if (funcIdx === undefined) return null;
+
+  const recvLocal = allocLocal(fctx, `__dynkey_recv_${fctx.locals.length}`, recvType);
+  fctx.body.push({ op: "local.set", index: recvLocal });
+  const keyType = compileExpression(ctx, fctx, key, EXTERNREF);
+  if (!keyType) return null;
+  if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, EXTERNREF);
+  const keyLocal = allocLocal(fctx, `__dynkey_key_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: keyLocal });
+
+  const valResult = compile(value, EXTERNREF);
+  if (!valResult) return null;
+  if (valResult.kind !== "externref") coerceType(ctx, fctx, valResult, EXTERNREF);
+  const valLocal = allocLocal(fctx, `__dynkey_val_${fctx.locals.length}`, EXTERNREF);
+  fctx.body.push({ op: "local.set", index: valLocal });
+
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push({ op: "local.get", index: keyLocal });
+  fctx.body.push({ op: "local.get", index: valLocal });
+  fctx.body.push({ op: "call", funcIdx });
+  fctx.body.push({ op: "local.get", index: valLocal });
+  return EXTERNREF;
+}
+
+/** Route the named-key and dynamic-string write cases owned by this module. */
+export function emitVecNamedOrDynamicElementSet(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  recvType: ValType,
+  target: ts.ElementAccessExpression,
+  value: ts.Expression,
+): ValType | null {
+  const compile = (expr: ts.Expression, hint?: ValType) => compileExpression(ctx, fctx, expr, hint);
+  if (
+    elementAccessTypedArrayName(ctx, target.expression) === undefined &&
+    !(ts.isIdentifier(target.expression) && target.expression.text === "arguments")
+  ) {
+    const namedKey = nonArrayIndexNumericKey(ctx, fctx, target.argumentExpression);
+    if (namedKey !== undefined) {
+      const named = emitNonIndexVecElementSet(ctx, fctx, recvType, namedKey, value, compile);
+      if (named) return named;
+    }
+  }
+  return emitDynamicStringVecElementSet(ctx, fctx, recvType, target.argumentExpression, value, compile);
 }

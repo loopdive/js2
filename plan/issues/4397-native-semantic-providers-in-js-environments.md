@@ -183,6 +183,14 @@ retaining only the JS value adapter and explicit platform capabilities.
   bases 2 through 36. Coverage includes zero and both i64 extrema; native-first
   no longer imports `bigint_toString` or `bigint_toString_radix`, while the
   compatibility provider remains unchanged.
+- Native-first BigInt selection now follows the target profile's semantic
+  provider instead of treating every JavaScript environment as host-assisted.
+  Locals, parameters, returns, fields, arrays, updates, comparisons, unary
+  operations, conversions, and branch joins stay on the signed-i64 Wasm
+  carrier with zero legacy or unknown imports. Host-assisted compatibility
+  retains arbitrary-width JavaScript BigInts. Native arbitrary-width BigInt and
+  native `Object(BigInt).valueOf()` remain separate representation/dispatch
+  work rather than silently importing host semantics.
 - Native-first now selects the existing Wasm providers for RegExp-backed string
   split, extern-array join, and ordinary `String.raw` calls. Typed inline raw
   templates are adapted to the open in-module object representation, so these
@@ -218,6 +226,33 @@ retaining only the JS value adapter and explicit platform capabilities.
   receiver and threads it through nested/forwarding Proxies. Explicit receiver
   `Reflect.set` remains fail-loud until its native receiver/write invariants are
   complete.
+
+## 2026-08-26 BigInt follow-up handoff
+
+The carrier split above fixes the exercised signed-i64 paths and prevents
+native-first from silently selecting arbitrary-width host semantics. A
+read-only adversarial sweep found these remaining native-provider gaps; none is
+required by the host-assisted UUID suite, and none should be hidden by relaxing
+the zero-legacy/zero-unknown policy:
+
+- `BigInt.asIntN` / `BigInt.asUintN` still use the standalone/WASI selector and
+  native-first refuses their fallback `__get_builtin` import.
+- BigInt member/array `++` and compound assignment still pass through `f64` in
+  some native paths. The exact `9007199254740993n + 1n` probe rounds to
+  `9007199254740992n`; these paths need branded-i64 update emitters.
+- `String(bigint)` can trap, a dynamic string passed to `BigInt(value)` reaches
+  the standalone parser refusal, and a caller-supplied non-null
+  `bigint | null` fails narrowing.
+- `BigInt64Array` / `BigUint64Array` construction remains selected as host
+  semantics in native-first and is rejected by the publication gate.
+- Native `Object(BigInt).valueOf()` remains broken even for small values, while
+  values outside signed i64 additionally require a native bignum carrier.
+
+The next slice should start in `call-builtin-static.ts`,
+`host-bigint-updates.ts`, `unary-updates.ts`, `operator-assignment.ts`,
+`call-identifier.ts`, `identifiers.ts`, and the BigInt typed-array constructor
+selectors. Its regression matrix must use dynamic inputs and values above
+2^53, and must retain zero legacy and zero unknown imports.
 
 Remaining work includes the remaining Proxy MOP invariant edges (#4402),
 Promise subclass conformance, further family expansion, accelerator

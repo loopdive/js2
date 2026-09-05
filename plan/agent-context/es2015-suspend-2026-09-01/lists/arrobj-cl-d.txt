@@ -1,0 +1,7 @@
+built-ins/Object/getOwnPropertyDescriptors/symbols-included.js
+built-ins/Object/getOwnPropertyNames/order-after-define-property.js
+built-ins/Object/entries/symbols-omitted.js
+built-ins/Object/getOwnPropertySymbols/order-after-define-property.js
+built-ins/Object/getOwnPropertyDescriptors/order-after-define-property.js
+built-ins/Object/keys/order-after-define-property-with-function.js
+built-ins/Object/entries/order-after-define-property-with-function.js

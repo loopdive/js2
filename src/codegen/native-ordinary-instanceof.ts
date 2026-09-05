@@ -38,11 +38,10 @@
  * ## Not covered (deliberate)
  *
  * `obj instanceof FACTORY` where `FACTORY` is a runtime-built `Function(…)`
- * value (the `S15.3.5.3_A2_*` / `_A3_*` family) needs a RUNTIME read of
- * `FACTORY.prototype` off an arbitrary callable, which the standalone object
- * model does not expose yet (`$Object.$proto` is only seeded for #2660-approved
- * fnctor reconstructions). Those keep the host import and stay refused under
- * standalone rather than being answered wrongly.
+ * value still needs a RUNTIME read of `FACTORY.prototype` off an arbitrary
+ * callable. The shared dynamic substrate handles the exact
+ * `FACTORY.prototype = Object.prototype` identity join; other arbitrary
+ * prototypes keep their conservative answer rather than being guessed here.
  *
  * ## Why this cannot regress a passing test
  *
@@ -295,7 +294,7 @@ function isProvablyNonCallableObjectType(ctx: CodegenContext, expr: ts.Expressio
  * Either one unproven ⇒ decline, because the consequence of a false positive is
  * a spurious TypeError (a wrong answer), not a missed conversion.
  */
-function isFreshOrdinaryObjectExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
+export function isFreshOrdinaryObjectExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
   if (ts.isObjectLiteralExpression(expr)) return true;
   let source: ts.Expression = expr;
   if (ts.isIdentifier(expr)) {
@@ -338,31 +337,119 @@ function containsValueReturn(body: ts.Block): boolean {
 }
 
 /**
- * True when `name` is the target of any write (assignment / update) in `file` —
- * i.e. the binding is NOT single-assignment and its value at a later use site is
- * not determined by its initializer. Shared with the `isPrototypeOf` folds.
+ * True when `name` is the target of any write (assignment / update / binding
+ * re-declaration) in `file` — i.e. the binding is NOT single-assignment and its
+ * value at a later use site is not determined by its initializer. Shared with
+ * the `isPrototypeOf` folds, the plain builtin-static alias resolver, and the
+ * Proxy provenance traces.
+ *
+ * (#5196 R3 review F1/F3) Widened from "`<id> = …` or `++`/`--` with the
+ * identifier as the WHOLE operand" to any write POSITION: a destructuring
+ * assignment target (`[P] = [K]`, `({x: P} = o)`) and a `for-in`/`for-of` head
+ * now count. The old shape missed `var P = Proxy; [P] = [K];` entirely.
+ * The declarator's own name is NOT a write — a second declaration of the same
+ * binding is a separate question, answered by declaration COUNT at the one call
+ * site that needs it. Widening can only make a caller DECLINE a fold it would
+ * otherwise take — all eight callers use this as a soundness gate — so it is
+ * safe in the direction that matters.
+ *
+ * The scan counts only identifiers in a REFERENCE position. A member NAME
+ * (`o.P = 1`), a property-assignment key (`{ P: 1 }`) and a declaration's own
+ * name are all skipped: they merely SPELL the word, and counting them would
+ * turn a common unrelated statement into a blanket de-optimisation of every
+ * binding that happens to share the name. The base shape could not see them
+ * either (it required `node.left` to BE the identifier), so this keeps the
+ * widening to genuine write positions and nothing else.
  */
 export function identifierIsWrittenTo(file: ts.SourceFile, name: string): boolean {
+  const contains = (root: ts.Node, candidate: ts.Node): boolean =>
+    candidate.pos >= root.pos && candidate.end <= root.end;
+  /** False for the spelling-only positions described above. */
+  const isReference = (id: ts.Identifier): boolean => {
+    const parent: ts.Node | undefined = id.parent;
+    if (parent === undefined) return true;
+    if (ts.isQualifiedName(parent)) return parent.right !== id;
+    // `ShorthandPropertyAssignment.name` IS the reference (and, inside a
+    // destructuring assignment, the write target), so it stays in.
+    if (ts.isShorthandPropertyAssignment(parent)) return true;
+    return (parent as ts.Node & { name?: ts.Node }).name !== id;
+  };
+  /**
+   * True when `id` reaches `target` (an assignment's left side, an update
+   * operand, or a for-in/of head) only through PATTERN nodes — parentheses,
+   * array-literal elements, spreads, object-literal property values, shorthand
+   * names, and the target side of a pattern default (`[P = 1] = arr`). That is
+   * exactly the set of positions in which the BINDING is what gets written.
+   *
+   * (2026-09-04, #5576 merge-group wedge) The first cut of the widening used
+   * a plain containment test, which counted `X.prop = v`, `X.prop++` and
+   * `X[k] = v` as writes to X. Every test262 row carries
+   * `Test262Error.prototype.toString = …` (sta.js), so `Test262Error` read as
+   * reassigned in every file: the `new` fold for it declined everywhere and,
+   * on `language/module-code/namespace/internals/is-extensible.js`, the
+   * dynamic fallback spun forever inside the in-process fixture lane, capping
+   * 27 of 50 standalone shards. A member write mutates the OBJECT, not the
+   * binding, and is not a write here — same as the pre-widening shape.
+   */
+  const isBindingWritePath = (id: ts.Node, target: ts.Node): boolean => {
+    let cur: ts.Node = id;
+    while (cur !== target) {
+      const p: ts.Node | undefined = cur.parent;
+      if (p === undefined) return false;
+      if (ts.isParenthesizedExpression(p) || ts.isArrayLiteralExpression(p) || ts.isSpreadElement(p)) {
+        // pattern element / rest
+      } else if (ts.isObjectLiteralExpression(p) || ts.isSpreadAssignment(p)) {
+        // pattern property list / rest property
+      } else if (ts.isPropertyAssignment(p)) {
+        if (p.initializer !== cur) return false; // `{ [P]: x } = o` — computed key, not a target
+      } else if (ts.isShorthandPropertyAssignment(p)) {
+        if (p.name !== cur) return false; // `{ x = P } = o` — default value, not a target
+      } else if (ts.isBinaryExpression(p) && p.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        if (p.left !== cur) return false; // `[a = P] = arr` — default value, not a target
+      } else {
+        return false; // property/element access, call, conditional, … — the binding is only READ
+      }
+      cur = p;
+    }
+    return true;
+  };
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
-    if (
-      ts.isBinaryExpression(node) &&
-      ts.isIdentifier(node.left) &&
-      node.left.text === name &&
-      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-    ) {
-      found = true;
-      return;
-    }
-    if (
-      (ts.isPostfixUnaryExpression(node) || ts.isPrefixUnaryExpression(node)) &&
-      ts.isIdentifier(node.operand) &&
-      node.operand.text === name
-    ) {
-      found = true;
-      return;
+    if (ts.isIdentifier(node) && node.text === name && isReference(node)) {
+      for (let parent: ts.Node | undefined = node.parent; parent; parent = parent.parent) {
+        if (
+          ts.isBinaryExpression(parent) &&
+          contains(parent.left, node) &&
+          parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+        ) {
+          if (isBindingWritePath(node, parent.left)) {
+            found = true;
+            return;
+          }
+          break; // `X.prop = v`: X is read, and no enclosing assignment can target it either
+        }
+        if (
+          (ts.isPostfixUnaryExpression(parent) || ts.isPrefixUnaryExpression(parent)) &&
+          contains(parent.operand, node) &&
+          (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+        ) {
+          if (isBindingWritePath(node, parent.operand)) {
+            found = true;
+            return;
+          }
+          break;
+        }
+        if ((ts.isForInStatement(parent) || ts.isForOfStatement(parent)) && contains(parent.initializer, node)) {
+          if (isBindingWritePath(node, parent.initializer)) {
+            found = true;
+            return;
+          }
+          break;
+        }
+        if (ts.isStatement(parent) || ts.isSourceFile(parent)) break;
+      }
     }
     ts.forEachChild(node, visit);
   };

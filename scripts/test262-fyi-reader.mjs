@@ -8,8 +8,15 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { discoverFixtureGraph } from "./test262-fixture-graph.mjs";
+import { ITERATOR_BINDING_PREAMBLE, needsIteratorBinding } from "./test262-iterator-binding.mjs";
 
-export { discoverFixtureGraph, dynamicFixtureSpecifiers, staticFixtureSpecifiers } from "./test262-fixture-graph.mjs";
+export {
+  discoverFixtureGraph,
+  dynamicFixtureSpecifiers,
+  hasSelfModuleImport,
+  staticFixtureSpecifiers,
+  staticRelativeModuleSpecifiers,
+} from "./test262-fixture-graph.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const FYI_ROOT = join(ROOT, "test262-fyi", "data");
@@ -68,11 +75,66 @@ function readHarnessPreludes() {
   return preludes;
 }
 
+// (#4626) A test that DECLARES its own top-level `$262` (harness
+// detachArrayBuffer-host-detachArrayBuffer.js) collides with the runtime
+// shim's `var $262 = {…}` — the compiler gives duplicate top-level vars no
+// last-assignment-wins semantics, so the test's override silently never took
+// effect. Rename the SHIM segment's `$262` occurrences in place (same byte
+// length, so line/offset math is unaffected). The slice AFTER the runtime
+// segment is assert.js + sta.js + the test body; only a declaration there
+// (not a mere reference — harness includes reference `$262` and must keep
+// binding the single remaining declaration) triggers the rename. Mirrors the
+// tests/test262-original-harness.ts assembleVariant fix for the in-process
+// lane.
+function shadowRuntime262ForOwnDeclarations(tests, runtime) {
+  const renamed = runtime.replace(/\$262\b/g, () => "$26_");
+  for (const test of tests) {
+    if (typeof test?.contents !== "string") continue;
+    const at = test.contents.indexOf(runtime);
+    if (at < 0) continue;
+    const tail = test.contents.slice(at + runtime.length);
+    if (/\b(?:var|let|const)\s+\$262\b/.test(tail)) {
+      test.contents = test.contents.slice(0, at) + renamed + tail;
+    }
+  }
+  return tests;
+}
+
+// test262.fyi assembles the upstream harness before it exposes records to this
+// runner. Keep its records aligned with tests/test262-original-harness.ts by
+// adding the same feature-gated, compiled `%Iterator%` binding immediately
+// before the literal upstream body. The body itself remains byte-for-byte
+// untouched, which is important both to the Test262 source contract and to
+// strict reruns (the runner prepends their directive outside `contents`).
+export function provisionIteratorBindingsInOriginalHarnessRecords(tests) {
+  for (const test of tests) {
+    if (typeof test?.contents !== "string") continue;
+    const raw = Array.isArray(test.flags) ? test.flags.includes("raw") : test.flags?.raw === true;
+    if (raw) continue;
+
+    const body = fs.readFileSync(join(TEST262_ROOT, "test", normalizeTestPath(test.file)), "utf8");
+    if (!needsIteratorBinding(body)) continue;
+    if (!test.contents.endsWith(body)) {
+      throw new Error(`original-harness record does not preserve literal body: ${test.file}`);
+    }
+
+    const prefix = test.contents.slice(0, -body.length);
+    if (prefix.endsWith(ITERATOR_BINDING_PREAMBLE)) continue;
+    test.contents = prefix + ITERATOR_BINDING_PREAMBLE + body;
+  }
+  return tests;
+}
+
 export async function loadOriginalHarnessTests(selectedPaths) {
   const reader = requireOptionalInputs();
   const { default: readTests } = await import(pathToFileURL(reader).href);
   const runtime = fs.readFileSync(RUNTIME_PATH, "utf8");
-  if (!selectedPaths) return attachFixtureGraphs(await readTests(TEST262_ROOT, readHarnessPreludes(), runtime));
+  if (!selectedPaths)
+    return attachFixtureGraphs(
+      provisionIteratorBindingsInOriginalHarnessRecords(
+        shadowRuntime262ForOwnDeclarations(await readTests(TEST262_ROOT, readHarnessPreludes(), runtime), runtime),
+      ),
+    );
 
   // test262.fyi's reader eagerly retains every assembled source in the corpus.
   // Give parity tests a sparse mirror so small samples do not require hundreds
@@ -85,7 +147,11 @@ export async function loadOriginalHarnessTests(selectedPaths) {
       fs.mkdirSync(dirname(destination), { recursive: true });
       fs.copyFileSync(join(TEST262_ROOT, "test", normalized), destination);
     }
-    return attachFixtureGraphs(await readTests(scratch, readHarnessPreludes(), runtime));
+    return attachFixtureGraphs(
+      provisionIteratorBindingsInOriginalHarnessRecords(
+        shadowRuntime262ForOwnDeclarations(await readTests(scratch, readHarnessPreludes(), runtime), runtime),
+      ),
+    );
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }

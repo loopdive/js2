@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { describe, expect, it } from "vitest";
+import { resolve } from "node:path";
 import { compile } from "../src/index.js";
+import { runTest262File } from "./test262-runner.js";
 
 /**
  * #2717 — Array.prototype.flat / flatMap on the host-free lanes.
@@ -69,6 +71,80 @@ describe("#2717 — native standalone flat/flatMap (no unsatisfiable import)", (
       expect((instance.exports as { test: () => number }).test()).toBe(want);
     });
   }
+
+  it("preserves a scalar callback's custom species result", async () => {
+    const relativePath = "built-ins/Array/prototype/flatMap/target-array-with-non-writable-property.js";
+    const result = await runTest262File(
+      resolve("test262/test", relativePath),
+      "issue-2717-standalone",
+      120_000,
+      "standalone",
+    );
+    expect(result.status, `${relativePath}: ${result.error ?? result.reason ?? ""}`).toBe("pass");
+  });
+
+  it("keeps a dynamic scalar-or-array callback fail-loud", async () => {
+    const r = await compileStandalone(`
+      const a: number[] = [1, 2];
+      const cb: (x: number) => number | number[] = (x) => x;
+      return a.flatMap(cb).length;
+    `);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(noFlatImports(r)).toEqual([]);
+  });
+
+  it("keeps an Array-subclass callback fail-loud under custom species", async () => {
+    const r = await compileStandalone(`
+      class SubArray extends Array<number> {}
+      const a: number[] = [1, 2];
+      a.constructor = SubArray;
+      return a.flatMap((x) => new SubArray([x, x])).length;
+    `);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(noFlatImports(r)).toEqual([]);
+  });
+
+  it("keeps a transitive Array-subclass callback fail-loud", async () => {
+    const r = await compileStandalone(`
+      class BaseArray extends Array<number> {}
+      class SubArray extends BaseArray {}
+      const a: number[] = [1, 2];
+      a.constructor = SubArray;
+      return a.flatMap((x) => new SubArray([x, x])).length;
+    `);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(noFlatImports(r)).toEqual([]);
+  });
+
+  it("keeps a builtin-aliased Array-subclass callback fail-loud under custom species", async () => {
+    const r = await compileStandalone(`
+      const ArrayAlias = Array;
+      class AliasSubArray extends ArrayAlias<number> {}
+      const a: number[] = [1, 2];
+      a.constructor = AliasSubArray;
+      return a.flatMap((x) => new AliasSubArray([x, x])).length;
+    `);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(noFlatImports(r)).toEqual([]);
+  });
+
+  it("keeps a user-aliased Array-subclass callback fail-loud under custom species", async () => {
+    const r = await compileStandalone(`
+      class BaseArray extends Array<number> {}
+      const UserAlias = BaseArray;
+      class AliasSubArray extends UserAlias {}
+      const a: number[] = [1, 2];
+      a.constructor = AliasSubArray;
+      return a.flatMap((x) => new AliasSubArray([x, x])).length;
+    `);
+    expect(r.success).toBe(false);
+    expect(r.errors.map((e) => e.message).join("\n")).toMatch(/non-array-returning callback/);
+    expect(noFlatImports(r)).toEqual([]);
+  });
 
   const loudCases: Array<[string, string, RegExp]> = [
     [

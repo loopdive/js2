@@ -22,16 +22,22 @@ import {
   hasInterveningLexicalBinder,
 } from "./annexb-cancel.js";
 import { tryCompileAnnexBModuleBlockFnEvaluation } from "./annexb-global-live-binding.js";
-import { emitCachedFuncClosureAccess } from "./closures.js";
+import { mintScopedClassIdentity } from "./class-bodies.js";
+import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "./closures.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
-import { getLocalType } from "./context/locals.js";
+import { allocLocal, getLocalType } from "./context/locals.js";
 import { attachSourcePos, getSourcePos } from "./context/source-pos.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { compileExpression, registerCompileStatement } from "./shared.js";
-import { restoreBlockScopedShadows, saveBlockScopedShadows } from "./statements/shared.js";
-import { sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
+import {
+  collectBlockScopedNames,
+  discardBlockScopedShadows,
+  saveBlockScopedShadowsForNames,
+} from "./statements/shared.js";
+import { resetCompletionValueForStatement, sinkExpressionStatementValue } from "./statements/eval-completion-value.js";
 import { compileWithStatement } from "./with-scope.js";
-import { expressionRunsUserCode } from "./module-init-collection.js"; // (#4433) bare `typeof f();`
+import { expressionRunsUserCode, looseEqualityCoercesAnOperand } from "./module-init-collection.js"; // (#4433) bare `typeof f();` · (#5270 R3-F1) loose-eq guard
+import { noJsHost } from "./js-errors.js";
 
 // Sub-module imports — statement-family functions
 import {
@@ -56,8 +62,13 @@ import {
   compileNestedFunctionDeclaration,
 } from "./statements/nested-declarations.js";
 import { compileVariableStatement } from "./statements/variables.js";
+// (#5271 step 2.3) block-entry pre-allocation of the block's own lexical slots.
+import { preallocateBlockScopedSlots } from "./index.js";
+import { emitLocalTdzInit } from "./statements/tdz.js";
 import { definedFuncAt } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
 import { coerceType } from "./type-coercion.js";
+import { compileClassExpression } from "./expressions/new-super.js";
+import { emitLazyClassObjectGet } from "./expressions/extern.js";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the existing public API surface
@@ -73,7 +84,7 @@ export {
 export { bodyUsesArguments } from "./helpers/body-uses-arguments.js";
 export { emitArgumentsObject, hoistFunctionDeclarations } from "./statements/nested-declarations.js";
 export { collectInstrs } from "./statements/shared.js";
-export { emitTdzCheck } from "./statements/tdz.js";
+export { emitTdzCheckAtGlobal } from "./statements/tdz.js";
 
 // ---------------------------------------------------------------------------
 // Dispatcher helpers
@@ -82,8 +93,35 @@ export { emitTdzCheck } from "./statements/tdz.js";
 /**
  * Mark the first instruction emitted for a statement with its source position.
  */
+let traceStmtGlobalSerial = 0;
 function markStatementPos(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.Statement, compile: () => void): void {
   const pos = getSourcePos(ctx, stmt);
+  if (process.env.JS2WASM_TRACE_LAST_STMT && pos) {
+    // Debug-only (env-gated): stream every statement boundary into an exported
+    // mutable f64 global so a host harness can read WHERE a standalone module
+    // trapped (file index * 1e6 + line). No imports — global writes don't
+    // shift function indices.
+    const anyCtx = ctx as unknown as { __traceStmtGlobalIdx?: number; __traceStmtFiles?: Map<string, number> };
+    if (anyCtx.__traceStmtGlobalIdx === undefined) {
+      const idx = ctx.numImportGlobals + ctx.mod.globals.length;
+      ctx.mod.globals.push({
+        name: "__trace_last_stmt",
+        type: { kind: "f64" },
+        mutable: true,
+        init: [{ op: "f64.const", value: -1 }],
+      });
+      ctx.mod.exports.push({
+        name: `__trace_last_stmt_${traceStmtGlobalSerial++}`,
+        desc: { kind: "global", index: idx },
+      });
+      anyCtx.__traceStmtGlobalIdx = idx;
+      anyCtx.__traceStmtFiles = new Map();
+    }
+    const files = anyCtx.__traceStmtFiles!;
+    if (!files.has(pos.file)) files.set(pos.file, files.size);
+    fctx.body.push({ op: "f64.const", value: files.get(pos.file)! * 1e6 + pos.line });
+    fctx.body.push({ op: "global.set", index: anyCtx.__traceStmtGlobalIdx });
+  }
   const bodyLenBefore = fctx.body.length;
   compile();
   if (pos && fctx.body.length > bodyLenBefore) {
@@ -136,10 +174,66 @@ function bareTypeofStatementOperand(expr: ts.Expression): ts.Expression | undefi
  * on `expressionRunsUserCode`, so a statement with nothing to evaluate keeps its
  * previous lowering byte-for-byte.
  */
+/**
+ * (#5270 step 8) True for a bare `a <op> b;` statement whose operands can be
+ * OBJECTS, for an operator that reaches ToPrimitive (§7.1.1) — i.e. whose
+ * evaluation can run user code through `valueOf` / `toString` /
+ * `@@toPrimitive`.
+ *
+ * In statement position the value is dropped, so `compileExpression` is called
+ * with NO expected type and the binary lowering picks a scalar carrier that
+ * unboxes each operand directly, skipping ToPrimitive entirely: measured on
+ * HEAD, `left + right;` invoked the operands' `@@toPrimitive` ZERO times
+ * (probe p62 logged `""`) while `var r = left + right` — the same expression
+ * with an `externref` expectation — invoked both. Asking for `externref` here
+ * routes the statement through the same dynamic lowering the assignment gets.
+ *
+ * Deliberately narrow: an operand the oracle proves is a number / string /
+ * boolean / bigint cannot reach ToPrimitive, so those statements keep their
+ * previous lowering byte-for-byte.
+ */
+function bareBinaryStatementReachesToPrimitive(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ts.isBinaryExpression(expr)) return false;
+  switch (expr.operatorToken.kind) {
+    case ts.SyntaxKind.PlusToken:
+    case ts.SyntaxKind.MinusToken:
+    case ts.SyntaxKind.AsteriskToken:
+    case ts.SyntaxKind.SlashToken:
+    case ts.SyntaxKind.PercentToken:
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+    case ts.SyntaxKind.LessThanToken:
+    case ts.SyntaxKind.GreaterThanToken:
+    case ts.SyntaxKind.LessThanEqualsToken:
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+      break;
+    default:
+      return false;
+  }
+  // (#5270 review R3-F1) §7.2.15 does NOT coerce Object-vs-Object (nor
+  // null/undefined), but this compiler's `==` lowering coerces both operands
+  // regardless. Asking for `externref` on `objA == objB;` therefore turns a
+  // statement the spec says is inert into one that runs `valueOf` — and a
+  // poisoned `valueOf` then kills the whole enclosing evaluation. Keep the
+  // dynamic lowering for the `0 == y;` shape only. MUST stay in step with
+  // `looseEqualityCoercesAnOperand` in module-init-collection.ts.
+  if (!looseEqualityCoercesAnOperand(expr)) return false;
+  const mayBeObject = (operand: ts.Expression): boolean => {
+    const tag = ctx.oracle.staticJsTypeOf(operand);
+    return tag === "object" || tag === "function" || tag === "mixed";
+  };
+  return mayBeObject(expr.left) || mayBeObject(expr.right);
+}
+
 function compileExpressionStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ExpressionStatement): void {
   const typeofOperand = bareTypeofStatementOperand(stmt.expression);
   const evaluated = typeofOperand ?? stmt.expression;
-  sinkExpressionStatementValue(ctx, fctx, compileExpression(ctx, fctx, evaluated));
+  const expected =
+    typeofOperand === undefined && bareBinaryStatementReachesToPrimitive(ctx, evaluated)
+      ? ({ kind: "externref" } as const)
+      : undefined;
+  sinkExpressionStatementValue(ctx, fctx, compileExpression(ctx, fctx, evaluated, expected));
 }
 
 function restoreMapEntry<K, V>(map: Map<K, V>, key: K, hadEntry: boolean, value: V | undefined): void {
@@ -227,13 +321,68 @@ function tryCompileAnnexBExistingDirectFunctionUpdate(
     }
   }
   if (innerIdx !== undefined) {
-    const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, innerIdx);
+    const closureType = emitAnnexBFunctionClosure(ctx, fctx, stmt, funcName, innerIdx);
     if (closureType) {
       if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
       fctx.body.push({ op: "local.set", index: bindingLocal });
     }
   }
   return true;
+}
+
+/**
+ * Ordinary function declarations carry the nominal constructible marker in
+ * standalone/WASI closure values. Annex-B evaluation sites used to omit this
+ * flag while identifier reads supplied it, so both sites shared one cache
+ * global but disagreed about its struct type; the first site to initialize the
+ * cache then made the other site's ref.cast trap. Keep all declaration-value
+ * paths on the same wrapper family.
+ */
+function isOrdinaryFunctionDeclaration(ctx: CodegenContext, stmt: ts.FunctionDeclaration): boolean {
+  return (
+    (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
+    stmt.asteriskToken === undefined &&
+    !(stmt.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false)
+  );
+}
+
+/**
+ * Annex-B function values may carry TDZ/capture cells when the declaration's
+ * body mutates its own binding. The cached singleton helper models the full
+ * function signature as user parameters and therefore cannot represent those
+ * hidden capture parameters; use the per-activation closure path for such
+ * declarations and retain the singleton for capture-free functions.
+ */
+function emitAnnexBFunctionClosure(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  funcName: string,
+  funcIdx: number,
+): ReturnType<typeof emitCachedFuncClosureAccess> {
+  const constructible = isOrdinaryFunctionDeclaration(ctx, stmt);
+  const captures = ctx.nestedFuncCaptures.get(funcName);
+  const closureType =
+    captures && captures.length > 0
+      ? emitFuncRefAsClosure(ctx, fctx, funcName, funcIdx, constructible)
+      : emitCachedFuncClosureAccess(ctx, fctx, funcName, funcIdx, constructible);
+  const boxed = fctx.boxedCaptures?.get(funcName);
+  if (!closureType || !boxed || boxed.valType.kind !== "externref") return closureType;
+
+  // A function body that assigns to its own Annex-B name captures the mutable
+  // outer binding through a ref cell.  The closure must publish itself into
+  // that cell after construction; otherwise its first `f` read observes the
+  // null value captured while the box was being allocated.
+  if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+  const closureLocal = allocLocal(fctx, `__annexb_closure_${funcName}_${fctx.locals.length}`, {
+    kind: "externref",
+  });
+  fctx.body.push({ op: "local.tee", index: closureLocal });
+  fctx.body.push({ op: "local.get", index: fctx.localMap.get(funcName)! });
+  fctx.body.push({ op: "local.get", index: closureLocal });
+  fctx.body.push({ op: "struct.set", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+  fctx.body.push({ op: "local.get", index: closureLocal });
+  return { kind: "externref" };
 }
 
 /**
@@ -318,6 +467,10 @@ export function compileStatement(ctx: CodegenContext, fctx: FunctionContext, stm
 
   try {
     ctx.irBodyRouteAuditSession?.recordFrame("compileStatement", fctx, stmt);
+    // (#4515) §13 `UpdateEmpty(…, undefined)`: `if` / `try` / `switch` / `with`
+    // and every loop start their completion value at `undefined` rather than
+    // inheriting the previous statement's. No-op outside an inline eval.
+    resetCompletionValueForStatement(ctx, fctx, stmt);
     compileStatementInner(ctx, fctx, stmt);
   } catch (e) {
     // Defensive: catch any unhandled crash in statement compilation
@@ -335,7 +488,8 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   if (ts.isExportDeclaration(stmt)) return;
 
   // Export assignment — `export default expr` or `export = expr`
-  // Evaluate the expression (for side effects) but discard the result.
+  // Evaluate the expression and store it when this linked module owns an exact
+  // default-export snapshot cell; otherwise preserve the effects and discard it.
   if (ts.isExportAssignment(stmt)) {
     const resultType = compileExpression(ctx, fctx, stmt.expression);
     const expressionGlobal = ctx.defaultExpressionGlobals?.get(stmt);
@@ -343,7 +497,16 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       if (resultType.kind !== expressionGlobal.type.kind) {
         coerceType(ctx, fctx, resultType, expressionGlobal.type);
       }
-      fctx.body.push({ op: "global.set", index: ctx.moduleGlobals.get(expressionGlobal.bindingName)! });
+      const valueLocalIdx = ctx.mod.globals.indexOf(expressionGlobal.value);
+      const initializedLocalIdx = ctx.mod.globals.indexOf(expressionGlobal.initialized);
+      if (valueLocalIdx < 0 || initializedLocalIdx < 0) {
+        reportErrorNoNode(ctx, "Default-export snapshot cell lost its allocator identity");
+        fctx.body.push({ op: "drop" });
+        return;
+      }
+      fctx.body.push({ op: "global.set", index: ctx.numImportGlobals + valueLocalIdx });
+      fctx.body.push({ op: "i32.const", value: 1 });
+      fctx.body.push({ op: "global.set", index: ctx.numImportGlobals + initializedLocalIdx });
     } else if (resultType !== null) {
       fctx.body.push({ op: "drop" });
     }
@@ -379,11 +542,35 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
     // Save localMap entries for any block-scoped (let/const) names that shadow
     // existing variables.  Wasm locals are flat (no block scope), so we need to
     // restore the outer mapping after the block ends.
-    const savedLocals = saveBlockScopedShadows(fctx, stmt);
+    //
+    // (#5221) The save/restore pair only ever handled names that ALREADY had a
+    // local — a `let`/`const` the block introduces fresh had nothing to save,
+    // so its local stayed in `localMap` after the block closed and leaked into
+    // the enclosing scope. A later same-named declaration out there then reused
+    // the inner slot, INCLUDING ITS WASM TYPE:
+    //
+    //   if (x === 2) { const n = obj(); … }   // $n : (ref null $Anon)
+    //   const n = str();                      // reuses that slot ⇒
+    //                                         // ref.test fails ⇒ ref.null ⇒ null
+    //
+    // which is exactly the Temporal polyfill's `rn()` (`ToTemporalDate`): its
+    // `if (isZonedDateTime(e)) { const n = … }` arm poisoned the outer
+    // `const n = calendarOf(e)`, so the calendar id read back as `null` and the
+    // `%calendarImpl%` lookup that followed dereferenced a null pointer.
+    // `discardBlockScopedShadows` drops the block's own new names and then
+    // restores any genuine outer shadows — the CaseBlock path has used exactly
+    // this for the same reason.
+    const blockNames = collectBlockScopedNames(stmt);
+    const savedLocals = saveBlockScopedShadowsForNames(fctx, blockNames);
+    // (#5271 step 2.3) The block's declarative environment exists before its
+    // first statement runs (§13.2.14), so its own `let`/`const` slots must too —
+    // otherwise a closure built earlier in the block captures the outer (or
+    // same-spelled module-global) binding instead of the block's.
+    preallocateBlockScopedSlots(ctx, fctx, stmt.statements);
     for (const s of stmt.statements) {
       compileStatement(ctx, fctx, s);
     }
-    restoreBlockScopedShadows(fctx, savedLocals);
+    discardBlockScopedShadows(fctx, blockNames, savedLocals);
     return;
   }
 
@@ -481,15 +668,14 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       }
       const fnIdx = ctx.funcMap.get(funcName);
       if (outerLocal !== undefined && flagLocal !== undefined && fnIdx !== undefined) {
-        const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, fnIdx);
+        const closureType = emitAnnexBFunctionClosure(ctx, fctx, stmt, funcName, fnIdx);
         if (closureType) {
           // Closure value is on the stack; widen to externref for the outer local.
           if (closureType.kind !== "externref") {
             fctx.body.push({ op: "extern.convert_any" });
           }
           fctx.body.push({ op: "local.set", index: outerLocal });
-          fctx.body.push({ op: "i32.const", value: 1 });
-          fctx.body.push({ op: "local.set", index: flagLocal });
+          emitLocalTdzInit(fctx, funcName);
         }
       }
       // The function body itself was already compiled during the hoist pre-pass;
@@ -537,7 +723,7 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
       // through to today's wrong-but-valid behaviour instead.
       if (varLocal === undefined || fnIdx === undefined) return;
       if (getLocalType(fctx, varLocal)?.kind !== "externref") return;
-      const closureType = emitCachedFuncClosureAccess(ctx, fctx, funcName, fnIdx);
+      const closureType = emitAnnexBFunctionClosure(ctx, fctx, stmt, funcName, fnIdx);
       if (!closureType) return;
       if (closureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
       fctx.body.push({ op: "local.set", index: varLocal });
@@ -565,7 +751,46 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   // ClassDeclaration in statement position (e.g., inside for loops, if blocks,
   // switch cases, labeled statements, try/catch/finally, etc.)
   if (ts.isClassDeclaration(stmt)) {
-    compileNestedClassDeclaration(ctx, fctx, stmt);
+    // (#4618) A nested class whose name collided with a class in another
+    // scope was collected under a per-site synthetic identity (see
+    // collectClassesFromStatements). Compile it under that identity and bind
+    // the scoped class VALUE to a same-named LOCAL, exactly like
+    // `const Foo = class {…}` — locals outrank the name-keyed
+    // classObjectGlobals read, so `new Foo()` / `createElement(Foo)` in this
+    // scope resolve to THIS declaration, not the first same-named one.
+    // (#4646) The collection pass mints that identity only for the scopes it
+    // walks — a class in a sibling BLOCK, or in a class/object-literal METHOD
+    // body, is never visited, so its name collision survives to here. Mint on
+    // demand from the same helper: the check is declaration-node identity, so a
+    // class that legitimately owns its name is untouched.
+    const scopedSynthetic = ctx.anonClassExprNames.get(stmt) ?? mintScopedClassIdentity(ctx, stmt);
+    compileNestedClassDeclaration(ctx, fctx, stmt, scopedSynthetic);
+    // Only synthetic nested duplicates need a local singleton binding.  The
+    // ordinary class-declaration path intentionally keeps its historical
+    // module/class binding: eagerly materialising every class object here
+    // changes module-init ordering and can hand the host a half-initialised
+    // prototype (the Test262 class-elements cluster exposed this as
+    // "Cannot convert undefined or null to object").
+    const scopedName = scopedSynthetic;
+    if (scopedName !== undefined && stmt.name !== undefined) {
+      const bindName = stmt.name.text;
+      // Bind the SINGLETON class object (registered with the #4618 host
+      // [[Construct]] bridge — parent chain, mirror crossing), not the
+      // legacy ctor-value closure, so the scoped class behaves identically
+      // to a non-colliding declaration.
+      let vt: import("../ir/types.js").ValType | null = null;
+      if (emitLazyClassObjectGet(ctx, fctx, scopedName)) {
+        vt = { kind: "externref" };
+      } else {
+        vt = compileClassExpression(ctx, fctx, stmt as unknown as ts.ClassExpression);
+      }
+      if (vt !== null) {
+        if (vt.kind !== "externref") coerceType(ctx, fctx, vt, { kind: "externref" });
+        let localIdx = fctx.localMap.get(bindName);
+        if (localIdx === undefined) localIdx = allocLocal(fctx, bindName, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: localIdx });
+      }
+    }
     return;
   }
 
@@ -578,6 +803,19 @@ function compileStatementInner(ctx: CodegenContext, fctx: FunctionContext, stmt:
   // in the top-level declaration pass, but can reach this statement compiler
   // from a namespace/module block or another nested statement list.
   if (ts.isInterfaceDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt)) {
+    return;
+  }
+
+  // A `const enum` is a type-directed compile-time declaration with no runtime
+  // evaluation. Top-level enum declarations are consumed by the declaration
+  // collector, but a function-local const enum reaches this dispatcher (the
+  // TypeScript compiler's Debug.formatControlFlowGraph declares two). Its
+  // member reads are folded through the checker in property-access dispatch;
+  // the declaration itself must disappear just as it does in TypeScript emit.
+  if (
+    ts.isEnumDeclaration(stmt) &&
+    stmt.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ConstKeyword) === true
+  ) {
     return;
   }
 

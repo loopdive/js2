@@ -22,12 +22,14 @@ import { emitThrowReferenceError } from "./expressions/helpers.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { isStrictContext } from "./helpers/is-strict-function.js";
+import { thisBelongsToTopLevelCode } from "./helpers/sloppy-this-global.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { buildRuntimeEvalValueUnwrap } from "./runtime-eval-boundary.js";
+import { coerceType } from "./shared.js";
 
 const RUNTIME_EVAL_CLAIM_STATE_VALUE_CELL = "__runtime_eval_claim_activation_state_value_cell";
 
@@ -65,6 +67,39 @@ export function ensureGlobalEnvironmentOperation(
   const idx = ensureLateImport(ctx, name, signature.params, signature.results);
   flushLateImportShifts(ctx, fctx);
   return idx;
+}
+
+/**
+ * Mirror a script binding's primitive-conversion method onto the realm object.
+ * Script `var` bindings are backed by module globals for compiled identifier
+ * reads, while ordinary ToPrimitive on `globalThis` consults the realm object.
+ * Keep this writeback narrow to the two conversion hooks and script init.
+ */
+export function emitRealmGlobalPrimitiveMethodWriteback(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  valueLocal: number,
+  valueType: ValType,
+): boolean {
+  if (ctx.sourceIsModule || fctx.name !== "__module_init" || (name !== "toString" && name !== "valueOf")) {
+    return false;
+  }
+  if (!emitGlobalEnvironmentObject(ctx, fctx)) return false;
+  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+  if (setIdx === undefined) {
+    fctx.body.push({ op: "drop" });
+    return false;
+  }
+  emitGlobalEnvironmentKey(ctx, fctx, name);
+  fctx.body.push({ op: "local.get", index: valueLocal });
+  if (valueType.kind !== "externref") {
+    // Import through the shared delegate to preserve the compiler's established
+    // boxing/coercion rules for closure and primitive carriers.
+    coerceType(ctx, fctx, valueType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "call", funcIdx: setIdx });
+  return true;
 }
 
 /** Decode the provider's canonical primitive/reference carrier after reading
@@ -336,9 +371,26 @@ export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContex
   if (!emitGlobalEnvironmentObject(ctx, fctx)) return null;
   const objectLocal = allocLocal(fctx, `__implicit_global_obj_${fctx.locals.length}`, { kind: "externref" });
   fctx.body.push({ op: "local.set", index: objectLocal });
-  const hasOwnIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__hasOwnProperty");
+  const hasOwnIdx0 = ensureGlobalEnvironmentOperation(ctx, fctx, "__hasOwnProperty");
   const getIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_get");
-  if (hasOwnIdx === undefined || getIdx === undefined) return null;
+  if (hasOwnIdx0 === undefined || getIdx === undefined) return null;
+  // (#4640) HARDENING, not a measured fix — say so plainly. Registering
+  // `__extern_get` on the line above can add a late import, and a late import
+  // SHIFTS every function index at or above its insertion point
+  // (#1839/#117/#1886). `flushLateImportShifts` repairs indices already EMITTED
+  // into a body; it cannot repair one still sitting in a local variable, and
+  // `hasOwnIdx0` is captured before the shift and pushed after it. Same for
+  // `getIdx`, which is pushed after `emitThrowReferenceError` may have
+  // registered `__new_ReferenceError`.
+  //
+  // `emitRuntimeEvalGlobalRead` immediately below already re-reads both of its
+  // own indices for exactly this reason; this arm was the one that did not, and
+  // the asymmetry is the kind that gets discovered by a miscompile. It was
+  // investigated as a candidate cause of the #4640 D3 failure and RULED OUT
+  // (the real cause was `tryEmitUnresolvableUpdateThrow` / the missing compound
+  // arm); no shift was observed here. The re-read is a no-op when nothing
+  // shifted, so it costs nothing to keep the two readers symmetric.
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty") ?? hasOwnIdx0;
 
   fctx.body.push({ op: "local.get", index: objectLocal });
   emitGlobalEnvironmentKey(ctx, fctx, name);
@@ -351,7 +403,7 @@ export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContex
 
   fctx.body.push({ op: "local.get", index: objectLocal });
   emitGlobalEnvironmentKey(ctx, fctx, name);
-  fctx.body.push({ op: "call", funcIdx: getIdx });
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
   return { kind: "externref" };
 }
 
@@ -360,7 +412,7 @@ export function emitImplicitGlobalRead(ctx: CodegenContext, fctx: FunctionContex
  * HasProperty because a Global Environment Record delegates object-record
  * lookup through the prototype chain. `missingAsUndefined` implements the
  * special non-throwing lookup required by `typeof IdentifierName`. */
-export function emitRuntimeEvalGlobalRead(
+function emitRuntimeEvalGlobalObjectRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
   name: string,
@@ -412,6 +464,109 @@ export function emitRuntimeEvalGlobalRead(
     else: missingBody,
   });
   return { kind: "externref" };
+}
+
+const RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY = "__js2wasm_runtime_eval_global_dynamic_lexicals__";
+
+export function emitRuntimeEvalGlobalLexicalReadOrFallback(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  fallbackBody: Instr[],
+  fallbackType: ValType,
+): ValType | null {
+  if (!emitGlobalEnvironmentObject(ctx, fctx)) {
+    fctx.body.push(...fallbackBody);
+    return fallbackType;
+  }
+  const globalLocal = allocLocal(fctx, "__runtime_eval_dynamic_global_obj_" + fctx.locals.length, {
+    kind: "externref",
+  });
+  fctx.body.push({ op: "local.set", index: globalLocal });
+  const getIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_get");
+  const hasIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_has");
+  if (getIdx === undefined || hasIdx === undefined) {
+    fctx.body.push(...fallbackBody);
+    return fallbackType;
+  }
+  const mapLocal = allocLocal(fctx, "__runtime_eval_dynamic_lexicals_" + fctx.locals.length, {
+    kind: "externref",
+  });
+  addStringConstantGlobal(ctx, RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY);
+  const mapPropertyKey = stringConstantExternrefInstrs(ctx, RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY);
+  const resolvedBody: Instr[] = [
+    { op: "local.get", index: mapLocal },
+    ...stringConstantExternrefInstrs(ctx, name),
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx },
+  ];
+  const savedBody = fctx.body;
+  fctx.body = resolvedBody;
+  emitRuntimeEvalSharedValueUnwrap(ctx, fctx);
+  fctx.body = savedBody;
+  const mapLookupBody = resolvedBody;
+  const mapHasBody: Instr[] = [
+    { op: "local.get", index: mapLocal },
+    ...(() => {
+      addStringConstantGlobal(ctx, name);
+      return stringConstantExternrefInstrs(ctx, name);
+    })(),
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_has") ?? hasIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: mapLookupBody,
+      else: fallbackBody,
+    },
+  ];
+  const mapPropertyPresentBody: Instr[] = [
+    { op: "local.get", index: globalLocal },
+    ...mapPropertyKey,
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx },
+    { op: "local.set", index: mapLocal },
+    { op: "local.get", index: mapLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: fallbackBody,
+      else: mapHasBody,
+    },
+  ];
+  // The provider does not install the sidecar until the first global Script.
+  // Check the property before reading it: an absent `$Object` property returns
+  // the module's undefined carrier, which is non-null and unsafe as a receiver
+  // for `__extern_has`.
+  fctx.body.push(
+    { op: "local.get", index: globalLocal },
+    ...mapPropertyKey,
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_has") ?? hasIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: mapPropertyPresentBody,
+      else: fallbackBody,
+    },
+  );
+  return { kind: "externref" };
+}
+/** Read a global name while honoring lexical bindings introduced by the
+ * provider global-Script entry. Ordinary global object lookup remains the
+ * fallback and retains its missing-name behavior. */
+export function emitRuntimeEvalGlobalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: string,
+  missingAsUndefined: boolean,
+): ValType | null {
+  if (!(ctx.standalone || ctx.wasi) || ctx.runtimeEvalGlobalFunctionBindings !== true) {
+    return emitRuntimeEvalGlobalObjectRead(ctx, fctx, name, missingAsUndefined);
+  }
+  const savedBody = pushBody(fctx);
+  const fallbackType = emitRuntimeEvalGlobalObjectRead(ctx, fctx, name, missingAsUndefined);
+  const fallbackBody = fctx.body;
+  popBody(fctx, savedBody);
+  if (fallbackType === null) return null;
+  return emitRuntimeEvalGlobalLexicalReadOrFallback(ctx, fctx, name, fallbackBody, fallbackType);
 }
 
 /** Read an identifier that may have been introduced by an earlier direct eval
@@ -620,8 +775,54 @@ export function isGlobalObjectExpr(ctx: CodegenContext, fctx: FunctionContext, e
   ) {
     cur = cur.expression;
   }
-  if (cur.kind === ts.SyntaxKind.ThisKeyword) return fctx.name === "__module_init" && !ctx.sourceIsModule;
+  if (cur.kind === ts.SyntaxKind.ThisKeyword) {
+    return fctx.name === "__module_init" && !ctx.sourceIsModule && thisBelongsToTopLevelCode(cur);
+  }
   return ts.isIdentifier(cur) && cur.text === "globalThis" && !ctx.moduleGlobals.has("globalThis");
+}
+
+/**
+ * The deleted member's NAME, for either spelling of a global-object member
+ * access — `this.x` and `this["x"]` name the same property (§13.5.1.2 runs
+ * ToPropertyKey on the computed form), so the `{ DontDelete }` answer must not
+ * depend on which one the source used.
+ *
+ * (#4491 T4) The element-access arm is the gap: `S12.2_A2` spells its checks
+ * `delete this["__variable"]`, which fell past a property-access-only guard to
+ * the generic member delete and answered `true` for a declared `var`. The
+ * identifier form of the same check (`delete __variable`) already answered
+ * `false` in the same file — one binding, two answers, decided by spelling.
+ * Only a STRING/no-substitution-template literal key qualifies; a computed key
+ * is not knowable here and keeps the runtime path.
+ */
+function unwrapTypeOnly(expr: ts.Expression): ts.Expression {
+  let cur = expr;
+  while (
+    ts.isParenthesizedExpression(cur) ||
+    ts.isAsExpression(cur) ||
+    ts.isNonNullExpression(cur) ||
+    ts.isTypeAssertionExpression(cur)
+  ) {
+    cur = cur.expression;
+  }
+  return cur;
+}
+
+function globalObjectDeletedMember(operand: ts.Expression): { name: string; receiver: ts.Expression } | undefined {
+  // `delete(this["k"])` — the Sputnik spelling — parses the operand as a
+  // ParenthesizedExpression, so an unwrapped test misses the very files this
+  // guard exists for.
+  const target = unwrapTypeOnly(operand);
+  if (ts.isPropertyAccessExpression(target)) {
+    if (ts.isPrivateIdentifier(target.name)) return undefined;
+    return { name: target.name.text, receiver: unwrapTypeOnly(target.expression) };
+  }
+  if (ts.isElementAccessExpression(target)) {
+    const key = unwrapTypeOnly(target.argumentExpression);
+    if (!ts.isStringLiteral(key) && !ts.isNoSubstitutionTemplateLiteral(key)) return undefined;
+    return { name: key.text, receiver: unwrapTypeOnly(target.expression) };
+  }
+  return undefined;
 }
 
 /** Whether a direct module-init member delete targets a script var/function. */
@@ -630,23 +831,14 @@ export function isNonConfigurableGlobalObjectDelete(
   fctx: FunctionContext,
   operand: ts.Expression,
 ): boolean {
-  if (!ts.isPropertyAccessExpression(operand) || fctx.name !== "__module_init" || ctx.sourceIsModule) return false;
-  let receiver: ts.Expression = operand.expression;
-  while (
-    ts.isParenthesizedExpression(receiver) ||
-    ts.isAsExpression(receiver) ||
-    ts.isNonNullExpression(receiver) ||
-    ts.isTypeAssertionExpression(receiver)
-  ) {
-    receiver = receiver.expression;
-  }
+  if (fctx.name !== "__module_init" || ctx.sourceIsModule) return false;
+  const member = globalObjectDeletedMember(operand);
+  if (member === undefined) return false;
+  const { name, receiver } = member;
   const isGlobalObject =
     receiver.kind === ts.SyntaxKind.ThisKeyword ||
     (ts.isIdentifier(receiver) && receiver.text === "globalThis" && !ctx.moduleGlobals.has("globalThis"));
-  return (
-    isGlobalObject &&
-    (ctx.globalObjectVarBindings?.has(operand.name.text) || ctx.topLevelFunctionNames.has(operand.name.text))
-  );
+  return isGlobalObject && (ctx.globalObjectVarBindings?.has(name) || ctx.topLevelFunctionNames.has(name));
 }
 
 /** Emit the known outcome for a direct delete of a script var/function property. */

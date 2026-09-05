@@ -5,6 +5,7 @@ import type { ts } from "../ts-api.js";
 import { captureSourceSlot, recordLiftedCaptureSlots } from "./closures/capture-source-slot.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { emitFnctorCtorCallSiteArgc } from "./fnctor-ctor-arguments.js";
 import { FNCTOR_CONSTRUCTOR_FIELD } from "./fnctor-identity-fields.js";
 import { getOrRegisterRefCellType, refCellValueType } from "./registry/types.js";
 import { coerceType, compileExpression } from "./shared.js";
@@ -83,6 +84,7 @@ export function registerFnctorCaptureParams(
   recordLiftedCaptureSlots(
     fctx,
     layout.captures.map((capture) => capture.name),
+    { leadingParamOffset: 0 },
   );
   for (let i = 0; i < layout.captures.length; i++) {
     const capture = layout.captures[i]!;
@@ -235,6 +237,7 @@ export function emitFnctorConstructorArguments(
   callee: ts.Expression,
   args: readonly ts.Expression[],
   userParamTypes: ValType[] | undefined,
+  ctorReadsArguments = false,
 ): void {
   let constructorIdentityLocal: number | undefined;
   if (!ctx.wasi) {
@@ -265,15 +268,32 @@ export function emitFnctorConstructorArguments(
   // only `arguments` can observe them — but they must still be EVALUATED for
   // their side effects, in source order, before the call. So compile each one
   // in place and drop it: order preserved, arity restored.
+  //
+  // (fnctor-ctor-arguments.ts) …but only `arguments` can observe them, so when
+  // the ctor body READS `arguments` the over-supplied values are parked in
+  // externref locals and published through `__extras_argv`/`__argc` instead of
+  // being discarded. Same evaluation order, same arity; the drop becomes a
+  // `local.set`. Every other constructor keeps the drop byte-identically.
   const declaredCount = userParamTypes?.length;
+  const extrasLocals: number[] = [];
   for (let i = 0; i < args.length; i++) {
     const actual = compileExpression(ctx, fctx, args[i]!, userParamTypes?.[i]);
     if (declaredCount !== undefined && i >= declaredCount && actual !== null && actual !== undefined) {
-      fctx.body.push({ op: "drop" });
+      if (ctorReadsArguments) {
+        if (actual.kind !== "externref") coerceType(ctx, fctx, actual, { kind: "externref" });
+        const slot = allocLocal(fctx, `__fnctor_extra_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: slot });
+        extrasLocals.push(slot);
+      } else {
+        fctx.body.push({ op: "drop" });
+      }
     }
   }
   for (let i = args.length; i < (userParamTypes?.length ?? 0); i++) {
     pushDefaultValue(fctx, userParamTypes![i]!, ctx);
+  }
+  if (ctorReadsArguments) {
+    emitFnctorCtorCallSiteArgc(ctx, fctx, declaredCount ?? args.length, extrasLocals, args.length);
   }
   if (constructorIdentityLocal !== undefined) {
     fctx.body.push({ op: "local.get", index: constructorIdentityLocal });

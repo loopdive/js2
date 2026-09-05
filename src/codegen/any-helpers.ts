@@ -15,6 +15,7 @@ import { addFuncType } from "./registry/types.js";
 import { addStringImportsDelegate, registerEnsureAnyHelpers } from "./shared.js";
 import { registerAnyBoxHelpers, registerAnyUnboxHelpers } from "./any-boxing-helpers.js";
 import { registerAnyEqHelpers } from "./any-eq-helpers.js";
+import { buildAnyTag5ExternProjection } from "./any-to-extern-projection.js";
 import { buildFastStrictEqDispatch } from "./extern-eq-fast.js";
 export const NATIVE_PROMISE_NUMBER_BOUNDARY_HELPERS = ["__typeof_number", "__unbox_number"] as const;
 /**
@@ -289,6 +290,77 @@ export function emitIsNullishAnyAt(ctx: CodegenContext, fctx: FunctionContext, a
     ],
   });
   return true;
+}
+
+/**
+ * (#4519) A/B switch for the corpus sweep, the #4489 instrument's shape: with
+ * `JS2WASM_4519_AB=base` every #4519 widening emits its PRE-fix bytes, so both
+ * arms of a paired run compile in ONE process against the same machine, load and
+ * provider cache. Reads `process.env` per call deliberately — a module-level
+ * constant would freeze the arm at import time and defeat the pairing.
+ */
+export function ab4519RevertsToBase(): boolean {
+  return process.env.JS2WASM_4519_AB === "base";
+}
+
+/**
+ * (#4519) `emitIsNullishAnyAt`'s EXTERNREF twin, as a DETACHED instruction array:
+ * `1` when the externref in `externLocalIdx` is null or the tag-1 `$undefined`
+ * singleton. Returns `undefined` — meaning "emit your existing `ref.is_null`" —
+ * when the singleton regime is inactive, so host/gc-lane modules stay
+ * byte-identical.
+ *
+ * Three shape decisions, each forced by the consumer this was built for
+ * (`emitReceiverNullGuard`, the §7.3.2 member-access receiver check):
+ *
+ * - **Detached array, not a `fctx.body` push.** The consumer lives in
+ *   `nonnull-proof.ts`, a deliberate LEAF module that imports nothing from the
+ *   property-access layer (its `throwInstrs` parameter is a thunk for exactly
+ *   that reason). Handing it instructions keeps that property.
+ * - **Scratch-free**, at the cost of converting the receiver twice. The consumer
+ *   emits ~2,600 guards per test262 module (measured, 120 modules), and that
+ *   module's entire purpose is code SIZE — one extra anyref local per guard site
+ *   would work against it. `any.convert_extern` is a no-op reinterpretation.
+ * - **Tag-1 `$AnyValue` only**, deliberately NOT the #2979 UNDEF_F64
+ *   `$BoxedNumber` arm that `buildIsUndefinedExternBody` carries. A receiver
+ *   check must be ABSENT rather than WRONG: a wrong throw here is catchable and
+ *   therefore observable (the reasoning `nullish-receiver-coercible.ts` states
+ *   for declining the checker), and the boxed sentinel is ambiguous in
+ *   container position (#3010's 55-test regression).
+ */
+export function nullishExternTestInstrs(ctx: CodegenContext, externLocalIdx: number): Instr[] | undefined {
+  if (ab4519RevertsToBase()) return undefined;
+  if (!undefinedSingletonActive(ctx)) return undefined;
+  if (ctx.anyValueTypeIdx < 0) ensureAnyValueType(ctx);
+  if (ctx.anyValueTypeIdx < 0) return undefined;
+  const t = ctx.anyValueTypeIdx;
+  return [
+    { op: "local.get", index: externLocalIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 1 }],
+      else: [
+        { op: "local.get", index: externLocalIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: t },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
+            { op: "local.get", index: externLocalIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: t },
+            { op: "struct.get", typeIdx: t, fieldIdx: 0 },
+            { op: "i32.const", value: 1 },
+            { op: "i32.eq" },
+          ],
+          else: [{ op: "i32.const", value: 0 }],
+        },
+      ],
+    },
+  ];
 }
 
 /**
@@ -938,7 +1010,8 @@ export function ensureExternSameValueZeroHelper(ctx: CodegenContext): number | u
 }
 
 export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined {
-  if (ctx.targetProfile.semanticProviders !== "native-first") return undefined;
+  // Fast JS-host builds also need to project `$AnyValue` at typed boundaries.
+  if (ctx.targetProfile.semanticProviders !== "native-first" && !ctx.fast) return undefined;
   if (ctx.anyValueTypeIdx < 0) return undefined;
 
   const existing = ctx.funcMap.get("__any_to_extern");
@@ -1008,41 +1081,10 @@ export function ensureAnyToExternHelper(ctx: CodegenContext): number | undefined
         { op: "return" },
       ],
     },
-    // A genuine native string payload is safe to unwrap. Generic externref
-    // boxing recreates exactly the same tag-5 string box on the next any-typed
-    // operation. Keeping the whole box here instead creates a nested tag-5
-    // carrier; a second `+` then classifies the inner `$AnyValue` as an object
-    // (`let s = ""; s += "a"; s += "b"` became NaN in the standalone
-    // interpreter). The runtime type test is essential because field 4 is also
-    // used by legacy tag-5 boxes for numbers, booleans, null, and opaque refs.
-    ...((ctx.anyStrTypeIdx >= 0
-      ? [
-          { op: "local.get", index: 1 },
-          { op: "i32.const", value: 5 },
-          { op: "i32.eq" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: [
-              { op: "local.get", index: 0 },
-              { op: "ref.as_non_null" },
-              { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
-              { op: "any.convert_extern" },
-              { op: "ref.test", typeIdx: ctx.anyStrTypeIdx },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: [
-                  { op: "local.get", index: 0 },
-                  { op: "ref.as_non_null" },
-                  { op: "struct.get", typeIdx: anyTypeIdx, fieldIdx: 4 },
-                  { op: "return" },
-                ],
-              },
-            ],
-          },
-        ]
-      : []) satisfies Instr[]),
+    // A JS host owns tag 5's externval (including BigInt); project it directly.
+    // Host-free builds unwrap only a proven native string, preserving the
+    // round-trip rule for legacy tag-5 boxes of other values.
+    ...buildAnyTag5ExternProjection(ctx, anyTypeIdx),
     // (#2106 S1) Under the `undefinedSingleton` regime tag 0 (null) unwraps to
     // its canonical externref-plane representation `ref.null.extern` — and the
     // round-trip is SAFE there because `__any_from_extern`'s null arm boxes

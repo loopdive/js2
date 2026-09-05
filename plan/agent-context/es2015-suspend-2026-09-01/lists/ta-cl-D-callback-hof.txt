@@ -1,0 +1,16 @@
+built-ins/TypedArray/prototype/filter/callbackfn-arguments-with-thisarg.js
+built-ins/TypedArray/prototype/reduce/callbackfn-is-not-callable-throws.js
+built-ins/TypedArray/prototype/forEach/callbackfn-is-not-callable.js
+built-ins/TypedArray/prototype/map/callbackfn-set-value-during-interaction.js
+built-ins/TypedArray/prototype/reduceRight/callbackfn-is-not-callable-throws.js
+built-ins/TypedArray/prototype/filter/callbackfn-set-value-during-iteration.js
+built-ins/TypedArray/prototype/reduce/empty-instance-with-no-initialvalue-throws.js
+built-ins/TypedArray/prototype/reduceRight/empty-instance-with-no-initialvalue-throws.js
+built-ins/TypedArray/prototype/filter/result-empty-callbackfn-returns-false.js
+built-ins/TypedArray/prototype/every/callbackfn-not-callable-throws.js
+built-ins/TypedArray/prototype/map/callbackfn-arguments-without-thisarg.js
+built-ins/TypedArray/prototype/map/callbackfn-arguments-with-thisarg.js
+built-ins/TypedArray/prototype/some/callbackfn-not-callable-throws.js
+built-ins/TypedArray/prototype/find/predicate-is-not-callable-throws.js
+built-ins/TypedArray/prototype/filter/callbackfn-arguments-without-thisarg.js
+built-ins/TypedArray/prototype/findIndex/predicate-is-not-callable-throws.js

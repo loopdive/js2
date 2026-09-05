@@ -40,10 +40,12 @@
 import { ts, forEachChild } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { Instr, StructTypeDef } from "../ir/types.js";
+export { excludeArgumentsArrayCarrier } from "./arguments-carrier-brand.js";
 import { allocTempLocal } from "./context/locals.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { isBrandedBuiltinName } from "./builtin-brands.js"; // (#4176) named proto-write pre-scan
 import { planHoleyArrayCarrier } from "./holey-array-plan.js"; // (#4222) isolated sparse-carrier proof
+import { recordDescriptorArrayReceiver } from "./declarations/descriptor-array-carrier.js"; // (#4670)
 
 /**
  * Cheap AST pre-scan: set `ctx.usesArrayHoles` when the program contains any
@@ -69,6 +71,7 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
       ctx.inheritedSetDescriptorDirty &&
       ctx.vecIndexDeleteDirty &&
       ctx.vecOwnKeysDirty &&
+      ctx.arraySpeciesDirty &&
       ctx.dynamicCodeDirty
     ) {
       return;
@@ -84,14 +87,27 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.protoIndexDirty && isProtoIndexWrite(node)) {
       ctx.protoIndexDirty = true;
     }
-    if (!ctx.protoNamedDirty && isProtoNamedWrite(node)) {
+    if (isProtoNamedWrite(node)) {
       ctx.protoNamedDirty = true;
+      // (#4492 wave-5) …and WHICH member. The flag is on in nearly every
+      // test262 module (the harness prelude writes some builtin prototype), so
+      // only the name can answer "did this program override
+      // `Function.prototype.toString`?" — the question that decides whether a
+      // callable's INHERITED `toString` may be believed by the ToPrimitive walk.
+      if (ts.isBinaryExpression(node)) {
+        const lhs = unwrapExpr(node.left);
+        if (ts.isPropertyAccessExpression(lhs)) ctx.protoNamedWrittenMembers.add(lhs.name.text);
+      }
     }
     if (!ctx.protoMemberDirty && isProtoMemberValueUse(node)) {
       ctx.protoMemberDirty = true;
     }
     if (!ctx.vecAccessorDescriptorDirty && isNonDataDescriptorDefine(node)) {
       ctx.vecAccessorDescriptorDirty = true;
+    }
+    const descriptorArrayReceiver = indexedDescriptorArrayReceiver(node);
+    if (descriptorArrayReceiver !== undefined) {
+      recordDescriptorArrayReceiver(ctx, descriptorArrayReceiver);
     }
     if (!ctx.inheritedSetDescriptorDirty) {
       // (#4602) Statically-named triggers poison only their own keys; a
@@ -114,8 +130,15 @@ export function scanForArrayHoles(ctx: CodegenContext, root: ts.Node): void {
     if (!ctx.vecIndexDeleteDirty && isIndexDelete(node)) {
       ctx.vecIndexDeleteDirty = true;
     }
-    if (!ctx.vecOwnKeysDirty && isOwnKeysOrDescriptorDefineUse(node)) {
+    if (!ctx.arraySpeciesDirty && isArraySpeciesObservable(node)) {
+      ctx.arraySpeciesDirty = true;
+    }
+    if (isOwnKeysOrDescriptorDefineUse(node)) {
       ctx.vecOwnKeysDirty = true;
+      // ArraySetLength can expose absent f64 indices even when every literal
+      // starts dense. Arm the read-side marker before body compilation for
+      // any descriptor builtin that may reach a vec through an alias.
+      if (isDescriptorDefineReference(node)) ctx.usesArrayHoles = true;
     }
     // (#4159/#4160) Dynamic code defeats the whole pre-scan: static eval
     // inlining (#1163) splices parsed statements in during BODY compilation,
@@ -276,6 +299,27 @@ function isNonDataDescriptorDefine(node: ts.Node): boolean {
     return node.arguments.length >= 2 && !isDataOnlyDescriptorBag(node.arguments[1]);
   }
   return false;
+}
+
+/**
+ * (#4670) Return a direct identifier receiver for a non-data descriptor on a
+ * canonical array-index key. This is intentionally narrower than the module
+ * dirty flag: only these writes need an identity-preserving array carrier.
+ */
+function indexedDescriptorArrayReceiver(node: ts.Node): string | undefined {
+  if (!isNonDataDescriptorDefine(node) || !ts.isCallExpression(node)) return undefined;
+  const callee = node.expression;
+  if (!ts.isPropertyAccessExpression(callee) || callee.name.text !== "defineProperty") return undefined;
+  const key = literalPropertyKeyOf(node.arguments[1]);
+  if (!isCanonicalArrayIndexKey(key)) return undefined;
+  const receiver = unwrapExpr(node.arguments[0]);
+  return ts.isIdentifier(receiver) ? receiver.text : undefined;
+}
+
+function isCanonicalArrayIndexKey(key: string | undefined): boolean {
+  if (key === undefined) return false;
+  const index = Number(key);
+  return Number.isInteger(index) && index >= 0 && index < 0xffffffff && String(index) === key;
 }
 
 /**
@@ -566,6 +610,37 @@ function isIndexDelete(node: ts.Node): boolean {
 }
 
 /**
+ * (#5145) Can this module observe `ArraySpeciesCreate` (§10.4.2.3)? Two
+ * syntactic triggers, both cheap and both necessary:
+ *
+ *  - `Symbol.species` anywhere — the only way to install a species constructor;
+ *  - an assignment whose target is a `.constructor` property — the only way to
+ *    make step 5's `Get(O, "constructor")` answer anything on a `$vec` (nothing
+ *    installs a reflective `constructor` on an array otherwise).
+ *
+ * Clear ⇒ `slice`/`splice`/`map`/`filter` keep their raw `struct.new $vec`
+ * result AND their static `(ref null $vec)` result type, so no unrelated typed
+ * code is pushed onto the dynamic lane. Deliberately over-approximate: a module
+ * that merely *reads* `Symbol.species` pays the (runtime-null, one helper call)
+ * species prologue, which is the cheap side of the error.
+ */
+function isArraySpeciesObservable(node: ts.Node): boolean {
+  if (ts.isPropertyAccessExpression(node) && node.name.text === "species") return true;
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    const lhs = unwrapExpr(node.left);
+    if (ts.isPropertyAccessExpression(lhs) && lhs.name.text === "constructor") return true;
+    if (
+      ts.isElementAccessExpression(lhs) &&
+      ts.isStringLiteralLike(lhs.argumentExpression) &&
+      lhs.argumentExpression.text === "constructor"
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * (#4230 L1) `Object`/`Reflect` member names that can either PUT a named
  * expando into the #3251 overlay companion or ASK for a vec's own key list.
  * Either one makes `vec-overlay-keys.ts` observable; neither present means it
@@ -608,6 +683,14 @@ function isOwnKeysOrDescriptorDefineUse(node: ts.Node): boolean {
   const ns = node.expression.text;
   if (ns !== "Object" && ns !== "Reflect") return false;
   return OWN_KEYS_OR_DEFINE_METHODS.has(node.name.text);
+}
+
+function isDescriptorDefineReference(node: ts.Node): boolean {
+  if (!ts.isPropertyAccessExpression(node) || !ts.isIdentifier(node.expression)) return false;
+  return (
+    (node.expression.text === "Object" || node.expression.text === "Reflect") &&
+    (node.name.text === "defineProperty" || node.name.text === "defineProperties")
+  );
 }
 
 /**
@@ -770,6 +853,26 @@ function isProtoMemberValueUse(node: ts.Node): boolean {
   if (!isBrandedBuiltinPrototypeExpr(node)) return false;
   const parent: ts.Node | undefined = node.parent;
   if (parent === undefined) return true;
+  // (#4492) `delete <Builtin>.prototype.<name>` is the ONE member-access parent
+  // the syntactic path does NOT handle. Recording a deleted OWN member needs the
+  // brand COMPANION seeded — `__nproto_hasown`'s seeded-member ladder asks the
+  // companion, and everything else falls to the immutable `$memberCsv` scan,
+  // which resurrects the member. Without arming, `delete` reported success and
+  // `hasOwnProperty` kept answering true.
+  //
+  // Measured, and it explains a pair that looked contradictory: `String/
+  // prototype/S15.5.4_A3` PASSED while `S15.5.4_A1` FAILED on the identical
+  // `delete String.prototype.toString; String.prototype.toString()` — because
+  // A3 happens to read `Object.prototype` as a VALUE one line earlier, which
+  // armed the flag by accident. A1 opens with the delete and armed nothing.
+  if (
+    (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+    unwrapExpr(parent.expression) === unwrapExpr(node) &&
+    parent.parent !== undefined &&
+    ts.isDeleteExpression(parent.parent)
+  ) {
+    return true;
+  }
   // Object-of-a-member-access ⇒ the syntactic path handles it; not a value use.
   if (
     (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&

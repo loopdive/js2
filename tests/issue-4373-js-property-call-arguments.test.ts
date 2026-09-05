@@ -60,5 +60,22 @@ describe("#4373 — JavaScript property-call arguments", () => {
 
       expect(exports.probe()).toBe(757);
     });
+
+    it(`does not bind an any receiver's createElement to Document (IR=${experimentalIR})`, async () => {
+      const exports = await run(
+        `
+          declare const document: Document;
+          const react: any = {};
+          react.createElement = function (type: any, config: any): any { return type; };
+          export function probe(): number {
+            if (false) document.createElement("span");
+            return react.createElement("div", null) === "div" ? 1 : 0;
+          }
+        `,
+        { fileName: "issue-4373-create-element.ts", experimentalIR },
+      );
+
+      expect(exports.probe()).toBe(1);
+    });
   }
 });

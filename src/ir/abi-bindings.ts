@@ -348,6 +348,11 @@ export function irSupportTypeRef(
   });
 }
 
+/** Exact reserved layout type identity for one nominal-fnctor constructor. */
+export function irFnctorLayoutTypeRef(unitId: IrUnitId, adapterName: string): IrTypeRef {
+  return irSupportTypeRef(unitId, "fnctor-layout", adapterName);
+}
+
 function keyPart(value: string): string {
   return `${value.length}:${value}`;
 }

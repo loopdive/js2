@@ -63,25 +63,25 @@ import { emitUndefinedExtern, undefinedExternInstrs } from "./any-helpers.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
   BUILTIN_STATIC_METHOD_ARITY,
-  ensureBuiltinFnMetaType,
+  ensureStandaloneSpeciesGetterClosure,
   pushBuiltinFnSingletonValueInstrs,
 } from "./builtin-fn-meta.js";
-import { getOrCreateFuncRefWrapperTypes } from "./closures.js";
 import { allocLocal } from "./context/locals.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "./native-strings.js";
 import {
   BUILTIN_CTOR_ARITY,
   ensureStandaloneBuiltinStaticMethodClosure,
-  makeBuiltinClosureFctx,
   MATH_CONSTANT_VALUES,
   NUMBER_CONSTANT_VALUES,
   TYPED_ARRAY_BYTES_PER_ELEMENT,
   tryEnsureNativeProtoBrand,
 } from "./property-access.js";
+import { getWellKnownSymbolId } from "./builtin-value-read.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
 
 // §6.1.7.3 attribute flag bits — mirrors object-runtime's `__create_descriptor`
 // (1=writable, 2=enumerable, 4=configurable).
@@ -252,7 +252,14 @@ export function resolveBuiltinProtoGopdReceiver(
     arg0.name.text === "prototype" &&
     ts.isIdentifier(arg0.expression) &&
     builtinCtorNames.has(arg0.expression.text) &&
-    !(fctx.localMap.has(arg0.expression.text) || (fctx.boxedCaptures?.has(arg0.expression.text) ?? false))
+    // (#5194 review F2) Function-scope shadow facts plus the FILE-scope one:
+    // a module-level `class Int16Array { … }` is invisible to `localMap`, and
+    // the same descriptor synthesis feeds `<Ctor>.prototype.constructor`.
+    !(
+      fctx.localMap.has(arg0.expression.text) ||
+      (fctx.boxedCaptures?.has(arg0.expression.text) ?? false) ||
+      sourceShadowsGlobalName(arg0.getSourceFile(), arg0.expression.text)
+    )
   ) {
     return arg0.expression.text;
   }
@@ -353,13 +360,35 @@ export function tryEmitStandaloneBuiltinStaticGopd(
     return true;
   }
 
+  // ── Symbol well-known own data props — {w:false, e:false, c:false} ────────
+  // (#5269 A-2) §20.4.2: `Symbol.iterator` & co. are own data properties whose
+  // value is the INTERNED `$Symbol` carrier — the same object the syntactic
+  // `Symbol.iterator` value read boxes to, so `desc.value === Symbol.iterator`.
+  // Only these names are closed; every OTHER `Symbol` member keeps the refusal
+  // below, because `Symbol`'s own universe stays open (a user
+  // `Symbol.foo = …` is a legal write the tables here cannot model).
+  if (builtinName === "Symbol") {
+    const wellKnownId = getWellKnownSymbolId(member);
+    if (wellKnownId === undefined) return false;
+    const createIdx = resolveCreateDescriptor(ctx, fctx);
+    if (createIdx === undefined) return false;
+    ensureSymbolCarrier(ctx);
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    if (boxSymbolIdx === undefined) return false;
+    fctx.body.push({ op: "i32.const", value: wellKnownId });
+    fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "call", funcIdx: createIdx });
+    return true;
+  }
+
   // ── Unknown member ─────────────────────────────────────────────────────────
-  // Symbol (own well-known-symbol data props: `Symbol.iterator`, …) and RegExp
-  // (annex-B legacy statics: `$1`…`$9`, `input`, …) have OPEN own-property
-  // universes the tables above do not close — refuse rather than fabricate a
-  // phantom `undefined`. Every other receiver's standard own STRING-keyed
-  // surface is fully covered above, so the member is genuinely absent.
-  if (builtinName === "Symbol" || builtinName === "RegExp") return false;
+  // RegExp's annex-B legacy statics (`$1`…`$9`, `input`, …) are an OPEN
+  // own-property universe the tables above do not close — refuse rather than
+  // fabricate a phantom `undefined`. Every other receiver's standard own
+  // STRING-keyed surface is fully covered above, so the member is genuinely
+  // absent.
+  if (builtinName === "RegExp") return false;
   // (#3319) Genuinely-absent member → `undefined` (singleton under the #2106
   // regime; legacy null.extern).
   if (!emitUndefinedExtern(ctx, fctx)) fctx.body.push({ op: "ref.null.extern" });
@@ -376,7 +405,7 @@ export function tryEmitStandaloneBuiltinStaticGopd(
  * resolver declines — out of scope for this slice. The CONCRETE TypedArray
  * ctors inherit @@species and do NOT own it, so they are correctly absent.)
  */
-const SPECIES_OWNER_CTORS: ReadonlySet<string> = new Set([
+export const SPECIES_OWNER_CTORS: ReadonlySet<string> = new Set([
   "Array",
   "ArrayBuffer",
   "SharedArrayBuffer",
@@ -384,6 +413,11 @@ const SPECIES_OWNER_CTORS: ReadonlySet<string> = new Set([
   "Set",
   "Promise",
   "RegExp",
+  // (#5194 step 2) §23.2.2.4 — the abstract `%TypedArray%` intrinsic owns
+  // `@@species` too. It is not a global identifier, so the receiver is
+  // recovered by the static `isTypedArrayIntrinsicCtorExpr` tracer at the call
+  // site rather than by `resolveBuiltinReceiverName`.
+  "%TypedArray%",
 ]);
 
 /**
@@ -413,69 +447,6 @@ export function isSymbolSpeciesKeyExpression(fctx: FunctionContext, expr: ts.Exp
     e.expression.text === "Symbol" &&
     !(fctx.localMap.has("Symbol") || (fctx.boxedCaptures?.has("Symbol") ?? false))
   );
-}
-
-/**
- * (#2984 "builtin receiver + non-literal key") The per-constructor
- * `get [Symbol.species]` accessor closure — spec `get <Ctor> [ @@species ]`
- * (§23.1.2.5, §25.1.5.3, §24.1.2.2, §24.2.2.2, §27.2.4.4, §22.2.6.2): the body
- * is exactly "Return the this value" (param 1, the lifted receiver slot).
- *
- * The value struct is the UNIQUE per-ctor meta subtype (`species:<Ctor>`), so
- * (a) `pushBuiltinFnSingletonValueInstrs`' per-typeIdx singleton global gives
- * identity-stable reads (`gOPD(Array, Symbol.species).get` is the SAME object
- * across calls) while Array's getter stays distinct from Map's (each ctor owns
- * its OWN accessor function per spec), and (b) the reflective `__builtinfn_*`
- * natives answer `name`/`length` at runtime — `"get [Symbol.species]"` / 0
- * (§10.2.9 accessor spelling) — which is what the test262 propertyHelper reads
- * (`verifyProperty(desc.get, "name"|"length", …)`).
- *
- * The meta type is registered in `nativeProtoReceiverClosureStructTypes`
- * (#2193 PR-B): the getter's FIRST user param IS the receiver, so a statically
- * resolvable `g.call(thisVal)` threads `thisVal` into param 1 (→ returns it)
- * instead of dropping it. Only the meta subtype is registered — the shared
- * signature-wrapper base is left alone (other closures of the same signature
- * take a plain first ARG there, not a receiver).
- */
-function ensureStandaloneSpeciesGetterClosure(
-  ctx: CodegenContext,
-  builtinName: string,
-): { type: { kind: "ref"; typeIdx: number }; funcIdx: number } | null {
-  const userParams: ValType[] = [{ kind: "externref" }]; // param 1 = `this`
-  const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, [{ kind: "externref" }]);
-  if (!wrapperTypes) return null;
-
-  const funcName = `__builtin_species_get_${builtinName}`;
-  let funcIdx = ctx.funcMap.get(funcName);
-  if (funcIdx === undefined) {
-    const selfType: ValType = { kind: "ref", typeIdx: wrapperTypes.liftedSelfTypeIdx };
-    const closureFctx = makeBuiltinClosureFctx(funcName, selfType, userParams, { kind: "externref" });
-    // Step 1 (the whole algorithm): Return the this value.
-    closureFctx.body.push({ op: "local.get", index: 1 });
-    funcIdx = mintDefinedFunc(ctx);
-    pushDefinedFunc(ctx, funcIdx, {
-      name: funcName,
-      typeIdx: wrapperTypes.liftedFuncTypeIdx,
-      locals: closureFctx.locals,
-      body: closureFctx.body,
-      exported: false,
-    });
-    ctx.funcMap.set(funcName, funcIdx);
-    if (!ctx.nativeClosureMeta) ctx.nativeClosureMeta = new Map();
-    ctx.nativeClosureMeta.set(funcIdx, { name: "get [Symbol.species]", length: 0 });
-  }
-
-  const metaTypeIdx = ensureBuiltinFnMetaType(
-    ctx,
-    wrapperTypes.structTypeIdx,
-    wrapperTypes.closureInfo,
-    `species:${builtinName}`,
-    "get [Symbol.species]",
-    0,
-  );
-  if (!ctx.nativeProtoReceiverClosureStructTypes) ctx.nativeProtoReceiverClosureStructTypes = new Set();
-  ctx.nativeProtoReceiverClosureStructTypes.add(metaTypeIdx);
-  return { type: { kind: "ref", typeIdx: metaTypeIdx }, funcIdx };
 }
 
 /**

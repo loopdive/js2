@@ -38,9 +38,241 @@
  * never shift funcIdxs).
  */
 
-import type { Instr } from "../ir/types.js";
+import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { runtimeToNumberInstrs } from "./coercion-engine.js";
 import { nativeStringLiteralInstrs } from "./native-string-literals.js";
+import { addUnionImportsViaRegistry } from "./shared.js";
+
+type CallableArmLocals = { name: string; type: { kind: "f64" } | { kind: "externref" } };
+
+/**
+ * Build the `[[Call]]` arms for the identity-stable Object and Array
+ * constructor carriers. The Array constructor callback is supplied by the
+ * object-runtime owner to keep this subsystem independent of that god-file.
+ */
+export function builtinObjectArrayCallableArmInstrs(
+  ctx: CodegenContext,
+  argOf: (k: number) => Instr[],
+  arrayConstructor: (ctx: CodegenContext, argCount: number) => number | undefined,
+  localBaseIndex: number,
+): { instrs: Instr[]; locals: CallableArmLocals[] } {
+  if (!ctx.standalone) return { instrs: [], locals: [] };
+  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+  const externLengthIdx = ctx.funcMap.get("__extern_length");
+  const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const arrayGlobalIdx = ctx.builtinObjectGlobals.get("Array");
+  const objectGlobalIdx = ctx.builtinObjectGlobals.get("Object");
+  if (
+    objectTypeIdx === undefined ||
+    externLengthIdx === undefined ||
+    newPlainObjectIdx === undefined ||
+    (arrayGlobalIdx === undefined && objectGlobalIdx === undefined)
+  ) {
+    return { instrs: [], locals: [] };
+  }
+
+  const argCountLocal = 3 + localBaseIndex;
+  const argLocal = argCountLocal + 1;
+  const locals: CallableArmLocals[] = [
+    { name: "builtinCtorArgCount", type: { kind: "f64" } },
+    { name: "builtinCtorArg", type: { kind: "externref" } },
+  ];
+  const identityArm = (globalIdx: number, result: Instr[]): Instr[] => [
+    { op: "global.get", index: globalIdx },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: objectTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 0 },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: objectTypeIdx },
+            { op: "global.get", index: globalIdx },
+            { op: "any.convert_extern" },
+            { op: "ref.cast", typeIdx: objectTypeIdx },
+            { op: "ref.eq" },
+            { op: "if", blockType: { kind: "empty" }, then: result },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const undefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const undefinedCheck: Instr[] =
+    undefinedIdx === undefined
+      ? []
+      : [{ op: "local.get", index: argLocal }, { op: "call", funcIdx: undefinedIdx }, { op: "i32.or" }];
+  const objectElse: Instr[] = [
+    ...argOf(0),
+    { op: "local.set", index: argLocal },
+    { op: "local.get", index: argLocal },
+    { op: "ref.is_null" },
+    ...undefinedCheck,
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "call", funcIdx: newPlainObjectIdx }],
+      else: (() => {
+        addUnionImportsViaRegistry(ctx);
+        const numberType = ctx.funcMap.get("__typeof_number");
+        const stringType = ctx.funcMap.get("__typeof_string");
+        const booleanType = ctx.funcMap.get("__typeof_boolean");
+        const unboxNumber = runtimeToNumberInstrs(ctx);
+        const newNumber = ctx.funcMap.get("__new_Number");
+        const newString = ctx.funcMap.get("__new_String");
+        const newBoolean = ctx.funcMap.get("__new_Boolean");
+        let value: Instr[] = [{ op: "local.get", index: argLocal }];
+        if (booleanType !== undefined && unboxNumber !== null && newBoolean !== undefined) {
+          value = [
+            { op: "local.get", index: argLocal },
+            { op: "call", funcIdx: booleanType },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [{ op: "local.get", index: argLocal }, ...unboxNumber, { op: "call", funcIdx: newBoolean }],
+              else: value,
+            },
+          ];
+        }
+        if (stringType !== undefined && newString !== undefined) {
+          value = [
+            { op: "local.get", index: argLocal },
+            { op: "call", funcIdx: stringType },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [
+                { op: "local.get", index: argLocal },
+                { op: "call", funcIdx: newString },
+              ],
+              else: value,
+            },
+          ];
+        }
+        if (numberType !== undefined && unboxNumber !== null && newNumber !== undefined) {
+          value = [
+            { op: "local.get", index: argLocal },
+            { op: "call", funcIdx: numberType },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [{ op: "local.get", index: argLocal }, ...unboxNumber, { op: "call", funcIdx: newNumber }],
+              else: value,
+            },
+          ];
+        }
+        return value;
+      })(),
+    },
+  ];
+  const objectCall: Instr[] = [
+    { op: "local.get", index: 2 },
+    { op: "call", funcIdx: externLengthIdx },
+    { op: "local.set", index: argCountLocal },
+    { op: "local.get", index: argCountLocal },
+    { op: "f64.const", value: 0 },
+    { op: "f64.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [{ op: "call", funcIdx: newPlainObjectIdx }],
+      else: objectElse,
+    },
+    { op: "return" },
+  ];
+
+  const instrs: Instr[] = [];
+  if (objectGlobalIdx !== undefined) instrs.push(...identityArm(objectGlobalIdx, objectCall));
+  if (arrayGlobalIdx !== undefined) {
+    let dispatch: Instr[] = [];
+    for (let n = 8; n >= 0; n--) {
+      const ctorIdx = arrayConstructor(ctx, n);
+      if (ctorIdx === undefined) continue;
+      const call: Instr[] = [];
+      for (let k = 0; k < n; k++) call.push(...argOf(k));
+      call.push({ op: "call", funcIdx: ctorIdx }, { op: "return" });
+      dispatch = [
+        { op: "local.get", index: argCountLocal },
+        { op: "f64.const", value: n },
+        { op: "f64.eq" },
+        { op: "if", blockType: { kind: "empty" }, then: call, else: dispatch },
+      ];
+    }
+    instrs.push(
+      ...identityArm(arrayGlobalIdx, [
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: externLengthIdx },
+        { op: "local.set", index: argCountLocal },
+        ...dispatch,
+      ]),
+    );
+  }
+  return { instrs, locals };
+}
+
+/** Append Object/Array carrier locals and return their front-guard arms. */
+export function appendBuiltinObjectArrayCallableArms(
+  ctx: CodegenContext,
+  argOf: (k: number) => Instr[],
+  arrayConstructor: (ctx: CodegenContext, argCount: number) => number | undefined,
+  locals: Array<{ name: string; type: ValType }>,
+): Instr[] {
+  const arm = builtinObjectArrayCallableArmInstrs(ctx, argOf, arrayConstructor, locals.length);
+  locals.push(...arm.locals);
+  return arm.instrs;
+}
+
+/**
+ * Build the identity-gated constructor arms for `__bind_dyn`. Constructor
+ * carriers are `$Object` values, so they must enter the bound-function
+ * carrier path before the ordinary closure classifier runs.
+ */
+export function builtinConstructorBindArmInstrs(ctx: CodegenContext, anyLocal: number, mintArm: Instr[]): Instr[] {
+  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+  if (objectTypeIdx === undefined) return [];
+  const instrs: Instr[] = [];
+  for (const [key, globalIdx] of ctx.builtinObjectGlobals) {
+    if (key !== "Object" && key !== "Array" && !key.startsWith("ctor:")) continue;
+    instrs.push(
+      { op: "local.get", index: anyLocal },
+      { op: "ref.test", typeIdx: objectTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "global.get", index: globalIdx },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: objectTypeIdx },
+              { op: "global.get", index: globalIdx },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: objectTypeIdx },
+              { op: "ref.eq" },
+              { op: "if", blockType: { kind: "empty" }, then: [...mintArm] },
+            ],
+          },
+        ],
+      },
+    );
+  }
+  return instrs;
+}
 
 /** The wrapper builtins whose carrier gets a callable arm. Must stay a subset
  *  of `BUILTIN_CONSTRUCTOR_IDENTITY_NAMES` (builtin-static-globals.ts). */

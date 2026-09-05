@@ -40,6 +40,7 @@ import { buildCompileExplanation } from "./compile-explain.js";
 import {
   findSmallestNodeAtPosition,
   isBindingPatternFalsePositive,
+  isArraySearchElementDiagnostic,
   isJsDefaultInferredParamFalsePositive,
 } from "./compiler/argument-diagnostics.js";
 import {
@@ -57,13 +58,20 @@ import {
   validateSafeMode,
 } from "./compiler/validation.js";
 import { emitBinary, emitBinaryWithSourceMap, emitSourceMappingURLSection } from "./emit/binary.js";
+import {
+  extractRuntimeGroup,
+  fingerprintRuntimeGroup,
+  RUNTIME_RECGROUP_TYPE_NAMES,
+  verifyRuntimeRecGroupBinary,
+  type RuntimeGroupFingerprint,
+} from "./emit/canonical-recgroup.js";
 import { WasmEncoder } from "./emit/encoder.js";
 import { generateSourceMap } from "./emit/sourcemap.js";
 import { emitWat } from "./emit/wat.js";
 import { applyDefineSubstitutions, applyDefineSubstitutionsWithMap } from "./compiler/define-substitution.js";
 import { collectGraphNodeBuiltinImports } from "./compiler/node-builtin-import-collector.js";
 import { rewriteCjsRequire, rewriteCjsRequireWithMap } from "./cjs-rewrite.js";
-import { preprocessImports } from "./import-resolver.js";
+import { injectTimerShimOnly, preprocessImports } from "./import-resolver.js";
 import { PositionMap } from "./position-map.js";
 import { profileCount, profilePhase } from "./compile-profile.js";
 import { resolveCompileTargetProfile } from "./target-profile.js";
@@ -497,6 +505,17 @@ function isInOperatorOperandDiagnostic(diag: ts.Diagnostic): boolean {
   return false;
 }
 
+/** Warning when codegen handles the construct anyway — by diagnostic code, or by a
+ * node-shape predicate for a TypeScript typing stricter than the language it models.
+ * Shared by all three collection loops so single-source and multi-file cannot drift. */
+function diagnosticSeverity(diag: ts.Diagnostic, checker: ts.TypeChecker): "warning" | "error" {
+  return DOWNGRADE_DIAG_CODES.has(diag.code) ||
+    isGuardedNullablePrimitiveDiagnostic(diag, checker) ||
+    isArraySearchElementDiagnostic(diag)
+    ? "warning"
+    : "error";
+}
+
 function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecker): boolean {
   if (diag.category !== 1 || !HARD_TS_DIAG_CODES.has(diag.code)) return false;
   if (checker && isBindingPatternFalsePositive(diag, checker)) return false;
@@ -504,6 +523,7 @@ function isHardTypeScriptDiagnostic(diag: ts.Diagnostic, checker?: ts.TypeChecke
   if (checker && isGuardedNullablePrimitiveDiagnostic(diag, checker)) return false;
   if (isProxyHandlerTrapDiagnostic(diag)) return false;
   if (isInOperatorOperandDiagnostic(diag)) return false;
+  if (isArraySearchElementDiagnostic(diag)) return false;
   return true;
 }
 
@@ -663,6 +683,52 @@ function failResult(errors: CompileError[], telemetry: Partial<FailureTelemetry>
 }
 
 /**
+ * Capture the frozen runtime-type ABI after all codegen/DCE passes have run.
+ *
+ * The sidecar is deliberately produced only when the module carries the
+ * canonical range marker. A partial name scan is not a link contract: a
+ * provider and consumer must both retain the complete contiguous group.
+ */
+function getRuntimeRecGroupFingerprint(mod: WasmModule): RuntimeGroupFingerprint | undefined {
+  const range = mod.canonicalRuntimeRecGroup;
+  if (!range) return undefined;
+  const expectedCount = range.end - range.start + 1;
+  const members = extractRuntimeGroup(mod);
+  const fingerprint = fingerprintRuntimeGroup(mod);
+  const namesMatch =
+    fingerprint.count === RUNTIME_RECGROUP_TYPE_NAMES.length &&
+    fingerprint.members.every((name, index) => name === RUNTIME_RECGROUP_TYPE_NAMES[index]);
+  const rangeMatches =
+    members.length === expectedCount && members.every((member, index) => member.absIndex === range.start + index);
+  if (
+    range.start < 0 ||
+    range.end < range.start ||
+    fingerprint.count !== expectedCount ||
+    !namesMatch ||
+    !rangeMatches
+  ) {
+    throw new Error(
+      `canonical runtime rec-group metadata disagrees with the type table ` +
+        `(range ${range.start}..${range.end}, named members ${fingerprint.members.join(", ")})`,
+    );
+  }
+  if (fingerprint.abiVersion !== range.abiVersion) {
+    throw new Error(
+      `canonical runtime rec-group ABI mismatch (metadata v${range.abiVersion}, ` +
+        `fingerprint v${fingerprint.abiVersion})`,
+    );
+  }
+  return fingerprint;
+}
+
+/** Return a concise drift reason, or undefined when the binary is link-safe. */
+function runtimeRecGroupDrift(binary: Uint8Array, expected?: RuntimeGroupFingerprint): string | undefined {
+  if (!expected) return undefined;
+  const verification = verifyRuntimeRecGroupBinary(binary, expected);
+  return verification.valid ? undefined : (verification.detail ?? "the canonical runtime rec-group was not found");
+}
+
+/**
  * #1927 — apply the optional Binaryen wasm-opt pass in place over an already
  * produced {@link CompileResult}. This is the ONLY async step in the pipeline;
  * the synchronous core ({@link runPipeline}) never runs it. The two async entry
@@ -683,7 +749,21 @@ async function applyOptimize(
     preserveNames: options.preserveDebugNames,
   });
   if (optResult.optimized) {
-    result.binary = optResult.binary;
+    const drift = runtimeRecGroupDrift(optResult.binary, result.runtimeRecGroupFingerprint);
+    if (drift) {
+      // Binaryen is an optional accelerator. Never publish its output when it
+      // changes the GC type identity required by a separately linked module;
+      // retain the codegen bytes and make the fallback visible to callers.
+      pushSourceAnchoredDiagnostic(
+        result.errors,
+        anchor,
+        `wasm-opt output was rejected because it changed the canonical runtime rec-group — ${drift}; ` +
+          `using the unoptimized module`,
+        "warning",
+      );
+    } else {
+      result.binary = optResult.binary;
+    }
   }
   if (optResult.warning) {
     pushSourceAnchoredDiagnostic(result.errors, anchor, optResult.warning, "warning");
@@ -739,6 +819,20 @@ function buildCodegenOptions(
         `target: "${options.target}" does not use that cell bridge.`,
     );
   }
+  if (options.standaloneGlobalThisImport !== undefined) {
+    if (options.target !== "standalone") {
+      throw new Error('Compile option standaloneGlobalThisImport requires target: "standalone".');
+    }
+    if (!options.standaloneGlobalThisImport.module || !options.standaloneGlobalThisImport.name) {
+      throw new Error("Compile option standaloneGlobalThisImport requires non-empty module and name fields.");
+    }
+    if (!options.link?.includes(options.standaloneGlobalThisImport.module)) {
+      throw new Error("Compile option standaloneGlobalThisImport requires its provider module to be listed in link.");
+    }
+    if (options.standaloneGlobalThisImport.call !== undefined && !options.standaloneGlobalThisImport.call) {
+      throw new Error("Compile option standaloneGlobalThisImport.call must be non-empty when provided.");
+    }
+  }
   const targetProfile = resolveCompileTargetProfile(options);
   return {
     irCutoverRoute: readIrCompileRoute(options, "compileSourceSync"),
@@ -750,12 +844,14 @@ function buildCodegenOptions(
     utf8Storage: options.utf8Storage,
     testRuntime: options.testRuntime,
     wasi: targetProfile.target === "wasi",
-    nodeGlobals: options.emulateNode === true || options.platform === "node",
+    ambientPlatform: targetProfile.ambientPlatform,
     // #2783 — the dynamic-linking axis: namespaces to leave as link-time imports
     // (deduped). `link: ["node:fs"]` is the only spelling; the old `linkNodeShims`
     // boolean was removed.
     link: [...new Set(options.link ?? [])],
+    linkedPackageBindings: options.linkedPackageBindings,
     standalone: targetProfile.target === "standalone",
+    standaloneGlobalThisImport: options.standaloneGlobalThisImport,
     directEval: options.directEval,
     // (#2141 S1) honest any-boxing regime flag (default off = legacy tag-5 ABI).
     honestAnyBoxing: options.honestAnyBoxing,
@@ -801,6 +897,9 @@ function buildCodegenOptions(
     externNativeTypes: options.externNativeTypes === true,
     externImportModule: options.externImportModule,
     importMemory: options.importMemory,
+    runtimeProvider: options.runtimeProvider === true,
+    canonicalRuntimeTypes: options.canonicalRuntimeTypes === true,
+    sharedExceptionTag: options.sharedExceptionTag === true,
     jsxRuntime: prep?.jsxRuntime,
     dtsEntrypointSeeds: prep?.dtsEntrypointSeeds,
   };
@@ -1121,7 +1220,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   let sourceMapJson: string | undefined;
   try {
     if (emitSourceMap) {
-      const emitResult = emitBinaryWithSourceMap(mod);
+      const emitResult = profilePhase("emit-binary-source-map", () => emitBinaryWithSourceMap(mod));
       const sourceMap = generateSourceMap(emitResult.sourceMapEntries, input.sourcesContent);
       sourceMapJson = JSON.stringify(sourceMap);
       // Append sourceMappingURL custom section to the binary.
@@ -1134,7 +1233,7 @@ function runPipeline(input: PipelineInput): CompileResult {
       combined.set(urlSectionBytes, emitResult.binary.length);
       binary = combined;
     } else {
-      binary = emitBinary(mod);
+      binary = profilePhase("emit-binary", () => emitBinary(mod));
     }
   } catch (e) {
     if (isWasmException(e)) throw e;
@@ -1147,6 +1246,33 @@ function runPipeline(input: PipelineInput): CompileResult {
     return failResult(errors, telemetry);
   }
 
+  // #2527 — retain a link-time proof for the frozen GC type ABI. This check
+  // runs on the raw bytes produced by the compiler, before optional Binaryen
+  // optimization, so a bad emitter or an accidental DCE/layout change cannot
+  // be mistaken for a link-compatible artifact.
+  let runtimeRecGroupFingerprint: RuntimeGroupFingerprint | undefined;
+  try {
+    runtimeRecGroupFingerprint = getRuntimeRecGroupFingerprint(mod);
+    const drift = runtimeRecGroupDrift(binary, runtimeRecGroupFingerprint);
+    if (drift) {
+      pushSourceAnchoredDiagnostic(
+        errors,
+        diagnosticAnchor,
+        `emitted WebAssembly does not contain the canonical runtime rec-group — ${drift}`,
+        "error",
+      );
+      return failResult(errors, telemetry);
+    }
+  } catch (e) {
+    pushSourceAnchoredDiagnostic(
+      errors,
+      diagnosticAnchor,
+      `runtime rec-group ABI verification failed: ${e instanceof Error ? e.message : String(e)}`,
+      "error",
+    );
+    return failResult(errors, telemetry);
+  }
+
   // Step 3b: Optimize — applied by the async entry adapters via applyOptimize,
   // not here. This synchronous core ignores options.optimize.
 
@@ -1154,9 +1280,11 @@ function runPipeline(input: PipelineInput): CompileResult {
   let wat = "";
   if (emitWatOutput) {
     try {
-      wat = emitWat(
-        mod,
-        options.emitWatOnlyFunctions ? { onlyFunctions: new Set(options.emitWatOnlyFunctions) } : undefined,
+      wat = profilePhase("emit-wat", () =>
+        emitWat(
+          mod,
+          options.emitWatOnlyFunctions ? { onlyFunctions: new Set(options.emitWatOnlyFunctions) } : undefined,
+        ),
       );
     } catch (e) {
       pushSourceAnchoredDiagnostic(
@@ -1169,7 +1297,7 @@ function runPipeline(input: PipelineInput): CompileResult {
   }
 
   // Step 5: Generate .d.ts.
-  const dts = generateDts(entryAst, mod);
+  const dts = profilePhase("emit-dts", () => generateDts(entryAst, mod));
 
   const hostImportSummary = summarizeHostImportInventory(hostImportInventory);
   const capabilityRequirements = buildCapabilityRequirements(mod, hostImportInventory, targetEnvironment);
@@ -1239,6 +1367,7 @@ function runPipeline(input: PipelineInput): CompileResult {
     stringPool: mod.stringPool,
     sourceMap: sourceMapJson,
     imports,
+    runtimeRecGroupFingerprint,
     targetProfile,
     hostImportInventory,
     hostImportSummary,
@@ -1291,7 +1420,19 @@ export async function compileSource(
       preserveNames: options.preserveDebugNames,
     });
     if (optResult.optimized) {
-      result.binary = optResult.binary;
+      const drift = runtimeRecGroupDrift(optResult.binary, result.runtimeRecGroupFingerprint);
+      if (drift) {
+        result.errors.push({
+          message:
+            `wasm-opt output was rejected because it changed the canonical runtime rec-group — ${drift}; ` +
+            `using the unoptimized module`,
+          line: 0,
+          column: 0,
+          severity: "warning",
+        });
+      } else {
+        result.binary = optResult.binary;
+      }
     }
     if (optResult.warning) {
       result.errors.push({ message: optResult.warning, line: 0, column: 0, severity: "warning" });
@@ -1520,10 +1661,7 @@ export function compileSourceSync(
       // user wrote rather than the rewritten text. A no-op when no rewrite fired
       // (identity map) — same result as the old direct lookup.
       const pos = remapDiagnosticPosition(diag, source, positionMap);
-      const severity =
-        DOWNGRADE_DIAG_CODES.has(diag.code) || isGuardedNullablePrimitiveDiagnostic(diag, ast.checker)
-          ? "warning"
-          : "error";
+      const severity = diagnosticSeverity(diag, ast.checker);
       // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
       // elaboration) instead of only the head .messageText.
       let message = ts.flattenDiagnosticMessageText(diag.messageText, "\n");
@@ -1661,8 +1799,21 @@ export async function compileMultiSource(
   const rewrittenFiles = profilePhase("cjs-rewrite", () =>
     Object.fromEntries(Object.entries(definedFiles).map(([k, v]) => [k, rewriteCjsRequire(v)])),
   );
+  const multiTargetProfile = resolveCompileTargetProfile(options);
+  // Keep the graph's import declarations intact, but give each source the
+  // same callback-aware timer ABI as single-source compilation. Without this
+  // narrow prelude, multi-file `setTimeout` calls resolve to the raw ambient
+  // host function and pass an unwrapped Wasm closure across the boundary.
+  const timerShimmedFiles = profilePhase("timer-shim", () =>
+    Object.fromEntries(
+      Object.entries(rewrittenFiles).map(([k, v]) => [
+        k,
+        injectTimerShimOnly(v, { host: multiTargetProfile.target === "gc" }),
+      ]),
+    ),
+  );
   const processedFiles = profilePhase("ground-call-fold", () =>
-    foldGroundCallsInMulti(rewrittenFiles, entryFile, options.optimize),
+    foldGroundCallsInMulti(timerShimmedFiles, entryFile, options.optimize),
   );
   profileCount("input-files", Object.keys(processedFiles).length);
 
@@ -1695,10 +1846,7 @@ export async function compileMultiSource(
   for (const diag of multiAst.diagnostics) {
     if (diag.category === 1 && isEntryDiag(diag)) {
       const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
-      const severity =
-        DOWNGRADE_DIAG_CODES.has(diag.code) || isGuardedNullablePrimitiveDiagnostic(diag, multiAst.checker)
-          ? "warning"
-          : "error";
+      const severity = diagnosticSeverity(diag, multiAst.checker);
       errors.push({
         // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
         // elaboration) and attribute the source file for multi-file compiles.
@@ -1827,10 +1975,7 @@ export async function compileFilesSource(entryPath: string, options: CompileOpti
   for (const diag of multiAst.diagnostics) {
     if (diag.category === 1) {
       const pos = diag.file ? diag.file.getLineAndCharacterOfPosition(diag.start ?? 0) : { line: 0, character: 0 };
-      const severity =
-        DOWNGRADE_DIAG_CODES.has(diag.code) || isGuardedNullablePrimitiveDiagnostic(diag, multiAst.checker)
-          ? "warning"
-          : "error";
+      const severity = diagnosticSeverity(diag, multiAst.checker);
       errors.push({
         // #1929 — flatten the full DiagnosticMessageChain (keeps the "because…"
         // elaboration) and attribute the source file for multi-file compiles.

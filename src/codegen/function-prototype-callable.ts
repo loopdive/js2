@@ -81,6 +81,15 @@ export function functionPrototypeMemberSpecLength(
  */
 const NON_CALLABLE_BUILTIN_NAMESPACES: ReadonlySet<string> = new Set(["Math", "JSON", "Reflect", "Atomics"]);
 
+/**
+ * (#5140) Own members of a builtin namespace that COLLIDE with a
+ * `%Function.prototype%` invoker name. Only Reflect has any: `Reflect.apply`
+ * (§28.1.1). Math / JSON / Atomics own no `bind`/`call`/`apply`.
+ */
+const NAMESPACE_OWN_MEMBERS: Readonly<Record<string, ReadonlySet<string>>> = {
+  Reflect: new Set(["apply"]),
+};
+
 /** The `%Function.prototype%` methods that invoke their this-value (§20.2.3.1-.3). */
 const FUNCTION_PROTOTYPE_INVOKERS: ReadonlySet<string> = new Set(["bind", "call", "apply"]);
 
@@ -122,6 +131,11 @@ export function tryEmitNonCallableNamespaceInvokerThrow(
   const member = propAccess.name.text;
   if (!NON_CALLABLE_BUILTIN_NAMESPACES.has(namespaceName)) return false;
   if (!FUNCTION_PROTOTYPE_INVOKERS.has(member)) return false;
+  // (#5140) A namespace that OWNS a same-spelled method is not the
+  // `%Function.prototype%` invoker case at all: `Reflect.apply` is §28.1.1, a
+  // real own method of the Reflect namespace. Throwing here made every
+  // `Reflect.apply(...)` call die with "Reflect.apply is not a function".
+  if (NAMESPACE_OWN_MEMBERS[namespaceName]?.has(member) === true) return false;
   emitThrowTypeError(ctx, fctx, `${namespaceName}.${member} is not a function (${namespaceName} is not callable)`);
   return true;
 }

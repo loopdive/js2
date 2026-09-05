@@ -220,7 +220,11 @@ export class EvalDeclarationPlan {
   }
 }
 
-function appendUnique(names: string[], name: string): void {
+// Keep the carrier dynamically typed at this self-hosting boundary. The AOT
+// interpreter receives arrays created in several compiler modules; treating
+// `string[]` as a nominal WasmGC array type makes an otherwise ordinary empty
+// array fail an RTT cast before its first name is appended.
+function appendUnique(names: any, name: string): void {
   for (const existing of names) {
     if (existing === name) return;
   }
@@ -242,7 +246,7 @@ function collectPatternName(pattern: Node, target: string[]): void {
  * parameter: B.3.5 exempts only `CatchParameter : BindingIdentifier`, so a
  * destructuring parameter's bound names must shadow the handler descent and
  * cancel B.3.3's synthetic var for those names. */
-export function appendPatternBoundNames(pattern: Node, target: string[]): void {
+export function appendPatternBoundNames(pattern: Node, target: any): void {
   if (!pattern) return;
   if (pattern.type === "Identifier") {
     appendUnique(target, pattern.name);
@@ -605,6 +609,31 @@ function declarativeWithBindings(parent: EnvRec | null, bindingNames: JSValue, i
   return new EnvRec(ENV_DECLARATIVE, parent, names, slots, undefined);
 }
 
+/** Create one mutable Function Environment Record for an interpreted call.
+ *
+ * The emitter passes each name with its fixed entry-register index. Copy the
+ * entry values into cells once; all source-level reads/writes then use
+ * LdName/StName, so sibling and escaping closures share the live bindings.
+ * A fresh names vector is required per call because direct eval may extend the
+ * current VariableEnvironment without mutating metadata shared by later calls. */
+export function createFunctionEnvironment(
+  parent: EnvRec | null,
+  bindingNames: JSValue,
+  bindingRegisters: JSValue,
+  registers: Regs,
+): EnvRec {
+  const names: JSValue[] = [];
+  const slots: Regs = [];
+  for (let i = 0; i < bindingNames.length; i += 1) {
+    names.push(bindingNames[i]);
+    const cell: EvalBindingCell = { value: registers[bindingRegisters[i]] };
+    slots.push(cell);
+  }
+  const env = new EnvRec(ENV_DECLARATIVE, parent, names, slots, undefined);
+  registerVariableEnvironment(env, env);
+  return env;
+}
+
 /** Push a TDZ-initialized lexical block over the current interpreter
  * environment. Keeping construction outside the dispatch function preserves
  * the cross-module callable classifier's existing rec-group shape. */
@@ -762,6 +791,20 @@ function prepareGlobalDeclarations(plan: EvalDeclarationPlan, globalEnv: EnvRec)
       throw new SyntaxError(`Identifier '${name}' has already been declared`);
     }
   }
+  // GlobalDeclarationInstantiation checks lexical declarations against both
+  // the declarative half and restricted global object properties. A static
+  // Script-level var/function binding is represented by the latter at this
+  // boundary, so a later global Script `let` must reject it even when the
+  // property itself is otherwise readable and writable.
+  for (const name of plan.lexicalNames) {
+    if (declarativeHasOwnBinding(globalEnv, name)) {
+      throw new SyntaxError(`Identifier '${name}' has already been declared`);
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(globalObject, name);
+    if (descriptor !== undefined && descriptor.configurable === false) {
+      throw new SyntaxError(`Identifier '${name}' has already been declared`);
+    }
+  }
   for (const name of plan.functionNames) {
     if (!canDeclareGlobalFunction(globalObject, name)) {
       throw new TypeError(`Cannot declare global function ${name}`);
@@ -798,20 +841,21 @@ export function prepareEvalEnvironment(
   variableEnv: EnvRec,
   strictEval: boolean,
   existingVarEnv?: EnvRec,
+  persistGlobalLexicals = false,
 ): EnvRec {
   const plan = collectEvalDeclarations(program);
   let varEnv = variableEnv;
   let executionEnv = lexicalEnv;
   registerVariableEnvironment(variableEnv, variableEnv);
   registerVariableEnvironment(lexicalEnv, variableEnv);
-  if (strictEval) {
+  if (strictEval && !(persistGlobalLexicals && variableEnv.kind === ENV_GLOBAL)) {
     const privateNames: string[] = [];
     for (const name of plan.varNames) appendUnique(privateNames, name);
     varEnv = declarativeWithBindings(lexicalEnv, privateNames, undefined);
     executionEnv = varEnv;
     registerVariableEnvironment(varEnv, varEnv);
   } else {
-    validateNonStrictEvalVarNames(plan, lexicalEnv, varEnv);
+    if (!strictEval) validateNonStrictEvalVarNames(plan, lexicalEnv, varEnv);
     if (existingVarEnv !== undefined && existingVarEnv !== null) {
       EXISTING_VARIABLE_ENVIRONMENTS.set(varEnv as object, existingVarEnv);
     }
@@ -830,6 +874,16 @@ export function prepareEvalEnvironment(
   if (plan.lexicalNames.length === 0) {
     registerVariableEnvironment(executionEnv, varEnv);
     return executionEnv;
+  }
+  if (persistGlobalLexicals && varEnv.kind === ENV_GLOBAL && executionEnv === varEnv) {
+    const names = varEnv.names as JSValue[];
+    const slots = varEnv.slots as Regs;
+    for (const name of plan.lexicalNames) {
+      names.push(name);
+      slots.push({ value: EVAL_TDZ });
+    }
+    registerVariableEnvironment(varEnv, varEnv);
+    return varEnv;
   }
   const result = declarativeWithBindings(executionEnv, plan.lexicalNames, EVAL_TDZ);
   registerVariableEnvironment(result, varEnv);

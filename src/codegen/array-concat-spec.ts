@@ -21,8 +21,11 @@ import { allocLocal } from "./context/locals.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { emitToBoolean } from "./coercion-engine.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureHoleType, holeSentinelInstrs } from "./array-holes.js";
 import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { coerceType } from "./type-coercion.js";
+import { getArrTypeIdxFromVec } from "./registry/types.js";
+import { emitArraySpeciesCreate, emitArraySpeciesResultSwap, prepareArraySpeciesDeps } from "./array-species.js"; // (#5145)
 
 /**
  * (#4446) Well-known `@@isConcatSpreadable` symbol handle — the id the object
@@ -77,29 +80,51 @@ const MAX_SAFE_LENGTH = 9007199254740991;
  *   constructor call. The `create-species-*` bucket is a separate (already
  *   failing, not regressed) concern that needs the species protocol on the
  *   native constructor channel.
- * - **Holes are not preserved.** `$ObjVec` has no hole representation, so a
- *   skipped index materialises as `undefined` rather than an absent property.
- *   The VALUES are spec-correct (`Get` of an absent index is `undefined`, which
- *   is exactly what `__extern_get_idx` answers), so `compareArray`-style tests
- *   pass; only a `hasOwnProperty` probe on the result could tell the difference.
- *   That is why the loop does NOT gate on `__extern_has_idx`: the gate would buy
- *   nothing here and would actively DROP legitimately-present `null` elements
- *   (`__extern_has_idx` answers 0 for a field holding the externref null —
- *   see the #1382 note in array-prototype-borrow.ts).
+ * - **Holes use the shared absence marker.** `$ObjVec` stores externrefs, so a
+ *   `$Hole` sentinel preserves the distinction between an absent source index
+ *   and an explicit `undefined`/`null` value. The output readers map the marker
+ *   back to `undefined`, while the output presence helpers keep the index
+ *   absent. `__extern_has_idx` is therefore consulted before `Get`: it answers
+ *   HasProperty (including inherited numeric properties), not merely whether a
+ *   value happens to be non-null.
  *
  * Returns `undefined` (nothing emitted) when the substrate is unavailable, so
  * the caller falls back to the host bridge unchanged.
  */
-export function compileArrayConcatNativeSpec(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  propAccess: ts.PropertyAccessExpression,
-  callExpr: ts.CallExpression,
-): ValType | null | undefined {
+interface ConcatLocals {
+  out: number;
+  src: number;
+  spv: number;
+  flag: number;
+  lenF: number;
+  len: number;
+  idx: number;
+  total: number;
+  present: number;
+}
+
+interface ConcatDeps {
+  builders: ReturnType<typeof ensureObjVecBuilders>;
+  externLenIdx: number;
+  getIdxIdx: number;
+  hasIdxIdx: number;
+  externGetIdx: number;
+  isArrayIdx: number;
+  isUndefinedIdx: number;
+  boxSymbolIdx: number;
+  pushIdx: number;
+}
+
+function prepareConcatSpec(ctx: CodegenContext, fctx: FunctionContext): ConcatDeps | undefined {
   const externref: ValType = { kind: "externref" };
   const i32: ValType = { kind: "i32" };
   const f64: ValType = { kind: "f64" };
 
+  // `$ObjVec` is the native concat result carrier. Register the shared hole
+  // marker before the runtime builders are first requested; if the object
+  // runtime was already emitted, its finalize fills below still see the same
+  // context-owned type/global and patch the existing readers in place.
+  ensureHoleType(ctx);
   const builders = ensureObjVecBuilders(ctx);
   // Register every helper BEFORE resolving any index; each of these is a
   // DEFINED native under the native-first provider, so a later registration
@@ -108,6 +133,7 @@ export function compileArrayConcatNativeSpec(
   // `compileExpression`, which is the only other shift source in this body.
   ensureLateImport(ctx, "__extern_length", [externref], [f64]);
   ensureLateImport(ctx, "__extern_get_idx", [externref, f64], [externref]);
+  ensureLateImport(ctx, "__extern_has_idx", [externref, f64], [i32]);
   ensureLateImport(ctx, "__extern_get", [externref, externref], [externref]);
   ensureLateImport(ctx, "__extern_is_array", [externref], [i32]);
   ensureLateImport(ctx, "__extern_is_undefined", [externref], [i32]);
@@ -118,6 +144,7 @@ export function compileArrayConcatNativeSpec(
   const required = [
     "__extern_length",
     "__extern_get_idx",
+    "__extern_has_idx",
     "__extern_get",
     "__extern_is_array",
     "__extern_is_undefined",
@@ -126,96 +153,325 @@ export function compileArrayConcatNativeSpec(
   ];
   if (required.some((name) => ctx.funcMap.get(name) === undefined)) return undefined;
 
-  const out = allocLocal(fctx, `__cat_spec_out_${fctx.locals.length}`, externref);
-  const src = allocLocal(fctx, `__cat_spec_src_${fctx.locals.length}`, externref);
-  const spv = allocLocal(fctx, `__cat_spec_spv_${fctx.locals.length}`, externref);
-  const flag = allocLocal(fctx, `__cat_spec_flag_${fctx.locals.length}`, i32);
-  const lenF = allocLocal(fctx, `__cat_spec_lenf_${fctx.locals.length}`, f64);
-  const len = allocLocal(fctx, `__cat_spec_len_${fctx.locals.length}`, i32);
-  const idx = allocLocal(fctx, `__cat_spec_i_${fctx.locals.length}`, i32);
-  const total = allocLocal(fctx, `__cat_spec_n_${fctx.locals.length}`, f64);
+  return {
+    builders,
+    externLenIdx: ctx.funcMap.get("__extern_length")!,
+    getIdxIdx: ctx.funcMap.get("__extern_get_idx")!,
+    hasIdxIdx: ctx.funcMap.get("__extern_has_idx")!,
+    externGetIdx: ctx.funcMap.get("__extern_get")!,
+    isArrayIdx: ctx.funcMap.get("__extern_is_array")!,
+    isUndefinedIdx: ctx.funcMap.get("__extern_is_undefined")!,
+    boxSymbolIdx: ctx.funcMap.get("__box_symbol")!,
+    pushIdx: ctx.funcMap.get("__objvec_push") ?? builders.pushIdx,
+  };
+}
 
-  // out = ArraySpeciesCreate(O, 0) ≈ a fresh $ObjVec ; n = 0
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new") ?? builders.newIdx });
-  fctx.body.push({ op: "local.set", index: out });
-  fctx.body.push({ op: "f64.const", value: 0 });
-  fctx.body.push({ op: "local.set", index: total });
+function allocateConcatLocals(fctx: FunctionContext): ConcatLocals {
+  return {
+    out: allocLocal(fctx, `__cat_spec_out_${fctx.locals.length}`, { kind: "externref" }),
+    src: allocLocal(fctx, `__cat_spec_src_${fctx.locals.length}`, { kind: "externref" }),
+    spv: allocLocal(fctx, `__cat_spec_spv_${fctx.locals.length}`, { kind: "externref" }),
+    flag: allocLocal(fctx, `__cat_spec_flag_${fctx.locals.length}`, { kind: "i32" }),
+    lenF: allocLocal(fctx, `__cat_spec_lenf_${fctx.locals.length}`, { kind: "f64" }),
+    len: allocLocal(fctx, `__cat_spec_len_${fctx.locals.length}`, { kind: "i32" }),
+    idx: allocLocal(fctx, `__cat_spec_i_${fctx.locals.length}`, { kind: "i32" }),
+    total: allocLocal(fctx, `__cat_spec_n_${fctx.locals.length}`, { kind: "f64" }),
+    present: allocLocal(fctx, `__cat_spec_present_${fctx.locals.length}`, { kind: "i32" }),
+  };
+}
 
-  for (const sourceExpr of [propAccess.expression, ...callExpr.arguments]) {
-    const sourceType = compileExpression(ctx, fctx, sourceExpr, externref);
-    if (sourceType === null) fctx.body.push({ op: "ref.null.extern" });
-    else if (sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, externref);
-    fctx.body.push({ op: "local.set", index: src });
+function emitConcatSource(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  locals: ConcatLocals,
+  deps: ConcatDeps,
+  emitSource: () => void,
+): void {
+  emitSource();
+  fctx.body.push({ op: "local.set", index: locals.src });
 
-    // Build the overflow throw BEFORE resolving the helper indices: it can add
-    // the `__new_TypeError` late import and a string-constant global, and it
-    // flushes against `fctx.body` itself. Everything resolved after this point
-    // is therefore stable for the rest of this operand's emission.
-    const overflowThrow = buildThrowJsErrorInstrs(
-      ctx,
-      "TypeError",
-      "Array.prototype.concat: resulting array length exceeds 2^53-1",
-      { flush: fctx },
-    );
+  // Build the overflow throw BEFORE resolving the helper indices: it can add
+  // the `__new_TypeError` late import and a string-constant global, and it
+  // flushes against `fctx.body` itself. Everything resolved after this point
+  // is therefore stable for the rest of this operand's emission.
+  const overflowThrow = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    "Array.prototype.concat: resulting array length exceeds 2^53-1",
+    { flush: fctx },
+  );
 
-    const pushIdx = ctx.funcMap.get("__objvec_push") ?? builders.pushIdx;
-    const externLenIdx = ctx.funcMap.get("__extern_length")!;
-    const getIdxIdx = ctx.funcMap.get("__extern_get_idx")!;
-    const externGetIdx = ctx.funcMap.get("__extern_get")!;
-    const isArrayIdx = ctx.funcMap.get("__extern_is_array")!;
-    const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined")!;
-    const boxSymbolIdx = ctx.funcMap.get("__box_symbol")!;
+  // ── IsConcatSpreadable(E) (§23.1.3.1.1) ──────────────────────────────
+  // spv = Get(E, @@isConcatSpreadable); step 3 is "if spv is UNDEFINED, return
+  // IsArray(E)" — every other value, `null` included, goes to ToBoolean.
+  //
+  // (#5268 r3 R3-5d) The absence test used to accept a wasm `ref.null` as
+  // "absent" too, which made a PRESENT `null` spread an array
+  // (`is-concat-spreadable-val-falsey.js`: `item[@@isConcatSpreadable] = null`
+  // must NOT spread). A miss does not need that term: `__extern_get` answers
+  // the UNDEFINED singleton for a key it does not find — measured on both a
+  // `$Vec` and an `$Object` receiver (`[3,4][@@isConcatSpreadable]` prints
+  // "undefined", while a stored `null` prints "null"), which is exactly the
+  // distinction §23.1.3.1.1 step 3 rests on.
+  fctx.body.push({ op: "local.get", index: locals.src });
+  fctx.body.push({ op: "i32.const", value: SYMBOL_IS_CONCAT_SPREADABLE_ID });
+  fctx.body.push({ op: "call", funcIdx: deps.boxSymbolIdx });
+  fctx.body.push({ op: "call", funcIdx: deps.externGetIdx });
+  fctx.body.push({ op: "local.tee", index: locals.spv });
+  fctx.body.push({ op: "call", funcIdx: deps.isUndefinedIdx });
+  const toBool: Instr[] = [{ op: "local.get", index: locals.spv }];
+  emitToBoolean(ctx, { kind: "externref" }, toBool);
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: { kind: "i32" } },
+    then: [
+      { op: "local.get", index: locals.src },
+      { op: "call", funcIdx: deps.isArrayIdx },
+    ],
+    else: toBool,
+  });
+  fctx.body.push({ op: "local.set", index: locals.flag });
 
-    // ── IsConcatSpreadable(E) (§23.1.3.1.1) ──────────────────────────────
-    // spv = Get(E, @@isConcatSpreadable); a null/undefined answer (which also
-    // covers every non-Object E, whose reflective read misses) falls back to
-    // IsArray(E), otherwise ToBoolean(spv).
-    fctx.body.push({ op: "local.get", index: src });
-    fctx.body.push({ op: "i32.const", value: SYMBOL_IS_CONCAT_SPREADABLE_ID });
-    fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
-    fctx.body.push({ op: "call", funcIdx: externGetIdx });
-    fctx.body.push({ op: "local.tee", index: spv });
-    fctx.body.push({ op: "ref.is_null" });
-    fctx.body.push({ op: "local.get", index: spv });
-    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
-    fctx.body.push({ op: "i32.or" });
-    const toBool: Instr[] = [{ op: "local.get", index: spv }];
-    emitToBoolean(ctx, externref, toBool);
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "val", type: i32 },
-      then: [
-        { op: "local.get", index: src },
-        { op: "call", funcIdx: isArrayIdx },
+  // ── Spreadable arm: append E's 0..ToLength(E.length) elements ─────────
+  const spreadArm: Instr[] = [
+    { op: "local.get", index: locals.src },
+    { op: "call", funcIdx: deps.externLenIdx },
+    { op: "local.set", index: locals.lenF },
+    // step 5.c.iii — n + len > 2^53-1 ⇒ TypeError. Load-bearing beyond
+    // conformance: it is what keeps `length = Number.MAX_SAFE_INTEGER`
+    // (arg-length-exceeding-integer-limit.js) from entering a 2^31-iteration
+    // copy loop after the i32 truncation below.
+    { op: "local.get", index: locals.total },
+    { op: "local.get", index: locals.lenF },
+    { op: "f64.add" },
+    { op: "f64.const", value: MAX_SAFE_LENGTH },
+    { op: "f64.gt" },
+    { op: "if", blockType: { kind: "empty" }, then: overflowThrow },
+    { op: "local.get", index: locals.total },
+    { op: "local.get", index: locals.lenF },
+    { op: "f64.add" },
+    { op: "local.set", index: locals.total },
+    { op: "local.get", index: locals.lenF },
+    { op: "i32.trunc_sat_f64_s" },
+    { op: "local.set", index: locals.len },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: locals.idx },
+    {
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: locals.idx },
+            { op: "local.get", index: locals.len },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            // HasProperty decides whether concat creates an own result index.
+            // Inherited entries are copied; genuine holes stay absent through
+            // the shared internal sentinel.
+            { op: "local.get", index: locals.src },
+            { op: "local.get", index: locals.idx },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: deps.hasIdxIdx },
+            { op: "local.set", index: locals.present },
+            { op: "local.get", index: locals.out },
+            { op: "local.get", index: locals.present },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [
+                { op: "local.get", index: locals.src },
+                { op: "local.get", index: locals.idx },
+                { op: "f64.convert_i32_s" },
+                { op: "call", funcIdx: deps.getIdxIdx },
+              ],
+              else: holeSentinelInstrs(ctx),
+            },
+            { op: "call", funcIdx: deps.pushIdx },
+            { op: "local.get", index: locals.idx },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: locals.idx },
+            { op: "br", depth: 0 },
+          ],
+        },
       ],
-      else: toBool,
-    });
-    fctx.body.push({ op: "local.set", index: flag });
+    },
+  ];
 
-    // ── Spreadable arm: append E's 0..ToLength(E.length) elements ─────────
-    const spreadArm: Instr[] = [
-      { op: "local.get", index: src },
-      { op: "call", funcIdx: externLenIdx },
-      { op: "local.set", index: lenF },
-      // step 5.c.iii — n + len > 2^53-1 ⇒ TypeError. Load-bearing beyond
-      // conformance: it is what keeps `length = Number.MAX_SAFE_INTEGER`
-      // (arg-length-exceeding-integer-limit.js) from entering a 2^31-iteration
-      // copy loop after the i32 truncation below.
-      { op: "local.get", index: total },
-      { op: "local.get", index: lenF },
-      { op: "f64.add" },
-      { op: "f64.const", value: MAX_SAFE_LENGTH },
-      { op: "f64.gt" },
-      { op: "if", blockType: { kind: "empty" }, then: overflowThrow },
-      { op: "local.get", index: total },
-      { op: "local.get", index: lenF },
-      { op: "f64.add" },
-      { op: "local.set", index: total },
-      { op: "local.get", index: lenF },
-      { op: "i32.trunc_sat_f64_s" },
-      { op: "local.set", index: len },
+  // ── Non-spreadable arm: append E itself ──────────────────────────────
+  const singleArm: Instr[] = [
+    { op: "local.get", index: locals.out },
+    { op: "local.get", index: locals.src },
+    { op: "call", funcIdx: deps.pushIdx },
+    { op: "local.get", index: locals.total },
+    { op: "f64.const", value: 1 },
+    { op: "f64.add" },
+    { op: "local.set", index: locals.total },
+  ];
+
+  fctx.body.push({ op: "local.get", index: locals.flag });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: spreadArm, else: singleArm });
+}
+
+function emitConcatOutputInit(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  deps: ConcatDeps,
+  locals: ConcatLocals,
+): void {
+  // out = ArraySpeciesCreate(O, 0) ≈ a fresh $ObjVec ; n = 0
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new") ?? deps.builders.newIdx });
+  fctx.body.push({ op: "local.set", index: locals.out });
+  fctx.body.push({ op: "f64.const", value: 0 });
+  fctx.body.push({ op: "local.set", index: locals.total });
+}
+
+/** Emit the existing AST-driven concat lowering. */
+export function compileArrayConcatNativeSpec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propAccess: ts.PropertyAccessExpression,
+  callExpr: ts.CallExpression,
+): ValType | null | undefined {
+  return compileArrayConcatNativeSpecFromExprs(ctx, fctx, propAccess.expression, [...callExpr.arguments]);
+}
+
+/**
+ * (#5145) The receiver/args-EXPRESSION entry to the same §23.1.3.1 loop.
+ *
+ * `Array.prototype.concat.call(obj, …)` reaches the compiler with the receiver
+ * as `arguments[0]`, not as the property-access target, so the AST-driven entry
+ * above cannot express it. Before this, that spelling fell through to the
+ * reflective `.call` lowering, which invokes the concat proto-closure's VARIADIC
+ * `(this, argsVec)` ABI through an arity-shaped `call_ref` and pushes one
+ * operand too few — an INVALID MODULE ("not enough arguments on the stack for
+ * call_ref (need 3, got 2)"), i.e. a compile-time failure, not a wrong answer.
+ */
+export function compileArrayConcatNativeSpecFromExprs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverExpr: ts.Expression,
+  argExprs: readonly ts.Expression[],
+): ValType | null | undefined {
+  const externref: ValType = { kind: "externref" };
+  const deps = prepareConcatSpec(ctx, fctx);
+  if (deps === undefined) return undefined;
+  ctx.usesNativeConcatHoleSubstrate = true;
+  const locals = allocateConcatLocals(fctx);
+  emitConcatOutputInit(ctx, fctx, deps, locals);
+
+  // §23.1.3.1 step 2 — `A = ArraySpeciesCreate(O, 0)`. The receiver is the FIRST
+  // operand and must be evaluated before the species read, so the prologue is
+  // emitted from the receiver's own stashed value.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  let speciesLocal: number | undefined;
+
+  let first = true;
+  for (const sourceExpr of [receiverExpr, ...argExprs]) {
+    if (first && speciesDeps !== undefined) {
+      const recvTmp = allocLocal(fctx, `__cat_spec_recv_${fctx.locals.length}`, externref);
+      const sourceType = compileExpression(ctx, fctx, sourceExpr, externref);
+      if (sourceType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, externref);
+      fctx.body.push({ op: "local.set", index: recvTmp });
+      speciesLocal = emitArraySpeciesCreate(
+        ctx,
+        fctx,
+        speciesDeps,
+        [{ op: "local.get", index: recvTmp }],
+        [{ op: "f64.const", value: 0 }],
+      );
+      emitConcatSource(ctx, fctx, locals, deps, () => {
+        fctx.body.push({ op: "local.get", index: recvTmp });
+      });
+      first = false;
+      continue;
+    }
+    first = false;
+    emitConcatSource(ctx, fctx, locals, deps, () => {
+      const sourceType = compileExpression(ctx, fctx, sourceExpr, externref);
+      if (sourceType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (sourceType.kind !== "externref") coerceType(ctx, fctx, sourceType, externref);
+    });
+  }
+
+  fctx.body.push({ op: "local.get", index: locals.out });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, { kind: "externref" });
+  }
+  return { kind: "externref" };
+}
+
+/**
+ * Emit concat for the receiver-aware variadic native-proto ABI. `receiverIdx`
+ * is the closure's first user parameter (`thisValue`); `argsVecIdx` is the
+ * trailing `(ref null $vec_externref)` carrying exactly the call-site args.
+ * Keeping the vector length separate from the closure's `.length` is what
+ * makes both `x.concat()` and heterogeneous five-argument calls spec-shaped.
+ */
+export function compileArrayConcatNativeSpecFromReceiverAndArgsVec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverIdx: number,
+  argsVecIdx: number,
+): ValType | null | undefined {
+  const deps = prepareConcatSpec(ctx, fctx);
+  if (deps === undefined) return undefined;
+  const locals = allocateConcatLocals(fctx);
+  emitConcatOutputInit(ctx, fctx, deps, locals);
+
+  // (#5145) ArraySpeciesCreate(this, 0) — the receiver is already a parameter
+  // here, so no extra evaluation is needed.
+  const speciesDeps = prepareArraySpeciesDeps(ctx, fctx);
+  const speciesLocal =
+    speciesDeps === undefined
+      ? undefined
+      : emitArraySpeciesCreate(
+          ctx,
+          fctx,
+          speciesDeps,
+          [{ op: "local.get", index: receiverIdx }],
+          [{ op: "f64.const", value: 0 }],
+        );
+
+  emitConcatSource(ctx, fctx, locals, deps, () => {
+    fctx.body.push({ op: "local.get", index: receiverIdx });
+  });
+
+  // Read the typed vector directly. Going through the generic externref
+  // `__extern_get_idx` carrier loses Wasm-owned object values on this native
+  // closure boundary (primitive vector elements happened to survive, masking
+  // the bug); the vector layout is already canonical here.
+  const argsParam = fctx.params[argsVecIdx]?.type;
+  if (!argsParam || (argsParam.kind !== "ref" && argsParam.kind !== "ref_null")) return undefined;
+  const argsArrTypeIdx = getArrTypeIdxFromVec(ctx, argsParam.typeIdx);
+  const argsArrDef = ctx.mod.types[argsArrTypeIdx];
+  if (argsArrDef?.kind !== "array" || argsArrDef.element.kind !== "externref") return undefined;
+  const argsData = allocLocal(fctx, `__cat_spec_args_data_${fctx.locals.length}`, {
+    kind: "ref_null",
+    typeIdx: argsArrTypeIdx,
+  });
+  const argsLen = allocLocal(fctx, `__cat_spec_args_len_${fctx.locals.length}`, { kind: "i32" });
+  const argsIdx = allocLocal(fctx, `__cat_spec_args_i_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.get", index: argsVecIdx }, { op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [],
+    else: [
+      { op: "local.get", index: argsVecIdx },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: argsParam.typeIdx, fieldIdx: 1 },
+      { op: "local.set", index: argsData },
+      { op: "local.get", index: argsVecIdx },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: argsParam.typeIdx, fieldIdx: 0 },
+      { op: "local.set", index: argsLen },
       { op: "i32.const", value: 0 },
-      { op: "local.set", index: idx },
+      { op: "local.set", index: argsIdx },
       {
         op: "block",
         blockType: { kind: "empty" },
@@ -224,42 +480,49 @@ export function compileArrayConcatNativeSpec(
             op: "loop",
             blockType: { kind: "empty" },
             body: [
-              { op: "local.get", index: idx },
-              { op: "local.get", index: len },
+              { op: "local.get", index: argsIdx },
+              { op: "local.get", index: argsLen },
               { op: "i32.ge_s" },
               { op: "br_if", depth: 1 },
-              { op: "local.get", index: out },
-              { op: "local.get", index: src },
-              { op: "local.get", index: idx },
-              { op: "f64.convert_i32_s" },
-              { op: "call", funcIdx: getIdxIdx },
-              { op: "call", funcIdx: pushIdx },
-              { op: "local.get", index: idx },
+              // Build one operand body in a detached buffer so it can sit
+              // inside this dynamic loop without changing the existing
+              // source-expression lowering or its local allocation scheme.
+              ...((): Instr[] => {
+                const savedBody = fctx.body;
+                const sourceBody: Instr[] = [];
+                fctx.body = sourceBody;
+                const savedBodyWasLive = ctx.liveBodies.has(savedBody);
+                ctx.liveBodies.add(savedBody);
+                try {
+                  emitConcatSource(ctx, fctx, locals, deps, () => {
+                    fctx.body.push(
+                      { op: "local.get", index: argsData },
+                      { op: "ref.as_non_null" },
+                      { op: "local.get", index: argsIdx },
+                      { op: "array.get", typeIdx: argsArrTypeIdx },
+                    );
+                  });
+                } finally {
+                  fctx.body = savedBody;
+                  if (!savedBodyWasLive) ctx.liveBodies.delete(savedBody);
+                }
+                return sourceBody;
+              })(),
+              { op: "local.get", index: argsIdx },
               { op: "i32.const", value: 1 },
               { op: "i32.add" },
-              { op: "local.set", index: idx },
+              { op: "local.set", index: argsIdx },
               { op: "br", depth: 0 },
             ],
           },
         ],
       },
-    ];
+    ],
+  });
 
-    // ── Non-spreadable arm: append E itself ──────────────────────────────
-    const singleArm: Instr[] = [
-      { op: "local.get", index: out },
-      { op: "local.get", index: src },
-      { op: "call", funcIdx: pushIdx },
-      { op: "local.get", index: total },
-      { op: "f64.const", value: 1 },
-      { op: "f64.add" },
-      { op: "local.set", index: total },
-    ];
-
-    fctx.body.push({ op: "local.get", index: flag });
-    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: spreadArm, else: singleArm });
+  fctx.body.push({ op: "local.get", index: locals.out });
+  if (speciesDeps !== undefined && speciesLocal !== undefined) {
+    return emitArraySpeciesResultSwap(ctx, fctx, speciesDeps, speciesLocal, { kind: "externref" });
   }
-
-  fctx.body.push({ op: "local.get", index: out });
   return { kind: "externref" };
 }

@@ -12,9 +12,11 @@
  * family — every ES5 file that constructs through an eval-lane function value.
  *
  * ## Why the seam CAN express construction (this was verified, not assumed)
- * The `js2wasm:runtime-eval` ABI has exactly four entries
- * (`__runtime_direct_eval`, `__runtime_indirect_eval`, `__runtime_new_function`,
- * `__runtime_apply_interpreted`) and **no construct entry**. It does not need
+ * The `js2wasm:runtime-eval` ABI has five entries (`__runtime_direct_eval`,
+ * `__runtime_indirect_eval`, `__runtime_script_eval`, `__runtime_new_function`,
+ * `__runtime_apply_interpreted`) — this said "exactly four" until #4784, having
+ * missed the global-SCRIPT entry that 7d8021e8 added on 2026-08-26 — and
+ * **no construct entry**. It does not need
  * one: the fourth takes a `thisArg`, and the provider's inward membrane makes a
  * compiled `$Object` receiver writable from inside the evaluated code. Probed on
  * the base before any of this was written:
@@ -117,6 +119,8 @@ import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
+import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
+import { ensureNativeProtoCompanionSeeder } from "./native-proto.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 import { RUNTIME_EVAL_AOT_CALLABLE_BRAND_A, RUNTIME_EVAL_AOT_CALLABLE_BRAND_B } from "./runtime-eval-boundary.js";
@@ -197,6 +201,19 @@ function nodeCanSeeRuntimeEvalCallable(site: ts.Node): boolean {
 }
 
 /**
+ * Register the Function constructor's native prototype companion at a
+ * source-known `Function(...)` site. Both the runtime-eval and constant
+ * constructor lanes create a callable from the Function constructor, but only
+ * the former otherwise enters the native-prototype value-read machinery.
+ */
+export function ensureFunctionConstructorPrototypeInheritance(ctx: CodegenContext): void {
+  if (!ctx.standalone) return;
+  ensureObjectRuntime(ctx);
+  const functionBrand = ensureFunctionNativeProtoGlue(ctx);
+  if (functionBrand !== undefined) ensureNativeProtoCompanionSeeder(ctx, functionBrand);
+}
+
+/**
  * (#4438) Seed the §20.2.1.1 `prototype` / `constructor` pair onto a freshly
  * minted runtime-eval callable.
  *
@@ -206,9 +223,21 @@ function nodeCanSeeRuntimeEvalCallable(site: ts.Node): boolean {
  *
  * Emits nothing at all (leaving the site byte-identical) when the object
  * runtime cannot supply `__new_plain_object` / `__defineProperty_value`.
+ * A missing `fctx` is the constant-AOT constructor lane: it only registers
+ * the shared Function.prototype companion and emits no seed instructions.
  */
-export function emitRuntimeEvalFunctionPrototypeSeed(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitRuntimeEvalFunctionPrototypeSeed(ctx: CodegenContext, fctx?: FunctionContext): void {
   if (!ctx.standalone) return;
+  if (fctx === undefined) {
+    // The constant-AOT `Function()` lane mints a local closure and therefore
+    // needs the compiler's native Function.prototype companion. A callable
+    // produced by the runtime-eval provider already carries that engine's own
+    // Function prototype identity; globally installing the native companion
+    // for that lane intercepts `.constructor` / `.apply` and breaks the
+    // QuickJS function-parity canary.
+    ensureFunctionConstructorPrototypeInheritance(ctx);
+    return;
+  }
   ensureObjectRuntime(ctx);
   const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [EXTERNREF]);
   const defineIdx = ensureLateImport(

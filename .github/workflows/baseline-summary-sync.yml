@@ -88,10 +88,18 @@ jobs:
           node scripts/compare-test262-artifact.mjs --type report \
             --baseline public/benchmarks/results/test262-report.json \
             --candidate /tmp/js2wasm-baselines/test262-current.json && HOST_UNCHANGED=1
+          WEBSITE_HOST_UNCHANGED=0
+          node scripts/compare-test262-artifact.mjs --type report \
+            --baseline website/public/benchmarks/results/test262-report.json \
+            --candidate /tmp/js2wasm-baselines/test262-current.json && WEBSITE_HOST_UNCHANGED=1
           STANDALONE_UNCHANGED=0
           node scripts/compare-test262-artifact.mjs --type report \
             --baseline public/benchmarks/results/test262-standalone-report.json \
             --candidate /tmp/js2wasm-baselines/test262-standalone-report.json && STANDALONE_UNCHANGED=1
+          WEBSITE_STANDALONE_UNCHANGED=0
+          node scripts/compare-test262-artifact.mjs --type report \
+            --baseline website/public/benchmarks/results/test262-standalone-report.json \
+            --candidate /tmp/js2wasm-baselines/test262-standalone-report.json && WEBSITE_STANDALONE_UNCHANGED=1
           # (#3953) The #2097 high-water mark is a THIRD drift axis, independent
           # of the two report compares above. A stale mark can coexist with
           # semantically-identical reports (the mark lags whenever the promote's
@@ -104,7 +112,10 @@ jobs:
           node scripts/check-highwater-staleness.mjs \
             --report /tmp/js2wasm-baselines/test262-standalone-report.json \
             --annotate || HIGHWATER_STALE=1
-          if [ "$HOST_UNCHANGED" = "1" ] && [ "$STANDALONE_UNCHANGED" = "1" ] && [ "$HIGHWATER_STALE" = "0" ]; then
+          if [ "$HOST_UNCHANGED" = "1" ] && [ "$WEBSITE_HOST_UNCHANGED" = "1" ] \
+            && [ "$STANDALONE_UNCHANGED" = "1" ] \
+            && [ "$WEBSITE_STANDALONE_UNCHANGED" = "1" ] \
+            && [ "$HIGHWATER_STALE" = "0" ]; then
             echo "Committed summary already matches the baselines repo — nothing to sync."
             echo "sync=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -169,9 +180,8 @@ jobs:
           # this run's shard artifacts.
           mkdir -p benchmarks/results public/benchmarks/results
           cp /tmp/js2wasm-baselines/test262-current.json benchmarks/results/test262-current.json
-          cp /tmp/js2wasm-baselines/test262-current.json benchmarks/results/test262-report.json
-          cp /tmp/js2wasm-baselines/test262-current.json public/benchmarks/results/test262-report.json
-          cp /tmp/js2wasm-baselines/test262-standalone-report.json public/benchmarks/results/test262-standalone-report.json
+          cp /tmp/js2wasm-baselines/test262-standalone-report.json benchmarks/results/test262-standalone-current.json
+          node scripts/sync-test262-report-mirrors.mjs
           node --experimental-strip-types scripts/generate-editions.ts \
             --results /tmp/js2wasm-baselines/test262-current.jsonl || \
             echo "WARN: generate-editions failed (non-fatal) — edition buckets may lag"
@@ -251,9 +261,12 @@ jobs:
 
           stage_files() {
             git add -f benchmarks/results/test262-current.json \
+              benchmarks/results/test262-standalone-current.json \
               benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-report.json \
-              public/benchmarks/results/test262-standalone-report.json
+              public/benchmarks/results/test262-standalone-report.json \
+              website/public/benchmarks/results/test262-report.json \
+              website/public/benchmarks/results/test262-standalone-report.json
             [ -f website/public/benchmarks/results/test262-editions.json ] && \
               git add -f website/public/benchmarks/results/test262-editions.json || true
             [ -f website/public/benchmarks/results/test262-category-editions.json ] && \

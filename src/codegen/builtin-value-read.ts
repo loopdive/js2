@@ -28,6 +28,7 @@ import {
 } from "./shared.js";
 import { emitThrowTypeError, noJsHost } from "./expressions/helpers.js";
 import { allocLocal } from "./context/locals.js";
+import { isViewRefTestInstrs } from "./dataview-native.js"; // (#5150) ArrayBuffer.isView value closure
 import { reportErrorNoNode } from "./context/errors.js";
 import { ensureRegExpNativeProtoGlue } from "./regexp-standalone.js";
 import {
@@ -73,9 +74,29 @@ import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
 import { emitMathValueReadBody } from "./math-value-read.js"; // (#4565)
+import { ensureHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649)
+import {
+  emitStringFromCharCodeValueBody,
+  prepareStringFromCharCodeValueRead,
+} from "./string-fromcharcode-value-read.js"; // (#4491 wave-5 T6)
 import { ensureAnyFromExternHelper, ensureAnyHelpers, ensureExternStrictEqHelper } from "./any-helpers.js";
 import { sameValueNumberOps } from "./same-value-number-ops.js";
-import { ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
+import { ensureNativeProxyRuntime, ensureObjectRuntime, ensureObjVecBuilders } from "./object-runtime.js";
+import {
+  emitStandalonePromiseReject,
+  emitStandalonePromiseResolve,
+  ensurePromiseSettleFunctions,
+  isStandalonePromiseActive,
+} from "./async-scheduler.js";
+import {
+  ensureNativeSymbolBoundaryBridge,
+  ensureSymbolCarrier,
+  ensureSymbolRegistry,
+  usesNativeSymbolProvider,
+} from "./symbol-native.js";
+import { emitExternrefSlotToAnyStr } from "./native-string-slot-bridge.js";
+import { emitNativeReflectTargetGuard } from "./reflect-target-guard.js";
+import { sourceShadowsGlobalName } from "./source-function-members.js"; // (#5194 review F2)
 
 export const BUILTIN_CTOR_NAMES = new Set([
   "Object",
@@ -102,6 +123,7 @@ export const BUILTIN_CTOR_NAMES = new Set([
   "Map",
   "Set",
   "Error",
+  "AggregateError",
   "TypeError",
   "RangeError",
   "SyntaxError",
@@ -454,16 +476,15 @@ export function emitArrayIsArrayExternrefPredicate(ctx: CodegenContext, fctx: Fu
   fctx.body.push({ op: "local.set", index: externTmp });
   let emittedTerm = false;
 
-  if (vecTypeIdxs.length > 0) {
-    const anyTmp = allocLocal(fctx, `__isarr_any_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  // (#4649) The compiled-carrier half is a CALL to the finalize-filled
+  // `__host_array_carrier`, not an inline `ref.test` ladder over
+  // `ctx.vecTypeMap` — that ladder was an emission-time snapshot, so a carrier
+  // registered LATER (a `boolean[]` first minted by a test262 body, after the
+  // harness prefix baked its ladder) answered `false`. See host-array-carrier.ts.
+  const carrierIdx = vecTypeIdxs.length > 0 ? ensureHostArrayCarrierPredicate(ctx) : undefined;
+  if (carrierIdx !== undefined) {
     fctx.body.push({ op: "local.get", index: externTmp });
-    fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "local.set", index: anyTmp });
-    for (let vi = 0; vi < vecTypeIdxs.length; vi++) {
-      fctx.body.push({ op: "local.get", index: anyTmp });
-      fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdxs[vi]! });
-      if (vi > 0) fctx.body.push({ op: "i32.or" });
-    }
+    fctx.body.push({ op: "call", funcIdx: carrierIdx });
     emittedTerm = true;
   }
 
@@ -576,6 +597,7 @@ export function tryEnsureNativeProtoBrand(ctx: CodegenContext, builtinName: stri
   // entanglement), so wiring the glue flips the `<NativeError>.prototype[.member]`
   // value-read CE → host-free value object.
   if (
+    builtinName === "AggregateError" ||
     builtinName === "TypeError" ||
     builtinName === "RangeError" ||
     builtinName === "ReferenceError" ||
@@ -739,18 +761,34 @@ function tryCompileStandaloneBuiltinProtoMemberMeta(
   if (inner.name.text !== "prototype" || !ts.isIdentifier(inner.expression)) return undefined;
   const builtinName = inner.expression.text;
   if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
-  const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+  // (#5194 review F2) `localMap`/`boxedCaptures` are FUNCTION-scope facts, so
+  // they can never see a MODULE-level `class Int16Array { … }` — and once
+  // `hasBuiltinProtoConstructorCarrier` answered true for all 11 view names by
+  // NAME, `<UserClassNamedLikeAView>.prototype.constructor` resolved to the
+  // builtin `$__ta_ctor` singleton. The file-scope binding check closes that.
+  const isShadowed =
+    fctx.localMap.has(builtinName) ||
+    (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+    sourceShadowsGlobalName(expr.getSourceFile(), builtinName);
   if (isShadowed) return undefined;
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
   if (brand === undefined) return undefined;
-  const glue = getNativeProtoBuiltinGlue(ctx, brand);
-  if (!glue) return undefined;
+  const ownGlue = getNativeProtoBuiltinGlue(ctx, brand);
+  if (!ownGlue) return undefined;
 
   const member = memberAccess.name.text;
   // Only fold for members the glue actually advertises (so a typo / unknown
   // member still routes through the normal path rather than fabricating a 0).
-  if (!glue.memberCsv.split(",").includes(member)) return undefined;
+  // (#5194 step 1) A glue with a declared PARENT owns no methods of its own
+  // (`Uint8Array.prototype.map.length`), so consult the parent level too — the
+  // same one-level walk `resolveStandaloneProtoMemberValueClosure` performs.
+  const glue = ownGlue.memberCsv.split(",").includes(member)
+    ? ownGlue
+    : ownGlue.parentBrand !== undefined && ownGlue.parentBrand !== brand
+      ? getNativeProtoBuiltinGlue(ctx, ownGlue.parentBrand)
+      : undefined;
+  if (!glue || !glue.memberCsv.split(",").includes(member)) return undefined;
 
   if (metaProp === "length") {
     const arity = glue.memberKind(member) === "getter" ? 0 : glue.memberLength(member);
@@ -759,7 +797,10 @@ function tryCompileStandaloneBuiltinProtoMemberMeta(
   }
   // `.name` — the member's own name (getters are spelled "get <member>" per
   // §10.2.9, but the test gate reads method names; emit the bare member name).
-  return compileStringLiteral(ctx, fctx, member) ?? undefined;
+  // Annex B's trimLeft/trimRight entries are identity aliases, so their
+  // function object's name is the canonical trimStart/trimEnd spelling.
+  const canonicalMember = glue.memberAliasOf?.(member) ?? member;
+  return compileStringLiteral(ctx, fctx, canonicalMember) ?? undefined;
 }
 
 function tryCompileStandaloneBuiltinProtoMemberRead(
@@ -774,7 +815,15 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   if (!ts.isIdentifier(inner.expression)) return undefined;
   const builtinName = inner.expression.text;
   if (!BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
-  const isShadowed = fctx.localMap.has(builtinName) || (fctx.boxedCaptures?.has(builtinName) ?? false);
+  // (#5194 review F2) `localMap`/`boxedCaptures` are FUNCTION-scope facts, so
+  // they can never see a MODULE-level `class Int16Array { … }` — and once
+  // `hasBuiltinProtoConstructorCarrier` answered true for all 11 view names by
+  // NAME, `<UserClassNamedLikeAView>.prototype.constructor` resolved to the
+  // builtin `$__ta_ctor` singleton. The file-scope binding check closes that.
+  const isShadowed =
+    fctx.localMap.has(builtinName) ||
+    (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+    sourceShadowsGlobalName(expr.getSourceFile(), builtinName);
   if (isShadowed) return undefined;
 
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
@@ -794,6 +843,22 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
     const ctorType = emitBuiltinProtoConstructorValue(ctx, fctx, builtinName);
     if (ctorType !== null) return ctorType;
     return undefined;
+  }
+  // (#5156) Own string-valued DATA property of the prototype (Error family
+  // `name`/`message`). These are absent from `memberCsv` on purpose, so the
+  // read used to fall to the dynamic path, whose `$Object` cast of the
+  // `$NativeProto` struct trapped with "illegal cast in __module_init".
+  const dataProp = getNativeProtoBuiltinGlue(ctx, brand)?.dataProps?.find(([key]) => key === member);
+  if (dataProp) {
+    // (#5194 step 1) A NUMERIC own data property is a prototype CONSTANT —
+    // `<View>.prototype.BYTES_PER_ELEMENT` (§23.2.7.1) — folded to its f64
+    // constant, the same value the seeded companion entry carries.
+    if (typeof dataProp[1] === "number") {
+      fctx.body.push({ op: "f64.const", value: dataProp[1] });
+      return { kind: "f64" };
+    }
+    const literal = compileStringLiteral(ctx, fctx, dataProp[1]);
+    if (literal) return literal;
   }
   // (#2984 Phase 2) Own-CSV gate + Object.prototype inheritance + un-wired-
   // member refusal fallback — policy lives in native-proto-value-read.ts.
@@ -839,6 +904,68 @@ function tryCompileStandaloneBuiltinProtoMemberRead(
   // so `gOPD(RegExp.prototype,"exec").value === RegExp.prototype.exec`.
   fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
   return closure.type;
+}
+
+/**
+ * (#4731 / #5142) `<Builtin>.prototype[Symbol.<wellKnown>]` value read.  The
+ * ordinary computed-property path materializes the `$NativeProto` object and
+ * asks `__extern_get` for a dynamic symbol key; standalone has no symbol-key arm
+ * there, so it returned null (`undefined` at run time).  Resolve this static
+ * shape through the same identity-stable method closure the dot form uses.
+ *
+ * #4731 covered `<Map|Set>.prototype[Symbol.iterator]`, which is an ALIAS for
+ * that prototype's `entries`/`values` method; #5142 generalizes the arm to every
+ * well-known symbol advertised by a brand's glue under its physical `@@<id>` key
+ * (RegExp's `@@7`/`@@8`/`@@9`/`@@10` = `[Symbol.match]`/`[Symbol.replace]`/
+ * `[Symbol.search]`/`[Symbol.split]`).
+ */
+function tryCompileStandaloneBuiltinProtoIteratorRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.ElementAccessExpression,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+
+  const key = skipTransparentExpressions(expr.argumentExpression);
+  if (!ts.isPropertyAccessExpression(key) || !ts.isIdentifier(key.expression) || key.expression.text !== "Symbol") {
+    return undefined;
+  }
+  const symbolId = getWellKnownSymbolId(key.name.text);
+  if (symbolId === undefined) return undefined;
+
+  const receiver = skipTransparentExpressions(expr.expression);
+  if (!ts.isPropertyAccessExpression(receiver) || receiver.name.text !== "prototype") return undefined;
+  if (!ts.isIdentifier(receiver.expression)) return undefined;
+
+  const builtinName = receiver.expression.text;
+  const isIteratorAlias = key.name.text === "iterator" && (builtinName === "Map" || builtinName === "Set");
+  if (!isIteratorAlias && !BUILTIN_CTOR_NAMES.has(builtinName)) return undefined;
+  if (
+    fctx.localMap.has(builtinName) ||
+    (fctx.boxedCaptures?.has(builtinName) ?? false) ||
+    fctx.localMap.has("Symbol") ||
+    (fctx.boxedCaptures?.has("Symbol") ?? false)
+  ) {
+    return undefined;
+  }
+
+  const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
+  if (brand === undefined) return undefined;
+  // Map/Set keep their §24.1.3.12/§24.2.3.11 ALIAS resolution: `@@iterator` on
+  // those prototypes is the very same function object as `entries`/`values`, so
+  // it must resolve to that member's singleton rather than a distinct closure.
+  // Every other builtin resolves its symbol-keyed member under the physical
+  // `@@<id>` key (e.g. RegExp's `@@7` = `[Symbol.match]`, Date's `@@3` =
+  // `[Symbol.toPrimitive]`); `resolveStandaloneProtoMemberValueClosure` below
+  // answers undefined for a member the brand never registered, which keeps the
+  // pre-#5142/#5156 fallthrough for those.
+  const member = isIteratorAlias ? (builtinName === "Set" ? "values" : "entries") : `@@${symbolId}`;
+  const resolved = resolveStandaloneProtoMemberValueClosure(ctx, brand, builtinName, member);
+  if (!resolved || resolved.kind !== "method") return undefined;
+
+  fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, resolved.closure));
+  fctx.body.push({ op: "extern.convert_any" });
+  return { kind: "externref" };
 }
 
 /**
@@ -941,6 +1068,15 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // (see the issue's remaining scope). `Reflect.get`/`set` fix the arity at 2/3
     // (no explicit-receiver slot), matching the call path which refuses the
     // receiver form under standalone (#2046).
+    // (#5196 R3-0) `Proxy.revocable` as a VALUE — `$262.createRealm()
+    // .global.Proxy.revocable(t, h)`, the shape the `*-realm*` rows use. The
+    // namespace carrier previously seeded the `genericThrowBody` refusal
+    // closure here ("Proxy.revocable is not yet implemented"), so every such
+    // row threw at the revocable call itself.
+    case "Proxy.revocable":
+      paramTypes = [{ kind: "externref" }, { kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
     case "Reflect.get":
       paramTypes = [{ kind: "externref" }, { kind: "externref" }];
       returnType = { kind: "externref" };
@@ -971,6 +1107,40 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // coerced to an externref at the any-call boundary. Replacer/space args are
     // out of scope (matching the standalone call-path narrowing).
     case "JSON.stringify":
+      paramTypes = [{ kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
+    // Deno snapshots these constructor statics through its primordials
+    // carrier, so their VALUE closures must be executable rather than merely
+    // descriptor-shaped. Keep the all-externref callable ABI and delegate to
+    // the same native registry / scheduler used by direct calls.
+    case "Symbol.for":
+    case "Symbol.keyFor":
+      if (!usesNativeSymbolProvider(ctx)) {
+        paramTypes = [{ kind: "externref" }];
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      ensureObjectRuntime(ctx);
+      ensureNativeSymbolBoundaryBridge(ctx);
+      ensureSymbolCarrier(ctx);
+      ensureSymbolRegistry(ctx);
+      paramTypes = [{ kind: "externref" }];
+      returnType = { kind: "externref" };
+      break;
+    case "Promise.resolve":
+    case "Promise.reject":
+      if (!isStandalonePromiseActive(ctx)) {
+        paramTypes = [{ kind: "externref" }];
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      // Register the whole settle substrate before the closure function is
+      // minted. The emitters below then append instructions only, avoiding a
+      // mid-body function-index registration hazard.
+      ensurePromiseSettleFunctions(ctx);
       paramTypes = [{ kind: "externref" }];
       returnType = { kind: "externref" };
       break;
@@ -1011,6 +1181,39 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       returnType = { kind: "externref" };
       break;
     }
+    // (#4491 wave-5 T6) `String.fromCharCode` as a VALUE — genuinely VARIADIC
+    // (§22.1.2.1 takes a code-unit LIST). Reified on the SAME canonical variadic
+    // convention as `Math.max`/`Math.min` above — ONE `(ref null $vec_externref)`
+    // args param, `externref` result — so all three share ONE lifted func type
+    // and the single variadic dispatch arm in call-identifier.ts serves them
+    // all. Body lives in string-fromcharcode-value-read.ts. Falls through to the
+    // Phase-3 generic throw body when the native-string / any-value substrate is
+    // unavailable (identity + reflective `.name`/`.length` still work).
+    case "String.fromCharCode": {
+      addUnionImports(ctx);
+      if (!prepareStringFromCharCodeValueRead(ctx)) {
+        const genericArity = BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName];
+        if (genericArity === undefined) return null;
+        paramTypes = [];
+        for (let i = 0; i < genericArity; i++) paramTypes.push({ kind: "externref" });
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (getArrTypeIdxFromVec(ctx, vecTypeIdx) < 0) {
+        const genericArity = BUILTIN_STATIC_METHOD_ARITY[builtinName]?.[propName];
+        if (genericArity === undefined) return null;
+        paramTypes = [];
+        for (let i = 0; i < genericArity; i++) paramTypes.push({ kind: "externref" });
+        returnType = { kind: "externref" };
+        genericThrowBody = true;
+        break;
+      }
+      paramTypes = [{ kind: "ref_null", typeIdx: vecTypeIdx }];
+      returnType = { kind: "externref" };
+      break;
+    }
     // (#2963 Tier 2a) `Number.is{Integer,Finite,NaN,SafeInteger}` as first-class
     // VALUES. Fixed 1-arg predicates: the reified closure takes the boxed arg as
     // externref (the all-externref convention — coercion moves INSIDE the body)
@@ -1023,6 +1226,17 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
     // natives are standalone-DEFINED funcs (host-free) registered by
     // `addUnionImports`; if the substrate is unavailable, degrade to the generic
     // catchable-TypeError body (identity/meta still hold).
+    // (#5150) `ArrayBuffer.isView` as a first-class VALUE — `isView/
+    // invoked-as-a-fn.js` does `var isView = ArrayBuffer.isView; isView(x)`.
+    // The direct-call site is already host-free (call-namespace-static.ts);
+    // only the value read fell to the generic "not yet implemented in --target
+    // standalone" throw. Same 1-arg boxed-predicate shape as `Number.is*`.
+    case "ArrayBuffer.isView": {
+      if (!noJsHost(ctx)) return null;
+      paramTypes = [{ kind: "externref" }];
+      returnType = BOOLEAN_PREDICATE_RESULT;
+      break;
+    }
     case "Number.isInteger":
     case "Number.isFinite":
     case "Number.isNaN":
@@ -1145,9 +1359,9 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         [{ kind: "externref" }],
       );
       if (gopdIdx === undefined) return null;
-      closureFctx.body.push({ op: "local.get", index: 1 });
-      closureFctx.body.push({ op: "local.get", index: 2 });
-      closureFctx.body.push({ op: "call", funcIdx: gopdIdx });
+      flushLateImportShifts(ctx, closureFctx);
+      closureFctx.body.push({ op: "local.get", index: 1 }, { op: "local.get", index: 2 });
+      closureFctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__getOwnPropertyDescriptor") ?? gopdIdx });
     } else if (key === "Object.hasOwn") {
       const hasOwnIdx = ensureLateImport(
         ctx,
@@ -1186,6 +1400,19 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       const integrityIdx = ctx.funcMap.get(helperName);
       if (integrityIdx === undefined) return null;
       closureFctx.body.push({ op: "local.get", index: 1 }, { op: "call", funcIdx: integrityIdx });
+    } else if (key === "Proxy.revocable") {
+      // The SAME native the direct `Proxy.revocable(t, h)` call path uses
+      // (`call-builtin-static.ts`). `ensureNativeProxyRuntime` mints it (and
+      // the trap dispatchers) BEFORE any body instruction is pushed, so the
+      // funcIdx this closure bakes is already post-registration; the
+      // `flushLateImportShifts` at the end of this function repairs the rest.
+      ensureNativeProxyRuntime(ctx);
+      ctx.proxyRevocableSite = true; // (#5196 R3-4) arm the revoker metadata arms
+      const revocableIdx = ctx.funcMap.get("__proxy_revocable");
+      if (revocableIdx === undefined) return null;
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "local.get", index: 2 });
+      closureFctx.body.push({ op: "call", funcIdx: revocableIdx });
     } else if (key === "Reflect.get") {
       // (#2933) Same native the 2-arg standalone `Reflect.get(target, key)` call
       // path uses (calls.ts). The value closure is fixed 2-arg — the optional
@@ -1233,27 +1460,14 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       // extracted function value.
       const idx = ensureLateImport(ctx, "__getOwnPropertyNames", [{ kind: "externref" }], [{ kind: "externref" }]);
       if (idx === undefined) return null;
+      emitNativeReflectTargetGuard(ctx, closureFctx, 1, "Reflect.ownKeys called on non-object");
       closureFctx.body.push({ op: "local.get", index: 1 });
       closureFctx.body.push({ op: "call", funcIdx: idx });
     } else if (key === "Reflect.getOwnPropertyDescriptor") {
       // The first-class Reflect method must share the direct call path's
       // native descriptor provider. Deno snapshots this method through object
       // destructuring before using it to copy every primordial descriptor.
-      const runtime = ensureObjectRuntime(ctx);
-      const beforeThrow = closureFctx.body.length;
-      emitThrowTypeError(ctx, closureFctx, "Reflect.getOwnPropertyDescriptor called on non-object");
-      const throwInstrs = closureFctx.body.splice(beforeThrow);
-      closureFctx.body.push(
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: runtime.objectTypeIdx },
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: runtime.proxyTypeIdx },
-        { op: "i32.or" },
-        { op: "i32.eqz" },
-        { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
-      );
+      emitNativeReflectTargetGuard(ctx, closureFctx, 1, "Reflect.getOwnPropertyDescriptor called on non-object");
       const idx = ensureLateImport(
         ctx,
         "__getOwnPropertyDescriptor",
@@ -1267,21 +1481,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       // objects returned by Reflect.getOwnPropertyDescriptor. Route that
       // first-class call through the same native dynamic-descriptor applier as
       // the direct syntax and surface its boolean [[DefineOwnProperty]] result.
-      const runtime = ensureObjectRuntime(ctx);
-      const beforeThrow = closureFctx.body.length;
-      emitThrowTypeError(ctx, closureFctx, "Reflect.defineProperty called on non-object");
-      const throwInstrs = closureFctx.body.splice(beforeThrow);
-      closureFctx.body.push(
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: runtime.objectTypeIdx },
-        { op: "local.get", index: 1 },
-        { op: "any.convert_extern" },
-        { op: "ref.test", typeIdx: runtime.proxyTypeIdx },
-        { op: "i32.or" },
-        { op: "i32.eqz" },
-        { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
-      );
+      emitNativeReflectTargetGuard(ctx, closureFctx, 1, "Reflect.defineProperty called on non-object");
       const defineIdx = ctx.funcMap.get("__obj_define_from_desc");
       const truthyIdx = ctx.funcMap.get("__is_truthy");
       if (defineIdx === undefined || truthyIdx === undefined) return null;
@@ -1311,6 +1511,59 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       closureFctx.body.push({ op: "any.convert_extern" });
       closureFctx.body.push({ op: "call", funcIdx: rootIdx });
       closureFctx.body.push({ op: "extern.convert_any" });
+    } else if ((key === "Symbol.for" || key === "Symbol.keyFor") && !genericThrowBody) {
+      const symbolTypeIdx = ctx.symbolTypeIdx;
+      const { forIdx, keyForIdx } = ensureSymbolRegistry(ctx);
+      const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+      if (symbolTypeIdx < 0 || boxSymbolIdx === undefined) return null;
+
+      const beforeThrow = closureFctx.body.length;
+      emitThrowTypeError(
+        ctx,
+        closureFctx,
+        key === "Symbol.for" ? "Cannot convert a Symbol value to a string" : "Symbol.keyFor requires a symbol",
+      );
+      const throwInstrs = closureFctx.body.splice(beforeThrow);
+
+      if (key === "Symbol.for") {
+        // §20.4.2.2 first applies ToString. A native Symbol is the one
+        // primitive for which abstract ToString throws; every other dynamic
+        // externref is routed through the shared standalone ToString helper.
+        closureFctx.body.push(
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+          { op: "local.get", index: 1 },
+        );
+        emitExternrefSlotToAnyStr(ctx, closureFctx);
+        closureFctx.body.push({ op: "call", funcIdx: forIdx }, { op: "call", funcIdx: boxSymbolIdx });
+      } else {
+        // The dynamic callable boundary carries symbols as their canonical
+        // boxed `$Symbol` externref. Validate the brand, recover its i32 id,
+        // and return the registry key as an externref native string (or null
+        // for an unregistered symbol), matching the direct native call path.
+        closureFctx.body.push(
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: throwInstrs },
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: symbolTypeIdx },
+          { op: "struct.get", typeIdx: symbolTypeIdx, fieldIdx: 0 },
+          { op: "call", funcIdx: keyForIdx },
+          { op: "extern.convert_any" },
+        );
+      }
+    } else if ((key === "Promise.resolve" || key === "Promise.reject") && !genericThrowBody) {
+      const argument = [{ op: "local.get", index: 1 } satisfies Instr];
+      if (key === "Promise.resolve") {
+        emitStandalonePromiseResolve(ctx, closureFctx, argument);
+      } else {
+        emitStandalonePromiseReject(ctx, closureFctx, argument);
+      }
     } else if ((key === "Math.max" || key === "Math.min") && !genericThrowBody) {
       // (#2933) Variadic fold body. Params: 0=self, 1=argsVec
       // (ref null $vec_externref: field0 = i32 len, field1 = externref array).
@@ -1389,6 +1642,12 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         { op: "local.get", index: accLocal },
         { op: "call", funcIdx: boxNumIdx },
       );
+    } else if (key === "String.fromCharCode" && !genericThrowBody) {
+      // (#4491 wave-5 T6) Variadic fold body. Params: 0=self, 1=argsVec.
+      const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
+      if (!emitStringFromCharCodeValueBody(ctx, closureFctx, vecTypeIdx, getArrTypeIdxFromVec(ctx, vecTypeIdx))) {
+        return null;
+      }
     } else if (
       (key === "Number.isInteger" ||
         key === "Number.isFinite" ||
@@ -1421,6 +1680,15 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
           else: [{ op: "i32.const", value: 0 }],
         },
       );
+    } else if (key === "ArrayBuffer.isView" && !genericThrowBody) {
+      // (#5150) Body = the SAME carrier `ref.test` disjunction the direct call
+      // emits, shared through `isViewRefTestInstrs` so the value and the call
+      // can never answer differently. Params: 0 = self, 1 = the boxed argument.
+      const anyTmp = allocLocal(closureFctx, "isview_any", { kind: "anyref" });
+      closureFctx.body.push({ op: "local.get", index: 1 });
+      closureFctx.body.push({ op: "any.convert_extern" });
+      closureFctx.body.push({ op: "local.set", index: anyTmp });
+      closureFctx.body.push(...isViewRefTestInstrs(ctx, anyTmp));
     } else if (key === "Object.is" && !genericThrowBody) {
       // (#2963 Tier 2b) Body. Params: 0=self, 1=x, 2=y (both boxed externref).
       const typeofNumIdx = ctx.funcMap.get("__typeof_number");
@@ -1458,6 +1726,10 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
         },
       );
     } else if (genericThrowBody && builtinName === "Math" && emitMathValueReadBody(ctx, closureFctx, propName)) {
+      // (#4565; supersedes the #4491 wave-4 lane G arm, same defect) — the
+      // upstream module mints the `Math_<fn>` kernel late itself, so it needs
+      // no collector-phase seeding. Kept BEFORE the `genericThrowBody` arm
+      // below because that arm claims every `default:` case.
     } else if (genericThrowBody) {
       // (#2984 Phase 3) Degrade-to-catchable body: a real TypeError instance +
       // `throw` — the EXACT helper the Phase-2 proto refusal bodies use,
@@ -1466,6 +1738,12 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
       // (unreachable tail).
       emitThrowTypeError(ctx, closureFctx, `${key} is not yet implemented in --target standalone`);
     }
+
+    // Several first-class builtin bodies register late runtime imports after
+    // emitting their target guards (notably extracted Reflect methods). Shift
+    // every already-emitted call before publishing the closure; otherwise the
+    // guard calls the pre-import function index and rejects every target.
+    flushLateImportShifts(ctx, closureFctx);
 
     funcIdx = mintDefinedFunc(ctx);
     pushDefinedFunc(ctx, funcIdx, {
@@ -1483,7 +1761,7 @@ export function ensureStandaloneBuiltinStaticMethodClosure(
   // Math.min share the SAME lifted func type (one vec param → one `ref.test`
   // arm serves both; `call_ref` dispatches to the right body via the funcref
   // value). Idempotent — the wrapper types are cached per signature.
-  if ((key === "Math.max" || key === "Math.min") && !genericThrowBody) {
+  if ((key === "Math.max" || key === "Math.min" || key === "String.fromCharCode") && !genericThrowBody) {
     const { vecTypeIdx } = ensureExtrasArgvGlobal(ctx);
     ctx.variadicBuiltinClosure = {
       funcTypeIdx: wrapperTypes.liftedFuncTypeIdx,
@@ -1530,4 +1808,5 @@ export {
   reportUnsupportedStandaloneBuiltinValueRead,
   tryCompileStandaloneBuiltinProtoMemberMeta,
   tryCompileStandaloneBuiltinProtoMemberRead,
+  tryCompileStandaloneBuiltinProtoIteratorRead,
 };

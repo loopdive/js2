@@ -48,12 +48,14 @@
  *
  * ## Consult-only, and builtin-only
  *
- * The arm answers `1` and returns, or falls through to the untouched original
- * body. It never answers `0` authoritatively, so a prototype carrying an
- * ordinary expando still finds it through the existing path. It also declines
- * on `$isClass != 0`: a user CLASS proto is a `$NativeProto` façade over the
- * class's own machinery (#2101), whose own-property question is answered
- * elsewhere, and widening it here would change behaviour no test asked for.
+ * The arm answers `1` for a present advertised member or `0` for a known
+ * advertised member whose companion entry was deleted, and returns in either
+ * case. It answers `-1` when it does not own the query so the untouched
+ * original body can still find an ordinary expando (or answer for a non-proto
+ * receiver). It also declines on `$isClass != 0`: a user CLASS proto is a
+ * `$NativeProto` façade over the class's own machinery (#2101), whose
+ * own-property question is answered elsewhere, and widening it here would
+ * change behaviour no test asked for.
  *
  * ## Demand gate
  *
@@ -69,7 +71,15 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { seededNativeProtoDataMembersByBrand } from "./native-proto.js";
+import {
+  ensureStandaloneNativeMethodClosure,
+  getBuiltinBrand,
+  seededNativeProtoOwnMembersByBrand,
+  seededNativeProtoSymbolMembersByBrand,
+  seededNativeProtoSymbolTagsByBrand,
+} from "./native-proto.js";
+import { ensureFunctionNativeProtoGlue } from "./array-object-proto.js";
+import { pushBuiltinFnSingletonValueInstrs } from "./builtin-fn-meta.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
 
@@ -83,12 +93,124 @@ const STR_OFF = 1;
 const STR_DATA = 2;
 /** The CSV delimiter the glue joins member names with. */
 const COMMA = 0x2c;
+/** `__nproto_hasown` declines, leaving the original predicate body in charge. */
+const NATIVE_PROTO_NO_DECISION = -1;
 
 export const NATIVE_PROTO_HASOWN_FN = "__nproto_hasown";
 
+function registerNativeProtoHasInstanceGopd(
+  ctx: CodegenContext,
+  protoTypeIdx: number,
+  functionBrand: number | undefined,
+  symbolType: number | undefined,
+): void {
+  const createDescriptorIdx = ctx.funcMap.get("__create_descriptor");
+  if (createDescriptorIdx === undefined || symbolType === undefined || functionBrand === undefined) return;
+  // This splice runs during finalize, after reflective call exports have
+  // already captured their receiver-aware native-closure inventory. Do not
+  // mint the Function @@hasInstance closure here: doing so late adds a new
+  // closure family after those exports and can make an unrelated accessor
+  // getter (notably RegExp.prototype.global) miss its original receiver.
+  // Exact Function.prototype[Symbol.hasInstance] value reads reserve this
+  // closure during body compilation; descriptor synthesis may safely reuse it.
+  const funcName = `__proto_method_${functionBrand}_@@hasInstance`;
+  if (!ctx.funcMap.has(funcName)) return;
+  const brand = ensureFunctionNativeProtoGlue(ctx);
+  const closure =
+    brand === undefined
+      ? null
+      : ensureStandaloneNativeMethodClosure(ctx, brand, "@@hasInstance", "method", { refusalBodyFallback: true });
+  if (!closure) return;
+
+  const gopdTypeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+  const gopdFuncIdx = mintDefinedFunc(ctx);
+  const gopdBody: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "local.tee", index: 2 },
+    { op: "ref.test", typeIdx: protoTypeIdx },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+    { op: "local.get", index: 2 },
+    { op: "ref.cast", typeIdx: protoTypeIdx },
+    { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND },
+    { op: "i32.const", value: functionBrand },
+    { op: "i32.ne" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: symbolType },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: symbolType },
+    { op: "struct.get", typeIdx: symbolType, fieldIdx: 0 },
+    { op: "i32.const", value: 2 },
+    { op: "i32.ne" },
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "ref.null.extern" }, { op: "return" }] },
+    ...pushBuiltinFnSingletonValueInstrs(ctx, closure),
+    { op: "extern.convert_any" },
+    { op: "i32.const", value: 0 },
+    { op: "call", funcIdx: createDescriptorIdx },
+  ];
+  pushDefinedFunc(ctx, gopdFuncIdx, {
+    name: "__nproto_gopd",
+    typeIdx: gopdTypeIdx,
+    locals: [{ name: "any", type: { kind: "anyref" } }],
+    body: gopdBody,
+    exported: false,
+  });
+  ctx.funcMap.set("__nproto_gopd", gopdFuncIdx);
+}
+
+function nativeProtoHasInstanceOwnArm(
+  protoTypeIdx: number,
+  functionBrand: number | undefined,
+  symbolType: number | undefined,
+  anyLocal: number,
+): Instr[] {
+  if (functionBrand === undefined || symbolType === undefined) return [];
+  return [
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: symbolType },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: symbolType },
+        { op: "struct.get", typeIdx: symbolType, fieldIdx: 0 },
+        { op: "i32.const", value: 2 },
+        { op: "i32.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx: protoTypeIdx },
+            { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND },
+            { op: "i32.const", value: functionBrand },
+            { op: "i32.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+}
+
 /**
- * Register `__nproto_hasown(obj externref, key externref) -> i32`: 1 when `key`
- * names an OWN property of a BUILTIN prototype object `obj`, else 0.
+ * Register `__nproto_hasown(obj externref, key externref) -> i32`: 1 when
+ * `key` names a present OWN property of a BUILTIN prototype object `obj`, 0
+ * when it names a known seeded member whose companion entry is absent, and -1
+ * when this arm declines so the original predicate body can continue.
  *
  * Returns the funcIdx, or `undefined` when the module has no `$NativeProto`
  * (the demand gate) or the native-string subsystem is absent.
@@ -106,9 +228,13 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
   const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
   if (flattenIdx === undefined || equalsIdx === undefined) return undefined;
-  const seededDataMembers = seededNativeProtoDataMembersByBrand(ctx);
+  const seededOwnMembers = seededNativeProtoOwnMembersByBrand(ctx);
+  const seededSymbolMembers = seededNativeProtoSymbolMembersByBrand(ctx);
+  const seededSymbolTags = seededNativeProtoSymbolTagsByBrand(ctx);
   const protoOwnRecvIdx = ctx.funcMap.get("__protoidx_own_recv");
   const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn");
+  const functionBrand = getBuiltinBrand(ctx, "Function");
+  const symbolType = ctx.symbolTypeIdx >= 0 ? ctx.symbolTypeIdx : undefined;
 
   // params: 0 obj, 1 key
   const L_ANY = 2;
@@ -132,7 +258,7 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     { name: "c", type: { kind: "i32" } },
   ];
 
-  const returnZero: Instr[] = [{ op: "i32.const", value: 0 }, { op: "return" }];
+  const returnNoDecision: Instr[] = [{ op: "i32.const", value: NATIVE_PROTO_NO_DECISION }, { op: "return" }];
   /** `<flat>.data[<flat>.off + <index expr>]` as an unsigned char code. */
   const charAt = (strLocal: number, indexExpr: Instr[]): Instr[] => [
     { op: "local.get", index: strLocal },
@@ -153,18 +279,111 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     { op: "local.tee", index: L_ANY },
     { op: "ref.test", typeIdx: protoTypeIdx },
     { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: returnZero },
+    { op: "if", blockType: { kind: "empty" }, then: returnNoDecision },
     // … for a BUILTIN, not a user class (see the module note).
     { op: "local.get", index: L_ANY },
     { op: "ref.cast", typeIdx: protoTypeIdx },
     { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_IS_CLASS },
-    { op: "if", blockType: { kind: "empty" }, then: returnZero },
-    // A non-string key (symbol, boxed number) names no member of a prototype.
+    { op: "if", blockType: { kind: "empty" }, then: returnNoDecision },
+    // Symbol.hasInstance is an own Function.prototype method.
+    ...nativeProtoHasInstanceOwnArm(protoTypeIdx, functionBrand, symbolType, L_ANY),
+    // Well-known symbol tags are own data properties of the collection
+    // prototypes. Their companion entries are authoritative, just like the
+    // seeded string methods below, so replacement/deletion remains visible to
+    // hasOwnProperty and propertyIsEnumerable.
+    ...(protoOwnRecvIdx === undefined || objectHasOwnIdx === undefined || symbolType === undefined
+      ? []
+      : [...seededSymbolTags.keys()].flatMap((brand) => [
+          { op: "local.get", index: L_ANY } as Instr,
+          { op: "ref.cast", typeIdx: protoTypeIdx } as Instr,
+          { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND } as Instr,
+          { op: "i32.const", value: brand } as Instr,
+          { op: "i32.eq" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: symbolType },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 1 },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: symbolType },
+                  { op: "struct.get", typeIdx: symbolType, fieldIdx: 0 },
+                  { op: "i32.const", value: 4 }, // Symbol.toStringTag
+                  { op: "i32.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "local.get", index: 0 },
+                      { op: "call", funcIdx: protoOwnRecvIdx },
+                      { op: "local.get", index: 1 },
+                      { op: "call", funcIdx: objectHasOwnIdx },
+                      { op: "return" },
+                    ],
+                  },
+                ],
+              },
+            ],
+          } as Instr,
+        ])),
+    // Well-known symbol members (for example Symbol.prototype[@@toPrimitive])
+    // are also own companion entries, but unlike Symbol.toStringTag they are
+    // represented by `@@<id>` CSV sentinels and must compare the native Symbol
+    // carrier's identity field. Keep this arm separate from the string CSV
+    // ladder so a symbol key can never be coerced into text.
+    ...(protoOwnRecvIdx === undefined || objectHasOwnIdx === undefined || symbolType === undefined
+      ? []
+      : [...seededSymbolMembers.entries()].flatMap(([brand, symbolIds]) => [
+          { op: "local.get", index: L_ANY } as Instr,
+          { op: "ref.cast", typeIdx: protoTypeIdx } as Instr,
+          { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND } as Instr,
+          { op: "i32.const", value: brand } as Instr,
+          { op: "i32.eq" } as Instr,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: symbolIds.flatMap((symbolId) => [
+              { op: "local.get", index: 1 } as Instr,
+              { op: "any.convert_extern" } as Instr,
+              { op: "ref.test", typeIdx: symbolType } as Instr,
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 1 },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: symbolType },
+                  { op: "struct.get", typeIdx: symbolType, fieldIdx: 0 },
+                  { op: "i32.const", value: symbolId },
+                  { op: "i32.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "local.get", index: 0 },
+                      { op: "call", funcIdx: protoOwnRecvIdx },
+                      { op: "local.get", index: 1 },
+                      { op: "call", funcIdx: objectHasOwnIdx },
+                      { op: "return" },
+                    ],
+                  },
+                ],
+              },
+            ]),
+          } as Instr,
+        ])),
+    // A non-string key (other symbols, boxed number) names no member of a prototype.
     { op: "local.get", index: 1 },
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: anyStr },
     { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: returnZero },
+    { op: "if", blockType: { kind: "empty" }, then: returnNoDecision },
     { op: "local.get", index: 1 },
     { op: "any.convert_extern" },
     { op: "ref.cast", typeIdx: anyStr },
@@ -173,14 +392,15 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     { op: "ref.as_non_null" },
     { op: "struct.get", typeIdx: natStr, fieldIdx: STR_LEN },
     { op: "local.set", index: L_KLEN },
-    // A seeded DATA method is no longer an immutable CSV fact: its companion
+    // A seeded data method or accessor is no longer an immutable CSV fact: its companion
     // entry is the real own property and can be replaced or deleted. Resolve
     // those keys through the companion before the historical CSV shortcut.
-    // Accessors and `constructor` deliberately fall through because neither is
-    // seeded yet and their existing synthesized paths remain authoritative.
+    // (#4491 T9) `constructor` is in this ladder for a brand whose seeder
+    // installed it (one with an identity-stable carrier); a brand with no
+    // carrier seeds none and keeps the unconditional ES5 arm below.
     ...(protoOwnRecvIdx === undefined || objectHasOwnIdx === undefined
       ? []
-      : [...seededDataMembers.entries()].flatMap(([brand, members]) => [
+      : [...seededOwnMembers.entries()].flatMap(([brand, members]) => [
           { op: "local.get", index: L_ANY } as Instr,
           { op: "ref.cast", typeIdx: protoTypeIdx } as Instr,
           { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_BRAND } as Instr,
@@ -226,7 +446,7 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     { op: "any.convert_extern" },
     { op: "ref.test", typeIdx: anyStr },
     { op: "i32.eqz" },
-    { op: "if", blockType: { kind: "empty" }, then: returnZero },
+    { op: "if", blockType: { kind: "empty" }, then: returnNoDecision },
     { op: "local.get", index: L_ANY },
     { op: "ref.cast", typeIdx: protoTypeIdx },
     { op: "struct.get", typeIdx: protoTypeIdx, fieldIdx: NP_MEMBER_CSV },
@@ -336,7 +556,7 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
         },
       ],
     },
-    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: NATIVE_PROTO_NO_DECISION },
   ];
 
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
@@ -349,6 +569,8 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
     body,
     exported: false,
   });
+
+  registerNativeProtoHasInstanceGopd(ctx, protoTypeIdx, functionBrand, symbolType);
   return funcIdx;
 }
 
@@ -364,23 +586,91 @@ export function registerNativeProtoHasOwn(ctx: CodegenContext): number | undefin
  */
 export function unshiftNativeProtoHasOwnArms(ctx: CodegenContext): void {
   const funcIdx = registerNativeProtoHasOwn(ctx);
+  const protoOwnRecvIdx = ctx.funcMap.get("__protoidx_own_recv");
+  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
   if (funcIdx === undefined) return;
   for (const name of ["__hasOwnProperty", "__object_hasOwn", "__propertyIsEnumerable"]) {
     const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
     if (!fn) continue;
+    const predicateIdx = ctx.funcMap.get(name);
+    const fnType = ctx.mod.types[fn.typeIdx];
+    const paramCount = fnType?.kind === "func" ? fnType.params.length : 2;
+    const resultLocal = fn.locals.length + paramCount;
+    fn.locals.push({ name: "__nproto_result", type: { kind: "i32" } });
+    const companionLocal =
+      name === "__propertyIsEnumerable" &&
+      protoOwnRecvIdx !== undefined &&
+      predicateIdx !== undefined &&
+      objectTypeIdx !== undefined
+        ? fn.locals.length + paramCount
+        : undefined;
+    if (companionLocal !== undefined) {
+      fn.locals.push({ name: "__nproto_companion", type: { kind: "externref" } });
+    }
     fn.body.unshift(
       { op: "local.get", index: 0 },
       { op: "local.get", index: 1 },
       { op: "call", funcIdx },
+      { op: "local.tee", index: resultLocal },
+      { op: "i32.const", value: NATIVE_PROTO_NO_DECISION },
+      { op: "i32.ne" },
       {
         op: "if",
         blockType: { kind: "empty" },
         then: [
-          // §15.x.4 — every builtin prototype member is `{ DontEnum }`, so the
-          // enumerability predicate answers 0 where presence answers 1.
-          { op: "i32.const", value: name === "__propertyIsEnumerable" ? 0 : 1 },
+          // The NativeProto arm returns 0 for a known seeded member whose
+          // companion entry was deleted, so that absence must be authoritative
+          // instead of falling through to a stale CSV/intrinsic answer. For
+          // propertyIsEnumerable, re-run the predicate on the companion so a
+          // post-seed redefinition's enumerable flag is observed as well. The
+          // initial advertised members are `{ DontEnum }`, and a deleted entry
+          // naturally returns 0 from the companion's ordinary object path. An
+          // unseeded brand's own-receiver helper passes the `$NativeProto`
+          // through; the `$Object` type test below keeps that path from
+          // recursively re-entering this wrapper.
+          ...(name === "__propertyIsEnumerable"
+            ? protoOwnRecvIdx !== undefined &&
+              predicateIdx !== undefined &&
+              objectTypeIdx !== undefined &&
+              companionLocal !== undefined
+              ? [
+                  { op: "local.get", index: 0 } as Instr,
+                  { op: "call", funcIdx: protoOwnRecvIdx } as Instr,
+                  { op: "local.tee", index: companionLocal } as Instr,
+                  { op: "any.convert_extern" } as Instr,
+                  { op: "ref.test", typeIdx: objectTypeIdx } as Instr,
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "i32" } },
+                    then: [
+                      { op: "local.get", index: companionLocal } as Instr,
+                      { op: "local.get", index: 1 } as Instr,
+                      { op: "call", funcIdx: predicateIdx } as Instr,
+                    ],
+                    else: [{ op: "i32.const", value: 0 }],
+                  } as Instr,
+                ]
+              : [{ op: "i32.const", value: 0 } as Instr]
+            : [{ op: "local.get", index: resultLocal } as Instr]),
           { op: "return" },
         ],
+      },
+    );
+  }
+  const gopdFn = ctx.mod.functions.find((candidate) => candidate.name === "__getOwnPropertyDescriptor");
+  const gopdIdx = ctx.funcMap.get("__nproto_gopd");
+  if (gopdFn && gopdIdx !== undefined) {
+    gopdFn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: gopdIdx },
+      { op: "local.tee", index: 6 },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "local.get", index: 6 }, { op: "return" }],
       },
     );
   }

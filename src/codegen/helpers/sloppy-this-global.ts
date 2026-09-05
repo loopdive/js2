@@ -33,12 +33,14 @@
  * the sloppy half, which was never supplied.
  */
 import { ts } from "../../ts-api.js";
+import type { Instr } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { popBody, pushBody } from "../context/bodies.js";
 import { compileIdentifier } from "../expressions/identifiers.js";
 import { inlinedCalleeHasBoundReceiver } from "../expressions/inlined-call-receiver.js"; // (#4555)
-import { emitUndefined } from "../expressions/late-imports.js";
+import { emitUndefined, ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { coerceType } from "../shared.js";
-import { isStrictContext } from "./is-strict-function.js";
+import { isStrictContext, isStrictFunction } from "./is-strict-function.js";
 
 /**
  * True when an unbound `this` at `expr` must evaluate to the global object
@@ -63,7 +65,16 @@ export function unboundThisIsGlobalObject(ctx: CodegenContext, expr: ts.Node): b
  * (`expressions.ts`) does not grow the emission logic.
  */
 export function emitUnboundThis(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): void {
-  if (fctx.directEvalSloppyThisFallback || unboundThisIsGlobalObject(ctx, expr)) {
+  // A folded direct-eval body is a foreign AST: its parent chain stops at the
+  // synthetic eval SourceFile, so `isStrictContext(expr)` cannot recover the
+  // caller's strictness.  The eval inliner therefore installs an explicit
+  // tri-state override (`true` = sloppy global, `false` = strict undefined).
+  // Check for `undefined` rather than truthiness so the strict override is
+  // honored before falling back to ordinary source-context inference.
+  if (
+    (fctx.directEvalSloppyThisFallback !== undefined && fctx.directEvalSloppyThisFallback) ||
+    (fctx.directEvalSloppyThisFallback === undefined && unboundThisIsGlobalObject(ctx, expr))
+  ) {
     emitGlobalObjectAsThis(ctx, fctx);
     return;
   }
@@ -85,7 +96,10 @@ export function emitUnboundThis(ctx: CodegenContext, fctx: FunctionContext, expr
  * object, and getting that wrong is the trap this split exists to avoid.
  */
 export function emitExplicitNullThis(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): void {
-  if (fctx.directEvalSloppyThisFallback || unboundThisIsGlobalObject(ctx, expr)) {
+  if (
+    (fctx.directEvalSloppyThisFallback !== undefined && fctx.directEvalSloppyThisFallback) ||
+    (fctx.directEvalSloppyThisFallback === undefined && unboundThisIsGlobalObject(ctx, expr))
+  ) {
     emitGlobalObjectAsThis(ctx, fctx);
     return;
   }
@@ -93,10 +107,74 @@ export function emitExplicitNullThis(ctx: CodegenContext, fctx: FunctionContext,
 }
 
 /** Push the global object as an `externref` — the sloppy arm of both answers. */
-function emitGlobalObjectAsThis(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitGlobalObjectAsThis(ctx: CodegenContext, fctx: FunctionContext): void {
   const globalType = compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
   if (globalType && globalType.kind !== "externref") {
     coerceType(ctx, fctx, globalType, { kind: "externref" });
+  }
+}
+
+/**
+ * Normalize the runtime carrier used for a TypeScript `this` parameter.
+ *
+ * The pseudo-parameter is erased by TypeScript, but the direct function-body
+ * paths intentionally keep it as a Wasm parameter so typed call sites can
+ * pass an exact receiver. That means it bypasses the ordinary `this` keyword
+ * fallback, and must perform ES5 §10.4.3's sloppy nullish substitution here:
+ * `call(null)`, `apply(undefined)`, and a bare call all bind the global object
+ * in non-strict code. Strict functions retain the receiver verbatim.
+ *
+ * Keep this limited to the externref carrier. Typed GC reference parameters
+ * have a static shape that cannot safely accept the realm global object.
+ */
+export function normalizeSloppyExplicitThisParameter(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  decl: ts.FunctionLikeDeclaration,
+): void {
+  if (isStrictFunction(decl, ctx.inferModuleStrictArguments)) return;
+
+  const paramIndex = decl.parameters.findIndex((param) => ts.isIdentifier(param.name) && param.name.text === "this");
+  if (paramIndex < 0) return;
+
+  const thisLocalIdx = fctx.localMap.get("this");
+  if (thisLocalIdx === undefined || fctx.params[thisLocalIdx]?.type.kind !== "externref") return;
+
+  // The host lane has a distinct undefined value; standalone/native-first
+  // uses the same predicate for its tag-1 singleton. Null is handled by the
+  // preceding ref.is_null arm so a missing predicate cannot blur the two.
+  const isUndefinedIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  flushLateImportShifts(ctx, fctx);
+
+  // Capture the global-object sequence once so both nullish arms have the
+  // same result without compiling a second global lookup.
+  const savedBody = pushBody(fctx);
+  emitGlobalObjectAsThis(ctx, fctx);
+  const globalObjectInstrs = fctx.body;
+  popBody(fctx, savedBody);
+  if (globalObjectInstrs.length === 0) return;
+
+  const installGlobal = (): Instr[] => [...globalObjectInstrs, { op: "local.set", index: thisLocalIdx }];
+
+  fctx.body.push(
+    { op: "local.get", index: thisLocalIdx },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: installGlobal(),
+    },
+  );
+  if (isUndefinedIdx !== undefined) {
+    fctx.body.push(
+      { op: "local.get", index: thisLocalIdx },
+      { op: "call", funcIdx: isUndefinedIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: installGlobal(),
+      },
+    );
   }
 }
 

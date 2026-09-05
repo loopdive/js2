@@ -65,6 +65,9 @@ import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { noJsHost } from "./js-errors.js";
+// FLAG_TOMBSTONE is read only INSIDE functions, so the object-runtime <-> this
+// module import cycle never touches an uninitialised binding.
+import { FLAG_TOMBSTONE } from "./object-runtime.js";
 import { integrityVarKey } from "./widened-var-key.js";
 
 /** Minter signature shared with `ensureObjectRuntime`'s `registerNative`. */
@@ -177,12 +180,173 @@ export function decodeIntegrityFlag(
 }
 
 /**
+ * (#4491) The own-property half of ES §7.3.15 TestIntegrityLevel, for a receiver
+ * that is a genuine `$Object` (all of whose own properties live in its prop map).
+ *
+ * The sealed/frozen bits alone answer only the `Object.seal`/`Object.freeze`
+ * path. An object can also *become* sealed or frozen without either call ever
+ * running — `Object.preventExtensions(o)` on an object whose every own property
+ * is already non-configurable (and, for frozen, non-writable) is sealed/frozen
+ * by definition, and the extreme case is an object with NO own properties, which
+ * `preventExtensions` alone freezes. That is not an edge case: it is how
+ * `isFrozen`/`isSealed` are specified — a computed predicate, not a stored bit.
+ *
+ * Scope is deliberately the DIRECT `$Object` arm only, never the carrier-bag
+ * arm. A bag holds a non-`$Object` carrier's *expandos*, not the carrier's own
+ * elements/fields, so walking a bag would answer "frozen" for an Array whose
+ * elements are still writable. The bag arm keeps the stored-bit answer.
+ *
+ * No early exit: the loop ANDs into `res` and always runs to completion. Prop
+ * maps are small, and a straight-line accumulate avoids multi-level `br` depth
+ * arithmetic through the `if`/`loop`/`block` nest.
+ */
+function integrityLevelWalkInstrs(args: {
+  objectTypeIdx: number;
+  propMapTypeIdx: number;
+  propEntryTypeIdx: number;
+  objLocalIdx: number;
+  /** Frozen also requires every DATA property to be non-writable. */
+  requireNonWritable: boolean;
+  OBJ_FLAG_NONEXTENSIBLE: number;
+  FLAG_WRITABLE: number;
+  FLAG_CONFIGURABLE: number;
+  FLAG_ACCESSOR: number;
+  FLAG_TOMBSTONE: number;
+  /** First of the six scratch locals (res, props, cap, i, e, ef). */
+  base: number;
+}): Instr[] {
+  const {
+    objectTypeIdx,
+    propMapTypeIdx,
+    propEntryTypeIdx,
+    objLocalIdx,
+    requireNonWritable,
+    OBJ_FLAG_NONEXTENSIBLE,
+    FLAG_WRITABLE,
+    FLAG_CONFIGURABLE,
+    FLAG_ACCESSOR,
+    FLAG_TOMBSTONE,
+    base,
+  } = args;
+  const res = base;
+  const props = base + 1;
+  const cap = base + 2;
+  const idx = base + 3;
+  const entry = base + 4;
+  const eflags = base + 5;
+  const clearRes: Instr[] = [
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: res },
+  ];
+  return [
+    { op: "i32.const", value: 1 },
+    { op: "local.set", index: res },
+    // An extensible object is neither sealed nor frozen.
+    { op: "local.get", index: objLocalIdx },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+    { op: "i32.const", value: OBJ_FLAG_NONEXTENSIBLE },
+    { op: "i32.and" },
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: [...clearRes] },
+    { op: "local.get", index: objLocalIdx },
+    { op: "ref.cast", typeIdx: objectTypeIdx },
+    { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 1 },
+    { op: "local.tee", index: props },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      // A null prop map means no own properties — vacuously sealed and frozen.
+      then: [],
+      else: [
+        { op: "local.get", index: props },
+        { op: "array.len" },
+        { op: "local.set", index: cap },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: idx },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: idx },
+                { op: "local.get", index: cap },
+                { op: "i32.ge_s" },
+                { op: "br_if", depth: 1 },
+                { op: "local.get", index: props },
+                { op: "local.get", index: idx },
+                { op: "array.get", typeIdx: propMapTypeIdx },
+                { op: "local.tee", index: entry },
+                { op: "ref.is_null" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [],
+                  else: [
+                    { op: "local.get", index: entry },
+                    { op: "ref.as_non_null" },
+                    { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 2 },
+                    { op: "local.tee", index: eflags },
+                    { op: "i32.const", value: FLAG_TOMBSTONE },
+                    { op: "i32.and" },
+                    { op: "i32.eqz" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        // A configurable own property defeats both levels.
+                        { op: "local.get", index: eflags },
+                        { op: "i32.const", value: FLAG_CONFIGURABLE },
+                        { op: "i32.and" },
+                        { op: "if", blockType: { kind: "empty" }, then: [...clearRes] },
+                        // Frozen additionally requires no writable DATA property.
+                        // An accessor has no [[Writable]] (§6.2.6.1), so mask it out
+                        // rather than reading the bit that slot does not carry.
+                        ...(requireNonWritable
+                          ? ([
+                              { op: "local.get", index: eflags },
+                              { op: "i32.const", value: FLAG_WRITABLE | FLAG_ACCESSOR },
+                              { op: "i32.and" },
+                              { op: "i32.const", value: FLAG_WRITABLE },
+                              { op: "i32.eq" },
+                              { op: "if", blockType: { kind: "empty" }, then: [...clearRes] },
+                            ] satisfies Instr[])
+                          : []),
+                      ],
+                    },
+                  ],
+                },
+                { op: "local.get", index: idx },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: idx },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+    { op: "local.get", index: res },
+  ];
+}
+
+/**
  * Body + locals for one integrity predicate.
  *
  * `$Object` receiver → its own flags. Otherwise consult the carrier bag (local
  * 2), and fall back to `terminalResult` when the value carries no bag —
  * the ES non-object rule for the base helpers, the ordinary-object rule for the
  * `_obj` variants.
+ *
+ * (#4491) `levelWalk`, when supplied, adds the computed §7.3.15 half on the
+ * DIRECT `$Object` arm: the stored bit stays a fast path, and only when it is
+ * clear does the own-property walk decide. `isExtensible` never passes it —
+ * `[[Extensible]]` genuinely IS a stored slot.
  */
 export function buildIntegrityPredicate(args: {
   objectTypeIdx: number;
@@ -190,9 +354,48 @@ export function buildIntegrityPredicate(args: {
   invert: boolean;
   terminalResult: number;
   integrityBagIdx: number | undefined;
+  levelWalk?: {
+    propMapTypeIdx: number;
+    propEntryTypeIdx: number;
+    propMapRef: ValType;
+    entryRefNull: ValType;
+    requireNonWritable: boolean;
+    OBJ_FLAG_NONEXTENSIBLE: number;
+    FLAG_WRITABLE: number;
+    FLAG_CONFIGURABLE: number;
+    FLAG_ACCESSOR: number;
+    FLAG_TOMBSTONE: number;
+  };
 }): { locals: { name: string; type: ValType }[]; body: Instr[] } {
-  const { objectTypeIdx, flagBit, invert, terminalResult, integrityBagIdx } = args;
-  const decode = (localIdx: number): Instr[] => decodeIntegrityFlag(objectTypeIdx, localIdx, flagBit, invert);
+  const { objectTypeIdx, flagBit, invert, terminalResult, integrityBagIdx, levelWalk } = args;
+  const decodeBit = (localIdx: number): Instr[] => decodeIntegrityFlag(objectTypeIdx, localIdx, flagBit, invert);
+  // Scratch locals for the walk are APPENDED after `any`/`bag`, so no already
+  // baked local index moves.
+  const walkBase = integrityBagIdx === undefined ? 2 : 3;
+  const decode = (localIdx: number): Instr[] =>
+    levelWalk === undefined || localIdx !== 1
+      ? decodeBit(localIdx)
+      : [
+          ...decodeBit(localIdx),
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: 1 }],
+            else: integrityLevelWalkInstrs({
+              objectTypeIdx,
+              propMapTypeIdx: levelWalk.propMapTypeIdx,
+              propEntryTypeIdx: levelWalk.propEntryTypeIdx,
+              objLocalIdx: localIdx,
+              requireNonWritable: levelWalk.requireNonWritable,
+              OBJ_FLAG_NONEXTENSIBLE: levelWalk.OBJ_FLAG_NONEXTENSIBLE,
+              FLAG_WRITABLE: levelWalk.FLAG_WRITABLE,
+              FLAG_CONFIGURABLE: levelWalk.FLAG_CONFIGURABLE,
+              FLAG_ACCESSOR: levelWalk.FLAG_ACCESSOR,
+              FLAG_TOMBSTONE: levelWalk.FLAG_TOMBSTONE,
+              base: walkBase,
+            }),
+          },
+        ];
   const elseArm: Instr[] =
     integrityBagIdx === undefined
       ? [{ op: "i32.const", value: terminalResult }]
@@ -211,6 +414,16 @@ export function buildIntegrityPredicate(args: {
         ];
   const locals: { name: string; type: ValType }[] = [{ name: "any", type: { kind: "anyref" } }];
   if (integrityBagIdx !== undefined) locals.push({ name: "bag", type: { kind: "anyref" } });
+  if (levelWalk !== undefined) {
+    locals.push(
+      { name: "res", type: { kind: "i32" } },
+      { name: "props", type: levelWalk.propMapRef },
+      { name: "cap", type: { kind: "i32" } },
+      { name: "i", type: { kind: "i32" } },
+      { name: "e", type: levelWalk.entryRefNull },
+      { name: "ef", type: { kind: "i32" } },
+    );
+  }
   return {
     locals,
     body: [
@@ -280,4 +493,92 @@ export function provenJsObject(ctx: CodegenContext, arg: ts.Expression): boolean
   if (nullability.nullable || nullability.undefinable) return false;
   if (ts.isIdentifier(arg) && ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg))) return false;
   return true;
+}
+
+/**
+ * Emit the six object-integrity predicates and return the carrier-bag resolver
+ * funcIdx (the mutators need it too).
+ *
+ * Owned here rather than in the descriptor registry because everything the
+ * predicates depend on lives in this module: the non-`$Object` carrier bag
+ * (#4032) and the computed §7.3.15 own-property walk (#4491). The registration
+ * ORDER is load-bearing — every native minted after these keeps its funcIdx
+ * only if the sequence is unchanged.
+ */
+export function buildObjectIntegrityPredicates(args: {
+  ctx: CodegenContext;
+  registerNative: RegisterNative;
+  objectTypeIdx: number;
+  propMapTypeIdx: number;
+  propEntryTypeIdx: number;
+  propMapRef: ValType;
+  entryRefNull: ValType;
+  FLAG_WRITABLE: number;
+  FLAG_CONFIGURABLE: number;
+  FLAG_ACCESSOR: number;
+  OBJ_FLAG_NONEXTENSIBLE: number;
+  OBJ_FLAG_SEALED: number;
+  OBJ_FLAG_FROZEN: number;
+}): number | undefined {
+  const {
+    ctx,
+    registerNative,
+    objectTypeIdx,
+    propMapTypeIdx,
+    propEntryTypeIdx,
+    propMapRef,
+    entryRefNull,
+    FLAG_WRITABLE,
+    FLAG_CONFIGURABLE,
+    FLAG_ACCESSOR,
+    OBJ_FLAG_NONEXTENSIBLE,
+    OBJ_FLAG_SEALED,
+    OBJ_FLAG_FROZEN,
+  } = args;
+  const integrityBagIdx = registerIntegrityBagResolver(ctx, registerNative);
+  // `isFrozen`/`isSealed` are COMPUTED (§7.3.15 TestIntegrityLevel); the stored
+  // bit is only the `freeze`/`seal` fast path. `isExtensible` gets no walk —
+  // `[[Extensible]]` really is a slot.
+  const levelWalkFor = (requireNonWritable: boolean) => ({
+    propMapTypeIdx,
+    propEntryTypeIdx,
+    propMapRef,
+    entryRefNull,
+    requireNonWritable,
+    OBJ_FLAG_NONEXTENSIBLE,
+    FLAG_WRITABLE,
+    FLAG_CONFIGURABLE,
+    FLAG_ACCESSOR,
+    FLAG_TOMBSTONE,
+  });
+  const emit = (
+    name: string,
+    flagBit: number,
+    invert: boolean,
+    terminalResult: number,
+    levelWalk?: ReturnType<typeof levelWalkFor>,
+  ): void => {
+    const { locals, body } = buildIntegrityPredicate({
+      objectTypeIdx,
+      flagBit,
+      invert,
+      terminalResult,
+      integrityBagIdx,
+      levelWalk,
+    });
+    registerNative(name, [{ kind: "externref" }], [{ kind: "i32" }], locals, body);
+  };
+  // ES §20.5.2.13/14: isFrozen/isSealed on a NON-object return TRUE;
+  // §20.5.2.12: isExtensible on a non-object returns FALSE.
+  emit("__object_isFrozen", OBJ_FLAG_FROZEN, false, 1, levelWalkFor(true));
+  emit("__object_isSealed", OBJ_FLAG_SEALED, false, 1, levelWalkFor(false));
+  emit("__object_isExtensible", OBJ_FLAG_NONEXTENSIBLE, true, 0);
+  // Known-object variants: same body, terminal fallback flipped to the ORDINARY
+  // OBJECT rule. Standalone/wasi only — host already answers these correctly.
+  if (integrityBagIdx !== undefined) {
+    emit("__object_isFrozen_obj", OBJ_FLAG_FROZEN, false, 0, levelWalkFor(true));
+    emit("__object_isSealed_obj", OBJ_FLAG_SEALED, false, 0, levelWalkFor(false));
+    emit("__object_isExtensible_obj", OBJ_FLAG_NONEXTENSIBLE, true, 1);
+  }
+  return integrityBagIdx;
 }

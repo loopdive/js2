@@ -1,0 +1,9 @@
+var calls = 0;
+var iterable = {};
+iterable[Symbol.iterator] = function() {
+  return { next: function() { calls++; return { value: 7, done: calls > 1 }; } };
+};
+var s = new Set(iterable);
+assert.sameValue(calls, 2, 'next calls');
+assert.sameValue(s.has(7), true, 'seeded');
+function assert(){} assert.sameValue = function(){};

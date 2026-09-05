@@ -759,6 +759,37 @@ function certifyCalendarDomStorage(
   });
 }
 
+function unwrapDomGuardExpression(expr: ts.Expression): ts.Expression {
+  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+  return expr;
+}
+
+function isDocumentTypeofGuardOperand(expr: ts.Expression): boolean {
+  expr = unwrapDomGuardExpression(expr);
+  const operand = ts.isTypeOfExpression(expr) ? unwrapDomGuardExpression(expr.expression) : undefined;
+  return operand !== undefined && ts.isIdentifier(operand) && operand.text === "document";
+}
+
+export function conditionRequiresDocumentPresence(expr: ts.Expression): boolean {
+  expr = unwrapDomGuardExpression(expr);
+  if (!ts.isBinaryExpression(expr)) return false;
+  if (expr.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+    return conditionRequiresDocumentPresence(expr.left) || conditionRequiresDocumentPresence(expr.right);
+  }
+  if (
+    expr.operatorToken.kind !== ts.SyntaxKind.ExclamationEqualsToken &&
+    expr.operatorToken.kind !== ts.SyntaxKind.ExclamationEqualsEqualsToken
+  ) {
+    return false;
+  }
+  const left = unwrapDomGuardExpression(expr.left);
+  const right = unwrapDomGuardExpression(expr.right);
+  return (
+    (isDocumentTypeofGuardOperand(left) && ts.isStringLiteralLike(right) && right.text === "undefined") ||
+    (isDocumentTypeofGuardOperand(right) && ts.isStringLiteralLike(left) && left.text === "undefined")
+  );
+}
+
 /**
  * Build the all-or-nothing plan for the current Builtins slice.
  *
@@ -793,6 +824,14 @@ export function makeIrStandaloneDomCapabilityPlan(
 
   const visit = (node: ts.Node): void => {
     if (invalid) return;
+
+    // An optional-host guard does not request the standalone DOM provider.
+    // `typeof document !== "undefined"` is false in a host-free realm, so the
+    // guarded body is unreachable and must not mint DOM capability imports.
+    if (ts.isIfStatement(node) && conditionRequiresDocumentPresence(node.expression)) {
+      if (node.elseStatement) visit(node.elseStatement);
+      return;
+    }
 
     if (ts.isElementAccessExpression(node)) {
       // Computed DOM members are outside the provider ABI even when the key is

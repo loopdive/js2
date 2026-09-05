@@ -97,6 +97,7 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { ts } from "../ts-api.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
@@ -128,6 +129,53 @@ interface PrototypeEdge {
 }
 
 /**
+ * The module global is a canonical function value only while its binding is
+ * never replaced. Function-expression fnctors (`var F = function(){}`) do not
+ * get a cached `__fn_closure_F` singleton, so the edge collector falls back to
+ * their mutable module global; an assignment such as `F = G` would otherwise
+ * make that global match the stale `F` prototype. Conservatively reject the
+ * fallback for any source-level assignment to the same name. A shadowed local
+ * assignment may cause a missed edge, never a wrong prototype identity.
+ */
+function hasModuleBindingAssignment(ctx: CodegenContext, name: string): boolean {
+  const declaration = ctx.fnctorEscapeGate?.ctorDeclByName.get(name);
+  const sourceFile = declaration?.getSourceFile();
+  if (sourceFile === undefined) return ctx.liveFuncBindingGlobals?.has(name) === true;
+
+  let reassigned = false;
+  const visit = (node: ts.Node): void => {
+    if (reassigned) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name
+    ) {
+      reassigned = true;
+      return;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      ts.isIdentifier(node.operand) &&
+      node.operand.text === name
+    ) {
+      reassigned = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return reassigned;
+}
+
+/** Return the canonical function-value global for an approved fnctor name. */
+function fnctorPrototypeValueGlobalIdx(ctx: CodegenContext, name: string): number | undefined {
+  if (hasModuleBindingAssignment(ctx, name)) return undefined;
+  return ctx.funcClosureGlobals.get(name) ?? ctx.moduleGlobals.get(name);
+}
+
+/**
  * The edges that exist in this module, in a deterministic order (fnctors by
  * registration order, then classes). Both halves of every pair must be present:
  * a function with a prototype global but no singleton VALUE global was never
@@ -136,7 +184,11 @@ interface PrototypeEdge {
 function collectPrototypeEdges(ctx: CodegenContext): PrototypeEdge[] {
   const edges: PrototypeEdge[] = [];
   for (const [name, protoGlobalIdx] of ctx.fnctorPrototypeObject) {
-    const valueGlobalIdx = ctx.funcClosureGlobals.get(name);
+    // Function declarations use the cached `__fn_closure_<name>` singleton,
+    // while `var F = function(){}` publishes the same callable through its
+    // module binding global. Both are canonical values for the fnctor edge;
+    // the latter is the only value available for expression-backed fnctors.
+    const valueGlobalIdx = fnctorPrototypeValueGlobalIdx(ctx, name);
     if (valueGlobalIdx === undefined) continue;
     edges.push({ valueGlobalIdx, protoGlobalIdx, vivify: true, name });
   }
@@ -375,4 +427,131 @@ export function closurePrototypeEdgeGetArm(
       ],
     },
   ];
+}
+
+/**
+ * (#4637 A4) The same edge, on the OWN-PROPERTY VISIBILITY surface —
+ * `f.hasOwnProperty("prototype")` / `Object.hasOwn(f, "prototype")`.
+ *
+ * §20.2.4.2: an ordinary function's `prototype` is an OWN property of the
+ * function. The edge already answers the VALUE read (`closurePrototypeEdgeGetArm`
+ * above), so before this arm the two surfaces contradicted each other. Measured
+ * on this branch's base (`.tmp/p13.js`, `--target standalone`):
+ *
+ *     function f(){}
+ *     typeof f.prototype            // "object"   — the edge answers
+ *     f.hasOwnProperty("prototype") // false      — nothing answers
+ *
+ * — `built-ins/Function/prototype/S15.3.5.2_A1_T1`.
+ *
+ * ## Why this cannot answer a wrong `true`
+ *
+ * `__closure_proto_of` is an `ref.eq` identity match against the singletons the
+ * compiler minted for functions that HAVE a prototype object (`collectPrototypeEdges`
+ * pairs a `__fn_closure_<name>` / `__class_<Name>` value global with a prototype
+ * global). A value with no edge — an arrow, a bound function, a `Function(src)`
+ * product, a plain `$Object`, a host externref — answers `null` here exactly as
+ * it does for the value read, and this arm falls through to the receiver's
+ * existing answer. §15.3 requires an arrow to have NO `prototype`, and it keeps
+ * that answer because it never gets an edge, not because of an ad-hoc exclusion.
+ *
+ * Unlike the GET arm this does NOT consult the bag first, and the asymmetry is
+ * deliberate: an own bag entry `f.prototype = v` must WIN on the value read, but
+ * on the visibility question both the bag entry and the edge answer the same
+ * `true`, so the precedence question does not arise. The bag arm runs first in
+ * the spliced body anyway (this arm is a prologue that only fires on a miss for
+ * the interned `"prototype"` key).
+ *
+ * Splices into the FRONT of the named natives' bodies and adds NO locals, so no
+ * local index in those bodies moves. Returns an empty array — leaving every
+ * consumer byte-identical — unless the module has an edge and both the helper
+ * and the interned key literal are available.
+ */
+export function closurePrototypeEdgeHasOwnArm(
+  ctx: CodegenContext,
+  recvSlot: number,
+  keySlot: number,
+  answer = 1,
+): Instr[] {
+  const constructibleDeleteTypes = answer === 0 ? [...ctx.constructibleClosureTypeIdxs] : [];
+  if (!hasClosurePrototypeEdges(ctx) && constructibleDeleteTypes.length === 0) return [];
+  const protoOfIdx = ctx.funcMap.get(CLOSURE_PROTO_OF);
+  const nativeStrTypeIdx = ctx.nativeStrTypeIdx;
+  if (protoOfIdx === undefined && constructibleDeleteTypes.length === 0) return [];
+  if (!ctx.nativeStrings || nativeStrTypeIdx < 0) return [];
+  return [
+    { op: "local.get", index: keySlot },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: nativeStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: keySlot },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: nativeStrTypeIdx },
+        ...nativeStringLiteralInstrs(ctx, "prototype"),
+        { op: "ref.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...constructibleDeleteTypes.flatMap((typeIdx): Instr[] => [
+              { op: "local.get", index: recvSlot },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: answer }, { op: "return" }],
+              },
+            ]),
+            ...(protoOfIdx === undefined
+              ? []
+              : ([
+                  { op: "local.get", index: recvSlot },
+                  { op: "call", funcIdx: protoOfIdx },
+                  { op: "ref.is_null" },
+                  { op: "i32.eqz" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [{ op: "i32.const", value: answer }, { op: "return" }],
+                  },
+                ] satisfies Instr[])),
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
+ * (#4637 A4) Splice {@link closurePrototypeEdgeHasOwnArm} into the own-property
+ * visibility natives at FINALIZE, after `fillClosurePrototypeEdge` has given
+ * `__closure_proto_of` its real body.
+ *
+ * Only the OWN-property pair is targeted. `__extern_has` (§7.3.12 HasProperty)
+ * is deliberately left alone: it already reaches the value through
+ * `__closure_prop_get`'s edge arm, and splicing a second answer in would give
+ * one question two independent sources.
+ */
+export function spliceClosurePrototypeEdgeHasOwn(ctx: CodegenContext): void {
+  const arm = closurePrototypeEdgeHasOwnArm(ctx, 0, 1);
+  if (arm.length === 0) return;
+  // The same identity edge also proves that `prototype` is the mandatory
+  // non-configurable own property, so OrdinaryDelete must return false even
+  // before a side-bag entry has materialized it.
+  for (const [name, answer] of [
+    ["__hasOwnProperty", 1],
+    ["__object_hasOwn", 1],
+    ["__delete_property", 0],
+  ] as const) {
+    const fn = ctx.mod.functions.find((candidate) => candidate.name === name);
+    if (!fn) continue;
+    // A FACTORY per target: one shared `Instr` object reachable from two bodies
+    // is double-remapped by the finalize index walks
+    // (`reference_shared_instr_object_dce_double_remap`).
+    fn.body.unshift(...closurePrototypeEdgeHasOwnArm(ctx, 0, 1, answer));
+  }
 }

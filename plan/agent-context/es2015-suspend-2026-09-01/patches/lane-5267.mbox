@@ -1,0 +1,1956 @@
+From b67a7dd3f679edb2f2ce17a8868c87174b906a6d Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Thomas=20Tr=C3=A4nkler?= <git@thomas.traenkler.com>
+Date: Tue, 1 Sep 2026 21:57:24 +0000
+Subject: [PATCH] =?UTF-8?q?wip(#5267):=20suspension=20snapshot=202026-09-0?=
+ =?UTF-8?q?1T21:57Z=20=E2=9C=93?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Unverified WIP snapshot taken by the lead at user-requested suspension (plumbing commit per the /suspend protocol; gates not run).
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Model: Claude Opus 5 High
+---
+ ...andalone-forof-iterators-collections-r2.md | 744 ++++++++++++++++++
+ src/codegen/expressions/new-super.ts          | 326 +++++++-
+ src/codegen/iterator-native.ts                |  72 +-
+ src/codegen/map-runtime.ts                    | 195 ++++-
+ src/codegen/property-access-dispatch.ts       |   8 +-
+ src/codegen/set-runtime.ts                    |  10 +-
+ ...sue-5267-es2015-forof-iterators-r2.test.ts | 341 ++++++++
+ 7 files changed, 1651 insertions(+), 45 deletions(-)
+ create mode 100644 plan/issues/5267-es2015-standalone-forof-iterators-collections-r2.md
+ create mode 100644 tests/issue-5267-es2015-forof-iterators-r2.test.ts
+
+diff --git a/plan/issues/5267-es2015-standalone-forof-iterators-collections-r2.md b/plan/issues/5267-es2015-standalone-forof-iterators-collections-r2.md
+new file mode 100644
+index 000000000..1cad0fec0
+--- /dev/null
++++ b/plan/issues/5267-es2015-standalone-forof-iterators-collections-r2.md
+@@ -0,0 +1,744 @@
++---
++id: 5267
++title: "ES2015 standalone: for-of + iterator prototypes + collections — r2 residual pass"
++status: in-progress
++sprint: current
++created: 2026-09-01
++updated: 2026-09-01
++priority: high
++horizon: l
++feasibility: medium
++task_type: conformance
++area: codegen
++es_edition: ES2015
++goal: standalone-mode
++requested_by: claude.ai@loopdive.com/fable-es6
++related: [5144, 5147, 5151, 4444]
++loc-budget-allow:
++  # 2026-09-01 r2 plan: every step below adds NEW emitted-code paths (a
++  # constructor-side iterable drive, live collection iterator records, brand
++  # closures with behavioral bodies, a %IteratorPrototype% root, a cached
++  # `next` field on the iterator record, an interleaved per-element
++  # assignment-pattern drive, lazy-helper GetIteratorDirect) — growth, not
++  # refactor. Granted for this change-set only.
++  - src/codegen/expressions/new-super.ts
++  - src/codegen/map-runtime.ts
++  - src/codegen/set-runtime.ts
++  - src/codegen/weak-collections-runtime.ts
++  - src/codegen/iterator-native.ts
++  - src/codegen/iter-hof-native.ts
++  - src/codegen/iter-lazy-native.ts
++  - src/codegen/array-object-proto.ts
++  - src/codegen/native-proto.ts
++  - src/codegen/closed-method-dispatch.ts
++  - src/codegen/expressions/call-tail-dispatch.ts
++  - src/codegen/expressions/call-receiver-method.ts
++  - src/codegen/expressions/call-builtin-static.ts
++  - src/codegen/statements/loops.ts
++  - src/codegen/statements/for-of-destructuring.ts
++  - src/codegen/destructuring-params.ts
++  - src/codegen/function-instance-meta.ts
++  - src/codegen/builtin-static-gopd.ts
++  - src/codegen/property-access.ts
++  # 2026-09-01 (Opus impl, Step A-2): the well-known-symbol VALUE read
++  # (`Symbol.hasInstance`) must carry the i32 `symbol` brand in the
++  # native-symbol lanes, or an any-channel coercion boxes it as the NUMBER 2.
++  - src/codegen/property-access-dispatch.ts
++  - src/codegen/expressions/assignment.ts
++  - src/codegen/array-methods.ts
++  - src/codegen/context/types.ts
++  - src/codegen/index.ts
++func-budget-allow:
++  # 2026-09-01: each is a kind-dispatch / arm-ladder function that gains one
++  # more arm in the shape its existing arms already have (see the step that
++  # names it). Add further entries here, with a dated line, if the gate names
++  # another function — never edit scripts/*-baseline.json.
++  - src/codegen/expressions/new-super.ts::compileNewExpression
++  - src/codegen/expressions/new-super.ts::tryCompileNativeWeakCollectionNew
++  - src/codegen/array-object-proto.ts::emitIteratorPrototypeSingleton
++  - src/codegen/iterator-native.ts::buildIteratorBody
++  - src/codegen/iterator-native.ts::buildIteratorNextBody
++  - src/codegen/iterator-native.ts::fillNativeIteratorLateArms
++  - src/codegen/iter-hof-native.ts::fillIterHofSteppers
++  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
++  - src/codegen/expressions/call-tail-dispatch.ts::compileTailDispatch
++  - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
++  - src/codegen/map-runtime.ts::fillMapSetDynDispatchArms
++  # 2026-09-01 (Opus impl, Step B-3): `__map_iter_next` reports the entry KEY
++  # alongside the projected value so the kind-2 consumer can pack `[k, v]`.
++  - src/codegen/map-runtime.ts::ensureMapHelpers
++  - src/codegen/statements/loops.ts::compileForOfIterator
++  - src/codegen/statements/for-of-destructuring.ts::compileForOfAssignDestructuringExternref
++  - src/codegen/statements/for-of-destructuring.ts::compileForOfIteratorAssignDestructuring
++  - src/codegen/index.ts::generateModule
++---
++
++# #5267 — ES2015 standalone: for-of + iterator prototypes + collections (r2)
++
++## Problem
++
++The 2026-09-01 standalone baseline (loopdive/js2wasm-baselines, compiler sha
++`d39779cb`, an ancestor of HEAD) lists 155 failing ES2015 rows across
++`language/statements/for-of/**` (63), `built-ins/Iterator/prototype/**` (32),
++`built-ins/ArrayIteratorPrototype/next` (23), `Map`/`Set`/`WeakMap`/`WeakSet`
++(~50) and the `Set`/`Map`/`String` iterator prototypes (~21). Waves 1 (#5144
++for-of, #5147 iterators, #5151 collections — all on main via PR #5244) landed
++the mechanisms; this is the residual pass over what those waves' "Skipped /
++follow-ups" sections left open.
++
++**Re-verified on HEAD `0d9bfedee` (2026-09-01)** with
++`npx tsx scripts/run-test262-paths.mts .tmp/es2015/forof-head-safe.txt --standalone`
++(152 rows in-process) plus `--isolate` for the 3 rows that
++`delete Array.prototype[Symbol.iterator]` (`.tmp/es2015/forof-head-poison.txt`):
++
++| | pass | fail | compile_error |
++|---|---|---|---|
++| 152 in-process | **1** (dropped: `SetIteratorPrototype/next/does-not-have-mapiterator-internal-slots-set.js`) | 147 | 4 |
++| 3 isolated | 0 | 0 | 3 |
++
++**Target = 154 rows**, split into the per-cluster lists
++`.tmp/es2015/forof-cl-<X>.txt` (below; they partition the 151 in-process
++non-pass rows exactly — 0 unclustered, 0 duplicates — plus the 3 isolate
++rows in F5). Raw per-row verdicts: `.tmp/es2015/forof-head-nonpass.tsv`.
++
++Two things changed since the baseline and shape the plan:
++
++1. **The `env::*` host-import leaks are RE-CLASSIFIED, not gone** (baseline:
++   21 `host_import_leak` CEs — `WeakMap_new` ×8, `Set_entries` ×5,
++   `WeakSet_new` ×4, `Set_new` ×3, `Uint8ClampedArray_keys` ×1). On HEAD the
++   runner reports the 14 constructor rows as RUNTIME failures carrying V8's own
++   message text (`object is not iterable (cannot read property
++   Symbol(Symbol.iterator))`, `Iterator value 1 is not an entry object`) —
++   but compiling the same shapes through `compile(src, { target: "standalone" })`
++   still emits `env::Set_new` / `env::WeakMap_new` function imports (Step A-0,
++   measured). The runner instantiated those modules against the host `env`
++   instead of flagging the leak, so the failures LOOK like semantics gaps. A
++   runner-side finding to file separately; this issue closes the leak
++   natively (Step A) and verifies with the module's real import list, never
++   with the runner's classification. `registerBuiltinExternClasses`'s
++   `!ctx.nativeStrings` gates (`src/codegen/extern-declarations.ts:62`,
++   `:134`, `:158`) stay as they are — the leak comes from the ctor arms'
++   fall-through, not from those registrations.
++2. **7 rows are compile TIMEOUTS on HEAD** (15–30 s): the 3 F5 isolate rows,
++   `ArrayIteratorPrototype/next/detach-typedarray-in-progress.js`,
++   `WeakMap`/`WeakSet` `proto-from-ctor-realm.js`, and the two Step-A repro
++   probes `p6`/`p7`. They were measured at load 12–18 on a 4-core box shared
++   with five other agents' runs; the runner's per-test compile budget is 15 s.
++   **Re-measure on a quiet box before treating any of them as a hang.**
++
++Probe tooling: `npx tsx .tmp/probe-one.mts /abs/path/probe.js` (runs one file
++through `runTest262File` on the standalone lane, 120 s budget). Repros from
++this analysis: `.tmp/es2015/probes5267/p1…p7*.js`, results in
++`.tmp/es2015/probes5267/probes-run1.txt`:
++
++- `p1` `map.entries().next()` → null (`.done` read throws) — cluster B.
++- `p2` `[1,2][Symbol.iterator]().next()` → null in a Map-bearing module —
++  cluster D1. (The #5151 "`assert.sameValue(result.done, …)` → called value
++  is not a function" blocker did NOT reproduce at this stage; it can only
++  surface once a live carrier exists — see B6.)
++- `p3` `class T extends Iterator { next(){throw} get return(){…} }` →
++  `new T().chunks(1)` evaluates to **undefined** (then `.next` on undefined);
++  `return` getter never read — cluster E root is the `chunks` DISPATCH on a
++  class instance, not the stepping.
++- `p4` `new Map(customIterable)` → `next` called 0 times, no error (silent
++  empty map) — cluster A.
++- `p5` `set.entries()` → "called value is not a function" — B1.
++- `p6`/`p7` (`new WeakMap([1,1])`, `new Set(customIterable)`): with a 120 s
++  budget (`probes-run2.txt`) both compile and FAIL with V8's message text
++  thrown from `__module_init` — `Iterator value 1 is not an entry object`
++  and `object is not iterable (cannot read property Symbol(Symbol.iterator))`.
++  In `p6` that TypeError ESCAPES the source-level `try { … } catch (e)`
++  around the `new`, i.e. the construction ran host-side at module init, not
++  in the compiled try region. Their 16 s compile "timeouts" in the first
++  chain were load artifacts.
++
++### Draft PR #5225 (`origin/claude/es2015-forof-second-pass-draft`) — verdict
++
++Its one commit `465d1045c` is the #5144 wave-1 change-set (892 src lines, 8
++files) on a base 714 commits behind main. `git apply --check` of its src
++patch against HEAD: **0 of 7 files apply** — every hunk is already on main in
++superseded form (`emitAssignObjectPatternFromVec`, `emitDynamicElementSet`,
++`notAnObjectThrowInstrs`, `ensureNotAnObjectThrowDeps` all exist on HEAD).
++The only draft-added lines absent on HEAD are: a `console.error("DBG drain
++elem"…)` (noise), three `emitTdzCheck(ctx, fctx, name, noJsHost(ctx))` calls
++(HEAD uses `emitTdzCheckAtGlobal(…, noJsHost(ctx))` at
++`src/codegen/expressions/identifiers.ts:844/926`), and the 35-line body of the
++draft's rest-object-over-vec pattern (HEAD replaced it with
++`emitForOfRestObjectCarrier`, `src/codegen/statements/for-of-rest-object-default.ts`).
++**Nothing to re-apply; do not merge it.** Its value was the "Skipped /
++follow-ups" list, which is folded into clusters F1–F5 below.
++
++## Out of scope (owned elsewhere) — `.tmp/es2015/forof-cl-X-out-of-scope.txt` (9)
++
++| Rows | Owner | Why |
++|---|---|---|
++| `Map`/`Set`/`WeakMap`/`WeakSet` `proto-from-ctor-realm.js` (4) | #3371 (Reflect.construct distinct NewTarget), `$262.createRealm` realms | need a foreign-realm `%Map.prototype%` fallback; also `quickjs provider is not built` in this container |
++| `Iterator/prototype/{chunks,windows}/get-next-method-only-once.js` (2), `…/exhaustion-does-not-call-return.js` (2) | #680 / #2864 native generator carrier (codex lane) | the `get next()` accessor closes over a `function*` object and calls its `.next()` from a closure — HEAD: `Generator.prototype.next requires that 'this' be a Generator` |
++| `for-of/dstr/array-elem-init-in.js` (1) | parser | `[ x = 'x' in {} ]` in a for-of head is rejected by the TS parser (`',' expected`) — #5144 left it alone; not a codegen fix |
++
++Also not touched here by rule: `Reflect.set` receiver (#2046), RegExp
++(#5198). No row in the 154 belongs to those.
++
++## Cluster table (HEAD-verified, 154 rows incl. X)
++
++| # | Cluster | Count | Root cause (file:function) | Sample tests |
++|---|---|---|---|---|
++| A | Collection ctor: general iterable never driven | 25 | `src/codegen/expressions/new-super.ts` Map arm (`:5133`, admits only no-arg / nullish / literal-of-pairs → otherwise falls through and builds an EMPTY map, p4), Set arm (`:5237`, + array-typed var), `tryCompileNativeWeakCollectionNew` (`:4224`, `return undefined` when `!wcHandled`). #5151 Step A2's `emitNativeCollectionCtorIterableDrive` was never written. | `Map/iterator-next-failure.js`, `Map/iterable-calls-set.js`, `WeakMap/iterator-items-are-not-object-close-iterator.js`, `Set/set-iterator-close-after-add-failure.js` |
++| A2 | Symbol keys/values reach the adder as their numeric id | 2 | `src/codegen/map-runtime.ts:1424 coerceMapKeyToAnyref` has number/boolean/i64 arms, no `$Symbol` (`ctx.symbolTypeIdx`) arm (#5151 G) | `WeakMap/iterable-with-symbol-keys.js`, `WeakSet/iterable-with-symbol-values.js` |
++| B | `keys()/values()/entries()` return an eager `$Vec` snapshot; `.next()` on it is null; Set `entries` unrouted | 17 | `src/codegen/map-runtime.ts:2073 compileNativeCollectionIterator` → `:2094 emitCollectionIteratorVec`; `src/codegen/set-runtime.ts:158` routes only `keys`/`values` (p5). The live stepper already exists: `fillMapSetDynDispatchArms` (`map-runtime.ts:2605-2760`) builds `$__IterRec{ITER_KIND_MAPSET}` over `__map_iter_new` and steps it via `__map_iter_next` — but only for `__iterator($Map)`, never for the method-call sites. | `Map/prototype/entries/returns-iterator.js`, `Set/prototype/values/values-iteration-mutable.js`, `Map/prototype/delete/does-not-break-iterators.js`, `MapIteratorPrototype/next/iteration.js` |
++| C1 | `%{Array,Map,Set}IteratorPrototype%.next` not an own property / no brand check | 17 | `src/codegen/array-object-proto.ts:3384 emitIteratorPrototypeSingleton`: only `kind === "String"` (`:3441`) seeds an own `next` closure, and that one is a REFUSAL body (`refusalBodyFallback`). | `ArrayIteratorPrototype/next/property-descriptor.js`, `MapIteratorPrototype/next/name.js`, `SetIteratorPrototype/next/this-not-object-throw-values.js`, `MapIteratorPrototype/next/does-not-have-mapiterator-internal-slots.js` |
++| C2 | No `%IteratorPrototype%` root: singletons' `$Object.proto` is null; no `[Symbol.iterator]`, `chunks`/`windows`/`join` seeds on it | 10 | same function: `NativeIteratorPrototypeKind` (`:3374`) has no root kind; `$Object` field `proto` (`src/codegen/object-runtime.ts:1118`) never set; the runner's `Iterator` shim (`tests/test262-runner.ts:2294-2300`) resolves `Iterator.prototype` from that chain. | `Iterator/prototype/Symbol.iterator/return-val.js`, `…/prop-desc.js`, `chunks/result-is-iterator.js`, `chunks/non-constructible.js`, `join/not-a-constructor.js` |
++| D1 | `x[Symbol.iterator]()` on arrays/TypedArrays/strings yields a snapshot vec or nothing | 13 | `src/codegen/expressions/call-tail-dispatch.ts:763-772` routes array receivers to `compileArrayMethodCall(…, "values")` (a cursor-less `$Vec`, the #5147 note at `:764`); TA/string receivers are not admitted at all. | `ArrayIteratorPrototype/next/iteration.js`, `…/Float32Array.js` (9 TA rows), `StringIteratorPrototype/next/next-iteration.js` |
++| D2 | `arguments[Symbol.iterator]()` → "called value is not a function" | 8 | same arm: `resolveArrayInfo` is false for `IArguments`; the arguments object is the vec `getOrRegisterVecType(ctx, "arguments")` (`src/codegen/closures.ts:2942`) | `ArrayIteratorPrototype/next/args-mapped-iteration.js`, `…/args-unmapped-expansion-before-exhaustion.js` |
++| D3 | `typedArray.keys()` + `$DETACHBUFFER` mid-loop | 1 | baseline leaked `env::Uint8ClampedArray_keys` (TA `.keys()` not routed to `compileArrayIteratorMethod`, `src/codegen/array-methods.ts:2941`); HEAD: compile timeout (load) | `ArrayIteratorPrototype/next/detach-typedarray-in-progress.js` |
++| E | `chunks`/`windows` protocol tail on `class X extends Iterator` sources | 18 | (p3) `.chunks(n)` on a user-class instance is NOT dispatched to the lazy helper — the class-typed receiver path (`src/codegen/expressions/call-receiver-method.ts:3972`, `src/codegen/closed-method-dispatch.ts:399`) yields undefined; then `__iter_hof_open` (`src/codegen/iter-hof-native.ts:640-660`) only admits ladder carriers, no GetIteratorDirect (`next` read once, `return` never read at open / on next-abrupt). | `chunks/next-method-throws.js`, `windows/get-next-method-throws.js`, `chunks/return-is-forwarded-to-underlying-iterator.js`, `chunks/next-method-returns-throwing-value-done.js` |
++| F1 | for-of statement drive: next()-throw closes; `next` re-read per step; non-object result not rejected; +2 singles | 6 | `src/codegen/statements/loops.ts:2925 compileForOfIterator` — the #1347 `try/catch_all` wraps the `call __iterator_next` too; `src/codegen/iterator-native.ts:3028` OBJ step re-reads `next` every step; `:2946+` degrades a non-Object result to done | `for-of/iterator-next-error.js`, `for-of/iterator-next-reference.js`, `for-of/iterator-next-result-type.js`, `for-of/throw-from-finally.js`, `for-of/array-key-get-error.js` |
++| F2 | Assignment-pattern head drive is eager (`__array_from_iter_n(-1)` up front): no per-element lref/close order, holes, symbol elision, computed keys | 12 | `src/codegen/statements/for-of-destructuring.ts:2239 compileForOfAssignDestructuringExternref` (materialization at `:2254`); `:2567 compileForOfIteratorAssignDestructuring` (object patterns) | `dstr/array-elem-iter-thrw-close.js`, `dstr/array-rest-lref-err.js`, `dstr/array-elem-init-assignment.js`, `dstr/array-elision-val-symbol.js`, `dstr/obj-prop-name-evaluation-error.js` |
++| F3 | NamedEvaluation of anonymous `class` in a destructuring default | 3 | `src/codegen/function-instance-meta.ts:318-380` handles fn/arrow only; `.name` on a class value folds statically (#5144 F residue) | `dstr/array-elem-init-fn-name-class.js`, `dstr/obj-id-init-fn-name-class.js` |
++| F4 | `x[0] === first[0]` false for equal numbers in `for (x of map)` | 3 | pair element (from the `$ObjVec` `[k,v]` packing) vs heterogeneous-literal element compared as two externrefs under different boxings (#5144 "Map residue"); re-measure after B4 | `for-of/map.js`, `for-of/map-expand.js` |
++| F5 | `delete Array.prototype[Symbol.iterator]` then head destructuring must throw | 3 | HEAD: compile timeout (15–21 s under load; baseline "no exception"). `arrayProtoIteratorDeleteKey` exists (`src/codegen/array-proto-iterator-override-ast.ts:47`) — find its consumer; #5144 A residue | `dstr/{let,const,var}-ary-init-iter-get-err-array-prototype.js` (isolate!) |
++| G | Collection reflection residue | 7 | #5151 C4/D/F/G exactly as planned there: `@@iterator` own property on Map/Set proto pages, `@@species` read/write, `size` gOPD via a variable receiver, mixed-union `map.get` lane | `Map/prototype/Symbol.iterator.js`, `Map/Symbol.species/symbol-species.js`, `Set/prototype/size/size.js`, `Map/prototype/set/append-new-values.js` |
++| X | out of scope (table above) | 9 | | |
++
++## Implementation Plan
++
++Ordered by yield and dependency; each step independently shippable. After each
++step re-run its list(s) with
++`npx tsx scripts/run-test262-paths.mts .tmp/es2015/forof-cl-<X>.txt --standalone`
++and the controls list. Type queries go through `ctx.oracle` (oracle-ratchet
++gate); every instruction template minted FRESH per arm (#2169b — a shared
++`Instr[]` aliased into two branches is remapped twice by DCE, and the #1058
++stack-balance repair fails the whole compile); reserve-then-fill funcIdx
++discipline (#1719/#2043) for anything filled at finalize.
++
++### Step A — constructor iterable drive (A 25 + A2 2) — `forof-cl-A-ctor-iterable-drive.txt`, `forof-cl-A2-symbol-keys.txt`
++
++**A-0 (measured 2026-09-01 — the leaks are NOT gone).**
++`npx tsx .tmp/es2015/probes5267/imports-of.mts .tmp/es2015/probes5267/p7-min.js`
++(compiles through `compile(src, { target: "standalone" })` exactly like the
++runner and prints `WebAssembly.Module.imports`) on
++`new Set(customIterable); new WeakMap([1, 1])` gives
++`["function:env::Set_new", "function:env::WeakMap_new"]`, and
++`result.imports` lists both with `intent.type === "extern_class"`. So HEAD
++still emits the host constructors for every non-literal argument shape; the
++runner merely stopped CLASSIFYING them as `host_import_leak` (it instantiated
++the module against the host `env`, whose real `Set`/`WeakMap` threw V8's
++TypeErrors at `__module_init`). That runner discrepancy
++(`standaloneHostImportError`, `tests/test262-runner.ts:3700`, called at
++`:4944`) is a separate finding to file — do not fix it here, and do not rely
++on the runner to catch a leak in this cluster: **re-run `imports-of.mts` on
++the three rows named in the acceptance criteria after Step A and require `[]`.**
++(The CLI `npx tsx src/cli.ts <file> --standalone` crashes inside the TS
++checker on these probe files in this container — use `imports-of.mts`.)
++
++**A-1. One shared drive, three call sites.** Add
++`emitNativeCollectionCtorIterableDrive(ctx, fctx, collTmp, iterableExpr, kind: "Map"|"Set"|"WeakMap"|"WeakSet")`
++in `src/codegen/map-runtime.ts` (next to `emitCollectionIteratorVec`). Call it
++from the Map arm (`new-super.ts:5133`) when `args.length >= 1 && !nullishArg && !seedablePairs`,
++from the Set arm (`:5237`) when neither `arrArg`, `nonLiteralArrArg` nor
++`nullishArg` matched, and from `tryCompileNativeWeakCollectionNew` (`:4224`)
++in place of `if (!wcHandled) return undefined;` for the 1-arg case. Keep every
++existing literal / array-typed fast path exactly as is (they are the unpatched
++branch); extra arguments beyond the first: evaluate + drop (spec ignores them).
++
++Spec order (§24.1.1.1 / §24.2.1.1 / §24.3.1.1 / §24.4.1.1 steps 5–9), emitted
++in this order:
++
++1. `i32.const COLLECTION_KIND.<kind>; call __map_new` → `collTmp` (the
++   existing prologue; `ensureMapHelpers` / `ensureSetHelpers` /
++   `ensureWeakCollectionHelpers` as the arms already do).
++2. Compile the argument to externref. **Runtime** nullish test (the static
++   `nullishArg` only covers literals — `var it; new Map(it)` must also be
++   empty): `ref.is_null` OR equals the undefined singleton
++   (`undefinedExternInstrs`, `src/codegen/any-helpers.ts:138`) → skip to 8.
++3. `emitCollectionAdderGuard(ctx, fctx, collTmp, "set"|"add")`
++   (`new-super.ts:4140`) — Get(adder) + IsCallable BEFORE the iterable is
++   touched; then `prepareNativeSetAdderDispatch(ctx, fctx, collTmp, adderName)`
++   (`:4058`) so a user-patched `Map.prototype.set` observes every entry with
++   the collection as `this` (`iterable-calls-set.js`: `results.push([k,v])`,
++   `_this.push(this)`).
++4. GetIterator: `ensureNativeIteratorRuntime(ctx)`
++   (`src/codegen/iterator-native.ts:460`) then `call __iterator` (funcMap) on
++   the externref → iterator record. A non-iterable (`{[Symbol.iterator]: undefined}`,
++   a number) must throw the #3388 TypeError here (`Map/iterator-is-undefined-throws.js`);
++   verify the OBJ arm (`buildIteratorBody`, `iterator-native.ts:2288`, the
++   #3146 falsy-`@@iterator`-with-truthy-`next` admission at `:2508`) throws
++   rather than returning an empty record for that shape.
++5. Loop: `call __iterator_next(rec)` → `(i32 done, externref value)`
++   (multi-value; pop value then done — see `loops.ts:3194-3200`). `done` →
++   break. An abrupt `next()` / `value` getter propagates WITHOUT
++   IteratorClose (`iterator-next-failure`, `iterator-value-failure` expect no
++   `return()` call) — so the `try/catch_all` region of step 6–7 must NOT
++   enclose this call (same split as Step F1-a).
++6. Pairs (Map/WeakMap): `value` must be an Object — `any.convert_extern` +
++   `ref.test $Object` or a vec-family carrier (`[k,v]` array literal items
++   lower to vecs; the #3100 normalize arms in `iterator-native.ts:1278-1370`
++   show the vec-family test list). Primitive → IteratorClose then TypeError
++   (`iterator-items-are-not-object-close-iterator.js` counts `return()` once
++   per throw) via `buildThrowJsErrorInstrs(ctx, "TypeError", …)`
++   (`src/codegen/js-errors.ts:71`) — mirror `notAnObjectThrowInstrs`
++   (`iterator-native.ts:2167`). Then `k = __extern_get_idx(value, 0)`,
++   `v = __extern_get_idx(value, 1)` (the carrier-aware standalone reader used
++   at `for-of-destructuring.ts:2270`; for a plain `$Object` with `"0"`/`"1"`
++   keys use `__extern_get` + `nativeStringLiteralInstrs` keys — branch on
++   `ref.test $Object`). A throwing `get 0()` / `get 1()`
++   (`iterator-item-{first,second}-entry-returns-abrupt.js`) → IteratorClose +
++   rethrow.
++7. Call(adder, coll, «k, v» | «v»): `adderDispatch.modeLocal ? emitNativeSetAdderCall(dispatch, collTmp, kLocal, vLocal) : call __map_set | __set_add | __weakset_add`
++   (`new-super.ts:4190`; helper names in `map-runtime.ts` / `set-runtime.ts` /
++   `weak-collections-runtime.ts:53-71`); key/value through
++   `coerceMapKeyToAnyref` (`map-runtime.ts:1424`). Adder abrupt →
++   IteratorClose (its own abrupt SUPPRESSED — `iterator-close-failure-after-set-failure.js`:
++   the adder's Test262Error wins) then rethrow. Weak kinds: a key that cannot
++   be held weakly (number/string/boolean/null/undefined/registered symbol —
++   `WeakMap/iterator-items-keys-cannot-be-held-weakly.js`) must be a TypeError
++   from the adder path (`weak-collections-runtime.ts:178-200` routes keys
++   through `compileCollectionElementArg`; check the runtime `__weakset_add` /
++   `__map_set`-with-weak-brand for the CanBeHeldWeakly test — #4785 — and add
++   it in the drive if absent: `ref.test $Object`/struct/`$Symbol`, else
++   TypeError + IteratorClose).
++8. Leave `collTmp` on the stack; return `{ kind: "ref", typeIdx: ctx.mapTypeIdx }`.
++
++Wasm shape: `block $done  loop $step  <next> (br_if $done done) try <6-7> catch_all <IteratorClose ignoring its own throw> rethrow end  br $step end end`.
++The close-then-rethrow pattern exists at `loops.ts:3133-3160` (the iterator-close
++finallyStack entry) and the #1347 wrapper further down — copy the shape, not the
++array (fresh Instr objects).
++
++**A-2 symbol keys (2).** Add a `$Symbol` arm to `coerceMapKeyToAnyref`
++(`map-runtime.ts:1424`): `ref.test ctx.symbolTypeIdx` → pass the ref through
++as anyref (no boxing); confirm `__map_set`'s hash arm gives struct refs an
++identity hash so two distinct `Symbol('a description')` values stay distinct
++(`iterable-with-symbol-values.js` adds two same-description symbols).
++
++Edge cases: `new Map(iterable)` where `iterable` is an ARRAY variable of
++pairs (`iterable-calls-set.js`) reaches the drive with a typed vec — the
++ladder's vec-family arms normalize it, so no special case; `new Set(x)` with
++an array-typed `x` keeps the `seedNativeSetFromArrayArg` fast path
++(`new-super.ts:3938`) but must still call `emitCollectionAdderGuard` first
++(it does). A Set/WeakSet drive skips step 6's object test (flat values).
++
++### Step B — live `keys()/values()/entries()` records (B 17; unblocks half of C1) — `forof-cl-B-live-collection-iterators.txt`
++
++**B-1.** `src/codegen/set-runtime.ts:158`: route `entries` too (the comment
++defers it) — `compileNativeCollectionIterator(…, "entries", true)`.
++
++**B-2.** In `compileNativeCollectionIterator` (`map-runtime.ts:2073`) — the
++CALL-expression entry used by `tryCompileNativeMapMethodCall` (`:1615`) and
++`set-runtime.ts:158` — emit a LIVE record instead of the vec:
++`i32.const ITER_KIND_MAPSET; ref.null $vecExtern; i32.const 0; <recv as ref $Map>; i32.const <0 keys | 1 values | 2 entries>; call __map_iter_new; extern.convert_any; struct.new $__IterRec; extern.convert_any`
++— exactly the template `fillMapSetDynDispatchArms` emits for `__iterator($Map)`
++(`map-runtime.ts:2666-2700`); extract it into a factory
++`mapSetIterRecInstrs(ctx, kindOperand: Instr[])` shared by both sites (fresh
++objects per call). `ensureNativeIteratorRuntime(ctx)` first so
++`ctx.structMap.get("__IterRec")` resolves. Return `{ kind: "externref" }`.
++Keep `emitCollectionIteratorVec` for the bare for-of head
++(`compileForOfNativeCollection`, `loops.ts:1071`) — it consumes the vec.
++
++**B-3.** Entries pairs: `__map_iter_next` (`map-runtime.ts:1113-1240`) returns
++only the value for kind 2 ("packing deferred", `:1115`). Add the pair packing
++in the MAPSET twin of `__iterator_next` (`:2703-2760`, which has the
++`$MapIterResult` local): when `it.kind == 2`, build a fresh `$ObjVec [key, value]`
++via `ensureObjVecBuilders` (`src/codegen/object-runtime.ts:6967`) exactly as
++`emitCollectionIteratorVec` does at `:2205-2225`; Set entries → `[v, v]`.
++`__map_iter_next` must expose the key for that (add a key-carrying result or a
++second stepper `__map_iter_next_kv`) — `$MapIterResult` is a CLOSED struct
++that is never source-visible, so widening it is safe. Mutation rows
++(`delete/does-not-break-iterators`, `clear/map-data-list-is-preserved`,
++`*-iteration-mutable`) fall out of the tombstone-skipping index walk already in
++`__map_iter_next`.
++
++**B-4.** `for (x of map.entries())`: after B-2 the tentative-array probe in
++`compileForOfStatement` (`loops.ts:1036-1049`, via `arrayIteratorReceiverForForOf`)
++no longer sees a vec and the statement falls to `compileForOfIterator`, whose
++`__iterator` has the #5147 identity arm for an `$__IterRec` subject → MAPSET
++step. That is correct and LIVE. If the controls show a for-of regression,
++detect a collection receiver in `arrayIteratorReceiverForForOf` and call
++`emitCollectionIteratorVec` directly for the loop head instead.
++
++**B-5.** `.next()` routing needs no new arm: a `MapIterator`-typed receiver goes
++through `call-receiver-method.ts:987` → `reserveAnyIterNext`
++(`iterator-native.ts:782`) → `fillAnyIterNext` (filled in `index.ts:5929-5933`)
++which `ref.test`s `$__IterRec` → `__iter_next_result` (`:697`) → the MAPSET
++twin → `__iter_result_obj` (`:645`, a real `$Object {value, done}`). Untyped
++receivers hit the `closed-method-dispatch.ts:1022-1050` arm. Verify with `p1`.
++
++**B-6.** Only if the #5151 blocker reappears (`assert.sameValue(result.done, …)`
++→ "called value is not a function" with a property read as the ARGUMENT):
++the suspect is the IteratorResult fast path at
++`src/codegen/property-access-dispatch.ts:3645` routing `.value`/`.done` to
++`__gen_result_value/done` when those exist in funcMap — add a
++`ref.test $Object → __extern_get` arm to those bodies or decline the fast path
++for non-generator results (#5147 Step 0 wording). Repro: `p1` with the read
++inlined vs hoisted into a variable.
++
++### Step C — iterator-prototype singletons: own `next` + `%IteratorPrototype%` root (C1 17 + C2 10) — `forof-cl-C1-proto-own-next.txt`, `forof-cl-C2-iterator-prototype-root.txt`
++
++All in `emitIteratorPrototypeSingleton` (`src/codegen/array-object-proto.ts:3384`)
++plus glue registrations.
++
++**C-a root.** Extend `NativeIteratorPrototypeKind` (`:3374`) with `"Iterator"`
++(global `__native_iterator_iterator_prototype`, same lazy-init `if
++(ref.is_null global) { … }` shape). Seed its own `[Symbol.iterator]` with the
++`__box_symbol(1)` + `__defineProperty_value` recipe the function already uses
++for `@@toStringTag` (`:3420-3432`; id 1 = `@@iterator` per
++`iterator-native.ts:2508`, id 4 = `@@toStringTag`), descriptor bits
++`0x01|0x04` (writable, non-enumerable, configurable — `prop-desc.js`). Value:
++a native closure whose body is `local.get this; return` — register it on the
++Iterator brand glue (`ensureIteratorNativeProtoGlue`, `:2390`, members list
++`ITERATOR_PROTO_METHODS` `:361`) as member `"@@1"` so
++`nativeProtoMemberDisplayName` (`src/codegen/native-proto.ts:800`) names it
++`[Symbol.iterator]` (`name.js`) with length 0 (`length.js`), minted through
++`ensureStandaloneNativeMethodClosure(ctx, brand, "@@1", "method")` (`:826`).
++`return-val.js` calls it with primitives / `undefined` / `null` as `this` —
++the body must not brand-check.
++
++**C-b chain.** In each kind's init, after `__new_plain_object`, set the
++`$Object.proto` field (`object-runtime.ts:1118`, mutable) to the root object
++(`any.convert_extern; ref.cast $Object; struct.set`). Verify the dynamic
++`Object.getPrototypeOf(<$Object>)` path (`__getPrototypeOf`,
++`object-runtime.ts:11963`) reads that field — the outer call in
++`getPrototypeOf(getPrototypeOf([][Symbol.iterator]()))` is dynamic; the inner
++one is the static `ArrayIterator` route (`call-builtin-static.ts:2252`).
++Seed `chunks`/`windows`/`join` on the root as own function properties
++(#5147 A-4): `chunks`/`windows` bodies delegate to `__iter_lazy_chunks` /
++`__iter_lazy_windows` (`src/codegen/iter-lazy-native.ts:1161`, ABI
++`(externref recv, externref arg, externref arg2, i32 arg2Supplied) -> externref`);
++`join` may keep `refusalBodyFallback` (only `isConstructor` + `new` TypeError
++are asserted). `non-constructible.js` / `not-a-constructor.js`: `new iter.chunks(1)`
++and `Reflect.construct`-probing must see the closure as a non-constructor —
++check the construct arm in `tryEmitInlineDynamicCall`
++(`src/codegen/expressions/calls.ts`, the #5188 "Constructor cannot be invoked
++without 'new'" site) for `__fn_wrap` closures. `result-is-iterator.js`:
++`x.chunks(1) instanceof Iterator` walks the LHS prototype chain — the
++`$LazyIterHelper` / `$__IterRec` carriers have no proto link; give the native
++instanceof (`src/codegen/native-dynamic-instanceof.ts`, `__instanceof_check`)
++an arm mapping those carriers to (kind singleton → root).
++
++**C-c own `next` on Array/Map/Set (17).** Replicate the `kind === "String"`
++branch (`:3441-3456`) for the three kinds, but with a BEHAVIORAL body: register
++per-kind glues `makeGlue(ctx, brand, "ArrayIterator"|"MapIterator"|"SetIterator", ["next"])`
++(`:2088`; brands via `getBuiltinBrand`) whose `emitMemberBody`
++(`native-proto.ts:219-224` — `this` is closure param 1 as externref) emits:
++`local.get 1; any.convert_extern; ref.test $__IterRec` and a kind test
++(`struct.get kind == ITER_KIND_VEC (3)` for Array; `== ITER_KIND_MAPSET (9)`
++AND the `$MapIter`'s `$Map.M_KIND` (0 map / 1 set) for Map vs Set — the
++cross-kind rows `does-not-have-mapiterator-internal-slots*.js` throw in both
++directions) → `local.get 1; call __iter_next_result` ; else the catchable
++TypeError (`emitBrandCheckTypeError` as in `emitCollectionSizeGetterBody`,
++`:1788`). Descriptor bits `0x01|0x04` as the String branch. That gives
++`name`/`length`/`property-descriptor` (7 rows — the #5099 metadata machinery
++already emits `name: "next"`, `length: 0`), the 8 `this-not-object-throw-*`
++rows (primitive `this` → TypeError; final `iterator.next.call(map[Symbol.iterator]())`
++must SUCCEED — hence behavioral), and the 2 internal-slot rows. Map/Set rows
++need Step B's live records (a `$Vec` receiver is not an `$__IterRec`).
++
++### Step D — real records from `[Symbol.iterator]()` (D1 13 + D2 8; D3 1 stretch) — `forof-cl-D1-symbol-iterator-carrier.txt`, `forof-cl-D2-arguments-iterator.txt`, `forof-cl-D3-ta-keys-detach.txt`
++
++**D-1 carrier.** `call-tail-dispatch.ts:763-772`: replace the
++`compileArrayMethodCall(…, "values")` snapshot with GetIterator: compile the
++receiver → externref → `call __iterator` (native ladder; the VEC arm wraps the
++canonical externref vec the #3100 normalize arms build) → `$__IterRec{VEC}`.
++Admit, in the same arm: array receivers (`resolveArrayInfo`), TypedArray
++receivers (the 9 TA rows — check the ladder's vec-family arms admit TA storage
++vecs; `NON_ARRAY_BYTE_VEC_ELEM_KINDS` in `object-runtime.ts` deliberately
++filters byte carriers from `__extern_slice`, so add a `$__ta_view`/TA-vec arm
++that boxes per element), `$AnyString` receivers (`ensureStrToCharVecHelper`,
++`src/codegen/native-strings.ts:1459`, exactly as `__extern_slice`'s
++`$AnyString` arm at `iterator-native.ts:1314-1370` — per-code-point, so
++`next-iteration-surrogate-pairs.js` pairs stay paired), and the `arguments` vec
++(D-2). The static result type stays the checker's `ArrayIterator` /
++`StringIterator`, so the `Object.getPrototypeOf` routing
++(`call-builtin-static.ts:2252/2264/2281`) and C1's metadata rows are unaffected.
++This is the migration #5147 measured and reverted ("broke
++`array[Symbol.iterator]().next()` for a variable receiver") — that `.next()`
++now resolves through `__any_iter_next` (B-5), so re-measure rather than
++re-revert; the controls list carries the rows it once broke.
++
++**D-1b live stepping (`iteration-mutable.js`, and D-2's expansion/truncation
++rows).** Add `ITER_KIND_LIVEVEC = 8` — the spare kind `map-runtime.ts:2601-2604`
++reserves for `iterator-native.ts` — holding the SOURCE `$Vec` struct in
++`userIter` (externref of the typed vec) and re-reading its `length` each step,
++boxing each element with `boxVecElementToExternref` (`object-runtime.ts`, the
++#2190 recipe). Emit it from the D-1 arm only when the receiver's compiled
++ValType is a known vec type (typed arrays of number/string/externref); the
++step arm goes in `buildIteratorNextBody` beside the VEC step
++(`iterator-native.ts:2900-2915`). Exhausted stays exhausted (`push` after
++`done:true` must not revive — keep a `done` bit in `idx` = -1).
++
++**D-2 arguments (8).** The receiver's compiled type is the vec
++`getOrRegisterVecType(ctx, "arguments")` (`closures.ts:2942`; declarations via
++the #849 path) with TS type `IArguments`. Admit it in D-1's arm by comparing
++the compiled `typeIdx` (not the checker type) and route through the same
++GetIterator. `iteration` ×2 + `expansion-after-exhaustion` ×2 pass with a
++snapshot record; `expansion/truncation-before-exhaustion` ×4 need D-1b's live
++arm over the arguments vec (mapped aliasing: the test writes through the
++PARAMETER after grabbing the iterator — the mapped-arguments reverse sync
++(`src/codegen/mapped-arguments-formal-widening.ts`) must have written the vec
++before the next `next()`; measure).
++
++**D-3 (1, stretch).** Route TA `keys()/values()/entries()` to
++`compileNativeArrayIterator` (`array-methods.ts:2941-2957`) over the view; the
++mid-loop `$DETACHBUFFER` TypeError needs D-1b's live arm plus the
++`__detached__` sidecar check the DataView path uses (#1515). Re-measure the
++compile timeout on a quiet box first.
++
++### Step F — for-of protocol (F1 6 + F2 12 + F5 3; F3 3, F4 3) — `forof-cl-F1…F5-*.txt`
++
++**F1-a next()-abrupt must not close (2).** `compileForOfIterator`
++(`loops.ts:2925`; the loop body from `:3181`): the #1347 `try … catch_all`
++encloses `call __iterator_next` (`:3194`). Add an i32 local
++`__forof_closeable` = 0 before the `next` call, = 1 after the done-check /
++element bind, and gate the catch_all's `call __iterator_return`
++(`:3133-3160` finallyStack entry + the wrapper) on it. §14.7.5.7: `IteratorStep`
++/ `IteratorValue` abrupt → return WITHOUT close; body / binding abrupt →
++IteratorClose. Apply the same gate in `compileForOfDirectIterator` (`:2514`)
++if it carries its own wrapper, and in F2's drive.
++
++**F1-b `next` read once (1).** Add a 5th field `nextMethod (mut externref)` to
++`$__IterRec` (`iterator-native.ts:401-418`). The OBJ arm of `buildIteratorBody`
++already reads `next` for the #3146 admission (`:2508`) — store it; the OBJ step
++in `buildIteratorNextBody` (`:3020-3040`) then uses `rec.nextMethod` instead of
++`__extern_get(rec.userIter, "next")`. USER (closed-struct) records keep
++`ref.null.extern` and their `__call_next` dispatcher. Every `struct.new $__IterRec`
++site — 11 in `iterator-native.ts` + `map-runtime.ts`
++(`grep -rn 'struct.new", typeIdx: iterRecTypeIdx'`, plus the `types.iterRecTypeIdx`
++spellings) — pushes one more `ref.null.extern` operand; field arity is
++load-bearing (`:83-84`). Step E reuses this field for GetIteratorDirect.
++
++**F1-c §7.4.2 non-Object result (1).** In the OBJ step, after
++`__apply_closure(next, …)`: a result that is neither `$Object` nor a closed
++struct with `__sget_done` currently degrades to `done := 1` (`:2946+`, the
++#4447 note). Under `ctx.standalone`, throw TypeError instead via
++`notAnObjectThrowInstrs(ctx, scratch)` (`:2167`; deps
++`ensureNotAnObjectThrowDeps` `:2212`). #5144 flagged a collision with the
++"`next` missing/uncallable ⇒ done" degrade — keep THAT degrade only for a
++null `next` (the ladder-internal carriers), throw for a non-Object result of
++a real call. Run the equivalence gate after; it is the consumer of the
++degrade.
++
++**F1-d `throw-from-finally.js` (1).** `i` is incremented twice: the `finally`
++body (`i++; throw error`) is inlined again at its own inner `throw`
++(finallyStack push/pop in `src/codegen/statements/exceptions.ts:440-470`,
++`cloneFinallyAtDepth`) on top of the for-of iterator-close entry
++(`loops.ts:3133-3160`). A `throw` INSIDE a finally block must not re-inline
++that finally. Repro without a generator source first (`[1]` as the iterable);
++if it only reproduces with the `function*` source it belongs to X (#680/#2864).
++
++**F1-e `array-key-get-error.js` (1, stretch).** An accessor installed on index
++`0` of a vec-backed array (`Object.defineProperty(array, '0', {get})`) is
++invisible to the array fast path (`compileForOfArray`, `loops.ts:1834` reads
++`vec.data[i]`). Check whether the vec overlay (`src/codegen/vec-overlay.ts`,
++#4491) records accessors; if so, send arrays with an active overlay through
++`compileForOfIterator`. Otherwise leave it un-root-caused in the PR body.
++
++**F2 interleaved assignment-pattern drive (12).**
++`compileForOfAssignDestructuringExternref` (`for-of-destructuring.ts:2239`)
++materializes the whole source with `__array_from_iter_n(src, -1)` (`:2254`)
++before any target is evaluated, so `nextCount`/`returnCount` are wrong and no
++IteratorClose fires on a target/initializer abrupt. Rewrite as §13.15.5.5
++IteratorDestructuringAssignmentEvaluation, per element:
++1. target not a pattern → evaluate **lref first** (member target: object +
++   key expressions; `[ {}[thrower()] ]` throws HERE, before any `next()`);
++2. if `!done`: `call __iterator_next` → abrupt ⇒ `done = true`, rethrow
++   WITHOUT close (F1-a's flag);
++3. `value = done ? undefined : value`;
++4. initializer when `value === undefined` (NamedEvaluation — F3);
++5. PutValue / recurse for a nested pattern.
++Abrupt at 1, 4, 5 with `!done` → `call __iterator_return` (its own abrupt
++suppressed — the `*-close-err.js` rows: §7.4.9 the throw completion wins),
++then rethrow. Elision → step 2 only. Rest `[...t]` → lref first
++(`array-rest-lref-err.js`: nextCount 0, returnCount 1), then drain with
++repeated `next()` into a fresh `$Vec`. After the pattern, `!done` →
++IteratorClose (normal completion; the #5144 C "close result must be an Object"
++check stays). **Reuse, don't triplicate:** the binding form's per-element
++drive in `destructureParamArray` (`src/codegen/destructuring-params.ts:1677`,
++its `__iterator_next` stepping at `:1966` — correct since #4447 slice 2) is the
++model; factor its step / close emitters into helpers that take an
++"emit target write" callback and use them from both forms.
++- `array-elem-init-assignment.js`: the hole in `[2, null, , undefined]` is the
++  #2001 S1 hole sentinel (`emitHoleSentinel`, `src/codegen/array-holes.ts`;
++  `f64HoleTestInstrs` in `vec-f64-hole-presence.ts` for f64 vecs) — map hole
++  → undefined BEFORE the default test (only OOB/exhausted was fixed by #5144 U).
++- `array-elision-val-symbol.js`: elision-only patterns must still run
++  GetIterator on the element — `for ([,] of [Symbol()])` → the ladder's #3388
++  TypeError; today they skip it (only the empty pattern does, via
++  `emitEmptyForOfArrayPatternRequirement`, `:257`).
++- `obj-prop-name-evaluation-error.js`: `compileForOfIteratorAssignDestructuring`
++  (`:2567`) must evaluate a computed key `[a.b]` (ToPropertyKey) unconditionally
++  before the Get, even when it cannot resolve the key statically.
++
++**F5 `delete Array.prototype[Symbol.iterator]` (3, `--isolate` only).** HEAD
++compile-timeouts (15–21 s at load 15): profile first (`node --cpu-prof`
++around `runTest262File`) — `arrayProtoIteratorDeleteKey`
++(`array-proto-iterator-override-ast.ts:47`) exists; find its consumer and why
++the head-destructuring override scan goes superlinear. Semantics: after the
++delete, `for (let [x] of [[]])` must throw TypeError at GetIterator on the
++inner `[]` (the head ELEMENT) — model "array `@@iterator` deleted" in the
++read-drive that `sourceOverridesArrayIterator`-style detection feeds
++(`statements/destructuring.ts`, #5144 A).
++
++**F3 NamedEvaluation for `class` (3).** Extend the fn/arrow NamedEvaluation at
++`function-instance-meta.ts:318-380` (and the binding-default path,
++`statements/destructuring.ts:987`) to `ts.isClassExpression(init) && !init.name`:
++the class gets the binding name as its OWN `name` data property
++`{writable:false, enumerable:false, configurable:true}` (`CLASS_CONSTRUCTOR_OWN_KEYS`,
++`src/codegen/class-static-metadata.ts:14`, already lists `name`); `class x {}`
++keeps `"x"`; a `static name(){}` keeps the method. Also stop the static fold
++of `xCls.name` to the binding text when the DECLARATION has no initializer
++(#5144 F) — the `.name` read on a class value must read the runtime property.
++
++**F4 pair equality (3).** Re-measure AFTER B-4 (the `for (x of map)` pair now
++comes from the MAPSET stepper's packing). If still failing: `x[0]` (externref
++out of the `$ObjVec` pair) `===` `first[0]` (element of the heterogeneous
++literal `[0,'a']`) — strict equality of two externrefs must unbox boxed
++numbers on both sides (`__extern_strict_eq`, used from
++`closed-method-dispatch.ts` / `array-methods.ts`; the `===` externref arm in
++`src/codegen/binary-ops.ts` / `binary-ops-typed-dispatch.ts`, which #4447
++touched). Probe: `var a=[0,'a']; a[0] === [0,'a'][0]` inside vs outside the loop.
++
++### Step E — `chunks`/`windows` on `class X extends Iterator` (18) — `forof-cl-E-lazy-protocol-tail.txt`
++
++`Iterator` is the runner's shim `function Iterator(){}` with
++`Iterator.prototype = getPrototypeOf(getPrototypeOf([][Symbol.iterator]()))`
++(`tests/test262-runner.ts:2294-2300`) — i.e. the Step C root. Two defects, in
++order:
++
++**E-1 dispatch (p3).** `new T().chunks(1)` on a user-class instance evaluates
++to undefined: the class-typed receiver path never consults the lazy-helper
++dispatch (`call-receiver-method.ts:3972` / `closed-method-dispatch.ts:399`,
++`isLazyIterForm` in `iter-lazy-native.ts:103`). Make a receiver whose class
++has no own/inherited `chunks`/`windows` method and whose ancestor chain ends
++in a plain function value fall through to the lazy dispatch (the same
++`isLazyIterForm(name, arity)` gate) — statically when the class body is
++visible (`ctx.classBuiltinParentMap`, `class-bodies.ts:1015-1035`, records
++builtin parents only; a non-builtin parent function needs a "no such method
++on the closed struct" static check), dynamically via the Step C-b root seeds
++(`__protoidx_get_r` consult on the root `$Object`). `windows(1)` argument
++validation (already implemented) must run BEFORE GetIteratorDirect
++(`get-next-method-throws.js` expects the `next` getter's Test262Error, so
++validation must not throw first for a valid size).
++
++**E-2 GetIteratorDirect in `__iter_hof_open`** (`iter-hof-native.ts:640-660`):
++for the lazy ctors (`iter-lazy-native.ts:1161` "GetIteratorDirect, AFTER
++validation") a closed-struct receiver must be admitted as ITS OWN iterator:
++read `next` ONCE — method via the `__call_next` dispatcher reference, accessor
++via the `__sget_next` getter dispatcher (`get next()` must RUN here:
++`get-next-method-throws.js`) — and store it in the record's `nextMethod`
++(F1-b), kind OBJ/USER; never read `return` at open. `__iter_hof_next` then
++calls the cached `next`. Abrupt `next()` / `done` getter → propagate, NO
++IteratorClose (`next-method-throws.js`, `next-method-returns-throwing-done.js`
++— the TypeError we currently see would be the `get return(){throw TypeError}`
++accessor firing, so any `return` read on that path is a bug); `done: true`
++→ do NOT read `value` (`next-method-returns-throwing-value-done.js`).
++
++**E-3 `.return()` on the wrapper.** Source-level `iterator.return()` on a
++`$LazyIterHelper` reaches `call-receiver-method.ts:3700` (`methodName === "return"`
++→ `__gen_return`) — add a `ref.test $LazyIterHelper` arm → `__lazy_iter_close`
++(`iter-lazy-native.ts:956-985`) + `__iter_result_obj(1, undefined)`.
++`__lazy_iter_close`: forward IteratorClose to `src` exactly once — null `src`
++after closing (`return-is-forwarded-to-underlying-iterator.js`: second call is
++a no-op) and skip the forward once the source is exhausted (flags bit 0;
++`return-is-not-forwarded-after-exhaustion.js`). The underlying `return` Get
++abrupt (`get return(){throw}` — `get-return-method-throws.js`) and a throwing
++`return()` (`iterator-return-method-throws.js`) must propagate:
++`__iterator_return`'s OBJ arm (`iterator-native.ts:2012-2030`) reads via
++`__extern_get`; the closed-struct arm via `__sget_return` — make sure an
++ACCESSOR `return` is invoked, not read as a data field.
++
++The 4 generator-inside-accessor rows stay in X.
++
++### Step G — collection reflection residue (7) — `forof-cl-G-collection-reflection.txt`
++
++#5151 Steps C4 / D / F / G, unchanged in substance; HEAD sites:
++- `Map.prototype[Symbol.iterator]` / `Set.prototype[Symbol.iterator]` own
++  property (2): seed on the Map/Set proto pages (`ensureMapNativeProtoGlue`
++  `array-object-proto.ts:2400`, `ensureSetNativeProtoGlue` `:2412`) with the
++  SAME closure singleton the `entries` (Map) / `values` (Set) member read
++  yields (identity by `ref.eq`), descriptor `{w:T,e:F,c:T}`, following the
++  #4786/#5116 `@@toStringTag` seeding (`:1837`); the value-side alias
++  `tryCompileStandaloneBuiltinProtoIteratorRead` is already wired at
++  `property-access.ts:5005-5009` (import at `:223`). `verifyProperty` needs
++  hasOwnProperty/gOPD to see it (`native-proto-own-props.ts`).
++- `@@species` (2): the gOPD arm exists (`tryEmitStandaloneBuiltinSpeciesGopd`,
++  `builtin-static-gopd.ts:37`, called from `call-builtin-static.ts:3158`);
++  add the direct READ `Map[Symbol.species]` (computed-symbol read in
++  `property-access.ts`, gated by `isSymbolSpeciesKeyExpression`,
++  `builtin-static-gopd.ts:1`) returning the ctor identity, and make the
++  assignment `Map[Symbol.species] = v` a silent no-op (evaluate RHS, drop) in
++  `expressions/assignment.ts`'s computed member-set on an unshadowed builtin
++  ctor identifier.
++- `size` (2): gOPD through propertyHelper's `var obj = Map.prototype`
++  (`vec-overlay.ts` / `builtin-static-gopd.ts` list `"size"` for the syntactic
++  receiver only) — resolve a VARIABLE receiver via `ctx.oracle`'s declared
++  initializer or the runtime `$NativeProto` brand; `propertyIsEnumerable`
++  → false (`native-proto-own-props.ts`). Getter body already exists:
++  `emitCollectionSizeGetterBody` (`array-object-proto.ts:1788`).
++- `append-new-values.js` (1): `map.get(1)` returns NaN when the value union is
++  mixed — `tryCompileNativeMapMethodCall` (`map-runtime.ts:1597`) must unbox
++  the `get` result per dynamic tag, not per the first-seen element type.
++
++### What NOT to do
++
++- **No new host imports, ever.** The 21 baseline leaks must stay closed by
++  NATIVE paths: the Wasm `$Map` runtime (#1103/#2162), `__iterator` /
++  `__iterator_next` / `__iterator_return` (`iterator-native.ts`), the weak
++  runtime (`weak-collections-runtime.ts`). Do not re-register `Set`/`Map`/
++  `WeakMap`/`WeakSet` as extern classes under `nativeStrings`
++  (`extern-declarations.ts:62/134/158`), and do not route the general
++  iterable to the eval tier (wrong error identity is the current bug).
++- Never edit `tests/test262-runner.ts`, skip lists, or `scripts/*baseline*.json`;
++  the runner's `Iterator` shim stays — make the compiled code satisfy it.
++- No `--no-verify`; gates chained before every commit (below), also with
++  `LOC_GATE_BASE=$(git rev-parse origin/main)`.
++- New type queries via `ctx.oracle` only; `oracle-ratchet-allow:` only for a
++  genuine `ValType`-level question.
++- Never hand a closed struct (`$MapIterResult`, `$LazyIterHelper`,
++  `$__IterRec`) to source code as an iterator RESULT — wrap through
++  `__iter_result_obj`.
++- Don't touch owned areas (X table): no generator-carrier work, no
++  `Reflect.construct` NewTarget, no realms, no RegExp.
++- Don't re-apply draft #5225 hunks (all superseded on main).
++- Don't treat the 7 compile-timeout rows as hangs until re-measured on a
++  quiet box.
++
++## Acceptance criteria
++
++- Per-step lists green via
++  `npx tsx scripts/run-test262-paths.mts .tmp/es2015/forof-cl-<X>.txt --standalone`
++  (F5 with `--isolate`). Expected flips: A 25 (+A2 2), B 17, C 27, D 21
++  (+D3 1 stretch), F 24 (F1 6 incl. two stretch singles, F2 12, F3 3, F4 3)
++  + F5 3, E 18, G 7 — **145 max, ≥ 110 is the bar** (E and the stretch
++  singles are the uncertain part; report each unflipped row with its
++  residual error in the PR body).
++- Step A-0's import listing is `[]` for `Set/set-iterator-next-failure.js`,
++  `WeakMap/iterator-next-failure.js`, `WeakMap/iterator-items-keys-cannot-be-held-weakly.js`.
++- Controls: every row of `.tmp/es2015/forof-controls.txt` (28 currently-passing
++  siblings from the same directories — Map/Set/Weak* ctor + prototype rows,
++  the `ArrayIteratorPrototype`/`StringIteratorPrototype` metadata rows,
++  `chunks`/`windows` yield-shape rows, for-of array/break/generic-iterable/
++  `Array.prototype[@@iterator]`/arguments rows, and four `dstr` binding-form
++  rows; all 28 verified passing on HEAD 2026-09-01 via
++  `run-test262-paths.mts … --standalone`) still passes, on both lanes
++  (`--standalone` and the default js-host lane: the for-of/dstr lowering is
++  shared).
++- Gates, chained: `node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs && node scripts/check-coercion-sites.mjs && npm run -s check:oracle-ratchet && npm run -s check:dead-exports`
++  (also with `LOC_GATE_BASE` set to the upstream-main tip).
++- `pnpm run test:equivalence:gate` green (F1-c changes a degrade the
++  equivalence corpus may exercise).
++
++## References
++
++- #5144 / #5147 / #5151 — wave-1 plans and their Results/follow-ups (the
++  source of clusters A, B, C, D, F, G); landed via PR #5244.
++- #4447 — for-of destructuring residual; slice 2's binding-form stepping is
++  F2's model (`destructureParamArray`).
++- #5188 — IterRec delegation (`iterRecAdoptArm`) and the #1058 aliased
++  `Instr[]` hazard; its follow-up 3 (symbol-keyed method calls on plain
++  objects) is adjacent to Step A-4.
++- #3013 / #4747 / #4777 / #5099 — the iterator-prototype singletons Step C
++  extends; #2903 R3 — lazy helpers (`iter-lazy-native.ts`) Step E finishes.
++- #1320 / #2038 / #3119 / #3146 / #3388 — the native GetIterator ladder;
++  #2162 / #1103 / #3171 — the native `$Map` runtime and brands.
++- #3371, #2046, #5198, #680 / #2864 — owners of the X rows.
++- Handover: `plan/agent-context/es2015-standalone-session-handover.md`
++  (draft PR #5225 verdict, method notes).
+diff --git a/src/codegen/expressions/new-super.ts b/src/codegen/expressions/new-super.ts
+index aad1d2fcc..9cd924c5e 100644
+--- a/src/codegen/expressions/new-super.ts
++++ b/src/codegen/expressions/new-super.ts
+@@ -98,6 +98,8 @@ import {
+ import { isRuntimeEvalCallableResultExpression } from "./runtime-eval-callable-result.js";
+ import { emitToPropertyKeyOnce } from "./computed-member-reference.js"; // (#5153 D) §12.3.5.1 key evaluation
+ import { nullishExternTestInstrs } from "../any-helpers.js"; // (#5153 C.1) RequireObjectCoercible on the super base
++import { ensureNativeIteratorRuntime, externIsObjectInstrs } from "../iterator-native.js"; // (#5267 A) native GetIterator + §7.4 Object test for the collection-ctor drive
++import { buildStandardTryTable } from "../../ir/try-table.js"; // (#5267 A) IteratorClose-on-throw wrapper
+ import {
+   coerceType,
+   compileExpression,
+@@ -4206,6 +4208,272 @@ function emitNativeSetAdderCall(dispatch: NativeSetAdderDispatch, collTmp: numbe
+   ];
+ }
+ 
++/** (#5267 Step A) Which keyed-collection constructor the iterable drive serves. */
++type CollectionCtorKind = "Map" | "Set" | "WeakMap" | "WeakSet";
++
++/**
++ * (#5267 Step A) Emit `<body>` guarded so that ANY throw out of it first calls
++ * `IteratorClose(iter)` — with the close's own abrupt completion SUPPRESSED —
++ * and then re-raises the ORIGINAL exception (§7.4.9 step 6: the outer throw
++ * wins, which is what `iterator-close-failure-after-set-failure.js` asserts —
++ * the adder's `Test262Error` propagates even though `return()` throws a
++ * `TypeError`).
++ *
++ * Shape copied from the for-of `#1347` wrapper (`statements/loops.ts:3290`);
++ * the instruction objects are minted here rather than shared with it.
++ */
++function wrapWithIteratorClose(ctx: CodegenContext, fctx: FunctionContext, body: Instr[], iterLocal: number): Instr {
++  const returnIdx = ctx.funcMap.get("__iterator_return");
++  if (returnIdx === undefined) {
++    return { op: "block", blockType: { kind: "empty" }, body };
++  }
++  const closeBody: Instr[] = [
++    { op: "local.get", index: iterLocal },
++    { op: "call", funcIdx: returnIdx },
++  ];
++  if (ctx.wasi || ctx.standalone) {
++    const tagIdx = ensureExnTag(ctx);
++    const exnLocal = allocLocal(fctx, `__collctor_exn_${fctx.locals.length}`, { kind: "externref" });
++    const innerClose = buildStandardTryTable({ kind: "empty" }, closeBody, [
++      { kind: "catch", tagIdx, payloadType: { kind: "externref" }, body: [{ op: "drop" }] },
++    ]);
++    return buildStandardTryTable({ kind: "empty" }, body, [
++      {
++        kind: "catch",
++        tagIdx,
++        payloadType: { kind: "externref" },
++        body: [
++          { op: "local.set", index: exnLocal },
++          innerClose,
++          { op: "local.get", index: exnLocal },
++          { op: "throw", tagIdx },
++        ],
++      },
++    ]);
++  }
++  return {
++    op: "try",
++    blockType: { kind: "empty" },
++    body,
++    catches: [],
++    catchAll: [
++      { op: "try", blockType: { kind: "empty" }, body: closeBody, catches: [], catchAll: [] },
++      { op: "rethrow", depth: 0 },
++    ],
++  };
++}
++
++/**
++ * (#5267 Step A) §24.1.1.1 / §24.2.1.1 / §24.3.1.1 / §24.4.1.1 steps 5-9 —
++ * `AddEntriesFromIterable` (Map/WeakMap) and its element twin (Set/WeakSet),
++ * driven natively over a GENERAL iterable.
++ *
++ * Before this, every constructor arm admitted only the shapes it could seed
++ * statically (no-arg, nullish, an array literal of pairs/elements, an
++ * array-TYPED variable) and **fell through** for everything else — which for
++ * `Map`/`Set`/`WeakMap`/`WeakSet` meant the generic ctor path and an
++ * `env::Map_new` / `env::Set_new` / `env::WeakMap_new` / `env::WeakSet_new`
++ * host-import leak in standalone mode. `new Map(customIterable)` silently
++ * produced an EMPTY map when the module happened to be instantiated against a
++ * host `env` (measured 2026-09-01, `probes5267/p4`).
++ *
++ * Emitted order (spec order — every step is observable):
++ *   1. `Get(coll, adder)` + IsCallable  — BEFORE the iterable is touched.
++ *   2. evaluate the iterable; a RUNTIME nullish value ⇒ empty collection
++ *      (the static `nullishArg` test only covers literals).
++ *   3. `GetIterator(iterable)` — a non-iterable throws the #3388 TypeError here.
++ *   4. per step: `IteratorStep` / `IteratorValue`. An abrupt `next()` or
++ *      `value` getter propagates WITHOUT IteratorClose (§7.4.5/§7.4.6 —
++ *      `iterator-next-failure.js` / `iterator-value-failure.js` assert
++ *      `return()` is never called), so the close wrapper starts AFTER it.
++ *   5. Map/WeakMap: the entry must be an Object (else IteratorClose +
++ *      TypeError), then `Get(entry, "0")` / `Get(entry, "1")`.
++ *   6. `Call(adder, coll, «k, v» | «v»)`. Anything abrupt from 5-6 closes the
++ *      iterator (its own abrupt suppressed) and rethrows.
++ *
++ * `collTmp` holds the freshly built (empty) collection; on return the stack is
++ * unchanged and the collection is fully seeded. Returns `false` when a required
++ * runtime symbol is missing, in which case NOTHING was emitted and the caller
++ * must fall through.
++ */
++function emitNativeCollectionCtorIterableDrive(
++  ctx: CodegenContext,
++  fctx: FunctionContext,
++  collTmp: number,
++  iterableExpr: ts.Expression,
++  kind: CollectionCtorKind,
++): boolean {
++  const isPairKind = kind === "Map" || kind === "WeakMap";
++  const isWeak = kind === "WeakMap" || kind === "WeakSet";
++  const adderName = isPairKind ? "set" : "add";
++
++  // Every late import / runtime registration FIRST: `ensureLateImport` can
++  // shift function indices, so no funcIdx may be resolved before the flush and
++  // no sub-expression may be compiled before it either (#2043).
++  ensureNativeIteratorRuntime(ctx);
++  ensureLateImport(ctx, "__extern_get_idx", [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
++  flushLateImportShifts(ctx, fctx);
++
++  const iterIdx = ctx.funcMap.get("__iterator");
++  const iterNextIdx = ctx.funcMap.get("__iterator_next");
++  const getIdxIdx = ctx.funcMap.get("__extern_get_idx");
++  const adderIdx = ctx.mapHelpers.get(kind === "WeakSet" ? "__weakset_add" : isPairKind ? "__map_set" : "__set_add");
++  if (iterIdx === undefined || iterNextIdx === undefined || getIdxIdx === undefined || adderIdx === undefined) {
++    return false;
++  }
++  if (isPairKind && externIsObjectInstrs(ctx, 0) === undefined) return false;
++
++  // ── 1. Get(coll, adder) + IsCallable, then the observable-adder dispatch ──
++  emitCollectionAdderGuard(ctx, fctx, collTmp, adderName);
++  const dispatch = prepareNativeSetAdderDispatch(ctx, fctx, collTmp, adderName);
++
++  // ── 2. evaluate the iterable → externref ────────────────────────────────
++  const srcLocal = allocLocal(fctx, `__collctor_src_${fctx.locals.length}`, { kind: "externref" });
++  const srcType = compileExpression(ctx, fctx, iterableExpr);
++  if (srcType === null) {
++    fctx.body.push({ op: "ref.null.extern" });
++  } else if (srcType.kind !== "externref") {
++    coerceType(ctx, fctx, srcType, { kind: "externref" });
++  }
++  fctx.body.push({ op: "local.set", index: srcLocal });
++
++  const iterLocal = allocLocal(fctx, `__collctor_it_${fctx.locals.length}`, { kind: "externref" });
++  const valLocal = allocLocal(fctx, `__collctor_val_${fctx.locals.length}`, { kind: "externref" });
++  const doneLocal = allocLocal(fctx, `__collctor_done_${fctx.locals.length}`, { kind: "i32" });
++  const kExt = allocLocal(fctx, `__collctor_kext_${fctx.locals.length}`, { kind: "externref" });
++  const kAny = allocLocal(fctx, `__collctor_k_${fctx.locals.length}`, { kind: "anyref" });
++  const vAny = allocLocal(fctx, `__collctor_v_${fctx.locals.length}`, { kind: "anyref" });
++
++  // Every array built here is DETACHED until the final `fctx.body.push` below.
++  // It must be registered in `ctx.liveBodies` while detached (so a late-import
++  // shift remaps its funcIdxs) and DEREGISTERED once it is reachable from
++  // `fctx.body` — the #2182 invariant checks that add/delete balance per
++  // function.
++  const detached: Instr[][] = [];
++  const track = (arr: Instr[]): Instr[] => {
++    ctx.liveBodies.add(arr);
++    detached.push(arr);
++    return arr;
++  };
++
++  /** Throw a catchable TypeError with `msg`, as a nested instruction list. */
++  const throwTypeError = (msg: string): Instr[] => {
++    const arm = track([]);
++    const saved = fctx.body;
++    fctx.body = arm;
++    try {
++      emitThrowTypeError(ctx, fctx, msg);
++    } finally {
++      fctx.body = saved;
++    }
++    return arm;
++  };
++
++  // ── 5-6. the per-entry body, inside the IteratorClose wrapper ───────────
++  const entryBody: Instr[] = track([]);
++  if (isPairKind) {
++    // Type(nextItem) is Object — else IteratorClose + TypeError.
++    entryBody.push(...externIsObjectInstrs(ctx, valLocal)!, { op: "i32.eqz" }, {
++      op: "if",
++      blockType: { kind: "empty" },
++      then: throwTypeError("Iterator value is not an entry object"),
++    } satisfies Instr);
++    // k = Get(entry, "0"); v = Get(entry, "1") — a throwing accessor on either
++    // propagates out of the wrapper, which closes the iterator first.
++    entryBody.push(
++      { op: "local.get", index: valLocal },
++      { op: "f64.const", value: 0 },
++      { op: "call", funcIdx: getIdxIdx },
++      { op: "local.tee", index: kExt },
++      { op: "any.convert_extern" },
++      { op: "local.set", index: kAny },
++      { op: "local.get", index: valLocal },
++      { op: "f64.const", value: 1 },
++      { op: "call", funcIdx: getIdxIdx },
++      { op: "any.convert_extern" },
++      { op: "local.set", index: vAny },
++    );
++  } else {
++    entryBody.push(
++      { op: "local.get", index: valLocal },
++      { op: "local.tee", index: kExt },
++      {
++        op: "any.convert_extern",
++      } satisfies Instr,
++      { op: "local.set", index: kAny } satisfies Instr,
++    );
++  }
++  if (isWeak) {
++    // §CanBeHeldWeakly — a primitive key/value is a TypeError from the adder
++    // (`WeakMap/iterator-items-keys-cannot-be-held-weakly.js`). Symbols are
++    // deliberately NOT admitted here: separating an unregistered symbol from a
++    // `Symbol.for` one needs a registry probe the runtime does not expose, and
++    // every weak row that uses symbol keys reaches the literal seeding path,
++    // not this drive.
++    const holdable = externIsObjectInstrs(ctx, kExt);
++    if (holdable !== undefined) {
++      entryBody.push(...holdable, { op: "i32.eqz" }, {
++        op: "if",
++        blockType: { kind: "empty" },
++        then: throwTypeError(
++          isWeak && isPairKind ? "Invalid value used as weak map key" : "Invalid value used in weak set",
++        ),
++      } satisfies Instr);
++    }
++  }
++  const directAdd: Instr[] = [
++    { op: "local.get", index: collTmp },
++    { op: "local.get", index: kAny },
++    ...(isPairKind ? ([{ op: "local.get", index: vAny }] satisfies Instr[]) : []),
++    { op: "call", funcIdx: adderIdx },
++    { op: "drop" },
++  ];
++  if (dispatch !== undefined) {
++    entryBody.push({ op: "local.get", index: dispatch.modeLocal }, {
++      op: "if",
++      blockType: { kind: "empty" },
++      then: isPairKind
++        ? emitNativeSetAdderCall(dispatch, collTmp, kAny, vAny)
++        : emitNativeSetAdderCall(dispatch, collTmp, kAny),
++      else: directAdd,
++    } satisfies Instr);
++  } else {
++    entryBody.push(...directAdd);
++  }
++
++  // ── 3-4. GetIterator + the step loop ───────────────────────────────────
++  const loopBody: Instr[] = track([
++    { op: "local.get", index: iterLocal },
++    { op: "call", funcIdx: iterNextIdx },
++    { op: "local.set", index: valLocal }, // externref value (top of stack)
++    { op: "local.set", index: doneLocal }, // i32 done (below it)
++    { op: "local.get", index: doneLocal },
++    { op: "br_if", depth: 1 },
++    wrapWithIteratorClose(ctx, fctx, entryBody, iterLocal),
++    { op: "br", depth: 0 },
++  ]);
++  const driveBody: Instr[] = track([
++    { op: "local.get", index: srcLocal },
++    { op: "call", funcIdx: iterIdx },
++    { op: "local.set", index: iterLocal },
++    {
++      op: "block",
++      blockType: { kind: "empty" },
++      body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
++    },
++  ]);
++
++  // A RUNTIME nullish iterable is spec-empty (§ steps 5-6) — `var it; new Map(it)`.
++  const nullishTest = nullishExternTestInstrs(ctx, srcLocal);
++  fctx.body.push(
++    ...(nullishTest ?? [{ op: "local.get", index: srcLocal }, { op: "ref.is_null" }]),
++    { op: "i32.eqz" },
++    { op: "if", blockType: { kind: "empty" }, then: driveBody },
++  );
++  for (const arr of detached) ctx.liveBodies.delete(arr);
++  return true;
++}
++
+ /**
+  * (#2162 / #3572) `new WeakMap()` / `new WeakSet()` and their iterable
+  * constructor forms in standalone / nativeStrings mode → the native
+@@ -4255,8 +4523,19 @@ function tryCompileNativeWeakCollectionNew(
+     !isWeakMap && wcArgs.length === 1 && wcArrArg === undefined && !nullishArg && isArrayTypedArg(ctx, wcArgs[0]!)
+       ? wcArgs[0]!
+       : undefined;
++  // (#5267 Step A) Every remaining 1-argument form — a custom iterable, an
++  // array literal whose elements are not `[k,v]` pairs (`new WeakMap([1,1])`),
++  // a non-array variable — is driven natively. Previously these returned
++  // `undefined` and leaked `env::WeakMap_new` / `env::WeakSet_new`.
++  const driveWeak =
++    wcArgs.length === 1 && !nullishArg && !seedableMapPairs && !seedableSetElems && wcNonLiteralArrArg === undefined;
+   const wcHandled =
+-    wcArgs.length === 0 || nullishArg || seedableMapPairs || seedableSetElems || wcNonLiteralArrArg !== undefined;
++    wcArgs.length === 0 ||
++    nullishArg ||
++    seedableMapPairs ||
++    seedableSetElems ||
++    wcNonLiteralArrArg !== undefined ||
++    driveWeak;
+   if (!wcHandled) return undefined;
+ 
+   addUnionImports(ctx);
+@@ -4271,6 +4550,14 @@ function tryCompileNativeWeakCollectionNew(
+     value: isWeakMap ? COLLECTION_KIND.WEAKMAP : COLLECTION_KIND.WEAKSET,
+   }); // (#3171) brand tag
+   fctx.body.push({ op: "call", funcIdx: mapNewIdx });
++  if (driveWeak) {
++    // The drive emits step 7's `Get(coll, adder)` itself, in spec order.
++    const dTmp = allocLocal(fctx, `__wcctor_d_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
++    fctx.body.push({ op: "local.set", index: dTmp });
++    emitNativeCollectionCtorIterableDrive(ctx, fctx, dTmp, wcArgs[0]!, isWeakMap ? "WeakMap" : "WeakSet");
++    fctx.body.push({ op: "local.get", index: dTmp });
++    return { kind: "ref", typeIdx: ctx.mapTypeIdx };
++  }
+   if (wcArgs.length === 1 && !nullishArg) {
+     // §24.3.1.1 / §24.4.1.1 step 7 — Get(coll, "set"/"add") + IsCallable, before
+     // the iterable is consumed. `new WeakMap()` never performs this Get.
+@@ -5155,7 +5442,12 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
+     // inner `[K,V]` pair lowers to a typed tuple *struct* (not an inner vec), so
+     // its extraction differs from the Set element walk. The array-literal-of-pairs
+     // form is handled below; a non-literal Map arg falls through to the empty map.
+-    if (args.length === 0 || nullishArg || seedablePairs) {
++    // (#5267 Step A) Anything else with an argument — a custom iterable, a
++    // variable of pairs, an array literal whose elements are not pair literals
++    // — is driven by `emitNativeCollectionCtorIterableDrive` instead of falling
++    // through to the generic ctor path (which leaked `env::Map_new`).
++    const driveMap = args.length === 1 && !nullishArg && !seedablePairs;
++    if (args.length === 0 || nullishArg || seedablePairs || driveMap) {
+       addUnionImports(ctx);
+       ensureMapHelpers(ctx);
+       const mapNewIdx = ctx.mapHelpers.get("__map_new");
+@@ -5163,6 +5455,20 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
+       if (mapNewIdx !== undefined && ctx.mapTypeIdx >= 0) {
+         fctx.body.push({ op: "i32.const", value: COLLECTION_KIND.MAP }); // (#3171) brand tag
+         fctx.body.push({ op: "call", funcIdx: mapNewIdx });
++        if (driveMap) {
++          const dTmp = allocLocal(fctx, `__mapctor_d_${fctx.locals.length}`, {
++            kind: "ref",
++            typeIdx: ctx.mapTypeIdx,
++          });
++          fctx.body.push({ op: "local.set", index: dTmp });
++          // A `false` return means a runtime symbol was missing and NOTHING was
++          // emitted — the empty collection stays on the stack (graceful: an
++          // empty Map, never a host-import leak), same policy as
++          // `seedNativeSetFromArrayArg`.
++          emitNativeCollectionCtorIterableDrive(ctx, fctx, dTmp, args[0]!, "Map");
++          fctx.body.push({ op: "local.get", index: dTmp });
++          return { kind: "ref", typeIdx: ctx.mapTypeIdx };
++        }
+         if (seedablePairs && arrArg !== undefined) {
+           // §24.1.1.1 step 7 runs for ANY iterable argument, including `[]`.
+           const gTmp = allocLocal(fctx, `__mapctor_g_${fctx.locals.length}`, {
+@@ -5248,7 +5554,11 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
+         (ts.isIdentifier(args[0]!) && (args[0]! as ts.Identifier).text === "undefined"));
+     const nonLiteralArrArg =
+       args.length === 1 && arrArg === undefined && !nullishArg && isArrayTypedArg(ctx, args[0]!) ? args[0]! : undefined;
+-    if (args.length === 0 || nullishArg || arrArg || nonLiteralArrArg) {
++    // (#5267 Step A) A general iterable (a custom `@@iterator` object, a string,
++    // a Set/Map, a call result of unknown type) is driven natively rather than
++    // falling through to the generic ctor path, which leaked `env::Set_new`.
++    const driveSet = args.length === 1 && !nullishArg && arrArg === undefined && nonLiteralArrArg === undefined;
++    if (args.length === 0 || nullishArg || arrArg || nonLiteralArrArg || driveSet) {
+       addUnionImports(ctx);
+       ensureSetHelpers(ctx);
+       const mapNewIdx = ctx.mapHelpers.get("__map_new");
+@@ -5256,6 +5566,16 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr:
+       if (mapNewIdx !== undefined && ctx.mapTypeIdx >= 0) {
+         fctx.body.push({ op: "i32.const", value: COLLECTION_KIND.SET }); // (#3171) brand tag
+         fctx.body.push({ op: "call", funcIdx: mapNewIdx });
++        if (driveSet) {
++          const dTmp = allocLocal(fctx, `__setctor_d_${fctx.locals.length}`, {
++            kind: "ref",
++            typeIdx: ctx.mapTypeIdx,
++          });
++          fctx.body.push({ op: "local.set", index: dTmp });
++          emitNativeCollectionCtorIterableDrive(ctx, fctx, dTmp, args[0]!, "Set");
++          fctx.body.push({ op: "local.get", index: dTmp });
++          return { kind: "ref", typeIdx: ctx.mapTypeIdx };
++        }
+         if (arrArg !== undefined || nonLiteralArrArg !== undefined) {
+           // §24.2.1.1 step 7 — Get(set, "add") + IsCallable, before iteration.
+           const gTmp = allocLocal(fctx, `__setctor_g_${fctx.locals.length}`, {
+diff --git a/src/codegen/iterator-native.ts b/src/codegen/iterator-native.ts
+index 11a1ab7b6..217ffe725 100644
+--- a/src/codegen/iterator-native.ts
++++ b/src/codegen/iterator-native.ts
+@@ -916,7 +916,7 @@ export function ensureNativeArrayFromIterN(ctx: CodegenContext): number {
+ 
+   // Guarantee the iterator runtime (and the $Vec/$IterRec geometry) exist.
+   ensureNativeIteratorRuntime(ctx);
+-  const { vecTypeIdx, arrTypeIdx } = iterRuntimeTypes(ctx);
++  const { vecTypeIdx, arrTypeIdx, iterRecTypeIdx } = iterRuntimeTypes(ctx);
+   const iteratorIdx = ctx.funcMap.get("__iterator");
+   const iteratorNextIdx = ctx.funcMap.get("__iterator_next");
+   if (iteratorIdx === undefined || iteratorNextIdx === undefined) {
+@@ -957,7 +957,11 @@ export function ensureNativeArrayFromIterN(ctx: CodegenContext): number {
+   const body = buildArrayFromIterNBody(
+     { vecTypeIdx, arrTypeIdx },
+     { iteratorIdx, iteratorNextIdx, iteratorReturnIdx: ctx.funcMap.get("__iterator_return") },
+-    [],
++    // (#5267 B-2) An `$__IterRec` is by construction drainable — `__iterator`
++    // adopts it by identity and the kind arms step it. Without it the
++    // drainability guard passed a record through UNCHANGED, so the caller's
++    // indexed reads answered length 0 and `[...map.keys()]` was empty.
++    [iterRecTypeIdx],
+   );
+ 
+   const typeIdx = addFuncType(ctx, [{ kind: "externref" }, { kind: "f64" }], [{ kind: "externref" }]);
+@@ -1844,7 +1848,8 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
+             iteratorNextIdx,
+             iteratorReturnIdx: ctx.funcMap.get("__iterator_return"),
+           },
+-          [...userTypeIdxs, ...genStateTypeIdxs, ...lazyTypeIdxs],
++          // (#5267 B-2) Keep the record itself drainable across the rebuild.
++          [...userTypeIdxs, ...genStateTypeIdxs, ...lazyTypeIdxs, types.iterRecTypeIdx],
+           objDeps,
+         );
+       }
+@@ -2167,30 +2172,15 @@ const CLOSE_RESULT_MSG = "iterator result is not an object";
+ function notAnObjectThrowInstrs(ctx: CodegenContext, scratch: number): Instr[] | undefined {
+   if (!(ctx.standalone || ctx.wasi)) return undefined;
+   const ctorIdx = ctx.funcMap.get("__new_TypeError");
+-  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+-  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+-  const isTruthyIdx = ctx.funcMap.get("__is_truthy");
+-  if (
+-    ctorIdx === undefined ||
+-    typeofObjectIdx === undefined ||
+-    typeofFunctionIdx === undefined ||
+-    isTruthyIdx === undefined
+-  ) {
+-    return undefined;
+-  }
++  // (#5267) The Object test itself is `externIsObjectInstrs` — one definition
++  // for both this throw and the collection-constructor drive's entry check, so
++  // the two can never answer differently.
++  const isObject = externIsObjectInstrs(ctx, scratch);
++  if (ctorIdx === undefined || isObject === undefined) return undefined;
+   const tagIdx = ensureExnTag(ctx);
+   return [
+     { op: "local.set", index: scratch },
+-    { op: "local.get", index: scratch },
+-    { op: "call", funcIdx: typeofObjectIdx },
+-    { op: "local.get", index: scratch },
+-    { op: "call", funcIdx: typeofFunctionIdx },
+-    { op: "i32.or" },
+-    // `typeof null` is "object", and every real Object is truthy — so the
+-    // truthiness conjunct is what separates `null` from an ordinary object.
+-    { op: "local.get", index: scratch },
+-    { op: "call", funcIdx: isTruthyIdx },
+-    { op: "i32.and" },
++    ...isObject,
+     { op: "i32.eqz" },
+     {
+       op: "if",
+@@ -2205,6 +2195,40 @@ function notAnObjectThrowInstrs(ctx: CodegenContext, scratch: number): Instr[] |
+   ];
+ }
+ 
++/**
++ * (#5267 Step A) FRESH instrs that leave `1` on the stack when the externref in
++ * `local` is an ECMAScript **Object** — the §7.4 "Type(value) is Object" test
++ * the keyed-collection constructors run on every entry.
++ *
++ * Same three classifiers `notAnObjectThrowInstrs` uses, so both give the same
++ * answer: `typeof v === "object" && v` (the truthiness conjunct is what
++ * separates `null`, whose typeof is also `"object"`) OR
++ * `typeof v === "function"`. Lives here rather than at the call site so the
++ * coercion vocabulary stays in the one module that owns the iteration
++ * protocol's type tests.
++ *
++ * Registered eagerly by `ensureNativeIteratorRuntime` →
++ * `ensureNotAnObjectThrowDeps`, so this only READS already-present symbols and
++ * can never shift a baked index. Returns `undefined` (caller must decline) when
++ * a classifier is missing. Fresh objects per call (#2169b).
++ */
++export function externIsObjectInstrs(ctx: CodegenContext, local: number): Instr[] | undefined {
++  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
++  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
++  const isTruthyIdx = ctx.funcMap.get("__is_truthy");
++  if (typeofObjectIdx === undefined || typeofFunctionIdx === undefined || isTruthyIdx === undefined) return undefined;
++  return [
++    { op: "local.get", index: local },
++    { op: "call", funcIdx: typeofObjectIdx },
++    { op: "local.get", index: local },
++    { op: "call", funcIdx: isTruthyIdx },
++    { op: "i32.and" },
++    { op: "local.get", index: local },
++    { op: "call", funcIdx: typeofFunctionIdx },
++    { op: "i32.or" },
++  ];
++}
++
+ /**
+  * (#5144) Eagerly register everything `notAnObjectThrowInstrs` reads, so both
+  * the eager and the finalize build sites only READ already-present symbols.
+diff --git a/src/codegen/map-runtime.ts b/src/codegen/map-runtime.ts
+index 904000065..12cbce457 100644
+--- a/src/codegen/map-runtime.ts
++++ b/src/codegen/map-runtime.ts
+@@ -26,7 +26,7 @@
+ import { ts } from "../ts-api.js";
+ import { isVoidType } from "../checker/type-mapper.js";
+ import type { Instr, StructTypeDef, ArrayTypeDef, ValType } from "../ir/types.js";
+-import { ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
++import { canonicalUndefinedExternInstrs, ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
+ import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
+ import { allocLocal } from "./context/locals.js";
+ import { ensureObjVecBuilders, reserveApplyClosure, FLAG_DEFAULT } from "./object-runtime.js";
+@@ -42,6 +42,8 @@ import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
+ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
+ import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4629) dyn-dispatch fill key compares
+ import { getWellKnownSymbolId } from "./literals.js"; // (#4629) @@iterator id
++import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js"; // (#5267 A-2) symbol keys box as symbols, not ids
++import { ensureNativeIteratorRuntime } from "./iterator-native.js"; // (#5267 B-2) live collection iterator records
+ import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js"; // (#4629) iterator closure singleton
+ 
+ /** WasmGC `eq` abstract heap type, signed-LEB `0x6d` = -19. Used for ref.eq on
+@@ -159,8 +161,13 @@ export function ensureMapRuntimeTypes(ctx: CodegenContext): void {
+   ctx.structMap.set("Map", ctx.mapTypeIdx);
+   ctx.typeIdxToStructName.set(ctx.mapTypeIdx, "Map");
+ 
+-  // $MapIterResult: struct { value: anyref(mut); done: i32(mut) } — shared
+-  // iterator-result shape for collection iterators.
++  // $MapIterResult: struct { value: anyref(mut); done: i32(mut); key: anyref(mut) }
++  // — shared iterator-result shape for collection iterators.
++  // (#5267 B-3) `key` carries the entry's KEY alongside the projected value so
++  // the kind-2 (`entries`) consumer can pack the `[key, value]` pair. It is
++  // appended (not inserted) so the existing `value`/`done` field indices are
++  // unchanged; `$MapIterResult` is a CLOSED struct that never reaches source
++  // code, so widening it is unobservable.
+   ctx.mapIterResultTypeIdx = ctx.mod.types.length;
+   ctx.mod.types.push({
+     kind: "struct",
+@@ -168,6 +175,7 @@ export function ensureMapRuntimeTypes(ctx: CodegenContext): void {
+     fields: [
+       { name: "value", type: { kind: "anyref" }, mutable: true },
+       { name: "done", type: { kind: "i32" }, mutable: true },
++      { name: "key", type: { kind: "anyref" }, mutable: true },
+     ],
+   } as StructTypeDef);
+ 
+@@ -1211,15 +1219,19 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
+                 ],
+               },
+               { op: "i32.const", value: 0 },
++              // (#5267 B-3) key — the `entries` consumer packs `[key, value]`.
++              { op: "local.get", index: 4 },
++              { op: "struct.get", typeIdx: ctx.mapEntryTypeIdx, fieldIdx: F_KEY },
+               { op: "struct.new", typeIdx: ctx.mapIterResultTypeIdx },
+               { op: "return" },
+             ],
+           },
+         ],
+       },
+-      // done: {value:null, done:1}
++      // done: {value:null, done:1, key:null}
+       { op: "ref.null", typeIdx: NONE_HEAP },
+       { op: "i32.const", value: 1 },
++      { op: "ref.null", typeIdx: NONE_HEAP },
+       { op: "struct.new", typeIdx: ctx.mapIterResultTypeIdx },
+     ];
+     addMapFunc(
+@@ -1447,6 +1459,28 @@ function coerceArgToAnyref(ctx: CodegenContext, fctx: FunctionContext, t: ValTyp
+       return;
+     }
+     case "i32": {
++      // (#5267 A-2) A BRANDED symbol is a bare i32 id in standalone/WASI
++      // (`ensureSymbolCarrier`, symbol-native.ts) — boxing it with
++      // `__box_number` handed the collection the symbol's *numeric id*, so
++      // `new WeakMap([[Symbol('a'), 42]])` stored the key `100` and the
++      // patched `WeakMap.prototype.set` observed a number
++      // (`iterable-with-symbol-keys.js` / `iterable-with-symbol-values.js`).
++      // `__box_symbol` INTERNS by id, so two boxings of the same symbol stay
++      // `ref.eq`-equal and two same-description symbols stay distinct.
++      // Registered by the callers' addUnionImports/symbol lowering; a funcMap
++      // lookup avoids a mid-body import shift (same note as the boolean arm).
++      if (t.symbol === true) {
++        // The brand is only set under the native provider (literals.ts:2619),
++        // which is exactly where `ensureSymbolCarrier` is legal; it mints a
++        // DEFINED function, so registering it here shifts no baked index.
++        if (ctx.funcMap.get("__box_symbol") === undefined && usesNativeSymbolProvider(ctx)) ensureSymbolCarrier(ctx);
++        const boxSymIdx = ctx.funcMap.get("__box_symbol");
++        if (boxSymIdx !== undefined) {
++          fctx.body.push({ op: "call", funcIdx: boxSymIdx });
++          fctx.body.push({ op: "any.convert_extern" });
++          return;
++        }
++      }
+       // (#2712 I2) A BRANDED boolean boxes via __box_boolean so the element/key
+       // reifies as a boolean, not the number 1/0 — `new Set([(n<2)]).has(1)` must
+       // be false and `.has(true)` true (SameValueZero on a boolean, not a number).
+@@ -1608,11 +1642,12 @@ export function tryCompileNativeMapMethodCall(
+     return tryCompileNativeCollectionForEach(ctx, fctx, propAccess, callExpr, /* isSet */ false);
+   }
+ 
+-  // keys()/values() materialize a canonical externref $Vec of the projection
+-  // (24.1.3.*). `entries()` (the `[k, v]`-pair projection) needs the `__iterator`
+-  // pair consumer rather than the array fast path — deferred to a #2162 follow-up,
+-  // so it falls through to the existing handling here.
+-  if (methodName === "keys" || methodName === "values") {
++  // (#5267 B-1/B-2) keys()/values()/entries() yield a LIVE `$__IterRec` cursor
++  // over the `$Map` (24.1.3.*). `entries()` was deferred by #2162 — it needed
++  // the `[k, v]` pair packing that the MAPSET stepper now does (B-3), and while
++  // it fell through here it reached the generic path, where `.next()` read
++  // `undefined` (`Map/prototype/entries/returns-iterator.js`).
++  if (methodName === "keys" || methodName === "values" || methodName === "entries") {
+     return compileNativeCollectionIterator(ctx, fctx, propAccess, callExpr, methodName, /* isSet */ false);
+   }
+ 
+@@ -2080,9 +2115,79 @@ export function compileNativeCollectionIterator(
+ ): InnerResult | undefined {
+   if (!ctx.nativeStrings) return undefined;
+   if (callExpr.arguments.length !== 0) return undefined;
++  const live = emitLiveCollectionIterRec(ctx, fctx, propAccess.expression, kind, isSet);
++  if (live !== undefined) return live;
+   return emitCollectionIteratorVec(ctx, fctx, propAccess.expression, kind, isSet);
+ }
+ 
++/**
++ * (#5267 B-2) Emit a LIVE `$__IterRec{ITER_KIND_MAPSET}` cursor over a native
++ * `$Map`/`$Set` for `keys()` / `values()` / `entries()` in EXPRESSION position.
++ *
++ * `emitCollectionIteratorVec` materializes an eager `$Vec` snapshot, which is
++ * the right producer for the array-shaped consumers (`[...set]`,
++ * `Array.from(map)`, the for-of head — `compileForOfNativeCollection` calls it
++ * directly and is unaffected) but is NOT an iterator: `map.entries().next()`
++ * read `undefined`, `map.keys()` did not observe a later `delete`, and
++ * `set.entries()` was not routed at all. The record produced here is exactly
++ * the one `fillMapSetDynDispatchArms` builds for `__iterator($Map)`, so every
++ * downstream step (`__iterator_next`'s MAPSET twin, `__iter_next_result`, the
++ * `__iterator` identity-adopt arm) already understands it, and the underlying
++ * `__map_iter_next` index walk skips tombstones — so mutation during iteration
++ * behaves per §24.1.5.1.
++ *
++ * Returns `undefined` (caller keeps the vec producer) when the iterator runtime
++ * is unavailable or the receiver does not lower to the native `$Map` struct.
++ */
++function emitLiveCollectionIterRec(
++  ctx: CodegenContext,
++  fctx: FunctionContext,
++  receiver: ts.Expression,
++  kind: "keys" | "values" | "entries",
++  isSet: boolean,
++): InnerResult | undefined {
++  ensureMapHelpers(ctx);
++  if (ctx.mapTypeIdx < 0 || ctx.mapIterTypeIdx < 0) return undefined;
++  ensureNativeIteratorRuntime(ctx);
++  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
++  const iterNewIdx = ctx.mapHelpers.get("__map_iter_new");
++  if (iterRecTypeIdx === undefined || iterNewIdx === undefined) return undefined;
++  const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
++
++  const recvType = compileExpression(ctx, fctx, receiver);
++  if (recvType === null) return undefined;
++  if (recvType.kind === "externref") {
++    fctx.body.push({ op: "any.convert_extern" });
++    fctx.body.push({ op: "ref.cast", typeIdx: ctx.mapTypeIdx });
++  } else if (recvType.kind === "anyref" || recvType.kind === "eqref") {
++    fctx.body.push({ op: "ref.cast", typeIdx: ctx.mapTypeIdx });
++  } else if ((recvType.kind === "ref" || recvType.kind === "ref_null") && recvType.typeIdx !== ctx.mapTypeIdx) {
++    // Not the native carrier — the receiver was already compiled, so the caller
++    // cannot retry; drop it and let the vec producer recompile. (Speculative
++    // rollback is the caller's job; here the shapes that reach us are always
++    // Map/Set-typed, so this arm is a safety valve, not a hot path.)
++    return undefined;
++  }
++
++  // `$MapIter` kinds: 0 = key, 1 = value, 2 = entry-pair. A Set stores
++  // key === value, so `keys`/`values` both project the element.
++  const iterKind = kind === "entries" ? 2 : isSet ? 1 : kind === "keys" ? 0 : 1;
++  const mTmp = allocLocal(fctx, `__liveit_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
++  fctx.body.push({ op: "local.set", index: mTmp });
++  fctx.body.push(
++    { op: "i32.const", value: ITER_KIND_MAPSET },
++    { op: "ref.null", typeIdx: vecTypeIdx },
++    { op: "i32.const", value: 0 },
++    { op: "local.get", index: mTmp },
++    { op: "i32.const", value: iterKind },
++    { op: "call", funcIdx: iterNewIdx },
++    { op: "extern.convert_any" },
++    { op: "struct.new", typeIdx: iterRecTypeIdx },
++    { op: "extern.convert_any" },
++  );
++  return { kind: "externref" } as ValType;
++}
++
+ /**
+  * (#2162) Core of the collection-iterator materialization: given the *receiver*
+  * expression (compiled here), emit a canonical externref `$Vec` of the `kind`
+@@ -2711,11 +2816,74 @@ export function fillMapSetDynDispatchArms(ctx: CodegenContext): void {
+   if (iterNextFn && iterRecTypeIdx !== undefined) {
+     const mrLocal = 1 + iterNextFn.locals.length;
+     iterNextFn.locals.push({ name: "__mapset_mr", type: { kind: "ref_null", typeIdx: iterResultIdx } });
++    const miLocal = 1 + iterNextFn.locals.length;
++    iterNextFn.locals.push({ name: "__mapset_mi", type: { kind: "ref_null", typeIdx: mapIterIdx } });
++    const pairLocal = 1 + iterNextFn.locals.length;
++    iterNextFn.locals.push({ name: "__mapset_pair", type: { kind: "externref" } });
++    // (#5267 B-3) `entries` (kind 2) yields a `[key, value]` pair, not the bare
++    // value — `__map_iter_next` reports both halves and the pair is packed here,
++    // in the ONE stepper every consumer funnels through (`for (… of map)`,
++    // `map.entries()`, a manual `.next()` via `__iter_next_result`). Without
++    // this the Map default iterator yielded values, so `for (const [k, v] of
++    // map)` and `map.entries().next().value[0]` both read `undefined`.
++    const builders = ensureObjVecBuilders(ctx);
++    const IT_KIND_FIELD = 2;
+     const castRec = (): Instr[] => [
+       { op: "local.get", index: 0 },
+       { op: "any.convert_extern" },
+       { op: "ref.cast", typeIdx: iterRecTypeIdx },
+     ];
++    /**
++     * Fresh instrs (#2169b) for the projected value:
++     *   done          → the canonical `undefined` (a bare `ref.null.extern`
++     *                   surfaces as JS **null**, so `result.value === undefined`
++     *                   was false on the exhausted step);
++     *   kind 2        → a fresh `$ObjVec` `[key, value]` pair;
++     *   otherwise     → the stored value.
++     */
++    const mapsetValueInstrs = (): Instr[] => [
++      { op: "local.get", index: mrLocal },
++      { op: "ref.as_non_null" },
++      { op: "struct.get", typeIdx: iterResultIdx, fieldIdx: 1 }, // done
++      {
++        op: "if",
++        blockType: { kind: "val", type: { kind: "externref" } },
++        then: [...canonicalUndefinedExternInstrs(ctx)],
++        else: [
++          { op: "local.get", index: miLocal },
++          { op: "ref.as_non_null" },
++          { op: "struct.get", typeIdx: mapIterIdx, fieldIdx: IT_KIND_FIELD },
++          { op: "i32.const", value: 2 },
++          { op: "i32.eq" },
++          {
++            op: "if",
++            blockType: { kind: "val", type: { kind: "externref" } },
++            then: [
++              { op: "call", funcIdx: builders.newIdx },
++              { op: "local.tee", index: pairLocal },
++              { op: "local.get", index: mrLocal },
++              { op: "ref.as_non_null" },
++              { op: "struct.get", typeIdx: iterResultIdx, fieldIdx: 2 }, // key
++              { op: "extern.convert_any" },
++              { op: "call", funcIdx: builders.pushIdx },
++              { op: "local.get", index: pairLocal },
++              { op: "local.get", index: mrLocal },
++              { op: "ref.as_non_null" },
++              { op: "struct.get", typeIdx: iterResultIdx, fieldIdx: 0 }, // value
++              { op: "extern.convert_any" },
++              { op: "call", funcIdx: builders.pushIdx },
++              { op: "local.get", index: pairLocal },
++            ],
++            else: [
++              { op: "local.get", index: mrLocal },
++              { op: "ref.as_non_null" },
++              { op: "struct.get", typeIdx: iterResultIdx, fieldIdx: 0 }, // value
++              { op: "extern.convert_any" },
++            ],
++          },
++        ],
++      },
++    ];
+     iterNextFn.body.splice(
+       0,
+       0,
+@@ -2738,15 +2906,16 @@ export function fillMapSetDynDispatchArms(ctx: CodegenContext): void {
+               { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 }, // userIter externref
+               { op: "any.convert_extern" },
+               { op: "ref.cast", typeIdx: mapIterIdx },
++              { op: "local.tee", index: miLocal },
++              // The local is `ref null $MapIter` (locals must be defaultable),
++              // so re-assert non-nullness for `__map_iter_next`'s `ref $MapIter`.
++              { op: "ref.as_non_null" },
+               { op: "call", funcIdx: mapIterNextIdx },
+               { op: "local.set", index: mrLocal },
+               { op: "local.get", index: mrLocal },
+               { op: "ref.as_non_null" },
+               { op: "struct.get", typeIdx: iterResultIdx, fieldIdx: 1 }, // done i32
+-              { op: "local.get", index: mrLocal },
+-              { op: "ref.as_non_null" },
+-              { op: "struct.get", typeIdx: iterResultIdx, fieldIdx: 0 }, // value anyref
+-              { op: "extern.convert_any" },
++              ...mapsetValueInstrs(),
+               { op: "return" },
+             ],
+           },
+diff --git a/src/codegen/property-access-dispatch.ts b/src/codegen/property-access-dispatch.ts
+index ebfc1794a..edaf16a2e 100644
+--- a/src/codegen/property-access-dispatch.ts
++++ b/src/codegen/property-access-dispatch.ts
+@@ -3634,7 +3634,13 @@ export function tryNamespaceConstantAndSymbolReads(
+     const symId = getWellKnownSymbolId(propName);
+     if (symId !== undefined) {
+       fctx.body.push({ op: "i32.const", value: symId });
+-      return { kind: "i32" };
++      // (#5267 A-2) Carry the symbol BRAND in the native-symbol lanes, exactly
++      // as `compileSymbolCall` does for `Symbol()` (literals.ts, #4626): an
++      // any-channel coercion then boxes through `__box_symbol` instead of
++      // `__box_number`, so `new WeakSet([Symbol.hasInstance])` stores the
++      // symbol rather than the NUMBER 2 (its well-known id). The js-host lane
++      // stays unbranded for the #4626 index-shift reason recorded there.
++      return usesNativeSymbolProvider(ctx) ? { kind: "i32", symbol: true } : { kind: "i32" };
+     }
+   }
+ 
+diff --git a/src/codegen/set-runtime.ts b/src/codegen/set-runtime.ts
+index ce4d8e6f7..503c47aa1 100644
+--- a/src/codegen/set-runtime.ts
++++ b/src/codegen/set-runtime.ts
+@@ -152,10 +152,12 @@ export function tryCompileNativeSetMethodCall(
+     return tryCompileNativeCollectionForEach(ctx, fctx, propAccess, callExpr, /* isSet */ true);
+   }
+ 
+-  // keys()/values() materialize a canonical externref $Vec — for a Set both yield
+-  // the element (24.2.3.*). `entries()` (the `[v, v]`-pair projection) needs the
+-  // `__iterator` pair consumer, deferred to a #2162 follow-up — it falls through.
+-  if (methodName === "keys" || methodName === "values") {
++  // keys()/values()/entries() yield a LIVE `$__IterRec` over the Set — for a Set
++  // keys and values both project the element (24.2.3.*) and `entries()` yields
++  // the `[v, v]` pair, packed by the kind-2 arm of the shared MAPSET stepper
++  // (#5267 B-1/B-3; `entries` was deferred by #2162 and fell through to the
++  // host path, which is what `Set/prototype/entries/returns-iterator.js` hit).
++  if (methodName === "keys" || methodName === "values" || methodName === "entries") {
+     ensureSetHelpers(ctx);
+     return compileNativeCollectionIterator(ctx, fctx, propAccess, callExpr, methodName, /* isSet */ true);
+   }
+diff --git a/tests/issue-5267-es2015-forof-iterators-r2.test.ts b/tests/issue-5267-es2015-forof-iterators-r2.test.ts
+new file mode 100644
+index 000000000..c4699feed
+--- /dev/null
++++ b/tests/issue-5267-es2015-forof-iterators-r2.test.ts
+@@ -0,0 +1,341 @@
++// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
++// #5267 — ES2015 standalone residual pass over for-of / iterator prototypes /
++// collections (r2). Wave 1 (#5144/#5147/#5151) landed the mechanisms; this
++// covers the follow-ups those waves left open.
++//
++// Step A — the keyed-collection constructors accept a GENERAL iterable. Before
++//   this, `new Map(customIterable)` / `new Set(x)` / `new WeakMap([1,1])` matched
++//   none of the static seeding shapes and fell through to the generic ctor path,
++//   which emits `env::Map_new` / `env::Set_new` / `env::WeakMap_new` /
++//   `env::WeakSet_new`. In standalone mode there is no host to satisfy those, so
++//   every test here asserts the compiled module's import list is EMPTY as well
++//   as asserting the value — the leak is invisible in a runner that happens to
++//   instantiate against a host `env` (measured 2026-09-01, see the issue file).
++//
++// Step A-2 — a Symbol key/value reached the adder as its numeric id, because a
++//   standalone Symbol VALUE is a bare i32 and the collection boxing path used
++//   `__box_number`.
++//
++// Step B — `keys()/values()/entries()` returned an eager `$Vec` snapshot, so
++//   `.next()` on the result read `undefined`, `Set.prototype.entries` was not
++//   routed at all, and mutation during iteration was invisible. They now yield a
++//   LIVE `$__IterRec` cursor over the `$Map`.
++//
++// Both lanes are exercised: `target: "wasi"` (the standalone lowering, plus the
++// zero-host-import assertion) and the default js-host lane, whose for-of /
++// collection lowering is shared and must not regress.
++
++import { describe, expect, it } from "vitest";
++import { compile } from "../src/index.js";
++import { buildImports, buildWasiPolyfill } from "../src/runtime.js";
++
++interface StandaloneRun {
++  value: number;
++  valid: boolean;
++  /** Every `env::*` function import the module declares. Must be empty. */
++  hostImports: string[];
++}
++
++/** Compile `source` on the standalone (wasi) lane, run `test()`, list imports. */
++async function runStandalone(source: string): Promise<StandaloneRun> {
++  const result = await compile(source, { fileName: "test.ts", target: "wasi" });
++  if (!result.success) {
++    throw new Error(`compile failed: ${result.errors?.[0]?.message ?? "unknown error"}`);
++  }
++  const valid = WebAssembly.validate(result.binary);
++  const module = await WebAssembly.compile(result.binary);
++  const hostImports = WebAssembly.Module.imports(module)
++    .filter((i) => i.module !== "wasi_snapshot_preview1")
++    .map((i) => `${i.module}::${i.name}`);
++  const wasi = buildWasiPolyfill();
++  const instance = await WebAssembly.instantiate(module, { wasi_snapshot_preview1: wasi });
++  const exports = instance.exports as Record<string, unknown>;
++  if (exports.memory) wasi.setMemory(exports.memory as WebAssembly.Memory);
++  const value = (exports.test as () => number)();
++  return { value, valid, hostImports };
++}
++
++/** Compile `source` on the default js-host lane and run `test()`. */
++async function runHost(source: string): Promise<number> {
++  const result = await compile(source, { fileName: "test.ts" });
++  if (!result.success) {
++    throw new Error(`compile failed: ${result.errors?.[0]?.message ?? "unknown error"}`);
++  }
++  const imports = buildImports(result.imports, {}, result.stringPool);
++  const { instance } = await WebAssembly.instantiate(result.binary, imports);
++  (imports as { setExports?: (e: object) => void }).setExports?.(instance.exports as object);
++  return (instance.exports.test as () => number)();
++}
++
++// A `@@iterator` object literal is the shape every cluster-A test262 row uses.
++const CUSTOM_PAIR_ITERABLE = `
++  const iterable: any = {};
++  let calls = 0;
++  iterable[Symbol.iterator] = function () {
++    return {
++      next: function () {
++        calls++;
++        return { value: [calls, calls * 10], done: calls > 2 };
++      },
++    };
++  };`;
++
++describe("#5267 Step A — collection constructors drive a general iterable", () => {
++  it("new Map(customIterable) seeds every entry — standalone, host-import-free", async () => {
++    const { value, valid, hostImports } = await runStandalone(
++      `export function test(): number {
++         ${CUSTOM_PAIR_ITERABLE}
++         const m = new Map<number, number>(iterable);
++         return m.size * 100 + (m.get(1) as number) + (m.get(2) as number);
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(hostImports).toEqual([]);
++    expect(value).toBe(2 * 100 + 10 + 20);
++  });
++
++  it("the js-host lane is unchanged — the literal seeding path still works", async () => {
++    // The drive is `nativeStrings`-gated, so the js-host lane keeps the host
++    // `Map_new` constructor. This is the no-regression check for that lane; the
++    // custom-iterable form is deliberately NOT asserted here because js-host
++    // `new Map(customIterable)` hands the host constructor a compiled `$Object`
++    // whose `@@iterator` the host bridge does not expose — a pre-existing gap
++    // this issue does not touch.
++    const value = await runHost(
++      `export function test(): number {
++         const m = new Map<number, number>([[1, 10], [2, 20]]);
++         return m.size * 100 + (m.get(1) as number) + (m.get(2) as number);
++       }`,
++    );
++    expect(value).toBe(2 * 100 + 10 + 20);
++  });
++
++  it("new Set(iterator) drains it — standalone, host-import-free", async () => {
++    const { value, valid, hostImports } = await runStandalone(
++      `export function test(): number {
++         const s = new Set<number>([1, 2, 3, 2].values());
++         return s.size;
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(hostImports).toEqual([]);
++    expect(value).toBe(3);
++  });
++
++  it("a non-Object entry throws TypeError and closes the iterator once", async () => {
++    // §24.1.1.2 step 4f: IteratorClose(iter, TypeError). `return()` runs EXACTLY
++    // once (`Map/iterator-items-are-not-object-close-iterator.js`).
++    const { value, valid, hostImports } = await runStandalone(
++      `export function test(): number {
++         const iterable: any = {};
++         let closes = 0;
++         iterable[Symbol.iterator] = function () {
++           return {
++             next: function () { return { value: 1, done: false }; },
++             return: function () { closes++; },
++           };
++         };
++         let typeErrors = 0;
++         try { new Map<number, number>(iterable); } catch (e) { if (e instanceof TypeError) typeErrors++; }
++         return typeErrors * 10 + closes;
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(hostImports).toEqual([]);
++    expect(value).toBe(11);
++  });
++
++  it("an abrupt next() propagates WITHOUT calling return()", async () => {
++    // §7.4.5/§7.4.6: IteratorStep abrupt returns without IteratorClose
++    // (`Map/iterator-next-failure.js`, `Set/set-iterator-next-failure.js`).
++    const { value, valid, hostImports } = await runStandalone(
++      `export function test(): number {
++         const iterable: any = {};
++         let closes = 0;
++         iterable[Symbol.iterator] = function () {
++           return {
++             next: function () { throw new RangeError("boom"); },
++             return: function () { closes++; },
++           };
++         };
++         let caught = 0;
++         try { new Set<number>(iterable); } catch (e) { if (e instanceof RangeError) caught = 1; }
++         return caught * 10 + closes;
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(hostImports).toEqual([]);
++    expect(value).toBe(10);
++  });
++
++  it("new WeakMap([1, 1]) rejects the non-entry item with a TypeError", async () => {
++    const { value, valid, hostImports } = await runStandalone(
++      `export function test(): number {
++         let n = 0;
++         try { new WeakMap<object, number>([1, 1] as any); } catch (e) { if (e instanceof TypeError) n = 1; }
++         return n;
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(hostImports).toEqual([]);
++    expect(value).toBe(1);
++  });
++
++  it("a WeakMap key that cannot be held weakly is a TypeError", async () => {
++    const { value, valid } = await runStandalone(
++      `export function test(): number {
++         let n = 0;
++         try { new WeakMap<object, number>([["a", 1]] as any); } catch (e) { if (e instanceof TypeError) n = 1; }
++         return n;
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(value).toBe(1);
++  });
++
++  it("a nullish iterable is spec-empty even behind a variable", async () => {
++    // The static `nullishArg` test only covers literals; §24.1.1.1 steps 5-6
++    // apply to any runtime nullish value.
++    const { value, valid, hostImports } = await runStandalone(
++      `export function test(): number {
++         const it: any = undefined;
++         const m = new Map<number, number>(it);
++         return m.size;
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(hostImports).toEqual([]);
++    expect(value).toBe(0);
++  });
++});
++
++describe("#5267 Step A-2 — Symbol keys/values box as symbols, not as their id", () => {
++  it("two same-description symbols stay distinct WeakSet members — standalone", async () => {
++    const { value, valid, hostImports } = await runStandalone(
++      `export function test(): number {
++         const a = Symbol("d");
++         const b = Symbol("d");
++         const s = new WeakSet<any>([a, b]);
++         return (s.has(a) ? 1 : 0) + (s.has(b) ? 2 : 0);
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(hostImports).toEqual([]);
++    expect(value).toBe(3);
++  });
++
++  it("a symbol key is not confused with the number of the same id — standalone", async () => {
++    const { value, valid } = await runStandalone(
++      `export function test(): number {
++         const a = Symbol("d");
++         const m = new WeakMap<any, number>([[a, 7]]);
++         return m.get(a) as number;
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(value).toBe(7);
++  });
++});
++
++describe("#5267 Step B — live collection iterator records", () => {
++  it("map.entries().next() yields a [key, value] pair — standalone", async () => {
++    const { value, valid, hostImports } = await runStandalone(
++      `export function test(): number {
++         const m = new Map<number, number>([[1, 10], [2, 20]]);
++         const it = m.entries();
++         const r: any = it.next();
++         return (r.done === false ? 100 : 0) + (r.value[0] as number) + (r.value[1] as number);
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(hostImports).toEqual([]);
++    expect(value).toBe(111);
++  });
++
++  it("map.entries().next() yields a [key, value] pair — js-host lane", async () => {
++    const value = await runHost(
++      `export function test(): number {
++         const m = new Map<number, number>([[1, 10], [2, 20]]);
++         const it = m.entries();
++         const r: any = it.next();
++         return (r.done === false ? 100 : 0) + (r.value[0] as number) + (r.value[1] as number);
++       }`,
++    );
++    expect(value).toBe(111);
++  });
++
++  it("an exhausted record reports done:true with value undefined — standalone", async () => {
++    const { value, valid } = await runStandalone(
++      `export function test(): number {
++         const m = new Map<number, number>([[1, 10]]);
++         const it = m.keys();
++         it.next();
++         const r: any = it.next();
++         return (r.done === true ? 1 : 0) + (r.value === undefined ? 2 : 0);
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(value).toBe(3);
++  });
++
++  it("the record is LIVE: a delete between steps skips the removed entry", async () => {
++    // Read the step results through the dynamic channel (`r: any`), the shape
++    // every test262 row uses. A statically `number`-typed `.value` read still
++    // goes through the IteratorResult f64 fast path and answers NaN — a
++    // separate, pre-existing gap (`__gen_result_value_f64` has no `$Object`
++    // arm) that this step does not close.
++    const { value, valid, hostImports } = await runStandalone(
++      `export function test(): number {
++         const m = new Map<number, number>([[1, 1], [2, 2], [3, 3]]);
++         const it = m.keys();
++         const r1: any = it.next();
++         const first = r1.value as number;
++         m.delete(2);
++         const r2: any = it.next();
++         const second = r2.value as number;
++         return first * 10 + second;
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(hostImports).toEqual([]);
++    expect(value).toBe(13);
++  });
++
++  it("set.entries() is routed and yields [v, v] — standalone", async () => {
++    const { value, valid, hostImports } = await runStandalone(
++      `export function test(): number {
++         const s = new Set<number>([5, 6]);
++         const r: any = s.entries().next();
++         return (r.value[0] as number) * 10 + (r.value[1] as number);
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(hostImports).toEqual([]);
++    expect(value).toBe(55);
++  });
++
++  it("for-of over a Map still yields [k, v] pairs — standalone", async () => {
++    const { value, valid } = await runStandalone(
++      `export function test(): number {
++         const m = new Map<number, number>([[1, 10], [2, 20]]);
++         let sum = 0;
++         for (const e of m) { sum += (e[0] as number) * 100 + (e[1] as number); }
++         return sum;
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(value).toBe(330);
++  });
++
++  it("spreading a live record still materializes every element — standalone", async () => {
++    const { value, valid } = await runStandalone(
++      `export function test(): number {
++         const m = new Map<number, number>([[1, 10], [2, 20]]);
++         const ks = [...m.keys()];
++         return ks.length * 10 + (ks[0] as number) + (ks[1] as number);
++       }`,
++    );
++    expect(valid).toBe(true);
++    expect(value).toBe(23);
++  });
++});
+-- 
+2.43.0
+

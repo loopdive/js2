@@ -144,6 +144,12 @@ describe("#1712 — host-callable fallback for non-closure-shaped callees", () =
       expect(importNames).toContain("__js_array_new");
       expect(importNames).toContain("__js_array_push");
       expect(importNames).not.toContain("__call_function_1");
+
+      const importObject: any = result.importObject ?? {};
+      const instance = await WebAssembly.instantiate(module, importObject);
+      importObject.__setInstance?.(instance);
+      const dispatch = instance.exports.__call_fn_1 as (callback: (value: number) => number, value: number) => number;
+      expect(dispatch((value) => value + 1, 10)).toBe(11);
     } finally {
       if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_FIXED_ARITY_HOST_CALLS");
       else process.env.JS2WASM_FIXED_ARITY_HOST_CALLS = previous;

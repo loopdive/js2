@@ -2,10 +2,167 @@
 
 import { ts } from "../ts-api.js";
 import { addFunctionOwnLocals } from "../ir/analysis/binding-info.js";
+import { condenseDirectedGraph } from "./analysis/strongly-connected-components.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { annexBDeclaringRange, annexBUpdatesExistingVarBinding } from "./annexb-cancel.js";
 import { getOrRegisterRefCellType } from "./registry/types.js";
+
+interface FunctionObservationContextFacts {
+  /** Function declarations whose value is observed, grouped by the exact scan root. */
+  observedDeclarationsByScope: WeakMap<ts.Node, ReadonlySet<ts.FunctionDeclaration>>;
+  /** Static sibling dependency graphs, grouped by the exact statement-list identity. */
+  dependencyGraphsByStatements: WeakMap<readonly ts.Statement[], FunctionValueDependencyGraph>;
+}
+
+interface FunctionValueDependencyGraph {
+  /** Names whose dependency path reaches a strongly-connected component. */
+  reachesCycle: ReadonlySet<string>;
+}
+
+/**
+ * These facts depend on the selected oracle as well as the immutable AST. Keep
+ * them scoped to the CodegenContext: module-init recompilation may reuse the
+ * same nodes with a different context/backend, and a bare node-keyed cache
+ * would leak declaration answers between those runs.
+ */
+const observationFactsByContext = new WeakMap<CodegenContext, FunctionObservationContextFacts>();
+
+interface FunctionBindingUseFacts {
+  /** Names read outside a direct call position, with nested lexical shadows applied. */
+  observedNames: ReadonlySet<string>;
+  /** Names called/constructed directly by this declaration, excluding nested scopes. */
+  invokedNames: ReadonlySet<string>;
+}
+
+/** Pure syntax facts: safe to share for the lifetime of an immutable AST node. */
+const functionBindingUseFactsCache = new WeakMap<ts.FunctionDeclaration, FunctionBindingUseFacts>();
+
+/** Pure structural inverse of `functionDeclarationHasAnnexBUpdater`. */
+const annexBUpdaterNamesByDirectScope = new WeakMap<ts.Node, ReadonlySet<string>>();
+
+function observationFactsFor(ctx: CodegenContext): FunctionObservationContextFacts {
+  let facts = observationFactsByContext.get(ctx);
+  if (!facts) {
+    facts = {
+      observedDeclarationsByScope: new WeakMap(),
+      dependencyGraphsByStatements: new WeakMap(),
+    };
+    observationFactsByContext.set(ctx, facts);
+  }
+  return facts;
+}
+
+function functionBindingUseFacts(stmt: ts.FunctionDeclaration): FunctionBindingUseFacts {
+  const cached = functionBindingUseFactsCache.get(stmt);
+  if (cached) return cached;
+
+  const observedNames = new Set<string>();
+  const collectObserved = (node: ts.Node, shadowed: ReadonlySet<string>): void => {
+    if (
+      node !== stmt &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node) ||
+        ts.isConstructorDeclaration(node))
+    ) {
+      const nestedShadowed = new Set(shadowed);
+      addFunctionOwnLocals(node, nestedShadowed);
+      ts.forEachChild(node, (child) => collectObserved(child, nestedShadowed));
+      return;
+    }
+    if (node !== stmt && ts.isClassLike(node) && node.name) {
+      const nestedShadowed = new Set(shadowed);
+      nestedShadowed.add(node.name.text);
+      ts.forEachChild(node, (child) => collectObserved(child, nestedShadowed));
+      return;
+    }
+    if (ts.isIdentifier(node) && node !== stmt.name && !shadowed.has(node.text)) {
+      const parent = node.parent;
+      if (!(ts.isCallExpression(parent) && parent.expression === node)) observedNames.add(node.text);
+    }
+    ts.forEachChild(node, (child) => collectObserved(child, shadowed));
+  };
+  collectObserved(stmt, new Set());
+
+  const invokedNames = new Set<string>();
+  const collectInvoked = (node: ts.Node): void => {
+    if (node !== stmt && (ts.isFunctionLike(node) || ts.isClassLike(node))) return;
+    if (ts.isIdentifier(node) && node !== stmt.name) {
+      const parent = node.parent;
+      if (
+        (ts.isCallExpression(parent) && parent.expression === node) ||
+        (ts.isNewExpression(parent) && parent.expression === node)
+      ) {
+        invokedNames.add(node.text);
+      }
+    }
+    ts.forEachChild(node, collectInvoked);
+  };
+  collectInvoked(stmt);
+
+  const facts = { observedNames, invokedNames } satisfies FunctionBindingUseFacts;
+  functionBindingUseFactsCache.set(stmt, facts);
+  return facts;
+}
+
+/**
+ * A nested function can return the pre-initialization value of a `var` owned
+ * by an enclosing activation. TypeScript's signature still reports the
+ * declaration's eventual type, but the closure may run before that initializer
+ * executes (`function g(){ return x; } return g(); var x = 1`). Keep the
+ * return ABI dynamic for that source-proven shape, and propagate it through a
+ * direct nested-function call (`return g()`) in the owner.
+ */
+export function functionReturnsPreInitVarValue(
+  ctx: CodegenContext,
+  fn: ts.FunctionLikeDeclaration,
+  seen = new Set<ts.FunctionLikeDeclaration>(),
+): boolean {
+  if (seen.has(fn) || !fn.body || !ts.isBlock(fn.body)) return false;
+  seen.add(fn);
+  const isPreInitVar = (id: ts.Identifier): boolean => {
+    const decl = ctx.oracle.variableDeclarationOf(id);
+    return (
+      decl !== undefined &&
+      decl.initializer !== undefined &&
+      ts.isIdentifier(decl.name) &&
+      (decl.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      id.getStart() < decl.name.getStart()
+    );
+  };
+  const visit = (node: ts.Node): boolean => {
+    if (ts.isReturnStatement(node) && node.expression) {
+      let expression = node.expression;
+      while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+      if (ts.isIdentifier(expression) && isPreInitVar(expression)) {
+        return true;
+      }
+      if (ts.isCallExpression(expression) && ts.isIdentifier(expression.expression)) {
+        const target = ctx.oracle.valueDeclarationOf(expression.expression);
+        if (
+          target &&
+          (ts.isFunctionDeclaration(target) || ts.isFunctionExpression(target)) &&
+          functionReturnsPreInitVarValue(ctx, target, new Set(seen))
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (node !== fn && ts.isFunctionLike(node)) return false;
+    let found = false;
+    ts.forEachChild(node, (child) => {
+      if (!found && visit(child)) found = true;
+    });
+    return found;
+  };
+  return visit(fn.body);
+}
 
 /** Whether a closure observes a binding outside a direct call position. */
 export function closureObservesBindingValue(closure: ts.ArrowFunction | ts.FunctionExpression, name: string): boolean {
@@ -72,70 +229,12 @@ export function collectNestedCaptureReferences(
 
 /** True when a declaration body uses `name` in an identity-observing position. */
 export function functionDeclarationObservesBindingValue(stmt: ts.FunctionDeclaration, name: string): boolean {
-  let observed = false;
-  const visit = (node: ts.Node): void => {
-    if (observed) return;
-    if (
-      node !== stmt &&
-      (ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node) ||
-        ts.isGetAccessorDeclaration(node) ||
-        ts.isSetAccessorDeclaration(node) ||
-        ts.isConstructorDeclaration(node))
-    ) {
-      const nestedOwnLocals = new Set<string>();
-      addFunctionOwnLocals(node, nestedOwnLocals);
-      if (nestedOwnLocals.has(name)) return;
-    } else if (node !== stmt && ts.isClassLike(node) && node.name?.text === name) {
-      return;
-    }
-    if (ts.isIdentifier(node) && node !== stmt.name && node.text === name) {
-      const parent = node.parent;
-      if (!(ts.isCallExpression(parent) && parent.expression === node)) {
-        observed = true;
-        return;
-      }
-    }
-    node.forEachChild(visit);
-  };
-  visit(stmt);
-  return observed;
+  return functionBindingUseFacts(stmt).observedNames.has(name);
 }
 
 /** True when a stable function binding's lifted implementation executes here. */
 export function functionDeclarationInvokesBinding(stmt: ts.FunctionDeclaration, name: string): boolean {
-  let invoked = false;
-  const visit = (node: ts.Node): void => {
-    if (invoked) return;
-    if (
-      node !== stmt &&
-      (ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isArrowFunction(node) ||
-        ts.isMethodDeclaration(node) ||
-        ts.isGetAccessorDeclaration(node) ||
-        ts.isSetAccessorDeclaration(node) ||
-        ts.isConstructorDeclaration(node) ||
-        ts.isClassLike(node))
-    ) {
-      return;
-    }
-    if (ts.isIdentifier(node) && node !== stmt.name && node.text === name) {
-      const parent = node.parent;
-      if (
-        (ts.isCallExpression(parent) && parent.expression === node) ||
-        (ts.isNewExpression(parent) && parent.expression === node)
-      ) {
-        invoked = true;
-        return;
-      }
-    }
-    node.forEachChild(visit);
-  };
-  visit(stmt);
-  return invoked;
+  return functionBindingUseFacts(stmt).invokedNames.has(name);
 }
 
 export function observesHoistedFunctionValueBinding(
@@ -216,20 +315,47 @@ export function prepareHoistedFunctionValueBindings(
   fctx: FunctionContext,
   stmts: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
 ): void {
+  // A same-named `var` initializer affects the declaration-value carrier, but
+  // the answer is a property of this statement list, not of each function.
+  // Collect it once instead of re-running `stmts.some(...)` for every direct
+  // FunctionDeclaration (4,289 of them in the TypeScript 5 bundle IIFE).
+  const initializedVariableNames = new Set<string>();
+  for (const statement of stmts) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (ts.isIdentifier(declaration.name) && declaration.initializer !== undefined) {
+        initializedVariableNames.add(declaration.name.text);
+      }
+    }
+  }
+
   for (const stmt of stmts) {
+    const hasExistingBinding = ts.isFunctionDeclaration(stmt) && !!stmt.name && fctx.localMap.has(stmt.name.text);
+    const existingBindingHasInitializer =
+      hasExistingBinding && stmt.name !== undefined && initializedVariableNames.has(stmt.name.text);
     if (
       !ts.isFunctionDeclaration(stmt) ||
       !stmt.name ||
       !stmt.body ||
       annexBDeclaringRange(stmt) !== null ||
       functionDeclarationHasAnnexBUpdater(stmt) ||
-      !functionDeclarationValueIsObserved(ctx, stmt)
+      (!functionDeclarationValueIsObserved(ctx, stmt) && !hasExistingBinding)
     ) {
       continue;
     }
-    if (!hasStableFunctionValueCaptureAbi(fctx, stmt)) continue;
-    if (!fctx.localMap.has(stmt.name.text)) {
-      const cyclic = functionValueDependencyIsCyclic(ctx, stmt, stmts);
+    // (#4618) An observed declaration with an UNSTABLE capture ABI (a
+    // captured local whose value is not final at function entry — the jest
+    // `__jestFn` shape: `function mock()` capturing `var impl` assigned just
+    // above it, with `mock.mock = {…}` written after) used to be SKIPPED
+    // here, leaving every read — including SELF-reads inside the body — to
+    // re-materialize a fresh closure struct, so `mock.mock.calls` answered
+    // null inside the invoked mock. Route it through the same ref-cell
+    // strategy as cyclic values: the CELL's identity is fixed at entry, and
+    // the closure is materialized into it at the declaration statement,
+    // where every captured value is live.
+    const stableAbi = hasStableFunctionValueCaptureAbi(fctx, stmt);
+    if (!hasExistingBinding) {
+      const cyclic = !stableAbi || functionValueDependencyIsCyclic(ctx, stmt, stmts);
       if (cyclic) {
         const valueType = { kind: "externref" } as const;
         const refCellTypeIdx = getOrRegisterRefCellType(ctx, valueType);
@@ -244,6 +370,13 @@ export function prepareHoistedFunctionValueBindings(
       } else {
         allocLocal(fctx, stmt.name.text, { kind: "externref" });
       }
+      (fctx.hoistedFunctionValueBindings ??= new Set()).add(stmt.name.text);
+    } else if (!existingBindingHasInitializer) {
+      // FunctionDeclarationInstantiation installs a same-named function value
+      // into the existing var/parameter binding (ES5 §10.2.1, steps 5/8).
+      // Keep that original carrier for initialized vars: allocating a second
+      // slot makes later var writes target the old slot while reads target a
+      // stale function-valued slot (S13_A19_T2 observes NaN instead of 1).
       (fctx.hoistedFunctionValueBindings ??= new Set()).add(stmt.name.text);
     }
   }
@@ -336,8 +469,29 @@ function hasStableFunctionValueCaptureAbi(fctx: FunctionContext, decl: ts.Functi
     if (ts.isIdentifier(node) && isRuntimeIdentifierReference(node) && !ownLocals.has(node.text)) {
       const localIdx = fctx.localMap.get(node.text);
       if (localIdx !== undefined) {
+        // (#4616) Entry-hoisted materialization is safe whenever the captured
+        // slot's VALUE is already final at function entry:
+        //   - numeric scalars (the historical rule),
+        //   - the enclosing function's own PARAMS (bound before any statement
+        //     runs — jest's vi.fn `spy` captures the `implementation` param;
+        //     without a stable binding every self-read inside spy's body
+        //     re-materialized a fresh struct, so `spy.mock` written on the
+        //     invoked instance answered undefined in every spy body),
+        //   - boxed capture CELLS (`__ref_cell_*` refs — a mutated capture
+        //     shares the cell, whose identity is fixed at entry even though
+        //     its contents change).
+        const isParamSlot = localIdx < fctx.params.length;
         const type = getLocalType(fctx, localIdx);
-        if (!type || (type.kind !== "i32" && type.kind !== "i64" && type.kind !== "f32" && type.kind !== "f64")) {
+        const isRefCellSlot =
+          type !== undefined &&
+          type !== null &&
+          (type.kind === "ref" || type.kind === "ref_null") &&
+          fctx.boxedCaptures?.has(node.text) === true;
+        if (
+          !isParamSlot &&
+          !isRefCellSlot &&
+          (!type || (type.kind !== "i32" && type.kind !== "i64" && type.kind !== "f32" && type.kind !== "f64"))
+        ) {
           stable = false;
           return;
         }
@@ -349,12 +503,15 @@ function hasStableFunctionValueCaptureAbi(fctx: FunctionContext, decl: ts.Functi
   return stable;
 }
 
-/** Whether materializing target can reach any recursive value dependency. */
-function functionValueDependencyIsCyclic(
+/** Build the immutable dependency graph for one exact sibling statement list. */
+function functionValueDependencyGraph(
   ctx: CodegenContext,
-  target: ts.FunctionDeclaration,
   siblings: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
-): boolean {
+): FunctionValueDependencyGraph {
+  const cache = observationFactsFor(ctx).dependencyGraphsByStatements;
+  const cached = cache.get(siblings);
+  if (cached) return cached;
+
   const namedDeclarations = new Map<ts.Declaration, string>();
   const dependencyRoots = new Map<string, ts.Node>();
   for (const stmt of siblings) {
@@ -371,8 +528,6 @@ function functionValueDependencyIsCyclic(
     }
   }
 
-  const targetName = target.name?.text;
-  if (!targetName || !dependencyRoots.has(targetName)) return false;
   const edges = new Map<string, Set<string>>();
   for (const [name, root] of dependencyRoots) {
     const dependencies = new Set<string>();
@@ -393,19 +548,57 @@ function functionValueDependencyIsCyclic(
     edges.set(name, dependencies);
   }
 
-  const state = new Map<string, "visiting" | "done">();
-  const visit = (name: string): boolean => {
-    const current = state.get(name);
-    if (current === "visiting") return true;
-    if (current === "done") return false;
-    state.set(name, "visiting");
-    for (const dependency of edges.get(name) ?? []) {
-      if (visit(dependency)) return true;
+  // SCCs identify the actual cycles once. The previous per-target DFS
+  // rebuilt this whole graph and then repeated a reachability walk for every
+  // observed declaration. Preserve its exact predicate: a target is cyclic
+  // when it can reach *any* cycle, not only when the target belongs to one.
+  const {
+    components,
+    componentByNode: componentByName,
+    successorsByComponent: componentEdges,
+    predecessorsByComponent: reverseComponentEdges,
+  } = condenseDirectedGraph(dependencyRoots.keys(), (name) => edges.get(name) ?? []);
+  const componentReachesCycle = components.map(() => false);
+  for (let componentIdx = 0; componentIdx < components.length; componentIdx++) {
+    const component = components[componentIdx]!;
+    componentReachesCycle[componentIdx] =
+      component.length > 1 || (component.length === 1 && edges.get(component[0]!)?.has(component[0]!) === true);
+  }
+
+  // Collapse the SCCs into a DAG, then propagate the cycle bit backwards from
+  // sinks. This computes every target answer in one graph pass without the
+  // recursion depth or repeated edge scans of one DFS per declaration.
+  const remainingSuccessors = componentEdges.map((successors) => successors.size);
+  const worklist: number[] = [];
+  for (let componentIdx = 0; componentIdx < components.length; componentIdx++) {
+    if (remainingSuccessors[componentIdx] === 0) worklist.push(componentIdx);
+  }
+  while (worklist.length > 0) {
+    const componentIdx = worklist.pop()!;
+    for (const predecessor of reverseComponentEdges[componentIdx]!) {
+      if (componentReachesCycle[componentIdx]) componentReachesCycle[predecessor] = true;
+      remainingSuccessors[predecessor] = remainingSuccessors[predecessor]! - 1;
+      if (remainingSuccessors[predecessor] === 0) worklist.push(predecessor);
     }
-    state.set(name, "done");
-    return false;
-  };
-  return visit(targetName);
+  }
+
+  const reachesCycle = new Set<string>();
+  for (const [name, componentIdx] of componentByName) {
+    if (componentReachesCycle[componentIdx]) reachesCycle.add(name);
+  }
+  const graph = { reachesCycle } satisfies FunctionValueDependencyGraph;
+  cache.set(siblings, graph);
+  return graph;
+}
+
+/** Whether materializing target can reach any recursive value dependency. */
+export function functionValueDependencyIsCyclic(
+  ctx: CodegenContext,
+  target: ts.FunctionDeclaration,
+  siblings: ts.NodeArray<ts.Statement> | readonly ts.Statement[],
+): boolean {
+  const targetName = target.name?.text;
+  return targetName !== undefined && functionValueDependencyGraph(ctx, siblings).reachesCycle.has(targetName);
 }
 
 /** Prepare stable values and return the shared Annex B name accumulator. */
@@ -429,45 +622,50 @@ function functionDeclarationHasAnnexBUpdater(decl: ts.FunctionDeclaration): bool
   const name = decl.name?.text;
   const scope = decl.parent;
   if (!name || !scope) return false;
-
-  let found = false;
-  const visit = (node: ts.Node): void => {
-    if (found) return;
-    if (node !== scope && ts.isFunctionDeclaration(node)) {
-      if (
-        node !== decl &&
-        node.name?.text === name &&
-        annexBDeclaringRange(node) !== null &&
-        annexBUpdatesExistingVarBinding(node)
-      ) {
-        found = true;
+  let updaterNames = annexBUpdaterNamesByDirectScope.get(scope);
+  if (!updaterNames) {
+    const collected = new Set<string>();
+    const visit = (node: ts.Node): void => {
+      if (node !== scope && ts.isFunctionDeclaration(node)) {
+        if (node.name && annexBDeclaringRange(node) !== null && annexBUpdatesExistingVarBinding(node)) {
+          collected.add(node.name.text);
+        }
+        return;
       }
-      return;
+      if (node !== scope && (ts.isFunctionLike(node) || ts.isSourceFile(node) || ts.isModuleBlock(node))) return;
+      ts.forEachChild(node, visit);
+    };
+    visit(scope);
+    updaterNames = collected;
+    annexBUpdaterNamesByDirectScope.set(scope, updaterNames);
+  }
+  return updaterNames.has(name);
+}
+
+function observedFunctionDeclarationsInScope(ctx: CodegenContext, scope: ts.Node): ReadonlySet<ts.FunctionDeclaration> {
+  const cache = observationFactsFor(ctx).observedDeclarationsByScope;
+  const cached = cache.get(scope);
+  if (cached) return cached;
+
+  const observed = new Set<ts.FunctionDeclaration>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && isRuntimeIdentifierReference(node)) {
+      const declaration = ctx.oracle.valueDeclarationOf(node);
+      if (declaration && ts.isFunctionDeclaration(declaration) && node !== declaration.name) {
+        const parent = node.parent;
+        if (!(ts.isCallExpression(parent) && parent.expression === node)) observed.add(declaration);
+      }
     }
-    if (node !== scope && (ts.isFunctionLike(node) || ts.isSourceFile(node) || ts.isModuleBlock(node))) return;
     ts.forEachChild(node, visit);
   };
   visit(scope);
-  return found;
+  cache.set(scope, observed);
+  return observed;
 }
 
 export function functionDeclarationValueIsObserved(ctx: CodegenContext, decl: ts.FunctionDeclaration): boolean {
-  let observed = false;
-  const visit = (node: ts.Node): void => {
-    if (observed) return;
-    if (
-      ts.isIdentifier(node) &&
-      node !== decl.name &&
-      isRuntimeIdentifierReference(node) &&
-      ctx.oracle.valueDeclarationOf(node) === decl
-    ) {
-      const parent = node.parent;
-      if (!(ts.isCallExpression(parent) && parent.expression === node)) observed = true;
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(ts.isBlock(decl.parent) || ts.isSourceFile(decl.parent) ? decl.parent : decl.getSourceFile());
-  return observed;
+  const scope = ts.isBlock(decl.parent) || ts.isSourceFile(decl.parent) ? decl.parent : decl.getSourceFile();
+  return observedFunctionDeclarationsInScope(ctx, scope).has(decl);
 }
 
 /** Exclude binding/member-name syntax that does not read the function value. */

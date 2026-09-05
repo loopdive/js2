@@ -1,12 +1,12 @@
 ---
 id: 2175
 title: "architect spec: standalone builtin-prototype object representation + native-method-closure dispatch"
-status: ready
+status: in-progress
 model: fable
 fable_role: spec
 sprint: current
 created: 2026-06-16
-updated: 2026-07-17
+updated: 2026-09-01
 priority: high
 feasibility: hard
 model: fable
@@ -19,6 +19,12 @@ related: [2161, 2158, 2159, 2101, 2100, 1907, 1888, 1914, 1539, 2861, 2885, 2949
 loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/object-runtime.ts
+  # +6 lines: the generic class-expression evaluation route must emit the
+  # shared unresolved computed-accessor-name effect at its actual runtime site.
+  - src/codegen/expressions/new-super.ts
+  # +2 net lines: singleton class-expression materialization owns the same
+  # effect when it deliberately bypasses the generic expression route.
+  - src/codegen/statements/variables.ts
   - src/codegen/object-runtime-descriptors.ts
   - src/codegen/property-access-dispatch.ts
   # +15 lines: the guard clause routing a non-callable builtin namespace
@@ -27,8 +33,25 @@ loc-budget-allow:
   # (src/codegen/function-prototype-callable.ts); what remains here is the
   # dispatch arm itself, which has to sit in the ordered chain.
   - src/codegen/expressions/call-builtin-static.ts
+  # +27 lines: bounded RegExp.prototype.exec closure body delegates to the
+  # existing capture-array engine from the per-builtin glue site.
+  - src/codegen/regexp-standalone.ts
 func-budget-allow:
   - src/codegen/object-runtime.ts::ensureObjectRuntime
+  # +60 lines: the shared Object-prototype helper builder owns the explicit
+  # null-prototype terminal and inherited GetMethod/Proxy behavior together.
+  - src/codegen/object-runtime-prototype.ts::buildObjectPrototypeHelpers
+  # +19 lines: the ordered `in` operator route must distinguish the exact
+  # Proxy trap result from an ordinary terminal prototype-chain miss.
+  - src/codegen/binary-ops-in.ts::compileInOperator
+  # +2 net lines: singleton class-expression materialization owns its runtime
+  # computed-name effect when it bypasses compileClassExpression.
+  - src/codegen/statements/variables.ts::compileVariableStatement
+  - src/codegen/statements/variables.ts::emitHandledClassExpressionBindingEffects
+  # +13 lines: the e59 centralized class-value helper emits before the caller
+  # can know it handled the binding; this local owner keeps unresolved accessor
+  # names once-only and reorders only the emitted suffix after late-import
+  # remapping has seen both instruction groups.
   - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
   - src/codegen/context/create-context.ts::createCodegenContext
   # +12 lines — same arm; see the loc-budget note above.
@@ -38,6 +61,14 @@ func-budget-allow:
   # module (src/codegen/function-prototype-callable.ts); only the ordered
   # dispatch arm is here, and it must precede the generic signature count.
   - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+coercion-sites-allow:
+  # 2026-08-21 lane D (arguments inside `new F(…)`): __box_number/__unbox_number
+  # here are a REPRESENTATION transfer, not a hand-rolled ToNumber — numeric
+  # ctor params ride the externref arguments vector and the mapped-arguments
+  # writeback restores the declared param slot type. Same class as the
+  # bound-fn-meta declaration (#4562): routing through the coercion engine
+  # would coerce values §10.4.4 says must pass through unchanged.
+  - src/codegen/fnctor-ctor-arguments.ts
 depends_on: [2101]
 origin: "2026-06-16 — sdev5 #2161a refinement: RegExp.prototype-as-object refusal is the convergent gate across RegExp/class/TypedArray standalone reflection"
 ---
@@ -2296,3 +2327,2132 @@ biome clean; `tsc --noEmit` clean on all three touched files.
 spec-correct for user TypeScript that declares an explicit `this` parameter,
 but that surface was reasoned about (no top-level `this:` in any other bundled
 `lib.*.d.ts` method signature) rather than measured.
+
+## Suspended Work — builtin-prototype readers (2026-08-22)
+
+Merged via #4723: `arguments` inside `new F(…)` (the __extras_argv/__argc
+protocol at the ctor call site, `fnctor-ctor-arguments.ts`) and instanceof
+boolean branding. Wave-5 T9 later seeded `constructor` into the builtin-proto
+companion — which turned out to also break the QuickJS provider canary until
+#4491's T10 stopped `constructor` taking the `Object.prototype` fallthrough in
+the proto-index walk.
+
+Open, with prices attached in #4491: the `memberCsv` exclusion is load-bearing
+(a CSV entry would mint a brand-keyed closure, making `Error.prototype.
+constructor` a callable refusal stub); `Date`/`Function` decline the seed for
+want of an identity-stable carrier (#4200 follow-ups); `Iterator` needs an
+accessor pair. Four `tests/issue-4200.test.ts` guards are now stale against the
+seed and need #4200's owner to adjudicate.
+
+Resume from #4491's "Suspended Work" section.
+
+## Progress — 2026-08-25: RegExp.prototype.exec first-class method body
+
+This bounded follow-up resumes the RegExp portion of S1 without reopening the
+shared `$NativeProto` representation. Upstream `main` at `8a75a22ca4` already
+materialized `RegExp.prototype` and routed its `exec` member to an
+identity-stable native-method closure, but the closure body returned the
+placeholder `null`. The existing expression-driven `emitRegexExecArrayCall`
+engine already builds the spec capture-array shape, so the fix feeds it the
+closure's recovered `$NativeRegExp` and runtime string argument.
+
+### Scope
+
+- `src/codegen/regexp-standalone.ts`: implement the `exec` method arm in
+  `emitRegExpProtoMemberBody` using `emitRegexExecArrayCall` with
+  `regexpOverride`, an externref subject flattened to a native string, and
+  `gyLastIndex: "runtime"`; box the match vector back to the closure's
+  externref ABI.
+- `tests/issue-2175-regexp-exec-reflection.test.ts`: three host-free allowJs
+  regressions covering capture-array fields through `.call`, runtime `g`
+  `lastIndex` success/failure transitions, and catchable wrong-`this` branding.
+
+### Measured result
+
+The focused branch-point test was 1/3 on upstream: the capture-array case was
+a compile error (`match-result property reads on values not produced by this
+standalone backend`), the `g/y` case returned the placeholder, and the wrong-
+brand control passed. The branch is **3/3**, with no `env` imports in each
+binary. This slice leaves the parent issue open: direct dynamic closure calls
+through the generic JS/allowJs dispatcher, RegExp symbol-protocol methods,
+and the existing accessor proto-identity behavior remain separate follow-ups.
+
+### Test Results
+
+- `tests/issue-2175-regexp-exec-reflection.test.ts` — **3/3 passed**.
+- `tests/issue-1539-standalone-regex.test.ts`, `tests/issue-1914.test.ts`,
+  `tests/issue-2161-matchall.test.ts` — **199/199 passed**.
+- `tests/issue-2161-regex-symbol-protocol.test.ts`,
+  `tests/issue-2161-regex-tostring.test.ts` — **21/21 passed**.
+- `tsc --noEmit --pretty false` — passed.
+- `tests/issue-682-regexp-standalone-abi.test.ts` remains a pre-existing
+  collection failure at `collections-brand.ts:100` (`COLLECTION_KIND` is
+  undefined); `tests/issue-682.test.ts` also retains its unrelated upstream
+  1/17 failure. No code in this slice touches those paths.
+
+## D5 residual handoff — null-prototype OrdinaryToPrimitive (2026-08-31)
+
+### Ownership and boundary
+
+The four class accessor residuals discovered while validating #5195 are an
+exact, bounded #2175 D5 slice. D5 already chooses an implicit
+`Object.prototype` terminal for ordinary `$Object` chains and names
+`FLAG_NULL_PROTO` for `Object.create(null)` / `Object.setPrototypeOf(o, null)`.
+#5195's tracker explicitly excludes generic MOP and `Object.create` identity
+work, so this must not be folded into its runtime-computed-class-key bridge.
+
+This slice is deliberately narrower than the eventual all-reader D5 work: it
+only makes `OrdinaryToPrimitive` distinguish an implicit ordinary-object
+terminal from an explicit null prototype. It does not widen `$Object.$proto`,
+does not materialize a general Object.prototype table, and does not change
+unrelated `get`/`has`/descriptor/enumeration behavior.
+
+No GitHub issue was created.
+
+Before the next runtime replay, the focused file will add a balanced WAT
+function extractor plus numeric-call resolver and prove separately that the
+named `declarationProbe` and `expressionProbe` bodies each call
+`__to_property_key`. The expression probe uses the exact comma-expression
+shape. This is a reachability assertion over each emitted function body, not a
+module-wide substring, so a helper elsewhere cannot make the control vacuous.
+
+No GitHub issue was created.
+
+### d60 residual implementation checkpoint — terminal-aware fixed-name in (2026-08-31)
+
+**Verdict: still BLOCKED pending the released runtime lane.** This is a
+semantic port plus the root-filed residual repair in the clean worktree
+/Users/thomas/Code/js2/.codex-worktrees/final-2175-null-proto-d60-20260831,
+branch codex/2175-null-proto-d60-20260831, exact base
+d60aa73f9b3405dcdc1f832a511acb2366c7de00. It does not replace the historical
+b91 **18 / 19** checkpoint: no compiler, Vitest, Test262, TypeScript, hook,
+commit, push, PR, or GitHub action has run for this d60 repair checkpoint.
+
+The read-only d2c7305c0f..d60aa73f9b comparison is empty for the five D5
+paths. That delta adds only the unrelated #5246 tracker, so the reviewed b91
+slice was reconciled path-by-path rather than merged or copied wholesale.
+src/codegen/object-create-class-instance.ts and
+tests/issue-5239-object-create-class-prototype.test.ts are also byte-identical
+to the b91 source and remain untouched. #5239's bridge returns before emitting
+in standalone/native-hostless modes; D5's marker is written only by the
+standalone $Object allocator for a raw null prototype. Therefore this terminal
+classification cannot bypass #5239's class-instance dispatch.
+
+#### Residual implementation
+
+- The prior companion-only route in binary-ops-in.ts is replaced for a
+  standalone fixed %Object.prototype% name only when the receiver is a mutable
+  $Object representation or an approved fnctor. Immutable/proven-safe receiver
+  shapes retain the original constant fold.
+- The private __extern_has_with_implicit_object_proto(obj, key) answer first
+  preserves the existing real __extern_has own/inherited result. On a real
+  $Object root or an approved fnctor's actual prototype root, only a miss then
+  consults __object_terminal_allows_implicit_proto: an ordinary implicit
+  terminal answers true; an explicitly marked terminal answers false; an
+  explicit own/inherited entry remains true.
+- The helper performs no extra JavaScript property probe. Its structural Proxy
+  branch runs a present has trap once, forwards an absent trap directly to the
+  target (including nested proxies), and dispatches a revoked Proxy once to
+  preserve its abrupt completion. Other non-$Object/non-fnctor carriers retain
+  the old permissive fixed-name answer.
+- The existing D5 writer and reader work is retained exactly: raw-null
+  classification survives same-encoded-null transitions, accepted non-null
+  failed-$Object casts clear the marker, refusals do not mutate it, and the
+  direct/fnctor proto-index tails plus OrdinaryToPrimitive continue to use the
+  final-terminal predicate. proto-index-store.ts, its ABI, Test262, and #5239
+  files remain unchanged.
+
+#### Expanded focused controls
+
+The standalone/import-free focused file now has **25** independent it controls,
+unrun in this checkpoint. In addition to the historical direct, transition,
+override, non-callable, abrupt-accessor, proto-index, and class-prototype
+controls, it now proves:
+
+1. an unarmed ordinary child keeps both fixed in names and ordinary string
+   coercion;
+2. an unarmed null-terminal child rejects both fixed names, still throws during
+   OrdinaryToPrimitive, and then accepts a real inherited toString hit;
+3. an approved fnctor answers true before, then false after, a no-companion
+   terminal relink; and
+4. cycle refusal has separate controls for the preserved TypeError behavior and
+   for the fixed-name in result, so neither half can mask the other.
+5. an unarmed Proxy forwards to its ordinary target, while a present fixed-name
+   has trap receives the exact target and `"toString"` key exactly once and
+   returns an observable false result; and
+6. a distinct throwing fixed-name Proxy has trap preserves its original abrupt
+   object identity and cannot reach a nested null-terminal fallback trap.
+
+The exact four Test262 paths and SHA-256
+ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50 remain the
+historical conformance manifest; no Test262 file was edited.
+
+#### Required released-worker replay
+
+After static review, one released worker must run these serial commands from
+this exact d60 worktree (or a freshly recorded newer main), recording the
+actual focused denominator/result rather than reusing the historical 18 / 19:
+
+~~~sh
+node node_modules/vitest/dist/cli.js run tests/issue-2175-null-proto-toprimitive.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot
+
+node --import tsx scripts/harness-flip-probe.ts --target standalone \
+  --check-determinism \
+  --paths test/language/expressions/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/expressions/class/accessor-name-static/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-static/computed-err-to-prop-key.js \
+  --out .tmp/2175-d5-null-proto-rows.jsonl
+
+node node_modules/vitest/dist/cli.js run tests/issue-5239-object-create-class-prototype.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot
+~~~
+
+Before the four-row command, regenerate the sorted manifest exactly as recorded
+above and verify its SHA-256. Record the 25-control focused result, zero-import
+checks, all four rows, both harness controls, denominator 4, nondeterministic:
+0, and the #5239 control result before clearing BLOCK.
+
+No GitHub issue was created.
+
+### Final b91 focused-runtime BLOCK — null-terminal `in` fold bypass (2026-08-31)
+
+**Verdict: BLOCKED.** The exact focused standalone run on this b91 worktree
+completed **15 / 19** assertions in **20.98 s**, with four failures whose
+returned status codes were, in assertion order, **11 / 4 / 4 / 3**. No GitHub
+issue was created.
+
+- Code `11`: the proto-index-armed created child still reports `"toString"` or
+  `"valueOf" in child` after its direct marked-null terminal.
+- Code `4`: the same leakage remains after the ordinary ancestor is relinked to
+  null, and again for an activated fnctor after its prototype terminal is
+  relinked.
+- Code `3`: a child still reports `"toString" in child` after a refused cycle
+  write leaves its marked-null terminal intact.
+
+The direct marked terminal's `get`, `has`, and coercion controls passed. Static
+inspection confirms that `__extern_has` captures both its direct `$Object` root
+and its real fnctor prototype root before their cursors advance, walks the
+chain before the companion tail, and gates both tails with
+`__object_terminal_allows_implicit_proto`. The four failing forms instead have
+a preceding source-level escape: `binary-ops-in.ts` folds a fixed
+`Object.prototype` name to `i32.const 1` when
+`hasExplicitNullObjectPrototype` cannot prove the right operand is *directly*
+`Object.create(null)`. A created descendant, later ancestor relink, fnctor
+instance, and cycle-refusal child all miss that narrow syntactic proof, so they
+bypass `__extern_has` and its otherwise-correct terminal gate.
+
+#### Narrow repair plan
+
+1. Preserve the existing `__extern_has` direct-object and fnctor root capture,
+   loop ordering, companion ordering, and terminal predicate; do not weaken the
+   controls or change `proto-index-store.ts`.
+2. At the standalone fixed-`Object.prototype`-name `in` fold, route a mutable
+   `$Object`/approved-fnctor receiver through `__extern_has` whenever the
+   proto-index companion path is active instead of manufacturing an affirmative
+   constant. The runtime then preserves a found own/inherited entry, returns
+   true for an ordinary terminal through the companion, and returns the normal
+   miss past a marked null terminal.
+3. Keep the fold for modules without the companion path and for shapes outside
+   this bounded `$Object`/fnctor runtime route. Re-run only the focused 19-case
+   suite once a runtime lane is released, then record its denominator and the
+   unchanged four-row/#5239 replay requirements separately.
+
+No compiler, TypeScript, hook, commit, push, PR, or GitHub action has run for
+this diagnosis. The next source edit requires the narrowly related
+`binary-ops-in.ts` call-site correction in addition to the four existing D5
+paths; it must not broaden the object representation or #5239 bridge.
+
+Root confirmed this path expansion before implementation: the D5 slice now
+also owns only `src/codegen/binary-ops-in.ts` for this static-fold bypass. The
+file is the sole source of the four constant `in` answers; the runtime
+predicate and proto-index ABI remain owned and unchanged. No GitHub issue was
+created.
+
+### Discovery evidence and planning base
+
+- The isolated planning worktree is pinned to requested fetched-upstream commit
+  `1c0ac753d65a939d268560776eb0591e18ceb6b9`. No compiler, Vitest, or Test262
+  command was run for this planning update.
+- The evidence below is copied from the #5195 recovery tracker’s serial
+  per-path capture on branch `codex/5195-runtime-keys-recovery-20260831`, HEAD
+  `c39de6dac8c376482b4f2cd628e445c6d8441728`. That recovery tree had
+  uncommitted #5195 work; it is discovery evidence, not a validation result for
+  this #2175 base or for the planned implementation.
+- Its deterministic six-row harness had a passing must-pass control, a failing
+  must-fail control, `pass: 2`, `fail: 4`, `total: 6`, and
+  `nondeterministic: 0`. The two passing rows were separate #5195
+  representatives. The four rows below all failed their first `get` accessor
+  assertion with `Expected a TypeError to be thrown but no exception was thrown
+  at all` (line 47 for static forms; line 45 for instance forms).
+- Read-only source inspection at the planning base corroborates the recorded
+  mechanism: `__object_create` in `object-runtime-prototype.ts` stores a null
+  `$proto` with `flags = 0`, while `__to_primitive` in `object-runtime.ts`
+  supplies `"[object Object]"` when a missing `toString` looks like the
+  ordinary implicit Object.prototype case. The current representation cannot
+  tell that case apart from `Object.create(null)`.
+
+### Current-main grounding (read-only, 2026-08-31)
+
+The live tracking ref is `upstream/main` at
+`87002f1fe4dd373e8e3c791dcd964f561e02c78e`, newer than this planning
+worktree's requested historical base. The D5 ownership text is unchanged there:
+it still recommends the implicit Object.prototype terminal plus
+`FLAG_NULL_PROTO` for `Object.create(null)` / `setPrototypeOf(null)`. The live
+source retains the same relevant anchors: `0x80+` is documented free in the
+object-flag allocation, `__object_create` initializes `flags = 0`,
+`__object_setPrototypeOf` has the same-value early return, and
+`__to_primitive` still emits the missing-`toString` `"[object Object]"`
+fallback.
+
+An implementer must start from an updated current-main worktree, re-ground the
+bit allocation and all source anchors after integration, and replay the focused
+and four-row controls on that exact HEAD. The historical #5195 checkpoint and
+the static manifest are discovery inputs only; neither substitutes for the
+current-main replay.
+
+### Static residual manifest
+
+The manifest is reproducible without executing the compiler or Test262. It is
+byte-sorted with `LC_ALL=C`, `test/`-relative, LF-only, and has exactly one
+final LF:
+
+```text
+test/language/expressions/class/accessor-name-inst/computed-err-to-prop-key.js
+test/language/expressions/class/accessor-name-static/computed-err-to-prop-key.js
+test/language/statements/class/accessor-name-inst/computed-err-to-prop-key.js
+test/language/statements/class/accessor-name-static/computed-err-to-prop-key.js
+```
+
+SHA-256 of those exact bytes:
+
+```text
+ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50
+```
+
+All four are the declaration/expression × instance/static variants of the same
+`Object.create(null)` computed-key expectation. They are retained as conformance
+evidence; do not edit their Test262 expectations or remove them from the slow
+list to make this slice appear green.
+
+### Implementation plan
+
+1. In `src/codegen/object-runtime.ts`, reserve an object-level
+   `OBJ_FLAG_NULL_PROTO` bit. At this planning base the object-flag allocation
+   documents `0x80+` as free, after integrity (`0x01`/`0x02`/`0x04`), RawJSON
+   (`0x08`), callable/constructor (`0x10`/`0x20`), and arguments (`0x40`)
+   markers. Re-check that allocation after rebasing; do not reuse a bit claimed
+   by integrated work and do not alter the `$Object` field layout.
+2. Thread that flag through `ObjectPrototypeHelperState` into
+   `src/codegen/object-runtime-prototype.ts`. In `__object_create`, set it only
+   when the original prototype argument is JavaScript null; a failed
+   `$Object` cast for some other argument must not silently become a
+   null-prototype classification.
+3. Preserve the distinction through `__object_setPrototypeOf`. A successful
+   explicit `null` target sets the bit and a successful non-null target clears
+   it while preserving every other object flag. The same-value fast path needs
+   special care: an ordinary object is currently encoded as `$proto = null`, so
+   `Object.setPrototypeOf(o, null)` must set the bit even when its stored proto
+   field is already null. Refused non-extensible/cyclic changes must leave the
+   bit unchanged; `__object_setPrototypeOf_status` remains observational.
+4. In the existing `__to_primitive` `tryOrdinaryMethod("toString", true)`
+   fallback, synthesize `"[object Object]"` only when the receiver is not
+   marked null-prototype. For a marked object with no `toString`, continue to
+   the ordinary `valueOf` probe and then use the already-emitted TypeError when
+   neither method yields a primitive. Keep present data methods, accessors,
+   non-callable values, abrupt completions, and primitive-return checks on their
+   current paths.
+5. Add a focused regression file, proposed as
+   `tests/issue-2175-null-proto-toprimitive.test.ts`, using the normal
+   standalone compile/validate/instantiate helper. Keep the four Test262 rows
+   as the end-to-end gate rather than copying or weakening their assertions.
+
+### Acceptance controls
+
+- Ordinary-object control: `{}` still gets the implicit Object.prototype
+  `toString` fallback, so string coercion remains `"[object Object]"`.
+- Null-prototype control: `Object.create(null)` with no own coercion methods
+  reaches the existing catchable TypeError path; it must not produce
+  `"[object Object]"`.
+- Transition control: `Object.setPrototypeOf(o, null)` flips an ordinary
+  object into the null-prototype behavior even if the pre-existing encoded
+  `$proto` field was null; resetting it to an accepted non-null ordinary object
+  restores the ordinary fallback.
+- Override control: an own callable `toString` or `valueOf` on a null-prototype
+  object still runs once and supplies its primitive result; a present
+  non-callable value or a throwing accessor still follows the existing
+  TypeError/abrupt-completion behavior.
+- End-to-end control: each manifest row passes, still expects TypeError for its
+  `Object.create(null)` computed property key, and the harness reports four
+  deterministic passes with both harness controls intact.
+
+### Regression risks
+
+- The null state cannot be inferred from `$proto === null`; doing so would turn
+  all ordinary standalone objects into null-prototype objects. The flag is the
+  discriminant.
+- An early return in `__object_setPrototypeOf` can lose the state transition
+  when both the old and requested encoded proto are null. Preserve the ordinary
+  integrity and cycle checks while handling that accepted transition.
+- Replacing the entire flags field would erase integrity, RawJSON, callable,
+  constructor, or arguments bits. Update only `OBJ_FLAG_NULL_PROTO`.
+- Do not broaden this into an `anyref` `$proto` field or a generic native-proto
+  link: D5 selected the implicit terminal specifically to avoid the existing
+  canonicalization and all-reader blast radius.
+- The default fallback is narrow. Suppressing it for a present method, an
+  accessor, an inherited non-null chain, or an unmarked ordinary object would
+  create a wrong answer rather than a controlled conformance improvement.
+
+### One-worker replay after implementation
+
+Run this only in one clean, isolated implementation worktree after recording
+its exact integrated HEAD and confirming no other compiler/test lane is active.
+The repository harness is serial; `--check-determinism` repeats each selected
+row rather than adding parallel workers.
+
+```sh
+mkdir -p .tmp
+printf '%s\n' \
+  'test/language/expressions/class/accessor-name-inst/computed-err-to-prop-key.js' \
+  'test/language/expressions/class/accessor-name-static/computed-err-to-prop-key.js' \
+  'test/language/statements/class/accessor-name-inst/computed-err-to-prop-key.js' \
+  'test/language/statements/class/accessor-name-static/computed-err-to-prop-key.js' \
+  | LC_ALL=C sort > .tmp/2175-d5-null-proto-paths.txt
+shasum -a 256 .tmp/2175-d5-null-proto-paths.txt
+```
+
+The hash must be
+`ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50` before
+the manifest is consumed. Then run the focused regression and the serial
+four-row evidence lane, one at a time:
+
+```sh
+node node_modules/vitest/dist/cli.js run tests/issue-2175-null-proto-toprimitive.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot
+
+node --import tsx scripts/harness-flip-probe.ts --target standalone \
+  --check-determinism \
+  --paths test/language/expressions/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/expressions/class/accessor-name-static/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-static/computed-err-to-prop-key.js \
+  --out .tmp/2175-d5-null-proto-rows.jsonl
+```
+
+Record the harness controls, per-row outcomes, denominator (`4`), and
+`nondeterministic: 0`; do not promote the historical #5195 `2 pass / 4 fail`
+checkpoint into an after-fix result. Finish with the targeted static checks
+for the changed runtime files, the new focused test, and this issue file before
+any broader standalone measurement.
+
+### Handoff
+
+One worker should own the runtime change because `object-runtime.ts` and
+`object-runtime-prototype.ts` share the `$Object` flags contract. Start from
+current `upstream/main` (record the exact refreshed SHA; this planning pass saw
+`87002f1fe4dd373e8e3c791dcd964f561e02c78e`), not the historical planning base.
+Re-check the free bit and the `__object_setPrototypeOf` early-return ordering,
+then replay every focused and four-row control on the actual integrated HEAD
+before updating this record with results. Keep #5195 limited to its
+computed-class-key bridge and leave its historical residual classification
+intact. This documents a sub-slice of the existing #2175 issue; it neither
+claims a new issue ID nor closes the broader #2175 work.
+
+### D5 implementation checkpoint — integrated current main (2026-08-31)
+
+The isolated implementation worktree on
+`codex/2175-null-proto-residual-plan-20260831` was advanced from the historical
+planning base with a non-destructive `git merge --ff-only upstream/main`. Its
+implementation base is now exactly
+`87002f1fe4dd373e8e3c791dcd964f561e02c78e`. The tracked `0x80` flag range was
+re-checked on that HEAD before allocation; no `$Object` field was added or
+reordered.
+
+Implementation decisions on that exact base:
+
+- `OBJ_FLAG_NULL_PROTO = 0x80` is local to the `$Object.flags` contract and is
+  threaded only through `ObjectPrototypeHelperState` into the prototype helper
+  builder.
+- `__object_create` marks the flag only when its original externref prototype
+  input is JavaScript `null`; a failed `$Object` cast cannot classify another
+  input as null-prototype.
+- `__object_setPrototypeOf` preserves all unrelated flag bits, updates this bit
+  only after the ordinary extensibility/cycle checks accept the write, and
+  clears it for a successful non-null input. Its same-value fast path now treats
+  `($proto = null, FLAG_NULL_PROTO = 0)` and
+  `($proto = null, FLAG_NULL_PROTO = 1)` as distinct states. The paired status
+  helper mirrors that decision without a write, so the throwing high-level
+  `Object.setPrototypeOf` path cannot bypass a non-extensible transition.
+- `__to_primitive` retains the missing-`toString` `"[object Object]"` result
+  only for unmarked `$Object` receivers. Marked receivers continue through the
+  existing `valueOf` probe and TypeError tail; present methods, non-callable
+  properties, and abrupt method calls stay on their existing paths.
+- `tests/issue-2175-null-proto-toprimitive.test.ts` is the focused standalone
+  compile/validate/instantiate control. Its six assertions cover ordinary
+  fallback, `Object.create(null)`, the same-encoded-null transition and reset,
+  callable `toString`/`valueOf` overrides, a present non-callable `toString`,
+  and an abrupt own `toString` completion.
+
+#### Static evidence only
+
+The final changed-file static gate passed on this integrated worktree:
+
+- `git diff --check` reported no whitespace errors.
+- Prettier `--check` passed for this tracker, both runtime files, and the new
+  focused test.
+- Biome `lint --diagnostic-level=error` passed for the three changed TypeScript
+  files (`Checked 3 files`; no fixes applied).
+- Focused source inspection confirmed the only `ObjectPrototypeHelperState`
+  construction supplies the new bit, the writer and status helper share the
+  same encoded-null predicate, and the fallback gate reads only
+  `$Object.flags` after the existing `$Object` receiver test.
+
+No compiler, Vitest, Test262, TypeScript, hook, commit, push, PR, or GitHub
+mutation has been run for this implementation checkpoint. The historical
+#5195 evidence remains `2 pass / 4 fail` across its six-row harness and is not
+an after-fix claim. No GitHub issue was created.
+
+### P1 independent-review BLOCK — terminal null-prototype reachability (2026-08-31)
+
+**Verdict: BLOCK.** The first D5 implementation only inspected the receiver's
+`OBJ_FLAG_NULL_PROTO`. That is insufficient: an unmarked child such as
+`Object.create(Object.create(null))`, or an existing child whose ancestor is
+later changed with `Object.setPrototypeOf`, reaches an explicitly null terminal
+without carrying the bit itself. It could still receive the synthetic implicit
+`Object.prototype` answer. D5 is therefore not complete and must not be
+claimed as complete until the dynamic terminal check and its focused replay
+land.
+
+#### Required P1 repair plan
+
+1. Keep `OBJ_FLAG_NULL_PROTO` only on the object whose own `[[Prototype]]` was
+   explicitly set to JavaScript `null`; do not copy it into children. Add one
+   private, read-only `object-runtime.ts` instruction factory that starts at a
+   `$Object` root, walks `$proto` links until the final reachable `null`, and
+   answers whether that final terminal still permits the implicit
+   Object.prototype behavior. An unmarked terminal permits it; a marked
+   terminal does not. This must observe later ancestor mutation dynamically.
+   Non-`$Object` callers retain their former permissive behavior.
+2. Use that predicate only at the three reviewed synthetic-terminal sites:
+   `__to_primitive`'s `"[object Object]"` fallback, the `$Object`
+   terminal-miss tail in `__extern_get` before `protoIndexRecvGetMissInstrs`,
+   and the corresponding `__extern_has` tail before
+   `protoIndexRecvHasMissInstrs`. Capture each original `$Object` walk root
+   before its cursor loop overwrites the cursor. If the final terminal is
+   explicitly null, take the ordinary get/has miss; do not suppress a found own
+   or inherited `$Object` entry.
+3. Do not change `proto-index-store.ts`, its ABI, or generic prototype
+   representation. The repair is a local reader predicate plus the three call
+   sites above; no flag propagation and no Test262 edit are allowed.
+4. Extend the focused standalone/import-free test with direct, created-child,
+   and `setPrototypeOf`-child null-terminal cases; a proto-index-armed proof
+   that `Object.prototype.toString`/`valueOf` do not leak; inherited explicit
+   override; failed non-null cast staying ordinary; exact string/number-hint
+   order and object-result behavior; non-extensible and cycle refusals; and an
+   actual throwing accessor. Each remains non-vacuous.
+
+#### Truthful handoff before P1 repair
+
+The earlier static pass applies only to the receiver-bit implementation now
+blocked by review; it is not behavioral validation of P1. No compiler, Vitest,
+Test262, TypeScript, hook, commit, push, PR, or GitHub mutation has run. The
+historical #5195 `2 pass / 4 fail` discovery evidence remains pre-fix only.
+After this P1 repair, rerun the existing one-worker focused and four-row commands
+on this same isolated worktree and record outcomes separately. No GitHub issue
+was created.
+
+### P1 repair checkpoint — static evidence only (2026-08-31)
+
+The required P1 reader repair is staged, but **D5 remains BLOCKED pending the
+released one-worker runtime replay**. This is not a completion claim.
+
+- `object-runtime.ts` now registers the private, read-only
+  `__object_terminal_allows_implicit_proto` native. Starting from a nullable
+  `$Object` root, it walks each live `$proto` link and tests only the final
+  `$proto === null` terminal's `OBJ_FLAG_NULL_PROTO` bit. A null root remains
+  permissive for non-`$Object` callers. The bit remains local to explicit-null
+  writers; no descendant propagation was added, so ancestor relinks are read
+  dynamically at the eventual miss.
+- The predicate is called only at the three reviewed synthetic-terminal sites:
+  the missing-`toString` `"[object Object]"` fallback in `__to_primitive`, the
+  terminal `$Object` miss before `protoIndexRecvGetMissInstrs`, and the matching
+  terminal `$Object` miss before `protoIndexRecvHasMissInstrs`. `__extern_get`
+  and `__extern_has` save their direct `$Object` root in an appended local before
+  their cursor loops advance. A found own or inherited `$Object` entry still
+  returns before either tail; an explicit-null terminal uses the normal get/has
+  miss instead of the Object.prototype companion.
+- `proto-index-store.ts` and its ABI/body were not edited. The `$proto` field
+  representation remains unchanged; `Object.create` and `setPrototypeOf` retain
+  the existing D5 writer/status flag contract.
+- The standalone/import-free focused test now has direct, created-child,
+  `setPrototypeOf`-child, and dynamically relinked-ancestor terminal cases;
+  proto-index-armed `Object.prototype.toString`/`valueOf` ordinary controls and
+  direct-and-child null-terminal non-leak checks; an inherited explicit
+  override; a non-null class-instance prototype that fails the `$Object` cast
+  and stays ordinary; exact string/number-hint ordering after object results;
+  non-callable and throwing-accessor behavior; and
+  non-extensible/cycle refusal controls. Its helper still asserts a valid Wasm
+  module with zero imports for every snippet.
+
+#### P1 static checks
+
+- `git diff --check` passed after the P1 edits.
+- Prettier `--check` passed for this tracker, both runtime files, and
+  `tests/issue-2175-null-proto-toprimitive.test.ts`.
+- Biome `check` passed for the focused test, and Biome `lint` passed for the two
+  runtime files plus the focused test (`Checked 3 files`; no fixes applied).
+  A full Biome `check` of the two large runtime files still reports their
+  pre-existing repository-wide Biome formatter/import-order differences; this
+  slice did not rewrite unrelated source formatting. The targeted Prettier
+  check is clean, including both P1 insertion regions.
+
+No compiler, Vitest, Test262, TypeScript, hook, commit, push, PR, or GitHub
+action has run after this repair. The only result evidence remains the pre-fix
+#5195 discovery harness (`2 pass / 4 fail` across six rows); it must not be
+reported as P1 validation. No GitHub issue was created.
+
+#### Released-worker handoff
+
+Keep this worktree on exact integrated `upstream/main`
+`87002f1fe4dd373e8e3c791dcd964f561e02c78e` (or record the newer current-main
+SHA if it changes before replay). One worker, after the runtime lane is
+explicitly released, must run the focused Vitest command and the serial,
+deterministic four-row command already listed above, in that order. Record the
+focused assertion count, zero-import result, each manifest path, harness
+controls, denominator `4`, and `nondeterministic: 0`. Only then may D5's BLOCK
+verdict be revisited; do not edit Test262 or broaden into #5195.
+
+### P1/P2 independent-review BLOCK — encoded-null transition and fnctor tails (2026-08-31)
+
+**Verdict: still BLOCKED.** The terminal-reader repair fixed direct `$Object`
+walks but left two bounded correctness holes. No GitHub issue was created.
+
+1. **Encoded-null transition classification.** `returnIfSameEncodedPrototype`
+   compares the canonicalized `$Object` references before it distinguishes the
+   raw requested prototype. An explicitly null-marked object and a successful
+   non-null request that fails the `$Object` cast both encode as `null`; that
+   early return incorrectly retains `OBJ_FLAG_NULL_PROTO`. The writer and its
+   status helper must treat raw JavaScript `null` and raw non-null failed-cast
+   requests as distinct classifications whenever the encoded references are both
+   null. An accepted non-null failed-cast request must continue to the normal
+   write and clear only the marker; rejected non-extensible/cyclic requests and
+   the status predicate remain non-mutating.
+2. **Fnctor proto-index tails.** The direct `$Object` root capture intentionally
+   leaves non-`$Object` callers permissive, but an activated function-constructor
+   instance has a real per-fnctor `$Object` prototype walk root. When that
+   prototype chain terminates explicitly at null, the fnctor branch must gate
+   the same companion get/has tails using
+   `__object_terminal_allows_implicit_proto`; otherwise armed
+   `Object.prototype` companions leak through `in` and OrdinaryToPrimitive.
+
+#### Narrow P2 repair plan
+
+1. Refine only the shared same-encoded-prototype helper in
+   `object-runtime-prototype.ts`: preserve a true same-state return only when
+   both the canonicalized references and raw-null classifications agree. Keep
+   every existing writer/status refusal path and flag ABI unchanged.
+2. In `__extern_get` and `__extern_has`, capture the per-fnctor `$Object` walk
+   root when that branch is activated, then apply the existing private terminal
+   predicate solely to the receiver-aware companion tails. Do not widen generic
+   non-`$Object` callers, alter `proto-index-store.ts`, or propagate the bit.
+3. Extend the focused standalone/import-free control with an extensible
+   explicit-null → non-null `new C()` failed-cast transition, its non-extensible
+   refusal counterpart, a proto-index-armed ancestor-relink proof, and an
+   activated fnctor whose prototype terminal is relinked to null while both
+   `in` and coercion remain non-leaking.
+
+This remains a narrow reader/writer correction within #2175 D5. No compiler,
+Vitest, Test262, TypeScript, hook, commit, push, PR, or GitHub action has run
+for this review response; runtime replay remains required before clearing the
+BLOCK verdict.
+
+### P2 repair checkpoint — static evidence only (2026-08-31)
+
+The two review findings above are now repaired in the isolated D5 worktree,
+but **D5 remains BLOCKED pending the released one-worker runtime replay**. This
+is not a completion claim. No GitHub issue was created.
+
+- `returnIfSameEncodedPrototype` now requires both equal encoded `$Object`
+  references and matching original-input null classifications before it takes a
+  no-op return. Thus a marked explicit-null object plus a non-null `new C()`
+  input that cannot cast to `$Object` proceeds through the existing status,
+  extensibility, cycle, and writer paths; an accepted write clears only
+  `OBJ_FLAG_NULL_PROTO`. A refused status/write is still non-mutating.
+- `__extern_get` saves the actual `$Object` root of an approved fnctor's
+  per-constructor prototype walk before its cursor advances. `__extern_has`
+  does the same for its fnctor walk. Their receiver-aware proto-index companion
+  tails now use the existing terminal predicate, alongside the direct
+  `$Object` tails. This is intentionally a narrow get/has fallback gate: a
+  real root ending at marked null gets the normal miss; an unrooted generic
+  non-`$Object` caller continues to receive its prior permissive answer.
+- No descendant receives the flag, no `$proto` representation changed, and
+  `proto-index-store.ts` (including its ABI/body) was not edited.
+- The focused standalone/import-free control now also proves the accepted
+  explicit-null → `new C()` failed-cast transition, the matching
+  non-extensible refusal, a proto-index-armed ancestor relink, and an approved
+  non-empty fnctor whose armed `toString`/`valueOf` companions are visible
+  before its prototype terminal is relinked and cannot leak afterward through
+  either `in` or coercion. Existing direct terminal, child, override, ordering,
+  non-callable, abrupt-accessor, and cycle controls remain intact.
+
+#### P2 static checks
+
+- `git diff --check` passed.
+- Prettier `--check` passed for this tracker, `object-runtime.ts`,
+  `object-runtime-prototype.ts`, and the focused test.
+- Biome `check` passed for the focused test, and Biome `lint
+  --diagnostic-level=error` passed for the two runtime files plus the focused
+  test (`Checked 3 files`; no fixes applied). No broad formatter rewrite was
+  attempted.
+
+No compiler, Vitest, Test262, TypeScript, hook, commit, push, PR, or GitHub
+action has run for P2. The historical #5195 discovery evidence remains the
+pre-fix `2 pass / 4 fail` result and is not validation of this repair.
+
+#### Released-worker handoff
+
+On a freshly integrated current `upstream/main` worktree (re-record the SHA;
+this worktree's base remains
+`87002f1fe4dd373e8e3c791dcd964f561e02c78e`), one released worker must run the
+existing serial focused Vitest command and then the deterministic four-row
+`harness-flip-probe.ts --check-determinism` command in the earlier D5 handoff.
+Record the focused assertion count, zero-import result, exact four-path
+manifest and hash, each row, denominator `4`, and `nondeterministic: 0` before
+revisiting the BLOCK verdict. Do not edit Test262 or broaden #5195.
+
+### Live-base semantic port handoff — 427900e7 (2026-08-31)
+
+The independently PASSed D5 source slice is ported only into this exclusive live
+worktree:
+
+- worktree: `/Users/thomas/Code/js2/.codex-worktrees/recovery-2175-null-proto-live-20260831`
+- branch: `codex/2175-null-proto-live-20260831`
+- exact base: `427900e7cd4f40e294021d3421f7471fa49506fc`
+- read-only source: `codex/2175-null-proto-residual-plan-20260831` at
+  `87002f1fe4dd373e8e3c791dcd964f561e02c78e`
+
+A path-scoped comparison of that source base with this live base produced no
+changes for the four owned paths (this tracker, `object-runtime.ts`,
+`object-runtime-prototype.ts`, and the focused test). Therefore the port is
+semantically identical to the independently reviewed source slice; no upstream
+hunk reconciliation was necessary at base `427900e7`.
+
+The preceding P1/P2 BLOCK sections are the historical repair record, not a
+claim that the independently reviewed source remains blocked. This port ran no
+compiler, Vitest, Test262, TypeScript, hook, commit, push, PR, or GitHub action;
+it does not manufacture a second runtime result. The historical #5195 discovery
+evidence remains pre-fix only.
+
+#### New-current-main overlap and required replay
+
+While this 427-based port was in progress, `upstream/main` advanced to
+`b91fed8a1ff949f936877b4f06bd4868b1033959`, which merges #5239's
+Object.create class-prototype bridge. That is a semantic overlap at the
+Object.create boundary: it can change how the D5 `new C()` failed-`$Object`
+cast controls are represented. Do not merge this dirty snapshot. Root will
+provide a fresh b91-based worktree for final reconciliation and replay.
+
+On that fresh worktree, re-ground the raw-null classification in
+`__object_create`, the same-encoded-null writer/status distinction, and the
+class-instance `new C()` transition/refusal controls against #5239. Run the
+#5239 controls together with the existing one-worker focused Vitest and
+four-row deterministic replay commands above; record the fresh b91 SHA,
+focused assertion result, zero-import checks, manifest/hash, all four rows,
+denominator `4`, harness controls, and `nondeterministic: 0` before making
+any final behavior claim.
+
+#### 427-based static port evidence
+
+- The two runtime files and focused test are byte-identical to the read-only
+  independently reviewed source; this tracker adds only the live-base handoff
+  and b91 overlap record.
+- `git diff --check` passed for tracked changes, and a separate
+  `git diff --no-index --check /dev/null` check passed for the new focused test.
+- Targeted Prettier `--check` passed for all four owned paths. This worktree
+  has no local `node_modules`, so the existing canonical repository tool
+  binaries were invoked read-only against these absolute live-worktree paths.
+- Biome `check` passed for the focused test; Biome `lint
+  --diagnostic-level=error` passed for both runtime files plus that test
+  (`Checked 3 files`; no fixes applied).
+- The stable dirty snapshot contains exactly the three tracked owned files and
+  the one new focused test; no `proto-index-store.ts`, Test262, or unrelated
+  path changed.
+
+No GitHub issue was created.
+
+### Final live-base semantic port — b91fed8 (2026-08-31)
+
+The independently PASSed 427 D5 source slice is ported into this clean exact
+current-main worktree:
+
+- worktree: `/Users/thomas/Code/js2/.codex-worktrees/recovery-2175-null-proto-final-20260831`
+- branch: `codex/2175-null-proto-final-20260831`
+- exact base: `b91fed8a1ff949f936877b4f06bd4868b1033959`
+- read-only source: `codex/2175-null-proto-live-20260831` at
+  `427900e7cd4f40e294021d3421f7471fa49506fc`
+
+A path-scoped comparison of `427900e7` to `b91fed8` reports no upstream
+change in the four D5-owned paths. The runtime files and focused test are
+therefore semantically and byte-for-byte identical to the PASSed 427 port; this
+tracker retains its historical record and adds only the b91 grounding and
+#5239 interaction analysis. The source tracker carried one literal leading
+`+` before its D5 heading; that Markdown typo is corrected here only. No
+behavioral reconciliation hunk was needed.
+
+#### #5239 Object.create class-prototype bridge interaction
+
+#5239 adds `src/codegen/object-create-class-instance.ts` and
+`tests/issue-5239-object-create-class-prototype.test.ts`; both remain
+untouched by this D5 port. Its emitted class-instance export explicitly returns
+without emitting under `ctx.standalone`, `ctx.wasi`, or `noJsHost(ctx)`.
+D5's terminal marker is written only by the native `$Object` allocator, and
+only for a raw JavaScript `null` prototype input.
+
+Consequently, the bridge cannot bypass D5's marker: a non-null compiled class
+prototype either yields a real compiled class instance (not a D5 `$Object`)
+or declines to the ordinary host `Object.create` fallback; a null input
+declines the bridge before the native D5 writer classifies it. The focused D5
+suite uses `target: "standalone"`, where #5239 emits no bridge. Static
+inspection exposes no unpinned cross-path interaction, so no additional test
+was added and the #5239 control is preserved exactly.
+
+#### Final validation plan — one released worker only
+
+External compiler/test lanes are currently saturated. Do not treat this static
+port as a behavioral replay. On this exact b91 base (or a freshly recorded
+newer main), one worker must run these serial commands, in order, after
+confirming the dependency provisioning:
+
+```sh
+node node_modules/vitest/dist/cli.js run tests/issue-2175-null-proto-toprimitive.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot
+
+node --import tsx scripts/harness-flip-probe.ts --target standalone \
+  --check-determinism \
+  --paths test/language/expressions/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/expressions/class/accessor-name-static/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-static/computed-err-to-prop-key.js \
+  --out .tmp/2175-d5-null-proto-rows.jsonl
+
+node node_modules/vitest/dist/cli.js run tests/issue-5239-object-create-class-prototype.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot
+```
+
+Before the four-row command, regenerate and verify the earlier exact
+four-path manifest and SHA-256
+`ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`.
+Record the focused result, zero-import checks, each of the four row outcomes,
+harness controls, denominator `4`, `nondeterministic: 0`, and the #5239
+control result. Do not edit Test262 or broaden D5 while reconciling that
+independent host-only bridge.
+
+#### b91 static-port evidence
+
+- A read-only comparison against the PASSed 427 port confirms both runtime
+  files and the focused test are byte-identical. The tracker differs only for
+  its exact b91 handoff, #5239 analysis, and the corrected literal heading
+  prefix described above.
+- A path-scoped `427900e7..b91fed8` source comparison is empty for the four
+  D5 paths. The #5239 implementation file and its regression test also have no
+  diff in this worktree, preserving that bridge exactly.
+- `git diff --check` passed for tracked changes, and a separate
+  `git diff --no-index --check /dev/null` check passed for the new focused
+  test.
+- Targeted Prettier `--check` passed for all four D5 paths. The worktree has
+  no local `node_modules`, so the canonical repository tool binaries were
+  used read-only against absolute paths here.
+- Biome `check` passed for the focused test; Biome `lint
+  --diagnostic-level=error` passed for both runtime files plus that test
+  (`Checked 3 files`; no fixes applied).
+
+No compiler, Vitest, Test262, TypeScript, hook, commit, push, PR, or GitHub
+action has run in this b91 port.
+
+No GitHub issue was created.
+
+### Final b91 repair checkpoint — terminal-aware `in` fold route (2026-08-31)
+
+**Verdict: remains BLOCKED pending a released runtime rerun.** The exact
+pre-repair focused result remains **15 / 19** in **20.98 s**, with failure
+codes **11 / 4 / 4 / 3**; it is diagnosis evidence, not a passing result. No
+GitHub issue was created.
+
+The runtime reader was not the escaping path. `__extern_has` already captures
+the direct `$Object` and approved-fnctor `$Object` roots, walks those roots
+before its companion tail, and asks
+`__object_terminal_allows_implicit_proto` at each tail. The four failing
+descendant/relink/cycle/fnctor forms instead reached the fixed-name
+`Object.prototype` `in` fold in `binary-ops-in.ts`, which emitted an affirmative
+constant before `__extern_has` could inspect the marked terminal.
+
+Root approved the sole additional D5-owned path,
+`src/codegen/binary-ops-in.ts`, for this repair. Its read-only direct-statement
+recognizer records static named writes to the literal `Object.prototype` through
+direct or literal-element assignment, `Object`/`Reflect.defineProperty(ies)`,
+and direct `__defineGetter__`/`__defineSetter__` calls. It accepts only a
+preceding direct statement in the same block, rather than a merely possible
+source-wide write that could be conditional or later. The static fold now defers
+only when all of the following are true:
+
+- the exact fixed key has such an already-executed direct Object-prototype
+  companion write and the existing named/index proto-store reservation is
+  active;
+- the receiver is a mutable dynamic `$Object` representation or an approved
+  fnctor instance; and
+- the previous standalone Object-prototype fixed-name predicate was positive.
+
+That path forces the former positive fold through `__extern_has`. An ordinary
+terminal still gets the Object-prototype companion hit; a direct/descendant
+marked-null terminal gets the normal miss after the real own/inherited walk.
+Modules without an exact Object-prototype companion key, and immutable/proven
+safe receiver shapes, retain their prior constant fold. The shared bare-name
+pre-scan is deliberately not used as identity evidence: an
+`Array.prototype.toString`-only write must not make an ordinary `$Object` miss
+its valid Object-prototype answer. `proto-index-store.ts`, the terminal flag
+ABI, the core get/ToPrimitive paths, and #5239 remain unchanged.
+
+No additional compile-shape test was added. The focused 19-case control already
+arms both exact Object-prototype companions, proves the ordinary positive `in`
+answer, and then asserts the direct-child, ancestor-relink, fnctor-relink, and
+cycle-refusal terminal answers that previously produced codes 11/4/4/3. The
+new route is present in both the static `has` decision and the existing
+`__extern_has` call guard; a released focused pass is therefore non-vacuous
+coverage of this fold boundary.
+
+#### Static evidence after the fold repair
+
+- `git diff --check` passed.
+- Targeted Prettier `--check` passed for this tracker, `binary-ops-in.ts`, both
+  runtime files, and the focused test.
+- Biome `check` passed for the focused test (`Checked 1 file`); Biome `lint
+  --diagnostic-level=error` passed for `binary-ops-in.ts`, both runtime files,
+  and the focused test (`Checked 4 files`; no fixes applied).
+- A source inventory confirms the new route at the static fold and its existing
+  `__extern_has` terminal predicate/tails. The dirty snapshot contains exactly
+  this tracker, `binary-ops-in.ts`, `object-runtime.ts`,
+  `object-runtime-prototype.ts`, and the new focused test.
+
+No compiler, Vitest, Test262, TypeScript, hook, commit, push, PR, or GitHub
+action ran for this checkpoint.
+
+#### d2c replay handoff
+
+`upstream/main` subsequently advanced to
+`d2c7305c0fdd983cc3c60c545725bd8da5043d90`. A path-scoped read-only comparison
+of `b91fed8a1ff949f936877b4f06bd4868b1033959..d2c7305c0fdd983cc3c60c545725bd8da5043d90`
+is empty for all five D5-owned paths above. Do **not** merge this dirty b91
+worktree. A single released worker must replay the existing serial focused
+D5, four-row deterministic, and #5239 regression commands from the final
+validation plan on a fresh d2c-based worktree, re-record that base, and retain
+the unchanged manifest/hash, zero-import controls, denominator `4`, and
+`nondeterministic: 0` evidence. No GitHub issue was created.
+
+### Root runtime checkpoint: BLOCK at 18 / 19 (2026-08-31)
+
+Root released one compiler worker and ran the focused file from the stable b91
+snapshot with one Vitest fork and no file parallelism. The result improved from
+15 / 19 to **18 / 19**, but the issue remains **BLOCK** and no later validation
+gate ran. The sole failure was:
+
+```text
+keeps the marked null terminal intact after a cycle refusal
+expected 1, received 3
+tests/issue-2175-null-proto-toprimitive.test.ts:386
+```
+
+Code `3` is returned by the fixed-name `"toString" in child` check before the
+subsequent `String(child)` assertion executes. This is direct evidence that the
+compiler's affirmative Object-prototype fold still escapes; it is not evidence
+that the runtime cycle refusal changed the terminal bit. The first repair only
+defers the fold when the same source has an exact preceding
+Object.prototype-companion write. The cycle control has no such write, so
+`objectPrototypeCompanionCanAnswer` leaves the affirmative fold in place.
+
+#### Bounded residual repair plan
+
+1. Make the focused cycle control independently prove both halves: first prove
+   the refused write leaves OrdinaryToPrimitive at the marked null terminal,
+   then prove the fixed-name `in` answer is false. Add matching no-companion
+   direct-child and ordinary-object controls so neither outcome can pass by
+   constant or unreachable code.
+2. For standalone mutable `$Object` descendants and approved fnctor roots,
+   replace the unsound fixed-name constant with a non-observable runtime answer
+   that combines real own/prototype hits with the existing
+   `__object_terminal_allows_implicit_proto` classification. It must answer
+   true at an ordinary implicit Object.prototype terminal and false at an
+   explicitly marked null terminal even when no proto-index companion was
+   materialized. Reuse compiler/runtime metadata; do not add an observable
+   property probe or weaken Proxy traps. Keep the existing constant fold for
+   immutable/proven-safe shapes and preserve exact own/inherited hits.
+3. Semantically replay the five-path D5 snapshot plus this residual into the
+   clean current-main worktree at
+   `d60aa73f9b3405dcdc1f832a511acb2366c7de00`. The
+   `d2c7305c0f..d60aa73f9b` delta adds only the unrelated #5246 tracker and has
+   no exact D5 path overlap; nevertheless reconcile rather than copying whole
+   files.
+4. Rerun static gates and obtain a fresh independent review before root repeats
+   the one-worker 19-case file. Only a 19 / 19 result may unlock the exact
+   four-row deterministic manifest, #5239 regression, TS7, hooks, commit, push,
+   and separate non-draft PR.
+
+No GitHub issue was created.
+
+### d60 static handoff — pending runtime review (2026-08-31)
+
+The exact d60 worktree has reached a stable dirty static boundary. The
+historical b91 runtime result remains the only runtime evidence; the current
+focused file has 25 controls and has not been executed.
+
+- git diff --check passed, including the four tracked D5 paths.
+- A separate no-index whitespace check for the new focused test passed.
+- Targeted Prettier --check passed for this tracker, binary-ops-in.ts, both
+  runtime files, and the focused test.
+- Biome check passed for the focused test. Biome lint
+  --diagnostic-level=error passed for binary-ops-in.ts, both runtime files, and
+  the focused test; no fixes were applied.
+- Read-only comparison confirms object-runtime-prototype.ts is byte-identical
+  to the reviewed b91 slice. The #5239 class-instance bridge source is also
+  byte-identical and unmodified.
+- Source inventory is exactly this tracker, src/codegen/binary-ops-in.ts,
+  src/codegen/object-runtime.ts, src/codegen/object-runtime-prototype.ts, and
+  tests/issue-2175-null-proto-toprimitive.test.ts. No Test262 file,
+  proto-index-store.ts, #5239 file, or unrelated path changed.
+
+The next action is one released-worker runtime replay using the commands in
+the d60 checkpoint above, followed by independent review. Do not infer a
+runtime result from these static gates.
+
+No GitHub issue was created.
+
+### Independent d60 review: BLOCK on Proxy evidence (2026-08-31)
+
+The independent reviewer found the new
+`__extern_has_with_implicit_object_proto` source design coherent: real
+own/inherited hits precede terminal classification, classification occurs only
+after a miss, descendant/relink/fnctor roots are handled, immutable/proven-safe
+folds remain, and #5239 is untouched. Acceptance is nevertheless **BLOCK** on
+a P2 test-evidence gap.
+
+The current sole Proxy control returns a fixed `false` from a present `has`
+trap. It does not observe invocation count, receiver/target/key arguments, or
+abrupt completion. A broken specialized helper that bypasses a present trap,
+calls it twice, or swallows a thrown trap could therefore pass the claimed
+then-24-control denominator.
+
+#### Bounded evidence repair
+
+1. Strengthen or replace the present-Proxy control so it records exactly one
+   `has` invocation, proves the target and fixed key received by the trap, and
+   returns an observable false result through the specialized fixed-name path.
+2. Add a distinct throwing-`has` control that proves the original abrupt value
+   escapes unchanged and that no terminal fallback executes afterward.
+3. Update the exact focused denominator and tracker claims, then rerun targeted
+   diff/format/lint gates. Do not alter the runtime helper unless the stronger
+   controls expose a source defect.
+4. Obtain a fresh independent review before root releases the focused runtime
+   lane and later four-row/#5239 gates.
+
+No GitHub issue was created.
+
+### Proxy evidence repair checkpoint (2026-08-31)
+
+The present-has control now binds one ordinary target to both the forwarding and
+trapped proxies. It observes the forwarded positive result, the trapped false
+result, exactly one trap invocation, and that the sole invocation received that
+target plus the fixed `"toString"` key. The distinct abrupt control gives the
+outer proxy a unique object sentinel and places a counted `has` trap on its
+nested null-terminal target. It passes only when the original sentinel escapes,
+the outer trap ran once, and the nested fallback trap never ran. This keeps a
+swallowed abrupt completion, a duplicate trap call, a wrong trap argument, and
+a post-trap fallback independently observable.
+
+The focused file therefore has exactly **25** independent `it` controls: the
+prior present-trap control was strengthened and one abrupt-trap control was
+added. Runtime evidence remains absent. The released-worker command above must
+record a fresh **25 / 25** focused result (rather than the historical b91
+18 / 19 or the prior unrun 24-control denominator) before the four-row and
+#5239 commands can be released. No source helper, Test262 file, or #5239 path
+was changed. No GitHub issue was created.
+
+#### Targeted static evidence
+
+- `git diff --check` passed; the separate no-index whitespace check for the
+  new focused test passed as well.
+- Direct Prettier `--check` passed for this tracker and the focused test.
+- Biome `check` and `lint --diagnostic-level=error` passed for the focused test
+  (`Checked 1 file`; no fixes applied).
+
+No compiler, Vitest, Test262, TypeScript, hook, commit, push, PR, or GitHub
+operation ran. The P2 evidence repair is ready for a fresh independent static
+review, not a runtime PASS claim.
+
+### Released single-worker validation: Test262 setup BLOCK (2026-08-31)
+
+The assigned one-worker runtime lane ran serially on
+`codex/2175-null-proto-d60-20260831` at
+`d60aa73f9b3405dcdc1f832a511acb2366c7de00`. The subsequently fetched live
+`upstream/main` is `932341cc7d01547bf6b0065d766a31cdf3478d9f`; its
+`207793dd..932341cc` delta contains benchmark artifacts only and has no D5
+owned-path overlap. No GitHub issue was created.
+
+- The focused command completed with one Vitest fork and no file parallelism:
+
+  ~~~sh
+  node /Users/thomas/Code/js2/node_modules/vitest/dist/cli.js run \
+    tests/issue-2175-null-proto-toprimitive.test.ts \
+    --pool=forks --poolOptions.forks.singleFork=true \
+    --no-file-parallelism --reporter=dot
+  ~~~
+
+  Result: **25 / 25** tests passed in **18.49 s** (one file). This covers the
+  focused suite's standalone zero-import assertions, including the strengthened
+  present and abrupt Proxy controls.
+- The local root corpus is pinned at
+  `b363f29d3c43c626dc852744ad64a0b48a003693`; all four requested rows are
+  present there. The sorted four-line path manifest was regenerated and its
+  SHA-256 is
+  `ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`, matching
+  the recorded manifest.
+- The serial `harness-flip-probe` attempt exited **3** before measuring a row or
+  writing `.tmp/2175-d5-null-proto-rows.jsonl`. Its mandatory positive and
+  negative controls both reported
+  `ENOENT: no such file or directory, open
+  '/Users/thomas/Code/js2/.codex-worktrees/final-2175-null-proto-d60-20260831/test'`,
+  then refused to emit a count. The target worktree's `test262/` directory is
+  empty even though the locally cached pinned corpus exists at the repository
+  root. No row, determinism, or harness-control result is therefore available
+  to claim.
+- Per the released-lane stop-on-failure rule, the four rows were not retried and
+  `tests/issue-5239-object-create-class-prototype.test.ts` was **not run**.
+
+Handoff: provision this worktree's `test262/` root from the already available
+`b363f29` local corpus (without downloading or changing Test262), then rerun
+the existing serial harness command and only after its controls pass run the
+#5239 Vitest regression. Preserve this focused 25 / 25 result; do not promote
+it to four-row or #5239 evidence.
+
+### Attached-corpus four-row replay: real BLOCK (2026-08-31)
+
+The earlier exit-3 entry above was a harness **self-abort before measurement**:
+the target worktree's corpus root was empty, so neither its positive nor
+negative control could be read. It is distinct from this replay. The exact
+local Test262 corpus is now attached in this worktree at detached
+`b363f29d3c43c626dc852744ad64a0b48a003693`, with all four requested files and
+the upstream harness present. No download or Test262 edit occurred.
+
+One worker reran the serial standalone command:
+
+~~~sh
+node --import tsx scripts/harness-flip-probe.ts --target standalone \
+  --check-determinism \
+  --paths test/language/expressions/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/expressions/class/accessor-name-static/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-static/computed-err-to-prop-key.js \
+  --out .tmp/2175-d5-null-proto-rows.jsonl
+~~~
+
+The pre-run byte-sorted, LF-terminated manifest again hashed to
+`ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`.
+Both mandatory harness controls reported their intended opposite directions:
+`must-pass -> pass` and `must-fail -> fail` (the latter's callback was the
+expected `Test262Error` for `assert.sameValue(1, 2)`). The instrument therefore
+proved it could distinguish both outcomes before processing the four rows.
+
+**Result: BLOCKED — 0 / 4 pass, 4 / 4 fail, nondeterministic: 0.** The console
+count was `{"fail":4}`, `total: 4 (counts verified to sum)`, and the preserved
+JSONL has exactly four lines. A read-only JSONL reduction also reports four
+standalone rows and `{"fail":4}`; its four paths exactly equal the requested
+sorted manifest, so the count, callback controls, and artifact reconcile.
+
+- `expressions/class/accessor-name-inst/...`: `get` accessor expected a
+  `TypeError`, but no exception was thrown (L45).
+- `expressions/class/accessor-name-static/...`: the same `get` accessor failure
+  (L47).
+- `statements/class/accessor-name-inst/...`: the same `get` accessor failure
+  (L45).
+- `statements/class/accessor-name-static/...`: the same `get` accessor failure
+  (L47).
+
+This is a real residual failure after valid controls, not a corpus setup issue.
+Per the released one-worker stop-on-failure rule,
+`tests/issue-5239-object-create-class-prototype.test.ts` was not run. Preserve
+`.tmp/2175-d5-null-proto-rows.jsonl` for diagnosis; do not claim the historic
+focused **25 / 25** result as four-row or #5239 validation. No GitHub issue was
+created; no commit, push, or PR occurred.
+
+### First computed-accessor repair replay: BLOCK at 25 / 29 (2026-08-31)
+
+The first narrow implementation attempt is not accepted. One serial Vitest
+worker ran:
+
+~~~sh
+node /Users/thomas/Code/js2/node_modules/vitest/dist/cli.js run \
+  tests/issue-2175-null-proto-toprimitive.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true \
+  --no-file-parallelism --reporter=dot
+~~~
+
+It completed in **17.67 s** with **25 / 29** controls passing. The historical
+25 D5 controls remain green. The four newly added direct class-evaluation
+controls all returned `0`, so no `TypeError`/getter abrupt completion reached
+their `catch` blocks:
+
+- null-prototype computed instance accessor (`:68`);
+- null-prototype computed static accessor (`:82`);
+- inherited `Symbol.toPrimitive` getter through a computed instance accessor
+  (`:110`); and
+- the matching computed static accessor (`:138`).
+
+No Test262 or #5239 command ran after this real failure. The prior attached
+corpus artifact `.tmp/2175-d5-null-proto-rows.jsonl` remains preserved and is
+still the **0 / 4** diagnostic evidence; it was not overwritten. The current
+`nested-declarations.ts` conversion attempt is therefore ineffective for these
+forms and must be removed or replaced rather than supplemented with a second,
+stacked effect.
+
+#### Required second-pass diagnosis before another compiler run
+
+1. Trace the exact declaration and comma-expression class evaluation lowering,
+   including the `irClassBodyRouting`/prepared-unit gate. Prove whether
+   `emitPreparedAccessorComputedNameEffects` is unselected or its output is
+   detached from the generated body; do not infer reachability from its source
+   name alone.
+2. Identify the single ClassDefinitionEvaluation emission point that owns both
+   the pinned declaration and expression forms, then move the conversion there
+   exactly once. Remove the ineffective hook if that point subsumes it.
+3. Add a focused static non-vacuity assertion tied to the named generated
+   function/body (not a global substring): it must prove the computed-name path
+   contains the `__to_property_key` call for both instance and static shapes
+   before the next runtime replay.
+4. Preserve the full-`GetMethod` `Symbol.toPrimitive` requirement and the
+   existing D5/Proxy/#5239 controls. After static proof and review, rerun the
+   same serial focused file once; stop immediately on any failure.
+
+No GitHub issue was created.
+
+### Corrected computed-accessor root cause and replacement plan (2026-08-31)
+
+The real **0 / 4** corpus failure and the subsequent **25 / 29** focused
+replay falsify the earlier prepared-helper-only hypothesis. The D5
+null-terminal classifier itself is not the escape: each row discards a dynamic
+computed accessor name before it reaches `ToPropertyKey`.
+
+Read-only route tracing identifies the actual ClassDefinitionEvaluation
+owners:
+
+- a source-file declaration accepted by
+  `collectPreparedTopLevelClassComputedNameEffects` is placed in the module
+  timeline, then reaches `compileModuleInitBody` → `compileStatement` →
+  `compileNestedClassDeclaration`; ordinary nested declarations reach that
+  same last owner directly;
+- the pinned `0, class { … }` expression reaches
+  `compileExpression` → `compileClassExpression` in
+  `expressions/new-super.ts`, so it never selects the former prepared-only
+  hook; and
+- a variable-bound class expression can materialize through the singleton
+  branch in `statements/variables.ts`, bypassing `compileClassExpression`.
+
+The repair removes the ineffective prepared-only accessor-name hook rather
+than layering another call beside it. Its replacement is the one shared
+`emitUnresolvedComputedAccessorNameEffects` emitter in
+`statements/nested-declarations.ts`. It walks only unresolved computed
+get/set accessors in source order, evaluates each raw name once to
+`externref`, applies `emitToPropertyKeyOnce`, then drops the converted key.
+Its owners are deliberately disjoint: genuine declarations in
+`compileNestedClassDeclaration`, generic expressions in
+`compileClassExpression`, and only the singleton branch in
+`compileVariableStatement`. Thus a class expression passed through the nested
+body compiler does not receive a second effect. The singleton branch's
+`classObjectGlobals`/`structMap`/`structFields` preconditions exactly cover all
+`emitLazyClassObjectGet` false returns, so its generic-expression fallback is
+not reachable after it has emitted the key effect.
+
+The companion `object-runtime.ts` repair changes `@@toPrimitive` from a raw
+own-entry probe to `__extern_get` followed by the existing callable/result
+checks. This is the required ordinary `GetMethod` behavior: an inherited
+`Symbol.toPrimitive` data method or accessor getter sees the original receiver,
+and a getter's abrupt completion reaches the caller before ordinary
+`valueOf`/`toString` fallback. It does not alter the D5 terminal predicate,
+the fixed-name `in` helper, Proxy routing, or the #5239 class-instance bridge.
+
+#### Static reachability proof before the next compiler replay
+
+The focused file retains one top-level declaration control and compiles the
+Test262-shaped declaration and comma-expression forms in named function
+bodies—the latter matches the `assert.throws` callback lowering in the four
+rows. A balanced WAT-function extractor resolves numeric direct-call indices in
+each exact body: `$__module_init`, `$declarationProbe`, and
+`$expressionProbe` must each own **one** `__to_property_key` call. This catches
+both a dead/unselected route (zero calls) and accidental double evaluation (too
+many calls), without relying on a module-wide substring.
+
+The runtime half retains four non-vacuous controls: null-prototype instance and
+static names must throw `TypeError`; instance and static inherited
+`Symbol.toPrimitive` getter cases must preserve the unique abrupt identity,
+run once, and make no `toString` fallback call. Together with the prior 25 D5
+controls, the next focused replay has **30 controls**.
+
+#### Acceptance sequence and risks
+
+1. Run targeted Prettier/Biome lint and `git diff --check`, then one serial
+   focused 30-control Vitest replay. Stop immediately on a real failure.
+2. Only if focused green, rerun the exact four-row standalone manifest twice
+   with determinism enabled, write a new JSONL artifact (preserving
+   `.tmp/2175-d5-null-proto-rows.jsonl`), and reconcile row/callback/JSONL
+   counts.
+3. Only if all four rows are green, run the #5239 focused regression serially.
+
+Risks are confined to ClassDefinitionEvaluation timing and cardinality:
+evaluating a name twice, changing getter/setter order, or emitting the effect
+after class materialization is observable. The exact named-body WAT controls
+guard the retained top-level declaration and callback-equivalent declaration /
+expression paths; the runtime sentinel controls guard GetMethod abrupt behavior;
+and the existing D5,
+ordinary-object, Proxy, proto-index, mutation, and #5239 controls guard the
+unrelated routes. No prototype representation, proto-index ABI, Test262 row,
+or #5239 source is broadened or changed.
+
+No GitHub issue was created.
+
+#### Second-pass static boundary (runtime lane held)
+
+Before any further compiler execution, source inventory confirmed exactly four
+shared-emitter call sites: the two mutually exclusive declaration outcomes in
+`compileNestedClassDeclaration`, the generic expression owner, and the
+variable singleton owner. No former
+`emitPreparedAccessorComputedNameEffects` source symbol remains; its only
+mention is the preserved first-pass diagnostic history above. The focused file
+contains **30** controls, including the named module-init/declaration/expression
+WAT cardinality assertion.
+
+The following read-only static gates passed on the dirty d60 worktree:
+
+~~~sh
+prettier --check plan/issues/2175-standalone-builtin-prototype-readers.md \
+  src/codegen/object-runtime.ts src/codegen/statements/nested-declarations.ts \
+  src/codegen/expressions/new-super.ts src/codegen/statements/variables.ts \
+  tests/issue-2175-null-proto-toprimitive.test.ts
+biome lint --diagnostic-level=error src/codegen/object-runtime.ts \
+  src/codegen/statements/nested-declarations.ts \
+  src/codegen/expressions/new-super.ts src/codegen/statements/variables.ts \
+  tests/issue-2175-null-proto-toprimitive.test.ts
+biome check --formatter-enabled=false --diagnostic-level=error \
+  tests/issue-2175-null-proto-toprimitive.test.ts
+git diff --check
+~~~
+
+The focused-test Biome check, all targeted lint, Prettier, and whitespace diff
+check passed. A wider `biome check` over the legacy source files reports only
+its pre-existing full-file import-sort suggestions; no broad import reorder was
+applied because it would be unrelated to this repair. The WAT assertion is
+installed but deliberately unexecuted: root has held the sole #2175
+compiler/Vitest/Test262 lane while the other available lanes are occupied. The
+next permitted command remains the one-worker focused 30-control replay; the
+historic **25 / 29** failure and `.tmp/2175-d5-null-proto-rows.jsonl` remain
+preserved.
+
+No GitHub issue was created.
+
+### Second computed-accessor replay: BLOCK at 29 / 30 (2026-08-31)
+
+After root released the sole #2175 validation lane, one serial Vitest fork ran:
+
+~~~sh
+node /Users/thomas/Code/js2/node_modules/vitest/dist/cli.js run \
+  tests/issue-2175-null-proto-toprimitive.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true \
+  --no-file-parallelism --reporter=dot
+~~~
+
+It completed in **17.09 s** with **29 / 30** controls passing. The only
+failure is the new structural proof at
+`tests/issue-2175-null-proto-toprimitive.test.ts:111`: the balanced
+`$__module_init` extractor resolved **one** direct `__to_property_key` call
+where the top-level declaration-plus-bare-expression fixture expected two.
+The loop stopped at that first body, so it did not report the subsequently
+listed named-function WAT cardinalities.
+
+This is not a runtime regression claim: the other 29 controls passed,
+including all four new direct class-key/GetMethod controls for the declaration
+and comma-expression routes, the inherited `Symbol.toPrimitive` getter's
+identity/one-call/no-fallback checks, and the prior D5/Proxy controls. The
+remaining question is therefore the top-level bare expression's module-init
+collection/ownership versus the test's overstrong two-call expectation. It
+must be diagnosed before altering the proof or stacking a source change.
+
+Per the one-worker stop-on-failure rule, no four-row Test262 replay,
+determinism/census artifact, or #5239 regression ran. The prior real-failure
+artifact `.tmp/2175-d5-null-proto-rows.jsonl` remains untouched. No commit,
+push, PR, or GitHub issue occurred.
+
+#### WAT attribution diagnosis before static-control repair
+
+A diagnostic-only standalone compile of the exact focused fixture inspected the
+balanced generated WAT bodies and resolved direct numeric call indices against
+the import-plus-definition function order. Its relevant calls are:
+
+- `$declarationProbe`: `181:__object_create`, then
+  `133:__to_property_key` at WAT line **6633**;
+- `$expressionProbe`: `181:__object_create`, then
+  `133:__to_property_key` at WAT line **6649**; and
+- `$__module_init`: `181:__object_create`, then
+  `133:__to_property_key` at WAT line **43961**, then a second
+  `181:__object_create` with **no** following `__to_property_key` call.
+
+There is no separate generated function containing the bare top-level
+`0, class` conversion. Static tracing explains that distribution: the module
+initializer collector sees the statement as a comma `BinaryExpression`, and
+its `expressionRunsUserCode` predicate does not classify a dynamic
+`ClassExpression` name as provably effectful. That bare expression is therefore
+recorded/dropped by the top-level collection path. This is an adjacent
+module-init collection exposure, but it is not the four-row Test262 route:
+each expression row evaluates `0, class` inside an `assert.throws` callback,
+which is represented by the proven `$expressionProbe` path. The matching
+declaration callback route is likewise proven by `$declarationProbe`; all four
+runtime controls already passed in the 29 / 30 replay.
+
+Accordingly, do not broaden this D5 repair into that separate top-level
+collection issue. The fixture's two-call `$__module_init` expectation is wrong
+for the exact residual proof. Replace it with the observed, non-global
+one-call-per-body distribution: one call in `$__module_init` for the retained
+top-level declaration control, one in `$declarationProbe`, and one in
+`$expressionProbe`. Remove only the unrelated bare top-level comma-expression
+fixture; do not change runtime source.
+
+### Corrected focused replay: PASS at 30 / 30 (2026-08-31)
+
+After the evidence-only fixture correction, the same one-worker command ran:
+
+~~~sh
+node /Users/thomas/Code/js2/node_modules/vitest/dist/cli.js run \
+  tests/issue-2175-null-proto-toprimitive.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true \
+  --no-file-parallelism --reporter=dot
+~~~
+
+**Result: 30 / 30 passed** in **16.51 s** (one file, one fork, no file
+parallelism). The static control now proves the exact observed distribution:
+one direct `__to_property_key` call in each of `$__module_init`,
+`$declarationProbe`, and `$expressionProbe`. The remaining 29 controls include
+the null-prototype declaration/comma-expression throws, both inherited
+`Symbol.toPrimitive` getter abrupt-identity/one-call/no-fallback controls, and
+the prior D5/Proxy/fnctor/transition controls.
+
+This supersedes neither the preserved **25 / 29** nor **29 / 30** diagnostics;
+those remain evidence of the rejected prepared-only route and the corrected
+static-fixture denominator. It releases the next serial stage only: the exact
+four-row standalone deterministic manifest, with a fresh output path that must
+not overwrite `.tmp/2175-d5-null-proto-rows.jsonl`. No Test262 or #5239 command
+has yet run in this corrected stage. No GitHub issue was created.
+
+### Corrected four-row standalone replay: PASS at 4 / 4 (2026-08-31)
+
+The attached local corpus remains detached at
+`b363f29d3c43c626dc852744ad64a0b48a003693`. One serial harness process ran
+the exact sorted four-row manifest twice per row:
+
+~~~sh
+node --import tsx scripts/harness-flip-probe.ts --target standalone \
+  --check-determinism \
+  --paths test/language/expressions/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/expressions/class/accessor-name-static/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-static/computed-err-to-prop-key.js \
+  --out .tmp/2175-d5-null-proto-rows-corrected.jsonl
+~~~
+
+The byte-sorted LF manifest SHA-256 is again
+`ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`. Both
+mandatory controls demonstrated the two required directions before measurement:
+`must-pass -> pass` and `must-fail -> fail` (the latter through the expected
+`Test262Error`). The harness then reported **4 / 4 pass**, total `4` with
+counts summing, and **0 nondeterministic** readings.
+
+The fresh artifact
+`.tmp/2175-d5-null-proto-rows-corrected.jsonl` has exactly four standalone
+`pass` rows; its target is uniformly `standalone` and its sorted paths exactly
+equal the requested manifest. This supersedes neither the preserved prior
+**0 / 4** diagnostic artifact
+`.tmp/2175-d5-null-proto-rows.jsonl` nor its root-cause history. The sole
+remaining released validation command is the serial #5239 focused regression.
+No GitHub issue was created.
+
+### #5239 bridge regression: PASS at 2 / 2 (2026-08-31)
+
+Only after the corrected four-row replay was fully green, one serial Vitest
+fork ran:
+
+~~~sh
+node /Users/thomas/Code/js2/node_modules/vitest/dist/cli.js run \
+  tests/issue-5239-object-create-class-prototype.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true \
+  --no-file-parallelism --reporter=dot
+~~~
+
+**Result: 2 / 2 passed** in **9.09 s** (one file, one fork, no file
+parallelism). This is a regression-only confirmation: neither the #5239 bridge
+source nor its test changed in this D5 slice. Alongside the corrected focused
+**30 / 30** and exact standalone **4 / 4** deterministic manifest, the
+released #2175 validation sequence is complete. No commit, push, PR, or GitHub
+issue was created.
+
+Final targeted static gates also passed: Prettier checked the tracker, all six
+changed #2175 source files, and the focused test; Biome lint checked those
+seven TypeScript files; Biome check (with its formatter disabled) checked the
+focused test; and `git diff --check` was clean. The dirty inventory is limited
+to the tracker; `binary-ops-in.ts`; `object-runtime-prototype.ts`;
+`object-runtime.ts`; `nested-declarations.ts`; `new-super.ts`; `variables.ts`;
+and the new focused test. The two four-line JSONL artifacts are ignored test
+evidence, not staged source changes.
+
+### Independent P2 review BLOCK — exact WAT attribution (2026-08-31)
+
+**Verdict: BLOCK (test-proof only).** The 30-control replay remains real
+evidence for the observed d60 snapshot, and the native D5 semantics, Proxy
+single-observation behavior, GetMethod path, computed-name ownership, and
+#5239 boundary have no newly found source defect. However,
+`extractWatFunctionBody` in
+`tests/issue-2175-null-proto-toprimitive.test.ts` begins at a prefix
+`indexOf("(func $${name}")`; it neither requires a complete function-name
+token nor proves that exactly one definition owns that name. In particular a
+missing `$__module_init` could be masked by a `$__module_init_chunk_*` body.
+Its numeric call resolver also substitutes `"<missing>"` and does not reject
+duplicate callable names. The tracker must not continue to call that a robust
+exact named-body proof.
+
+The bounded repair changes only the focused test's WAT utilities:
+
+1. Discover function headers, require unique definition names, select the
+   requested name by exact equality, then retain the existing balanced
+   parenthesis extractor for that one body.
+2. Follow the local `issue-1004` resolver posture: reject duplicate callable
+   names and throw when a numeric call index has no exact target.
+3. Retain the three exact `__to_property_key` cardinalities, all 30 behavioral
+   controls, the corrected 4 / 4 manifest evidence, the unchanged #5239 2 / 2
+   control, and the documented adjacent top-level bare comma-class collector
+   gap. Do not alter compiler/runtime sources or rerun a compiler lane until
+   released.
+
+After this test-only repair, run only targeted whitespace, Prettier, Biome,
+and inventory checks. No compiler, Vitest, Test262, TypeScript, hook, commit,
+push, PR, or GitHub issue is authorized by this checkpoint.
+
+#### P2 proof-repair static checkpoint
+
+The focused test now enumerates WAT definition headers, requires a unique
+exact-name match before balanced extraction, and rejects duplicate or missing
+numeric call targets. Its three `__to_property_key` cardinalities and all 30
+behavioral controls are unchanged.
+
+Targeted static evidence passed after the repair: Prettier checked this tracker
+and the focused test; Biome lint and Biome check with formatting disabled
+checked the focused test; and `git diff --check` was clean. The inventory stays
+exactly the existing eight #2175 paths: this tracker, six pre-existing source
+paths, and `tests/issue-2175-null-proto-toprimitive.test.ts`. No compiler,
+Vitest, Test262, TypeScript, hook, commit, push, PR, or GitHub action ran.
+
+### Released exact-header/numeric-resolver focused replay: PASS at 30 / 30 (2026-08-31)
+
+After the independent PASS of the test-only exact-header/numeric-resolver
+repair, exactly one Vitest fork replayed the focused proof with file parallelism
+disabled:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  /Users/thomas/Code/js2/node_modules/vitest/dist/cli.js run \
+  tests/issue-2175-null-proto-toprimitive.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true \
+  --no-file-parallelism --reporter=dot
+~~~
+
+**Result: 30 / 30 passed** in **18.52 s** (one file, one Vitest fork, no file
+parallelism). An earlier unqualified `node` invocation did not launch Vitest
+because the default shell path has no `node`; it is not validation evidence.
+
+The three exact named-body `__to_property_key` cardinalities and all behavioral
+controls remain green. Relative to the corrected **4 / 4** deterministic
+Test262 evidence and unchanged **2 / 2** #5239 regression evidence above, the
+only intervening change is this focused test's WAT-attribution utility; all
+#2175 compiler/runtime source is unchanged. This replay made no source edit and
+did not run Test262, #5239, TypeScript, hooks, or any Git operation. No GitHub
+issue was created.
+
+### Commit-hook provisioning retry (2026-08-31)
+
+The first normal commit invocation stopped before `lint-staged` because the
+initial worktree `PATH` exposed `node` and `pnpm` but not the hook's `npx`
+launcher. No hook body, compiler, test, commit, or task-specific stash ran or
+was created, and the exact eight-path staged inventory remained intact. The
+retry uses the existing `/private/tmp/npx` wrapper (which delegates to
+`pnpm exec`) plus the bundled Node runtime and will run the complete normal
+hook chain without any skip variable.
+
+The provisioned retry completed `lint-staged` (Prettier and Biome) and then
+stopped at the unconditional LOC budget gate. It reported only the intended
+runtime-site growth in `new-super.ts` (+6) and `variables.ts` (+2); the already
+declared `object-runtime.ts` allowance was consumed successfully. Those two
+exact paths are now documented under this issue's `loc-budget-allow` with their
+route-ownership rationale. No compiler/test lane or commit ran, `lint-staged`
+removed its temporary backup, and the same eight paths remain staged for a full
+normal-hook retry.
+
+That retry passed `lint-staged` and the complete LOC budget gate, consuming all
+three exact path grants. It then stopped at the unconditional function budget
+gate on three intended route owners: `buildObjectPrototypeHelpers` (+60),
+`compileInOperator` (+19), and `compileVariableStatement` (+2). This issue now
+grants only those exact function keys with their ownership rationale; no
+baseline file changed. No compiler/test lane or commit ran, the temporary
+`lint-staged` backup was removed, and the eight-path inventory remains staged
+for another full normal-hook retry.
+
+The following retry passed `lint-staged` and the LOC gate again, but dependency
+resolution stopped the function gate before its census: while the shared root
+`node_modules` links were being refreshed elsewhere, Node transiently could
+not resolve `typescript`. No compiler/test lane or commit ran, the
+`lint-staged` backup was removed, and the staged inventory remains unchanged.
+A direct `import("typescript")` probe now resolves version 5.9.3 from the same
+worktree, so the retry remains the complete normal hook chain rather than a
+skipped or substituted gate.
+
+### Integrated merge-head replay plan (2026-08-31)
+
+The validation head is merge commit
+`ef9e5e274b9c2208ea33ed01193a410eacac90be`, with upstream parent
+`d1f2ed7d45b2c280cb5cea68266e73665a70f7f1`. The merged upstream delta is
+documentation/artifact-only for this slice; it has no owned D5 source or test
+overlap. This plan therefore replays the already reviewed D5 behavior at the
+integrated head without copying, merging, or changing any implementation.
+
+The integrated-head normal hook has already passed the focused #2175 **30 / 30**
+proof, targeted lint/format, LOC/function budgets, and oracle ratchet. That is
+recorded evidence and will not be rerun in this lane. The remaining commands
+are strictly serial, with at most one compiler/test process:
+
+1. Run the exact sorted four-row standalone manifest with
+   `harness-flip-probe --check-determinism`, which first executes its mandatory
+   must-pass and must-fail controls. Write a fresh ignored artifact at
+   `.tmp/2175-d5-null-proto-rows-integrated-ef9.jsonl`, preserving both earlier
+   JSONL artifacts. Reconcile the byte-sorted LF manifest SHA-256
+   `ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`, two
+   deterministic measurements per row, exactly four callbacks/rows, all-four
+   `standalone` pass results, and the exact requested paths.
+2. Only if that replay is fully green, run
+   `tests/issue-5239-object-create-class-prototype.test.ts` in one Vitest fork
+   with file parallelism disabled; expected result is **2 / 2**.
+3. Only if #5239 is green, run the documented TS7 typecheck
+   (`node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`) and
+   `git diff --check` serially. The hook evidence above substitutes for another
+   focused replay, Prettier/Biome, budget, or oracle invocation.
+
+Stop at the first real failure, retain its fresh artifact/output, and record
+the exact command and result here. No source/test edit, Test262 corpus update,
+commit, push, PR, or GitHub issue is authorized by this replay.
+
+No GitHub issue was created.
+
+### Integrated four-row standalone replay: PASS at 4 / 4 (2026-08-31)
+
+At integrated merge head `ef9e5e274b9c2208ea33ed01193a410eacac90be`, with
+the local corpus still detached at
+`b363f29d3c43c626dc852744ad64a0b48a003693`, exactly one harness process ran:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  --import tsx scripts/harness-flip-probe.ts --target standalone \
+  --check-determinism \
+  --paths test/language/expressions/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/expressions/class/accessor-name-static/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-inst/computed-err-to-prop-key.js,test/language/statements/class/accessor-name-static/computed-err-to-prop-key.js \
+  --out .tmp/2175-d5-null-proto-rows-integrated-ef9.jsonl
+~~~
+
+Exact harness output was: `control: must-pass -> pass`; `control: must-fail ->
+fail (Test262Error: this comparison must fail Expected SameValue(«1», «2») to
+be true | at L13: assert.sameValue(1, 2, "this c)`; `control: OK — instrument
+reports both directions.`; `running 4 file(s) through the assembled harness...`;
+`{"pass":4}`; `total: 4 (counts verified to sum)`; `nondeterministic: 0`; and
+`wrote 4 rows to .tmp/2175-d5-null-proto-rows-integrated-ef9.jsonl`.
+
+The byte-sorted LF manifest SHA-256 is
+`ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`.
+The fresh ignored JSONL has exactly four rows/results (one for each requested
+callback), each with `target: standalone` and `status: pass`; its sorted paths
+are exactly the requested four distinct paths, one record each. That reconciles
+the four callbacks, four requested rows, four JSONL records, and harness total
+without replacing either preserved historical artifact.
+
+### Integrated #5239 bridge regression: PASS at 2 / 2 (2026-08-31)
+
+Only after the integrated four-row manifest was fully green, exactly one Vitest
+fork ran:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  /Users/thomas/Code/js2/node_modules/vitest/dist/cli.js run \
+  tests/issue-5239-object-create-class-prototype.test.ts \
+  --pool=forks --poolOptions.forks.singleFork=true \
+  --no-file-parallelism --reporter=dot
+~~~
+
+It exited 0: one test file passed and **2 / 2** tests passed. Vitest reported
+**9.77 s** total duration (`transform 6.34 s`, `collect 8.66 s`, tests
+`840 ms`, `prepare 49 ms`). This preserves the #5239 class-prototype bridge
+regression boundary; neither that source nor test changed in this D5 replay.
+The TS7 typecheck and `git diff --check` are now the remaining released serial
+checks. No source or test changed, and no GitHub issue was created.
+
+### Integrated TS7 typecheck: BLOCK (2026-08-31)
+
+After the integrated four-row **4 / 4** replay and #5239 **2 / 2** regression
+were both green, the next single process ran:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+~~~
+
+It exited **1** after **13.82 s**. Exact output follows:
+
+~~~text
+src/codegen/object-runtime.ts(2298,7): error TS2322: Type '{ op: "local.get"; index: number; } | { op: "call"; funcIdx: number; } | { op: "local.tee"; index: number; } | { op: "ref.is_null"; } | { op: "i32.eqz"; } | { op: "if"; blockType: { kind: "empty"; }; then: ({ ...; } | { ...; })[]; } | ... 9 more ... | Instr' is not assignable to type 'Instr'.
+  Type '{ op: string; index: number; }' is not assignable to type 'Instr'.
+    Types of property 'op' are incompatible.
+      Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2314,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2315,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2316,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2317,7): error TS2322: Type '{ op: "local.get"; index: number; } | { op: "call"; funcIdx: number; } | { op: "local.tee"; index: number; } | { op: "ref.is_null"; } | { op: "i32.eqz"; } | { op: "if"; blockType: { kind: "empty"; }; then: ({ ...; } | { ...; })[]; } | ... 9 more ... | Instr' is not assignable to type 'Instr'.
+  Type '{ op: string; index: number; }' is not assignable to type 'Instr'.
+    Types of property 'op' are incompatible.
+      Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2323,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2325,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2444,9): error TS2322: Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(2588,7): error TS2322: Type '{ op: string; index: number; } | { op: string; funcIdx: number; } | { op: string; blockType: { kind: string; type: { kind: string; }; }; then: Instr[]; else: Instr[]; } | Instr' is not assignable to type 'Instr'.
+  Type '{ op: string; index: number; }' is not assignable to type 'Instr'.
+    Types of property 'op' are incompatible.
+      Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+src/codegen/object-runtime.ts(4641,11): error TS2322: Type '({ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "local.get"; index: number; } | { op: "i32.const"; value: number; } | { op: "i32.eq"; } | { op: "return"; })[]; } | ... 7 more ... | { ...; })[]; } | { ...; } | { ...; } | { ...; } | Instr)[]' is not assignable to type 'Instr[]'.
+  Type '{ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "local.get"; index: number; } | { op: "i32.const"; value: number; } | { op: "i32.eq"; } | { op: "return"; })[]; } | ... 7 more ... | { ...; })[]; } | { ...; } | { ...; } | { ...; } | Instr' is not assignable to type 'Instr'.
+    Type '{ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "local.get"; index: number; } | { op: "i32.const"; value: number; } | { op: "i32.eq"; } | { op: "return"; })[]; } | { op: "ref.is_null"; } | ... 6 more ... | { ...; })[]; }' is not assignable to type 'Instr'.
+      Types of property 'then' are incompatible.
+        Type '({ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "local.get"; index: number; } | { op: "i32.const"; value: number; } | { op: "i32.eq"; } | { op: "return"; })[]; } | { op: "ref.is_null"; } | { op: "i32.eqz"; } | ... 5 more ... | { ...; })[]' is not assignable to type 'Instr[]'.
+          Type '{ op: "if"; blockType: { kind: "empty"; }; then: ({ op: "local.get"; index: number; } | { op: "i32.const"; value: number; } | { op: "i32.eq"; } | { op: "return"; })[]; } | { op: "ref.is_null"; } | { op: "i32.eqz"; } | ... 5 more ... | { ...; }' is not assignable to type 'Instr'.
+            Type '{ op: string; index: number; }' is not assignable to type 'Instr'.
+              Types of property 'op' are incompatible.
+                Type 'string' is not assignable to type '"any.convert_extern" | "array.copy" | "array.fill" | "array.get" | "array.get_s" | "array.get_u" | "array.len" | "array.new" | "array.new_default" | "array.new_fixed" | "array.set" | ... 235 more ... | "v128.xor"'.
+~~~
+
+This is a real static failure in existing #2175-owned
+`src/codegen/object-runtime.ts` emission-array typing, concentrated at lines
+2298, 2314–2317, 2323, 2325, 2444, 2588, and 4641. Per the integrated replay
+plan, the sequence stops here: `git diff --check` and all remaining checks were
+not run, no source/test was altered, and the fresh green Test262 JSONL remains
+preserved. No GitHub issue was created.
+
+### TS7 merge-block repair plan (2026-08-31)
+
+This is a merge-blocking static regression, not a runtime/Test262 behavior
+failure. Read-only source inspection reduces the nine TS2322 locations to two
+native emission bodies: `__extern_get` at 2275 and `__extern_has` at 4641. The
+new D5 receiver-aware companion tails contain exactly three conditional literal
+instruction arrays that lack an `Instr[]` contextual check: the get tail at
+2588 and the fnctor/direct has tails at 4777 and 4845. TS7 consequently widens
+their `{ op: ... }` literals to `string`; that widened branch contaminates each
+containing body, producing the apparent errors at earlier ordinary instructions
+as well.
+
+The bounded repair is type-only and preserves emitted instruction order,
+branches, locals, helper calls, and runtime behavior: wrap only those three
+literal tail alternatives in `satisfies Instr[]`. It uses neither `any` nor a
+cast, does not change the `Instr` union, and keeps the existing explicit-null,
+ordinary terminal, fnctor, Proxy, and #5239 control flow byte-for-byte at
+runtime. The direct acceptance controls are the prior integrated Test262 **4 /
+4**, #5239 **2 / 2**, and focused **30 / 30** evidence; after the edit, run
+only targeted Prettier/Biome and `git diff --check`. An independent reviewer
+must rerun TS7 before this blocker is cleared; no compiler, Vitest, Test262,
+TS7 rerun, hook, or Git mutation is authorized in this repair lane.
+
+Risks are limited to accidentally widening the annotation beyond the three D5
+tail arrays or changing their evaluation order. The patch will avoid both, and
+the follow-up review must verify that all three source alternatives still emit
+the same direct `local.get`/predicate/call/`if` sequence.
+
+No GitHub issue was created.
+
+### TS7 merge-block repair: static checkpoint (2026-08-31)
+
+The repair changed only `src/codegen/object-runtime.ts` at the three planned
+D5 companion tails:
+
+- `__extern_get` terminal get-miss alternative (2588):
+  `: ([…] satisfies Instr[])`;
+- `__extern_has` approved-fnctor terminal has-miss alternative (4777):
+  `: ([…] satisfies Instr[])`; and
+- `__extern_has` direct-$Object terminal has-miss alternative (4845):
+  `: ([…] satisfies Instr[])`.
+
+Each is a contextual type constraint on the existing literal array, not a
+cast. The emitted `local.get`, terminal-predicate call, and value-producing
+`if` remain in the same order with the same operands; no `any`, `Instr`-union,
+control-flow, helper, local, source test, or Test262 row changed.
+
+The only permitted post-edit static gates passed:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  node_modules/prettier/bin/prettier.cjs --check \
+  plan/issues/2175-standalone-builtin-prototype-readers.md \
+  src/codegen/object-runtime.ts
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  node_modules/@biomejs/biome/bin/biome lint --diagnostic-level=error \
+  src/codegen/object-runtime.ts
+git diff --check
+~~~
+
+Prettier reported `All matched files use Prettier code style!`; Biome checked
+one file with no errors or fixes; and `git diff --check` exited 0. The dirty
+inventory is now exactly this tracker and `src/codegen/object-runtime.ts`.
+TS7, compiler, Vitest, Test262, hooks, and Git mutations remain deliberately
+unrun after this repair. The next required step is independent review followed
+by an authorized TS7 rerun; until then the prior TS7 BLOCK is not cleared.
+
+No GitHub issue was created.
+
+### Independent TS7 repair review and released replay plan (2026-08-31)
+
+An independent read-only review accepted the bounded repair. The unstaged
+source delta adds exactly three `satisfies Instr[]` contextual checks, at the
+`__extern_get` terminal get-miss alternative and the approved-fnctor/direct
+`__extern_has` terminal has-miss alternatives. Those are the three literal
+arrays identified as the source of all nine TS2322 diagnostics. `Instr`
+requires nested `if.then`/`if.else` values to be `Instr[]`, so the contextual
+checks also validate the nested arrays rather than concealing a heterogeneous
+instruction. The delta adds no `as`/`any`, helper, local, branch, or emitted
+instruction; `satisfies` is type-only.
+
+The index is empty. The dirty inventory remains exactly this tracker and
+`src/codegen/object-runtime.ts`; staged and unstaged targeted `git diff --check`
+both exit 0. The released replay is one direct TypeScript 7 process:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+~~~
+
+Only after a clean exit may the targeted tracker/source `git diff --check`,
+Prettier, and Biome checks run. No compiler, Vitest, Test262, source/test edit,
+or Git mutation is part of this replay.
+
+### TS7 replay attempt — non-authoritative wrapper loss (2026-08-31)
+
+The released direct Node command was launched once and occupied the lane for
+13.9 seconds with no TypeScript diagnostics printed. The timing wrapper then
+attempted to assign zsh's read-only special parameter `status` after Node
+returned, producing `zsh: read-only variable: status` before it could capture
+the compiler's actual exit code. That shell failure is not evidence of a
+TypeScript failure, but it also prevents claiming a clean TypeScript exit.
+This attempt is therefore non-authoritative. No post-green diff, Prettier, or
+Biome gate ran; the approved next action is one exact direct TS7 rerun with a
+nonreserved result variable, followed by those static gates only on exit 0.
+
+### Released TS7 replay: PASS (2026-08-31)
+
+The authorized clean replay ran exactly:
+
+~~~sh
+/Users/thomas/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node \
+  node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json
+~~~
+
+It exited **0** after **13 seconds** with no diagnostics. This is the
+authoritative result; the preceding wrapper-loss attempt remains recorded only
+as non-evidence. The released post-green checks also exited 0:
+
+- targeted `git diff --check` on this tracker and
+  `src/codegen/object-runtime.ts` produced no whitespace errors;
+- Prettier reported `All matched files use Prettier code style!`; and
+- Biome checked the one TypeScript source file with no errors or fixes.
+
+No compiler, Vitest, Test262, source/test change, hook, Git add, commit, push,
+or PR operation ran in this validation step.
+
+### Integrated commit and publication handoff (2026-08-31)
+
+The type-only repair and this issue record were committed at `73f9ac0bb3` on
+top of the reviewed implementation commit `18d4d05e37` and the normal upstream
+merge `ef9e5e274b` (whose upstream parent is current `d1f2ed7d45`). The normal
+commit hook passed `lint-staged`, all exact LOC/function budget grants, the
+focused #2175 file at **30 / 30**, and the oracle ratchet. The branch therefore
+retains the integrated exact Test262 **4 / 4** deterministic evidence, #5239
+**2 / 2**, and authoritative TS7 exit 0 above.
+
+This documentation checkpoint is followed by the repository's complete
+pre-push hook on its exact final head. Publication remains a separate,
+non-draft PR because the fix is locally mergeable; it must target
+`loopdive/js2:main`, use the fork branch only as the PR head, and cite this
+repository-local issue file. No GitHub issue was created. The environment still
+requires explicit user authorization before this workspace's source/history
+may be pushed to `https://github.com/ttraenkler/js2`; no push or PR operation
+has occurred without that authorization.
+
+## Live-main integration plan — 2026-09-01
+
+Fresh `git fetch upstream main` resolves `loopdive/js2:main` to
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`, one commit ahead of this branch's
+integrated base `d1f2ed7d45b2c280cb5cea68266e73665a70f7f1`. The upstream delta contains
+only Test262 benchmark/report mirrors plus `scripts/loc-budget-baseline.json`;
+it has no direct overlap with the eight #2175-owned paths.
+
+The normal merge hook's blanket `*.json` lint-staged rule can reformat four
+generated report mirrors that upstream deliberately stores outside Prettier's
+shape. Before the no-commit merge, add those four exact paths to a temporary,
+worktree-only `.prettierignore` block via `apply_patch`; never stage or commit
+that block. This keeps the unskipped hook from manufacturing an unrelated PR
+diff while every semantic and quality gate still runs. After the attributed
+normal merge commit, remove the temporary block via `apply_patch` and prove
+`.prettierignore` is byte-identical to `HEAD` and the PR range still contains
+exactly the eight owned paths.
+
+Then repeat the integrated focused **30/30** controls, the #5239 bridge **2/2**,
+TS7/typecheck, and the complete synthetic-ref pre-push hook on the actual final
+HEAD. Stop on any regression or generated-path leak. Publication remains
+blocked pending explicit authorization to push this completed branch to the
+public `ttraenkler/js2` fork for a non-draft PR against `loopdive/js2:main`; no
+push or GitHub mutation is part of this integration plan.
+
+### Live-main integrated validation handoff — 2026-09-01
+
+The plan was committed normally at `dfba027113`; its hook passed the focused
+#2175 file **30 / 30**, all exact LOC/function grants, and the zero-growth
+oracle ratchet. The attributed upstream merge is
+`aab562d5836f9ca2ede9c01dd5b0425f053a65a7`, with second parent
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7`. Its unskipped hook again passed
+the exact grants, oracle ratchet, and focused **30 / 30** controls (26.26 s
+total, 14.77 s test time).
+
+The four-path worktree-only Prettier guard was never staged or committed and
+was removed immediately after the merge. `.prettierignore` is byte-identical
+to `HEAD`, the worktree is clean, and `git diff upstream/main...HEAD` contains
+exactly the tracker, six implementation sources, and the focused test—no
+benchmark, public-report, website-report, or `labs/` path.
+
+One serial deterministic harness process then ran the four exact standalone
+rows into `.tmp/2175-d5-null-proto-rows-integrated-aab.jsonl`. Its mandatory
+must-pass and must-fail controls both behaved correctly; the result was **4 /
+4 pass**, total `4`, `nondeterministic: 0`. The JSONL contains four distinct
+requested paths, four `target: standalone` rows, and four `status: pass` rows.
+The byte-sorted LF manifest SHA-256 remains
+`ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`.
+
+Only after that green result, the one-fork #5239 bridge regression passed **2 /
+2** (10.35 s total, 815 ms test time). Direct TypeScript 7 then exited **0**
+with no diagnostics. This handoff note must pass the normal commit hook; the
+resulting actual HEAD must pass the complete synthetic-ref pre-push hook before
+publication. No push or GitHub mutation has occurred, and explicit
+authorization for the public fork remains the only publication-permission
+blocker.
+
+## c112 live-main integration plan — 2026-09-01
+
+Fresh upstream fetch resolves `upstream/main` to
+`c11206262088a69815d6126787b10942df148b6d`, 55 commits after the branch's
+`a4d141321daf7f8874e540d7b75f58f8c3e2c2a7` merge base. A read-only three-way
+`git merge-tree --trivial-merge a4d141321daf7f8874e540d7b75f58f8c3e2c2a7
+upstream/main HEAD` exits zero: Git predicts no conflict. Both sides modify
+`src/codegen/expressions/new-super.ts`, but #2175 owns the class-expression
+computed-accessor effect near `compileClassExpression`, while upstream #5244
+updates the later dynamic-`new` constructor arm and its `__argc` publication.
+The normal merge must retain both regions; do not resolve it by copying or
+replacing the whole file.
+
+The integration must preserve the D5 distinction between an implicit ordinary
+Object-prototype terminal and an explicit null terminal across `Object.create`,
+accepted/refused `Object.setPrototypeOf`, fixed-name `in`, and
+OrdinaryToPrimitive readers. It must also preserve the direct/fnctor/proxy
+routes, the existing #5239 class-instance bridge boundary, and upstream #5244
+dynamic-constructor default-argument behavior. No generated benchmark/report,
+website, public, `labs/`, or temporary `.prettierignore` path may enter the PR
+range.
+
+### Released-lane gate sequence
+
+Until root releases a global lane, do not stage, commit, merge, run a hook,
+compiler, TypeScript, Vitest, Test262, or any publication command. On release,
+fetch upstream again; if `upstream/main` is no longer c112, re-audit the exact
+new head before performing the normal merge. Then run, on the exact merged
+HEAD, in this order:
+
+1. the focused serial #2175 suite
+   `node node_modules/vitest/dist/cli.js run tests/issue-2175-null-proto-toprimitive.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism --reporter=dot`, expecting **30 / 30**;
+2. the exact standalone deterministic four-row manifest, with the retained
+   byte-sorted LF SHA-256
+   `ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`,
+   expecting **4 / 4**, both harness controls, and `nondeterministic: 0`;
+3. the serial #5239 bridge suite, expecting **2 / 2**;
+4. direct TS7 `node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`;
+5. targeted static checks for the #2175 tracker and owned TypeScript paths,
+   including `git diff --check` and the repository formatting/lint gates;
+6. the complete synthetic-ref pre-push hook on that exact final head; and
+7. a no-leak audit: `git diff --name-only upstream/main...HEAD` must contain
+   only this tracker, the six #2175 implementation sources, and
+   `tests/issue-2175-null-proto-toprimitive.test.ts`.
+
+Stop on any failure, conflict, changed denominator, nondeterminism, or leaked
+path. Publication remains blocked even after all local gates: root must release
+the lane and the user must explicitly authorize a push to the public
+`ttraenkler/js2` fork and creation of the non-draft PR against
+`loopdive/js2:main`.
+
+### Publication authorization cleared — 2026-09-01
+
+The user explicitly authorized publication of completed branches to
+`https://github.com/ttraenkler/js2` for pull requests against
+`loopdive/js2:main`. This clears the external-destination authorization block,
+but does not waive the live-main validation sequence, exact-head pre-push gate,
+or no-leak audit above. After those gates succeed, publication is a separate
+non-draft upstream PR from the fork branch. No GitHub issue was created.
+
+### c112 intermediate merge / e904 follow-up handoff — 2026-09-01
+
+This worktree is intentionally stopped at the uncommitted normal merge of
+`c11206262088a69815d6126787b10942df148b6d`: `HEAD` remains
+`2918a145147c0c6d9e6287efe10f12e7ebd79d9b` and `MERGE_HEAD` is `c112`. At the
+read-only audit boundary there were no unmerged entries and no unstaged diff.
+The prospective #2175 delta measured against `MERGE_HEAD` was exactly these
+eight paths: this tracker; `binary-ops-in.ts`, `new-super.ts`,
+`object-runtime-prototype.ts`, `object-runtime.ts`,
+`nested-declarations.ts`, and `variables.ts`; plus
+`tests/issue-2175-null-proto-toprimitive.test.ts`. It contains no benchmark,
+public/website-report, or `labs/` path. The broader staged index also contains
+the incoming c112 files; those are merge inputs, not #2175 PR leakage.
+
+`upstream/main` subsequently advanced to
+`e904b5f4b254dc5ab667685b8493f250d177efda`. Its post-c112 delta overlaps the
+owned range only in `src/codegen/object-runtime.ts` and
+`src/codegen/statements/variables.ts`. The former is mechanically disjoint:
+retain e904's `fillExternSetVecArms` canonical out-of-bounds/inherited-setter
+decision and retain #2175's earlier D5 terminal marker, `__extern_get`,
+`__extern_has`, fixed-name `in`, and OrdinaryToPrimitive changes. Do not copy
+either whole file.
+
+`variables.ts` needs a semantic, not merely textual, resolution. Retain e904's
+central `tryCompileClassExpressionBindingValue`/Promise-subclass and
+proxy/RegExp helper refactor, while preserving #2175's
+`emitUnresolvedComputedAccessorNameEffects` exactly once at
+ClassDefinitionEvaluation. Do not call that emitter unconditionally before the
+helper: a helper fallback to `compileClassExpression` would then evaluate the
+same computed accessor name twice. Instead, make the selected fast path expose
+an on-handled/pre-materialization hook (including the Promise-subclass path),
+invoke it only after the path is known to handle the value and before its
+runtime constructor/singleton materialization, and retain the generic
+`new-super.ts` owner for every `undefined` fallback. This preserves effect
+order, avoids duplicate keys, and keeps e904's dynamic Proxy/class-expression
+representation fixes.
+
+Next owner: first make the attributed normal c112 merge commit; then, after a
+fresh read-only `upstream/main` check, perform a normal no-commit e904 merge
+and apply the two narrow reconciliations above. The historical integrated
+evidence remains focused #2175 **30 / 30**, standalone deterministic **4 / 4**
+with both controls and `nondeterministic: 0`, #5239 **2 / 2**, and TS7 exit 0;
+it is prior evidence only and must not be represented as c112/e904-head
+validation. On the final e904 head, rerun the released focused, four-row,
+#5239, TS7/static, full synthetic-ref pre-push, and exact no-leak gates before
+publishing one mergeable non-draft PR from `ttraenkler/js2` to
+`loopdive/js2:main`. User authorization for that destination is recorded
+above; no GitHub issue was created.
+
+### Local hook-runner provenance — 2026-09-01
+
+The first normal c112 merge-commit attempt stopped at
+`.husky/pre-commit: line 1: npx: command not found`; it created no commit and
+left the open merge index intact. No hook was skipped, weakened, or bypassed.
+For the normal retry this worktree uses the ignored, fail-closed
+`.tmp/bin/npx` wrapper: it accepts only `npx lint-staged`, delegates directly to
+the existing root `node_modules/.bin/lint-staged`, and exits 127 for every
+other invocation. The retry PATH prefixes that local directory and the
+prescribed existing runtime/root-node-modules paths; it neither downloads
+dependencies nor changes repository configuration. Stage this provenance note
+with the existing tracker before retrying the ordinary hook-running commit.
+
+### c112 durable merge evidence — 2026-09-01
+
+The normal c112 merge committed at
+`36ddfd42847491f64c3c3f483362fc08e12fe341` with parents
+`2918a145147c0c6d9e6287efe10f12e7ebd79d9b` and
+`c11206262088a69815d6126787b10942df148b6d`. Its full, unskipped hook was run
+in a durable session and passed the LOC/function budgets and oracle ratchet.
+The changed-root controls were all green: #2175 **30 / 30**, fresh-cache
+Temporal **11 / 11** using the unique worktree-local
+`JS2WASM_TEMPORAL_CACHE=.tmp/temporal-cache-c112`, #5225 **2 / 2**, #5242
+**2 / 2**, #5243 **1 / 1**, and #5244 **9 / 9**. This is c112-head evidence;
+it does not replace the required current-main merge and exact-head validation
+below. No hook skip, `--no-verify`, source rewrite, push, or GitHub operation
+was used for this commit.
+
+### e59 live-main execution plan — 2026-09-01
+
+Fresh `upstream/main` is
+`e59af10496753d38352fdac74059872cd6033c7e`. The complete post-c112 delta has
+the same two owned-path overlaps already audited: `object-runtime.ts` and
+`variables.ts`; no other #2175 path moved. Merge normally without committing.
+Keep e59's vec numeric miss/inherited-setter sequence in
+`fillExternSetVecArms` and retain all earlier #2175 D5 terminal-gating code;
+the regions are mechanically disjoint.
+
+For `variables.ts`, retain e59's centralized Promise/class-expression,
+Proxy, and RegExp helpers. The #2175 computed-accessor effect must be emitted
+only after that centralized binding helper has actually handled a class value,
+but must execute at runtime before its materialization. Use a local
+transactional owner wrapper: remember the `fctx.body` length, call
+`tryCompileClassExpressionBindingValue`, and only for a non-`undefined`
+result remove its newly appended instruction suffix; emit
+`emitUnresolvedComputedAccessorNameEffects`, remove that suffix, then append
+the effect suffix followed by the handled materialization suffix. An
+`undefined` result leaves the generic `compileExpression`/`new-super.ts` owner
+unchanged, so it emits the effect exactly once itself. This covers both
+singleton and Promise fast paths without an unconditional pre-emission,
+fallback duplication, or a ninth PR path.
+
+### e59 durable merge evidence / current-main handoff — 2026-09-01
+
+The normal e59 merge committed in a durable session at
+`b14b4a67804e04b987c1a5b1153981df93237753`, with parents
+`36ddfd42847491f64c3c3f483362fc08e12fe341` and
+`e59af10496753d38352fdac74059872cd6033c7e`. Its full, unskipped hook passed
+formatting, lint, LOC/function budgets, and the oracle ratchet. The
+changed-root control was correctly not run because the e59 merge contained 24
+incoming root files, exceeding its 20-file applicability limit; that is a
+skipped-inapplicable control, not final-head evidence.
+
+At this handoff, `upstream/main` is
+`c372457da1ffd39b87bebf235aac115a27657abf`. Its true incoming delta from the
+e59 merge base contains only nine `benchmarks/results/` refresh artifacts and
+has no overlap with any of the eight #2175-owned paths. Next owner must stage
+this tracker handoff, make a normal no-commit merge of c372 (or a freshly
+fetched successor), and only then run the required exact-final-head controls,
+complete synthetic-ref pre-push gate, no-leak audit, fork push, and ready
+non-draft upstream PR. User publication authorization remains recorded above;
+no GitHub issue was created.
+
+### c372 exact-head validation handoff — 2026-09-01
+
+The current live-base merge committed at
+`58f1f163f20d653f093ee9d98ff50353f4597731` with upstream parent
+`c372457da1ffd39b87bebf235aac115a27657abf`. A fresh `git fetch upstream main`
+after that commit still resolved to c372, and `upstream/main` is an ancestor of
+the candidate. This is the code head validated below; the next commit is this
+evidence-only tracker handoff.
+
+With the unique worktree-local
+`JS2WASM_TEMPORAL_CACHE=.tmp/temporal-cache-final`, the final serial focused
+suite `tests/issue-2175-null-proto-toprimitive.test.ts` passed **30 / 30** in
+22.69 s total (10.01 s test time). The exact deterministic standalone harness
+then exercised its mandatory controls (`must-pass -> pass`; `must-fail -> fail`)
+and reported **4 / 4 pass**, total `4`, and `nondeterministic: 0`. Its fresh
+ignored artifact is `.tmp/2175-d5-null-proto-rows-final-c372.jsonl`: it holds
+exactly four records, each `{ file, target: "standalone", status: "pass" }`,
+for the requested four distinct paths. The byte-sorted LF manifest SHA-256 is
+`ce4e597c4194b44490b6d076870ff13f50948d972bb22ec366c06b7143ef5d50`.
+
+Only after that green harness, the serial #5239 class-prototype bridge suite
+passed **2 / 2** in 9.57 s total (810 ms test time). Direct TypeScript 7
+`--noEmit -p tsconfig.ts7.json` exited 0 in 16.5 s with no diagnostics.
+Scoped Prettier (all eight owned paths), Biome error-level lint (the seven
+TypeScript paths), and `git diff --check upstream/main...HEAD` also exited 0.
+At this evidence boundary the committed PR range is exactly this tracker, six
+implementation sources, and the focused test; it contains no
+`benchmarks/`, `public/`, `website/`, or `labs/` path.
+
+Next owner: make a normal hook-running documentation commit of this handoff,
+then run the complete synthetic-ref pre-push hook on that exact new head,
+fresh-fetch and re-merge if upstream advances, re-audit the exact eight-path
+range, and publish one ready non-draft PR from `ttraenkler/js2` to
+`loopdive/js2:main`. User authorization is recorded above; no GitHub issue was
+created.

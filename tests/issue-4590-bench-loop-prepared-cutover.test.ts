@@ -2,6 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import binaryen from "binaryen";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -25,9 +26,96 @@ const DIRECT_POISON = "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY";
 const REQUIRE_ROUTE = "JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP";
 const SEAL_FAILURE = "JS2WASM_TEST_INJECT_IR_PREPARED_SEAL_FAILURE";
 const TAMPER = "JS2WASM_TEST_TAMPER_MULTI_PREPARED_FUNCTION_VALUE_LEAF";
+// #4617 C1 — declaration-fact record/replay fault injection (test-only).
+const POISON_ORACLE = "JS2WASM_TEST_POISON_DECLARATION_ORACLE";
+const LIVE_ORACLE = "JS2WASM_TEST_DECLARATION_REPLAY_LIVE_ORACLE";
+const MUTATE_SNAPSHOT = "JS2WASM_TEST_MUTATE_DECLARATION_SNAPSHOT";
+const TAMPER_REPLAY = "JS2WASM_TEST_TAMPER_DECLARATION_REPLAY";
+const POISON_MESSAGE = "live declaration oracle poisoned after semantic-snapshot finalization";
 const TRAMPOLINE = "__fn_tramp_bench_loop_cached";
 const CACHE = "__fn_closure_bench_loop";
 const EXPECTED_RUNTIME = 1_783_293_664;
+const WASM_OPT_INVALID_BINARY_WARNING =
+  "wasm-opt produced an invalid binary (it failed WebAssembly.validate); shipping unoptimized output instead. " +
+  "This is a known binaryen-JS-module encoder bug for WasmGC ref types (#1941) — installing a native wasm-opt on PATH avoids it.";
+const WASM_OPT_NOT_AVAILABLE_WARNING =
+  "wasm-opt not available: install the 'binaryen' npm package or add wasm-opt to PATH. Skipping optimization.";
+const RAW_HOST_IMPORTS = [
+  "env.Document_createElement",
+  "env.Element_set_textContent",
+  "env.HTMLElement_addEventListener",
+  "env.Performance_now",
+  "env.Element_get_children",
+  "env.Document_get_body",
+  "env.Element_set_innerHTML",
+  "env.CSSStyleDeclaration_set_cssText",
+  "env.HTMLElement_get_style",
+  "env.Node_appendChild",
+] as const;
+
+type OptimizerDiagnostic = CompileResult["errors"][number];
+
+const EXPECTED_RAW_DIAGNOSTICS: readonly OptimizerDiagnostic[] = RAW_HOST_IMPORTS.map((hostImport) => ({
+  message:
+    `Host import leak (warning, #2961): host import "${hostImport}" survives into the finished --target standalone ` +
+    `binary and would fail instantiation in a runtime with no JS host (#2073/#2075). This is currently a warning; ` +
+    `#2961 ratchets --target standalone to the same hard no-leak guarantee --target wasi already enforces. The ` +
+    `name is not on the dual-mode allowlist (src/codegen/host-import-allowlist.ts). Add a Wasm-native fallback for ` +
+    `this feature, or — for a transitional host import — add an allowlist entry citing the tracking issue and include ` +
+    `"[allowlist-grow]" in your PR description.`,
+  line: 15,
+  column: 20,
+  severity: "warning",
+  file: "loop.ts",
+}));
+
+function isRecognizedWasmOptFallback(message: string): boolean {
+  return (
+    message === WASM_OPT_INVALID_BINARY_WARNING ||
+    message === WASM_OPT_NOT_AVAILABLE_WARNING ||
+    /^wasm-opt -O3 failed: .+/s.test(message) ||
+    /^wasm-opt output was rejected because it changed the canonical runtime rec-group — .+; using the unoptimized module$/s.test(
+      message,
+    )
+  );
+}
+
+function assertRawOptimizerDiagnostics(
+  prepared: readonly OptimizerDiagnostic[],
+  direct: readonly OptimizerDiagnostic[],
+): void {
+  if (!isDeepStrictEqual(prepared, EXPECTED_RAW_DIAGNOSTICS) || !isDeepStrictEqual(direct, EXPECTED_RAW_DIAGNOSTICS)) {
+    throw new Error(
+      `raw diagnostics must equal the exact ordered #2961 authority: ` +
+        `Prepared=${JSON.stringify(prepared)}, direct=${JSON.stringify(direct)}`,
+    );
+  }
+}
+
+function classifyOptimizerDiagnostics(
+  prepared: readonly OptimizerDiagnostic[],
+  direct: readonly OptimizerDiagnostic[],
+): "optimized" | "fallback" {
+  if (prepared.length === 0 && direct.length === 0) return "optimized";
+  if (
+    prepared.length !== 1 ||
+    direct.length !== 1 ||
+    !isDeepStrictEqual(prepared[0], direct[0]) ||
+    !isDeepStrictEqual(prepared[0], {
+      message: prepared[0]?.message,
+      line: 1,
+      column: 1,
+      severity: "warning",
+    }) ||
+    !isRecognizedWasmOptFallback(prepared[0].message)
+  ) {
+    throw new Error(
+      `optimizer diagnostics must be empty or one identical recognized fallback per lane: ` +
+        `Prepared=${JSON.stringify(prepared)}, direct=${JSON.stringify(direct)}`,
+    );
+  }
+  return "fallback";
+}
 
 function expectSuccess(result: CompileResult, label: string): void {
   expect(
@@ -85,6 +173,13 @@ async function benchRuntime(result: CompileResult): Promise<number> {
   return (instance.exports.bench_loop as () => number)();
 }
 
+function codegenErrors(result: GeneratedCodegenModule): string {
+  return result.errors
+    .filter((error) => error.severity !== "warning")
+    .map((error) => error.message)
+    .join("\n");
+}
+
 function expectDirectPoison(result: CompileResult): void {
   expect(result.success).toBe(false);
   expect(result.errors.map((error) => error.message).join("\n")).toContain(
@@ -93,6 +188,17 @@ function expectDirectPoison(result: CompileResult): void {
   expect(
     result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName === "bench_loop").map((row) => row.entryPoint),
   ).toContain("compileFunctionBody");
+}
+
+/** In-memory twin of `compileBench(true, ...)`; cheaper per test than compileProject. */
+async function compileBenchSources(options: CompileOptions = {}): Promise<CompileResult> {
+  vi.stubEnv(CUTOVER, "1");
+  return compileMulti({ "helpers.ts": HELPERS_SOURCE, "loop.ts": LOOP_SOURCE }, "loop.ts", {
+    experimentalIR: true,
+    target: "standalone",
+    trackIrOutcomes: true,
+    ...options,
+  });
 }
 
 async function compileMutatedLoop(source: string): Promise<CompileResult> {
@@ -193,7 +299,7 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     expect(preparedTrampoline).toContain("i32.const 125000");
 
     // Early support allocation is the one intentional raw artifact delta.
-    expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 35);
+    expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 29);
     expect(prepared.dts).toBe(direct.dts);
     expect(prepared.importsHelper).toBe(direct.importsHelper);
     expect(prepared.imports).toEqual(direct.imports);
@@ -204,27 +310,85 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
   });
 
   it("keeps optimized bench_loop and trampoline bodies exact without size or runtime growth", async () => {
+    const rawPrepared = await compileBench(true, { optimize: false, preserveDebugNames: true });
+    const rawDirect = await compileBench(false, { optimize: false, preserveDebugNames: true });
     const prepared = await compileBench(true, { optimize: true, preserveDebugNames: true });
     const direct = await compileBench(false, { optimize: true, preserveDebugNames: true });
+    expectSuccess(rawPrepared, "Prepared raw optimizer control");
+    expectSuccess(rawDirect, "direct raw optimizer control");
     expectSuccess(prepared, "Prepared optimized compile");
     expectSuccess(direct, "direct optimized control");
-    expect(prepared.binary.byteLength).toBeLessThanOrEqual(direct.binary.byteLength);
-    // Lane PARITY is the invariant; an absolute byte pin (formerly 50_363)
-    // broke on every unrelated main advance that shifted the optimized
-    // artifact. Both lanes compile the same graph, so their optimized sizes
-    // must be equal — that is the no-size-growth claim, portably.
-    expect(prepared.binary.byteLength).toBe(direct.binary.byteLength);
 
-    const preparedWat = binaryenWat(prepared.binary);
-    const directWat = binaryenWat(direct.binary);
+    const fallbackControl = {
+      message: WASM_OPT_NOT_AVAILABLE_WARNING,
+      line: 1,
+      column: 1,
+      severity: "warning",
+    } as const;
+    const invalidControl = { ...fallbackControl, message: WASM_OPT_INVALID_BINARY_WARNING } as const;
+    const unrelatedControl = { ...fallbackControl, message: "unrelated compile warning" } as const;
+    const unrecognizedControl = { ...fallbackControl, message: "wasm-opt unexpectedly declined" } as const;
+    const wrongLevelZero = { ...fallbackControl, message: "wasm-opt -O0 failed: synthetic refusal" } as const;
+    const wrongLevelNine = { ...fallbackControl, message: "wasm-opt -O9 failed: synthetic refusal" } as const;
+    const wrongSeverityControl = { ...fallbackControl, severity: "error" } as const;
+    const wrongAnchorControl = { ...fallbackControl, line: 2 } as const;
+    expect(classifyOptimizerDiagnostics([], [])).toBe("optimized");
+    expect(classifyOptimizerDiagnostics([fallbackControl], [fallbackControl])).toBe("fallback");
+    for (const [left, right] of [
+      [[fallbackControl], []],
+      [
+        [fallbackControl, fallbackControl],
+        [fallbackControl, fallbackControl],
+      ],
+      [[unrelatedControl], [unrelatedControl]],
+      [[unrecognizedControl], [unrecognizedControl]],
+      [[wrongLevelZero], [wrongLevelZero]],
+      [[wrongLevelNine], [wrongLevelNine]],
+      [[wrongSeverityControl], [wrongSeverityControl]],
+      [[wrongAnchorControl], [wrongAnchorControl]],
+      [[fallbackControl], [invalidControl]],
+    ] as const) {
+      expect(() => classifyOptimizerDiagnostics(left, right)).toThrow(
+        "optimizer diagnostics must be empty or one identical recognized fallback per lane",
+      );
+    }
+
+    expect(() => assertRawOptimizerDiagnostics([], [])).toThrow(
+      "raw diagnostics must equal the exact ordered #2961 authority",
+    );
+    const identicallyDriftedRaw = EXPECTED_RAW_DIAGNOSTICS.slice(1);
+    expect(() => assertRawOptimizerDiagnostics(identicallyDriftedRaw, identicallyDriftedRaw)).toThrow(
+      "raw diagnostics must equal the exact ordered #2961 authority",
+    );
+    assertRawOptimizerDiagnostics(rawPrepared.errors, rawDirect.errors);
+    expect(prepared.errors.slice(0, rawPrepared.errors.length)).toEqual(rawPrepared.errors);
+    expect(direct.errors.slice(0, rawDirect.errors.length)).toEqual(rawDirect.errors);
+    const disposition = classifyOptimizerDiagnostics(
+      prepared.errors.slice(rawPrepared.errors.length),
+      direct.errors.slice(rawDirect.errors.length),
+    );
+    const preparedWat = disposition === "optimized" ? binaryenWat(prepared.binary) : rawPrepared.wat;
+    const directWat = disposition === "optimized" ? binaryenWat(direct.binary) : rawDirect.wat;
     const preparedBody = watFunction(preparedWat, "bench_loop");
     const directBody = watFunction(directWat, "bench_loop");
     const preparedTrampoline = watFunction(preparedWat, TRAMPOLINE);
     const directTrampoline = watFunction(directWat, TRAMPOLINE);
+
     expect(preparedBody).toBe(directBody);
-    expect(preparedTrampoline).toBe(directTrampoline);
-    expect(preparedBody).toContain("(i32.const 125000)");
-    expect(preparedTrampoline).toContain("(i32.const 125000)");
+    if (disposition === "optimized") {
+      // Lane parity is the portable no-growth authority after wasm-opt runs.
+      expect(prepared.binary.byteLength).toBe(direct.binary.byteLength);
+      expect(preparedTrampoline).toBe(directTrampoline);
+    } else {
+      expect(prepared.binary).toEqual(rawPrepared.binary);
+      expect(direct.binary).toEqual(rawDirect.binary);
+      expect(prepared.binary.byteLength).toBe(133_297);
+      expect(direct.binary.byteLength).toBe(133_326);
+      expect(prepared.binary.byteLength).toBe(direct.binary.byteLength - 29);
+      expect(normalizedRawTrampoline(preparedTrampoline)).toBe(normalizedRawTrampoline(directTrampoline));
+    }
+    expect(preparedBody).toContain("i32.const 125000");
+    expect(preparedTrampoline).toContain("i32.const 125000");
 
     expect(prepared.dts).toBe(direct.dts);
     expect(prepared.importsHelper).toBe(direct.importsHelper);
@@ -258,7 +422,7 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     const ids = [sourceId, trampolineId, cacheId] as const;
     const slotExpectations = [
       { result: prepared, source: 76, trampoline: 78, cache: 10 },
-      { result: direct, source: 76, trampoline: 252, cache: 129 },
+      { result: direct, source: 76, trampoline: 291, cache: 139 },
     ] as const;
 
     for (const { result, source, trampoline, cache } of slotExpectations) {
@@ -403,6 +567,79 @@ describe("#4590 exact bench_loop Prepared cutover", () => {
     },
   ])("withdraws before skip for $label", async ({ source }) => {
     expectDirectPoison(await compileMutatedLoop(source));
+  });
+
+  // ── #4617 C1: declaration-fact record/replay ────────────────────────────
+  //
+  // The route's declaration authority is now a captured, canonicalized,
+  // serialized, re-parsed snapshot replayed through an oracle with NO delegate.
+  // These cases prove the replay is load-bearing (not a spy that never throws),
+  // that a poisoned live path would have been observed, and that one corrupted
+  // fact withdraws BEFORE any support allocation or direct-body skip.
+
+  it("routes the exact reduction from replayed facts with both live declaration methods poisoned", async () => {
+    vi.stubEnv(REQUIRE_ROUTE, "1");
+    vi.stubEnv(POISON_ORACLE, "bench_loop");
+    vi.stubEnv(DIRECT_POISON, "bench_loop");
+    const result = await compileBenchSources();
+    expectSuccess(result, "replayed Prepared compile under a poisoned live oracle");
+    expect(result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName === "bench_loop")).toEqual([]);
+    expect(result.irOutcomes?.find((outcome) => outcome.displayName === "bench_loop")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    await expect(benchRuntime(result)).resolves.toBe(EXPECTED_RUNTIME);
+  });
+
+  it("observes the poison when the pre-C1 live-query path runs after finalization", () => {
+    vi.stubEnv(POISON_ORACLE, "bench_loop");
+    vi.stubEnv(LIVE_ORACLE, "bench_loop");
+    // Codegen-only: the route decision is complete before binary emission, and
+    // this assertion is about the diagnostic, not the artifact.
+    expect(codegenErrors(generatedBench(true))).toContain(POISON_MESSAGE);
+  });
+
+  it("fails an armed-but-unmatched declaration fault injection instead of passing silently", () => {
+    vi.stubEnv(POISON_ORACLE, "not_the_certified_route");
+    expect(codegenErrors(generatedBench(true))).toContain(
+      "is armed for not_the_certified_route but the certified route is bench_loop",
+    );
+  });
+
+  it("keeps the live-oracle lane and the replay lane identical in route, surface, and runtime", async () => {
+    vi.stubEnv(LIVE_ORACLE, "bench_loop");
+    vi.stubEnv(REQUIRE_ROUTE, "1");
+    const live = await compileBenchSources();
+    vi.unstubAllEnvs();
+    vi.stubEnv(REQUIRE_ROUTE, "1");
+    const replayed = await compileBenchSources();
+    expectSuccess(live, "live-oracle declaration lane");
+    expectSuccess(replayed, "replayed declaration lane");
+
+    expect(replayed.irBodyRouteAudit?.legacyEntries).toEqual(live.irBodyRouteAudit?.legacyEntries);
+    expect(replayed.irBodyRouteAudit?.dispositions).toEqual(live.irBodyRouteAudit?.dispositions);
+    expect(replayed.irOutcomes).toEqual(live.irOutcomes);
+    expect(replayed.dts).toBe(live.dts);
+    expect(replayed.importsHelper).toBe(live.importsHelper);
+    expect(replayed.imports).toEqual(live.imports);
+    expect(replayed.stringPool).toEqual(live.stringPool);
+    expect(replayed.binary.byteLength).toBe(live.binary.byteLength);
+    // Byte-for-byte binary equality subsumes any WAT comparison, so this lane
+    // deliberately does not materialize two whole-module text renderings.
+    expect(Buffer.from(replayed.binary).equals(Buffer.from(live.binary))).toBe(true);
+    expect(wasmSurface(replayed.binary)).toEqual(wasmSurface(live.binary));
+    await expect(benchRuntime(replayed)).resolves.toBe(EXPECTED_RUNTIME);
+    await expect(benchRuntime(live)).resolves.toBe(EXPECTED_RUNTIME);
+  });
+
+  it("fails closed when the retained declaration snapshot is tampered after certification", async () => {
+    vi.stubEnv(TAMPER_REPLAY, "bench_loop");
+    const result = await compileBenchSources();
+    expect(result.success).toBe(false);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain("drifted after direct-body certification");
+    expect(result.irBodyRouteAudit?.legacyEntries.filter((row) => row.bodyName === "bench_loop")).toEqual([]);
   });
 
   it.each([

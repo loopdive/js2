@@ -32,7 +32,17 @@ import {
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
 import { emitFuncRefAsClosure } from "./funcref-as-closure.js";
-import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
+import { normalizeOrdinaryFunctionConstructibility } from "./ordinary-fn-constructibility.js";
+import {
+  observeProgramAbiFunctionValue,
+  sourceFunctionDeclarationForHandle,
+} from "../program-abi-source-callable-planning.js";
+// (#4630) the DECLARATION half of the parked-async `$Promise` value substrate
+import {
+  emitEagerAsyncPromiseWrap,
+  emitEagerAsyncUndefinedPromise,
+  parkedAsyncDeclarationWrapsPromise,
+} from "../async-eager-promise.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot } from "../function-instance-meta.js";
 // (#4440) the METHOD half of the same carrier — class/object-literal members
@@ -133,6 +143,23 @@ function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolea
     return false;
   };
   return walk(fn.body);
+}
+
+/**
+ * (#5318 r4 review) The same question {@link methodBodyReadsThis} answers, but
+ * TRI-STATE: `undefined` when the body is not compiled yet, so a caller that
+ * needs "provably does not read the receiver" can tell "no" from "don't know".
+ * The trampoline itself keeps its own conservative not-yet-compiled ⇒ `true`
+ * default; a caller that must DECLINE on doubt (the static sidecar) treats both
+ * `true` and `undefined` as a refusal.
+ */
+export function compiledBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolean | undefined {
+  const fn = definedFuncAt(ctx, methodFuncIdx);
+  // An EMPTY body is "not compiled yet", not "reads nothing" — a minted-but-
+  // unfilled function would otherwise read as receiver-free, which is exactly
+  // the wrong answer a caller gating an install on this must not be given.
+  if (!fn || !Array.isArray(fn.body) || fn.body.length === 0) return undefined;
+  return methodBodyReadsThis(ctx, methodFuncIdx);
 }
 
 function buildTrampolineThisSlot(
@@ -434,6 +461,40 @@ export function emitObjectMethodAsClosure(
  * indices stay valid; only the per-arg coercion is what could drift, and any
  * coercion the call needs is applied by mirroring the method's param types.
  */
+/**
+ * A `FunctionContext` shaped exactly like a func-decl trampoline's WRAPPER
+ * signature (`__self` at slot 0, the wrapper's user params at 1..N), so helpers
+ * that allocate scratch locals compute indices past the real params and the
+ * allocated `localDefs` can be attached to the registered function.
+ *
+ * `finalizeMethodTrampolines` builds this inline for its coercion temps; the
+ * (#4630) async-promise wrap needs the identical thing at REGISTRATION time,
+ * where no `FunctionContext` exists yet. Callers assign `body` themselves.
+ */
+function miniTrampolineFctx(
+  name: string,
+  wrapperUserParams: readonly ValType[],
+  wrapperResult: ValType | undefined,
+  localDefs: LocalDef[],
+): FunctionContext {
+  return {
+    name,
+    params: [
+      { name: "__self", type: { kind: "anyref" } },
+      ...wrapperUserParams.map((p, i) => ({ name: `__p${i}`, type: p })),
+    ],
+    locals: localDefs,
+    localMap: new Map(),
+    returnType: wrapperResult ?? null,
+    body: [],
+    blockDepth: 0,
+    breakStack: [],
+    continueStack: [],
+    labelMap: new Map(),
+    savedBodies: [],
+  };
+}
+
 export function finalizeMethodTrampolines(ctx: CodegenContext): void {
   for (const t of ctx.pendingMethodTrampolines) {
     // (#1525b / #1809) If the captured methodFuncIdx resolves to an IMPORT at
@@ -465,7 +526,11 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     // with `this` at param 0 and need it dropped. The legacy method path
     // requires `sig.params.length >= 1` because it slices off `this`.
     if (!t.noThisParam && sig.params.length === 0) continue;
-    const methodUserParams = t.noThisParam ? sig.params : sig.params.slice(1);
+    const methodUserParams = t.explicitThisParam
+      ? sig.params.slice(1)
+      : t.noThisParam
+        ? sig.params
+        : sig.params.slice(1);
     // Only rebuild when the user-param arity is unchanged. The trampoline's
     // OWN func type (its wrapper type) was fixed at registration with
     // `userParamCount` params and is shared/cached, so it cannot change here;
@@ -510,22 +575,12 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     // past the real params; the allocated `localDefs` are attached to the
     // registered trampoline function below.
     const localDefs: LocalDef[] = [];
-    const tFctx: FunctionContext = {
-      name: `__obj_meth_tramp_finalize_${t.trampolineFuncIdx}`,
-      params: [
-        { name: "__self", type: { kind: "anyref" } },
-        ...wrapperUserParams.map((p, i) => ({ name: `__p${i}`, type: p })),
-      ],
-      locals: localDefs,
-      localMap: new Map(),
-      returnType: wrapperResult ?? null,
-      body: [],
-      blockDepth: 0,
-      breakStack: [],
-      continueStack: [],
-      labelMap: new Map(),
-      savedBodies: [],
-    };
+    const tFctx: FunctionContext = miniTrampolineFctx(
+      `__obj_meth_tramp_finalize_${t.trampolineFuncIdx}`,
+      wrapperUserParams,
+      wrapperResult,
+      localDefs,
+    );
 
     // (#1340) Function-decl trampolines have no `this` prologue; method
     // trampolines resolve the receiver from `__current_this` (#2015, falling
@@ -536,6 +591,14 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
     let newBody: Instr[];
     if (t.noThisParam) {
       newBody = [];
+      if (t.explicitThisParam) {
+        newBody.push({ op: "global.get", index: ensureCurrentThisGlobal(ctx) });
+        const thisParam = sig.params[0]!;
+        if (thisParam.kind !== "externref") {
+          tFctx.body = newBody;
+          newBody.push(...coercionInstrs(ctx, { kind: "externref" }, thisParam, tFctx));
+        }
+      }
     } else {
       const anyTempLocalIdx = allocTempLocal(tFctx, { kind: "anyref" });
       // (#2025) Reuse the registration-time `methodUsesThis` (captured before
@@ -577,8 +640,24 @@ export function finalizeMethodTrampolines(ctx: CodegenContext): void {
       }
     }
     newBody.push({ op: "call", funcIdx: t.methodFuncIdx });
-    // Reconcile the result arity/type with the wrapper's declared result.
-    if (methodResult && !wrapperResult) {
+    // (#4630) Promoted async-declaration wrapper: settle the callee's completion
+    // into the `externref` `$Promise` the wrapper type declares. Both arms are
+    // §27.2.4.7-idempotent, which is what makes the promotion safe against the
+    // callee's signature having been re-resolved since registration — a callee
+    // that turned out drive-lowered already returns a real `$Promise` and passes
+    // through unchanged.
+    // Any other shape (which the registration gate's syntactic void check
+    // excludes) falls through to the generic reconciliation below rather than
+    // mis-settling a raw value as a completion.
+    if (
+      t.eagerAsyncPromiseWrap === true &&
+      wrapperResult?.kind === "externref" &&
+      (methodResult === undefined || methodResult.kind === "externref")
+    ) {
+      tFctx.body = newBody;
+      if (methodResult === undefined) emitEagerAsyncUndefinedPromise(ctx, tFctx);
+      else emitEagerAsyncPromiseWrap(ctx, tFctx);
+    } else if (methodResult && !wrapperResult) {
       // Method now returns a value the void wrapper must discard.
       newBody.push({ op: "drop" });
     } else if (wrapperResult && methodResult && wrapperResult.kind !== methodResult.kind) {
@@ -918,6 +997,12 @@ export interface FuncClosureSingleton {
   readonly metaInit?: Instr[];
 }
 
+function hasExplicitThisParameter(declaration: ts.Node | undefined): declaration is ts.FunctionDeclaration {
+  if (!declaration || !ts.isFunctionDeclaration(declaration)) return false;
+  const first = declaration.parameters[0];
+  return first !== undefined && ts.isIdentifier(first.name) && first.name.text === "this";
+}
+
 /**
  * Ensure the declarations behind a cached top-level function value exist,
  * without emitting an access into a legacy FunctionContext.
@@ -937,8 +1022,22 @@ export function ensureFuncClosureSingleton(
   const sig = getFuncSignature(ctx, funcIdx);
   if (!sig) return null;
 
-  const userParams = sig.params;
-  const results = sig.results;
+  const ownerDeclaration =
+    sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
+    ctx.funcMapOwnerDecl.get(funcName) ??
+    ctx.topLevelFunctionDeclarations.get(funcName);
+  const explicitThisParam = hasExplicitThisParameter(ownerDeclaration);
+  // The direct FunctionDeclaration ABI deliberately retains TS's pseudo-this
+  // slot (#2069), while a JavaScript function value exposes only real formals.
+  // Adapt between those ABIs in the wrapper instead of changing direct calls.
+  const userParams = explicitThisParam ? sig.params.slice(1) : sig.params;
+  // (#4630) A parked async function DECLARATION used as a VALUE must hand the
+  // dynamic dispatcher a `$Promise`, not the `undefined` a void wasm result
+  // substitutes. Promote the WRAPPER's result only — the declaration's own
+  // signature (and therefore every direct call site's `wasmFuncReturnsVoid`
+  // answer) is left untouched. See `parkedAsyncDeclarationWrapsPromise`.
+  const eagerAsyncPromiseWrap = parkedAsyncDeclarationWrapsPromise(ctx, ownerDeclaration, sig.results);
+  const results: ValType[] = eagerAsyncPromiseWrap ? [{ kind: "externref" }] : sig.results;
   const wrapperTypes = constructible
     ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, results)
     : getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
@@ -960,17 +1059,26 @@ export function ensureFuncClosureSingleton(
   // suffix. Assignment order is compile order, which is deterministic and
   // identical across passes — so unlike embedding a raw function handle, this
   // cannot drift when late imports shift indices (#2043).
+  // (#4630) Scan FORWARD for the first top-level `call`: the forwarding call to
+  // the target is always the first instruction after the parameter `local.get`s,
+  // whereas the promoted-async arm appends a `Promise.resolve` sequence whose own
+  // `call` would win a backward scan and name the wrong target.
   const targetOfTrampoline = (handle: number): number | undefined => {
     const body = definedFuncAt(ctx, handle)?.body;
     if (!body) return undefined;
-    for (let i = body.length - 1; i >= 0; i--) {
-      const instr = body[i]!;
+    for (const instr of body) {
       if (instr.op === "call") return instr.funcIdx;
     }
     return undefined;
   };
 
-  let key = funcName;
+  // (#4530) Canonicalize aliases: an import alias resolves to the SAME
+  // funcIdx under a different name. Reusing the first materialized key keeps
+  // one trampoline/cache pair per target function, so `import cx from 'clsx'`
+  // and the named `clsx` binding compare identical and share the wrapper type
+  // the call-site dispatch candidates expect.
+  const canonicalKey = ctx.funcClosureSingletonKeyByFuncIdx.get(funcIdx);
+  let key = canonicalKey ?? funcName;
   let trampolineName = `__fn_tramp_${key}_cached`;
   let trampolineFuncIdx = ctx.funcMap.get(trampolineName);
   let cacheGlobalIdx = ctx.funcClosureGlobals.get(key);
@@ -1016,15 +1124,31 @@ export function ensureFuncClosureSingleton(
     }
   } else {
     const trampolineBody: Instr[] = [];
+    if (explicitThisParam) {
+      // `__call_fn_method_N` installed the dynamic receiver in this module's
+      // receiver frame before entering the lifted funcref.
+      trampolineBody.push({ op: "global.get", index: ensureCurrentThisGlobal(ctx) });
+      trampolineBody.push(...coercionInstrs(ctx, { kind: "externref" }, sig.params[0]!));
+    }
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
     trampolineBody.push({ op: "call", funcIdx });
+    // (#4630) Settle the void async completion into the promoted `externref`
+    // result. `finalizeMethodTrampolines` rebuilds this body from the (possibly
+    // re-resolved) callee signature, but it can also decline to rebuild, so the
+    // registration-time body must already validate on its own.
+    const trampolineLocals: LocalDef[] = [];
+    if (eagerAsyncPromiseWrap) {
+      const wrapFctx = miniTrampolineFctx(trampolineName, userParams, results[0], trampolineLocals);
+      wrapFctx.body = trampolineBody;
+      emitEagerAsyncUndefinedPromise(ctx, wrapFctx);
+    }
     trampolineFuncIdx = mintDefinedFunc(ctx);
     pushDefinedFunc(ctx, trampolineFuncIdx, {
       name: trampolineName,
       typeIdx: liftedFuncTypeIdx,
-      locals: [],
+      locals: trampolineLocals,
       body: trampolineBody,
       exported: false,
     });
@@ -1040,7 +1164,9 @@ export function ensureFuncClosureSingleton(
       wrapperUserParams: userParams,
       wrapperResult: results[0],
       noThisParam: true,
+      ...(explicitThisParam ? { explicitThisParam: true } : {}),
       methodTargetsImport: funcIdx < ctx.numImportFuncs,
+      ...(eagerAsyncPromiseWrap ? { eagerAsyncPromiseWrap: true } : {}),
     });
 
     cacheGlobalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
@@ -1053,23 +1179,78 @@ export function ensureFuncClosureSingleton(
     ctx.funcClosureGlobals.set(key, cacheGlobalIdx);
   }
 
+  // (#4530) First materialization claims the canonical key so later aliases
+  // of the same target function reuse this exact trampoline/cache pair.
+  if (canonicalKey === undefined) ctx.funcClosureSingletonKeyByFuncIdx.set(funcIdx, key);
+
   observeProgramAbiFunctionValue(ctx, funcIdx, trampolineFuncIdx, cacheGlobalIdx);
 
   // (#4437) The cached singleton is the canonical value of a top-level function
   // DECLARATION — the receiver every `verifyProperty(f, "name", …)` sees. It is
   // built exactly once into the cache global, so the metadata operand costs one
   // push per module, not per reference.
-  const metaSlot = fnMetaSlot(
-    ctx,
-    ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName),
-  );
-  const allocStructTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, structTypeIdx) : undefined;
+  const metaSlot = fnMetaSlot(ctx, ownerDeclaration);
+  // (#4616) A rest-param function's shared signature wrapper carries NO
+  // rest-ness: `function spy(...args)` and `function g(xs: any[])` lift to the
+  // same `(self, vec) → res` funcref, so the dynamic dispatchers positionally
+  // cast call arg 0 to the vec type and trap `illegal cast` (jest-util's
+  // `jest.spyOn(Array,'isArray')` spy — the whole deepCyclicCopy bucket).
+  // Allocate the singleton as a marker SUBTYPE (base fields + an f64 marker —
+  // f64 so it cannot canonicalize with the constructible i32-marker subtype)
+  // registered in `closureInfoByTypeIdx` with `hasRestParam`, which both the
+  // generic `__call_fn_N` rest arms and the inline dynamic-call rest packing
+  // key on. Reads still cast to the base wrapper (safe direction, see
+  // `allocStructTypeIdx` above).
+  const restInfo = ctx.funcRestParams.get(funcName);
+  let restAllocIdx: number | undefined;
+  if (restInfo !== undefined && userParams.length > 0) {
+    restAllocIdx = ensureRestFnWrapSubtype(ctx, structTypeIdx);
+    const existing = ctx.closureInfoByTypeIdx.get(restAllocIdx);
+    if (!existing) {
+      ctx.closureInfoByTypeIdx.set(restAllocIdx, {
+        structTypeIdx: restAllocIdx,
+        funcTypeIdx: liftedFuncTypeIdx,
+        returnType: results.length > 0 ? results[0]! : null,
+        paramTypes: userParams,
+        hasRestParam: true,
+      });
+    }
+    if (constructible) ctx.constructibleClosureTypeIdxs.add(restAllocIdx);
+  }
+  const restMarkerInit: Instr[] = restAllocIdx !== undefined ? [{ op: "f64.const", value: 0 }] : [];
+  const allocBaseIdx = restAllocIdx ?? structTypeIdx;
+  const allocStructTypeIdx = metaSlot ? ensureFnMetaSubtype(ctx, allocBaseIdx) : restAllocIdx;
+  const allocInit = metaSlot ? [...restMarkerInit, ...metaSlot.init] : restMarkerInit;
   return {
     cacheGlobalIdx,
     trampolineFuncIdx,
     closureStructTypeIdx: structTypeIdx,
-    ...(allocStructTypeIdx !== undefined && metaSlot ? { allocStructTypeIdx, metaInit: metaSlot.init } : {}),
+    ...(allocStructTypeIdx !== undefined ? { allocStructTypeIdx, metaInit: allocInit } : {}),
   };
+}
+
+/**
+ * (#4616) Get-or-create the rest-marker subtype of a funcref-wrapper struct:
+ * the base wrapper's fields plus one immutable f64 marker. The f64 (vs the
+ * constructible subtype's i32 marker) keeps the canonical shape distinct, so
+ * `ref.test` can discriminate rest-param singleton closures at dispatch time.
+ */
+function ensureRestFnWrapSubtype(ctx: CodegenContext, baseStructTypeIdx: number): number {
+  const holder = ctx as unknown as { __restFnWrapSubtypeByBase?: Map<number, number> };
+  const cache = (holder.__restFnWrapSubtypeByBase ??= new Map());
+  const hit = cache.get(baseStructTypeIdx);
+  if (hit !== undefined) return hit;
+  const baseDef = ctx.mod.types[baseStructTypeIdx];
+  const baseFields = baseDef?.kind === "struct" ? baseDef.fields : [];
+  const idx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: `__rest_fn_wrap_${ctx.closureCounter++}_struct`,
+    fields: [...baseFields, { name: "__rest_marker", type: { kind: "f64" as const }, mutable: false }],
+    superTypeIdx: baseStructTypeIdx,
+  });
+  cache.set(baseStructTypeIdx, idx);
+  return idx;
 }
 
 /**
@@ -1126,6 +1307,11 @@ export function emitCachedFuncClosureAccess(
   funcIdx: number,
   constructible = false,
 ): ValType | null {
+  // (#4491 T12) Constructibility is a property of the compiled function, not of
+  // how the reading site resolved the name — the cache global is shared, so a
+  // site-keyed answer allocates and casts unrelated struct types. See
+  // `ordinary-fn-constructibility.ts`.
+  constructible = normalizeOrdinaryFunctionConstructibility(ctx, funcName, constructible);
   const singleton = ensureFuncClosureSingleton(ctx, funcName, funcIdx, constructible);
   // A synthetic-name collision makes the canonical pair unavailable, but
   // legacy value-producing sites still need a closure on the stack (module

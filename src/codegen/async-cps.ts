@@ -19,6 +19,14 @@ import { compileForOfDestructuring } from "./statements/for-of-destructuring.js"
 import { collectInstrs } from "./statements/shared.js";
 import { addIteratorImports } from "./registry/imports.js";
 import { getArrTypeIdxFromVec } from "./registry/types.js";
+import {
+  blockHasTopLevelReturn,
+  countAwaitsInStatement,
+  findAwaitInStatement,
+  isNestedFunctionScope,
+  statementContainsNode,
+  transparentLinearBlockStatements,
+} from "./async-cps-ast.js";
 
 /**
  * Master gate for the AST-side async CPS lowering.
@@ -153,6 +161,34 @@ export function analyzeAsyncBody(_ctx: CodegenContext, fn: ts.FunctionLikeDeclar
     hasUncaughtThrow: body !== undefined && bodyHasUncaughtThrow(body),
     awaitedStaticallyResolved,
   };
+}
+
+/**
+ * Does an `if` arm in this function's own body lexically own a suspension?
+ *
+ * This is intentionally stricter than "the body contains an if and an await":
+ * an unrelated synchronous guard followed by a canonical top-level await is
+ * already a linear body and must not be reclassified as branch-aware. Nested
+ * function scopes are excluded by `countAwaitsInStatement`.
+ */
+export function asyncBodyHasConditionalSuspension(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): boolean {
+  if (fn.body === undefined || plan.awaitPoints.length === 0) return false;
+  const awaitSet = new Set(plan.awaitPoints);
+  let found = false;
+  const walk = (node: ts.Node): void => {
+    if (found || (node !== fn.body && isNestedFunctionScope(node))) return;
+    if (
+      ts.isIfStatement(node) &&
+      (countAwaitsInStatement(node.thenStatement, awaitSet) > 0 ||
+        (node.elseStatement !== undefined && countAwaitsInStatement(node.elseStatement, awaitSet) > 0))
+    ) {
+      found = true;
+      return;
+    }
+    forEachChild(node, walk);
+  };
+  walk(fn.body);
+  return found;
 }
 
 // (#1373b C-1) `awaitIsStaticallyResolved` + `staticPromiseResolveSettledExpr`
@@ -448,6 +484,8 @@ export interface LinearAwaitSegment {
     readonly type: ts.TypeNode | undefined;
     /** Existing assignment target used to recover its inferred/local type. */
     readonly target?: ts.Identifier;
+    /** Await nested in a bounded continuation expression, replaced by this binding on resume. */
+    readonly awaitTarget?: ts.AwaitExpression;
   } | null;
   /** `return await P` — the resolved value settles the result promise directly. */
   readonly isReturnAwait: boolean;
@@ -490,6 +528,119 @@ export interface LinearAwaitPlan {
 }
 
 /**
+ * One direct await in a returned constructor argument. Arguments evaluated
+ * before the await must be literals: the continuation recompiles the
+ * constructor expression after resumption, so this guard prevents duplicated
+ * observable work while still covering `new C(null, await init)` generically.
+ */
+function returnedConstructorAwait(expression: ts.Expression): ts.AwaitExpression | null {
+  let candidate = expression;
+  while (ts.isParenthesizedExpression(candidate)) candidate = candidate.expression;
+  if (!ts.isNewExpression(candidate) || !ts.isIdentifier(candidate.expression)) return null;
+  const args = candidate.arguments;
+  if (args === undefined) return null;
+  let awaited: ts.AwaitExpression | null = null;
+  for (const arg of args) {
+    if (ts.isSpreadElement(arg)) return null;
+    if (ts.isAwaitExpression(arg)) {
+      if (awaited !== null) return null;
+      awaited = arg;
+      continue;
+    }
+    if (awaited === null && !ts.isLiteralExpression(arg) && arg.kind !== ts.SyntaxKind.NullKeyword) return null;
+  }
+  return awaited;
+}
+
+function nestedAwaitBinding(awaitTarget: ts.AwaitExpression) {
+  return {
+    name: `__async_await_expr@${awaitTarget.pos}`,
+    type: undefined,
+    awaitTarget,
+  };
+}
+
+/**
+ * A nested await can be resumed by recompiling its containing statement only
+ * when doing so does not repeat observable work that ran before suspension.
+ *
+ * This bounded shape covers calls such as
+ * `matcher(await response.text()).toBe("ok")`: the awaited value is the first
+ * dynamic argument to a lexically-constant callable, and every enclosing
+ * operation is downstream of that call. Before the await, evaluation has
+ * therefore only read the const binding. Re-reading that immutable binding
+ * after resumption is equivalent; the call and the rest of the chain still
+ * run exactly once. The dynamic-parameter bound is intentional: concrete
+ * scalar closure parameters need a distinct typed continuation ABI.
+ *
+ * Mutable/global callees, earlier arguments, and an awaited call embedded as
+ * an argument/operand of another expression are rejected. Those shapes need
+ * explicit pre-await operand spills rather than continuation recompilation.
+ */
+function replaySafeNestedCallAwait(
+  stmt: ts.Statement,
+  awaitTarget: ts.AwaitExpression,
+  checker: ts.TypeChecker | undefined,
+): boolean {
+  if (checker === undefined || !ts.isExpressionStatement(stmt)) return false;
+  const directCall = awaitTarget.parent;
+  if (
+    !ts.isCallExpression(directCall) ||
+    directCall.arguments[0] !== awaitTarget ||
+    !ts.isIdentifier(directCall.expression)
+  ) {
+    return false;
+  }
+
+  const signature = checker.getResolvedSignature(directCall);
+  const firstParameter = signature?.parameters[0];
+  if (firstParameter === undefined) return false;
+  const firstParameterType = checker.getTypeOfSymbolAtLocation(firstParameter, awaitTarget);
+  if ((firstParameterType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) return false;
+
+  const symbol = checker.getSymbolAtLocation(directCall.expression);
+  const declarations = symbol?.getDeclarations() ?? [];
+  if (declarations.length !== 1) return false;
+  const declaration = declarations[0]!;
+  if (
+    !ts.isVariableDeclaration(declaration) ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    (declaration.parent.flags & ts.NodeFlags.Const) === 0
+  ) {
+    return false;
+  }
+
+  let current: ts.Expression = directCall;
+  while (current !== stmt.expression) {
+    const parent = current.parent;
+    if (
+      (ts.isParenthesizedExpression(parent) ||
+        ts.isAsExpression(parent) ||
+        ts.isTypeAssertionExpression(parent) ||
+        ts.isSatisfiesExpression(parent) ||
+        ts.isNonNullExpression(parent)) &&
+      parent.expression === current
+    ) {
+      current = parent;
+      continue;
+    }
+    if (
+      (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent)) &&
+      parent.expression === current
+    ) {
+      current = parent;
+      continue;
+    }
+    if (ts.isCallExpression(parent) && parent.expression === current) {
+      current = parent;
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
+/**
  * Split a LINEAR async function body (a flat statement sequence whose awaits all
  * sit at canonical top-level positions) into ordered suspend segments. This is
  * the multi-await generalization of {@link splitBodyAtAwait}: each await must be
@@ -508,37 +659,51 @@ export interface LinearAwaitPlan {
 export function planLinearAwaits(
   fn: ts.FunctionLikeDeclaration,
   plan: AsyncCpsPlan,
-  opts?: { allowReturnInTry?: boolean },
+  opts?: { allowReturnInTry?: boolean; checker?: ts.TypeChecker },
 ): LinearAwaitPlan | null {
   if (plan.awaitPoints.length === 0) return null;
   const body = fn.body;
   if (body === undefined) return null;
   if (!ts.isBlock(body)) {
     // (#2967 slice 2b) CONCISE arrow body. The one drivable concise shape is
-    // `async (…) => await P` (possibly parenthesized) — semantically
-    // `{ return await P; }`, i.e. the single-segment isReturnAwait plan. This
-    // is exactly the concise population the CPS lane (`splitBodyAtAwait`)
-    // owned, so admitting it here moves those closures onto the frame engine
-    // (observable only via the closure activation path — declarations never
-    // have concise bodies). Any richer concise body (`=> f(await P)`,
-    // `=> (await P) + 1`) has its await NESTED in an expression — not
-    // linear-canonical, keep the legacy/CPS fallback.
+    // `async (…) => await P` (possibly parenthesized). A second bounded shape
+    // admits a direct constructor argument (`async () => new C(null, await P)`)
+    // by carrying the delivered value into the original continuation
+    // expression. Other nested-expression awaits remain on the legacy path.
     let e: ts.Expression = body;
     while (ts.isParenthesizedExpression(e)) e = e.expression;
-    if (!ts.isAwaitExpression(e)) return null;
-    if (plan.awaitPoints.length !== 1 || plan.awaitPoints[0] !== e) return null;
+    if (ts.isAwaitExpression(e)) {
+      if (plan.awaitPoints.length !== 1 || plan.awaitPoints[0] !== e) return null;
+      return {
+        segments: [
+          {
+            leadStmts: [],
+            awaitedExpr: e.expression,
+            resumeBinding: null,
+            isReturnAwait: true,
+            awaitInTry: false,
+            leadInTry: [],
+          },
+        ],
+        tail: [],
+        tailInTry: [],
+        finalizer: null,
+      };
+    }
+    const awaitTarget = plan.awaitPoints.length === 1 ? returnedConstructorAwait(e) : null;
+    if (awaitTarget === null || plan.awaitPoints[0] !== awaitTarget) return null;
     return {
       segments: [
         {
           leadStmts: [],
-          awaitedExpr: e.expression,
-          resumeBinding: null,
-          isReturnAwait: true,
+          awaitedExpr: awaitTarget.expression,
+          resumeBinding: nestedAwaitBinding(awaitTarget),
+          isReturnAwait: false,
           awaitInTry: false,
           leadInTry: [],
         },
       ],
-      tail: [],
+      tail: [ts.factory.createReturnStatement(body)],
       tailInTry: [],
       finalizer: null,
     };
@@ -554,6 +719,7 @@ export function planLinearAwaits(
     usedFinally: false,
     sawReturnAwait: false,
     allowReturnInTry: opts?.allowReturnInTry === true,
+    checker: opts?.checker,
   };
   if (!lowerLinearStatements(body.statements, st, awaitSet)) return null;
 
@@ -627,6 +793,8 @@ interface LowerState {
    * reject so admission is unchanged).
    */
   allowReturnInTry: boolean;
+  /** TypeScript identity proof used by bounded continuation recompilation. */
+  checker?: ts.TypeChecker;
 }
 
 /**
@@ -656,6 +824,12 @@ function lowerLinearStatements(
     if (awaitsHere === 0) {
       if (st.sawReturnAwait) return false; // unreachable code after `return await`
       pushLead(stmt);
+      continue;
+    }
+
+    const transparentBlock = transparentLinearBlockStatements(stmt);
+    if (transparentBlock !== undefined) {
+      if (!lowerLinearStatements(transparentBlock, st, awaitSet)) return false;
       continue;
     }
     if (awaitsHere > 1) return false; // two awaits in one statement — not linear-canonical
@@ -762,71 +936,47 @@ function lowerLinearStatements(
       resetLead();
       continue;
     }
+    // Preserve a constructor-argument await in a synthetic resume binding,
+    // then compile the original return as its continuation. The expression
+    // dispatcher resolves that exact AwaitExpression from the delivered local.
+    if (ts.isReturnStatement(stmt) && stmt.expression !== undefined) {
+      const nestedAwait = returnedConstructorAwait(stmt.expression);
+      if (nestedAwait === null || nestedAwait !== awaitNode) return false;
+      st.segments.push({
+        leadStmts,
+        awaitedExpr: nestedAwait.expression,
+        resumeBinding: nestedAwaitBinding(nestedAwait),
+        isReturnAwait: false,
+        awaitInTry,
+        leadInTry,
+      });
+      resetLead();
+      pushLead(stmt);
+      st.sawReturnAwait = true;
+      continue;
+    }
+    // A first-argument await on a lexically-constant callable can preserve its
+    // containing call chain as a continuation. The only work before suspension
+    // is an immutable binding read; the call itself and every enclosing member
+    // read/call remain after resumption. `asyncAwaitValueLocals` substitutes the
+    // delivered value for this exact AwaitExpression when the statement is
+    // compiled in the resume state.
+    if (replaySafeNestedCallAwait(stmt, awaitNode, st.checker)) {
+      st.segments.push({
+        leadStmts,
+        awaitedExpr: awaitNode.expression,
+        resumeBinding: nestedAwaitBinding(awaitNode),
+        isReturnAwait: false,
+        awaitInTry,
+        leadInTry,
+      });
+      resetLead();
+      pushLead(stmt);
+      continue;
+    }
     return false; // await sits in a non-canonical position within this statement
   }
   return true;
-}
-
-/** True if `block` contains a `return` at any depth (not crossing nested fn scopes). */
-function blockHasTopLevelReturn(block: ts.Block): boolean {
-  let found = false;
-  const walk = (node: ts.Node): void => {
-    if (found || isNestedFunctionScope(node)) return;
-    if (ts.isReturnStatement(node)) {
-      found = true;
-      return;
-    }
-    forEachChild(node, walk);
-  };
-  forEachChild(block, walk);
-  return found;
-}
-
-/** Count how many of `awaitSet`'s awaits sit inside `stmt` (not crossing fn scopes). */
-function countAwaitsInStatement(stmt: ts.Node, awaitSet: ReadonlySet<ts.AwaitExpression>): number {
-  let n = 0;
-  const walk = (node: ts.Node): void => {
-    if (isNestedFunctionScope(node) && node !== stmt) return;
-    if (ts.isAwaitExpression(node) && awaitSet.has(node)) n++;
-    forEachChild(node, walk);
-  };
-  walk(stmt);
-  return n;
-}
-
-/** The single `awaitSet` await inside `stmt`, or `undefined`. */
-function findAwaitInStatement(
-  stmt: ts.Node,
-  awaitSet: ReadonlySet<ts.AwaitExpression>,
-): ts.AwaitExpression | undefined {
-  let found: ts.AwaitExpression | undefined;
-  const walk = (node: ts.Node): void => {
-    if (found) return;
-    if (isNestedFunctionScope(node) && node !== stmt) return;
-    if (ts.isAwaitExpression(node) && awaitSet.has(node)) {
-      found = node;
-      return;
-    }
-    forEachChild(node, walk);
-  };
-  walk(stmt);
-  return found;
-}
-
-/** True if `node` appears anywhere within `stmt`'s subtree (not crossing fn scopes). */
-function statementContainsNode(stmt: ts.Node, node: ts.Node): boolean {
-  let found = false;
-  const walk = (n: ts.Node): void => {
-    if (found) return;
-    if (n === node) {
-      found = true;
-      return;
-    }
-    if (isNestedFunctionScope(n) && n !== stmt) return;
-    forEachChild(n, walk);
-  };
-  walk(stmt);
-  return found;
 }
 
 // ---------------------------------------------------------------------------
@@ -917,6 +1067,8 @@ export interface AsyncResumePoint {
     readonly type: ts.TypeNode | undefined;
     /** Existing assignment target used to recover its inferred/local type. */
     readonly target?: ts.Identifier;
+    /** Original nested await whose continuation reads this delivered binding. */
+    readonly awaitTarget?: ts.AwaitExpression;
   } | null;
   /** Handler region the suspended await sat in (0 = none). */
   readonly handler: number;
@@ -1159,7 +1311,10 @@ export function planAsyncCfg(
   plan: AsyncCpsPlan,
   opts: AsyncCfgOptions,
 ): AsyncCfgPlan | null {
-  const linear = planLinearAwaits(fn, plan, { allowReturnInTry: opts.allowReturnInTry === true });
+  const linear = planLinearAwaits(fn, plan, {
+    allowReturnInTry: opts.allowReturnInTry === true,
+    checker: ctx.checker,
+  });
   if (linear !== null) return linearPlanToCfg(linear);
   if (opts.allowLoops) {
     const whileCfg = planWhileLoopCfg(fn, plan);
@@ -1519,6 +1674,16 @@ function bodyHasGroup(body: RegionBody): boolean {
   );
 }
 
+/** Any conditional branch carrying an await anywhere in the body (recursive)? */
+function bodyHasConditional(body: RegionBody): boolean {
+  return body.items.some(
+    (item) =>
+      item.kind === "conditional" ||
+      (item.kind === "group" && bodyHasConditional(item.group.tryBody)) ||
+      (item.kind === "forOf" && bodyHasConditional(item.body)),
+  );
+}
+
 function asyncForOfIteratorSpill(stmt: ts.ForOfStatement): string {
   return `__async_forof_iter_${stmt.pos >= 0 ? stmt.pos : stmt.getStart()}`;
 }
@@ -1764,12 +1929,12 @@ function lowerRegionBody(
 }
 
 /**
- * (#2906 3c / 3c-ii / 3c-iii) Structural analysis of the bounded
- * try/catch-around-await body: a flat statement block whose awaited
- * `try { … } catch (e?) { … }` statements — top-level AND nested inside try
- * blocks — become a recursive region-body of groups; the runs between them
- * and the catch blocks are linear-canonical chunks (awaits allowed). Returns
- * `null` (→ Gap-3 linear / legacy fallback) for anything outside the slice.
+ * (#2906 3c / 3c-ii / 3c-iii, #3995) Structural analysis of a bounded
+ * branch-aware async body. Awaited `try { … } catch (e?) { … }` statements
+ * become recursive groups, while `if` statements whose arms contain awaits
+ * become CFG conditionals. Runs between them and catch blocks are
+ * linear-canonical chunks (awaits allowed). Returns `null` (→ Gap-3 linear /
+ * legacy fallback) for anything outside the slice.
  */
 export function analyzeTryCatchAsync(fn: ts.FunctionLikeDeclaration, plan: AsyncCpsPlan): { body: RegionBody } | null {
   if (plan.awaitPoints.length === 0) return null;
@@ -1779,16 +1944,18 @@ export function analyzeTryCatchAsync(fn: ts.FunctionLikeDeclaration, plan: Async
 
   const region = lowerRegionBody(body.statements, awaitSet, 0);
   if (region === null) return null;
-  // At least one group (else the linear path owns the body), and every await
-  // accounted for by the region's chunks (no stray positions).
-  if (!bodyHasGroup(region)) return null;
+  // At least one non-linear construct (else the linear path owns the body), and
+  // every await accounted for by the region's chunks (no stray positions).
+  // Conditionals reuse the same branch-capable CFG builder as try/catch; no
+  // handler region is created when the body contains only `if` branches.
+  if (!bodyHasGroup(region) && !bodyHasConditional(region)) return null;
   if (bodySegCount(region) !== plan.awaitPoints.length) return null;
   return { body: region };
 }
 
 /**
- * (#2906 3c / 3c-ii) Build the CFG for the bounded (multi-region sibling)
- * try/catch shape. Per group g (region id r, in source order): the pre chunk's
+ * (#2906 3c / 3c-ii, #3995) Build the CFG for bounded branch-aware async
+ * bodies. Per try/catch group g (region id r, in source order): the pre chunk's
  * suspend chain (handler 0, its tail fused into the first try state's leads),
  * the try chunk's suspend chain (handler r), a try-exit state
  * (deliver the last try await → try tail → `goto(join)`, or `settleSent` for a
@@ -3812,19 +3979,6 @@ function collectAllDeclaredNames(fn: ts.FunctionLikeDeclaration, out: Set<string
   walk(body);
 }
 
-/** True for nodes that open a new function scope (awaits inside don't suspend us). */
-function isNestedFunctionScope(node: ts.Node): boolean {
-  return (
-    ts.isFunctionDeclaration(node) ||
-    ts.isFunctionExpression(node) ||
-    ts.isArrowFunction(node) ||
-    ts.isMethodDeclaration(node) ||
-    ts.isGetAccessorDeclaration(node) ||
-    ts.isSetAccessorDeclaration(node) ||
-    ts.isConstructorDeclaration(node)
-  );
-}
-
 /** Collect `await` expressions in pre-order, not descending into nested fn scopes. */
 function collectAwaitPoints(node: ts.Node, out: ts.AwaitExpression[]): void {
   if (isNestedFunctionScope(node)) return;
@@ -3861,9 +4015,15 @@ function collectReferencedAfter(root: ts.Node, target: ts.AwaitExpression, out: 
       return; // the await's own operand executes BEFORE resumption — skip it
     }
     if (isNestedFunctionScope(node)) {
-      // A nested scope after the target may still reference our locals (closure
-      // capture), so when we're already past the target, collect from it too.
-      if (passedTarget) collectReferencedIdentifiers(node, out);
+      // A nested scope may reference our locals (closure capture) and run
+      // after the await REGARDLESS of where it is declared: a hoisted function
+      // declaration or an arrow created before the suspend point is routinely
+      // invoked from the resumed continuation (#4618 — react it-bodies declare
+      // `function ParentComponent(){…}` before `await act(...)` and render it
+      // after). Collect from every nested scope, not just ones lexically after
+      // the target; the outer `ownLocals` filter keeps this to genuine
+      // captures, and an over-approximated spill is only an extra frame field.
+      collectReferencedIdentifiers(node, out);
       return;
     }
     if (passedTarget && ts.isIdentifier(node)) {

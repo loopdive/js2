@@ -1,18 +1,30 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { irSupportFuncRef, irUnitCallableBindingId, irUnitFuncRef } from "../ir/callable-bindings.js";
+import {
+  irCallableBindingKey,
+  irSupportFuncRef,
+  irUnitCallableBindingId,
+  irUnitFuncRef,
+} from "../ir/callable-bindings.js";
 import type { IrBindingId, IrClassId, IrUnitId, IrUnitKind } from "../ir/identity.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
-import { ProgramAbiInvariantError } from "../ir/program-abi.js";
+import { ProgramAbiInvariantError, type ProgramAbiCallableSignature } from "../ir/program-abi.js";
 import type { FuncHandle, FuncTypeDef, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
+import { classMemberFuncKey } from "./class-member-keys.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, isImportFuncIdx, pushDefinedFunc } from "./func-space.js";
 import {
+  planProgramAbiSupportCallableAlias,
   planProgramAbiSupportCallable,
   planProgramAbiUnitCallable,
   PROGRAM_ABI_CALLABLE_ROLE,
 } from "./program-abi-planning.js";
+import {
+  canonicalProgramAbiCallableTypeContract,
+  programAbiCallableSignaturesEqual,
+} from "./program-abi-signatures.js";
+import { resolveComputedKeyExpression } from "./shared.js";
 import type { ProgramAbiSession } from "./program-abi-session.js";
 
 export { mintDefinedFunc } from "./func-space.js";
@@ -39,7 +51,13 @@ interface ProgramAbiClassSupportCallableObservation {
 interface ProgramAbiInheritedClassCallableObservation {
   readonly childClassId: IrClassId;
   readonly canonicalUnitId: IrUnitId;
+  readonly memberKind: "method" | "getter" | "setter" | "static";
+  readonly memberName: string;
+  readonly role: string;
+  readonly derivedOrdinal: number;
   readonly displayName: string;
+  readonly funcIdx: FuncHandle;
+  readonly signature: ProgramAbiCallableSignature;
 }
 
 /** Push and structurally observe one class-owned allocation atomically. */
@@ -92,7 +110,13 @@ function expectedClassUnitKind(declaration: ts.Node): IrUnitKind | null {
   if (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) {
     return "class-implicit-constructor";
   }
-  if (ts.isConstructorDeclaration(declaration)) return "class-constructor";
+  if (ts.isConstructorDeclaration(declaration)) {
+    // (#5195 r3-4, r3 review F2) `static constructor(){}` parses as a
+    // ConstructorDeclaration but is an ordinary static METHOD named
+    // "constructor" (§15.7); the IR inventory classifies it that way, so the
+    // ABI planner has to agree or every such class fails to plan.
+    return hasStaticModifier(declaration) ? "class-static-method" : "class-constructor";
+  }
   if (ts.isMethodDeclaration(declaration)) {
     return hasStaticModifier(declaration) ? "class-static-method" : "class-instance-method";
   }
@@ -122,6 +146,84 @@ function functionSignature(ctx: CodegenContext, func: WasmFunction): FuncTypeDef
   return signature;
 }
 
+type InheritedClassMemberKind = ProgramAbiInheritedClassCallableObservation["memberKind"];
+
+function inheritedMemberKind(declaration: ts.Node, unitKind: IrUnitKind): InheritedClassMemberKind | null {
+  const isStatic = hasStaticModifier(declaration);
+  if (unitKind === "class-instance-method" && ts.isMethodDeclaration(declaration) && !isStatic) return "method";
+  if (
+    (unitKind === "class-instance-getter" || unitKind === "class-static-getter") &&
+    ts.isGetAccessorDeclaration(declaration) &&
+    isStatic === unitKind.startsWith("class-static-")
+  ) {
+    return "getter";
+  }
+  if (
+    (unitKind === "class-instance-setter" || unitKind === "class-static-setter") &&
+    ts.isSetAccessorDeclaration(declaration) &&
+    isStatic === unitKind.startsWith("class-static-")
+  ) {
+    return "setter";
+  }
+  if (unitKind === "class-static-method" && ts.isMethodDeclaration(declaration) && isStatic) return "static";
+  return null;
+}
+
+function inheritedMemberRole(kind: InheritedClassMemberKind, memberName: string): string {
+  return kind === "method"
+    ? `class-method-adapter:instance:${memberName}`
+    : `class-member-adapter:${kind}:${memberName}`;
+}
+
+function structuralClassMemberName(ctx: CodegenContext, name: ts.PropertyName): string | undefined {
+  if (ts.isIdentifier(name)) return name.text;
+  if (ts.isPrivateIdentifier(name)) return `__priv_${name.text.slice(1)}`;
+  if (ts.isStringLiteral(name)) return name.text;
+  if (ts.isNumericLiteral(name)) return String(Number(name.text));
+  return ts.isComputedPropertyName(name) ? resolveComputedKeyExpression(ctx, name.expression) : undefined;
+}
+
+function inheritedParentClassId(
+  ctx: CodegenContext,
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  identityContext: IrPlanningIdentityContext,
+): IrClassId | null | undefined {
+  const heritage = declaration.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
+  const expression = heritage?.types[0]?.expression;
+  if (!expression) return null;
+  const declarations = ctx.oracle
+    .declarationsOf(expression)
+    .filter(
+      (candidate): candidate is ts.ClassDeclaration | ts.ClassExpression =>
+        ts.isClassDeclaration(candidate) || ts.isClassExpression(candidate),
+    );
+  if (declarations.length !== 1) return undefined;
+  const parent = declarations[0]!;
+  const classId = identityContext.classIdByDeclaration.get(parent);
+  return classId !== undefined && identityContext.declarationByClassId.get(classId) === parent ? classId : undefined;
+}
+
+function inheritedMemberSuffix(kind: InheritedClassMemberKind, memberName: string): string {
+  return kind === "getter" ? `get_${memberName}` : kind === "setter" ? `set_${memberName}` : memberName;
+}
+
+function inheritedObservationsEqual(
+  left: ProgramAbiInheritedClassCallableObservation,
+  right: ProgramAbiInheritedClassCallableObservation,
+): boolean {
+  return (
+    left.childClassId === right.childClassId &&
+    left.canonicalUnitId === right.canonicalUnitId &&
+    left.memberKind === right.memberKind &&
+    left.memberName === right.memberName &&
+    left.role === right.role &&
+    left.derivedOrdinal === right.derivedOrdinal &&
+    left.displayName === right.displayName &&
+    left.funcIdx === right.funcIdx &&
+    programAbiCallableSignaturesEqual(left.signature, right.signature)
+  );
+}
+
 /**
  * Exact class-callable sidecar spanning collection and final ABI planning.
  *
@@ -135,10 +237,7 @@ function functionSignature(ctx: CodegenContext, func: WasmFunction): FuncTypeDef
 export class ProgramAbiClassCallableRegistry {
   private readonly units = new Map<IrUnitId, ProgramAbiClassUnitCallableObservation[]>();
   private readonly supports = new Map<IrBindingId, ProgramAbiClassSupportCallableObservation[]>();
-  private readonly inheritedAliases = new Map<
-    IrClassId,
-    Map<IrUnitId, ProgramAbiInheritedClassCallableObservation[]>
-  >();
+  private readonly inheritedAliases = new Map<IrClassId, Map<string, ProgramAbiInheritedClassCallableObservation>>();
   private planned = false;
 
   constructor(
@@ -286,30 +385,257 @@ export class ProgramAbiClassCallableRegistry {
       );
     }
     const canonicalUnitId = canonicalUnitIds[0]!;
-    const canonical = this.identityContext.unitByUnitId.get(canonicalUnitId);
-    const canonicalClass =
-      canonical?.lexicalOwnerId === null || canonical?.lexicalOwnerId === undefined
-        ? undefined
-        : this.identityContext.declarationByClassId.get(canonical.lexicalOwnerId as IrClassId);
-    if (!canonical || !canonicalClass || !canonical.kind.startsWith("class-")) {
+    const contract = this.inheritedContract(childDeclaration, childClassId, canonicalUnitId, displayName);
+    if (!contract) return undefined;
+    const currentSignature = functionSignature(this.ctx, func);
+    const signature = canonicalProgramAbiCallableTypeContract(currentSignature);
+    const observation: ProgramAbiInheritedClassCallableObservation = Object.freeze({
+      ...contract,
+      childClassId,
+      canonicalUnitId,
+      displayName,
+      funcIdx,
+      signature,
+    });
+    const aliasesByRole = this.inheritedAliases.get(childClassId) ?? new Map();
+    const existing = aliasesByRole.get(observation.role);
+    if (existing && !inheritedObservationsEqual(existing, observation)) {
       throw new ProgramAbiInvariantError(
-        "missing-source-unit",
-        `inherited class callable ${displayName} has no exact canonical class unit`,
+        "session-draft-mismatch",
+        `inherited class callable ${childClassId} / ${observation.role} was observed with conflicting structural authority`,
       );
     }
-    const aliasesByUnit = this.inheritedAliases.get(childClassId) ?? new Map();
-    const observations = aliasesByUnit.get(canonicalUnitId) ?? [];
-    const previous = observations.at(-1);
-    if (
-      previous?.childClassId !== childClassId ||
-      previous.canonicalUnitId !== canonicalUnitId ||
-      previous.displayName !== displayName
-    ) {
-      observations.push(Object.freeze({ childClassId, canonicalUnitId, displayName }));
-      aliasesByUnit.set(canonicalUnitId, observations);
-      this.inheritedAliases.set(childClassId, aliasesByUnit);
+    for (const other of aliasesByRole.values()) {
+      if (other.role === observation.role) continue;
+      if (other.displayName === displayName || other.canonicalUnitId === canonicalUnitId) {
+        throw new ProgramAbiInvariantError(
+          "session-draft-mismatch",
+          `inherited class callable ${childClassId} / ${displayName} conflicts with structural role ${other.role}`,
+        );
+      }
+    }
+    if (!existing) {
+      this.planInheritedAliasDraft(observation, currentSignature);
+      aliasesByRole.set(observation.role, observation);
+      this.inheritedAliases.set(childClassId, aliasesByRole);
     }
     return canonicalUnitId;
+  }
+
+  /**
+   * Plan one slotless inherited alias while its prepared scope is still open.
+   *
+   * This has to happen at OBSERVATION time: class-body compilation is the only
+   * point at which the alias's prepared component scope is still unsealed, and
+   * a new draft raised later is rejected outright ("would mutate sealed prepared
+   * scope"). The consequence is that the alias's stored `intent.signature` is a
+   * pre-dead-type-elimination snapshot, while its canonical is planned in
+   * `planRetained` after the remap — see the exact-signature check there, which
+   * must therefore compare rebased contracts and not these snapshots.
+   */
+  private planInheritedAliasDraft(
+    observation: ProgramAbiInheritedClassCallableObservation,
+    signature: FuncTypeDef,
+  ): IrBindingId {
+    const ref = irSupportFuncRef(
+      observation.childClassId,
+      observation.role,
+      observation.displayName,
+      observation.derivedOrdinal,
+    );
+    const bindingId = planProgramAbiSupportCallableAlias(this.ctx, {
+      ref,
+      anchor: { kind: "class", classId: observation.childClassId },
+      role: observation.role,
+      roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.classMethodAdapter,
+      derivedOrdinal: observation.derivedOrdinal,
+      aliasOf: irUnitCallableBindingId(observation.canonicalUnitId),
+      signature,
+    });
+    if (
+      ref.binding.kind !== "support" ||
+      bindingId !== ref.binding.bindingId ||
+      this.session.hasLocator(ref.binding.bindingId)
+    ) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `inherited class callable ${observation.childClassId} / ${observation.canonicalUnitId} was not accepted as a slotless exact alias`,
+      );
+    }
+    return bindingId;
+  }
+
+  private inheritedContract(
+    childDeclaration: ts.ClassDeclaration | ts.ClassExpression,
+    childClassId: IrClassId,
+    canonicalUnitId: IrUnitId,
+    displayName: string,
+  ):
+    | Pick<ProgramAbiInheritedClassCallableObservation, "memberKind" | "memberName" | "role" | "derivedOrdinal">
+    | undefined {
+    const canonical = this.identityContext.unitByUnitId.get(canonicalUnitId);
+    const canonicalDeclaration = this.identityContext.declarationByUnitId.get(canonicalUnitId);
+    const canonicalClassId = canonical?.lexicalOwnerId as IrClassId | null | undefined;
+    const canonicalClassDeclaration =
+      canonicalClassId === null || canonicalClassId === undefined
+        ? undefined
+        : this.identityContext.declarationByClassId.get(canonicalClassId);
+    const canonicalClassRecords = this.session.inventory.classes.filter((record) => record.id === canonicalClassId);
+    const childClassRecords = this.session.inventory.classes.filter((record) => record.id === childClassId);
+    const memberKind =
+      canonicalDeclaration && canonical ? inheritedMemberKind(canonicalDeclaration, canonical.kind) : null;
+    const memberName =
+      canonicalDeclaration &&
+      (ts.isMethodDeclaration(canonicalDeclaration) ||
+        ts.isGetAccessorDeclaration(canonicalDeclaration) ||
+        ts.isSetAccessorDeclaration(canonicalDeclaration))
+        ? structuralClassMemberName(this.ctx, canonicalDeclaration.name)
+        : undefined;
+    const childName = childDeclaration.name?.text;
+    if (
+      !canonical ||
+      !canonicalDeclaration ||
+      !canonicalClassDeclaration ||
+      canonicalClassRecords.length !== 1 ||
+      childClassRecords.length !== 1 ||
+      !memberKind ||
+      memberName === undefined ||
+      this.identityContext.declarationByUnitId.get(canonical.id) !== canonicalDeclaration ||
+      this.identityContext.unitIdByDeclaration.get(canonicalDeclaration) !== canonical.id ||
+      this.identityContext.declarationByClassId.get(canonicalClassId!) !== canonicalClassDeclaration ||
+      this.identityContext.classIdByDeclaration.get(canonicalClassDeclaration) !== canonicalClassId ||
+      canonicalDeclaration.parent !== canonicalClassDeclaration ||
+      this.identityContext.declarationByClassId.get(childClassId) !== childDeclaration ||
+      this.identityContext.classIdByDeclaration.get(childDeclaration) !== childClassId
+    ) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `inherited class callable ${displayName} has no complete exact canonical class-member authority`,
+      );
+    }
+    if (childName === undefined) return undefined;
+    const expectedStatic = canonical.kind.startsWith("class-static-");
+    const suffix = inheritedMemberSuffix(memberKind, memberName);
+    if (
+      canonical.terminal &&
+      (canonical.observedKind !== "class-member" || canonical.staticClassMember !== expectedStatic)
+    ) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `inherited class callable ${displayName} disagrees with exact ${memberKind} source unit ${canonicalUnitId}`,
+      );
+    }
+    const parentClassId = inheritedParentClassId(this.ctx, childDeclaration, this.identityContext);
+    if (parentClassId === undefined) return undefined;
+    if (parentClassId === null) {
+      throw new ProgramAbiInvariantError(
+        "unknown-inventory-class",
+        `inherited class callable ${displayName} has no exact parent class`,
+      );
+    }
+    if (this.memberUnitIds(childDeclaration, canonical.kind, memberName).length !== 0) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `inherited class callable ${displayName} aliases a member owned directly by child ${childClassId}`,
+      );
+    }
+    const nearestUnitId = this.nearestInheritedMemberUnitId(childDeclaration, canonical.kind, memberKind, memberName);
+    if (nearestUnitId !== canonicalUnitId) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        `inherited class callable ${displayName} targets ${canonicalUnitId}, not nearest exact override ${nearestUnitId ?? "<none>"}`,
+      );
+    }
+    const inventoryMatches = this.session.inventory.allUnits
+      .map((unit, index) => ({ unit, index }))
+      .filter(({ unit }) => unit.id === canonicalUnitId);
+    if (inventoryMatches.length !== 1) {
+      throw new ProgramAbiInvariantError(
+        "unknown-order-anchor",
+        `inherited class callable ${displayName} canonical unit ${canonicalUnitId} occurs ${inventoryMatches.length} times`,
+      );
+    }
+    const expectedDisplayName = classMemberFuncKey(this.ctx, `${childName}_${suffix}`);
+    if (displayName !== expectedDisplayName) {
+      throw new ProgramAbiInvariantError(
+        "binding-reference-mismatch",
+        `inherited class callable ${displayName} is not exact child physical key ${expectedDisplayName}`,
+      );
+    }
+    return Object.freeze({
+      memberKind,
+      memberName,
+      role: inheritedMemberRole(memberKind, memberName),
+      derivedOrdinal: inventoryMatches[0]!.index,
+    });
+  }
+
+  private nearestInheritedMemberUnitId(
+    childDeclaration: ts.ClassDeclaration | ts.ClassExpression,
+    unitKind: IrUnitKind,
+    memberKind: InheritedClassMemberKind,
+    memberName: string,
+  ): IrUnitId | undefined {
+    const seen = new Set<IrClassId>();
+    let ancestor = this.directParentClassDeclaration(childDeclaration);
+    while (ancestor) {
+      const classId = this.identityContext.classIdByDeclaration.get(ancestor);
+      if (
+        classId === undefined ||
+        this.identityContext.declarationByClassId.get(classId) !== ancestor ||
+        seen.has(classId)
+      ) {
+        throw new ProgramAbiInvariantError(
+          "unknown-inventory-class",
+          `inherited ${memberKind} ${memberName} has an invalid or cyclic exact ancestor`,
+        );
+      }
+      seen.add(classId);
+      const candidates = this.memberUnitIds(ancestor, unitKind, memberName);
+      if (candidates.length > 1) {
+        throw new ProgramAbiInvariantError(
+          "missing-source-unit",
+          `ancestor ${classId} owns ${candidates.length} exact ${memberKind} units named ${memberName}`,
+        );
+      }
+      if (candidates.length === 1) return candidates[0];
+      ancestor = this.directParentClassDeclaration(ancestor);
+    }
+    return undefined;
+  }
+
+  private memberUnitIds(
+    declaration: ts.ClassDeclaration | ts.ClassExpression,
+    expectedKind: IrUnitKind,
+    memberName: string,
+  ): IrUnitId[] {
+    return declaration.members.flatMap((member) => {
+      if (!member.name || structuralClassMemberName(this.ctx, member.name) !== memberName) return [];
+      if (inheritedMemberKind(member, expectedKind) === null) return [];
+      const unitId = this.identityContext.unitIdByDeclaration.get(member);
+      const unit = unitId === undefined ? undefined : this.identityContext.unitByUnitId.get(unitId);
+      const classId = this.identityContext.classIdByDeclaration.get(declaration);
+      return unitId !== undefined && unit?.kind === expectedKind && unit.lexicalOwnerId === classId ? [unitId] : [];
+    });
+  }
+
+  private directParentClassDeclaration(
+    declaration: ts.ClassDeclaration | ts.ClassExpression,
+  ): ts.ClassDeclaration | ts.ClassExpression | undefined {
+    const classId = inheritedParentClassId(this.ctx, declaration, this.identityContext);
+    if (classId === null || classId === undefined) return undefined;
+    const parent = this.identityContext.declarationByClassId.get(classId);
+    if (
+      !parent ||
+      (!ts.isClassDeclaration(parent) && !ts.isClassExpression(parent)) ||
+      this.identityContext.classIdByDeclaration.get(parent) !== classId
+    ) {
+      throw new ProgramAbiInvariantError(
+        "unknown-inventory-class",
+        `inherited class callable parent ${classId} has no exact declaration`,
+      );
+    }
+    return parent;
   }
 
   private observeSupport(
@@ -377,6 +703,128 @@ export class ProgramAbiClassCallableRegistry {
           "missing-source-unit",
           `retained class callable ${canonical.displayName} was not accepted for exact unit ${unitId}`,
         );
+      }
+    }
+
+    for (const [childClassId, aliasesByRole] of this.inheritedAliases) {
+      const childDeclaration = this.identityContext.declarationByClassId.get(childClassId);
+      if (
+        !childDeclaration ||
+        (!ts.isClassDeclaration(childDeclaration) && !ts.isClassExpression(childDeclaration)) ||
+        this.identityContext.classIdByDeclaration.get(childDeclaration) !== childClassId
+      ) {
+        throw new ProgramAbiInvariantError(
+          "unknown-inventory-class",
+          `inherited callable observations have no exact child class ${childClassId}`,
+        );
+      }
+      const canonicalUnitIds = new Set<IrUnitId>();
+      const physicalNames = new Set<string>();
+      for (const [role, observation] of aliasesByRole) {
+        if (
+          observation.childClassId !== childClassId ||
+          observation.role !== role ||
+          physicalNames.has(observation.displayName) ||
+          canonicalUnitIds.has(observation.canonicalUnitId)
+        ) {
+          throw new ProgramAbiInvariantError(
+            "session-draft-mismatch",
+            `inherited class callable ${childClassId} / ${role} has conflicting map authority`,
+          );
+        }
+        physicalNames.add(observation.displayName);
+        canonicalUnitIds.add(observation.canonicalUnitId);
+        const liveFunc = definedFuncAt(this.ctx, observation.funcIdx);
+        if (!liveFunc) {
+          throw new ProgramAbiInvariantError(
+            "missing-required-locator",
+            `inherited class callable ${childClassId} / ${observation.canonicalUnitId} lost its exact allocator`,
+          );
+        }
+        const contract = this.inheritedContract(
+          childDeclaration,
+          childClassId,
+          observation.canonicalUnitId,
+          observation.displayName,
+        );
+        if (
+          !contract ||
+          contract.memberKind !== observation.memberKind ||
+          contract.memberName !== observation.memberName ||
+          contract.role !== observation.role ||
+          contract.derivedOrdinal !== observation.derivedOrdinal
+        ) {
+          throw new ProgramAbiInvariantError(
+            "session-draft-mismatch",
+            `inherited class callable ${childClassId} / ${role} drifted after observation`,
+          );
+        }
+        const aliasOf = irUnitCallableBindingId(observation.canonicalUnitId);
+        const canonicalDraft = this.session.getDraft(aliasOf);
+        const canonicalRef = irUnitFuncRef({ unitId: observation.canonicalUnitId, name: liveFunc.name });
+        if (
+          !canonicalDraft ||
+          canonicalDraft.slotPolicy !== "required" ||
+          canonicalDraft.slotSpace !== "function" ||
+          canonicalDraft.intent.kind !== "callable" ||
+          canonicalDraft.intent.origin !== "source" ||
+          canonicalDraft.intent.unitId !== observation.canonicalUnitId ||
+          canonicalDraft.structuralReferenceKey !== irCallableBindingKey(canonicalRef.binding) ||
+          this.session.locatorObjectForBinding(aliasOf) !== liveFunc
+        ) {
+          throw new ProgramAbiInvariantError(
+            "missing-required-locator",
+            `inherited class callable ${childClassId} / ${observation.canonicalUnitId} has no exact canonical Program ABI locator`,
+          );
+        }
+        const aliasRef = irSupportFuncRef(
+          observation.childClassId,
+          observation.role,
+          observation.displayName,
+          observation.derivedOrdinal,
+        );
+        const aliasBindingId =
+          aliasRef.binding.kind === "support" ? aliasRef.binding.bindingId : (undefined as IrBindingId | undefined);
+        const aliasDraft = aliasBindingId === undefined ? undefined : this.session.getDraft(aliasBindingId);
+        if (
+          !aliasDraft ||
+          aliasDraft.slotPolicy !== "alias" ||
+          aliasDraft.aliasOf !== aliasOf ||
+          aliasDraft.structuralReferenceKey !== irCallableBindingKey(aliasRef.binding) ||
+          aliasDraft.intent.kind !== "callable" ||
+          aliasDraft.intent.origin !== "support" ||
+          aliasDraft.intent.classId !== observation.childClassId ||
+          this.session.hasLocator(aliasDraft.id)
+        ) {
+          throw new ProgramAbiInvariantError(
+            "invalid-binding-reference",
+            `inherited class callable ${childClassId} / ${observation.canonicalUnitId} lost its exact slotless alias plan`,
+          );
+        }
+        // Compare CURRENT contracts, not the drafts' frozen `intent.signature`.
+        // The alias is raised during class-body compilation (the only point its
+        // prepared scope is still open) and the canonical is raised in this pass,
+        // after `eliminateDeadImports` has applied the type layout remap. The
+        // session rebases `callableTypeContracts` across that remap but never
+        // rewrites a draft's stored signature, so the two snapshots describe one
+        // function with two type-index numberings (`ref 14` vs `ref 1` for a
+        // `super.value` getter receiver) and comparing them rejects a correct
+        // module. Both contracts must exist: a missing one is an unrebased or
+        // unregistered alias, which this invariant must not silently accept.
+        const canonicalSignature = this.session.currentCallableSignature(aliasOf);
+        const aliasSignature = this.session.currentCallableSignature(aliasDraft.id);
+        const liveSignature = canonicalProgramAbiCallableTypeContract(functionSignature(this.ctx, liveFunc));
+        if (
+          !canonicalSignature ||
+          !aliasSignature ||
+          !programAbiCallableSignaturesEqual(canonicalSignature, aliasSignature) ||
+          !programAbiCallableSignaturesEqual(canonicalSignature, liveSignature)
+        ) {
+          throw new ProgramAbiInvariantError(
+            "alias-signature-mismatch",
+            `inherited class callable ${childClassId} / ${observation.canonicalUnitId} disagrees with its exact canonical signature`,
+          );
+        }
       }
     }
 
@@ -529,10 +977,31 @@ export class ProgramAbiClassCallableRegistry {
     childClassId: IrClassId,
     canonicalUnitId: IrUnitId,
   ): { readonly canonicalUnitId: IrUnitId; readonly handle: FuncHandle } | undefined {
-    const canonical = this.inheritedAliases.get(childClassId)?.get(canonicalUnitId)?.at(-1);
-    if (!canonical) return undefined;
-    const handle = this.handleForUnit(canonical.canonicalUnitId);
-    return handle === undefined ? undefined : Object.freeze({ canonicalUnitId: canonical.canonicalUnitId, handle });
+    const aliasesByRole = this.inheritedAliases.get(childClassId);
+    if (!aliasesByRole) return undefined;
+    const matches = [...aliasesByRole.entries()].filter(
+      ([, observation]) => observation.canonicalUnitId === canonicalUnitId,
+    );
+    if (matches.length === 0) return undefined;
+    if (matches.length !== 1) {
+      throw new ProgramAbiInvariantError(
+        "session-draft-mismatch",
+        `inherited class callable ${childClassId} / ${canonicalUnitId} has ${matches.length} structural roles`,
+      );
+    }
+    const [role, observation] = matches[0]!;
+    if (
+      observation.childClassId !== childClassId ||
+      observation.canonicalUnitId !== canonicalUnitId ||
+      observation.role !== role ||
+      definedFuncAt(this.ctx, observation.funcIdx) === undefined
+    ) {
+      throw new ProgramAbiInvariantError(
+        "missing-required-locator",
+        `inherited class callable ${childClassId} / ${canonicalUnitId} lost its exact allocator`,
+      );
+    }
+    return Object.freeze({ canonicalUnitId, handle: observation.funcIdx });
   }
 
   private assertOpen(displayName: string): void {

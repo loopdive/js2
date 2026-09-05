@@ -1,9 +1,9 @@
 ---
 id: 2867
 title: "Standalone: Promise / async microtask leaks Promise_resolve/reject/then + __make_callback host imports"
-status: ready
+status: in-progress
 created: 2026-06-30
-updated: 2026-08-15
+updated: 2026-08-25
 priority: high
 feasibility: hard
 model: fable
@@ -17,6 +17,9 @@ loc-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/async-cps.ts
   - src/codegen/expressions/call-namespace-static.ts
+  # string-combinator slice: the string arm belongs in the combinator
+  # subsystem module itself; +15 over the 1500 god-file threshold.
+  - src/codegen/promise-combinators.ts
 func-budget-allow:
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
@@ -397,11 +400,23 @@ branch.**
    this is the real next lever.**
 2. **84** `AsyncTestFailure: [object Object]` — drive-layer semantics, needs its
    own triage pass.
-3. **13** residual `illegal cast` — all combinator-over-**string**
-   (`Promise.all('')` → `Native-first adapter cannot bind env::Promise_all`).
-   Explicitly deferred in the Gap-4 note; the smallest bounded item left. Needs
-   `__combinator_to_vec` to iterate a string's code points; the exclusion is
-   explicit at `calls.ts:8959` and `:8973`.
+3. ~~**13** residual `illegal cast` — all combinator-over-**string**~~ **DONE
+   (string-combinator slice, 2026-08-23).** `__combinator_to_vec` gained a
+   native code-point string arm (`buildToVecStringArm`,
+   `promise-combinators.ts`): flatten once, walk with `__str_charAt_cp` (the
+   same helper the for-of/spread string lowerings use), advance by the
+   element's `.len` so surrogate pairs stay whole (§22.1.5). The arm sits in
+   the shared to-vec head, so it serves both the eager and the finalize-filled
+   body — including a string arriving at runtime inside an `any`-typed value,
+   which previously fell to the user-iterable arm and wrongly rejected. The
+   compile-time string exclusions in `isDynamicCombinatorArgEligible`
+   (calls.ts) now admit strings under the same `ctx.nativeStrings` predicate.
+   Verified host-free on BOTH carrier lanes (wasi + standalone):
+   `tests/issue-2867-string-combinator.test.ts` — 12 cases incl. `all("")`
+   empty-fulfil, surrogate-pair element, `race` first-char, any-typed string,
+   and the non-iterable→TypeError control. gc/host lane inert by construction
+   (all touched paths are behind `isStandalonePromiseActive` /
+   `nativeCombinatorEligible`).
 4. **Unrelated defect found while investigating, needs its own issue:**
    `__drain_microtasks()` in an otherwise-EMPTY module emits an **invalid
    binary** on BOTH carrier lanes — `Compiling function #17:"__str_ws_start"
@@ -412,3 +427,56 @@ branch.**
    `tests/issue-2895-drain-hook.test.ts`'s second case was red; that case has
    been re-pointed at the post-widen truth (standalone drives to 41, same as
    wasi) with the defect preserved as a documented `it.skip`.
+
+## Wave-2 slice — explicit global-Promise combinator receiver (2026-08-25)
+
+The deferred `allSettled`/`any` carrier work is already landed upstream as
+#3137, and the generic iterable plus string arms are already covered by
+#2922/the string-combinator follow-up. The next bounded native gap is the
+explicit receiver spelling used by the remaining Promise corpus:
+
+```ts
+Promise.all.call(Promise, iterable)
+Promise.allSettled.call(Promise, iterable)
+Promise.race.call(Promise, iterable)
+Promise.any.call(Promise, iterable)
+```
+
+Before this slice, the `.call` dispatcher always selected `Promise_*` host
+imports, even when the receiver was the intrinsic `Promise` constructor and
+the operation was semantically identical to the already-native direct form.
+That left a host import in standalone modules and prevented the native carrier
+from handling the explicit form. Custom constructors, subclasses, non-constructors,
+extra `.call` arguments, and `Promise.resolve/reject.call` remain out of scope.
+
+### Implementation
+
+`src/codegen/expressions/call-namespace-static.ts` now reshapes exactly the
+two-argument `Promise.<combinator>.call(Promise, iterable)` form into the
+existing direct static dispatcher. This reuses all established carrier gates
+and iterable arms without duplicating lowering logic. The reshape is gated by
+`isStandalonePromiseActive`, so the default gc/host lane retains its host path.
+Extra `.call` arguments deliberately fall through until a reflective-call slice
+can preserve their evaluation ordering.
+
+`tests/issue-3390.test.ts` adds host-free runtime coverage for all four methods,
+updates the global-`Promise` receiver expectation, and keeps the custom
+constructor and gc/host controls intact.
+
+### Test results
+
+- Focused receiver suite: **22/22** (`tests/issue-3390.test.ts`); all four
+  explicit forms settle with the expected values and no imports.
+- Carrier regression suites: **62/62** across #2867 Gap 1/2/4, S2, string
+  combinators, and #3137 allSettled/any tests.
+- TypeScript 7 typecheck: **clean**.
+- Prettier check: **clean**.
+- gc/host control: explicit `.call` continues to request the host path.
+
+### Remaining blockers
+
+The high-count residual is still the custom-constructor/NewPromiseCapability
+protocol (~54 rows in the #3390 measure), which needs dynamic constructor
+invocation, observable `resolve` lookup, and callable element functions. It is
+not part of this slice and does not overlap the active async-drive work. No
+status change to `done` is warranted for #2867.

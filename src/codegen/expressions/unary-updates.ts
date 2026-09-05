@@ -11,8 +11,15 @@ import { ts } from "../../ts-api.js";
 import { tryEmitUnresolvableUpdateThrow } from "../update-unresolvable-ref.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { emitBoundsCheckedArrayGet } from "../array-methods.js";
+import {
+  emitGlobalEnvironmentKey,
+  emitGlobalEnvironmentObject,
+  emitImplicitGlobalRead,
+  ensureGlobalEnvironmentOperation,
+} from "../global-environment.js";
 import { tryEmitLinearU8ElementUpdate } from "../linear-uint8-codegen.js";
 import { resolveWidenedVarKey } from "../widened-var-key.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js";
 import { reportError } from "../context/errors.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
@@ -51,6 +58,14 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { compileComputedMemberKeyAfterBaseGuard } from "./computed-member-reference.js";
 import { emitMappedArgParamSync } from "./logical-ops.js";
 import { resolveStructName } from "./misc.js";
+import { isSloppyImplicitGlobalBinding } from "./implicit-global-binding.js"; // (#3966) `p++` on a realm-global property
+import { emitConstIdentifierUpdateGuard } from "./identifier-assignment.js";
+import {
+  compileHostBigIntIdentifierUpdate,
+  emitHostBigIntBinaryOpFromStack,
+  emitStructMemberIncDec,
+  isHostBigIntUpdate,
+} from "./host-bigint-updates.js";
 
 /**
  * §13.4 UpdateExpression evaluation applies ToNumeric to the operand's current
@@ -217,6 +232,61 @@ function compileGlobalIncDec(
 
   // Result: old for postfix, new for prefix.
   fctx.body.push({ op: "local.get", index: mode === "postfix" ? oldTmp : newTmp });
+  return { kind: "f64" };
+}
+
+/**
+ * (#3966) Update a pre-scanned sloppy implicit global through the realm global
+ * object. Plain reads already use `emitImplicitGlobalRead`, but the update
+ * paths used to fall through to a constant-zero placeholder when the name had
+ * no Wasm local/global slot. That dropped the write, so an implicit-global loop
+ * counter such as `for (i = 0; i < 2; i++)` never advanced.
+ */
+function compileImplicitGlobalIncDec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  arithOp: "f64.add" | "f64.sub",
+  mode: "prefix" | "postfix",
+): ValType | null | undefined {
+  if (!isSloppyImplicitGlobalBinding(ctx, fctx, id.text)) return undefined;
+
+  if (!emitImplicitGlobalRead(ctx, fctx, id.text)) {
+    reportError(ctx, id, `Failed to read implicit global ${id.text} for update`);
+    return null;
+  }
+  emitToNumericForUpdate(ctx, fctx);
+
+  const oldTmp = allocLocal(fctx, `__implicit_global_old_${fctx.locals.length}`, { kind: "f64" });
+  const newTmp = allocLocal(fctx, `__implicit_global_new_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push(
+    { op: "local.tee", index: oldTmp },
+    { op: "f64.const", value: 1 },
+    { op: arithOp },
+    { op: "local.tee", index: newTmp },
+  );
+
+  addUnionImports(ctx);
+  const boxIdx = ctx.funcMap.get("__box_number");
+  if (boxIdx === undefined) {
+    reportError(ctx, id, "Missing __box_number for implicit-global update");
+    return null;
+  }
+  fctx.body.push({ op: "call", funcIdx: boxIdx });
+  const boxedTmp = allocLocal(fctx, `__implicit_global_boxed_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: boxedTmp });
+
+  const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+  if (setIdx === undefined || !emitGlobalEnvironmentObject(ctx, fctx)) {
+    reportError(ctx, id, `Failed to write implicit global ${id.text} after update`);
+    return null;
+  }
+  emitGlobalEnvironmentKey(ctx, fctx, id.text);
+  fctx.body.push(
+    { op: "local.get", index: boxedTmp },
+    { op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx },
+    { op: "local.get", index: mode === "prefix" ? newTmp : oldTmp },
+  );
   return { kind: "f64" };
 }
 
@@ -440,6 +510,65 @@ function emitExternrefElementIncDec(
 }
 
 /**
+ * (#2656/#4491) Externref read-modify-write for `obj.p++` / `--obj.p`, shared by
+ * `compileMemberIncDec`'s two "the struct cannot serve this write" arms: an
+ * UNRESOLVABLE receiver type (#2656) and a resolved struct with NO SLOT for the
+ * property (#4491). Both used to emit `f64.const NaN` and drop the write.
+ *
+ * `reason` names the caller on the silent-fallback channel, which is reached only
+ * when the receiver itself will not compile — that residual NaN is the honest
+ * answer there (§13.4 on an unresolvable Reference).
+ */
+function emitMemberIncDecExternrefFallback(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  operand: ts.PropertyAccessExpression,
+  propName: string,
+  f64Op: "f64.add" | "f64.sub",
+  mode: "prefix" | "postfix",
+  reason: string,
+): ValType | null {
+  const incDecPinned =
+    (operand.expression.kind === ts.SyntaxKind.ThisKeyword && fctx.thisStructName !== undefined) ||
+    resolveReceiverStruct(ctx, fctx, operand.expression) !== undefined;
+  const objResult = compileExpression(ctx, fctx, operand.expression);
+  if (objResult) {
+    const objLocal = allocLocal(fctx, `__incdec_eobj_${fctx.locals.length}`, { kind: "externref" });
+    if (objResult.kind !== "externref") {
+      coerceType(ctx, fctx, objResult, { kind: "externref" });
+    }
+    fctx.body.push({ op: "local.set", index: objLocal });
+    return emitExternrefMemberIncDec(ctx, fctx, objLocal, propName, f64Op, mode, incDecPinned);
+  }
+  reportSilentFallback(ctx, "const-fallback", reason, operand);
+  fctx.body.push({ op: "f64.const", value: NaN });
+  return { kind: "f64" };
+}
+
+function emitHostBigIntArrayIncDec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  elemType: ValType,
+  objTmp: number,
+  vecTypeIdx: number,
+  idxTmp: number,
+  arrayTypeIdx: number,
+  arithOp: "add" | "sub",
+  mode: "prefix" | "postfix",
+): ValType | null {
+  const one = ts.factory.createBigIntLiteral("1");
+  return emitHostBigIntBinaryOpFromStack(
+    ctx,
+    fctx,
+    elemType,
+    one,
+    arithOp === "add" ? 0 : 1,
+    mode === "postfix",
+    (newValue) => emitBoundsGuardedArraySet(fctx, objTmp, vecTypeIdx, idxTmp, newValue, arrayTypeIdx),
+  );
+}
+
+/**
  * Compile prefix/postfix increment/decrement on member expressions:
  *   ++obj.x, obj.x++, --obj[i], obj[i]--, etc.
  *
@@ -524,23 +653,15 @@ function compileMemberIncDec(
       // (#2656) Unresolvable static struct type — typically an `any`/`externref`
       // receiver. Do NOT NaN-drop the write: route through the externref
       // read-modify-write, which hits the same slot the READ uses. (#2681/#2686)
-      const incDecPinned =
-        (operand.expression.kind === ts.SyntaxKind.ThisKeyword && fctx.thisStructName !== undefined) ||
-        resolveReceiverStruct(ctx, fctx, operand.expression) !== undefined;
-      const objResult = compileExpression(ctx, fctx, operand.expression);
-      if (objResult) {
-        const objLocal = allocLocal(fctx, `__incdec_eobj_${fctx.locals.length}`, { kind: "externref" });
-        if (objResult.kind !== "externref") {
-          coerceType(ctx, fctx, objResult, { kind: "externref" });
-        }
-        fctx.body.push({ op: "local.set", index: objLocal });
-        return emitExternrefMemberIncDec(ctx, fctx, objLocal, propName, f64Op, mode, incDecPinned);
-      }
-      // Could not compile the receiver — graceful NaN (incrementing an
-      // unresolvable property is NaN in JS).
-      reportSilentFallback(ctx, "const-fallback", "unary-updates:incdec-unresolvable-receiver-type", operand);
-      fctx.body.push({ op: "f64.const", value: NaN });
-      return { kind: "f64" };
+      return emitMemberIncDecExternrefFallback(
+        ctx,
+        fctx,
+        operand,
+        propName,
+        f64Op,
+        mode,
+        "unary-updates:incdec-unresolvable-receiver-type",
+      );
     }
 
     // Check for accessor properties (get/set) before looking up struct fields
@@ -633,10 +754,21 @@ function compileMemberIncDec(
 
     const fieldIdx = fields.findIndex((f) => f.name === propName);
     if (fieldIdx === -1) {
-      // Unknown field — gracefully emit NaN (reading undefined property in numeric context)
-      reportSilentFallback(ctx, "const-fallback", "unary-updates:member-incdec-unknown-field", operand);
-      fctx.body.push({ op: "f64.const", value: NaN });
-      return { kind: "f64" };
+      // (#4491) The struct resolved but carries NO slot for this property. The
+      // old arm emitted `f64.const NaN` and DROPPED the write, so `var m = {};
+      // m.foo++` left `"foo" in m` false — §13.4 requires the update to CREATE
+      // the property holding NaN. Reuse the #2656 externref read-modify-write:
+      // the read still answers undefined → NaN (unchanged result value), and the
+      // write-back lands under a fresh key instead of vanishing.
+      return emitMemberIncDecExternrefFallback(
+        ctx,
+        fctx,
+        operand,
+        propName,
+        f64Op,
+        mode,
+        "unary-updates:member-incdec-unknown-field",
+      );
     }
 
     const fieldType = fields[fieldIdx]!.type;
@@ -647,87 +779,7 @@ function compileMemberIncDec(
     const objTmp = allocLocal(fctx, `__incdec_obj_${fctx.locals.length}`, objResult);
     fctx.body.push({ op: "local.set", index: objTmp });
 
-    // Read current value: obj.prop
-    fctx.body.push({ op: "local.get", index: objTmp });
-    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
-
-    if (ctx.fast && fieldType.kind === "i32") {
-      if (mode === "postfix") {
-        // Save old value, compute new, store new, return old
-        const oldTmp = allocLocal(fctx, `__incdec_old_${fctx.locals.length}`, {
-          kind: "i32",
-        });
-        fctx.body.push({ op: "local.tee", index: oldTmp });
-        fctx.body.push({ op: "i32.const", value: 1 });
-        fctx.body.push({ op: i32Op });
-        const newTmp = allocLocal(fctx, `__incdec_new_${fctx.locals.length}`, {
-          kind: "i32",
-        });
-        fctx.body.push({ op: "local.set", index: newTmp });
-        fctx.body.push({ op: "local.get", index: objTmp });
-        fctx.body.push({ op: "local.get", index: newTmp });
-        fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-        fctx.body.push({ op: "local.get", index: oldTmp });
-        return { kind: "i32" };
-      } else {
-        // Compute new, store, return new
-        fctx.body.push({ op: "i32.const", value: 1 });
-        fctx.body.push({ op: i32Op });
-        const newTmp = allocLocal(fctx, `__incdec_new_${fctx.locals.length}`, {
-          kind: "i32",
-        });
-        fctx.body.push({ op: "local.set", index: newTmp });
-        fctx.body.push({ op: "local.get", index: objTmp });
-        fctx.body.push({ op: "local.get", index: newTmp });
-        fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-        fctx.body.push({ op: "local.get", index: newTmp });
-        return { kind: "i32" };
-      }
-    }
-
-    // Default: f64 arithmetic
-    // Coerce field value to f64 if needed
-    if (fieldType.kind !== "f64") {
-      coerceType(ctx, fctx, fieldType, { kind: "f64" });
-    }
-
-    if (mode === "postfix") {
-      // Save old value, compute new, store, return old
-      const oldTmp = allocLocal(fctx, `__incdec_old_${fctx.locals.length}`, {
-        kind: "f64",
-      });
-      fctx.body.push({ op: "local.tee", index: oldTmp });
-      fctx.body.push({ op: "f64.const", value: 1 });
-      fctx.body.push({ op: f64Op });
-      // Coerce back to field type if needed
-      if (fieldType.kind !== "f64") {
-        coerceType(ctx, fctx, { kind: "f64" }, fieldType);
-      }
-      const newTmp = allocLocal(fctx, `__incdec_new_${fctx.locals.length}`, fieldType);
-      fctx.body.push({ op: "local.set", index: newTmp });
-      fctx.body.push({ op: "local.get", index: objTmp });
-      fctx.body.push({ op: "local.get", index: newTmp });
-      fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-      fctx.body.push({ op: "local.get", index: oldTmp });
-      return { kind: "f64" };
-    } else {
-      // Compute new, store, return new
-      fctx.body.push({ op: "f64.const", value: 1 });
-      fctx.body.push({ op: f64Op });
-      const newF64Tmp = allocLocal(fctx, `__incdec_new_${fctx.locals.length}`, {
-        kind: "f64",
-      });
-      fctx.body.push({ op: "local.set", index: newF64Tmp });
-      // Store: obj.prop = new (coerced back to field type)
-      fctx.body.push({ op: "local.get", index: objTmp });
-      fctx.body.push({ op: "local.get", index: newF64Tmp });
-      if (fieldType.kind !== "f64") {
-        coerceType(ctx, fctx, { kind: "f64" }, fieldType);
-      }
-      fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx });
-      fctx.body.push({ op: "local.get", index: newF64Tmp });
-      return { kind: "f64" };
-    }
+    return emitStructMemberIncDec(ctx, fctx, operand, fieldType, objTmp, structTypeIdx, fieldIdx, arithOp, mode);
   }
 
   // Handle obj[idx] — element access increment/decrement on arrays
@@ -879,6 +931,14 @@ function compileMemberIncDec(
         fctx.body.push({ op: "local.get", index: idxTmp });
         emitBoundsCheckedArrayGet(fctx, arrayTypeIdx, elemType);
 
+        // A typed `bigint[]` uses externref elements in the JS-host lanes.
+        // Preserve the old/new values as host BigInts instead of sending them
+        // through the numeric f64 update path. Standalone/WASI remain on the
+        // existing i64 path because this predicate is host-only.
+        if (isHostBigIntUpdate(ctx, operand)) {
+          return emitHostBigIntArrayIncDec(ctx, fctx, elemType, objTmp, typeIdx, idxTmp, arrayTypeIdx, arithOp, mode);
+        }
+
         // Coerce to f64 for arithmetic if needed
         if (elemType.kind !== "f64" && elemType.kind !== "i32") {
           coerceType(ctx, fctx, elemType, { kind: "f64" });
@@ -1011,21 +1071,27 @@ function compilePrefixUpdate(
   if (emitSymbolUpdateThrow(ctx, fctx, expr.operand)) {
     return { kind: "f64" };
   }
-  // §13.4.4 GetValue on an unresolvable Reference (update-unresolvable-ref.ts).
-  const unresolvablePre = tryEmitUnresolvableUpdateThrow(ctx, fctx, unwrapParens(expr.operand));
-  if (unresolvablePre !== undefined) return unresolvablePre;
+  // Preserve §6.2.5.5's ReferenceError for genuinely unresolvable names.
+  // A pre-scanned sloppy implicit global is the one exception: its property
+  // already exists on the realm global object and is handled by the dedicated
+  // read-modify-write arm below.
+  const updateOperand = unwrapParens(expr.operand);
+  if (!(ts.isIdentifier(updateOperand) && isSloppyImplicitGlobalBinding(ctx, fctx, updateOperand.text))) {
+    const unresolvablePre = tryEmitUnresolvableUpdateThrow(ctx, fctx, updateOperand);
+    if (unresolvablePre !== undefined) return unresolvablePre;
+  }
+  // Share the with/const/host-BigInt prelude for both operators.
+  if (ts.isIdentifier(updateOperand)) {
+    const isIncrement = expr.operator === ts.SyntaxKind.PlusPlusToken;
+    const w = compileWithUpdateExpression(ctx, fctx, updateOperand, isIncrement, /*prefix*/ true);
+    if (w !== undefined) return w;
+    if (emitConstIdentifierUpdateGuard(ctx, fctx, updateOperand)) return { kind: "f64" };
+    if (isHostBigIntUpdate(ctx, updateOperand))
+      return compileHostBigIntIdentifierUpdate(ctx, fctx, updateOperand, isIncrement, false);
+  }
   switch (expr.operator) {
     case ts.SyntaxKind.PlusPlusToken: {
       const ppOperand = unwrapParens(expr.operand);
-      if (ts.isIdentifier(ppOperand)) {
-        const w = compileWithUpdateExpression(ctx, fctx, ppOperand, /*increment*/ true, /*prefix*/ true);
-        if (w !== undefined) return w;
-      }
-      if (ts.isIdentifier(ppOperand) && fctx.constBindings?.has(ppOperand.text)) {
-        emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-        fctx.body.push({ op: "unreachable" });
-        return { kind: "f64" };
-      }
       if (ts.isIdentifier(ppOperand)) {
         if (fctx.localMap.get(ppOperand.text) === undefined) {
           // (#3039) ++x on a boxed captured global — update through the cell.
@@ -1037,6 +1103,7 @@ function compilePrefixUpdate(
           const boxedPP = fctx.boxedCaptures?.get(ppOperand.text);
           if (boxedPP) {
             // ++x through ref cell (null-guarded #702)
+            emitConditionalCaptureBoxRepair(fctx, ppOperand.text, idx);
             // For non-numeric boxed types (externref, ref_null, i64), coerce to f64
             // before arithmetic to avoid f64.add on non-f64 operand (#816)
             const needsCoerce = boxedPP.valType.kind !== "f64" && boxedPP.valType.kind !== "i32";
@@ -1185,6 +1252,9 @@ function compilePrefixUpdate(
           // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
           return compileGlobalIncDec(ctx, fctx, ppCapIdx, "f64.add", "prefix");
         }
+        // (#3966) sloppy implicit global — see the postfix arm below.
+        const implicit = compileImplicitGlobalIncDec(ctx, fctx, ppOperand, "f64.add", "prefix");
+        if (implicit !== undefined) return implicit;
       }
       // ++obj.prop or ++obj[idx] — delegate to member increment helper
       return compileMemberIncDec(ctx, fctx, expr.operand, "add", "prefix");
@@ -1196,15 +1266,6 @@ function compilePrefixUpdate(
 
       const mmOperand = unwrapParens(expr.operand);
       if (ts.isIdentifier(mmOperand)) {
-        const w = compileWithUpdateExpression(ctx, fctx, mmOperand, /*increment*/ false, /*prefix*/ true);
-        if (w !== undefined) return w;
-      }
-      if (ts.isIdentifier(mmOperand) && fctx.constBindings?.has(mmOperand.text)) {
-        emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-        fctx.body.push({ op: "unreachable" });
-        return { kind: "f64" };
-      }
-      if (ts.isIdentifier(mmOperand)) {
         if (fctx.localMap.get(mmOperand.text) === undefined) {
           // (#3039) --x on a boxed captured global — update through the cell.
           const mmBox = getCapturedBoxGlobal(ctx, mmOperand.text);
@@ -1215,6 +1276,7 @@ function compilePrefixUpdate(
           const boxed = fctx.boxedCaptures?.get(mmOperand.text);
           if (boxed) {
             // ++x / --x through ref cell (null-guarded #702)
+            emitConditionalCaptureBoxRepair(fctx, mmOperand.text, idx);
             // For non-numeric boxed types (externref, ref_null, i64), coerce to f64
             // before arithmetic to avoid f64.sub on non-f64 operand (#816)
             const needsCoerce = boxed.valType.kind !== "f64" && boxed.valType.kind !== "i32";
@@ -1363,6 +1425,9 @@ function compilePrefixUpdate(
           // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
           return compileGlobalIncDec(ctx, fctx, mmCapIdx, arithOp, "prefix");
         }
+        // (#3966) sloppy implicit global — see the postfix arm below.
+        const implicit = compileImplicitGlobalIncDec(ctx, fctx, mmOperand, arithOp, "prefix");
+        if (implicit !== undefined) return implicit;
       }
       // --obj.prop or --obj[idx] — delegate to member decrement helper
       return compileMemberIncDec(ctx, fctx, expr.operand, "sub", "prefix");
@@ -1397,10 +1462,10 @@ function compilePostfixUnary(
     const w = compileWithUpdateExpression(ctx, fctx, postOperand, isIncrement, /*prefix*/ false);
     if (w !== undefined) return w;
   }
-  // §13.4.5 GetValue on an unresolvable Reference (update-unresolvable-ref.ts).
-  const unresolvablePost = tryEmitUnresolvableUpdateThrow(ctx, fctx, postOperand);
-  if (unresolvablePost !== undefined) return unresolvablePost;
-
+  if (!(ts.isIdentifier(postOperand) && isSloppyImplicitGlobalBinding(ctx, fctx, postOperand.text))) {
+    const unresolvablePost = tryEmitUnresolvableUpdateThrow(ctx, fctx, postOperand);
+    if (unresolvablePost !== undefined) return unresolvablePost;
+  }
   if (!ts.isIdentifier(postOperand)) {
     // obj.prop++ or obj[idx]++ — delegate to member increment helper
     const memberOp = isIncrement ? "add" : "sub";
@@ -1409,10 +1474,9 @@ function compilePostfixUnary(
 
   if (ts.isIdentifier(postOperand)) {
     // const bindings — increment/decrement throws TypeError at runtime
-    if (fctx.constBindings?.has(postOperand.text)) {
-      emitThrowTypeError(ctx, fctx, "Assignment to constant variable.");
-      fctx.body.push({ op: "unreachable" });
-      return { kind: "f64" };
+    if (emitConstIdentifierUpdateGuard(ctx, fctx, postOperand)) return { kind: "f64" };
+    if (isHostBigIntUpdate(ctx, postOperand)) {
+      return compileHostBigIntIdentifierUpdate(ctx, fctx, postOperand, isIncrement, true);
     }
     const idx = fctx.localMap.get(postOperand.text);
     if (idx === undefined) {
@@ -1453,6 +1517,10 @@ function compilePostfixUnary(
         // (#4079) f64 OR i32 backing slot — see compileGlobalIncDec.
         return compileGlobalIncDec(ctx, fctx, postCapIdx, arithOp, "postfix");
       }
+      // (#3966) A sloppy implicit global has real storage on the realm global
+      // object; the `f64.const 0` fallback below dropped the store entirely.
+      const implicit = compileImplicitGlobalIncDec(ctx, fctx, postOperand, arithOp, "postfix");
+      if (implicit !== undefined) return implicit;
       // Graceful fallback: emit 0 for unknown postfix increment/decrement
       fctx.body.push({ op: "f64.const", value: 0 });
       return { kind: "f64" };
@@ -1461,6 +1529,7 @@ function compilePostfixUnary(
     // Handle boxed (ref cell) mutable captures for postfix (null-guarded #702)
     const boxedPost = fctx.boxedCaptures?.get(postOperand.text);
     if (boxedPost) {
+      emitConditionalCaptureBoxRepair(fctx, postOperand.text, idx);
       // For non-numeric boxed types (externref, ref_null, i64), coerce to f64
       // before arithmetic to avoid f64.add/sub on non-f64 operand (#816)
       const needsCoerce = boxedPost.valType.kind !== "f64" && boxedPost.valType.kind !== "i32";

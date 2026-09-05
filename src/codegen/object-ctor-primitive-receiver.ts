@@ -46,7 +46,9 @@
  * `.constructor` to the runtime path, where it currently reads `undefined`.
  */
 import { ts } from "../ts-api.js";
+import type { TypeFact } from "../checker/oracle.js";
 import type { CodegenContext } from "./context/types.js";
+import { bindingIsSingleAssignment } from "./single-assignment-binding.js";
 
 /**
  * Names that are ASSIGNED, updated, or bound more than once anywhere in a
@@ -122,7 +124,14 @@ function traceToProducer(ctx: CodegenContext, expr: ts.Expression): ts.Expressio
       continue;
     }
     if (!ts.isIdentifier(cur)) return cur;
-    if (rebindingNames(cur.getSourceFile()).has(cur.text)) return undefined;
+    // (#4491 wave-5 T2) The name-level scan below is kept as a cheap PREFILTER:
+    // a spelling nothing writes needs no checker work at all. When the spelling
+    // IS written somewhere, ask the sharper per-BINDING question rather than
+    // rejecting — in test262 the harness is concatenated into this same source
+    // file, so short spellings (`a`, `obj`, `x`) are written by harness
+    // parameters in every single file and the name-level answer is always
+    // "poisoned". See single-assignment-binding.ts.
+    if (rebindingNames(cur.getSourceFile()).has(cur.text) && !bindingIsSingleAssignment(ctx, cur)) return undefined;
     const init = ctx.oracle.variableInitializerOf(cur);
     if (init === undefined) return undefined;
     cur = init;
@@ -141,16 +150,79 @@ function traceToProducer(ctx: CodegenContext, expr: ts.Expression): ts.Expressio
  * Arity is deliberately NOT pinned to 1 — §20.1.1.1 ignores the extra
  * arguments, and `new Object(1, 2, 3)` (S15.2.2.1_A6_T1) is in the corpus.
  */
-function isPrimitiveObjectCoercionCall(ctx: CodegenContext, expr: ts.Expression): boolean {
-  if (!ts.isNewExpression(expr) && !ts.isCallExpression(expr)) return false;
+function objectCoercionArgument(ctx: CodegenContext, expr: ts.Expression): ts.Expression | undefined {
+  if (!ts.isNewExpression(expr) && !ts.isCallExpression(expr)) return undefined;
   const callee = expr.expression;
-  if (!ts.isIdentifier(callee) || callee.text !== "Object") return false;
+  if (!ts.isIdentifier(callee) || callee.text !== "Object") return undefined;
   const decl = ctx.oracle.valueDeclarationOf(callee);
-  if (decl !== undefined && !decl.getSourceFile().isDeclarationFile) return false;
-  const arg = expr.arguments?.[0];
+  if (decl !== undefined && !decl.getSourceFile().isDeclarationFile) return undefined;
+  return expr.arguments?.[0];
+}
+
+function isPrimitiveObjectCoercionCall(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const arg = objectCoercionArgument(ctx, expr);
   if (arg === undefined) return false;
   const tag = ctx.oracle.staticJsTypeOf(arg);
   return tag === "string" || tag === "number" || tag === "boolean";
+}
+
+/**
+ * Return the statically object-valued argument preserved by `Object(x)` /
+ * `new Object(x)`, when the receiver can be traced to that exact coercion.
+ *
+ * The checker gives every Object-constructor result the broad `Object` type,
+ * even though §20.1.1.1 returns an object argument unchanged.  That erasure is
+ * observable by native receiver dispatch: `new Object(date).getFullYear()`
+ * needs the Date lowering and `Object(fn).constructor` needs the Function
+ * lowering.  Keep this proof narrow: only exact, non-primitive oracle facts
+ * are returned, while primitives, nullish values, unions, `any`, and unknown
+ * values continue through the existing Object carrier paths.
+ */
+export function objectCoercionObjectArgumentOf(
+  ctx: CodegenContext,
+  recvExpr: ts.Expression,
+): ts.Expression | undefined {
+  const producer = traceToProducer(ctx, recvExpr);
+  if (producer === undefined) return undefined;
+  const argument = objectCoercionArgument(ctx, producer);
+  if (argument === undefined) return undefined;
+  return isObjectLikeFact(ctx.oracle.typeFactOf(argument)) ? argument : undefined;
+}
+
+/** The BigInt argument wrapped by an ambient `Object(value)` coercion. */
+export function objectCoercionBigIntArgumentOf(
+  ctx: CodegenContext,
+  recvExpr: ts.Expression,
+): ts.Expression | undefined {
+  const producer = traceToProducer(ctx, recvExpr);
+  if (producer === undefined) return undefined;
+  const argument = objectCoercionArgument(ctx, producer);
+  return argument !== undefined && ctx.oracle.staticJsTypeOf(argument) === "bigint" ? argument : undefined;
+}
+
+/** Whether a TypeOracle fact proves a value is already an object identity. */
+export function isObjectLikeFact(fact: TypeFact): boolean {
+  if (fact.kind === "union") return fact.parts.length > 0 && fact.parts.every(isObjectLikeFact);
+  return (
+    fact.kind === "array" ||
+    fact.kind === "tuple" ||
+    fact.kind === "builtin" ||
+    fact.kind === "class" ||
+    fact.kind === "function" ||
+    fact.kind === "object"
+  );
+}
+
+export function objectCoercionPreservesDate(ctx: CodegenContext, recvExpr: ts.Expression): boolean {
+  const argument = objectCoercionObjectArgumentOf(ctx, recvExpr);
+  return argument !== undefined && ctx.oracle.builtinReceiverOf(argument) === "Date";
+}
+
+export function objectCoercionPreservesFunction(ctx: CodegenContext, recvExpr: ts.Expression): boolean {
+  const argument = objectCoercionObjectArgumentOf(ctx, recvExpr);
+  if (argument === undefined) return false;
+  const fact = ctx.oracle.typeFactOf(argument);
+  return fact.kind === "function" || (fact.kind === "builtin" && fact.name === "Function");
 }
 
 /**

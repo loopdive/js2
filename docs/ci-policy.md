@@ -60,7 +60,7 @@ A failure here surfaces in the PR Checks tab but does not block merge.
 | Check name                                                 | Workflow file                                 | Why it isn't required                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `linear-tests`                                             | `.github/workflows/ci.yml`                    | Runs the linear-backend (`tests/linear-*.test.ts`), C-ABI (`tests/c-abi.test.ts`) and SIMD (`tests/simd*.test.ts`) suites — the 20 files that had no CI job before #2139. **Documented as required until 2026-08-01 while never being in the ruleset (#3934).** `ci.yml`'s own `changes` job already treats it as optional (it skips it on docs-only PRs). If it should gate, promote it deliberately — ruleset and this document together.                                                                                          |
-| `issue-tests`                                              | `.github/workflows/ci.yml`                    | #4448 — runs the `tests/issue-*.test.ts` files the PR itself touches, plus the pinned set in `scripts/select-changed-issue-tests.mjs`. Until this existed, NO check ran that suite at all: `equivalence-gate` runs `tests/equivalence/`, `quality` runs lint/ratchets/named files, the test262 jobs run conformance, `linear-tests` runs the linear subset. A file could therefore be **born red** (#4430's `issue-3529-selector-preclaim` was) or go red later (`6203320a` reddened three of its tests, invisibly, for two days). Not required, and split in two: the **pinned** step is fatal (those files are verified green on main, so a failure is a real regression), the **changed** step is `continue-on-error` because the suite is **not clean on main today** (a #4448 sample found 8 pre-existing failures across `issue-3522-ir-class-compile-once`, `issue-3529-dataflow-outcomes`, `issue-3529-integration-preflight`) and a red non-required check makes the PR `UNSTABLE`, which `auto-enqueue` skips outright (#3878/#3904) — stranding a PR behind an already-red test would be worse than the gap being closed. Grow the pinned list as files are verified green; promote the job to required once the suite is clean.                                     |
+| `issue-tests`                                              | `.github/workflows/ci.yml`                    | #4448 — runs the `tests/issue-*.test.ts` and `tests/ir/*.test.ts` files the PR itself touches, plus the pinned set in `scripts/select-changed-issue-tests.mjs`. Until this existed, NO check ran that suite at all: `equivalence-gate` runs `tests/equivalence/`, `quality` runs lint/ratchets/named files, the test262 jobs run conformance, `linear-tests` runs the linear subset. A file could therefore be **born red** (#4430's `issue-3529-selector-preclaim` was) or go red later (`6203320a` reddened three of its tests, invisibly, for two days). Not required, and split in two: the **pinned** step is fatal (those files are verified green on main, so a failure is a real regression), the **changed** step is `continue-on-error` because the suite is **not clean on main today** (a #4448 sample found 8 pre-existing failures across `issue-3522-ir-class-compile-once`, `issue-3529-dataflow-outcomes`, `issue-3529-integration-preflight`) and a red non-required check makes the PR `UNSTABLE`, which `auto-enqueue` skips outright (#3878/#3904) — stranding a PR behind an already-red test would be worse than the gap being closed. Grow the pinned list as files are verified green; promote the job to required once the suite is clean. **#3521 R2-T1** added `tests/ir/*.test.ts` to the advisory selector and pinned six R2-named files there (`fnctor-abi`, `fnctor-admission`, `fnctor-argument-projection`, `fnctor-producer`, `inline-small`, `phase3c` — 44.8 s together, measured 2026-09-02); the directory had no selector match at all, which is how `cb733cde37` and `0f42c1fde4` reddened two files unseen. Both of those commits are src-only, so it is the **pinned** half that catches that shape; the advisory half selects on changed *test* paths, so a src-only PR that reddens one of the 13 unpinned green files is still invisible. It stays non-required: `tests/ir/counted-string-append-provenance.test.ts` (13/29, #3518) is still red on main.                                     |
 | `test262 PR stub — detect relevance`                       | `.github/workflows/test262-pr-stub.yml`       | Decides which workflow owns the three test262-sharded context names on this PR. Not required — but note a non-green NON-required check still blocks merge indirectly by making the PR `UNSTABLE`; see §1's "Reading a PR's check state".                                                                                                                                                                                                                                                                                          |
 | `test262 js-host/standalone shard 1..57` (114 matrix jobs) | `.github/workflows/test262-sharded.yml`       | Individual shard results feed into `merge shard reports`, which is the required check. Individual shard failures are visible for diagnosis but the aggregated signal is what gates.                                                                                                                                                                                                                                                                                                                                               |
 | `differential gate (branch vs main)`                       | `.github/workflows/test262-differential.yml`  | Branch-vs-main HEAD comparison with src-tree-hash caching (#1246). Useful diagnostic signal, but the sharded `merge shard reports` is the authoritative gate. Kept running for visibility into per-PR deltas.                                                                                                                                                                                                                                                                                                                     |
@@ -186,13 +186,39 @@ Two test262 workflows currently run on PRs:
     own delta. Fallback order when a predecessor artifact is unavailable:
     #1081 runs/<merge-base> cache, then latest-main baseline — i.e. exactly
     the pre-#1956 behavior.
-  - **Canonical queue configuration: `max_entries_to_build: 1` (no
-    speculation), `max_entries_to_merge: 5`, `min_entries_to_merge: 1`
-    (#3914 Step 2 was tried at floor 2 on 2026-08-14 and measured a NO-OP on
-    2026-08-15 — reverted; see the floor note below).** These live in the repo
-    ruleset, not in any workflow file, so they are applied and read back with
-    **`scripts/set-merge-queue-config.sh`** (`--show` to read, `--check` to
-    diff, no flag to apply; needs repo-admin `gh`). Before that script existed
+  - **Queue configuration — MEASURED LIVE 2026-09-03, not restated from
+    intent.** Read straight off the ruleset REST endpoint (see below), the
+    effective values on `main` are:
+
+    ```json
+    { "merge_method": "MERGE",
+      "max_entries_to_build": 1,
+      "min_entries_to_merge": 2,
+      "max_entries_to_merge": 5,
+      "min_entries_to_merge_wait_minutes": 5,
+      "grouping_strategy": "HEADGREEN",
+      "check_response_timeout_minutes": 120 }
+    ```
+
+    **`min_entries_to_merge` is 2, not the 1 this paragraph and the floor note
+    below both claim.** #3914 Step 2 raised it to 2 on 2026-08-14 and the
+    revert recorded on 2026-08-15 **never reached the ruleset** — see the floor
+    note for why that is not free. `max_entries_to_build: 1` (no speculation)
+    and `max_entries_to_merge: 5` are confirmed correct. Intent for the floor
+    is unresolved: either revert it to 1 as #3914 concluded, or record 2 as
+    deliberate; it is currently neither.
+
+    These live in the repo ruleset, not in any workflow file. **Read them with
+    the REST endpoint, which needs no repo-admin `gh`:**
+
+    ```bash
+    curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" \
+      https://api.github.com/repos/loopdive/js2/rules/branches/main \
+      | jq '.[] | select(.type=="merge_queue") | .parameters'
+    ```
+
+    `scripts/set-merge-queue-config.sh` (`--show` / `--check` / apply) is still
+    the way to *write* them and needs repo-admin `gh`. Before that script existed
     the values were invisible from the repo and this doc's record of them went
     six weeks stale — it still said `max_entries_to_build: 5` long after the
     2026-06-20 wedge reverted it. Treat the script's `--show` output as
@@ -239,8 +265,15 @@ Two test262 workflows currently run on PRs:
     optimistic-batch/split-on-failure: re-enqueue the members singly to
     attribute. Cost is one wasted run, which is the `e`-weighted term in
     #3914's sizing.
-  - **`min_entries_to_merge` is back to 1 — #3914 Step 2 was tried and
-    measured a NO-OP.** The floor was raised to 2 (5-min timer) on
+  - **`min_entries_to_merge` was measured a NO-OP by #3914 Step 2 — but the
+    revert never landed, and it is LIVE AT 2 as of 2026-09-03.** The analysis
+    below stands; only its status line was wrong. Read together with the
+    measured block above: because `max_entries_to_build: 1` guarantees a second
+    entry is never green simultaneously, the floor is satisfied only by the
+    5-minute timer expiring, so **every fast merge pays that timer** — which is
+    the "added latency on quiet-queue fast merges" this note predicts, now in
+    force rather than reverted. Docs-only PRs go green in ~2-3 min and this
+    repo merges many of them. The floor was raised to 2 (5-min timer) on
     2026-08-14T18:16Z on the "the floor is what forms groups" hypothesis.
     Measured across all of 2026-08-15 up to 13:34Z: **29/29 successful merge
     groups still carried exactly one PR**, one full run each, merging ~15 min
@@ -372,6 +405,36 @@ Two test262 workflows currently run on PRs:
 
 For one-off sharded runs outside the normal PR/merge_group path,
 `workflow_dispatch` is the supported entry point.
+
+**A bare dispatch PROMOTES. Pass `skip_promote: true` for any measurement.**
+`promote-baseline`'s `if:` admits `push || workflow_dispatch`, and its
+"Push baseline artifacts to js2wasm-baselines repo" step carries no guard of
+its own. So a dispatch on *any* ref overwrites `loopdive/js2wasm-baselines` —
+the regression-gate baseline every open PR is diffed against — with that ref's
+numbers, re-stamps the #2097 high-water mark, and can push a `[skip ci]` commit
+to `main` (the rebuild tax below) plus redeploy Pages.
+
+The trap is that it is inverted: promote runs only when `merge-report`
+**succeeds**, so the *clean* measurement — the one that finds nothing wrong —
+is exactly the one that overwrites. It never self-blocks.
+
+`skip_promote` is the only promote suppressor that leaves the measurement
+comparable to the published baseline; the other three each change what is being
+measured, so none of them can substitute for it:
+
+| input | suppresses promote | report comparable to the published QuickJS baseline |
+| ------------------------- | ------------------ | --------------------------------------------------- |
+| `ir_first` | yes | no — IR-first compile path |
+| `layout_emit` | yes | no — per-type layout emission |
+| `eval_engine: interpreter` | yes | no — different standalone eval lane |
+| `skip_promote` | yes | **yes** — identical compile, run and engine |
+
+Use it for bisects and for every manual rerun on a non-tip ref; the merged
+report artifact is the output. Gating that one job is sufficient — both write
+paths (the baselines-repo SSH push and the deploy-key push to `main`) live
+wholly inside `promote-baseline`, and `write-run-cache-bot`, the only other
+side-effecting job, is `push` + `github-merge-queue[bot]` only and never fires
+on a dispatch.
 
 ### Pushing to `main` from a workflow — the rebuild tax (#3915)
 
@@ -800,13 +863,31 @@ gh api repos/loopdive/js2wasm/rules/branches/main \
 | ----------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck on the PR branch before any test262 shard runs. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR.                                                                                                                                                                                                                                                                                                   |
 | `merge shard reports`               | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the merge queue (build/merge up to 5 concurrently since #1956; predecessor-group diffing preserves per-PR attribution, so no ALLGREEN hiding) — each PR validated on its own merge_group ref. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
-| `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                                                                                    |
+| `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration, **and the dogfood emitted-binary validation floor (#5336)**. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                       |
 | `equivalence-gate`                  | `ci.yml`              | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged.                                                                                                                                                                                                                                                                                                                                                                            |
 | `check for test262 regressions`     | `test262-sharded.yml` | full rolling-baseline test262 diff, including pass→fail changes that stay below the inline catastrophic thresholds.                                                                                                                                                                                                                                                                                                                                                                   |
 | `cla-check`                         | `cla-check.yml`       | CLA acceptance for external contributors while preserving internal and bot exemptions.                                                                                                                                                                                                                                                                                                                                                                                                |
 
 The CODEOWNERS file gates **who** can approve. The required checks gate
 **what** must pass. Both must clear for a PR to merge.
+
+### Dogfood emitted-binary validation floor (#5336) — a step, not a seventh context
+
+`pnpm run check:dogfood-validation` runs as a **step inside `quality`**, so it
+gates without changing the required-checks ruleset. It compiles the pinned
+tarball entry of six npm-compat packages (no test execution, no upstream
+clone) and fails when `compile.success` is true but the emitted binary is
+rejected by `WebAssembly.compile`. That implication is a theorem about the
+compiler, not a target — a module that codegens but will not load is always a
+bug — which is why it needs no baseline and no golden number.
+
+Why it exists: #5390 broke it for moment and survived **five merges with all
+six required checks green**, because no check read `compile.validated`.
+Measured cost: **25.7 s** in `quality` on a 4-vCPU `ubuntu-latest`
+(concurrency 3, bounded by moment's ~13 s compile), against a job that runs
+~10 min — about 4 %. If it ever needs to become its own required context —
+e.g. to move it off `quality`'s critical path — that is a ruleset change and
+goes through §8, not through a workflow edit.
 
 `benchmark-refresh.yml` (the playground perf gate) is not in the required-
 checks list but its `pull_request` event path is a hard fail on regression

@@ -8,7 +8,12 @@
 // instructions or module indices, Porffor representation values, renderer
 // records, concrete runtime symbol names, or artifact fragments.
 
-import { ALLOC_NAMESPACES, type AllocSite, type AllocSiteRegistry } from "../alloc-registry.js";
+import {
+  ALLOC_NAMESPACES,
+  type AllocRegistrySnapshot,
+  type AllocSite,
+  type AllocSiteRegistry,
+} from "../alloc-registry.js";
 import {
   forEachInstrDeep,
   type AllocKind,
@@ -27,6 +32,7 @@ import { analyzeEscape, type EscapeClass, type EscapeInfo } from "./escape.js";
 import type { Ownership } from "./lattice.js";
 import { analyzeOwnership } from "./ownership.js";
 import { findStackAllocCandidates } from "./stack-alloc.js";
+import { irFnctorShapeKey } from "../type-key.js";
 
 /** JS2's current linear address width. Kept here rather than in an emitter. */
 export const LINEAR_POINTER_BYTES = 4;
@@ -197,6 +203,31 @@ export interface LinearAllocationFacts {
   readonly escape: EscapeClass;
   readonly stackCandidate: boolean;
   readonly encoding?: Encoding;
+}
+
+/**
+ * Allocation analysis output detached from the mutable registry and physical
+ * layout. The batch boundary owns this value before a backend chooses layout.
+ */
+export interface LinearPreparedAllocationFact {
+  readonly id: AllocSiteId;
+  readonly site: AllocSite;
+  readonly ownership: Ownership;
+  readonly accesses: readonly string[];
+  readonly escape: EscapeClass;
+  readonly stackCandidate: boolean;
+  readonly encoding?: Encoding;
+  /** Presence is separate from the value so absent and explicit undefined survive freeze. */
+  readonly evidence: {
+    readonly ownership: { readonly present: boolean; readonly value: OwnershipMetadata | undefined };
+    readonly escape: { readonly present: boolean; readonly value: EscapeInfo | undefined };
+    readonly encoding: { readonly present: boolean; readonly value: Encoding | undefined };
+  };
+}
+
+export interface LinearPreparedAllocationFacts {
+  readonly allocations: readonly LinearPreparedAllocationFact[];
+  readonly registry: AllocRegistrySnapshot;
 }
 
 export interface LinearAllocationDecision {
@@ -457,12 +488,15 @@ export function linearAllocatorPolicy(id: string): LinearAllocatorPolicy {
   throw new Error(`unknown linear-memory allocation policy '${id}'`);
 }
 
-/** Run the producer analyses and build one canonical plan for an IR module. */
-export function planLinearMemory(
+/**
+ * Run allocation analyses once and return their detached evidence. This is
+ * the producer half of the linear body handoff; it deliberately does not
+ * choose addresses, segments, or backend operations.
+ */
+export function prepareLinearAllocationFacts(
   module: IrModule,
   registry: AllocSiteRegistry,
-  policy: LinearAllocatorPolicy = DEFAULT_ARENA_POLICY,
-): LinearMemoryPlan {
+): LinearPreparedAllocationFacts {
   for (const fn of module.functions) {
     analyzeEncoding(fn, registry);
     const ownership = analyzeOwnership(fn, registry);
@@ -470,10 +504,309 @@ export function planLinearMemory(
     findStackAllocCandidates(fn, registry, ownership);
   }
 
+  const registrySnapshot = registry.snapshot();
+  const located = collectModuleAllocationInstructions(module);
+  const allocations: LinearPreparedAllocationFact[] = [];
+  const seen = new Set<number>();
+
+  for (const { instr } of located.allocations) {
+    const alloc = instr.alloc;
+    if (alloc === undefined) continue;
+    const numericId = alloc as number;
+    if (seen.has(numericId)) throw new Error(`duplicate live allocation-site id ${numericId} in linear-memory plan`);
+    seen.add(numericId);
+    const site = registry.resolve(alloc);
+    if (!site) {
+      const state = registry.isKnown(alloc) ? "retired or broken alias" : "unknown";
+      throw new Error(`linear-memory allocation facts cannot resolve ${state} site ${numericId}`);
+    }
+    const canonicalIndex = canonicalIndexFromSnapshot(alloc, registrySnapshot);
+    const ownershipEvidence = metadataValue(registrySnapshot, canonicalIndex, ALLOC_NAMESPACES.ownership);
+    const escapeEvidence = metadataValue(registrySnapshot, canonicalIndex, ALLOC_NAMESPACES.escape);
+    const encodingEvidence = metadataValue(registrySnapshot, canonicalIndex, ALLOC_NAMESPACES.encoding);
+    const ownership = (ownershipEvidence.value as OwnershipMetadata | undefined) ?? {};
+    const escapeInfo = (escapeEvidence.value as EscapeInfo | undefined) ?? {
+      classification: "opaque",
+      stackAllocatable: false,
+    };
+    const encoding = encodingEvidence.value as Encoding | undefined;
+    allocations.push({
+      id: alloc,
+      site,
+      ownership: ownership.state ?? "escaped",
+      accesses: ownership.ops ?? [],
+      escape: escapeInfo.classification,
+      stackCandidate: ownership.stackCandidate === true,
+      ...(encodingEvidence.present ? { encoding } : {}),
+      evidence: {
+        ownership: {
+          present: ownershipEvidence.present,
+          value: ownershipEvidence.value as OwnershipMetadata | undefined,
+        },
+        escape: { present: escapeEvidence.present, value: escapeEvidence.value as EscapeInfo | undefined },
+        encoding: { present: encodingEvidence.present, value: encoding },
+      },
+    });
+  }
+
+  allocations.sort((left, right) => (left.id as number) - (right.id as number));
+  const preparedFacts = {
+    allocations: Object.freeze(allocations),
+    registry: registrySnapshot,
+  };
+  verifyLinearPreparedAllocationFacts(module, preparedFacts);
+  return preparedFacts;
+}
+
+function canonicalSiteFromSnapshot(id: AllocSiteId, snapshot: AllocRegistrySnapshot): AllocSite {
+  return snapshotSiteAtCanonicalIndex(canonicalIndexFromSnapshot(id, snapshot), snapshot);
+}
+
+function canonicalIndexFromSnapshot(id: AllocSiteId, snapshot: AllocRegistrySnapshot): number {
+  let current = id as number;
+  const seen = new Set<number>();
+  while (true) {
+    if (current < 0 || current >= snapshot.entries.length || !snapshot.entries[current]) {
+      throw new Error(`linear-memory frozen allocation facts have unknown site ${id as number}`);
+    }
+    if (seen.has(current)) throw new Error(`linear-memory frozen allocation facts have cyclic alias at ${current}`);
+    seen.add(current);
+    const entry = snapshot.entries[current]!;
+    if (entry.state === "live") return current;
+    if (entry.state === "retired") {
+      throw new Error(`linear-memory frozen allocation facts reference retired site ${current}`);
+    }
+    current = entry.to as number;
+  }
+}
+
+function snapshotSiteAtCanonicalIndex(index: number, snapshot: AllocRegistrySnapshot): AllocSite {
+  const entry = snapshot.entries[index];
+  if (!entry || entry.state !== "live") {
+    throw new Error(`linear-memory frozen allocation facts have no live canonical site ${index}`);
+  }
+  return entry.site;
+}
+
+function metadataValue(
+  snapshot: AllocRegistrySnapshot,
+  id: number,
+  namespace: string,
+): { readonly present: boolean; readonly value: unknown } {
+  const row = snapshot.metadata.find((candidate) => (candidate.id as number) === id);
+  if (!row) return { present: false, value: undefined };
+  const entry = row.entries.find(([key]) => key === namespace);
+  return entry ? { present: true, value: entry[1] } : { present: false, value: undefined };
+}
+
+function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+export function sameDetachedValue(
+  left: unknown,
+  right: unknown,
+  seen = new WeakMap<object, WeakSet<object>>(),
+): boolean {
+  if (Object.is(left, right)) return true;
+  if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
+  let paired = seen.get(left);
+  if (paired?.has(right)) return true;
+  if (!paired) {
+    paired = new WeakSet<object>();
+    seen.set(left, paired);
+  }
+  paired.add(right);
+
+  const leftTag = Object.prototype.toString.call(left);
+  const rightTag = Object.prototype.toString.call(right);
+  const leftMap = leftTag === "[object Map]" || leftTag === "[object FrozenMap]";
+  const rightMap = rightTag === "[object Map]" || rightTag === "[object FrozenMap]";
+  if (leftMap || rightMap) {
+    if (!leftMap || !rightMap) return false;
+    const leftEntries = [...(left as ReadonlyMap<unknown, unknown>)];
+    const rightEntries = [...(right as ReadonlyMap<unknown, unknown>)];
+    return (
+      leftEntries.length === rightEntries.length &&
+      leftEntries.every(
+        ([leftKey, leftValue], index) =>
+          sameDetachedValue(leftKey, rightEntries[index]![0], seen) &&
+          sameDetachedValue(leftValue, rightEntries[index]![1], seen),
+      )
+    );
+  }
+  const leftSet = leftTag === "[object Set]" || leftTag === "[object FrozenSet]";
+  const rightSet = rightTag === "[object Set]" || rightTag === "[object FrozenSet]";
+  if (leftSet || rightSet) {
+    if (!leftSet || !rightSet) return false;
+    const leftValues = [...(left as ReadonlySet<unknown>)];
+    const rightValues = [...(right as ReadonlySet<unknown>)];
+    return (
+      leftValues.length === rightValues.length &&
+      leftValues.every((value, index) => sameDetachedValue(value, rightValues[index], seen))
+    );
+  }
+
+  const leftKeys = Reflect.ownKeys(left).sort((a, b) => String(a).localeCompare(String(b)));
+  const rightKeys = Reflect.ownKeys(right).sort((a, b) => String(a).localeCompare(String(b)));
+  if (leftKeys.length !== rightKeys.length) return false;
+  for (let index = 0; index < leftKeys.length; index++) {
+    const leftKey = leftKeys[index]!;
+    const rightKey = rightKeys[index]!;
+    if (
+      typeof leftKey !== typeof rightKey ||
+      (typeof leftKey === "symbol" ? leftKey !== rightKey : leftKey !== rightKey)
+    ) {
+      return false;
+    }
+    const leftDescriptor = Object.getOwnPropertyDescriptor(left, leftKey);
+    const rightDescriptor = Object.getOwnPropertyDescriptor(right, rightKey);
+    if (!leftDescriptor || !rightDescriptor || !("value" in leftDescriptor) || !("value" in rightDescriptor)) {
+      return false;
+    }
+    if (!sameDetachedValue(leftDescriptor.value, rightDescriptor.value, seen)) return false;
+  }
+  return true;
+}
+
+function verifyRegistrySnapshot(snapshot: AllocRegistrySnapshot): void {
+  if (!Number.isSafeInteger(snapshot.size) || snapshot.size < 0 || snapshot.entries.length !== snapshot.size) {
+    throw new Error("linear-memory frozen allocation facts have an incomplete registry snapshot");
+  }
+  for (let index = 0; index < snapshot.entries.length; index++) {
+    const entry = snapshot.entries[index]!;
+    if (entry.state === "live" && (entry.site.id as number) !== index) {
+      throw new Error(`linear-memory frozen allocation facts site identity mismatch at ${index}`);
+    }
+    if (entry.state === "aliased") canonicalIndexFromSnapshot(entry.to, snapshot);
+  }
+  const metadataIds = new Set<number>();
+  for (const row of snapshot.metadata) {
+    const id = row.id as number;
+    if (!Number.isSafeInteger(id) || id < 0 || id >= snapshot.size) {
+      throw new Error(`linear-memory frozen allocation facts metadata has unknown site ${id}`);
+    }
+    if (metadataIds.has(id)) throw new Error(`linear-memory frozen allocation facts duplicate metadata site ${id}`);
+    metadataIds.add(id);
+    const namespaces = new Set<string>();
+    for (const [namespace] of row.entries) {
+      if (namespaces.has(namespace)) {
+        throw new Error(`linear-memory frozen allocation facts duplicate metadata namespace ${namespace}`);
+      }
+      namespaces.add(namespace);
+    }
+  }
+}
+
+/** Validate exact body-site joins and all producer evidence before layout. */
+export function verifyLinearPreparedAllocationFacts(
+  module: IrModule,
+  preparedFacts: LinearPreparedAllocationFacts,
+): void {
+  verifyRegistrySnapshot(preparedFacts.registry);
+  const located = collectModuleAllocationInstructions(module);
+  const factsById = new Map<number, LinearPreparedAllocationFact>();
+  for (const fact of preparedFacts.allocations) {
+    const id = fact.id as number;
+    if (factsById.has(id)) throw new Error(`linear-memory frozen allocation facts duplicate site ${id}`);
+    const canonicalIndex = canonicalIndexFromSnapshot(fact.id, preparedFacts.registry);
+    const canonical = snapshotSiteAtCanonicalIndex(canonicalIndex, preparedFacts.registry);
+    if (fact.site.id !== canonical.id || !sameDetachedValue(fact.site, canonical)) {
+      throw new Error(`linear-memory frozen allocation fact ${id} has a falsified site projection`);
+    }
+    const ownership = metadataValue(preparedFacts.registry, canonicalIndex, ALLOC_NAMESPACES.ownership);
+    const escapeMetadata = metadataValue(preparedFacts.registry, canonicalIndex, ALLOC_NAMESPACES.escape);
+    const encoding = metadataValue(preparedFacts.registry, canonicalIndex, ALLOC_NAMESPACES.encoding);
+    if (!fact.evidence || typeof fact.evidence !== "object") {
+      throw new Error(`linear-memory frozen allocation fact ${id} has no evidence-presence projection`);
+    }
+    const factOwnershipEvidence = fact.evidence.ownership;
+    const factEscapeEvidence = fact.evidence.escape;
+    const factEncodingEvidence = fact.evidence.encoding;
+    if (
+      !factOwnershipEvidence ||
+      !factEscapeEvidence ||
+      !factEncodingEvidence ||
+      factOwnershipEvidence.present !== ownership.present ||
+      factEscapeEvidence.present !== escapeMetadata.present
+    ) {
+      throw new Error(`linear-memory frozen allocation fact ${id} disagrees with metadata presence`);
+    }
+    if (
+      !sameDetachedValue(factOwnershipEvidence.value, ownership.value) ||
+      !sameDetachedValue(factEscapeEvidence.value, escapeMetadata.value)
+    ) {
+      throw new Error(`linear-memory frozen allocation fact ${id} disagrees with metadata evidence`);
+    }
+    const factEncodingPresent = Object.prototype.hasOwnProperty.call(fact, "encoding");
+    if (factEncodingPresent !== encoding.present || factEncodingEvidence.present !== encoding.present) {
+      throw new Error(`linear-memory frozen allocation fact ${id} disagrees with encoding presence`);
+    }
+    if (!sameDetachedValue(factEncodingEvidence.value, encoding.value)) {
+      throw new Error(`linear-memory frozen allocation fact ${id} disagrees with encoding evidence`);
+    }
+    const ownershipValue = ownership.value;
+    if (ownershipValue !== undefined && (typeof ownershipValue !== "object" || ownershipValue === null)) {
+      throw new Error(`linear-memory frozen allocation fact ${id} has malformed ownership evidence`);
+    }
+    const ownershipRecord = ownershipValue as OwnershipMetadata | undefined;
+    const expectedOwnership = ownershipRecord?.state ?? "escaped";
+    const expectedAccesses = ownershipRecord?.ops ?? [];
+    const expectedStackCandidate = ownershipRecord?.stackCandidate === true;
+    if (
+      fact.ownership !== expectedOwnership ||
+      !sameStringArray(fact.accesses, expectedAccesses) ||
+      fact.stackCandidate !== expectedStackCandidate
+    ) {
+      throw new Error(`linear-memory frozen allocation fact ${id} disagrees with ownership evidence`);
+    }
+    const escapeValue = escapeMetadata.value;
+    if (escapeValue !== undefined && (typeof escapeValue !== "object" || escapeValue === null)) {
+      throw new Error(`linear-memory frozen allocation fact ${id} has malformed escape evidence`);
+    }
+    const escapeRecord = escapeValue as EscapeInfo | undefined;
+    if (fact.escape !== (escapeRecord?.classification ?? "opaque")) {
+      throw new Error(`linear-memory frozen allocation fact ${id} disagrees with escape evidence`);
+    }
+    factsById.set(id, fact);
+  }
+  const bodyIds = new Set<number>();
+  for (const { instr } of located.allocations) {
+    if (instr.alloc === undefined) continue;
+    const id = instr.alloc as number;
+    if (bodyIds.has(id)) throw new Error(`duplicate live allocation-site id ${id} in linear-memory facts`);
+    bodyIds.add(id);
+    if (!factsById.has(id)) throw new Error(`linear-memory facts are missing body allocation site ${id}`);
+  }
+  for (const id of factsById.keys()) {
+    if (!bodyIds.has(id)) throw new Error(`linear-memory facts contain extra site ${id}`);
+  }
+}
+
+/**
+ * Consume detached allocation facts to choose physical layouts and runtime
+ * policy decisions. No producer analysis or mutable registry is consulted.
+ */
+export function planLinearMemoryFromFrozenFacts(
+  module: IrModule,
+  preparedFacts: LinearPreparedAllocationFacts,
+  policy: LinearAllocatorPolicy = DEFAULT_ARENA_POLICY,
+): LinearMemoryPlan {
+  verifyLinearPreparedAllocationFacts(module, preparedFacts);
   const layouts = new Map<string, LinearLayoutPlan>();
   const segments = new Map<string, LinearDataSegmentPlan>();
   const globals = new Map<string, LinearGlobalStoragePlan>();
   const located = collectModuleFacts(module, layouts, globals);
+  const factsById = new Map<number, LinearPreparedAllocationFact>();
+  for (const fact of preparedFacts.allocations) {
+    const id = fact.id as number;
+    if (factsById.has(id)) throw new Error(`linear-memory frozen allocation facts duplicate site ${id}`);
+    const canonical = canonicalSiteFromSnapshot(fact.id, preparedFacts.registry);
+    if (canonical.id !== fact.site.id) {
+      throw new Error(`linear-memory frozen allocation fact ${id} has a detached canonical-site mismatch`);
+    }
+    factsById.set(id, fact);
+  }
   const allocations: LinearAllocationSitePlan[] = [];
   const seen = new Set<number>();
 
@@ -483,27 +816,25 @@ export function planLinearMemory(
     const numericId = alloc as number;
     if (seen.has(numericId)) throw new Error(`duplicate live allocation-site id ${numericId} in linear-memory plan`);
     seen.add(numericId);
-    const site = registry.resolve(alloc);
-    if (!site) throw new Error(`linear-memory plan cannot resolve allocation-site id ${numericId}`);
+    const fact = factsById.get(numericId);
+    if (!fact) throw new Error(`linear-memory plan has no frozen allocation facts for site ${numericId}`);
+    const site = canonicalSiteFromSnapshot(alloc, preparedFacts.registry);
+    if (site.id !== fact.site.id) {
+      throw new Error(`linear-memory allocation site ${numericId} changed between preparation and layout`);
+    }
 
     const layout = layoutForAllocation(instr, site, valueTypes);
     const canonicalLayout = internLayout(layouts, layout);
-    const ownership = registry.read<OwnershipMetadata>(alloc, ALLOC_NAMESPACES.ownership) ?? {};
-    const escapeInfo = registry.read<EscapeInfo>(alloc, ALLOC_NAMESPACES.escape) ?? {
-      classification: "opaque",
-      stackAllocatable: false,
-    };
-    const encoding = registry.read<Encoding>(alloc, ALLOC_NAMESPACES.encoding);
-    const facts: LinearAllocationFacts = {
+    const linearFacts: LinearAllocationFacts = {
       site,
       layout: canonicalLayout,
-      ownership: ownership.state ?? "escaped",
-      accesses: ownership.ops ?? [],
-      escape: escapeInfo.classification,
-      stackCandidate: ownership.stackCandidate === true,
-      encoding,
+      ownership: fact.ownership,
+      accesses: fact.accesses,
+      escape: fact.escape,
+      stackCandidate: fact.stackCandidate,
+      encoding: fact.encoding,
     };
-    const decision = policy.decide(facts);
+    const decision = policy.decide(linearFacts);
     let dataSegmentId: string | undefined;
     if (instr.kind === "string.const") {
       const bytes = [...new TextEncoder().encode(instr.value)];
@@ -519,11 +850,11 @@ export function planLinearMemory(
       origin: site.origin,
       layoutId: canonicalLayout.id,
       size: allocationSize(instr, canonicalLayout),
-      ownership: facts.ownership,
-      accesses: facts.accesses,
-      escape: facts.escape,
-      stackCandidate: facts.stackCandidate,
-      encoding,
+      ownership: linearFacts.ownership,
+      accesses: linearFacts.accesses,
+      escape: linearFacts.escape,
+      stackCandidate: linearFacts.stackCandidate,
+      encoding: linearFacts.encoding,
       dataSegmentId,
       ...decision,
     });
@@ -537,6 +868,15 @@ export function planLinearMemory(
     dataSegments: [...segments.values()].sort((left, right) => compareText(left.id, right.id)),
     globals: [...globals.values()].sort((left, right) => compareText(left.id, right.id)),
   });
+}
+
+/** Run analyses and build one canonical plan for compatibility callers. */
+export function planLinearMemory(
+  module: IrModule,
+  registry: AllocSiteRegistry,
+  policy: LinearAllocatorPolicy = DEFAULT_ARENA_POLICY,
+): LinearMemoryPlan {
+  return planLinearMemoryFromFrozenFacts(module, prepareLinearAllocationFacts(module, registry), policy);
 }
 
 /** Shared record-layout primitive consumed by IR and direct linear-Wasm paths. */
@@ -788,6 +1128,7 @@ function layoutForAllocation(
       return planLinearVectorLayout(instr.elementType);
     case "string.const":
     case "string.concat":
+    case "string.repeat":
       return planLinearStringLayout();
     default:
       return site.kind === "string" ? planLinearStringLayout() : opaqueLayout(site);
@@ -837,7 +1178,7 @@ function collectModuleFacts(
     readonly ownerFunction: string;
   }[];
 } {
-  const allocations: { instr: IrInstr; valueTypes: ReadonlyMap<IrValueId, IrType>; ownerFunction: string }[] = [];
+  const allocations = collectModuleAllocationInstructions(module).allocations;
   for (const fn of module.functions) {
     const valueTypes = collectValueTypes(fn);
     for (const param of fn.params) collectLayoutsFromType(param.type, layouts);
@@ -847,8 +1188,48 @@ function collectModuleFacts(
       for (const instr of block.instrs) {
         forEachInstrDeep(instr, (nested) => {
           if (nested.resultType) collectLayoutsFromType(nested.resultType, layouts);
-          if (nested.alloc !== undefined) allocations.push({ instr: nested, valueTypes, ownerFunction: fn.name });
           collectGlobalStorage(nested, valueTypes, globals);
+        });
+      }
+    }
+    for (const state of fn.asyncPlan?.states ?? []) {
+      for (const instr of state.body) {
+        forEachInstrDeep(instr, (nested) => {
+          if (nested.resultType) collectLayoutsFromType(nested.resultType, layouts);
+          collectGlobalStorage(nested, valueTypes, globals);
+        });
+      }
+    }
+  }
+  return { allocations };
+}
+
+/**
+ * Collect only allocation instructions and their value-type environments.
+ * Keeping this census separate prevents preparation facts from invoking the
+ * backend layout/storage walk before the immutable handoff.
+ */
+function collectModuleAllocationInstructions(module: IrModule): {
+  allocations: {
+    readonly instr: IrInstr;
+    readonly valueTypes: ReadonlyMap<IrValueId, IrType>;
+    readonly ownerFunction: string;
+  }[];
+} {
+  const allocations: { instr: IrInstr; valueTypes: ReadonlyMap<IrValueId, IrType>; ownerFunction: string }[] = [];
+  for (const fn of module.functions) {
+    const valueTypes = collectValueTypes(fn);
+    for (const block of fn.blocks) {
+      for (const instr of block.instrs) {
+        forEachInstrDeep(instr, (nested) => {
+          if (nested.alloc !== undefined) allocations.push({ instr: nested, valueTypes, ownerFunction: fn.name });
+        });
+      }
+    }
+    for (const state of fn.asyncPlan?.states ?? []) {
+      for (const instr of state.body) {
+        forEachInstrDeep(instr, (nested) => {
+          if (nested.alloc !== undefined) allocations.push({ instr: nested, valueTypes, ownerFunction: fn.name });
         });
       }
     }
@@ -905,6 +1286,7 @@ function collectLayoutsFromType(
 function collectValueTypes(fn: IrFunction): Map<IrValueId, IrType> {
   const types = new Map<IrValueId, IrType>();
   for (const param of fn.params) types.set(param.value, param.type);
+  for (const value of fn.asyncPlan?.values ?? []) types.set(value.value, value.type);
   for (const block of fn.blocks) {
     block.blockArgs.forEach((value, index) => {
       const type = block.blockArgTypes[index];
@@ -974,6 +1356,8 @@ function linearIrTypeKey(type: IrType): string {
       return `union:${type.members.map(linearIrTypeKey).join("|")}`;
     case "boxed":
       return `boxed:${linearIrTypeKey(type.inner)}`;
+    case "fnctor":
+      return irFnctorShapeKey(type.shape);
     case "dynamic":
       return "dynamic";
   }

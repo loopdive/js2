@@ -27,6 +27,8 @@ import type { CodegenContext } from "./context/types.js";
 import { addFuncType, getOrRegisterHoleyArrayType, getOrRegisterVecType, isHoleyArrayType } from "./registry/types.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { holeSentinelInstrs } from "./array-holes.js";
+import { f64HolesActive } from "./vec-f64-hole-presence.js";
+import { HOLE_F64_BITS } from "./value-tags.js";
 
 /** Reserved name prefix; the suffix is the vec STRUCT typeIdx. */
 export const VEC_ELEM_SET_PREFIX = "__vec_elem_set_";
@@ -167,6 +169,18 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   if (elem.kind === "i8" || elem.kind === "i16") return null;
 
   const holeyCarrier = isHoleyArrayType(ctx, vecTypeIdx) && elem.kind === "externref";
+  // Standalone f64 vectors use the same absence marker as sparse literals.
+  // Without this, an indexed write past capacity grows the backing array with
+  // f64 zeroes, materializing every intervening index as an own property.
+  // Mark the carrier here as well as in literal lowering: a module can first
+  // encounter a sparse indexed write before it emits a f64 literal marker.
+  const f64HoleCarrier = ctx.standalone && elem.kind === "f64" && f64HolesActive(ctx);
+  if (f64HoleCarrier) ctx.f64HoleMarkerEmitted = true;
+  const gapFillInit: Instr[] = holeyCarrier
+    ? holeSentinelInstrs(ctx)
+    : f64HoleCarrier
+      ? [{ op: "i64.const", value: HOLE_F64_BITS }, { op: "f64.reinterpret_i64" }]
+      : [];
   // (#4430) The branded sparse carrier is a FINAL subtype of the ordinary
   // externref vec, and BOTH fields this helper touches (`length`, `data`) are
   // declared on that parent. The IR path types the receiving binding from the
@@ -257,10 +271,12 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
             { op: "local.set", index: NCAP },
           ],
         },
-        // Only the branded sparse carrier fills new capacity with `$Hole`.
-        ...(holeyCarrier ? holeSentinelInstrs(ctx) : []),
+        // Branded externref sparse carriers and standalone f64 sparse carriers
+        // fill new capacity with their respective absence markers. Dense
+        // carriers retain the ordinary zero/null default.
+        ...gapFillInit,
         { op: "local.get", index: NCAP },
-        ...(holeyCarrier
+        ...(holeyCarrier || f64HoleCarrier
           ? ([{ op: "array.new", typeIdx: arrTypeIdx }] satisfies Instr[])
           : ([{ op: "array.new_default", typeIdx: arrTypeIdx }] satisfies Instr[])),
         { op: "local.set", index: NDATA },
@@ -281,23 +297,24 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
         { op: "local.set", index: DATA },
       ],
     },
-    ...(holeyCarrier
+    ...(holeyCarrier || f64HoleCarrier
       ? ([
           // A write beyond logical length can land in already-allocated spare
-          // capacity. Preserve absence in the full [oldLength, idx) gap.
+          // capacity. Preserve absence in the full [oldLength, idx) gap for
+          // both branded externref and standalone f64 sparse carriers.
           { op: "local.get", index: VEC },
           { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 0 },
           { op: "local.set", index: OLEN },
           { op: "local.get", index: IDX },
           { op: "local.get", index: OLEN },
-          { op: "i32.gt_s" },
+          { op: "i32.gt_u" },
           {
             op: "if",
             blockType: { kind: "empty" },
             then: [
               { op: "local.get", index: DATA },
               { op: "local.get", index: OLEN },
-              ...holeSentinelInstrs(ctx),
+              ...gapFillInit,
               { op: "local.get", index: IDX },
               { op: "local.get", index: OLEN },
               { op: "i32.sub" },
@@ -317,7 +334,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
     { op: "i32.add" },
     { op: "local.get", index: VEC },
     { op: "struct.get", typeIdx: carrierTypeIdx, fieldIdx: 0 },
-    { op: "i32.gt_s" },
+    { op: "i32.gt_u" },
     {
       op: "if",
       blockType: { kind: "empty" },
@@ -339,7 +356,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
       { name: "$ncap", type: { kind: "i32" } },
       { name: "$ndata", type: { kind: "ref_null", typeIdx: arrTypeIdx } },
       { name: "$ocap", type: { kind: "i32" } },
-      ...(holeyCarrier ? [{ name: "$oldlen", type: { kind: "i32" } as ValType }] : []),
+      ...(holeyCarrier || f64HoleCarrier ? [{ name: "$oldlen", type: { kind: "i32" } as ValType }] : []),
     ],
     body,
     exported: false,

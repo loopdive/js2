@@ -4,6 +4,7 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import * as ts from "typescript";
+import { readWorkerCompileDuration, stripWorkerProtocol } from "./upstream-suite-worker-protocol.mjs";
 
 // The assertions are intentionally small, deterministic JavaScript. They are
 // runner infrastructure; the registered callback bodies remain the exact
@@ -14,9 +15,29 @@ export const UPSTREAM_TEST_SHIM = String.raw`
 // the alias explicit in both the native and Wasm lanes instead of treating a
 // missing Node compatibility global as a package failure.
 var global = globalThis;
+// Some original Jest units pass the timer globals as bare identifiers. Keep
+// those names live through globalThis so fake-timer installation and spy
+// replacement update the same host function in both Node and Wasm lanes.
+function setTimeout(callback, delay) {
+  if (__upstreamFakeTimers !== null) {
+    __upstreamRecordTimerSpy("setTimeout", [callback, delay]);
+    return __upstreamFakeTimers.fakeSetTimeout(callback, delay);
+  }
+  return globalThis.setTimeout(callback, delay);
+}
+function clearTimeout(timer) {
+  if (__upstreamFakeTimers !== null) {
+    __upstreamRecordTimerSpy("clearTimeout", [timer]);
+    return __upstreamFakeTimers.fakeClearTimeout(timer);
+  }
+  return globalThis.clearTimeout(timer);
+}
+const __upstreamBareTimerAliases = { setTimeout, clearTimeout };
 const __upstreamTests = [];
 const __upstreamErrors = [];
 let __upstreamSnapshotMatcher = null;
+let __upstreamSnapshotEntries = null;
+let __upstreamSnapshotUsed = null;
 let __upstreamCurrentTestName = "";
 let __upstreamAssertion = 0;
 function __upstreamFail(message) { throw new Error(String(message || "Assertion failed")); }
@@ -33,6 +54,39 @@ function __upstreamSame(a, b) {
   if (typeof a !== "object") return false;
   if (a instanceof Date || b instanceof Date) return a instanceof Date && b instanceof Date && +a === +b;
   if (a instanceof RegExp || b instanceof RegExp) return a instanceof RegExp && b instanceof RegExp && String(a) === String(b);
+  const aIsArray = Array.isArray(a);
+  const bIsArray = Array.isArray(b);
+  if (aIsArray || bIsArray) {
+    if (!aIsArray || !bIsArray || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!__upstreamSame(a[i], b[i])) return false;
+    return true;
+  }
+  const aIsSet = a instanceof Set;
+  const bIsSet = b instanceof Set;
+  if (aIsSet || bIsSet) {
+    if (!aIsSet || !bIsSet || a.size !== b.size) return false;
+    const unmatched = Array.from(b);
+    for (const value of a) {
+      const index = unmatched.findIndex((candidate) => __upstreamSame(value, candidate));
+      if (index < 0) return false;
+      unmatched.splice(index, 1);
+    }
+    return true;
+  }
+  const aIsMap = a instanceof Map;
+  const bIsMap = b instanceof Map;
+  if (aIsMap || bIsMap) {
+    if (!aIsMap || !bIsMap || a.size !== b.size) return false;
+    const unmatched = Array.from(b);
+    for (const [key, value] of a) {
+      const index = unmatched.findIndex(
+        (candidate) => __upstreamSame(key, candidate[0]) && __upstreamSame(value, candidate[1]),
+      );
+      if (index < 0) return false;
+      unmatched.splice(index, 1);
+    }
+    return true;
+  }
   if (typeof a.length === "number" || typeof b.length === "number") {
     if (typeof a.length !== "number" || typeof b.length !== "number" || a.length !== b.length) return false;
     for (let i = 0; i < a.length; i++) if (!__upstreamSame(a[i], b[i])) return false;
@@ -49,6 +103,13 @@ function __upstreamSame(a, b) {
 function __upstreamSubset(actual, expected) {
   if (Object.is(actual, expected)) return true;
   if (actual == null || expected == null || typeof expected !== "object") return false;
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    if (!Array.isArray(actual) || !Array.isArray(expected) || actual.length !== expected.length) return false;
+    for (let index = 0; index < expected.length; index++) {
+      if (!__upstreamSubset(actual[index], expected[index])) return false;
+    }
+    return true;
+  }
   const keys = Object.keys(expected);
   for (let i = 0; i < keys.length; i++) {
     const key = keys[i];
@@ -68,6 +129,39 @@ function __upstreamThrownMatches(error, expected) {
   if (typeof expected === "string") return message.includes(expected);
   if (typeof expected === "function") return error instanceof expected || error.name === expected.name;
   return true;
+}
+function __upstreamNormalizeAnsi(value) {
+  return String(value)
+    .replace(/\u001b\[2m/g, "<dim>")
+    .replace(/\u001b\[22m/g, "</intensity>")
+    .replace(/\u001b\[0m/g, "</>");
+}
+function __upstreamInstallSnapshotMatcher(entries) {
+  __upstreamSnapshotEntries = entries;
+  __upstreamSnapshotUsed = [];
+}
+function __upstreamSnapshotMatches(actual) {
+  if (__upstreamSnapshotEntries === null || __upstreamSnapshotUsed === null) return false;
+  const current = String(__upstreamCurrentTestName);
+  const serialized = __upstreamNormalizeAnsi(
+    typeof __upstreamPrettyFormat === "function"
+      ? __upstreamPrettyFormat(actual, {escapeString: false})
+      : String(actual),
+  );
+  const candidates = [];
+  for (let index = 0; index < __upstreamSnapshotEntries.length; index++) {
+    const name = String(__upstreamSnapshotEntries[index][0]);
+    if (__upstreamSnapshotUsed[index] || (name !== current && !name.endsWith(" " + current))) continue;
+    const expected = String(__upstreamSnapshotEntries[index][1]);
+    candidates.push(expected);
+    const stringSnapshotMatches = typeof actual === "string" && serialized === '"' + expected + '"';
+    if (serialized === expected || stringSnapshotMatches) {
+      __upstreamSnapshotUsed[index] = true;
+      return true;
+    }
+  }
+  if (candidates.length > 0) __upstreamFail("snapshot mismatch: " + serialized + " != " + candidates.join(" || "));
+  return false;
 }
 function __upstreamAsyncReject(actual, expected, label) {
   return Promise.resolve(actual).then(
@@ -90,6 +184,24 @@ function __upstreamAsyncResolve(actual, matcher, expected, hasExpected, label) {
     },
   );
 }
+function __upstreamNormalizeInlineSnapshot(value) {
+  return String(value)
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .join("\n")
+    .replace(/,\n([}\]])/g, "\n$1");
+}
+function __upstreamInlineSnapshotValue(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (value === undefined) return "undefined";
+  try {
+    const serialized = JSON.stringify(value, null, 2);
+    return serialized === undefined ? String(value) : serialized;
+  } catch {
+    return String(value);
+  }
+}
 function __upstreamExpect(actual) {
   const positive = {
     toBe(expected) { const n = ++__upstreamAssertion; if (!Object.is(actual, expected)) __upstreamFail("assertion " + n + " toBe: " + __upstreamValue(actual) + " != " + __upstreamValue(expected)); },
@@ -105,22 +217,26 @@ function __upstreamExpect(actual) {
     toHaveProperty(expected) { const n = ++__upstreamAssertion; if (actual == null || !(expected in Object(actual))) __upstreamFail("assertion " + n + " missing property " + String(expected)); },
     toMatchObject(expected) { const n = ++__upstreamAssertion; if (!__upstreamSubset(actual, expected)) __upstreamFail("assertion " + n + " object subset mismatch"); },
     toMatch(expected) { const n = ++__upstreamAssertion; const value = String(actual); if (expected instanceof RegExp ? !expected.test(value) : !value.includes(String(expected))) __upstreamFail("assertion " + n + " pattern mismatch"); },
-    toMatchInlineSnapshot(expected) { const n = ++__upstreamAssertion; const value = typeof actual === "string" ? JSON.stringify(actual) : String(actual); if (value !== String(expected).trim()) __upstreamFail("assertion " + n + " inline snapshot mismatch: " + value + " != " + String(expected).trim()); },
-    toBeCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
-    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
-    toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
-    toHaveBeenCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = actual && actual.mock && actual.mock.calls; let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
-    toHaveBeenCalledTimes(expected) { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== expected) __upstreamFail("assertion " + n + " spy call count mismatch"); },
-    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
-    toBeCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
+    toMatchInlineSnapshot(expected) { const n = ++__upstreamAssertion; const value = __upstreamNormalizeInlineSnapshot(__upstreamInlineSnapshotValue(actual)); const snapshot = __upstreamNormalizeInlineSnapshot(expected); if (value !== snapshot) __upstreamFail("assertion " + n + " inline snapshot mismatch: " + value + " != " + snapshot); },
+    toBeGreaterThan(expected) { const n = ++__upstreamAssertion; if (!(actual > expected)) __upstreamFail("assertion " + n + " expected greater value"); },
+    toBeCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
+    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length === 0) __upstreamFail("assertion " + n + " expected spy to be called"); },
+    toBeCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = __upstreamMockCalls(actual); let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
+    toHaveBeenCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = __upstreamMockCalls(actual); let matched = false; if (calls) for (let i = 0; i < calls.length; i++) if (__upstreamSame(calls[i], expected)) matched = true; if (!matched) __upstreamFail("assertion " + n + " expected matching spy call"); },
+    toHaveBeenLastCalledWith() { const n = ++__upstreamAssertion; const expected = Array.prototype.slice.call(arguments); const calls = __upstreamMockCalls(actual); const last = calls && calls.length > 0 ? calls[calls.length - 1] : undefined; if (!__upstreamSame(last, expected)) __upstreamFail("assertion " + n + " expected matching last spy call"); },
+    toHaveBeenCalledTimes(expected) { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length !== expected) __upstreamFail("assertion " + n + " spy call count mismatch"); },
+    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
+    toBeCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (!calls || calls.length !== 1) __upstreamFail("assertion " + n + " spy call count mismatch"); },
     toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
     instanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected !== "function" || !(actual instanceof expected)) __upstreamFail("assertion " + n + " instance mismatch"); },
     toMatchSnapshot() {
-      if (typeof __upstreamSnapshotMatcher !== "function") {
+      if (__upstreamSnapshotEntries === null && typeof __upstreamSnapshotMatcher !== "function") {
         __upstreamFail("snapshot assertion requires a package-specific snapshot adapter");
       }
       const n = ++__upstreamAssertion;
-      if (!__upstreamSnapshotMatcher(actual)) __upstreamFail("snapshot mismatch at assertion " + n);
+      const matched =
+        __upstreamSnapshotEntries !== null ? __upstreamSnapshotMatches(actual) : __upstreamSnapshotMatcher(actual);
+      if (!matched) __upstreamFail("snapshot mismatch at assertion " + n);
     },
     toThrow(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
     toThrowError(expected) { const n = ++__upstreamAssertion; if (typeof actual !== "function" || !__upstreamThrownMatches(__upstreamThrown(actual), expected)) __upstreamFail("assertion " + n + " expected matching throw"); },
@@ -133,13 +249,17 @@ function __upstreamExpect(actual) {
     toBeNull() { const n = ++__upstreamAssertion; if (actual === null) __upstreamFail("assertion " + n + " unexpectedly null"); },
     toBeTruthy() { const n = ++__upstreamAssertion; if (actual) __upstreamFail("assertion " + n + " unexpectedly truthy"); },
     toBeFalsy() { const n = ++__upstreamAssertion; if (!actual) __upstreamFail("assertion " + n + " unexpectedly falsey"); },
+    toMatchInlineSnapshot(expected) { const n = ++__upstreamAssertion; const value = __upstreamNormalizeInlineSnapshot(__upstreamInlineSnapshotValue(actual)); const snapshot = __upstreamNormalizeInlineSnapshot(expected); if (value === snapshot) __upstreamFail("assertion " + n + " unexpectedly matched inline snapshot"); },
     toBeInstanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected === "function" && actual instanceof expected) __upstreamFail("assertion " + n + " unexpected instance"); },
     instanceOf(expected) { const n = ++__upstreamAssertion; if (typeof expected === "function" && actual instanceof expected) __upstreamFail("assertion " + n + " unexpected instance"); },
-    toBeCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
-    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
-    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = actual && actual.mock && actual.mock.calls; if (calls && calls.length === 1) __upstreamFail("assertion " + n + " unexpected spy call"); },
-    toThrow() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
-    toThrowError() { const n = ++__upstreamAssertion; if (typeof actual !== "function" || __upstreamThrown(actual) !== null) __upstreamFail("assertion " + n + " unexpected throw"); },
+    toBeCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length === 1) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toBeCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toHaveBeenCalled() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length > 0) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toHaveBeenCalledOnce() { const n = ++__upstreamAssertion; const calls = __upstreamMockCalls(actual); if (calls && calls.length === 1) __upstreamFail("assertion " + n + " unexpected spy call"); },
+    toThrow(expected) { const n = ++__upstreamAssertion; const error = typeof actual === "function" ? __upstreamThrown(actual) : new Error("not callable"); if (error !== null && (expected === undefined || __upstreamThrownMatches(error, expected))) __upstreamFail("assertion " + n + " unexpected throw"); },
+    toThrowError(expected) { const n = ++__upstreamAssertion; const error = typeof actual === "function" ? __upstreamThrown(actual) : new Error("not callable"); if (error !== null && (expected === undefined || __upstreamThrownMatches(error, expected))) __upstreamFail("assertion " + n + " unexpected throw"); },
   };
   // Vitest/Jest promise assertions are part of the upstream test contract,
   // not optional syntax. Attach rejection handlers immediately so a rejected
@@ -166,15 +286,80 @@ function __upstreamExpect(actual) {
 const expect = __upstreamExpect;
 const __upstreamGlobalStubs = [];
 const __upstreamEnvStubs = [];
+const __upstreamSpies = [];
+const __upstreamSpyFunctions = [];
+// Keep scalar call counts in a flat host vector. Nested WasmGC vectors are
+// copied when stored in another host-like vector and do not receive later
+// writes from the callback closure.
+const __upstreamSpyCallCounts = [];
+const __upstreamSpyCallBases = [];
+const __upstreamSpyCallOwners = [];
+const __upstreamSpyCallStarts = [];
+const __upstreamSpyCallLengths = [];
+const __upstreamSpyCallValues = [];
+const __upstreamTimerSpies = { setTimeout: null, clearTimeout: null };
+let __upstreamSetTimeoutCallCount = 0;
+let __upstreamClearTimeoutCallCount = 0;
+function __upstreamMockCallsByIndex(index) {
+  const calls = [];
+  const base = __upstreamSpyCallBases[index] || 0;
+  for (let record = base; record < __upstreamSpyCallOwners.length; record++) {
+    if (__upstreamSpyCallOwners[record] !== index) continue;
+    const args = [];
+    const start = __upstreamSpyCallStarts[record] || 0;
+    const length = __upstreamSpyCallLengths[record] || 0;
+    for (let arg = 0; arg < length; arg++) args.push(__upstreamSpyCallValues[start + arg]);
+    calls.push(args);
+  }
+  return calls;
+}
+function __upstreamMockCalls(actual) {
+  if (actual === __upstreamBareTimerAliases.setTimeout) {
+    return { length: __upstreamSetTimeoutCallCount };
+  }
+  if (actual === __upstreamBareTimerAliases.clearTimeout) {
+    return { length: __upstreamClearTimeoutCallCount };
+  }
+  for (let index = 0; index < __upstreamSpyFunctions.length; index++) {
+    if (__upstreamSpyFunctions[index] === actual) return __upstreamMockCallsByIndex(index);
+  }
+  // Keep the live mock.calls vector on the spy itself. A WasmGC vector stored
+  // inside another host-like vector is copied at the boundary and then stops
+  // reflecting later callback invocations.
+  const directMock = actual && actual.mock;
+  if (directMock && directMock.calls) return directMock.calls;
+  return undefined;
+}
+function __upstreamRecordTimerSpy(key, args) {
+  if (key === "setTimeout") __upstreamSetTimeoutCallCount++;
+  else if (key === "clearTimeout") __upstreamClearTimeoutCallCount++;
+}
 const vi = {
   fn(implementation) {
-    function spy() {
-      const args = Array.prototype.slice.call(arguments);
-      spy.mock.calls.push(args);
+    const spyIndex = __upstreamSpyFunctions.length;
+    __upstreamSpyCallCounts.push(0);
+    __upstreamSpyCallBases.push(__upstreamSpyCallOwners.length);
+    function spy(...args) {
+      __upstreamSpyCallCounts[spyIndex] = (__upstreamSpyCallCounts[spyIndex] || 0) + 1;
+      __upstreamSpyCallOwners.push(spyIndex);
+      __upstreamSpyCallStarts.push(__upstreamSpyCallValues.length);
+      __upstreamSpyCallLengths.push(args.length);
+      for (let index = 0; index < args.length; index++) __upstreamSpyCallValues.push(args[index]);
       if (typeof implementation === "function") return implementation.apply(this, args);
     }
-    spy.mock = { calls: [] };
-    spy.mockClear = function() { spy.mock.calls.length = 0; return spy; };
+    __upstreamSpyFunctions.push(spy);
+    const mock = {};
+    Object.defineProperty(mock, "calls", {
+      get() { return __upstreamMockCallsByIndex(spyIndex); },
+      enumerable: true,
+      configurable: true,
+    });
+    spy.mock = mock;
+    spy.mockClear = function() {
+      __upstreamSpyCallCounts[spyIndex] = 0;
+      __upstreamSpyCallBases[spyIndex] = __upstreamSpyCallOwners.length;
+      return spy;
+    };
     spy.mockReturnValue = function(value) { implementation = function() { return value; }; return spy; };
     spy.mockImplementation = function(next) { implementation = next; return spy; };
     spy.mockRestore = function() {};
@@ -183,7 +368,20 @@ const vi = {
   spyOn(object, key) {
     const original = object[key];
     const spy = vi.fn(function() { return original.apply(this, arguments); });
-    spy.mockRestore = function() { object[key] = original; };
+    spy.mockRestore = function() {
+      object[key] = original;
+      if (__upstreamTimerSpies[key] === spy) __upstreamTimerSpies[key] = null;
+    };
+    const bareAlias = __upstreamBareTimerAliases[key];
+    if (bareAlias !== undefined) {
+      bareAlias.mock = spy.mock;
+      bareAlias.mockClear = spy.mockClear;
+      bareAlias.mockRestore = spy.mockRestore;
+      __upstreamTimerSpies[key] = spy;
+      if (key === "setTimeout") __upstreamSetTimeoutCallCount = 0;
+      else if (key === "clearTimeout") __upstreamClearTimeoutCallCount = 0;
+    }
+    __upstreamSpies.push({ object, key, original, spy });
     object[key] = spy;
     return spy;
   },
@@ -218,6 +416,116 @@ const vi = {
     __upstreamEnvStubs.length = 0;
   },
 };
+function __upstreamRestoreAllMocks() {
+  for (let index = __upstreamSpies.length - 1; index >= 0; index--) {
+    const spy = __upstreamSpies[index];
+    spy.spy.mockRestore();
+  }
+  __upstreamSpies.length = 0;
+  __upstreamTimerSpies.setTimeout = null;
+  __upstreamTimerSpies.clearTimeout = null;
+  __upstreamSetTimeoutCallCount = 0;
+  __upstreamClearTimeoutCallCount = 0;
+}
+let __upstreamFakeTimers = null;
+function __upstreamUseFakeTimers() {
+  if (__upstreamFakeTimers !== null) return jest;
+  const timers = new Map();
+  let nextTimerId = 1;
+  let now = 0;
+  const fakeSetTimeout = function(callback, delay) {
+    const id = nextTimerId++;
+    const normalizedDelay = Math.max(0, Number(delay) || 0);
+    timers.set(id, { callback, at: now + normalizedDelay });
+    return id;
+  };
+  const fakeClearTimeout = function(id) {
+    timers.delete(id);
+  };
+  __upstreamFakeTimers = { timers, fakeSetTimeout, fakeClearTimeout, get now() { return now; }, set now(value) { now = value; } };
+  return jest;
+}
+function __upstreamNextTimer() {
+  if (__upstreamFakeTimers === null || __upstreamFakeTimers.timers.size === 0) return null;
+  let next = null;
+  for (const [id, entry] of __upstreamFakeTimers.timers) {
+    if (next === null || entry.at < next.entry.at || (entry.at === next.entry.at && id < next.id)) {
+      next = { id, entry };
+    }
+  }
+  return next;
+}
+function __upstreamRunTimer(next) {
+  if (__upstreamFakeTimers === null || next === null) return;
+  if (!__upstreamFakeTimers.timers.has(next.id)) return;
+  __upstreamFakeTimers.timers.delete(next.id);
+  __upstreamFakeTimers.now = Math.max(__upstreamFakeTimers.now, next.entry.at);
+  next.entry.callback();
+}
+function __upstreamRunAllTimers() {
+  if (__upstreamFakeTimers === null) return;
+  let guard = 10000;
+  while (__upstreamFakeTimers.timers.size > 0) {
+    if (--guard < 0) throw new Error("fake timer queue exceeded 10000 callbacks");
+    __upstreamRunTimer(__upstreamNextTimer());
+  }
+}
+function __upstreamAdvanceTimersByTime(milliseconds) {
+  if (__upstreamFakeTimers === null) return;
+  const target = __upstreamFakeTimers.now + Math.max(0, Number(milliseconds) || 0);
+  let guard = 10000;
+  while (__upstreamFakeTimers.timers.size > 0) {
+    if (--guard < 0) throw new Error("fake timer queue exceeded 10000 callbacks");
+    const next = __upstreamNextTimer();
+    if (next === null || next.entry.at > target) break;
+    __upstreamRunTimer(next);
+  }
+  __upstreamFakeTimers.now = target;
+}
+function __upstreamRunOnlyPendingTimers() {
+  if (__upstreamFakeTimers === null) return;
+  const pending = Array.from(__upstreamFakeTimers.timers.keys());
+  for (const id of pending) {
+    const entry = __upstreamFakeTimers.timers.get(id);
+    if (entry !== undefined) __upstreamRunTimer({ id, entry });
+  }
+}
+function __upstreamClearAllTimers() {
+  if (__upstreamFakeTimers !== null) __upstreamFakeTimers.timers.clear();
+}
+function __upstreamGetTimerCount() {
+  return __upstreamFakeTimers === null ? 0 : __upstreamFakeTimers.timers.size;
+}
+function __upstreamRunAllTimersAsync() {
+  __upstreamRunAllTimers();
+  return Promise.resolve();
+}
+function __upstreamAdvanceTimersByTimeAsync(milliseconds) {
+  __upstreamAdvanceTimersByTime(milliseconds);
+  return Promise.resolve();
+}
+function __upstreamRunOnlyPendingTimersAsync() {
+  __upstreamRunOnlyPendingTimers();
+  return Promise.resolve();
+}
+function __upstreamUseRealTimers() {
+  __upstreamRestoreAllMocks();
+  if (__upstreamFakeTimers === null) return jest;
+  __upstreamFakeTimers = null;
+  return jest;
+}
+function __upstreamSetSystemTime(value) {
+  if (__upstreamFakeTimers !== null) {
+    const timestamp = value instanceof Date ? value.getTime() : Number(value);
+    if (Number.isFinite(timestamp)) __upstreamFakeTimers.now = timestamp;
+  }
+}
+function __upstreamNow() {
+  return __upstreamFakeTimers === null ? Date.now() : __upstreamFakeTimers.now;
+}
+function __upstreamGetRealSystemTime() {
+  return Date.now();
+}
 // A number of Jest-owned packages publish their original tests with the Jest
 // global even when the selected unit only needs spies. Keep this small facade
 // backed by the same deterministic implementation as vi; package adapters can
@@ -228,6 +536,26 @@ const jest = {
   spyOn: vi.spyOn,
   resetModules() {},
   doMock() {},
+  // The selected original units use isolateModules to make a fresh require
+  // boundary. Each compiled test file already runs in its own worker/module,
+  // so invoke the callback directly while preserving the public Jest seam.
+  isolateModules(callback) {
+    return callback();
+  },
+  useFakeTimers: __upstreamUseFakeTimers,
+  useRealTimers: __upstreamUseRealTimers,
+  runAllTimers: __upstreamRunAllTimers,
+  runAllTimersAsync: __upstreamRunAllTimersAsync,
+  advanceTimersByTime: __upstreamAdvanceTimersByTime,
+  advanceTimersByTimeAsync: __upstreamAdvanceTimersByTimeAsync,
+  runOnlyPendingTimers: __upstreamRunOnlyPendingTimers,
+  runOnlyPendingTimersAsync: __upstreamRunOnlyPendingTimersAsync,
+  clearAllTimers: __upstreamClearAllTimers,
+  getTimerCount: __upstreamGetTimerCount,
+  setSystemTime: __upstreamSetSystemTime,
+  now: __upstreamNow,
+  getRealSystemTime: __upstreamGetRealSystemTime,
+  restoreAllMocks: __upstreamRestoreAllMocks,
 };
 const __upstreamBeforeEach = [];
 const __upstreamAfterEach = [];
@@ -244,9 +572,6 @@ function describe(_name, body) {
   __upstreamBeforeAll.length = beforeAllCount;
   __upstreamAfterAll.length = afterAllCount;
 }
-function beforeEach(body) { __upstreamBeforeEach.push(body); }
-function beforeAll(body) { __upstreamBeforeAll.push(body); }
-function afterAll(body) { __upstreamAfterAll.push(body); }
 function __upstreamRegister(name, body) {
   const hooks = __upstreamBeforeEach.slice();
   const afterHooks = __upstreamAfterEach.slice();
@@ -282,16 +607,58 @@ function __upstreamRegister(name, body) {
     },
   });
 }
-function it(name, body) { __upstreamRegister(name, body); }
-function test(name, body) { __upstreamRegister(name, body); }
+function __upstreamRegisterTest(name, body) {
+  const validName = typeof name === "string" || typeof name === "number" || (typeof name === "function" && name.name);
+  if (!validName) {
+    const renderedName = typeof name === "function" && !name.name ? "() => {}" : String(name);
+    throw new Error("Invalid first argument, " + renderedName + ". It must be a named class, named function, number, or string.");
+  }
+  if (typeof body === "undefined") {
+    throw new Error(
+      "Missing second argument. It must be a callback function. Perhaps you want to use " +
+        String.fromCharCode(96) +
+        "test.todo" +
+        String.fromCharCode(96) +
+        " for a test placeholder.",
+    );
+  }
+  if (typeof body !== "function") {
+    throw new Error("Invalid second argument, " + String(body) + ". It must be a callback function.");
+  }
+  __upstreamRegister(name, body);
+}
+function it(name, body) { __upstreamRegisterTest(name, body); }
+function test(name, body) { __upstreamRegisterTest(name, body); }
 function __upstreamSkip() {}
+function __upstreamTodo(description) {
+  if (arguments.length !== 1 || typeof description !== "string") {
+    throw new Error("Todo must be called with only a description.");
+  }
+}
 it.skip = __upstreamSkip;
-it.todo = __upstreamSkip;
+it.todo = __upstreamTodo;
 test.skip = __upstreamSkip;
-test.todo = __upstreamSkip;
+test.todo = __upstreamTodo;
 describe.skip = __upstreamSkip;
 describe.todo = __upstreamSkip;
-function afterEach(body) { __upstreamAfterEach.push(body); }
+function __upstreamRegisterHook(body) {
+  if (typeof body !== "function") throw new Error("Invalid first argument. It must be a callback function.");
+}
+function afterEach(body) { __upstreamRegisterHook(body); __upstreamAfterEach.push(body); }
+function beforeEach(body) { __upstreamRegisterHook(body); __upstreamBeforeEach.push(body); }
+function beforeAll(body) { __upstreamRegisterHook(body); __upstreamBeforeAll.push(body); }
+function afterAll(body) { __upstreamRegisterHook(body); __upstreamAfterAll.push(body); }
+Object.defineProperty(globalThis, "beforeEach", { configurable: true, writable: true, value: function(body) { __upstreamRegisterHook(body); __upstreamBeforeEach.push(body); } });
+Object.defineProperty(globalThis, "beforeAll", { configurable: true, writable: true, value: function(body) { __upstreamRegisterHook(body); __upstreamBeforeAll.push(body); } });
+Object.defineProperty(globalThis, "afterEach", { configurable: true, writable: true, value: function(body) { __upstreamRegisterHook(body); __upstreamAfterEach.push(body); } });
+Object.defineProperty(globalThis, "afterAll", { configurable: true, writable: true, value: function(body) { __upstreamRegisterHook(body); __upstreamAfterAll.push(body); } });
+function __upstreamCallNamedHook(name, body) {
+  if (name === "beforeEach") return beforeEach(body);
+  if (name === "beforeAll") return beforeAll(body);
+  if (name === "afterEach") return afterEach(body);
+  if (name === "afterAll") return afterAll(body);
+  throw new Error("Unknown hook: " + String(name));
+}
 function __upstreamTableRows(strings, values) {
   const markers = [];
   let source = "";
@@ -327,7 +694,10 @@ function __upstreamEach(cases) {
   const tableRows = Array.isArray(cases) && cases.raw && values.length > 0 ? __upstreamTableRows(cases, values) : null;
   return function(name, body) {
     const sourceCases = tableRows || cases;
-    const expandRows = sourceCases.length > 0 && sourceCases.every(function(value) { return Array.isArray(value); });
+    let expandRows = sourceCases.length > 0;
+    for (let caseIndex = 0; caseIndex < sourceCases.length; caseIndex++) {
+      if (!Array.isArray(sourceCases[caseIndex])) { expandRows = false; break; }
+    }
     for (let index = 0; index < sourceCases.length; index++) {
       const sourceRow = sourceCases[index];
       const row = expandRows ? sourceRow : [sourceRow];
@@ -347,24 +717,59 @@ function __upstreamEach(cases) {
     }
   };
 }
+function __upstreamEachDirect(cases, name, body) {
+  let expandRows = cases.length > 0;
+  for (let caseIndex = 0; caseIndex < cases.length; caseIndex++) {
+    if (!Array.isArray(cases[caseIndex])) { expandRows = false; break; }
+  }
+  for (let index = 0; index < cases.length; index++) {
+    const sourceRow = cases[index];
+    const row = expandRows ? sourceRow : [sourceRow];
+    const displayName = String(name).replace(/%s/g, function() { return String(row[0]); });
+    it(displayName, function() {
+      if (row.length === 0) return body();
+      if (row.length === 1) return body(row[0]);
+      if (row.length === 2) return body(row[0], row[1]);
+      if (row.length === 3) return body(row[0], row[1], row[2]);
+      return body(row[0], row[1], row[2], row[3]);
+    });
+  }
+}
+function __upstreamDescribeEachDirect(cases, name, body) {
+  let expandRows = cases.length > 0;
+  for (let caseIndex = 0; caseIndex < cases.length; caseIndex++) {
+    if (!Array.isArray(cases[caseIndex])) { expandRows = false; break; }
+  }
+  for (let index = 0; index < cases.length; index++) {
+    const sourceRow = cases[index];
+    const row = expandRows ? sourceRow : [sourceRow];
+    if (row.length === 0) body();
+    else if (row.length === 1) body(row[0]);
+    else if (row.length === 2) body(row[0], row[1]);
+    else if (row.length === 3) body(row[0], row[1], row[2]);
+    else body(row[0], row[1], row[2], row[3]);
+  }
+}
 it.each = __upstreamEach;
 test.each = __upstreamEach;
-describe.each = function(cases) {
-  return function(name, body) {
-    const expandRows = cases.length > 0 && cases.every(function(value) { return Array.isArray(value); });
+function __upstreamDescribeEach(cases) {
+  return (name, body) => {
+    let expandRows = cases.length > 0;
+    for (let caseIndex = 0; caseIndex < cases.length; caseIndex++) {
+      if (!Array.isArray(cases[caseIndex])) { expandRows = false; break; }
+    }
     for (let index = 0; index < cases.length; index++) {
       const row = expandRows ? cases[index] : [cases[index]];
       const displayName = String(name).replace(/%s/g, function() { return String(row[0]); });
-      describe(displayName, function() {
-        if (row.length === 0) return body();
-        if (row.length === 1) return body(row[0]);
-        if (row.length === 2) return body(row[0], row[1]);
-        if (row.length === 3) return body(row[0], row[1], row[2]);
-        return body(row[0], row[1], row[2], row[3]);
-      });
+      if (row.length === 0) body();
+      else if (row.length === 1) body(row[0]);
+      else if (row.length === 2) body(row[0], row[1]);
+      else if (row.length === 3) body(row[0], row[1], row[2]);
+      else body(row[0], row[1], row[2], row[3]);
     }
   };
-};
+}
+describe.each = __upstreamDescribeEach;
 // Vitest's expectTypeOf is erased by TypeScript and only performs compile-time
 // checks. Keep the original calls executable without turning type assertions
 // into fake runtime coverage in either the Node or Wasm lane.
@@ -388,6 +793,7 @@ const __qunitAssert = {
   expect(_count) {},
   ok(value, message) { const n = ++__upstreamAssertion; if (!value) __upstreamFail("assertion " + n + ": " + (message || "expected truthy value") + "; got " + __upstreamValue(value)); },
   notOk(value, message) { const n = ++__upstreamAssertion; if (value) __upstreamFail("assertion " + n + ": " + (message || "expected falsey value") + "; got " + __upstreamValue(value)); },
+  isDefined(value, message) { const n = ++__upstreamAssertion; if (value === undefined) __upstreamFail("assertion " + n + ": " + (message || "expected defined value")); },
   equal(actual, expected, message) { const n = ++__upstreamAssertion; if (actual != expected) __upstreamFail("assertion " + n + ": " + (message || "equal mismatch") + "; " + __upstreamValue(actual) + " != " + __upstreamValue(expected)); },
   notEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (actual == expected) __upstreamFail("assertion " + n + ": " + (message || "notEqual mismatch") + "; unexpected " + __upstreamValue(actual)); },
   strictEqual(actual, expected, message) { const n = ++__upstreamAssertion; if (actual !== expected) __upstreamFail("assertion " + n + ": " + (message || "strictEqual mismatch") + "; " + __upstreamValue(actual) + " !== " + __upstreamValue(expected)); },
@@ -432,14 +838,21 @@ export async function runUpstreamTest(index: number): Promise<number> {
     return 0;
   }
   if (result && typeof result.then === "function") {
-    const outcome = await result.then(
-      () => ({ passed: true, error: "" }),
-      (error) => ({
-        passed: false,
-        error: error && error.message !== undefined ? String(error.message) : String(error),
-      }),
-    );
-    __upstreamErrors[index] = outcome.error;
+    // Await the test promise directly. Returning an anonymous object from the
+    // Promise.then callbacks makes the harness result depend on that object's
+    // inferred Wasm struct identity. In a large package graph (Hono's
+    // trailing-slash tests), an unrelated same-shape carrier can then make
+    // outcome.passed read as false even though the original callback and all
+    // assertions completed successfully.
+    let outcomePassed = true;
+    let outcomeError = "";
+    try {
+      await result;
+    } catch (error) {
+      outcomePassed = false;
+      outcomeError = error && error.message !== undefined ? String(error.message) : String(error);
+    }
+    __upstreamErrors[index] = outcomeError;
     if (index === __upstreamTests.length - 1) {
       const afterAllHooks = __upstreamTests[index].afterAllHooks || [];
       for (let hookIndex = afterAllHooks.length - 1; hookIndex >= 0; hookIndex--) {
@@ -447,7 +860,7 @@ export async function runUpstreamTest(index: number): Promise<number> {
         if (!hook.__upstreamRan) { hook(); hook.__upstreamRan = true; }
       }
     }
-    return outcome.passed ? 1 : 0;
+    return outcomePassed ? 1 : 0;
   }
   __upstreamErrors[index] = "";
   if (index === __upstreamTests.length - 1) {
@@ -500,6 +913,10 @@ export function runUpstreamTests(): number[] {
   return statuses;
 }
 export function upstreamTestErrors(): string[] { return __upstreamErrors; }
+export function cleanupUpstreamTestEnvironment(): void {
+  if (typeof jest.useRealTimers === "function") jest.useRealTimers();
+  if (typeof jest.restoreAllMocks === "function") jest.restoreAllMocks();
+}
 `;
 
 function errorText(error) {
@@ -511,7 +928,133 @@ function nativePathFor(generatedPath) {
   return `${generatedPath.slice(0, -extension.length)}.native.mjs`;
 }
 
+/**
+ * A write path to the terminal that upstream test code cannot take away.
+ *
+ * The native oracle lane executes upstream test bodies IN THIS PROCESS, so any
+ * global a test replaces stays replaced. `console.log` is the one that matters:
+ * a harness whose own progress output goes through the same binding the guest
+ * just hijacked reports nothing and looks finished.
+ */
+const HOST_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
+const HOST_STDERR_WRITE = process.stderr.write.bind(process.stderr);
+
+/**
+ * Console methods an upstream suite is likely to stub. Snapshotting the listed
+ * methods is not enough on its own — a test can also *add* keys — so
+ * `restoreHostConsole` diffs the key set as well.
+ */
+const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug", "trace", "dir", "table", "group", "groupEnd"];
+
+function snapshotHostConsole() {
+  const methods = new Map();
+  for (const name of CONSOLE_METHODS) {
+    if (name in console) methods.set(name, console[name]);
+  }
+  return { methods, keys: new Set(Reflect.ownKeys(console)) };
+}
+
+function restoreHostConsole(snapshot) {
+  const replaced = [];
+  for (const [name, original] of snapshot.methods) {
+    if (console[name] !== original) {
+      replaced.push(name);
+      try {
+        console[name] = original;
+      } catch {
+        /* a frozen console is the host's business, not ours */
+      }
+    }
+  }
+  for (const key of Reflect.ownKeys(console)) {
+    if (snapshot.keys.has(key)) continue;
+    try {
+      delete console[key];
+    } catch {
+      /* non-configurable additions are harmless */
+    }
+  }
+  return replaced;
+}
+
+/**
+ * Run `body` with the host console guaranteed to survive it.
+ *
+ * Hono's `showRoutes()` suite is the motivating case (#5326): its `beforeAll`
+ * swaps `console.log` for a collector array and its `afterAll` puts the real
+ * one back — but the shim only runs a test's `afterAll` hooks when that test is
+ * the module's LAST registered test, and hono's last test lives in a different
+ * `describe`. The collector therefore outlived the file and swallowed every
+ * later harness line, in this process, for the rest of the run. The suite kept
+ * working; only the reporting went dark. Containment belongs here rather than
+ * in the shim because the hazard is structural: upstream tests are guests in
+ * the harness process and any of them may stub a global. Same policy as
+ * `installNativeLateErrorBoundary` above — record and keep going.
+ */
+export async function withHostConsole(body) {
+  const snapshot = snapshotHostConsole();
+  try {
+    return await body();
+  } finally {
+    const replaced = restoreHostConsole(snapshot);
+    if (replaced.length > 0) {
+      HOST_STDERR_WRITE(
+        `[dogfood] restored host console.${replaced.join(", console.")} left stubbed by upstream test code\n`,
+      );
+    }
+  }
+}
+
+/**
+ * Print through the write path captured at module load.
+ *
+ * Drivers used to build their logger as `(...v) => console.log(...v)`, which
+ * re-reads the (mutable) global on every call. `createHarnessLogger` resolves
+ * the write path once, at import time, so harness output is independent of
+ * whatever the code under measurement does to `console`.
+ */
+export function createHarnessLogger({ quiet = false } = {}) {
+  if (quiet) return () => {};
+  return (...values) => {
+    HOST_STDOUT_WRITE(`${values.map((value) => (typeof value === "string" ? value : String(value))).join(" ")}\n`);
+  };
+}
+
+// (#4604 S7, generalized) Late host errors from NATIVE upstream test runs must
+// cost a report entry, never the process. `runNative` imports the generated
+// module IN-PROCESS and try/catches only the awaited test body — but upstream
+// code schedules host-timer work that can throw AFTER its test resolved.
+// npm-compat refresh run 32623956233 died exactly this way: hono's
+// `concurrent.js` threw "interval violated" from a `setTimeout` callback ~2
+// minutes into the measurement, the uncaughtException killed node, and ALL SIX
+// packages of the `libraries` matrix row lost their measurement (the partial
+// report is deliberately discarded on non-zero exit). Same policy as
+// react-dom's `installNativeHostErrorBoundary`: record and keep going. Every
+// capture is echoed to stderr so genuine harness bugs stay visible in CI logs,
+// and drained into the next run's `native.lateHostErrors`.
+const nativeLateHostErrors = [];
+let nativeLateBoundaryInstalled = false;
+let nativeLateCurrentFile = null;
+function installNativeLateErrorBoundary() {
+  if (nativeLateBoundaryInstalled) return;
+  nativeLateBoundaryInstalled = true;
+  const record = (kind) => (error) => {
+    const entry = {
+      kind,
+      file: nativeLateCurrentFile,
+      name: error?.name ?? "Error",
+      message: error?.message ?? String(error),
+    };
+    nativeLateHostErrors.push(entry);
+    process.stderr.write(`[dogfood] late native host error (${kind}) in ${entry.file ?? "?"}: ${entry.message}\n`);
+  };
+  process.on("uncaughtException", record("uncaughtException"));
+  process.on("unhandledRejection", record("unhandledRejection"));
+}
+
 async function runNative(generatedPath, source) {
+  installNativeLateErrorBoundary();
+  nativeLateCurrentFile = generatedPath;
   const transpiled = ts.transpileModule(source, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
@@ -523,32 +1066,41 @@ async function runNative(generatedPath, source) {
   });
   const nativePath = nativePathFor(generatedPath);
   writeFileSync(nativePath, transpiled.outputText);
-  const module = await import(`${pathToFileURL(nativePath).href}?run=${Date.now()}-${Math.random()}`);
-  const count = Number(module.upstreamTestCount());
-  const statuses = [];
-  const errors = [];
-  if (typeof module.runUpstreamTest === "function") {
-    for (let index = 0; index < count; index++) {
-      let value;
-      try {
-        value = await module.runUpstreamTest(index);
-      } catch (error) {
-        value = 0;
-        errors.push(errorText(error));
+  // Everything from the dynamic import onward is guest code: the module's
+  // top-level `describe` bodies and then every registered test body.
+  return withHostConsole(async () => {
+    const module = await import(`${pathToFileURL(nativePath).href}?run=${Date.now()}-${Math.random()}`);
+    const count = Number(module.upstreamTestCount());
+    const statuses = [];
+    const errors = [];
+    if (typeof module.runUpstreamTest === "function") {
+      for (let index = 0; index < count; index++) {
+        let value;
+        try {
+          value = await module.runUpstreamTest(index);
+        } catch (error) {
+          value = 0;
+          errors.push(errorText(error));
+        }
+        statuses.push(Number(value) === 1);
+        if (errors.length < index + 1) errors.push(String(module.upstreamTestErrors()[index] ?? ""));
       }
-      statuses.push(Number(value) === 1);
-      if (errors.length < index + 1) errors.push(String(module.upstreamTestErrors()[index] ?? ""));
+    } else {
+      statuses.push(...Array.from(module.runUpstreamTests(), (value) => Number(value) === 1));
+      errors.push(...Array.from(module.upstreamTestErrors(), String));
     }
-  } else {
-    statuses.push(...Array.from(module.runUpstreamTests(), (value) => Number(value) === 1));
-    errors.push(...Array.from(module.upstreamTestErrors(), String));
-  }
-  return {
-    count,
-    names: Array.from(module.upstreamTestNames(), String),
-    statuses,
-    errors,
-  };
+    module.cleanupUpstreamTestEnvironment?.();
+    return {
+      count,
+      names: Array.from(module.upstreamTestNames(), String),
+      statuses,
+      errors,
+      // Late async throws recorded (not fatal) since this file's native run
+      // started — see installNativeLateErrorBoundary above. Drained per run so
+      // one file's stray timers are not attributed to the next.
+      lateHostErrors: nativeLateHostErrors.splice(0, nativeLateHostErrors.length),
+    };
+  });
 }
 
 /**
@@ -571,12 +1123,37 @@ function runIsolatedCompile(generatedPath, timeoutMs, mode = "project", workerEn
     let stdout = "";
     let stderr = "";
     let settled = false;
+    let stage = "compile";
+    let compileDurationMs = null;
+    let timer;
     const started = performance.now();
     const finish = (value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       resolve(value);
+    };
+    const armTimeout = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        child.kill("SIGTERM");
+        const detail = stripWorkerProtocol(stderr);
+        const timeoutLabel = stage === "compile" ? "compile" : "worker execution";
+        finish({
+          compile: {
+            success: false,
+            validates: false,
+            durationMs: stage === "execution" && compileDurationMs !== null ? compileDurationMs : timeoutMs,
+            workerDurationMs: Math.round(performance.now() - started),
+            binaryBytes: 0,
+            timedOut: true,
+            timeoutStage: stage,
+            errors: [{ message: `${timeoutLabel} timeout after ${timeoutMs}ms${detail ? `; worker: ${detail}` : ""}` }],
+          },
+          wasm: null,
+        });
+      }, timeoutMs);
+      timer.unref?.();
     };
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
@@ -585,6 +1162,14 @@ function runIsolatedCompile(generatedPath, timeoutMs, mode = "project", workerEn
     });
     child.stderr.on("data", (chunk) => {
       stderr += chunk;
+      if (stage === "compile") {
+        const duration = readWorkerCompileDuration(stderr);
+        if (duration !== null) {
+          compileDurationMs = duration;
+          stage = "execution";
+          armTimeout();
+        }
+      }
     });
     child.on("error", (error) => {
       finish({
@@ -617,21 +1202,7 @@ function runIsolatedCompile(generatedPath, timeoutMs, mode = "project", workerEn
         });
       }
     });
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      finish({
-        compile: {
-          success: false,
-          validates: false,
-          durationMs: timeoutMs,
-          binaryBytes: 0,
-          timedOut: true,
-          errors: [{ message: `compile timeout after ${timeoutMs}ms${stderr ? `; worker: ${stderr.trim()}` : ""}` }],
-        },
-        wasm: null,
-      });
-    }, timeoutMs);
-    timer.unref?.();
+    armTimeout();
   });
 }
 
@@ -654,6 +1225,80 @@ export async function compileAndRunUpstreamModule({
 
   const isolated = await runIsolatedCompile(generatedPath, timeoutMs, "project", workerEnv);
   return { native, ...isolated };
+}
+
+/** Degenerate per-file result recorded when a file never produced one. */
+function unmeasuredUpstreamResult(reason) {
+  return {
+    native: { fatal: reason, count: 0, names: [], statuses: [], errors: [] },
+    compile: { success: false, validates: false, durationMs: 0, binaryBytes: 0, errors: [{ message: reason }] },
+    wasm: null,
+    harnessError: reason,
+  };
+}
+
+/**
+ * Run one upstream file so that the suite always survives it.
+ *
+ * The native oracle lane is in-process, so it has no hard deadline of its own:
+ * a test body that awaits a promise nothing will ever settle simply parks the
+ * driver's `await` forever. With nothing else pending, Node's event loop
+ * drains and the process **exits 0** — a suite that measured a fraction of its
+ * files is indistinguishable from one that finished. The watchdog below is
+ * deliberately NOT `unref`'d for exactly that reason: a ref'd timer keeps the
+ * loop alive while a file is in flight, so a wedged file becomes a recorded
+ * timeout instead of a silent success.
+ *
+ * The wedged microtask itself cannot be reclaimed in-process; the file is
+ * scored as unmeasured and the loop moves on.
+ */
+export async function runUpstreamFile(file, body, { timeoutMs = 600_000 } = {}) {
+  let timer;
+  const watchdog = new Promise((resolve) => {
+    timer = setTimeout(
+      () => resolve(unmeasuredUpstreamResult(`harness watchdog: no result after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  try {
+    const result = await Promise.race([
+      Promise.resolve()
+        .then(body)
+        .catch((error) => unmeasuredUpstreamResult(`harness error: ${errorText(error)}`)),
+      watchdog,
+    ]);
+    if (!result || typeof result !== "object" || !result.native) {
+      return { file, result: unmeasuredUpstreamResult("harness error: runner returned no native result") };
+    }
+    return { file, result };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Why a run produced nothing measurable, or `null` when it did.
+ *
+ * A selected upstream file registering zero tests is degenerate by
+ * construction — the file was chosen because it has tests — so it counts as
+ * unmeasured rather than as an honest zero.
+ */
+export function unmeasuredUpstreamReason(run) {
+  if (run?.result?.harnessError) return String(run.result.harnessError);
+  if (run?.result?.native?.fatal) return `native lane failed: ${run.result.native.fatal}`;
+  if (!(Number(run?.result?.native?.count) > 0)) return "no upstream tests registered";
+  return null;
+}
+
+/** The `N of M files produced no result` line drivers print after the headline. */
+export function unmeasuredFilesLine(report) {
+  const missing = report.extraction?.filesWithoutResult ?? 0;
+  const total = report.compile?.modules ?? 0;
+  if (missing === 0) return `[dogfood] ${total} of ${total} selected files produced a result`;
+  const detail = (report.extraction?.filesWithoutResultDetail ?? [])
+    .map((entry) => `${entry.file} (${entry.reason})`)
+    .join("; ");
+  return `[dogfood] ${missing} of ${total} selected files produced NO result: ${detail}`;
 }
 
 /**
@@ -702,6 +1347,7 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
       testFiles: testFiles.length,
       testFilePaths: testFiles,
       registrationSites: pin.registrationSites,
+      selectedRegistrationSites: pin.selectedRegistrationSites ?? null,
       selectedFiles,
     },
     extraction: {
@@ -718,10 +1364,23 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
       unavailableInfra: 0,
       nativePassed: 0,
       nativeFailed: 0,
+      // A selected file that hung, threw, or registered nothing is NOT a
+      // legitimate zero — it is an unmeasured file, and a score computed over
+      // the rest is a fraction of the suite reported as if it were the whole.
+      filesWithoutResult: 0,
+      filesWithoutResultDetail: [],
     },
     compile: { modules: runs.length, succeeded: 0, validated: 0, durationMs: 0, binaryBytes: 0 },
     results: { scored: 0, passed: 0, failed: 0, runtimeFailed: 0, tests: [] },
   };
+
+  for (const run of runs) {
+    const unmeasured = unmeasuredUpstreamReason(run);
+    if (unmeasured) {
+      report.extraction.filesWithoutResult++;
+      report.extraction.filesWithoutResultDetail.push({ file: run.file, reason: unmeasured });
+    }
+  }
 
   for (const run of runs) {
     const native = run.result.native;
@@ -760,7 +1419,16 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
   }
   const registrationSites = Number(pin.registrationSites);
   if (Number.isFinite(registrationSites)) {
-    report.extraction.deferredRegistrations = Math.max(0, registrationSites - report.extraction.testsRegistered);
+    // `testsRegistered` may include expanded `test.each`/`it.each` cases and
+    // therefore cannot be compared directly with the static call-site count.
+    // An adapter can provide the number of static sites it selected so the
+    // report keeps deferred host infrastructure visible without inventing a
+    // negative or zero deferred count after table expansion.
+    const selectedRegistrationSites = Number(pin.selectedRegistrationSites);
+    const registeredForInventory = Number.isFinite(selectedRegistrationSites)
+      ? selectedRegistrationSites
+      : report.extraction.testsRegistered;
+    report.extraction.deferredRegistrations = Math.max(0, registrationSites - registeredForInventory);
     report.extraction.unavailableInfra = report.extraction.deferredRegistrations;
   }
   report.compile.details = runs.map((run) => ({
@@ -774,6 +1442,9 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
     exactDenominator: report.results.scored,
     upstreamFiles: report.extraction.filesSeen,
     deferredFiles: report.extraction.filesDeferred,
+    selectedFilesRun: runs.length,
+    filesWithoutResult: report.extraction.filesWithoutResult,
+    filesWithoutResultDetail: report.extraction.filesWithoutResultDetail,
     nativePassed: report.extraction.nativePassed,
     nativeFailed: report.extraction.nativeFailed,
     unavailableInfra: report.extraction.unavailableInfra,
@@ -789,15 +1460,23 @@ export function writeUpstreamReport(reportPath, report) {
   writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
 }
 
-export function cliUpstreamHarness(runHarness) {
+export function cliUpstreamHarness(runHarness, { reportSucceeded } = {}) {
   const jsonOnly = process.argv.includes("--json");
-  runHarness({ quiet: jsonOnly })
+  // Exit 0 must mean "the harness reached its summary", nothing less. Upstream
+  // test bodies run in this process; one that never settles drains the event
+  // loop and Node exits 0 with a partial measurement and no error anywhere.
+  // Starting non-zero and clearing it only on completion makes that failure
+  // mode observable to any caller that checks the status (#5326).
+  process.exitCode = 3;
+  return runHarness({ quiet: jsonOnly })
     .then((report) => {
       if (jsonOnly) process.stdout.write(`${JSON.stringify(report)}\n`);
+      process.exitCode = reportSucceeded && !reportSucceeded(report) ? 1 : 0;
+      return report;
     })
     .catch((error) => {
       if (jsonOnly) process.stdout.write(`${JSON.stringify({ fatal: errorText(error) })}\n`);
-      else console.error("[dogfood] upstream suite crashed:", error);
+      else HOST_STDERR_WRITE(`[dogfood] upstream suite crashed: ${errorText(error)}\n${error?.stack ?? ""}\n`);
       process.exitCode = 2;
     });
 }

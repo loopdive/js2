@@ -75,6 +75,7 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime, ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
 import { coerceType, compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { ensureDateStruct } from "./expressions/builtins.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const DRIVER_NAME = "__construct_bound";
@@ -265,6 +266,9 @@ export function fillConstructBoundDriver(ctx: CodegenContext): void {
   const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
   const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
   const protoKeyInstrs = PROTO_KEY_BY_CTX.get(ctx);
+  const dateCtorGlobalIdx = ctx.builtinObjectGlobals.get("ctor:Date");
+  const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
+  const dateTypeIdx = dateCtorGlobalIdx !== undefined ? ensureDateStruct(ctx) : undefined;
   // `__apply_closure` can only invoke the target with an explicit receiver via
   // a `__call_fn_method_<N>` dispatcher. The multi-file finalize path emits
   // only `__call_fn_0`/`__call_fn_1`, so without one of these the bridge would
@@ -375,6 +379,52 @@ export function fillConstructBoundDriver(ctx: CodegenContext): void {
     isObjectProbe.push({ op: "i32.const", value: 0 });
   }
 
+  // Date's constructor value is an identity-stable `$Object` carrier. Its
+  // `prototype` is a native-prototype carrier rather than an ordinary
+  // `$Object`, so the generic OrdinaryCreateFromConstructor path below cannot
+  // materialize `self` before dispatching Date's [[Construct]]. Return the
+  // native Date object directly on this identity arm.
+  const dateConstructArm: Instr[] =
+    dateCtorGlobalIdx !== undefined && objectTypeIdx !== undefined && dateTypeIdx !== undefined
+      ? [
+          { op: "global.get", index: dateCtorGlobalIdx },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: curLocal },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: objectTypeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: curLocal },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: objectTypeIdx },
+                  { op: "global.get", index: dateCtorGlobalIdx },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: objectTypeIdx },
+                  { op: "ref.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [
+                      { op: "i64.const", value: 0n },
+                      { op: "struct.new", typeIdx: dateTypeIdx },
+                      { op: "extern.convert_any" },
+                      { op: "return" },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+        ]
+      : [];
+
   driver.body = [
     // Not a bound function → the site's pre-#4196 value. Keeps this driver a
     // pure ADDITION for every other dynamic-`new` callee that reaches it.
@@ -426,6 +476,10 @@ export function fillConstructBoundDriver(ctx: CodegenContext): void {
         },
       ],
     },
+
+    // Date's bound [[Construct]] does not use OrdinaryCreateFromConstructor;
+    // its native Date object is the construct result itself.
+    ...dateConstructArm,
 
     // proto = target.prototype; self = OrdinaryObjectCreate(proto)
     { op: "local.get", index: curLocal },

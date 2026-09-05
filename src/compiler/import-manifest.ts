@@ -118,7 +118,7 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   if (name === "__bigint_ctor_ref") return { type: "builtin", name: "__bigint_ctor_ref" };
   if (name === "__is_truthy") return { type: "truthy_check" };
   if (name === "__typeof") return { type: "builtin", name: "__typeof" };
-
+  if (name === "__wrap_callable_for_host") return { type: "builtin", name: "__wrap_callable_for_host" };
   // globalThis
   if (name === "__get_globalThis") return { type: "declared_global", name: "globalThis" };
 
@@ -287,6 +287,12 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
   // through the dedicated builtin handler in the runtime.
   if (name === "__new_AggregateError") return { type: "builtin", name };
 
+  // (#5159) §20.5.1.1 step 4 InstallErrorCause for the plain Error family
+  // (`new Error(msg, { cause })` and its 6 siblings). Their `__new_<Name>`
+  // import stays a 1-arg message constructor so option-less constructions are
+  // untouched; this companion installs `cause` on the returned error.
+  if (name === "__error_install_cause") return { type: "builtin", name };
+
   // (#1339) SuppressedError likewise needs spec-specific construction
   // (CreateNonEnumerableDataPropertyOrThrow for error/suppressed/message,
   // InstallErrorCause via HasProperty for opaque WasmGC options struct).
@@ -319,6 +325,14 @@ function classifyImport(name: string, mod: WasmModule): ImportIntent {
 
 function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
   const manifest: ImportDescriptor[] = [];
+  // Codegen can request the same adapter helper from more than one lowering
+  // path (for example, a Node fs call plus the surrounding numeric coercion
+  // both need `__box_number`). Wasm accepts repeated physical imports, but the
+  // JavaScript adapter manifest is keyed by module/name/kind and must contain
+  // one descriptor for each exact helper. Collapse only byte-for-byte-equal
+  // descriptors here; entries that share a name but differ in arity or intent
+  // remain visible so manifest validation can reject the ambiguous ABI.
+  const seenExact = new Set<string>();
   for (const imp of mod.imports) {
     if (imp.module !== "env") continue;
     // (#4150) Carry the declared parameter count for func imports so the host
@@ -328,13 +342,17 @@ function buildImportManifest(mod: WasmModule): ImportDescriptor[] {
       const t = mod.types[imp.desc.typeIdx];
       if (t && t.kind === "func") paramCount = t.params.length;
     }
-    manifest.push({
+    const descriptor: ImportDescriptor = {
       module: "env",
       name: imp.name,
       kind: imp.desc.kind === "func" ? "func" : "global",
       intent: classifyImport(imp.name, mod),
       paramCount,
-    });
+    };
+    const key = JSON.stringify(descriptor);
+    if (seenExact.has(key)) continue;
+    seenExact.add(key);
+    manifest.push(descriptor);
   }
   return manifest;
 }

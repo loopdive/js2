@@ -19,6 +19,8 @@ import { describe, expect, it } from "vitest";
 
 import { compile } from "../../src/index.js";
 import {
+  asAllocSiteId,
+  asAsyncStateId,
   asBlockId,
   asValueId,
   irImportFuncRef,
@@ -33,7 +35,9 @@ import {
   type IrType,
   type IrValueId,
 } from "../../src/ir/index.js";
+import { createIrCountedStringAppendSiteId } from "../../src/ir/counted-string-append-provenance.js";
 import { inlineSmall } from "../../src/ir/passes/inline-small.js";
+import { IR_STRING_REPEAT_FN } from "../../src/ir/string-runtime.js";
 import { createTestIrFunctionIdentityFactory } from "../helpers/ir-identities.js";
 
 const irIdentities = createTestIrFunctionIdentityFactory("ir/inline-small");
@@ -48,6 +52,7 @@ function id(n: number): IrValueId {
 
 const F64 = irVal({ kind: "f64" });
 const BOOL = irVal({ kind: "i32" });
+const STRING: IrType = { kind: "string" };
 const REGEXP: IrType = { kind: "extern", className: "RegExp" };
 
 // A tiny single-block, non-recursive callee modelling `abs(x) = x < 0 ? -x : x`.
@@ -218,6 +223,129 @@ function makeRegexpBoundaryCallee(name: string): IrFunction {
   };
 }
 
+function makeRepeatBoundaryCallee(name: string, counted: boolean): IrFunction {
+  const identity = irIdentities.next(name);
+  const countedStringAppendSite = counted
+    ? createIrCountedStringAppendSiteId({
+        sourceId: irIdentities.sourceId,
+        ownerUnitId: identity.unitId,
+        loopStart: 17,
+        loopEnd: 43,
+      })
+    : undefined;
+  return {
+    ...identity,
+    params: [
+      { value: id(0), type: STRING, name: "value" },
+      { value: id(1), type: F64, name: "count" },
+    ],
+    resultTypes: [STRING],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [
+          {
+            kind: "string.repeat",
+            value: id(0),
+            count: id(1),
+            encodingEvidence: "ascii",
+            provider: irIntrinsicFuncRef(IR_STRING_REPEAT_FN),
+            ...(countedStringAppendSite ? { countedStringAppendSite } : {}),
+            result: id(2),
+            resultType: STRING,
+            alloc: asAllocSiteId(0),
+          },
+        ],
+        terminator: { kind: "return", values: [id(2)] },
+      },
+    ],
+    exported: false,
+    valueCount: 3,
+  };
+}
+
+function makeRepeatCalleeCaller(name: string, target: IrFunction): IrFunction {
+  return {
+    ...irIdentities.next(name),
+    params: [
+      { value: id(0), type: STRING, name: "value" },
+      { value: id(1), type: F64, name: "count" },
+    ],
+    resultTypes: [STRING],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [
+          {
+            kind: "call",
+            target: irUnitFuncRef(target),
+            args: [id(0), id(1)],
+            result: id(2),
+            resultType: STRING,
+          },
+        ],
+        terminator: { kind: "return", values: [id(2)] },
+      },
+    ],
+    exported: false,
+    valueCount: 3,
+  };
+}
+
+function makeRepeatBoundaryCaller(name: string, target: IrFunction, counted: boolean): IrFunction {
+  const identity = irIdentities.next(name);
+  const countedStringAppendSite = counted
+    ? createIrCountedStringAppendSiteId({
+        sourceId: irIdentities.sourceId,
+        ownerUnitId: identity.unitId,
+        loopStart: 51,
+        loopEnd: 79,
+      })
+    : undefined;
+  return {
+    ...identity,
+    params: [
+      { value: id(0), type: STRING, name: "value" },
+      { value: id(1), type: F64, name: "count" },
+    ],
+    resultTypes: [F64],
+    blocks: [
+      {
+        id: asBlockId(0),
+        blockArgs: [],
+        blockArgTypes: [],
+        instrs: [
+          {
+            kind: "string.repeat",
+            value: id(0),
+            count: id(1),
+            encodingEvidence: "ascii",
+            provider: irIntrinsicFuncRef(IR_STRING_REPEAT_FN),
+            ...(countedStringAppendSite ? { countedStringAppendSite } : {}),
+            result: id(2),
+            resultType: STRING,
+            alloc: asAllocSiteId(0),
+          },
+          {
+            kind: "call",
+            target: irUnitFuncRef(target),
+            args: [],
+            result: id(3),
+            resultType: F64,
+          },
+        ],
+        terminator: { kind: "return", values: [id(3)] },
+      },
+    ],
+    exported: false,
+    valueCount: 4,
+  };
+}
+
 /** A caller whose sole local-unit call site lives inside a nested IR buffer. */
 function makeNestedZeroArgCaller(name: string, target: IrFuncRef): IrFunction {
   return {
@@ -275,6 +403,67 @@ function makeNestedZeroArgCaller(name: string, target: IrFuncRef): IrFunction {
 // ---------------------------------------------------------------------------
 
 describe("#1167b — inlineSmall (unit)", () => {
+  it("treats counted repeat provenance as a two-sided ownership-transfer barrier", () => {
+    const genericCallee = makeRepeatBoundaryCallee("generic-repeat-callee", false);
+    const genericCaller = makeRepeatCalleeCaller("generic-repeat-callee-caller", genericCallee);
+    const genericResult = inlineSmall({ functions: [genericCallee, genericCaller] });
+    const genericCallerAfter = genericResult.functions.find((fn) => fn.unitId === genericCaller.unitId)!;
+    expect(genericCallerAfter.blocks[0]!.instrs.some((instr) => instr.kind === "call")).toBe(false);
+    expect(genericCallerAfter.blocks[0]!.instrs.some((instr) => instr.kind === "string.repeat")).toBe(true);
+
+    const countedCallee = makeRepeatBoundaryCallee("counted-repeat-callee", true);
+    const countedCaller = makeRepeatCalleeCaller("counted-repeat-callee-caller", countedCallee);
+    const countedFromResult = inlineSmall({ functions: [countedCallee, countedCaller] });
+    const countedCallerAfter = countedFromResult.functions.find((fn) => fn.unitId === countedCaller.unitId)!;
+    expect(countedCallerAfter.blocks[0]!.instrs).toHaveLength(1);
+    expect(countedCallerAfter.blocks[0]!.instrs[0]).toMatchObject({ kind: "call" });
+
+    const constant = makeConstantCallee("repeat-boundary-constant", 7);
+    const genericOwner = makeRepeatBoundaryCaller("generic-repeat-caller", constant, false);
+    const genericIntoResult = inlineSmall({ functions: [constant, genericOwner] });
+    const genericOwnerAfter = genericIntoResult.functions.find((fn) => fn.unitId === genericOwner.unitId)!;
+    expect(genericOwnerAfter.blocks[0]!.instrs.some((instr) => instr.kind === "call")).toBe(false);
+
+    const countedOwner = makeRepeatBoundaryCaller("counted-repeat-caller", constant, true);
+    const countedIntoResult = inlineSmall({ functions: [constant, countedOwner] });
+    const countedOwnerAfter = countedIntoResult.functions.find((fn) => fn.unitId === countedOwner.unitId)!;
+    expect(countedOwnerAfter).toBe(countedOwner);
+    expect(countedOwnerAfter.blocks[0]!.instrs.some((instr) => instr.kind === "call")).toBe(true);
+
+    const runtimeOwnerBase = makeRepeatBoundaryCaller("runtime-counted-repeat-caller", constant, false);
+    const runtimeRepeat = runtimeOwnerBase.blocks[0]!.instrs.find((instr) => instr.kind === "string.repeat");
+    if (!runtimeRepeat || runtimeRepeat.kind !== "string.repeat")
+      throw new Error("fixture lost generic runtime repeat");
+    const runtimeOwner: IrFunction = {
+      ...runtimeOwnerBase,
+      asyncRuntime: {
+        kind: "standalone-native-wasmgc",
+        adapters: [],
+        states: [
+          {
+            id: asAsyncStateId(0),
+            body: [
+              {
+                ...runtimeRepeat,
+                countedStringAppendSite: createIrCountedStringAppendSiteId({
+                  sourceId: irIdentities.sourceId,
+                  ownerUnitId: runtimeOwnerBase.unitId,
+                  loopStart: 91,
+                  loopEnd: 117,
+                }),
+              },
+            ],
+            terminator: { kind: "complete" },
+          },
+        ],
+      },
+    };
+    const runtimeIntoResult = inlineSmall({ functions: [constant, runtimeOwner] });
+    const runtimeOwnerAfter = runtimeIntoResult.functions.find((fn) => fn.unitId === runtimeOwner.unitId)!;
+    expect(runtimeOwnerAfter).toBe(runtimeOwner);
+    expect(runtimeOwnerAfter.blocks[0]!.instrs.some((instr) => instr.kind === "call")).toBe(true);
+  });
+
   it("inlines a single-block non-recursive callee", () => {
     const callee = makeAbsCallee();
     const caller = makeRunCaller(callee);

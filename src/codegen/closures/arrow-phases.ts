@@ -16,15 +16,9 @@
 import { ts, forEachChild } from "../../ts-api.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import {
-  addFuncType,
-  destructureParamArray,
-  destructureParamObjectExternref,
-  getArrTypeIdxFromVec,
-  getOrRegisterRefCellType,
-  resolveWasmType,
-} from "../index.js";
+import { addFuncType, destructureParamArray, destructureParamObject, getOrRegisterRefCellType } from "../index.js";
 import { addFunctionOwnLocals } from "../../ir/analysis/binding-info.js";
+import { isFunctionScopeBoundary } from "../../ir/analysis/ast-scope.js";
 import {
   closureArityField,
   closureBagField,
@@ -34,9 +28,10 @@ import {
 } from "./funcref-wrapper-types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { closureObservesBindingValue, collectTransitiveCaptureNames } from "../function-declaration-observation.js";
-import { emitBoundsCheckedArrayGet, valTypesMatch } from "../shared.js";
-import { spliceNullGuarded } from "./param-emit-helpers.js";
+import { valTypesMatch } from "../shared.js";
+import { tryEmitNativeIteratorResultParam } from "../promise-native-iterator-result.js";
 import { materializeHoistedFunctionValueBinding } from "./funcref-as-closure.js";
+import { bodyReferencesOwnThis } from "../helpers/body-references-own-this.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
 // (#4440) object-literal accessors / methods — §10.2.9 comes from the property key
@@ -46,10 +41,12 @@ import {
   buildCaptureFieldDef,
   closureProvablyAfterLetDecl,
   closureNameResolvesToImportBinding,
+  collectBindingPatternNames,
   collectOverBody,
   collectParamDefaultReferences,
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
+  genBodyReferencesSuper,
   isOwnParamName,
   runtimeParameters,
 } from "../closures.js";
@@ -174,6 +171,26 @@ function directInitializedLocalBeforeRegion(
   return undefined;
 }
 
+/**
+ * (#2118 mirror) The binding name a `const f = (…) => …` / `let f = …` arrow
+ * refers to itself by. Inside the lifted body that name resolves to `__self`
+ * (lifted param 0), not to any declared parameter — the same predicate
+ * `collectArrowCaptures` uses to route the recursive call.
+ */
+function selfRecursiveArrowBindingName(owner: ts.Node): string | undefined {
+  if (!ts.isArrowFunction(owner) && !(ts.isFunctionExpression(owner) && !owner.name)) return undefined;
+  const declaration = owner.parent;
+  if (
+    declaration &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer === owner &&
+    ts.isIdentifier(declaration.name)
+  ) {
+    return declaration.name.text;
+  }
+  return undefined;
+}
+
 function canBoxBindingInDominatingParent(
   fctx: FunctionContext,
   closure: ts.ArrowFunction | ts.FunctionExpression,
@@ -207,7 +224,22 @@ function canBoxBindingInDominatingParent(
     localIdx < fctx.params.length && sourceParameter !== undefined && sourceParameter.initializer === undefined;
   const safeInitializedLocal =
     localIdx >= fctx.params.length && directInitializedLocalBeforeRegion(ownerBody, region, name) !== undefined;
-  if (!safeSourceParameter && !safeInitializedLocal) return false;
+  // (#2118) The self-recursive arrow binding resolves to `__self`, lifted param
+  // 0 — always live at entry and never written. It has no entry in
+  // `owner.parameters` (the name belongs to the OUTER binding), so the
+  // parameter test cannot see it, and the local test rejects it for being a
+  // param. Without this a nested closure that captures the recursion boxes it
+  // inside whichever conditional arm happens to construct that closure first,
+  // and every LATER recursive reference is re-aimed at that box — reading null
+  // on any path that skipped the arm. Source order alone then decides whether
+  // the function traps.
+  // `localIdx === 0` alone is NOT proof: in a body that was not lifted, slot 0
+  // is the arrow's own FIRST PARAMETER, and boxing that instead of the
+  // recursion is a miscompile (measured: jest's `test.concurrent.each` fixture
+  // went 3/3 → 0/3). Require the synthetic self param by NAME.
+  const safeSelfBinding =
+    localIdx === 0 && fctx.params[0]?.name === "__self" && selfRecursiveArrowBindingName(owner) === name;
+  if (!safeSourceParameter && !safeInitializedLocal && !safeSelfBinding) return false;
 
   // The parent buffer already contains every preceding top-level statement,
   // so writes before `region` are reflected in the value we box there. Refuse
@@ -238,6 +270,28 @@ function isDirectParameterInitializerClosure(node: ts.ArrowFunction | ts.Functio
 function isEnclosingParameterBinding(fctx: FunctionContext, name: string): boolean {
   const localIdx = fctx.localMap.get(name);
   return localIdx !== undefined && localIdx < fctx.params.length;
+}
+
+/**
+ * Whether an inner closure is nested below a function parameter binding with
+ * this spelling.  The checker can temporarily resolve a nested reference to
+ * a same-named module function while the linked multi-source pass is filling
+ * funcMap; the enclosing parameter is still the lexical runtime binding.
+ */
+function hasEnclosingParameterBinding(arrow: ts.ArrowFunction | ts.FunctionExpression, name: string): boolean {
+  for (let node = arrow.parent; node && !ts.isSourceFile(node); node = node.parent) {
+    if (!isFunctionScopeBoundary(node)) continue;
+    const parameters = (node as ts.SignatureDeclaration).parameters;
+    for (const parameter of parameters ?? []) {
+      if (ts.isIdentifier(parameter.name) && parameter.name.text === name) return true;
+      if (ts.isObjectBindingPattern(parameter.name) || ts.isArrayBindingPattern(parameter.name)) {
+        const names = new Set<string>();
+        collectBindingPatternNames(parameter.name, names);
+        if (names.has(name)) return true;
+      }
+    }
+  }
+  return false;
 }
 
 function isCaptureValueReference(id: ts.Identifier): boolean {
@@ -323,6 +377,26 @@ function referencedBindingDeclaration(
   return ambiguous ? undefined : declaration;
 }
 
+/**
+ * True when a declaration is owned directly by an emitted TypeScript
+ * namespace/module block rather than by a nested function inside it.
+ * Runtime-namespace bindings have dedicated module globals and must remain
+ * live when an arrow created during namespace initialization observes a later
+ * assignment (the TypeScript parser's lazily initialized constructors are the
+ * production witness).
+ */
+function isDirectRuntimeModuleVariableBinding(declaration: ts.Declaration | undefined): boolean {
+  if (declaration === undefined) return false;
+  let sawVariableDeclaration = false;
+  for (let current: ts.Node | undefined = declaration; current?.parent; current = current.parent) {
+    if (ts.isVariableDeclaration(current)) sawVariableDeclaration = true;
+    if (ts.isModuleBlock(current.parent)) return sawVariableDeclaration;
+    if (current !== declaration && (ts.isFunctionLike(current) || ts.isClassLike(current))) return false;
+    if (ts.isSourceFile(current.parent)) return false;
+  }
+  return false;
+}
+
 function removeClosureOwnedBlockBindingCollisions(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -343,6 +417,36 @@ function collectClosureParameterReferences(
 ): void {
   collectParamDefaultReferences(arrow.parameters, referencedNames, ownLocals);
   for (const parameter of arrow.parameters) collectReferencedIdentifiers(parameter, referencedNames, ownLocals);
+}
+
+/**
+ * True when evaluating `closure` is part of evaluating the initializer that
+ * will later store the captured binding's first value.
+ *
+ * `var scanner = { self: () => scanner }` is observably a live binding, even
+ * when no later assignment exists: the closure is constructed while
+ * `scanner` still contains its hoisted `undefined`/null value, and the
+ * declarator store happens only after the whole object literal completes.
+ * Such a capture therefore needs the same ref-cell treatment as an explicit
+ * outer assignment. Declaration identity comes from the checker; ancestry is
+ * used only to establish the evaluation ordering within that declaration.
+ */
+function closurePrecedesBindingInitializerStore(
+  closure: ts.ArrowFunction | ts.FunctionExpression,
+  declaration: ts.Declaration | undefined,
+): boolean {
+  if (declaration === undefined || !ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) {
+    return false;
+  }
+  for (let current: ts.Node | undefined = closure; current && current !== declaration; current = current.parent) {
+    if (current === declaration.initializer) return true;
+    // A nested closure in another function's body is constructed only when
+    // that outer function runs, not while the declarator evaluates. The outer
+    // function value itself will independently capture this binding at the
+    // actual initializer site.
+    if (current !== closure && ts.isFunctionLike(current)) return false;
+  }
+  return false;
 }
 
 /**
@@ -407,6 +511,21 @@ export function planClosureCaptures(
   // `param.initializer` (top-level param default) with the same own-locals
   // shadow set, so the param's own binding names stay excluded.
   collectClosureParameterReferences(arrow, referencedNames, ownLocals);
+
+  // Arrow functions do not introduce a `this` binding.  `this` is not an
+  // identifier, so the free-variable scan above intentionally cannot see it;
+  // without an explicit capture, the lifted body falls through to
+  // `__current_this` (or the unbound value) instead of retaining the receiver
+  // from its enclosing constructor/method.  Keep ordinary function
+  // expressions on their existing own-`this` path, and only add the synthetic
+  // capture when the enclosing frame actually has a receiver local.
+  if (
+    ts.isArrowFunction(arrow) &&
+    fctx.localMap.has("this") &&
+    (bodyReferencesOwnThis(body) || genBodyReferencesSuper(body))
+  ) {
+    referencedNames.add("this");
+  }
 
   // (#3040) Parameter DEFAULT initializers can reference enclosing-scope names
   // that appear NOWHERE in the body — e.g. `f = async function*([x] = iter)`
@@ -575,6 +694,9 @@ export function planClosureCaptures(
   }[] = [];
   for (const name of referencedNames) {
     let localIdx = fctx.localMap.get(name);
+    // The ordinary-function lexical-this path materializes a private local
+    // without changing the frame's normal `this` binding (see closures.ts).
+    if (localIdx === undefined && name === "this") localIdx = fctx.lexicalThisCaptureLocal;
     let tdzFlagIdxFromScan: number | undefined;
     if (localIdx === undefined) {
       // (#3121) A localMap miss can ALSO mean the name was PROMOTED to a
@@ -606,6 +728,21 @@ export function planClosureCaptures(
     }
     if (localIdx === undefined) continue;
     const bindingDeclaration = referencedBindingDeclaration(ctx, arrow, name);
+    // A runtime namespace initializer is compiled in the shared module-init
+    // frame, whose staging locals can have the same spelling as both the
+    // namespace slot and an unrelated top-level binding. Capturing that local
+    // snapshots the hoisted null value. The exact namespace projection in
+    // `ctx.moduleGlobals` is active for this whole closure compilation, so
+    // leave the name uncaptured and let the lifted body read that live global.
+    if (ctx.moduleGlobals.has(name) && isDirectRuntimeModuleVariableBinding(bindingDeclaration)) continue;
+    // A lexical capture can share its spelling with a function declaration
+    // already registered in funcMap (for example `{ dispatch }` beside a
+    // module-local `dispatch`).  The old spelling-only guard dropped every
+    // non-variable declaration here, including binding elements that resolve
+    // to an enclosing parameter.  Keep the fast path only when checker
+    // identity proves that this reference is the mapped function itself.
+    const mappedFunctionDeclaration = ctx.funcMapOwnerDecl.get(name) ?? ctx.topLevelFunctionDeclarations.get(name);
+    const hasEnclosingParam = hasEnclosingParameterBinding(arrow, name);
     // #2669: skip names bound to a *user* function (a function reference, not a
     // captured variable) — but NOT a wasm:js-string builtin import
     // (concat/length/equals/substring/charCodeAt), which lives in funcMap yet
@@ -616,7 +753,8 @@ export function planClosureCaptures(
       localIdx >= fctx.params.length &&
       ctx.funcMap.has(name) &&
       ctx.funcMap.get(name) !== ctx.jsStringImports.get(name) &&
-      (bindingDeclaration === undefined || !ts.isVariableDeclaration(bindingDeclaration)) &&
+      !hasEnclosingParam &&
+      (bindingDeclaration === undefined || bindingDeclaration === mappedFunctionDeclaration) &&
       !transitivelyRequiredNames.has(name) &&
       (!fctx.hoistedFunctionValueBindings?.has(name) || !closureObservesBindingValue(arrow, name))
     ) {
@@ -658,7 +796,9 @@ export function planClosureCaptures(
     // so all closures see the final value of the loop variable.
     const tdzFlagPresent = !!fctx.tdzFlagLocals?.has(name) || tdzFlagIdxFromScan !== undefined;
     const hasTdzFlag = tdzFlagPresent && !closureProvablyAfterLetDecl(ctx, arrow, name);
-    const isMutable = writtenInClosure.has(name) || writtenInOuter.has(name) || hasTdzFlag;
+    const initializerStoreFollowsCapture = closurePrecedesBindingInitializerStore(arrow, bindingDeclaration);
+    const isMutable =
+      writtenInClosure.has(name) || writtenInOuter.has(name) || hasTdzFlag || initializerStoreFollowsCapture;
     // Check if the variable is already boxed from a previous closure capture.
     // If so, the local already holds a ref cell — don't wrap it again.
     const alreadyBoxed = !!fctx.boxedCaptures?.has(name);
@@ -686,18 +826,54 @@ export function planClosureCaptures(
  * become a subtype of it so call-site `ref.cast` succeeds. Returns the struct /
  * func type indices and the lifted parameter list.
  */
+interface ClosureStructMintOptions {
+  captures: ArrowClosureCapture[];
+  arrowParams: ValType[];
+  closureResults: ValType[];
+  closureName: string;
+  isNamedFuncExpr: boolean;
+  constructible: boolean;
+  /** (#4437) The arrow / function expression itself, for the `$fnmeta` slot. */
+  decl?: ts.Node;
+}
+
+/**
+ * Publish a capturing rest closure's subtype before its lifted body compiles.
+ * A reduce callback can feed an earlier instance of this same closure back
+ * into that body; nominal registration distinguishes its positional call from
+ * a genuine one-vec-parameter closure with the same funcref signature.
+ */
+function registerCapturingRestClosureDuringBodyCompilation(
+  ctx: CodegenContext,
+  opts: ClosureStructMintOptions,
+  structTypeIdx: number,
+  liftedFuncTypeIdx: number,
+): void {
+  const { captures, arrowParams, closureResults, decl } = opts;
+  const returnType = closureResults.length === 1 ? closureResults[0]! : null;
+  if (
+    captures.length === 0 ||
+    decl === undefined ||
+    (!ts.isArrowFunction(decl) && !ts.isFunctionExpression(decl)) ||
+    !runtimeParameters(decl).some((param) => param.dotDotDotToken !== undefined) ||
+    returnType?.kind !== "externref"
+  ) {
+    return;
+  }
+  ctx.closureInfoByTypeIdx.set(structTypeIdx, {
+    structTypeIdx,
+    funcTypeIdx: liftedFuncTypeIdx,
+    returnType,
+    paramTypes: arrowParams,
+    hasCaptures: true,
+    hasRestParam: true,
+    needsCallSiteArity: true,
+  });
+}
+
 export function mintClosureStructTypes(
   ctx: CodegenContext,
-  opts: {
-    captures: ArrowClosureCapture[];
-    arrowParams: ValType[];
-    closureResults: ValType[];
-    closureName: string;
-    isNamedFuncExpr: boolean;
-    constructible: boolean;
-    /** (#4437) The arrow / function expression itself, for the `$fnmeta` slot. */
-    decl?: ts.Node;
-  },
+  opts: ClosureStructMintOptions,
 ): {
   structTypeIdx: number;
   liftedFuncTypeIdx: number;
@@ -723,7 +899,16 @@ export function mintClosureStructTypes(
   // `FunctionExpression` for the closure compile). `fnMetaSlot` declines those —
   // §10.2.9 for an accessor is `"get p"` / `"set p"`, which comes from the
   // property KEY, not from a function name. The member walk answers it.
-  const metaSlot = fnMetaSlot(ctx, opts.decl) ?? fnMetaSlotForMemberDecl(ctx, opts.decl);
+  //
+  // (#5149 cluster B) The member walk runs FIRST for a member declaration.
+  // `fnInstanceMetaOf` accepts a `MethodDeclaration` and answers `""` for it —
+  // §10.2.9 for a method comes from the property KEY, which only the member
+  // walk reads — so the old `fnMetaSlot ?? member` order published that empty
+  // name and never consulted the member walk at all. Measured on
+  // `{ id() {} }` reached through the open-object literal path: the descriptor
+  // `Object.getOwnPropertyDescriptor(o.id, "name").value` read `""` while the
+  // static `.name` fold answered `"id"` — one function, two answers.
+  const metaSlot = fnMetaSlotForMemberDecl(ctx, opts.decl) ?? fnMetaSlot(ctx, opts.decl);
   let structTypeIdx: number;
   let liftedFuncTypeIdx: number;
   let liftedSelfTypeIdx: number;
@@ -852,6 +1037,9 @@ export function mintClosureStructTypes(
       liftedFuncTypeIdx = addFuncType(ctx, liftedParams, closureResults, `${closureName}_type`);
     }
   }
+  // The ordinary post-body registration replaces this provisional entry with
+  // the complete ClosureInfo.
+  registerCapturingRestClosureDuringBodyCompilation(ctx, opts, structTypeIdx, liftedFuncTypeIdx);
   if (metaSlot) {
     // Registered here rather than at each mint branch so every path that grew
     // the field also gets its family arm — the slot is always LAST, so its
@@ -885,21 +1073,6 @@ export function emitClosureParamDestructuring(
   arrow: ts.ArrowFunction | ts.FunctionExpression,
   arrowParams: ValType[],
 ): void {
-  // Fallback: allocate externref locals for each name in a binding pattern.
-  // Used when the param type doesn't match any known struct/vec — locals are
-  // initialized to null/undefined (best-effort; the type is unknown at compile time).
-  function allocBindingLocals(pattern: ts.BindingPattern): void {
-    for (const element of pattern.elements) {
-      if (ts.isOmittedExpression(element)) continue;
-      if (!ts.isBindingElement(element)) continue;
-      if (ts.isIdentifier(element.name)) {
-        allocLocal(liftedFctx, element.name.text, { kind: "externref" });
-      } else {
-        allocBindingLocals(element.name);
-      }
-    }
-  }
-
   // Destructuring parameter initialization: for parameters with binding patterns
   // (e.g. function([x, y]) or function({a, b})), extract values from the parameter
   // and assign them to local variables. Delegate to the shared destructuring
@@ -916,201 +1089,20 @@ export function emitClosureParamDestructuring(
     const paramIdx = pi + 1; // +1 for __self
     const paramType = arrowParams[pi]!;
 
-    // Helper: allocate locals for all identifiers in a binding pattern
-    // using TS type inference for each element. Fallback used when the
-    // Wasm type doesn't provide enough info to extract values.
-    const allocBindingLocals = (pattern: ts.BindingPattern) => {
-      for (const element of pattern.elements) {
-        if (ts.isOmittedExpression(element)) continue;
-        if (ts.isIdentifier(element.name)) {
-          const localName = element.name.text;
-          if (!liftedFctx.localMap.has(localName)) {
-            const elemTsType = ctx.checker.getTypeAtLocation(element);
-            const elemWasmType = resolveWasmType(ctx, elemTsType);
-            allocLocal(liftedFctx, localName, elemWasmType);
-          }
-        } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
-          allocBindingLocals(element.name);
-        }
-      }
-    };
-
+    // Keep closure parameter binding-patterns on the same shared lowering as
+    // declarations and ordinary function bodies.  The old closure-only
+    // struct/vec extractors handled identifiers, but skipped nested patterns
+    // and their default initializers (for example `[{x} = fallback]`), which
+    // left those bindings at their zero/null local defaults.  The shared
+    // helpers already select the native carrier and preserve the required
+    // undefined/null checks for every ABI type.
     if (ts.isArrayBindingPattern(param.name)) {
-      // Array destructuring: function([a, b, c]) { ... }
-      let handled = false;
-
-      // For externref params (e.g. typed as `any`), delegate to destructureParamArray
-      // which handles multi-type vec conversion with ref.test guards.
-      // A bare ref.cast to a single vec type (e.g. __vec_f64) will trap at runtime
-      // if the actual value is a different vec type (e.g. __vec_externref from []).
-      if (paramType.kind === "externref") {
-        destructureParamArray(ctx, liftedFctx, paramIdx, param.name, paramType);
-        handled = true;
-      }
-
-      let resolvedParamType = paramType;
-      let srcParamIdx = paramIdx;
-      if (!handled && (paramType.kind === "ref" || paramType.kind === "ref_null")) {
-        resolvedParamType = paramType;
-        srcParamIdx = paramIdx;
-      }
-
-      if (resolvedParamType.kind === "ref" || resolvedParamType.kind === "ref_null") {
-        const typeIdx = resolvedParamType.typeIdx;
-        const typeDef = ctx.mod.types[typeIdx];
-        if (typeDef && typeDef.kind === "struct") {
-          const arrTypeIdx = getArrTypeIdxFromVec(ctx, typeIdx);
-          const arrDef = ctx.mod.types[arrTypeIdx];
-          if (arrDef && arrDef.kind === "array") {
-            const elemType = arrDef.element;
-            const savedBodyFPAD = liftedFctx.body;
-            const fpadInstrs: Instr[] = [];
-            liftedFctx.body = fpadInstrs;
-            for (let ei = 0; ei < param.name.elements.length; ei++) {
-              const element = param.name.elements[ei]!;
-              if (ts.isOmittedExpression(element)) continue;
-              if (!ts.isBindingElement(element)) continue;
-
-              // Handle rest element: function([a, ...rest])
-              if (element.dotDotDotToken && ts.isIdentifier(element.name)) {
-                const restName = element.name.text;
-                const restLenLocal = allocLocal(liftedFctx, `__rest_len_${liftedFctx.locals.length}`, { kind: "i32" });
-                // Compute rest length: max(0, param.length - ei)
-                liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
-                liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // length
-                liftedFctx.body.push({ op: "i32.const", value: ei });
-                liftedFctx.body.push({ op: "i32.sub" });
-                liftedFctx.body.push({ op: "local.set", index: restLenLocal });
-                // Clamp to 0 if negative
-                liftedFctx.body.push({ op: "i32.const", value: 0 });
-                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
-                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
-                liftedFctx.body.push({ op: "i32.const", value: 0 });
-                liftedFctx.body.push({ op: "i32.lt_s" });
-                liftedFctx.body.push({ op: "select" });
-                liftedFctx.body.push({ op: "local.set", index: restLenLocal });
-
-                // Create new data array
-                const restArrLocal = allocLocal(liftedFctx, `__rest_arr_${liftedFctx.locals.length}`, {
-                  kind: "ref",
-                  typeIdx: arrTypeIdx,
-                });
-                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
-                liftedFctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
-                liftedFctx.body.push({ op: "local.set", index: restArrLocal });
-
-                // array.copy(restArr, 0, srcData, ei, restLen)
-                liftedFctx.body.push({ op: "local.get", index: restArrLocal });
-                liftedFctx.body.push({ op: "i32.const", value: 0 });
-                liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
-                liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 }); // src data
-                liftedFctx.body.push({ op: "i32.const", value: ei });
-                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
-                liftedFctx.body.push({ op: "array.copy", dstTypeIdx: arrTypeIdx, srcTypeIdx: arrTypeIdx });
-
-                // Create new vec struct: struct.new(restLen, restArr)
-                liftedFctx.body.push({ op: "local.get", index: restLenLocal });
-                liftedFctx.body.push({ op: "local.get", index: restArrLocal });
-                liftedFctx.body.push({ op: "struct.new", typeIdx });
-
-                const vecType: ValType = { kind: "ref_null", typeIdx };
-                const restLocal = allocLocal(liftedFctx, restName, vecType);
-                liftedFctx.body.push({ op: "local.set", index: restLocal });
-                continue;
-              }
-
-              if (!ts.isIdentifier(element.name)) continue;
-              const localName = element.name.text;
-              const localIdx = allocLocal(liftedFctx, localName, elemType);
-              liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
-              liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
-              liftedFctx.body.push({ op: "i32.const", value: ei });
-              emitBoundsCheckedArrayGet(liftedFctx, arrTypeIdx, elemType);
-              liftedFctx.body.push({ op: "local.set", index: localIdx });
-            }
-            liftedFctx.body = savedBodyFPAD;
-            spliceNullGuarded(liftedFctx, srcParamIdx, resolvedParamType.kind === "ref_null", fpadInstrs);
-            handled = true;
-          } else if (typeDef.fields.length > 0 && typeDef.fields[0]!.name === "_0") {
-            // Tuple struct destructuring: extract positional fields via struct.get
-            const savedBodyFPAD = liftedFctx.body;
-            const fpadInstrs: Instr[] = [];
-            liftedFctx.body = fpadInstrs;
-            for (let ei = 0; ei < param.name.elements.length; ei++) {
-              const element = param.name.elements[ei]!;
-              if (ts.isOmittedExpression(element)) continue;
-              if (!ts.isBindingElement(element)) continue;
-              if (ei >= typeDef.fields.length) break;
-
-              const fieldType = typeDef.fields[ei]!.type;
-              if (!ts.isIdentifier(element.name)) continue;
-              const localName = element.name.text;
-              const localIdx = allocLocal(liftedFctx, localName, fieldType);
-              liftedFctx.body.push({ op: "local.get", index: srcParamIdx });
-              liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx: ei });
-              liftedFctx.body.push({ op: "local.set", index: localIdx });
-            }
-            liftedFctx.body = savedBodyFPAD;
-            spliceNullGuarded(liftedFctx, srcParamIdx, resolvedParamType.kind === "ref_null", fpadInstrs);
-            handled = true;
-          }
-        }
-      }
-      if (!handled) {
-        allocBindingLocals(param.name);
-      }
-    } else if (ts.isObjectBindingPattern(param.name)) {
-      // Object destructuring: function({a, b}) { ... }
-      let handled = false;
-
-      // Externref params (e.g. callback from JS host or `: any`-typed) need
-      // the host-import-driven extraction path that mirrors the array case
-      // above. Without this, the object pattern's binding locals get
-      // allocated but never written, so any code reading w/x/y/z sees the
-      // default-zero/null value of the local instead of the property pulled
-      // off the argument object. (#43 cluster — function-expression dstr
-      // on `any` params)
-      if (paramType.kind === "externref") {
-        destructureParamObjectExternref(ctx, liftedFctx, paramIdx, param.name);
-        handled = true;
-      }
-
-      if (!handled && (paramType.kind === "ref" || paramType.kind === "ref_null")) {
-        const typeIdx = paramType.typeIdx;
-        const typeDef = ctx.mod.types[typeIdx];
-        if (typeDef && typeDef.kind === "struct") {
-          let allFound = true;
-          const savedBodyFPOD = liftedFctx.body;
-          const fpodInstrs: Instr[] = [];
-          liftedFctx.body = fpodInstrs;
-          for (const element of param.name.elements) {
-            if (ts.isOmittedExpression(element)) continue;
-            if (!ts.isIdentifier(element.name)) continue;
-            const localName = element.name.text;
-            const propName = element.propertyName
-              ? ts.isIdentifier(element.propertyName)
-                ? element.propertyName.text
-                : localName
-              : localName;
-            const fieldIdx = typeDef.fields.findIndex((f: any) => f.name === propName);
-            if (fieldIdx < 0) {
-              allFound = false;
-              continue;
-            }
-            const fieldType = typeDef.fields[fieldIdx]!.type;
-            const localIdx = allocLocal(liftedFctx, localName, fieldType);
-            liftedFctx.body.push({ op: "local.get", index: paramIdx });
-            liftedFctx.body.push({ op: "struct.get", typeIdx, fieldIdx });
-            liftedFctx.body.push({ op: "local.set", index: localIdx });
-          }
-          liftedFctx.body = savedBodyFPOD;
-          spliceNullGuarded(liftedFctx, paramIdx, paramType.kind === "ref_null", fpodInstrs);
-          handled = allFound;
-        }
-      }
-      if (!handled) {
-        allocBindingLocals(param.name);
-      }
+      destructureParamArray(ctx, liftedFctx, paramIdx, param.name, paramType);
+      continue;
+    }
+    if (ts.isObjectBindingPattern(param.name)) {
+      if (tryEmitNativeIteratorResultParam(ctx, liftedFctx, paramIdx, param.name, paramType)) continue;
+      destructureParamObject(ctx, liftedFctx, paramIdx, param.name, paramType);
     }
   }
 }
@@ -1145,10 +1137,36 @@ function findUnboxedCaptureLocal(
  */
 function pushCaptureCell(ctx: CodegenContext, fctx: FunctionContext, cap: ArrowClosureCapture): void {
   const boxed = fctx.boxedCaptures?.get(cap.name);
-  const boxedLocalIdx = cap.localIdx;
+  // A recursive sibling can materialize this binding while an outer closure's
+  // construction is still walking its capture list. That promotion updates
+  // `boxedCaptures` and `localMap`, but the capture descriptor's `localIdx`
+  // was computed before the promotion and still names the raw value slot.
+  // Prefer the live mapped cell only when its type agrees with the box; keep
+  // the descriptor slot for ordinary captures and stale-map cases.
+  const mappedLocalIdx = fctx.localMap.get(cap.name);
+  const mappedType = mappedLocalIdx === undefined ? undefined : getLocalType(fctx, mappedLocalIdx);
+  const mappedIsCell =
+    boxed !== undefined &&
+    mappedType !== undefined &&
+    (mappedType.kind === "ref" || mappedType.kind === "ref_null") &&
+    mappedType.typeIdx === boxed.refCellTypeIdx;
+  const boxedLocalIdx = mappedIsCell ? mappedLocalIdx! : cap.localIdx;
   const boxedType = getLocalType(fctx, boxedLocalIdx);
   const valueType = boxed?.valType;
-  const rawLocalIdx = valueType ? findUnboxedCaptureLocal(fctx, cap.name, boxedLocalIdx, valueType) : undefined;
+  // Prefer the slot the box RECORDED over the name+type scan: the scan walks
+  // `fctx.locals` only, so a boxed PARAMETER has no discoverable raw slot and
+  // the repair silently declined for it.
+  const recordedRawIdx = boxed?.rawLocalIdx;
+  const recordedRawType = recordedRawIdx === undefined ? undefined : getLocalType(fctx, recordedRawIdx);
+  const rawLocalIdx =
+    valueType === undefined
+      ? undefined
+      : recordedRawIdx !== undefined &&
+          recordedRawIdx !== boxedLocalIdx &&
+          recordedRawType !== undefined &&
+          valTypesMatch(recordedRawType, valueType)
+        ? recordedRawIdx
+        : findUnboxedCaptureLocal(fctx, cap.name, boxedLocalIdx, valueType);
   const nullableBox =
     boxed !== undefined &&
     valueType !== undefined &&
@@ -1218,7 +1236,7 @@ export function emitClosureConstruction(
     // Function value even when this closure never names it directly. Fill the
     // hoisted binding before the closure snapshots/passes its slot; otherwise
     // the lifted caller receives the preallocated null value.
-    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
+    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
     if (cap.mutable) {
       // Check if the outer scope already has this variable boxed (nested closure case)
       if (fctx.boxedCaptures?.has(cap.name)) {
@@ -1238,7 +1256,11 @@ export function emitClosureConstruction(
         // Re-register the original name to point to the boxed local
         fctx.localMap.set(cap.name, boxedLocalIdx);
         if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
-        fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type });
+        // The rebind is FUNCTION-wide but this `struct.new` runs only where the
+        // closure is constructed. Record the slot it wrapped so the frame's own
+        // reads/writes can mint the cell lazily on a path that skipped this
+        // site — see closures/conditional-capture-box.ts.
+        fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type, rawLocalIdx: cap.localIdx });
       }
     } else {
       if (cap.alreadyBoxed && fctx.boxedCaptures?.has(cap.name)) {
@@ -1312,11 +1334,14 @@ export function registerClosureBindingInfo(
     ts.isFunctionExpression(arrow) && ts.isBlock(arrow.body) && closureBodyUsesOwnArguments(arrow.body);
   // 8. Register closure info so call sites can emit call_ref
   const structDef = ctx.mod.types[structTypeIdx];
+  const inheritedInfo = ctx.closureInfoByTypeIdx.get(structTypeIdx);
   const closureInfo: ClosureInfo = {
     structTypeIdx,
     funcTypeIdx: liftedFuncTypeIdx,
     returnType: closureReturnType,
     paramTypes: arrowParams,
+    minimumArgumentCount:
+      ctx.closureMinimumArgumentCountByFuncTypeIdx.get(liftedFuncTypeIdx) ?? inheritedInfo?.minimumArgumentCount,
     hasCaptures: structDef?.kind === "struct" && structDef.fields.length > 1,
     hasRestParam: params.some((p) => p.dotDotDotToken !== undefined),
     needsCallSiteArity:

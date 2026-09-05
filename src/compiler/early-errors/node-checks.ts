@@ -26,6 +26,7 @@ import {
   isInsideClassWithPrivateName,
   isInsideFunction,
   isInsideGeneratorFunction,
+  isInYieldParamContext,
   isInsideGeneratorParams,
   isInsideIteration,
   isInsideMethod,
@@ -529,6 +530,43 @@ on([ts.SyntaxKind.SourceFile, ts.SyntaxKind.Block], (ctx, node) => {
   }
 });
 
+/**
+ * (#4621 D) A node the parser INVENTED to recover from missing source. TypeScript
+ * marks these with a zero-width extent (`pos === end`); they carry no text and no
+ * symbol. `EndOfFileToken` is the one legitimate zero-width node.
+ */
+function nodeIsParserSynthesizedMissing(node: ts.Node): boolean {
+  return node.pos === node.end && node.kind !== ts.SyntaxKind.EndOfFileToken;
+}
+
+// (#4621 D) §14.12.1 — `switch ( Expression ) CaseBlock` and
+// `CaseClause : case Expression : StatementList`. Neither expression is
+// optional, so `switch () {}` and `case :` are SyntaxErrors.
+//
+// TypeScript DOES report both ("Expression expected.", code 1109) but that code
+// sits in `TOLERATED_SYNTAX_CODES` (compiler.ts) — #537 downgraded it to a
+// warning because the TS-mode parser raises it for several patterns that are
+// valid JavaScript. The blanket tolerance also swallowed these two genuine
+// grammar violations, so `language/statements/switch/S12.11_A3_T{1,4}` compiled,
+// RAN, and tripped their own `$DONOTEVALUATE()` sentinel instead of failing to
+// parse. Re-raise exactly the two recovered shapes here, on the same discipline
+// the 1121/1489/1487/1488 octal checks use for their own tolerated codes.
+//
+// This is a syntactic test on the RECOVERED AST, not a re-parse: the parser
+// leaves a zero-width invented Identifier in the missing expression's place, a
+// shape no well-formed source can produce.
+on([ts.SyntaxKind.SwitchStatement], (ctx, node) => {
+  if (ts.isSwitchStatement(node) && nodeIsParserSynthesizedMissing(node.expression)) {
+    ctx.addError(node, "Expression expected: a switch statement requires a discriminant");
+  }
+});
+
+on([ts.SyntaxKind.CaseClause], (ctx, node) => {
+  if (ts.isCaseClause(node) && nodeIsParserSynthesizedMissing(node.expression)) {
+    ctx.addError(node, "Expression expected: a case clause requires a test expression");
+  }
+});
+
 // Check 'with' statement — SyntaxError in strict mode (all modules are strict)
 on([ts.SyntaxKind.WithStatement], (ctx, node) => {
   if (ts.isWithStatement(node) && isStrictMode(node)) {
@@ -845,7 +883,7 @@ on([ts.SyntaxKind.Identifier], (ctx, node) => {
         if (node.text === "await" && isInsideAsyncFunction(node)) {
           ctx.addError(node, "'await' is not allowed as an identifier in an async function");
         }
-        if (node.text === "yield" && isInsideGeneratorFunction(node)) {
+        if (node.text === "yield" && isInYieldParamContext(node)) {
           ctx.addError(node, "'yield' is not allowed as an identifier in a generator function");
         }
       }
@@ -1242,7 +1280,14 @@ on([ts.SyntaxKind.ClassDeclaration, ts.SyntaxKind.ClassExpression], (ctx, node) 
   if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
     for (const member of node.members) {
       const memberName = getMemberName(member);
-      if (memberName === "constructor") {
+      // (#5195 K) PropName of a ComputedPropertyName is EMPTY (§13.2.5.5), so a
+      // computed key that happens to fold to the string "constructor" is not
+      // the class constructor and carries none of these restrictions:
+      // `get ['constructor']() {}` is legal. `getMemberName` folds string- and
+      // numeric-literal computed keys, which is right for its other callers but
+      // wrong here.
+      const isComputedKey = member.name !== undefined && ts.isComputedPropertyName(member.name);
+      if (memberName === "constructor" && !isComputedKey) {
         const isStaticMember = (member as any).modifiers?.some((m: any) => m.kind === ts.SyntaxKind.StaticKeyword);
         if (isStaticMember) continue; // static "constructor" is fine
         if (ts.isMethodDeclaration(member) && member.asteriskToken) {
@@ -1317,9 +1362,47 @@ on([ts.SyntaxKind.BinaryExpression], (ctx, node) => {
   }
 });
 
+/**
+ * (#5146 cluster H) True when `node` is covered by an ObjectAssignmentPattern /
+ * ArrayAssignmentPattern — the LHS of `=`, or a for-of / for-in head, possibly
+ * nested inside another pattern. The duplicate-`__proto__` Early Error applies
+ * to object LITERALS only; `({ __proto__: x, __proto__: y } = value)` is legal.
+ */
+function isAssignmentPatternPosition(node: ts.Node): boolean {
+  let child: ts.Node = node;
+  let parent: ts.Node | undefined = node.parent;
+  while (parent !== undefined) {
+    if (ts.isParenthesizedExpression(parent)) {
+      child = parent;
+      parent = parent.parent;
+      continue;
+    }
+    if (ts.isBinaryExpression(parent) && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      // `pattern = value`, or a nested `target = default` inside a pattern.
+      if (parent.left === child) return true;
+      return false;
+    }
+    if ((ts.isForOfStatement(parent) || ts.isForInStatement(parent)) && parent.initializer === child) return true;
+    if (
+      ts.isArrayLiteralExpression(parent) ||
+      ts.isObjectLiteralExpression(parent) ||
+      ts.isPropertyAssignment(parent) ||
+      ts.isShorthandPropertyAssignment(parent) ||
+      ts.isSpreadElement(parent) ||
+      ts.isSpreadAssignment(parent)
+    ) {
+      child = parent;
+      parent = parent.parent;
+      continue;
+    }
+    return false;
+  }
+  return false;
+}
+
 // ── Duplicate __proto__ in object literal ────────────────────────
 on([ts.SyntaxKind.ObjectLiteralExpression], (ctx, node) => {
-  if (ts.isObjectLiteralExpression(node)) {
+  if (ts.isObjectLiteralExpression(node) && !isAssignmentPatternPosition(node)) {
     let protoCount = 0;
     for (const prop of node.properties) {
       if (ts.isPropertyAssignment(prop)) {
@@ -1889,6 +1972,25 @@ on([ts.SyntaxKind.YieldExpression], (ctx, node) => {
 // \u006Cet is not valid as a keyword
 on([ts.SyntaxKind.Identifier], (ctx, node) => {
   if (ts.isIdentifier(node) && node.text === "let") {
+    // (#5139) A PROPERTY NAME is an IdentifierName, not an Identifier, and
+    // IdentifierName explicitly permits UnicodeEscapeSequence — `class C {
+    // let() {} }` is legal and defines the key "let". Only a keyword-position
+    // `let` may not be escaped.
+    const parent = node.parent;
+    const isPropertyName =
+      parent !== undefined &&
+      ((ts.isMethodDeclaration(parent) && parent.name === node) ||
+        (ts.isPropertyDeclaration(parent) && parent.name === node) ||
+        (ts.isGetAccessorDeclaration(parent) && parent.name === node) ||
+        (ts.isSetAccessorDeclaration(parent) && parent.name === node) ||
+        (ts.isPropertyAssignment(parent) && parent.name === node) ||
+        (ts.isShorthandPropertyAssignment(parent) && parent.name === node) ||
+        (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+        (ts.isMethodSignature(parent) && parent.name === node) ||
+        (ts.isPropertySignature(parent) && parent.name === node) ||
+        (ts.isEnumMember(parent) && parent.name === node) ||
+        (ts.isBindingElement(parent) && parent.propertyName === node));
+    if (isPropertyName) return;
     const start = node.getStart(ctx.sourceFile);
     const rawText = ctx.sourceFile.text.substring(start, start + 10);
     if (rawText.includes("\\u")) {

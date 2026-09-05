@@ -337,17 +337,40 @@ export function emitDynGet(ctx: CodegenContext, fctx: FunctionContext, keyName: 
     // `ctx.closureInfoByTypeIdx` (walking each to its root struct) to avoid a
     // circular import on index.ts's private `collectClosureBaseWrapperTypeIdxs`.
     // (#2896) Standalone: a builtin function value carries its spec arity in
-    // the finalize-filled `__builtinfn_get_meta` native — ask it first; a null
-    // result (plain user closure, or a builtin fn whose `length` was deleted →
-    // inherited Function.prototype.length === 0) keeps the prior flat 0.
+    // the finalize-filled `__builtinfn_get_meta` native — ask it first. When
+    // that metadata was deleted, consult the ordinary closure-property bag
+    // before falling back to Function.prototype.length === 0. This matters for
+    // dynamically registered host functions: they delete the configurable
+    // intrinsic metadata and define an exact own `length` in the bag.
     const bfnGetMetaIdx = ctx.standalone ? ctx.funcMap.get("__builtinfn_get_meta") : undefined;
     const closureArmThen = (): Instr[] => {
-      if (bfnGetMetaIdx === undefined) {
-        // arity fallback: box_number(0.0) — matches the prior numeric path.
+      const ownLengthOrZero = (): Instr[] => {
+        if (isUndefIdx === undefined) {
+          return [
+            { op: "f64.const", value: 0 },
+            { op: "call", funcIdx: boxNumIdx },
+          ];
+        }
+        const ownTmp = allocLocal(fctx, `__dg_fnlen_${fctx.locals.length}`, { kind: "externref" });
         return [
-          { op: "f64.const", value: 0 },
-          { op: "call", funcIdx: boxNumIdx },
+          { op: "local.get", index: recvTmp },
+          ...stringConstantExternrefInstrs(ctx, keyName),
+          { op: "call", funcIdx: finalExternGetIdx },
+          { op: "local.tee", index: ownTmp },
+          { op: "call", funcIdx: isUndefIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } as ValType },
+            then: [
+              { op: "f64.const", value: 0 },
+              { op: "call", funcIdx: boxNumIdx },
+            ],
+            else: [{ op: "local.get", index: ownTmp }],
+          },
         ];
+      };
+      if (bfnGetMetaIdx === undefined) {
+        return ownLengthOrZero();
       }
       const metaTmp = allocLocal(fctx, `__dg_bfnmeta_${fctx.locals.length}`, { kind: "externref" });
       return [
@@ -359,10 +382,7 @@ export function emitDynGet(ctx: CodegenContext, fctx: FunctionContext, keyName: 
         {
           op: "if",
           blockType: { kind: "val", type: { kind: "externref" } as ValType },
-          then: [
-            { op: "f64.const", value: 0 },
-            { op: "call", funcIdx: boxNumIdx },
-          ],
+          then: ownLengthOrZero(),
           else: [{ op: "local.get", index: metaTmp }],
         },
       ];
@@ -379,9 +399,37 @@ export function emitDynGet(ctx: CodegenContext, fctx: FunctionContext, keyName: 
         },
       ];
     }
+    // (#4649) ONE `ref.test $__vec_base` replaces the per-vec-type ladder,
+    // which was built from an emission-time `ctx.vecTypeMap` snapshot: a
+    // carrier registered LATER (in a test262 file, anything the BODY mints
+    // after the harness PREFIX compiled — e.g. `boolean[]`) fell through to
+    // `__extern_get(vec,"length")`, which answers 0 for an opaque struct.
+    // `$__vec_base` is the declared supertype of every concrete vec with
+    // `length` at field 0 (#2186), so this is a strict SUPERSET of the ladder
+    // (the byte vecs it also matches were in `vecTypeMap`, hence in the ladder).
+    const vecBaseIdx = ctx.vecBaseTypeIdx;
+    const lateBoundVecArm = vecBaseIdx >= 0;
+    if (lateBoundVecArm) {
+      chain = [
+        { op: "local.get", index: anyTmp },
+        { op: "ref.test", typeIdx: vecBaseIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } as ValType },
+          then: [
+            { op: "local.get", index: anyTmp },
+            { op: "ref.cast", typeIdx: vecBaseIdx },
+            { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: boxNumIdx },
+          ],
+          else: chain,
+        },
+      ];
+    }
     // Wrap from the innermost (last) vec type outward: each layer is
     // `if ref.test $vec { box_number(f64(struct.get field0)) } else { <chain> }`.
-    for (let i = vecEntries.length - 1; i >= 0; i--) {
+    for (let i = lateBoundVecArm ? -1 : vecEntries.length - 1; i >= 0; i--) {
       const vecTypeIdx = vecEntries[i]!;
       const def = ctx.mod.types[vecTypeIdx];
       if (def?.kind !== "struct" || def.fields[0]?.name !== "length" || def.fields[1]?.name !== "data") {

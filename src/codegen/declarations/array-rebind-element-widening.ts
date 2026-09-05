@@ -48,17 +48,21 @@
  * WITHIN one write (`[obj, true]`) is the array-literal element-typing lane's
  * job and is not touched here.
  */
-import type { JsTag } from "../../checker/oracle.js";
+import { jsTagOfFact, type JsTag } from "../../checker/oracle.js";
 import type { ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import type { CodegenContext } from "../context/types.js";
 import { getOrRegisterVecType } from "../registry/types.js";
+import { descriptorArrayCarrierType } from "./descriptor-array-carrier.js";
 
 /** Per-(context, file) memo — `moduleGlobalWasmType` asks once per declaration. */
 const analysisCache = new WeakMap<CodegenContext, Map<ts.SourceFile, ReadonlySet<string>>>();
 
 /** The domain a single whole-array write stores into the binding. */
 type WriteDomain = "object" | "primitive";
+
+/** `typeof null` is "object", but it is not an object-element carrier. */
+type WriteTag = JsTag | "nullish";
 
 /** Tags whose values are references with observable identity. */
 const OBJECT_TAGS: ReadonlySet<JsTag> = new Set<JsTag>(["object", "function"]);
@@ -73,8 +77,132 @@ export function rebindWidenedArrayVecType(
   decl: ts.VariableDeclaration,
 ): ValType | undefined {
   if (!ts.isIdentifier(decl.name)) return undefined;
+  const descriptorCarrier = descriptorArrayCarrierType(ctx, decl);
+  if (descriptorCarrier !== undefined) return descriptorCarrier;
+  const descriptorType = descriptorValueWidenedArrayVecType(ctx, sourceFile, decl);
+  if (descriptorType !== undefined) return descriptorType;
   if (!widenedVarsOf(ctx, sourceFile).has(decl.name.text)) return undefined;
   return { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) };
+}
+
+/**
+ * (#4491) A standalone data descriptor can write a value whose JS tag cannot
+ * live in the array's inferred primitive element carrier. The descriptor
+ * overlay correctly keeps that value in its companion, but a typed element
+ * read would otherwise bypass the companion and return the stale primitive
+ * slot. Widen the binding's element carrier before its initializer is built so
+ * the ordinary vec read/write path remains authoritative.
+ *
+ * This is deliberately limited to statically known indexed data descriptors:
+ * unknown descriptors and non-index expandos retain their existing lowering,
+ * while a dynamic value remains the overlay's responsibility. The standalone
+ * lane is the only one with this WasmGC vec/companion split; host arrays do not
+ * need a representation change here.
+ */
+export function descriptorValueWidenedArrayVecType(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  decl: ts.VariableDeclaration,
+): ValType | undefined {
+  if (!ctx.standalone || !ts.isIdentifier(decl.name)) return undefined;
+  const elementTag = jsTagOfFact(ctx.oracle.elementFactOf(decl));
+  if (elementTag === undefined || !["number", "string", "boolean", "bigint"].includes(elementTag)) {
+    return undefined;
+  }
+
+  let widened = false;
+  const indexedKey = (node: ts.Node): boolean => {
+    const key = ts.isStringLiteral(node) || ts.isNumericLiteral(node) ? node.text : undefined;
+    if (key === undefined || !/^(0|[1-9][0-9]*)$/.test(key)) return false;
+    const numeric = Number(key);
+    return Number.isInteger(numeric) && numeric >= 0 && numeric < 0xffffffff;
+  };
+  const descriptorValue = (node: ts.Expression): ts.Expression | undefined => {
+    let desc = node;
+    while (
+      ts.isParenthesizedExpression(desc) ||
+      ts.isAsExpression(desc) ||
+      ts.isTypeAssertionExpression(desc) ||
+      ts.isNonNullExpression(desc) ||
+      ts.isSatisfiesExpression(desc)
+    ) {
+      desc = desc.expression;
+    }
+    if (!ts.isObjectLiteralExpression(desc)) return undefined;
+    let value: ts.Expression | undefined;
+    for (const property of desc.properties) {
+      if (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) {
+        const name = property.name;
+        if ((ts.isIdentifier(name) || ts.isStringLiteral(name)) && name.text === "value") {
+          value = ts.isPropertyAssignment(property) ? property.initializer : property.name;
+        }
+      }
+      if (
+        (ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)) &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        (property.name.text === "get" || property.name.text === "set")
+      ) {
+        return undefined;
+      }
+    }
+    return value;
+  };
+  const incompatible = (value: ts.Expression): boolean => {
+    const valueTag = ctx.oracle.staticJsTypeOf(value);
+    return valueTag !== "mixed" && valueTag !== elementTag;
+  };
+  const visit = (node: ts.Node): void => {
+    if (widened || !ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) {
+      ts.forEachChild(node, visit);
+      return;
+    }
+    const callee = node.expression;
+    if (
+      !ts.isIdentifier(callee.expression) ||
+      callee.expression.text !== "Object" ||
+      !ts.isIdentifier(callee.name) ||
+      (callee.name.text !== "defineProperty" && callee.name.text !== "defineProperties")
+    ) {
+      ts.forEachChild(node, visit);
+      return;
+    }
+    const receiver = node.arguments[0];
+    if (!receiver || !ts.isIdentifier(receiver) || ctx.oracle.variableDeclarationOf(receiver) !== decl) {
+      ts.forEachChild(node, visit);
+      return;
+    }
+    if (callee.name.text === "defineProperty" && node.arguments.length >= 3) {
+      const key = node.arguments[1]!;
+      const value = descriptorValue(node.arguments[2]!);
+      if (indexedKey(key) && value !== undefined && incompatible(value)) widened = true;
+    } else if (callee.name.text === "defineProperties" && node.arguments.length >= 2) {
+      let descriptors = node.arguments[1]!;
+      while (
+        ts.isParenthesizedExpression(descriptors) ||
+        ts.isAsExpression(descriptors) ||
+        ts.isTypeAssertionExpression(descriptors) ||
+        ts.isNonNullExpression(descriptors) ||
+        ts.isSatisfiesExpression(descriptors)
+      ) {
+        descriptors = descriptors.expression;
+      }
+      if (ts.isObjectLiteralExpression(descriptors)) {
+        for (const property of descriptors.properties) {
+          if (!ts.isPropertyAssignment(property)) continue;
+          const value = descriptorValue(property.initializer);
+          if (indexedKey(property.name) && value !== undefined && incompatible(value)) {
+            widened = true;
+            break;
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(sourceFile, visit);
+  return widened
+    ? { kind: "ref_null", typeIdx: getOrRegisterVecType(ctx, "externref", { kind: "externref" }) }
+    : undefined;
 }
 
 /**
@@ -147,18 +275,25 @@ function isModuleScoped(node: ts.Node): boolean {
  * not a syntactically classifiable array construction.
  *
  * `undefined` means "an array with no statically known elements" (`[]`, or the
- * `new Array(len)` length form): carries no element evidence, and — unlike
- * `null` — does not abandon the binding.
+ * `new Array(len)` length form): carries no element evidence, and — unlike an
+ * unclassifiable `null` result — does not abandon the binding.
  */
-function writtenElementTags(ctx: CodegenContext, expr: ts.Expression): readonly JsTag[] | undefined | null {
+function writtenElementTags(ctx: CodegenContext, expr: ts.Expression): readonly WriteTag[] | undefined | null {
   if (ts.isArrayLiteralExpression(expr)) {
     if (expr.elements.length === 0) return undefined;
-    const tags: JsTag[] = [];
+    const tags: WriteTag[] = [];
     for (const element of expr.elements) {
       if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) return null;
-      const tag = ctx.oracle.staticJsTypeOf(element);
-      if (tag === "mixed") return null;
-      tags.push(tag);
+      // Keep null separate from ordinary objects: null can share the
+      // externref element carrier, but it cannot be represented by a closed
+      // object struct (and `typeof null` otherwise hides this distinction).
+      if (element.kind === ts.SyntaxKind.NullKeyword) {
+        tags.push("nullish");
+      } else {
+        const tag = ctx.oracle.staticJsTypeOf(element);
+        if (tag === "mixed") return null;
+        tags.push(tag);
+      }
     }
     return tags;
   }
@@ -167,12 +302,16 @@ function writtenElementTags(ctx: CodegenContext, expr: ts.Expression): readonly 
     if (!ts.isIdentifier(callee) || callee.text !== "Array") return null;
     const args = expr.arguments;
     if (args === undefined || args.length === 0) return undefined;
-    const tags: JsTag[] = [];
+    const tags: WriteTag[] = [];
     for (const argument of args) {
       if (ts.isSpreadElement(argument)) return null;
-      const tag = ctx.oracle.staticJsTypeOf(argument);
-      if (tag === "mixed") return null;
-      tags.push(tag);
+      if (argument.kind === ts.SyntaxKind.NullKeyword) {
+        tags.push("nullish");
+      } else {
+        const tag = ctx.oracle.staticJsTypeOf(argument);
+        if (tag === "mixed") return null;
+        tags.push(tag);
+      }
     }
     // §23.1.1.1 step 5 / ES5 §15.4.2.2: a SINGLE Number argument is a LENGTH,
     // so the array has no statically known elements. Every other single
@@ -184,9 +323,17 @@ function writtenElementTags(ctx: CodegenContext, expr: ts.Expression): readonly 
 }
 
 /** The domain of one write, or `undefined` when it carries no element evidence. */
-function writeDomain(tags: readonly JsTag[] | undefined): WriteDomain | undefined {
+function writeDomain(tags: readonly WriteTag[] | undefined): WriteDomain | undefined {
   if (tags === undefined || tags.length === 0) return undefined;
-  const objectElements = tags.filter((tag) => OBJECT_TAGS.has(tag)).length;
+  const objectElements = tags.filter((tag) => tag !== "nullish" && OBJECT_TAGS.has(tag)).length;
+  const nullishElements = tags.filter((tag) => tag === "nullish").length;
+  // A null-containing write needs the universal element carrier even when all
+  // its other values are primitive. Treat that representation as object-domain
+  // evidence so a preceding numeric/boolean/string write widens the rebinding.
+  if (nullishElements > 0) {
+    const nonNullElements = tags.length - nullishElements;
+    if (objectElements === 0 || objectElements === nonNullElements) return "object";
+  }
   if (objectElements === tags.length) return "object";
   if (objectElements === 0) return "primitive";
   // Mixed within a single write — the array-literal element-typing lane's job.

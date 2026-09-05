@@ -39,11 +39,15 @@ export interface ProgramAbiDerivedUnitRecord {
 export type ProgramAbiIntent =
   | {
       readonly kind: "callable";
-      readonly origin: "source" | "import" | "runtime" | "intrinsic" | "support";
+      readonly origin: "source" | "module-alias" | "import" | "runtime" | "intrinsic" | "support";
       readonly signature: ProgramAbiCallableSignature;
       readonly unitId?: IrUnitId;
       readonly classId?: IrClassId;
       readonly sourceId?: IrSourceId;
+      /** Exact internal module-binding flavor; present only for module aliases. */
+      readonly aliasKind?: "import-alias" | "export-alias";
+      /** Canonical source unit reached by an internal module alias. */
+      readonly targetUnitId?: IrUnitId;
       /** Exact platform-capability allocator provenance for imported callables. */
       readonly capabilityId?: string;
       readonly providerId?: string;
@@ -479,6 +483,18 @@ export class ProgramAbiMap {
           `alias ${entry.id} has ${entry.intent.kind} intent but resolves to ${canonical.intent.kind} binding ${canonical.id}`,
         );
       }
+      if (entry.intent.kind === "callable" && entry.intent.origin === "module-alias") {
+        if (
+          canonical.intent.kind !== "callable" ||
+          canonical.intent.origin !== "source" ||
+          canonical.intent.unitId !== entry.intent.targetUnitId
+        ) {
+          throw new ProgramAbiInvariantError(
+            "alias-contract-mismatch",
+            `module alias ${entry.id} does not resolve to its declared source unit ${entry.intent.targetUnitId}`,
+          );
+        }
+      }
       const expectedSpace = intentSlotSpace(entry.intent);
       if (expectedSpace === null || canonical.slotSpace !== expectedSpace) {
         throw new ProgramAbiInvariantError(
@@ -653,6 +669,8 @@ export class ProgramAbiMap {
       const hasUnit = entry.intent.unitId !== undefined;
       const hasClass = entry.intent.classId !== undefined;
       const hasSource = entry.intent.sourceId !== undefined;
+      const hasAliasKind = entry.intent.aliasKind !== undefined;
+      const hasTargetUnit = entry.intent.targetUnitId !== undefined;
       const hasCapability = entry.intent.capabilityId !== undefined;
       const hasProvider = entry.intent.providerId !== undefined;
       if (hasCapability !== hasProvider || (hasCapability && entry.intent.origin !== "import")) {
@@ -674,6 +692,22 @@ export class ProgramAbiMap {
             `source callable binding ${entry.id} cannot identify a class or support source`,
           );
         }
+      } else if (entry.intent.origin === "module-alias") {
+        if (
+          !hasSource ||
+          hasUnit ||
+          hasClass ||
+          !hasAliasKind ||
+          !hasTargetUnit ||
+          hasCapability ||
+          hasProvider ||
+          entry.slotPolicy !== "alias"
+        ) {
+          throw new ProgramAbiInvariantError(
+            "invalid-callable-provenance",
+            `module alias callable binding ${entry.id} requires source, alias-kind, target-unit, and alias slot provenance`,
+          );
+        }
       } else if (entry.intent.origin === "support") {
         if (Number(hasUnit) + Number(hasClass) + Number(hasSource) !== 1) {
           throw new ProgramAbiInvariantError(
@@ -681,7 +715,7 @@ export class ProgramAbiMap {
             `support callable binding ${entry.id} must identify exactly one unit, class, or source owner`,
           );
         }
-      } else if (hasUnit || hasClass || hasSource) {
+      } else if (hasUnit || hasClass || hasSource || hasAliasKind || hasTargetUnit) {
         throw new ProgramAbiInvariantError(
           "invalid-callable-provenance",
           `${entry.intent.origin} callable binding ${entry.id} cannot identify a source unit, class, or support source owner`,
@@ -716,6 +750,15 @@ export class ProgramAbiMap {
           );
         }
         this.assertInventorySourceOrder(entry, entry.intent.sourceId!);
+      }
+      if (hasTargetUnit) {
+        const targetUnit = this.units.get(entry.intent.targetUnitId!);
+        if (!targetUnit) {
+          throw new ProgramAbiInvariantError(
+            "unknown-inventory-unit",
+            `callable binding ${entry.id} references target unit ${entry.intent.targetUnitId} outside this inventory`,
+          );
+        }
       }
     }
 

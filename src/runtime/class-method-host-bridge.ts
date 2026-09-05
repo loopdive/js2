@@ -1,6 +1,18 @@
 type ClassMethodExports = Record<string, Function>;
 type ClassMethodCallbackState = { getExports: () => ClassMethodExports | undefined };
 
+/** Resolve and invoke a compiled coercion method; `miss` means no callable member (#5239). */
+export function callResolvedClassPrimitive(
+  resolver: (obj: any, key: any, exports: ClassMethodExports | undefined) => any,
+  raw: any,
+  name: string,
+  exports: ClassMethodExports,
+  miss: unknown,
+): any {
+  const member = resolver(raw, name, exports);
+  return member !== miss && typeof member === "function" ? member.call(raw) : miss;
+}
+
 export interface ClassMethodHostBridgeDeps {
   miss: unknown;
   canBeWeakKey(value: unknown): boolean;
@@ -8,6 +20,40 @@ export interface ClassMethodHostBridgeDeps {
   /** Return the innermost compiled user-class name for a host-backed object. */
   getClassName?(value: unknown): string | undefined;
   marshalBridgeResult(value: any, callbackState: ClassMethodCallbackState): any;
+  /**
+   * (#5237) Strip a host mirror back to the raw carrier the compiled bridges
+   * dispatch on. Used only to honour an explicit `this`; when absent the
+   * bridges keep their historical bound-receiver behaviour.
+   */
+  unwrapReceiver?(value: any): any;
+}
+
+/**
+ * (#5237) Pick the carrier a method bridge should dispatch on.
+ *
+ * A bridge is minted per (carrier, key) and, until now, closed over the carrier
+ * it was RESOLVED from and ignored `this` entirely. That is right for the
+ * `inst.m()` shape it was built for, but wrong for the two shapes a linked
+ * consumer reaches a provider class through: `C.prototype.m.call(inst)` and
+ * `C.prototype.m.apply(inst, …)` both resolve `m` off the PROTOTYPE struct, so
+ * the call ran against the prototype and every field read `null` (measured:
+ * `Point.prototype.label.call(new Point(1,2))` answered "Pnull:null").
+ *
+ * `this` is honoured only when it is a genuine alternative carrier that the
+ * SAME member-kind discriminator accepts — so an unrelated or absent `this`
+ * still falls back to the bound carrier and nothing that worked before moves.
+ */
+function selectBridgeReceiver(
+  thisArg: any,
+  bound: any,
+  accepts: (candidate: any) => boolean,
+  unwrap: ((value: any) => any) | undefined,
+): any {
+  if (thisArg == null || unwrap === undefined) return bound;
+  if (typeof thisArg !== "object" && typeof thisArg !== "function") return bound;
+  const raw = unwrap(thisArg);
+  if (raw === bound || raw == null || typeof raw !== "object") return bound;
+  return accepts(raw) ? raw : bound;
 }
 
 export function invokeResolvedClassMethod(
@@ -71,8 +117,21 @@ export function createClassMemberResolver(
       // the receiver is the real host object, not a WasmGC struct. The codegen
       // emits a class-qualified bridge for each such method, so resolve it
       // directly before consulting the historical fnctor/struct surface.
+      // (#5204) A GETTER on an externref-backed class. The generic
+      // `__call_get_<key>` is reached only after `__member_kind_<key>`'s
+      // ref.test cascade classifies the receiver, and a host-object receiver
+      // never passes that test — so `get g()` read `NaN` with no error. The
+      // class-qualified export is unambiguous; check it before the method
+      // candidates, since a key is either an accessor or a method.
+      const classGetFn = exports[`__call_get_${className}_${key}`] as unknown as ((value: any) => any) | undefined;
+      if (typeof classGetFn === "function") {
+        return deps.marshalBridgeResult(classGetFn(obj), callbackState);
+      }
       const prefix = `__class_call_${className}_${key}_`;
       const candidates: Array<{ arity: number; fn: Function }> = [];
+      // (#5204) A rest-parameter method publishes ONE `_vararg` bridge taking
+      // the whole argument array, not an arity-suffixed family.
+      let varargFn: ((value: any, args: any[]) => any) | undefined;
       // `callbackState.getExports()` may be the host-bridge projection whose
       // generated helpers live on a prototype. Walk the full export view, not
       // only its enumerable own keys, so class-qualified bridges remain
@@ -84,11 +143,32 @@ export function createClassMemberResolver(
           if (seenNames.has(name) || !name.startsWith(prefix)) continue;
           seenNames.add(name);
           const suffix = name.slice(prefix.length);
-          if (!/^\d+$/.test(suffix)) continue;
           const fn = exports[name];
+          if (suffix === "vararg") {
+            if (typeof fn === "function") varargFn = fn as (value: any, args: any[]) => any;
+            continue;
+          }
+          if (!/^\d+$/.test(suffix)) continue;
           if (typeof fn === "function") candidates.push({ arity: Number(suffix), fn });
         }
         exportView = Object.getPrototypeOf(exportView) as Record<string, any> | null;
+      }
+      if (varargFn !== undefined) {
+        const restFn = varargFn;
+        let bridges = classMethodHostBridges.get(obj);
+        if (!bridges) {
+          bridges = new Map();
+          classMethodHostBridges.set(obj, bridges);
+        }
+        let fn = bridges.get(key);
+        if (!fn) {
+          fn = function externrefClassVarargHostBridge(this: any, ...args: any[]) {
+            return deps.marshalBridgeResult(restFn(obj, args), callbackState);
+          };
+          Object.defineProperty(fn, "name", { value: key, configurable: true });
+          bridges.set(key, fn);
+        }
+        return fn;
       }
       if (candidates.length > 0) {
         candidates.sort((a, b) => a.arity - b.arity);
@@ -167,11 +247,21 @@ export function createClassMemberResolver(
     }
     let fn = bridges.get(key);
     if (!fn) {
+      const resolvedKindFn = kindFn;
+      const acceptsReceiver = (candidate: any): boolean => {
+        if (!deps.isRegisteredInstance(candidate)) return false;
+        try {
+          return resolvedKindFn(candidate) === kind;
+        } catch {
+          return false;
+        }
+      };
       fn = function classMethodHostBridge(this: any, ...args: any[]) {
-        if (hasRest) return deps.marshalBridgeResult(callFn(obj, args), callbackState);
+        const recv = selectBridgeReceiver(this, obj, acceptsReceiver, deps.unwrapReceiver);
+        if (hasRest) return deps.marshalBridgeResult(callFn(recv, args), callbackState);
         const callArgs =
           args.length < declaredArity ? args.concat(new Array(declaredArity - args.length).fill(undefined)) : args;
-        return deps.marshalBridgeResult(callFn(obj, ...callArgs), callbackState);
+        return deps.marshalBridgeResult(callFn(recv, ...callArgs), callbackState);
       };
       Object.defineProperty(fn, "name", { value: key, configurable: true });
       bridges.set(key, fn);

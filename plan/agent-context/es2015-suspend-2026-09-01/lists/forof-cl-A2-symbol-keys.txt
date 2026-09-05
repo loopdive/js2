@@ -1,0 +1,2 @@
+built-ins/WeakMap/iterable-with-symbol-keys.js
+built-ins/WeakSet/iterable-with-symbol-values.js

@@ -38,6 +38,7 @@
  * (`*-skip-param`, `*-skip-early-err` without a suffix).
  */
 import ts from "typescript";
+import { isStrictContext } from "./helpers/is-strict-function.js";
 
 export interface AnnexBCancelSite {
   /** The cancelled function-declaration name. */
@@ -410,7 +411,33 @@ export function collectAnnexBCancelSites(sf: ts.SourceFile | undefined): AnnexBC
         // `hasInterveningLexicalBinder` walks only the ancestor chain and is
         // almost always false, so it gates the subtree-walking `scopeBindsName`.
         if (scope) {
-          if (!hasInterveningLexicalBinder(node.parent, name, scope)) {
+          // A FunctionDeclaration directly in a switch CaseBlock is a lexical
+          // declaration in strict code, not an Annex B web-compat var binding.
+          // The CaseBlock environment is active only while the switch runs, so
+          // reads before/after the switch must remain unresolved.  The ordinary
+          // hoist walk still needs to compile the declaration for in-switch
+          // references; record only the position-sensitive unbound read rule
+          // here.  Annex B's relaxed treatment is explicitly non-strict
+          // (ECMA-262 B.3.2.5/B.3.2.6), so preserve the existing eligible path
+          // for the sloppy primary variant.
+          // (#5271 step 8) The same rule for a strict BLOCK: B.3.3's relaxed
+          // treatment is explicitly non-strict, so a function declared in a
+          // strict block is a LEXICAL declaration of that block and its name is
+          // unbound outside it (`global-code/block-decl-strict`). Only the
+          // position-sensitive unbound-read rule is recorded; the hoist walk
+          // still compiles the declaration for in-block references.
+          const strictSwitchFunction =
+            isStrictContext(node) &&
+            (ts.isCaseClause(node.parent) || ts.isDefaultClause(node.parent) || ts.isBlock(node.parent));
+          if (strictSwitchFunction && !scopeBindsName(scope, name)) {
+            sites.push({
+              name,
+              scopeStart: scope.getStart(sf),
+              scopeEnd: scope.getEnd(),
+              blockStart: range.getStart(sf),
+              blockEnd: range.getEnd(),
+            });
+          } else if (!strictSwitchFunction && !hasInterveningLexicalBinder(node.parent, name, scope)) {
             eligible.add(`${scope.getStart(sf)}:${name}`);
           } else if (!scopeBindsName(scope, name)) {
             sites.push({
@@ -443,8 +470,23 @@ function boundByInterveningScope(id: ts.Identifier, name: string, scopeStart: nu
   let node: ts.Node | undefined = id.parent;
   let child: ts.Node = id;
   while (node && node.getStart(sf) > scopeStart) {
-    if (ts.isBlock(node) && listBindsLexically(node.statements, name)) return true;
-    if ((ts.isCaseClause(node) || ts.isDefaultClause(node)) && listBindsLexically(node.statements, name)) return true;
+    // (#4618) A block-level FUNCTION DECLARATION is a lexical binding of its
+    // block (§14.2.3 sloppy-web-compat included) — without counting it here, a
+    // read inside `try { function ParentComponent(){…} … PC … }` was condemned
+    // by a SAME-NAMED Annex B site in a DIFFERENT sibling function (react's
+    // repeated ParentComponent/ComponentRendering* test components), throwing
+    // "X is not defined" for a perfectly bound read.
+    const blockStatements = ts.isBlock(node)
+      ? node.statements
+      : ts.isCaseClause(node) || ts.isDefaultClause(node)
+        ? node.statements
+        : undefined;
+    if (blockStatements !== undefined) {
+      if (listBindsLexically(blockStatements, name)) return true;
+      for (const stmt of blockStatements) {
+        if (ts.isFunctionDeclaration(stmt) && stmt.name?.text === name) return true;
+      }
+    }
     if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
       if (loopHeadBindsLexically(node, name)) return true;
     }

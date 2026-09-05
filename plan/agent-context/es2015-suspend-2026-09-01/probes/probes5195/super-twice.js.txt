@@ -1,0 +1,10 @@
+/*---
+description: probe .tmp/es2015/probes5195/super-twice.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var caught;
+class Parent { constructor() {} }
+class Child extends Parent { constructor() { super(); try { super(); } catch (err) { caught = err; } } }
+new Child();
+assert.sameValue(typeof caught, 'object');
+assert.sameValue(caught instanceof ReferenceError, true);

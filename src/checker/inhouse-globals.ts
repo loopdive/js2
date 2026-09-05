@@ -286,6 +286,8 @@ export const STRING_METHOD_RETURNS: ReadonlyMap<string, TypeFact> = new Map<stri
   ["toString", STRING],
   ["trim", STRING],
   ["trimEnd", STRING],
+  ["trimLeft", STRING],
+  ["trimRight", STRING],
   ["trimStart", STRING],
   ["valueOf", STRING],
 ]);

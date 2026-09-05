@@ -43,6 +43,44 @@ function buildPlan(
 }
 
 describe("#3523 source-ordered module-init planning", () => {
+  it("keeps declaration bindings independent from the population-wide evaluation order", () => {
+    const { ast, plan } = buildPlan(`let total: number = 0; total = total + 1;`);
+    const bindingId = plan.bindings[0]?.globalBindingId;
+    expect(bindingId).toEqual(expect.stringContaining("ir-binding:v1:global:"));
+    expect(plan.bindings).toEqual([
+      expect.objectContaining({
+        declarationOrdinal: 0,
+        names: ["total"],
+        declarationKind: "let",
+        mutable: true,
+        initialization: "tdz",
+        globalBindingId: bindingId,
+        tdzBindingId: expect.stringContaining("ir-binding:v1:global:"),
+      }),
+    ]);
+    expect(plan.evaluations).toEqual([
+      expect.objectContaining({
+        kind: "variable-initializer",
+        sourceOrdinal: 0,
+        statementOrdinal: 0,
+        bindingIds: [bindingId],
+      }),
+      expect.objectContaining({
+        kind: "statement",
+        sourceOrdinal: 1,
+        statementOrdinal: 1,
+        bindingIds: [],
+      }),
+    ]);
+    expect(
+      reconcileIrModuleInitPlan(plan, ast.sourceFile, {
+        liveFunctionNames: [],
+        staticEntries: [],
+        moduleStatements: [...ast.sourceFile.statements],
+      }),
+    ).toMatchObject({ aligned: true, plannedEntryCount: 2, legacyEntryCount: 2 });
+  });
+
   it("builds exact binding, live-seed, export, static, and invocation intents", () => {
     const { plan } = buildPlan(
       `
@@ -115,9 +153,21 @@ describe("#3523 source-ordered module-init planning", () => {
     ]);
     expect(destructuring.evaluations).toHaveLength(1);
 
+    // (#5332) This rung used to pin `missing-module-init-unit` here. That gap
+    // was not a capability limit of the PLAN — it was identity failing to mint
+    // a module-init terminal for a source whose only top-level statement is an
+    // export assignment, while this plan (correctly, matching the direct
+    // front-end queue) counts one as an evaluation. #3525's census turned that
+    // disagreement into a hard `terminal-join` error, so
+    // `export default <anything>;` in a multi-file project stopped compiling
+    // outright. Identity now owns the terminal, so the join succeeds and the
+    // gap is gone. `missing-module-init-unit` stays in the plan as a
+    // fail-closed guard; no ordinary source shape reaches it any more.
     const exportAssignment = buildPlan(`export default sideEffect();`).plan;
     expect(exportAssignment.evaluations.map((entry) => entry.kind)).toEqual(["export-assignment"]);
-    expect(exportAssignment.gaps).toEqual([expect.objectContaining({ code: "missing-module-init-unit" })]);
+    expect(exportAssignment.executable).toBe(true);
+    expect(exportAssignment.unitId).not.toBeNull();
+    expect(exportAssignment.gaps).toEqual([]);
 
     const forwardExport = buildPlan(`export { later }; function later(): number { return 1; }`).plan;
     expect(forwardExport.exports).toEqual([
@@ -178,7 +228,22 @@ describe("#3523 direct-queue parity inventory", () => {
     });
   });
 
-  it("keeps duplicated class-expression static queues observational", () => {
+  // Until `8f161cbf1` (which added `src/codegen/class-expression-static-init.ts`)
+  // a variable-bound class expression pushed its statics onto the MODULE-level
+  // `staticInitExprs` queue, and did so twice — once under the source binding
+  // and once under the synthetic identity. The legacy order for the source
+  // below was therefore `[static:28:29, static:43:44, static:28:29,
+  // static:43:44]` — four entries, two distinct — with the owning statement
+  // missing entirely, and this test pinned that divergence as observational.
+  //
+  // Class-expression statics now execute as part of ClassDefinitionEvaluation
+  // at the exact expression site (the expression-owned queue), so the
+  // module-level ordered queue holds exactly the one statement the plan
+  // predicts. Verified beyond the parity report: for a module that interleaves
+  // `log` writes with a class expression whose two statics also write `log`,
+  // both lanes observe `1234` and read the static values back as `5`/`6` — the
+  // statics still run, at the right point in source order.
+  it("aligns the class-expression static queue with the planned statement entry", () => {
     const ast = analyzeSource(
       `var C = class { static #a = 1; static #b = 2; m() { return 42; } };`,
       "module-init-class-expression-duplicate.js",
@@ -191,14 +256,17 @@ describe("#3523 direct-queue parity inventory", () => {
     const evidence = generated.moduleInitPlanning;
     expect(evidence).toBeDefined();
     expect(evidence!.parity).toMatchObject({
-      aligned: false,
+      aligned: true,
       plannedEntryCount: 1,
-      legacyEntryCount: 4,
-      missingFromLegacy: [expect.stringMatching(/^statement:/)],
+      legacyEntryCount: 1,
+      missingFromLegacy: [],
+      extraInLegacy: [],
       reordered: [],
     });
-    expect(evidence!.parity.extraInLegacy).toHaveLength(4);
-    expect(new Set(evidence!.parity.extraInLegacy).size).toBe(2);
+    // The single entry is the owning statement, not a static — no
+    // module-level static entry survives for a class EXPRESSION.
+    expect(evidence!.parity.legacyOrder).toEqual([expect.stringMatching(/^statement:/)]);
+    expect(evidence!.parity.legacyOrder).toEqual(evidence!.parity.plannedOrder);
   });
 
   it("detects the legacy all-statics-before-statements reordering in production", () => {
@@ -260,8 +328,13 @@ export function late(): number { return v; }
 `;
   // Rejected by the exact-lexical selector (string binding), so it stays on the
   // typed Unsupported route in every mode — the control for each claim below.
-  const UNSUPPORTED = `const greeting = "hi";
-export function get(): string { return greeting + "!"; }
+  // A module-init population the IR still declines, so the direct emitter owns
+  // it. The declaration is an OBJECT LITERAL, not the string const this fixture
+  // used until #3523 R4-M1 — a string module binding is representable storage
+  // now, so a string const stopped being an "unsupported" fixture and this
+  // block silently started asserting the opposite of its own name.
+  const UNSUPPORTED = `const config = { n: 1 };
+export function get(): number { return config.n + 1; }
 `;
 
   function moduleInitOutcome(result: CompileResult): IrObservedOutcome {
@@ -367,7 +440,9 @@ export function get(): string { return greeting + "!"; }
         // Fatal, not a demotion: no direct replacement body is emitted and no
         // publishable artifact survives the reconciliation failure.
         expect(violated.success).toBe(false);
-        expect(violated.errors.map((error) => error.message).join("\n")).toMatch(/exactly one startup adapter/);
+        expect(violated.errors.map((error) => error.message).join("\n")).toMatch(
+          /exactly one startup adapter|no declaration-time startup adapter/,
+        );
         expect(violated.binary.length).toBe(0);
       }
       // Control: the seam only arms the Prepared route. An Unsupported module
@@ -376,6 +451,366 @@ export function get(): string { return greeting + "!"; }
       expect(control.success).toBe(true);
     } finally {
       if (previous === undefined) delete process.env[seam];
+      else process.env[seam] = previous;
+    }
+  });
+});
+
+describe("#3523 exact scalar assignment stays inside the prepared module-init transaction", () => {
+  const SOURCE = `let total: number = 0;
+total = total + 1;
+export function read(): number { return total; }
+`;
+
+  // (#3523 R4 gap 2b) The scalar-statement operator family the prepared
+  // transaction owns. Every row's expected value is one only the ASSIGNMENT
+  // can produce — initializer-only execution returns the declared value — so a
+  // silently dropped statement fails on the number, not merely on an outcome
+  // row. The last two rows are the sub-B cases: a declaration AFTER an
+  // assignment, which the retired `sawAssignment` rule refused for order alone.
+  const ADMITTED_SHAPES = [
+    { name: "postfix increment", body: `let n: number = 0;\nn++;`, read: `n`, expected: 1 },
+    { name: "prefix increment", body: `let n: number = 0;\n++n;`, read: `n`, expected: 1 },
+    { name: "postfix decrement", body: `let n: number = 5;\nn--;`, read: `n`, expected: 4 },
+    { name: "prefix decrement", body: `let n: number = 5;\n--n;`, read: `n`, expected: 4 },
+    { name: "plus-equals", body: `let n: number = 0;\nn += 2;`, read: `n`, expected: 2 },
+    { name: "minus-equals", body: `let n: number = 5;\nn -= 2;`, read: `n`, expected: 3 },
+    { name: "times-equals", body: `let n: number = 5;\nn *= 3;`, read: `n`, expected: 15 },
+    { name: "divide-equals", body: `let n: number = 8;\nn /= 2;`, read: `n`, expected: 4 },
+    { name: "binary minus", body: `let n: number = 5;\nn = n - 2;`, read: `n`, expected: 3 },
+    { name: "binary times", body: `let n: number = 5;\nn = n * 3;`, read: `n`, expected: 15 },
+    { name: "binary divide", body: `let n: number = 8;\nn = n / 2;`, read: `n`, expected: 4 },
+    { name: "plain numeric literal", body: `let n: number = 0;\nn = 7;`, read: `n`, expected: 7 },
+    { name: "sequential compounds", body: `let n: number = 5;\nn -= 2;\nn *= 3;`, read: `n`, expected: 9 },
+    { name: "sequential binaries", body: `let n: number = 5;\nn = n - 2;\nn = n * 3;`, read: `n`, expected: 9 },
+    {
+      name: "declaration after assignment",
+      body: `let total: number = 0;\ntotal = total + 1;\nlet later: number = 2;`,
+      read: `total * 10 + later`,
+      expected: 12,
+    },
+    {
+      name: "interleaved declarations and updates",
+      body: `let n: number = 0;\nn++;\nlet k: number = 4;\nk--;`,
+      read: `n * 10 + k`,
+      expected: 13,
+    },
+  ] as const;
+
+  function admittedSource(shape: (typeof ADMITTED_SHAPES)[number]): string {
+    return `${shape.body}\nexport function read(): number { return ${shape.read}; }\n`;
+  }
+  const lanes = [
+    { name: "host-start", target: "gc" as const, deferTopLevelInit: false },
+    { name: "host-deferred", target: "gc" as const, deferTopLevelInit: true },
+    { name: "standalone-start", target: "standalone" as const, deferTopLevelInit: false },
+    { name: "standalone-deferred", target: "standalone" as const, deferTopLevelInit: true },
+    // (#3523 R4 gap 3) WASI is the fifth admitted lane. Its startup adapter is
+    // neither the `start` section nor a `__module_init` export: it is the one
+    // `_start` export, and the body carries the `__init_done` idempotence guard
+    // planted at preparation. `deferTopLevelInit` is not a WASI axis —
+    // `exportModuleInit` is `deferTopLevelInit && !wasi` — so one row covers it.
+    { name: "wasi-start-export", target: "wasi" as const, deferTopLevelInit: false },
+  ];
+
+  function compileLane(
+    source: string,
+    lane: (typeof lanes)[number],
+    skipSemanticDiagnostics = false,
+    optimize: false | undefined = undefined,
+  ): Promise<CompileResult> {
+    return compile(source, {
+      fileName: `issue-3523-scalar-${lane.name}.ts`,
+      target: lane.target,
+      deferTopLevelInit: lane.deferTopLevelInit,
+      experimentalIR: true,
+      trackFallbacks: true,
+      trackIrOutcomes: true,
+      emitWat: false,
+      ...(skipSemanticDiagnostics ? { skipSemanticDiagnostics: true } : {}),
+      ...(optimize === false ? { optimize: false } : {}),
+    });
+  }
+
+  function scalarModuleInitOutcome(result: CompileResult): IrObservedOutcome {
+    const rows = (result.irOutcomes ?? []).filter((outcome) => outcome.unitKind === "module-init");
+    expect(rows).toHaveLength(1);
+    return rows[0]!;
+  }
+
+  async function instantiateLane(
+    result: CompileResult,
+    lane: (typeof lanes)[number],
+  ): Promise<Record<string, unknown>> {
+    if (lane.target === "standalone" || lane.target === "wasi") {
+      const { instance } = await WebAssembly.instantiate(result.binary, {});
+      return instance.exports as Record<string, unknown>;
+    }
+    const imports = buildImports(result.imports, {}, result.stringPool);
+    const { instance } = await instantiateWasm(result.binary, imports.env, imports.string_constants);
+    imports.setInstance?.(instance);
+    return instance.exports as Record<string, unknown>;
+  }
+
+  async function directPoisonEvidence(source: string, target: "gc" | "wasi" = "gc"): Promise<string> {
+    try {
+      const result = await compile(source, {
+        fileName: `issue-3523-scalar-control-${target}.ts`,
+        target,
+        experimentalIR: true,
+        trackFallbacks: true,
+        trackIrOutcomes: true,
+        emitWat: false,
+        skipSemanticDiagnostics: true,
+      });
+      expect(result.success).toBe(false);
+      return result.errors.map((error) => error.message).join("\n");
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  it("routes every host/standalone/WASI adapter through one genuine IR component", async () => {
+    for (const lane of lanes) {
+      const result = await compileLane(SOURCE, lane);
+      expect(result.success, `${lane.name}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
+      expect(scalarModuleInitOutcome(result)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      expect(new Set(result.irCompiledFuncs ?? [])).toContain("<module-init>");
+      expect((result.irPostClaimErrors ?? []).filter((error) => error.func === "<module-init>")).toEqual([]);
+
+      const exports = await instantiateLane(result, lane);
+      const read = exports.read as () => number;
+      if (lane.deferTopLevelInit) {
+        expect(typeof exports.__module_init).toBe("function");
+        expect(read).toThrow();
+        (exports.__module_init as () => void)();
+      } else {
+        expect(exports.__module_init).toBeUndefined();
+      }
+      // The value, not merely an outcome row, proves that the later statement
+      // was lowered. Initializer-only execution would return zero.
+      expect(read()).toBe(1);
+      expect(read()).toBe(1);
+    }
+  });
+
+  it("is structural rather than allowlisted to one name, literal, or assignment count", async () => {
+    const variants = [
+      {
+        name: "renamed binding and different literal",
+        source: `let score = 10; score = score + 7; export function read(): number { return score; }`,
+        expected: 17,
+      },
+      {
+        name: "two independently assigned declarations",
+        source: `let left = 1; let right = 2; left = left + 3; right = right + 4;
+export function read(): number { return left * 10 + right; }`,
+        expected: 46,
+      },
+      {
+        name: "unrelated const before the assigned let",
+        source: `const offset = 4; let total = 1; total = total + 2;
+export function read(): number { return offset * 10 + total; }`,
+        expected: 43,
+      },
+      {
+        name: "multiple sequential assignments",
+        source: `let value = 0; value = value + 2; value = value + 3;
+export function read(): number { return value; }`,
+        expected: 5,
+      },
+      // (#3523 R4 gap 2b) Source order is proven per entry, so a declaration
+      // may follow an assignment. The retired `sawAssignment` rule refused
+      // this for ordering alone even though the plan zips bindings by
+      // `declarationOrdinal` and evaluations by population ordinal.
+      {
+        name: "declaration after an assignment",
+        source: `let total = 0; total = total + 1; let later = 2;
+export function read(): number { return total * 10 + later; }`,
+        expected: 12,
+      },
+      {
+        name: "declarations interleaved with updates",
+        source: `let first = 0; first++; let second = 4; second--;
+export function read(): number { return first * 10 + second; }`,
+        expected: 13,
+      },
+    ] as const;
+    for (const variant of variants) {
+      const result = await compileLane(variant.source, lanes[2]!);
+      expect(result.success, variant.name).toBe(true);
+      expect(scalarModuleInitOutcome(result)).toMatchObject({
+        kind: "emitted",
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+        preparedComponentId: expect.stringMatching(/^prepared-component:/),
+      });
+      const exports = await instantiateLane(result, lanes[2]!);
+      expect((exports.read as () => number)(), variant.name).toBe(variant.expected);
+    }
+  });
+
+  // (#3523 R4 gap 2b) The operator family is the slice's whole behavior claim:
+  // each shape must be prepared-owned on every lane AND produce a value only
+  // the assignment can produce. The deferred lanes additionally prove the
+  // statement runs at `__module_init`, not at instantiation.
+  it("owns the whole scalar-statement operator family on every lane", async () => {
+    for (const shape of ADMITTED_SHAPES) {
+      const source = admittedSource(shape);
+      for (const lane of lanes) {
+        const label = `${shape.name} / ${lane.name}`;
+        const result = await compileLane(source, lane);
+        expect(result.success, `${label}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
+        expect(scalarModuleInitOutcome(result), label).toMatchObject({
+          kind: "emitted",
+          legacyBodyEmitted: false,
+          irBodyEmitted: true,
+          preparedComponentId: expect.stringMatching(/^prepared-component:/),
+        });
+        expect(new Set(result.irCompiledFuncs ?? []), label).toContain("<module-init>");
+
+        const exports = await instantiateLane(result, lane);
+        const read = exports.read as () => number;
+        if (lane.deferTopLevelInit) {
+          expect(typeof exports.__module_init, label).toBe("function");
+          expect(read, label).toThrow();
+          (exports.__module_init as () => void)();
+        } else {
+          expect(exports.__module_init, label).toBeUndefined();
+        }
+        expect(read(), label).toBe(shape.expected);
+        expect(read(), label).toBe(shape.expected);
+      }
+    }
+    // 16 shapes x 5 lanes of real compiles; the default 35s budget is for
+    // single-compile tests.
+  }, 300000);
+
+  it("keeps the exact standalone candidate prepared without Binaryen optimization", async () => {
+    const lane = lanes[2]!;
+    const result = await compileLane(SOURCE, lane, false, false);
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(scalarModuleInitOutcome(result)).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    const exports = await instantiateLane(result, lane);
+    expect((exports.read as () => number)()).toBe(1);
+  });
+
+  it("never reaches the direct emitter in any admitted lane", async () => {
+    const poison = "JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY";
+    const previous = process.env[poison];
+    process.env[poison] = "1";
+    try {
+      // (#3523 R4 gap 2b) Every shape of the admitted operator family, not
+      // only the landed `total = total + 1`. A shape that still compiled a
+      // direct body would trip the poison and fail its compile.
+      for (const source of [SOURCE, ...ADMITTED_SHAPES.map(admittedSource)]) {
+        for (const lane of lanes) {
+          const result = await compileLane(source, lane);
+          expect(result.success, `${lane.name}: ${result.errors.map((error) => error.message).join("\n")}`).toBe(true);
+          expect(scalarModuleInitOutcome(result)).toMatchObject({
+            kind: "emitted",
+            legacyBodyEmitted: false,
+            irBodyEmitted: true,
+          });
+        }
+      }
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, poison);
+      else process.env[poison] = previous;
+    }
+    // 17 sources x 5 lanes of real compiles under the poison seam.
+  }, 300000);
+
+  it("fails closed for every near-miss grammar and binding-identity mutation", async () => {
+    const controls = [
+      ["const target", `const total: number = 0; total = total + 1;`],
+      // (#3523 R4 gap 2b) `total += 1`, `total++`, `total = total - 1` and
+      // `let total = 0; total = total + 1; let later = 2` used to sit here.
+      // They are now ADMITTED; their green-under-poison proof lives in "never
+      // reaches the direct emitter in any admitted lane". What replaces them
+      // are the boundaries of the widened grammar — the operators the two
+      // allowlists deliberately omit, the fixed operand order, the
+      // non-numeric storage kind, and statement-subtree admission.
+      ["exponent compound", `let total: number = 2; total **= 2;`],
+      ["remainder compound", `let total: number = 7; total %= 3;`],
+      ["bitwise-or compound", `let total: number = 0; total |= 1;`],
+      ["shift compound", `let total: number = 1; total <<= 1;`],
+      ["literal-first operand order", `let total: number = 0; total = 1 + total;`],
+      ["boolean-branded increment", `let flag = true; flag++;`],
+      ["statement-subtree body", `let total: number = 0; for (let i = 0; i < 3; i++) { total = total + i; }`],
+      ["parenthesized RHS", `let total: number = 0; total = (total + 1);`],
+      ["nonnumeric literal", `let total: number = 0; total = total + "1";`],
+      ["forward target", `total = total + 1; let total: number = 0;`],
+      ["unknown target", `missing = missing + 1;`],
+      ["missing initializer", `let total: number; total = total + 1;`],
+      ["different binding RHS", `let total: number = 0; let other: number = 0; total = other + 1;`],
+      ["property LHS", `const box = { value: 0 }; box.value = box.value + 1;`],
+      [
+        "local call RHS",
+        `function bump(value: number): number { return value + 1; } let total = 0; total = bump(total);`,
+      ],
+      ["var declaration", `var total: number = 0; total = total + 1;`],
+      ["destructuring", `let [total] = [0]; total = total + 1;`],
+      ["multiple declarations", `let total: number = 0, other: number = 1; total = total + 1;`],
+    ] as const;
+    const poison = "JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY";
+    const previous = process.env[poison];
+    process.env[poison] = "1";
+    try {
+      for (const [name, source] of controls) {
+        expect(await directPoisonEvidence(source), name).toContain("injected direct module-init body poison");
+      }
+      // (#3523 R4 gap 3) WASI used to sit here as a near-miss control: the
+      // selector refused it, so the admitted grammar still reached the direct
+      // emitter and tripped the poison. It is now an ADMITTED lane, and its
+      // green-under-poison proof lives in "never reaches the direct emitter in
+      // any admitted lane" above. The near-miss GRAMMAR controls still run on
+      // the gc lane, so this test keeps every assertion it was written for.
+      // (#3523 R4 gap 2b) `total += 1` was the WASI row here; it is now
+      // admitted, so the WASI near-miss carries a grammar the widened
+      // predicate still refuses.
+      expect(
+        await directPoisonEvidence(`let total: number = 2; total **= 2;`, "wasi"),
+        "WASI exponent compound",
+      ).toContain("injected direct module-init body poison");
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, poison);
+      else process.env[poison] = previous;
+    }
+  });
+
+  it("fails fatally if the prepared statement component is wired to two startup adapters", async () => {
+    const seam = "JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER";
+    const previous = process.env[seam];
+    process.env[seam] = "1";
+    try {
+      for (const lane of lanes) {
+        const violated = await compileLane(SOURCE, lane);
+        expect(violated.success, lane.name).toBe(false);
+        expect(violated.errors.map((error) => error.message).join("\n")).toMatch(
+          /exactly one startup adapter|no declaration-time startup adapter/,
+        );
+        expect(violated.binary.length).toBe(0);
+      }
+      // (#3523 R4 gap 2b) The control has to be a shape that STAYS overlay,
+      // or it proves nothing about the seam. `total += 1` was admitted by this
+      // slice; a `for` body is statement-subtree admission — a later slice —
+      // and is measured overlay on every lane.
+      const control = await compileLane(`let total = 0; for (let i = 0; i < 3; i++) { total = total + i; }`, lanes[1]!);
+      expect(control.success).toBe(true);
+      expect(scalarModuleInitOutcome(control).legacyBodyEmitted).toBe(true);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, seam);
       else process.env[seam] = previous;
     }
   });

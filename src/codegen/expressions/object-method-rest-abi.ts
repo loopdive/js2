@@ -5,6 +5,7 @@ import type { ValType } from "../../ir/types.js";
 import type { CodegenContext, FunctionContext, RestParamInfo } from "../context/types.js";
 import { getArrTypeIdxFromVec } from "../registry/types.js";
 import { skipTransparentExpressions } from "../shared.js";
+import { bindingIsSingleAssignment } from "../single-assignment-binding.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 
@@ -16,7 +17,12 @@ function objectLiteralMethodDeclaration(
   if (!ts.isPropertyAccessExpression(callee)) return undefined;
   let receiver = skipTransparentExpressions(callee.expression);
   if (ts.isIdentifier(receiver)) {
-    const initializer = ctx.oracle.constInitializerOf(receiver);
+    // `var` object bindings are the dominant test262 form. The declaration
+    // body is still a closed struct, so use its initializer when available;
+    // callers already fall back to the generic path when this proof fails.
+    const initializer =
+      ctx.oracle.constInitializerOf(receiver) ??
+      (bindingIsSingleAssignment(ctx, receiver) ? ctx.oracle.variableInitializerOf(receiver) : undefined);
     if (initializer) receiver = skipTransparentExpressions(initializer);
   }
   if (!ts.isObjectLiteralExpression(receiver)) return undefined;
@@ -41,6 +47,8 @@ export function directObjectMethodFuncIdx(
 ): number | undefined {
   if (funcIdx === undefined) return undefined;
   const declaration = objectLiteralMethodDeclaration(ctx, expr);
+  const literalFuncIdx = declaration ? ctx.objectLiteralMethodFuncIdx.get(declaration) : undefined;
+  if (literalFuncIdx !== undefined) funcIdx = literalFuncIdx;
   const hasRestBinding = declaration?.parameters.some(
     (parameter) =>
       parameter.dotDotDotToken !== undefined &&
@@ -87,14 +95,31 @@ export function emitKnownRestMethodArguments(
   restInfo: RestParamInfo,
   selfOffset: number,
 ): boolean {
-  if (expr.arguments.some((argument) => ts.isSpreadElement(argument))) return false;
   const fixedCount = restInfo.restIndex;
+  const spreadArguments = expr.arguments.filter(ts.isSpreadElement);
+  // A trailing spread that starts exactly at the callee's rest slot already
+  // has the hidden vec ABI the direct method expects. Forward that vec intact
+  // instead of falling through to the fixed-arity spread expander, which reads
+  // element zero and turns `m(...[])` into `m(undefined)`. Marked's
+  // `constructor(...args) { this.use(...args) }` exercises this exact shape at
+  // module start. Spreads that can also fill fixed parameters still require
+  // runtime expansion and deliberately keep the generic fallback.
+  const forwardsRestVec =
+    spreadArguments.length === 1 &&
+    expr.arguments.length === fixedCount + 1 &&
+    ts.isSpreadElement(expr.arguments[fixedCount]!);
+  if (spreadArguments.length > 0 && !forwardsRestVec) return false;
   for (let index = 0; index < fixedCount; index++) {
     if (index < expr.arguments.length) {
       compileInternalCallArgument(ctx, fctx, expr.arguments[index]!, paramTypes?.[selfOffset + index]);
     } else {
       pushDefaultValue(fctx, paramTypes?.[selfOffset + index] ?? { kind: "f64" }, ctx);
     }
+  }
+  if (forwardsRestVec) {
+    const spread = expr.arguments[fixedCount] as ts.SpreadElement;
+    compileInternalCallArgument(ctx, fctx, spread.expression, paramTypes?.[selfOffset + fixedCount]);
+    return true;
   }
   const restCount = Math.max(0, expr.arguments.length - fixedCount);
   fctx.body.push({ op: "i32.const", value: restCount });

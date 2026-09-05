@@ -22,6 +22,7 @@ import { emitDynGet } from "./dyn-read.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
+import { ensureWithHasBindingNative } from "./with-has-binding-native.js";
 import { emitThrowTypeError } from "./expressions/helpers.js";
 import { compileExpression, compileStatement, coerceType, valTypesMatch } from "./shared.js";
 
@@ -54,6 +55,32 @@ const OBJECT_PROTOTYPE_KEYS = new Set([
  */
 function withHasBindingImport(ctx: CodegenContext): string {
   return ctx.standalone ? "__extern_has" : "__with_has_binding";
+}
+
+/**
+ * (#5271 step 3, D1) The funcIdx of the HasBinding gate for a dynamic `with`.
+ *
+ * HOST: the `__with_has_binding` import (unchanged). STANDALONE: the DEFINED
+ * §9.1.1.2.1 native from `with-has-binding-native.ts` — HasProperty filtered by
+ * the receiver's @@unscopables blocklist — falling back to the plain
+ * `__extern_has` gate (pre-#5271 behaviour) when that native's substrate is
+ * absent. Callers must `flushLateImportShifts` before baking the result, exactly
+ * as they did around the bare `ensureLateImport`.
+ */
+function withHasBindingFuncIdx(ctx: CodegenContext, fctx: FunctionContext): number | undefined {
+  if (ctx.standalone) {
+    const native = ensureWithHasBindingNative(ctx);
+    if (native !== undefined) {
+      flushLateImportShifts(ctx, fctx);
+      return native;
+    }
+  }
+  return ensureLateImport(
+    ctx,
+    withHasBindingImport(ctx),
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "i32" }],
+  );
 }
 
 /**
@@ -334,6 +361,7 @@ function proveStructTypedWithTarget(ctx: CodegenContext, stmt: ts.WithStatement)
   if (!ts.isIdentifier(ident)) return null;
   // `undefined` is an identifier syntactically but never a struct target.
   if (ident.text === "undefined") return null;
+  if (ctx.growableObjectLiteralVars.has(ident.text)) return null;
 
   // Resolve the identifier's type via its SYMBOL's declaration, not its use
   // site. Inside a `with` body the TS checker widens every identifier to `any`
@@ -516,15 +544,7 @@ export function emitDynamicWithGet(
 ): ValType {
   // HasBinding gate: __extern_has(recv, "name") -> i32 (own+proto, value-indep).
   addStringConstantGlobal(ctx, name);
-  const hasIdx =
-    hasLocalIdx !== undefined
-      ? -1
-      : ensureLateImport(
-          ctx,
-          withHasBindingImport(ctx),
-          [{ kind: "externref" }, { kind: "externref" }],
-          [{ kind: "i32" }],
-        );
+  const hasIdx = hasLocalIdx !== undefined ? -1 : withHasBindingFuncIdx(ctx, fctx);
   flushLateImportShifts(ctx, fctx);
 
   // THEN arm: Get(recv, name) -> externref (via the #2580 substrate emitDynGet).
@@ -691,12 +711,7 @@ export function emitCaptureWithHasBinding(
   name: string,
 ): number {
   addStringConstantGlobal(ctx, name);
-  const hasIdx = ensureLateImport(
-    ctx,
-    withHasBindingImport(ctx),
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "i32" }],
-  );
+  const hasIdx = withHasBindingFuncIdx(ctx, fctx);
   flushLateImportShifts(ctx, fctx);
   const hasLocal = allocLocal(fctx, `__with_has_${fctx.locals.length}`, { kind: "i32" });
   if (hasIdx === undefined) {
@@ -786,12 +801,7 @@ export function emitDynamicWithDelete(
   emitOuterDelete: () => void,
 ): ValType {
   addStringConstantGlobal(ctx, name);
-  const hasIdx = ensureLateImport(
-    ctx,
-    withHasBindingImport(ctx),
-    [{ kind: "externref" }, { kind: "externref" }],
-    [{ kind: "i32" }],
-  );
+  const hasIdx = withHasBindingFuncIdx(ctx, fctx);
   const delIdx = ensureLateImport(
     ctx,
     "__delete_property",
@@ -845,8 +855,8 @@ function compileClosedObjectLiteralTarget(
   if (!typeName) {
     typeName = registerClosedLiteralStruct(ctx, expr);
   }
-  ensureComputedPropertyFields(ctx, fctx, expr, tsType);
-  return compileObjectLiteralForStruct(ctx, fctx, expr, typeName);
+  const replacementName = ensureComputedPropertyFields(ctx, fctx, expr, tsType);
+  return compileObjectLiteralForStruct(ctx, fctx, expr, replacementName ?? typeName);
 }
 
 function registerClosedLiteralStruct(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): string {

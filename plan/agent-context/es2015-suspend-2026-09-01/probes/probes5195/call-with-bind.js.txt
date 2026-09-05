@@ -1,0 +1,11 @@
+/*---
+description: probe .tmp/es2015/probes5195/call-with-bind.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class Base1 { }
+assert.throws(TypeError, function() { Base1(); });
+class Subclass1 extends Base1 { }
+assert.throws(TypeError, function() { Subclass1(); });
+var f = Subclass1.bind({}, 3, 4);
+var s = new f();
+assert.sameValue(Object.getPrototypeOf(s), Subclass1.prototype, 'bound-ctor instance proto');

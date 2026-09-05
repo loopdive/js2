@@ -41,6 +41,33 @@ function __isObject(value) {
 
 function __deepEqual(a, b) {
   if (__objectIs(a, b)) return true;
+  if (b !== null && b !== undefined && typeof b === "object") {
+    if (b.__js2ObjectContaining !== undefined) {
+      var objectExpected = b.__js2ObjectContaining;
+      if (!__isObject(a)) return false;
+      var objectKeys = Object.keys(objectExpected);
+      for (var objectIndex = 0; objectIndex < objectKeys.length; objectIndex++) {
+        var objectKey = objectKeys[objectIndex];
+        if (!__deepEqual(a[objectKey], objectExpected[objectKey])) return false;
+      }
+      return true;
+    }
+    if (b.__js2ArrayContaining !== undefined) {
+      if (!Array.isArray(a)) return false;
+      var arrayExpected = b.__js2ArrayContaining;
+      for (var arrayIndex = 0; arrayIndex < arrayExpected.length; arrayIndex++) {
+        var found = false;
+        for (var actualIndex = 0; actualIndex < a.length; actualIndex++) {
+          if (__deepEqual(a[actualIndex], arrayExpected[arrayIndex])) {
+            found = true;
+            break;
+          }
+        }
+        if (!found) return false;
+      }
+      return true;
+    }
+  }
   if (!__isObject(a) || !__isObject(b)) return false;
   var aIsArray = Array.isArray(a);
   var bIsArray = Array.isArray(b);
@@ -347,9 +374,35 @@ function expect(actual) {
       toEqual: function (expected) {
         return Promise.resolve(actual).then(function (value) { __assert(__deepEqual(value, expected), "resolved value mismatch"); });
       },
+      not: {
+        toThrow: function () {
+          return Promise.resolve(actual).then(function (value) {
+            if (typeof value !== "function") return;
+            __assert(__captureThrow(value) === null, "expected resolved function not to throw");
+          });
+        },
+        toThrowError: function () {
+          return Promise.resolve(actual).then(function (value) {
+            if (typeof value !== "function") return;
+            __assert(__captureThrow(value) === null, "expected resolved function not to throw");
+          });
+        },
+      },
     }
   };
 }
+
+// Jest exposes asymmetric matchers as static helpers on expect. Keep their
+// marker objects inside the same literal matcher implementation so
+// toEqual(expect.objectContaining(...)) and
+// toEqual(expect.arrayContaining(...)) behave identically in the native
+// oracle and compiled Wasm lanes.
+expect.objectContaining = function (value) {
+  return { __js2ObjectContaining: value };
+};
+expect.arrayContaining = function (value) {
+  return { __js2ArrayContaining: value };
+};
 
 function __recordError(error) {
   __lastError = __messageOf(error);
@@ -455,6 +508,9 @@ var jest = {
   mock: function (name, factory) {
     __jestMocks[name] = typeof factory === "function" ? factory : function () { return factory; };
   },
+  unmock: function (name) {
+    delete __jestMocks[name];
+  },
   requireActual: function (name) { return __js2IsolatedModule(name, __js2RequireActual(name)); },
   restoreAllMocks: function () {
     for (var i = 0; i < __jestSpies.length; i++) __jestSpies[i].mockRestore();
@@ -463,6 +519,7 @@ var jest = {
   runAllTimers: function () { return Promise.resolve(); },
   useFakeTimers: function () {},
   useRealTimers: function () {},
+  setTimeout: function () {},
   advanceTimersByTime: function () {},
 };
 
@@ -900,6 +957,7 @@ function __js2AssertConsole(kind, expected) {
 
 function patchMessageChannel() {}
 function spyOnDevAndProd(target, key) { return jest.spyOn(target, key); }
+function spyOnDev(target, key) { return jest.spyOn(target, key); }
 function gate(callbackOrName) {
   if (typeof callbackOrName === "string") {
     return callbackOrName === "enableFragmentRefs" ? false : false;
@@ -929,6 +987,252 @@ function __js2CheckReactVersion(packageName) {
         "  - " + (packageName || "react-dom") + ":  " + actual.version,
     );
   }
+}
+
+// The ReactDOM repository keeps this helper next to its tests rather than in
+// the published package. Keep its original rendering scenarios in the test
+// shim, but resolve every React/ReactDOM module through initModules so the
+// compiled lane still exercises its own Wasm renderer. Only JSDOM and the
+// Node stream sink remain explicit host capabilities.
+function __js2ReactDOMServerIntegrationTestUtils(initModules) {
+  var ReactDOM;
+  var ReactDOMClient;
+  var ReactDOMServer;
+  var act;
+
+  function resetModules() {
+    var modules = initModules();
+    ReactDOM = modules.ReactDOM;
+    ReactDOMClient = modules.ReactDOMClient;
+    ReactDOMServer = modules.ReactDOMServer;
+    act = __js2RequireActual("internal-test-utils").act;
+  }
+
+  function shouldUseDocument(reactElement) {
+    return reactElement && reactElement.type === "html";
+  }
+
+  function getContainerFromMarkup(reactElement, markup) {
+    if (shouldUseDocument(reactElement)) {
+      var doc = document.implementation.createHTMLDocument("");
+      doc.open();
+      doc.write(markup || "<!doctype html><html><meta charset=utf-8><title>test doc</title>");
+      doc.close();
+      return doc;
+    }
+    var container = document.createElement("div");
+    container.innerHTML = markup;
+    return container;
+  }
+
+  async function asyncReactDOMRender(reactElement, domElement, forceHydrate) {
+    if (forceHydrate) {
+      await act(function () {
+        ReactDOMClient.hydrateRoot(domElement, reactElement, {
+          onRecoverableError: function (error) {
+            var message = error && error.message ? error.message : "";
+            if (message.indexOf("There was an error while hydrating.") < 0) console.error(error);
+          },
+        });
+      });
+      return;
+    }
+    await act(function () {
+      if (ReactDOMClient) {
+        var root = ReactDOMClient.createRoot(domElement);
+        root.render(reactElement);
+      } else {
+        ReactDOM.render(reactElement, domElement);
+      }
+    });
+  }
+
+  async function expectErrors(fn, count) {
+    if (console.error && typeof console.error.mockClear === "function") console.error.mockClear();
+    else if (console.error) spyOnDev(console, "error").mockImplementation(function () {});
+    var result = await fn();
+    if (console.error && console.error.mock && console.error.mock.calls) {
+      var filteredWarnings = [];
+      var shouldIgnore = __js2ReactInfra().shouldIgnoreConsoleError;
+      for (var index = 0; index < console.error.mock.calls.length; index++) {
+        var args = console.error.mock.calls[index];
+        var format = args[0];
+        var rest = Array.prototype.slice.call(args, 1);
+        if (typeof shouldIgnore !== "function" || !shouldIgnore(format, rest)) filteredWarnings.push(args);
+      }
+      if (filteredWarnings.length !== count && __DEV__) {
+        expect(console.error).toHaveBeenCalledTimes(count);
+      }
+    }
+    return result;
+  }
+
+  function renderIntoDom(reactElement, domElement, forceHydrate, errorCount) {
+    return expectErrors(async function () {
+      await asyncReactDOMRender(reactElement, domElement, forceHydrate);
+      return domElement.firstChild;
+    }, errorCount === undefined ? 0 : errorCount);
+  }
+
+  async function renderIntoString(reactElement, errorCount) {
+    return expectErrors(function () {
+      return new Promise(function (resolve) {
+        resolve(ReactDOMServer.renderToString(reactElement));
+      });
+    }, errorCount === undefined ? 0 : errorCount);
+  }
+
+  async function serverRender(reactElement, errorCount) {
+    var markup = await renderIntoString(reactElement, errorCount);
+    return getContainerFromMarkup(reactElement, markup).firstChild;
+  }
+
+  async function renderIntoStream(reactElement, errorCount) {
+    return expectErrors(function () {
+      return new Promise(function (resolve, reject) {
+        var writable = __js2NodeStreamFacade().PassThrough();
+        var buffer = "";
+        writable.setEncoding("utf8");
+        writable.on("data", function (chunk) { buffer += chunk; });
+        writable.on("error", reject);
+        writable.on("finish", function () { resolve(buffer); });
+        var stream = ReactDOMServer.renderToPipeableStream(reactElement, {
+          onShellError: reject,
+        });
+        stream.pipe(writable);
+      });
+    }, errorCount === undefined ? 0 : errorCount);
+  }
+
+  async function streamRender(reactElement, errorCount) {
+    var markup = await renderIntoStream(reactElement, errorCount);
+    var firstNode = getContainerFromMarkup(reactElement, markup).firstChild;
+    if (firstNode && firstNode.nodeType === 10) firstNode = firstNode.nextSibling;
+    return firstNode;
+  }
+
+  function clientCleanRender(element, errorCount) {
+    if (shouldUseDocument(element)) return clientRenderOnServerString(element, errorCount);
+    return renderIntoDom(element, document.createElement("div"), false, errorCount);
+  }
+
+  async function clientRenderOnServerString(element, errorCount) {
+    var markup = await renderIntoString(element, errorCount);
+    resetModules();
+    var container = getContainerFromMarkup(element, markup);
+    var serverNode = container.firstChild;
+    var firstClientNode = await renderIntoDom(element, container, true, errorCount);
+    var clientNode = firstClientNode;
+    while (serverNode || clientNode) {
+      expect(serverNode !== null && serverNode !== undefined).toBe(true);
+      expect(clientNode !== null && clientNode !== undefined).toBe(true);
+      expect(clientNode.nodeType).toBe(serverNode.nodeType);
+      expect(serverNode === clientNode).toBe(true);
+      serverNode = serverNode.nextSibling;
+      clientNode = clientNode.nextSibling;
+    }
+    return firstClientNode;
+  }
+
+  function BadMarkupExpected() {}
+
+  async function clientRenderOnBadMarkup(element, errorCount) {
+    var container = getContainerFromMarkup(
+      element,
+      shouldUseDocument(element)
+        ? "<html><body><div id=badIdWhichWillCauseMismatch /></body></html>"
+        : "<div id=badIdWhichWillCauseMismatch></div>",
+    );
+    await renderIntoDom(element, container, true, (errorCount === undefined ? 0 : errorCount) + 1);
+    var hydratedTextContent = container.lastChild && container.lastChild.textContent;
+    var cleanContainer;
+    if (shouldUseDocument(element)) {
+      cleanContainer = getContainerFromMarkup(element, "<html></html>").documentElement;
+      element = element.props.children;
+    } else {
+      cleanContainer = document.createElement("div");
+    }
+    await asyncReactDOMRender(element, cleanContainer, true);
+    var cleanTextContent = (cleanContainer.lastChild && cleanContainer.lastChild.textContent) || "";
+    expect(hydratedTextContent).toBe(cleanTextContent);
+    throw new BadMarkupExpected();
+  }
+
+  function itRenders(desc, testFn) {
+    it("renders " + desc + " with server string render", function () { return testFn(serverRender); });
+    it("renders " + desc + " with server stream render", function () { return testFn(streamRender); });
+    itClientRenders(desc, testFn);
+  }
+
+  function itClientRenders(desc, testFn) {
+    it("renders " + desc + " with clean client render", function () { return testFn(clientCleanRender); });
+    it("renders " + desc + " with client render on top of good server markup", function () {
+      return testFn(clientRenderOnServerString);
+    });
+    it("renders " + desc + " with client render on top of bad server markup", async function () {
+      try {
+        await testFn(clientRenderOnBadMarkup);
+      } catch (error) {
+        if (!(error instanceof BadMarkupExpected)) throw error;
+      }
+    });
+  }
+
+  function itThrows(desc, testFn, partialMessage) {
+    it("throws " + desc, function () {
+      return testFn().then(
+        function () { expect(false).toBe("The promise resolved and should not have."); },
+        function (error) {
+          expect(error).toBeInstanceOf(Error);
+          expect(error.message).toContain(partialMessage);
+        },
+      );
+    });
+  }
+
+  function itThrowsWhenRendering(desc, testFn, partialMessage) {
+    itThrows("when rendering " + desc + " with server string render", function () {
+      return testFn(serverRender);
+    }, partialMessage);
+    itThrows("when rendering " + desc + " with clean client render", function () {
+      return testFn(clientCleanRender);
+    }, partialMessage);
+    itThrows("when rendering " + desc + " with client render on top of bad server markup", function () {
+      return testFn(function (element, warningCount) {
+        return clientRenderOnBadMarkup(element, (warningCount || 0) - 1);
+      });
+    }, partialMessage);
+  }
+
+  function expectMarkupMatch(serverElement, clientElement) {
+    return testMarkupMatch(serverElement, clientElement, true);
+  }
+
+  function expectMarkupMismatch(serverElement, clientElement) {
+    return testMarkupMatch(serverElement, clientElement, false);
+  }
+
+  async function testMarkupMatch(serverElement, clientElement, shouldMatch) {
+    var domElement = await serverRender(serverElement);
+    resetModules();
+    return renderIntoDom(clientElement, domElement.parentNode, true, shouldMatch ? 0 : 1);
+  }
+
+  return {
+    resetModules: resetModules,
+    expectMarkupMismatch: expectMarkupMismatch,
+    expectMarkupMatch: expectMarkupMatch,
+    itRenders: itRenders,
+    itClientRenders: itClientRenders,
+    itThrowsWhenRendering: itThrowsWhenRendering,
+    asyncReactDOMRender: asyncReactDOMRender,
+    serverRender: serverRender,
+    clientCleanRender: clientCleanRender,
+    clientRenderOnBadMarkup: clientRenderOnBadMarkup,
+    clientRenderOnServerString: clientRenderOnServerString,
+    renderIntoDom: renderIntoDom,
+    streamRender: streamRender,
+  };
 }
 
 function __js2RequireActual(name) {
@@ -996,7 +1300,9 @@ function __js2RequireActual(name) {
   // upstream test reaches its assertion instead of failing at module lookup.
   if (name === "react/jsx-runtime") return __js2ReactInfra().reactJsxRuntime;
   if (name === "react/jsx-dev-runtime") return __js2ReactInfra().reactJsxDevRuntime;
+  if (name === "scheduler" || name === "scheduler/unstable_mock") return __js2ReactInfra().schedulerMock;
   if (name === "internal-test-utils") return __js2InternalTestUtils;
+  if (name === "./utils/ReactDOMServerIntegrationTestUtils") return __js2ReactDOMServerIntegrationTestUtils;
   if (name === "./utils/IntersectionMocks") return __js2IntersectionMocks;
   if (name === "react-dom-bindings/src/client/HTMLNodeType") return __js2HTMLNodeType;
   if (name === "prop-types") return __js2PropTypes;
@@ -1024,7 +1330,12 @@ function __js2RequireActual(name) {
 }
 
 function require(name) {
-  if (__jestMocks[name]) return __js2IsolatedModule(name, __jestMocks[name]());
+  // Published implementation modules are evaluated before the entry module
+  // initializes the Jest mock table. Their top-level Node require calls
+  // must still reach the explicit host dependency resolver; an early access
+  // to __jestMocks[name] would otherwise trap during module initialization.
+  if (__jestMocks !== undefined && __jestMocks !== null && __jestMocks[name])
+    return __js2IsolatedModule(name, __jestMocks[name]());
   return __js2IsolatedModule(name, __js2RequireActual(name));
 }
 `;
@@ -1057,3 +1368,22 @@ ${test.body}
 
 /** Reads back the message recorded by the most recent failing test. */
 export const LAST_ERROR_EXPORT = `export function __react_last_error() { return __lastError; }`;
+
+/**
+ * Watchdog for one awaited test execution, shared by the React-family suites.
+ *
+ * An upstream body can await a promise the harness can never settle (a Fizz
+ * stream that never completes, an `act` whose scheduler work never drains).
+ * Without this bound a single such test parks the whole npm-compat generator
+ * forever — the process prints nothing and never exits, which is
+ * indistinguishable from a crashed runner from CI's point of view. The
+ * timeout is a watchdog, not a selection filter: a timed-out test stays in
+ * the report as a failure or harness-incompatible result.
+ */
+export function withTimeout(value, timeoutMs, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs} ms`)), timeoutMs);
+  });
+  return Promise.race([Promise.resolve(value), timeout]).finally(() => clearTimeout(timer));
+}

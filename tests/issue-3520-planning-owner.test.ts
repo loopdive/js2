@@ -120,6 +120,62 @@ describe("#3520 exact planning owner identity", () => {
     expect([...context.moduleInitUnitIdBySourceFile]).toEqual(before.moduleInits);
   });
 
+  it("uses explicit and implicit terminal constructors as exact initialized-field planning owners", () => {
+    const fixture = source(
+      "/repo/field-planning-owners.ts",
+      `
+        function seed() { return 1; }
+        class TopExplicit { value = 1; constructor() {} read() { return this.value; } }
+        class TopImplicit { value = 2; read() { return this.value; } }
+        function outer() {
+          class NestedExplicit { value = 3; constructor() {} read() { return this.value; } }
+          class NestedImplicit { value = 4; read() { return this.value; } }
+          class UnsupportedNestedExplicit { value = seed(); constructor() {} read() { return this.value; } }
+          return 0;
+        }
+      `,
+    );
+    const context = contextFor([fixture]);
+    const outer = functionDeclaration(fixture, "outer");
+    const outerId = unitId(context, outer);
+    const classes = collectNodes(fixture, ts.isClassDeclaration);
+    const classByName = (name: string): ts.ClassDeclaration => {
+      const declaration = classes.find((candidate) => candidate.name?.text === name);
+      if (!declaration) throw new Error(`missing class ${name}`);
+      return declaration;
+    };
+
+    for (const name of ["TopExplicit", "TopImplicit", "NestedExplicit", "NestedImplicit"] as const) {
+      const declaration = classByName(name);
+      const explicitConstructor = declaration.members.find(ts.isConstructorDeclaration);
+      const constructorDeclaration = explicitConstructor ?? declaration;
+      const constructorId = unitId(context, constructorDeclaration);
+      const field = declaration.members.find(ts.isPropertyDeclaration)!;
+
+      expect(context.terminalByUnitId.get(constructorId)).toBe(context.unitByUnitId.get(constructorId));
+      expect(requireIrPlanningOwnerUnitId(context, field.initializer!)).toBe(constructorId);
+      if (explicitConstructor) {
+        expect(requireIrPlanningOwnerUnitId(context, explicitConstructor.body!)).toBe(constructorId);
+      }
+    }
+
+    const unsupported = classByName("UnsupportedNestedExplicit");
+    const unsupportedConstructor = unsupported.members.find(ts.isConstructorDeclaration)!;
+    const unsupportedConstructorId = unitId(context, unsupportedConstructor);
+    const unsupportedField = unsupported.members.find(ts.isPropertyDeclaration)!;
+
+    expect(context.terminalByUnitId.get(unsupportedConstructorId)).toBe(
+      context.unitByUnitId.get(unsupportedConstructorId),
+    );
+    expect(context.unitByUnitId.get(unsupportedConstructorId)).toMatchObject({
+      terminal: true,
+      terminalOwnerId: unsupportedConstructorId,
+      containingTerminalOwnerId: outerId,
+    });
+    expect(requireIrPlanningOwnerUnitId(context, unsupportedConstructor.body!)).toBe(unsupportedConstructorId);
+    expect(requireIrPlanningOwnerUnitId(context, unsupportedField.initializer!)).toBe(unsupportedConstructorId);
+  });
+
   it("returns the outer terminal for nested, arrow, object-method, and Promise-like support units", () => {
     const fixture = source(
       "/repo/callbacks.ts",

@@ -32,6 +32,8 @@ on:
       - "vitest.config.ts"
       - "src/**"
       - "scripts/build-test262-report.mjs"
+      - "scripts/test262-concurrency.mjs"
+      - "scripts/validate-test262-completeness.mjs"
       - "scripts/compiler-fork-worker.mjs"
       - "scripts/compiler-pool.ts"
       - "scripts/diff-test262.ts"
@@ -96,6 +98,11 @@ on:
         type: boolean
       layout_emit:
         description: "(#3927) Measurement lane for the per-type-layout default-ON decision: export JS2WASM_FNCTOR_LAYOUT_EMIT=1 into the shard env. Same contract as ir_first: NEVER promotes a baseline — the merged report artifact is the measurement output, diffed against the same-SHA committed baseline."
+        required: false
+        default: false
+        type: boolean
+      skip_promote:
+        description: "Measure only: run the shard matrix but NEVER promote. Use for bisects and any manual rerun on a non-tip ref. Unlike ir_first / layout_emit / eval_engine=interpreter — the three existing promote suppressors — this changes NOTHING about how the corpus is compiled or run, so its merged report is directly comparable to the published QuickJS baseline. Without it, a workflow_dispatch measures an arbitrary ref and then overwrites loopdive/js2wasm-baselines (the regression-gate baseline EVERY open PR is diffed against) with that ref's numbers, re-stamps the #2097 high-water mark and redeploys Pages."
         required: false
         default: false
         type: boolean
@@ -879,6 +886,16 @@ jobs:
       TEST262_TARGET: ${{ matrix.target.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.target.result_prefix }}
       JS2WASM_EVAL_ENGINE: ${{ matrix.target.test262_target == 'standalone' && (inputs.eval_engine || 'quickjs') || '' }}
+      # (#4654) The standalone lane's eval-heavy rows can legitimately exceed the
+      # 90 s per-test default: a single test262 file that reconstructs a RegExp
+      # through the runtime-eval membrane runs ~65k evals at ~1.6 ms each, so it
+      # needs 130-200 s of honest work. Vitest kills a test that blows the limit
+      # WITHOUT writing a jsonl row, so the run under-reports its own denominator
+      # instead of recording a failure (measured on the same mechanism: 202 of 816
+      # eval-code rows missing at 2 workers). Only tests that would otherwise be
+      # KILLED consume the extra budget; the job's timeout-minutes is the real cap.
+      # Host cells keep the 90 s default (empty = tests/test262-shared.ts default).
+      TEST262_IT_TIMEOUT_MS: ${{ matrix.target.test262_target == 'standalone' && '300000' || '' }}
       # The shared provider artifact makes QuickJS the authoritative CI
       # standalone lane. Host cells leave the flag empty; the interpreter
       # escape hatch still uses this full-tier switch.
@@ -951,11 +968,15 @@ jobs:
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
           fi
-          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
-          if [ ! -s "$completion_marker" ]; then
+          completion_marker=$(find benchmarks/results -maxdepth 1 -name "${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json" -print -quit)
+          if [ -z "$completion_marker" ] || [ ! -s "$completion_marker" ]; then
             echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
             exit 2
           fi
+          node scripts/validate-test262-completeness.mjs \
+            --input "benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl" \
+            --manifest "$completion_marker" \
+            --expected-shards 1
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Upload shard artifacts
@@ -971,7 +992,7 @@ jobs:
           name: test262-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
-            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
       # #3404 — a single transient artifact-upload flake (e.g. `Failed to
@@ -990,6 +1011,7 @@ jobs:
           overwrite: true
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
   test262-shard-mg:
@@ -1083,6 +1105,16 @@ jobs:
       TEST262_TARGET: ${{ matrix.test262_target }}
       TEST262_RESULT_PREFIX: ${{ matrix.result_prefix }}
       JS2WASM_EVAL_ENGINE: ${{ matrix.test262_target == 'standalone' && 'quickjs' || '' }}
+      # (#4654) The standalone lane's eval-heavy rows can legitimately exceed the
+      # 90 s per-test default: a single test262 file that reconstructs a RegExp
+      # through the runtime-eval membrane runs ~65k evals at ~1.6 ms each, so it
+      # needs 130-200 s of honest work. Vitest kills a test that blows the limit
+      # WITHOUT writing a jsonl row, so the run under-reports its own denominator
+      # instead of recording a failure (measured on the same mechanism: 202 of 816
+      # eval-code rows missing at 2 workers). Only tests that would otherwise be
+      # KILLED consume the extra budget; the job's timeout-minutes is the real cap.
+      # Host cells keep the 90 s default (empty = tests/test262-shared.ts default).
+      TEST262_IT_TIMEOUT_MS: ${{ matrix.test262_target == 'standalone' && '300000' || '' }}
       TEST262_FULL_RUNTIME_EVAL: ${{ matrix.test262_target == 'standalone' && '1' || '' }}
       TEST262_CHUNK_INDEX: ${{ matrix.chunk_index }}
       TEST262_CHUNK_TOTAL: ${{ matrix.chunk_total }}
@@ -1141,11 +1173,15 @@ jobs:
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
           fi
-          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
-          if [ ! -s "$completion_marker" ]; then
+          completion_marker=$(find benchmarks/results -maxdepth 1 -name "${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json" -print -quit)
+          if [ -z "$completion_marker" ] || [ ! -s "$completion_marker" ]; then
             echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
             exit 2
           fi
+          node scripts/validate-test262-completeness.mjs \
+            --input "benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl" \
+            --manifest "$completion_marker" \
+            --expected-shards 1
           echo "vitest_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Upload shard artifacts
@@ -1167,7 +1203,7 @@ jobs:
           name: test262-${{ matrix.target_name }}-shard-${{ matrix.chunk_label }}
           path: |
             benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
-            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
+            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
       # #3404 — retry a transient artifact-upload flake once (see the matching
@@ -1183,6 +1219,7 @@ jobs:
           overwrite: true
           path: |
             benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
   merge-report:
@@ -1329,6 +1366,37 @@ jobs:
           find shard-artifacts/test262-standalone-shard-* -name 'test262-standalone-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-standalone-results-merged.jsonl
           test -s merged-reports/test262-standalone-results-merged.jsonl
 
+      - name: Validate merged JS-host Test262 verdict completeness (#5215)
+        if: env.HOST_RAN == 'true'
+        env:
+          # Static push/dispatch matrices have 57 shards; the capacity-sized
+          # merge_group matrix keeps 52 js-host shards. Missing artifact
+          # directories must fail the aggregate, not disappear in `find`.
+          EXPECTED_SHARDS: ${{ github.event_name == 'merge_group' && '52' || '57' }}
+        run: |
+          mapfile -d '' manifests < <(find shard-artifacts/test262-js-host-shard-* -type f -name 'test262-results-*.shard-*.complete.json' -print0 | sort -z)
+          manifest_args=()
+          for manifest in "${manifests[@]}"; do manifest_args+=(--manifest "$manifest"); done
+          node scripts/validate-test262-completeness.mjs \
+            --input merged-reports/test262-results-merged.jsonl \
+            --expected-shards "$EXPECTED_SHARDS" \
+            "${manifest_args[@]}"
+
+      - name: Validate merged standalone Test262 verdict completeness (#5215)
+        if: env.STANDALONE_RAN == 'true'
+        env:
+          # Static push/dispatch matrices have 57 shards; the capacity-sized
+          # merge_group matrix keeps 50 standalone shards.
+          EXPECTED_SHARDS: ${{ github.event_name == 'merge_group' && '50' || '57' }}
+        run: |
+          mapfile -d '' manifests < <(find shard-artifacts/test262-standalone-shard-* -type f -name 'test262-standalone-results-*.shard-*.complete.json' -print0 | sort -z)
+          manifest_args=()
+          for manifest in "${manifests[@]}"; do manifest_args+=(--manifest "$manifest"); done
+          node scripts/validate-test262-completeness.mjs \
+            --input merged-reports/test262-standalone-results-merged.jsonl \
+            --expected-shards "$EXPECTED_SHARDS" \
+            "${manifest_args[@]}"
+
       - name: Build merged JS-host test262 report
         if: env.HOST_RAN == 'true'
         run: |
@@ -1364,6 +1432,38 @@ jobs:
         run: |
           node scripts/check-standalone-highwater.mjs \
             --report merged-reports/test262-standalone-report-merged.json
+
+      # PER-EDITION conformance ratchet. Every guard above this line scores the
+      # corpus as ONE number, so an edition the project has already finished can
+      # rot while attention is on the edition being worked: -40 in ES5 against
+      # +50 in ES2016 reads as +10 and passes the high-water floor, the #1897
+      # net gate and the catastrophic guard alike. This step scores each ES
+      # edition separately against a committed floor and fails if a RATCHETED
+      # edition loses ground, whatever the headline did.
+      #
+      # `--compare` makes it per-TEST rather than per-count: a change that
+      # breaks one ES5 test and fixes another leaves the count flat, and a
+      # count-only ratchet would call that even. It is not even -- it is a
+      # regression plus an improvement, and the regression still has to be
+      # deliberate.
+      #
+      # Partially-covered editions are skipped, not scored (see the script
+      # header) -- the #4412 hazard, where a scoped run's partial total was
+      # posted as if it were a full one.
+      - name: Per-edition conformance ratchet (no completed edition may regress)
+        if: env.STANDALONE_RAN == 'true'
+        run: |
+          COMPARE=""
+          if [ -s .test262-cache/test262-standalone-current.jsonl ]; then
+            COMPARE="--compare .test262-cache/test262-standalone-current.jsonl"
+          else
+            echo "::notice::no standalone baseline JSONL on disk — running the ratchet in count-only mode"
+          fi
+          npx tsx scripts/test262-edition-ratchet.ts \
+            --results merged-reports/test262-standalone-results-merged.jsonl \
+            --target standalone \
+            --eval-engine "${JS2WASM_EVAL_ENGINE:-quickjs}" \
+            $COMPARE
 
       # (#3953) MAKE THE SILENCE LOUD. The step above is the only place in CI
       # that holds BOTH the committed mark and a fresh measurement of reality,
@@ -2246,6 +2346,15 @@ jobs:
           # so the +4 is a speculative-merge/CI-flaky classification, NOT a main
           # regression — this valve is the ratchet's own designed unwedge.
           TRAP_RATCHET_TOLERANCE: ${{ vars.TRAP_RATCHET_TOLERANCE || '0' }}
+          # (#5280) Persist the #2098 regression-bucket signature as a
+          # machine-readable sidecar. diff-test262.ts writes it only when this
+          # variable is set, and writing it changes nothing else about the run
+          # — the gate's exit code, its regression arithmetic and its artifact
+          # are untouched. The signature is emitted from the GATE invocation,
+          # not the triage one, so it always describes the exact regression set
+          # the verdict was computed from (scope filter and baseline metadata
+          # applied).
+          TEST262_SIGNATURE_OUT: merged-reports/test262-bucket-signature.json
         run: |
           BASELINE="benchmarks/results/test262-current.jsonl"
           if [ ! -f "$BASELINE" ]; then
@@ -2335,6 +2444,112 @@ jobs:
           echo "--- first 40 lines of the detailed report ---"
           head -40 merged-reports/test262-regressions-detail.txt || true
 
+      # (#5280) CROSS-PR BUCKET-SIGNATURE LEDGER — the piece that makes the
+      # #2098 hint load-bearing.
+      #
+      # The hint "Same signature on another PR ⇒ identical cluster ⇒ likely
+      # baseline drift" has been PRINTED since #2098 and ACTED ON by nobody: a
+      # human had to open two run logs and compare. On 2026-09-02 the identical
+      # one-row cluster `class-definition-null-proto-super.js` (signature
+      # 96690aa5e0efb4ff) parked THREE unrelated PRs — #5479 (run 33626922676),
+      # #5480 (33642323854), #5486 (33683869984) — costing three ~20-minute
+      # matrix cycles, three hand diagnoses and three re-admissions.
+      #
+      # Persistence is an ordinary run artifact named by the signature itself,
+      # so the lookup is one exact-name artifact query — the same mechanism the
+      # #1956 predecessor-group baseline uses for `test262-group-<sha>`. The
+      # 1-day retention is ample: those three parks landed inside nine hours.
+      #
+      # WHAT IT CANNOT DO, BY CONSTRUCTION: it never turns a failing gate green.
+      # It rewrites the VERDICT TEXT in `Fail on regressions` and names the
+      # prior occurrence. A signature seen once stays `first-occurrence` and the
+      # #2562 LIKELY-REAL banner is left exactly as it was — which is the case a
+      # genuine single-PR regression falls into. merge_group only: PR-time runs
+      # green-skip the shards (#4153), so a PR-time signature would compare
+      # nothing against nothing.
+      - name: Cross-PR bucket-signature ledger (#5280)
+        id: sig_ledger
+        if: always() && env.HOST_RAN == 'true' && github.event_name == 'merge_group'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          # `gh-readonly-queue/main/pr-<N>-<sha>` — the PR (or the batch's last
+          # entry) this group was built for. Parsed below; empty is tolerated
+          # and simply makes every prior count as "a different PR".
+          MG_HEAD_REF: ${{ github.event.merge_group.head_ref }}
+        run: |
+          set -uo pipefail
+          SIG_FILE=merged-reports/test262-bucket-signature.json
+          if [ ! -f "$SIG_FILE" ]; then
+            echo "#5280: no bucket signature this run (no regressions) — nothing to compare."
+            exit 0
+          fi
+          SIG=$(node -e "process.stdout.write(String(require('./merged-reports/test262-bucket-signature.json').signature||''))")
+          if [ -z "$SIG" ]; then
+            echo "::warning::#5280 signature sidecar present but empty — skipping ledger."
+            exit 0
+          fi
+          PR_NUM=$(printf '%s' "$MG_HEAD_REF" | sed -nE 's|.*/pr-([0-9]+)-.*|\1|p')
+          echo "#5280 signature=$SIG pr=${PR_NUM:-<unparsed>} base=${MG_BASE_SHA:-<none>}"
+
+          # This group's test262-RELEVANT changed paths. Same classifier the
+          # #2562 staleness step and the `changes` job use (--list mode), so the
+          # ledger's notion of "relevant" cannot drift from the gate's. An
+          # unresolvable diff leaves the list EMPTY, and an empty list can never
+          # be judged disjoint (see pathsDisjoint) — the fail-safe direction is
+          # "not enough evidence to downgrade", never "downgrade by default".
+          CHANGED=/tmp/test262-sig-changed.txt
+          : > "$CHANGED"
+          if [ -n "${MG_BASE_SHA:-}" ]; then
+            git fetch --no-tags --filter=blob:none origin "$MG_BASE_SHA" 2>/dev/null || true
+            git diff --name-only "$MG_BASE_SHA" HEAD 2>/dev/null \
+              | bash scripts/test262-paths-match.sh --list > "$CHANGED" || : > "$CHANGED"
+          fi
+          echo "#5280 test262-relevant changed paths: $(wc -l < "$CHANGED")"
+
+          # Prior occurrences of THIS signature, newest first. Exact-name query;
+          # our own record is not uploaded until the step after this one, so the
+          # current run cannot appear here (the ledger drops same-run records
+          # anyway, belt and braces).
+          PRIORS=/tmp/test262-sig-priors
+          mkdir -p "$PRIORS"
+          ART_NAME="test262-bucket-sig-${SIG}"
+          IDS=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=${ART_NAME}&per_page=10" \
+            --jq '.artifacts[].id' 2>/dev/null || true)
+          for id in $IDS; do
+            if gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/${id}/zip" > "/tmp/sig-${id}.zip" 2>/dev/null; then
+              unzip -o "/tmp/sig-${id}.zip" -d "${PRIORS}/${id}" >/dev/null 2>&1 || true
+            fi
+          done
+          echo "#5280 prior artifacts fetched: $(ls -1 "$PRIORS" 2>/dev/null | wc -l)"
+
+          mkdir -p merged-reports
+          node scripts/test262-signature-ledger.mjs \
+            --signature-file "$SIG_FILE" \
+            --changed-paths-file "$CHANGED" \
+            --run-id "${GITHUB_RUN_ID}" \
+            --pr "${PR_NUM}" \
+            --head-sha "${GITHUB_SHA}" \
+            --event "${GITHUB_EVENT_NAME}" \
+            --priors-dir "$PRIORS" \
+            --out merged-reports/test262-signature-record.json \
+            --github-output "$GITHUB_OUTPUT"
+
+      # Publish THIS run's record under the signature-named artifact so the next
+      # occurrence can find it. Uploaded after the lookup above, never before.
+      - name: Publish bucket-signature record (#5280)
+        uses: actions/upload-artifact@v6
+        if: always() && env.HOST_RAN == 'true' && github.event_name == 'merge_group' && steps.sig_ledger.outputs.signature != ''
+        with:
+          retention-days: 1
+          name: test262-bucket-sig-${{ steps.sig_ledger.outputs.signature }}
+          path: merged-reports/test262-signature-record.json
+          if-no-files-found: warn
+          # Two groups can legitimately carry the same signature; keeping both
+          # records is the entire point, so never overwrite a sibling.
+          overwrite: false
+
       - name: Upload regressions report
         uses: actions/upload-artifact@v6
         if: always() && env.HOST_RAN == 'true'
@@ -2391,7 +2606,37 @@ jobs:
           SRC_BEHIND="${{ steps.staleness.outputs.src_commits_behind || '' }}"
           CONTENT_CURRENT="${{ steps.staleness.outputs.baseline_content_current || '' }}"
           STALE_M="${{ steps.staleness.outputs.stale_minutes || '0' }}"
-          if [ "$CONTENT_CURRENT" = "true" ]; then
+          # (#5280) The cross-PR ledger's verdict OUTRANKS the #2562 banner when
+          # — and only when — it has cross-PR evidence. #2562 measures baseline
+          # content-CURRENCY; the ledger measures REPETITION across disjoint
+          # diffs. Those are different questions, and on 2026-09-02 they gave
+          # opposite answers on the same row: the baseline was content-current
+          # (so #2562 said LIKELY-REAL) while the identical cluster had already
+          # failed on two unrelated PRs (so it was a flake). Only
+          # `cross-pr-flake-candidate` displaces the banner; every other verdict
+          # leaves the #2562 text and the exit code below exactly as they were.
+          LEDGER_VERDICT="${{ steps.sig_ledger.outputs.verdict || '' }}"
+          LEDGER_RUN="${{ steps.sig_ledger.outputs.matched_run_id || '' }}"
+          LEDGER_PR="${{ steps.sig_ledger.outputs.matched_pr || '' }}"
+          LEDGER_SIG="${{ steps.sig_ledger.outputs.signature || '' }}"
+          if [ "$LEDGER_VERDICT" = "cross-pr-flake-candidate" ]; then
+            echo ""
+            echo "==============================================================="
+            echo "  🔁  CROSS-PR FLAKE CANDIDATE (#5280) — NOT a fresh regression"
+            echo "  Bucket signature ${LEDGER_SIG} already failed on PR"
+            echo "  #${LEDGER_PR} (run ${LEDGER_RUN}), whose test262-relevant"
+            echo "  diff is DISJOINT from this group's. Two disjoint diffs"
+            echo "  cannot both have produced the identical cluster, so it is a"
+            echo "  property of the corpus/runner, not of either change."
+            echo "  This SUPERSEDES the #2562 content-currency banner, which"
+            echo "  answers a different question (is the baseline current?) and"
+            echo "  says nothing about determinism."
+            echo "  Prior run log:"
+            echo "  https://github.com/${GITHUB_REPOSITORY}/actions/runs/${LEDGER_RUN}"
+            echo "  Action: re-admit this group. If the row recurs, add it to"
+            echo "  scripts/test262-host-noise-quarantine.json citing both runs."
+            echo "==============================================================="
+          elif [ "$CONTENT_CURRENT" = "true" ]; then
             echo ""
             echo "==============================================================="
             echo "  ❌  LIKELY-REAL REGRESSION (baseline content-current, #2562)"
@@ -2399,6 +2644,11 @@ jobs:
             echo "  HEAD (${STALE_M}m clock age is irrelevant) — the baseline"
             echo "  reflects current src, so these regressions are far more"
             echo "  likely PR-caused than baseline drift. Do not dismiss them."
+            if [ -n "$LEDGER_VERDICT" ] && [ "$LEDGER_VERDICT" != "first-occurrence" ]; then
+              echo "  (#5280 ledger: ${LEDGER_VERDICT} vs PR #${LEDGER_PR}, run"
+              echo "  ${LEDGER_RUN} — same signature, but NOT a disjoint diff,"
+              echo "  so this stays a real regression. Triage them together.)"
+            fi
             echo "==============================================================="
           elif [ -n "$SRC_BEHIND" ] && [ "$SRC_BEHIND" -gt 0 ] 2>/dev/null; then
             echo ""
@@ -2462,6 +2712,7 @@ jobs:
       github.actor != 'github-actions[bot]' &&
       !(github.event_name == 'workflow_dispatch' && inputs.ir_first) &&
       !(github.event_name == 'workflow_dispatch' && inputs.layout_emit) &&
+      !(github.event_name == 'workflow_dispatch' && inputs.skip_promote) &&
       !(github.event_name == 'workflow_dispatch' && inputs.eval_engine == 'interpreter')
     name: promote merged report to main baseline
     # Explicit interpreter dispatches are anti-rot measurements for the kept
@@ -2487,10 +2738,9 @@ jobs:
       contents: write
       pull-requests: write
       # #3448 — the HIT path downloads test262-group-<sha> via the artifacts
-      # REST API (a cross-run read), same permission the #1956 predecessor
-      # step uses. The top-level `contents: write` would otherwise leave
-      # actions at `none` for this job.
-      actions: read
+      # REST API (a cross-run read), and the successful promotion dispatches
+      # deploy-pages.yml. Write includes the required cross-run read access.
+      actions: write
 
     steps:
       - name: Checkout
@@ -2613,34 +2863,24 @@ jobs:
           mkdir -p benchmarks/results
           mkdir -p /tmp/js2wasm-before-refresh
           cp benchmarks/results/test262-current.json /tmp/js2wasm-before-refresh/test262-current.json 2>/dev/null || true
+          cp website/public/benchmarks/results/test262-report.json /tmp/js2wasm-before-refresh/test262-website-report.json 2>/dev/null || true
           cp public/benchmarks/results/test262-standalone-report.json /tmp/js2wasm-before-refresh/test262-standalone-report.json 2>/dev/null || true
+          cp website/public/benchmarks/results/test262-standalone-report.json /tmp/js2wasm-before-refresh/test262-website-standalone-report.json 2>/dev/null || true
           rm -f benchmarks/results/test262-current.jsonl \
             benchmarks/results/test262-current.json \
             benchmarks/results/test262-report.json \
             benchmarks/results/test262-results.jsonl
           cp shard-artifacts/test262-results-merged.jsonl benchmarks/results/test262-current.jsonl
           cp shard-artifacts/test262-report-merged.json benchmarks/results/test262-current.json
-          cp shard-artifacts/test262-report-merged.json benchmarks/results/test262-report.json
           cp shard-artifacts/test262-results-merged.jsonl benchmarks/results/test262-results.jsonl
           cp shard-artifacts/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-current.jsonl
           cp shard-artifacts/test262-standalone-report-merged.json benchmarks/results/test262-standalone-current.json
-          cp shard-artifacts/test262-standalone-report-merged.json benchmarks/results/test262-standalone-report.json
           cp shard-artifacts/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-results.jsonl
-          # Also update public/ so the landing page dev server picks up fresh data
+          # Keep the JSONL mirror used by local development; report JSON mirrors
+          # are synchronized centrally from the current snapshots below.
           mkdir -p public/benchmarks/results
-          cp shard-artifacts/test262-report-merged.json public/benchmarks/results/test262-report.json
           cp shard-artifacts/test262-results-merged.jsonl public/benchmarks/results/test262-results.jsonl
-          cp shard-artifacts/test262-standalone-report-merged.json public/benchmarks/results/test262-standalone-report.json
-          # …and the SERVED copy under website/public (the vite publicDir since
-          # #1656). Its host twin is refreshed here, but the standalone one only
-          # ever landed via deploy-pages, so the committed file sat at a
-          # 2026-06-07 snapshot (16,298 pass, no host_free_pass field). The
-          # landing page reads this path FIRST for its standalone donut, so if a
-          # deploy's baselines fetch ever fails it serves that June number —
-          # now the site's default headline, since standalone is the default lane.
-          mkdir -p website/public/benchmarks/results
-          cp shard-artifacts/test262-standalone-report-merged.json \
-            website/public/benchmarks/results/test262-standalone-report.json
+          node scripts/sync-test262-report-mirrors.mjs
 
       # #2097 — ratchet the absolute standalone high-water mark UP when this
       # push improved standalone conformance. Only ever raises (never lowers);
@@ -3125,10 +3365,11 @@ jobs:
             git add -f benchmarks/results/test262-current.json \
               benchmarks/results/test262-report.json \
               public/benchmarks/results/test262-report.json \
-              public/benchmarks/results/test262-standalone-report.json
-            # The SERVED standalone report (website/public, copied above) — the
-            # landing page's first source for its standalone donut.
-            git add -f website/public/benchmarks/results/test262-standalone-report.json 2>/dev/null || true
+              public/benchmarks/results/test262-standalone-report.json \
+              website/public/benchmarks/results/test262-report.json \
+              website/public/benchmarks/results/test262-standalone-report.json
+            # Both report files above are served by the Vite publicDir and must
+            # land atomically with the promoted baseline.
             # #1853 — hard-error stability baseline, refreshed just above.
             git add -f scripts/test262-hard-error-baseline.json 2>/dev/null || true
             # #2108 — coercion-site drift baseline, refreshed just above. Staged
@@ -3212,6 +3453,14 @@ jobs:
               --candidate benchmarks/results/test262-current.json; then
             HOST_REPORT_UNCHANGED=1
           fi
+          WEBSITE_HOST_REPORT_UNCHANGED=0
+          if [ -f /tmp/js2wasm-before-refresh/test262-website-report.json ] && \
+            node scripts/compare-test262-artifact.mjs \
+              --type report \
+              --baseline /tmp/js2wasm-before-refresh/test262-website-report.json \
+              --candidate benchmarks/results/test262-current.json; then
+            WEBSITE_HOST_REPORT_UNCHANGED=1
+          fi
           STANDALONE_REPORT_UNCHANGED=0
           if [ -f /tmp/js2wasm-before-refresh/test262-standalone-report.json ] && \
             node scripts/compare-test262-artifact.mjs \
@@ -3220,7 +3469,18 @@ jobs:
               --candidate public/benchmarks/results/test262-standalone-report.json; then
             STANDALONE_REPORT_UNCHANGED=1
           fi
-          if [ "$HOST_REPORT_UNCHANGED" = "1" ] && [ "$STANDALONE_REPORT_UNCHANGED" = "1" ]; then
+          WEBSITE_STANDALONE_REPORT_UNCHANGED=0
+          if [ -f /tmp/js2wasm-before-refresh/test262-website-standalone-report.json ] && \
+            node scripts/compare-test262-artifact.mjs \
+              --type report \
+              --baseline /tmp/js2wasm-before-refresh/test262-website-standalone-report.json \
+              --candidate public/benchmarks/results/test262-standalone-report.json; then
+            WEBSITE_STANDALONE_REPORT_UNCHANGED=1
+          fi
+          if [ "$HOST_REPORT_UNCHANGED" = "1" ] \
+            && [ "$WEBSITE_HOST_REPORT_UNCHANGED" = "1" ] \
+            && [ "$STANDALONE_REPORT_UNCHANGED" = "1" ] \
+            && [ "$WEBSITE_STANDALONE_REPORT_UNCHANGED" = "1" ]; then
             echo "Only volatile test262 report metadata changed — skipping main commit."
             exit 0
           fi
@@ -3424,7 +3684,10 @@ jobs:
       contents: read
       # Read the just-landed merge_group's `test262-group-<sha>` artifact via
       # the artifacts REST API (a cross-run read), same as the #1956 step.
-      actions: read
+      actions: write
+      # The write level above also covers the cross-run artifact read and lets
+      # this job dispatch Pages after the queue-only baseline promotion below.
+      # The baseline commit is [skip ci], so no push-triggered Pages run follows it.
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -3777,3 +4040,13 @@ jobs:
           if [ "$PUSHED" != "1" ]; then
             echo "::warning::#3468 failed to push the root baseline after 8 re-anchor attempts. The landing page + regression floor stay at the previous SHA until the next queue merge promotes (self-heals). Re-run this push (or workflow_dispatch promote-baseline) to force it."
           fi
+
+      - name: Trigger Pages deploy after queue baseline refresh
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Queue-only baseline commits land in js2wasm-baselines and carry
+          # [skip ci], so neither the main push trigger nor the baseline
+          # promote job's dispatch reaches Pages for this path.
+          gh workflow run deploy-pages.yml --ref main || true

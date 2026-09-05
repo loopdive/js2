@@ -4,7 +4,7 @@ title: "Compile jsdom and run its 318 original API tests against Wasm"
 status: ready
 sprint: current
 created: 2026-08-09
-updated: 2026-08-13
+updated: 2026-08-26
 priority: high
 feasibility: hard
 reasoning_effort: high
@@ -91,6 +91,19 @@ Resume at the compiler, not the adapter: profile the 180-second
 `compileProject(package/lib/api.js)` child by graph and finalization phase. Do
 not replace jsdom with a reduced implementation, count native-only execution,
 or turn the entry-barrel validation result into a package pass.
+
+## 2026-08-26 selected-suite checkpoint
+
+The pinned adapter now executes **6/6** selected `VirtualConsole` tests against
+compiled Wasm. Those six rows are useful correctness evidence, but they do not
+close the package-wide infrastructure gap: **312/318** original API tests remain
+unavailable and the full published `lib/api.js` project still exhausts the
+180-second compile budget without producing a binary.
+
+Resume by profiling and bounding the real full graph, then expand the adapter
+from the same immutable 318-test inventory. Do not extrapolate the 6/6 selected
+result to the deferred rows, and do not proxy the jsdom implementation through
+native host jsdom.
 
 ## Acceptance criteria
 

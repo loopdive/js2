@@ -1,0 +1,327 @@
+---
+id: 5243
+title: "An object argument through the dynamic method bridge arrives as null — ISO calendar dateAdd's destructuring parameter throws 'Cannot destructure null or undefined'; blocks all Temporal arithmetic single-module"
+status: done
+sprint: current
+priority: high
+horizon: m
+goal: core-semantics
+reasoning_effort: max
+requested_by: ttraenkler/fable-lead
+assignee: ttraenkler/senior-dev-5243
+created: 2026-08-31
+completed: 2026-08-31
+# Growth allowance for the record materializer + its rationale comment in
+# src/codegen/type-coercion.ts, and for the new regression test. The materializer
+# is the general fix for "a failed shape test must never silently coerce to
+# null" (see ## Root cause); it cannot be expressed more compactly without
+# dropping either the shape gate or the null/undefined preservation, both of
+# which are load-bearing.
+# The record materializer unboxes a numeric field it just read off the host
+# object (`__extern_get` → `__unbox_number`), which is +2 occurrences in
+# type-coercion.ts. It cannot be routed "through the coercion engine": this IS
+# the coercion engine's externref→struct arm, and the two occurrences are the
+# import registration plus the post-flush name re-resolution the shift
+# discipline requires. Identical vocabulary to the tuple materializer 1,300
+# lines above it.
+coercion-sites-allow:
+  - src/codegen/type-coercion.ts
+loc-budget-allow:
+  - src/codegen/type-coercion.ts
+  - tests/issue-5243-bridge-object-arg-null.test.ts
+  - tests/dogfood/temporal-global-harness.mjs
+  - tests/issue-4628-temporal-global.test.ts
+---
+
+# #5243 — dynamic method bridge nulls an object argument
+
+## Problem
+
+After #5242 (PR #5354) gave class values a constructor bridge, every
+single-module Temporal arithmetic row (`add`/`subtract`, object or string
+argument) lands on `TypeError: Cannot destructure 'null' or 'undefined'`,
+thrown by the ISO calendar's
+`dateAdd(e, {years = 0, months = 0, weeks = 0, days = 0}, i)` — its second
+argument arrives **null** through the dynamic method bridge chain
+`__extern_method_call` → `__call_fn_method_3` → `__anon_0_dateAdd`.
+
+Control (dev-5242b): `add({days: 1})` constructs no Duration at all and fails
+with the same message and a byte-identical stack on #5354's base — so this is
+an argument-marshalling gap on the dynamic METHOD bridge, pre-existing and
+independent of the constructor path. Adjacent to #5221's through-line (a
+slot/shape mismatch silently coerced to null) and to #5221 defect 6 (call-site
+specialisation of forwarding params).
+
+## Direction
+
+Reduce non-Temporal: a method with a destructuring-with-defaults object
+parameter, called through the dynamic bridge (`any` receiver / 3-arg
+`__call_fn_method_3` shape) with a real object argument. Establish where the
+null appears: the bridge's argument coercion (`callArgCoercionInstrs` family),
+the `__anon_*` specialised param type rejecting the shape (ref.test →
+ref.null), or the method-3 dispatcher's marshalling. Fix at the general site;
+never let a failed shape test coerce to null silently.
+
+## Acceptance criteria
+
+1. Non-Temporal reduction answers correctly; `tests/issue-5243-*.test.ts`
+   failing on base with controls.
+2. Single-module: `Temporal.PlainDate.from("2020-03-04").add({days:1}).toString()`
+   → `"2020-03-05"`, `.subtract({days:1})` → `"2020-03-03"`. Update harness
+   KNOWN_GAPS/SUPPORTED honestly; provider lane may stay blocked by #5225.
+3. No regressions in the issue-5221…5242 family + linker family; equivalence
+   gate at baseline. Gates green.
+
+## Notes
+
+- Found by dev-5242b (PR #5354 "Reported, NOT fixed" item 1) with control.
+  This is now THE single-module blocker for Temporal arithmetic conformance.
+- Id reserved with a degraded PR scan; manually checked against open PR head
+  branches 2026-08-31.
+
+## Root cause (measured 2026-08-31, base = `origin/issue-5242-class-value-ctor-bridge` @ 93972f5691)
+
+**The dynamic method bridge was the messenger, not the cause.** The argument was
+already `null` before it reached `__extern_method_call` — proved by logging the
+host-side arg list at the dispatch point: `dateAdd nargs=3 object,object:null,string`.
+
+The null is minted in `coerceType`'s `externref → ref/ref_null` arm
+(`src/codegen/type-coercion.ts`). An object literal with a **spread** has no
+statically closed shape, so `objectLiteralSpreadTakesHostPath` builds it on the
+HOST and hands back an `externref`; the enclosing function's **inferred** type
+is nevertheless the concrete `__anon_*` record struct. The two meet in that arm,
+its `ref.test` fails (a host object is not a WasmGC struct), and the fallback
+was a bare `ref.null` — a silently wrong value whose failure surfaces wherever
+it is next used.
+
+In `@js-temporal/polyfill` that is exactly
+
+```js
+function Wr(e) { const t = qr(e), n = …; return { ...t.date, days: n }; }
+```
+
+whose inferred return type is `__anon_37 {days:f64, years:externref,
+months:externref, weeks:externref}`. `Wr`'s null then travels as the second
+argument of `calendar.dateAdd(date, duration, options)` and detonates in the ISO
+calendar's destructuring parameter.
+
+Non-Temporal reduction (`tests/issue-5243-bridge-object-arg-null.test.ts`), base
+vs after:
+
+| probe | base | after |
+| --- | --- | --- |
+| `spreadIsObject` — read the record, call nothing | `"NULL"` | `"3/1"` |
+| `spreadIsObject2` — a DIFFERENT caller shape | `"NULL"` | `"5/4"` |
+| `viaBridge` — dynamic 3-arg method call | THREW `Cannot destructure 'null' or 'undefined'` | `"D\|1,2,0,3\|constrain"` |
+| `viaBridgeOtherShape` — same forwarding param, other shape | same throw | `"T\|0,0,0,5\|reject"` |
+| `viaDirect` — statically resolved call, the CONTROL | same throw | `"D\|1,2,0,3\|constrain"` |
+
+The `viaDirect` row is why the fix is not in the bridge: with no dynamic
+dispatch at all, base fails identically.
+
+## Fix
+
+`buildRecordFromExternref` in `src/codegen/type-coercion.ts`: when the target is
+a compiler-minted anonymous record shape, rebuild it from the host object's own
+properties by name (`__extern_get`) instead of pushing `ref.null`. Deliberately
+narrow — `__anon_*` only, no supertype, ≤32 fields, ordinary property names, no
+erased type brands, no non-nullable `ref` field, host targets only. Everything
+else keeps today's null.
+
+Two semantics stated because they are not free:
+
+- **null / undefined / a non-object stay `ref.null`** (guarded by
+  `__extern_is_object`) so `RequireObjectCoercible` still throws in the callee's
+  destructure guard. Fabricating a zero-filled record out of `undefined` would
+  hide a real spec error.
+- **The result is a COPY** — writes through it do not reach the host object.
+  That is the same trade the vec (#2831) and tuple (#1161) materializers next
+  door already make, against a `null` that supports no read at all.
+
+## Temporal, measured with a fresh `JS2WASM_TEMPORAL_CACHE` per lane
+
+| lane / row | base | after |
+| --- | --- | --- |
+| provider `add("P1D")` | THREW `Cannot destructure 'null' or 'undefined'` | **`"2020-03-05"`** — promoted to the harness's asserted `SUPPORTED` set as `arithmeticAddString` |
+| provider `add({days:1})` / `subtract` / `with` | `WebAssembly.Exception` | unchanged — #5225's object-literal-across-the-seam lane |
+| single-module `add({days:1})` / `subtract({days:1})` / `add("P1D")` | THREW the destructure null | no longer throws; answers `"2020-03-04"` (unchanged date) — see below |
+
+This table isolates THIS change. On the branch as it now stands, #5242's
+`__argc` fix is merged in and single-module `add("P1D")` answers `"2020-03-05"`;
+the combined-branch numbers are in the correction block further down.
+| single-module `with({year:2021})` | `"2021-03-04"` | `"2021-03-04"` |
+| single-module `new Duration(0,0,0,1)` | `"P1D"` | `"P1D"` |
+
+## Reported, NOT fixed — #5244's root cause, now localized
+
+The single-module arithmetic rows stop throwing but answer the unchanged date
+because a **second, independent** defect owns them: `sn(e)`
+(ToTemporalDuration) constructs through the intrinsics registry,
+`new (ce("%Temporal.Duration%"))(…)` — #5242's class-VALUE constructor mirror —
+and every constructor argument after the first is lost. Measured on one build:
+
+| observation | result |
+| --- | --- |
+| mirror `[[Construct]]` trap receives | `args=10 [0,0,0,1,0,0,0,0,0,0]`, `bridgeArity=10` — correct |
+| `instance.exports.__class_construct_Duration_10(11,…,20)` called DIRECTLY from JS, read back through Wasm | `11,12,13,14,15` — **correct** |
+| the instance that same trap hands back to Wasm | `11,0,0,0,0,0,0,0,0,0` |
+| control: `new Temporal.Duration(11,…,20)` (statically resolved, no mirror) | `11,12,…,20` |
+
+So the emitted bridge is correct and the trap's inputs are correct; the loss is
+between the trap's `ctorBridge.fn(…)` result and what the Wasm caller observes.
+It is not a bridge-arity mismatch (only `__class_construct_Duration_10` exists).
+Left for #5244.
+
+### Correction, same day — it WAS `__argc`, and my disproof was invalid
+
+The paragraph above originally also claimed `__argc` default-parameter plumbing
+was disproved. **That claim was wrong and is retracted.** dev-5242b fixed exactly
+that (`23bab6240c` on `issue-5242-class-value-ctor-bridge`): `<Class>_new` reads
+the mutable `__argc` module global once in its prologue to tell an omitted
+argument from an explicit `undefined`, the construct bridge never wrote it, so
+the callee read whatever the previously compiled call site had left there. One
+omission, two symptoms: stale `-1` defaults nothing and the padding arrives as
+`undefined` → NaN; a stale small count `n` makes `argc !== -1 && argc <= i` fire
+past `n`, so the REAL arguments are discarded in favour of the initializers —
+which is the `11,0,0,0,…` above.
+
+**Why my test did not refute it:** I forced `__argc = params.length` *from the
+host*, and the callee reads the **wasm global**, which nothing reachable from
+the host side can set. The intervention could not touch the mechanism, so its
+null result was evidence about nothing. Recorded because the failure is
+reusable: a negative result only bears on a mechanism if the intervention can
+actually reach it.
+
+The argc fix is now merged into this branch (`ce0700b315`). Measured on the
+merged result (single-module lane, one build) — it moves some of these rows and
+not others:
+
+| probe | this change alone | + the argc fix |
+| --- | --- | --- |
+| `sn("P1D")` fields | `0,0` | **`1,0`** |
+| `add("P1D")` end-to-end | `"2020-03-04"` | **`"2020-03-05"`** |
+| `qr(sn("P1D"))` | `date.days=0 time.sec=0` | `date.days=0 time.sec=86400` (= the `new Duration` control) |
+| `const t = ce("%Temporal.Duration%"); new t(11,…,20)` | `11,0,0,…` | `11,0,0,…` — **unchanged** |
+| `add({days:1})` / `Duration.from({days:1})` | `"2020-03-04"` / `"PT0S"` | unchanged |
+
+So two paths remain open, both #5244's, both now narrowed:
+
+1. **A local-bound callee still loses its arguments — and it is PRE-EXISTING,
+   not something #5242 uncovered.** dev-5242b measured the same row on the
+   pre-#5242 base `528b8d42cc`: bound `const t = ce(…); new t(11,…,20)` already
+   answered `11,0,0,0,…` there, while the INLINE spelling
+   `new (ce(…))(11,…,20)` threw `bridge unavailable`. #5242 fixed the spelling
+   that used to throw and left the other untouched. So the general
+   "louder → quieter" worry — #5242 turning a thrown
+   `compiled class constructor Duration bridge unavailable` into a
+   silently-wrong value — does not apply to THIS row: it was never loud. An earlier
+   draft of this section framed it as an arm the argc fix failed to cover —
+   that framing was wrong and is corrected here.
+
+   **It is ORDER-DEPENDENT, which makes it invisible to a single-probe test.**
+   Verified independently on the merged branch (`.tmp/order-dep.mjs`, one
+   compile per mode):
+
+   | module | the FIRST bound construct | `boundTen` = `const t = ce(…); new t(11,…,20)` |
+   | --- | --- | --- |
+   | ten-arg bound construct ALONE | — | `11,12,13,14,15,16,17,18,19,20` — correct |
+   | a **two**-arg bound construct runs first | `1,2,0,0,0,0,0,0,0,0` — correct | `11,0,0,0,0,0,0,0,0,0` |
+   | a **four**-arg bound construct runs first | `1` — correct | `11,0,0,0,0,0,0,0,0,0` |
+   | a **ten**-arg bound construct runs first | `1,2,3,4,5,6,7,8,9,10` — correct | `11,0,0,0,0,0,0,0,0,0` |
+
+   **The first bound construct of a class is always correct, at any width; every
+   LATER one collapses to exactly ONE argument, and the "one" is a constant.**
+   It does not track either call's width — a ten-arg predecessor that itself
+   answers perfectly still poisons an identical ten-arg successor. So this is a
+   first-call-wins latch that degrades to arity 1, not a cache that carries the
+   first call's arity.
+
+   Three further measurements, each eliminating a candidate explanation:
+
+   - **Not ambient `__argc` at the call site.** Interposing `control()` — a
+     TEN-arg construct on the static path, which leaves `__argc` at 10 —
+     between the two bound calls does **not** repair the second
+     (`11,0,0,…` before and after, and stable on a repeat call). So the carrier
+     is a latched per-class route, not whatever last wrote `__argc`.
+   - **Not the `__call_fn_<N>` arity collapse.** The failing module exports
+     `__call_fn_0` … `__call_fn_4`, so a generic-closure fallback would clamp a
+     ten-arg call to 4 and deliver `11,12,13,14,…` — not the single value
+     observed. Only one construct bridge exists
+     (`__class_construct_Duration_10`).
+
+   - **Not an arity-carrying cache.** The width table above: a two-, four- or
+     ten-arg predecessor all produce the same one-argument successor.
+
+   dev-5242b separately traced that it does not enter `__construct_closure` as
+   a struct (`struct=false`), and wrote and then removed a reordering of the
+   `_classCtorClosures` / `__is_closure` test there because it moved no
+   observable value — a fourth eliminated candidate. dev-5242b also retracted
+   the "`__argc` stale at 1 / cached `_wrapCallableForHost` wrapper" reading
+   once the interposition result landed; it is recorded here as eliminated, not
+   as a lead.
+
+   **What survives all of it:** something the FIRST bound construct of a class
+   installs, which every later one reuses, delivering exactly one correct
+   argument regardless of either call's width, regardless of the `__argc`
+   global's state, and regardless of which `__call_fn_<N>` dispatchers the
+   module emits. Start at whatever is memoised per class on that first
+   construct.
+2. **`Duration.from({days:1})` is NOT this change's `buildRecordFromExternref`.**
+   It stays `"PT0S"` with both fixes applied. `sn`'s object branch is a
+   computed-key copy into a statically-shaped record
+   (`const n = {years:0,…}; r = kt(e); for (…) { o = r[st[i]]; if (o !== undefined) n[st[i]] = o; }`).
+   That shape reduced in isolation — computed-key read plus computed-key write
+   into a 3-field record, with static-write and read-only controls — answers
+   **correctly** (`"0/0/1"`, `"0/1"`, `"1"`). So the generic computed-key
+   machinery is fine and the loss is in `kt(e)` (the copy of the user's object)
+   or `st` (the key list), not in member-set dispatch.
+
+Also unresolved and worth its own look: single-module `until(...)` throws a
+value with no `name` and no `message` (`THREW undefined: undefined`).
+
+## Validation of a coordinator stack-refresh onto this branch (2026-08-31)
+
+The branch tip moved from `15201ee8ee` to `f538269ddd` between two of this
+lane's own pushes, under the shared git identity. **It has a known owner: the
+coordinator's shepherd loop.** All six chain PRs went `DIRTY` when main's docs
+merges landed, so the coordinator refreshed the whole stack in land order (the
+12:20 UTC cycle) — here, merging
+`origin/issue-5242-class-value-ctor-bridge @ bc979fb1d4` (which carries
+`origin/main` plus #5241's runtime work) into this branch, with the
+coordinator's committer stamp. The coordinator ran the fresh-cache harness
+(11/11), the branch's own tests and all gates including
+`LOC_GATE_BASE=origin/main` before pushing. No third party touches these
+branches.
+
+It was noticed because dev-5242b saw the same move on its branch and said so,
+and it was re-validated here before the provenance was known. **Re-validating a
+tip you did not move is the right default regardless of who moved it** — the
+cost is one test cycle, and the alternative is that a branch's numbers silently
+describe a tree that no longer exists.
+
+Nothing was lost (`15201ee8ee` is an ancestor) and none of this change's own
+files were touched: the diff over
+`src/codegen/type-coercion.ts`, `tests/issue-5243-*`,
+`tests/dogfood/temporal-global-harness.mjs`,
+`tests/issue-4628-temporal-global.test.ts` and this file is **empty**.
+
+But it brought `origin/main` plus #5241's runtime work — `src/runtime.ts`
+(+97/−…), `src/runtime/class-method-host-bridge.ts`, and a NEW
+`src/runtime/object-create-class-instance.ts` — i.e. code this lane did not
+write, arriving after every number this lane had reported. That makes the
+branch's measurements stale until re-taken, whoever moved the tip, so they were
+re-taken here rather than assumed:
+
+- `typecheck` clean.
+- All five ratchet gates green (LOC, function, coercion-sites, oracle, dead
+  exports).
+- 39 tests across issue-5243 / 5242 / 5241 / 5239 / 5237 / 5223 / 5221 / 5222.
+- `issue-4628-temporal-global` 11/11 on a **fresh** provider cache —
+  load-bearing here, because `src/runtime.ts` changed and a cache hit would have
+  served a provider built by the pre-merge compiler. This is exactly the hazard
+  the warning added above exists for.
+- Every Temporal row re-measured and **unchanged**: `add("P1D")` `"2020-03-05"`,
+  `add({days:1})` / `subtract({days:1})` `"2020-03-04"`, `with({year:2021})`
+  `"2021-03-04"`, `new Duration(0,0,0,1)` `"P1D"`, `Duration.from({days:1})`
+  `"PT0S"`.
+- Equivalence gate re-run at baseline.

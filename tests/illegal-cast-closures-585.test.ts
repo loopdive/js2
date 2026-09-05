@@ -1,6 +1,5 @@
 import { describe, it, expect } from "vitest";
 import { compile } from "../src/index.js";
-import { buildStringConstants } from "../src/runtime.js";
 
 async function run(source: string, fn: string, args: unknown[] = []): Promise<unknown> {
   const result = await compile(source);
@@ -9,19 +8,17 @@ async function run(source: string, fn: string, args: unknown[] = []): Promise<un
       `Compile failed:\n${result.errors.map((e) => `  L${e.line}: ${e.message}`).join("\n")}\nWAT:\n${result.wat}`,
     );
   }
-  const env: Record<string, Function> = {};
-  const jsStringPolyfill = {
-    concat: (a: string, b: string) => a + b,
-    length: (s: string) => s.length,
-    equals: (a: string, b: string) => (a === b ? 1 : 0),
-    substring: (s: string, start: number, end: number) => s.substring(start, end),
-    charCodeAt: (s: string, i: number) => s.charCodeAt(i),
-  };
-  const { instance } = await WebAssembly.instantiate(result.binary, {
-    env,
-    "wasm:js-string": jsStringPolyfill,
-    string_constants: buildStringConstants(result.stringPool),
-  } as WebAssembly.Imports);
+  // This is the JS-host lane. Use the compiler's matching runtime imports;
+  // an empty `env` stopped exercising the closure assertions once dynamic
+  // callable fallbacks became part of the generated host ABI.
+  const imports = result.importObject ?? {};
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  (imports as WebAssembly.Imports & { __setExports?: (exports: WebAssembly.Exports) => void }).__setExports?.(
+    instance.exports,
+  );
+  (imports as WebAssembly.Imports & { __setInstance?: (instance: WebAssembly.Instance) => void }).__setInstance?.(
+    instance,
+  );
   return (instance.exports as any)[fn](...args);
 }
 

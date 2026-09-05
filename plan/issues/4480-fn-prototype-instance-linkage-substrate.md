@@ -284,6 +284,25 @@ Each of R1–R5 has an `it.fails` pin in `tests/issue-4480.test.ts`, so a
 successor that fixes one is told by a failing test rather than having to
 re-derive the shape.
 
+**2026-08-23 (#4643) — R3, R4 and R5 are RETIRED; their pins are ordinary
+positive pins now.** The mechanism was not the one any of the three rows
+predicted, which is the part worth keeping:
+
+- **R3** was already passing on the campaign head **before** #4643 — #4637
+  retired it by canonicalizing a callable to its own-property bag `$Object` at
+  `__object_create`, so the "representation limit" above was answered without
+  widening `$proto` at all. Its `it.fails` was simply stale, and this row is the
+  reminder that a residual table is only as true as its last measurement.
+- **R4 and R5** are retired by #4643's second half: `__getPrototypeOf` and
+  `__isPrototypeOf` had **no chain start for a `__fnctor_<F>` instance struct**
+  — they tested `$Object`, missed, and answered `null`/`false` for every such
+  instance. Both rows' diagnoses above (escape-gate demotion; condition 2
+  declining) are still CORRECT and still in force; the compile-time arms decline
+  exactly as documented, and the runtime helper now answers instead. So neither
+  guard had to be relaxed.
+
+R1 and R2 remain.
+
 ## Design — the carrier, and what it can and cannot link
 
 Written after S1+S2, from runs executed on this branch. Read this before

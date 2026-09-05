@@ -364,23 +364,32 @@ if (benchHistorySource) {
 if (benchLatestSource) {
   copyFile(benchLatestSource, join(PAGES_DIST, "benchmarks", "results", "latest.json"));
 }
-// Preference order:
-//   1. test262-current.{jsonl,json}  — committed by the nightly workflow,
-//      always present in CI checkouts. THIS is what GitHub Pages should serve.
-//   2. test262-results.jsonl symlink — local dev, points at the latest run.
-//   3. latest test262-results-*.jsonl in benchmarks/results/ — local dev fallback.
+// Preference order for the report summary:
+//   1. test262-current.json — the canonical promoted snapshot.
+//   2. website/public/.../test262-report.json — the Vite-served copy, useful
+//      for deploys or older checkouts where the canonical file is absent.
+//   3. legacy report snapshots in benchmarks/results/.
+//
+// The public copy is deliberately not first. It is a generated mirror and can
+// lag the canonical snapshot when a promotion workflow is interrupted between
+// copying and staging files. Picking it first made the landing page publish a
+// stale pass rate even though the current baseline was already in the checkout.
+//
+// Preference order for JSONL remains separate below because the JSONL is no
+// longer committed by default and the local cache is the freshest source.
 //
 // Do NOT fall back to runs/ archive — those files can be months old and would
 // silently poison the deployed dashboard.
 const test262ReportSource = resolvePreferredFile(
-  join(PUBLIC_BENCH, "test262-report.json"),
   join(BENCHMARKS_RESULTS_DIR, "test262-current.json"),
+  join(PUBLIC_BENCH, "test262-report.json"),
   join(BENCHMARKS_RESULTS_DIR, "test262-report.json"),
   latestNamedFile(BENCHMARKS_RESULTS_DIR, "test262-report-", ".json"),
 );
 const test262StandaloneReportSource = resolvePreferredFileOrNull(
-  join(PUBLIC_BENCH, "test262-standalone-report.json"),
+  join(BENCHMARKS_RESULTS_DIR, "test262-standalone-current.json"),
   join(BENCHMARKS_RESULTS_DIR, "test262-standalone-report.json"),
+  join(PUBLIC_BENCH, "test262-standalone-report.json"),
   join(ROOT, "public", "benchmarks", "results", "test262-standalone-report.json"),
   latestNamedFile(BENCHMARKS_RESULTS_DIR, "test262-standalone-report-", ".json"),
 );

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../ts-api.js";
+import type { TypeOracle } from "../checker/oracle.js";
 import type { Instr, LocalDef, ValType, WasmModule } from "../ir/types.js";
 import type { ClassLayout } from "./layout.js";
 
@@ -13,6 +14,8 @@ export interface LinearStringLiteralData {
 export interface LinearContext {
   mod: WasmModule;
   checker: ts.TypeChecker;
+  /** Backend-selected authority shared by single-source planning and lowering. */
+  oracle?: TypeOracle;
   /** Map from function name to its absolute index (imports + locals) */
   funcMap: Map<string, number>;
   /** Number of imported functions */

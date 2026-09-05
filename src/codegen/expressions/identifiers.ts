@@ -15,8 +15,14 @@ import {
   type NullablePrimitiveKind,
 } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.js";
+import {
+  computeClosureWrapperSig,
+  emitCachedFuncClosureAccess,
+  emitFuncRefAsClosure,
+  getFuncSignature,
+} from "../closures.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js";
 import { tryEmitNativeUserCtorInstanceOf } from "../native-user-instanceof.js";
 import { emitLazyClassObjectGet } from "./extern.js";
@@ -27,12 +33,20 @@ import {
   addStringConstantGlobal,
   addUnionImports,
   ensureExnTag,
+  findUserBindingDecl,
   localGlobalIdx,
   resolveWasmType,
 } from "../index.js";
+import { addHostStringConstantGlobal } from "../registry/imports.js";
 import { emitCapturedBoxGlobalRead, emitNullGuardedStructGet, getCapturedBoxGlobal } from "../property-access.js";
 import { coerceType, compileExpression, isAnyValue } from "../shared.js";
-import { emitTdzCheck } from "../statements.js";
+import {
+  fnShadowSlot,
+  isShadowedTopLevelFn,
+  isShadowStaticArmFor,
+  withShadowReadSuppressed,
+} from "../fn-global-shadow.js"; // (#4630 / #4648)
+import { emitTdzCheckAtGlobal } from "../statements.js";
 import { emitUndefined, ensureLateImport, flushLateImportShifts, shiftLateImportIndices } from "./late-imports.js";
 import { emitStringBuilderRead, getBuilderInfo } from "../string-builder.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -46,6 +60,7 @@ import { popBody, pushBody } from "../context/bodies.js";
 import { reportSilentFallback } from "../fallback-telemetry.js";
 import { reportError } from "../context/errors.js";
 import { isUnaliasedNodeFsImportBinding } from "../node-fs-binding-identity.js";
+import { sourceFunctionHandleForDeclaration } from "../program-abi-source-callable-planning.js";
 import { annexBReadEscapesFunctionScope, annexBReadIsUnbound, collectAnnexBCancelSites } from "../annexb-cancel.js";
 import { emitAnnexBUnboundReferenceError } from "../js-errors.js";
 import {
@@ -65,25 +80,47 @@ import {
   isBuiltinConstructorIdentityName,
   isSupportedBuiltinNamespace,
 } from "../builtin-static-globals.js";
-import { tryEmitPromiseSubclassValue } from "./promise-subclass.js";
+import {
+  emitPromiseSubclassCtor,
+  resolvePromiseSubclassIdentifier,
+  tryEmitPromiseSubclassValue,
+} from "./promise-subclass.js";
+import {
+  emitLiveIdentifierGlobalRead,
+  moduleTdzGlobalIndexForIdentifier,
+  tryEmitAmbientRegistryCollisionRead,
+  tryEmitExplicitHostAmbientValueRead,
+} from "./identifier-module-storage.js";
 import {
   emitCaptureRuntimeEvalBindingValueCell,
   emitImplicitGlobalRead,
   emitRuntimeEvalBindingRead,
   emitRuntimeEvalGlobalRead,
+  emitRuntimeEvalGlobalLexicalReadOrFallback,
   emitRuntimeEvalSharedValueUnwrap,
   runtimeEvalSharedValueUnwrapInstrs,
 } from "../global-environment.js";
 import { runtimeEvalStateMayShadowBinding } from "../direct-eval-environment.js";
 import { emitStandaloneIntrinsicEvalValue } from "./eval-inline.js";
+import { emitHostEvalGlobalBindingSeed } from "./runtime-eval-provider.js";
 import { emitStandaloneFunctionIntrinsicValue } from "../function-intrinsic-carrier.js"; // (#4442) THE `%Function%` emitter
 import { definedFuncAt } from "../func-space.js";
 import { emitHostOrNativeBuiltinInstanceOf } from "../host-native-instanceof.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import {
   ensureStandaloneWrapperInstanceOfHelper,
   type StandaloneWrapperConstructorName,
 } from "../standalone-wrapper-instanceof.js";
 import { tryEmitStandaloneGlobalFunctionIdentifier } from "../standalone-global-functions.js";
+import { evaluateInstanceOfRhsForEffects } from "../instanceof-rhs-evaluation.js"; // (#4491 T3) §13.10.1 step 3
+import { resolveBuiltinCtorAssignedAliasName } from "../builtin-ctor-assigned-alias.js"; // (#4491 T3)
+import { resolveDefaultExpressionImportGlobal } from "../default-expression-import-global.js";
+import {
+  tryEmitCompiledModuleNamespaceObject,
+  tryEmitCompiledRuntimeNamespaceFunctionObject,
+} from "../module-namespace-value.js";
+
+const switchCaseLexicalDeclarationCache = new WeakMap<ts.SourceFile, Map<string, ts.Node[]>>();
 
 /**
  * #1473 — Build the set of `$Error_struct` `$tag` values compatible with an
@@ -199,9 +236,13 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
   fctx.body.push({ op: "i32.eqz" });
   let then: Instr[];
   if (throwRefErrIdx !== undefined) {
-    addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
-    then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    const strIdx = addHostStringConstantGlobal(ctx, msg);
+    if (strIdx !== undefined) {
+      then = [{ op: "global.get", index: strIdx }, { op: "call", funcIdx: throwRefErrIdx }, { op: "unreachable" }];
+    } else {
+      const tagIdx = ensureExnTag(ctx);
+      then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
+    }
   } else {
     const tagIdx = ensureExnTag(ctx);
     then = [{ op: "ref.null.extern" }, { op: "throw", tagIdx }];
@@ -215,16 +256,137 @@ export function emitLocalTdzCheck(ctx: CodegenContext, fctx: FunctionContext, na
 }
 
 /** Resolve the lexical value read by an identifier, including `{ value }`. */
-function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
-  if (ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
-    const shorthand = (
+export function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbol | undefined {
+  if (id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id) {
+    const resolveShorthand = (
       ctx.checker as typeof ctx.checker & {
         getShorthandAssignmentValueSymbol?: (node: ts.ShorthandPropertyAssignment) => ts.Symbol | undefined;
       }
-    ).getShorthandAssignmentValueSymbol?.(id.parent);
-    if (shorthand !== undefined) return shorthand;
+    ).getShorthandAssignmentValueSymbol;
+    if (typeof resolveShorthand === "function") {
+      const shorthand = resolveShorthand(id.parent);
+      // (#5149 cluster F) An `undefined` answer means the shorthand's VALUE is
+      // unresolvable: `({ notDefined })` reads a binding that does not exist
+      // and must throw a ReferenceError (§13.2.5.5 step 3 forwards the
+      // IdentifierReference GetValue). The old fall-through to
+      // `getSymbolAtLocation` handed back the shorthand's own PROPERTY symbol,
+      // which is ALWAYS present, so the caller's `!sym` undeclared test never
+      // fired and the literal quietly built `{ notDefined: undefined }`.
+      return shorthand;
+    }
   }
   return ctx.checker.getSymbolAtLocation(id);
+}
+
+/**
+ * Return the direct CaseBlock declaration denoted by an identifier outside its
+ * switch.  CaseBlock names are not module/function bindings, but the flat
+ * codegen registries still know about class/function names and the module-init
+ * collector deliberately drops inert bare identifiers.  Keep the runtime
+ * ReferenceError observable for this small, well-defined lexical shape.
+ */
+function switchCaseLexicalDeclarationOutside(ctx: CodegenContext, id: ts.Identifier): ts.Node | undefined {
+  const symbol = identifierValueSymbol(ctx, id);
+  const symbolDecl = symbol?.valueDeclaration;
+  const direct = symbolDecl && directSwitchCaseLexicalDeclaration(symbolDecl);
+  if (direct && !identifierInsideSwitchCaseBlock(id, direct)) return direct;
+
+  // TypeScript leaves an out-of-scope CaseBlock reference unresolved in some
+  // script/module combinations. Recover the declaration syntactically so the
+  // runtime path does not fall through to a class/function registry entry.
+  if (symbol !== undefined) return undefined;
+  const sourceFile = id.getSourceFile();
+  if (!sourceFile) return undefined;
+  const declarations = switchCaseLexicalDeclarations(sourceFile).get(id.text);
+  if (!declarations) return undefined;
+  return declarations.find((declaration) => !identifierInsideSwitchCaseBlock(id, declaration));
+}
+
+function switchCaseLexicalDeclarations(sourceFile: ts.SourceFile): Map<string, ts.Node[]> {
+  const cached = switchCaseLexicalDeclarationCache.get(sourceFile);
+  if (cached) return cached;
+  const declarations = new Map<string, ts.Node[]>();
+  const add = (declaration: ts.Node): void => {
+    const name = declarationName(declaration);
+    if (!name) return;
+    const entries = declarations.get(name);
+    if (entries) entries.push(declaration);
+    else declarations.set(name, [declaration]);
+  };
+  const visit = (node: ts.Node): void => {
+    if (ts.isSwitchStatement(node)) {
+      for (const clause of node.caseBlock.clauses) {
+        for (const stmt of clause.statements) {
+          if (ts.isVariableStatement(stmt)) {
+            for (const variable of stmt.declarationList.declarations) {
+              const declaration = directSwitchCaseLexicalDeclaration(variable);
+              if (declaration) add(declaration);
+            }
+          } else {
+            const declaration = directSwitchCaseLexicalDeclaration(stmt);
+            if (declaration) add(declaration);
+          }
+        }
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  switchCaseLexicalDeclarationCache.set(sourceFile, declarations);
+  return declarations;
+}
+
+function directSwitchCaseLexicalDeclaration(node: ts.Node | undefined): ts.Node | undefined {
+  if (!node) return undefined;
+  let clause: ts.CaseClause | ts.DefaultClause | undefined;
+  if (ts.isVariableDeclaration(node)) {
+    const stmt = node.parent?.parent;
+    if (ts.isVariableStatement(stmt)) {
+      const flags = stmt.declarationList.flags;
+      if (
+        (flags & ts.NodeFlags.Let) !== 0 ||
+        (flags & ts.NodeFlags.Const) !== 0 ||
+        (flags & ts.NodeFlags.Using) !== 0 ||
+        (flags & ts.NodeFlags.AwaitUsing) !== 0
+      ) {
+        clause = ts.isCaseClause(stmt.parent) || ts.isDefaultClause(stmt.parent) ? stmt.parent : undefined;
+      }
+    }
+  } else if (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) {
+    clause = ts.isCaseClause(node.parent) || ts.isDefaultClause(node.parent) ? node.parent : undefined;
+  }
+  if (!clause) return undefined;
+  // Annex B's ordinary sloppy function extension is intentionally left to its
+  // existing var-binding machinery; the ES2015 residuals here are lexical
+  // variables, classes, generators, and async functions.
+  if (ts.isFunctionDeclaration(node) && node.asteriskToken === undefined) {
+    const isAsync = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+    if (!isAsync) return undefined;
+  }
+  return node;
+}
+
+function declarationName(node: ts.Node | undefined): string | undefined {
+  if (node && (ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) return node.name.text;
+  if (node && ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) return node.name.text;
+  return undefined;
+}
+
+function identifierInsideSwitchCaseBlock(id: ts.Identifier, declaration: ts.Node | undefined): boolean {
+  if (!declaration) return false;
+  let clause: ts.Node | undefined = declaration.parent;
+  while (clause && !ts.isCaseClause(clause) && !ts.isDefaultClause(clause)) clause = clause.parent;
+  const caseBlock = clause?.parent;
+  const switchStmt = caseBlock?.parent;
+  return (
+    caseBlock !== undefined &&
+    switchStmt !== undefined &&
+    ts.isCaseBlock(caseBlock) &&
+    ts.isSwitchStatement(switchStmt) &&
+    id.getSourceFile() === switchStmt.getSourceFile() &&
+    id.getStart() >= caseBlock.getStart() &&
+    id.getEnd() <= caseBlock.getEnd()
+  );
 }
 
 /**
@@ -239,8 +401,19 @@ function identifierValueSymbol(ctx: CodegenContext, id: ts.Identifier): ts.Symbo
  * legitimately resolve cross-file and stay untouched, as do synthetic
  * compiler-minted identifiers (no parent / no source position).
  */
-function moduleGoalReadIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boolean {
+export function moduleGoalIdentifierIsUndeclared(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): boolean {
   if (!ctx.sourceIsModule || id.parent === undefined || id.pos < 0) return false;
+  // (#4249) A direct eval body is parsed as a foreign SourceFile, so its
+  // identifiers have no checker symbol and would otherwise look like a
+  // cross-module leak. The eval executes in the caller's module environment;
+  // let the ordinary local/module-global resolution below serve that binding.
+  // `directEvalSloppyThisFallback` is set only while the direct-eval splice is
+  // being compiled (and is propagated to its callback frames).
+  if (fctx.directEvalSloppyThisFallback === true) return false;
   const valSym = identifierValueSymbol(ctx, id);
   if (valSym === undefined) return true;
   const decl = valSym.valueDeclaration ?? valSym.declarations?.[0];
@@ -259,7 +432,7 @@ function moduleGoalReadIsUndeclared(ctx: CodegenContext, id: ts.Identifier): boo
  * - 'throw': access is before declaration in straight-line code — guaranteed TDZ error
  * - 'check': can't determine statically — keep runtime flag check
  */
-function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "throw" | "check" {
+export function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "throw" | "check" {
   // A shorthand property name (`{ value }`) has two symbols in TypeScript:
   // the property being declared and the lexical binding whose value is read.
   // `getSymbolAtLocation(id)` answers the former, whose declaration range is
@@ -307,6 +480,76 @@ function analyzeTdzAccess(ctx: CodegenContext, id: ts.Identifier): "skip" | "thr
     // But only if not in a loop that wraps both (already checked above)
     return "throw";
   }
+}
+
+/**
+ * (#5271 F2) True when a top-level `const` is provably INITIALIZED before any
+ * user code in this module can run, so a read of it — from anywhere, including a
+ * hoisted function declaration — can never be in its temporal dead zone.
+ *
+ * `analyzeTdzAccess` answers "check" for every read whose containing function is
+ * a FunctionDeclaration, because hoisting lets a call precede the declaration.
+ * That is right in general, but it made the constant folders refuse an ordinary
+ * `const NAME = "kern"; function label(n) { return NAME + ":" + n; }` — the
+ * module then emitted a runtime concat plus two flag guards where it used to
+ * emit one folded string constant. Same output, worse code, on ordinary typed
+ * source.
+ *
+ * The proof is positional and cheap: module initialization runs the top-level
+ * statements in order, so if EVERY statement that ends before this declaration
+ * begins is inert — an import, a type-only declaration, a function declaration
+ * (hoisted, not executed), or a variable statement whose initializers cannot
+ * invoke anything — then the first user code to run is at or after the
+ * declaration. An importer cannot run earlier either: a module's body completes
+ * before its exports are used.
+ *
+ * Deliberately conservative. Anything else before the declaration (an expression
+ * statement, a class with static initializers, a control-flow statement) answers
+ * false and the read keeps its runtime check, which is what
+ * `const/global-closure-get-before-initialization` needs.
+ */
+function initializerCannotRunUserCode(node: ts.Node): boolean {
+  let clean = true;
+  const visit = (n: ts.Node): void => {
+    if (!clean) return;
+    if (
+      ts.isCallExpression(n) ||
+      ts.isNewExpression(n) ||
+      ts.isTaggedTemplateExpression(n) ||
+      ts.isPropertyAccessExpression(n) ||
+      ts.isElementAccessExpression(n) ||
+      ts.isFunctionExpression(n) ||
+      ts.isArrowFunction(n) ||
+      ts.isClassExpression(n)
+    ) {
+      clean = false;
+      return;
+    }
+    forEachChild(n, visit);
+  };
+  visit(node);
+  return clean;
+}
+
+export function topLevelConstInitializedBeforeAnyUserCode(decl: ts.Declaration): boolean {
+  if (!ts.isVariableDeclaration(decl)) return false;
+  const list = decl.parent;
+  if (!ts.isVariableDeclarationList(list) || !(list.flags & ts.NodeFlags.Const)) return false;
+  const statement = list.parent;
+  if (!ts.isVariableStatement(statement)) return false;
+  const sourceFile = statement.parent;
+  if (!ts.isSourceFile(sourceFile)) return false;
+  const declStart = statement.getStart(sourceFile);
+  for (const stmt of sourceFile.statements) {
+    if (stmt.getEnd() > declStart) break;
+    if (ts.isImportDeclaration(stmt) || ts.isImportEqualsDeclaration(stmt)) continue;
+    if (ts.isInterfaceDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt)) continue;
+    // A hoisted FunctionDeclaration is created, never executed, at this point.
+    if (ts.isFunctionDeclaration(stmt)) continue;
+    if (ts.isVariableStatement(stmt) && initializerCannotRunUserCode(stmt)) continue;
+    return false;
+  }
+  return true;
 }
 
 /** Walk up to find the nearest containing function (or source file for top-level). */
@@ -433,6 +676,10 @@ function emitNullablePrimitiveUnbox(
     }
   }
   if (primitiveKind === "bigint") {
+    // JS-host BigInts stay as arbitrary-width externrefs. Narrowing this value
+    // through __to_bigint would collapse it to the compiler's host-free i64
+    // carrier and discard every bit above 63.
+    if (usesHostBigIntCarrier(ctx)) return null;
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx });
@@ -491,7 +738,11 @@ export function computeElidableTopLevelTdzNames(
       if (!isDeclName) {
         // Verify this identifier resolves to OUR top-level declaration
         // (and not a shadowed local with the same name).
-        const symbol = ctx.checker.getSymbolAtLocation(node);
+        // (#5144 cluster S) Use the VALUE symbol — a shorthand assignment
+        // target (`for ({ x } of …)`) resolves through `getSymbolAtLocation`
+        // to the property, so the write was invisible here and the whole TDZ
+        // flag got elided (`obj-id-put-let` threw nothing).
+        const symbol = identifierValueSymbol(ctx, node);
         const decl = symbol?.valueDeclaration;
         if (decl === declByName.get(node.text)) {
           const result = analyzeTdzAccess(ctx, node);
@@ -555,12 +806,13 @@ export function emitStaticTdzThrow(ctx: CodegenContext, fctx: FunctionContext, n
   const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
   flushLateImportShifts(ctx, fctx);
   if (throwRefErrIdx !== undefined) {
-    addStringConstantGlobal(ctx, msg);
-    const strIdx = ctx.stringGlobalMap.get(msg)!;
-    fctx.body.push({ op: "global.get", index: strIdx });
-    fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-    fctx.body.push({ op: "unreachable" });
-    return;
+    const strIdx = addHostStringConstantGlobal(ctx, msg);
+    if (strIdx !== undefined) {
+      fctx.body.push({ op: "global.get", index: strIdx });
+      fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
+      fctx.body.push({ op: "unreachable" });
+      return;
+    }
   }
   const tagIdx = ensureExnTag(ctx);
   fctx.body.push({ op: "ref.null.extern" });
@@ -598,6 +850,162 @@ function compileIdentifier(ctx: CodegenContext, fctx: FunctionContext, id: ts.Id
   return compileIdentifierCore(ctx, fctx, id);
 }
 
+/**
+ * (#4660) Does `id` resolve to a USER function declaration that shadows an
+ * ambient `ctx.declaredGlobals` entry of the same name?
+ *
+ * The ambient arm is name-keyed, so it answers `env.global_<name>` for every
+ * read of that name anywhere in the module. That is correct only for reads that
+ * actually denote the global. The checker knows which declaration a given
+ * identifier denotes, so ask it rather than the name.
+ *
+ * Deliberately narrow — all three conditions are load-bearing:
+ *  - a **function declaration** in a non-declaration source file (a lib.d.ts
+ *    declaration IS the ambient global; a `var`/`let` shadow is already served
+ *    by the local/module arms and has no in-module carrier here);
+ *  - the declaration's own name matches, so a renamed/aliased binding never
+ *    diverts the read;
+ *  - `ctx.funcMap` holds a **defined** (non-import) function for that name, so
+ *    the funcref-as-value arm downstream is guaranteed to serve the read. An
+ *    import-backed entry is skipped by that arm (#1809) and skipping the
+ *    ambient one too would degrade the read to `ref.null.extern`.
+ */
+function ambientGlobalReadIsUserFunctionShadowed(ctx: CodegenContext, id: ts.Identifier, name: string): boolean {
+  if (!ctx.declaredGlobals.has(name)) return false;
+  const funcIdx = ctx.funcMap.get(name);
+  if (funcIdx === undefined || definedFuncAt(ctx, funcIdx) === undefined) return false;
+  const decl = ctx.oracle.valueDeclarationOf(id);
+  if (decl === undefined) return false;
+  if (decl.getSourceFile().isDeclarationFile) return false;
+  return ts.isFunctionDeclaration(decl) && decl.name?.text === name;
+}
+
+function compileRuntimeEvalGlobalLexicalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): ValType | null {
+  const name = id.text;
+  const savedFallback = pushBody(fctx);
+  const fallbackType = compileIdentifierCore(ctx, fctx, id, true);
+  if (fallbackType === null) {
+    popBody(fctx, savedFallback);
+    return null;
+  }
+  if (fallbackType.kind !== "externref") coerceType(ctx, fctx, fallbackType, { kind: "externref" });
+  const fallbackBody = fctx.body;
+  popBody(fctx, savedFallback);
+  return emitRuntimeEvalGlobalLexicalReadOrFallback(ctx, fctx, name, fallbackBody, { kind: "externref" });
+}
+
+function shouldUseRuntimeEvalGlobalLexicalRead(
+  ctx: CodegenContext,
+  skipRuntimeEvalState: boolean,
+  unresolvedInModuleGoal: boolean,
+): boolean {
+  return (
+    !skipRuntimeEvalState &&
+    !unresolvedInModuleGoal &&
+    (ctx.standalone || ctx.wasi) &&
+    ctx.runtimeEvalGlobalFunctionBindings === true
+  );
+}
+
+function emitModuleTdzReadCheck(ctx: CodegenContext, fctx: FunctionContext, id: ts.Identifier): void {
+  const flagIdx = moduleTdzGlobalIndexForIdentifier(ctx, id);
+  if (flagIdx === undefined) return;
+  const tdzResult = analyzeTdzAccess(ctx, id);
+  if (tdzResult === "check") emitTdzCheckAtGlobal(ctx, fctx, flagIdx, id.text, noJsHost(ctx));
+  else if (tdzResult === "throw") emitStaticTdzThrow(ctx, fctx, id.text);
+}
+
+function compileCapturedGlobalRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+  name: string,
+): ValType {
+  emitModuleTdzReadCheck(ctx, fctx, id);
+  const gType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.capturedGlobals, name);
+  if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
+    fctx.body.push({ op: "ref.as_non_null" });
+    return { kind: "ref", typeIdx: gType.typeIdx };
+  }
+  return gType;
+}
+
+/** Resolve an imported top-level function by declaration/allocator identity. */
+function exactImportedTopLevelFunction(
+  ctx: CodegenContext,
+  id: ts.Identifier,
+): { declaration: ts.FunctionDeclaration; funcIdx: number; name: string } | undefined {
+  const binding = ctx.oracle.valueDeclarationOf(id);
+  if (!binding || (!ts.isImportClause(binding) && !ts.isImportSpecifier(binding))) return undefined;
+  const declaration = ctx.importBindingTargets?.get(binding);
+  if (
+    !declaration ||
+    !ts.isFunctionDeclaration(declaration) ||
+    declaration.body === undefined ||
+    declaration.parent !== declaration.getSourceFile()
+  ) {
+    return undefined;
+  }
+  // Reassigned function declarations are live module bindings. The immutable
+  // direct body is not their current value; let the existing live-global import
+  // path serve them instead. This check must use declaration identity: the
+  // legacy storage registry is graph-wide and name-keyed, so an unrelated
+  // reassigned `source` must not hide this immutable declaration.
+  if (ctx.reassignedFunctionDeclarations?.has(declaration)) return undefined;
+  const registry = ctx.programAbiSourceCallables;
+  const identity = registry?.identityContext;
+  const unitId = identity?.unitIdByDeclaration.get(declaration);
+  if (
+    unitId === undefined ||
+    identity?.declarationByUnitId.get(unitId) !== declaration ||
+    registry?.functionForUnit(unitId) === undefined
+  ) {
+    return undefined;
+  }
+  const funcIdx = registry.handleForUnit(unitId);
+  if (funcIdx === undefined || definedFuncAt(ctx, funcIdx) !== registry.functionForUnit(unitId)) return undefined;
+  return {
+    declaration,
+    funcIdx,
+    name: declaration.name?.text ?? registry.functionForUnit(unitId)!.name,
+  };
+}
+
+/**
+ * Read a user module binding that TypeScript resolved to a same-named ambient
+ * declaration in script mode (#2176). The source lookup establishes lexical
+ * ownership; Program ABI allocator identity then prevents another module's
+ * same-named global from serving the read.
+ */
+function compileExactAmbientShadowedModuleBinding(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): ValType | undefined {
+  const declaration = findUserBindingDecl(id);
+  if (!declaration || !ts.isVariableDeclaration(declaration)) return undefined;
+  const binding = ctx.programAbiGlobals?.moduleBinding(declaration);
+  if (!binding) return undefined;
+  const localIdx = ctx.mod.globals.indexOf(binding.value);
+  if (localIdx < 0) return undefined;
+  if (binding.tdz) {
+    const tdzLocalIdx = ctx.mod.globals.indexOf(binding.tdz);
+    if (tdzLocalIdx < 0) return undefined;
+    const tdzResult = analyzeTdzAccess(ctx, id);
+    if (tdzResult === "check") {
+      emitTdzCheckAtGlobal(ctx, fctx, ctx.numImportGlobals + tdzLocalIdx, id.text, noJsHost(ctx));
+    } else if (tdzResult === "throw") {
+      emitStaticTdzThrow(ctx, fctx, id.text);
+    }
+  }
+  fctx.body.push({ op: "global.get", index: ctx.numImportGlobals + localIdx });
+  return binding.value.type;
+}
+
 /** The non-`with` identifier lowering (locals, globals, funcs, builders,
  *  ReferenceError). Split out so the Tier-2 dynamic `with` path can invoke it as
  *  the HasBinding-miss fallback (#2663 Slice 1). */
@@ -608,6 +1016,66 @@ function compileIdentifierCore(
   skipRuntimeEvalState = false,
 ): ValType | null {
   const name = id.text;
+
+  const runtimeEvalMayShadow = !skipRuntimeEvalState && runtimeEvalStateMayShadowBinding(ctx, fctx, name);
+  const foldedEvalActivationOwnsBinding =
+    fctx.directEvalActivationBindingNames?.has(name) === true && fctx.localMap.has(name);
+
+  // A typed source-level `declare const/let/var` is a promise that the host
+  // environment owns the value; it does not allocate a Wasm local. Resolve it
+  // by checker identity before the legacy flat local maps. Those maps can carry
+  // an unrelated same-named block binding from elsewhere in the function (the
+  // TypeScript compiler's performanceCore has exactly this shape), which would
+  // otherwise hijack the ambient read and apply that dead block's TDZ flag.
+  // Concrete lexical shadows do not enter this arm because their checker
+  // declarations are not ambient-only. A provider-created binding must select
+  // before this fallback, and a successfully folded sloppy eval can create the
+  // same activation binding statically; both shadows therefore take priority.
+  if (!runtimeEvalMayShadow && !foldedEvalActivationOwnsBinding) {
+    const explicitAmbientType = tryEmitExplicitHostAmbientValueRead(ctx, fctx, id);
+    if (explicitAmbientType !== undefined) return explicitAmbientType;
+  }
+
+  // A direct CaseBlock lexical declaration is visible only while evaluating
+  // that switch's clauses.  Keep an outside reference from falling through to
+  // the flat class/function registries, which otherwise make the name appear
+  // callable even though the binding is out of scope.
+  const switchDeclaration = switchCaseLexicalDeclarationOutside(ctx, id);
+  if (switchDeclaration !== undefined) {
+    emitStaticTdzThrow(ctx, fctx, name);
+    return { kind: "externref" };
+  }
+
+  // (#4630) A top-level function reassigned via `globalThis.<name> = …` must
+  // resolve bare reads through the override slot (§16.1.7 — the declaration
+  // IS a global-object property, so the write rebinds it). Locals/captures
+  // still win; the static closure serves until the first reassignment.
+  if (
+    isShadowedTopLevelFn(ctx, name) &&
+    fctx.localMap.get(name) === undefined &&
+    !(fctx.boxedCaptures?.has(name) ?? false)
+  ) {
+    const slot = fnShadowSlot(ctx, name);
+    const staticArm: Instr[] = [];
+    const savedBody = fctx.body;
+    fctx.body = staticArm;
+    const staticTy = withShadowReadSuppressed(
+      () => compileIdentifierCore(ctx, fctx, id, true),
+      name, // (#4648) marks this as the static fallback arm FOR `name`
+    );
+    if (staticTy && staticTy.kind !== "externref") coerceType(ctx, fctx, staticTy, { kind: "externref" });
+    else if (!staticTy) fctx.body.push({ op: "ref.null.extern" });
+    fctx.body = savedBody;
+    fctx.body.push({ op: "global.get", index: slot });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: staticArm,
+      else: [{ op: "global.get", index: slot }],
+    });
+    return { kind: "externref" };
+  }
 
   // #1210: string-builder bindings are stored as a (buf, len, cap, mat)
   // tuple of synthetic locals. The binding name is intentionally NOT in
@@ -623,7 +1091,7 @@ function compileIdentifierCore(
   // outer capture or ambient/global symbol. Compile the ordinary resolution as
   // the miss arm, then select through the stable caller-owned value cell. A
   // current-function local/lexical binding is excluded by the shared predicate.
-  if (!skipRuntimeEvalState && runtimeEvalStateMayShadowBinding(ctx, fctx, name)) {
+  if (runtimeEvalMayShadow) {
     const savedFallback = pushBody(fctx);
     const fallbackType = compileIdentifierCore(ctx, fctx, id, true);
     if (fallbackType === null) {
@@ -675,7 +1143,14 @@ function compileIdentifierCore(
   if (cancelRanges && cancelRanges.length > 0) {
     const pos = id.getStart();
     const insideDeclaringBlock = cancelRanges.some((r) => pos >= r.start && pos < r.end);
-    if (!insideDeclaringBlock) return emitAnnexBUnboundReferenceError(ctx, fctx, name);
+    // A cancelled block declaration named `arguments` does not erase the
+    // enclosing function's implicit arguments binding.  Keep that binding
+    // available outside the declaring block; calls inside the block are
+    // resolved separately by the Annex-B call-site path.
+    const preservesImplicitArguments = name === "arguments" && fctx.localMap.has(name);
+    if (!insideDeclaringBlock && !preservesImplicitArguments) {
+      return emitAnnexBUnboundReferenceError(ctx, fctx, name);
+    }
   }
 
   // (#3980, Annex B B.3.3) The `fctx.annexBCancelled` map above is per-
@@ -690,10 +1165,11 @@ function compileIdentifierCore(
   // short-circuiting on the (near-universally) empty site list, so non-Annex-B
   // modules are byte-identical.
   const annexBSites = collectAnnexBCancelSites(id.getSourceFile());
-  if (annexBSites.length > 0 && annexBReadIsUnbound(annexBSites, id)) {
+  const preservesImplicitArguments = name === "arguments" && fctx.localMap.has(name);
+  if (annexBSites.length > 0 && !preservesImplicitArguments && annexBReadIsUnbound(annexBSites, id)) {
     return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
-  if (annexBReadEscapesFunctionScope(id)) {
+  if (!preservesImplicitArguments && annexBReadEscapesFunctionScope(id)) {
     return emitAnnexBUnboundReferenceError(ctx, fctx, name);
   }
 
@@ -717,11 +1193,28 @@ function compileIdentifierCore(
       emitUndefined(ctx, fctx);
       const undefLocal = allocLocal(fctx, `__annexb_undef_${fctx.locals.length}`, { kind: "externref" });
       fctx.body.push({ op: "local.set", index: undefLocal });
-      fctx.body.push({ op: "local.get", index: flagLocal });
+      const boxed = fctx.boxedTdzFlags?.get(name);
+      if (boxed) {
+        // Captured Annex-B outer bindings share their TDZ state through an
+        // i32 ref cell.  The `tdzFlagLocals` entry then names the box local,
+        // not an i32 local, so dereference it before using it as a condition.
+        fctx.body.push({ op: "local.get", index: boxed.localIdx });
+        fctx.body.push({ op: "struct.get", typeIdx: boxed.refCellTypeIdx, fieldIdx: 0 });
+      } else {
+        fctx.body.push({ op: "local.get", index: flagLocal });
+      }
       fctx.body.push({
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
-        then: [{ op: "local.get", index: outerLocal }],
+        then: (() => {
+          const valueBox = fctx.boxedCaptures?.get(name);
+          return valueBox
+            ? [
+                { op: "local.get", index: outerLocal },
+                { op: "struct.get", typeIdx: valueBox.refCellTypeIdx, fieldIdx: 0 },
+              ]
+            : [{ op: "local.get", index: outerLocal }];
+        })(),
         else: [{ op: "local.get", index: undefLocal }],
       });
       return { kind: "externref" };
@@ -730,7 +1223,21 @@ function compileIdentifierCore(
 
   const localIdx = fctx.localMap.get(name);
   if (localIdx !== undefined) {
-    materializeHoistedFunctionValueBinding(ctx, fctx, name);
+    const localDeclaration = ctx.oracle.valueDeclarationOf(id);
+    const stableHoistedFunctionValue =
+      localDeclaration !== undefined &&
+      ts.isFunctionDeclaration(localDeclaration) &&
+      !ctx.reassignedFunctionDeclarations?.has(localDeclaration) &&
+      fctx.directEvalBindingNames?.has(name) !== true;
+    // Compilation visits conditional arms in source order, but execution may
+    // enter only a later arm. A first value read in an earlier arm therefore
+    // does not dominate this read. Stable FunctionDeclaration bindings may
+    // safely publish their memoized closure at every value-read site; a
+    // reassigned declaration must retain its live binding instead. Direct eval
+    // can perform the same replacement without a static assignment target, so
+    // any binding exposed to this activation's eval environment is mutable for
+    // the purpose of re-emission too.
+    materializeHoistedFunctionValueBinding(ctx, fctx, name, stableHoistedFunctionValue);
     const tdzFlagIdx = fctx.tdzFlagLocals?.get(name);
     if (tdzFlagIdx !== undefined) {
       const tdzResult = analyzeTdzAccess(ctx, id);
@@ -742,12 +1249,21 @@ function compileIdentifierCore(
       // tdzResult === "skip" — no check needed, variable is guaranteed initialized
     }
 
+    const promiseSubclass = resolvePromiseSubclassIdentifier(ctx, id);
+    if (promiseSubclass !== undefined && emitPromiseSubclassCtor(ctx, fctx, promiseSubclass)) {
+      return { kind: "externref" };
+    }
+
     // Check if this is a boxed (ref cell) mutable capture
     const boxed = fctx.boxedCaptures?.get(name);
     if (boxed) {
       // Read through ref cell: local.get → null guard → struct.get $ref_cell 0
       // The ref cell local is ref_null — if the closure capture is uninitialized,
       // the local is null and struct.get would trap (#702).
+      // A cell whose `struct.new` sits in a conditional arm is null on every
+      // path that skipped that arm; the guard below would then read the value
+      // type's DEFAULT rather than the binding. Mint it from the pre-box slot.
+      emitConditionalCaptureBoxRepair(fctx, name, localIdx);
       fctx.body.push({ op: "local.get", index: localIdx });
       emitNullGuardedStructGet(
         ctx,
@@ -792,12 +1308,24 @@ function compileIdentifierCore(
     // runtime `undefined` to NaN before `=== undefined` / any-param uses can
     // observe it. Return the raw externref; numeric consumers coerce at
     // their own use site (ToNumber(undefined) = NaN matches JS).
+    // #4701: a widened mapped-arguments formal is intentionally a dynamic
+    // carrier. Its checker type can remain numeric because the original
+    // call-site argument was numeric, but reverse sync may later write any JS
+    // value (for example, a string descriptor value) into the formal. Preserve
+    // the carrier on a bare read; numeric consumers coerce it at their use site.
+    const mappedExternrefParam = (() => {
+      const info = fctx.mappedArgsInfo;
+      if (!info || localIdx < info.paramOffset) return false;
+      const paramIndex = localIdx - info.paramOffset;
+      return paramIndex < info.paramCount && info.paramTypes[paramIndex]?.kind === "externref";
+    })();
     if (
       declaredType.kind === "externref" &&
       !fctx.captureExternrefNames?.has(name) &&
       !fctx.undefWidenedLocals?.has(name) &&
       !fctx.forInIdentifierVars?.has(name) &&
-      !fctx.mixedAssignmentCarrierVars?.has(name)
+      !fctx.mixedAssignmentCarrierVars?.has(name) &&
+      !mappedExternrefParam
     ) {
       const narrowedType = ctx.checker.getTypeAtLocation(id);
       const narrowed = narrowTypeToUnbox(ctx, fctx, narrowedType);
@@ -886,64 +1414,108 @@ function compileIdentifierCore(
     }
   }
 
+  // An imported default expression is identified by its checker declaration,
+  // not by the import's bare local spelling. This must precede every graph-wide
+  // name registry: an unrelated same-named function/closure/global in another
+  // source file is not visible through this import binding.
+  const importedDefaultExpression = resolveDefaultExpressionImportGlobal(ctx, id);
+  if (importedDefaultExpression) {
+    emitTdzCheckAtGlobal(ctx, fctx, importedDefaultExpression.initializedGlobalIdx, name);
+    fctx.body.push({ op: "global.get", index: importedDefaultExpression.globalIdx });
+    return importedDefaultExpression.type;
+  }
+
+  // Default/named imports of top-level functions must retain source identity.
+  // The graph-wide funcMap is keyed by spelling, so two dependencies that both
+  // declare `function source()` cannot safely be projected through that map.
+  const importedFunction = exactImportedTopLevelFunction(ctx, id);
+  if (importedFunction) {
+    const constructible =
+      importedFunction.declaration.asteriskToken === undefined &&
+      !(importedFunction.declaration.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
+    const valueType = emitCachedFuncClosureAccess(
+      ctx,
+      fctx,
+      importedFunction.name,
+      importedFunction.funcIdx,
+      constructible,
+    );
+    if (valueType) return valueType;
+  }
+
+  const namespaceObject = tryEmitCompiledModuleNamespaceObject(ctx, fctx, id);
+  if (namespaceObject) return namespaceObject;
+
+  const runtimeNamespaceObject = tryEmitCompiledRuntimeNamespaceFunctionObject(ctx, fctx, id);
+  if (runtimeNamespaceObject) return runtimeNamespaceObject;
+
+  const resolvedValueDeclaration = ctx.oracle.valueDeclarationOf(id);
+  const readsAmbientDeclaration = resolvedValueDeclaration?.getSourceFile().isDeclarationFile === true;
+  const ambientShadowType = readsAmbientDeclaration
+    ? compileExactAmbientShadowedModuleBinding(ctx, fctx, id)
+    : undefined;
+  if (ambientShadowType) return ambientShadowType;
+  const ambientCollisionType = tryEmitAmbientRegistryCollisionRead(ctx, fctx, id, skipRuntimeEvalState);
+  if (ambientCollisionType) return ambientCollisionType;
+
+  // (#4618) A class declaration is already represented by its canonical,
+  // identity-stable class-object singleton, so it never needs a value-copy
+  // capture. Resolve the checker-verified declaration before the graph-wide,
+  // name-keyed capture tables below. Otherwise a sibling callback that
+  // previously promoted its own same-named class (React's many per-test
+  // `class Foo` declarations) can intercept this read with a foreign null
+  // capture global. Per-site synthetic identities keep duplicate lexical
+  // declarations distinct while preserving the ordinary class name for the
+  // first declaration.
+  const declaredClass = resolvedValueDeclaration;
+  if (declaredClass && (ts.isClassDeclaration(declaredClass) || ts.isClassExpression(declaredClass))) {
+    const promiseSubclass = resolvePromiseSubclassIdentifier(ctx, id);
+    if (promiseSubclass !== undefined && emitPromiseSubclassCtor(ctx, fctx, promiseSubclass)) {
+      return { kind: "externref" };
+    }
+    const classIdentity =
+      ctx.anonClassExprNames.get(declaredClass) ??
+      (declaredClass.name?.text && ctx.classObjectGlobals?.has(declaredClass.name.text)
+        ? declaredClass.name.text
+        : (ctx.classExprNameMap.get(name) ?? name));
+    if (ctx.classObjectGlobals?.has(classIdentity) && emitLazyClassObjectGet(ctx, fctx, classIdentity)) {
+      return { kind: "externref" };
+    }
+  }
   // (#3039) Check BOXED captured globals FIRST — a transitively-captured
   // mutable var (ref cell) that a method-shorthand / class-method / accessor
   // body reads. The promoted global holds the box; deref it (global.get;
   // struct.get field 0) rather than returning the ref cell as if it were the
   // value (which coerced ref→f64 to `f64.const 0` / ref→externref to garbage).
-  const capturedBox = getCapturedBoxGlobal(ctx, name);
+  const capturedBox = readsAmbientDeclaration ? undefined : getCapturedBoxGlobal(ctx, name);
   if (capturedBox !== undefined) {
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
+    emitModuleTdzReadCheck(ctx, fctx, id);
     return emitCapturedBoxGlobalRead(ctx, fctx, capturedBox);
   }
 
   // (#3505) Graph-wide name-keyed registries (capturedGlobals, moduleGlobals,
   // funcMap, classObjectGlobals, …) must not serve a read that is undeclared
-  // for THIS module's environment record — see moduleGoalReadIsUndeclared.
-  const unresolvedInModuleGoal = moduleGoalReadIsUndeclared(ctx, id);
+  // for THIS module's environment record — see moduleGoalIdentifierIsUndeclared.
+  const unresolvedInModuleGoal = moduleGoalIdentifierIsUndeclared(ctx, fctx, id);
+  const graphNameRegistryUnavailable = unresolvedInModuleGoal || readsAmbientDeclaration;
 
   // Check captured globals (variables promoted from enclosing scope for callbacks)
-  const capturedIdx = unresolvedInModuleGoal ? undefined : ctx.capturedGlobals.get(name);
+  const capturedIdx = graphNameRegistryUnavailable ? undefined : ctx.capturedGlobals.get(name);
   if (capturedIdx !== undefined) {
-    // TDZ check: throw ReferenceError if let/const variable accessed before initialization
-    // Apply static analysis — captured globals are often accessed from closures,
-    // but analyzeTdzAccess handles the cross-function case correctly (returns "check")
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
-    fctx.body.push({ op: "global.get", index: capturedIdx });
-    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, capturedIdx)];
-    const gType = globalDef?.type ?? { kind: "f64" };
-    // Globals widened from ref to ref_null for null init — narrow back
-    if (gType.kind === "ref_null" && (ctx.capturedGlobalsWidened.has(name) || fctx.narrowedNonNull?.has(name))) {
-      fctx.body.push({ op: "ref.as_non_null" });
-      return { kind: "ref", typeIdx: gType.typeIdx };
-    }
-    return gType;
+    return compileCapturedGlobalRead(ctx, fctx, id, name);
+  }
+
+  if (shouldUseRuntimeEvalGlobalLexicalRead(ctx, skipRuntimeEvalState, unresolvedInModuleGoal)) {
+    return compileRuntimeEvalGlobalLexicalRead(ctx, fctx, id);
   }
 
   // Check module-level globals (top-level let/const declarations)
-  const moduleIdx = unresolvedInModuleGoal ? undefined : ctx.moduleGlobals.get(name);
+  const moduleIdx = graphNameRegistryUnavailable ? undefined : ctx.moduleGlobals.get(name);
   if (moduleIdx !== undefined) {
     // TDZ check: throw ReferenceError if let/const variable accessed before initialization
     // Apply static analysis for module-level globals
-    const tdzResult = ctx.tdzGlobals.has(name) ? analyzeTdzAccess(ctx, id) : "skip";
-    if (tdzResult === "check") {
-      emitTdzCheck(ctx, fctx, name);
-    } else if (tdzResult === "throw") {
-      emitStaticTdzThrow(ctx, fctx, id.text);
-    }
-    fctx.body.push({ op: "global.get", index: moduleIdx });
-    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, moduleIdx)];
-    const mType = globalDef?.type ?? { kind: "f64" };
+    emitModuleTdzReadCheck(ctx, fctx, id);
+    const mType = emitLiveIdentifierGlobalRead(ctx, fctx, ctx.moduleGlobals, name);
     // Null narrowing for module globals
     if (mType.kind === "ref_null" && fctx.narrowedNonNull?.has(name)) {
       fctx.body.push({ op: "ref.as_non_null" });
@@ -967,6 +1539,28 @@ function compileIdentifierCore(
     return { kind: "externref" };
   }
 
+  // Node's `process` is a host-owned global rather than a module binding.
+  // Keep a bare read on the same live host object used by the dedicated
+  // `process.*` property readers. This matters for code such as
+  // `Object.prototype.toString.call(process)`: synthesizing a Wasm object in
+  // the test shim makes callback-valued members (stdout.on/removeListener)
+  // opaque GC closures, while the real host process exposes ordinary JS
+  // functions. Lexical/module/captured shadows have already returned above.
+  if (
+    name === "process" &&
+    !ctx.standalone &&
+    !ctx.wasi &&
+    !fctx.localMap.has(name) &&
+    !(fctx.boxedCaptures?.has(name) ?? false) &&
+    !unresolvedInModuleGoal
+  ) {
+    const processIdx = ensureLateImport(ctx, "__get_process", [], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    if (processIdx !== undefined) fctx.body.push({ op: "call", funcIdx: processIdx });
+    else fctx.body.push({ op: "ref.null.extern" });
+    return { kind: "externref" };
+  }
+
   // A first-class read of the unshadowed global `%eval%` (`var indirect =
   // eval`) must produce the provider's callable, realm-stable intrinsic
   // marker. Syntactic direct/sequence calls are intercepted in calls.ts before
@@ -978,6 +1572,33 @@ function compileIdentifierCore(
     if (isGlobalIntrinsic) {
       const valueType = emitStandaloneIntrinsicEvalValue(ctx, fctx);
       if (valueType !== undefined) return valueType;
+    }
+  }
+  // Host/gc: expose the sandbox realm's genuine, non-constructible `%eval%`.
+  // Seed compiled script globals first so an alias performs indirect eval in
+  // the same GlobalEnvironmentRecord as the AOT module.
+  if (!ctx.standalone && !ctx.wasi && name === "eval") {
+    const declaration = ctx.oracle.valueDeclarationOf(id);
+    const isGlobalIntrinsic = declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+    if (isGlobalIntrinsic) {
+      emitHostEvalGlobalBindingSeed(ctx, fctx);
+      const gtFuncIdx = ensureLateImport(ctx, "__get_globalThis", [], [{ kind: "externref" }]);
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (gtFuncIdx !== undefined && getIdx !== undefined) {
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__get_globalThis") ?? gtFuncIdx });
+        const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
+        fctx.body.push(
+          strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
+        );
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+        return { kind: "externref" };
+      }
     }
   }
   // `%Function%` is a genuine realm-owned callable in runtime-eval builds.
@@ -996,7 +1617,14 @@ function compileIdentifierCore(
   }
   const globalFunction = tryEmitStandaloneGlobalFunctionIdentifier(ctx, fctx, name, id);
   if (globalFunction) return globalFunction;
-  if (ctx.sloppyImplicitGlobals?.has(name)) return emitImplicitGlobalRead(ctx, fctx, name);
+  // (#4648) …except inside the shadow-slot STATIC arm on the JS-host lane: the
+  // pre-override value of a top-level function declaration is the compiled
+  // function, and round-tripping it through the host global object loses the
+  // WasmGC closure representation the call path needs. Host lane only, so the
+  // standalone lowering stays byte-identical.
+  if (ctx.sloppyImplicitGlobals?.has(name) && !(!ctx.standalone && !ctx.wasi && isShadowStaticArmFor(name))) {
+    return emitImplicitGlobalRead(ctx, fctx, name);
+  }
   // Standalone built-in namespace values (Array/Object) materialize as lazy
   // open-object singletons before ambient lib declarations can route them to
   // host globals.
@@ -1016,10 +1644,16 @@ function compileIdentifierCore(
   // extern constructor through globalThis generically; this covers Web/API
   // constructors without extending the TypedArray/ERM name allowlists below.
   // Standalone/WASI deliberately keep their native/no-host behavior.
+  // The registry is graph-wide and name-keyed, so require the identifier's
+  // VALUE declaration to be ambient (or unresolved). TypeScript itself imports
+  // `interface Node` and also declares a local constructible `function Node`;
+  // that function must reach the compiled funcref path below rather than read
+  // the unrelated DOM `globalThis.Node` constructor.
   if (
     !ctx.standalone &&
     !ctx.wasi &&
     ctx.externClasses.has(name) &&
+    (resolvedValueDeclaration === undefined || readsAmbientDeclaration) &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)
@@ -1034,8 +1668,7 @@ function compileIdentifierCore(
     flushLateImportShifts(ctx, fctx);
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      addStringConstantGlobal(ctx, name);
-      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
       fctx.body.push(
         strGlobalIdx !== undefined ? { op: "global.get", index: strGlobalIdx } : { op: "ref.null.extern" },
       );
@@ -1060,7 +1693,39 @@ function compileIdentifierCore(
   if (
     !ctx.standalone &&
     !ctx.wasi &&
-    (taCtorKindOf(name) >= 0 || name === "BigInt64Array" || name === "BigUint64Array") &&
+    // (#4616-adjacent) `Buffer` rides the same host-global materialization:
+    // jest-util's deepCyclicCopy suite reads the bare Node global (`new
+    // Buffer/Buffer.from`), which otherwise fell to the null-extern default
+    // ("Buffer is not defined").
+    // (#4616) `process` too: jest-core's globals suite reads the bare Node
+    // global (`Object.prototype.toString.call(process)`), which otherwise fell
+    // to the graceful-null default and stringified as "[object Null]".
+    (taCtorKindOf(name) >= 0 ||
+      name === "BigInt64Array" ||
+      name === "BigUint64Array" ||
+      name === "Buffer" ||
+      name === "process" ||
+      // Web Crypto is also a genuine host-global VALUE. Direct
+      // `crypto.randomUUID()` / `crypto.getRandomValues()` calls have typed
+      // builtin lowerings, but a guard such as `if (crypto.randomUUID)` reads
+      // the namespace first. Multi-module JS projects do not necessarily
+      // retain the lib.dom ambient declaration for that dependency, so the
+      // read used to fall through to the unresolvable-name path even though
+      // the host supplies globalThis.crypto.
+      name === "crypto" ||
+      // (#5206) `Intl` is an ambient NAMESPACE (`declare namespace Intl` in
+      // lib.es5.d.ts), not a `declare var`, so none of the value-shaped arms
+      // above claim it and every read fell to the `ref.null.extern` graceful
+      // default — `Intl.DateTimeFormat` then threw "Cannot access property on
+      // null or undefined". That is the eighth @js-temporal/polyfill
+      // module-init blocker (#4628): the bundle's very first Intl statement is
+      // a top-level `ct = Intl.DateTimeFormat`. The JS host owns a full,
+      // ICU-backed `Intl`, and `__get_globalThis`/`__extern_get` are IMPORTS
+      // (unlike the module's own exports), so this resolves inside the wasm
+      // `start` section as well as after it. Standalone/WASI keep the null
+      // default: there is no host Intl there, and a compiled shim for it is a
+      // separate, much larger gap.
+      name === "Intl") &&
     fctx.localMap.get(name) === undefined &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)
@@ -1075,8 +1740,7 @@ function compileIdentifierCore(
     flushLateImportShifts(ctx, fctx);
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      addStringConstantGlobal(ctx, name);
-      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
       if (strGlobalIdx !== undefined) {
         fctx.body.push({ op: "global.get", index: strGlobalIdx });
       } else {
@@ -1088,9 +1752,54 @@ function compileIdentifierCore(
   }
 
   // Check declared globals (e.g. document, window)
-  const globalInfo = ctx.declaredGlobals.get(name);
+  //
+  // (#4660) …but ONLY when this identifier really denotes the ambient global.
+  // `ctx.declaredGlobals` is name-keyed and module-wide, and the arms above that
+  // model shadowing (`localMap`, `capturedGlobals`, `moduleGlobals`) are ALSO
+  // name-keyed per-FunctionContext — so a user function declaration that lives
+  // in a body the driven/frame-based async lowering re-hosts (`__async_resume_*`)
+  // is invisible to all of them and the read fell through to the host global.
+  // That silently returned the INTRINSIC for a shadowing declaration:
+  //
+  //   asyncTest(async function () {
+  //     function TypeError() {}          // shadows the intrinsic
+  //     await (async function () { throw new TypeError(); })();
+  //     // `TypeError === intrinsicTypeError` was TRUE — both read
+  //     // `call env.global_TypeError`
+  //   });
+  //
+  // Ask the checker who this identifier resolves to instead of trusting the
+  // name. A declaration in a real source file is a user binding, not the
+  // ambient one. Gated on there being a DEFINED in-module function to serve the
+  // read (the funcref-as-value arm below), so the read can never degrade from
+  // "wrong object" to the `ref.null.extern` graceful default.
+  // `unresolvedInModuleGoal` disables the funcref arm too (#3505), so the
+  // ambient read must stay in that case or nothing serves it.
+  const shadowedAmbient = !unresolvedInModuleGoal && ambientGlobalReadIsUserFunctionShadowed(ctx, id, name);
+  const globalInfo = shadowedAmbient ? undefined : ctx.declaredGlobals.get(name);
   if (globalInfo) {
     fctx.body.push({ op: "call", funcIdx: globalInfo.funcIdx });
+    // (#4616-adjacent) A node-builtin NAMED binding is a MEMBER of the module
+    // object the thunk returns (`import { EOL } from 'os'` reads `os.EOL`),
+    // not the module itself.
+    if (globalInfo.member !== undefined) {
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (getIdx !== undefined) {
+        const strGlobalIdx = addHostStringConstantGlobal(ctx, globalInfo.member);
+        if (strGlobalIdx !== undefined) {
+          fctx.body.push({ op: "global.get", index: strGlobalIdx });
+        } else {
+          fctx.body.push({ op: "ref.null.extern" });
+        }
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+      }
+    }
     return globalInfo.type;
   }
 
@@ -1123,7 +1832,48 @@ function compileIdentifierCore(
   {
     // (#3505) A foreign module's class must not resolve by bare name — see
     // `unresolvedInModuleGoal`.
-    const resolvedClassName = unresolvedInModuleGoal ? undefined : (ctx.classExprNameMap.get(name) ?? name);
+    let resolvedClassName = graphNameRegistryUnavailable ? undefined : (ctx.classExprNameMap.get(name) ?? name);
+    // (#4618) Checker-verified identity: a bare name is not a binding. A
+    // nested FUNCTION named like a class elsewhere (react's StrictMode batch
+    // declares `class Foo` in one test and `function Foo()` in the next) was
+    // hijacked into the class singleton here — createElement received the
+    // CLASS object and the function component never ran. When the checker
+    // resolves this identifier to a declaration, take the class arm only if
+    // that declaration IS a class; a per-site synthetic (scoped duplicate
+    // declaration) resolves through its own node.
+    if (resolvedClassName !== undefined && ctx.classObjectGlobals?.has(resolvedClassName)) {
+      const decl = ctx.oracle.valueDeclarationOf(id);
+      if (decl !== undefined) {
+        if (ts.isClassDeclaration(decl) || ts.isClassExpression(decl)) {
+          const scoped = ctx.anonClassExprNames.get(decl);
+          if (scoped !== undefined && ctx.classObjectGlobals.has(scoped)) resolvedClassName = scoped;
+        } else if (
+          ts.isFunctionDeclaration(decl) ||
+          ts.isFunctionExpression(decl) ||
+          ts.isArrowFunction(decl) ||
+          ts.isParameter(decl)
+        ) {
+          resolvedClassName = undefined;
+        } else if (ts.isVariableDeclaration(decl)) {
+          // A var/let/const binding opts out ONLY when it provably holds a
+          // NON-class function value (react's `const Foo = () => …` twin of
+          // the function-declaration case). `var C = class { … }` — the
+          // dominant test262 class-elements shape — IS the class this arm
+          // serves; the blanket var opt-out sent every read of `C` to the
+          // normal identifier lanes (undefined), which surfaced as 205
+          // merge_group regressions in language/expressions/class/elements
+          // ("Cannot convert undefined or null to object" in verifyProperty).
+          let init = decl.initializer;
+          while (init !== undefined && ts.isParenthesizedExpression(init)) init = init.expression;
+          if (init !== undefined && ts.isClassExpression(init)) {
+            const scoped = ctx.anonClassExprNames.get(init);
+            if (scoped !== undefined && ctx.classObjectGlobals.has(scoped)) resolvedClassName = scoped;
+          } else if (init !== undefined && (ts.isFunctionExpression(init) || ts.isArrowFunction(init))) {
+            resolvedClassName = undefined;
+          }
+        }
+      }
+    }
     if (resolvedClassName !== undefined && ctx.classObjectGlobals?.has(resolvedClassName)) {
       if (emitLazyClassObjectGet(ctx, fctx, resolvedClassName)) {
         return { kind: "externref" };
@@ -1271,7 +2021,15 @@ function compileIdentifierCore(
   if (
     !ctx.standalone &&
     !ctx.wasi &&
-    (name === "DisposableStack" || name === "AsyncDisposableStack" || name === "SuppressedError") &&
+    // (#4618) `console` referenced as a VALUE (not `console.m(...)` call
+    // position, which has its own intrinsic path): react's upstream tests do
+    // `spyOnDevAndProd(console, 'log')` — the null-externref fallback made
+    // `target[key]` throw inside the spy helper for all 7 StrictMode
+    // console-logs-logging tests. Same host-only resolution as the ERM ctors.
+    (name === "DisposableStack" ||
+      name === "AsyncDisposableStack" ||
+      name === "SuppressedError" ||
+      name === "console") &&
     !fctx.localMap.has(name) &&
     !(fctx.boxedCaptures?.has(name) ?? false) &&
     !ctx.classSet.has(name)
@@ -1286,8 +2044,7 @@ function compileIdentifierCore(
     flushLateImportShifts(ctx, fctx);
     if (gtFuncIdx !== undefined && getIdx !== undefined) {
       fctx.body.push({ op: "call", funcIdx: gtFuncIdx });
-      addStringConstantGlobal(ctx, name);
-      const strGlobalIdx = ctx.stringGlobalMap.get(name);
+      const strGlobalIdx = addHostStringConstantGlobal(ctx, name);
       if (strGlobalIdx !== undefined) {
         fctx.body.push({ op: "global.get", index: strGlobalIdx });
       } else {
@@ -1315,7 +2072,7 @@ function compileIdentifierCore(
   // path (which would otherwise re-wrap the func index into a fresh closure,
   // ignoring the live value). Gated on the normally-empty set — byte-identical
   // for programs that never reassign a function declaration.
-  if (fctx.localMap.get(name) === undefined && !unresolvedInModuleGoal && ctx.liveFuncBindingGlobals?.has(name)) {
+  if (fctx.localMap.get(name) === undefined && !graphNameRegistryUnavailable && ctx.liveFuncBindingGlobals?.has(name)) {
     const liveGlobalIdx = ctx.moduleGlobals.get(name);
     if (liveGlobalIdx !== undefined) {
       fctx.body.push({ op: "global.get", index: liveGlobalIdx });
@@ -1330,7 +2087,40 @@ function compileIdentifierCore(
   // (#3505) A foreign module's function declaration must not resolve by bare
   // name (funcMap is graph-wide) — skip the funcref-as-value arm so the read
   // reaches the undeclared -> ReferenceError emission below.
-  const funcRefIdx = unresolvedInModuleGoal ? undefined : ctx.funcMap.get(name);
+  const functionValueFunctionDeclaration =
+    resolvedValueDeclaration !== undefined &&
+    ts.isFunctionDeclaration(resolvedValueDeclaration) &&
+    resolvedValueDeclaration.body !== undefined
+      ? resolvedValueDeclaration
+      : undefined;
+  // A function used as a value must follow the checker's exact declaration,
+  // not the graph-wide bare-name compatibility map. TypeScript's parser and
+  // NodeFactory both declare a nested `createNodeArray`; compiling the
+  // NodeFactory shorthand `{ createNodeArray }` after parser registration made
+  // the later parser wrapper win `funcMap`, so the factory field recursively
+  // called the parser wrapper and, on larger graphs, returned an unrelated
+  // array carrier. Program ABI retains the allocator handle per declaration;
+  // prefer it wherever the source binding is known and keep the legacy map for
+  // synthetic/internal callables that have no source declaration.
+  const declarationOwnedFunctionHandle =
+    functionValueFunctionDeclaration !== undefined
+      ? sourceFunctionHandleForDeclaration(ctx, functionValueFunctionDeclaration)
+      : undefined;
+  // A nested function's direct handle prepends its captured values. The legacy
+  // capture-construction metadata is still lexically name-scoped, so an exact
+  // handle is independently materializable only when its physical signature
+  // proves there is no capture prefix. Top-level declarations are capture-free
+  // by construction. This keeps the identity repair narrow rather than pairing
+  // one declaration's handle with another same-named declaration's captures.
+  const exactFunctionValueIsCaptureFree = (() => {
+    if (declarationOwnedFunctionHandle === undefined || functionValueFunctionDeclaration === undefined) return false;
+    if (ts.isSourceFile(functionValueFunctionDeclaration.parent)) return true;
+    const directSignature = getFuncSignature(ctx, declarationOwnedFunctionHandle);
+    const valueSignature = computeClosureWrapperSig(ctx, functionValueFunctionDeclaration);
+    return directSignature !== null && directSignature.params.length === valueSignature.params.length;
+  })();
+  const exactFunctionValueHandle = exactFunctionValueIsCaptureFree ? declarationOwnedFunctionHandle : undefined;
+  const funcRefIdx = graphNameRegistryUnavailable ? undefined : (exactFunctionValueHandle ?? ctx.funcMap.get(name));
   // (#1809) Only wrap DEFINED functions (index >= numImportFuncs) in a funcref
   // closure. A host import (e.g. the ambient DOM global `resizeTo`/`resizeBy`
   // from lib.dom.d.ts) has no in-module body to forward to via `ref.func`, so
@@ -1363,11 +2153,40 @@ function compileIdentifierCore(
     const valDecl = valSym?.valueDeclaration;
     return !(valDecl !== undefined && ts.isFunctionDeclaration(valDecl));
   };
+  // (#4618) `classSet` is name-keyed, so a class named `Foo` ANYWHERE in the
+  // module used to veto the funcref-as-value arm for a sibling scope's
+  // `function Foo()` too — the read fell through to the graceful default and
+  // the function crossed as a bare value with its capture writes lost. When
+  // the funcMap entry is OWNED by the exact FunctionDeclaration this
+  // reference resolves to (funcMapOwnerDecl), the collision is spurious.
+  const collisionValueDecl = ctx.classSet.has(name) ? identifierValueSymbol(ctx, id)?.valueDeclaration : undefined;
+  const classNameCollision =
+    ctx.classSet.has(name) &&
+    !(
+      funcRefIdx !== undefined &&
+      ctx.funcMapOwnerDecl.get(name) !== undefined &&
+      collisionValueDecl === ctx.funcMapOwnerDecl.get(name)
+    ) &&
+    // (#4618) A TOP-LEVEL `function Component` read as a value was ALSO
+    // vetoed by a sibling `class Component` anywhere in the module (react's
+    // own `exports.Component = Component` under per-test class declarations
+    // stored null, so `React.Component` and every class-component detection
+    // read back null). With no nested owner declaration the funcMap entry
+    // belongs to the top-level function; when the checker resolves this
+    // reference to exactly a top-level FunctionDeclaration, the collision
+    // is spurious.
+    !(
+      funcRefIdx !== undefined &&
+      ctx.funcMapOwnerDecl.get(name) === undefined &&
+      collisionValueDecl !== undefined &&
+      ts.isFunctionDeclaration(collisionValueDecl) &&
+      ts.isSourceFile(collisionValueDecl.parent)
+    );
   if (
     funcRefIdx !== undefined &&
     definedFuncAt(ctx, funcRefIdx) !== undefined &&
     !isInternalHelperName() &&
-    !ctx.classSet.has(name)
+    !classNameCollision
   ) {
     const valueDecl = identifierValueSymbol(ctx, id)?.valueDeclaration;
     const isOrdinaryFunctionDecl =
@@ -1400,7 +2219,7 @@ function compileIdentifierCore(
     // misclassified "wasm_compile" errors. Captures must be filled at the
     // construction site (per-instance), so we only take the cached path when
     // no captures are required.
-    const nestedCaptures = ctx.nestedFuncCaptures.get(name);
+    const nestedCaptures = exactFunctionValueIsCaptureFree ? undefined : ctx.nestedFuncCaptures.get(name);
     if (!nestedCaptures || nestedCaptures.length === 0) {
       const cachedRefType = emitCachedFuncClosureAccess(ctx, fctx, name, funcRefIdx, isOrdinaryFunctionDecl);
       if (cachedRefType) {
@@ -1426,6 +2245,35 @@ function compileIdentifierCore(
     // module's top-level binding, not a candidate runtime global — the
     // runtime-eval binding pool is graph-wide and would hand that foreign
     // binding back. Skip the dynamic read and throw.
+    // A context-linked standalone module shares its GlobalEnvironmentRecord's
+    // object half with the owning realm. Static source cannot see names that a
+    // prior classic Script introduced (for example Deno tests commonly install
+    // a global `assert` before evaluating an ES module), so resolve otherwise
+    // unbound identifiers through that linked global object at runtime.
+    // (#5148 checkpoint) `moduleGoalIdentifierIsUndeclared` answers true for
+    // BOTH a foreign module's top-level binding (sym defined, declared in
+    // another module-goal file — the #3505 leak this gate exists for) and a
+    // name with NO symbol at all. Only the former must skip the linked read: a
+    // symbol-less name has no foreign binding to leak, and it is exactly the
+    // script-installed-global shape the linked realm serves (`dynamicAnswer`
+    // written by the owning realm before this module evaluates).
+    if ((!unresolvedInModuleGoal || !sym) && ctx.standaloneGlobalThisImport !== undefined) {
+      const getIdx = ensureLateImport(
+        ctx,
+        "__extern_get",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const globalType = emitNativeGlobalThisObject(ctx, fctx);
+      if (getIdx !== undefined && globalType !== null) {
+        addStringConstantGlobal(ctx, name);
+        fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_get") ?? getIdx });
+        return { kind: "externref" };
+      }
+      if (globalType !== null) fctx.body.push({ op: "drop" });
+    }
     if (!unresolvedInModuleGoal && (ctx.standalone || ctx.wasi) && ctx.runtimeEvalGlobalFunctionBindings) {
       const dynamicGlobal = skipRuntimeEvalState
         ? emitRuntimeEvalGlobalRead(ctx, fctx, name, false)
@@ -1448,12 +2296,15 @@ function compileIdentifierCore(
     const throwRefErrIdx = ensureLateImport(ctx, "__throw_reference_error", [{ kind: "externref" }], []);
     flushLateImportShifts(ctx, fctx);
     if (throwRefErrIdx !== undefined) {
-      addStringConstantGlobal(ctx, msg);
-      const strIdx = ctx.stringGlobalMap.get(msg)!;
-      fctx.body.push({ op: "global.get", index: strIdx });
-      fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
-      fctx.body.push({ op: "unreachable" });
-    } else {
+      const strIdx = addHostStringConstantGlobal(ctx, msg);
+      if (strIdx !== undefined) {
+        fctx.body.push({ op: "global.get", index: strIdx });
+        fctx.body.push({ op: "call", funcIdx: throwRefErrIdx });
+        fctx.body.push({ op: "unreachable" });
+        return { kind: "externref" };
+      }
+    }
+    {
       // Fallback: raw exception-tag throw (no JS host to construct a ReferenceError).
       const tagIdx = ensureExnTag(ctx);
       fctx.body.push({ op: "ref.null.extern" });
@@ -1531,6 +2382,10 @@ function narrowTypeToUnbox(ctx: CodegenContext, fctx: FunctionContext, narrowedT
     }
   }
   if (isBigIntType(narrowedType)) {
+    // In JS-host mode resolveWasmType deliberately keeps BigInt values as real
+    // host BigInts. A checker narrowing changes the logical type, not that
+    // physical representation, so leave the externref on the stack.
+    if (usesHostBigIntCarrier(ctx)) return null;
     addUnionImports(ctx);
     const funcIdx = ctx.funcMap.get("__to_bigint");
     if (funcIdx !== undefined) {
@@ -1711,7 +2566,7 @@ function identifierHasSourceDeclaration(ctx: CodegenContext, id: ts.Identifier):
  * is not an object, is not callable with no `@@hasInstance`, has a non-callable
  * `@@hasInstance`, or (OrdinaryHasInstance §7.3.20) has a non-object prototype.
  */
-function emitInstanceofThrowGuard(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitInstanceofThrowGuard(ctx: CodegenContext, fctx: FunctionContext): void {
   // stack in: [i32 code]
   const codeLocal = allocLocal(fctx, `__instanceof_code_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.tee", index: codeLocal });
@@ -1974,7 +2829,7 @@ function nativeBuiltinInstanceOfTypeIdxs(ctx: CodegenContext, ctorName: string):
 }
 
 function isStandaloneWrapperConstructorName(ctorName: string): ctorName is StandaloneWrapperConstructorName {
-  return ctorName === "Number" || ctorName === "String" || ctorName === "Boolean";
+  return ctorName === "Number" || ctorName === "String" || ctorName === "Boolean" || ctorName === "BigInt";
 }
 
 /** Emit the real standalone wrapper-brand predicate over the LHS carrier. */
@@ -2118,6 +2973,35 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     if (namespaceThrow) return namespaceThrow;
   }
 
+  // Promise subclasses are represented by cached host constructors. Their
+  // instances therefore need the actual RHS value, not the name-based user
+  // class/tag predicate used for WasmGC classes and other builtin subclasses.
+  if (
+    ts.isIdentifier(expr.right) &&
+    resolvePromiseSubclassIdentifier(ctx, expr.right) !== undefined &&
+    !noJsHost(ctx)
+  ) {
+    const helperIdx = ensureLateImport(
+      ctx,
+      "__promise_subclass_instanceof",
+      [{ kind: "externref" }, { kind: "externref" }],
+      [{ kind: "i32" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    const leftType = compileExpression(ctx, fctx, expr.left);
+    if (!leftType) fctx.body.push({ op: "ref.null.extern" });
+    else if (leftType.kind !== "externref") coerceType(ctx, fctx, leftType, { kind: "externref" });
+    const rightType = compileExpression(ctx, fctx, expr.right);
+    if (!rightType) fctx.body.push({ op: "ref.null.extern" });
+    else if (rightType.kind !== "externref") coerceType(ctx, fctx, rightType, { kind: "externref" });
+    if (helperIdx === undefined) {
+      fctx.body.push({ op: "drop" }, { op: "drop" }, { op: "i32.const", value: 0 });
+    } else {
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__promise_subclass_instanceof") ?? helperIdx });
+    }
+    return { kind: "i32" };
+  }
+
   // Resolve constructor name from the RHS expression (simple identifiers only)
   let ctorName: string | undefined;
   if (ts.isIdentifier(expr.right)) {
@@ -2136,6 +3020,11 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   // behind an alias so the builtin dispatch below is not skipped (host-free
   // only; gc/host keeps its runtime predicate). See native-ordinary-instanceof.ts.
   ctorName = resolveBuiltinCtorAliasName(ctx, expr.right, ctorName) ?? ctorName;
+  // (#4491 T3) …and the ASSIGNED alias — `OBJECT = Object; x instanceof OBJECT`.
+  // The declared-alias resolver above reads the binding's static type, which an
+  // implicit global does not have and a reassigned `var` widens to a union.
+  // See builtin-ctor-assigned-alias.ts for the uniform-write soundness argument.
+  ctorName = resolveBuiltinCtorAssignedAliasName(ctx, expr.right, ctorName) ?? ctorName;
 
   if (!ctorName) {
     return emitDynamicInstanceOf(ctx, fctx, expr);
@@ -2172,7 +3061,8 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     ts.isIdentifier(expr.right) &&
     !isBuiltinTypeName(ctorName) &&
     identifierHasSourceDeclaration(ctx, expr.right) &&
-    userErrorParent === undefined
+    userErrorParent === undefined &&
+    !ctx.classExternrefBackedSet.has(ctorName)
   ) {
     // (#3962) Host-free answer for a plain user function constructor — the
     // `e instanceof Test262Error` shape, 26 of the 36 ≤ES5 sole leaks of
@@ -2181,6 +3071,15 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     if (nativeCtor) return nativeCtor;
     return emitDynamicInstanceOf(ctx, fctx, expr);
   }
+
+  // An externref-backed user Error subclass has no callable Wasm constructor
+  // value to hand to `__instanceof_check`: reading the class binding through
+  // the ordinary dynamic RHS path currently produces null. Construction has
+  // already registered the exact synthetic class name via
+  // `__set_subclass_proto` / `__tag_user_class`, so keep this shape on the
+  // name-based `__instanceof(value, ctorName)` path below. This is required for
+  // caught/dynamic values, where the typed static shortcut cannot answer (the
+  // Hono `error instanceof UnsupportedPathError` router fallback).
 
   // #1473 — no JS host: `e instanceof TypeError` (and other Error subtypes)
   // where the LHS is a dynamic value (any/externref). The caught value is the
@@ -2299,6 +3198,10 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
     }
     const lt = compileExpression(ctx, fctx, expr.left);
     if (lt) fctx.body.push({ op: "drop" });
+    // (#4491 T3) §13.10.1 step 3 GetValues the RHS too — an undeclared name
+    // there is a ReferenceError, not a silent `false`. See
+    // instanceof-rhs-evaluation.ts.
+    evaluateInstanceOfRhsForEffects(ctx, fctx, expr.right);
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }
@@ -2315,6 +3218,8 @@ function compileHostInstanceOf(ctx: CodegenContext, fctx: FunctionContext, expr:
   if (instanceofIdx === undefined) {
     const leftType = compileExpression(ctx, fctx, expr.left);
     if (leftType) fctx.body.push({ op: "drop" });
+    // (#4491 T3) …and here too — same §13.10.1 step-3 obligation.
+    evaluateInstanceOfRhsForEffects(ctx, fctx, expr.right);
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }

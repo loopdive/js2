@@ -71,12 +71,26 @@
  */
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { withSpeculativeCompile } from "./context/speculative.js";
-import { BUILTIN_CTOR_ARITY, NUMBER_CONSTANT_VALUES, tryEnsureNativeProtoBrand } from "./builtin-value-read.js";
+import {
+  BUILTIN_CTOR_ARITY,
+  getWellKnownSymbolId,
+  NUMBER_CONSTANT_VALUES,
+  TYPED_ARRAY_BYTES_PER_ELEMENT,
+  tryEnsureNativeProtoBrand,
+} from "./builtin-value-read.js";
+import { ensureStandaloneBuiltinStaticMethodClosure } from "./property-access.js";
+import {
+  BUILTIN_STATIC_METHOD_ARITY,
+  ensureStandaloneSpeciesGetterClosure,
+  pushBuiltinFnSingletonValueInstrs,
+} from "./builtin-fn-meta.js";
 import { pushMarkBuiltinCarrierCallable } from "./builtin-callable-brand.js";
+import { SPECIES_OWNER_CTORS } from "./builtin-static-gopd.js";
 import { emitLazyNativeProtoGet } from "./native-proto.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { ensureSymbolCarrier } from "./symbol-native.js";
 
 /**
  * Spec `length` for ctors that DO get a runtime carrier but are absent from the
@@ -93,6 +107,12 @@ const EXTRA_CTOR_ARITY: Record<string, number> = { AggregateError: 2 };
  * attributes default to false per CompletePropertyDescriptor §6.2.6.4).
  */
 const HOST_FLAG_CONFIGURABLE = 0x04;
+const HOST_FLAG_WRITABLE = 0x01;
+// Accessor descriptors carry the enumerable/configurable specified bits in
+// addition to the configurable value bit.  This is the native
+// `__defineProperty_accessor` encoding for `{ enumerable:false,
+// configurable:true }` (no writable bit for accessors).
+const HOST_ACCESSOR_CONFIGURABLE = (1 << 4) | (1 << 5) | HOST_FLAG_CONFIGURABLE;
 
 /**
  * (#4234) Per-ctor NUMERIC own data constants to seed alongside
@@ -118,6 +138,68 @@ const HOST_FLAG_CONFIGURABLE = 0x04;
 const CTOR_NUMERIC_CONSTANTS: Record<string, Record<string, number>> = {
   Number: NUMBER_CONSTANT_VALUES,
 };
+
+/**
+ * (#5269 A-1) `Symbol`'s well-known-symbol own DATA properties — §20.4.2.
+ *
+ * Every one is `{ [[Writable]]: false, [[Enumerable]]: false,
+ * [[Configurable]]: false }` (flag word `0`, the same encoding `prototype`
+ * uses). The value is `__box_symbol(<id>)`, i.e. the INTERNED `$Symbol`
+ * carrier — the same object a syntactic `Symbol.iterator` read boxes to — so
+ * `gOPD(Symbol, "iterator").value === Symbol.iterator` holds and
+ * `verifyProperty`'s write / delete probes see one property model.
+ *
+ * Ids come from `getWellKnownSymbolId`, the table the value reads already use.
+ * Listing the names here rather than iterating that table keeps the seed to the
+ * spec's own-property set even if the id table gains a compiler-internal entry.
+ */
+const SYMBOL_WELL_KNOWN_OWN_PROPS: readonly string[] = [
+  "asyncIterator",
+  "hasInstance",
+  "isConcatSpreadable",
+  "iterator",
+  "match",
+  "matchAll",
+  "replace",
+  "search",
+  "species",
+  "split",
+  "toPrimitive",
+  "toStringTag",
+  "unscopables",
+  "dispose",
+  "asyncDispose",
+];
+
+/**
+ * (#2875 wave-4 lane F) Per-ctor STATIC METHOD names to seed alongside
+ * `length`/`name`/`prototype`, `{ [[Writable]]: true, [[Enumerable]]: false,
+ * [[Configurable]]: true }` (§17 — the attributes every builtin function-valued
+ * own property carries).
+ *
+ * `builtin-static-gopd.ts` already synthesizes exactly this descriptor for a
+ * SYNTACTIC `gOPD(String, "fromCharCode")`, and measured on this branch's base
+ * it answers `{value: <function>, w:true, e:false, c:true}` — but
+ * `String.hasOwnProperty("fromCharCode")` answered **`false`** on the very same
+ * build, because presence goes through the runtime carrier and the carrier had
+ * only `length`/`name`/`prototype`. A descriptor that exists while
+ * `hasOwnProperty` says the property does not is worse than either answer alone;
+ * seeding closes that disagreement, and the value is the SAME per-(builtin,
+ * method) singleton both the descriptor and a plain `String.fromCharCode` read
+ * yield (`ensureStandaloneBuiltinStaticMethodClosure`).
+ *
+ * Keep this demand-bounded to the constructor carriers Deno snapshots through
+ * `globalThis`: seeding every namespace entry would pull in ~30 closures for
+ * `Math` and ~24 for `Object` on any module that merely mentions the identifier
+ * as a value. The selected constructors have small static surfaces and need the
+ * carrier's runtime own-property table to agree with direct static reads.
+ */
+const CTOR_STATIC_METHODS: Record<string, readonly string[]> = Object.fromEntries(
+  ["ArrayBuffer", "BigInt", "Date", "Map", "Number", "Promise", "RegExp", "String", "Symbol"].map((name) => [
+    name,
+    Object.keys(BUILTIN_STATIC_METHOD_ARITY[name] ?? {}),
+  ]),
+);
 
 /**
  * Emit — into `fctx.body`, which the caller has already swapped to the
@@ -191,24 +273,131 @@ export function pushBuiltinCtorOwnPropSeed(
     fctx.body.push({ op: "drop" });
   }
 
+  // (#5269 A-1) `Symbol`'s well-known-symbol own data props — { w:false,
+  // e:false, c:false }. Seeded before `prototype` so
+  // `Object.getOwnPropertyNames(Symbol)` reports them in creation order.
+  if (builtinName === "Symbol") {
+    ensureSymbolCarrier(ctx);
+    const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+    if (boxSymbolIdx !== undefined) {
+      for (const wellKnown of SYMBOL_WELL_KNOWN_OWN_PROPS) {
+        const id = getWellKnownSymbolId(wellKnown);
+        if (id === undefined) continue;
+        fctx.body.push({ op: "local.get", index: objLocal });
+        addStringConstantGlobal(ctx, wellKnown);
+        for (const instr of stringConstantExternrefInstrs(ctx, wellKnown)) fctx.body.push(instr);
+        fctx.body.push({ op: "i32.const", value: id });
+        fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+        fctx.body.push({ op: "f64.const", value: 0 });
+        fctx.body.push({ op: "call", funcIdx: defineIdx });
+        fctx.body.push({ op: "drop" });
+      }
+    }
+  }
+
   // `prototype` — { w:false, e:false, c:false }, value = the `$NativeProto`
   // singleton (identical to the syntactic `<Ctor>.prototype` read). Ctors with
   // no registered brand keep only `length`/`name`.
   const brand = tryEnsureNativeProtoBrand(ctx, builtinName);
-  if (brand === undefined) return;
-  // Speculative: `emitLazyNativeProtoGet` may decline, and it can allocate
-  // locals / late imports before doing so. A raw `body.length = mark` would undo
-  // only the body and strand those — hence the #1919 transactional helper, which
-  // rolls back body + locals + imports + errors together. On decline the body is
-  // left exactly as it was after `name` (stack-neutral).
-  withSpeculativeCompile(ctx, fctx, () => {
+  if (brand !== undefined) {
+    // Speculative: `emitLazyNativeProtoGet` may decline, and it can allocate
+    // locals / late imports before doing so. A raw `body.length = mark` would undo
+    // only the body and strand those — hence the #1919 transactional helper, which
+    // rolls back body + locals + imports + errors together. On decline the body is
+    // left exactly as it was after `name` (stack-neutral).
+    withSpeculativeCompile(ctx, fctx, () => {
+      fctx.body.push({ op: "local.get", index: objLocal });
+      addStringConstantGlobal(ctx, "prototype");
+      for (const instr of stringConstantExternrefInstrs(ctx, "prototype")) fctx.body.push(instr);
+      if (!emitLazyNativeProtoGet(ctx, fctx, brand)) return { commit: false, value: undefined };
+      fctx.body.push({ op: "f64.const", value: 0 });
+      fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" });
+      return { commit: true, value: undefined };
+    });
+  }
+
+  // (#4490 wave 2) Int8Array's `BYTES_PER_ELEMENT` is an own data property of
+  // the constructor.  Seed it on the same carrier as `length`/`name` so the
+  // dynamic read, `in`, delete, and gOPD paths observe one mutable entry.  The
+  // descriptor is non-writable, non-enumerable, and non-configurable (§23.2.4).
+  if (builtinName === "Int8Array") {
     fctx.body.push({ op: "local.get", index: objLocal });
-    addStringConstantGlobal(ctx, "prototype");
-    for (const instr of stringConstantExternrefInstrs(ctx, "prototype")) fctx.body.push(instr);
-    if (!emitLazyNativeProtoGet(ctx, fctx, brand)) return { commit: false, value: undefined };
+    addStringConstantGlobal(ctx, "BYTES_PER_ELEMENT");
+    for (const instr of stringConstantExternrefInstrs(ctx, "BYTES_PER_ELEMENT")) fctx.body.push(instr);
+    fctx.body.push({ op: "f64.const", value: TYPED_ARRAY_BYTES_PER_ELEMENT[builtinName] ?? 1 });
+    fctx.body.push({ op: "call", funcIdx: boxIdx });
     fctx.body.push({ op: "f64.const", value: 0 });
     fctx.body.push({ op: "call", funcIdx: defineIdx });
     fctx.body.push({ op: "drop" });
-    return { commit: true, value: undefined };
-  });
+  }
+
+  // (#2875 w4-F) Static METHODS — { w:true, e:false, c:true }, value = the
+  // per-(builtin, method) singleton. Seeded LAST so `getOwnPropertyNames`
+  // reports `length, name, prototype, fromCharCode, …`, the creation order a
+  // conforming host reports. Each is speculative: the closure may decline (no
+  // wired body / missing prerequisite), and declining must leave the body
+  // stack-neutral rather than stranding a half-pushed define call.
+  for (const method of CTOR_STATIC_METHODS[builtinName] ?? []) {
+    withSpeculativeCompile(ctx, fctx, () => {
+      const closure = ensureStandaloneBuiltinStaticMethodClosure(ctx, builtinName, method);
+      if (!closure) return { commit: false, value: undefined };
+      fctx.body.push({ op: "local.get", index: objLocal });
+      addStringConstantGlobal(ctx, method);
+      for (const instr of stringConstantExternrefInstrs(ctx, method)) fctx.body.push(instr);
+      fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+      fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "f64.const", value: HOST_FLAG_WRITABLE | HOST_FLAG_CONFIGURABLE });
+      fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" });
+      return { commit: true, value: undefined };
+    });
+  }
+
+  // `<Ctor>[@@species]` is an own accessor whose getter returns the receiver
+  // (§27.2.4.4 for Promise, §23.1.2.5 / §24.1.2.2 / §22.2.6.2 / … for the rest).
+  // The static gOPD synthesis in builtin-static-gopd.ts already uses this
+  // canonical getter singleton, but a bare `Promise` value reaches this real
+  // `$Object` carrier at runtime.  Seed the same accessor there so direct
+  // computed reads and runtime descriptor/attribute queries observe one
+  // property model instead of a synthetic descriptor-only answer.
+  //
+  // (#5269 A-5) Extended from Promise-only to the whole `SPECIES_OWNER_CTORS`
+  // set — the same set the static synthesis answers for. A DYNAMIC
+  // `getOwnPropertyDescriptor(Array, Symbol.species)` (the harness's
+  // `getGetterName` shape, where both receiver and key are untyped parameters)
+  // reaches the carrier, not the syntactic arm, so a Promise-only seed left
+  // every other owner answering `undefined` while its syntactic sibling
+  // answered a full accessor descriptor — the same descriptor-vs-presence
+  // disagreement this module exists to close.
+  if (SPECIES_OWNER_CTORS.has(builtinName)) {
+    withSpeculativeCompile(ctx, fctx, () => {
+      const closure = ensureStandaloneSpeciesGetterClosure(ctx, builtinName);
+      if (!closure) return { commit: false, value: undefined };
+      // ensureObjectRuntime (the caller of this seeder) normally creates the
+      // native symbol carrier before entering here. Re-ensure it defensively;
+      // this is a defined helper in standalone and cannot introduce a late
+      // function-index shift.
+      // `ensureSymbolCarrier` returns the `$Symbol` *type* index. The boxing
+      // function is a defined helper registered by that call; resolve its
+      // function index from the map after registration (using the type index
+      // here makes the emitted `call` target an unrelated function).
+      ensureSymbolCarrier(ctx);
+      const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+      const defineAccessorIdx = ctx.funcMap.get("__defineProperty_accessor");
+      if (boxSymbolIdx === undefined || defineAccessorIdx === undefined) {
+        return { commit: false, value: undefined };
+      }
+      fctx.body.push({ op: "local.get", index: objLocal });
+      fctx.body.push({ op: "i32.const", value: 5 }); // Symbol.species
+      fctx.body.push({ op: "call", funcIdx: boxSymbolIdx });
+      fctx.body.push(...pushBuiltinFnSingletonValueInstrs(ctx, closure));
+      fctx.body.push({ op: "extern.convert_any" });
+      fctx.body.push({ op: "ref.null.extern" }); // setter = undefined
+      fctx.body.push({ op: "f64.const", value: HOST_ACCESSOR_CONFIGURABLE });
+      fctx.body.push({ op: "call", funcIdx: defineAccessorIdx });
+      fctx.body.push({ op: "drop" });
+      return { commit: true, value: undefined };
+    });
+  }
 }

@@ -10,6 +10,8 @@
  * change (prove-emit-identity IDENTICAL across gc/standalone/wasi).
  */
 import { ts } from "../ts-api.js";
+import { f64HolesActive } from "./vec-f64-hole-presence.js"; // (#4491 T11)
+import { getArrTypeIdxFromVec } from "./registry/types.js"; // (#4491 T11)
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
@@ -27,9 +29,18 @@ import { emitInPresence } from "./closed-struct-presence.js";
 import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
+import { identifierEscapesToCall } from "./in-escaped-receiver.js";
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#4484) reassigned-binding guard
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
-import { vecNamedKeyNeedsRuntime } from "./vec-named-key-presence.js"; // (#4062) array expando presence
+// (#4062 array bag / #4491 T9 Date+RegExp bag) a statically-known key may live in
+// a carrier bag the receiver's field list cannot see — route the folded `false`.
+import { carrierBagKeyNeedsRuntime } from "./builtin-instance-key-presence.js";
+// (#4491 T4) %Object.prototype%'s own names are `in` every ordinary object.
+import {
+  hasExplicitNullObjectPrototype,
+  inReceiverIsObjectShaped,
+  objectPrototypeInheritsInName,
+} from "./object-proto-name-in.js";
 
 /**
  * (#3714) `emitThrowTypeError` pushes directly onto `fctx.body`; to nest its
@@ -56,6 +67,143 @@ function publicPhysicalFieldNames(rightType: ts.Type, fields: FieldDef[]): strin
   return fields
     .map((field) => field.name)
     .filter((name): name is string => name !== undefined && publicPropertyNames.has(name));
+}
+
+/**
+ * (#5270 step 10, cluster N) True when the `in` receiver is provably an ARROW
+ * FUNCTION value — the literal form, or an identifier whose (only) initializer
+ * is one. Arrows are never constructors, so they have no `prototype` own
+ * property; TypeScript's `Function` interface declares `prototype: any` for
+ * every callable, which is why the checker-type fold answered `true`.
+ */
+function receiverIsArrowFunctionValue(ctx: CodegenContext, receiver: ts.Expression): boolean {
+  let expr: ts.Expression = receiver;
+  while (
+    ts.isParenthesizedExpression(expr) ||
+    ts.isAsExpression(expr) ||
+    ts.isNonNullExpression(expr) ||
+    ts.isTypeAssertionExpression(expr)
+  ) {
+    expr = expr.expression;
+  }
+  // An arrow LITERAL has no binding anybody could have written to between its
+  // creation and this `in`, so the syntactic fact is the whole answer.
+  if (ts.isArrowFunction(expr)) return true;
+  if (!ts.isIdentifier(expr)) return false;
+  // (#5270 review R2-F1b) `constInitializerOf`, NOT `variableInitializerOf`.
+  // The fold is justified ENTIRELY by the initializer, so it is sound only for
+  // a binding that cannot be REBOUND — and `const` gives that structurally,
+  // where enumerating rebinding spellings does not. The first cut used
+  // `variableInitializerOf` (which deliberately accepts `let`/`var`) plus a
+  // hand-rolled rebinding guard, and three spellings walked straight past it
+  // because `identifierIsWrittenTo` only matches a BARE-IDENTIFIER assignment
+  // LHS: `[a] = src` (array-pattern LHS), `({ a } = src)` (object-pattern LHS),
+  // and `for (a of src) {}` (not a BinaryExpression at all). After any of those
+  // the binding holds a function EXPRESSION — which HAS a `prototype` — and the
+  // fold still answered `false`. It bit hardest exactly where the runtime
+  // fallback cannot rescue it: the receiver stays a typed closure ref rather
+  // than externref, so `__extern_has` never fires and the folded `false` is
+  // final.
+  const initializer = ctx.oracle.constInitializerOf(expr);
+  if (initializer === undefined || !ts.isArrowFunction(initializer)) return false;
+  // `const` still permits MUTATION of the object it binds
+  // (`const a = () => 1; a.prototype = 5`), so the property-gaining scan below
+  // is still required — the two guards answer different questions.
+  return arrowBindingNeverGainsProperties(expr.getSourceFile(), expr.text);
+}
+
+/**
+ * (#5270 review F1) An arrow's MISSING `prototype` is a fact about its
+ * CREATION, not about its lifetime: the arrow is an ordinary extensible object
+ * afterwards, so `arrow.prototype = 5` gives it one and `"prototype" in arrow`
+ * must then answer true. The first cut of the route above folded a hard `false`
+ * for any identifier whose initializer is an arrow, with no write check — which
+ * regressed all four write forms against the base compiler AND against node
+ * (`arrow.prototype = 5`, `Object.defineProperty(arrow, "prototype", …)`,
+ * `arrow["prototype"] = 9`, `Object.assign(arrow, {prototype: 4})`).
+ *
+ * So the fold now applies only where the binding provably never gains a
+ * property. Deliberately conservative, and cheap — mirrors the reasoning of
+ * `identifierEscapesToCall` (#4765) and `identifierIsWrittenTo` (#4484 D):
+ * being wrong in the PERMISSIVE direction costs only the loss of a fold (the
+ * base answer, which is what the write forms need anyway), while being wrong in
+ * the restrictive direction is a wrong answer.
+ *
+ * Refuses when the file contains, anywhere:
+ *   - a member write through the binding (`a.k = …`, `a[k] = …`, any assignment
+ *     operator) — the `arrow.prototype = 5` / `a2["prototype"] = 9` forms;
+ *   - the binding as a call/new ARGUMENT — `Object.defineProperty(a1, …)` and
+ *     `Object.assign(a3, …)`, and every opaque escape besides.
+ *
+ * REBINDING is deliberately NOT checked here: the caller admits only `const`
+ * bindings (`ctx.oracle.constInitializerOf`), which makes rebinding impossible
+ * by construction. An earlier cut used `identifierIsWrittenTo` for that job and
+ * it did not hold — that matcher requires a bare-identifier assignment LHS, so
+ * `[a] = src`, `({ a } = src)` and `for (a of src)` all slipped past. A guard
+ * that enumerates spellings reads as protection it does not give; `const`
+ * answers the question once, for every spelling.
+ */
+function arrowBindingNeverGainsProperties(file: ts.SourceFile, name: string): boolean {
+  if (identifierEscapesToCall(file, name)) return false;
+  let written = false;
+  const visit = (node: ts.Node): void => {
+    if (written) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left))
+    ) {
+      let base: ts.Expression = node.left.expression;
+      while (
+        ts.isParenthesizedExpression(base) ||
+        ts.isAsExpression(base) ||
+        ts.isNonNullExpression(base) ||
+        ts.isTypeAssertionExpression(base)
+      ) {
+        base = base.expression;
+      }
+      if (ts.isIdentifier(base) && base.text === name) {
+        written = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return !written;
+}
+
+/**
+ * Instance method names the receiver's class (and its ancestors) put on the
+ * prototype. `in` finds them; the physical field list does not carry them.
+ */
+function dynamicKeyMethodNames(ctx: CodegenContext, receiver: ValType | null | undefined): string[] {
+  if (receiver == null || (receiver.kind !== "ref" && receiver.kind !== "ref_null")) return [];
+  let className = ctx.typeIdxToStructName.get(receiver.typeIdx);
+  const names: string[] = [];
+  const seen = new Set<string>();
+  while (className !== undefined && !seen.has(className)) {
+    seen.add(className);
+    for (const name of ctx.classMethodNames.get(className) ?? []) names.push(name);
+    className = ctx.classParentMap.get(className);
+  }
+  return names;
+}
+
+/** Return true for an approved standalone fnctor instance struct. */
+function isFnctorInstanceWasm(ctx: CodegenContext, wasmType: ValType): boolean {
+  if (wasmType.kind !== "ref" && wasmType.kind !== "ref_null") return false;
+  return ctx.typeIdxToStructName.get(wasmType.typeIdx)?.startsWith("__fnctor_") ?? false;
+}
+
+/** `$Object` values normally flow as externref; retain the direct typed form too. */
+function isMutableObjectRuntimeWasm(ctx: CodegenContext, wasmType: ValType): boolean {
+  if (wasmType.kind === "externref" || wasmType.kind === "anyref") return true;
+  return (
+    (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
+    wasmType.typeIdx === ctx.objectRuntimeTypes?.objectTypeIdx
+  );
 }
 
 /**
@@ -212,6 +360,22 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     }
   }
 
+  // (#5140) Same reasoning for a MODULE-LEVEL binding. `var p = new Proxy(…)`
+  // at script top level lives in `ctx.moduleGlobals`, not `fctx.localMap`, so
+  // the local-only check above missed it and `"attr" in p;` still constant-
+  // folded against the target struct — the `has` trap never ran.
+  if (
+    (rightWasm.kind === "ref" || rightWasm.kind === "ref_null") &&
+    ts.isIdentifier(expr.right) &&
+    !fctx.localMap.has(expr.right.text)
+  ) {
+    const globalIdx = ctx.moduleGlobals.get(expr.right.text);
+    const globalType = globalIdx === undefined ? undefined : ctx.mod.globals[globalIdx]?.type;
+    if (globalType?.kind === "externref" || globalType?.kind === "anyref") {
+      rightWasm = globalType;
+    }
+  }
+
   // Get struct field names if available; detect vec (array) types
   let structFieldNames: string[] | null = null;
   let isVecType = false;
@@ -322,7 +486,12 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
       // knows about both — the same typed→dynamic hand-off #4159 made for
       // element reads/writes. Route-inactive modules keep the inline compare
       // byte-for-byte.
-      if (overlayRouteActive(ctx)) {
+      // (#4491 T11) An f64 carrier can hold the ABSENCE marker at an in-bounds
+      // index, so `numIdx < length` is not the HasProperty answer there either.
+      // Same hand-off, restricted to the carrier that can actually hold one, so
+      // every other vec keeps the inline compare byte-for-byte.
+      const f64HoleRoute = f64HolesActive(ctx) && vecCarrierElementIsF64(ctx, vecTypeIdx);
+      if (overlayRouteActive(ctx) || f64HoleRoute) {
         const hasIdxFn = ensureLateImport(
           ctx,
           "__extern_has_idx",
@@ -387,7 +556,58 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // deleted keys).
     const growableReceiver =
       ctx.standalone && ts.isIdentifier(expr.right) && ctx.growableObjectLiteralVars.has(expr.right.text);
-    const has = !growableReceiver && (hasInStruct || tsTypeHasProperty);
+    // (#4491 wave-5 T4) §7.3.12 is prototype-inclusive and every ordinary
+    // object's chain ends at %Object.prototype%, but standalone's `$Object`
+    // chain ends at `null` (the priced `$Object.$proto` vs `$NativeProto`
+    // wall), so `"valueOf" in {}` folded FALSE while `typeof o.valueOf` was
+    // already `"function"`. Answer from the spec's fixed name set instead of
+    // the prototype object. Standalone-only so the js-host lane — where
+    // `__extern_has` already answers correctly — stays byte-identical.
+    // See `object-proto-name-in.ts`.
+    const inheritsFromObjectPrototype =
+      ctx.standalone &&
+      !hasExplicitNullObjectPrototype(ctx, expr.right) &&
+      objectPrototypeInheritsInName(staticKey, inReceiverIsObjectShaped(rightWasm.kind));
+    // (#2175 D5) The fixed Object.prototype name set is a valid positive fold
+    // only for immutable/proven-safe carriers. A mutable `$Object` descendant
+    // (or an approved fnctor's real `$Object` prototype root) can later end
+    // at an explicitly marked null terminal that the syntactic
+    // `hasExplicitNullObjectPrototype` probe cannot see: created children,
+    // ancestor relinks, and cycle-refusal survivors all have this shape.
+    //
+    // Route only those dynamic carriers to the dedicated native answer. It
+    // first preserves a real own/inherited `__extern_has` hit, then classifies
+    // the final reachable terminal without observing a second user property
+    // lookup. Thus an ordinary implicit terminal remains true even with no
+    // Object.prototype proto-index companion, while an explicit null terminal
+    // is false. Its Proxy arm delegates a present has trap exactly once.
+    const terminalAwareObjectPrototypeRoute =
+      inheritsFromObjectPrototype &&
+      (isMutableObjectRuntimeWasm(ctx, rightWasm) || isFnctorInstanceWasm(ctx, rightWasm));
+    // (#4765) Host lane: the receiver was handed to a callee the compiler
+    // cannot see through, so its compile-time struct shape is no longer a fact
+    // about this site — the callee may have DELETED the key and the field list
+    // does not shrink. Suppress the fold and take the `__extern_has` arm, which
+    // consults the delete tombstone. See `in-escaped-receiver.ts`.
+    const escapedReceiverRoute =
+      !ctx.standalone &&
+      !ctx.wasi &&
+      ts.isIdentifier(expr.right) &&
+      identifierEscapesToCall(expr.right.getSourceFile(), expr.right.text);
+    // (#5270 step 10, cluster N) `"prototype" in (() => {})` folded TRUE
+    // because `tsTypeHasProperty` reads the checker's APPARENT type, and
+    // TypeScript's `Function` interface declares `prototype: any` for every
+    // callable — including the ones that have no `prototype` own property at
+    // all. An arrow is never a constructor (§10.2.4 / §15.3), so it carries no
+    // `prototype`; answering from the syntactic form is exact where the type is
+    // structurally wrong.
+    const arrowPrototypeRoute = staticKey === "prototype" && receiverIsArrowFunctionValue(ctx, expr.right);
+    const has = arrowPrototypeRoute
+      ? false
+      : terminalAwareObjectPrototypeRoute
+        ? false
+        : inheritsFromObjectPrototype ||
+          (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).
@@ -400,11 +620,50 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // the bag is invisible to both. `__extern_has`'s vec arm consults the #3251
     // overlay and the #3537 bag, so routing makes `in` agree with the read — and
     // only a folded `false` is routed, so no affirmative answer moves.
-    const vecNamedKeyRoute = !has && vecNamedKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
-    if (!has && (rightWasm.kind === "externref" || rightWasm.kind === "anyref" || vecNamedKeyRoute)) {
+    const vecNamedKeyRoute = !has && carrierBagKeyNeedsRuntime(ctx, rightWasm, staticKey, 0);
+    const fnctorProtoRoute = !has && ctx.standalone && isFnctorInstanceWasm(ctx, rightWasm);
+    // (#4515 wave-5) The SECOND half of the #4484 D guard above. That one
+    // stopped a reassigned binding's stale static type from producing a wrong
+    // THROW; the same staleness also produces a wrong ANSWER here, because
+    // `tsTypeHasProperty` is read off that same type:
+    //
+    //   var NUMBER = 0;
+    //   (NUMBER = Number, "MAX_VALUE") in NUMBER   // folded false, spec true
+    //
+    // TS widens `NUMBER` to `number | NumberConstructor` and a union property
+    // must exist on EVERY constituent, so `MAX_VALUE` is invisible and the fold
+    // answers `false` for an RHS that holds the real `Number` constructor.
+    // `__extern_has` decides from the VALUE and already answers this correctly
+    // — measured on this branch, `(function (x, k) { return k in x; })(Number,
+    // "MAX_VALUE")` is `true` and `…"nope"` is `false`, both through this same
+    // helper. Routing the site there replaces evidence that is stale by
+    // construction with evidence that is not (`S11.8.7_A2.4_T1`).
+    //
+    // Deliberately narrow: ONLY a bare-identifier RHS the file writes to
+    // somewhere, which is exactly the population whose declared type is not a
+    // fact about this site. Every other receiver keeps its fold byte-for-byte.
+    const reassignedReceiverRoute = rhsIsReassignedBinding && rightWasm.kind !== "ref" && rightWasm.kind !== "ref_null";
+    if (
+      !has &&
+      // (#5270 review F1) The suppression that used to sit here
+      // (`!arrowPrototypeRoute`) is GONE. It stopped a folded `false` from
+      // falling through to `__extern_has`, so an arrow that had been GIVEN a
+      // `prototype` still answered false — the fold and the runtime fallback
+      // were both disabled at once. The route above is now gated on the
+      // binding provably never gaining a property, and a `false` fold is once
+      // more allowed to be re-asked at runtime, which is what the base
+      // compiler did.
+      (rightWasm.kind === "externref" ||
+        rightWasm.kind === "anyref" ||
+        vecNamedKeyRoute ||
+        reassignedReceiverRoute ||
+        escapedReceiverRoute ||
+        fnctorProtoRoute ||
+        terminalAwareObjectPrototypeRoute)
+    ) {
       const hasIdx = ensureLateImport(
         ctx,
-        "__extern_has",
+        terminalAwareObjectPrototypeRoute ? "__extern_has_with_implicit_object_proto" : "__extern_has",
         [{ kind: "externref" }, { kind: "externref" }],
         [{ kind: "i32" }],
       );
@@ -462,7 +721,31 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     leftKeyWasm.kind === "anyref" ||
     leftKeyWasm.kind === "ref" ||
     leftKeyWasm.kind === "ref_null";
-  if (structFieldNames !== null && structFieldNames.length > 0 && keyIsRefLike) {
+  // §7.3.12 [[HasProperty]] is prototype-INCLUSIVE, but `structFieldNames`
+  // holds only the receiver's physical struct fields — a class's instance
+  // METHODS live on the prototype and have no field, so a dynamic key naming
+  // one compared against nothing and answered `false`. A literal key took the
+  // checker-backed static fold above and answered correctly, which is what hid
+  // it: `"pre" in new P()` was true while `for (const k in src) k in new P()`
+  // was false for the same name.
+  //
+  // marked's `use()` is exactly that loop —
+  //   `for (let i in n.hooks) { if (!(i in r)) throw new Error(...) }`
+  // with `r = new _Hooks()` — so every `marked.use({hooks})` threw
+  // "hook 'preprocess' does not exist" and all 30 of its upstream tests
+  // failed with `Cannot convert object to primitive value` downstream.
+  //
+  // Adding names can only turn a `false` into a `true`, and every name added
+  // is one the prototype genuinely carries, so no currently-correct answer
+  // moves.
+  const inheritedMethodNames = dynamicKeyMethodNames(ctx, structWasm);
+  const dynamicKeyNames =
+    structFieldNames === null
+      ? inheritedMethodNames.length > 0
+        ? inheritedMethodNames
+        : null
+      : [...new Set([...structFieldNames, ...inheritedMethodNames])];
+  if (dynamicKeyNames !== null && dynamicKeyNames.length > 0 && keyIsRefLike) {
     // Compile the key expression (should produce a string/externref)
     const keyType = compileExpression(ctx, fctx, expr.left);
     if (keyType) {
@@ -475,7 +758,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         fctx.body.push({ op: "local.set", index: keyLocal });
         // Start with false (0)
         fctx.body.push({ op: "i32.const", value: 0 });
-        for (const fieldName of structFieldNames) {
+        for (const fieldName of dynamicKeyNames) {
           const strGlobal = ctx.stringGlobalMap.get(fieldName);
           if (strGlobal !== undefined) {
             fctx.body.push({ op: "local.get", index: keyLocal });
@@ -560,4 +843,13 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     fctx.body.push({ op: "i32.const", value: 0 });
     return { kind: "i32" };
   }
+}
+
+/** (#4491 T11) True iff the `__vec_*` struct at `vecTypeIdx` stores f64 elements. */
+function vecCarrierElementIsF64(ctx: CodegenContext, vecTypeIdx: number): boolean {
+  if (vecTypeIdx < 0) return false;
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
+  if (arrTypeIdx < 0) return false;
+  const arrDef = ctx.mod.types[arrTypeIdx];
+  return arrDef?.kind === "array" && (arrDef.element as ValType).kind === "f64";
 }

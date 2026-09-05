@@ -30,9 +30,20 @@ describe("React upstream test infrastructure", () => {
       expect(infrastructure.reactNoop?.render).toBeTypeOf("function");
       expect(infrastructure.reactNoop?.createRoot).toBeTypeOf("function");
       expect(infrastructure.internalTestUtils?.act).toBeTypeOf("function");
+      expect(infrastructure.shouldIgnoreConsoleError).toBeTypeOf("function");
+      expect(infrastructure.schedulerMock?.log).toBeTypeOf("function");
+      expect(infrastructure.schedulerMock?.unstable_flushAll).toBeTypeOf("function");
+      expect(infrastructure.nodeUtil?.TextEncoder).toBeTypeOf("function");
+      expect(infrastructure.nodeTextEncoder?.encode).toBeTypeOf("function");
+      expect(infrastructure.nodeAsyncHooks?.AsyncLocalStorage).toBeTypeOf("function");
+      expect(infrastructure.nodeAsyncLocalStorage?.run).toBeTypeOf("function");
+      expect(infrastructure.nodeCrypto?.createHash).toBeTypeOf("function");
+      expect(infrastructure.nodeStream?.PassThrough).toBeTypeOf("function");
       expect(infrastructure.reactNativeRenderer?.version).toBe(infrastructure.react?.version);
       expect(infrastructure.reactJsxRuntime?.jsx).toBeTypeOf("function");
       expect(infrastructure.require("scheduler").unstable_now).toBeTypeOf("function");
+      const refCell = { current: null };
+      expect(infrastructure.prepareReactValue(refCell)).toBe(refCell);
       expect(globalThis.HTMLAnchorElement).toBeTypeOf("function");
       expect(globalThis.HTMLFieldSetElement).toBeTypeOf("function");
       expect(globalThis.HTMLLinkElement).toBeTypeOf("function");
@@ -140,6 +151,80 @@ describe("React upstream test infrastructure", () => {
       else process.env.NODE_ENV = previousNodeEnv;
     }
   });
+
+  it("implements Jest asymmetric and promise-negative matchers in both shim lanes", async () => {
+    // The matcher implementation is embedded in each generated upstream test;
+    // exercise it through the same source string rather than a host-only
+    // assertion helper.
+    // eslint-disable-next-line no-new-func
+    const run = new Function(
+      `${REACT_EXPECT_SHIM}
+return async function () {
+  expect({ answer: 42, extra: true }).toEqual(expect.objectContaining({ answer: 42 }));
+  expect(["a", "b", "c"]).toEqual(expect.arrayContaining(["c", "a"]));
+  await expect(Promise.resolve()).resolves.not.toThrow();
+  await expect(Promise.resolve(function () {})).resolves.not.toThrowError();
+  return 1;
+};`,
+    )();
+    await expect(run()).resolves.toBe(1);
+  });
+
+  it("routes the private ReactDOM server helper through the selected module set", async () => {
+    const previous = globalThis.__js2ReactUpstreamInfrastructure;
+    const dom = installReactTestEnvironment();
+    const installed = installReactUpstreamInfrastructure();
+    try {
+      // eslint-disable-next-line no-new-func
+      const factory = new Function(`${REACT_EXPECT_SHIM}
+return __js2ReactDOMServerIntegrationTestUtils;`)();
+      const helper = factory(() => ({
+        ReactDOM: installed.infrastructure.reactDom,
+        ReactDOMClient: installed.infrastructure.reactDomClient,
+        ReactDOMServer: { renderToString: () => "<div>from-selected-renderer</div>" },
+      }));
+      helper.resetModules();
+      const node = await helper.serverRender({ type: "div" });
+      expect(node?.textContent).toBe("from-selected-renderer");
+    } finally {
+      installed.cleanup();
+      dom.cleanup();
+      expect(globalThis.__js2ReactUpstreamInfrastructure).toBe(previous);
+    }
+  });
+
+  it("compiles the private server-helper facade into the Wasm test lane", async () => {
+    const dom = installReactTestEnvironment();
+    const installed = installReactUpstreamInfrastructure();
+    try {
+      const source = `${REACT_EXPECT_SHIM}
+export function checkServerHelper() {
+  var helper = __js2ReactDOMServerIntegrationTestUtils(function () {
+    return {
+      ReactDOM: {},
+      ReactDOMClient: {},
+      ReactDOMServer: { renderToString: function () { return "<div>x</div>"; } },
+    };
+  });
+  return typeof helper.serverRender === "function" ? 1 : 0;
+}`;
+      const result = await compile(source, {
+        fileName: "react-dom-server-helper-smoke.js",
+        skipSemanticDiagnostics: true,
+      });
+      expect(result.success).toBe(true);
+      if (!result.success || !result.binary) return;
+      const imports = result.importObject ?? {};
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      imports.__setExports?.(instance.exports);
+      imports.__setInstance?.(instance);
+      const compiled = wrapExports(instance.exports, { signatures: result.exportSignatures });
+      expect(compiled.checkServerHelper()).toBe(1);
+    } finally {
+      installed.cleanup();
+      dom.cleanup();
+    }
+  }, 90_000);
 
   it("provides scoped Jest module isolation to Node and compiled Wasm", async () => {
     const previousNodeEnv = process.env.NODE_ENV;

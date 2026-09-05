@@ -16,7 +16,6 @@ import { ensureAnyFromExternHelper, undefinedSingletonActive } from "./any-helpe
 import { reportError } from "./context/errors.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { moduleGlobalIsDynamicButStaticallyPrimitive } from "./declarations/heterogeneous-scalar-var-widening.js";
 import { ensureLateImport } from "./expressions/late-imports.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157) caller-side flatten elision
@@ -32,13 +31,7 @@ import {
   compileI64BinaryOp,
   compileNumericBinaryOp,
 } from "./binary-ops.js";
-
-function equalityOperandHasStaleStaticType(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
-  return (
-    ts.isIdentifier(expr) &&
-    (fctx.forInIdentifierVars?.has(expr.text) === true || moduleGlobalIsDynamicButStaticallyPrimitive(ctx, expr))
-  );
-}
+import { equalityOperandHasStaleStaticType } from "./strict-eq-stale-type.js";
 
 /**
  * Type-directed dispatch for a binary expression whose operands have already
@@ -302,8 +295,15 @@ export function compileTypedBinaryDispatch(
         // byte-identical.
         if (ctx.standalone === true || ctx.wasi === true) {
           const refSideType = leftIsRef ? leftType : rightType;
+          // Destructuring declaration locals use the nullable carrier even
+          // when the value read from the vector is known to be present.  Keep
+          // the tag-aware path for both carrier spellings; limiting this to
+          // `ref` made `for (const [x] of [[null, 0, false]])` compare through
+          // raw reference identity and lose every primitive value (#4447).
           const refSideIsAnyValue =
-            ctx.anyValueTypeIdx >= 0 && refSideType.kind === "ref" && refSideType.typeIdx === ctx.anyValueTypeIdx;
+            ctx.anyValueTypeIdx >= 0 &&
+            (refSideType.kind === "ref" || refSideType.kind === "ref_null") &&
+            refSideType.typeIdx === ctx.anyValueTypeIdx;
           const otherTsTypeAV = leftIsRef ? rightTsType : leftTsType;
           const otherBoxableAV = otherType.kind === "externref" || otherType.kind === "i32" || otherType.kind === "f64";
           if (refSideIsAnyValue && otherBoxableAV) {
@@ -466,7 +466,17 @@ export function compileTypedBinaryDispatch(
         // For numeric, comparison, and loose equality ops: coerce struct refs → f64 via valueOf
         // Per JS spec, binary + uses ToPrimitive with hint "default",
         // while other numeric/comparison ops use hint "number".
-        const hint: "number" | "default" = op === ts.SyntaxKind.PlusToken ? "default" : "number";
+        // (#5154 cluster F) LOOSE equality is the second "default"-hint
+        // operator: §7.2.15 steps 10-11 call ToPrimitive(operand) with NO hint,
+        // which is "default". A user `[Symbol.toPrimitive]` therefore observed
+        // `"number"` where the spec says `"default"` (`equals/to-prim-hint`).
+        // Strict `===` never reaches ToPrimitive at all, so it keeps its bytes.
+        const hint: "number" | "default" =
+          op === ts.SyntaxKind.PlusToken ||
+          op === ts.SyntaxKind.EqualsEqualsToken ||
+          op === ts.SyntaxKind.ExclamationEqualsToken
+            ? "default"
+            : "number";
         // Coerce right operand (top of stack) first
         if (rightIsRef) {
           coerceType(ctx, fctx, rightType, { kind: "f64" }, hint);

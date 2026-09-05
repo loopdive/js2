@@ -133,6 +133,30 @@ export interface NumericPropertyAnalysisHost {
    */
   readonly excludeNames?: ReadonlySet<string>;
   /**
+   * (#4406 Phase 4) Function NAMES #2847's `analyzeBooleanNames` proved return
+   * a boolean on every path — the return-side counterpart of
+   * {@link excludeNames}, and supplied from the same single traversal.
+   *
+   * Supplying it OPTS THE `numericFunctions` LOOP INTO ITS ADMISSION FILTER.
+   * That loop is the only one of the three here with no boolean guard (the
+   * property loop has `anyBoolean`, the grounded-slot loop has
+   * `provesNumericCarrier`), and `Prover.isNumeric` answers true for booleans
+   * by design — so without a filter every predicate is claimed as numeric, an
+   * `f64` twin is minted for it, and `("" + p.pred(5))` reads `"1"` where JS
+   * says `"true"`.
+   *
+   * The supplied verdict and the local {@link Prover.isBooleanish} backstop are
+   * BOTH applied, and neither subsumes the other. #2847's fixpoint is
+   * name-keyed and needs EVERY return boolean, so it sees `return this.eq(x) &&
+   * this.eq(x)` (a `&&` of calls, which the syntactic test cannot follow) but
+   * declines a MIXED `return 7` / `return a === b`. The syntactic test is the
+   * reverse. A mixed body is exactly where an `f64` twin is unsound, so the
+   * filter withdraws on either.
+   *
+   * Absent ⇒ no filter at all, which is the pre-#4406 verdict byte-for-byte.
+   */
+  readonly excludeFunctionNames?: ReadonlySet<string>;
+  /**
    * (#4121 slice 2) "Does this direct call resolve to a declaration whose
    * return the binding-aware least fixpoint proved to be a plain `f64`?"
    *
@@ -256,6 +280,8 @@ const STRING_STRING_METHODS: ReadonlySet<string> = new Set([
   "trim",
   "trimStart",
   "trimEnd",
+  "trimLeft",
+  "trimRight",
   "charAt",
   "concat",
   "repeat",
@@ -1200,6 +1226,29 @@ export interface NumericPropertyAnalysisTarget {
   };
 }
 
+/**
+ * (#4406 Phase 4) Apply the boolean admission filter to the `numericFunctions`
+ * verdict AT THE PUBLICATION BOUNDARY, and deliberately NOT inside the fixpoint
+ * loop that computes it.
+ *
+ * Measured on the acorn self-parse (checksum 422, standalone, `optimize: 0`,
+ * executed `__box_boolean`): filtering in the loop costs **308,510** where
+ * filtering here costs **257,258** — +51,252 (+19.9 %) for nothing either
+ * external consumer can see. The loop variant also withdraws the name from the
+ * prover's OWN call arm, so every property and slot whose proof ran through a
+ * predicate call is demoted with it.
+ *
+ * What that leaves unfiltered, stated rather than hidden: the prover's internal
+ * call arm still proves a LOCAL numeric from a boolean-returning call, so
+ * `var f = this.pred(x); "" + f` reads `"1"` where JS says `"true"`. That
+ * reproduces identically on the pre-#4406 tree — it belongs to the
+ * local-carrier oracle, not to this verdict. The property side is already
+ * covered: #2847's brand arrives as `excludeNames` and withdraws it there.
+ */
+function publishNumericFunctions(numericFunctions: ReadonlySet<string>, returnsBoolean: (name: string) => boolean) {
+  return new Set([...numericFunctions].filter((name) => !returnsBoolean(name)));
+}
+
 /** The verdict shape returned when the analysis declines to run at all. */
 function noVerdicts(): PropertyKindVerdicts {
   return {
@@ -1273,6 +1322,21 @@ export function analyzeNumericPropertyNames(
     if (prover.isNumeric(write.value) || prover.isOpaqueParamRead(write.value)) return true;
     // `this.f += <opaque param>` — see {@link PropWrite.plusEqualsRhs}.
     return write.plusEqualsRhs !== undefined && prover.isOpaqueParamRead(write.plusEqualsRhs);
+  };
+
+  /**
+   * (#4406 Phase 4) The `numericFunctions` admission filter — the mirror of the
+   * property loop's `anyBoolean`, and inert unless {@link
+   * NumericPropertyAnalysisHost.excludeFunctionNames} is supplied.
+   *
+   * ANY boolean return withdraws the name, not just an all-boolean set: a body
+   * that returns `7` on one path and `a === b` on another is precisely where an
+   * `f64` result would silently rewrite the boolean into `1`.
+   */
+  const returnsBoolean = (name: string, functions: readonly FunctionLike[]): boolean => {
+    if (host.excludeFunctionNames === undefined) return false;
+    if (host.excludeFunctionNames.has(name)) return true;
+    return functions.some((fn) => (returnsByFunction.get(fn) ?? []).some((expr) => prover.isBooleanish(expr)));
   };
 
   let changed = true;
@@ -1452,10 +1516,13 @@ export function analyzeNumericPropertyNames(
       });
     }
   }
+  const publishedNumericFunctions = publishNumericFunctions(numericFunctions, (name) =>
+    returnsBoolean(name, facts.functionsByName.get(name) ?? []),
+  );
   return {
     numeric: numericProperties,
     string: stringProperties,
-    numericFunctions,
+    numericFunctions: publishedNumericFunctions,
     // Resolved through the SAME `ScopeTable` the fixpoint used, so a caller
     // cannot accidentally consult a different (looser) notion of scope.
     isNumericLocal: (node, name) => {

@@ -30,7 +30,13 @@ env:
 
 concurrency:
   group: github-pages
-  cancel-in-progress: true
+  # false, not true: with push + workflow_run + workflow_dispatch triggers all
+  # sharing this group, cancel-in-progress livelocks whenever triggers arrive
+  # faster than one build+deploy completes — each run gets killed by the next
+  # before finishing, and none ever reaches "deploy" (same failure mode as the
+  # npm-compat-refresh incident this file's history warns about). Queueing
+  # instead means a burst of triggers still drains to a real deploy.
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -80,9 +86,7 @@ jobs:
             && git -C /tmp/js2wasm-baselines checkout main; } 2>/dev/null || true
           if [ -f /tmp/js2wasm-baselines/test262-current.json ]; then
             mkdir -p website/public/benchmarks/results benchmarks/results/runs
-            cp /tmp/js2wasm-baselines/test262-current.json   website/public/benchmarks/results/test262-report.json
             cp /tmp/js2wasm-baselines/test262-current.json   benchmarks/results/test262-current.json
-            cp /tmp/js2wasm-baselines/test262-current.json   benchmarks/results/test262-report.json
             if [ -f /tmp/js2wasm-baselines/test262-current.jsonl ]; then
               cp /tmp/js2wasm-baselines/test262-current.jsonl website/public/benchmarks/results/test262-results.jsonl
               # build:pages → generate-editions.ts regenerates test262-editions.json
@@ -104,15 +108,14 @@ jobs:
               mkdir -p .test262-cache
               cp /tmp/js2wasm-baselines/test262-standalone-current.jsonl .test262-cache/test262-standalone-current.jsonl
             fi
-            # Refresh the SERVED standalone report JSON, mirroring the host
-            # copy above. build-pages.js prefers the website/public copy, so
-            # without this the report page's Host/Standalone switch reads the
-            # stale committed test262-standalone-report.json (old corpus, no
-            # host_free field) while the host donut shows fresh numbers.
+            # Materialize the standalone current snapshot so the shared report
+            # mirror step below can refresh every served report path atomically.
             if [ -f /tmp/js2wasm-baselines/test262-standalone-current.json ]; then
-              cp /tmp/js2wasm-baselines/test262-standalone-current.json website/public/benchmarks/results/test262-standalone-report.json
-              cp /tmp/js2wasm-baselines/test262-standalone-current.json benchmarks/results/test262-standalone-report.json
+              cp /tmp/js2wasm-baselines/test262-standalone-current.json benchmarks/results/test262-standalone-current.json
             fi
+            # Keep all report JSON paths derived from the canonical current
+            # snapshots through one synchronizer.
+            node scripts/sync-test262-report-mirrors.mjs
             [ -f /tmp/js2wasm-baselines/runs/index.json ] && \
               cp /tmp/js2wasm-baselines/runs/index.json benchmarks/results/runs/index.json
             [ -f /tmp/js2wasm-baselines/runs/editions-index.json ] && \

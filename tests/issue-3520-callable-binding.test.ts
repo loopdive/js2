@@ -142,6 +142,6 @@ describe("#3520 structural callable bindings", () => {
   });
 
   it("retains callable bindings in the class-identity interchange revision", () => {
-    expect(IR_FORMAT_VERSION).toBe("5.1");
+    expect(IR_FORMAT_VERSION).toBe("5.4");
   });
 });

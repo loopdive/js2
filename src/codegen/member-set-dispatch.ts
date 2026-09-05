@@ -47,6 +47,12 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { presenceSetInstrs, presenceTestInstrs } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { coldFieldWriteArm, coldTailAllocatorName, findColdStructsForField } from "./fnctor-cold-tail.js"; // (#3927)
 import { inheritedSetAffectsKey } from "./inherited-set-gate.js"; // (#4602) per-key #4504 gate
+import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
+import {
+  ARGUMENTS_LENGTH_ABSENT_FIELD,
+  ARGUMENTS_LENGTH_OVERRIDE_FIELD,
+  ARGUMENTS_LENGTH_VALUE_FIELD,
+} from "./arguments-length-brand.js";
 import {
   findFnctorLayoutStructsForField,
   findFnctorResidStructsForField,
@@ -136,6 +142,35 @@ export function reserveMemberSetDispatch(
   return funcIdx;
 }
 
+/** Build the ordinary-property `arguments.length` arm for standalone vecs. */
+function argumentsLengthSetArm(ctx: CodegenContext, propName: string): Instr[] {
+  const typeIdx = ctx.standalone ? ctx.structMap.get("__arguments_vec") : undefined;
+  if (propName !== "length" || typeIdx === undefined) return [];
+  return [
+    { op: "local.get", index: 2 },
+    { op: "ref.test", typeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 2 },
+        { op: "ref.cast", typeIdx },
+        { op: "local.get", index: 1 },
+        { op: "struct.set", typeIdx, fieldIdx: ARGUMENTS_LENGTH_VALUE_FIELD },
+        { op: "local.get", index: 2 },
+        { op: "ref.cast", typeIdx },
+        { op: "i32.const", value: 1 },
+        { op: "struct.set", typeIdx, fieldIdx: ARGUMENTS_LENGTH_OVERRIDE_FIELD },
+        { op: "local.get", index: 2 },
+        { op: "ref.cast", typeIdx },
+        { op: "i32.const", value: 0 },
+        { op: "struct.set", typeIdx, fieldIdx: ARGUMENTS_LENGTH_ABSENT_FIELD },
+        { op: "return" },
+      ],
+    },
+  ];
+}
+
 /**
  * Fill every reserved `__set_member_<name>` dispatcher body at FINALIZE, after
  * every struct type (incl. late-registered fnctor structs) is known. READ-ONLY
@@ -147,8 +182,6 @@ export function reserveMemberSetDispatch(
  * local 2 = `__any` (anyref, the converted receiver tested against each struct).
  */
 export function fillMemberSetDispatch(ctx: CodegenContext): void {
-  const mod = ctx.mod;
-
   for (const key of ctx.memberSetDispatchNames ?? []) {
     // key is `<propName>\0<S|N>` — strict (S) vs non-strict (N) fallback variant.
     const sep = key.lastIndexOf("\0");
@@ -406,32 +439,15 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
       // alone can therefore select the wrong logical shape and write another
       // field's slot. Mirror the exported __sset_* guards: verify the hidden
       // per-instance shape id and continue dispatching on a mismatch.
-      const shapeGuardedSetFieldInstrs: Instr[] =
-        cand.shapeId !== undefined && cand.shapeFieldIdx !== undefined
-          ? [
-              { op: "local.get", index: 2 },
-              { op: "ref.cast", typeIdx: cand.structTypeIdx },
-              { op: "struct.get", typeIdx: cand.structTypeIdx, fieldIdx: cand.shapeFieldIdx },
-              { op: "i32.const", value: cand.shapeId },
-              { op: "i32.eq" },
-              {
-                op: "if",
-                blockType: { kind: "empty" },
-                then: presenceAwareSetFieldInstrs,
-                else: next,
-              },
-            ]
-          : presenceAwareSetFieldInstrs;
-      return [
-        { op: "local.get", index: 2 }, // __any
-        { op: "ref.test", typeIdx: cand.structTypeIdx },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: shapeGuardedSetFieldInstrs,
-          else: next,
-        },
-      ];
+      // (#4645) single-`next` arm — see `buildShapeGuardedArm`.
+      return buildShapeGuardedArm(
+        2, // __any
+        cand.structTypeIdx,
+        cand,
+        { kind: "empty" },
+        presenceAwareSetFieldInstrs,
+        next,
+      );
     };
 
     dispFn.locals =
@@ -445,6 +461,7 @@ export function fillMemberSetDispatch(ctx: CodegenContext): void {
       { op: "local.get", index: 0 }, // recv (externref)
       { op: "any.convert_extern" },
       { op: "local.set", index: 2 }, // __any
+      ...argumentsLengthSetArm(ctx, propName),
       ...buildSetDispatch(0),
     ];
   }

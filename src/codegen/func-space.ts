@@ -29,7 +29,7 @@
 //   (`numImportFuncs + mod.functions.length`) stays at registration sites
 //   until S3 replaces it with registry handle minting.
 // ---------------------------------------------------------------------------
-
+export * from "./multi-source-ir-integration.js";
 import type { FuncTypeDef, FuncHandle, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";

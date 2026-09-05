@@ -7,7 +7,7 @@
 // threading an EarlyErrorContext and importing the shared predicate helpers.
 import { ts, forEachChild } from "../../ts-api.js";
 import type { EarlyErrorContext } from "./context.js";
-import { findInnermostNodeAtPosition, isStrictMode } from "./predicates.js";
+import { findInnermostNodeAtPosition, isInYieldParamContext, isStrictMode } from "./predicates.js";
 
 /**
  * `export default const/var/let` — always a SyntaxError.
@@ -204,20 +204,13 @@ export function checkReservedIdentifiers(ctx: EarlyErrorContext): void {
       const name = node.text;
       if (name === "yield") {
         // Reserved in strict mode or inside any enclosing generator.
-        let reserved = isStrictMode(node) || sourceFileIsModule;
-        if (!reserved) {
-          let c: ts.Node | undefined = node.parent;
-          while (c) {
-            if (
-              (ts.isFunctionDeclaration(c) || ts.isFunctionExpression(c) || ts.isMethodDeclaration(c)) &&
-              c.asteriskToken
-            ) {
-              reserved = true;
-              break;
-            }
-            c = c.parent;
-          }
-        }
+        // (#5141) The enclosing-generator walk must stop at the first
+        // non-arrow function boundary — a nested ordinary function resets
+        // [Yield], so `function*g(){ function h(){ yield = 1; } }` is legal —
+        // and a function's own BindingIdentifier is not judged by its own
+        // context. `isInYieldParamContext` implements both (mirrors the
+        // `await` rule below, which already walks to the function boundary).
+        const reserved = isStrictMode(node) || sourceFileIsModule || isInYieldParamContext(node);
         if (reserved) {
           ctx.addError(node, "'yield' is a reserved word and may not be used as an identifier in strict mode");
         }
@@ -292,11 +285,20 @@ export function checkHtmlCloseComment(ctx: EarlyErrorContext): void {
  * ES spec: It is a Syntax Error if PrototypePropertyNameList of ClassElementList
  * contains more than one occurrence of "constructor".
  */
+function isStaticCtorMethodMember(member: ts.ClassElement): boolean {
+  // (#5195 r3-4) Local twin of `codegen/ast-modifiers.ts::isStaticCtorMethod`,
+  // kept local so early-errors takes no codegen import. `static constructor(){}`
+  // is a static METHOD named "constructor" (§15.7), not the class's
+  // constructor, so it must not count toward the duplicate-constructor rule.
+  const modifiers = ts.canHaveModifiers(member) ? ts.getModifiers(member) : undefined;
+  return modifiers?.some((m) => m.kind === ts.SyntaxKind.StaticKeyword) ?? false;
+}
+
 export function checkDuplicateConstructors(ctx: EarlyErrorContext): void {
   const checkClass = (classNode: ts.ClassDeclaration | ts.ClassExpression): void => {
     let ctorCount = 0;
     for (const member of classNode.members) {
-      if (ts.isConstructorDeclaration(member)) {
+      if (ts.isConstructorDeclaration(member) && !isStaticCtorMethodMember(member)) {
         // Only count constructors with a body (declarations without bodies are overloads)
         if (member.body) {
           ctorCount++;

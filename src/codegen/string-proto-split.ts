@@ -27,20 +27,17 @@
  * dispatcher stays a dispatcher, and the LOC/function budget gates keep growth
  * in the cohesive sibling.
  *
- * ## Deliberately NOT handled: a RegExp separator
+ * ## Runtime RegExp separators
  *
  * §22.1.3.23 step 2 dispatches to `separator[@@split]` when the separator is an
  * object carrying it — i.e. a RegExp. The standalone RegExp engine
- * (`regexp-standalone.ts`) is reachable from the DIRECT path only, and only for
- * a *statically known, backend-created* pattern (`tryCompileStandaloneString-
- * Split`): it compiles the pattern to a matcher at COMPILE time. A reflective
- * closure receives its separator as a runtime `externref`, so there is no
- * static pattern to compile and no runtime interpreter to fall back on. A
- * RegExp separator therefore keeps flowing into ToString(separator) here, which
- * is the pre-existing behaviour of every other reflective String member with a
- * search-value argument (see the `emitStringSearchBooleanMemberBody` "known
- * spec gap" note). Wiring it properly needs a runtime regexp interpreter, which
- * is a separate work item.
+ * (`regexp-standalone.ts`) now supplies the same pure-Wasm `__regex_split`
+ * kernel used by the direct path. Backend-created RegExp values retain their
+ * `$__StandaloneRegExp` carrier even when the transferred closure ABI erases
+ * the argument to `externref`, so a runtime `ref.test` can select the protocol
+ * branch. Foreign RegExp values and ordinary objects still take the existing
+ * ToString(separator) path; they are not backend carriers and the standalone
+ * lane has no general host protocol fallback for them.
  */
 
 import type { Instr, ValType } from "../ir/types.js";
@@ -58,6 +55,14 @@ import {
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { emitStringProtoToStringFlat } from "./string-proto-tostring.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
+import {
+  RE_FIELD_CLASS_TABLE,
+  RE_FIELD_NGROUPS,
+  RE_FIELD_NSCRATCH,
+  RE_FIELD_PROG,
+  usesNativeRegExpProvider,
+} from "./regexp-standalone.js";
+import { ensureRegexSplit } from "./native-regex.js";
 import { getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { flushLateImportShifts } from "./shared.js";
 import { ensureVecConstructorCarrier } from "./vec-constructor-carrier.js";
@@ -233,45 +238,120 @@ export function emitStringSplitMemberBody(ctx: CodegenContext, fctx: FunctionCon
   });
   fctx.body.push({ op: "local.set", index: limLocal });
 
-  // Step 5: R = ? ToString(separator), flattened.
-  emitStringProtoToStringFlat(ctx, fctx, 2, anyToStrIdx, flattenIdx);
-  const rLocal = allocLocal(fctx, `__split_r_${fctx.locals.length}`, flatStringType(ctx));
-  fctx.body.push({ op: "local.set", index: rLocal });
+  // §22.1.3.23 step 2: a backend-created RegExp separator owns the
+  // `@@split` operation. The closure argument is opaque, but the carrier test
+  // is enough to recover its fields without a raw cast on ordinary objects.
+  // Only demand the regex VM when this module has already minted the carrier;
+  // a plain-string split therefore retains its old demand-driven footprint.
+  const regexpTypeIdx = usesNativeRegExpProvider(ctx) ? ctx.structMap.get("__StandaloneRegExp") : undefined;
+  const regexpSplitIdx = regexpTypeIdx === undefined ? undefined : ensureRegexSplit(ctx);
+  const separatorIsRegExpLocal = allocLocal(fctx, `__split_is_re_${fctx.locals.length}`, { kind: "i32" });
+  if (regexpTypeIdx !== undefined && regexpSplitIdx !== undefined) {
+    fctx.body.push(
+      { op: "local.get", index: 2 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: regexpTypeIdx },
+      { op: "local.set", index: separatorIsRegExpLocal },
+    );
+  } else {
+    fctx.body.push({ op: "i32.const", value: 0 }, { op: "local.set", index: separatorIsRegExpLocal });
+  }
 
-  // Steps 6–8: pick the result shape.
-  const sepUndefLocal = allocLocal(fctx, `__split_sepu_${fctx.locals.length}`, { kind: "i32" });
-  pushIsUndefined(ctx, fctx.body, 2);
-  fctx.body.push({ op: "local.set", index: sepUndefLocal });
+  // Build the ordinary-string branch in a detached sink. Its ToString must
+  // run only when the separator is not a RegExp: calling it before the runtime
+  // protocol dispatch would observe a user-mutated RegExp.prototype.toString.
+  const stringSeparatorBody: Instr[] = [];
+  const savedBody = fctx.body;
+  ctx.liveBodies.add(savedBody);
+  fctx.body = stringSeparatorBody;
+  try {
+    // Step 5: R = ? ToString(separator), flattened.
+    emitStringProtoToStringFlat(ctx, fctx, 2, anyToStrIdx, flattenIdx);
+    const rLocal = allocLocal(fctx, `__split_r_${fctx.locals.length}`, flatStringType(ctx));
+    fctx.body.push({ op: "local.set", index: rLocal });
 
-  const emptyVec: Instr[] = [
-    { op: "i32.const", value: 0 },
-    { op: "i32.const", value: 0 },
-    { op: "array.new_default", typeIdx: arrTypeIdx },
-    { op: "struct.new", typeIdx: vecTypeIdx },
-  ];
-  const wholeVec: Instr[] = [
-    { op: "i32.const", value: 1 },
-    { op: "local.get", index: sLocal },
-    { op: "array.new_fixed", typeIdx: arrTypeIdx, length: 1 },
-    { op: "struct.new", typeIdx: vecTypeIdx },
-  ];
-  const kernel: Instr[] = [
-    { op: "local.get", index: sLocal },
-    { op: "local.get", index: rLocal },
-    { op: "local.get", index: limLocal },
-    { op: "call", funcIdx: splitIdx },
-  ];
+    // Steps 6–8: pick the result shape.
+    const sepUndefLocal = allocLocal(fctx, `__split_sepu_${fctx.locals.length}`, { kind: "i32" });
+    pushIsUndefined(ctx, fctx.body, 2);
+    fctx.body.push({ op: "local.set", index: sepUndefLocal });
+
+    const emptyVec: Instr[] = [
+      { op: "i32.const", value: 0 },
+      { op: "i32.const", value: 0 },
+      { op: "array.new_default", typeIdx: arrTypeIdx },
+      { op: "struct.new", typeIdx: vecTypeIdx },
+    ];
+    const wholeVec: Instr[] = [
+      { op: "i32.const", value: 1 },
+      { op: "local.get", index: sLocal },
+      { op: "array.new_fixed", typeIdx: arrTypeIdx, length: 1 },
+      { op: "struct.new", typeIdx: vecTypeIdx },
+    ];
+    const kernel: Instr[] = [
+      { op: "local.get", index: sLocal },
+      { op: "local.get", index: rLocal },
+      { op: "local.get", index: limLocal },
+      { op: "call", funcIdx: splitIdx },
+    ];
+    stringSeparatorBody.push(
+      { op: "local.get", index: limLocal },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: vecRef },
+        then: emptyVec,
+        else: [
+          { op: "local.get", index: sepUndefLocal },
+          { op: "if", blockType: { kind: "val", type: vecRef }, then: wholeVec, else: kernel },
+        ],
+      },
+    );
+  } finally {
+    fctx.body = savedBody;
+    ctx.liveBodies.delete(savedBody);
+  }
+
+  const regexpSeparatorBody: Instr[] = [];
+  if (regexpTypeIdx !== undefined && regexpSplitIdx !== undefined) {
+    const regexpLocal = allocLocal(fctx, `__split_re_${fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: regexpTypeIdx,
+    });
+    // __regex_split(prog, classTable, nGroups, subjectData, subjectOffset,
+    // subjectLength, subject, limit, nScratch). The result vec type is the
+    // same `ref_${anyStr}` registration used by the string kernel above.
+    regexpSeparatorBody.push(
+      { op: "local.get", index: 2 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: regexpTypeIdx },
+      { op: "local.set", index: regexpLocal },
+      { op: "local.get", index: regexpLocal },
+      { op: "struct.get", typeIdx: regexpTypeIdx, fieldIdx: RE_FIELD_PROG },
+      { op: "local.get", index: regexpLocal },
+      { op: "struct.get", typeIdx: regexpTypeIdx, fieldIdx: RE_FIELD_CLASS_TABLE },
+      { op: "local.get", index: regexpLocal },
+      { op: "struct.get", typeIdx: regexpTypeIdx, fieldIdx: RE_FIELD_NGROUPS },
+      { op: "local.get", index: sLocal },
+      { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 2 },
+      { op: "local.get", index: sLocal },
+      { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 1 },
+      { op: "local.get", index: sLocal },
+      { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 },
+      { op: "local.get", index: sLocal },
+      { op: "local.get", index: limLocal },
+      { op: "local.get", index: regexpLocal },
+      { op: "struct.get", typeIdx: regexpTypeIdx, fieldIdx: RE_FIELD_NSCRATCH },
+      { op: "call", funcIdx: regexpSplitIdx },
+    );
+  }
+
   fctx.body.push(
-    { op: "local.get", index: limLocal },
-    { op: "i32.eqz" },
+    { op: "local.get", index: separatorIsRegExpLocal },
     {
       op: "if",
       blockType: { kind: "val", type: vecRef },
-      then: emptyVec,
-      else: [
-        { op: "local.get", index: sepUndefLocal },
-        { op: "if", blockType: { kind: "val", type: vecRef }, then: wholeVec, else: kernel },
-      ],
+      then: regexpSeparatorBody,
+      else: stringSeparatorBody,
     },
     { op: "extern.convert_any" },
   );

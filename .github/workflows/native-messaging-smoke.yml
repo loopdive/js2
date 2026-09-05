@@ -57,6 +57,11 @@ jobs:
       - name: Verify wasmtime is on PATH
         run: wasmtime --version
 
+      - name: Externref tail-call compatibility regression
+        run: >-
+          pnpm exec vitest run tests/v8x-js2wasm-spike.test.ts
+          -t "executes an externref-returning trampoline in Wasmtime"
+
       - name: Install bun (the reporter's bundler — loopdive/js2wasm#389)
         uses: oven-sh/setup-bun@v2
         with:

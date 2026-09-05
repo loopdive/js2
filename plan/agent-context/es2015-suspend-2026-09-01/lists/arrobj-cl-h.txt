@@ -1,0 +1,4 @@
+built-ins/Object/prototype/toLocaleString/primitive_this_value_getter.js
+built-ins/Object/prototype/toLocaleString/primitive_this_value.js
+built-ins/Array/prototype/toLocaleString/primitive_this_value.js
+built-ins/Array/prototype/toLocaleString/primitive_this_value_getter.js

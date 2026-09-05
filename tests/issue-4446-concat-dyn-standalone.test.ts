@@ -166,23 +166,18 @@ describe("#4446 — dynamic Array.prototype.concat lowers host-free under --targ
       expect(await run(SPREADABLE_FALSE_OBJECT, "standalone")).toBe(1);
     });
 
-    it("RESIDUAL: a vec-backed ARRAY still ignores its @@isConcatSpreadable", async () => {
-      // Pins the KNOWN GAP so it cannot regress silently in either direction.
-      // `item[Symbol.isConcatSpreadable] = false` on a vec receiver does not
-      // reach the symbol-key channel that `__extern_get` reads, so
-      // IsConcatSpreadable falls through to IsArray → true → spread. The set
-      // currently lands on numeric index 6 instead, which is why `item.length`
-      // is 7 and the concat result has 7 elements. Measured identically on the
-      // untouched gc lane (`item.length === 7` there too), so this is the
-      // symbol/vec property channel, NOT the #4446 concat loop.
-      expect(await run(SPREADABLE_FALSE_ARRAY, "standalone")).toBe(7);
+    it("a vec-backed ARRAY with falsy @@isConcatSpreadable is NOT spread", async () => {
+      // The standalone carrier path now preserves the symbol-keyed override:
+      // concat appends the array itself as one element. The gc observation
+      // separately pins that the symbol write does not corrupt array length.
+      expect(await run(SPREADABLE_FALSE_ARRAY, "standalone")).toBe(1);
       expect(
         await run(
           `var item=[1,2,3]; item[Symbol.isConcatSpreadable]=false;
         export function test(){ return item.length; }`,
           "gc",
         ),
-      ).toBe(7);
+      ).toBe(3);
     });
 
     it("an array-like with a truthy @@isConcatSpreadable IS spread", async () => {

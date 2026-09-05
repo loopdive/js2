@@ -1,0 +1,7 @@
+/*---
+description: probe .tmp/es2015/probes5195/static-ctor.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class C { static constructor() { return 7; } constructor() {} }
+assert.sameValue(C.constructor(), 7);
+assert(C.hasOwnProperty('constructor'));

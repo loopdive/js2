@@ -54,6 +54,28 @@ function bumpBranches(instrs: Instr[], delta: number, includeLegacyTryLabel: boo
         if (targetsLegacyTryOrOuter(instr.targets[i]!)) instr.targets[i] = instr.targets[i]! + delta;
       }
       if (targetsLegacyTryOrOuter(instr.defaultDepth)) instr.defaultDepth += delta;
+    } else if (op === "try_table") {
+      // (#5139) A raw `try_table`'s catch depths are branch targets resolved in
+      // the scope ENCLOSING the try_table (its own label is not in scope for
+      // the clauses), so they shift exactly like a `br` sitting at the
+      // try_table's position. `walkChildren` cannot do this — a try_table catch
+      // carries no `body`, only a `depth` — so an already-lowered inner
+      // try_table nested in a region that later gets re-wrapped (the standalone
+      // generator resume trampoline, #5060) kept stale catch targets and
+      // trapped on resume.
+      for (const clause of instr.catches) {
+        if (targetsLegacyTryOrOuter(clause.depth)) clause.depth += delta;
+      }
+    }
+
+    // (#5139) A raw `try_table`'s catch clauses carry a `depth`, not a `body`,
+    // so `walkChildren` cannot see them. Their label indices resolve in the
+    // context OUTSIDE the try_table (same reference frame as a `br` sitting
+    // where the instruction sits), so they shift exactly like one.
+    if (op === "try_table") {
+      for (const clause of (instr as Instr & { catches?: TryTableCatch[] }).catches ?? []) {
+        if (typeof clause.depth === "number" && targetsLegacyTryOrOuter(clause.depth)) clause.depth += delta;
+      }
     }
 
     const childDepth = isLabelOp(op) ? localDepth + 1 : localDepth;

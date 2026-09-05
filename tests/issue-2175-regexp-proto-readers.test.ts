@@ -97,13 +97,13 @@ describe("#2175 S1 — RegExp.prototype reads route through $NativeProto (no ref
     ).toBe(1);
   });
 
-  it("reads RegExp.prototype.flags / .source / flag-bool getters as accessor closure values", async () => {
+  it("invokes RegExp.prototype accessors on a plain property read", async () => {
     expect(
       await runStandalone(`
         const gf: any = RegExp.prototype.flags;
         const gs: any = RegExp.prototype.source;
         const gg: any = RegExp.prototype.global;
-        function test(): number { return (gf !== null && gs !== null && gg !== null) ? 1 : 0; }
+        function test(): number { return (gf === "" && gs === "(?:)" && gg === undefined) ? 1 : 0; }
         export { test };
       `),
     ).toBe(1);
@@ -128,16 +128,16 @@ describe("#2175 S1 — native-method-closure dispatch via the brand-recovery pro
   it("dispatches flag-bool getters on a correct `this` (RegExpHasFlag §22.2.6)", async () => {
     expect(
       await runStandalone(`
-        const gGlobal: any = RegExp.prototype.global;
-        const gIgnore: any = RegExp.prototype.ignoreCase;
-        const gMulti: any = RegExp.prototype.multiline;
-        const gSticky: any = RegExp.prototype.sticky;
+        const gGlobal: any = Object.getOwnPropertyDescriptor(RegExp.prototype, "global").get;
+        const gIgnore: any = Object.getOwnPropertyDescriptor(RegExp.prototype, "ignoreCase").get;
+        const gMulti: any = Object.getOwnPropertyDescriptor(RegExp.prototype, "multiline").get;
+        const gSticky: any = Object.getOwnPropertyDescriptor(RegExp.prototype, "sticky").get;
         function test(): number {
-          if (!gGlobal(/a/g)) return 1;
-          if (gGlobal(/a/)) return 2;
-          if (!gIgnore(/a/i)) return 3;
-          if (!gMulti(/a/m)) return 4;
-          if (gSticky(/a/)) return 5;
+          if (!gGlobal.call(/a/g)) return 1;
+          if (gGlobal.call(/a/)) return 2;
+          if (!gIgnore.call(/a/i)) return 3;
+          if (!gMulti.call(/a/m)) return 4;
+          if (gSticky.call(/a/)) return 5;
           return 0;
         }
         export { test };
@@ -152,9 +152,9 @@ describe("#2175 S1 — native-method-closure dispatch via the brand-recovery pro
     // closes the loop). Typed binding avoids the `any === literal` confound.
     expect(
       await runStandalone(`
-        const g: any = RegExp.prototype.flags;
+        const g: any = Object.getOwnPropertyDescriptor(RegExp.prototype, "flags").get;
         function test(): number {
-          const f: string = g(/a/gi) as string;
+          const f: string = g.call(/a/gi) as string;
           return f === "gi" ? 1 : 0;
         }
         export { test };
@@ -165,9 +165,9 @@ describe("#2175 S1 — native-method-closure dispatch via the brand-recovery pro
   it("dispatches the .source getter on a correct `this`", async () => {
     expect(
       await runStandalone(`
-        const g: any = RegExp.prototype.source;
+        const g: any = Object.getOwnPropertyDescriptor(RegExp.prototype, "source").get;
         function test(): number {
-          const s: string = g(/abc/) as string;
+          const s: string = g.call(/abc/) as string;
           return s === "abc" ? 1 : 0;
         }
         export { test };

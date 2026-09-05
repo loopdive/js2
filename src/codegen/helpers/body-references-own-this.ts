@@ -8,6 +8,35 @@ import { ts } from "../../ts-api.js";
 const cache = new WeakMap<ts.Node, boolean>();
 
 /**
+ * Return one `this` node belonging to the scanned lexical function body.
+ * Nested arrows inherit `this`, while ordinary function-like/class nodes
+ * rebind it and therefore are not traversed.  The node is used when codegen
+ * must materialize a lexical receiver so source-sensitive sloppy-IIFE rules
+ * see the original AST position rather than a detached synthetic node.
+ */
+export function findOwnThisReference(node: ts.Node): ts.Expression | undefined {
+  const stack: ts.Node[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current.kind === ts.SyntaxKind.ThisKeyword) return current as ts.Expression;
+    if (
+      ts.isFunctionDeclaration(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isGetAccessorDeclaration(current) ||
+      ts.isSetAccessorDeclaration(current) ||
+      ts.isConstructorDeclaration(current) ||
+      ts.isClassDeclaration(current) ||
+      ts.isClassExpression(current)
+    ) {
+      continue;
+    }
+    current.forEachChild((child) => stack.push(child));
+  }
+  return undefined;
+}
+
+/**
  * #2152 — Check whether a node tree references `this` in its OWN function scope.
  *
  * A non-arrow `function` / method / accessor / constructor / class rebinds
@@ -70,4 +99,19 @@ export function bodyReferencesOwnThis(node: ts.Node): boolean {
   }
   cache.set(node, false);
   return false;
+}
+
+/** Whether any call-time parameter initializer reads this function's receiver. */
+export function parametersReferenceOwnThis(parameters: readonly ts.ParameterDeclaration[]): boolean {
+  return parameters.some((parameter) =>
+    parameter.initializer === undefined ? false : bodyReferencesOwnThis(parameter.initializer),
+  );
+}
+
+/** Receiver demand across both call-time parameter initialization and the body. */
+export function functionLikeReferencesOwnThis(declaration: ts.FunctionLikeDeclaration): boolean {
+  return (
+    parametersReferenceOwnThis(declaration.parameters) ||
+    (declaration.body !== undefined && bodyReferencesOwnThis(declaration.body))
+  );
 }

@@ -46,17 +46,22 @@
  *  - `__isPrototypeOf` — the §7.3.20 step 6/7 chain walk over `$Object.$proto`
  *    with `ref.eq` per level (object-runtime-prototype.ts). ONE walk, shared
  *    with #3962 and Slice C; no parallel `[[Prototype]]` mechanism.
+ *  - The two tri-state identity probes below — the canonical `Object` carrier
+ *    and `$NativeProto`'s `Object` brand. They answer only exact identities;
+ *    an unknown probe leaves the ordinary conservative path untouched.
  *
- * ## The closure → prototype edge (#2660 M3) — what this module could NOT decide
+ * ## The closure → prototype edge (#2660 M3) — and the remaining gap
  *
  * Until #2660 M3, `Get(C, "prototype")` was unanswerable for a **closure**: a
  * standalone function value is a WasmGC closure-wrapper struct, and its
  * prototype object lives in a module GLOBAL keyed by the COMPILE-TIME symbol
  * name (`fnctor-prototype.ts`, and `ctx.protoGlobals` for classes), with no
  * runtime edge from the value. So a closure RHS answered the conservative
- * `false` and `S15.3.5.3_A2_T2/T6` / `_A3_T1/T2` kept failing.
+ * `false` and the arbitrary runtime-`Function(...)` prototype cases remained
+ * unresolved. The explicit `FACTORY.prototype = Object.prototype` join is a
+ * separate, exact `$NativeProto` identity that the probes below can answer.
  *
- * Two arms close it, in this precedence order:
+ * Three arms close the modeled cases, in this precedence order:
  *
  * 1. **Own `prototype` on a NON-`$Object` callable.** The `ref.test $Object`
  *    branch below gained an `else`. `__hasOwnProperty`/`__extern_get` dispatch
@@ -75,10 +80,16 @@
  *    and a miss is `null`. It is also consulted on the NOT-callable tail,
  *    because a CLASS value is `typeof "object"` in this backend (reason 2
  *    there) yet is callable per spec.
+ * 3. **The canonical `Object.prototype` identity.** A runtime-created
+ *    `Function()` can be joined to that native prototype by an own-property
+ *    assignment. The Object-brand probe recognizes that exact value and
+ *    answers the ordinary object-family membership without guessing about any
+ *    other runtime-created prototype.
  *
- * Both arms emit NOTHING when the module has no edges, and neither can produce
- * a wrong `true`: arm 2 is an exact identity match, and arm 1 reads a property
- * the program itself wrote.
+ * The closure edge emits NOTHING when the module has no edges, and neither
+ * identity arm can produce a wrong `true`: the closure edge is an exact
+ * singleton match, the Object-brand arm is an exact native-proto brand match,
+ * and the own-property arm reads a property the program itself wrote.
  *
  * ## The answers, and why each is the least-wrong one available
  *
@@ -94,15 +105,18 @@
  *
  * ### The residual, stated plainly
  *
- * `obj instanceof FACTORY` where `FACTORY` holds a runtime closure answers
- * **`false`, not the spec's true/TypeError** — `S15.3.5.3_A2_T2/T5/T6` (which
- * want a TypeError for a non-object `F.prototype`) and `_A3_T1/T2` (which want a
- * chain-walk `true`) keep failing. That is deliberate. Both alternatives are
- * WORSE: answering `2` asserts "F.prototype really is a non-object", and
- * answering `1` asserts membership — neither is known. A missed conversion is a
- * missed conversion; a wrong `true` passes a test vacuously and a wrong throw is
- * observable in a `catch`. Closing it needs a runtime closure→prototype edge
- * (the #2660 M3 substrate), not this module.
+ * `obj instanceof FACTORY` where `FACTORY` holds a runtime closure still
+ * answers **`false`, not the spec's true/TypeError**, unless its own
+ * `prototype` is a modelled value (including the exact `Object.prototype`
+ * identity). `S15.3.5.3_A2_T2/T5/T6` (which want a TypeError for an arbitrary
+ * non-object `F.prototype`) remain residuals; `_A3_T1` is the expected initial
+ * false, while `_A3_T2` is closed by the Object-brand join. That is deliberate.
+ * Both alternatives are WORSE: answering `2` asserts "F.prototype really is a
+ * non-object", and answering `1` asserts membership — neither is known. A
+ * missed conversion is a missed conversion; a wrong `true` passes a test
+ * vacuously and a wrong throw is observable in a `catch`. Closing the remaining
+ * cases needs a general runtime closure→prototype edge, not a guess in this
+ * module.
  *
  * ### No wrong throws — the second thing this module measured and changed
  *
@@ -146,13 +160,14 @@
  * hazard); the only finalize-time correction it depends on is a BODY rewrite of
  * `__typeof_function`, which changes no index at all.
  */
-import type { Instr, ValType } from "../ir/types.js";
+import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import type { ts } from "../ts-api.js";
 import { OBJ_FLAG_CALLABLE } from "./builtin-callable-brand.js";
+import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js";
 import { CLOSURE_PROTO_OF } from "./closure-prototype-edge.js"; // (#2660 M3) closure → prototype identity edge
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
-import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { noJsHost } from "./js-errors.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
@@ -166,11 +181,64 @@ const I32: ValType = { kind: "i32" };
 /** `__instanceof_dynamic(value, target) -> i32` — the 0/1/2 tri-state helper. */
 const HELPER_NAME = "__instanceof_dynamic";
 
+/** Runtime identity probes used by the shared dynamic HasInstance substrate. */
+const BUILTIN_CTOR_IDENTITY_HELPER = "__instanceof_builtin_ctor_identity";
+const OBJECT_PROTO_INSTANCE_HELPER = "__instanceof_object_prototype";
+const UNKNOWN_RESULT = 3;
+
 /** Param / local slots of the helper body. */
 const P_VALUE = 0;
 const P_TARGET = 1;
 const L_TARGET_ANY = 2;
 const L_PROTO = 3;
+const L_BUILTIN_CODE = 4;
+const L_OBJECT_PROTO_CODE = 5;
+
+/**
+ * Reserve a value-identity probe for reified builtin constructors.
+ *
+ * The dynamic `instanceof` helper is registered before its operands are
+ * compiled, while a builtin carrier global is created by the operand's value
+ * lowering.  A tiny reserve/fill helper keeps that ordering honest: the
+ * helper is present while the dynamic body is built, and its body is filled
+ * only after all source expressions have published their canonical globals.
+ */
+function reserveBuiltinCtorIdentityHelper(ctx: CodegenContext): number {
+  const existing = ctx.funcMap.get(BUILTIN_CTOR_IDENTITY_HELPER);
+  if (existing !== undefined) return existing;
+  const typeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32]);
+  const funcIdx = mintDefinedFunc(ctx);
+  const fn: WasmFunction = {
+    name: BUILTIN_CTOR_IDENTITY_HELPER,
+    typeIdx,
+    locals: [],
+    // 0/1 are definitive results; 3 means that this target is not the
+    // canonical Object constructor carrier known to this module.
+    body: [{ op: "i32.const", value: UNKNOWN_RESULT }],
+    exported: false,
+  };
+  pushDefinedFunc(ctx, funcIdx, fn);
+  ctx.funcMap.set(BUILTIN_CTOR_IDENTITY_HELPER, funcIdx);
+  return funcIdx;
+}
+
+/** Reserve the Object.prototype identity probe used by OrdinaryHasInstance. */
+function reserveObjectPrototypeInstanceHelper(ctx: CodegenContext): number {
+  const existing = ctx.funcMap.get(OBJECT_PROTO_INSTANCE_HELPER);
+  if (existing !== undefined) return existing;
+  const typeIdx = addFuncType(ctx, [EXTERNREF, EXTERNREF], [I32]);
+  const funcIdx = mintDefinedFunc(ctx);
+  const fn: WasmFunction = {
+    name: OBJECT_PROTO_INSTANCE_HELPER,
+    typeIdx,
+    locals: [],
+    body: [{ op: "i32.const", value: UNKNOWN_RESULT }],
+    exported: false,
+  };
+  pushDefinedFunc(ctx, funcIdx, fn);
+  ctx.funcMap.set(OBJECT_PROTO_INSTANCE_HELPER, funcIdx);
+  return funcIdx;
+}
 
 /**
  * Register (once) the native `__instanceof_dynamic` helper and return its stable
@@ -178,7 +246,7 @@ const L_PROTO = 3;
  * unavailable — in which case the caller MUST keep its existing lowering rather
  * than emit a partial answer.
  */
-function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined {
+export function ensureNativeDynamicInstanceOf(ctx: CodegenContext): number | undefined {
   const existing = ctx.funcMap.get(HELPER_NAME);
   if (existing !== undefined) return existing;
 
@@ -192,9 +260,8 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
   const externGetIdx = ensureLateImport(ctx, "__extern_get", [EXTERNREF, EXTERNREF], [EXTERNREF]);
   const isProtoOfIdx = ensureLateImport(ctx, "__isPrototypeOf", [EXTERNREF, EXTERNREF], [I32]);
   const hasOwnIdx = ensureLateImport(ctx, "__hasOwnProperty", [EXTERNREF, EXTERNREF], [I32]);
-  // The four POSITIVE primitive classifiers. The throw arm needs proof that the
-  // target IS a primitive, not the absence of proof that it is an object — see
-  // `isProvenPrimitive` below.
+  // Positive primitive classifiers: the dynamic throw arm needs proof, not the
+  // absence of an object classification.
   const primitiveIdxs = (["__typeof_number", "__typeof_string", "__typeof_boolean", "__typeof_bigint"] as const).map(
     (n) => ensureLateImport(ctx, n, [EXTERNREF], [I32]),
   );
@@ -205,6 +272,8 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
   // when the reservation did not happen, in which case every arm below that
   // depends on it emits nothing and this helper keeps its previous answers.
   const closureProtoOfIdx = ctx.funcMap.get(CLOSURE_PROTO_OF);
+  const builtinCtorIdentityIdx = reserveBuiltinCtorIdentityHelper(ctx);
+  const objectProtoInstanceIdx = reserveObjectPrototypeInstanceHelper(ctx);
   flushLateImportShifts(ctx, null);
 
   const objectTypeIdx = ctx.objectRuntimeTypes?.objectTypeIdx;
@@ -237,21 +306,7 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
     { op: "call", funcIdx: typeofUndefinedIdx },
     { op: "i32.or" },
   ];
-  /**
-   * `slot` is PROVABLY a primitive — number / string / boolean / bigint.
-   *
-   * Deliberately positive. The first cut inferred "primitive" from
-   * `__typeof_object(slot) === 0`, which is NOT the same claim: that native
-   * answers 0 for anything it does not model, so an intrinsic the classifiers do
-   * not recognise read as a primitive and the operator threw where the spec (and
-   * the host predicate) answer `false`. Measured on
-   * `built-ins/TypedArrayConstructors/ctors/object-arg/iterator-is-null-as-array-like.js`,
-   * whose `typedArray instanceof TypedArray` (the `%TypedArray%` intrinsic
-   * reached through `Object.getPrototypeOf(Int8Array)`) turned into
-   * "Right-hand side of 'instanceof' is not callable". A wrong THROW is
-   * observable in a `catch`; an unproven case must fall to the conservative
-   * `false` instead.
-   */
+  /** Positive primitive proof; unknown values must remain conservative false. */
   const isProvenPrimitive = (slot: number): Instr[] => {
     const out: Instr[] = [
       { op: "local.get", index: slot },
@@ -266,33 +321,26 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
 
   addStringConstantGlobal(ctx, "prototype");
 
-  // §7.3.20 steps 4–7 for a target that OWNS a `prototype` property.
-  //
-  // The own-property gate is load-bearing, not a micro-optimisation. `Get`
-  // returning nothing has TWO causes that the spec treats oppositely: the
-  // program really set `F.prototype = undefined` (§7.3.20 step 5 ⇒ TypeError),
-  // or this backend simply does not model a `prototype` on that carrier
-  // (⇒ nothing is known). `__hasOwnProperty` separates them. Measured without
-  // it: `typedArray instanceof TypedArray` — the `%TypedArray%` intrinsic
-  // reached through `Object.getPrototypeOf(Int8Array)`, a callable carrier with
-  // no modelled `prototype` — threw "Right-hand side of 'instanceof' is not
-  // callable" where the host predicate answers `false`
-  // (`built-ins/TypedArrayConstructors/ctors/object-arg/iterator-is-null-as-array-like.js`).
-  //
-  // A non-object P is likewise refused only when PROVABLY primitive, for the
-  // same reason as `isProvenPrimitive`: an unrecognised P is simply not in V's
-  // chain, and the walk already answers 0 for a non-`$Object`.
-  //
-  // (#2660 M3) The next three are FACTORIES, not shared arrays: the tail is
-  // emitted at three points in one body, and a shared `Instr` object is
-  // double-remapped by the finalize index walks
-  // (`reference_shared_instr_object_dce_double_remap`).
+  // §7.3.20 steps 4–7 for a target that owns `prototype`. The own-property gate
+  // distinguishes a written non-object (throw) from an unmodelled property;
+  // each emitted tail is a fresh instruction array for index-finalization safety.
   /** §7.3.20 steps 5–7 for a `prototype` value already in `L_PROTO`. */
   const ordinaryHasInstanceTail = (): Instr[] => [
     ...isNullish(L_PROTO),
     ...isProvenPrimitive(L_PROTO),
     { op: "i32.or" },
     { op: "if", blockType: { kind: "empty" }, then: returnConst(2) },
+    { op: "local.get", index: L_PROTO },
+    { op: "local.get", index: P_VALUE },
+    { op: "call", funcIdx: objectProtoInstanceIdx },
+    { op: "local.tee", index: L_OBJECT_PROTO_CODE },
+    { op: "i32.const", value: UNKNOWN_RESULT },
+    { op: "i32.ne" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: L_OBJECT_PROTO_CODE }, { op: "return" }],
+    },
     { op: "local.get", index: L_PROTO },
     { op: "local.get", index: P_VALUE },
     { op: "call", funcIdx: isProtoOfIdx },
@@ -353,6 +401,22 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
     // `primitive instanceof FACTORY` must stay `false` (S15.3.5.3_A1_T1…T8).
     ...isNullish(P_TARGET),
     { op: "if", blockType: { kind: "empty" }, then: returnConst(0) },
+
+    // A runtime alias may still carry the canonical Object constructor after
+    // its source binding was written (e.g. `var O = 0; O = Object`).  The
+    // identity probe is deliberately tri-state: only the exact carrier match
+    // is decisive, and every other target keeps the normal callable path.
+    { op: "local.get", index: P_VALUE },
+    { op: "local.get", index: P_TARGET },
+    { op: "call", funcIdx: builtinCtorIdentityIdx },
+    { op: "local.tee", index: L_BUILTIN_CODE },
+    { op: "i32.const", value: UNKNOWN_RESULT },
+    { op: "i32.ne" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [{ op: "local.get", index: L_BUILTIN_CODE }, { op: "return" }],
+    },
 
     // IsCallable(C) — the shared, finalize-corrected classifier.
     { op: "local.get", index: P_TARGET },
@@ -423,31 +487,9 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
           },
         ] satisfies Instr[])),
 
-    // NOT CALLABLE ⇒ conservative `false`. §13.10.2 steps 1/4 say TypeError, and
-    // this arm deliberately does not emit one. Three independent reasons, each
-    // sufficient on its own:
-    //
-    //  1. **There is no sound runtime primitive test here.** An unmodelled
-    //     builtin constructor is lowered to a boxed-primitive carrier, so the
-    //     shared classifiers answer `typeof Int8Array === "boolean"`
-    //     (probe-verified on this branch). Every "is C a primitive" predicate
-    //     built on them therefore mistakes a real constructor for a primitive.
-    //     The first cut did throw here and turned `typedArray instanceof
-    //     TypedArray` into "Right-hand side of 'instanceof' is not callable"
-    //     where the host predicate answers `false`
-    //     (`built-ins/TypedArrayConstructors/ctors/object-arg/iterator-is-null-as-array-like.js`).
-    //  2. **Class VALUES are `typeof "object"`** in this backend, so a blanket
-    //     "not callable ⇒ TypeError" would turn `x instanceof C` — a legitimate
-    //     true/false — into a spurious, catchable TypeError. Host dynamic-path
-    //     parity (`runtime.ts:2400` keeps exactly this conservatism).
-    //  3. A wrong THROW is observable in a `catch` and passes/fails tests for
-    //     the wrong reason; a wrong `false` is a missed conversion.
-    //
-    // Nothing that is PROVABLE is lost: a statically-primitive RHS and a
-    // provably non-callable object RHS both still throw at codegen, one dispatch
-    // step earlier (`compileHostInstanceOf`'s §13.10.2-step-1 fold and
-    // `tryEmitNonCallableRhsThrow`), where the evidence is the static type
-    // rather than a representation the backend gets wrong.
+    // NOT CALLABLE ⇒ conservative false. Runtime classifiers cannot prove this
+    // for every builtin carrier or class representation; statically provable
+    // primitive/non-callable RHS values still throw before this helper.
     { op: "i32.const", value: 0 },
   ];
 
@@ -460,11 +502,165 @@ function ensureDynamicInstanceOfHelper(ctx: CodegenContext): number | undefined 
     locals: [
       { name: "targetAny", type: { kind: "anyref" } },
       { name: "proto", type: { kind: "externref" } },
+      { name: "builtinCtorCode", type: { kind: "i32" } },
+      { name: "objectProtoCode", type: { kind: "i32" } },
     ],
     body,
     exported: false,
   });
   return funcIdx;
+}
+
+/** WasmGC `eqref` — the domain used by the identity probes below. */
+const EQ_HEAP_TYPE = -19;
+
+/** `$NativeProto.$brand` field. */
+const NATIVE_PROTO_BRAND_FIELD = 0;
+
+/**
+ * Build the positive `Type(value) is Object` answer shared by the two
+ * identity probes.  `typeof_object` includes the backend's ordinary `$Object`
+ * values and `typeof_function` includes closure values; null is excluded
+ * explicitly because it is an externref that neither classifier is allowed to
+ * treat as an object.
+ */
+function objectValueResult(valueSlot: number, typeofObjectIdx: number, typeofFunctionIdx: number): Instr[] {
+  return [
+    { op: "local.get", index: valueSlot },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: valueSlot },
+        { op: "call", funcIdx: typeofObjectIdx },
+        { op: "local.get", index: valueSlot },
+        { op: "call", funcIdx: typeofFunctionIdx },
+        { op: "i32.or" },
+      ],
+    },
+  ];
+}
+
+/**
+ * Fill the two reserve/fill probes used by `__instanceof_dynamic`.
+ *
+ * The dynamic helper is emitted before its operands.  At that point neither
+ * the canonical `Object` carrier global nor the `$NativeProto` type is
+ * guaranteed to exist, so both helpers start with the tri-state `UNKNOWN`
+ * answer.  Finalization runs after all source expressions have published
+ * those identities and only then installs the exact checks.  A probe that
+ * cannot prove its identity remains unknown and the caller keeps its existing
+ * conservative path.
+ */
+export function fillNativeDynamicInstanceOf(ctx: CodegenContext): void {
+  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  if (typeofObjectIdx === undefined || typeofFunctionIdx === undefined) return;
+
+  const builtinFnIdx = ctx.funcMap.get(BUILTIN_CTOR_IDENTITY_HELPER);
+  const objectProtoFnIdx = ctx.funcMap.get(OBJECT_PROTO_INSTANCE_HELPER);
+
+  const builtinGlobalIdx = ctx.builtinObjectGlobals.get("Object");
+  const builtinFn = builtinFnIdx === undefined ? undefined : definedFuncAt(ctx, builtinFnIdx);
+  if (builtinFn && builtinGlobalIdx !== undefined) {
+    const targetAny = 2;
+    const valueAny = 3;
+    builtinFn.locals = [
+      { name: "targetAny", type: { kind: "anyref" } },
+      { name: "valueAny", type: { kind: "anyref" } },
+    ];
+    builtinFn.body = [
+      // A null target cannot be the canonical Object carrier.  The caller
+      // normally checks this already, but keeping the probe total makes it
+      // safe to reuse independently.
+      { op: "local.get", index: 1 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: UNKNOWN_RESULT }, { op: "return" }],
+      },
+      { op: "global.get", index: builtinGlobalIdx },
+      { op: "ref.is_null" },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "local.tee", index: targetAny },
+          { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "global.get", index: builtinGlobalIdx },
+              { op: "any.convert_extern" },
+              { op: "local.tee", index: valueAny },
+              { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: targetAny },
+                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+                  { op: "local.get", index: valueAny },
+                  { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+                  { op: "ref.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "empty" },
+                    then: [...objectValueResult(0, typeofObjectIdx, typeofFunctionIdx), { op: "return" }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      { op: "i32.const", value: UNKNOWN_RESULT },
+    ];
+  }
+
+  const nativeProtoTypeIdx = ctx.nativeProtoTypeIdx;
+  const objectProtoFn = objectProtoFnIdx === undefined ? undefined : definedFuncAt(ctx, objectProtoFnIdx);
+  if (objectProtoFn && nativeProtoTypeIdx !== undefined) {
+    const protoAny = 2;
+    objectProtoFn.locals = [{ name: "protoAny", type: { kind: "anyref" } }];
+    objectProtoFn.body = [
+      { op: "local.get", index: 0 },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [{ op: "i32.const", value: UNKNOWN_RESULT }, { op: "return" }],
+      },
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: protoAny },
+      { op: "ref.test", typeIdx: nativeProtoTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: protoAny },
+          { op: "ref.cast", typeIdx: nativeProtoTypeIdx },
+          { op: "struct.get", typeIdx: nativeProtoTypeIdx, fieldIdx: NATIVE_PROTO_BRAND_FIELD },
+          { op: "i32.const", value: BUILTIN_BRAND_TABLE.Object! },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [...objectValueResult(1, typeofObjectIdx, typeofFunctionIdx), { op: "return" }],
+          },
+        ],
+      },
+      { op: "i32.const", value: UNKNOWN_RESULT },
+    ];
+  }
 }
 
 /**
@@ -486,7 +682,7 @@ export function tryEmitNativeDynamicInstanceOf(
   // Reserve the helper (and everything it calls) BEFORE either operand is
   // compiled, so any index shift it triggers reaches the already-emitted
   // instructions through `currentFunc`.
-  const helperIdx = ensureDynamicInstanceOfHelper(ctx);
+  const helperIdx = ensureNativeDynamicInstanceOf(ctx);
   if (helperIdx === undefined) return null;
   flushLateImportShifts(ctx, fctx);
 

@@ -6,15 +6,11 @@
  *
  * Legacy codegen (`src/codegen/string-builder.ts`) rewrites that shape into
  * a growable (and, per #1761, often presized) WasmGC i16 buffer instead of
- * per-append `__str_concat` cons-node allocation. The IR path
- * (`src/ir/lower.ts` et al.) does not implement that rewrite yet, so an
- * IR-claimed function containing this shape silently regresses to the
- * naive O(N)-allocation concat path — measured ~20x slower (Node's WasmGC
- * engine, `website/public/benchmarks/competitive/programs/string-hash.js`)
- * than the same source compiled legacy (`experimentalIR: false`), because
- * `run`'s untyped `number` params/return satisfy the IR individual-claim
- * gate today. `whyNotIrClaimable` calls `containsStringBuilderLoopShape` to
- * defer such functions to legacy until IR grows its own builder lowering.
+ * per-append `__str_concat` cons-node allocation. Generic IR builder loops
+ * now use the owned-append path, while #3518's exact constant-count/literal
+ * subset carries a checker-proven plan into one Prepared `string.repeat`
+ * plus one concat. Callers that cannot supply that proof retain the historic
+ * conservative deferral; the rollback switch restores the direct artifact.
  *
  * Deliberately independent of `src/codegen/string-builder.ts`:
  *   - avoids adding a codegen->ir runtime import edge (string-builder.ts
@@ -29,6 +25,7 @@
  *     just leaves an existing regression unfixed for that shape.
  */
 import { forEachChild, ts } from "../ts-api.js";
+import { countedStringAppendCandidateLoops, type IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
 
 function isFunctionScopeBoundary(node: ts.Node): boolean {
   return (
@@ -102,140 +99,40 @@ function loopBodyOnlyAppends(loopBody: ts.Node, name: string): boolean {
  *
  * General builder loops are claimed by IR by default through its
  * `__str_concat_owned` fast path. `JS2WASM_IR_STRING_BUILDER=0` remains the
- * kill switch for that ownership. Constant-count, literal-fragment loops are
- * always deferred because legacy additionally folds all iterations into one
- * `repeat(N)` plus one concat (#1004), which IR does not yet implement.
+ * kill switch for that ownership. A bare caller still defers constant-count,
+ * literal-fragment loops; production may admit only the exact loops for which
+ * it supplies the shared checker proof and retains the resulting plan.
  */
-export function stringBuilderForcedLegacy(body: ts.Node): boolean {
-  return (
-    (process.env.JS2WASM_IR_STRING_BUILDER === "0" && containsStringBuilderLoopShape(body)) ||
-    containsCountedLiteralStringAppend(body)
-  );
-}
-
-/**
- * Detect the constant-count, literal-fragment append loop handled by legacy
- * codegen's #1004 aggregation:
- *
- *   let s = <string literal>;
- *   for (let i = A; i < B; i++) s = s + <string literal>;
- *
- * IR currently emits every iteration as a wasm:js-string `concat` call. The
- * legacy path proves this narrow shape and replaces it with one `repeat(N)`
- * plus one concat, so the selector should preserve that production
- * optimization until IR owns an equivalent transform.
- */
-function containsCountedLiteralStringAppend(root: ts.Node): boolean {
-  let found = false;
-
-  const unwrap = (expr: ts.Expression): ts.Expression => {
-    let current = expr;
-    while (ts.isParenthesizedExpression(current)) current = current.expression;
-    return current;
-  };
-
-  const appendTarget = (stmt: ts.Statement): { accum: string; fragment: ts.Expression } | null => {
-    const only = ts.isBlock(stmt) && stmt.statements.length === 1 ? stmt.statements[0]! : stmt;
-    if (!ts.isExpressionStatement(only) || !ts.isBinaryExpression(only.expression)) return null;
-    const expr = only.expression;
-    if (expr.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken && ts.isIdentifier(expr.left)) {
-      return { accum: expr.left.text, fragment: expr.right };
-    }
-    if (expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isIdentifier(expr.left)) return null;
-    const rhs = unwrap(expr.right);
-    if (
-      !ts.isBinaryExpression(rhs) ||
-      rhs.operatorToken.kind !== ts.SyntaxKind.PlusToken ||
-      !ts.isIdentifier(rhs.left) ||
-      rhs.left.text !== expr.left.text
-    ) {
-      return null;
-    }
-    return { accum: expr.left.text, fragment: rhs.right };
-  };
-
-  const isUnitIncrement = (expr: ts.Expression | undefined, counter: string): boolean => {
-    if (!expr) return false;
-    if (ts.isPrefixUnaryExpression(expr) || ts.isPostfixUnaryExpression(expr)) {
-      return (
-        expr.operator === ts.SyntaxKind.PlusPlusToken && ts.isIdentifier(expr.operand) && expr.operand.text === counter
-      );
-    }
+export function stringBuilderForcedLegacy(
+  body: ts.Node,
+  planCountedAppend?: (loop: ts.ForStatement) => IrCountedStringAppendPlan | null,
+): boolean {
+  const compatibilityCandidates = countedStringAppendCandidateLoops(body);
+  if (!planCountedAppend) {
     return (
-      ts.isBinaryExpression(expr) &&
-      expr.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken &&
-      ts.isIdentifier(expr.left) &&
-      expr.left.text === counter &&
-      ts.isNumericLiteral(expr.right) &&
-      Number(expr.right.text) === 1
+      (process.env.JS2WASM_IR_STRING_BUILDER === "0" && containsStringBuilderLoopShape(body)) ||
+      compatibilityCandidates.length > 0
     );
-  };
+  }
 
-  const matches = (seedStmt: ts.Statement, loopStmt: ts.Statement): boolean => {
-    if (!ts.isVariableStatement(seedStmt) || seedStmt.declarationList.declarations.length !== 1) return false;
-    const seed = seedStmt.declarationList.declarations[0]!;
-    if (
-      !ts.isIdentifier(seed.name) ||
-      !seed.initializer ||
-      !(ts.isStringLiteral(seed.initializer) || ts.isNoSubstitutionTemplateLiteral(seed.initializer))
-    ) {
-      return false;
+  const exactPlans = new Map<ts.ForStatement, IrCountedStringAppendPlan>();
+  const visit = (node: ts.Node): void => {
+    if (node !== body && isFunctionScopeBoundary(node)) return;
+    if (ts.isForStatement(node)) {
+      const plan = planCountedAppend(node);
+      if (plan) exactPlans.set(node, plan);
     }
-    if (
-      !ts.isForStatement(loopStmt) ||
-      !loopStmt.initializer ||
-      !ts.isVariableDeclarationList(loopStmt.initializer) ||
-      loopStmt.initializer.declarations.length !== 1 ||
-      !loopStmt.condition
-    ) {
-      return false;
-    }
-    const counterDecl = loopStmt.initializer.declarations[0]!;
-    if (
-      !ts.isIdentifier(counterDecl.name) ||
-      !counterDecl.initializer ||
-      !ts.isNumericLiteral(counterDecl.initializer)
-    ) {
-      return false;
-    }
-    const counter = counterDecl.name.text;
-    if (
-      !ts.isBinaryExpression(loopStmt.condition) ||
-      (loopStmt.condition.operatorToken.kind !== ts.SyntaxKind.LessThanToken &&
-        loopStmt.condition.operatorToken.kind !== ts.SyntaxKind.LessThanEqualsToken) ||
-      !ts.isIdentifier(loopStmt.condition.left) ||
-      loopStmt.condition.left.text !== counter ||
-      !ts.isNumericLiteral(loopStmt.condition.right) ||
-      !isUnitIncrement(loopStmt.incrementor, counter)
-    ) {
-      return false;
-    }
-    const append = appendTarget(loopStmt.statement);
-    return (
-      append !== null &&
-      append.accum === seed.name.text &&
-      append.accum !== counter &&
-      (ts.isStringLiteral(append.fragment) || ts.isNoSubstitutionTemplateLiteral(append.fragment))
-    );
+    forEachChild(node, visit);
   };
+  visit(body);
 
-  const walk = (node: ts.Node): void => {
-    if (found) return;
-    if (ts.isBlock(node) || ts.isSourceFile(node) || ts.isModuleBlock(node)) {
-      for (let i = 0; i + 1 < node.statements.length; i++) {
-        if (matches(node.statements[i]!, node.statements[i + 1]!)) {
-          found = true;
-          return;
-        }
-      }
-    }
-    forEachChild(node, (child) => {
-      if (found || isFunctionScopeBoundary(child)) return;
-      walk(child);
-    });
-  };
-  walk(root);
-  return found;
+  if (process.env.JS2WASM_IR_STRING_BUILDER === "0") {
+    return containsStringBuilderLoopShape(body) || compatibilityCandidates.length > 0 || exactPlans.size > 0;
+  }
+
+  // An old compatibility shape is admitted only when the production checker
+  // proves that exact loop. Unknown or stale proof remains on the direct path.
+  return compatibilityCandidates.some((loop) => !exactPlans.has(loop));
 }
 
 export function containsStringBuilderLoopShape(root: ts.Node): boolean {

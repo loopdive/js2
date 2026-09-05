@@ -44,12 +44,14 @@ import {
   emitDynDecodeDispatch,
   emitDynEncodeDispatch,
   i32ByteVec,
+  getOrRegisterTaCtorSingleton,
   pushElemSizeForKind,
   pushTaDynViewInBoundsLen,
 } from "./dataview-native.js";
 import { addFuncType, TA_CTOR_KINDS } from "./registry/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
+import { BFN_ID_FIELD_IDX } from "./builtin-fn-meta.js"; // (#5194 r3 F3) refusal-closure filter
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 // (#3177 slice 3) per-kind `<View>.prototype` identity — the SAME $NativeProto
 // glue singleton a static `<View>.prototype` value read yields.
@@ -365,6 +367,12 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     return; // object runtime not in this module — nothing routes here anyway
   }
 
+  // Dynamic view constructor reads are runtime-kind dispatches. Ensure every
+  // non-migrated TypedArray kind has an identity-stable singleton available
+  // before the MOP body captures its fallback chain; the source-level ctor
+  // value may be emitted after this finalize-time fill.
+  for (let k = 1; k < TA_CTOR_KINDS.length; k++) getOrRegisterTaCtorSingleton(ctx, k);
+
   const findFn = (name: string) => {
     const idx = ctx.funcMap.get(name);
     return idx === undefined ? undefined : definedFuncAt(ctx, idx);
@@ -415,10 +423,26 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
           { op: "call", funcIdx: boxNumIdx },
         ];
       case "byteOffset":
+        // §10.4.5.2: a detached TypedArray reports byteOffset 0. Detachment is
+        // represented by the shared backing byte-vec's length field being
+        // negative; preserve a non-zero offset for an attached empty/windowed
+        // view, so checking the view's effective length would conflate the two.
         return [
           { op: "local.get", index: dv },
-          { op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 },
-          { op: "f64.convert_i32_s" },
+          { op: "struct.get", typeIdx: dynIdx, fieldIdx: 1 }, // buf
+          { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 }, // buf.length
+          { op: "i32.const", value: 0 },
+          { op: "i32.lt_s" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "f64" } },
+            then: [{ op: "f64.const", value: 0 }],
+            else: [
+              { op: "local.get", index: dv },
+              { op: "struct.get", typeIdx: dynIdx, fieldIdx: 2 },
+              { op: "f64.convert_i32_s" },
+            ],
+          },
           { op: "call", funcIdx: boxNumIdx },
         ];
       case "BYTES_PER_ELEMENT":
@@ -434,11 +458,30 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
           { op: "extern.convert_any" },
         ];
       case "constructor": {
+        // (#4490 wave 2) Int8Array is the first concrete TypedArray ctor whose
+        // value is backed by the mutable `$Object` carrier.  A dynamically
+        // materialized Int8Array view must return that carrier, not mint a
+        // parallel `$__ta_ctor` singleton, or `view.constructor` would split
+        // identity from the bare `Int8Array` value and its own-property state.
+        const int8Carrier = ctx.builtinObjectGlobals.get("ctor:Int8Array");
+        const int8: Instr[] =
+          int8Carrier === undefined
+            ? []
+            : [
+                { op: "local.get", index: kind },
+                { op: "i32.const", value: 0 },
+                { op: "i32.eq" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [{ op: "global.get", index: int8Carrier }, { op: "return" }],
+                },
+              ];
         // Runtime kind → the per-kind $__ta_ctor SINGLETON (the same object a
         // bare ctor identifier mention produces — ref.eq identity, #3177).
         // Kinds with no registered singleton (ctor never mentioned as a value
         // in this module) answer undefined.
-        const out: Instr[] = [];
+        const out: Instr[] = [...int8];
         for (const [k, globalIdx] of [...ctx.taCtorSingletonGlobals.entries()].sort((a, b) => a[0] - b[0])) {
           out.push({ op: "local.get", index: kind });
           out.push({ op: "i32.const", value: k });
@@ -501,6 +544,16 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     const aKey = base + 5; // normalized key externref
     const aN = base + 6; // parsed numeric key f64
     const aExp = base + 7; // (#3177 slice 4) expando $Object externref
+    // `pushTaDynViewInBoundsLen` below allocates scratch locals, so append the
+    // prototype scratch slot only after that helper has finished. Keeping its
+    // index after the helper-owned locals avoids aliasing an i32 temporary with
+    // this externref slot.
+    let aProto = -1;
+    let aProtoValue = -1;
+    const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+    const getProtoIdx = ctx.funcMap.get("__getPrototypeOf");
+    const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+    const newPlainObjIdx = ctx.funcMap.get("__new_plain_object");
     fn.locals.push(
       { name: "__tam_any", type: { kind: "anyref" } },
       { name: "__tam_dv", type: { kind: "ref_null", typeIdx: dynIdx } },
@@ -536,6 +589,113 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     inner.push({ op: "local.set", index: aEs });
     pushTaDynViewInBoundsLen(ctx, fctxLike, aDv, aEs);
     inner.push({ op: "local.set", index: aLen });
+    if ((mode === "get" || mode === "has") && getProtoIdx !== undefined) {
+      aProto = numParams + fn.locals.length;
+      fn.locals.push({ name: "__tam_proto", type: { kind: "externref" } });
+    }
+    let aBfnId = -1;
+    if (mode === "get") {
+      aProtoValue = numParams + fn.locals.length;
+      fn.locals.push({ name: "__tam_proto_value", type: { kind: "externref" } });
+      aBfnId = numParams + fn.locals.length;
+      fn.locals.push({ name: "__tam_bfnid", type: { kind: "i32" } });
+    }
+    // (#5194 r3 review F2) §7.3.2 OrdinaryGet step 3 forwards the ORIGINAL
+    // receiver to the parent's [[Get]]. A bare recursive `__extern_get(proto,
+    // key)` runs an inherited accessor with `this` = the prototype (a getter
+    // reading `this.length` answered 0 instead of the instance's length; one
+    // writing `this.marker = 1` polluted the SHARED prototype). So the walk
+    // recurses through `__reflect_get_receiver(proto, key, param0)` — the
+    // Reflect.get wrapper that arms the one-shot explicit-receiver globals
+    // the ordinary body consumes at entry and RESTORES them on return, so an
+    // armed bit can never leak into an unrelated later read. Exception: this
+    // dyn-view arm sits BEFORE that entry prelude, so an outer `Reflect.get(
+    // view, key, receiver)` still has its receiver pending; then the plain
+    // recursion consumes it and that receiver wins.
+    const moduleGlobalIdx = (name: string): number | undefined => {
+      const i = ctx.mod.globals.findIndex((g) => g.name === name);
+      return i < 0 ? undefined : ctx.numImportGlobals + i;
+    };
+    const recvActiveIdx = mode === "get" ? moduleGlobalIdx("__reflect_get_receiver_active") : undefined;
+    const reflectGetRecvIdx = mode === "get" ? ctx.funcMap.get("__reflect_get_receiver") : undefined;
+    /** `[] -> [externref]`: [[Get]](proto, key) with param 0 as Receiver. */
+    const protoGetWithReceiver = (protoLocal: number, keyLocal: number, fallbackSelfIdx: number): Instr[] =>
+      recvActiveIdx === undefined || reflectGetRecvIdx === undefined
+        ? [
+            { op: "local.get", index: protoLocal },
+            { op: "local.get", index: keyLocal },
+            { op: "call", funcIdx: fallbackSelfIdx },
+          ]
+        : [
+            { op: "global.get", index: recvActiveIdx },
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [
+                { op: "local.get", index: protoLocal },
+                { op: "local.get", index: keyLocal },
+                { op: "call", funcIdx: fallbackSelfIdx },
+              ],
+              else: [
+                { op: "local.get", index: protoLocal },
+                { op: "local.get", index: keyLocal },
+                { op: "local.get", index: 0 },
+                { op: "call", funcIdx: reflectGetRecvIdx },
+              ],
+            },
+          ];
+    // (#5194 r3 review F3) The walk must never hand back one of the r2-seeded
+    // REFUSAL closures (`native-proto.ts` `refusalBodyFallback`: a body that
+    // throws "<Builtin>.prototype.<m> is not yet implemented in --target
+    // standalone") as a first-class value. Reached through the value path — the
+    // closed dispatch a same-name `.m = function` assignment anywhere in the
+    // module forces, `__extern_method_call`'s proto arm for a method with no
+    // dyn-view helper — that value gets CALLED and the refusal fires where the
+    // pre-walk answer was a stable `undefined`. A stable wrong value must not
+    // become an exception, so such a result reads back as `undefined` here; the
+    // loud refusal stays on the direct read off the prototype object itself.
+    // Same family-`ref.test` + `bfnid` identity discipline as `fillBuiltinFnMeta`
+    // (meta subtypes of one wrapper canonicalize to one runtime type).
+    const refusalFilter = (valueLocal: number): Instr[] => {
+      const ids = ctx.nativeProtoRefusalMetaTypeIdxs;
+      if (mode !== "get" || !ids || ids.size === 0 || aBfnId < 0) return [];
+      const byFamily = new Map<number, number[]>();
+      for (const idx of Array.from(ids).sort((a, b) => a - b)) {
+        const def = ctx.mod.types[idx];
+        const superIdx = def?.kind === "struct" ? (def.superTypeIdx ?? idx) : idx;
+        const list = byFamily.get(superIdx) ?? [];
+        list.push(idx);
+        byFamily.set(superIdx, list);
+      }
+      const out: Instr[] = [];
+      for (const list of byFamily.values()) {
+        const family = list[0];
+        const isOneOf: Instr[] = [];
+        list.forEach((idx, i) => {
+          isOneOf.push({ op: "local.get", index: aBfnId }, { op: "i32.const", value: idx }, { op: "i32.eq" });
+          if (i > 0) isOneOf.push({ op: "i32.or" });
+        });
+        out.push(
+          { op: "local.get", index: valueLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: family },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: valueLocal },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: family },
+              { op: "struct.get", typeIdx: family, fieldIdx: BFN_ID_FIELD_IDX },
+              { op: "local.set", index: aBfnId },
+              ...isOneOf,
+              { op: "if", blockType: { kind: "empty" }, then: [...undef(), { op: "return" }] },
+            ],
+          },
+        );
+      }
+      return out;
+    };
     // key = __to_property_key(key)
     inner.push({ op: "local.get", index: 1 });
     inner.push({ op: "call", funcIdx: tpkIdx });
@@ -559,14 +719,54 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
               ? "__reflect_set"
               : "__delete_property",
     );
-    const newPlainObjIdx = ctx.funcMap.get("__new_plain_object");
     const loadExpando = (): Instr[] => [
       { op: "local.get", index: aDv },
       { op: "ref.as_non_null" },
       { op: "struct.get", typeIdx: dynIdx, fieldIdx: 4 },
       { op: "local.set", index: aExp },
     ];
-    const missInstrs = (): Instr[] => {
+    // (#5194 r3-1) §10.4.5.4 IntegerIndexedElementGet falls back to
+    // OrdinaryGet, whose step 3 walks the [[Prototype]] chain. Before this the
+    // dyn-view arm stopped at the expando side-table, so every inherited
+    // `%TypedArray%.prototype` member — `includes`, `sort`, `keys`, … — read
+    // back `undefined` on an instance even though the prototype graph (r2
+    // step 1) had already seeded them. That is why `typeof sample.includes`
+    // was `"undefined"` and `"includes" in sample` was `false` while
+    // `Object.getPrototypeOf(sample) === TA.prototype` was already `true`.
+    //
+    // Only `get` and `has` walk: `set`/`reflect_set` own the receiver-on-the-
+    // prototype-chain question (r3-10) and `delete` never consults a parent.
+    const inheritedLookup = (fallback: Instr[]): Instr[] => {
+      if (mode !== "get" && mode !== "has") return fallback;
+      if (getProtoIdx === undefined || selfIdx === undefined || aProto < 0) return fallback;
+      return [
+        { op: "local.get", index: 0 },
+        { op: "call", funcIdx: getProtoIdx },
+        { op: "local.set", index: aProto },
+        { op: "local.get", index: aProto },
+        { op: "ref.is_null" },
+        { op: "if", blockType: { kind: "empty" }, then: fallback },
+        // The prototype is a `$NativeProto` (or an ordinary object a test
+        // installed), never a `$__ta_dyn_view`, so this recursion terminates
+        // in the untouched ordinary body one level down.
+        ...(mode === "get"
+          ? protoGetWithReceiver(aProto, aKey, selfIdx)
+          : [
+              { op: "local.get", index: aProto } as Instr,
+              { op: "local.get", index: aKey } as Instr,
+              { op: "call", funcIdx: selfIdx } as Instr,
+            ]),
+        ...(mode === "get" && aProtoValue >= 0
+          ? [
+              { op: "local.set", index: aProtoValue } as Instr,
+              ...refusalFilter(aProtoValue),
+              { op: "local.get", index: aProtoValue } as Instr,
+            ]
+          : []),
+        { op: "return" },
+      ];
+    };
+    const missInstrs = (inherit = false): Instr[] => {
       const legacyMiss: Instr[] = (() => {
         switch (mode) {
           case "get":
@@ -607,14 +807,107 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
         out.push({ op: "return" });
         return out;
       }
-      // get / has / delete: no expando → legacy miss; else delegate.
+      // get / has / delete: no expando → final miss; else delegate.
+      const finalMiss = inherit ? inheritedLookup(legacyMiss) : legacyMiss;
       out.push({ op: "local.get", index: aExp });
       out.push({ op: "ref.is_null" });
-      out.push({ op: "if", blockType: { kind: "empty" }, then: legacyMiss });
+      out.push({ op: "if", blockType: { kind: "empty" }, then: finalMiss });
+      if (inherit && hasOwnIdx !== undefined) {
+        // §7.3.2 OrdinaryGet step 2: an OWN expando property shadows the
+        // prototype. A miss there must NOT stop the walk — delegating the miss
+        // to `__extern_get(expando, key)` would answer from `Object.prototype`
+        // and hide `%TypedArray%.prototype` entirely.
+        out.push(
+          { op: "local.get", index: aExp },
+          { op: "local.get", index: aKey },
+          { op: "call", funcIdx: hasOwnIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: finalMiss },
+        );
+      }
       out.push({ op: "local.get", index: aExp });
       out.push({ op: "local.get", index: aKey });
       out.push({ op: "call", funcIdx: selfIdx });
       out.push({ op: "return" });
+      return out;
+    };
+
+    // `constructor` is the one named TypedArray property whose ordinary
+    // lookup is observable by the species protocol.  It must consult an own
+    // expando property first, then the selected prototype (which may carry an
+    // inherited getter installed by the test), before falling back to the
+    // intrinsic per-kind carrier.  The old namedValue arm ran first and made
+    // an own `view.constructor = C` invisible to `SpeciesConstructor`.
+    //
+    // Keep the recursive call on the ordinary MOP rather than reaching into
+    // the property table here: that preserves accessor invocation and abrupt
+    // completion propagation for both the expando and prototype paths.
+    const constructorLookup = (): Instr[] => {
+      const fallback: Instr[] =
+        mode === "get"
+          ? [...namedValue("constructor", aDv, aKind, aEs, aLen), { op: "return" }]
+          : [{ op: "i32.const", value: 1 }, { op: "return" }];
+      const out: Instr[] = [];
+      out.push(...loadExpando());
+      if (hasOwnIdx !== undefined && selfIdx !== undefined) {
+        const own: Instr[] = [
+          { op: "local.get", index: aExp },
+          { op: "local.get", index: aKey },
+          { op: "call", funcIdx: hasOwnIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: aExp },
+              { op: "local.get", index: aKey },
+              { op: "call", funcIdx: selfIdx },
+              { op: "return" },
+            ],
+          },
+        ];
+        out.push(
+          { op: "local.get", index: aExp },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: own },
+        );
+      }
+      if ((mode === "get" || mode === "has") && getProtoIdx !== undefined && selfIdx !== undefined) {
+        out.push(
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: getProtoIdx },
+          { op: "local.set", index: aProto },
+        );
+        out.push({ op: "local.get", index: aProto }, { op: "ref.is_null" });
+        out.push({ op: "if", blockType: { kind: "empty" }, then: fallback });
+        if (mode === "get" && isUndefinedIdx !== undefined) {
+          // A freshly materialized native prototype has no companion entry
+          // unless the module also flows that prototype through reflection.
+          // Treat that missing constructor as the intrinsic kind default so a
+          // dynamic view still exposes `view.constructor === TA`.  Keep an
+          // explicitly own expando value on the earlier path, and preserve
+          // non-undefined prototype values (including abrupt getter results).
+          out.push(
+            // (#5194 r3 F2) an inherited `constructor` getter sees the instance
+            ...protoGetWithReceiver(aProto, aKey, selfIdx),
+            { op: "local.set", index: aProtoValue },
+            { op: "local.get", index: aProtoValue },
+            { op: "call", funcIdx: isUndefinedIdx },
+            { op: "if", blockType: { kind: "empty" }, then: fallback },
+            { op: "local.get", index: aProtoValue },
+            { op: "return" },
+          );
+        } else {
+          out.push(
+            { op: "local.get", index: aProto },
+            { op: "local.get", index: aKey },
+            { op: "call", funcIdx: selfIdx },
+            { op: "return" },
+          );
+        }
+      } else {
+        out.push(...fallback);
+      }
       return out;
     };
     // (§23.2.3.34) `view[Symbol.toStringTag]` — the %TypedArray%.prototype
@@ -681,9 +974,11 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
           op: "if",
           blockType: { kind: "empty" },
           then:
-            mode === "get"
-              ? [...namedValue(prop, aDv, aKind, aEs, aLen), { op: "return" }]
-              : [{ op: "i32.const", value: 1 }, { op: "return" }],
+            prop === "constructor"
+              ? constructorLookup()
+              : mode === "get"
+                ? [...namedValue(prop, aDv, aKind, aEs, aLen), { op: "return" }]
+                : [{ op: "i32.const", value: 1 }, { op: "return" }],
         });
       }
     }
@@ -737,7 +1032,10 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
       }
     })();
     inner.push({ op: "if", blockType: { kind: "empty" }, then: canonThen });
-    inner.push(...missInstrs());
+    // Ordinary (non-index, non-intrinsic) STRING keys are the only path that
+    // continues onto the prototype chain here; the Symbol/non-string miss above
+    // keeps its expando-only behaviour until a step owns those keys.
+    inner.push(...missInstrs(true));
 
     const arm: Instr[] = [
       { op: "local.get", index: 0 },
@@ -748,6 +1046,59 @@ export function fillTaDynViewMopArms(ctx: CodegenContext): void {
     ];
     fn.body.unshift(...arm);
   };
+
+  // ── (#5138 A2) `__extern_length` arm ───────────────────────────────────
+  // A `.length` read on an externref does NOT route through `__extern_get`'s
+  // string-key ladder — it lowers to the dedicated `__extern_length` native,
+  // whose `$__vec_base` arm returns the STORED field 0 verbatim. For a
+  // length-TRACKING view over a resizable ArrayBuffer that field holds the
+  // auto-length sentinel `-1` (`emitTaBufferBoundsAndLength`, step 7.b), so
+  // `new TA(resizableBuffer).length` answered −1 and every harness factory
+  // built on `makeResizableArrayBuffer` / `makeGrownArrayBuffer` /
+  // `makeShrunkArrayBuffer` produced a garbage view. `$__ta_dyn_view` subtypes
+  // `$__vec_base`, so the fix is one arm AHEAD of it computing the live
+  // in-bounds element count — the same `pushTaDynViewInBoundsLen` the MOP and
+  // the element engine already use, so all three agree.
+  const lenFn = findFn("__extern_length");
+  if (lenFn) {
+    const base = 1 + lenFn.locals.length;
+    const lAny = base;
+    const lDv = base + 1;
+    const lKind = base + 2;
+    const lEs = base + 3;
+    lenFn.locals.push(
+      { name: "__tal_any", type: { kind: "anyref" } },
+      { name: "__tal_dv", type: { kind: "ref_null", typeIdx: dynIdx } },
+      { name: "__tal_kind", type: { kind: "i32" } },
+      { name: "__tal_es", type: { kind: "i32" } },
+    );
+    const inner: Instr[] = [];
+    const lenFctx = {
+      body: inner,
+      locals: lenFn.locals,
+      params: new Array(1).fill({ name: "p", type: { kind: "externref" } }),
+      localMap: new Map(),
+    } as unknown as FunctionContext;
+    inner.push({ op: "local.get", index: lAny });
+    inner.push({ op: "ref.cast", typeIdx: dynIdx });
+    inner.push({ op: "local.set", index: lDv });
+    inner.push({ op: "local.get", index: lDv });
+    inner.push({ op: "ref.as_non_null" });
+    inner.push({ op: "struct.get", typeIdx: dynIdx, fieldIdx: 3 });
+    inner.push({ op: "local.set", index: lKind });
+    pushElemSizeForKind(lenFctx, lKind);
+    inner.push({ op: "local.set", index: lEs });
+    pushTaDynViewInBoundsLen(ctx, lenFctx, lDv, lEs);
+    inner.push({ op: "f64.convert_i32_s" });
+    inner.push({ op: "return" });
+    lenFn.body.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: lAny },
+      { op: "ref.test", typeIdx: dynIdx },
+      { op: "if", blockType: { kind: "empty" }, then: inner },
+    );
+  }
 
   const getFn = findFn("__extern_get");
   if (getFn) buildStringKeyArm(getFn, 2, "get");

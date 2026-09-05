@@ -1,0 +1,9 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var thisValue = 'unset';
+var method = { method: function() { 'use strict'; thisValue = this; } }.method;
+method();
+assert.sameValue(thisValue, undefined, 'strict fn-valued prop this: ' + typeof thisValue + ' ' + String(thisValue));

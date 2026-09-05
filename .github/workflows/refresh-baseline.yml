@@ -53,6 +53,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # gh workflow run deploy-pages.yml
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -349,11 +350,15 @@ jobs:
             echo "Vitest exited with unexpected code $exit_code"
             exit "$exit_code"
           fi
-          completion_marker="benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl.complete.json"
-          if [ ! -s "$completion_marker" ]; then
+          completion_marker=$(find benchmarks/results -maxdepth 1 -name "${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.shard-*.complete.json" -print -quit)
+          if [ -z "$completion_marker" ] || [ ! -s "$completion_marker" ]; then
             echo "::error::Test262 shard did not reach afterAll; refusing partial JSONL evidence"
             exit 2
           fi
+          node scripts/validate-test262-completeness.mjs \
+            --input "benchmarks/results/${TEST262_RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl" \
+            --manifest "$completion_marker" \
+            --expected-shards 1
 
       - name: Upload shard artifacts
         id: upload_shard
@@ -370,7 +375,7 @@ jobs:
           name: emergency-${{ matrix.target.name }}-shard-${{ matrix.chunk }}
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
-            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl.complete.json
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
       # #3404 — retry a transient artifact-upload flake once. Idempotent +
@@ -387,6 +392,7 @@ jobs:
           overwrite: true
           path: |
             benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.jsonl
+            benchmarks/results/${{ matrix.target.result_prefix }}-results-${{ env.RUN_TIMESTAMP }}.shard-*.complete.json
           if-no-files-found: warn
 
   merge-and-promote:
@@ -447,6 +453,30 @@ jobs:
           mkdir -p merged-reports
           find shard-artifacts/emergency-standalone-shard-* -name 'test262-standalone-results-*.jsonl' -print0 | sort -z | xargs -0 cat > merged-reports/test262-standalone-results-merged.jsonl
           test -s merged-reports/test262-standalone-results-merged.jsonl
+
+      - name: Validate merged JS-host Test262 verdict completeness (#5215)
+        env:
+          EXPECTED_SHARDS: "57"
+        run: |
+          mapfile -d '' manifests < <(find shard-artifacts/emergency-js-host-shard-* -type f -name 'test262-results-*.shard-*.complete.json' -print0 | sort -z)
+          manifest_args=()
+          for manifest in "${manifests[@]}"; do manifest_args+=(--manifest "$manifest"); done
+          node scripts/validate-test262-completeness.mjs \
+            --input merged-reports/test262-results-merged.jsonl \
+            --expected-shards "$EXPECTED_SHARDS" \
+            "${manifest_args[@]}"
+
+      - name: Validate merged standalone Test262 verdict completeness (#5215)
+        env:
+          EXPECTED_SHARDS: "57"
+        run: |
+          mapfile -d '' manifests < <(find shard-artifacts/emergency-standalone-shard-* -type f -name 'test262-standalone-results-*.shard-*.complete.json' -print0 | sort -z)
+          manifest_args=()
+          for manifest in "${manifests[@]}"; do manifest_args+=(--manifest "$manifest"); done
+          node scripts/validate-test262-completeness.mjs \
+            --input merged-reports/test262-standalone-results-merged.jsonl \
+            --expected-shards "$EXPECTED_SHARDS" \
+            "${manifest_args[@]}"
 
       - name: Build merged test262 report
         run: |
@@ -511,16 +541,14 @@ jobs:
       # unconditional promote. Either way it never compares against a baseline.
       - name: Promote merged report to baseline
         run: |
-          mkdir -p benchmarks/results website/public/benchmarks/results public/benchmarks/results
+          mkdir -p benchmarks/results public/benchmarks/results
           rm -f benchmarks/results/test262-current.jsonl \
             benchmarks/results/test262-current.json \
             benchmarks/results/test262-report.json \
             benchmarks/results/test262-results.jsonl
           cp merged-reports/test262-results-merged.jsonl benchmarks/results/test262-current.jsonl
           cp merged-reports/test262-report-merged.json benchmarks/results/test262-current.json
-          cp merged-reports/test262-report-merged.json benchmarks/results/test262-report.json
           cp merged-reports/test262-results-merged.jsonl benchmarks/results/test262-results.jsonl
-          cp merged-reports/test262-report-merged.json website/public/benchmarks/results/test262-report.json
           cp merged-reports/test262-results-merged.jsonl website/public/benchmarks/results/test262-results.jsonl
           # #3381 — promote the STANDALONE report alongside host, mirroring
           # test262-sharded.yml's promote-baseline. public/benchmarks/results/
@@ -533,17 +561,8 @@ jobs:
             benchmarks/results/test262-standalone-results.jsonl
           cp merged-reports/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-current.jsonl
           cp merged-reports/test262-standalone-report-merged.json benchmarks/results/test262-standalone-current.json
-          cp merged-reports/test262-standalone-report-merged.json benchmarks/results/test262-standalone-report.json
           cp merged-reports/test262-standalone-results-merged.jsonl benchmarks/results/test262-standalone-results.jsonl
-          cp merged-reports/test262-standalone-report-merged.json public/benchmarks/results/test262-standalone-report.json
-          # …and the SERVED copy under website/public (the vite publicDir since
-          # #1656), mirroring the host line above. The landing page reads this
-          # path FIRST for its standalone donut — the default lane now — so a
-          # committed copy that never refreshes is a stale-headline trap
-          # whenever a deploy's baselines fetch fails.
-          mkdir -p website/public/benchmarks/results
-          cp merged-reports/test262-standalone-report-merged.json \
-            website/public/benchmarks/results/test262-standalone-report.json
+          node scripts/sync-test262-report-mirrors.mjs
 
       - name: Raise standalone pass-count high-water mark (#2097)
         run: |
@@ -833,9 +852,11 @@ jobs:
           # Stage only the small JSON files and generated edition buckets (JSONL lives in baselines repo, not main).
           # Editions live under website/public/ (the vite publicDir) since #1656; the old public/ path no longer receives them.
           git add -f benchmarks/results/test262-current.json \
+            benchmarks/results/test262-standalone-current.json \
             benchmarks/results/test262-report.json \
             public/benchmarks/results/test262-report.json \
             public/benchmarks/results/test262-standalone-report.json \
+            website/public/benchmarks/results/test262-report.json \
             website/public/benchmarks/results/test262-editions.json \
             website/public/benchmarks/results/test262-category-editions.json
           # The SERVED standalone report (website/public, copied above) — the

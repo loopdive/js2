@@ -5,6 +5,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { compile, type CompileResult, type IrObservedOutcome, type IrOutcomePolicy } from "../src/index.js";
+import { r2WithdrawalDefect } from "../src/ir/r2-withdrawal.js";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SCRIPT_PATH), "..");
@@ -70,6 +71,14 @@ export interface IrOnlyBaselineLane {
   readonly terminalUnitFloor: number;
   readonly emittedFloor: number;
   readonly irBodyEmittedFloor: number;
+  /**
+   * (#3523 R4 gap 4) Floor on rows for sources whose module init has nothing to
+   * do. It is a FLOOR, not a ceiling: the defect being closed was the ledger
+   * staying silent, so the gate must fail if these rows go missing again. A
+   * source that becomes genuinely executable moves the floor down through a
+   * reviewed `--update`, exactly like every other ratchet here.
+   */
+  readonly nonExecutableFloor: number;
   readonly legacyBodyEmittedCeiling: number;
   readonly unsupportedCeiling: number;
   readonly unsupportedByCode: Readonly<Record<string, number>>;
@@ -97,6 +106,12 @@ export interface IrOnlyLaneSummary {
   readonly emitted: number;
   readonly unsupported: number;
   readonly invariants: number;
+  /**
+   * (#3523 R4 gap 4) Rows for sources whose module init has nothing to do.
+   * They are recorded rows, so they COUNT in `terminalUnits`; they have no
+   * body to emit, so they are excluded from the compile-once equation below.
+   */
+  readonly nonExecutable: number;
   readonly legacyBodyEmitted: number;
   readonly irBodyEmitted: number;
   readonly byUnitKind: Readonly<Record<string, number>>;
@@ -198,6 +213,7 @@ function summarizeLane(lane: IrOnlyLaneObservation): IrOnlyLaneSummary {
   let emitted = 0;
   let unsupported = 0;
   let invariants = 0;
+  let nonExecutable = 0;
   let legacyBodyEmitted = 0;
   let irBodyEmitted = 0;
   for (const outcome of allOutcomes) {
@@ -209,6 +225,7 @@ function summarizeLane(lane: IrOnlyLaneObservation): IrOnlyLaneSummary {
       bump(unsupportedByCode, `${outcome.stage}/${outcome.code}`);
       blockers.push(`${outcome.key}: unsupported/${outcome.stage}/${outcome.code}`);
     }
+    if (outcome.kind === "non-executable") nonExecutable += 1;
     if (outcome.kind === "invariant") {
       invariants += 1;
       blockers.push(`${outcome.key}: invariant/${outcome.stage}/${outcome.code}`);
@@ -225,6 +242,7 @@ function summarizeLane(lane: IrOnlyLaneObservation): IrOnlyLaneSummary {
     emitted,
     unsupported,
     invariants,
+    nonExecutable,
     legacyBodyEmitted,
     irBodyEmitted,
     byUnitKind,
@@ -302,6 +320,14 @@ export function evaluateIrOnlyReport(
             `${lane.name}/${entry.entry}: non-legacy function ${outcome.displayName} is absent from irFirstSkipped`,
           );
         }
+        // (#3521 R2-T1) Compile-twice rows must name WHY they were never
+        // prepared, and no other row may claim a withdrawal reason. Both
+        // directions are malformed evidence, so this is policy-independent: it
+        // fails under `hybrid` and `ir-only` alike.
+        const r2Defect = r2WithdrawalDefect(outcome);
+        if (r2Defect) {
+          failures.push(`${lane.name}/${entry.entry}: terminal ${outcome.displayName}: ${r2Defect}`);
+        }
       }
       for (const name of compiled) {
         const sourceOutcomes = outcomesByName.get(name);
@@ -334,6 +360,11 @@ export function evaluateIrOnlyReport(
       if (summary.terminalUnits < expected.terminalUnitFloor) {
         failures.push(
           `${lane.name}: terminal-unit floor regressed ${summary.terminalUnits} < ${expected.terminalUnitFloor}`,
+        );
+      }
+      if (summary.nonExecutable < expected.nonExecutableFloor) {
+        failures.push(
+          `${lane.name}: non-executable floor regressed ${summary.nonExecutable} < ${expected.nonExecutableFloor}`,
         );
       }
       if (summary.emitted < expected.emittedFloor) {
@@ -374,9 +405,14 @@ export function evaluateIrOnlyReport(
       if (summary.legacyBodyEmitted > 0) {
         failures.push(`${lane.name}: ${summary.legacyBodyEmitted} unit(s) still emitted a legacy body`);
       }
-      if (summary.irBodyEmitted !== summary.terminalUnits) {
+      // (#3523 R4 gap 4) Compile-once is asserted over the units that HAVE a
+      // body. A non-executable module init has none by construction, so it is
+      // subtracted here rather than counted as a missing IR body — while still
+      // being a recorded row in every denominator above.
+      const bodyBearingUnits = summary.terminalUnits - summary.nonExecutable;
+      if (summary.irBodyEmitted !== bodyBearingUnits) {
         failures.push(
-          `${lane.name}: IR emitted ${summary.irBodyEmitted}/${summary.terminalUnits} terminal source units`,
+          `${lane.name}: IR emitted ${summary.irBodyEmitted}/${bodyBearingUnits} body-bearing terminal source units`,
         );
       }
     }
@@ -398,6 +434,7 @@ export function baselineFrom(lanes: readonly IrOnlyLaneObservation[], previous?:
       terminalUnitFloor: summary.terminalUnits,
       emittedFloor: summary.emitted,
       irBodyEmittedFloor: summary.irBodyEmitted,
+      nonExecutableFloor: summary.nonExecutable,
       legacyBodyEmittedCeiling: summary.legacyBodyEmitted,
       unsupportedCeiling: summary.unsupported,
       unsupportedByCode: summary.unsupportedByCode,
@@ -428,6 +465,7 @@ function printHuman(verdict: IrOnlyGateVerdict): void {
     process.stdout.write(`  invariants          ${lane.invariants}\n`);
     process.stdout.write(`  legacy body emitted ${lane.legacyBodyEmitted}\n`);
     process.stdout.write(`  IR body emitted     ${lane.irBodyEmitted}\n`);
+    process.stdout.write(`  non-executable      ${lane.nonExecutable}\n`);
     process.stdout.write(`  by unit kind        ${JSON.stringify(lane.byUnitKind)}\n`);
     process.stdout.write(`  by backend/target   ${JSON.stringify(lane.byTarget)}\n`);
     process.stdout.write(`  unsupported codes   ${JSON.stringify(lane.unsupportedByCode)}\n`);

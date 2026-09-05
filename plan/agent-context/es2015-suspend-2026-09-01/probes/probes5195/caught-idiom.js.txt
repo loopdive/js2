@@ -1,0 +1,9 @@
+/*---
+description: probe .tmp/es2015/probes5195/caught-idiom.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+var caught;
+function f() { try { throw new TypeError('x'); } catch (e) { caught = e; } }
+f();
+assert.sameValue(typeof caught, 'object', 'typeof caught');
+assert.sameValue(caught.constructor, TypeError, 'caught.constructor');

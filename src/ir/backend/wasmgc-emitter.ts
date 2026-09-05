@@ -76,6 +76,18 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
     out.push(...ops);
   }
 
+  emitStringRepeat(
+    alloc: AllocSiteId | undefined,
+    inputEncoding: IrStringEncoding,
+    out: Instr[],
+    provider?: IrFuncRef,
+    countedStringAppendTripCount?: number,
+  ): void {
+    const ops = this.stringRuntime?.emitStringRepeat?.(alloc, inputEncoding, provider, countedStringAppendTripCount);
+    if (!ops) throw new Error("WasmGcEmitter: string.repeat runtime is unavailable");
+    out.push(...ops);
+  }
+
   emitStringEquals(negate: boolean, out: Instr[], provider?: IrFuncRef): void {
     const ops = this.stringRuntime?.emitStringEquals?.(provider);
     if (!ops) throw new Error("WasmGcEmitter: string.eq runtime is unavailable");
@@ -336,8 +348,11 @@ export class WasmGcEmitter implements BackendEmitter<Instr[]> {
 
   // ---- Promise aggregate family (#2953) — byte-identical to the prior
   // inline struct.new/get pushes in lower.ts. The canonical WasmGC Promise
-  // layout is { state: i32, value: externref, callbacks: externref }.
+  // layout is { state: i32, value: externref, callbacks: externref,
+  // $bag: externref }. The first three operands are already on the stack;
+  // every new Promise starts without an expando bag.
   emitPromiseNew(promiseTypeIdx: number, out: Instr[]): void {
+    out.push({ op: "ref.null.extern" });
     out.push({ op: "struct.new", typeIdx: promiseTypeIdx });
   }
 

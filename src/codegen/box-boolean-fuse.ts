@@ -67,6 +67,30 @@
  * results and boolean-flagged i32 slots are always 0/1; `__box_boolean` is
  * only ever the BOOLEAN coercion — numbers go through `__box_number`).
  *
+ * ## The SINK leaf (#4406 Phase 2) — `JS2WASM_RET_UNBOX_ABI`
+ *
+ * The "all leaves or nothing" rule above is what makes the arm-tail-call
+ * residual expensive: one unspecialisable arm strands every box in the tree,
+ * including its sibling's. #4406's return-type ABI closed the residual for the
+ * arms whose callee it could retype (a boolean-branded `i32` result makes the
+ * arm tail a `__box_boolean` leaf), but it cannot retype every callee — and
+ * measured on the acorn self-parse, retyping alone moved the decline tally by
+ * two sites.
+ *
+ * So Phase 2 adds the general leaf the two specialised ones are optimisations
+ * of: keep the consumer, but move a COPY of it INTO the arm. Sound for the same
+ * reason the pass is: the arm tail leaves exactly one externref (the merge
+ * declares `(result externref)`), and the consumer answers `truthy` of it, so
+ * `truthy(merge)` is unchanged leaf by leaf. Executed cost is unchanged — one
+ * arm runs, one consumer runs — while every box leaf in the tree now fuses.
+ * Only static size grows, which is why a tree of nothing BUT sink leaves is
+ * declined (`no-free-leaf`): it would pay that size for zero deleted boxes.
+ *
+ * The residual this does NOT close stays open and is the parameter half of the
+ * same ABI: a truthy operand that arrives through a local (`prev-local.get`)
+ * or is produced by a call outside any merge (`prev-call`) never reaches a
+ * merge site at all.
+ *
  * ## Flag — DEFAULT OFF
  *
  * `JS2WASM_UNBOXED_BOOL_FUSE` unset, or set to (case/space-insensitive) one of
@@ -79,12 +103,54 @@
  *     Poison alone (main flag off) is inert.
  *   - `JS2WASM_UNBOXED_BOOL_FUSE_DEBUG=1` — stderr stats (fused/declined per
  *     shape). Nothing is printed without it.
+ *
+ * The sink leaf carries its own default-OFF gate on top of this one
+ * (`JS2WASM_RET_UNBOX_ABI`, with `JS2WASM_RET_UNBOX_ABI_POISON` inverting the
+ * sites that used it), so lever 4 alone still emits exactly the bytes it did
+ * before #4406 Phase 2.
  */
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { retUnboxAbiPoisoned, retUnboxMergeSinkEnabled } from "./ret-unbox-abi.js"; // (#4406 Phase 2)
 import { walkChildren, walkInstructions } from "./walk-instructions.js";
 
 const OFF_TOKENS = new Set(["", "0", "off", "false", "no"]);
+
+/**
+ * (#4406 Phase 2) Arm-tail opcodes a SINK leaf may be built on.
+ *
+ * An ALLOWLIST, not a denylist, and that direction is the whole safety
+ * argument. The rule only holds for a tail that leaves exactly one externref on
+ * the stack — which the enclosing `(result externref)` merge guarantees for
+ * every *value-producing* tail, but NOT for a tail that terminates the frame
+ * (`return_call`, `return`, `unreachable`) or transfers control out of the arm
+ * (`br`, `br_table`): those type-check against the merge polymorphically, and
+ * appending a consumer after them would be dead code at best. A denylist would
+ * silently admit the next such opcode somebody adds to the `Instr` union.
+ */
+const SINKABLE_TAIL_OPS: ReadonlySet<string> = new Set([
+  "call",
+  "call_ref",
+  "call_indirect",
+  "local.get",
+  "local.tee",
+  "global.get",
+  "struct.get",
+  "array.get",
+  "extern.convert_any",
+  "ref.null",
+  "select",
+]);
+
+/**
+ * Structural copy of a consumer sequence, so each sink leaf owns its own
+ * instructions. Sharing them would alias sub-arrays (the truthy-IC consumer is
+ * a nested `if` tree) across arms, and `fctx.body` is NOT append-only — later
+ * relocations splice ranges in place (#4157 entry 33).
+ */
+function cloneInstrs(instrs: readonly Instr[]): Instr[] {
+  return structuredClone(instrs) as Instr[];
+}
 
 /** Flag gate. Default OFF ⇒ byte-identical output. */
 function fuseEnabled(): boolean {
@@ -99,6 +165,10 @@ interface Stats {
   fusedAdjacent: number;
   leafBoxCall: number;
   leafCondReuse: number;
+  /** (#4406 Phase 2) Leaves that fused by taking a COPY of the consumer. */
+  leafSunkConsumer: number;
+  /** (#4406 Phase 2) Sites fused only because sink leaves were available. */
+  fusedSiteWithSink: number;
   declines: Map<string, number>;
 }
 
@@ -152,7 +222,10 @@ function condTeeLocal(arr: Instr[], ifIdx: number, truthyIdx: number): number | 
 }
 
 /** One planned leaf rewrite. Applied only when the WHOLE tree planned clean. */
-type LeafAction = { arm: Instr[]; kind: "box" } | { arm: Instr[]; kind: "cond"; value: 0 | 1 };
+type LeafAction =
+  | { arm: Instr[]; kind: "box" }
+  | { arm: Instr[]; kind: "cond"; value: 0 | 1 }
+  | { arm: Instr[]; kind: "sink" };
 
 interface FusePlan {
   actions: LeafAction[];
@@ -160,6 +233,14 @@ interface FusePlan {
   ifs: Instr[];
   leafBox: number;
   leafCond: number;
+  /** (#4406 Phase 2) Leaves that keep the consumer instead of specialising it. */
+  leafSink: number;
+  /**
+   * (#4406 Phase 2) The consumer sequence to COPY into each sink leaf, or
+   * `undefined` when the merge half is off — in which case `planFuse` declines
+   * exactly the leaves it declined before, so the pass stays byte-identical.
+   */
+  consumer: readonly Instr[] | undefined;
 }
 
 /**
@@ -202,8 +283,26 @@ function planFuse(
         plan.leafCond++;
         continue;
       }
-      return "arm-local.get";
     }
+    // (#4406 Phase 2) SINK leaf — the general case the two specialised leaves
+    // above are optimisations of. The arm tail leaves one externref (the merge
+    // declares `(result externref)`, so a value-producing tail cannot leave
+    // anything else), and the consumer answers `truthy(that externref)`. Moving
+    // a COPY of the consumer into the arm therefore preserves the merge's
+    // value exactly, while letting the SIBLING arm's box leaf fuse — which is
+    // the whole point: `planFuse` is all-or-nothing, so one unspecialisable arm
+    // used to strand every box in the tree.
+    //
+    // Executed cost is unchanged, not merely bounded: exactly one arm runs per
+    // execution, so exactly one copy of the consumer runs where exactly one ran
+    // before. Only the STATIC instruction count grows (one consumer per sink
+    // leaf instead of one per site).
+    if (plan.consumer !== undefined && SINKABLE_TAIL_OPS.has(a.op)) {
+      plan.actions.push({ arm, kind: "sink" });
+      plan.leafSink++;
+      continue;
+    }
+    if (a.op === "local.get") return "arm-local.get";
     if (a.op === "call") return "arm-tail-call";
     return `arm-${a.op}`;
   }
@@ -214,6 +313,7 @@ function planFuse(
 function applyFuse(plan: FusePlan, stats: Stats): void {
   for (const action of plan.actions) {
     if (action.kind === "box") action.arm.pop();
+    else if (action.kind === "sink") action.arm.push(...cloneInstrs(plan.consumer ?? []));
     else action.arm[action.arm.length - 1] = { op: "i32.const", value: action.value };
   }
   for (const ifi of plan.ifs) {
@@ -224,6 +324,8 @@ function applyFuse(plan: FusePlan, stats: Stats): void {
   }
   stats.leafBoxCall += plan.leafBox;
   stats.leafCondReuse += plan.leafCond;
+  stats.leafSunkConsumer += plan.leafSink;
+  if (plan.leafSink > 0) stats.fusedSiteWithSink++;
 }
 
 /**
@@ -262,12 +364,56 @@ function matchTruthyIcChain(arr: Instr[], start: number, truthyIdx: number): num
   return undefined;
 }
 
+/** Everything the rewrite needs that is constant for one module. */
+interface FuseOpts {
+  boxIdx: number | undefined;
+  truthyIdx: number;
+  /** Lever 4's own poison (`JS2WASM_UNBOXED_BOOL_FUSE_POISON`). */
+  poison: boolean;
+  /** (#4406 Phase 2) Are sink leaves allowed? */
+  mergeSink: boolean;
+  /** (#4406 Phase 2) `JS2WASM_RET_UNBOX_ABI_POISON` — invert sink-using sites. */
+  mergePoison: boolean;
+}
+
+/**
+ * Plan and apply ONE merge site whose consumer occupies
+ * `arr[ifIdx+1 … ifIdx+consumerLen]`. Returns whether it fused; a decline is
+ * recorded against `stats` either way.
+ */
+function tryFuseSite(arr: Instr[], ifIdx: number, consumerLen: number, opts: FuseOpts, stats: Stats): boolean {
+  // Sliced BEFORE the splice below, and only read by `applyFuse`, which runs
+  // before it — so the copies each sink leaf takes are of the live consumer.
+  const consumer = opts.mergeSink ? arr.slice(ifIdx + 1, ifIdx + 1 + consumerLen) : undefined;
+  const plan: FusePlan = { actions: [], ifs: [], leafBox: 0, leafCond: 0, leafSink: 0, consumer };
+  const reason = planFuse(arr, ifIdx, opts.boxIdx, opts.truthyIdx, plan);
+  if (reason !== undefined) {
+    decline(stats, reason);
+    return false;
+  }
+  // (#4406 Phase 2) A tree of nothing but sink leaves deletes no box — it only
+  // copies the consumer into every arm. Decline it: this pass exists to remove
+  // boxes, and paying static size for zero of them is a pure regression.
+  if (plan.leafSink > 0 && plan.leafBox === 0 && plan.leafCond === 0) {
+    decline(stats, "no-free-leaf");
+    return false;
+  }
+  applyFuse(plan, stats);
+  // Lever 4's poison and the return-ABI's Phase-2 poison are separate liveness
+  // probes over overlapping sites, and inverting twice is the identity — so
+  // invert exactly when one of them claims this site.
+  const invert = opts.poison !== (opts.mergePoison && plan.leafSink > 0);
+  arr.splice(ifIdx + 1, consumerLen, ...(invert ? ([{ op: "i32.eqz" }] as Instr[]) : []));
+  return true;
+}
+
 /** Rewrite one instruction array in place, recursing into nested bodies. */
-function fuseInArray(arr: Instr[], boxIdx: number | undefined, truthyIdx: number, poison: boolean, stats: Stats): void {
+function fuseInArray(arr: Instr[], opts: FuseOpts, stats: Stats): void {
+  const { boxIdx, truthyIdx, poison } = opts;
   // Children first, so an inner merge consumed inside an arm fuses before the
   // outer scan reads that arm's (unchanged) tail.
   for (const instr of arr) {
-    walkChildren(instr, (children) => fuseInArray(children, boxIdx, truthyIdx, poison, stats));
+    walkChildren(instr, (children) => fuseInArray(children, opts, stats));
   }
 
   let i = 0;
@@ -278,33 +424,17 @@ function fuseInArray(arr: Instr[], boxIdx: number | undefined, truthyIdx: number
     if (isExternrefIf(cur) && next !== undefined) {
       // Consumer form 1: the plain sink — `call __is_truthy` right after the merge.
       if (next.op === "call" && next.funcIdx === truthyIdx) {
-        const plan: FusePlan = { actions: [], ifs: [], leafBox: 0, leafCond: 0 };
-        const reason = planFuse(arr, i, boxIdx, truthyIdx, plan);
-        if (reason === undefined) {
-          applyFuse(plan, stats);
-          arr.splice(i + 1, 1, ...(poison ? ([{ op: "i32.eqz" }] as Instr[]) : []));
-          stats.fusedSink++;
-          i++;
-          continue;
-        }
-        decline(stats, reason);
+        if (tryFuseSite(arr, i, 1, opts, stats)) stats.fusedSink++;
         i++;
         continue;
       }
       // Consumer form 2: the inlined truthy-IC prefix claimed the site first.
       const chainLen = matchTruthyIcChain(arr, i + 1, truthyIdx);
       if (chainLen !== undefined) {
-        const plan: FusePlan = { actions: [], ifs: [], leafBox: 0, leafCond: 0 };
-        const reason = planFuse(arr, i, boxIdx, truthyIdx, plan);
-        if (reason === undefined) {
-          applyFuse(plan, stats);
-          arr.splice(i + 1, chainLen, ...(poison ? ([{ op: "i32.eqz" }] as Instr[]) : []));
+        if (tryFuseSite(arr, i, chainLen, opts, stats)) {
           stats.fusedSink++;
           stats.fusedSinkIc++;
-          i++;
-          continue;
         }
-        decline(stats, reason);
         i++;
         continue;
       }
@@ -356,6 +486,15 @@ export function fuseBoxBooleanSinks(ctx: CodegenContext): void {
     return;
   }
   const boxIdx = ctx.funcMap.get("__box_boolean");
+  // (#4406 Phase 2) OFF unless the return-ABI flag is on, so lever 4 alone
+  // keeps emitting exactly the bytes it emitted before this landed.
+  const opts: FuseOpts = {
+    boxIdx,
+    truthyIdx,
+    poison,
+    mergeSink: retUnboxMergeSinkEnabled(),
+    mergePoison: retUnboxAbiPoisoned(),
+  };
 
   const stats: Stats = {
     fusedSink: 0,
@@ -363,12 +502,14 @@ export function fuseBoxBooleanSinks(ctx: CodegenContext): void {
     fusedAdjacent: 0,
     leafBoxCall: 0,
     leafCondReuse: 0,
+    leafSunkConsumer: 0,
+    fusedSiteWithSink: 0,
     declines: new Map(),
   };
   for (const fn of ctx.mod.functions) {
     // Never rewrite the helpers themselves — only their consumption sites.
     if (fn.name === "__is_truthy" || fn.name === "__box_boolean") continue;
-    fuseInArray(fn.body, boxIdx, truthyIdx, poison, stats);
+    fuseInArray(fn.body, opts, stats);
   }
 
   if (debug) {
@@ -379,7 +520,9 @@ export function fuseBoxBooleanSinks(ctx: CodegenContext): void {
     process.stderr.write(
       `[box-bool-fuse] fused-sink=${stats.fusedSink} (via-ic=${stats.fusedSinkIc}) ` +
         `fused-adjacent=${stats.fusedAdjacent} leaves: box-call=${stats.leafBoxCall} ` +
-        `cond-reuse=${stats.leafCondReuse}${poison ? " POISON=ON" : ""}` +
+        `cond-reuse=${stats.leafCondReuse} sunk-consumer=${stats.leafSunkConsumer} ` +
+        `(sites=${stats.fusedSiteWithSink}, merge-sink=${opts.mergeSink ? "on" : "off"})` +
+        `${poison ? " POISON=ON" : ""}${opts.mergePoison ? " RET-ABI-POISON=ON" : ""}` +
         `${declines.length > 0 ? ` declined: ${declines}` : ""}\n`,
     );
   }

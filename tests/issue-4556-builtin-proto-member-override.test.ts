@@ -30,9 +30,11 @@
 // receiver picks up the override today) and ignores it for one that has an arm
 // (`toString` does not). Fixing that is the consult-order inversion inside the
 // dynamic reader, a strictly larger change than this call-site branch.
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 import { buildImports } from "../src/runtime.js";
+import { runTest262File } from "./test262-runner.js";
 
 // STANDALONE ONLY. The two-arm is gated on `ctx.standalone` — in host mode the
 // override already works through the JS engine's own prototype chain, and the
@@ -65,6 +67,28 @@ describe.each(LANES)("#4556 — Array.prototype member override (%s)", (lane) =>
         lane,
       ),
     ).toBe(1);
+  });
+
+  it("String(new Array) uses an overridden Array.prototype.toString", async () => {
+    expect(
+      await run(
+        `(Array.prototype as any).toString = function (): any { return "__ARRAY__"; };
+         export function test(): number {
+           return String(new Array) === "__ARRAY__" ? 1 : 0;
+         }`,
+        lane,
+      ),
+    ).toBe(1);
+  });
+
+  it("the assembled Test262 row S15.5.1.1_A1_T8 passes in standalone", async () => {
+    const result = await runTest262File(
+      resolve("test262/test/built-ins/String/S15.5.1.1_A1_T8.js"),
+      "built-ins/String",
+      120_000,
+      "standalone",
+    );
+    expect(result.status, result.error ?? result.reason).toBe("pass");
   });
 
   it("an overridden join is used, and receives the arguments", async () => {

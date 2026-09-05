@@ -227,6 +227,36 @@ ${WIDE_HOST_PRELUDE}
 }
 
 export function main(): number { return factory(); }
+    `);
+  });
+
+  it("materializes a mutable transitive sibling from a published function value", async () => {
+    const exports = await run(`
+function factory() {
+${WIDE_HOST_PRELUDE}
+  let queue = 40;
+
+  function runQueue(): number {
+    queue += 1;
+    return queue;
+  }
+
+  // Publishing this caller as a value lifts it into a separate frame. Its
+  // transitive queue capture must be forwarded when runQueue is materialized
+  // there; the declaring-frame slot is deliberately beyond this frame.
+  function runImmediateCallbacks(): number {
+    return runQueue();
+  }
+
+  const sink = ${WIDE_HOST_SINK};
+  return { runImmediateCallbacks, sink };
+}
+
+const core = factory();
+export function main(): number {
+  return core.runImmediateCallbacks() + core.sink * 0;
+}
 `);
+    expect((exports.main as () => number)()).toBe(41);
   });
 });

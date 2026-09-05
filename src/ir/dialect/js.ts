@@ -20,7 +20,7 @@
 // uncontested members; `scripts/check-ir-kind-neutrality.mjs` (#4551) then
 // produced a per-kind verdict with cited evidence, and slice A moved the three
 // kinds it judged `js` while still in core — `string.char_at`,
-// `string.char_code_at`, `forof.string`. The families that came back **neutral**
+// `string.char_code_at`, `string.repeat`, `forof.string`. The families that came back **neutral**
 // stay in core and are not candidates: `vec.*`, `class.*`, `object.*`,
 // `box`/`unbox`/`tag.test`, `forof.vec`, `coerce.to_externref`, and the
 // encoding-parameterized `string.const`/`string.concat`/`string.eq`. An
@@ -54,6 +54,7 @@ import type {
 // representation axis lives), so this is an ordinary downward edge, not a
 // second core->dialect one. Type-only, like everything else here.
 import type { IrStringEncoding } from "../string-runtime.js";
+import type { IrCountedStringAppendSiteId } from "../counted-string-append-provenance.js";
 
 /**
  * (#1373 Phase B) `await <expr>` — suspend the current async function until
@@ -590,19 +591,44 @@ export interface IrInstrRegExpLiteral extends IrInstrBase {
 }
 
 // ---------------------------------------------------------------------------
-// String indexing (#3954 phase 2, slice A)
+// String operations (#3954 phase 2, slice A; #3518 repeat)
 // ---------------------------------------------------------------------------
 //
 // The `string.*` family split three ways under #4551's per-kind verdict: the
 // encoding-parameterized members (`string.const` / `string.concat` /
 // `string.eq`) came back NEUTRAL, `string.len` is still an open policy call
-// (code units or code points), and these two are ECMAScript. The JS residue is
+// (code units or code points), and these indexing operations are ECMAScript. The JS residue is
 // in the OPERATION, not the representation — `IrStringEncoding` already
 // parameterizes the latter. Both are total functions over an unnormalized
 // index: §22.1.3.1 yields the empty string out of range and §22.1.3.2 yields
 // NaN, after a ToIntegerOrInfinity (§7.1.5) normalization of the index. A
 // non-JS producer would have to work around that convention, not adopt it —
-// Java throws and Rust panics on the same input.
+// Java throws and Rust panics on the same input. `string.repeat` is likewise
+// dialect-owned: its f64 count is a JS Number and its provider must implement
+// ToIntegerOrInfinity plus the ECMAScript negative/+Infinity RangeError.
+
+/**
+ * Repeat a string using ECMAScript `String.prototype.repeat` count semantics.
+ *
+ * The count remains a JS Number (`f64`) through the IR/backend boundary. The
+ * prepared provider owns `ToIntegerOrInfinity` and the negative/+Infinity
+ * RangeError (or the backend's documented exception trap). This instruction
+ * is therefore potentially throwing even when a current producer supplies a
+ * statically-proven safe count.
+ */
+export interface IrInstrStringRepeat extends IrInstrBase {
+  readonly kind: "string.repeat";
+  readonly value: IrValueId;
+  readonly count: IrValueId;
+  /** Repeat preserves the producer-authenticated encoding of its operand. */
+  readonly encodingEvidence: IrStringEncoding;
+  /** Semantic callable intent bound to the exact backend provider during final preparation. */
+  readonly provider?: IrFuncRef;
+  /** Exact counted-loop provenance; absent for unrelated generic repeat producers. */
+  readonly countedStringAppendSite?: IrCountedStringAppendSiteId;
+  /** Exact checker-proven count for a bounded string.const native repeat. */
+  readonly countedStringAppendTripCount?: number;
+}
 
 /** Return one UTF-16 code unit as a string, or the empty string out of bounds. */
 export interface IrInstrStringCharAt extends IrInstrBase {

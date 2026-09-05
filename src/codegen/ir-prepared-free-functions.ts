@@ -1,12 +1,20 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrHostVoidCallbackLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
-import { isBoundedPreparedAccessorClass, isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js";
+import {
+  irDirectCallLoweringPlanEquals,
+  type IrDirectCallLoweringPlan,
+  type IrHostVoidCallbackLoweringPlan,
+  type IrIntegrationLoweringPlans,
+} from "../ir/ast-lowering-plans.js";
+import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
+import { isBoundedPreparedAccessorClass } from "../ir/class-accessor-safety.js";
+import { irPreparedNestedOrdinaryClass } from "../ir/identity.js";
 import { compilerTimerShimTerminalUnitIds } from "../ir/compiler-timer-shim-preparation.js";
 import type { IrClassId, IrUnitId } from "../ir/identity.js";
 import { compileIrPathFunctions, type IrIntegrationReport, type IrTypeOverrideMap } from "../ir/integration.js";
 import { asVal, type IrClassShape, type IrType } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
+import type { IrR2Withdrawal, IrR2WithdrawalReason } from "../ir/r2-withdrawal.js";
 import {
   buildIrLegacyUnitProjection,
   type IrLegacyUnitProjection,
@@ -38,6 +46,7 @@ import {
 } from "./ir-overlay-safety.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
 import { prepareImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
+import type { PreparedCallableBoundaryCandidate } from "../ir/prepared-callable-boundary.js";
 
 /** Preserve the inherited compile-once allowlist for owners not prepared early. */
 export function computePreparedInheritedIrFirstSkipUnitIds(input: {
@@ -64,10 +73,10 @@ export function computePreparedInheritedIrFirstSkipUnitIds(input: {
       generatorsSkippable: input.generatorsSkippable,
     }),
   );
-  // Fast mode can ground source `number` positions to i32 during direct body
-  // discovery even though the early IR override still says f64. Keep only the
-  // annotation-proven boolean subset on the inherited compile-once route until
-  // exact callable-contract comparison moves into preparation.
+  // Keep the inherited fast route to its annotation-proven boolean subset.
+  // Numeric scalars have a separate pre-body admission below, where the final
+  // IR override is compared with the allocated callable slot before ownership
+  // can move out of the direct overlay.
   if (!input.fast) return requestedSkipUnitIds;
 
   const fastBlockedUnitIds = new Set<IrUnitId>();
@@ -111,7 +120,16 @@ interface PreparedIrBodyFamily {
   readonly preserveBodies: ReadonlySet<string>;
 }
 
-export interface PreparedIrFreeFunctionBodies extends PreparedIrBodyFamily {}
+/**
+ * Prepared free-function bodies retain their exact ownership rows alongside
+ * the temporary declaration-name projection. The UnitId sets are the routing
+ * authority; names remain only for the legacy declaration seam and telemetry.
+ */
+export interface PreparedIrFreeFunctionBodies extends PreparedIrBodyFamily {
+  readonly completedBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly skipBodyUnitIds: ReadonlySet<IrUnitId>;
+  readonly preserveBodyUnitIds: ReadonlySet<IrUnitId>;
+}
 
 export interface PreparedIrClassMemberBodies extends PreparedIrBodyFamily {
   readonly completedBodyUnitIds: ReadonlySet<IrUnitId>;
@@ -209,7 +227,7 @@ export function selectPreparedClassMemberUnitIds(
       terminal?.containingTerminalOwnerId !== undefined &&
       owner !== undefined &&
       (ts.isClassDeclaration(owner) || ts.isClassExpression(owner)) &&
-      isBoundedPreparedNestedOrdinaryClass(owner);
+      irPreparedNestedOrdinaryClass(owner, identityPlan.nestedClassFieldCallAdmission);
     const selectedTopLevelStaticAccessorBody = staticAccessorBody && terminal?.containingTerminalOwnerId === undefined;
     if (
       (selectedUnitIds ? selectedUnitIds.has(claim.unitId) : selectedNames.has(claim.legacyMatchName)) &&
@@ -253,10 +271,24 @@ export function selectPreparedClassMemberNames(
   );
 }
 
+/**
+ * (#3521 R2-T1) First-wins per unit. A unit can be reached by more than one
+ * withdrawal path across fixed-point iterations; the FIRST recorded reason is
+ * the one that actually removed it, so later passes must not overwrite it.
+ */
+function recordIrR2Withdrawal(ctx: CodegenContext, unitId: IrUnitId, withdrawal: IrR2Withdrawal): void {
+  const withdrawals = (ctx.irR2WithdrawalsByUnitId ??= new Map());
+  if (!withdrawals.has(unitId)) withdrawals.set(unitId, withdrawal);
+}
+
 function deferUnsealedPreparedComponents(
   report: IrIntegrationReport,
   deferredUnitIds: ReadonlySet<IrUnitId>,
   claimsByUnitId: ReadonlyMap<IrUnitId, IrExactBodyClaim>,
+  // (#3521 R2-T1) Optional so the internal callers that only reshape a report
+  // keep their signature; the production call in `prepareIrBodies` threads the
+  // ctx sink so a deferred owner's compile-twice row carries its own reason.
+  recordR2Withdrawal?: (unitId: IrUnitId, withdrawal: IrR2Withdrawal) => void,
 ): IrIntegrationReport {
   if (deferredUnitIds.size === 0) return report;
   if (!report.terminalEvidence || !report.compiledArtifactEvidence) {
@@ -281,6 +313,11 @@ function deferUnsealedPreparedComponents(
       );
     }
     deferredLegacyNames.add(claim.legacyName);
+    recordR2Withdrawal?.(unitId, {
+      stage: "deferred",
+      reason: "unsealed-component",
+      detail: `${claim.legacyName} deferred before its prepared component sealed`,
+    });
   }
   const compiledArtifactEvidence = report.compiledArtifactEvidence.filter(
     (artifact) => !deferredUnitIds.has(artifact.terminalOwnerUnitId),
@@ -314,6 +351,15 @@ function deferUnsealedPreparedComponents(
     syntheticCompiledArtifacts: compiledArtifactEvidence
       .filter((artifact) => artifact.artifactUnitId !== artifact.terminalOwnerUnitId)
       .map((artifact) => artifact.name),
+    ...(report.preparedCountedStringAppendReceipts
+      ? {
+          preparedCountedStringAppendReceipts: Object.freeze(
+            report.preparedCountedStringAppendReceipts.filter(
+              (receipt) => !deferredUnitIds.has(requireValidPreparedCountedStringAppendReceipt(receipt).ownerUnitId),
+            ),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -703,6 +749,239 @@ function r2SignatureMatchesAllocatedSlot(
 }
 
 /**
+ * Fast mode used to keep every selected owner on the direct/IR overlay because
+ * its direct `number` ABI could be i32 while IR retained f64. #3907 makes a
+ * source `number` position f64 in fast mode, but do not turn that repair into
+ * a general fast-mode admission: only a syntax-fixed scalar declaration whose
+ * final override still equals the already allocated slot may prepare early.
+ *
+ * This deliberately duplicates the narrow declaration checks rather than
+ * widening the general R2 vocabulary. In particular, a checked `any`, string,
+ * vector, reference, generic, default/rest/optional, destructured, async, or
+ * generator position remains typed Unsupported on the existing direct route.
+ */
+function r2FastPreparedScalarFunctionSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  unitId: IrUnitId,
+  claim: IrExactFunctionClaim,
+  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+): boolean {
+  const declaration = claim.declaration;
+  const scalarAnnotationKind = (type: ts.TypeNode | undefined): "f64" | "i32" | undefined => {
+    if (type?.kind === ts.SyntaxKind.NumberKeyword) return "f64";
+    if (type?.kind === ts.SyntaxKind.BooleanKeyword) return "i32";
+    return undefined;
+  };
+
+  if (
+    !declaration.name ||
+    declaration.name.text !== claim.legacyName ||
+    declaration.parent !== sourceFile ||
+    !sourceFile.statements.some((statement) => statement === declaration) ||
+    !declaration.body ||
+    (declaration.typeParameters?.length ?? 0) !== 0 ||
+    declaration.asteriskToken !== undefined ||
+    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    declaration.parameters.length !== override.params.length ||
+    !declaration.parameters.every((parameter, index) => {
+      const expectedKind = scalarAnnotationKind(parameter.type);
+      return (
+        ts.isIdentifier(parameter.name) &&
+        parameter.questionToken === undefined &&
+        parameter.dotDotDotToken === undefined &&
+        parameter.initializer === undefined &&
+        expectedKind !== undefined &&
+        asVal(override.params[index]!)?.kind === expectedKind
+      );
+    })
+  ) {
+    return false;
+  }
+  if (declaration.type?.kind === ts.SyntaxKind.VoidKeyword) {
+    if (override.returnType !== null) return false;
+  } else {
+    const expectedKind = scalarAnnotationKind(declaration.type);
+    if (
+      expectedKind === undefined ||
+      override.returnType === null ||
+      asVal(override.returnType)?.kind !== expectedKind
+    ) {
+      return false;
+    }
+  }
+  return r2SignatureMatchesAllocatedSlot(ctx, unitId, override);
+}
+
+/**
+ * Fast mode normally selects native strings, but an explicit nativeStrings:
+ * false keeps the JS-host externref string ABI. Its only added
+ * prepare-before-direct admission is an annotation-fixed pass-through
+ * signature whose constructed IR string contract still equals the allocated
+ * callable slot.
+ */
+function r2FastJsHostPassThroughStringSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  unitId: IrUnitId,
+  claim: IrExactFunctionClaim,
+  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+): boolean {
+  const declaration = claim.declaration;
+  const preparedOverride: { readonly params: readonly IrType[]; readonly returnType: IrType } = {
+    params: declaration.parameters.map(() => ({ kind: "string" })),
+    returnType: { kind: "string" },
+  };
+  const exactJsHostLane = !ctx.nativeStrings && !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
+
+  if (
+    !exactJsHostLane ||
+    !declaration.name ||
+    !ts.isIdentifier(declaration.name) ||
+    declaration.name.text !== claim.legacyName ||
+    declaration.parent !== sourceFile ||
+    !sourceFile.statements.some((statement) => statement === declaration) ||
+    !declaration.body ||
+    (declaration.typeParameters?.length ?? 0) !== 0 ||
+    declaration.asteriskToken !== undefined ||
+    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    declaration.type?.kind !== ts.SyntaxKind.StringKeyword ||
+    declaration.parameters.length !== override.params.length ||
+    !declaration.parameters.every(
+      (parameter) =>
+        ts.isIdentifier(parameter.name) &&
+        parameter.questionToken === undefined &&
+        parameter.dotDotDotToken === undefined &&
+        parameter.initializer === undefined &&
+        parameter.type?.kind === ts.SyntaxKind.StringKeyword,
+    ) ||
+    !override.params.every((type) => type.kind === "string") ||
+    override.returnType?.kind !== "string"
+  ) {
+    return false;
+  }
+  return r2SignatureMatchesAllocatedSlot(ctx, unitId, preparedOverride);
+}
+
+/**
+ * (#3521 R2-F1) The third fast-mode admission: a declaration whose every
+ * position is drawn from the #4514 carrier-fixed family — `number`/`boolean`
+ * scalars, `string`, and a `number[]`/`boolean[]` vector — mixed freely, plus
+ * a `void` return. `r2StableValType` already fixes one physical carrier per
+ * position per lane (`f64`, `i32`, the `nativeStrings`-keyed string carrier,
+ * one interned `$vec`), and the direct declaration pass allocated the slot
+ * from the same facts, so nothing is left for a prepared component to re-plan.
+ *
+ * Two refusals keep this predicate disjoint from the two it sits beside in the
+ * fast-arm OR, so that each one's revert stays observable on its own pins:
+ * an all-scalar signature belongs to `r2FastPreparedScalarFunctionSignature`,
+ * and an all-`string` signature under `nativeStrings: false` belongs to
+ * `r2FastJsHostPassThroughStringSignature`. All-`string` WITH native strings
+ * is this predicate's — no other fast predicate admits it.
+ *
+ * String positions are admitted only where the lane actually fixes a string
+ * carrier: the native `$anyStr` struct must be registered, or the lane must be
+ * the exact JS-host externref lane. Standalone / WASI / no-host-import lanes
+ * under `nativeStrings: false` have no string carrier to mirror and stay on
+ * the direct route.
+ *
+ * `string[]` and every reference carrier (`object`, callable, destructured,
+ * generic, `any`, optional/default/rest, async, generator) are deliberately
+ * NOT part of the family and keep their existing routes: the non-fast lanes do
+ * not agree those slots are stable, so the fast arm has nothing to mirror.
+ */
+function r2FastMixedFixedCarrierSignature(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  unitId: IrUnitId,
+  claim: IrExactFunctionClaim,
+  override: { readonly params: readonly IrType[]; readonly returnType: IrType | null },
+): boolean {
+  const declaration = claim.declaration;
+  // Mirrors `r2StableValType`'s string arm: the native carrier needs its
+  // registered `$anyStr` type, the host carrier needs the exact JS-host lane.
+  const stringCarrierFixed = ctx.nativeStrings
+    ? ctx.anyStrTypeIdx >= 0
+    : !ctx.standalone && !ctx.wasi && !ctx.strictNoHostImports;
+
+  type FixedCarrierKind = "f64" | "i32" | "string" | "vec-f64" | "vec-i32";
+  const fixedCarrierKind = (type: ts.TypeNode | undefined): FixedCarrierKind | undefined => {
+    if (type === undefined) return undefined;
+    if (type.kind === ts.SyntaxKind.NumberKeyword) return "f64";
+    if (type.kind === ts.SyntaxKind.BooleanKeyword) return "i32";
+    if (type.kind === ts.SyntaxKind.StringKeyword) return stringCarrierFixed ? "string" : undefined;
+    if (ts.isArrayTypeNode(type)) {
+      if (type.elementType.kind === ts.SyntaxKind.NumberKeyword) return "vec-f64";
+      if (type.elementType.kind === ts.SyntaxKind.BooleanKeyword) return "vec-i32";
+    }
+    return undefined;
+  };
+  // The same parity `r2FastPreparedScalarFunctionSignature` performs, widened
+  // to the two non-scalar members of the family.
+  const overrideMatchesKind = (kind: FixedCarrierKind, type: IrType): boolean => {
+    if (kind === "string") return type.kind === "string";
+    if (kind === "vec-f64" || kind === "vec-i32") {
+      return type.kind === "vec" && asVal(type.elementType)?.kind === (kind === "vec-f64" ? "f64" : "i32");
+    }
+    return asVal(type)?.kind === kind;
+  };
+
+  if (
+    !declaration.name ||
+    !ts.isIdentifier(declaration.name) ||
+    declaration.name.text !== claim.legacyName ||
+    declaration.parent !== sourceFile ||
+    !sourceFile.statements.some((statement) => statement === declaration) ||
+    !declaration.body ||
+    (declaration.typeParameters?.length ?? 0) !== 0 ||
+    declaration.asteriskToken !== undefined ||
+    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    declaration.parameters.length !== override.params.length
+  ) {
+    return false;
+  }
+
+  const positionKinds: FixedCarrierKind[] = [];
+  for (const [index, parameter] of declaration.parameters.entries()) {
+    const kind = fixedCarrierKind(parameter.type);
+    if (
+      !ts.isIdentifier(parameter.name) ||
+      parameter.questionToken !== undefined ||
+      parameter.dotDotDotToken !== undefined ||
+      parameter.initializer !== undefined ||
+      kind === undefined ||
+      !overrideMatchesKind(kind, override.params[index]!)
+    ) {
+      return false;
+    }
+    positionKinds.push(kind);
+  }
+
+  if (declaration.type?.kind === ts.SyntaxKind.VoidKeyword) {
+    if (override.returnType !== null) return false;
+  } else {
+    const returnKind = fixedCarrierKind(declaration.type);
+    if (
+      returnKind === undefined ||
+      override.returnType === null ||
+      !overrideMatchesKind(returnKind, override.returnType)
+    ) {
+      return false;
+    }
+    positionKinds.push(returnKind);
+  }
+
+  // Disjointness with the two predicates this one sits beside in the OR.
+  if (positionKinds.every((kind) => kind === "f64" || kind === "i32")) return false;
+  if (!ctx.nativeStrings && positionKinds.every((kind) => kind === "string")) return false;
+
+  // The syntax proof above is necessary, not sufficient: the direct pass has
+  // already allocated the callable slot and later direct callers/exports can
+  // target it. Re-prove physical equality so a wrong admission fails closed.
+  return r2SignatureMatchesAllocatedSlot(ctx, unitId, override);
+}
+
+/**
  * (#4514) The narrow value vocabulary whose physical carrier is fixed by the
  * declaration alone, with no decision the prepared component could re-plan:
  * `void`, `f64`/`i32` scalars, `string` (one `nativeStrings`-keyed carrier both
@@ -755,6 +1034,13 @@ function r2CertifiedAgainstOutsideCallers(
   if (!override.params.every((type) => r2CarrierFixedByDeclaration(type))) return false;
   if (!r2CarrierFixedByDeclaration(override.returnType)) return false;
   return r2SignatureMatchesAllocatedSlot(ctx, unitId, override);
+}
+
+function hasPositiveCallableBoundary(override: {
+  readonly params: readonly IrType[];
+  readonly returnType: IrType | null;
+}): boolean {
+  return override.params.some((type) => type.kind === "callable") || override.returnType?.kind === "callable";
 }
 
 /**
@@ -972,7 +1258,12 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
         containsNestedExecutableSyntax(claim.declaration) ||
         functionValueTargets.has(unitId) ||
         containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
-        !r3SuspendingAsyncSignatureMatchesAllocatedSlot(input.ctx, unitId, override, sourceShape?.kind === "final-main")
+        !r3SuspendingAsyncSignatureMatchesAllocatedSlot(
+          input.ctx,
+          unitId,
+          override,
+          sourceShape?.kind === "final-main" || sourceShape?.kind === "linear",
+        )
       ) {
         continue;
       }
@@ -1002,7 +1293,7 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
         ) {
           continue;
         }
-      } else if (unitCalls.length === 0) {
+      } else if (unitCalls.length === 0 && sourceShape.kind !== "linear") {
         continue;
       }
       additions.push(legacyName);
@@ -1031,6 +1322,7 @@ export function finalizeR3PreparedOwnerPopulation(input: {
   readonly selection: IrSelection;
   readonly preliminaryClassMemberUnitIds: ReadonlySet<IrUnitId>;
   readonly preliminaryR2Names: ReadonlySet<string>;
+  readonly preliminaryCallableBoundaryCandidates?: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
   readonly promiseDelayNames: ReadonlySet<string>;
   readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
 }): {
@@ -1038,6 +1330,7 @@ export function finalizeR3PreparedOwnerPopulation(input: {
   readonly classMemberNames: ReadonlySet<string>;
   readonly classMemberUnitIds: ReadonlySet<IrUnitId>;
   readonly freeFunctionNames: ReadonlySet<string>;
+  readonly callableBoundaryCandidates: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
 } {
   let selection = input.selection;
   const selectClassMemberPopulation = (): {
@@ -1107,16 +1400,24 @@ export function finalizeR3PreparedOwnerPopulation(input: {
         selection.funcs.has(name),
       ),
     ),
+    callableBoundaryCandidates: new Map(
+      [...(input.preliminaryCallableBoundaryCandidates ?? [])].filter(([unitId]) => {
+        const claim = input.plan.functionClaimsByUnitId.get(unitId);
+        return claim !== undefined && selection.funcs.has(claim.legacyName);
+      }),
+    ),
   };
 }
 
 /**
  * R2/R3 prepare only components whose free-function and class-member contracts
  * have one backend-stable Program ABI projection: scalars, strings, selected
- * vectors, and opaque JS-host externrefs. Other reference-shaped contracts,
- * fast-mode grounded numerics, and async/generator frames still require direct
- * discovery and remain on the post-direct overlay. Nested callable syntax
- * inside an otherwise admitted owner does not by itself block that owner.
+ * vectors, opaque JS-host externrefs, and callable boundaries that carry an
+ * authenticated source ABI/support contract. Other reference-shaped
+ * contracts, unproven fast-mode signatures, and async/generator frames still
+ * require direct discovery and remain on the post-direct overlay. Nested
+ * callable syntax inside an otherwise admitted owner does not by itself block
+ * that owner.
  */
 export function selectR2PreparedOwnerComponents(input: {
   readonly ctx: CodegenContext;
@@ -1141,8 +1442,26 @@ export function selectR2PreparedOwnerComponents(input: {
 }): {
   readonly freeFunctionNames: ReadonlySet<string>;
   readonly classMemberUnitIds: ReadonlySet<IrUnitId>;
+  /**
+   * (#3521 R2-T1) Why each withdrawn unit is not in `freeFunctionNames`. One
+   * entry per unit the admission chain or the ownership fixed point removed,
+   * carrying the FIRST failing predicate / crossing edge in the chain's own
+   * order. Class-member candidates are recorded too; their rows carry no
+   * body-emission triple yet, so the reason is inert until #3522 migrates
+   * member accounting.
+   */
+  readonly withdrawals: ReadonlyMap<IrUnitId, IrR2Withdrawal>;
+  /** Source-qualified callable boundaries pending final IR/support certification. */
+  readonly pendingCallableBoundaryCandidates: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
 } {
+  const withdrawals = new Map<IrUnitId, IrR2Withdrawal>();
+  // First-wins: the reason that actually removed the unit is the first one
+  // reached, never a later iteration's.
+  const record = (unitId: IrUnitId, stage: IrR2Withdrawal["stage"], reason: IrR2WithdrawalReason): void => {
+    if (!withdrawals.has(unitId)) withdrawals.set(unitId, { stage, reason });
+  };
   const freeFunctionCandidates = new Set<IrUnitId>();
+  const pendingCallableBoundaryCandidates = new Map<IrUnitId, PreparedCallableBoundaryCandidate>();
   const baseline = new Set<IrUnitId>();
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
   const directCallerActivationTargets = collectDirectCallerActivationTargetUnitIds(
@@ -1153,6 +1472,7 @@ export function selectR2PreparedOwnerComponents(input: {
   for (const legacyName of input.baselineLegacyNames) {
     baseline.add(irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName));
   }
+
   for (const legacyName of input.selectedLegacyNames) {
     const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
     const claim = input.claimsByUnitId.get(unitId);
@@ -1175,28 +1495,73 @@ export function selectR2PreparedOwnerComponents(input: {
     // WASI / no-host-import lanes keep the compile-twice route because their
     // legacy lowering is the disjoint #680 native carrier.
     const signatureOptions = isGenerator ? { allowOpaqueExternrefValue: true } : undefined;
-    if (
-      input.ctx.fast ||
-      isAsync ||
-      (isGenerator && !generatorsPreparable(input.ctx)) ||
-      containsUnplannedNestedExecutableSyntax(claim.declaration, unitId, claim.legacyName, input.hostVoidCallbacks) ||
-      containsCurrentFunctionPoisonPillRead(input.ctx, claim.declaration) ||
-      directCallerActivationTargets.has(unitId) ||
-      containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
-      !override.params.every((type) => r2StableSignatureType(type, signatureOptions)) ||
-      !r2StableSignatureType(override.returnType, signatureOptions) ||
-      !r2SignatureMatchesAllocatedSlot(input.ctx, unitId, override, signatureOptions)
-    ) {
+    // (#3521 R2-T1) The same ten predicates in the same order, read as a table
+    // so the FIRST failing one can be named. `find` short-circuits exactly like
+    // the `||` chain it replaces, so no predicate that used to be skipped runs.
+    // (#5282) Still true: the order and the short-circuit below are untouched.
+    // Only the recorded NAME may be re-scanned, and only after refusal — see
+    // the `firstFailing` block.
+    const admissionPredicates: readonly (readonly [IrR2WithdrawalReason, () => boolean])[] = [
+      [
+        "fast-signature-unproven",
+        () =>
+          input.ctx.fast &&
+          !(
+            r2FastPreparedScalarFunctionSignature(input.ctx, input.sourceFile, unitId, claim, override) ||
+            r2FastJsHostPassThroughStringSignature(input.ctx, input.sourceFile, unitId, claim, override) ||
+            r2FastMixedFixedCarrierSignature(input.ctx, input.sourceFile, unitId, claim, override)
+          ),
+      ],
+      ["async-declaration", () => isAsync],
+      ["generator-lane", () => isGenerator && !generatorsPreparable(input.ctx)],
+      [
+        "nested-executable-syntax",
+        () =>
+          containsUnplannedNestedExecutableSyntax(
+            claim.declaration,
+            unitId,
+            claim.legacyName,
+            input.hostVoidCallbacks,
+            input.identityPlan.nestedClassFieldCallAdmission,
+          ),
+      ],
+      ["poison-pill-read", () => containsCurrentFunctionPoisonPillRead(input.ctx, claim.declaration)],
+      ["direct-caller-activation-target", () => directCallerActivationTargets.has(unitId)],
+      [
+        "function-value-reference",
+        () => containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName),
+      ],
+      [
+        "param-signature-unstable",
+        () => !override.params.every((type) => r2StableSignatureType(type, signatureOptions)),
+      ],
+      ["return-signature-unstable", () => !r2StableSignatureType(override.returnType, signatureOptions)],
+      [
+        "allocated-slot-mismatch",
+        () => !r2SignatureMatchesAllocatedSlot(input.ctx, unitId, override, signatureOptions),
+      ],
+    ];
+    const firstFailing = admissionPredicates.find(([, rejects]) => rejects());
+    if (firstFailing) {
+      // (#5282) The DECISION above is untouched, so the prepared set is
+      // byte-identical; only the NAME moves. `fast-signature-unproven` is entry
+      // zero and its guard subsumes every later predicate, so in a fast lane it
+      // answered for refusals it does not describe — one object-parameter unit
+      // read `fast-signature-unproven` fast and `param-signature-unstable`
+      // plain. The unit is ALREADY refused here, so running the remaining
+      // predicates cannot admit it; it can only find the reason that fits. No
+      // later predicate firing means the fast proof was the sole objection.
+      let reason = firstFailing[0];
+      if (reason === "fast-signature-unproven") {
+        const specific = admissionPredicates.slice(1).find(([, rejects]) => rejects());
+        if (specific) reason = specific[0];
+      }
+      record(unitId, "admission", reason);
       continue;
     }
     freeFunctionCandidates.add(unitId);
   }
 
-  // Close free functions and class members together. A class-to-free edge is
-  // safe only when both endpoints survive the same bidirectional ownership
-  // fixed point; preparing either family in isolation would leave an exact
-  // source call without a callable plan or retain a legacy caller.
-  const candidates = new Set<IrUnitId>([...freeFunctionCandidates, ...input.classMemberUnitIds]);
   const callEdges = collectLocalCallEdgesByIdentity(input.sourceFile, input.identityPlan.identityContext);
   const callers = new Map<IrUnitId, Set<IrUnitId>>();
   for (const [callerUnitId, calleeUnitIds] of callEdges.callees) {
@@ -1206,6 +1571,35 @@ export function selectR2PreparedOwnerComponents(input: {
       callers.set(calleeUnitId, owners);
     }
   }
+
+  // Issue callable-boundary candidates only after the ordinary admission
+  // predicates have accepted the owner.  The registry binds each candidate to
+  // the exact source allocator and targeted Program ABI draft; a missing
+  // registry/observation provides no positive evidence and therefore leaves
+  // the existing outside-caller withdrawal in place.  An owner whose known
+  // callers are all in this same candidate population has no outside-caller
+  // boundary to certify, so avoid opening a deferred ABI transaction for its
+  // ordinary callable support.
+  for (const unitId of freeFunctionCandidates) {
+    // Compiler-owned timer shims have their own exact late-seal transaction.
+    // Keep them on that route; their deferred component does not exist yet at
+    // this generic callable-boundary certification point.
+    if (input.timerShimUnitIds?.has(unitId)) continue;
+    const override = input.overridesByUnitId.get(unitId);
+    if (!override || !hasPositiveCallableBoundary(override)) continue;
+    const hasPotentialOutsideCaller = [...(callers.get(unitId) ?? [])].some(
+      (callerUnitId) => !freeFunctionCandidates.has(callerUnitId) && !input.classMemberUnitIds.has(callerUnitId),
+    );
+    if (!hasPotentialOutsideCaller) continue;
+    const candidate = input.ctx.programAbiSourceCallables?.issuePreparedCallableBoundary(unitId, override);
+    if (candidate) pendingCallableBoundaryCandidates.set(unitId, candidate);
+  }
+
+  // Close free functions and class members together. A class-to-free edge is
+  // safe only when both endpoints survive the same bidirectional ownership
+  // fixed point; preparing either family in isolation would leave an exact
+  // source call without a callable plan or retain a legacy caller.
+  const candidates = new Set<IrUnitId>([...freeFunctionCandidates, ...input.classMemberUnitIds]);
   // (#4514) Free-function owners whose ABI an outside caller provably cannot
   // observe changing. Computed once, before the fixed point: the inputs are the
   // admission-time override and the already-allocated slot, neither of which
@@ -1221,6 +1615,7 @@ export function selectR2PreparedOwnerComponents(input: {
       // signature proof covers; annexB block-function hoisting is that shape.
       if (claim.declaration.name && nestedFunctionDeclarationNames.has(claim.declaration.name.text)) return false;
       if (timerShimOutsideCaller(input, unitId, override, r2SignatureMatchesAllocatedSlot)) return true;
+      if (pendingCallableBoundaryCandidates.has(unitId)) return true;
       return r2CertifiedAgainstOutsideCallers(input.ctx, unitId, override);
     }),
   );
@@ -1228,9 +1623,15 @@ export function selectR2PreparedOwnerComponents(input: {
     changed = false;
     for (const unitId of [...candidates]) {
       if (baseline.has(unitId)) continue;
-      const crossesOwnership =
-        callEdges.calleesFromUnownedCallers.has(unitId) ||
-        [...(callEdges.callees.get(unitId) ?? [])].some((calleeUnitId) => !candidates.has(calleeUnitId)) ||
+      // (#3521 R2-T1) The same five edges in the same order, read as a table so
+      // the first crossing one can be named. `find` short-circuits exactly like
+      // the `||` chain it replaces.
+      const crossingEdges: readonly (readonly [IrR2WithdrawalReason, () => boolean])[] = [
+        ["callee-of-unowned-caller", () => callEdges.calleesFromUnownedCallers.has(unitId)],
+        [
+          "callee-outside-component",
+          () => [...(callEdges.callees.get(unitId) ?? [])].some((calleeUnitId) => !candidates.has(calleeUnitId)),
+        ],
         // (#4494) claim ⇔ PREPARABILITY parity. `new C()` makes this owner
         // execute `C`'s explicit constructor chain, and sealing records that as
         // an exact unit-bound dependency. Withdrawing the constructing owner
@@ -1239,9 +1640,13 @@ export function selectR2PreparedOwnerComponents(input: {
         // `foreign-source-unit` and degrades the whole prepared owner after the
         // claim. Only this direction is checked: a constructor does not need its
         // constructing callers co-prepared.
-        [...(callEdges.constructionCallees.get(unitId) ?? [])].some(
-          (constructedUnitId) => !candidates.has(constructedUnitId),
-        ) ||
+        [
+          "construction-callee-outside",
+          () =>
+            [...(callEdges.constructionCallees.get(unitId) ?? [])].some(
+              (constructedUnitId) => !candidates.has(constructedUnitId),
+            ),
+        ],
         // (#4508) The second parity edge #4494's follow-up named. Reading a
         // top-level binding pins the module-init storage terminal, and
         // `recordGlobalReference` fails that read closed with
@@ -1255,24 +1660,58 @@ export function selectR2PreparedOwnerComponents(input: {
         // reader beside a still-prepared component, whose late-discovered
         // runtime providers then break the frozen prepared ABI
         // (`callable provider … discovered after prepared provider planning`).
-        [...(callEdges.moduleBindingStorageTerminals.get(unitId) ?? [])].some(
-          (storageUnitId) => !input.preparedStorageTerminalUnitIds.has(storageUnitId),
-        ) ||
+        [
+          "storage-terminal-unprepared",
+          () =>
+            [...(callEdges.moduleBindingStorageTerminals.get(unitId) ?? [])].some(
+              (storageUnitId) => !input.preparedStorageTerminalUnitIds.has(storageUnitId),
+            ),
+        ],
         // (#4514) Reverse-callers edge, directionally refined. An outside
         // caller is a SIGNATURE hazard: its `call` is emitted against this
         // unit's allocated Program ABI slot, so preparation must not re-plan
         // that slot. `outsideCallerCertifiedUnitIds` proves it cannot for the
-        // declaration-fixed carrier family; every other unit still withdraws.
+        // declaration-fixed carrier family, while an authenticated callable
+        // boundary candidate supplies the same proof after final support
+        // preparation; every other unit still withdraws.
         // Without this refinement one withdrawn caller drags its whole callee
         // fan-out out of the component — #4508's enlarged `algorithms.ts`
         // component lost compile-once for `fibIter`, `binarySearch`,
         // `quicksort` and `joinNums` that way, none of which had any other
         // blocking edge (measured; see the issue file).
-        (!outsideCallerCertifiedUnitIds.has(unitId) &&
-          [...(callers.get(unitId) ?? [])].some((callerUnitId) => !candidates.has(callerUnitId)));
-      if (!crossesOwnership) continue;
+        [
+          "outside-caller-uncertified",
+          () =>
+            !outsideCallerCertifiedUnitIds.has(unitId) &&
+            [...(callers.get(unitId) ?? [])].some((callerUnitId) => !candidates.has(callerUnitId)),
+        ],
+      ];
+      const firstCrossingEdge = crossingEdges.find(([, crosses]) => crosses());
+      if (!firstCrossingEdge) continue;
+      record(unitId, "fixed-point", firstCrossingEdge[0]);
       candidates.delete(unitId);
       changed = true;
+    }
+    // (#3522 F4) An admitted field-call class is ONE atom. The preselection
+    // marker is evidence, never a bypass around this final reconciliation: the
+    // constructor, every promoted body member, the containing terminal owner
+    // and every proved callee survive together, or the whole class withdraws.
+    for (const admitted of input.identityPlan.nestedClassFieldCallAdmission?.classes ?? []) {
+      if (admitted.sourceFile !== input.sourceFile) continue;
+      const atom = [
+        ...admitted.candidate.terminalMembers.map(({ record }) => record.id),
+        admitted.containingTerminalUnitId,
+        ...admitted.fields.map((field) => field.calleeUnitId),
+      ];
+      if (atom.every((unitId) => candidates.has(unitId)) || atom.every((unitId) => !candidates.has(unitId))) {
+        continue;
+      }
+      for (const unitId of atom) {
+        if (candidates.delete(unitId)) {
+          record(unitId, "fixed-point", "class-atom");
+          changed = true;
+        }
+      }
     }
   }
 
@@ -1294,6 +1733,10 @@ export function selectR2PreparedOwnerComponents(input: {
   return {
     freeFunctionNames,
     classMemberUnitIds: new Set([...input.classMemberUnitIds].filter((unitId) => candidates.has(unitId))),
+    withdrawals,
+    pendingCallableBoundaryCandidates: new Map(
+      [...pendingCallableBoundaryCandidates].filter(([unitId]) => candidates.has(unitId)),
+    ),
   };
 }
 
@@ -1553,6 +1996,7 @@ export function prepareIrBodies(input: {
   readonly classShapes: ReadonlyMap<string, IrClassShape>;
   readonly classShapesById: ReadonlyMap<IrClassId, IrClassShape>;
   readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
+  readonly callableBoundaryCandidates?: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
 }): PreparedIrBodies {
   const freeFunctionNames = new Set(input.selection.funcs);
   const freeFunctionClaimsByUnitId = new Map<IrUnitId, IrExactFunctionClaim>();
@@ -1653,13 +2097,30 @@ export function prepareIrBodies(input: {
             input.overrideMap,
             input.classShapes,
             input.projectLoweringPlans(selection),
-            { sealPreparedComponents: true },
+            {
+              sealPreparedComponents: true,
+              ...(input.callableBoundaryCandidates && input.callableBoundaryCandidates.size > 0
+                ? { preparedCallableBoundaryCandidates: input.callableBoundaryCandidates }
+                : {}),
+              // (#3523 R4 gap 3) Only this call constructs the Prepared
+              // module-init body, so only this call may plant the reserved WASI
+              // `__init_done` guard into it. A no-op unless the reservation
+              // exists (WASI) and this population actually claims the init.
+              ...(moduleInitClaimsByUnitId.size > 0 && input.ctx.preparedWasiModuleInitGuard !== undefined
+                ? { plantPreparedWasiModuleInitGuard: true as const }
+                : {}),
+            },
           ),
   );
   const timerUnitIds = compilerTimerShimTerminalUnitIds(input.identityPlan.identityContext.inventory);
   const deferUnsupportedUnitIds = new Set([...freeFunctionClaimsByUnitId.keys()].filter((id) => !timerUnitIds.has(id)));
   const routing = preparedIrBodyRouting(initialReport, claimsByUnitId, { deferUnsupportedUnitIds });
-  const report = deferUnsealedPreparedComponents(initialReport, routing.deferredUnitIds, claimsByUnitId);
+  const report = deferUnsealedPreparedComponents(
+    initialReport,
+    routing.deferredUnitIds,
+    claimsByUnitId,
+    (unitId, withdrawal) => recordIrR2Withdrawal(input.ctx, unitId, withdrawal),
+  );
   const classMemberClaimsByUnitId = classPopulation?.claimsByUnitId ?? new Map<IrUnitId, IrExactBodyClaim>();
   const irOwnedPartition = partitionPreparedUnitIds(
     routing.irOwnedUnitIds,
@@ -1701,6 +2162,11 @@ export function prepareIrBodies(input: {
     completedBodies: new Set([...freeFunctionNames].filter((legacyName) => !freeDeferredBodies.has(legacyName))),
     skipBodies: new Set(freeRequestedSkipProjection.entries.map(({ legacyName }) => legacyName)),
     preserveBodies: new Set(freePreparedProjection.entries.map(({ legacyName }) => legacyName)),
+    completedBodyUnitIds: new Set(
+      [...freeFunctionClaimsByUnitId.keys()].filter((unitId) => !deferredPartition.freeFunctionUnitIds.has(unitId)),
+    ),
+    skipBodyUnitIds: irOwnedPartition.freeFunctionUnitIds,
+    preserveBodyUnitIds: preparedPartition.freeFunctionUnitIds,
   };
 
   const classRequestedSkipProjection = classPopulation
@@ -1806,10 +2272,10 @@ export function completePreparedIrIntegration(input: {
         // A deferred caller can still target a dependency whose sealed body
         // was settled by the early report. Retain those exact AST-site plans
         // without re-adding the prepared owner to the emission population.
-        directCalls: new Map([
-          ...input.projectLoweringPlans(input.selection).directCalls,
-          ...remainingLoweringPlans.directCalls,
-        ]),
+        directCalls: mergePreparedIrDirectCallLoweringPlans(
+          input.projectLoweringPlans(input.selection).directCalls,
+          remainingLoweringPlans.directCalls,
+        ),
       }
     : remainingLoweringPlans;
   const remainingReport = compileIrPathFunctions(
@@ -1821,4 +2287,24 @@ export function completePreparedIrIntegration(input: {
     loweringPlans,
   );
   return input.preparedReport ? mergeIrIntegrationReports(input.preparedReport, remainingReport) : remainingReport;
+}
+
+/** Merge two authenticated projections without allowing later authority to replace an exact AST-site row. */
+export function mergePreparedIrDirectCallLoweringPlans(
+  full: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>,
+  remaining: ReadonlyMap<ts.CallExpression, IrDirectCallLoweringPlan>,
+): Map<ts.CallExpression, IrDirectCallLoweringPlan> {
+  const merged = new Map(full);
+  for (const [call, plan] of remaining) {
+    const prior = merged.get(call);
+    if (prior && !irDirectCallLoweringPlanEquals(prior, plan)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared IR direct-call projections disagree for ${call.expression.getText(call.getSourceFile())}`,
+      );
+    }
+    if (!prior) merged.set(call, plan);
+  }
+  return merged;
 }

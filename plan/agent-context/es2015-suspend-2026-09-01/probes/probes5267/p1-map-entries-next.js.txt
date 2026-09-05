@@ -1,0 +1,9 @@
+/*---
+description: map.entries().next() manual drive (5151 cluster B blocker repro)
+---*/
+var map = new Map();
+map.set('a', 1);
+var iterator = map.entries();
+var result = iterator.next();
+assert.sameValue(result.done, false, 'done');
+assert.sameValue(result.value[0], 'a', 'key');

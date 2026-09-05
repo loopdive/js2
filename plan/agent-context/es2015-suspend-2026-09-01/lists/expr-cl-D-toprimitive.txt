@@ -1,0 +1,3 @@
+language/expressions/addition/coerce-symbol-to-prim-invocation.js
+language/expressions/equals/coerce-symbol-to-prim-invocation.js
+language/expressions/equals/coerce-symbol-to-prim-return-prim.js

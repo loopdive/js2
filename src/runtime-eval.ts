@@ -116,6 +116,28 @@ export interface EvalShimOptions {
    * invocation — useful for telemetry or caching.
    */
   onCompiled?: (info: { src: string; binarySize: number; isDirect: boolean }) => void;
+
+  /**
+   * (#4657) The PARENT module's realm — the same object the parent resolves
+   * `__get_globalThis` and every `global_<Name>` declared-global import
+   * against (`globalSandbox`, e.g. the test262 runner's per-test realm).
+   *
+   * `new Function` is realm-transparent: §20.2.1.1 constructs the function in
+   * the *running* realm, so `new Function("return Array")()` must hand back
+   * the very object the caller's own `Array` binding denotes. The child module
+   * this shim compiles is a separate Wasm instance with its OWN import object,
+   * so leaving this unset resolved the child's `global_Array` against the host
+   * `globalThis` while the parent resolved its `Array` against the sandbox —
+   * two different function objects with the same `.name`, the same
+   * `.prototype` and the same statics, so the split was invisible to
+   * everything EXCEPT an identity test.
+   *
+   * That is precisely what test262 `harness/wellKnownIntrinsicObjects.js`
+   * tests: it obtains all ~380 intrinsics via `new Function("return " + src)()`
+   * and asserts `Object.is(Array, intrinsicArray)`. Threading the parent realm
+   * through fixes the whole family at once rather than per name.
+   */
+  globalSandbox?: Record<string, any>;
 }
 
 const TEST262_ASSERT_METHODS = new Set([
@@ -543,6 +565,58 @@ export function createEvalShim(options: EvalShimOptions = {}): (src: any, isDire
  */
 export function createNewFunctionShim(options: EvalShimOptions = {}): (params: any, body: any) => any {
   const filename = options.filename ?? "__new_function__.js";
+  /**
+   * The child module used by the compat Function shim has no lexical view of
+   * the parent's global object.  A free identifier such as `f()` therefore
+   * reaches the compiler's ordinary unresolved-name diagnostic before the
+   * child ever crosses the host boundary, even though §20.2.1.1 requires a
+   * Function-constructor body to resolve names in the running realm's global
+   * environment.  Collect only identifier references that are present on the
+   * supplied realm object; property names (`obj.f`) and declaration names are
+   * not references and must not cause eager global reads.
+   *
+   * The prelude is intentionally generated from the body, not from a test
+   * filename or a fixed binding list.  It snapshots a referenced global at
+   * child-module initialization.  This is the same limitation as the existing
+   * compat shim's fresh child-module environment for global writes, but it
+   * restores the read-only global binding needed by dynamic Function bodies
+   * without granting the child an unrestricted host-eval escape hatch.
+   */
+  const referencedRealmNames = (paramString: string, bodyString: string): string[] => {
+    const realm = options.globalSandbox;
+    if (realm === undefined) return [];
+    const source = `function __new_fn(${paramString}) {\n${bodyString}\n}`;
+    const sf = ts.createSourceFile(filename, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const names = new Set<string>();
+    const isReference = (node: ts.Identifier): boolean => {
+      const parent = node.parent;
+      if (ts.isPropertyAccessExpression(parent) && parent.name === node) return false;
+      if (ts.isElementAccessExpression(parent) && parent.argumentExpression === node) return false;
+      if (ts.isQualifiedName(parent) && parent.right === node) return false;
+      if (ts.isPropertyAssignment(parent) && parent.name === node) return false;
+      if (ts.isMethodDeclaration(parent) && parent.name === node) return false;
+      if (ts.isGetAccessorDeclaration(parent) && parent.name === node) return false;
+      if (ts.isSetAccessorDeclaration(parent) && parent.name === node) return false;
+      if (ts.isLabeledStatement(parent) || ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) return false;
+      if (ts.isVariableDeclaration(parent) && parent.name === node) return false;
+      if (ts.isParameter(parent) && parent.name === node) return false;
+      if (
+        (ts.isFunctionDeclaration(parent) || ts.isFunctionExpression(parent) || ts.isClassDeclaration(parent)) &&
+        parent.name === node
+      )
+        return false;
+      return Object.prototype.hasOwnProperty.call(realm, node.text);
+    };
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && isReference(node)) names.add(node.text);
+      ts.forEachChild(node, visit);
+    };
+    ts.forEachChild(sf, visit);
+    // `globalThis` itself must remain the compiler-provided realm object; a
+    // prelude declaration with the same name would self-shadow its RHS.
+    names.delete("globalThis");
+    return [...names].sort();
+  };
   const FN_CACHE_MAX = 256;
   // key (`${params} ${body}`) → the callable child-export wrapper.
   const fnCache = new Map<string, Function>();
@@ -562,7 +636,10 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
     const neg = fnNegCache.get(key);
     if (neg !== undefined) throw neg;
 
-    const src = `export function __new_fn(${paramStr}) {\n${bodyStr}\n}`;
+    const prelude = referencedRealmNames(paramStr, bodyStr)
+      .map((name) => `var ${name} = (0, globalThis)[${JSON.stringify(name)}];`)
+      .join("\n");
+    const src = `${prelude}${prelude.length > 0 ? "\n" : ""}export function __new_fn(${paramStr}) {\n${bodyStr}\n}`;
     let result:
       | { success: boolean; binary: Uint8Array; imports: any; stringPool: string[]; errors?: { message: string }[] }
       | undefined;
@@ -602,7 +679,14 @@ export function createNewFunctionShim(options: EvalShimOptions = {}): (params: a
 
     // Non-sandbox auto-fill — the child gets the standard js2wasm helpers it
     // declared, plus a recursive `__extern_new_function` for nested cases.
-    const auto = buildImports(result.imports, undefined, result.stringPool);
+    // (#4657) …and the PARENT's realm, so the child's `global_<Name>` /
+    // `__get_globalThis` imports resolve to the same objects the caller sees.
+    const auto = buildImports(
+      result.imports,
+      undefined,
+      result.stringPool,
+      options.globalSandbox === undefined ? undefined : { globalSandbox: options.globalSandbox },
+    );
     const autoSetExports = (auto as { setExports?: (exports: Record<string, Function>) => void }).setExports;
     const importObj: Record<string, Record<string, unknown>> = {
       env: { ...auto.env },

@@ -380,11 +380,22 @@ const BUCKET_FILE = {
   "weak-collections-runtime.ts": "runtime",
   "wellformed-native.ts": "runtime",
 };
+// Buckets are ASSERTED, not measured (#5286). `bucketOf` is a lookup on the
+// file path and consumes nothing from the reachability analysis above — it
+// encodes R10's *intent* (`deferred` means eval / `with` / async-CPS are out of
+// scope by decision, not by reachability). Returning the basis alongside the
+// bucket is what lets the report say which of its numbers is an assertion and
+// which is a measurement; it deliberately does NOT re-derive the bucket.
+//
+// basis: "named"   — a hand-typed BUCKET_FILE entry
+//        "prefix"  — a BUCKET_PREFIX match (two of the six are directories, so
+//                    any file added under them joins that bucket automatically)
+//        "default" — no rule matched; falls through to "stays"
 function bucketOf(fileRel) {
   const short = fileRel.replace("src/codegen/", "");
-  if (BUCKET_FILE[short]) return BUCKET_FILE[short];
-  for (const [pre, b] of BUCKET_PREFIX) if (fileRel.startsWith(pre)) return b;
-  return "stays";
+  if (BUCKET_FILE[short]) return [BUCKET_FILE[short], "named"];
+  for (const [pre, b] of BUCKET_PREFIX) if (fileRel.startsWith(pre)) return [b, "prefix"];
+  return ["stays", "default"];
 }
 
 // ---------------------------------------------------------------------------
@@ -407,7 +418,12 @@ for (const [fileRel, info] of fileInfo) {
     fns.push({ name, loc, cls, exported: fn.exported, start: fn.start });
   }
   const totalLines = info.text.split("\n").length;
-  perFile.push({ file: fileRel, bucket: bucketOf(fileRel), totalLines, legacyLoc, sharedLoc, deadLoc, fns });
+  const [bucket, bucketBasis] = bucketOf(fileRel);
+  // The asserted bucket contradicted by the measured classes: the file is in
+  // R10's deletion scope, yet most of its function lines survive the cut. This
+  // does NOT re-bucket the file — it reports the disagreement (#5286).
+  const bucketConflict = bucket === "frontend" && sharedLoc > legacyLoc;
+  perFile.push({ file: fileRel, bucket, bucketBasis, bucketConflict, totalLines, legacyLoc, sharedLoc, deadLoc, fns });
 }
 
 perFile.sort((a, b) => b.legacyLoc - a.legacyLoc);
@@ -469,14 +485,58 @@ for (const f of perFile) byBucket[f.bucket].push(f);
 
 const sum = (arr, k) => arr.reduce((a, f) => a + f[k], 0);
 
+// How a bucket's membership was decided, e.g. "100 prefix / 7 named". The
+// file COUNT is an assertion (a path lookup); the fn-line columns beside it
+// are measurements. Spelling out the basis is what keeps the two apart (#5286).
+const basisBreakdown = (arr) =>
+  ["named", "prefix", "default"]
+    .map((k) => [k, arr.filter((f) => f.bucketBasis === k).length])
+    .filter(([, n]) => n > 0)
+    .map(([k, n]) => `${n} ${k}`)
+    .join(" / ") || "—";
+
 console.log(`# Legacy front-end reachability (src/codegen, ${perFile.length} files)`);
 console.log(`# JSON: ${rel(jsonPath)}  (per-function detail)`);
 console.log("");
-console.log("| Bucket | files | legacy-only fn-lines | shared fn-lines | unreferenced fn-lines |");
-console.log("| --- | --: | --: | --: | --: |");
+console.log(
+  "| Bucket | files | membership basis (asserted) | legacy-only fn-lines | shared fn-lines | unreferenced fn-lines |",
+);
+console.log("| --- | --: | --- | --: | --: | --: |");
 for (const b of ["frontend", "deferred", "runtime", "stays"]) {
   const fs = byBucket[b];
-  console.log(`| ${b} | ${fs.length} | ${sum(fs, "legacyLoc")} | ${sum(fs, "sharedLoc")} | ${sum(fs, "deadLoc")} |`);
+  console.log(
+    `| ${b} | ${fs.length} | ${basisBreakdown(fs)} | ${sum(fs, "legacyLoc")} | ${sum(fs, "sharedLoc")} | ${sum(fs, "deadLoc")} |`,
+  );
+}
+console.log("");
+console.log(
+  "Bucket and file count are ASSERTED by `bucketOf` — a path lookup (`BUCKET_FILE` by name, `BUCKET_PREFIX` by",
+);
+console.log(
+  "directory, else `stays`) that reads nothing from the reachability analysis. The fn-line columns are MEASURED.",
+);
+console.log("A file can therefore sit in a bucket its own measured classes contradict — see `## bucket conflicts`.");
+console.log("");
+
+// ---------------------------------------------------------------------------
+// Bucket conflicts (#5286) — asserted `frontend` vs measured survivorship.
+// Reported, never resolved: the bucket taxonomy is R10's editorial call, and a
+// shared/legacy ratio cannot express intent. No bucket is changed here.
+// ---------------------------------------------------------------------------
+const conflicts = perFile.filter((f) => f.bucketConflict).sort((a, b) => b.sharedLoc - a.sharedLoc);
+console.log("## bucket conflicts");
+console.log("");
+console.log(
+  `${conflicts.length} file(s) asserted \`frontend\` (R10 deletion scope) whose measured shared fn-lines exceed their`,
+);
+console.log(
+  `legacy-only fn-lines — ${sum(conflicts, "sharedLoc")} shared lines counted as deletion scope. Not re-bucketed here.`,
+);
+console.log("");
+console.log("| File | basis | legacy-only fn-lines | shared fn-lines |");
+console.log("| --- | --- | --: | --: |");
+for (const f of conflicts) {
+  console.log(`| ${f.file.replace("src/codegen/", "")} | ${f.bucketBasis} | ${f.legacyLoc} | ${f.sharedLoc} |`);
 }
 console.log("");
 for (const b of ["frontend", "deferred", "runtime"]) {

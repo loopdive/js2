@@ -4,9 +4,9 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-21
-assignee: ttraenkler/fable-lead
-branch: claude/ir-3522-static-nested-family
+updated: 2026-09-05
+assignee: ttraenkler/codex
+branch: codex/3522-f2-owner-aware-direct-calls
 priority: critical
 horizon: xl
 complexity: XL
@@ -28,6 +28,9 @@ files:
   - .github/workflows/test262-sharded.yml
   - .github/workflows/refresh-baseline.yml
   - src/ir/identity.ts
+  - src/ir/class-method-names.ts
+  - src/ir/class-accessor-safety.ts
+  - src/ir/class-field-call-planning.ts
   - src/ir/class-instance-initializers.ts
   - src/ir/builder.ts
   - src/ir/extern-support.ts
@@ -51,6 +54,7 @@ files:
   - src/codegen/closures.ts
   - src/codegen/declarations.ts
   - src/codegen/ir-overlay-safety.ts
+  - src/codegen/ir-overlay-identity.ts
   - src/codegen/ir-imported-call-planning.ts
   - src/codegen/ir-plain-implicit-constructors.ts
   - src/codegen/ir-prepared-free-functions.ts
@@ -67,6 +71,13 @@ files:
   - tests/issue-3214-callable-abi.test.ts
   - tests/issue-2859.test.ts
   - tests/issue-3522-ir-nested-class-expression-ownership.test.ts
+  - tests/issue-3522-ir-nested-class-ownership.test.ts
+  - tests/issue-3522-nested-class-field-call-planning.test.ts
+  - tests/issue-3522-nested-class-field-call-admission.test.ts
+  - tests/issue-3522-nested-class-field-call-marker.test.ts
+  - tests/issue-3520-ir-first-identity.test.ts
+  - tests/issue-3520-ir-unit-identity.test.ts
+  - tests/issue-3520-planning-owner.test.ts
   - tests/issue-3520-inherited-class-integration-abi.test.ts
   - tests/issue-3521-prepared-free-function-routing.test.ts
   - tests/issue-3521-prepared-component-dependencies.test.ts
@@ -74,6 +85,8 @@ files:
   - tests/issue-3522-ir-cross-owner-free-function.test.ts
   - tests/issue-3522-ir-object-method-call-ownership.test.ts
   - tests/issue-3522-ir-static-class-method.test.ts
+  - tests/issue-3522-computed-literal-method.test.ts
+  - tests/issue-3529-selector-preclaim.test.ts
   - tests/issue-3522-test262-shard-completion.test.ts
   - tests/test262-shared.ts
   - tests/issue-3792-ir-optimization-retirement-gate.test.ts
@@ -93,6 +106,37 @@ loc-budget-allow:
   - src/ir/prepared-closure-support.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
+  # 2026-08-28 (F4). Measured against origin/main 81e54a98e: the admitted-class
+  # marker adds +120 LOC to `identity.ts` (1471 -> 1591) and +146 to
+  # `select-identity.ts` (1463 -> 1609), pushing both across the 1500-LOC
+  # god-file threshold for the first time. The marker's container, its
+  # authenticity check and the two threading helpers belong with the identity
+  # records they key on; its proof-consuming derivation belongs with the
+  # selector that consumes it. Splitting either into a new module would put the
+  # marker type on the wrong side of the identity/selection seam and force a new
+  # ir->ir import edge for every one of the seven consumers.
+  # 2026-09-03 (W1-A, PrivateIdentifier instance-method declarations). Measured
+  # against origin/main 2510fae02: identity.ts 1591 -> 1620 (+29, of which 23
+  # are the rationale comment on `privateMemberMangledName`), select-identity.ts
+  # 1621 -> 1630 (+9), select.ts 11122 -> 11128 (+6), codegen/index.ts
+  # 14773 -> 14778 (+5). The mangling helper has to live beside the identity
+  # records it names (`select.ts` already imports `identity.js`; the reverse
+  # edge would close an ir->ir cycle through dom-capability/propagate), and the
+  # other three sites are one-predicate widenings inside functions that already
+  # own the decision. All four paths are already granted above; this entry
+  # restates the grant so the allowance is not stranded (CLAUDE.md).
+  # 2026-09-03 (W1-B, PrivateIdentifier method CALL SITES). Measured against
+  # origin/main 744203f3c7: select.ts 11128 -> 11186 (+58), from-ast.ts
+  # 15252 -> 15258 (+6). 33 of select.ts's 58 are the dedicated private-call
+  # arm inside `isPhase1Expr` — it has to sit BEFORE the identifier-name gate
+  # that refused it (a bare `return false`), and it re-uses the two existing
+  # projections rather than threading a private name through the six ambient
+  # method-call arms in between, which is the widening the plan explicitly
+  # rules out. The rest is the shadow-guard name helper plus the rationale
+  # comments the reverts below are quoted in. Both paths are already granted
+  # above; this entry restates the grant so it is not stranded (CLAUDE.md).
+  - src/ir/identity.ts
+  - src/ir/select-identity.ts
 func-budget-allow:
   - src/ir/select.ts::isPhase1Expr
   - src/codegen/class-bodies.ts::collectClassDeclaration
@@ -100,11 +144,24 @@ func-budget-allow:
   - src/codegen/function-body.ts::compileFunctionBody
   - src/codegen/index.ts::buildIrClassShapes
   - src/codegen/index.ts::generateModule
+  # 2026-08-28 (F4). Measured against origin/main 81e54a98e: 628 -> 652 (+24).
+  # F4 requires the ONE resolver, the F3 proof and the derived admitted-class
+  # marker to be constructed here, before local class-expression resolution and
+  # identity selection, and then handed to five call sites in the same
+  # function. Hoisting them out would either recompute the marker per consumer
+  # (the exact thing the slice forbids) or make it a mutable sidecar.
+  - src/codegen/index.ts::planIrOverlay
   - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeFromAstResolver
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
+  # 2026-09-05 (W1-D, literal computed instance-method names). The shared
+  # class-member selection function grows by one measured line to route the
+  # method-specific descriptor name through the exact-shape arm. Keeping the
+  # wrapper at the existing selector seam preserves the identity and
+  # descriptor proof without widening unrelated member paths.
+  - src/ir/select.ts::planIrCompilation
   - src/ir/select-identity.ts::planIrCompilationByIdentity
   - src/ir/select.ts::isPhase1StatementListInScope
   - src/ir/select.ts::whyNotIrClaimable
@@ -3050,3 +3107,2402 @@ the previous slice), static-ONLY class expressions (the binding-proof residual
 above), computed member names, static fields with their class-definition-time
 ordered contract, nested heritage, and then top-level class expressions with
 their module-global binding ABI.
+
+### Implementation plan — nested instance-field direct calls (2026-08-26)
+
+This plan owns the first remaining boundary named above: an initialized
+instance field of a bounded nested class calling one exact same-source
+top-level function. It does not admit method calls, constructors, tagged
+templates, imported targets, arbitrary dynamic calls, or static-field
+definition evaluation.
+
+The current failure has two independent causes, and neither is a lowering
+deficiency:
+
+1. **The explicit-constructor inventory owner is wrong.** A bounded nested
+   explicit constructor is already promoted to a terminal class-member unit,
+   but the field support records still inherit the containing function as their
+   terminal owner. The corresponding implicit initialized constructor already
+   self-owns its fields correctly. For both forms the field's lexical owner is
+   the class; its execution owner must be the exact constructor terminal, while
+   that constructor retains the containing function in
+   **containingTerminalOwnerId**.
+2. **The direct-call collector is ownership-blind.**
+   **collectIrDirectCallLoweringPlans** recursively walks whichever root it is
+   given and assigns every nested call to the supplied owner. The overlay can
+   therefore record the same field call once as an outer-function call and
+   again as a constructor call. Constructor integration rescans the exact
+   initializer and correctly throws **selection-preparation-mismatch** rather
+   than accept the conflicting owners.
+
+The exact seams already exist. **requireIrPlanningOwnerUnitId** resolves an AST
+site through its nearest scanner-indexed declaration to the authoritative R0
+terminal owner. **collectLocalCallEdgesByIdentity** already treats property
+initializers as ownership boundaries and already drives the combined R2/R3
+free-function plus class-member fixed point. Once inventory ownership is
+correct, it naturally records constructor → callee rather than outer function
+→ callee.
+
+Do not generalize **IrIdentitySelection.localCallees** in this work. That map is
+deliberately the function-only legacy projection, and its validator requires
+both endpoints to be function units. The later identity call-edge collector is
+the authoritative mixed-owner graph. Its conservative function-only
+over-approximation across a nested class is harmless because nested ordinary
+class atomicity already withdraws the enclosing owner with the class.
+
+Land the plan amendment and the following four implementation checkpoints as
+separate ready PRs. Each implementation checkpoint is rebased from live
+**main** only after its predecessor merges. No checkpoint may be stacked
+behind an unpublished predecessor.
+
+#### F1. Correct existing explicit-constructor field ownership
+
+Limit production changes to:
+
+- **src/ir/identity.ts**.
+
+Focused test ownership:
+
+- **tests/issue-3520-ir-unit-identity.test.ts**;
+- **tests/issue-3520-planning-owner.test.ts**; and
+- only the exact identity-edge assertion needed in
+  **tests/issue-3520-ir-first-identity.test.ts**.
+
+For an already-bounded nested class, choose **explicitConstructor.id** as the
+instance-field support terminal owner when that exact record is terminal.
+Otherwise retain the current inherited owner. This is an identity correction,
+not an admission change:
+
+- the constructor remains terminal and self-owned;
+- the constructor's **containingTerminalOwnerId** remains the outer executable;
+- the field's **lexicalOwnerId** remains the exact class ID;
+- the field's **terminalOwnerId** becomes that exact constructor ID; and
+- an unsupported nested constructor remains support-owned by the outer
+  executable exactly as before.
+
+Prove explicit and implicit initialized constructors side by side, with and
+without an enclosing function, and mutate one owner/source/class/declaration
+join at a time. The runtime route, selector population, emitted bytes, and
+current call-bearing-field rejection must remain unchanged. No selector,
+direct-call, Program ABI, component, or lowering file belongs in F1.
+
+#### F2. Make source direct-call collection exact-owner-aware
+
+Limit production changes to:
+
+- **src/ir/ast-lowering-plans.ts**;
+- **src/codegen/ir-overlay-identity.ts**; and
+- **src/ir/integration.ts**;
+- **src/codegen/index.ts**, to thread the already-built identity resolver to
+  every identity-aware projection/reconciliation call; and
+- **src/codegen/ir-prepared-free-functions.ts**, to merge the full-selection
+  and remaining-selection authenticated plan maps only through exact equality;
+  and
+- **src/ir/imported-functions.ts** only if the existing resolver interface
+  needs a narrowly shared certification method rather than a new resolver.
+
+Focused test ownership:
+
+- **tests/issue-3520-lowering-plan-identity.test.ts**; and
+- **tests/issue-3522-ir-nested-class-ownership.test.ts**.
+
+Add a distinctly named identity-aware collector rather than an optional
+best-effort mode. For each candidate call, require:
+
+- the exact call AST belongs to the supplied source;
+- **requireIrPlanningOwnerUnitId(identityContext, call)** equals the requested
+  owner;
+- that owner is an exact active terminal record;
+- an **IrIdentityImportedFunctionResolver**, or an equivalently exact AST-keyed
+  certification retained from it, resolves the call's identifier through
+  **resolveTopLevelFunctionValueTarget(call.expression)**;
+- the resolved declaration, source, source-qualified unit ID, binding, and
+  compatibility name all equal the retained callable target; and
+- the retained signature is equal by the canonical closure-signature
+  comparator.
+
+The checker-backed/AST-keyed result is the authority. The current
+**targetsByLegacyName** map may remain only as a compatibility projection after
+that exact target has been certified; it must never choose or authenticate the
+target. A lexical shadow, imported binding, reassigned declaration, or
+same-spelled declaration from another source must fail even if the legacy map
+contains an otherwise compatible row. Thread the one resolver already created
+for the source through overlay projection and integration reconciliation; do
+not reconstruct checker authority from a name, span, or owner context.
+
+Use that collector in both overlay projection and integration reconciliation.
+An outer traversal must skip a call whose exact terminal owner is a nested
+constructor; the constructor traversal retains it. A nested support callable
+whose inventory terminal owner legitimately remains the containing function
+continues to belong to that function.
+
+Do not rely on **Map.set** to resolve a collision. A second producer for one
+AST call must either revalidate and reuse the one authenticated retained row or
+fail before replacing it; a different owner, binding, name, signature, source,
+or AST object always fails closed. Preserve the context-free collector for
+isolated stdlib-selfhost and linear callers until those routes supply the same
+authoritative identity context. Their behavior must remain byte-identical.
+
+F2 remains behavior-neutral because the field-call gate is still closed. Use
+an already-admitted nested method calling a top-level function as the positive
+class-owner control. Add outer-root, nested-function, implicit-constructor,
+explicit-constructor, stale AST, copied SourceFile, wrong owner, same-spelled
+foreign target, binding, name, and signature mutations. **from-ast.ts** needs
+no change: it already consumes an exact AST-site plan and verifies its owner
+before emitting the symbolic target.
+
+The implicit-constructor control in F2 is deliberately negative: with the
+field-call gate closed, any natural call owned by an implicit constructor would
+have to occur in an instance-field initializer, and that exact shape remains
+unbounded until F3/F4. Its support/nonterminal owner must therefore reject the
+identity-aware collector. Do not fabricate a terminal implicit constructor or
+admit a call-bearing field to manufacture a positive F2 row. F4 owns the first
+natural positive implicit-constructor field-call control.
+
+#### F3. Retain dormant source-qualified field-call evidence
+
+Build the proof before selection and keep production behavior closed. Prefer a
+narrow new module:
+
+- **src/ir/class-field-call-planning.ts**.
+
+Expected integration ownership:
+
+- **src/ir/class-accessor-safety.ts**, for a syntax-only inventory-candidate
+  predicate that is not a selector admission predicate;
+- **src/ir/identity.ts**, to mint the exact constructor and field-support
+  identities for that candidate while leaving it unclaimed;
+- **src/ir/select-identity.ts**, only for the immutable proof/candidate
+  input/output and exact typed fallback normalization described below;
+- **src/codegen/ir-overlay-identity.ts**;
+- **src/codegen/index.ts**; and
+- **src/ir/imported-functions.ts** only if the existing exact resolver needs a
+  narrowly shared method.
+
+Focused test ownership:
+
+- new
+  **tests/issue-3522-nested-class-field-call-planning.test.ts**; and
+- resolver tests only if the resolver API changes.
+
+F3 first splits identity candidacy from the current lowering/admission
+predicate. Add one explicitly named syntax-only candidate for the narrow bare
+field-call shape. Only the inventory scanner consumes it: a call-bearing nested
+class receives the same constructor terminal, containing-owner edge,
+field-support unit, and constructor-owned support edge that an
+already-bounded initialized class receives. The existing
+**isBoundedPreparedNestedOrdinaryClass** remains unchanged and remains the
+selector/preparation gate, so this new identity population is typed but
+unclaimed. No other predicate consumer may switch to the candidate in F3.
+
+Retain an immutable, proof-independent inventory-candidate marker for that
+exact class, constructor, source, and inventory snapshot. It exists for every
+syntax candidate even when proof collection is disabled, missing, or invalid.
+**select-identity.ts** may consume this marker only to normalize the
+still-unclaimed implicit or explicit constructor and body-member terminals to the promised typed
+**class-member-unsupported@select** fallback/outcome. It must not turn the
+candidate into a claim or preparation input. The instance-field initializer
+remains a constructor-owned support unit and therefore has no independent
+terminal outcome.
+
+This ordering is load-bearing. Building the exact field-call proof before the
+constructor and field support identities exist would force it to invent an ID
+or borrow the outer owner; waiting until F4 to mint those identities would make
+selection depend circularly on evidence that cannot yet be constructed.
+
+The proof is keyed by the exact initializer **CallExpression** and retains:
+
+- exact source file and source ID;
+- exact class, field, constructor, call, and callee declaration objects;
+- class ID, field-support unit ID, constructor terminal ID, containing terminal
+  ID, and callee unit ID;
+- the exact bare-identifier call edge;
+- the target's exact source-unit callable reference and stable signature; and
+- a frozen argument/arity projection for the bounded family.
+
+Reuse
+**IrIdentityImportedFunctionResolver.resolveTopLevelFunctionValueTarget**.
+That resolver already proves a unique, non-reassigned, same-file top-level
+function and returns its exact source-qualified unit ID. Do not create a
+parallel name resolver, use the checker-free call graph as admission authority,
+or fall back to a suffix, span, display name, or legacy map. The checker-free
+graph remains component-closure evidence only.
+
+The forward and reverse joins are mandatory: AST call → field support →
+constructor terminal → class/source, and target identifier → exact declaration
+→ exact callee unit/source. A copied AST, rebuilt inventory, wrong source,
+wrong field or constructor, ambiguous/reassigned/overloaded target, stale
+signature, optional/spread/generic call, or changed argument population
+invalidates the proof.
+
+Retain the proof as a separate optional immutable sidecar keyed back to the
+proof-independent inventory-candidate marker; never make the marker's
+existence depend on proof success. Retain both on the identity/overlay plan as
+source-qualified evidence. The newly inventoried constructor/member terminal
+rows are deliberate: while admission is inactive they must each reconcile to the exact typed
+**class-member-unsupported@select** disposition/outcome required by the
+existing terminal-outcome contract. Do not silently omit those terminals or
+leave them without an outcome. Field-initializer support rows instead reconcile
+through their constructor terminal exactly as the inventory contract requires.
+
+F3 must not change claims, prepared candidates, runtime output, or emitted
+bytes. Its new typed inventory denominator and matching terminal/fallback rows
+are expected and must be pinned explicitly. Proof-enabled versus proof-disabled
+A/B controls compare after constructing the same candidate inventory and must
+have identical claims, terminal outcomes, preparation, runtime, and bytes;
+only the immutable dormant proof sidecar may differ. A comparison against the
+pre-F3 implementation may therefore differ only by those pinned candidate
+inventory and typed fallback/outcome rows, never by an admitted body.
+
+F3 shares the identity-selection and direct-call sidecar seam with #3521.
+Rebase it onto the exact landed #3521 L1/L3 API and use that API's ownership and
+copy-on-write rules. Do not land a competing resolver or mutable sidecar.
+
+##### F3a disjoint dormant-evidence checkpoint (2026-08-28, non-authoritative)
+
+The disjoint F3 core is intentionally separable from the active
+`src/codegen/index.ts` merge surface. It establishes the following contracts
+without activating F4:
+
+- `isNestedOrdinaryClassFieldCallInventoryCandidate` is a syntax-only
+  inventory predicate. The existing
+  `isBoundedPreparedNestedOrdinaryClass` selector/preparation gate remains
+  unchanged.
+- The inventory promotes only that exact direct-nested candidate's constructor
+  and body members to terminal identities, keeps every field initializer as a
+  constructor-owned support row, and retains an immutable marker tied to the
+  exact inventory, source, class, constructor, containing terminal, fields,
+  calls, and terminal-member rows.
+- `class-field-call-planning.ts` reuses the exact identity imported-function
+  resolver's same-source top-level value path. It retains a frozen
+  source-qualified `IrFuncRef`, explicit stable callable signature, and exact
+  argument population only after every forward/reverse AST and inventory join
+  revalidates.
+- Selection consumes the proof-independent marker only to force every newly
+  inventoried constructor/member terminal to
+  `class-member-unsupported@select`; it does not consume the optional proof for
+  admission. Identity and overlay plans retain the marker and optional proof
+  sidecar as dormant evidence.
+
+This checkpoint is **not F3 acceptance** while the final production seam is
+unwired. The overlap audit originally found #5154 at `be5ec432…`, #5148 at
+`fd7b280c…`, and #5097 at `f10283be…` touching `src/codegen/index.ts`. #5154 is
+now present in the refreshed `a2191bb09520…` base; the disjoint branch still
+deliberately leaves that file untouched while #5148/#5097 remain adjacent.
+After those heads settle, the remaining narrow follow-up is:
+
+1. construct the already-shared exact resolver once before identity selection;
+2. call `planIrNestedClassFieldCalls` over the exact planning context and pass
+   its sidecar through `IrIdentitySelectionOptions`;
+3. retain that same sidecar on the outer overlay plan without rebuilding it;
+4. run the proof-enabled/proof-disabled full compiler A/B matrix and pin exact
+   inventory/outcome deltas, unchanged claims/preparation/runtime/bytes, and
+   proof-only sidecar variance.
+
+Direct planner/identity tests are necessary evidence for this checkpoint but
+cannot substitute for that final compile A/B. Until the follow-up lands, the
+production path intentionally behaves as proof-disabled: the typed candidate
+inventory and exact unsupported terminal outcomes exist, but no field-call
+body is admitted or prepared.
+
+Checkpoint evidence on the refreshed `a2191bb09520…` base. The only
+intervening changes since the measured `9f5c421b9849…` baseline were the
+unrelated #5157/#5158 issue plans; they did not touch this source or test
+surface:
+
+- TS 7 and TS 5 no-emit checks pass.
+- The focused dormant-planner matrix passes **16/16** and the four directly
+  affected identity/ownership files pass **55/55**.
+- The complete 20-file #3522 matrix on code-identical `9f5c421b9849…` reports
+  **300 pass / 17 fail**. A clean detached worktree at that same base reproduces
+  those exact 17 failures in the same four files (two cross-owner expectations,
+  eleven stale GC import-surface expectations, and four nested-static poison
+  expectations), so they are current-main baseline debt rather than an F3a
+  delta.
+- Prettier, IR layering, IR fallback, IR-only readiness, IR adoption,
+  codegen-fallback, oracle, coercion-site, optimization-retirement,
+  dead-export, LOC, and function-budget gates pass. The LOC gate measures
+  **+669 src LOC** with no unallowed growth; the existing issue-local function
+  grant accounts for `planIrCompilationByIdentity` growing **481 → 542**.
+
+#### F4. Activate only the exact prepared field-call family
+
+Primary production ownership:
+
+- **src/ir/class-accessor-safety.ts**;
+- **src/ir/identity.ts**;
+- **src/ir/select-identity.ts**;
+- **src/codegen/index.ts**;
+- **src/codegen/ir-overlay-identity.ts**;
+- **src/codegen/ir-class-shapes.ts**;
+- **src/codegen/ir-prepared-free-functions.ts**;
+- **src/codegen/class-bodies.ts**;
+- **src/codegen/ir-prepared-nested-executable-syntax.ts**;
+- **src/ir/module-bindings.ts**; and
+- **src/ir/from-ast.ts**, for the exact admitted immutable class-expression
+  binding at the final lowering boundary.
+
+Audit, but do not edit without a demonstrated shared-API need:
+
+- **src/codegen/ir-plain-implicit-constructors.ts**;
+- **src/ir/prepared-component-dependencies.ts**.
+
+Separate inventory candidacy from selector admission. A class may receive the
+exact constructor/field identities required to validate an F3 proof in F3, but
+it becomes claimable only here and only when every call-bearing field carries a
+current exact proof. Replace only the selector/preparation uses of the strict
+predicate with a proof-consuming admission decision; keep syntax-only
+inventory candidacy distinct.
+Never make arbitrary calls admissible by deleting **CallExpression** from
+**boundedPreparedInstanceFieldInitializer**.
+
+F3 may retain dormant proof and inventory candidacy, but it may not manufacture
+admission. In F4, **codegen/index.ts** validates the complete proof and computes
+one immutable, proof-derived admitted-class marker before local class-expression
+resolution and identity selection. The overlay plan carries that marker without
+recomputation into **ir-class-shapes**, **module-bindings**, and the selector.
+For `const C = class { ... }`, project one exact marker-aware binding
+identity/name into the class-shape sidecar, carry that same identity through
+local-class resolution, and require it again at the **from-ast** lowering site.
+No consumer may call
+**boundedPreparedNestedOrdinaryClassBindingName** as an independent admission
+decision for that candidate. Thread that same marker through selection,
+**ir-prepared-free-functions**, **class-bodies**,
+**ir-prepared-nested-executable-syntax**, and **module-bindings**. Those
+consumers must not independently re-run, approximate, or widen the syntax
+predicate: they either consume the exact admitted marker for the same class,
+source, constructor, and proof snapshot or fail closed. The
+plain-implicit-constructor and final dependency routes remain audit controls
+unless a test demonstrates that this immutable marker must cross one of their
+existing boundaries. The final combined prepared fixed point must
+revalidate every admitted marker against surviving constructor/callee units and
+withdraw the whole class if any dependency or proof row disappeared; the
+preselection marker is evidence, never a bypass around final reconciliation.
+
+The first positive family is deliberately narrow:
+
+- one nested ordinary class declaration or immutable class expression;
+- no heritage, static field, computed field name, decorator, nested executable,
+  **super**, construction, member call, tagged template, import, or
+  cross-source target;
+- a fixed-arity bare call to one unique non-reassigned same-source top-level
+  function;
+- no optional, spread, generic, or dynamic argument edge;
+- exact stable parameter/return types already supported by the prepared
+  constructor field lowerer; and
+- caller, constructor, callee, and enclosing owner all surviving the existing
+  combined R2/R3 candidate fixed point.
+
+The existing pipeline remains authoritative after admission:
+**collectIrClassInstanceInitializers** preserves source order; constructor
+integration binds each exact initializer to the constructor owner; direct calls
+lower through the retained **IrFuncRef**; final IR calls become Program ABI unit
+references; and post-pass component derivation closes over the final symbolic
+edge. Do not add a new lowering opcode, eager legacy body, provider
+publication, sealing exemption, or compile-twice retry.
+
+Positive runtime/Wasm coverage runs on both **gc** and **standalone**:
+
+- implicit nested declaration with **p = seed(40)**;
+- explicit constructor proving field initialization precedes constructor-body
+  reads;
+- immutable nested class expression;
+- two source-ordered call-bearing fields;
+- inlining disabled, with one exact constructor call target visible in WAT;
+- inlining enabled, where optimization may remove the call but semantic and
+  final component evidence remains valid;
+- the already-admitted nested-method call from F2; and
+- an unchanged top-level initialized-field call.
+
+Poison every expected direct body. Require exact outcomes for the outer owner,
+constructor, members, and callee; one prepared component before a legitimate
+optimizer removes an edge; zero legacy bodies for the positive component; no
+post-claim errors; valid Wasm; node/direct/IR runtime equality; and exact
+evaluation order.
+
+Negative source controls remain direct without an invariant:
+
+- unpreparable, unknown, imported, cross-source, duplicate, overloaded,
+  reassigned, or same-spelled foreign target;
+- lexical shadowing or enclosing-frame capture;
+- optional, generic, or spread call;
+- member call such as **Math.floor(...)**;
+- **new**, tagged template, nested executable, or **super**;
+- static field, heritage, dynamic computed field, or mutable class-expression
+  binding; and
+- a callee removed by the final prepared fixed point.
+
+One-fact fail-closed mutations cover:
+
+- field owner changed from constructor to outer;
+- field/class/source/constructor ID or AST object replaced;
+- constructor no longer self-owned or its containing owner changed;
+- call plan owner changed, missing, duplicated, or attached to a copied AST;
+- same-spelled target UnitId, binding, compatibility name, or signature changed;
+- source file/source ID mismatch;
+- selected callee removed from the prepared denominator;
+- final symbolic call missing its Program ABI unit binding; and
+- component evidence attributing the call to the outer function.
+
+The unpreparable-callee control must prove successful direct execution, exact
+direct binary/WAT parity, a typed Unsupported outcome, and poison evidence that
+the direct constructor emitter remained live. Successful execution alone is
+not acceptance evidence.
+
+#### Dependencies, conflicts, and landing gates
+
+This issue formally depends on #3521. The docs-only plan amendment is unblocked
+and may land now; it authorizes no runtime replay and no R3 completion claim.
+F1 is technically disjoint and behavior-neutral. F2 and F3 share the
+source-qualified direct-call map with #3521's active L1/L3 work, so they wait
+for that API to land or rebase onto it exactly. F4 remains HOLD until the shared
+#3521 evidence API has one owner and F1–F3 are merged.
+
+#4260's prepared provider transaction is disjoint provided this work does not
+edit Program ABI session/provider/import/type planning or component sealing.
+Do not solve field calls by moving provider publication, weakening atomic
+sealing, or retaining dead imports.
+
+For every implementation checkpoint run its focused suites, the full existing
+#3522 class-family matrix, TypeScript 7 and 5, Prettier/Biome, IR
+layering/dialect/fallback/IR-only/adoption gates, cross-backend differential
+coverage, oracle/coercion/optimization/dead-export ratchets, and LOC/function
+budgets. Measure source/function growth before adding any exact issue-scoped
+allowance; never raise a global baseline speculatively. Run
+**pnpm run check:loc-budget** again immediately before every signed commit.
+Never skip pre-commit or pre-push hooks.
+
+Every heavy command and every commit/push boundary requires a fresh finite,
+non-negative one-minute load strictly below **logical cores - 2**. Each signed
+checkpoint receives independent read-only review before push and is shepherded
+through actual merge before its successor is published.
+
+### 2026-08-27 F2 implementation checkpoint — exact-owner direct-call plans
+
+F2 is implemented as the behavior-neutral authority split specified above.
+`collectIrDirectCallLoweringPlansByIdentity` is a distinct collector; the
+context-free collector used by resolver-less linear and stdlib-selfhost routes
+retains its prior contract. The identity-aware path requires the exact source
+and planning owner for each AST call, active self-owned owner and target
+terminals, and the one source resolver's
+`resolveTopLevelFunctionValueTarget` certification. Declaration object,
+source-qualified unit, callable binding, compatibility name, and canonical
+closure signature are revalidated before one retained plan can be projected or
+reconciled. Copied roots/sites, lexical ancestry drift, same-spelled foreign
+targets, stale owners, bindings, names, signatures, or source identities fail
+closed.
+
+The one resolver is threaded through single- and multi-source overlay planning
+and integration reconciliation. Source-unit targets remain disjoint from the
+non-unit runtime/intrinsic compatibility projection. A duplicate producer may
+only reuse an identical authenticated row; `Map.set` never resolves an owner
+collision, including when full-selection and remaining-selection plan maps are
+combined. The existing field-call selector gate stays closed, so this slice
+does not admit a class field, change a claim/outcome, or alter emitted behavior.
+
+Focused evidence covers outer-root, nested-function, implicit/explicit
+constructor, admitted nested-method, copied AST/source, ancestry, wrong-owner,
+foreign-target, binding/name/signature, and collision controls. The #3522
+GC/standalone matrix is 7/7 and the new #3520 collector/collision/mutation
+controls are 4/4. TypeScript 7 and 5, formatting, IR layering, fallback
+controls, and the function ratchet pass. The full adjacent #3520 suite is
+13/13. Its host-void-callback fixture now supplies the exact admitted
+`HTMLElement_addEventListener` operation certificate, so missing/stale owner
+mutations reach the intended callback-plan invariant instead of stopping at the
+earlier generic capability guard. With only that test-fixture correction, exact
+parent `5bdc209f0de611808a701d9b08a0b971d689f12f` passes the original denominator
+9/9; F2 passes all 13. Against that same parent, F2 is
+byte-identical within every measured target/option: GC direct is 974 bytes,
+SHA-256 `b9358ef967232d9248c5e14b660fba012397e344f45d108bc926329516300d77`;
+GC experimental is 981 bytes,
+`b18876938bb429a377c5abdb3a476cf3a6c554fd8ca3d9dec64c68861d70259e`;
+standalone direct is 49,113 bytes,
+`e1a48a77e3c902f5097cc4329c7787f70dc99af68621d2ac418da3c9e34229ee`;
+and standalone experimental is 49,120 bytes,
+`33b6777e092efee30c6f20e2266aba9125ed0efcd75de15831a7153dd0d02041`.
+The pre-existing 7-byte direct-versus-experimental difference is unchanged and
+is not attributed to F2.
+
+Production growth is confined to the five files authorized by F2: +152 in
+`src/ir/ast-lowering-plans.ts`, +29 in
+`src/codegen/ir-overlay-identity.ts`, +25 in
+`src/codegen/ir-prepared-free-functions.ts`, +30 in
+`src/codegen/index.ts`, and +37 in `src/ir/integration.ts`. The existing
+issue-scoped LOC allowances for `index.ts` and `integration.ts` cover those
+measured changes when this plan is included in the checkpoint; no budget
+baseline changes. F2 remains `in-progress` work under #3522. F3 dormant
+field-call evidence and F4 bounded admission remain separate post-merge
+checkpoints and inherit the same independent-review, strict-load,
+signed-commit, and unskipped-hook gates.
+
+The post-push kind-neutrality gate found one evidence location made stale by
+the added `integration.ts` lines. The `forof.string` row keeps its existing
+`js` verdict, `dialect` placement, rationale, declaration, and two-entry
+evidence set; only the integration evidence location moves from line 5109 to
+line 5146. The relocked
+baseline SHA-256 is
+`42686323c13fcb8539e82b179efd89a4d2feba10edefc7d4772ca65130a91a42`.
+`check:ir-kind-neutrality` again reports 85 kinds: 55 neutral, 27 JS-dialect,
+and 3 unresolved, with 58 core placements and 27 dialect placements. No row,
+verdict, placement, or phase-two move was added, removed, or widened.
+
+### 2026-08-28 F4 implementation checkpoint — the exact prepared field-call family
+
+F4 activates the narrow family F3 prepared evidence for, and nothing wider.
+Measured baseline on `origin/main` `81e54a98e`, through the production
+`compile` seam with `experimentalIR: true, trackIrOutcomes: true`, for
+`class Box { p: number = seed(40); get(): number { return this.p; } }` inside
+`run`: `seed=emitted(ir)`, and `run`, `Box_new@`, `Box_get@` all
+`unsupported(legacy)` on both **gc** and **standalone**. On this branch all
+four are `emitted(ir)` with `legacyBodyEmitted: false`, on both lanes, with the
+direct class and function emitters poisoned.
+
+**Candidacy stays separate from admission.**
+`isBoundedPreparedNestedOrdinaryClass` is unchanged and still refuses a
+call-bearing field; `boundedPreparedInstanceFieldInitializer` still rejects
+`CallExpression`. It is now expressed as
+`isBoundedPreparedNestedOrdinaryClass(d) ? nestedOrdinaryClassLexicalBindingName(d) : undefined`,
+so the syntax-only lexical name is shared by inventory candidacy and admission
+without either deriving from the other.
+
+**One marker, computed once, threaded never recomputed.** `planIrOverlay` in
+`src/codegen/index.ts` now constructs the ONE exact resolver at the top of the
+function (it previously built it at the plan boundary), calls
+`planIrNestedClassFieldCalls` over it, and derives one immutable
+`IrNestedClassFieldCallAdmission` via
+`computeIrNestedClassFieldCallAdmission` — all before `buildIrClassShapes`
+(`selection-candidate`), before `makeIrLocalClassExpressionResolver`, and
+before identity selection. That same object is then passed to the
+selection-candidate and lowering class-shape builds, local class-expression
+resolution, `planIrOverlayByIdentity`, and the class-body routing; it is
+carried on `IrIdentitySelection` and `IrOverlayIdentityPlan` and read from
+there by `ir-prepared-free-functions`, `class-bodies` and
+`ir-prepared-nested-executable-syntax`. No consumer re-runs a syntax predicate:
+each either finds the exact class in the marker or falls back to the unchanged
+strict predicate. `src/ir/from-ast.ts` requires the identity again at the
+lowering boundary by exact `classId` — the shape published in the class-shape
+sidecar under the binding name must be the shape of exactly that class
+expression — which is strictly stronger than the previous name-plus-presence
+check and closes the outer-class shadowing hole.
+
+The admission is minted only when the sidecar belongs to this exact inventory,
+EVERY call-bearing field carries a currently valid proof whose class, field,
+constructor, containing owner, source and `IrFuncRef` all rejoin the candidate,
+and the class resolves one lexical binding name. The selector then revalidates
+every admitted row against the live inventory — including that each field's
+callee is an exact active same-source top-level function terminal whose
+declaration name equals the retained compatibility name — and raises a typed
+planning invariant otherwise. The final combined R2/R3 prepared fixed point in
+`ir-prepared-free-functions.ts` treats each admitted class as one atom:
+constructor, every promoted body member, the containing terminal owner and
+every proved callee survive together or the whole class withdraws.
+
+**The first family excludes nested executables, and that exclusion is
+measured, not assumed.** On `origin/main` a CALL-FREE bounded nested class
+whose method contains `const f = (): number => this.p` is already a hard
+compile failure (`ir/from-ast: 'this' reference outside an instance method
+body`, owner outcome `invariant`). Admitting the field-call variant of that
+shape produced the identical failure, so
+`nestedOrdinaryClassBodyHasNestedExecutable` keeps it out; the control is
+pinned in the negative matrix and now matches `origin/main` exactly.
+
+Positive coverage on both **gc** and **standalone**, with the direct class and
+function emitters poisoned: implicit nested declaration, explicit constructor
+proving field initialization precedes constructor-body reads (`40100`, where
+every wrong ordering yields `0` or `NaN`), immutable nested class expression,
+two source-ordered call-bearing fields, the already-admitted F2 nested-method
+call, and the unchanged top-level initialized-field call. Component evidence
+attributes the call to the CLASS: `run`, `Box_new@` and `Box_get@` share one
+`prepared-component:` id naming both the `class-implicit-constructor` and the
+`class-instance-method` terminals, while the callee keeps its own single-unit
+component.
+
+With inlining OFF the emitted call edge is observable exactly once, in the
+constructor `_init` and nowhere else, with no `call_ref` / `call_indirect` /
+`__call_m_`. That assertion needed a non-foldable callee: with
+`seed(v) => v + 2` the whole initializer folds to `f64.const 42` even at
+`JS2WASM_IR_INLINE=0`, and emitted calls carry the numeric function index, not
+`call $seed` — a `call \$seed` regex matches nothing and the assertion would
+have passed vacuously. With inlining ON the optimizer may remove the edge;
+semantics, validity and the component evidence still hold.
+
+Negative source controls, each measured identical on `origin/main` and on this
+branch: member call, construction, tagged template, optional call, generic
+call, spread call, lexical shadowing, enclosing-frame capture, overloaded
+target, static field, heritage, dynamic computed field name, mutable
+class-expression binding, nested executable in a member, a callee removed by
+the final prepared fixed point, and a same-spelled cross-source target. Three
+of these carry PRE-EXISTING direct-path divergences from node unrelated to F4
+(spread evaluates to `NaN`/`0`, lexical shadowing resolves the outer `seed`,
+enclosing-frame capture yields `0`), so those rows are anchored to the direct
+compiler rather than to a node constant; the optional-call program is a
+pre-existing hard codegen failure on `origin/main` and is therefore proved at
+the marker level instead of the runtime level.
+
+The unpreparable-callee control proves all four required facts: successful
+direct execution, exact whole-WAT and whole-binary parity between
+`experimentalIR: false` and `experimentalIR: true`, typed `unsupported`
+outcomes for the owner and both class members, and a firing
+`JS2WASM_TEST_POISON_DIRECT_CLASS_BODY` proving the direct constructor emitter
+stayed live.
+
+Evidence:
+
+- New focused suites pass **59/59**: `issue-3522-nested-class-field-call-admission`
+  38/38 (both lanes) and `issue-3522-nested-class-field-call-marker` 21/21.
+- The marker suite covers the one-fact fail-closed mutations: forged
+  (non-planner) marker, wrong inventory, replaced class/constructor/containing/
+  source id, replaced class declaration object, replaced inventory candidate,
+  mismatched `SourceFile`, replaced field declaration / initializer call /
+  field-support unit id / callee unit id / callee compatibility name,
+  duplicated admitted row, missing field row, and construction without planner
+  authority.
+- The #3522 class-family matrix, run in batches on a 16 GB container: **19 of
+  20 files** run; `issue-3522-ir-object-method-call-ownership` OOMs the vitest
+  fork on `origin/main` and on this branch alike (also true of
+  `issue-3521-prepared-free-function-routing`), so it is an environment limit,
+  not a delta. Across the 19: **7 failures, all reproduced identically on
+  `origin/main` `81e54a98e`** — four nested-static, one accessor
+  optimized-binary bound, one cross-owner unsupported-console parity, one
+  captured object-method gc. **F4 introduces no new failure.**
+- Four pre-F4 boundary pins were retargeted, because they pinned exactly the
+  gate F4 opens: the three "field initializer CALLS a local function stays
+  direct" controls now use a MEMBER call (which no proof can reach), and
+  `issue-3522-ir-nested-class-ownership`'s "keeps the call-bearing nested field
+  family closed" became "prepares the call-bearing nested field family once".
+  The retargeted controls were verified to stay direct.
+- Adjacent suites pass: `issue-3520-ir-unit-identity`,
+  `issue-3520-planning-owner`, `issue-3520-lowering-plan-identity`,
+  `issue-3520-ir-first-identity` and `issue-3521-prepared-component-dependencies`
+  **96/96**; `class-expressions` and `nested-class-declarations` 4/4.
+- TypeScript 7 and TypeScript 5 no-emit, Prettier, Biome lint, IR layering (86
+  import lines, baseline 86), IR dialect, IR fallback, IR-only readiness
+  (verdict READY), IR adoption, codegen-fallback, oracle, coercion-site,
+  optimization-retirement, dead-export, LOC and function budgets all pass,
+  including the CI-base simulation (`LOC_GATE_BASE=origin/main`).
+- `check:ir-kind-neutrality` needed one evidence relocation caused by the +24
+  lines in `from-ast.ts`: `vec.new_fixed` moves from `from-ast.ts:4502` to
+  `:4526` and `vec.set`'s second evidence entry from `:380` to `:383`. No row,
+  verdict, placement, rationale or phase-two move changed; the diff is two
+  lines. The relocked baseline SHA-256 is
+  `64c8e68d5c56620872363b187c381255a1c2e989a5d09a217fd2e7c60df1bc1f`, and the
+  gate again reports 85 kinds: 55 neutral, 27 JS-dialect, 3 unresolved, 58 core
+  placements, 27 dialect placements.
+
+Production growth against `81e54a98e`, confined to the F4 ownership list:
+`src/ir/select-identity.ts` +156, `src/ir/identity.ts` +120,
+`src/ir/class-accessor-safety.ts` +59, `src/codegen/index.ts` +36,
+`src/codegen/ir-prepared-free-functions.ts` +25, `src/ir/from-ast.ts` +24,
+`src/ir/module-bindings.ts` +14, `src/codegen/ir-overlay-identity.ts` +11,
+`src/codegen/class-bodies.ts` +7, `src/codegen/ir-class-shapes.ts` +7,
+`src/codegen/ir-prepared-nested-executable-syntax.ts` +4 — net **+463 src
+LOC**. `src/codegen/ir-plain-implicit-constructors.ts` and
+`src/ir/prepared-component-dependencies.ts` remained audit-only: no test
+demonstrated a shared-API need across their boundaries. Two issue-local
+allowances are added with dated rationale — `src/ir/identity.ts` and
+`src/ir/select-identity.ts` cross the 1500-LOC god-file threshold for the first
+time, and `src/codegen/index.ts::planIrOverlay` grows 628 → 652 because the
+resolver, the proof and the marker must all be constructed there, before
+selection, and handed to five call sites in the same function. No budget
+baseline file was edited.
+
+F4 remains `in-progress` work under #3522. Not yet covered, and deliberately
+left specified rather than half-implemented: the wider families the spec
+already excludes (static fields, heritage, computed names, member/imported/
+cross-source targets), and the pre-existing nested-executable-in-a-member
+failure that F4 routes around rather than fixes — that shape is broken for the
+CALL-FREE bounded family too and belongs to its own slice.
+
+#### 2026-08-29 correction — accessors leave the first admitted family
+
+The first F4 push turned `quality` red on the accessor suite's
+"does not grow the optimized binary versus the direct control" row. The
+checkpoint above attributed that row to a container artifact. **That
+attribution was wrong, and the A/B that produced it was run but not read
+carefully enough**: reverting only the eleven F4 source files to
+`origin/main` and re-measuring gives, for all three fixtures in that row,
+byte-identical numbers and byte-identical claimed-unit sets —
+
+| fixture | rawDirect | rawPrepared | optDirect | optPrepared |
+| --- | --- | --- | --- | --- |
+| `METHOD_AND_GETTER` | 683 | 690 | 367 | 367 |
+| `GETTER_AND_SETTER` | 1081 | 1007 | 588 | **1007** |
+| `CLASS_EXPRESSION` | 4915 | 855 | 4915 | 382 |
+
+identical on `origin/main` `23bc3ddece` and on the F4 branch. So F4 did not
+grow that binary. The failing fixture is `GETTER_AND_SETTER`, an
+**accessor-only class with no field call**, which F4's admission never
+touches: `optPrepared == rawPrepared` because wasm-opt aborts on the prepared
+module (`Assertion failed: type.isStruct(), effects.h:650, writesStruct`) and
+`optimize` silently returns the unoptimized binary, while the direct module
+optimizes 1081 → 588.
+
+It reached CI only because the slice had MODIFIED that file. `test:changed-root`
+runs exactly the root test files a branch adds or modifies — `ci.yml`'s own
+comment states "Untouched root test files do NOT run at PR time" — and
+`tests/guard-suite.json`'s twenty entries contain no `issue-3522` file. So the
+row never runs on `main`, and `main` being green was never evidence about it.
+Touching the file armed the fix-on-touch ratchet against pre-existing rot the
+slice has no remit to repair.
+
+The resolution narrows F4 rather than the bound. **Accessor-bearing classes
+leave the first admitted family** (`nestedOrdinaryClassBodyHasAccessor`),
+for the same kind of measured reason as the nested-executable exclusion:
+
+1. the F4 plan's positive-coverage list contains no accessor case;
+2. F3 already inventories accessor field-call candidates and deliberately
+   leaves them unclaimed — its merged suite pins exactly that; and
+3. the accessor family's optimized lane is already broken on `origin/main`
+   independently of any field call, as the table above shows, so admitting its
+   field-call variant would add instances of a known-broken shape rather than
+   new compile-once coverage.
+
+With that narrowing, `tests/issue-3522-nested-class-accessor.test.ts` is
+restored to `origin/main` byte-for-byte: its
+"keeps a nested accessor class whose field initializer CALLS a local function
+direct" assertion is TRUE again under F4 (verified passing), the file is no
+longer selected by `changed-root`, and that lane returns to main's behaviour
+exactly. The accessor boundary is instead pinned where F4 owns it — three new
+controls in the F4 suites (two runtime, one marker-level, the last one
+asserting that F3 still inventories the candidate and mints its dormant proof
+while admission refuses).
+
+Evidence after the correction:
+
+- CI's gate reproduced exactly (`scripts/hooks/changed-root-tests.sh` against
+  `23bc3ddece`, `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`,
+  `JS2WASM_EVAL_ENGINE=interpreter`): **5 files selected, 113 tests, exit 0** —
+  `issue-3522-ir-nested-class-ownership` 7/7,
+  `issue-3522-nested-class-field-call-admission` 40/40,
+  `issue-3522-nested-class-field-call-marker` 22/22,
+  `issue-3522-nested-class-field` 24/24,
+  `issue-3522-nested-implicit-constructor` 20/20.
+- All fifteen ratchet/format/lint gates pass, plus the
+  `LOC_GATE_BASE=origin/main` simulation for both budgets, and TypeScript 7 and
+  5 no-emit.
+- Source growth is now `src/ir/select-identity.ts` +158,
+  `src/ir/identity.ts` +120, `src/ir/class-accessor-safety.ts` +88,
+  `src/codegen/index.ts` +36, `src/codegen/ir-prepared-free-functions.ts` +25,
+  `src/ir/from-ast.ts` +24, `src/ir/module-bindings.ts` +14,
+  `src/codegen/ir-overlay-identity.ts` +11, `src/codegen/class-bodies.ts` +7,
+  `src/codegen/ir-class-shapes.ts` +7,
+  `src/codegen/ir-prepared-nested-executable-syntax.ts` +4 — net **+494 src
+  LOC**, inside the same allowances.
+
+The other six failures the checkpoint above called pre-existing were re-audited
+against the CI lane, not just the container. None of them is in
+`tests/guard-suite.json`, and this branch modifies none of them, so
+`changed-root` does not select any of them and CI does not exercise them on
+this PR: four in `issue-3522-nested-class-static`, one in
+`issue-3522-ir-cross-owner-free-function`, one in
+`issue-3522-ir-object-method-ownership`. Each was additionally confirmed to
+fail with the eleven F4 source files reverted to `origin/main` in the same
+container — the correct instrument for "did this slice cause it", which
+answers no. Whether they would fail on a CI runner is a separate question this
+slice does not answer and does not need to.
+
+The remaining accessor-family defect is real and now explicitly out of scope:
+wasm-opt aborts on the prepared accessor module, and `optimize` swallows the
+abort and returns the unoptimized binary rather than reporting it. The silent
+fallback is the more dangerous half — a crashing optimizer currently reads as a
+successful compile. Both belong to the accessor slice, not to F4.
+
+## 2026-09-03 — this issue's claim is a GHOST, and it has blocked R3 for five days
+
+`claim-issue.mjs --check 3522` reports:
+
+```
+#3522 is CLAIMED by ttraenkler/opus-3522-f4 (since 2026-08-28T22:01:28Z).
+claim-issue: REFUSED (exit 3)
+```
+
+**That lane finished on 2026-08-29 and never released.** Evidence, all checked:
+
+| fact | value |
+| --- | --- |
+| claim holder | `ttraenkler/opus-3522-f4` (slice-named, not epic-named) |
+| its branch | `claude/issue-3522-f4-field-call-admission` |
+| its PR | **#5199, MERGED 2026-08-29T04:27:46Z** by the merge-queue bot |
+| branch vs `main` | **0 ahead, 1299 behind** — nothing left on it |
+| any `*3522*` branch moved since | **no** — the other four last moved 2026-08-15/16 |
+
+So the claim on the **bare issue id** outlived the slice that took it by five days.
+Every other lane this week claimed a *slice* (`3526:f3s1`, `3521:r2f1`,
+`3523:r4m1`) and released on merge; this one claimed the whole issue and did not.
+
+**The cost is concrete.** `claim-issue.mjs` exit 3 is what a dispatcher checks
+before starting, and `budget-status --pick` excludes claimed issues from its
+recommendations. So R3 — `priority: critical`, `sprint: current`, and the
+**second-largest blocker** in the 2026-09-03 dogfood census (the class family is
+7 of 33 single-host rejections; see `#3518`) — has been invisible to dispatch
+since 2026-08-29 while reading as actively owned.
+
+**Fix, one line:**
+
+```bash
+node scripts/claim-issue.mjs --release 3522 ttraenkler/opus-3522-f4
+```
+
+**Deliberately not run here.** #3522 is `horizon: xl` and #5199's own body says
+"F4 is a checkpoint under #3522, not its completion" — so someone intended to
+continue. If that lane is somehow still live, releasing lets a second lane start
+the same XL work, which is the duplicate-work hazard CLAUDE.md documents at
+length. The evidence says it is not live, but the asymmetry (a five-day-old
+ghost costs a day; a duplicated XL slice costs a week) says a human or the next
+session should make that call with this evidence in hand rather than have it
+made at 02:00 by a session that is suspending.
+
+**If you release it**, the next slice is well-specified: the class family in the
+dogfood census is `class-member-unsupported` ×4, `class-projection-unsupported`
+×2, `class-method` ×1, plus `static-class-initialization` ×1 on the module-init
+side — 7–8 units, second only to R4's module-init blocker.
+
+### Addendum — the session evidence is weaker than it looks, and here is why
+
+Before suspending I went looking for the one fact that would settle it: does
+the F4 lane's session still exist? `list_sessions` (100 rows, back to
+2026-07-17, so the 2026-08-28 claim window is covered) has **no row for
+`opus-3522-f4`**. The 12 rows in the 08-27..08-29 window are:
+
+| created (UTC) | status | title |
+| --- | --- | --- |
+| 08-28 21:44 | **RUNNING** | IR migration |
+| 08-28 21:58 | archived | PR #23 repository migration |
+| 08-28 22:36 | idle | Deno integration |
+| 08-28 23:13 | idle | ES edition feature list currency |
+| 08-29 00:53 | idle | PR #5183 fix |
+| 08-29 02:44 | idle | 3520 R1-A review + R1-B repair |
+| 08-29 02:44 | idle | 5165 tail loops/try adoption |
+| 08-29 02:44 | idle | 5166 nested-vec carrier + 4470 lift |
+| 08-29 02:45 | idle | 5167 string-index loop proof |
+| 08-29 02:45 | idle | 3521 R2-v2 static collector repair |
+| 08-29 07:41 | idle | 3523 R4 gap-1a single-pass module init |
+| 08-29 16:29 | idle | Landing page passrate not updating |
+
+**I nearly read that as "no session ⇒ the lane is dead." It does not say
+that.** A lane dispatched as an in-process `Agent` subagent never gets a
+session row at all, so its absence is consistent with both "gone" and "never
+had one." And the timing points exactly there: the claim landed
+**2026-08-28T22:01:28Z, seventeen minutes after** the `IR migration` session
+opened at 21:44 — the shape of a plan-then-dispatch subagent, not of an
+independent lane. Note that session is the one row still marked **RUNNING**.
+
+What the table *does* establish is narrower and still useful:
+
+- **Every sibling R-slice from this same window has its own session row**
+  (R1 #3520, R2 #3521, R4 #3523) — and every one of those released its claim
+  on merge. #3522 is the only R-slice of that week with neither.
+- **There is no session anyone can reattach to** to ask the F4 lane whether it
+  intends to continue. Whatever it was, it is not reachable.
+
+So the release decision rests where it already did — on the merged PR, the
+0-ahead/1299-behind branch, and five days of no branch movement — and **not**
+on this listing, which cannot distinguish a dead lane from a subagent. The one
+thing worth checking before releasing that I could not: whether the
+still-RUNNING `IR migration` seat considers F4 unfinished work of its own.
+
+## Measurement 2026-09-03 — class-arm census
+
+Run on `origin/main` **`42a0adf7d47579e4632c7ddd4b82f6e5732cb7bf`** ("Merge pull
+request #5535"), through the production `compile` seam with
+`experimentalIR: true, trackIrOutcomes: true` and `JS2WASM_IR_SHAPE_DIAG=1`,
+sequentially in one process, over the full census population the #5285 survey
+used: **`tests/dogfood/corpus` (20 `.js`) + `website/playground/examples` (13
+`.ts`) = 33 entries × 2 lanes = 66 compiles**. No source was edited; the probe
+harness is `.tmp/` only.
+
+### Instrument validation
+
+The run reproduces #3518's 2026-09-03 dogfood census: 35 terminal units per
+lane, 33 unsupported / 1 emitted / 1 non-executable on single-host, 31
+unsupported on standalone, and the class family at exactly
+`class-member-unsupported ×4`, `class-projection-unsupported ×2`,
+`class-method ×1`, `static-class-initialization ×1` — **identical on both
+lanes**. Two non-class buckets have drifted since that census as main advanced
+(`body-shape-rejected` 19→18 sh / 16→14 sa; `template-substitution-unsupported`
+and, on standalone, `string-method-unsupported` are now split out). The class
+family has not moved.
+
+| corpus | lane | units | emitted | unsupported | non-exec |
+| --- | --- | --: | --: | --: | --: |
+| dogfood (20) | single-host | 35 | 1 | 33 | 1 |
+| dogfood (20) | standalone | 35 | 0 | 31 | 4 |
+| playground (13) | single-host | 73 | 54 | 8 | 11 |
+| playground (13) | standalone | 73 | 48 | 14 | 11 |
+
+**Finding 0 — the class family is ONE FILE.** All 16 class-family refusal rows
+(8 units × 2 lanes) come from `tests/dogfood/corpus/classes.js`. Every one of
+the **20 playground `class-member` rows is `emitted`** on both lanes: classes
+already compile once on that corpus. There is no second file to generalise
+from.
+
+**Finding 1 — the `detail` string does not name the arm for these codes.** The
+brief assumed `detail` could be mapped to a source line. It cannot here:
+`src/codegen/ir-overlay-outcomes.ts:827` composes
+`` `${unit.matchName} rejected by IR selection (${fallback.reason})` `` whenever
+the identity fallback carries no detail, so every class row reads
+`Animal_get_label rejected by IR selection (class-member-unsupported)` — the
+code restated, zero arm information. `JS2WASM_IR_SHAPE_DIAG=1` adds arm detail
+for `body-shape-rejected` and for #5285's module-binding refusals, **not** for
+the class reasons. The arms below were therefore established by source reading
+plus **fixture bisection**, which is the only instrument that currently answers
+this question.
+
+### Raw class rows (both lanes identical; single-host shown)
+
+| unit | file:line | unitKind | code | stage |
+| --- | --- | --- | --- | --- |
+| `<module-init>` | classes.js:2 | module-init | `static-class-initialization` | select |
+| `Animal_new` | classes.js:5 | class-member | `class-projection-unsupported` | select |
+| `Animal_get_label` | classes.js:6 | class-member | `class-member-unsupported` | select |
+| `Animal_set_label` | classes.js:7 | class-member | `class-member-unsupported` | select |
+| `Animal_<computed>` | classes.js:8 | class-member | `class-method` | select |
+| `Animal_make` | classes.js:9 | class-member | `class-member-unsupported` | select |
+| `Dog_new` | classes.js:12 | class-member | `class-projection-unsupported` | select |
+| `Dog_speak` | classes.js:13 | class-member | `class-member-unsupported` | select |
+
+### Arm map — arm (file:line) → units → lanes
+
+| # | arm | file:line | units firing | lanes |
+| --- | --- | --- | --- | --- |
+| **A1** | **root: class position type is `any`** → `ctorOk = false`, class never enters the shape sidecar | `src/codegen/index.ts:1633` (predicate `tsTypeToClassPositionIr` `:2032`), gate `:1646`. Same-cause twin for fields: `:1747`, gate `:1752` (via `valTypeToIrField` `:2059`, which returns null for string/externref with no AST evidence) | `Animal`, `Dog` (⇒ **6 units**) | gc + sa |
+| A1a | downstream stamp, constructors: `projectionGap && !isStaticMethod` | `src/ir/select-identity.ts:1334` (`localClassHasKnownProjectionGap` `src/ir/select.ts:8039`, which is `!projectedClassShapes.has(className)`) | `Animal_new`, `Dog_new` | gc + sa |
+| A1b | downstream stamp, non-constructors: no exact member descriptor | `src/ir/select-identity.ts:1329` | `Animal_get_label`, `Animal_set_label`, `Animal_make`, `Dog_speak` | gc + sa |
+| **A2** | **member NAME not phase-1 representable** (`PrivateIdentifier` / `ComputedPropertyName`) | `src/ir/select-identity.ts:1286`; predicate `phase1MemberName` `src/ir/select.ts:10495`; the `<computed>` display name is minted at `src/ir/identity.ts:602-605` (`memberBaseName`) and composed at `:607` | `Animal_<computed>` (`#privateMethod`) | gc + sa |
+| A3 | static class initialization on the module-init unit | `src/ir/identity.ts:890` | `<module-init>` | gc + sa |
+
+A1a and A1b are **not independent arms** — they are two stamps of one fact
+(`Animal`/`Dog` absent from the projected class-shape map). The census's
+`class-member-unsupported ×4` and `class-projection-unsupported ×2` are the same
+root cause seen from the member side and the constructor side.
+
+### Bisection — the measurement that establishes A1
+
+Additive probes, each compiled on both lanes (`.tmp/probes`, results identical
+gc/standalone unless noted):
+
+| probe | shape | outcome |
+| --- | --- | --- |
+| `p01` | **untyped `.js`** class: ctor + one method | `Animal_new=class-projection-unsupported`, `Animal_speak=class-member-unsupported` |
+| `p02` | **the same class, annotated `.ts`** | **all units claim (IR)** |
+| `q01` | untyped, but `.ts` | refused, identically to `p01` — **the `.js` extension is not the discriminant** |
+| `q02` | field declared, ctor param untyped | refused ⇒ the **ctor-position** arm (`:1633`) |
+| `q03` | ctor param typed, field not declared | refused ⇒ the **field** arm (`:1747`) |
+| `p03`/`p04`/`p05`/`p06`/`p08` | annotated getter+setter / static method / static field / private FIELD / extra field | **all claim** |
+| `q06` | annotated twin of `classes.js` minus `#privateMethod` and minus `extends` | **every class unit claims**; only `<module-init>` still refuses (`static-class-initialization`) |
+| `q05` | full annotated twin of `classes.js` | accessors claim; `Animal_<computed>=class-method`; ctors `late-preparation-unsupported`; `Dog_speak=body-shape-rejected` |
+
+Checker probe on the arm inputs (`.tmp/arm-probe.ts`, TypeScript API,
+`tests/dogfood/corpus/classes.js`): `Animal`'s and `Dog`'s constructor parameter
+`name` both have type **`any`** (flags `0x1`), and `this.name` / `this.legs`
+are `any` as well. `tsTypeToClassPositionIr` returns null for `any` (it admits
+only NumberLike / BooleanLike / StringLike / a projected class / an object IR
+type), so `ctorOk` is false at `:1633` for both classes, and the gate at `:1646`
+drops them before the field and method loops are ever reached.
+
+**Consequence, stated plainly: 6 of the 8 class units in the census are not a
+class-coverage gap. They are unannotated-`any` class positions.** The identical
+class shapes — implicit-ctor, getter, setter, static method, static field,
+private field, extra instance field — all compile once today when annotated
+(`q06`). Reading this cluster as "R3 class members" would repeat exactly the
+error #3518 recorded twice: a reason label names a demote path, not a feature
+area.
+
+### Cost of the A2 (private-method) arm, measured
+
+| probe | shape | units lost |
+| --- | --- | --- |
+| `r01` | private method **declared, never called** | **1** (`Animal_<computed>`); ctor, sibling method and `run` all claim |
+| `r03` | private method called from the constructor | 2 (`Animal_new` → `body-shape-rejected`) |
+| `r02` | private method called from a sibling method | 3 (ctor → `late-preparation-unsupported`, sibling → `body-shape-rejected`) |
+| `r04` | private **field** only, read from a method | **0 — already claims** |
+| `r05` | computed-name method `["tagged"]()` | 1, same arm (`class-method`) |
+| `r06` | generator method `*gen()` | 1, but a **different** arm — `class-member-unsupported` via the descriptor drop at `src/codegen/index.ts:1763` (`asteriskToken`) |
+
+`classes.js:8` is the `r01` shape: `#privateMethod` is never called, so on the
+census this arm costs exactly one unit per lane and produces **no cascade**.
+
+**Latent naming defect found while measuring (`s01`/`s02`).** Two private
+methods in one class both take the display/legacy-match name
+`Animal_<computed>` — `memberBaseName` (`src/ir/identity.ts:602-605`) returns
+the same literal for every `PrivateIdentifier` and every
+`ComputedPropertyName`. Today this is inert because both members are refused
+and never mint a callable slot. It becomes load-bearing the moment either is
+admitted: a second private method would overwrite the first's exact UnitId in
+the legacy callable slot — the same hazard the accessor slice guarded with
+`occupiedAccessorSlots`. Any admission of this arm must introduce a distinct
+name **before** claiming.
+
+## Implementation Plan — W1-A class-member family (2026-09-03)
+
+### What the census changed about this slice
+
+W1-A was briefed as "one PR over the `class-member-unsupported` ×4 cluster,
+after an arm-level census says all four fire on the same arm." The census says
+they **do** fire on one arm — and that arm is **A1, an `any`-typed class
+position**, not a class-member shape. So the briefed slice does not exist as
+briefed. This plan therefore does two things: it disqualifies A1 with reasons,
+and it dispatches the largest arm that is genuinely class-shaped, in-scope, and
+test262-representative.
+
+**Why A1 is not this slice**, three measured reasons:
+
+1. **It is a type-resolution arm.** `q06` proves the identical class shapes
+   claim once annotated. Fixing A1 means deciding how an `any` class position
+   is carried (boxed / dynamic), not widening class-member admission.
+2. **It belongs to another lane.** The `any`-carrier decision is #5289 /
+   #3523 territory (module-binding `any` ABI landed in PR #5525); duplicating
+   it here is the cross-lane duplication CLAUDE.md documents at length.
+3. **Blast radius.** It changes the class-shape sidecar for *every* class in
+   *every* unannotated file, on both lanes — the opposite of a bounded slice.
+
+Record it as R3's largest measured cluster and hand the mechanism to the `any`
+lane; do not implement it under W1-A.
+
+### Chosen cluster — A2, PrivateIdentifier instance-method declarations
+
+Scope: **admit a `PrivateIdentifier`-named, non-static, non-generator,
+body-bearing instance METHOD DECLARATION into the ordinary bounded class-member
+family.** Computed names stay refused. Private-method **call sites** (`r02`/`r03`,
+2–3 units, an `src/ir/from-ast.ts` lowering question) are explicitly the *next*
+slice, not this one.
+
+Why this one:
+
+- It is the largest **class-shaped** arm on the census (1 unit × 2 lanes) once
+  A1 is removed, and the only one whose fix is a member-admission change.
+- **It is the single most test262-representative class shape we have.** #3518
+  measures `PrivateIdentifier` at **4.58 % of test262 nodes vs 0.21 %
+  (playground) / 0.23 % (dogfood)** — the largest blind spot in both denominators
+  by an order of magnitude.
+- Measured cost is bounded and cascade-free in the census shape (`r01`).
+- The legacy substrate already exists and agrees:
+  `resolveClassMemberName` (`src/codegen/class-bodies.ts:752-761`) already maps
+  `#x` → `__priv_x`, and the field path in `buildIrClassShapes`
+  (`src/codegen/index.ts:1682`) already uses the identical mangling. This slice
+  makes the IR member path agree with two conventions that are already in the
+  tree; it invents no naming.
+
+### Root cause
+
+A `PrivateIdentifier`-named method fails `phase1MemberName`
+(`src/ir/select.ts:10495`, which returns `null` for `PrivateIdentifier` and
+`ComputedPropertyName` alike), so `src/ir/select-identity.ts:1286` stamps
+`class-method` before any descriptor is consulted. Independently, the descriptor
+loop in `buildIrClassShapes` skips the member at `src/codegen/index.ts:1762`
+(`if (!ts.isIdentifier(member.name)) continue`), so no descriptor exists for it
+either. And `memberBaseName` (`src/ir/identity.ts:602-605`) gives every such
+member the same name, `<computed>`.
+
+**All three must move together.** Relaxing only the name predicate moves the
+row from `class-method` (A2) to `class-member-unsupported` (A1b, the
+missing-descriptor arm) and claims nothing — the exact trap recorded in the
+2026-08-15 accessor measurement ("Relaxing gate 1 alone moved every fixture from
+`body-shape-rejected` to `class-member-unsupported` and claimed nothing").
+Relaxing the name without the mangling re-admits the `s01` collision.
+
+### Changes, in this order
+
+**Step 0 (measurement, before any edit).** Re-run the probe set at the branch
+base and record the current rows for `r01`, `r02`, `s01`, `s02` and
+`tests/dogfood/corpus/classes.js` on **both** lanes. Capture the base copies of
+every file this slice touches (`cp src/… .tmp/base-….ts`) at the *first* edit,
+per CLAUDE.md's A/B rule — the acceptance criteria below require a base run.
+
+**1. `src/ir/identity.ts` — `memberBaseName` (`:602-605`).**
+Return `"__priv_" + name.text.slice(1)` for a `PrivateIdentifier`; leave
+`ComputedPropertyName` returning `"<computed>"` unchanged. This is the naming
+substrate for both the display name and the legacy match name composed at
+`classMemberLegacyName` (`:607-616`), so `#first` becomes `Animal___priv_first`
+— byte-agreeing with what `resolveClassMemberName`
+(`src/codegen/class-bodies.ts:754`) already produces on the legacy side.
+`memberBaseName` is also read by `objectMemberDisplayName` (`:620-627`); an
+object literal cannot carry a private name, so that call site is unaffected —
+assert it with a test rather than assuming it.
+
+**2. `src/ir/select.ts` — `phase1MemberName` (`:10495-10501`).**
+Return the same mangled name for a `PrivateIdentifier`; keep `null` for
+`ComputedPropertyName`. Use one shared helper so steps 1 and 2 cannot drift —
+put it beside `phase1MemberName` and have `memberBaseName` call it. Do **not**
+touch the accessor arm at `select-identity.ts:1294`; private accessors are out
+of scope for this slice and must stay refused (negative test).
+
+**3. `src/codegen/index.ts` — the method-descriptor loop (`:1756-1800`).**
+Widen `:1762` from `!ts.isIdentifier(member.name)` to also admit a
+`PrivateIdentifier`, using the same helper, and mint `methodName` from it. The
+static defer (`:1760`), the abstract defer, and the generator defer (`:1763`)
+are unchanged. **This function is `buildIrClassShapes` (`:1519`), ~1,300 lines
+above `planIrOverlay`; the standing instruction to stay out of `planIrOverlay`
+is respected.** PR #5530, which held this file, **merged** (`54bfb99c90`, on
+main at the base sha) — verified, so the file is free. Re-verify at branch time.
+
+**4. `src/codegen/class-bodies.ts` — verify only, edit only if measured.**
+`resolveClassMemberName` (`:752`) already yields `__priv_x`. Confirm the
+prepared class-body route emits and dispatches the admitted member under that
+name on both lanes; if it does, this file is audit-only and the slice does not
+edit it. Do not "fix" it speculatively.
+
+**5. Do NOT touch** `src/codegen/prepared-class-body-cutover.ts` unless a
+measured failure requires it (it is the `JS2WASM_PREPARED_CLASS_ROUTE_CUTOVER`
+hatch, R9 inventory row 12 — changing it moves a retirement denominator).
+
+### What this must NOT change
+
+- **Order preservation.** Field initialization must still precede constructor
+  body reads, and member declaration order must be unchanged. Reuse the F4
+  ordering control (`40100`, where every wrong ordering yields `0` or `NaN`).
+- **Byte identity for programs without a private method.** Every entry in the
+  census cohort that carries no `PrivateIdentifier` member must be
+  byte-identical to base, on both lanes. This is the primary safety property:
+  step 1 edits a naming helper on a shared path.
+- **Computed names stay refused** (`r05` keeps its `class-method` row), private
+  **accessors** stay refused, **generator** methods keep their `class-member-unsupported`
+  row via `:1763` (`r06`), **static** private methods stay deferred via `:1760`.
+- **The `s01`/`s02` collision must be closed, not inherited.** Two private
+  methods, and a private method beside a computed-name method, must resolve to
+  distinct names and must not overwrite each other's UnitId.
+- **A1 must not move.** `tests/dogfood/corpus/classes.js` keeps its 6 A1 rows
+  after this slice; only `Animal_<computed>` changes. A run that "improves"
+  A1 means step 3 widened something it should not have.
+- **No new import, runtime representation, ABI, or lowering surface.** If one
+  appears to be needed, the slice is wrong — stop and re-measure.
+
+### Tests to add (must be RED on base)
+
+`tests/issue-3522-private-method-admission.test.ts`, both lanes, direct class
+and function emitters poisoned (`JS2WASM_TEST_POISON_DIRECT_CLASS_BODY`), with a
+positive control proving the poison seam is live so no assertion can pass
+vacuously:
+
+1. `r01` — private method declared, never called: the member claims (IR) and
+   the class's other units stay claimed. **Red on base** (`class-method` today).
+2. Runtime equality legacy↔IR for that fixture, both lanes.
+3. `s01` — two private methods: distinct unit names, both admitted, no UnitId
+   overwrite; assert the two rows carry different `displayName`s. **Red on base**
+   (both read `Animal_<computed>`).
+4. `s02` — private method beside a computed-name method: the private one
+   claims, the computed one keeps `class-method`.
+5. Negatives, each asserted identical to base: private **accessor**, **static**
+   private method, **generator** method (`r06` keeps `class-member-unsupported`),
+   computed name (`r05`).
+6. Call-site controls pinning the deferral: `r02` and `r03` keep their exact
+   current rows (3 and 2 units lost). These are the next slice's boundary and
+   must not silently move.
+7. A1 control: `tests/dogfood/corpus/classes.js` keeps 6 A1 rows on both lanes.
+8. WAT proof on the admitted fixture: no `call_ref`, `call_indirect`,
+   `ref.test`, ambient `this`, boxing, or `__call_m_*` in the prepared owner.
+
+### Byte-identity cohort
+
+Per-row **sha256** over the emitted binary for **all 33 entries × 2 lanes**
+(dogfood 20 + playground 13; gc and standalone), base vs branch, with the
+diagnostic OFF. Expected: **65 of 66 identical**; the sole permitted mover is
+`tests/dogfood/corpus/classes.js`, whose two rows change because
+`Animal_<computed>` is admitted. Publish the full table, and publish the two
+changed digests explicitly with the claimed-unit set before and after. A second
+mover is a stop-and-diagnose, not a rebaseline. Reuse `.tmp/census-3522.ts`
+(add a `sha256` over `result.wasm`); it is a `.tmp` instrument, not a shipped
+script.
+
+### Gates
+
+Run bare (never piped — a piped gate reports the pipe's status), chained so a
+failure blocks, before the commit:
+
+```bash
+node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
+  && node scripts/check-coercion-sites.mjs && npm run -s check:oracle-ratchet \
+  && npm run -s check:dead-exports
+```
+
+plus, and each named because this slice can move it:
+
+- `LOC_GATE_BASE=$(git rev-parse origin/main) node scripts/check-loc-budget.mjs`
+  and the same for `check-func-budget` — CI diffs the merge preview, not the
+  fork point. Any growth allowance goes in **this issue file's** frontmatter
+  with a dated rationale; never edit `scripts/*-baseline.json`.
+- `npm run -s check:ir-dialect`.
+- `npm run -s check:ir-kind-neutrality` — steps 2 and 3 add lines to
+  `src/ir/select.ts` and `src/codegen/index.ts`, which is exactly what has
+  relocated evidence line anchors on the last two checkpoints (F2, F4). Expect
+  an evidence-location-only diff; **re-lock the baseline sha256 and state in the
+  commit that no row, verdict, placement, rationale or phase-two move changed.**
+- `pnpm run check:ir-fallbacks` — name the class buckets in the result:
+  `class-member-unsupported`, `class-projection-unsupported`, `class-method`,
+  `static-class-initialization`. `class-method` should **decrease**; the other
+  three must not move. Use `--update-on-decrease` only for a real decrease.
+- `npm run -s check:ir-only` — must stay **READY**, single-host and standalone.
+  The five gate entries contain no private members, so this is a no-move check.
+- `gen-ir-adoption --check` byte-clean, TypeScript 7 and 5 no-emit, Prettier,
+  Biome, IR layering.
+- `scripts/hooks/changed-root-tests.sh` against the branch base, reproducing
+  CI's `test:changed-root` selection — and read the 2026-08-29 F4 correction
+  above before dismissing any failure in a file this branch touches: touching a
+  root test file arms the fix-on-touch ratchet against pre-existing rot.
+
+Never `--no-verify`.
+
+### Acceptance criteria
+
+1. On `tests/dogfood/corpus/classes.js`, `Animal_<computed>` becomes an admitted
+   IR-emitted unit named `Animal___priv_first`-style (mangled, not `<computed>`),
+   on **both** lanes, with `legacyBodyEmitted: false`.
+2. The other 7 class rows of that file are **unchanged**, including all 6 A1
+   rows and the `<module-init>` `static-class-initialization` row.
+3. The byte-identity cohort is 65/66 identical with the one documented mover.
+4. All 8 test groups above pass on both lanes; groups 1 and 3 are demonstrably
+   RED on the branch base (show the base failure output).
+5. Every gate above passes, including the `LOC_GATE_BASE` simulation, with the
+   kind-neutrality baseline re-locked and its diff characterised.
+6. `check:ir-fallbacks` shows `class-method` decreased and no other bucket —
+   class or otherwise — increased.
+7. No new import, ABI, runtime representation, or lowering surface, evidenced by
+   the WAT assertion in test group 8.
+
+### Blast radius and conflict check
+
+Files this slice owns: `src/ir/identity.ts`, `src/ir/select.ts`,
+`src/codegen/index.ts` (`buildIrClassShapes` only), optionally
+`src/codegen/class-bodies.ts`, and `tests/issue-3522-*`.
+
+Verified against the in-flight set at base sha `42a0adf7d4`:
+
+| constraint | state today | verdict |
+| --- | --- | --- |
+| `src/codegen/index.ts` / `planIrOverlay`, `src/codegen/ir-overlay-outcomes.ts` (#5530) | **PR #5530 MERGED** (`54bfb99c90`) — the takeover doc's "draft, in flight" is stale | file free; still stay out of `planIrOverlay` |
+| #5283 — `ir-overlay-outcomes.ts`, `src/ir/module-init.ts`, `legacy-body-audit.ts` | `status: ready` (queued) | untouched by this slice |
+| #5297 — `prepared-dynamic-support.ts`, `prepared-component-sealing.ts`, `compiler-timer-shim-preparation.ts`, `src/ir/integration.ts` | `status: ready` | untouched. **Note:** `late-preparation-unsupported` is raised in `prepared-component-sealing.ts:648/698` — this is why the slice fixes the *cause* (admit the member) and never the cascade |
+| #5300 — `src/ir/from-ast.ts` direct-call lowering | `status: done` (PR #5535, at the base sha) | free — but the private-method **call-site** slice will land there, so keep this slice out of `from-ast.ts` entirely |
+| #3520 W1-D — `src/codegen/program-abi-*.ts` | untouched | clear |
+| `src/ir/integration.ts`, `src/ir/module-bindings.ts` | untouched | clear |
+
+Residual risk, highest first: (a) step 1 edits a naming helper on a shared
+path — the byte-identity cohort is the control that catches over-reach; (b)
+`check:ir-kind-neutrality` evidence anchors will move; (c) the legacy match name
+must agree exactly with `resolveClassMemberName`, so a mismatch surfaces as an
+invariant, not a demote — assert the emitted legacy name directly.
+
+### Representativeness
+
+**This arm is the test262-representative one**, which is unusual for this issue
+and is the main reason to prefer it over A1's larger count. #3518's 2026-09-03
+node-frequency measurement puts `PrivateIdentifier` at **4.58 % of test262 nodes
+against 0.21 % (playground) / 0.23 % (dogfood)**, and `PrivateIdentifier` +
+`PropertyDeclaration` together at **8.9 % vs 0.4 %** — class bodies are the
+single largest blind spot in both denominators, by an order of magnitude. The
+`PropertyDeclaration` half is already covered (annotated fields, including
+private fields, claim today — `r04`, `p06`), so this slice attacks precisely the
+half that is both uncovered and heavily represented upstream. A1, by contrast,
+is a shape test262 barely contains at all: test262 is not an unannotated-`.js`
+application corpus, so A1's 6 units are close to the maximum that arm will ever
+be worth on this census, while A2's 1 unit is close to the minimum it is worth
+on the real target population. **Fixture to add to the census** so the arm stops
+being invisible: a single file
+`tests/dogfood/corpus/class-private-members.js` — one class with a private
+field, an uncalled private method, and a private method called from a sibling —
+which covers `r01`, `r02` and `r04` in one entry and gives the next slice its
+denominator. Adding it changes census counts, so add it in the **same** PR as
+this slice or in a dedicated corpus PR, never silently.
+
+### Next cluster, in order
+
+1. **Private-method call sites** (`r02`/`r03`) — 2–3 units per occurrence,
+   `src/ir/from-ast.ts` lowering; sequence after #5300's file settles.
+2. **`super.<accessor>` in a derived method** (`p09`/`q05`) — the remaining
+   genuine class gap in the annotated twin: both ctors
+   `late-preparation-unsupported`, `Dog_speak` `body-shape-rejected`.
+3. **Computed-name methods** (`r05`) — same A2 arm, but needs a compile-time
+   constant-key contract; deliberately excluded here.
+4. **A1, the `any` class position** — hand to the `any`-carrier lane (#5289 /
+   #3523), not to R3.
+5. `static-class-initialization` on `<module-init>` — R4 (#3523), not R3.
+
+### Claim
+
+Claim the **slice**, never the bare id — the bare-id claim is what froze this
+issue for five days:
+
+```bash
+node scripts/claim-issue.mjs 3522:w1a-private-method ttraenkler/<agent> --branch <branch>
+```
+
+Release it on merge. `#3522` itself is `horizon: xl` and remains open after this
+slice.
+
+### W1-A private-method — landed (2026-09-03)
+
+Branch `claude/issue-3522-w1a-private-method`, base `origin/main` **2510fae02**.
+All three sites moved together; `src/codegen/class-bodies.ts` was audit-only, as
+the plan predicted, and is not edited.
+
+| # | site | change |
+| --- | --- | --- |
+| 1 | `src/ir/identity.ts::memberBaseName` | returns `__priv_<x>` for a `PrivateIdentifier` via the new exported `privateMemberMangledName` |
+| 2 | `src/ir/select.ts::phase1MemberName` | returns the same mangled name; `ComputedPropertyName` still `null` |
+| 3 | `src/codegen/index.ts` method-descriptor loop (in `buildIrClassShapes`) | admits a `PrivateIdentifier` name; static / abstract / generator defers unchanged |
+| 4 | `src/ir/select-identity.ts` accessor arm | **behaviour-preserving**: an explicit `ts.isPrivateIdentifier` refusal so widening the shared predicate does not admit private ACCESSORS |
+
+The helper lives in `identity.ts`, not beside `phase1MemberName`: `select.ts`
+already imports `identity.js`, and the reverse value edge would close an
+`ir -> ir` cycle through `dom-capability` / `propagate` / `type-evidence`. One
+definition, both callers — the anti-drift property the plan asked for.
+
+#### Measured plan correction — on the census file, A2 sits on top of A1
+
+The arm map above lists `classes.js`'s `Animal_<computed>` under **A2** as if A2
+and A1 were disjoint for that member. Measured on this branch, they are
+**stacked**: `Animal` takes an `any`-typed constructor parameter, so the class
+never enters the class-shape sidecar at all — **no member of it has a
+descriptor**. A2 was merely the first stamp. With the name admitted, the row
+falls through to the same missing-descriptor arm its six siblings already sit
+on. This is a correction to the arm map, not a shortfall in the slice: all three
+sites moved, and reverting any one of them individually puts the row back on its
+own arm (table further down).
+
+| | base | branch |
+| --- | --- | --- |
+| display name | `Animal_<computed>` | `Animal___priv_privateMethod` |
+| code | `class-method` (A2) | `class-member-unsupported` (A1b) |
+| emitted | no | no |
+
+The remaining step for this one file is A1 — the `any`-carrier decision this
+plan disqualifies from R3 with three measured reasons and hands to the A1 /
+`any`-carrier lane (#5289 / #3523). So the arm table below moves exactly one row
+per lane, and no row reaches `emitted` on the census population; **acceptance
+criterion 1 is evidenced on the annotated fixtures**, which is where the plan's
+own cost table (`r01`…`s02`) measured this arm in the first place.
+
+Census (33 entries × 2 lanes = 66 compiles: dogfood 20 `.js` + playground 13
+`.ts`, gc + standalone, `trackIrOutcomes` + `JS2WASM_IR_SHAPE_DIAG=1`), base vs
+branch, code counts over all 216 terminal units:
+
+| code | base | branch |
+| --- | --: | --: |
+| `emitted` | 103 | 103 |
+| `class-method` | 2 | **0** |
+| `class-member-unsupported` | 8 | **10** |
+| `class-projection-unsupported` | 4 | 4 |
+| `static-class-initialization` | 2 | 2 |
+| every other code (15 of them) | — | unchanged |
+
+The only unit rows that move are `classes.js`'s `Animal_<computed>` on each
+lane. **Byte identity: 66 / 66 sha256-identical**, including `classes.js`
+itself — the refused row changes its label, not its bytes. (The plan budgeted
+65/66 with `classes.js` as the permitted mover; the actual result is stricter.)
+
+#### Acceptance criterion 1 — the arm claimed, annotated shapes, both lanes
+
+Measured through the production `compile` seam, gc and standalone identical,
+with the direct class-body emitter POISONED for the named slot:
+
+| probe | shape | base | branch |
+| --- | --- | --- | --- |
+| `r01` | private method declared, never called | `class-method` | **`emitted`**, in `irCompiledFuncs`, `legacyBodyEmitted: false` |
+| `r02` | called from a sibling method | 3 units lost | callee **`emitted`**; caller `body-shape-rejected` and ctor `late-preparation-unsupported` **unchanged** |
+| `r03` | called from the constructor | 2 units lost | callee **`emitted`**; ctor `body-shape-rejected` **unchanged** |
+| `s01` | TWO private methods | both `Animal_<computed>` / `class-method` | **`Animal___priv_first` + `Animal___priv_second`, both emitted, distinct unit ids** |
+| `s02` | private + computed-name method | both `Animal_<computed>` | private **`emitted`**; computed keeps `class-method` |
+| `r04` | private FIELD only | already claimed | unchanged |
+| `r05` | computed-name method | `class-method` | unchanged |
+| `r06` | generator method | `class-member-unsupported` | unchanged |
+
+`r02`/`r03` lose one unit FEWER than on base. The deferral boundary is
+unmoved — the caller and constructor keep their exact pre-slice codes; the
+extra claimed unit is the private method's own declaration, which is this
+slice.
+
+#### The collision was real, and the non-vacuity reverts prove each site
+
+Reverting each site alone (file-copy A/B, both lanes identical):
+
+| reverted | `r01` (one private method) | `s01` (two private methods) |
+| --- | --- | --- |
+| — (all three) | `emitted` | both `emitted`, distinct ids |
+| site 1 (`memberBaseName`) | `emitted`, but named `Animal_<computed>` | **both refused** `class-member-unsupported` — the collision materialises the moment admission is attempted |
+| site 2 (`phase1MemberName`) | `class-method` | `class-method` |
+| site 3 (descriptor loop) | `class-member-unsupported` | `class-member-unsupported` |
+
+Site 3's revert reproduces the exact trap the plan named: the row shifts A2 →
+A1b and claims nothing. Site 1's revert is the `s01` hazard measured live —
+without the distinct name, admitting two private methods drops both.
+
+#### The prescribed corpus fixture was measured and REJECTED
+
+The plan asked for `tests/dogfood/corpus/class-private-members.js` so the arm
+stops being invisible on the census. Built and measured: an unannotated `.js`
+class lands on **`return-type-not-resolvable`**, a different arm entirely — the
+method return type needs an explicit annotation (`ts-annotated` claims,
+`ts-inferred` and `js-inferred` both refuse with that code). A `.js` corpus
+entry therefore cannot exhibit this arm; it would have added four refused rows
+on an unrelated arm and moved the census denominators for nothing. The fixture
+is not added; the durable home for these shapes is
+`tests/issue-3522-private-method-admission.test.ts`, which pins all eight groups
+in CI on both lanes.
+
+#### Two honest deviations from the plan's expectations
+
+1. **A static private method's reason code moves**, `class-method` →
+   `class-member-unsupported`. The VERDICT is unchanged (refused, direct body,
+   still deferred by the static branch in `buildIrClassShapes`), and the new
+   code is the accurate one: the name is now representable, the missing static
+   descriptor is the real reason. No gate corpus contains the shape, so no
+   bucket moves. A private ACCESSOR likewise keeps `class-method` but is now
+   displayed as `Animal_get___priv_hidden` instead of `Animal_get_<computed>`.
+2. **`check:ir-kind-neutrality` did NOT move.** The plan expected an
+   evidence-location-only diff and a baseline re-lock; the gate's output is
+   byte-identical base vs branch, so nothing was re-locked.
+
+#### Gates
+
+`check-loc-budget` (bare and with `LOC_GATE_BASE=origin/main`),
+`check-func-budget`, `check-coercion-sites`, `check:oracle-ratchet`,
+`check:dead-exports`, `check:ir-dialect`, `check:ir-kind-neutrality`,
+`check:ir-fallbacks`, `check:ir-only`, `check:ir-adoption`,
+`check:test-vacuity-shapes`, `update-issues --check`, TS7 no-emit, Biome,
+Prettier, `scripts/hooks/changed-root-tests.sh`, and equivalence across all 8
+shards (no new regressions, zero name-set diff vs the committed baseline): all
+pass. `check:ir-layering` is **86 import lines across 15 files, baseline 86,
+unchanged** — this slice adds no `src/ir/` -> `src/codegen/` edge; its two new
+imports are `codegen/index.ts` -> `ir/identity.js` (the permitted direction) and
+`ir/select.ts` -> `ir/identity.js` (intra-IR). `check:ir-fallbacks --verbose` output is
+byte-identical base vs branch — the playground gate corpus carries **zero**
+class-family rejections (every one of its class rows already emits), so
+`class-method` is 0 on both sides there and no bucket moved in either
+direction; nothing to `--update-on-decrease`. `check:ir-only` stays **READY**
+on both lanes with an identical ledger. No new import, ABI, runtime
+representation or lowering surface — asserted directly on the prepared owner's
+WAT (no `call_ref`, `call_indirect`, `ref.test`, `__box_number`, `__call_m_*`).
+
+The next cluster is unchanged: private-method **call sites** (`r02`/`r03`), in
+`src/ir/from-ast.ts`.
+
+## Implementation Plan — W1-B private-method CALL SITES (2026-09-03, Fable lane)
+
+Written from a read of `src/ir/select.ts` (generic method-call arm
+`:9606-9612`, local-class instance arm `:9888-9905`, `classMethodProjection`
+`:7717-7785`, `classElementMayName` `:7709-7715`, call-graph walker
+`:10830-10886`), `src/ir/from-ast.ts` (`lowerMethodCall` entry `:7509-7513`,
+class arm `:8380-8432`, `irPrivateFieldName` `:5179`), `src/ir/builder.ts`
+(`emitClassCall` `:1033`) at the W1-A branch head `b57d721a98` (PR #5545), and
+from one probe on that head. Line numbers are from that revision; W1-A moved
+`identity.ts` / `select.ts` / `codegen/index.ts` — re-verify anchors after
+#5545 lands, and **branch from `origin/main` only after it has landed** (this
+slice depends on `privateMemberMangledName` and the admitted descriptor).
+
+### Measured starting point (W1-A head, both lanes identical)
+
+`CALLED_FROM_SIBLING` (`r02`, the test file's fixture), `trackIrOutcomes`,
+`JS2WASM_IR_SHAPE_DIAG=1`:
+
+| unit | kind | code | stage | detail |
+| --- | --- | --- | --- | --- |
+| `Animal___priv_doubled` (instance-method #0) | emitted | — | patch | W1-A's claim |
+| `Animal_reveal` (instance-method #1) | unsupported | `body-shape-rejected` | select | `unattributed-arm:helper-internal` |
+| `Animal_new` (implicit ctor) | unsupported | `late-preparation-unsupported` | resolve | "prepared component … has incomplete dependencies" |
+| `run` | emitted | — | patch | |
+| module-init | non-executable | | | |
+
+Two facts the table settles: (1) the caller is refused by the **selector**, not
+by from-ast — the shape diag names no arm because the refusing line is a bare
+`return false`; (2) the constructor's `late-preparation-unsupported` is not its
+own defect, it is the sealing consequence of the sibling's refusal (the
+component cannot complete while `reveal` is direct-owned), so it should flip to
+`emitted` with no ctor-specific change. That is the slice's built-in
+non-vacuity signal.
+
+### The refusing line, and its four siblings that must move with it
+
+| # | site | today | change |
+| --- | --- | --- | --- |
+| S1 | `select.ts:9611` generic method-call arm: `if (!ts.isIdentifier(expr.expression.name)) return false;` | a `PrivateIdentifier` callee name falls out as an unattributed shape refusal | add a **dedicated arm BEFORE this line**: if `ts.isPrivateIdentifier(expr.expression.name)`, the receiver must resolve to a local class (`localClassNameForExpression(expr.expression.expression, scope)`; `this` resolves to `currentClaimClassName` at `:8128`) — otherwise `shapeNo("expr-private-method-receiver", expr)`; then run exactly the existing instance projection check (`:9888-9905`) with `methodName = privateMemberMangledName(expr.expression.name)`. Do NOT thread a private name through the ambient arms (`Function.prototype`, regexp, `Math`, `String.fromCharCode`, `Object.defineProperty`, array methods) — none can carry one, and the early arm keeps them untouched. |
+| S2 | `select.ts:7756-7776` `classMethodProjection` declaration walk (the `exactShapes`-less branch) — matches only `ts.isIdentifier(member.name) && member.name.text === methodName` | a private method never matches its own mangled name → `missing` → `class-member-unsupported` | compare through one helper that maps a `PropertyName` to its projection name: `Identifier`/string/numeric → `.text`, `PrivateIdentifier` → `privateMemberMangledName`. The `exactShapes` branch (`:7719-7746`) already matches `shape.methods[].name`, which W1-A mints as `__priv_<x>` (`codegen/index.ts:1769`) — measure which branch the census takes and state it. |
+| S3 | `select.ts:7709` `classElementMayName` | private members can never "name" anything → an own private method never shadows an inherited public one | same helper. This is the shadowing guard for `class B extends A { #m() {} }` vs `A.m` — without it S2's parent walk resolves the wrong member. |
+| S4 | `select.ts:10830/10885` call-graph walker: `PropertyAccessExpression` callee with a non-`Identifier` name → `hasExternalCall.add(callerName)` | after S1 the selector admits the shape, then the closure pass drops the caller again as `external-call` (`:1121`) | in the `ts.isPropertyAccessExpression(node.expression)` branch, treat `ts.isPrivateIdentifier(node.expression.name)` like an identifier-named method call: visit receiver + args, no external mark. |
+| S5 | `from-ast.ts:7511` `lowerMethodCall` entry: `!ts.isIdentifier(expr.expression.name)` → `method-call-unsupported` "malformed method call" | post-claim demote if S1–S4 land alone | accept `PrivateIdentifier`; `methodName = irPrivateFieldName(expr.expression.name)` (`:5179`, already the field-read spelling). The class arm at `:8380` then finds the descriptor via `findClassMember(shape, "__priv_x", "method")` and emits `class.call` with `method.target` — the same `Animal___priv_doubled` slot W1-A minted. No builder change: `emitClassCall` takes a plain string. |
+
+Order matters for the non-vacuity table: S5 without S1 is unreachable; S1
+without S5 is a **post-claim** demote (the worst class — measure it once, then
+never ship it).
+
+### Explicitly out of scope, with the reason
+
+- **Private accessors / static private methods** (`this.#get`, `Animal.#s()`):
+  W1-A left both refused (`select-identity.ts` accessor arm; static branch in
+  `buildIrClassShapes`). The S1 arm must send a static-receiver private call
+  (`Animal.#s()`) down the existing static path (`:9866-9886`), where the
+  projection is `missing` → `class-member-unsupported`, unchanged. Pin it.
+- **`#m in obj`** (`ts.isPrivateIdentifier(expr.left)` at `select.ts:7312`):
+  a different production; untouched.
+- **Mangling collision** `#m` vs a public `__priv_m`: pre-existing in legacy's
+  `resolveClassMemberName` and in W1-A; not this slice. Note it in the PR body
+  as inherited.
+
+### Measurement order
+
+1. **Probe on base** (`.tmp/probe-3522-w1b.mts`, the table above): `r02`,
+   `r03` (`CALLED_FROM_CTOR`), `s01` + a call to each private method, and a
+   negative `Animal.#s()` fixture, both lanes, `JS2WASM_IR_SHAPE_DIAG=1`.
+   Record every row.
+2. Base copies at the first edit (`.tmp/base-select.ts`, `.tmp/base-from-ast.ts`).
+3. Implement S1–S5. Re-run the probe. Acceptance: `r02` → all three units
+   `emitted` (`Animal___priv_doubled`, `Animal_reveal`, `Animal_new`);
+   `r03` → `Animal___priv_privateMethod` + `Animal_new` emitted; `run` still
+   emitted; the static negative unchanged. Runtime with the direct emitters
+   POISONED (the test file's `compilePoisoned`): `r02` returns 84, `r03` 42,
+   both lanes.
+4. **Census** — the same 66 compiles W1-A used (dogfood 20 + playground 13 ×
+   gc/standalone): per-code counts and **66/66 sha256 byte identity**.
+   `classes.js`'s `Animal` is A1-blocked (`any` ctor param, no descriptors),
+   so no census row can move; if one does, it is a defect. State the
+   `class-member-unsupported` count before/after (expected 10 → 10).
+5. `check:ir-fallbacks --verbose`, `check:ir-only` (READY, identical ledger),
+   `check:ir-kind-neutrality`, `check:ir-dialect`, `check:ir-layering`
+   (86/86 — S1–S5 add no `src/ir` → `src/codegen` import; `select.ts` already
+   imports `identity.js`).
+6. Non-vacuity by revert, each site alone (file-copy A/B): S1 alone → `r02`
+   caller back to `body-shape-rejected`; S5 alone (S1–S4 kept) → post-claim
+   `method-call-unsupported` on `Animal_reveal` — record it, that row is the
+   argument for shipping the five together; S2/S3 alone → `class-member-unsupported`
+   on the caller; S4 alone → `external-call` under `check:ir-fallbacks --verbose`.
+7. Full ratchet chain + `LOC_GATE_BASE=$(git rev-parse origin/main)`;
+   equivalence 8 shards by name, zero name-set diff (24 known failures).
+
+### Tests
+
+`tests/issue-3522-private-method-call-sites.test.ts`, both lanes, direct
+emitters poisoned as in W1-A's file (reuse its helpers by import if they are
+exported, else copy the three small ones — do not widen W1-A's file):
+
+- (a) `r02`: caller + callee + ctor all `emitted`, `irCompiledFuncs` carries
+  all three, `run() === 84` — **red on base** (caller `body-shape-rejected`).
+- (b) `r03`: ctor + callee emitted, `run() === 42` — red on base.
+- (c) two private methods, each called from a public method: four emitted
+  units, distinct ids — red on base.
+- (d) inheritance shadow: `class A { m(): number { return 1 } } class B extends A { #m(): number { return 2 } f(): number { return this.#m() } }`
+  → `B_f` calls `B___priv_m` (WAT contains `call $B___priv_m`, not `$A_m`) and
+  `run() === 2` — red on base; this is S3's pin.
+- (e) arity mismatch `this.#m(1)` on a zero-param private method →
+  `call-arity-unsupported` at select (green on base by a different code;
+  label it as the guard).
+- (f) static private call `Animal.#s()` → still `class-member-unsupported`,
+  direct-owned — green on base, the out-of-scope pin.
+- (g) WAT proof on `r02`: no `call_ref` / `call_indirect` / `ref.test` /
+  `__box_number` in `Animal_reveal`.
+
+### Budget, sequencing, conflict surface
+
+`select.ts` (+~45 LOC: one early arm, one name helper, two comparisons, one
+walker branch), `from-ast.ts` (+~4), grant in this issue's frontmatter with a
+dated rationale. **Branch after PR #5545 lands** (needs W1-A's helper and
+descriptor). Disjoint from #5299 (`multi-prepared-callable-publication.ts`,
+`prepared-component-publication.ts`, `outcomes.ts`), F3-S3 (`runtime-manifest.ts`,
+`intrinsic-support.ts`, `integration.ts`), #3520 cluster D (`async.ts`
+positional fallback). Claim slug `3522:w1b-private-call-sites`.
+
+### W1-B private-method call sites — landed (2026-09-03)
+
+Branch `claude/issue-3522-w1b-private-call-sites`, base `origin/main`
+**744203f3c7** (which carries W1-A / PR #5545). The plan for this slice named
+five sites; **three shipped and two were dropped after measurement** — the two
+dropped ones are provably unreachable from a private call site, and each
+revert-alone run below is the evidence.
+
+| # | site | shipped | change |
+| --- | --- | --- | --- |
+| S1 | `src/ir/select.ts::isPhase1Expr`, generic method-call block | yes | a dedicated `ts.isPrivateIdentifier` arm placed BEFORE the identifier-name gate. Resolves the receiver's local class (`this` → `currentClaimClassName`; a bare unshadowed class identifier → the STATIC route), then runs the existing projection with `privateMemberMangledName`. No private name is threaded through the ambient arms in between. |
+| S2 | `classMethodProjection`'s declaration walk (the `exactShapes`-less branch) | **no — dropped** | unreachable in production: the ONE caller (`codegen/index.ts:3137`) always supplies `projectedClassShapes`, and the syntax mirror is documented as deliberately conservative. Reverting it alone moved zero rows on every fixture and zero census rows. Shipping it would widen a fallback path no test can exercise. |
+| S3 | `src/ir/select.ts::classElementMayName` (new `classElementProjectionName`) | yes | an own private member now names its own mangled name, so it SHADOWS an inherited descriptor of the same projected name. |
+| S4 | the free-function call-graph walker (`buildLocalCallGraph`) | **no — dropped** | unreachable: the walker returns at every function-like node, so a class METHOD body is never visited, and the one non-function-like carrier (a field initializer `x = this.#m()`) is claimed through the class path. Measured on three targeted fixtures (top-level class, class inside a function, class + module-init seed) plus the four-fixture matrix: reverting it alone moves nothing. |
+| S5 | `src/ir/from-ast.ts::lowerMethodCall` entry | yes | accept the private spelling and mint `__priv_<x>` via the existing `irPrivateFieldName`. `PropertyAccessExpression.name` is exactly `Identifier \| PrivateIdentifier`, so the old name-shape refusal only ever rejected private calls — as a POST-CLAIM demote once S1 admits them. |
+
+#### Acceptance, measured through the production `compile` seam (both lanes identical)
+
+| probe | base `744203f3c7` | branch |
+| --- | --- | --- |
+| `r02` callee `Animal___priv_doubled` | emitted | emitted |
+| `r02` caller `Animal_reveal` | `body-shape-rejected` @select | **emitted** |
+| `r02` ctor `Animal_new` | `late-preparation-unsupported` @resolve | **emitted** |
+| `r02` post-claim entries | 1 (ctor sealing) | **0** |
+| `r02` `run()`, direct emitters POISONED | — (poison fails: rows are direct) | **84** |
+| `s01`+calls (2 private methods, 1 caller) | caller + ctor lost | **all five units emitted**, poisoned `run()` = 3 |
+| inheritance shadow `B.#m` vs `A.m` | `B___priv_m` late-prep, `B_f` `body-shape-rejected` | **both emitted**, poisoned `run()` = 2 |
+| `r03` ctor `Animal_new` | `body-shape-rejected` | `body-shape-rejected` (unchanged — see below) |
+| static `Animal.#make()` declaration | `class-member-unsupported` | unchanged |
+| static `Animal.build()` caller | `body-shape-rejected` | `class-member-unsupported` (arm move; still refused, still legacy-owned) |
+| arity `this.#m(1)` | `body-shape-rejected` | `call-arity-unsupported` (the guard) |
+
+#### Measured plan correction — `r03`'s constructor is NOT this slice's
+
+The plan's acceptance asked for `r03`'s `Animal_new` to reach `emitted`. It does
+not, and no W1-B site could move it: an EXPLICIT constructor that calls **any**
+instance method is refused by `constructorHasIrSafeReceiverSemantics`
+(`select.ts`, the `hasReceiverDerivedCall` branch), which never looks at the
+name. Measured on this branch, the public twin
+(`constructor() { this.seen = this.publicMethod(); }`) is `body-shape-rejected`
+identically; a constructor with a plain field write is `emitted`. `r02`'s
+constructor DOES flip, because it is IMPLICIT — it was blocked only by the
+sibling's non-candidate status, exactly the sealing consequence W1-A predicted.
+The W1-B test file pins the public twin beside the private one so the boundary
+cannot be re-read as a private-name defect.
+
+#### Non-vacuity by revert (file-copy A/B, one site at a time)
+
+| reverted | `r02` caller | `r02` ctor | shadow `B_f` | generator-shadow `B_f` | static caller |
+| --- | --- | --- | --- | --- | --- |
+| nothing (shipped) | emitted | emitted | emitted | `class-member-unsupported` @select | `class-member-unsupported` |
+| S1 | `body-shape-rejected` | `late-preparation-unsupported` | `body-shape-rejected` | `body-shape-rejected` | `body-shape-rejected` |
+| S3 | emitted | emitted | emitted | **`method-call-unsupported` POST-CLAIM** | `class-member-unsupported` |
+| S5 | **`method-call-unsupported` POST-CLAIM** | `late-preparation-unsupported` | **post-claim** | `class-member-unsupported` | `class-member-unsupported` |
+| S2 / S4 | no change on any row | | | | |
+
+S3's row is the reason it ships: `class B extends A` whose own `#m` has no
+method descriptor (here a generator) resolved to `A`'s `__priv_m` — a
+**different** private name, since private names are per-class — and the selector
+CLAIMED the caller on that wrong slot, leaving from-ast to demote it after the
+claim. S5 alone is the post-claim class in the other direction, which is why S1
+and S5 ship together.
+
+#### Census — 33 files × 2 lanes = 66 compiles, 216 terminal units
+
+Per-code counts base vs branch: **identical in every one of the 18 buckets**
+(`emitted` 103, `class-member-unsupported` 10 → 10, `body-shape-rejected` 40,
+…). **0 of 216 unit rows moved. 66 / 66 sha256-identical binaries.** As the plan
+predicted, `classes.js`'s private method is A1-blocked (its class takes an
+`any`-typed constructor parameter, so no member has a descriptor), and no other
+corpus file calls a private method — so a moved census row would have been a
+defect, not a win.
+
+#### Two findings recorded, not fixed
+
+1. **A pre-existing legacy miscompile, unrelated to this slice.**
+   `class A { #m() { return 1 } } class B extends A { #m = () => 2; f() { return this.#m() } }`
+   returns **1**; node returns **2**. `B_f` is `class-member-unsupported` and
+   legacy-owned on base and on this branch, and reverting each site leaves the
+   answer at 1 — so the wrong resolution is on the direct route
+   (`class-bodies.ts`'s member-name resolution), not in selection. Files under
+   the private-field/method collision family rather than here.
+2. **`emitted` does not imply the legacy body was skipped when a DIRECT
+   constructor calls the method.** On `r03` the private method's row is
+   `emitted` with `irBodyEmitted: true` AND `legacyBodyEmitted: true` — the
+   legacy constructor needs that slot, so poisoning it fails the compile. The
+   compile-twice residue belongs to the constructor and leaves with it.
+
+#### Gates
+
+Bare and with `LOC_GATE_BASE=origin/main`: `check-loc-budget` (+58 select.ts,
++6 from-ast.ts, both granted above), `check-func-budget`
+(`isPhase1Expr` 1078 → 1119, `lowerMethodCall` 926 → 932, both already granted),
+`check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`. Whole
+`quality` list: `check:ir-dialect`, `check:ir-kind-neutrality`,
+`check:jstag-seam`, `check:ir-layering` (**86 / 86, unchanged** — no new
+`src/ir` → `src/codegen` edge and no new import at all), `check:ir-fallbacks`
+(no unintended, post-claim or module-level increase; output byte-identical),
+`check:host-import-policy`, `check:ir-only --policy=hybrid` (**READY**, identical
+ledger), `check:standalone-ir-cutover-corpus`, `check:pushraw`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`,
+`check:speculative-rollback`, `check:harness-compile-budget` (measured 150774,
+ceiling 150803 — **29 under, unchanged**), `check:ir-adoption`,
+`check:linear-ir`; TS7 no-emit, Biome, Prettier. Equivalence: all **8 shards
+exit 0**, 24 failing = exactly the 24 committed known failures, zero
+regressions and zero newly-fixed. `tests/issue-3522-*`, `issue-3519-*`,
+`issue-3144-*`, `issue-3000-*`: failing-name-set diff vs base is **empty**
+(24 pre-existing failures on both sides).
+
+#### One W1-A test updated, deliberately
+
+`tests/issue-3522-private-method-admission.test.ts` pinned the sibling call site
+as deferred ("the NEXT slice's boundary") and asserted the constructor's sealing
+note. Both are this slice's subject, so the sibling test moves to the W1-B file
+and the sealing-note assertion becomes "no post-claim entries", with the reason
+in place. The constructor test, the negatives and the census test are untouched.
+
+The next boundary in this family: private ACCESSORS (`get #x`), static private
+methods, and the explicit-constructor receiver-call refusal above.
+
+## Implementation Plan — W1-C `super.<accessor>` read and write (2026-09-04, Fable lane)
+
+The `### Next cluster, in order` list above names this as item 2: the remaining
+genuine class gap in the annotated twin. W1-B (PR #5552) left it untouched.
+
+### Measured starting point (main `e041f82b1e`, both lanes identical)
+
+`.tmp/probe-3522-super.mts` — `analyzeSource` + `generateModule({ experimentalIR,
+trackIrOutcomes })` on an annotated twin of `classes.js`'s `Animal`/`Dog` pair
+(typed fields, `get label` / `set label`, `speak() { return super.label + " barks" }`,
+plus a `rename(v) { super.label = v }` write twin):
+
+| unit | gc | standalone |
+| --- | --- | --- |
+| `Animal_new`, `Animal_get_label`, `Animal_set_label`, `Dog_new` | emitted | emitted |
+| `Dog_speak` (`super.label` read) | `body-shape-rejected` @select | same |
+| `Dog_rename` (`super.label = v` write) | `body-shape-rejected` @select | same |
+
+So on this fixture the constructors already emit — q05's
+`late-preparation-unsupported` ctors were the sealing consequence of sibling
+non-candidacy (`Animal_<computed>` + `Dog_speak`), not a ctor defect. The
+implementer re-measures on the full annotated twin (reconstruct from
+`tests/dogfood/corpus/classes.js`; the q05 file lived only in `.tmp`) and
+records which ctor rows move.
+
+### Root cause — a keyword receiver that two arms never expected
+
+`isPhase1Expr` has explicit arms for `super(...)` (`select.ts:9579`) and
+`super.m(...)` (`:9603`) because `super` is a keyword, not an expression the
+generic receiver checks can accept. A **bare** `super.<name>` is a
+`PropertyAccessExpression` and reaches the generic arm at `select.ts:10141`,
+whose last line is `isPhase1Expr(expr.expression, …)` on `SuperKeyword` —
+which has no arm and returns `false`. Same for the write: the assignment-target
+check (`:3328`) and the tail-assign arm (`:5351`) both end in
+`isPhase1Expr(target.expression)`; `preflightClassPropertyWrite` (`:8100`
+region) returns `true` early because `localClassNameForExpression(super)` is
+null, so nothing refuses with a named arm — the row lands in the anonymous
+`body-shape-rejected` bucket.
+
+On the lowering side, `lowerPropertyAccess` (`from-ast.ts:5196`) and
+`lowerPropertyAssignment` (`:8855`) both begin with `lowerExpr(lhs.expression)`,
+which cannot produce a value for `super`. The `super.method()` arm
+(`:7784-7823`) is the template: intercept BEFORE receiver lowering,
+`requireSuperParentShape(cx)` + `requireThisValue(cx)`, resolve the member on
+the **parent** shape (bypassing any subclass override), emit
+`class.super_call`.
+
+`class.super_call` today hard-codes `memberFunc("method", …)` in
+`lower.ts:2588`; `class.call` (`:2552`) already threads `instr.memberKind`, and
+`IrClassLowering.memberFunc` (`integration.ts:10035`) resolves `"getter"` /
+`"setter"` to the legacy `<Class>_get_<p>` / `<Class>_set_<p>` keys (the same
+keys `Animal_get_label` is emitted under, see the descriptor doc in
+`nodes.ts` for `memberKind`). So the op needs a kind, not a new op.
+
+### Changes, in this order
+
+**S0 — `IrInstrClassSuperCall` gains `memberKind`** (`nodes.ts:1584`):
+`readonly memberKind?: IrClassMemberKind` (absent = `"method"`, exactly like
+`class.call`'s pre-#3144 population). `builder.emitClassSuperCall` takes it as a
+trailing optional param; `lower.ts:2588` becomes
+`cl.memberFunc(instr.memberKind ?? "method", …)`. `effects.ts:164/480` and
+`integration.ts:7958` need no change (kind-agnostic). Run `check:ir-dialect`
+and `check:ir-kind-neutrality` right after S0 — a new instr field is exactly
+what those gates inspect.
+
+**S1 — selector, read** (`select.ts`, inside the `isPropertyAccessExpression`
+arm at `:10141`, BEFORE the `localClassNameForExpression` block): when
+`expr.expression.kind === SuperKeyword`:
+- name must be an `Identifier` → else `shapeNo("super-property-computed")`
+  (private `super.#x` is a syntax error; computed is `super[...]`, an
+  ElementAccess, and stays refused by the element arm).
+- `superParentClassName()` (`:8105`) null or
+  `localClassHasKnownProjectionGap(parent)` →
+  `capabilityNo("class-projection-unsupported", "super-property-parent-shape")`.
+- the parent chain must **declare a `get <name>` accessor** that projects.
+  Write `superAccessorProjection(parentClass, name, "getter" | "setter")`:
+  walk `currentLocalClassDeclarations` from the parent upward (same cursor
+  loop as `classPropertyHasKnownProjectionGap`), find the first own
+  non-static member named `name`; if it is a getter/setter of the requested
+  kind, project it with `classAccessorMayProject` (`:8041`) — or, when
+  `projectedClassShapes` is present, require `exactShape.methods` to carry a
+  descriptor with that `memberKind`. If the first named member is a **field**
+  or a **method**, refuse with `capabilityNo("class-member-unsupported",
+  "super-property-not-accessor")`: `super.<field>` reads the prototype chain and
+  is `undefined` in JS, and a method-as-value is not a Phase-1 value — both are
+  deliberately out of scope, and the arm name keeps them out of the anonymous
+  bucket. Return `true` without recursing into `isPhase1Expr(super)`.
+
+**S2 — selector, write**: in the assignment-target check (`:3328`) and the
+tail-assign arm (`:5351`), add the same `SuperKeyword` receiver arm requiring a
+projected **setter** via `superAccessorProjection(parent, name, "setter")`, then
+`isPhase1Expr(expr.right)`; do not call `isPhase1Expr(super)`. Compound
+(`super.x += 1`) and update (`super.x++`) forms stay refused with a named arm
+`super-property-compound` — the read-modify-write desugaring would need two
+static dispatches and is not this slice.
+
+**S3 — lowering, read** (`from-ast.ts:5196`, first lines of
+`lowerPropertyAccess`): `if (expr.expression.kind === SuperKeyword)` →
+`parentShape = requireSuperParentShape(cx)`, `self = requireThisValue(cx)`,
+`getter = findClassMember(parentShape, name, "getter")` (demote
+`property-access-unsupported` with a message naming the parent if absent or
+`returnType === null`), then
+`emitClassSuperCall(parentShape, self, name, [], getter.returnType, getter.target, "getter")`.
+Mirror the null-result invariant from the `this.prop` getter arm (`:5306`).
+
+**S4 — lowering, write** (`from-ast.ts:8855`, before `lowerExpr(lhs.expression)`):
+`setter = findClassMember(parentShape, name, "setter")` with the same
+one-param / dynamic-boxing / assignability checks as the `this.prop = v` arm
+(`:8873-8883`), then
+`emitClassSuperCall(parentShape, self, name, [value], null, setter.target, "setter")`
+in statement position.
+
+**S5 — nothing else.** `referencesSuper` (`select.ts:10576`) and the ctor
+gate are untouched: W1-B measured `super.m()` inside a derived method already
+admitted, so the only refusals are the two arms above.
+
+### What this must NOT change
+
+- `super.method()` and `super(...)` rows: byte-identical emission (S0's
+  default keeps the `"method"` key).
+- A subclass that **overrides** the getter: `super.label` inside `Dog` must
+  call `Animal_get_label`, never `Dog_get_label` — that is the whole point of
+  resolving on `parentShape`. Pin it with a fixture where `Dog` also declares
+  `get label()` returning a different string.
+- `this.label` in the same method keeps the receiver-shape dispatch (unchanged
+  arm).
+- No new `src/ir` → `src/codegen` import (`check:ir-layering` 86/86).
+
+### Tests — `tests/issue-3522-super-accessor.test.ts` (red on base)
+
+Through the production `compile` seam, both lanes:
+
+| # | fixture | expectation | base |
+| --- | --- | --- | --- |
+| a | the measured twin | `Dog_speak`, `Dog_rename` `emitted`; ctors and accessors unchanged | red (`body-shape-rejected`) |
+| b | run: `new Dog("rex")`, `rename("max")`, `speak()` | `"max barks"`, equal to node; direct emitters POISONED, still runs | red |
+| c | `Dog` overrides `get label()` → `"dog"` | `super.label` yields `Animal`'s value, `this.label` yields `"dog"` | red |
+| d | parent declares `label` as a **field**, `super.label` read | refused at select, arm `super-property-not-accessor`; legacy answer unchanged | green — pins the arm name |
+| e | parent has getter only, `super.label = v` | refused, arm `super-property-not-accessor` | green |
+| f | `super.label += "!"` | refused, arm `super-property-compound` | green |
+| g | parent is a builtin/extern class (`extends Error`) | refused, `super-property-parent-shape` | green |
+| h | selector↔lowering parity: every row S1/S2 admits must reach `emitted`, never a POST-CLAIM demote | zero post-claim entries on a–c | red |
+
+Non-vacuity by file-copy revert, one site at a time (S1, S2, S3, S4, S0's
+kind threading): each must turn at least one of a–c red; S0 reverted alone must
+surface as `Dog_speak` calling the **method** key and failing to resolve
+(`ir/lower` throw → clean legacy fallback), which row h catches.
+
+### Byte-identity cohort
+
+The 33-file × 2-lane census from W1-B (66 compiles, 216 terminal units).
+Prediction: **0 rows move, 66/66 identical.** `classes.js`'s `Dog.speak` is the
+only corpus `super.<accessor>` and its class is A1-blocked (`any`-typed ctor
+param), so no descriptor exists and S1 refuses at `super-property-parent-shape`
+or earlier. If a row moves, name it and its cause; a moved row here is a defect
+in the plan, not a win.
+
+### Gates
+
+The full `quality` list as in W1-B (bare, and again with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`), plus `check:ir-dialect` and
+`check:ir-kind-neutrality` immediately after S0. Growth to grant in this
+file's frontmatter with a dated rationale: `select.ts` ≈ +45, `from-ast.ts`
+≈ +50, `nodes.ts`/`builder.ts`/`lower.ts` ≈ +6; `isPhase1Expr` function budget
+(already granted for W1-B) needs a re-stated grant for this slice.
+Equivalence 8 shards, `EQUIVALENCE_FORK_HEAP_MB=4096`, failing-name set
+identical to the 24 known. `tests/issue-3522-*`, `issue-3519-*`,
+`issue-3144-*`, `issue-3000-*`: failing-name diff vs base empty.
+
+### Acceptance criteria
+
+1. Table rows a–c and h green on both lanes, red on base as recorded.
+2. Rows d–g pin their arm names.
+3. Census 66/66 identical or every moved row explained.
+4. The annotated twin re-measured: which of q05's ctor rows now emit, stated
+   with the sealing reason for any that do not.
+5. Issue `status:` stays `in-progress`; `### W1-C super accessor — landed`
+   appended with the before/after tables.
+
+### Claim
+
+```bash
+node scripts/claim-issue.mjs 3522:w1c-super-accessor ttraenkler/<agent> --branch claude/issue-3522-w1c-super-accessor
+```
+
+### W1-C super accessor — landed (2026-09-04)
+
+Branch `claude/issue-3522-w1c-super-accessor`, base `origin/main` **5c90d7069a**
+(re-merged to **f85b6276d1** before the final push). The plan named five sites;
+**all five shipped**, but three of its predictions were measured false and are
+corrected below. This slice was implemented once, lost to a container restart
+mid-validation, and salvaged from the dead worktree's uncommitted files — every
+number here was re-measured on this branch, not inherited from that run.
+
+| # | site | shipped | change |
+| --- | --- | --- | --- |
+| S0 | `nodes.ts` / `builder.ts` / `lower.ts` — `class.super_call` payload | yes | a `memberKind?: Exclude<IrClassMemberKind, "static">` field, the exact type `class.call` already carries (`nodes.ts:1547`). Absent means `"method"`, so every pre-#3522 producer resolves the identical key; `lower.ts` passes `instr.memberKind ?? "method"` to the same `IrClassLowering.memberFunc` the `this.prop` accessor arm uses. A member kind, not a new op. |
+| S1 | `select.ts::isPhase1Expr`, property-access block | yes | a `SuperKeyword`-receiver arm placed BEFORE any receiver walk, gated on the new `superAccessorProjection` (a parent-chain accessor walk). Returns without recursing into `isPhase1Expr(super)`. |
+| S2 | `select.ts` — `super.<p> = v` write, **three** statement walkers + the compound guard | yes | the plan named two positions; **three** are reachable (see the correction below), plus a named `super-property-compound` refusal in `isPhase1MutableMemberTarget` for `+=` / `++`. |
+| S3 | `from-ast.ts::lowerPropertyAccess` | yes | intercept before receiver lowering, `requireSuperParentShape` + `requireThisValue`, resolve the getter on `parentShape`, emit `class.super_call` with `"getter"`. |
+| S4 | `from-ast.ts::lowerPropertyAssignment` | yes | the setter twin, in statement position, with the `this.prop = v` arm's value-shape obligations verbatim. |
+
+#### Acceptance — the full annotated twin, measured through `generateModule` (both lanes identical)
+
+Acceptance criterion 4. Fixture: the annotated twin of `tests/dogfood/corpus/classes.js`
+(static field, private field, private method, static factory, `get`/`set label`)
+plus the `rename` write twin.
+
+| unit | base `5c90d7069a` | branch |
+| --- | --- | --- |
+| `Dog_speak` (`super.label` read) | `body-shape-rejected` @select, arm `expr-unhandled:SuperKeyword` | **emitted** |
+| `Dog_rename` (`super.label = v` write) | `body-shape-rejected` @select, same arm | **emitted** |
+| `Animal_new` | `late-preparation-unsupported` @resolve | **emitted** |
+| `Dog_new` | `late-preparation-unsupported` @resolve | **emitted** |
+| `Animal_make` (static factory) | `late-preparation-unsupported` @resolve | **emitted** |
+| `Animal_get_label`, `Animal_set_label`, `Animal___priv_privateMethod` | emitted | emitted |
+| `run` | emitted (`legacyBodyEmitted: true`) | **emitted, `legacyBodyEmitted: false`** |
+| `<module-init>` | `static-class-initialization` @select | unchanged |
+
+**All three of q05's sealed rows now emit**, which confirms the plan's diagnosis
+that they were sealing collateral of the two `super` rows and not a constructor
+defect. The one row that does not move is `<module-init>`, refused as
+`static-class-initialization` — "class static initialization is still emitted by
+the direct module-init path", caused by `static species = "generic"`. That is a
+different, already-named boundary, not this slice's.
+
+**Plan correction — the starting-point table understated the base.** The plan's
+`### Measured starting point` recorded the constructors as already `emitted` and
+concluded "q05's ctors were the sealing consequence … not a ctor defect".
+The conclusion is right; the measurement is not. On the full annotated twin all
+three ctor/static rows are `late-preparation-unsupported` on base, so the
+before-state was the sealed one q05 reported.
+
+#### Non-vacuity by revert (file-copy A/B, one site at a time)
+
+28 assertions in `tests/issue-3522-super-accessor.test.ts`; **20 red on base**,
+all 28 green on the branch. Each site reverted alone against the full branch:
+
+| reverted | failing | first rows lost |
+| --- | --- | --- |
+| nothing | **0** | — |
+| S0 | 2 | only the `memberFunc` resolver unit rows (`getter`, `setter`) |
+| S1 | 12 | every read row + the non-tail write + `super.<field>` guard |
+| S2 | 14 | every write row + both compound/update arm pins |
+| S3 | 10 | every read row (selector claims, lowering cannot build) |
+| S4 | 10 | every write row |
+
+**Plan correction — S0 is not observable through the compile seam.** The plan
+predicted that reverting S0 alone would make `Dog_speak` resolve the *method*
+key and fail (`ir/lower` throw → legacy fallback), caught by row h. Measured:
+reverting S0 alone leaves all 24 compile-seam assertions green and **every
+emitted binary byte-identical across 22 compiles** (11 fixtures × 2 lanes,
+including a three-level chain) — because `IrClassLowering.memberFunc` begins
+with `preparedMemberTarget(target)`, which returns the symbolic callable and
+never consults the kind, and every `class.super_call` this slice emits carries
+such a target. S0 still ships: without it the instruction would describe an
+accessor dispatch as a `"method"` dispatch, and `memberFunc`'s name-resolution
+fallback would compute `Animal_label` instead of `Animal_get_label` the moment a
+target is absent. It is therefore pinned at the one seam where it IS observable
+— the resolver call `lower.ts` makes — by four unit rows.
+
+**Plan correction — three write positions, not two.** The plan named the
+assignment-target check and the tail-assign arm. Measured: a leading
+`super.label = v;` in `renameAndRead(v) { super.label = v; return super.label; }`
+stayed on `expr-unhandled:SuperKeyword` with only those two, because a class
+method's leading statements are walked by `isPhase1StatementListInScope`
+(`nontail-` is a POSITION prefix, not a module-level restriction), and a write
+nested in an `if` block is walked by `isPhase1BodyStatement`. All three ship,
+and the two extra positions have their own fixtures (`NON_TAIL_WRITE`,
+`NESTED_WRITE`). The plan's `:3328` "assignment-target check" is
+`isPhase1MutableMemberTarget`, which is the read-modify-write path only — so it
+carries the `super-property-compound` refusal, not a write arm.
+
+#### Guard rows and one arm that no fixture reaches
+
+| row | code | pins |
+| --- | --- | --- |
+| d `super.<field>` read | `class-member-unsupported` | **red on base** (`body-shape-rejected`); arm `super-property-not-accessor` |
+| e `super.<getter-only> = v` | `class-member-unsupported` | green on base via the ordinary property-write preflight; this slice answers first, same code |
+| f `super.x += "!"` / `super.x++` | `body-shape-rejected`, arm `super-property-compound:PropertyAccessExpression` | **red on base** (`expr-unhandled:SuperKeyword`) |
+| g `extends Error` | `class-member-unsupported` | green on base **and with S1 reverted** |
+
+**Plan correction — row g does not pin `super-property-parent-shape`.** The plan
+expected the builtin-parent fixture to land on that arm. Measured: `Boom_info`
+never reaches either super arm — `Boom` itself is non-projecting (`Boom_new` is
+`class-projection-unsupported`) and the member is refused at the class-member
+level first, identically on base and branch. Row g is a genuine guard (a builtin
+parent stays refused, legacy-owned, answer unchanged) but not an arm pin, and
+the test comment now says so. Consequently **`super-property-parent-shape` is
+defensive-only**: a parent that does not project makes the derived class
+non-projecting too, so its members are refused before the arm runs, and no
+fixture constructed for this slice reaches it. It is kept because it is the
+correct refusal if that invariant ever stops holding, and because leaving the
+case unnamed would return the shape to the anonymous bucket.
+
+Acceptance criterion 2 is therefore met for rows d, e and f, and **not** for row
+g, by measurement rather than by omission.
+
+#### Census — 33 files × 2 lanes = 66 compiles, 216 terminal units
+
+**0 of 216 unit rows moved. 66 / 66 sha256-identical binaries.** As the plan
+predicted, `classes.js`'s `Dog.speak` is the only corpus `super.<accessor>` and
+it is A1-blocked (`any`-typed constructor parameter → no descriptor), so it is
+`class-member-unsupported` on both sides and never reaches the new arm.
+
+#### Findings recorded, not fixed
+
+1. **A pre-existing legacy miscompile on `super.<string accessor> += "!"`.** The
+   module fails to instantiate with `f64.add[0] expected type f64, found block of
+   type externref` on both lanes, at byte-identical offsets on base and on this
+   branch, and identically with `experimentalIR: false`. A direct-route defect,
+   not this slice's; the numeric `++` twin carries the behavioural assertion
+   instead.
+2. The standalone lane returns a WasmGC `i16` array rather than a JS string from
+   an exported string-returning function, so the run fixtures read the answer
+   back through `length` / `charCodeAt`. Measured true of `super.method()` on
+   base too — a lane property, not this slice's.
+
+#### Gates
+
+Bare and again with the CI merge base pinned through `LOC_GATE_BASE`:
+`check-loc-budget` (+133 `select.ts`, +64 `from-ast.ts`, +10 `nodes.ts`, +6
+`builder.ts`, all already granted above; **`lower.ts` net 0** — the S0 note was
+folded into the existing comment rather than taking a god-file grant),
+`check-func-budget` (`isPhase1StatementListInScope` 367 → 381, `isPhase1Expr`
+1119 → 1126, both already granted), `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`. Whole `quality` list:
+`check:ir-dialect`, `check:ir-kind-neutrality` (both re-run immediately after
+S0, as the plan asks), `check:jstag-seam`, `check:ir-layering` (**86 / 86,
+unchanged**), `check:ir-fallbacks` (no unintended, post-claim or module-level
+increase), `check:host-import-policy`, `check:ir-only --policy=hybrid`
+(**READY**), `check:standalone-ir-cutover-corpus` (5 sources, 47 units, no
+legacy), `check:pushraw`, `check:stack-balance`, `check:codegen-fallbacks`,
+`check:any-box-sites`, `check:speculative-rollback`,
+`check:harness-compile-budget` (measured 150774 = budget 150774, ceiling 173391,
+**13.04 % margin left** — the figure is unchanged by this slice; main's
+post-merge baseline refresh moved the budget under it mid-validation, so the
+pre-merge run of the same gate read `ceiling 150803`), `check:ir-adoption`,
+`check:linear-ir`; TS7 no-emit, Biome, Prettier. Equivalence: all **8 shards
+exit 0**, 24 failing = exactly the 24 committed known failures, zero
+regressions. `tests/issue-3522-*`, `issue-3519-*`, `issue-3144-*`,
+`issue-3000-*` (31 files, 504 tests): failing-name-set diff vs base is **empty**
+(24 pre-existing on both sides).
+
+Every gate above was run twice — once before merging `origin/main`
+(**5c90d7069a** era) and once after (**f85b6276d1**), because that merge moved
+`src/codegen/class-bodies.ts` and the harness budget. `src/ir/` itself is
+untouched by main across that span, so the file-copy A/B stays exact; the
+census, the annotated twin and the 28 assertions were re-measured on the merged
+tree and reproduce identically.
+
+The next boundary in this family: `super.<accessor>` compound / update forms
+(the two-dispatch read-modify-write named above), and `super.<accessor>` reached
+from a nested or static context.
+## Handover — Fable lane, session ending 2026-09-04 ~07:00Z
+
+### Landed this session
+
+| slice | PR |
+| --- | --- |
+| W1-A private-method declaration admitted | #5545 |
+| W1-B private-method call sites (S1/S3/S5; S2/S4 measured unreachable) | #5552 |
+| W1-C `super.<accessor>` read and write (S0–S4; three plan predictions corrected in its landed record) | #5570 |
+
+The annotated `classes.js` twin now compiles every executable unit once
+(`Dog_speak`, `Dog_rename`, both ctors and `Animal_make` emitted); only
+`<module-init>` still refuses at `static-class-initialization`, which is R4's
+(#3523).
+
+### Next, in the order the `### Next cluster` list gives
+
+1. **Computed-name methods (`r05`)** — needs a compile-time constant-key
+   contract before the A2 arm can admit them; unplanned.
+2. A1 `any`-class position → the `any`-carrier lane (#5289 / #3523), not R3.
+3. `static-class-initialization` on `<module-init>` → R4 (#3523).
+
+### Findings recorded this session that need their own issue or triage
+
+- `tests/issue-3522-*` carries **23 pre-existing red names on `main`** (measured
+  independently by the #5308 and #5309 implementers, failing-name diff empty
+  on both PRs). Nobody owns that backlog; triage it by file before the next
+  slice so a slice's "diff empty" claim stays meaningful.
+- **Legacy miscompile**: `super.<string accessor> += "!"` fails to instantiate
+  (`f64.add[0] expected type f64, found block of type externref`), identical
+  with `experimentalIR: false` — direct-route, recorded by W1-C, no issue yet.
+- #5309 (landed, PR #5565) recorded two out-of-scope siblings that need issues:
+  parent instance field vs child method (node 1, js2 2) and a base-typed
+  receiver holding a subclass with a shadowing field (node 2, js2 1) — both
+  need field-before-method precedence in dispatch.
+- #5312 (uninitialised declared field reads as a null ref, not `undefined`) is
+  being implemented by opus-5312 at hand-over time; its PR will carry the
+  decision between read-site mapping and comparison folding.
+
+## Implementation Plan — 2026-09-05
+
+### W1-D: literal computed instance-method names, with exact body ownership
+
+Planner: **Astra**. Source review base:
+`a53b1bd17338c01f4bffe2df6b3463d216990a6b`. This is the next unimplemented
+class-member slice after the landed private-method and `super`-accessor work.
+It does not reopen those slices or mark R3 complete. No compiler tests were
+run by the planner; the current-source facts below are distinct from the
+historical September 3/4 measurements, which must be reproduced by the dev.
+
+**Dispatch identity:** `3522:w1d-computed-literal-method`, intended owner
+`ttraenkler/luna-ir-computed-method-20260905`, branch
+`codex/3522-w1d-luna-20260905`. The lead verified this reservation remotely
+after checking claims, remote branches and open PRs, and provisioned its
+isolated worktree. Recheck the record before editing. The old
+`3522:w1c-super-accessor` claim is not this slice.
+
+### Root cause on the reviewed source
+
+For `class Tagged { ["tagged"](): number { return 42; } }`:
+
+1. `identity.ts::classMemberLegacyName` (`:637`) obtains `<computed>` from
+   `memberBaseName` (`:631`) instead of the literal runtime key.
+2. `select.ts::phase1MemberName` (`:10696`) returns `null`; the identity
+   selector (`select-identity.ts:1285`) therefore refuses the method as
+   `class-method` before looking for its descriptor.
+3. `codegen/index.ts::buildIrClassShapes` (`:1526`, instance-method loop
+   `:1762-1815`) still skips every name except Identifier/PrivateIdentifier.
+   Opening the selector alone would merely move the refusal to
+   `class-member-unsupported` for the missing descriptor.
+4. `integration-identity.ts::classMemberLegacyName` (`:132-144`) must agree
+   with selection and inventory when it builds the exact selected owner map.
+
+The backend already knows the key: `class-bodies.ts::resolveClassMemberName`
+(`:757`) calls `resolveComputedKeyExpression` (`literals.ts:2792`), which
+resolves a string literal to its string value. This slice must use only that
+literal fact. Importing the backend's general constant evaluator into IR
+would also import mutable binding, enum and symbol assumptions this slice
+does not establish.
+
+### Bounded acceptance contract
+
+Add one syntax-only helper in **new `src/ir/class-method-names.ts`**, importing
+only `ts-api`. Suggested API:
+`literalComputedInstanceMethodKey(member: ts.MethodDeclaration): string | undefined`.
+It answers an exact decoded key or **unproven**, never a guessed name.
+
+For this first slice require all of the following:
+
+- The method name is a `ComputedPropertyName` whose expression is directly a
+  `StringLiteral`; `"tagged"` and `'tagged'` agree. No identifier lookup,
+  parentheses, assertion, template, arithmetic, comma, assignment, symbol,
+  numeric key, or runtime evaluation is added.
+- The containing declaration is a named, non-ambient top-level
+  `ClassDeclaration`, with no heritage or decorators. It contains only
+  body-bearing instance methods, an optional ordinary zero-parameter
+  constructor, and semicolons. Fields, accessors, statics, overload signatures,
+  private members and nested/class-expression ownership remain outside the
+  **new** family; existing admission for those forms stays unchanged.
+- Each method in that family has an Identifier or the same raw-string-literal
+  computed name, a body, no optional/async/generator/abstract form, no
+  decorators, and a fixed parameter list with explicit number/string/boolean
+  types. Return annotations are number/string/boolean/void. Parameter
+  defaults, rest, destructuring and callable/class/dynamic positions stay out.
+  Existing body selection still decides whether the body can lower.
+- The decoded keys are unique among the class's methods. Restrict the new
+  computed keys to ordinary ASCII identifier spellings for this slice, and
+  exclude `constructor`, `new`, and `init` (the latter two overlap constructor
+  support labels). The helper must reject an unresolved sibling or duplicate
+  rather than assuming it cannot collide. This restriction is deliberate
+  scope, not a claim that other legal JavaScript keys are unsupported forever.
+
+Keep name resolution and existing type/body/ABI proofs separate: the helper
+only certifies this narrow declaration family and its key. It does not mint
+an identity, reserve a slot, evaluate a key, or authorize emission by itself.
+The return type `undefined` is a refusal to extend the existing claim set.
+
+### Exact changes, in order
+
+1. **`src/ir/identity.ts`, `classMemberLegacyName` (`:637`).** For a method
+   accepted by the new helper, use its decoded key before the existing
+   `memberBaseName` fallback. Leave `memberBaseName` itself unchanged: it also
+   names object-literal members and field-initializer support. Keep
+   `InventoryBuilder.processClass`'s definition-expression scan (`:1191`) and
+   unit ordinal/lexical-owner construction (`:1257-1322`) unchanged. Thus the
+   exact declaration keeps its UnitId while its compatibility label becomes
+   `Tagged_tagged`; two different admitted keys get different labels.
+2. **`src/ir/select.ts`.** Add a method-specific wrapper, e.g.
+   `phase1MethodName(member)`, delegating to the new helper for computed names
+   and to `phase1MemberName` otherwise. Update only the method naming in
+   `planIrCompilation`'s static/instance collision collection (`:891-901`),
+   method branch (`:924`), and descriptor lookup (`:987`, branch by member
+   kind). The existing `phase1MemberName`, `phase1PropertyName`, accessor
+   paths and `classElementProjectionName` remain unchanged. In the
+   **no-sidecar** arm of `classMethodProjection` (`:7815-7852`), use the same
+   method-specific name for matching a method and counting an instance/static
+   collision. Its exact-shape arm (`:7776`) already reads descriptors by
+   semantic key and needs no new lookup. Leave the W1-H binary-expression
+   function at `:7361` alone.
+3. **`src/ir/select-identity.ts`, `planIrCompilationByIdentity` (`:909`) class loop.**
+   Use the method-specific name at the method-name refusal (`:1285`) and the
+   descriptor-name computation (`:1314`), preserving accessor behavior.
+   For a newly admitted computed method, require exactly one descriptor with
+   matching name/kind **and** exact `placement.classId`, `placement.unitId`,
+   unit-bound `target.binding.unitId`. Missing/ambiguous evidence refuses
+   before claim using the existing class-member capability path. Do not
+   weaken any `selectorIdentityInvariant`, replace exact ids with text, or
+   rewrite nested-class atom handling.
+4. **`src/codegen/index.ts`, `buildIrClassShapes` instance-method loop
+   (`:1762-1815`).** Keep the old Identifier/PrivateIdentifier arms, then add
+   only the new helper's successful computed-method arm. Preserve all
+   parameter/return projection checks, `callableTarget(member, ...)`,
+   `placementFor(member)` and descriptor shape. Do not admit every
+   StringLiteral/NumericLiteral property simply by calling the broader
+   `phase1MemberName`: those existing descriptor gaps are not this slice.
+   `planIrOverlay`, the TypeScript binder work and Reflect handlers are out
+   of the write scope.
+5. **`src/ir/integration-identity.ts`, `classMemberLegacyName` (`:132`).**
+   Use the same method-specific name for methods, preserving the accessor
+   branch and duplicate-owner invariants. Prove the producer declaration,
+   inventory terminal, descriptor target and final Program ABI callable all
+   point to the same exact unit.
+
+**Wasm pattern:** no new instruction or runtime helper. The existing
+`class.call`/method lowering continues to obtain its callee from the class
+descriptor, pass the existing receiver plus arguments, and emit the direct
+Wasm `call` to the exact resolved callable. The method body uses the existing
+IR operations for its scalar body. No `ref.cast`, ref-cell, `VOID_RESULT`,
+boxing or coercion rule changes are authorized here.
+
+### Direct-body routing and read-only checks
+
+`prepared-class-body-cutover.ts::hasResidualClassBodySyntax` (`:56`) rejects
+every computed member, but that is a **whole-walker cutover**, not evidence
+that a selected method must emit directly. The fallback
+`class-bodies.ts::compileClassBodies` calls `skipExactPreparedClassBody`
+(`:2996`) before resolving or emitting a method body; that helper (`:2188`)
+checks the exact declaration UnitId and allocator-owned callable. Use it.
+Do not widen the whole-class cutover or its kill switch.
+
+Read, do not edit, `class-bodies.ts`,
+`program-abi-class-callable-planning.ts::structuralClassMemberName` (`:178`),
+`class-callable-abi.ts::finalizeForwardClassCallableAbis` (`:106`, deliberately
+still identifier-only), and `integration.ts`'s compatibility-only method
+walk (`:3460`). The primitive-signature/top-level/identity-route limits avoid
+requiring their wider ABI surfaces. If a positive case needs a new callable
+provider or body-router change, report it and re-scope before broadening.
+
+### Tests and first-run decision
+
+New **`tests/issue-3522-computed-literal-method.test.ts`**, following
+`tests/issue-3522-private-method-admission.test.ts`'s per-target outcomes,
+runtime setup, exact body-poison controls and cleanup in `finally`.
+
+```ts
+class Tagged {
+  constructor() {}
+  ["tagged"](n: number): number { return n + 2; }
+  ["other"](n: number): number { return n + 7; }
+}
+export function run(): number {
+  const value = new Tagged();
+  return value.tagged(3) * 10 + value.other(4);
+}
+```
+
+Expected executed result is **61**. First run this source on the real branch
+base through `compile` and record the exact method and caller outcomes on
+`gc` and `standalone`. The new methods should reproduce the name/descriptor
+refusal; the planner does not claim a freshly measured failing-test count.
+If base already emits these methods or another earlier arm prevents reaching
+the intended boundary, resolve that finding before the production edit.
+
+The candidate must demonstrate all of the following:
+
+- One exact terminal per method, stable UnitIds versus base, decoded distinct
+  labels, exact descriptor/callable agreement, `irBodyEmitted: true` and
+  `legacyBodyEmitted: false`, with no post-claim errors or audit violations.
+- The positive source runs to 61 on both targets with each named direct
+  method body poisoned. A forced-direct control must trip the poison; a
+  no-poison direct baseline must return the same value. Do not equate a
+  successfully entered declaration walker with direct body emission.
+- Literal aliases (`const key = "tagged"; [key]()`), an effectful key,
+  numeric/template keys, duplicate decoded keys, reserved support names,
+  static/accessor/private/nested/derived/field-bearing classes and wider
+  signatures retain their previous admission. Existing ordinary methods in
+  a mixed class must not lose their prior ownership just because the new
+  computed candidate is refused.
+- The previously admitted private-method and `super`-accessor cases stay
+  unchanged. Object literal computed names and field/accessor key evaluation
+  also stay unchanged because their helpers were not widened.
+- Remove each load-bearing production seam in turn using worktree-local
+  file copies: the positive ownership/identity tests must fail. A branch
+  that changes only display names is not accepted as method admission.
+
+`tests/issue-3529-selector-preclaim.test.ts:114` currently lists a literal
+computed method as a refusal. Move that **exact** case to a positive runtime
+and ownership test; preserve a refusal control with a truly dynamic key.
+Do not delete the negative coverage or silently relax its assertions.
+
+### Validation, write ownership and dispatch
+
+```bash
+pnpm exec vitest run tests/issue-3522-computed-literal-method.test.ts tests/issue-3522-private-method-admission.test.ts tests/issue-3522-private-method-call-sites.test.ts tests/issue-3522-super-accessor.test.ts tests/issue-3529-selector-preclaim.test.ts tests/issue-3529-class-integration.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+node --import tsx scripts/check-ir-fallbacks.ts
+node --import tsx scripts/check-ir-only.ts --policy=hybrid
+node --import tsx scripts/check-ir-only.ts --policy=ir-only
+pnpm run check:ir-dialect
+pnpm run check:ir-kind-neutrality
+pnpm run check:ir-layering
+pnpm run typecheck
+pnpm run lint
+node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs && node scripts/check-coercion-sites.mjs && pnpm run check:oracle-ratchet && pnpm run check:dead-exports
+```
+
+Run all affected R1 identity/R3/class-projection suites one file per invocation
+on base and candidate; report the fresh failing-name diff, not September's
+"23 pre-existing" count. Capture and compare emitted bytes with
+`node --import tsx scripts/prove-emit-identity.mjs write --baseline .tmp/w1d-emit-base.json`
+before edits and its `check` mode after. State its enumerated `.ts` manifest
+and successful-compile floor; it does not enumerate dogfood `.js`. No corpus
+coverage gain is predicted from the synthetic `r05` shape. Run required
+equivalence/quality checks, including the five ratchets against a freshly
+verified main SHA. Put only measured growth grants in this issue; never
+inflate main-owned baselines.
+
+**Luna / max brief:** own the new helper, the narrowly named functions in
+`identity.ts`, `select.ts`, `select-identity.ts`, `integration-identity.ts`,
+and `codegen/index.ts`, the new test, the one stale refusal case, and this
+issue's landing record. You are not alone; preserve peers' changes and use
+your assigned isolated branch. W1-H owns a different function in `select.ts`;
+coordinate imports and serialize main integration if both edit that file.
+No other shared function is assigned concurrently in this wave. Do not edit
+module-binding storage, R2 free-function ownership, class cutover switches,
+Reflect methods, or the binder. First measure the motivating row, then ship
+only this literal family with exact body evidence. Source and test results
+outrank this plan. Keep the epic `in-progress` and return base/head SHAs,
+commands, outcome changes, poison/removal controls, and remaining failures.
+
+## Results — 2026-09-05 W1-D
+
+Developer: **Luna**. Base reproduction used
+`a53b1bd17338c01f4bffe2df6b3463d216990a6b` and the exact `Tagged` fixture
+above on `gc` and `standalone`. Both targets executed to **61** through the
+legacy method bodies. `Tagged_new` was IR-owned, while both instance methods
+were terminal `Tagged_<computed>` refusals with `class-method`, distinct
+`class-instance-method:0000000000000000/0000000000000001` ordinals, and
+`legacyBodyEmitted: true`; `run` remained a direct
+`class-member-unsupported` refusal.
+
+The candidate resolves the two decoded names to `Tagged_tagged` and
+`Tagged_other`, retains those same method ordinals, and emits
+`run`, `Tagged_new`, `Tagged_tagged`, and `Tagged_other` through the IR patch
+on both targets (`legacyBodyEmitted: false`, `irBodyEmitted: true`, no
+post-claim errors). With both direct method bodies poisoned, each target
+still executes to **61**. The forced-direct poison control fails at
+`Tagged_tagged`, while the unpoisoned direct baseline also returns **61**.
+The moved former #3529 literal case is IR-owned as `Greeter_value` and
+returns **42**. Dynamic aliases, effectful keys, unsupported signatures,
+and a mixed ordinary/dynamic class retain refusal and ordinary-method
+ownership; the direct syntax helper also rejects duplicate, reserved,
+numeric/template, static/private/field-bearing, derived, and wider-signature
+shapes.
+
+Focused computed-method plus selector-preclaim coverage passes **80/80**.
+The full affected command passes **154/155** tests; the sole failure is the
+existing W1-B standalone test for a private method with no descriptor, which
+reproduces in isolation as `Invalid opcode 0x1f (enable with
+--experimental-wasm-exnref)` in `__gen_resume_B___priv_m`. The four
+load-bearing identity, selector, descriptor, and codegen seam removals each
+trip the positive ownership/poison test. The exact modern integration path
+uses `classMemberUnitIds`, so its compatibility-only name fallback is not
+reached by that ownership test; the shared helper is nevertheless updated to
+keep that fallback in agreement.
+
+Required checks pass: TypeScript 7 typecheck, IR fallback, hybrid and
+IR-only readiness (each 5/5 entries, 41 units, 38 emitted, 0 unsupported,
+0 invariants, 0 legacy bodies), dialect, kind-neutrality, layering,
+coercion, oracle ratchet, LOC/function budgets, targeted Biome/Prettier, and
+`git diff --check`. For the required A/B emit proof, only the W1-D-owned
+source/test files were copied aside and restored to base
+`a53b1bd17338c01f4bffe2df6b3463d216990a6b`; the base snapshot enumerates
+**15** `.ts` files across four targets (**60** records: 36 successful
+compiles, 24 expected CEs, 0 throws), and the restored candidate check is
+**IDENTICAL for all 60** records. The base file-copy lint run reports the
+same repository diagnostic cap (**1,824** diagnostics across 5,229 files),
+and the W1-B standalone failure reproduces at base with the same exnref
+opcode error. Dead-export checking also reproduces its existing
+space-encoded path failure (`.../Volumes/Archiv%20Mini/...`). The later
+current-main merge (`5da655f286fcd569203cd2012b23dc21bf1c626d`, included in
+candidate merge commit `f8037b04efed8373a7013d400ab4f0588c74645d`) changes
+one unrelated corpus emit (`website/playground/examples/js/async.ts::gc`);
+the W1-D candidate A/B comparison itself was identical before that merge.

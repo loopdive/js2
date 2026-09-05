@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { getWebHostConstructors } from "../src/runtime/web-host-constructors.js";
 import { compileValid, hostImportNames, instantiate } from "./real-world-helpers.js";
 
 /**
@@ -43,6 +44,24 @@ describe("real-world: Web APIs", () => {
     `);
   });
 
+  it("binds bare TextEncoder/TextDecoder globals to the host constructors", async () => {
+    const source = `
+      export function byteLength(s: string): number {
+        return new TextEncoder().encode(s).length;
+      }
+      export function roundTrip(): string {
+        return new TextDecoder().decode(new TextEncoder().encode("Aé"));
+      }
+    `;
+    const result = await compileValid(source);
+    expect(hostImportNames(result)).toEqual(
+      expect.arrayContaining(["TextEncoder_new", "TextEncoder_encode", "TextDecoder_new", "TextDecoder_decode"]),
+    );
+    const exports = await instantiate(source);
+    expect(exports.byteLength("Aé")).toBe(3);
+    expect(exports.roundTrip()).toBe("Aé");
+  });
+
   it("compiles URL parsing", async () => {
     await compileValid(`
       export function hostname(u: string): string {
@@ -73,8 +92,8 @@ describe("real-world: Web APIs", () => {
     expect(uuid).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
-  it("compiles assorted Web globals (structuredClone, queueMicrotask, btoa, AbortController)", async () => {
-    await compileValid(`
+  it("runs Web base64 globals and compiles assorted Web globals", async () => {
+    const source = `
       export function clone(o: any): any {
         return structuredClone(o);
       }
@@ -84,12 +103,22 @@ describe("real-world: Web APIs", () => {
       export function base64(s: string): string {
         return btoa(s);
       }
+      export function unbase64(s: string): string {
+        return atob(s);
+      }
       export function abortable(): any {
         const c = new AbortController();
         c.abort();
         return c.signal;
       }
-    `);
+    `;
+    const result = await compileValid(source);
+    expect(hostImportNames(result)).toEqual(expect.arrayContaining(["atob", "btoa"]));
+    const webHost = getWebHostConstructors();
+    expect(webHost).toMatchObject({ atob: expect.any(Function), btoa: expect.any(Function) });
+    const exports = await instantiate(source, webHost);
+    expect(exports.base64("foo")).toBe("Zm9v");
+    expect(exports.unbase64("Zm9v")).toBe("foo");
   });
 
   it("compiles a Headers map", async () => {
@@ -118,8 +147,7 @@ describe("real-world: Web APIs", () => {
     const body = makeEl();
     const document = { createElement: () => makeEl(), body };
 
-    const exports = await instantiate(
-      `
+    const source = `
         declare const document: any;
         export function render(label: string): number {
           const box = document.createElement("div");
@@ -128,9 +156,10 @@ describe("real-world: Web APIs", () => {
           document.body.append(box);
           return 1;
         }
-      `,
-      { document },
-    );
+      `;
+    const result = await compileValid(source);
+    expect(hostImportNames(result)).toContain("global_document");
+    const exports = await instantiate(source, { document });
 
     expect(exports.render("Hello")).toBe(1);
     expect(body.children).toHaveLength(1);

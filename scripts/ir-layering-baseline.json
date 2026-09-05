@@ -1,6 +1,6 @@
 {
-  "generated": "2026-08-21T19:36:10.550Z",
-  "total": 83,
+  "generated": "2026-08-24T02:40:56.495Z",
+  "total": 86,
   "files": {
     "ir/backend/linear-integration.ts": 1,
     "ir/calendar-selection-support.ts": 1,
@@ -10,7 +10,7 @@
     "ir/fmod-selection.ts": 1,
     "ir/from-ast.ts": 3,
     "ir/i32-pure-bitwise.ts": 1,
-    "ir/integration.ts": 41,
+    "ir/integration.ts": 44,
     "ir/math-runtime-providers.ts": 3,
     "ir/number-to-string-provider.ts": 6,
     "ir/prepared-callable-resolution.ts": 3,

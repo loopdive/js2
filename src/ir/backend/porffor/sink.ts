@@ -562,6 +562,10 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
     out.push(pointer!);
   }
 
+  emitStringRepeat(): void {
+    throw new Error("PorfforEmitter: string.repeat is outside the typed Porffor subset");
+  }
+
   emitStringEquals(_negate: boolean, _out: PorfforSink): void {
     throw new Error("porffor backend does not yet support string.eq");
   }
@@ -767,6 +771,9 @@ export class PorfforEmitter implements BackendEmitter<PorfforSink> {
       case "f64.convert_i32_u":
         out.push(convertExpr("f64", convertExpr("u32", value, 0), 0));
         return;
+      case "f32.demote_f64":
+      case "f64.promote_f32":
+        throw new Error(`porffor backend does not support numeric conversion '${op}'`);
     }
   }
 

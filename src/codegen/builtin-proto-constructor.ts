@@ -41,21 +41,22 @@
  * | `__builtin_ctor_<N>` (#3006)       | Set, Map, Weak*, RegExp, FinalizationRegistry, …    |
  * | `__builtin_<N>` namespace (#2907)  | Object, Array, Math, JSON, Reflect, Error family    |
  *
- * A builtin with NEITHER carrier (`Date`, `String`, `Number`, `Boolean`,
- * `Function`) declines and keeps today's `undefined`. Minting a carrier for
- * those means changing what the BARE identifier reads — a strictly wider blast
- * radius than this arm — so it is deliberately left to a follow-up that can
- * measure the bare-value change on its own. `Function` in particular must stay
- * out: its bare value is the realm-owned `%Function%` intrinsic in runtime-eval
- * builds (`emitStandaloneIntrinsicFunctionValue`), not a plain carrier.
+ * A builtin with NEITHER carrier (`Date`, `String`, `Number`, `Boolean`)
+ * declines and keeps today's `undefined`. `Function` is the one exception:
+ * its constructor value already has a single shared emitter
+ * (`emitStandaloneFunctionIntrinsicValue`) because the bare value is the
+ * realm-owned `%Function%` intrinsic in runtime-eval builds. Reusing that
+ * emitter here makes the prototype's own data property agree with both the
+ * `Function.prototype.constructor` read and the bare `Function` value without
+ * minting a second, non-callable carrier.
  *
  * ## Safety envelope
  *
  * Standalone only (`ctx.standalone` is checked by both callers); host/gc keep
  * their genuine `Object_get_constructor` read. Every shape this module answers
- * read `undefined` on main, so nothing that previously produced a value can
- * change. `tryEmit*` returns `false` having pushed NOTHING when it declines, so
- * a decline can never leave partial instructions in `fctx.body`.
+ * was previously `undefined` on main, so nothing that previously produced a
+ * value can change. `tryEmit*` keeps the no-partial-instructions contract when
+ * it declines.
  */
 import type { ValType } from "../ir/types.js";
 import {
@@ -64,6 +65,13 @@ import {
   isBuiltinConstructorIdentityName,
   isSupportedBuiltinNamespace,
 } from "./builtin-static-globals.js";
+import { emitStandaloneFunctionIntrinsicValue } from "./function-intrinsic-carrier.js";
+// (#5194 step 1) TypedArray carriers. Both are used only inside functions, so
+// the module cycle these introduce is evaluation-order safe.
+import { emitTaCtorValue } from "./dataview-native.js";
+import { taCtorKindOf } from "./registry/types.js";
+import { emitTypedArrayIntrinsicCtorObject } from "./array-object-proto.js";
+import { withSpeculativeCompile } from "./context/speculative.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { coerceType, ensureLateImport, flushLateImportShifts } from "./shared.js";
 
@@ -80,7 +88,29 @@ const CONSTRUCTOR_FLAGS = 0x05;
  * pushing operands and keep the "declines push nothing" contract.
  */
 export function hasBuiltinProtoConstructorCarrier(builtinName: string): boolean {
-  return isBuiltinConstructorIdentityName(builtinName) || isSupportedBuiltinNamespace(builtinName);
+  return (
+    builtinName === "Function" ||
+    isBuiltinConstructorIdentityName(builtinName) ||
+    isSupportedBuiltinNamespace(builtinName) ||
+    // (#5194 step 1) The TypedArray family. `<View>.prototype.constructor` is
+    // the per-kind `$__ta_ctor` singleton — the SAME value the bare
+    // `Uint8Array` identifier reads (Int8Array is already covered above by the
+    // #4490 identity carrier). `%TypedArray%.prototype.constructor` is the
+    // abstract intrinsic ctor object (§23.2.3.5). Without a carrier here the
+    // seeder skipped `constructor` entirely, so `verifyNotEnumerable(
+    // TA.prototype, "constructor")` null-dereferenced the missing descriptor.
+    isTypedArrayProtoConstructorName(builtinName)
+  );
+}
+
+/**
+ * (#5194 step 1) The TypedArray-family prototype names whose own `constructor`
+ * resolves to a TypedArray carrier: the 9 wired concrete views plus the
+ * abstract `%TypedArray%` intrinsic. `taCtorKindOf` is the same predicate the
+ * bare-identifier read uses, so the two cannot drift.
+ */
+function isTypedArrayProtoConstructorName(builtinName: string): boolean {
+  return builtinName === "%TypedArray%" || taCtorKindOf(builtinName) >= 0;
 }
 
 /**
@@ -95,11 +125,21 @@ export function emitBuiltinProtoConstructorValue(
   fctx: FunctionContext,
   builtinName: string,
 ): ValType | null {
+  if (builtinName === "Function") {
+    return emitStandaloneFunctionIntrinsicValue(ctx, fctx) ?? null;
+  }
   if (isBuiltinConstructorIdentityName(builtinName)) {
     return emitBuiltinConstructorIdentity(ctx, fctx, builtinName);
   }
   if (isSupportedBuiltinNamespace(builtinName)) {
     return emitBuiltinNamespaceObject(ctx, fctx, builtinName);
+  }
+  // (#5194 step 1) TypedArray family — see `isTypedArrayProtoConstructorName`.
+  if (builtinName === "%TypedArray%") {
+    return emitTypedArrayIntrinsicCtorObject(ctx, fctx);
+  }
+  if (taCtorKindOf(builtinName) >= 0) {
+    return emitTaCtorValue(ctx, fctx, builtinName);
   }
   return null;
 }
@@ -127,19 +167,26 @@ export function tryEmitBuiltinProtoConstructorDescriptor(
 ): boolean {
   if (builtinName === undefined || member !== "constructor") return false;
   if (!hasBuiltinProtoConstructorCarrier(builtinName)) return false;
-  const createIdx = ensureLateImport(
-    ctx,
-    "__create_descriptor",
-    [{ kind: "externref" }, { kind: "i32" }],
-    [{ kind: "externref" }],
-  );
-  flushLateImportShifts(ctx, fctx);
-  if (createIdx === undefined) return false;
+  return withSpeculativeCompile(ctx, fctx, () => {
+    // The provider-backed `%Function%` emitter can register the runtime-eval
+    // import while producing the descriptor value. Emit the value first, then
+    // resolve the descriptor helper and flush shifts so its call index is live.
+    // The other carriers are self-contained, but keeping the ordering uniform
+    // avoids a future carrier reintroducing the same stale-index hazard.
+    const valueType = emitBuiltinProtoConstructorValue(ctx, fctx, builtinName);
+    if (valueType === null) return { commit: false, value: false };
+    if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
 
-  const valueType = emitBuiltinProtoConstructorValue(ctx, fctx, builtinName);
-  if (valueType === null) return false;
-  if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
-  fctx.body.push({ op: "i32.const", value: CONSTRUCTOR_FLAGS });
-  fctx.body.push({ op: "call", funcIdx: createIdx });
-  return true;
+    const createIdx = ensureLateImport(
+      ctx,
+      "__create_descriptor",
+      [{ kind: "externref" }, { kind: "i32" }],
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    if (createIdx === undefined) return { commit: false, value: false };
+    fctx.body.push({ op: "i32.const", value: CONSTRUCTOR_FLAGS });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__create_descriptor") ?? createIdx });
+    return { commit: true, value: true };
+  });
 }

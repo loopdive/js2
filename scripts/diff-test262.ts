@@ -13,7 +13,7 @@
  *   - Error category breakdown for regressions
  */
 
-import { createReadStream, readFileSync } from "fs";
+import { createReadStream, readFileSync, writeFileSync } from "fs";
 import { createInterface } from "readline";
 import { createHash } from "crypto";
 // (#3613) A checker that answers for 0 of N inputs is a BROKEN checker, not a
@@ -2352,6 +2352,28 @@ async function run(
     console.log(
       `  (Same signature on another PR ⇒ identical cluster ⇒ likely baseline drift — see feedback_baseline_drift_cross_check.)`,
     );
+    // #5280 — the hint above has been printed since #2098 but nothing ever
+    // ACTED on it: comparing two runs' signatures was a human step, and the
+    // same null-proto-super cluster parked three unrelated PRs in one day
+    // (#5479/#5480/#5486) because nobody did it automatically. Persist the
+    // signature as a machine-readable sidecar so the cross-PR ledger
+    // (scripts/test262-signature-ledger.mjs) can match it against recent
+    // merge_group runs. Env-var gated and write-only: absent variable ⇒ not
+    // one byte of this run changes, which is what keeps the merge_group's
+    // main-YAML/merged-script split (see --help) safe.
+    const signatureOut = process.env.TEST262_SIGNATURE_OUT;
+    if (signatureOut) {
+      try {
+        writeFileSync(
+          signatureOut,
+          `${JSON.stringify({ signature: bucketSignature, file_count: signatureFiles.length, files: signatureFiles }, null, 2)}\n`,
+        );
+        console.log(`  (bucket signature record written to ${signatureOut} — #5280 cross-PR ledger)`);
+      } catch (error) {
+        // Evidence emission must never change a verdict.
+        console.log(`  (bucket signature record NOT written: ${(error as Error).message})`);
+      }
+    }
     console.log();
   }
 

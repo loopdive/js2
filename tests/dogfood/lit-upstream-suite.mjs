@@ -45,7 +45,7 @@ import { performance } from "node:perf_hooks";
 
 import * as esbuild from "esbuild";
 
-import { compile } from "../../src/index.ts";
+import { compileProject, instantiateLinkedProject } from "../../src/index.ts";
 import { wrapExports } from "../../src/runtime.ts";
 import { setupLitImplementation, setupLitUpstreamSuite } from "./setup-lit-upstream-suite.mjs";
 import { extractLitUpstreamTests } from "./lit-upstream-extract.mjs";
@@ -55,6 +55,7 @@ import { installReactTestEnvironment } from "./react-test-environment.mjs";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "lit-upstream-suite.json");
 const NAMESPACE = "__LIT__";
+let projectCompileSequence = 0;
 
 // Upstream inlines a lot of shared scaffolding into each `suite`, and that
 // scope prelude is replicated into every lifted test — so lit-html_test.ts
@@ -193,7 +194,48 @@ async function bundleImports(fileRecord, { nodeModules, resolveDir }) {
     .map(([publicName, internal]) => `${JSON.stringify(publicName)}: ${internal}`)
     .join(", ")} };\n}\nvar ${NAMESPACE} = __litModule();`;
 
-  return { source, names: pairs.map(([publicName]) => publicName), stubbed: [...stubbed] };
+  return {
+    source,
+    names: pairs.map(([publicName]) => publicName),
+    stubbed: [...stubbed],
+    projectPrelude: buildProjectImportPrelude(fileRecord),
+  };
+}
+
+// Keep published Lit packages as real bare imports in the compiled lane. The
+// project linker can then compile each package once into its own provider Wasm
+// module and serve later test batches from the content-addressed cache. The
+// native oracle continues to use the fully bundled source above.
+export function buildProjectImportPrelude(fileRecord) {
+  const lines = [];
+  for (const entry of fileRecord.imports) {
+    if (/^(lit|lit-html|lit-element|@lit\/reactive-element)(\/.*)?$/.test(entry.from)) {
+      const namespaceBindings = entry.bindings.filter((binding) => binding.imported === "*");
+      for (const binding of namespaceBindings) {
+        lines.push(`import * as ${binding.local} from ${JSON.stringify(entry.from)};`);
+      }
+      const valueBindings = entry.bindings.filter((binding) => binding.imported !== "*");
+      for (const binding of valueBindings) {
+        lines.push(
+          binding.imported === "default"
+            ? `import ${binding.local} from ${JSON.stringify(entry.from)};`
+            : `import { ${binding.imported} as ${binding.local} } from ${JSON.stringify(entry.from)};`,
+        );
+      }
+      continue;
+    }
+    // Repo-internal test helpers are not part of the published packages. Keep
+    // them admitted but make their first use fail loudly, matching the bundled
+    // oracle's unavailable-module classification.
+    for (const binding of entry.bindings) {
+      lines.push(
+        `var ${binding.local} = function () { throw new Error(${JSON.stringify(
+          `lit-dogfood: ${entry.from} is not shipped by the published package`,
+        )}); };`,
+      );
+    }
+  }
+  return lines.join("\n");
 }
 
 // Rebinds each imported value under the identifier the upstream file's own
@@ -204,18 +246,34 @@ function bindingPrelude(names) {
   return names.map((name) => `var ${name} = ${NAMESPACE}[${JSON.stringify(name)}];`).join("\n");
 }
 
-function buildModuleSource(bundle, tests) {
+function buildProjectModuleSource(bundle, tests) {
   return [
-    bundle.source,
-    bindingPrelude(bundle.names),
+    bundle.projectPrelude,
     LIT_ASSERT_SHIM,
     ...tests.map((test) => buildTestFunction(test)),
     LAST_ERROR_EXPORT,
   ].join("\n");
 }
 
-// The native oracle runs the identical generated sources — same bundle, same
-// shim, same prelude, same body — so any difference is the compiler.
+async function compileLitProject(implementation, source, label) {
+  const generatedRoot = join(implementation.root, ".js2wasm-lit-projects");
+  mkdirSync(generatedRoot, { recursive: true });
+  const safeLabel = label.replace(/[^A-Za-z0-9_.-]+/g, "-");
+  const entryPath = join(generatedRoot, `${String(projectCompileSequence++).padStart(5, "0")}-${safeLabel}.ts`);
+  writeFileSync(entryPath, source);
+  return compileProject(entryPath, {
+    allowJs: true,
+    emitWat: false,
+    skipSemanticDiagnostics: true,
+    deferTopLevelInit: true,
+    packageCacheDir: join(implementation.root, ".js2wasm-cache", "npm-modules"),
+  });
+}
+
+// The native oracle runs the fully bundled form of the same pinned published
+// modules. The compiled lane keeps those package imports external so provider
+// compilation can be cached, while both lanes retain the same bindings, shim,
+// and upstream test body.
 function buildNativeRunners(bundle, tests) {
   const source = [
     bundle.source,
@@ -260,14 +318,12 @@ async function runNative(bundle, tests) {
 // fails). It is also the more interesting result — an invalid module here
 // means js2wasm cannot compile lit's published bytes, full stop, which no
 // per-test number would ever surface.
-async function compileImplementationOnly(bundle) {
-  const source = [bundle.source, bindingPrelude(bundle.names), "export function __probe() {\n  return 1;\n}"].join(
-    "\n",
-  );
+async function compileImplementationOnly(implementation, bundle, label) {
+  const source = [bundle.projectPrelude, "export function __probe() {\n  return 1;\n}"].join("\n");
   const started = performance.now();
   let result;
   try {
-    result = await compile(source, { fileName: "lit.js", skipSemanticDiagnostics: true });
+    result = await compileLitProject(implementation, source, `${label}-implementation`);
   } catch (thrown) {
     return {
       validates: false,
@@ -281,7 +337,13 @@ async function compileImplementationOnly(bundle) {
   }
   try {
     await WebAssembly.compile(result.binary);
-    return { validates: true, compileMs, error: null, binaryBytes: result.binary.length };
+    return {
+      validates: true,
+      compileMs,
+      error: null,
+      binaryBytes: result.binary.length,
+      linkPlan: result.linkPlan ?? null,
+    };
   } catch (error) {
     return {
       validates: false,
@@ -430,10 +492,10 @@ export async function runHarness({ quiet = false } = {}) {
     let compileMs = 0;
 
     for (let attempt = 0; attempt < 4 && batchTests.length > 0; attempt++) {
-      moduleSource = buildModuleSource(bundle, batchTests);
+      moduleSource = buildProjectModuleSource(bundle, batchTests);
       const started = performance.now();
       try {
-        result = await compile(moduleSource, { fileName: "lit.js", skipSemanticDiagnostics: true });
+        result = await compileLitProject(implementation, moduleSource, `${file}-${depth}-${attempt}`);
       } catch (thrown) {
         result = { success: false, errors: [{ message: thrown instanceof Error ? thrown.message : String(thrown) }] };
       }
@@ -478,7 +540,9 @@ export async function runHarness({ quiet = false } = {}) {
     if (validates) {
       try {
         const imports = result.importObject ?? {};
-        const { instance } = await WebAssembly.instantiate(result.binary, imports);
+        const { instance } = result.linkedModules?.length
+          ? await instantiateLinkedProject(result, imports)
+          : await WebAssembly.instantiate(result.binary, imports);
         imports.__setExports?.(instance.exports);
         imports.__setInstance?.(instance);
         compiled = wrapExports(instance.exports, { signatures: result.exportSignatures });
@@ -495,6 +559,7 @@ export async function runHarness({ quiet = false } = {}) {
       compileSuccess: result?.success ?? false,
       validates,
       firstError,
+      linkPlan: result?.linkPlan ?? null,
     });
     log(
       `[dogfood]   ${file.replace(/^.*\//, "")}: ${batchTests.length} tests, ` +
@@ -526,7 +591,7 @@ export async function runHarness({ quiet = false } = {}) {
     }
     // Ask first whether the implementation this file imports compiles to a
     // VALID module at all, before spending any time on its tests.
-    const baseline = await compileImplementationOnly(bundle);
+    const baseline = await compileImplementationOnly(implementation, bundle, fileRecord.file);
     totalCompileMs += baseline.compileMs;
     if (!baseline.validates) {
       implementationInvalid.push({

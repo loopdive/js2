@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { buildImports, compile, compileMulti, type CompileResult, type IrObservedOutcome } from "../src/index.js";
-import { buildCompiledImports } from "../src/runtime.js";
+import { buildCompiledImports, wrapExports } from "../src/runtime.js";
 import {
   inspectIrCompilerTimerShimRouting,
   shouldVisitIrImportedCallBody,
@@ -108,6 +108,7 @@ describe("#4588 exact compiler timer-shim physical-route cutover", () => {
       kind: "failed",
       unitId,
       legacyName,
+      diagnosticVisibility: "report",
       error: {
         func: legacyName,
         message: `${legacyName} is not ready for prepared lowering`,
@@ -464,5 +465,32 @@ describe("#4588 exact compiler timer-shim physical-route cutover", () => {
         "legacy-ast-entry",
       );
     }
+  });
+
+  it("keeps host multi-source timer callbacks on the callback-aware ABI", async () => {
+    const result = await compileMulti(
+      {
+        "dep.ts": `export function dep(): any {
+          return new Promise(function (resolve) { setTimeout(function () { resolve(7); }, 0); });
+        }`,
+        "entry.ts": `import { dep } from "./dep"; export function main(): any { return dep(); }`,
+      },
+      "entry.ts",
+      { target: "gc", experimentalIR: true, optimize: false, deferTopLevelInit: true },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(result.imports.some((entry) => entry.name === "__timer_set_timeout")).toBe(true);
+    const imports = result.importObject;
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.__setInstance?.(instance);
+    imports.setInstance?.(instance);
+    instance.exports.__module_init?.();
+    const exports = wrapExports(instance, { signatures: result.exportSignatures });
+    await expect(
+      Promise.race([
+        exports.main(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timer callback timeout")), 1000)),
+      ]),
+    ).resolves.toBe(7);
   });
 });

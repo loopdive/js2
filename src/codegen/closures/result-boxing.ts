@@ -25,12 +25,21 @@ import type { Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { ensureAnyToExternHelper, isAnyValue, undefinedExternInstrs } from "../any-helpers.js";
 
-/** Preserve the structural boolean brand when an i32 crosses the externref ABI. */
+/** Preserve structural boolean/Symbol brands across the externref ABI. */
 function boxI32ClosureResult(
   ctx: CodegenContext,
-  returnType: { kind: "i32"; boolean?: true },
+  returnType: { kind: "i32"; boolean?: true; symbol?: true },
   boxNumberIdx: number | undefined,
 ): Instr[] {
+  // Native standalone Symbols are represented as branded i32 ids until they
+  // cross an externref boundary.  A dynamically dispatched ToPrimitive method
+  // is exactly such a boundary: treating the id as an ordinary number loses
+  // the Symbol carrier, so ToPropertyKey searches for a numeric property
+  // instead of preserving the returned Symbol.
+  const boxSymbolIdx = ctx.funcMap.get("__box_symbol");
+  if (returnType.symbol === true && boxSymbolIdx !== undefined) {
+    return [{ op: "call", funcIdx: boxSymbolIdx }];
+  }
   const boxBooleanIdx = ctx.funcMap.get("__box_boolean");
   if (returnType.boolean === true && boxBooleanIdx !== undefined) {
     return [{ op: "call", funcIdx: boxBooleanIdx }];
@@ -53,7 +62,11 @@ export function buildClosureResultBoxing(
   // null through every dynamic consumer (measured: `Object.defineProperty(o,
   // "p", {get: function(){}}); o.p` answered null — 15.2.3.6-4-207 family, and
   // the same for any dynamically dispatched void method's result).
-  if (!returnType) return undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }];
+  // Return fresh instruction objects: this sequence is spliced into several
+  // dispatch arms, whose finalize walks remap instruction indices in place.
+  if (!returnType) {
+    return undefinedExternInstrs(ctx)?.map((instr) => ({ ...instr })) ?? [{ op: "ref.null.extern" }];
+  }
   if ((ctx.standalone || ctx.wasi) && isAnyValue(returnType, ctx)) {
     const anyToExternIdx = ensureAnyToExternHelper(ctx);
     return anyToExternIdx !== undefined ? [{ op: "call", funcIdx: anyToExternIdx }] : [{ op: "extern.convert_any" }];

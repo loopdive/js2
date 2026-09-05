@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts } from "../../ts-api.js";
+import { isUseStrictDirectiveExpression } from "./use-strict-directive.js";
 
 const cache = new WeakMap<ts.Node, boolean>();
 // (#2119) Separate cache for the inferModuleStrict=false path so the two
@@ -12,7 +13,9 @@ function hasUseStrictPrologue(statements: readonly ts.Statement[]): boolean {
     // A Directive Prologue is a leading run of ExpressionStatements whose
     // expression is a string literal. The first non-directive statement ends it.
     if (ts.isExpressionStatement(s) && ts.isStringLiteralLike(s.expression)) {
-      if (s.expression.text === "use strict") return true;
+      // §11.2.2 matches the RAW token: a directive containing an EscapeSequence
+      // or a LineContinuation is NOT a Use Strict Directive, however it cooks.
+      if (isUseStrictDirectiveExpression(s.expression)) return true;
       continue;
     }
     break;

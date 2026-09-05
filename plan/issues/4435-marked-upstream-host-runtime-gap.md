@@ -17,12 +17,16 @@ loc-budget-allow:
   - src/codegen/context/create-context.ts
   - src/codegen/context/types.ts
   - src/codegen/declarations.ts
+  - src/codegen/declarations/param-return-inference.ts
   - src/codegen/declarations/object-shape-widening.ts
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/expressions/call-tail-dispatch.ts
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/expressions/calls.ts
+  - src/codegen/expressions/calls-optional.ts
+  - src/codegen/expressions/internal-call-argument.ts
+  - src/codegen/expressions/operator-assignment.ts
   - src/codegen/expressions/extern.ts
   - src/codegen/index.ts
   - src/codegen/literals.ts
@@ -30,6 +34,7 @@ loc-budget-allow:
   - src/codegen/property-access.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
+  - src/runtime.ts
 func-budget-allow:
   - src/codegen/class-bodies.ts::collectClassDeclaration
   - src/codegen/declarations.ts::compileDeclarations
@@ -37,11 +42,19 @@ func-budget-allow:
   - src/codegen/literals.ts::compileObjectLiteralForStruct
   - src/codegen/context/create-context.ts::createCodegenContext
   - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/declarations/param-return-inference.ts::anyIdentifierHasOpaqueLocalOrigin
+  - src/codegen/declarations/param-return-inference.ts::inferParamTypeFromCallSites
   - src/codegen/declarations/object-shape-widening.ts::collectEmptyObjectWidening
+  - src/codegen/expressions/internal-call-argument.ts::compileInternalCallArgument
+  - src/codegen/expressions/operator-assignment.ts::tryCompileExternrefStructFieldPlusEquals
   - src/codegen/expressions/calls-closures.ts::compileCallablePropertyCall
+  - src/codegen/expressions/calls-optional.ts::compileCapturedDynamicOptionalReceiverMethodCall
+  - src/codegen/expressions/calls-optional.ts::compileOptionalCallExpression
   - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   - src/codegen/expressions/call-receiver-method.ts::compileReceiverMethodCall
   - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+  - src/codegen/literals.ts::compileObjectLiteralAsExternref
+  - src/codegen/literals.ts::compileObjectLiteralWithAccessors
   - src/codegen/index.ts::generateModule
   - src/codegen/index.ts::generateMultiModule
   - src/codegen/index.ts::emitIteratorMethodExport
@@ -50,11 +63,17 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerMethodCall
   - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/integration.ts::compileIrPathFunctions
+  - src/codegen/literals.ts::isPlainDataLiteralSpreadSource
+  - src/codegen/literals.ts::materializableSpreadStructTypeIdx
 oracle-ratchet-allow:
   - src/codegen/class-bodies.ts
   - src/codegen/expressions/call-receiver-method.ts
   - src/codegen/literals.ts
+  - src/codegen/declarations/param-return-inference.ts
 coercion-sites-allow:
+  - src/codegen/expressions/calls-optional.ts
+  - src/codegen/expressions/internal-call-argument.ts
+  - src/codegen/expressions/operator-assignment.ts
   - src/codegen/index.ts
 ---
 
@@ -132,3 +151,154 @@ problem in the `use` callback path, not a compiler watchdog or Wasm validation
 problem. Continue from the current branch/PR with the existing probes removed;
 do not report the bridge as upstream-runtime complete until the Hooks suite
 passes.
+
+## 2026-08-24 checkpoint — generic WasmGC receiver bridge
+
+The remaining `space is not a function` failure was reduced to a minimal
+generic call: a compiled `Renderer` instance is read from a dynamic field,
+returned through `getRenderer(parser: any)`, and then called by
+`invoke(renderer: any)`. The field read crosses as a live host proxy. The
+runtime's class-member resolver previously rejected that proxy because only
+fnctor and externref-backed instances were registered; it therefore never
+consulted the already-emitted `__member_kind_space`/`__class_call_space_1`
+Wasm discriminator. The fix unwraps the proxy at this boundary and admits the
+positive WasmGC carrier check; the generated `ref.test` remains the receiver
+identity decision.
+
+Focused regression: `tests/dogfood/marked-runtime.test.ts` passes **1/1**.
+The pinned `marked@18.0.2` surface was re-measured with the original eight
+fixtures:
+
+| | compile | diagnostics | binary | validation | fixture result |
+|---|---:|---:|---:|---:|---:|
+| before bridge | passed | 0 | 4,169,367 bytes | valid | **0/8** equal; all 8 `space is not a function` |
+| after bridge | passed | 0 | 4,169,367 bytes | valid | **0/8** equal; all 8 reach `Cannot read properties of null (reading 'exec')` |
+
+This is a genuine runtime progression, not a passing Marked claim: the class
+method dispatch failure is removed, and the next independent regex/property
+carrier gap is now exposed. The unchanged upstream Hooks denominator remains
+**0/15** until that subsequent gap and the existing `use()` path are fixed.
+
+## 2026-08-24 checkpoint — module-init spread and internal vec arguments
+
+The `null.exec` failure was not a RegExp implementation bug. Marked constructs
+its GFM and pedantic rule tables with module-level spreads such as
+`{ ...blockNormal, paragraph: ... }`. Module initialization invokes host
+`Object.assign` before `setExports` has installed the generated struct-field
+readers, so the spread source is still an opaque WasmGC object with zero host
+keys. Only Marked's explicit override fields survived; inherited rules such as
+`newline` were absent before `.exec()` was called.
+
+The generic fix materializes a host-readable copy only when the source resolves
+to a compiler-visible, statically named data-only literal. Accessor, method,
+computed-key, and nested-spread sources retain the lazy host path; this keeps
+the getter-order safeguard from [#4466](4466-4507-landed-seven-test262-regressions-on-main.md)
+intact. The focused spread and prior class-receiver probes passed, as did the
+host half of the [#2804](2804-host-object-spread-assign-value-copy.md) suite
+(10/10). This first step changed the eight original fixtures from **0/8** with
+`null.exec` to **3 equal, 2 divergent, 3 errored**.
+
+The three remaining traps had one shared stack shape:
+`Tokenizer.{blockquote,list}` called the in-Wasm
+`__call_m_blockTokens_{2,3}` dispatcher with an inline `[]`. Although the call
+never left the module, its uniform externref ABI caused ordinary JS-host
+coercion to run `__make_iterable`, replacing the raw Wasm vec with a host Array;
+the dispatcher's required `ref.cast $__vec_externref` then trapped. The internal
+argument helper now preserves inline array literals as raw vec externrefs, just
+as it already did for identifier-held vecs. Host fallback remains correct
+because `__extern_method_call` wraps raw vec arguments at the real boundary.
+
+Fresh pinned `marked@18.0.2` result after both fixes:
+
+| compile | diagnostics | binary | validation | exact fixtures |
+|---:|---:|---:|---:|---:|
+| passed | 0 | 4,171,028 bytes | valid | **4/8 equal, 4 divergent, 0 errored** |
+
+The four byte-equal fixtures are `blockquote-hr.md`, `code-blocks.md`,
+`emphasis.md`, and `headings.md`. No fixture now throws. The remaining work is
+semantic rather than infrastructure: reference links lose their resolved
+`href`/`title`, table bodies lose rows, and nested-list state drifts (the mixed
+fixture reaches the same list/blockquote family). Focused Marked regressions
+pass **3/3**. The upstream Hooks denominator remains **0/15** and must be
+remeasured separately; this checkpoint does not claim the original unit suite
+is green.
+
+## 2026-08-24 checkpoint — resolved struct-field string `+=`
+
+The largest shared semantic divergence in the remaining fixtures was Marked's
+list token accumulator. Its inferred token object has an externref-backed
+`raw` field and repeatedly executes `token.raw += chunk`. The unresolved-object
+compound-assignment path already used JavaScript's dynamic `+` semantics, but
+both resolved Wasm struct-field paths unconditionally coerced the field and RHS
+to `f64`. Consequently the token's accumulated raw source became `NaN`, and the
+lexer reparsed each unconsumed suffix as duplicate paragraphs and lists.
+
+Resolved externref fields now use the existing ToPrimitive-aware dynamic `+`
+dispatcher and store the resulting externref back into the struct. Numeric
+fields and every other compound operator retain their prior lowering. A focused
+closed-token regression reproduces the original `NaN` and now preserves both
+string chunks; the focused Marked regressions pass **4/4**, and the existing
+resolved/unresolved property-compound suites pass **10/10**.
+
+Fresh pinned `marked@18.0.2` result with the original fixtures:
+
+| | compile | diagnostics | binary | validation | exact fixtures |
+|---|---:|---:|---:|---:|---:|
+| before struct-field `+=` fix | passed | 0 | 4,171,028 bytes | valid | **4/8 equal, 4 divergent, 0 errored** |
+| after struct-field `+=` fix | passed | 0 | 4,171,026 bytes | valid | **6/8 equal, 2 divergent, 0 errored** |
+
+`lists.md` and `mixed-readme-like.md` are newly byte-equal; all four previously
+green fixtures remain green. The two residuals are independent: reference
+links/images lose the resolved `href`/`title` after lexer definition storage,
+and table tokenization retains the regex capture but does not append body rows.
+The original upstream Hooks denominator remains **0/15** and is not claimed by
+this fixture-level checkpoint.
+
+## 2026-08-24 checkpoint — final fixture carrier reductions
+
+The two residual fixture mismatches reduce to independent, generic carrier
+mistakes rather than Marked-specific output patches.
+
+Reference definitions cross an open dictionary before entering the shared link
+builder. A local identifier initialized from that dynamic member read remained
+typed `any`, but call-site inference treated the name as transparent and let a
+second object-literal call narrow the builder parameter to that literal's
+nominal struct. Following the local initializer/alias chain and withdrawing
+that speculative narrowing preserves the runtime definition record, including
+its `href` and `title`. Plain forwarded parameters remain eligible for the
+existing byte-vector narrowing.
+
+Table bodies use the exact expression `match[3]?.trim()`. The optional-call
+lowering captured `match[3]` once for the nullish check, then declined generic
+dispatch because an element access cannot be re-evaluated without observable
+effects. Its live branch therefore returned the default value and produced no
+rows. The JS-host lane now calls `trim` through the ordinary dynamic method
+bridge using the already-captured receiver, preserving both single evaluation
+and the method's `this` value.
+
+The combined reference/table carrier regression passes, and all focused Marked
+regressions pass **7/7**. A concurrent direct-rest regression briefly exposed a
+module-start failure in Marked's
+`constructor(...extensions) { this.use(...extensions) }`: the direct known-rest
+method path expanded the empty rest vector to element zero and called
+`use(null)`. The generic rest ABI now forwards a sole trailing spread intact
+when it starts exactly at the callee's rest index.
+
+Fresh pinned `marked@18.0.2` result with the original fixtures unchanged:
+
+| | compile | diagnostics | binary | validation | exact fixtures |
+|---|---:|---:|---:|---:|---:|
+| before final carrier fixes | passed | 0 | 4,171,026 bytes | valid | **6/8 equal, 2 divergent, 0 errored** |
+| after final carrier + rest fixes | passed | 0 | 4,174,549 bytes | valid | **8/8 equal, 0 divergent, 0 errored** |
+
+All six previously green fixtures remain byte-equal; `image-html.md` and
+`table.md` are newly byte-equal. The broader optional-chain and native-string
+adjacent suites plus the focused Marked tests pass **18/18**.
+This closes the fixture carrier frontier measured by `marked-harness.mjs`; it
+does not by itself claim that the separately adapted original Hooks suite is
+fully green.
+
+As an adjacent-control check, the [#4530 import-alias suite](4530-clsx-variadic-argument-classification.md)
+is **10/11** on both this tree and clean base `f85b3bd520`: its pre-existing
+`default === named` case traps with `illegal cast`. The identical clean-base
+failure rules out the new dynamic-local-origin withdrawal as its cause.

@@ -281,16 +281,16 @@ describe("#4489 module-scope `var` seeds the undefined singleton", () => {
     expect(bits).toBe(1);
   });
 
-  // MEASURED RESIDUAL (pre-existing, NOT introduced here — it is what keeps 3
-  // of #4465's 5 R1 rows red). The REFLECTIVE String-method arm (an object
-  // `searchValue`, or a detached `String.prototype.replace.call`) stringifies
-  // the undefined singleton as "[object Object]" instead of "undefined". The
-  // provenance does not matter, which is the proof it is not this issue's:
-  // an ABSENT ARGUMENT's undefined — a value the seed cannot reach — renders
-  // "[object Object]" there both before and after the seed. The direct arm
-  // (string `searchValue`) is correct. Owner: standalone-gap, filed against the
-  // reflective String dispatch; see `## Residuals` in plan/issues/4489-*.md.
-  it.fails('residual: reflective String.replace renders undefined as "[object Object]"', async () => {
+  // RESIDUAL RETIRED BY #4620 (was `it.fails`). The REFLECTIVE String-method
+  // arm (an object `searchValue`) used to stringify the undefined singleton as
+  // "[object Object]" instead of "undefined", which is what kept 3 of #4465's
+  // 5 R1 rows red. #4620's opaque-callable replacer arm
+  // (`replacer-apply-bridge.ts`) gives this shape a real per-match call through
+  // `__apply_closure`, whose result goes through the runtime ToString, so both
+  // provenances now render "undefined". Verified by A/B on 2026-08-22: this
+  // case FAILS on the pre-#4620 sources and PASSES with them, with only
+  // `regex-replace-fn.ts` + `named-this-call.ts` reverted.
+  it('reflective String.replace renders undefined as "undefined" (fixed by #4620)', async () => {
     const bits = await runModuleInit(`
       var viaModuleVar = 0, viaAbsentArg = 0;
       var pattern = { toString: function () { return "AB"; } };

@@ -17,9 +17,23 @@ const TRACKED_ENV = [
 ] as const;
 const ORIGINAL_ENV = new Map(TRACKED_ENV.map((name) => [name, process.env[name]]));
 
+/**
+ * The TERMINAL-unit rows of a ledger.
+ *
+ * (#3523 R4 gap 4) The ledger also carries one unit-less `non-executable` row
+ * per source whose module init has nothing to do. Those are observations about
+ * a source, not terminal units, so they are excluded here — which is what this
+ * helper's name has always claimed. `nonExecutable` below is their accessor,
+ * and the dedicated suite in `issue-3523-non-executable-outcome.test.ts` owns
+ * their contract.
+ */
 function terminal(result: Awaited<ReturnType<typeof compile>>): readonly IrObservedOutcome[] {
   expect(result.irOutcomes).toBeDefined();
-  return result.irOutcomes ?? [];
+  return (result.irOutcomes ?? []).filter((outcome) => outcome.kind !== "non-executable");
+}
+
+function nonExecutable(result: Awaited<ReturnType<typeof compile>>): readonly IrObservedOutcome[] {
+  return (result.irOutcomes ?? []).filter((outcome) => outcome.kind === "non-executable");
 }
 
 function invariant(code: IrInvariantCode, detail: string): IrObservedOutcome {
@@ -185,6 +199,25 @@ export function value(): number { return new Dog(4).age; }
     expect(constructorOutcome && evaluateIrOutcomePolicy([constructorOutcome], "ir-only").ready).toBe(true);
   });
 
+  // (#3523 R4 gap 4) The complement of the test below: where a source HAS a
+  // module initializer it gets a terminal row, and where it has none it gets an
+  // observational one. Stated here so this file records the whole partition
+  // rather than silently filtering half of it away in `terminal`.
+  it("adds one unit-less non-executable row for a source with no module initializer", async () => {
+    const result = await compile(`export function f(value: number): number {\n  return value + 1;\n}\n`, {
+      fileName: "no-module-init.ts",
+      trackIrOutcomes: true,
+    });
+    expect(result.success, JSON.stringify(result.errors)).toBe(true);
+    const rows = nonExecutable(result);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.unitKind).toBe("module-init");
+    expect(rows[0]!.unitId).toBeUndefined();
+    expect(rows[0]!.sourceId).toBeDefined();
+    expect(rows[0]!.stage).toBe("select");
+    expect(terminal(result).every((outcome) => outcome.unitId !== undefined)).toBe(true);
+  });
+
   it("accounts class members and a non-empty module initializer exactly once", async () => {
     const result = await compile(
       `
@@ -212,6 +245,24 @@ export function readSeed(): number { return seed; }
     expect(new Set(outcomes.map((outcome) => outcome.key)).size).toBe(outcomes.length);
   });
 
+  // UN-SKIPPED BY #5300 — and it was never the #5262 accounting failure.
+  //
+  // The block that used to stand here blamed the R2 body-emission accounting
+  // check for masking this test's root cause, alongside the four below. #5262
+  // fixed that masking and the four below now run. This one was a different
+  // cause entirely. Measured 2026-09-03 with #5262's fix applied, it failed
+  // with:
+  //
+  //   ir/from-ast: direct call to "overloaded" has no exact AST-site plan in run
+  //   IR-first (#2138): run failed after its legacy body was skipped [unpatched-slot]
+  //   IR outcome invariant [unpatched-slot] for run
+  //
+  // `run` calls an OVERLOADED function; the direct-call resolver refused every
+  // overload set (`imported-functions.ts` `targetForSymbol`,
+  // `functions.length !== 1`), so the call site got no lowering plan, the legacy
+  // slot was already skipped, and the row failed closed as `unpatched-slot`.
+  // Nothing in `functionBodyAccountingFailure` participated. #5300 admits a
+  // compatible overload set as a direct-call target, so this runs again.
   it("counts only executable overload implementations and ignores ambient signatures", async () => {
     const result = await compile(
       `
@@ -257,20 +308,37 @@ export function answer(): number { return 42; }
       { fileName: "anonymous-class.ts", trackIrOutcomes: true },
     );
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    // (#5283) `legacyBodyEmitted` is now a receipt: it requires a physical
+    // direct-body root, and an anonymous default class records none — the only
+    // audited entry for this source is a `compileDeclarations` root with no
+    // unit identity at all. The direct route almost certainly DID emit these
+    // two bodies, so this is not a claim that it did not; it is the audit
+    // refusing to assert a body it cannot see. Measured before/after: the two
+    // rows read `true` with `missing-legacy-entry-evidence` x2 ("reports a
+    // legacy body without entering an audited direct-body root"), and now read
+    // `false` with `missing-terminal-evidence` x2 ("neither a resolved IR
+    // outcome nor a physical legacy entry"). Same violation count, and the
+    // second label is the honest one: attributing this class's roots is the
+    // #3523 gap-1 unattributed-entry debt, not something this row can fix.
     expect(terminal(result)).toEqual([
       expect.objectContaining({
         displayName: "<anonymous-default-class:0>_new",
         kind: "unsupported",
         code: "anonymous-class",
-        legacyBodyEmitted: true,
+        legacyBodyEmitted: false,
       }),
       expect.objectContaining({
         displayName: "<anonymous-default-class:0>_read",
         kind: "unsupported",
         code: "anonymous-class",
-        legacyBodyEmitted: true,
+        legacyBodyEmitted: false,
       }),
     ]);
+    expect(
+      (result.irBodyRouteAudit?.violations ?? []).filter(
+        (violation) => violation.code === "missing-legacy-entry-evidence",
+      ),
+    ).toEqual([]);
   });
 
   it("records the compiler-injected timer wrapper as an exact IR terminal", async () => {

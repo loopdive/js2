@@ -1,0 +1,40 @@
+import re,sys
+paths=[l.strip() for l in open('builtins-head.txt') if l.strip()]
+realm=set(l.strip() for l in open('builtins-realm-rows.txt') if l.strip())
+X3371={'built-ins/Date/subclassing.js','built-ins/Error/prototype/stack/getter-foreign-new-target.js',
+ 'built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget.js',
+ 'built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget-bound.js',
+ 'built-ins/Function/prototype/bind/get-fn-realm.js','built-ins/Function/prototype/bind/get-fn-realm-recursive.js',
+ 'built-ins/Function/prototype/bind/instance-construct-newtarget-self-new.js',
+ 'built-ins/Function/prototype/bind/instance-construct-newtarget-self-reflect.js'}
+X5198=set(p for p in paths if re.search(r'String/prototype/(match|search|split|replace)/(cstm-|invoke-builtin|this-value-tostring-error|limit-touint32-error)',p))
+def cl(p):
+    if p in X3371: return 'X1-3371-newtarget'
+    if p in X5198: return 'X2-5198-string-protocol'
+    if p in realm: return 'X3-4274-realm'
+    if p.endswith('Construct/derived-return-val.js'): return 'X4-5139-class'
+    if p.endswith('Construct/base-ctor-revoked-proxy.js'): return 'X5-5140-proxy-revocable'
+    if 'AsyncFunction/' in p: return 'K-asyncfunction-intrinsic'
+    if p.endswith('message_property_native_error.js') or p.endswith('stack/getter-subclass.js'): return 'E-suppressederror-leak'
+    if '/Error/prototype/stack/' in p: return 'D-error-stack-accessor'
+    if '/Function/prototype/toString/' in p: return 'C-proxy-tostring'
+    if 'Symbol/species/subclassing' in p: return 'B2-species-subclass'
+    if re.search(r'Symbol/(symbol\.js|[a-zA-Z]+/prop-desc\.js|species/basic\.js|species/builtin-getter-name\.js|constructor\.js)',p): return 'A1-symbol-namespace'
+    if re.search(r'Symbol/(desc-to-string|for/to-string-err|keyFor/arg-non-symbol|not-callable)',p): return 'A2-symbol-arg-coercion'
+    if p.startswith('built-ins/Symbol/'): return 'B1-symbol-prototype-wrapper'
+    if '/Symbol.hasInstance/' in p:
+        return 'F-function-reflective' if re.search(r'(prop-desc|name)\.js$',p) else 'M-function-call-value'
+    if p.endswith('Function/prototype/name.js') or p.endswith('Function/is-a-constructor.js'): return 'F-function-reflective'
+    if '/JSON/' in p: return 'G-json'
+    if re.search(r'(String/prototype/indexOf/|isNaN/|isFinite/|escape/|unescape/)',p): return 'H-closed-literal-toprimitive'
+    if re.search(r'String/(prototype/normalize|raw/|prototype/substr/)',p): return 'I-string-residual'
+    if re.search(r'toPrecision|toJSON',p): return 'J-number-date-reflective'
+    if p.endswith('Error/message_property.js'): return 'L-error-instance-message'
+    return 'UNCLUSTERED'
+import collections
+c=collections.Counter()
+with open('builtins-cluster.tsv','w') as f:
+    for p in paths:
+        k=cl(p); c[k]+=1; f.write(f'{p}\t{k}\n')
+for k,v in sorted(c.items()): print(v,k)
+print(sum(c.values()),'total')

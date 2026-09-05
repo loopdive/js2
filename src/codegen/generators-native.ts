@@ -34,6 +34,7 @@ import {
   isUndefWidenedBindingElement,
   resolveBindingElementType,
 } from "../checker/type-mapper.js";
+import type { TypeFact } from "../checker/oracle.js";
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import { ensureNativeIteratorRuntime } from "./iterator-native.js";
@@ -41,9 +42,11 @@ import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
 import { reportError } from "./context/errors.js";
 import { nativeStringType } from "./native-strings.js";
+import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import {
   coerceType,
+  compileThisKeywordLate,
   compileExpression,
   compileStatement,
   ensureLateImport,
@@ -52,10 +55,11 @@ import {
 } from "./shared.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wave-2 S1)
-import { addUnionImports } from "./index.js";
+import { addUnionImports, ensureI32Condition, resolveWasmType } from "./index.js";
 import { bodyNeedsArgumentsObject } from "./helpers/body-uses-arguments.js";
+import { bodyReferencesOwnThis, findOwnThisReference } from "./helpers/body-references-own-this.js";
+import { isSimpleParameterList, isStrictFunction } from "./helpers/is-strict-function.js";
 import { resolveSpillLocalValType } from "./statements/variables.js";
-import { resolveWasmType } from "./index.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 // (#2895 PR1) The frame ABI (state-struct field offsets + resume modes) and the
@@ -119,7 +123,15 @@ type StateTerminator =
   // finally's exit router proceeds to the join. Abrupt entries write the pending
   // fields directly in the routers; plain jumps leave it undefined (no write).
   | { kind: "jump"; next: number; setPending?: number }
-  | { kind: "branch"; cond: ts.Expression; negate: boolean; thenState: number; elseState: number }
+  | {
+      kind: "branch";
+      cond: ts.Expression;
+      negate: boolean;
+      thenState: number;
+      elseState: number;
+      /** #680 continuation conditional: use canonical JS ToBoolean. */
+      canonical?: boolean;
+    }
   // (#3050) Exit router of a state-lowered `finally` block: consult the saved
   // pending completion — none → proceed to `join`; return/throw → re-dispatch
   // the completion against the region's OUTER unwind chain (innermost-first),
@@ -223,6 +235,20 @@ type UnwindEntry =
  */
 type ThrowRoute = { kind: "catch"; region: TryRegionPlan } | { kind: "finally"; region: TryRegionPlan };
 
+/** A yield-free operand evaluated once before a continuation suspension. */
+interface NativeGeneratorExpressionCapture {
+  expression: ts.Expression;
+  spillName: string;
+  type: ValType;
+  /** Oracle proved this direct prefix is global undefined; never box it as i32. */
+  canonicalUndefined?: boolean;
+}
+
+/** A source-node identity replaced by a state-local continuation spill. */
+type NativeGeneratorExpressionReplacement =
+  | { kind: "yield"; expression: ts.YieldExpression; spillName: string }
+  | { kind: "operand"; expression: ts.Expression; spillName: string };
+
 interface NativeGeneratorState {
   /** Straight-line, yield-free statements to run on entering this state. */
   statements: ts.Statement[];
@@ -248,6 +274,10 @@ interface NativeGeneratorState {
    * executes (set for states positionally inside a NEW try-region).
    */
   throwRoute?: ThrowRoute;
+  /** Planner-owned pre-yield values, emitted once before this state suspends. */
+  expressionCaptures?: readonly NativeGeneratorExpressionCapture[];
+  /** Original AST nodes read from spills while this state emits source code. */
+  continuationReplacements?: readonly NativeGeneratorExpressionReplacement[];
   terminator: StateTerminator;
 }
 
@@ -363,7 +393,7 @@ function isStringYieldExpression(ctx: CodegenContext, expr: ts.Expression | unde
  * the body (not descending into nested functions).
  *
  *  - all-numeric (or zero-yield) → `{kind:"f64"}` (the historical fast path);
- *  - all-string → the native `$AnyString` ref (#2171);
+ *  - all-string (including a direct `yield*` string) → the native `$AnyString` ref (#2171);
  *  - anything else (object yields, or a MIX of numeric/string/object) →
  *    `{kind:"externref"}`, the universal boxed-`any` carrier (#2864 F1). Every
  *    JS value coerces to externref host-free in standalone/WASI (numbers via the
@@ -383,8 +413,14 @@ function generatorElemValType(ctx: CodegenContext, decl: GeneratorDecl): ValType
     if (isFunctionLikeScope(node)) {
       return; // a yield here belongs to an inner generator
     }
-    if (ts.isYieldExpression(node) && !node.asteriskToken) {
-      if (isNumericExpression(ctx, node.expression)) sawNumeric = true;
+    if (ts.isYieldExpression(node)) {
+      // A direct `yield* "abc"` is lowered by the generic iterable cursor,
+      // whose values are native strings in the standalone iterator runtime.
+      // Include that operand in the carrier decision; otherwise the generator
+      // defaults to f64 and each delegated character becomes NaN.
+      if (node.asteriskToken) {
+        if (isStringYieldExpression(ctx, node.expression)) sawString = true;
+      } else if (isNumericExpression(ctx, node.expression)) sawNumeric = true;
       else if (isStringYieldExpression(ctx, node.expression)) sawString = true;
       else sawOther = true;
     }
@@ -447,6 +483,14 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
   const states: NativeGeneratorState[] = [];
   const spills: string[] = [];
+  // (#680) Continuation metadata is plan-local. A state owns captures emitted
+  // before its suspension and source-node replacements read only while its
+  // successor/branch source expression is compiled.
+  const stateExpressionCaptures = new Map<number, NativeGeneratorExpressionCapture[]>();
+  const stateContinuationReplacements = new Map<number, NativeGeneratorExpressionReplacement[]>();
+  // Synthetic operand spills have no VariableDeclaration for the historical
+  // type resolver, so retain their already validated frame representation.
+  const continuationSpillTypes = new Map<string, ValType>();
   // (#2170) `yield*` delegation sites, allocated in source order; index into
   // this array is the terminator's `siteIndex`.
   const delegationSites: { innerName: string }[] = [];
@@ -548,6 +592,8 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       resumeBindings: curResumeBindings,
       abruptResume: curAbrupt,
       unwind: curUnwind,
+      expressionCaptures: stateExpressionCaptures.get(id),
+      continuationReplacements: stateContinuationReplacements.get(id),
       terminator,
     };
   }
@@ -585,7 +631,11 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
    * entries (byte-identical to the historical activeFinalizers threading) plus
    * `catch` / `finally` entries for regions on the new try-region machinery.
    */
-  function lowerStatements(statements: readonly ts.Statement[], unwind: readonly UnwindEntry[]): boolean {
+  function lowerStatements(
+    statements: readonly ts.Statement[],
+    unwind: readonly UnwindEntry[],
+    allowExpressionContinuations: boolean,
+  ): boolean {
     for (const stmt of statements) {
       if (!ok) return false;
       if (stmt.kind === ts.SyntaxKind.EmptyStatement) continue;
@@ -634,6 +684,19 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         continue;
       }
 
+      // 2b) #680 continuation expressions are only admitted in the direct
+      // generator body. Every recursive structural list passes false. A
+      // state-lowered-finally context rejects this path even if a future caller
+      // accidentally grants permission; direct yields already continued above.
+      if (ts.isExpressionStatement(stmt) && stateFinallyDepth > 0 && nodeContainsYield(stmt.expression)) {
+        return fail();
+      }
+      if (ts.isExpressionStatement(stmt) && allowExpressionContinuations) {
+        const continuation = lowerExpressionContinuation(stmt, unwind);
+        if (continuation === "lowered") continue;
+        if (continuation === "failed") return false;
+      }
+
       // 3) try statements wrapping yields.
       if (ts.isTryStatement(stmt)) {
         const finallyYieldFree = !stmt.finallyBlock || statementsAreYieldFree(stmt.finallyBlock.statements);
@@ -641,10 +704,11 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
           // Legacy kind-L region: finally-only, yield-free finally — the
           // historical replay lowering, byte-identical to pre-#3050.
           if (
-            !lowerStatements(stmt.tryBlock.statements, [
-              ...unwind,
-              { kind: "replay", statements: [...stmt.finallyBlock.statements] },
-            ])
+            !lowerStatements(
+              stmt.tryBlock.statements,
+              [...unwind, { kind: "replay", statements: [...stmt.finallyBlock.statements] }],
+              false,
+            )
           ) {
             return false;
           }
@@ -683,7 +747,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
 
       // 6) A bare block with yields — flatten it (no new scope modeling).
       if (ts.isBlock(stmt)) {
-        if (!lowerStatements(stmt.statements, unwind)) return false;
+        if (!lowerStatements(stmt.statements, unwind, false)) return false;
         continue;
       }
 
@@ -776,7 +840,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     finishState(curId, { kind: "jump", next: tryEntry });
     curThrowRoute = tryPartRoute;
     resetCursor(tryEntry);
-    const tryOk = lowerStatements(stmt.tryBlock.statements, tryUnwind);
+    const tryOk = lowerStatements(stmt.tryBlock.statements, tryUnwind, false);
     curThrowRoute = outerRoute;
     if (!tryOk) return false;
     finishState(curId, { kind: "jump", next: normalNext, setPending: normalPending });
@@ -785,7 +849,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     if (stmt.catchClause) {
       curThrowRoute = catchPartRoute;
       resetCursor(catchEntry);
-      const catchOk = lowerStatements(stmt.catchClause.block.statements, catchUnwind);
+      const catchOk = lowerStatements(stmt.catchClause.block.statements, catchUnwind, false);
       curThrowRoute = outerRoute;
       if (!catchOk) return false;
       finishState(curId, { kind: "jump", next: normalNext, setPending: normalPending });
@@ -795,7 +859,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     if (stmt.finallyBlock) {
       resetCursor(finallyEntry);
       stateFinallyDepth++;
-      const finOk = lowerStatements(stmt.finallyBlock.statements, [...outerUnwind]);
+      const finOk = lowerStatements(stmt.finallyBlock.statements, [...outerUnwind], false);
       stateFinallyDepth--;
       if (!finOk) return false;
       finishState(curId, { kind: "finally-exit", join: joinId, unwind: [...outerUnwind].reverse() });
@@ -900,12 +964,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         // (#2173 slice-2b) Not a native-gen call nor a numeric vec — try a
         // GENERIC iterable (`yield* arr.values()`, `yield* customIterable`).
         // Driven by the standalone-native `__iterator`/`__iterator_next` runtime
-        // (#2038) → zero host imports. Same STRING-outer bail as the other arms:
-        // the iterator value rides externref and re-yields through the OUTER
+        // (#2038) → zero host imports. The iterator value rides externref and re-yields through the OUTER
         // result struct's `value` field; an f64 outer unboxes it and a boxed-any
-        // outer passes it through, but a concrete-ref (string) outer has no
-        // repair seam — bail to the host path (the clean #680 refusal).
-        if (!elemIsString && isGenericIterableDelegate(ctx, subject)) {
+        // outer passes it through. A direct string operand is the one concrete
+        // ref case supported here: the iterator runtime returns native-string
+        // refs, and the emitter casts the externref back to that ref below.
+        if ((!elemIsString || isStringYieldExpression(ctx, subject)) && isGenericIterableDelegate(ctx, subject)) {
           // (#2864 R1) `const x = yield* it` — the delegation completion value
           // (§27.5.3.7) is the iterator's done-result `value`; for the common
           // array/`.values()` shape that is `undefined`. The done-arm delivers
@@ -1094,6 +1158,525 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     pendingUnwind = undefined;
   }
 
+  // -------------------------------------------------------------------------
+  // #680 expression continuations
+  //
+  // The bounded grammar uses original AST identities, not synthetic replay
+  // nodes. Prefix operands are captured into ordinary generator spills before a
+  // suspension; a successor state recompiles the original expression with each
+  // capture/yield read from its validated spill.
+
+  type ContinuationYieldBinding = readonly [ts.YieldExpression, string];
+  type ExpressionContinuationAttempt = "lowered" | "not-applicable" | "failed";
+
+  interface ContinuationCaptureType {
+    type: ValType;
+    /** Emit the canonical JS undefined singleton instead of a raw i32 value. */
+    canonicalUndefined: boolean;
+  }
+
+  let continuationSpillOrdinal = 0;
+
+  function continuationSpillName(role: "operand" | "sent"): string {
+    for (;;) {
+      const name = `__gen_expr_${role}_${continuationSpillOrdinal++}`;
+      if (spillSet.has(name)) continue;
+      if (decl.parameters.some((param) => ts.isIdentifier(param.name) && param.name.text === name)) continue;
+      if (decl.body && bodyDeclaresBinding(decl.body, name)) continue;
+      return name;
+    }
+  }
+
+  function unwrapContinuationWrapper(expr: ts.Expression): ts.Expression {
+    let current = expr;
+    for (;;) {
+      if (ts.isParenthesizedExpression(current)) {
+        current = current.expression;
+        continue;
+      }
+      if (ts.isAsExpression(current)) {
+        current = current.expression;
+        continue;
+      }
+      if (ts.isTypeAssertionExpression(current)) {
+        current = current.expression;
+        continue;
+      }
+      if (ts.isNonNullExpression(current)) {
+        current = current.expression;
+        continue;
+      }
+      if (ts.isSatisfiesExpression(current)) {
+        current = current.expression;
+        continue;
+      }
+      return current;
+    }
+  }
+
+  /** Only a bare, non-delegating yield belongs to this checkpoint. */
+  function bareContinuationYield(expr: ts.Expression): ts.YieldExpression | null {
+    const inner = unwrapContinuationWrapper(expr);
+    if (!ts.isYieldExpression(inner) || inner.asteriskToken || inner.expression !== undefined) return null;
+    return inner;
+  }
+
+  /** The standalone form is deliberately limited to one-or-more parentheses. */
+  function parenthesizedContinuationYield(expr: ts.Expression): ts.YieldExpression | null {
+    let inner = expr;
+    let parenthesized = false;
+    while (ts.isParenthesizedExpression(inner)) {
+      parenthesized = true;
+      inner = inner.expression;
+    }
+    if (!parenthesized || !ts.isYieldExpression(inner) || inner.asteriskToken || inner.expression !== undefined) {
+      return null;
+    }
+    return inner;
+  }
+
+  /** Verify that every yield in a rebuilt expression is one of our bare yields. */
+  function continuationYields(root: ts.Expression): ts.YieldExpression[] | null {
+    const yields: ts.YieldExpression[] = [];
+    let valid = true;
+    function visit(node: ts.Node): void {
+      if (!valid) return;
+      if (ts.isYieldExpression(node)) {
+        if (node.asteriskToken || node.expression !== undefined) valid = false;
+        else yields.push(node);
+        return;
+      }
+      if (node !== root && isFunctionLikeScope(node)) {
+        valid = false;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(root);
+    return valid ? yields : null;
+  }
+
+  /**
+   * Values before a suspension must not require observable Get/call/spread/key
+   * work. Local/literal arithmetic and identifier updates are the bounded
+   * one-time-effect set proven by this slice.
+   */
+  function isSafeContinuationOperand(expr: ts.Expression): boolean {
+    if (nodeContainsYield(expr)) return false;
+    const inner = unwrapContinuationWrapper(expr);
+    if (ts.isIdentifier(inner) || ts.isNumericLiteral(inner) || ts.isStringLiteral(inner)) return true;
+    if (
+      inner.kind === ts.SyntaxKind.TrueKeyword ||
+      inner.kind === ts.SyntaxKind.FalseKeyword ||
+      inner.kind === ts.SyntaxKind.NullKeyword
+    ) {
+      return true;
+    }
+    if (ts.isPostfixUnaryExpression(inner)) {
+      return (
+        ts.isIdentifier(inner.operand) &&
+        (inner.operator === ts.SyntaxKind.PlusPlusToken || inner.operator === ts.SyntaxKind.MinusMinusToken)
+      );
+    }
+    if (ts.isPrefixUnaryExpression(inner)) {
+      if (inner.operator === ts.SyntaxKind.PlusPlusToken || inner.operator === ts.SyntaxKind.MinusMinusToken) {
+        return ts.isIdentifier(inner.operand);
+      }
+      return isSafeContinuationOperand(inner.operand);
+    }
+    if (!ts.isBinaryExpression(inner)) return false;
+    switch (inner.operatorToken.kind) {
+      case ts.SyntaxKind.EqualsToken:
+      case ts.SyntaxKind.PlusEqualsToken:
+      case ts.SyntaxKind.MinusEqualsToken:
+        return ts.isIdentifier(inner.left) && isSafeContinuationOperand(inner.right);
+      case ts.SyntaxKind.PlusToken:
+      case ts.SyntaxKind.MinusToken:
+      case ts.SyntaxKind.AsteriskToken:
+      case ts.SyntaxKind.SlashToken:
+      case ts.SyntaxKind.PercentToken:
+        return isSafeContinuationOperand(inner.left) && isSafeContinuationOperand(inner.right);
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * The direct identifier compiler arm gives `undefined` canonical semantics,
+   * so a continuation may skip source emission only when the oracle proves the
+   * ORIGINAL identifier has only ambient declaration-file bindings, never a
+   * user source declaration. A transparent wrapper is intentionally not
+   * canonical: its type can launder a value.
+   */
+  function isOracleUnshadowedGlobalUndefined(expr: ts.Expression): boolean {
+    const declaration = ctx.oracle.valueDeclarationOf(expr);
+    return (
+      ts.isIdentifier(expr) &&
+      expr.text === "undefined" &&
+      // lib.d.ts supplies the ambient global declaration; a source declaration
+      // is a shadow and must not be canonicalized.
+      (declaration === undefined || declaration.getSourceFile().isDeclarationFile) &&
+      ctx.oracle.declarationsOf(expr).every((entry) => entry.getSourceFile().isDeclarationFile)
+    );
+  }
+
+  /** Noncanonical undefined/void and any nullish union lack a proven spill carrier. */
+  function hasDisallowedContinuationNullishFact(fact: TypeFact): boolean {
+    if (fact.kind === "undefined" || fact.kind === "void") return true;
+    if (fact.kind !== "union") return false;
+    return fact.nullable || fact.undefinable || fact.parts.some((part) => hasDisallowedContinuationNullishFact(part));
+  }
+
+  /**
+   * Map the oracle's registry-free fact to the bounded capture ABI. Complex,
+   * unknown, and non-nullish union values use the existing lossless externref
+   * spill route; only primitives retain their scalar/native-string carriers.
+   */
+  function continuationCaptureFactValType(fact: TypeFact): ValType | null {
+    switch (fact.kind) {
+      case "number":
+        return { kind: "f64" };
+      case "boolean":
+        return { kind: "i32", boolean: true };
+      case "string":
+        return ctx.nativeStrings && ctx.anyStrTypeIdx >= 0 ? nativeStringType(ctx) : { kind: "externref" };
+      case "bigint":
+        return usesHostBigIntCarrier(ctx) ? { kind: "externref" } : { kind: "i64", bigint: true };
+      case "symbol":
+        return { kind: "i32", symbol: true };
+      case "undefined":
+      case "void":
+        return null;
+      default:
+        return { kind: "externref" };
+    }
+  }
+
+  function continuationCaptureType(expr: ts.Expression): ContinuationCaptureType | null {
+    const inner = unwrapContinuationWrapper(expr);
+    const outerFact = ctx.oracle.typeFactOf(expr);
+    const innerFact = inner === expr ? outerFact : ctx.oracle.typeFactOf(inner);
+    const canonicalUndefined = isOracleUnshadowedGlobalUndefined(expr);
+
+    // A user binding named `undefined` reaches the direct identifier compiler
+    // arm too. Do not let this narrow continuation lane misread it as ambient.
+    if (ts.isIdentifier(inner) && inner.text === "undefined" && !canonicalUndefined) return null;
+
+    // This gate precedes boolean branding. An assertion can otherwise present
+    // an inner `true` as outer `void`/`undefined`, and a wrapper can conceal a
+    // nullish union around an otherwise numeric inner expression. Direct null
+    // is not a union and stays on the ordinary externref capture route.
+    if (
+      !canonicalUndefined &&
+      (hasDisallowedContinuationNullishFact(outerFact) || hasDisallowedContinuationNullishFact(innerFact))
+    ) {
+      return null;
+    }
+
+    if (canonicalUndefined) {
+      // The host lane would need a preplanned `__get_undefined` import. Do
+      // not accept the expression and accidentally fall through to its legacy
+      // null/i32 representation; keep that lane on the existing host fallback.
+      if (!(ctx.standalone || ctx.nativeStrings)) return null;
+      return { type: { kind: "externref" }, canonicalUndefined: true };
+    }
+
+    // The normal expression compiler brands raw booleans. Preserve that brand
+    // through the i32 spill so rebuilding `[true, yield]` invokes the ordinary
+    // boolean boxer rather than treating `true` as numeric 1.
+    if (inner.kind === ts.SyntaxKind.TrueKeyword || inner.kind === ts.SyntaxKind.FalseKeyword) {
+      return { type: { kind: "i32", boolean: true }, canonicalUndefined: false };
+    }
+
+    const captureFactType = continuationCaptureFactValType(outerFact);
+    if (!captureFactType) return null;
+    const type = spillSafeValType(captureFactType);
+    return type ? { type, canonicalUndefined: false } : null;
+  }
+
+  function captureContinuationOperand(expr: ts.Expression): NativeGeneratorExpressionCapture | null {
+    if (!isSafeContinuationOperand(expr)) return null;
+    const captureType = continuationCaptureType(expr);
+    if (!captureType) return null;
+    const spillName = continuationSpillName("operand");
+    addSpill(spillName);
+    continuationSpillTypes.set(spillName, captureType.type);
+    const capture = {
+      expression: expr,
+      spillName,
+      type: captureType.type,
+      canonicalUndefined: captureType.canonicalUndefined,
+    };
+    const existing = stateExpressionCaptures.get(curId);
+    if (existing) existing.push(capture);
+    else stateExpressionCaptures.set(curId, [capture]);
+    return capture;
+  }
+
+  /**
+   * Build a complete replacement list before attaching a state. Missing or
+   * duplicate original-node identities fail native-plan construction rather
+   * than permitting replay/default behavior in codegen.
+   */
+  function buildContinuationReplacements(
+    root: ts.Expression,
+    captures: readonly NativeGeneratorExpressionCapture[],
+    yieldBindings: readonly ContinuationYieldBinding[],
+  ): NativeGeneratorExpressionReplacement[] | null {
+    const yields = continuationYields(root);
+    if (!yields || yields.length !== yieldBindings.length) return null;
+
+    const replacements: NativeGeneratorExpressionReplacement[] = [];
+    const seen = new Set<ts.Expression>();
+    for (const capture of captures) {
+      if (
+        seen.has(capture.expression) ||
+        !spillSet.has(capture.spillName) ||
+        continuationSpillTypes.get(capture.spillName) === undefined
+      ) {
+        return null;
+      }
+      seen.add(capture.expression);
+      replacements.push({ kind: "operand", expression: capture.expression, spillName: capture.spillName });
+    }
+
+    const yieldSpills = new Map<ts.YieldExpression, string>();
+    for (const [yieldExpr, spillName] of yieldBindings) {
+      if (yieldSpills.has(yieldExpr) || !spillSet.has(spillName)) return null;
+      yieldSpills.set(yieldExpr, spillName);
+    }
+    for (const yieldExpr of yields) {
+      const spillName = yieldSpills.get(yieldExpr);
+      if (spillName === undefined || seen.has(yieldExpr)) return null;
+      seen.add(yieldExpr);
+      replacements.push({ kind: "yield", expression: yieldExpr, spillName });
+    }
+    return yieldSpills.size === yields.length ? replacements : null;
+  }
+
+  function attachContinuationReplacements(
+    stateId: number,
+    replacements: NativeGeneratorExpressionReplacement[],
+  ): boolean {
+    if (replacements.length === 0 || stateContinuationReplacements.has(stateId)) return false;
+    stateContinuationReplacements.set(stateId, replacements);
+    return true;
+  }
+
+  function finishExpressionContinuation(
+    stmt: ts.ExpressionStatement,
+    captures: readonly NativeGeneratorExpressionCapture[],
+    yieldBindings: readonly ContinuationYieldBinding[],
+  ): boolean {
+    const replacements = buildContinuationReplacements(stmt.expression, captures, yieldBindings);
+    if (!replacements || !attachContinuationReplacements(curId, replacements)) return false;
+    curStatements.push(stmt);
+    return true;
+  }
+
+  function lowerSingleExpressionContinuation(
+    stmt: ts.ExpressionStatement,
+    yieldExpr: ts.YieldExpression,
+    captureExpressions: readonly ts.Expression[],
+    unwind: readonly UnwindEntry[],
+  ): boolean {
+    const captures: NativeGeneratorExpressionCapture[] = [];
+    for (const expression of captureExpressions) {
+      const capture = captureContinuationOperand(expression);
+      if (!capture) return false;
+      captures.push(capture);
+    }
+    const sentSpill = continuationSpillName("sent");
+    if (!emitYield(yieldExpr, sentSpill, unwind)) return false;
+    return finishExpressionContinuation(stmt, captures, [[yieldExpr, sentSpill]]);
+  }
+
+  function flattenCommaExpression(expr: ts.Expression, terms: ts.Expression[]): void {
+    const inner = unwrapContinuationWrapper(expr);
+    if (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      flattenCommaExpression(inner.left, terms);
+      flattenCommaExpression(inner.right, terms);
+      return;
+    }
+    terms.push(inner);
+  }
+
+  function lowerCommaExpressionContinuation(
+    stmt: ts.ExpressionStatement,
+    root: ts.Expression,
+    unwind: readonly UnwindEntry[],
+  ): boolean {
+    const terms: ts.Expression[] = [];
+    flattenCommaExpression(root, terms);
+    if (terms.length < 2) return false;
+
+    const yields: { index: number; expression: ts.YieldExpression }[] = [];
+    for (let index = 0; index < terms.length; index++) {
+      const yieldExpr = bareContinuationYield(terms[index]!);
+      if (yieldExpr) yields.push({ index, expression: yieldExpr });
+      else if (!isSafeContinuationOperand(terms[index]!)) return false;
+    }
+    if (yields.length === 0) return false;
+
+    const captures: NativeGeneratorExpressionCapture[] = [];
+    const bindings: ContinuationYieldBinding[] = [];
+    let nextYield = 0;
+    for (let index = 0; index < terms.length; index++) {
+      const yieldAtTerm = nextYield < yields.length && yields[nextYield]!.index === index;
+      if (yieldAtTerm) {
+        const yieldExpr = yields[nextYield]!.expression;
+        const sentSpill = continuationSpillName("sent");
+        if (!emitYield(yieldExpr, sentSpill, unwind)) return false;
+        bindings.push([yieldExpr, sentSpill]);
+        nextYield++;
+      } else if (nextYield < yields.length) {
+        const capture = captureContinuationOperand(terms[index]!);
+        if (!capture) return false;
+        captures.push(capture);
+      }
+    }
+    return finishExpressionContinuation(stmt, captures, bindings);
+  }
+
+  function lowerConditionalExpressionContinuation(
+    stmt: ts.ExpressionStatement,
+    conditional: ts.ConditionalExpression,
+    unwind: readonly UnwindEntry[],
+  ): boolean {
+    const conditionYield = bareContinuationYield(conditional.condition);
+    const thenYield = bareContinuationYield(conditional.whenTrue);
+    const elseYield = bareContinuationYield(conditional.whenFalse);
+    if (!conditionYield || !thenYield || !elseYield) return false;
+
+    const conditionSent = continuationSpillName("sent");
+    if (!emitYield(conditionYield, conditionSent, unwind)) return false;
+
+    const thenEntry = reserveState();
+    const elseEntry = reserveState();
+    const join = reserveState();
+    const conditionReplacements = buildContinuationReplacements(
+      conditional.condition,
+      [],
+      [[conditionYield, conditionSent]],
+    );
+    if (!conditionReplacements || !attachContinuationReplacements(curId, conditionReplacements)) return false;
+    finishState(curId, {
+      kind: "branch",
+      cond: conditional.condition,
+      negate: false,
+      thenState: thenEntry,
+      elseState: elseEntry,
+      canonical: true,
+    });
+
+    resetCursor(thenEntry);
+    const thenSent = continuationSpillName("sent");
+    if (!emitYield(thenYield, thenSent, unwind)) return false;
+    const thenReplacements = buildContinuationReplacements(
+      stmt.expression,
+      [],
+      [
+        [conditionYield, conditionSent],
+        [thenYield, thenSent],
+        [elseYield, thenSent],
+      ],
+    );
+    if (!thenReplacements || !attachContinuationReplacements(curId, thenReplacements)) return false;
+    curStatements.push(stmt);
+    finishState(curId, { kind: "jump", next: join });
+
+    resetCursor(elseEntry);
+    const elseSent = continuationSpillName("sent");
+    if (!emitYield(elseYield, elseSent, unwind)) return false;
+    const elseReplacements = buildContinuationReplacements(
+      stmt.expression,
+      [],
+      [
+        [conditionYield, conditionSent],
+        [thenYield, elseSent],
+        [elseYield, elseSent],
+      ],
+    );
+    if (!elseReplacements || !attachContinuationReplacements(curId, elseReplacements)) return false;
+    curStatements.push(stmt);
+    finishState(curId, { kind: "jump", next: join });
+
+    resetCursor(join);
+    return true;
+  }
+
+  function lowerExpressionContinuation(
+    stmt: ts.ExpressionStatement,
+    unwind: readonly UnwindEntry[],
+  ): ExpressionContinuationAttempt {
+    const root = unwrapContinuationWrapper(stmt.expression);
+    const singleYield = parenthesizedContinuationYield(stmt.expression);
+    const arrayRoot = ts.isArrayLiteralExpression(root) ? root : undefined;
+    const objectRoot = ts.isObjectLiteralExpression(root) ? root : undefined;
+    const conditionalRoot = ts.isConditionalExpression(root) ? root : undefined;
+    const commaRoot =
+      ts.isBinaryExpression(root) && root.operatorToken.kind === ts.SyntaxKind.CommaToken ? root : undefined;
+    if (!singleYield && !arrayRoot && !objectRoot && !conditionalRoot && !commaRoot) return "not-applicable";
+
+    // Bare-yield sent values are f64 in this checkpoint. String/boxed-any
+    // carriers and every try/unwind crossing retain the existing fail-closed
+    // native-plan boundary.
+    if (unwind.length !== 0 || elemValType.kind !== "f64") return "failed";
+
+    if (singleYield) {
+      return lowerSingleExpressionContinuation(stmt, singleYield, [], unwind) ? "lowered" : "failed";
+    }
+
+    if (arrayRoot) {
+      const elements: ts.Expression[] = [];
+      for (const element of arrayRoot.elements) {
+        if (ts.isOmittedExpression(element) || ts.isSpreadElement(element)) return "not-applicable";
+        elements.push(element as ts.Expression);
+      }
+      const yieldIndex = elements.findIndex((element) => bareContinuationYield(element) !== null);
+      if (yieldIndex < 0 || elements.some((element, index) => index !== yieldIndex && nodeContainsYield(element))) {
+        return "not-applicable";
+      }
+      const yieldExpr = bareContinuationYield(elements[yieldIndex]!);
+      if (
+        !yieldExpr ||
+        !elements.every((element, index) => index === yieldIndex || isSafeContinuationOperand(element))
+      ) {
+        return "not-applicable";
+      }
+      return lowerSingleExpressionContinuation(stmt, yieldExpr, elements.slice(0, yieldIndex), unwind)
+        ? "lowered"
+        : "failed";
+    }
+
+    if (objectRoot) {
+      const values: ts.Expression[] = [];
+      for (const property of objectRoot.properties) {
+        if (!ts.isPropertyAssignment(property) || ts.isComputedPropertyName(property.name)) return "not-applicable";
+        values.push(property.initializer);
+      }
+      const yieldIndex = values.findIndex((value) => bareContinuationYield(value) !== null);
+      if (yieldIndex < 0 || values.some((value, index) => index !== yieldIndex && nodeContainsYield(value))) {
+        return "not-applicable";
+      }
+      const yieldExpr = bareContinuationYield(values[yieldIndex]!);
+      if (!yieldExpr || !values.every((value, index) => index === yieldIndex || isSafeContinuationOperand(value))) {
+        return "not-applicable";
+      }
+      return lowerSingleExpressionContinuation(stmt, yieldExpr, values.slice(0, yieldIndex), unwind)
+        ? "lowered"
+        : "failed";
+    }
+
+    if (conditionalRoot) {
+      return lowerConditionalExpressionContinuation(stmt, conditionalRoot, unwind) ? "lowered" : "not-applicable";
+    }
+    if (commaRoot) {
+      return lowerCommaExpressionContinuation(stmt, commaRoot, unwind) ? "lowered" : "not-applicable";
+    }
+    return "not-applicable";
+  }
+
   /** if (cond) thenBlock [else elseBlock] — at least one branch yields. */
   function lowerIf(stmt: ts.IfStatement, unwind: readonly UnwindEntry[]): boolean {
     if (!isNumericExpression(ctx, stmt.expression)) return fail();
@@ -1122,7 +1705,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curResumeBindings = [];
     curAbrupt = undefined;
     curUnwind = undefined;
-    if (!lowerStatements(thenBody(stmt.thenStatement), unwind)) return false;
+    if (!lowerStatements(thenBody(stmt.thenStatement), unwind, false)) return false;
     finishState(curId, { kind: "jump", next: joinId });
 
     if (hasElse) {
@@ -1131,7 +1714,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       curResumeBindings = [];
       curAbrupt = undefined;
       curUnwind = undefined;
-      if (!lowerStatements(thenBody(stmt.elseStatement!), unwind)) return false;
+      if (!lowerStatements(thenBody(stmt.elseStatement!), unwind, false)) return false;
       finishState(curId, { kind: "jump", next: joinId });
     }
 
@@ -1169,7 +1752,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curResumeBindings = [];
     curAbrupt = undefined;
     curUnwind = undefined;
-    if (!lowerStatements(thenBody(stmt.statement), unwind)) return false;
+    if (!lowerStatements(thenBody(stmt.statement), unwind, false)) return false;
     finishState(curId, { kind: "jump", next: headerId });
 
     // continue at exit.
@@ -1199,7 +1782,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curResumeBindings = [];
     curAbrupt = undefined;
     curUnwind = undefined;
-    if (!lowerStatements(thenBody(stmt.statement), unwind)) return false;
+    if (!lowerStatements(thenBody(stmt.statement), unwind, false)) return false;
     finishState(curId, { kind: "jump", next: headerId });
 
     // header: cond ? bodyEntry : exit
@@ -1263,7 +1846,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curResumeBindings = [];
     curAbrupt = undefined;
     curUnwind = undefined;
-    if (!lowerStatements(thenBody(stmt.statement), unwind)) return false;
+    if (!lowerStatements(thenBody(stmt.statement), unwind, false)) return false;
     finishState(curId, { kind: "jump", next: updateId });
 
     // update → header
@@ -1413,8 +1996,9 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       //     (NamedEvaluation, #1450/#1119/#1049). ADMITTED.
       //   GENERATOR function expression (`[g = function*(){}]`) → objlit lane
       //     traps at runtime. STILL BAILS.
-      //   CLASS expression (`{ K = class {…} }`) → "dereferencing a null pointer"
-      //     in BOTH the objlit and class lanes. STILL BAILS.
+      //   CLASS expression (`{ K = class {…} }`) → the zero-suspend class/object
+      //     method lane is admitted by #4769 with an externref spill; yielding
+      //     methods and generator-function-expression lanes retain the bail.
       //
       // Note #3386's cited evidence is stale: the shape it named — the #3164
       // host-mix fixture `*method([gen = function*(){}] = [])` in the CLASS lane —
@@ -1439,16 +2023,37 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         (ts.isFunctionExpression(el.initializer) ||
           ts.isArrowFunction(el.initializer) ||
           ts.isClassExpression(el.initializer));
+      // (#4769) A class-valued default is safe for a ZERO-SUSPEND method in
+      // the class-declaration, class-expression, and object-literal lanes. The
+      // factory round-trips the class through the state field, but the resume
+      // function runs immediately and never carries it over a yield. In the
+      // class-expression lane TypeScript can alias an anonymous default class
+      // to the enclosing class's GC type; keeping these bindings at the
+      // boundary `externref` representation avoids that identity collision and
+      // lets the normal dynamic property path observe the constructor name.
+      // Methods with a yield retain the #3952 cross-suspend host path.
+      const classDefaultSafe =
+        el.initializer !== undefined &&
+        ts.isClassExpression(el.initializer!) &&
+        ts.isMethodDeclaration(decl) &&
+        decl.body !== undefined &&
+        !nodeContainsYield(decl.body) &&
+        (ts.isClassDeclaration(decl.parent) ||
+          ts.isObjectLiteralExpression(decl.parent) ||
+          ts.isClassExpression(decl.parent));
       if (
         closureDefault &&
         ((ts.isFunctionExpression(el.initializer!) && el.initializer!.asteriskToken !== undefined) ||
-          ts.isClassExpression(el.initializer!) ||
+          (ts.isClassExpression(el.initializer!) && !classDefaultSafe) ||
           ts.isFunctionExpression(decl))
       ) {
         return null;
       }
       const elemTsType = ctx.checker.getTypeAtLocation(el);
-      const bindType = resolveBindingElementType(el, elemTsType, (t) => resolveWasmType(ctx, t));
+      const bindType =
+        classDefaultSafe && ts.isClassExpression(decl.parent)
+          ? { kind: "externref" as const }
+          : resolveBindingElementType(el, elemTsType, (t) => resolveWasmType(ctx, t));
       const safe = spillSafeValType(bindType);
       if (!safe) return null;
       patternParamSpillTypes.set(id.text, safe);
@@ -1463,7 +2068,7 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     }
   }
 
-  if (!lowerStatements(decl.body.statements, [])) return null;
+  if (!lowerStatements(decl.body.statements, [], true)) return null;
   if (!ok) return null;
 
   // Final fallthrough state completes the generator.
@@ -1548,6 +2153,13 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       spillTypes.set(name, carrierType);
       continue;
     }
+    // (#680) Synthetic continuation operands have no declaration to resolve;
+    // their planner-validated representation is the spill's exact ABI type.
+    const continuationType = continuationSpillTypes.get(name);
+    if (continuationType !== undefined) {
+      spillTypes.set(name, continuationType);
+      continue;
+    }
     // (#2920) A destructuring-param binding name — typed up-front from the
     // checker (no body `VariableDeclaration` exists to resolve it from).
     const patternType = patternParamSpillTypes.get(name);
@@ -1608,8 +2220,9 @@ export type GeneratorDecl = ts.FunctionDeclaration | ts.MethodDeclaration | ts.F
  *     §27.5/EvaluateGeneratorBody). Pattern params destructure eagerly in the
  *     lifted factory (emitClosureParamDestructuring) and pack into spill
  *     fields (#3386);
- *   - no `arguments` (the eager path builds the arguments vec; the state struct
- *     has no slot for it);
+ *   - `arguments` is supported by the C02 frame-carrier slice: the lifted
+ *     factory builds the vec and `registerNativeGenerator` stores it in the
+ *     state; the resume context reloads it before compiling the body;
  *   - no `this` (a bare function expression's `this` is call-site dependent; the
  *     state-struct model has no receiver slot for the non-method case);
  *   - a NAMED fn-expr must not reference its own name (the self-binding scope
@@ -1636,7 +2249,6 @@ function isNativeGeneratorExpressionShape(ctx: CodegenContext, decl: ts.Function
     }
     if (param.questionToken || param.dotDotDotToken || (param.initializer && !noJsHostTarget(ctx))) return false;
   }
-  if (bodyNeedsArgumentsObject(decl.body)) return false;
   if (fnExprBodyReferencesThis(decl.body)) return false;
   if (decl.name && bodyReferencesOwnName(decl.body, decl.name.text)) return false;
   // (#3302) Outer-scope captures are ADMITTED in the standalone/wasi lane:
@@ -1814,6 +2426,22 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
     return false;
   };
 
+  const bindingHasGeneratorInitializer = (node: ts.Node): boolean => {
+    if (!ts.isIdentifier(node)) return false;
+    const binding = ctx.oracle.variableDeclarationOf(node);
+    if (!binding?.initializer) return false;
+    let init = binding.initializer;
+    while (ts.isParenthesizedExpression(init)) init = init.expression;
+    if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression)) return false;
+    const targetDeclarations = ctx.oracle.declarationsOf(init.expression);
+    return (
+      targetDeclarations.some((d) => {
+        return (
+          (ts.isFunctionDeclaration(d) || ts.isFunctionExpression(d) || ts.isMethodDeclaration(d)) && !!d.asteriskToken
+        );
+      }) ?? false
+    );
+  };
   /** Every reference of a RESULT binding is an allowlisted result consumer? */
   const resultBindingUsesAreSafe = (bindingName: ts.Identifier): boolean => {
     const sym = checker.getSymbolAtLocation(bindingName);
@@ -1840,6 +2468,169 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
     };
     ts.forEachChild(sf, visitRef);
     return safe;
+  };
+
+  /**
+   * A native generator state may cross an ordinary call boundary only when
+   * the compiler can prove what receives that argument.  The closure ABI
+   * carries binding-pattern parameters as `externref`; the parameter
+   * destructurer below recognises the native state struct after that carrier
+   * conversion.  A plain parameter is safe only when its body never reads it
+   * (the call is observationally equivalent to passing an unused value).
+   *
+   * `getResolvedSignature` is deliberately used instead of a name-based
+   * lookup.  It resolves arrows assigned to variables, class/static methods,
+   * and private methods while declining unknown/dynamic callees.  A
+   * declaration from a different source file is also declined: the local
+   * source is the only body whose parameter consumption this walk can prove.
+   */
+  const knownCallArgumentConsumer = (call: ts.CallExpression, arg: ts.Node): boolean => {
+    const argIndex = call.arguments.indexOf(arg as ts.Expression);
+    if (argIndex < 0) return false;
+
+    // A checker signature is not, by itself, proof that an identifier still
+    // names the declaration it resolved to: `let f = known; f = other; f(g())`
+    // can retain the original contextual signature. Count writes to an
+    // identifier binding before accepting its resolved parameter body. A
+    // declaration initializer (or one later assignment for `var f; f = fn`)
+    // is the one stable write; a second write means the callee is
+    // reassignable/unknown and must keep the eager path.
+    if (ts.isIdentifier(call.expression)) {
+      const calleeSymbol = checker.getSymbolAtLocation(call.expression);
+      if (!calleeSymbol) return false;
+      let writes = 0;
+      const scanCalleeWrites = (node: ts.Node): void => {
+        if (
+          (ts.isVariableDeclaration(node) || ts.isFunctionDeclaration(node)) &&
+          node.name &&
+          checker.getSymbolAtLocation(node.name) === calleeSymbol
+        ) {
+          // Function declarations establish the initial binding even though
+          // they have no `initializer` expression.
+          if (ts.isFunctionDeclaration(node) || node.initializer) writes++;
+        } else if (
+          ts.isBinaryExpression(node) &&
+          node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+          ts.isIdentifier(node.left) &&
+          checker.getSymbolAtLocation(node.left) === calleeSymbol
+        ) {
+          writes++;
+        } else if (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) {
+          const operand = node.operand;
+          if (
+            ts.isIdentifier(operand) &&
+            checker.getSymbolAtLocation(operand) === calleeSymbol &&
+            (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+          ) {
+            writes++;
+          }
+        }
+        ts.forEachChild(node, scanCalleeWrites);
+      };
+      scanCalleeWrites(sf);
+      if (writes > 1) return false;
+    }
+
+    let signature: ts.Signature | undefined;
+    try {
+      signature = checker.getResolvedSignature(call) ?? undefined;
+    } catch {
+      return false;
+    }
+    let declaration = signature?.declaration;
+    // Untyped JavaScript-style assignment (`var f; f = ([,]) => {}`) has no
+    // resolved checker signature even though the source contains one exact
+    // function value. Recover that value by symbol identity and require every
+    // write to the slot to be this same function expression. This keeps a
+    // reassignable/unknown callee on the eager path.
+    if (!declaration && ts.isIdentifier(call.expression)) {
+      const calleeSymbol = checker.getSymbolAtLocation(call.expression);
+      const candidateFns: Array<ts.FunctionExpression | ts.ArrowFunction> = [];
+      let writes = 0;
+      let invalidWrite = false;
+      const scanWrites = (node: ts.Node): void => {
+        if (invalidWrite) return;
+        if (ts.isVariableDeclaration(node) && node.name === call.expression) {
+          if (node.initializer) {
+            writes++;
+            if (ts.isFunctionExpression(node.initializer) || ts.isArrowFunction(node.initializer)) {
+              candidateFns.push(node.initializer);
+            } else {
+              invalidWrite = true;
+            }
+          }
+        } else if (
+          ts.isBinaryExpression(node) &&
+          node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isIdentifier(node.left) &&
+          checker.getSymbolAtLocation(node.left) === calleeSymbol
+        ) {
+          writes++;
+          if (ts.isFunctionExpression(node.right) || ts.isArrowFunction(node.right)) {
+            candidateFns.push(node.right);
+          } else {
+            invalidWrite = true;
+          }
+        }
+        ts.forEachChild(node, scanWrites);
+      };
+      scanWrites(sf);
+      if (!invalidWrite && writes === 1 && candidateFns.length === 1) declaration = candidateFns[0];
+    }
+
+    if (!declaration || declaration.getSourceFile() !== sf) return false;
+    if (
+      !(
+        ts.isFunctionDeclaration(declaration) ||
+        ts.isFunctionExpression(declaration) ||
+        ts.isArrowFunction(declaration) ||
+        ts.isMethodDeclaration(declaration) ||
+        ts.isGetAccessorDeclaration(declaration) ||
+        ts.isSetAccessorDeclaration(declaration)
+      )
+    ) {
+      return false;
+    }
+
+    const bindingPatternHasRest = (name: ts.BindingName): boolean => {
+      if (!ts.isArrayBindingPattern(name) && !ts.isObjectBindingPattern(name)) return false;
+      return name.elements.some(
+        (element) =>
+          ts.isBindingElement(element) && (element.dotDotDotToken !== undefined || bindingPatternHasRest(element.name)),
+      );
+    };
+
+    const parameter = declaration.parameters[argIndex];
+    if (!parameter || parameter.dotDotDotToken) return false;
+    if (ts.isArrayBindingPattern(parameter.name)) {
+      // Rest parameters require an unbounded drain, whereas this slice's
+      // state materializer is deliberately bounded by the finite binding
+      // pattern. Keep those call sites conservative until a rest-aware state
+      // carrier exists.
+      return !bindingPatternHasRest(parameter.name);
+    }
+    if (!ts.isIdentifier(parameter.name)) return false;
+
+    const parameterSymbol = checker.getSymbolAtLocation(parameter.name);
+    if (!parameterSymbol || !declaration.body) return false;
+    let used = false;
+    const visitParameterUse = (node: ts.Node): void => {
+      if (used) return;
+      if (ts.isIdentifier(node) && node !== parameter.name && node.text === (parameter.name as ts.Identifier).text) {
+        if (checker.getSymbolAtLocation(node) === parameterSymbol) used = true;
+      }
+      ts.forEachChild(node, visitParameterUse);
+    };
+    visitParameterUse(declaration.body);
+    // A later parameter default is evaluated in this function's parameter
+    // environment too; a read there is an observable use of the argument.
+    for (const otherParameter of declaration.parameters) {
+      if (otherParameter !== parameter && otherParameter.initializer) {
+        visitParameterUse(otherParameter.initializer);
+      }
+    }
+    return !used;
   };
 
   /**
@@ -1884,11 +2675,14 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
       }
       return true;
     }
-    // Iteration / drain consumers are native-safe ONLY over the direct call
-    // expression (state-struct ValType visible), NOT over an externref binding
-    // reference (#3468).
+    // A direct call exposes the state-struct ValType. A binding used as a
+    // for-of subject is also safe when its initializer is a native generator;
+    // the loop driver recovers the state ref from the externref slot. Its
+    // throw path now closes the native state machine before rethrowing.
+    if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) {
+      return !viaBinding || bindingHasGeneratorInitializer(node);
+    }
     if (!viaBinding) {
-      if (ts.isForOfStatement(p) && p.expression === node && !p.awaitModifier) return true;
       if (ts.isSpreadElement(p)) return true;
       if (isArrayFromArg(node)) return true;
     }
@@ -1979,6 +2773,11 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
       const p = node.parent;
       if (useIsSafe(node, /* viaBinding */ false)) {
         // safe direct consumer
+      } else if (ts.isCallExpression(p) && knownCallArgumentConsumer(p, node)) {
+        // (#4768) A statically resolved ordinary call can carry the native
+        // state through its externref parameter ABI when that parameter is an
+        // array binding pattern (or is provably unused). Unknown/dynamic
+        // callees remain rejected by knownCallArgumentConsumer.
       } else if (ts.isVariableDeclaration(p) && p.initializer === node) {
         if (ts.isIdentifier(p.name)) {
           if (!bindingUsesAreSafe(p.name)) allSafe = false;
@@ -1998,6 +2797,20 @@ function hostLaneGeneratorUsesAreSafe(ctx: CodegenContext, decl: GeneratorDecl):
         ts.isArrayLiteralExpression(p.left)
       ) {
         // `[a, b] = g()` destructuring-assignment source — native path.
+      } else if (
+        ts.isBinaryExpression(p) &&
+        p.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        p.right === node &&
+        ts.isArrayBindingPattern(p.left)
+      ) {
+        // (#4768) A parameter default such as `([,] = g())` feeds the native
+        // state directly into the binding-pattern destructurer. The
+        // externref parameter lane recovers the state and drains only the
+        // pattern's required iterator steps.
+      } else if (ts.isParameter(p) && p.initializer === node && ts.isArrayBindingPattern(p.name)) {
+        // (#4768) In the AST, a default parameter's `g()` is the Parameter's
+        // initializer (`p` is not the assignment expression shown by source
+        // text). It is consumed by the same binding-pattern lane above.
       } else {
         allSafe = false;
       }
@@ -2057,44 +2870,15 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
     if (!hostLaneGeneratorUsesAreSafe(ctx, decl)) return false;
   }
   if (!decl.body || !decl.asteriskToken) return false;
-  // (#2864 wave-2 S2) A body that READS the implicit `arguments` object has no
-  // native-frame support: the state struct has slots for `this`, own params and
-  // spilled locals, and the RESUME function compiles the body with a fresh
-  // `FunctionContext` in which nothing ever builds the arguments vec (the
-  // §10.2.11 setup in function-body.ts runs on the FACTORY's context only). So
-  // `arguments` resolves to nothing in the resume body.
-  //
-  // This bail already existed for the two OTHER generator forms — generator
-  // EXPRESSIONS (`isNativeGeneratorExpressionShape`) and METHODS (the
-  // `bodyNeedsArgumentsObject(decl.body)` arm below) — and was simply never
-  // applied to free function DECLARATIONS, which #3032 W6 subsequently routed
-  // natively on the JS-HOST lane as well. Measured consequences of the gap:
-  //   * JS-HOST (gc): `function* g(a,b){ const n = arguments.length; yield n }`
-  //     compiled "successfully" and produced a module the ENGINE REJECTS —
-  //     `global.set[0] expected type externref, found i32.const of type i32`.
-  //     A non-generator reading `arguments`, and a generator not reading it,
-  //     are both valid; it is specifically generator × `arguments`.
-  //   * standalone/wasi: a raw wasm trap at the first `arguments` read, before
-  //     any suspend — not a suspend-crossing problem.
-  // Both become the ordinary eager-buffer path (host: correct; standalone: a
-  // clean #680 refusal), which is what every other unsupported shape does here.
-  //
-  // NOTE for the #3032 "js-host bytes identical" contract: host bytes DO change
-  // for these programs, and that contract cannot apply — the bytes being
-  // replaced are an invalid module, so there is no valid baseline to preserve.
-  //
-  // Making `arguments` genuinely work in the native frame is a real slice, not
-  // a wider gate: the factory must build the vec at CALL time (§10.2.11) and
-  // spill it, the resume function must reload it into an `arguments` local, and
-  // MAPPED aliasing (`arguments[0] = v` writing back to param `a`) needs
-  // `fctx.mappedArgsInfo` rebuilt against the frame. Design banked in #2864.
-  if (bodyNeedsArgumentsObject(decl.body)) return false;
+  // (#2864 C02) `arguments` is carried by the native frame. The factory setup
+  // builds the vec at call time and `ensureNativeGeneratorResumeFunction`
+  // rehydrates it into the detached resume context, including mapped metadata.
   // (#3164) A FunctionExpression may be anonymous — its native registration
   // rides a synthetic lifted-closure name supplied by the emit site
   // (closures.ts). Everything else still requires a name (funcMap key).
   if (!decl.name && !ts.isFunctionExpression(decl)) return false;
-  // (#3164) Fn-expr-specific shape gate (identifier-only params, no
-  // `this`/`arguments`, no self-name reference, no outer capture). Applied
+  // (#3164) Fn-expr-specific shape gate (identifier-only params, frame-carried
+  // `arguments`, no `this`/self-name reference, no outer capture). Applied
   // here — the SINGLE candidate gate — so `sourceNeedsGeneratorHostImports`,
   // `registerNativeGenerator`, and the closures.ts emit site all agree
   // (disagreement bakes an undefined `__gen_*` funcIdx → invalid module).
@@ -2208,19 +2992,15 @@ export function isNativeGeneratorCandidate(ctx: CodegenContext, decl: GeneratorD
       if (sameName > 1) return false;
     }
   }
-  // (#2571) A method generator that reads `arguments`, uses `super.*`, or
-  // CAPTURES an enclosing-function binding (#2203) has no native state-machine
-  // support: the eager-buffer path builds the arguments vec / closure, while the
-  // native state struct has slots only for `this` + own params, not captures.
-  // Bail to the host path so it stays correct (host) / refuses cleanly
-  // (standalone) rather than reading a garbage slot. This keeps the candidate
-  // gate the SINGLE source of truth — `registerNativeGenerator` (class-bodies)
-  // and `sourceNeedsGeneratorHostImports` both consult it and agree.
+  // (#2571) A method generator that uses `super.*` or CAPTURES an
+  // enclosing-function binding (#2203) has no native state-machine support.
+  // `arguments` is the bounded C02 exception: its vec is now carried by the
+  // native frame, while the remaining unsupported method cases stay on the
+  // host path / clean standalone refusal.
   if (
     ts.isMethodDeclaration(decl) &&
     decl.body &&
-    (bodyNeedsArgumentsObject(decl.body) ||
-      methodBodyUsesSuper(decl.body) ||
+    (methodBodyUsesSuper(decl.body) ||
       // (#3032 W4) Outer-scope captures are ADMITTED for method generators in
       // the standalone/wasi lane: a class / object-literal method body never
       // receives captures as params — it resolves them through the
@@ -2343,7 +3123,7 @@ export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile:
       found = true;
       // (#3164) A generator FUNCTION EXPRESSION no longer forces the host
       // imports when the extended candidate gate admits it (zero/identifier
-      // params, no `this`/`arguments`/self-name/capture — the fn-expr arm of
+      // params, frame-carried `arguments`, no `this`/self-name/capture — the fn-expr arm of
       // `isNativeGeneratorCandidate`); the closures.ts emit site routes it
       // through the native state-struct factory. Any bail (including async —
       // the modifiers check inside the candidate) keeps the imports
@@ -2354,8 +3134,8 @@ export function sourceNeedsGeneratorHostImports(ctx: CodegenContext, sourceFile:
     if (ts.isMethodDeclaration(node) && node.asteriskToken && node.body) {
       found = true;
       // (#2571) A class / object-literal generator METHOD that the native path
-      // can lower (instance/static, identifier params, no capture / arguments /
-      // super) no longer forces the host imports — same logic as the
+      // can lower (instance/static, identifier params, frame-carried arguments,
+      // no capture / super) no longer forces the host imports — same logic as the
       // FunctionDeclaration branch above, generalized to methods. A
       // non-candidate or capturing method generator still needs the host buffer.
       if (!isNativeGeneratorCandidate(ctx, node) || generatorCapturesOuterScope(ctx, node)) needsHost = true;
@@ -2489,6 +3269,14 @@ export function registerNativeGenerator(
   // builder already returned null for any spill whose type it could not resolve.
 
   const resultTypeIdx = ensureNativeGeneratorResultType(ctx, elemValType);
+  // (#5255) A free declaration can be invoked through a callable object field
+  // (`{ g: g }.g()`), whose receiver is installed only while its factory call
+  // runs. Native execution resumes later, so persist that dynamic receiver in
+  // the state frame. Methods already have their exact receiver as the leading
+  // synthetic wasm param; generator function expressions remain separately
+  // gated because their closure ABI supplies a different capture carrier.
+  const capturesDynamicThis =
+    !synthesizedThis && ts.isFunctionDeclaration(decl) && decl.body !== undefined && bodyReferencesOwnThis(decl.body);
   // (#2571) The synthetic `this` (when present) is the FIRST param name, aligned
   // with the caller's `paramTypes[0] === receiverType`. User params follow.
   // (#2920) A binding-pattern param has no source identifier; mint a unique
@@ -2500,6 +3288,19 @@ export function registerNativeGenerator(
   // precede the user params, aligned with the caller's paramTypes prefix.
   const captureNames = (leadingCaptures ?? []).map((c) => c.name);
   const paramNames = synthesizedThis ? ["this", ...userParamNames] : [...captureNames, ...userParamNames];
+  // (#2864 C02) The ordinary emit sites build `arguments` before this factory
+  // is emitted. Carry that vec in the native frame so the detached resume
+  // function can rehydrate the same object (including call-site extras).
+  // Synthetic receiver/capture params are not part of the source-level
+  // arguments object.
+  const needsArguments = decl.body ? bodyNeedsArgumentsObject(decl.body) : false;
+  const argumentsParamOffset = synthesizedThis ? 1 : captureNames.length;
+  const argumentsVecTypeIdx = needsArguments ? getOrRegisterVecType(ctx, "arguments") : undefined;
+  const argumentsMapped =
+    needsArguments &&
+    decl.parameters.length > 0 &&
+    isSimpleParameterList(decl.parameters) &&
+    !isStrictFunction(decl, ctx.inferModuleStrictArguments);
   // (#2864 F1) `sent` / `abrupt` carry the `.next(v)` / `.return(v)` value. For
   // the boxed-any carrier they are externref so an arbitrary value survives; for
   // numeric / string carriers they stay f64 (byte-identical to before).
@@ -2512,6 +3313,20 @@ export function registerNativeGenerator(
     // (#2864 F2) `gen.throw(e)` payload — externref regardless of carrier.
     { name: "error", type: { kind: "externref" }, mutable: true },
   ];
+  const argumentsFieldIdx = needsArguments ? stateFields.length : undefined;
+  if (argumentsFieldIdx !== undefined) {
+    stateFields.push({
+      name: "arguments",
+      type: { kind: "ref", typeIdx: argumentsVecTypeIdx! },
+      mutable: true,
+    });
+  }
+  // Keep the dynamic receiver outside the parameter layout. A source-level
+  // `this` parameter has no runtime receiver semantics, and leading closure /
+  // TDZ captures occupy the same param arrays for nested generators.
+  if (capturesDynamicThis) {
+    stateFields.push({ name: "dynamic_this", type: { kind: "externref" }, mutable: false });
+  }
   // (#3620) A BINDING-PATTERN parameter's state field must be typed at the
   // value's actual wasm-boundary representation (`externref`), NOT at the TS
   // type the checker infers for the pattern.
@@ -2547,7 +3362,9 @@ export function registerNativeGenerator(
       mutable: false,
     });
   }
-  const spillFieldOffset = PARAM_FIELD_OFFSET + paramTypes.length;
+  const paramFieldOffset =
+    PARAM_FIELD_OFFSET + (argumentsFieldIdx === undefined ? 0 : 1) + (capturesDynamicThis ? 1 : 0);
+  const spillFieldOffset = paramFieldOffset + paramTypes.length;
   // Params that are also reassigned in the body need a mutable spill slot too;
   // but params already live in the struct. Spills cover body-declared locals.
   const paramNameSet = new Set(paramNames);
@@ -2688,6 +3505,7 @@ export function registerNativeGenerator(
     functionName: internalName,
     decl,
     synthesizedThis,
+    capturesDynamicThis: capturesDynamicThis || undefined,
     stateTypeIdx,
     resultTypeIdx,
     paramNames,
@@ -2696,7 +3514,11 @@ export function registerNativeGenerator(
     // must agree with the field it `struct.get`s. Identical to `paramTypes`
     // except for binding-pattern params (widened to `externref` above).
     paramTypes: stateParamTypes,
-    paramFieldOffset: PARAM_FIELD_OFFSET,
+    paramFieldOffset,
+    argumentsFieldIdx,
+    argumentsVecTypeIdx,
+    argumentsParamOffset: needsArguments ? argumentsParamOffset : undefined,
+    argumentsMapped: needsArguments ? argumentsMapped : undefined,
     sentFieldIdx: SENT_FIELD,
     modeFieldIdx: MODE_FIELD,
     abruptFieldIdx: ABRUPT_FIELD,
@@ -2985,6 +3807,100 @@ function emitConditionAsI32(ctx: CodegenContext, fctx: FunctionContext, expr: ts
   coerceType(ctx, fctx, t, { kind: "f64" });
   fctx.body.push({ op: "f64.const", value: 0 });
   fctx.body.push({ op: "f64.ne" });
+}
+
+/**
+ * Emit one planner-owned pre-yield operand capture. The expression runs before
+ * its suspension; later states read only this spill through the scoped map.
+ */
+function emitNativeGeneratorExpressionCapture(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  capture: NativeGeneratorExpressionCapture,
+): void {
+  const localIdx = fctx.localMap.get(capture.spillName);
+  const localType = localIdx === undefined ? undefined : getLocalType(fctx, localIdx);
+  if (localIdx === undefined || localType === undefined) {
+    reportError(ctx, capture.expression, "Internal error: native generator continuation capture spill is unavailable");
+    throw new Error("native generator continuation capture spill is unavailable");
+  }
+
+  if (capture.canonicalUndefined) {
+    // Only oracle-proven unshadowed `undefined` bypasses the normal expression
+    // compiler when a successor recompiles the source. Its admitted
+    // representation is the standalone canonical singleton — never an
+    // unbranded i32 that could box as numeric zero.
+    if (localType.kind !== "externref") {
+      reportError(ctx, capture.expression, "Internal error: canonical undefined continuation spill is not externref");
+      throw new Error("canonical undefined continuation spill is not externref");
+    }
+    fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
+    fctx.body.push({ op: "local.set", index: localIdx });
+    return;
+  }
+
+  const emittedType = compileExpression(ctx, fctx, capture.expression, capture.type);
+  if (emittedType === null) {
+    reportError(
+      ctx,
+      capture.expression,
+      "Internal error: native generator continuation capture did not produce a value",
+    );
+    throw new Error("native generator continuation capture did not produce a value");
+  }
+  if (!valTypesMatch(emittedType, localType)) coerceType(ctx, fctx, emittedType, localType);
+  fctx.body.push({ op: "local.set", index: localIdx });
+}
+
+/**
+ * Install continuation substitutions only while compiling the original source
+ * expression in its successor state. `finally` restoration keeps the maps
+ * state-local even when expression lowering throws or recursively compiles a
+ * nested body. Planner validation makes every entry mandatory; this helper
+ * fails loudly rather than allowing a missing spill to replay source.
+ */
+function withNativeGeneratorContinuationLocals<T>(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  replacements: readonly NativeGeneratorExpressionReplacement[] | undefined,
+  emit: () => T,
+): T {
+  if (!replacements || replacements.length === 0) return emit();
+
+  const previousYieldLocals = fctx.nativeGeneratorYieldValueLocals;
+  const previousExpressionLocals = fctx.nativeGeneratorExpressionValueLocals;
+  const yieldLocals = new Map(previousYieldLocals);
+  const expressionLocals = new Map(previousExpressionLocals);
+  const seen = new Set<ts.Expression>();
+
+  for (const replacement of replacements) {
+    const localIdx = fctx.localMap.get(replacement.spillName);
+    if (seen.has(replacement.expression) || localIdx === undefined || getLocalType(fctx, localIdx) === undefined) {
+      reportError(
+        ctx,
+        replacement.expression,
+        "Internal error: native generator continuation replacement is unavailable",
+      );
+      throw new Error("native generator continuation replacement is unavailable");
+    }
+    seen.add(replacement.expression);
+    if (replacement.kind === "yield") yieldLocals.set(replacement.expression, localIdx);
+    else expressionLocals.set(replacement.expression, localIdx);
+  }
+
+  fctx.nativeGeneratorYieldValueLocals = yieldLocals;
+  fctx.nativeGeneratorExpressionValueLocals = expressionLocals;
+  try {
+    return emit();
+  } finally {
+    fctx.nativeGeneratorYieldValueLocals = previousYieldLocals;
+    fctx.nativeGeneratorExpressionValueLocals = previousExpressionLocals;
+  }
+}
+
+/** #680 condition states need the canonical JS ToBoolean path (NaN is false). */
+function emitCanonicalConditionAsI32(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): void {
+  ensureI32Condition(fctx, compileExpression(ctx, fctx, expr), ctx);
 }
 
 /**
@@ -3304,12 +4220,27 @@ function compileState(
   }
 
   // Prelude statements (straight-line, yield-free).
-  for (const stmt of state.statements) compileStatement(ctx, fctx, stmt);
+  for (const stmt of state.statements) {
+    withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () => {
+      compileStatement(ctx, fctx, stmt);
+    });
+  }
+
+  // Captures are attached when their continuation is found, so a state can
+  // already have earlier yield-free prelude statements. Emit that prelude
+  // first to preserve source order. Captures stay deliberately outside the
+  // replacement scope: this is the sole evaluation of their ORIGINAL AST;
+  // successor states only read the saved value.
+  for (const capture of state.expressionCaptures ?? []) {
+    emitNativeGeneratorExpressionCapture(ctx, fctx, capture);
+  }
 
   const term = state.terminator;
   switch (term.kind) {
     case "yield": {
-      const tmp = emitYieldValueAsElem(ctx, fctx, term.expr, info);
+      const tmp = withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () =>
+        emitYieldValueAsElem(ctx, fctx, term.expr, info),
+      );
       body.push(...storeSpills(info, fctx, selfLocal));
       body.push(...setStateInstrs(info, selfLocal, term.next));
       body.push(...setModeInstrs(info, selfLocal, 0));
@@ -3321,7 +4252,9 @@ function compileState(
       break;
     }
     case "return": {
-      const tmp = emitYieldValueAsElem(ctx, fctx, term.expr, info);
+      const tmp = withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () =>
+        emitYieldValueAsElem(ctx, fctx, term.expr, info),
+      );
       body.push(...storeSpills(info, fctx, selfLocal));
       body.push(...setStateInstrs(info, selfLocal, info.doneState));
       body.push(...setModeInstrs(info, selfLocal, 0));
@@ -3378,7 +4311,10 @@ function compileState(
     }
     case "branch": {
       body.push(...storeSpills(info, fctx, selfLocal));
-      emitConditionAsI32(ctx, fctx, term.cond);
+      withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () => {
+        if (term.canonical) emitCanonicalConditionAsI32(ctx, fctx, term.cond);
+        else emitConditionAsI32(ctx, fctx, term.cond);
+      });
       if (term.negate) body.push({ op: "i32.eqz" });
       body.push({
         op: "if",
@@ -3620,8 +4556,8 @@ function compileState(
         }
 
         // Re-yielded value: unbox the externref `value` to the OUTER element type
-        // (f64 outer → native `__unbox_number` via coerceType; boxed-any outer →
-        // pass through). String outers bailed in `emitYield`.
+        // (f64 outer → native `__unbox_number`; string outer → guarded native
+        // string ref cast; boxed-any outer → pass through).
         const valueInstrs: Instr[] = [];
         {
           const savedC = fctx.body;
@@ -3629,6 +4565,8 @@ function compileState(
           fctx.body.push({ op: "local.get", index: valueLocal });
           if (info.elemValType.kind === "f64") {
             coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+          } else if (info.elemValType.kind === "ref" || info.elemValType.kind === "ref_null") {
+            coerceType(ctx, fctx, { kind: "externref" }, info.elemValType);
           }
           fctx.body = savedC;
         }
@@ -4020,6 +4958,23 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     resumeFctx.body.push({ op: "local.set", index: localIdx });
   }
 
+  // (#5255) The object-property caller restores `__current_this` immediately
+  // after constructing the iterator. Its generator body starts only on a later
+  // `.next()`, so restore the factory-time receiver from the dedicated frame
+  // field before compiling any body expression. The field sits immediately
+  // before `paramFieldOffset`; it is intentionally not a synthetic parameter
+  // (see NativeGeneratorInfo.capturesDynamicThis).
+  if (info.capturesDynamicThis) {
+    const thisLocal = allocLocal(resumeFctx, "this", { kind: "externref" });
+    resumeFctx.body.push({ op: "local.get", index: 0 });
+    resumeFctx.body.push({
+      op: "struct.get",
+      typeIdx: info.stateTypeIdx,
+      fieldIdx: info.paramFieldOffset - 1,
+    });
+    resumeFctx.body.push({ op: "local.set", index: thisLocal });
+  }
+
   // (#3050) Capturing nested generator: register each cell-riding capture in
   // `boxedCaptures` so identifier reads/writes inside resume states deref the
   // shared cell (the exact mechanism a lifted capturing function body uses) —
@@ -4103,6 +5058,38 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
     }
   }
 
+  // (#2864 C02) `arguments` is initialized by the factory at call time, but
+  // this resume function owns the detached execution context. Rehydrate the
+  // same vec before compiling the body so identifier/property lowering sees a
+  // real local. The resume function has its own `__gen_self` parameter, hence
+  // the +1 when rebuilding mapped-arguments metadata; source-level synthetic
+  // receiver/capture params are skipped by `argumentsParamOffset`.
+  if (info.argumentsFieldIdx !== undefined && info.argumentsVecTypeIdx !== undefined) {
+    const argumentsLocal = allocLocal(resumeFctx, "arguments", {
+      kind: "ref",
+      typeIdx: info.argumentsVecTypeIdx,
+    });
+    resumeFctx.body.push({ op: "local.get", index: 0 });
+    resumeFctx.body.push({
+      op: "struct.get",
+      typeIdx: info.stateTypeIdx,
+      fieldIdx: info.argumentsFieldIdx,
+    });
+    resumeFctx.body.push({ op: "local.set", index: argumentsLocal });
+    if (info.argumentsMapped) {
+      const sourceParamOffset = info.argumentsParamOffset ?? 0;
+      const paramTypes = info.paramTypes.slice(sourceParamOffset, sourceParamOffset + info.decl.parameters.length);
+      resumeFctx.mappedArgsInfo = {
+        argsLocalIdx: argumentsLocal,
+        arrTypeIdx: getArrTypeIdxFromVec(ctx, info.argumentsVecTypeIdx),
+        vecTypeIdx: info.argumentsVecTypeIdx,
+        paramCount: paramTypes.length,
+        paramOffset: sourceParamOffset + 1,
+        paramTypes,
+      };
+    }
+  }
+
   // Load spills into locals. (#2864 F1b) The load local is minted at the spill's
   // actual ValType so the `struct.get` (of the same-typed field) round-trips. The
   // body's var-declaration reuses this exact slot (it is already in `localMap`),
@@ -4158,7 +5145,43 @@ export function ensureNativeGeneratorResumeFunction(ctx: CodegenContext, info: N
         getCaughtExnIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
         flushLateImportShifts(ctx, resumeFctx);
       }
-      resumeFctx.body.push(...emitTrampoline(ctx, resumeFctx, info, plan, 0, resultLocal, getCaughtExnIdx));
+      const trampoline = emitTrampoline(ctx, resumeFctx, info, plan, 0, resultLocal, getCaughtExnIdx);
+      if (ctx.standalone || ctx.wasi) {
+        // A native generator is completed when its body raises while a resume
+        // is in progress (§27.5.3.4). Most abrupt paths already set
+        // `STATE_FIELD` before their explicit rethrow, but an unhandled body
+        // exception (including an abrupt IteratorStep) escapes directly from
+        // the trampoline. Close that state before preserving the original
+        // payload so a later `.next()` observes the completed generator
+        // instead of re-entering the throwing state. Keep this wrapper out of
+        // the JS-host lane: its foreign-exception recovery and legacy lowering
+        // have their own established path.
+        // (#5141) The wrapper must NOT be a result-typed `try_table`: V8 12.4
+        // (Node 22, the floor in `package.json` engines) executes
+        // `try_table (ref null $result)` as `unreachable`, so every first
+        // resume trapped. Every other standalone EH site emits the empty
+        // blocktype (`promise-executor.ts`, `expressions/calls.ts`), so match
+        // them: keep the trampoline's own value-producing shape inside a plain
+        // `block (result R)`, spill it to `resultLocal`, and read it back after
+        // the (empty-typed) try scaffold. Branch depths inside the trampoline
+        // are unchanged relative to that inner block, and `bumpBranches` still
+        // retargets the ones escaping it.
+        const tryBody: Instr[] = [
+          { op: "block", blockType: { kind: "val", type: resultType }, body: trampoline },
+          { op: "local.set", index: resultLocal },
+        ];
+        resumeFctx.body.push(
+          buildTargetTaggedTry(ctx, { kind: "empty" }, tryBody, [
+            {
+              tagIdx: ensureExnTag(ctx),
+              body: [...setStateInstrs(info, 0, info.doneState), { op: "throw", tagIdx: ensureExnTag(ctx) }],
+            },
+          ]),
+        );
+        resumeFctx.body.push({ op: "local.get", index: resultLocal });
+      } else {
+        resumeFctx.body.push(...trampoline);
+      }
     } finally {
       ctx.currentFunc = savedFunc;
     }
@@ -4203,8 +5226,20 @@ export function compileNativeGeneratorFunction(
   decl: GeneratorDecl,
   info: NativeGeneratorInfo,
 ): void {
-  ensureNativeGeneratorResumeFunction(ctx, info);
-  // Construct the state struct: state=0, sent=⊥, mode=0, abrupt=⊥, params…, spills(NaN)…
+  // The factory prologue is not yet registered in `mod.functions`. Building
+  // the detached resume function can add host-lane imports, so keep the
+  // already-emitted arguments setup visible to the late-index shifter for the
+  // duration of that build. Standalone has no such imports, which is why this
+  // corruption previously appeared only in the JS-host controls.
+  const factoryBodyWasLive = ctx.liveBodies.has(fctx.body);
+  if (!factoryBodyWasLive) ctx.liveBodies.add(fctx.body);
+  try {
+    ensureNativeGeneratorResumeFunction(ctx, info);
+  } finally {
+    if (!factoryBodyWasLive) ctx.liveBodies.delete(fctx.body);
+  }
+  // Construct the state struct: state=0, sent=⊥, mode=0, abrupt=⊥, error=⊥,
+  // optional frame-carried arguments/dynamic receiver, params…, spills(NaN)…
   // (#2864 F1) `sent`/`abrupt` init to the carrier default — `f64 NaN` for the
   // numeric/string carriers (unchanged) or a null externref for the boxed-any
   // carrier so the struct.new typechecks before the first `.next(v)`.
@@ -4216,6 +5251,33 @@ export function compileNativeGeneratorFunction(
   fctx.body.push({ op: "i32.const", value: 0 }); // mode = MODE_NEXT
   fctx.body.push(carrierInit); // abrupt
   fctx.body.push({ op: "ref.null.extern" }); // (#2864 F2) error
+  // (#2864 C02) The ordinary function/method/closure prologue has already
+  // built the arguments vec in this factory at call time. Store that exact
+  // object in the frame before the captured params so every later resume sees
+  // the original call-site arity and values.
+  if (info.argumentsFieldIdx !== undefined) {
+    const argumentsLocal = fctx.localMap.get("arguments");
+    if (argumentsLocal === undefined) {
+      reportError(ctx, decl, "Internal error: native generator arguments local disappeared before frame construction");
+      fctx.body.push({ op: "unreachable" });
+      return;
+    }
+    fctx.body.push({ op: "local.get", index: argumentsLocal });
+  }
+  // (#5255) Snapshot the receiver while the callable-property dispatch still
+  // has it installed. `findOwnThisReference` keeps the original source node for
+  // strict/sloppy and lexical-arrow classification; a direct-eval-only body has
+  // no literal `this` node, so its declaration still selects the same receiver
+  // ladder. The resume function reads the resulting frame field as a local.
+  if (info.capturesDynamicThis) {
+    const thisExpr = decl.body ? findOwnThisReference(decl.body) : undefined;
+    const thisType = compileThisKeywordLate(ctx, fctx, thisExpr ?? decl);
+    if (thisType === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    } else if (!valTypesMatch(thisType, { kind: "externref" })) {
+      coerceType(ctx, fctx, thisType, { kind: "externref" });
+    }
+  }
   // (#2571) Read every wasm param into its `param_*` state slot. For an instance
   // method generator the synthetic `this` is wasm param 0 and user params are
   // 1..n, so iterate `info.paramTypes.length` (which includes the synthetic

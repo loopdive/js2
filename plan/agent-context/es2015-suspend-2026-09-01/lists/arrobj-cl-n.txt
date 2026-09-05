@@ -1,0 +1,3 @@
+built-ins/Array/length/define-own-prop-length-no-value-order.js
+built-ins/Array/length/define-own-prop-length-coercion-order.js
+built-ins/Array/length/define-own-prop-length-coercion-order-set.js

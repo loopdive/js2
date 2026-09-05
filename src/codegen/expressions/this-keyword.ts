@@ -86,6 +86,41 @@ export function compileThisKeyword(ctx: CodegenContext, fctx: FunctionContext, e
   if (fctx.name === "__module_init" && !ctx.sourceIsModule && thisBelongsToTopLevelCode(expr)) {
     return compileIdentifier(ctx, fctx, ts.factory.createIdentifier("globalThis"));
   }
+  // A folded direct-eval body is a foreign AST, but its `this` still belongs
+  // to the caller's activation (§10.4.4). Lexical receiver rungs above have
+  // already handled class/typed-this callers. For an ordinary function the
+  // caller's receiver is the non-null `__current_this` marker when it was
+  // invoked through a receiver-aware trampoline; only the null arm uses the
+  // eval caller-strictness override (sloppy → global, strict → undefined).
+  // This ordering is load-bearing: the old early override discarded a real
+  // constructor receiver and made `eval("this")` return `undefined` in strict
+  // `new F()` bodies.
+  if (fctx.directEvalSloppyThisFallback !== undefined && (fctx.name !== "__module_init" || ctx.sourceIsModule)) {
+    if (ctx.currentThisGlobalIdx >= 0) {
+      if (emitCachedResolvedThis(ctx, fctx, expr)) return { kind: "externref" };
+      const thisTmp = allocTempLocal(fctx, { kind: "externref" });
+      fctx.body.push({ op: "global.get", index: ctx.currentThisGlobalIdx });
+      fctx.body.push({ op: "local.tee", index: thisTmp });
+      fctx.body.push({ op: "ref.is_null" });
+      const elseBody: Instr[] = buildCurrentThisNonNullArm(ctx, fctx, expr, thisTmp);
+      const savedBody = fctx.body;
+      const thenBody: Instr[] = [];
+      fctx.body = thenBody;
+      emitUnboundThis(ctx, fctx, expr);
+      fctx.body = savedBody;
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: thenBody,
+        else: elseBody,
+      });
+      releaseTempLocal(fctx, thisTmp);
+      recordResolvedThis(ctx, fctx, expr);
+      return { kind: "externref" };
+    }
+    emitUnboundThis(ctx, fctx, expr);
+    return { kind: "externref" };
+  }
   // (#1636-S1) Host-dispatched-closure fallback: when no local `this`
   // binding exists and we're not in a static-class context, read the
   // host-supplied receiver from the `__current_this` module global —

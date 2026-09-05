@@ -6,51 +6,168 @@
  * These identifiers name meaning, never a concrete helper, import, or module
  * index. The initial vocabulary deliberately matches the exact deterministic,
  * exact-arity f64 Math surface certified by `IR_MATH_METHOD_TABLE`. Widening
- * any of these unions is therefore a reviewed runtime-contract change.
+ * `PURE_MATH_INTRINSIC_IDS` remains the exact source-Math catalogue; other
+ * reviewed semantic families are composed into `INTRINSIC_IDS` separately.
  */
 import { effectsArePure, effectsOf } from "./effects.js";
 import { irTypeEquals, type IrInstr, type IrType } from "./nodes.js";
 
 export const PURE_MATH_INTRINSIC_IDS = Object.freeze([
   "math.abs",
+  "math.acos",
+  "math.acosh",
+  "math.asin",
+  "math.asinh",
+  "math.atan",
   "math.atan2",
+  "math.atanh",
+  "math.cbrt",
   "math.ceil",
+  "math.clz32",
   "math.cos",
+  "math.cosh",
   "math.exp",
+  "math.expm1",
   "math.floor",
+  "math.fround",
+  "math.imul",
   "math.log",
+  "math.log10",
+  "math.log1p",
   "math.log2",
+  "math.max",
+  "math.min",
   "math.pow",
+  "math.round",
+  "math.sign",
   "math.sin",
+  "math.sinh",
   "math.sqrt",
+  "math.tan",
+  "math.tanh",
   "math.trunc",
 ] as const);
 
-export type IntrinsicId = (typeof PURE_MATH_INTRINSIC_IDS)[number];
+export const NUMERIC_COERCION_INTRINSIC_IDS = Object.freeze(["js.to_uint32"] as const);
 
 /**
- * Provider requirements reachable from the twelve intrinsic entry points.
- * `math.atan` and `math.reduce-trig` are provider-only dependencies and are
- * intentionally not source-level intrinsic IDs in this slice.
+ * (#3526 F1-S1) The synchronous number boundary — the f64⇄externref carrier
+ * pair the front-end used to emit as a direct named call to
+ * `__box_number` / `__unbox_number` after reading a resolver mode predicate.
+ * The IDs name meaning only; which provider (host import vs union-native
+ * function) answers them is a frozen-manifest decision, not a front-end one.
+ */
+export const NUMBER_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.number.box", "js.number.unbox"] as const);
+
+export type NumberBoundaryIntrinsicId = (typeof NUMBER_BOUNDARY_INTRINSIC_IDS)[number];
+
+/**
+ * (#3526 F1-S2) The synchronous BOOLEAN boundary — the branded-i32→externref
+ * carrier the front-end used to emit as a direct named call to
+ * `__box_boolean` after reading the `hasHostBooleanBox` resolver predicate.
+ *
+ * A deliberate SIBLING of the number constants, not a widening of them: this
+ * family is one-armed. There is no `js.boolean.unbox` because there is no
+ * front-end producer for one — `__unbox_boolean` is a union member with no IR
+ * consumer, and the boolean capability has no widening follow-up.
+ */
+export const BOOLEAN_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.boolean.box"] as const);
+
+export type BooleanBoundaryIntrinsicId = (typeof BOOLEAN_BOUNDARY_INTRINSIC_IDS)[number];
+
+/**
+ * (#3526 F1-S4) The externref UNDEFINED PROBE — the last surviving pre-F1
+ * two-armed shape in from-ast. `x !== undefined` on an externref-shaped value
+ * used to pick between the `env.__extern_is_undefined` host import and the
+ * host-free lanes' real Wasm function IN THE FRONT-END, by reading the
+ * `externIsUndefinedIsNative` resolver predicate.
+ *
+ * A SIBLING of the number/boolean constants, never a widening of them: this
+ * family has no boxing at all. It is one-armed at the ID level (one probe) but
+ * TWO-armed at the provider level, unlike `js.boolean.box` — both a host
+ * capability and a runtime symbol can answer it, so its policy carries the
+ * same three-valued shape the number boundary's unbox arm does.
+ */
+export const EXTERN_BOUNDARY_INTRINSIC_IDS = Object.freeze(["js.extern.is_undefined"] as const);
+
+export type ExternBoundaryIntrinsicId = (typeof EXTERN_BOUNDARY_INTRINSIC_IDS)[number];
+
+export const INTRINSIC_IDS = Object.freeze([
+  ...NUMERIC_COERCION_INTRINSIC_IDS,
+  ...NUMBER_BOUNDARY_INTRINSIC_IDS,
+  ...BOOLEAN_BOUNDARY_INTRINSIC_IDS,
+  ...EXTERN_BOUNDARY_INTRINSIC_IDS,
+  ...PURE_MATH_INTRINSIC_IDS,
+] as const);
+
+export type IntrinsicId = (typeof INTRINSIC_IDS)[number];
+
+/**
+ * Provider requirements reachable from the thirty-three intrinsic entry points.
+ * `math.reduce-trig` is the sole provider-only dependency in this slice.
  */
 export const PURE_MATH_RUNTIME_FEATURES = Object.freeze([
   "math.abs",
+  "math.acos",
+  "math.acosh",
+  "math.asin",
+  "math.asinh",
   "math.atan",
   "math.atan2",
+  "math.atanh",
+  "math.cbrt",
   "math.ceil",
+  "math.clz32",
   "math.cos",
+  "math.cosh",
   "math.exp",
+  "math.expm1",
   "math.floor",
+  "math.fround",
+  "math.imul",
   "math.log",
+  "math.log10",
+  "math.log1p",
   "math.log2",
+  "math.max",
+  "math.min",
   "math.pow",
   "math.reduce-trig",
+  "math.round",
+  "math.sign",
   "math.sin",
+  "math.sinh",
   "math.sqrt",
+  "math.tan",
+  "math.tanh",
   "math.trunc",
 ] as const);
 
-export type RuntimeFeature = (typeof PURE_MATH_RUNTIME_FEATURES)[number];
+export const NUMERIC_COERCION_RUNTIME_FEATURES = Object.freeze(["js.to_uint32"] as const);
+
+/** Feature rows mirror the number-boundary intrinsic IDs 1:1. */
+export const NUMBER_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.number.box", "js.number.unbox"] as const);
+
+/** (#3526 F1-S2) The boolean-boundary feature row, 1:1 with its one ID. */
+export const BOOLEAN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.boolean.box"] as const);
+
+/** (#3526 F1-S4) The extern undefined-probe feature row, 1:1 with its one ID. */
+export const EXTERN_BOUNDARY_RUNTIME_FEATURES = Object.freeze(["js.extern.is_undefined"] as const);
+
+export const INTRINSIC_RUNTIME_FEATURES = Object.freeze([
+  ...NUMERIC_COERCION_RUNTIME_FEATURES,
+  ...NUMBER_BOUNDARY_RUNTIME_FEATURES,
+  ...BOOLEAN_BOUNDARY_RUNTIME_FEATURES,
+  ...EXTERN_BOUNDARY_RUNTIME_FEATURES,
+  ...PURE_MATH_RUNTIME_FEATURES,
+] as const);
+
+export type PureMathRuntimeFeature = (typeof PURE_MATH_RUNTIME_FEATURES)[number];
+export type NumericCoercionRuntimeFeature = (typeof NUMERIC_COERCION_RUNTIME_FEATURES)[number];
+export type NumberBoundaryRuntimeFeature = (typeof NUMBER_BOUNDARY_RUNTIME_FEATURES)[number];
+export type BooleanBoundaryRuntimeFeature = (typeof BOOLEAN_BOUNDARY_RUNTIME_FEATURES)[number];
+export type ExternBoundaryRuntimeFeature = (typeof EXTERN_BOUNDARY_RUNTIME_FEATURES)[number];
+export type RuntimeFeature = (typeof INTRINSIC_RUNTIME_FEATURES)[number];
 
 /**
  * The certified deterministic Math slice is host-free by construction.
@@ -107,6 +224,145 @@ const F64_TYPE = Object.freeze({
   val: Object.freeze({ kind: "f64" as const }),
 });
 
+/**
+ * (#3526 F1-S2) The boolean carrier's PARAMETER type. `valTypeEquals` compares
+ * only the ValType `kind`, so the `boolean` brand (#4503) is erasable here: the
+ * signature accepts the branded carrier the from-ast arm passes without the
+ * brand having to appear in the ABI. The brand stays the arm's own TYPE GATE.
+ */
+const I32_TYPE = Object.freeze({
+  kind: "val" as const,
+  val: Object.freeze({ kind: "i32" as const }),
+});
+
+const U32_TYPE = Object.freeze({
+  kind: "val" as const,
+  val: Object.freeze({ kind: "i32" as const }),
+  signed: false as const,
+});
+
+const EXTERNREF_TYPE = Object.freeze({
+  kind: "val" as const,
+  val: Object.freeze({ kind: "externref" as const }),
+});
+
+/** `(f64) -> externref` — the exact ABI of the `__box_number` carrier. */
+export const F64_TO_EXTERNREF_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([F64_TYPE]),
+  result: EXTERNREF_TYPE,
+});
+
+/** `(externref) -> f64` — the exact ABI of the `__unbox_number` carrier. */
+export const EXTERNREF_TO_F64_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE]),
+  result: F64_TYPE,
+});
+
+/** `(i32) -> externref` — the exact ABI of the `__box_boolean` carrier. */
+export const I32_TO_EXTERNREF_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([I32_TYPE]),
+  result: EXTERNREF_TYPE,
+});
+
+/**
+ * `(externref) -> i32` — the exact ABI of the `__extern_is_undefined` probe,
+ * shared by its host import and its host-free Wasm function (#4461 registered
+ * both under exactly this signature).
+ */
+export const EXTERNREF_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE]),
+  result: I32_TYPE,
+});
+
+/**
+ * `(externref, externref) -> i32` — the exact ABI of the string relational
+ * compare helper, shared by the `env.string_compare` host import and the
+ * host-free `__str_compare` Wasm helper. Both answer a -1/0/1 lexicographic
+ * sign; #3526 F2-S1 made the manifest the authority over which one answers.
+ */
+export const EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE, EXTERNREF_TYPE]),
+  result: I32_TYPE,
+});
+
+/**
+ * (#3526 F2-S5) A non-null `(ref extern)` result. `wasm:js-string.concat`
+ * returns a non-nullable external reference, not a nullable `externref` — the
+ * distinction the host-capability catalogue's value union had to grow for in
+ * F2-S2, and the reason the concat seam cannot reuse any existing signature.
+ */
+const REF_EXTERN_TYPE = Object.freeze({
+  kind: "val" as const,
+  val: Object.freeze({ kind: "ref_extern" as const }),
+});
+
+/**
+ * `(externref, externref) -> (ref extern)` — the exact ABI of the string
+ * CONCATENATION seam, shared by the `wasm:js-string.concat` builtin import and
+ * the host-free `__str_concat` / `__str_concat_owned` Wasm helpers. The two
+ * native helpers physically take and return `ref $AnyString`; the signature
+ * states the seam's SEMANTIC shape (two strings in, one string out), exactly as
+ * `native.js.string.eq` reuses the externref pair for `__str_equals`.
+ * #3526 F2-S5 made the manifest the authority over which one answers.
+ */
+export const EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE, EXTERNREF_TYPE]),
+  result: REF_EXTERN_TYPE,
+});
+
+/**
+ * `(externref, i32) -> f64` — the exact SEMANTIC shape of the guarded
+ * `charCodeAt` read: a string and a UTF-16 index in, a code unit or `NaN` out.
+ *
+ * (#3526 F2-S7) The first row in the catalogue whose signature is deliberately
+ * NOT its capability record's ABI. `wasm:js-string.charCodeAt` is
+ * `(externref, i32) -> i32` and TRAPS out of range (#2003); the seam both
+ * authorities implement is the guarded f64 that answers `NaN` instead, and the
+ * providers are defined helpers over that builtin (`__jsstr_charCodeAt`) or
+ * over the native carrier (`__str_charCodeAt`) rather than the builtin itself.
+ * The native helper physically takes `(ref $AnyString, i32)`; the signature
+ * states the seam's shape, exactly as `native.js.string.eq` reuses the
+ * externref pair for `__str_equals`.
+ */
+export const EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([EXTERNREF_TYPE, I32_TYPE]),
+  result: F64_TYPE,
+});
+
+/**
+ * `() -> externref` — the seam shape of a string LITERAL's storage.
+ *
+ * (#3526 F2-S8) The catalogue's first and only signature with NO parameters,
+ * and the one place the family's callable-shaped `IntrinsicSignature` is bent
+ * to describe a VALUE rather than a call: a `string.const` is answered by a
+ * global (an imported `string_constants.<literal>` externref on the host lane,
+ * an interned `__strlit_N` defined global natively), never by a function.
+ *
+ * Nominal, exactly as `native.js.string.len` reuses
+ * {@link EXTERNREF_TO_I32_INTRINSIC_SIGNATURE} for a `struct.get`: the rows it
+ * carries state "one string comes out, nothing goes in". The alternative — a
+ * `valueType` field on `RuntimeProvider` — would have changed every projection
+ * in the catalogue for one seam, and was rejected in the plan for that reason.
+ */
+export const EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([] as readonly IrType[]),
+  result: EXTERNREF_TYPE,
+});
+
+export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: INTRINSIC_SIGNATURE_VERSION,
+  params: Object.freeze([F64_TYPE]),
+  result: U32_TYPE,
+});
+
 export const F64_UNARY_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
   version: INTRINSIC_SIGNATURE_VERSION,
   params: Object.freeze([F64_TYPE]),
@@ -125,21 +381,47 @@ function definition(id: IntrinsicId, signature: IntrinsicSignature, feature: Run
 
 /** Exhaustive entry contract. Record typing makes an added ID fail closed. */
 export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefinition>> = Object.freeze({
+  "js.to_uint32": definition("js.to_uint32", F64_TO_U32_INTRINSIC_SIGNATURE),
+  "js.number.box": definition("js.number.box", F64_TO_EXTERNREF_INTRINSIC_SIGNATURE),
+  "js.number.unbox": definition("js.number.unbox", EXTERNREF_TO_F64_INTRINSIC_SIGNATURE),
+  "js.boolean.box": definition("js.boolean.box", I32_TO_EXTERNREF_INTRINSIC_SIGNATURE),
+  "js.extern.is_undefined": definition("js.extern.is_undefined", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
   "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.asin": definition("math.asin", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.asinh": definition("math.asinh", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.atan": definition("math.atan", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.atan2": definition("math.atan2", F64_BINARY_INTRINSIC_SIGNATURE),
+  "math.atanh": definition("math.atanh", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.cbrt": definition("math.cbrt", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.ceil": definition("math.ceil", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.clz32": definition("math.clz32", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.cos": definition("math.cos", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.cosh": definition("math.cosh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.exp": definition("math.exp", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.expm1": definition("math.expm1", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.floor": definition("math.floor", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.fround": definition("math.fround", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.imul": definition("math.imul", F64_BINARY_INTRINSIC_SIGNATURE),
   "math.log": definition("math.log", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.log10": definition("math.log10", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.log1p": definition("math.log1p", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.log2": definition("math.log2", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.max": definition("math.max", F64_BINARY_INTRINSIC_SIGNATURE),
+  "math.min": definition("math.min", F64_BINARY_INTRINSIC_SIGNATURE),
   "math.pow": definition("math.pow", F64_BINARY_INTRINSIC_SIGNATURE),
+  "math.round": definition("math.round", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.sign": definition("math.sign", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.sin": definition("math.sin", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.sinh": definition("math.sinh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.sqrt": definition("math.sqrt", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.tan": definition("math.tan", F64_UNARY_INTRINSIC_SIGNATURE),
+  "math.tanh": definition("math.tanh", F64_UNARY_INTRINSIC_SIGNATURE),
   "math.trunc": definition("math.trunc", F64_UNARY_INTRINSIC_SIGNATURE),
 });
 
-const INTRINSIC_ID_SET: ReadonlySet<string> = new Set(PURE_MATH_INTRINSIC_IDS);
+const INTRINSIC_ID_SET: ReadonlySet<string> = new Set(INTRINSIC_IDS);
 
 export function isIntrinsicId(value: string): value is IntrinsicId {
   return INTRINSIC_ID_SET.has(value);

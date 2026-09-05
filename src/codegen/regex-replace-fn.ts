@@ -37,7 +37,7 @@
  */
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
-import { undefinedExternInstrs } from "./any-helpers.js";
+import { canonicalUndefinedExternInstrs, undefinedExternInstrs } from "./any-helpers.js";
 import { guardedFuncRefCastInstrs } from "./array-methods.js";
 import { allocLocal } from "./context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
@@ -55,6 +55,7 @@ import {
   staticRegExpGroupMeta,
   stripStaticWrapper,
 } from "./regexp-standalone.js";
+import { type OpaqueReplacer, buildOpaqueReplacerCallInstrs, stageOpaqueReplacer } from "./replacer-apply-bridge.js";
 import { compileArrowAsClosure, compileExpression } from "./shared.js";
 import { isCallableReplacement } from "./string-proto-replace.js";
 import { coercionInstrs } from "./type-coercion.js";
@@ -87,10 +88,28 @@ function loadKernel(ctx: CodegenContext, fctx: FunctionContext): ReplaceKernel |
 }
 
 /**
- * Compile the replacer expression into a closure the emitted loop can
- * `call_ref`. Returns `undefined` when the value is not a resolvable in-module
- * closure — a host function value has no funcref to call in a host-free module,
- * so the caller keeps its refusal rather than emitting a broken call.
+ * A staged replacer: either an in-module closure STRUCT the loop can `call_ref`
+ * directly, or (#4620) an opaque function VALUE it invokes through the
+ * `__apply_closure` bridge. `undefined` is the decline.
+ */
+type StagedReplacer =
+  | {
+      kind: "closure";
+      closureTmp: number;
+      closureTypeIdx: number;
+      info: ClosureInfo;
+      instrs: Instr[];
+    }
+  | { kind: "opaque"; opaque: OpaqueReplacer; instrs: Instr[] }
+  | undefined;
+
+/**
+ * Compile the replacer expression into something the emitted loop can call:
+ * a closure struct (`call_ref`) or, when the value reaches the call site as an
+ * opaque `externref`, the `__apply_closure` bridge (#4620 — see
+ * `replacer-apply-bridge.ts` for why that arm exists and what it fixes).
+ * Returns `undefined` only when neither applies, so the caller keeps its
+ * refusal rather than emitting a broken call.
  *
  * Emission goes into a DETACHED buffer the caller splices in only on success.
  * A `return undefined` after committing instructions to `fctx.body` would leave
@@ -99,18 +118,7 @@ function loadKernel(ctx: CodegenContext, fctx: FunctionContext): ReplaceKernel |
  * `ctx.liveBodies` while it is off-body so a late import/field shift still
  * walks it (same mechanism as the param-destructure body in function-body.ts).
  */
-function stageReplacerClosure(
-  ctx: CodegenContext,
-  fctx: FunctionContext,
-  replExpr: ts.Expression,
-):
-  | {
-      closureTmp: number;
-      closureTypeIdx: number;
-      info: ClosureInfo;
-      instrs: Instr[];
-    }
-  | undefined {
+function stageReplacerClosure(ctx: CodegenContext, fctx: FunctionContext, replExpr: ts.Expression): StagedReplacer {
   const value = stripStaticWrapper(replExpr);
   const outer = fctx.body;
   const buffer: Instr[] = [];
@@ -126,13 +134,22 @@ function stageReplacerClosure(
     fctx.body = outer;
     ctx.liveBodies.delete(buffer);
   }
-  if (!compiled || (compiled.kind !== "ref" && compiled.kind !== "ref_null")) return undefined;
-  const closureTypeIdx = (compiled as { typeIdx: number }).typeIdx;
-  const info = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
-  if (!info) return undefined;
-  const closureTmp = allocLocal(fctx, `__re_repl_fn_${fctx.locals.length}`, compiled);
-  buffer.push({ op: "local.set", index: closureTmp });
-  return { closureTmp, closureTypeIdx, info, instrs: buffer };
+  if (!compiled) return undefined;
+  if (compiled.kind === "ref" || compiled.kind === "ref_null") {
+    const closureTypeIdx = (compiled as { typeIdx: number }).typeIdx;
+    const info = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
+    if (info) {
+      const closureTmp = allocLocal(fctx, `__re_repl_fn_${fctx.locals.length}`, compiled);
+      buffer.push({ op: "local.set", index: closureTmp });
+      return { kind: "closure", closureTmp, closureTypeIdx, info, instrs: buffer };
+    }
+  }
+  // (#4620) No registered `ClosureInfo` — a function VALUE (`var g = function
+  // …`, an IIFE's result) rather than a resolvable closure struct. Route it
+  // through the dynamic `__apply_closure` bridge instead of declining into the
+  // caller's naive string arm, which would `ref.cast` a closure to a string.
+  const opaque = stageOpaqueReplacer(ctx, fctx, compiled, buffer);
+  return opaque === undefined ? undefined : { kind: "opaque", opaque, instrs: buffer };
 }
 
 /** `caps[slot]` as an i32 on the stack. */
@@ -226,10 +243,21 @@ function buildReplacerCallInstrs(
   ctx: CodegenContext,
   fctx: FunctionContext,
   k: ReplaceKernel,
-  closure: { closureTmp: number; closureTypeIdx: number; info: ClosureInfo },
+  staged: NonNullable<StagedReplacer>,
   argLocals: number[],
 ): Instr[] {
-  const { info, closureTmp, closureTypeIdx } = closure;
+  if (staged.kind === "opaque") {
+    // (#4620) The bridge marshals the whole argument list itself (it reads the
+    // count off the carrier), so there is no formal-count split and no
+    // `__extras_argv` setup: `__call_fn_method_N` owns that plumbing.
+    return [
+      ...buildOpaqueReplacerCallInstrs(staged.opaque, argLocals),
+      { op: "call", funcIdx: k.toStringIdx },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+    ];
+  }
+  const { info, closureTmp, closureTypeIdx } = staged;
   const paramCount = info.paramTypes.length;
   const out: Instr[] = [];
 
@@ -259,8 +287,17 @@ function buildReplacerCallInstrs(
 
   // Normalize the return value to externref, then ToString it. A void replacer
   // leaves nothing on the stack, which is `undefined` → `"undefined"`.
+  //
+  // (#4639 C6) …and `undefined` here must be the CANONICAL undefined, not
+  // `ref.null.extern`. Standalone distinguishes the two regardless of the
+  // #2106 flag (see `canonicalUndefinedExternInstrs`), so the null form is JS
+  // **null**, and the ToString tail below then answered for a value the
+  // replacer never returned. Measured on this branch's base, host-free:
+  // `"gnulluna".replace("null", function(){})` came back UNCHANGED, where a
+  // conforming engine answers "gundefineduna"
+  // (`built-ins/String/prototype/replace/S15.5.4.11_A1_T{5,9}`).
   if (info.returnType === null) {
-    out.push({ op: "ref.null.extern" });
+    out.push(...canonicalUndefinedExternInstrs(ctx));
   } else {
     out.push(...coercionInstrs(ctx, info.returnType, { kind: "externref" }, fctx));
   }

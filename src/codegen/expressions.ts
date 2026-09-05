@@ -41,19 +41,29 @@ import {
   ensureAnyHelpers,
   isAnyValue,
   registerCompileExpression,
+  registerCompileThisKeyword,
   registerEnsureLateImport,
   registerFlushLateImportShifts,
   valTypesMatch,
   VOID_RESULT,
 } from "./shared.js";
-import { compileStringLiteral } from "./string-ops.js";
+import { compileStringLiteral, emitNativeStringToHostExternref } from "./string-ops.js";
+import { compileHostBigIntLiteralText } from "./bigint-host-literal.js";
+import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { ensureImportMetaObject } from "./import-meta.js";
-import { coerceType as coerceTypeImpl, pushDefaultValue } from "./type-coercion.js";
+import {
+  canStructurallyProjectRef,
+  coerceType as coerceTypeImpl,
+  emitAssertedStructExtension,
+  pushDefaultValue,
+} from "./type-coercion.js";
+import { assertedStructFactoryExpression } from "./generic-struct-factory.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
+import { emitVoidOperandSideEffects } from "./expressions/void-operand.js";
 
 // ── Sub-module imports ─────────────────────────────────────────────────
 
-import { wasmFuncReturnsVoid, wasmFuncTypeReturnsVoid } from "./expressions/helpers.js";
+import { wasmFuncReturnsVoid, wasmFuncTypeReturnsVoid, widenLocalToNullable } from "./expressions/helpers.js";
 
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 
@@ -76,6 +86,7 @@ import { compileConditionalExpression, compileYieldExpression } from "./expressi
 
 // Closures (used inside compileExpressionInner)
 import { compileArrowFunction } from "./closures.js";
+import { closureBagInitInstr } from "./closures/closure-header-layout.js";
 
 // Property access + binary ops (used inside compileExpressionInner)
 import { brandBooleanBinaryResult, compileBinaryExpression } from "./binary-ops.js";
@@ -216,14 +227,17 @@ function isAsyncCallExpression(ctx: CodegenContext, expr: ts.CallExpression): bo
     return false;
   }
   if (
-    isStandalonePromiseActive(ctx) &&
     ts.isPropertyAccessExpression(expr.expression) &&
     (expr.expression.name.text === "then" ||
-      // (#2165) `.catch` lowers to the same native `$Promise` then-machinery
-      // in standalone mode (`.catch(f)` ≡ `.then(undefined, f)`); it already
-      // returns a `$Promise`, so it must NOT be re-wrapped by `wrapAsyncReturn`
-      // (double-wrapping yields a Promise-of-Promise → illegal cast / NaN when
-      // the chained result is consumed).
+      // (#2165) `.catch` lowers to the same native then-machinery in standalone
+      // mode (`.catch(f)` ≡ `.then(undefined, f)`); it already returns a
+      // `$Promise`, so it must NOT be re-wrapped by `wrapAsyncReturn` (double-
+      // wrapping yields a Promise-of-Promise → illegal cast / NaN when the
+      // chained result is consumed). The host Promise_then/Promise_catch
+      // imports likewise return the receiver's native Promise directly. The
+      // old host wrap converted their synchronous constructor/species errors
+      // into rejected promises, violating §27.2.5.4's abrupt-completion
+      // contract (`p.then()` must throw before returning a promise).
       expr.expression.name.text === "catch")
   ) {
     const receiverType = ctx.checker.getTypeAtLocation(expr.expression.expression);
@@ -485,7 +499,7 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
   // avoids the missing-import error at module instantiation.
   //
   // Wasm `struct.new` pops fields in declaration order (state | value |
-  // callbacks); the value is already on the stack but state must come
+  // callbacks | $bag); the value is already on the stack but state must come
   // BEFORE it. Stash via a temp local, then emit in the correct order.
   if (isStandalonePromiseActive(ctx)) {
     const valueLocal = allocTempLocal(fctx, { kind: "externref" });
@@ -518,6 +532,7 @@ function wrapAsyncReturn(ctx: CodegenContext, fctx: FunctionContext, resultType:
         { op: "i32.const", value: PROMISE_STATE_FULFILLED },
         { op: "local.get", index: valueLocal },
         { op: "ref.null.extern" },
+        closureBagInitInstr(),
         { op: "struct.new", typeIdx: promiseTypeIdx },
         { op: "extern.convert_any" },
       ],
@@ -606,6 +621,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "i32.const", value: PROMISE_STATE_REJECTED },
       { op: "local.get", index: reasonLocal },
       { op: "ref.null.extern" },
+      closureBagInitInstr(),
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];
@@ -613,6 +629,7 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       { op: "i32.const", value: PROMISE_STATE_REJECTED },
       { op: "ref.null.extern" },
       { op: "ref.null.extern" },
+      closureBagInitInstr(),
       { op: "struct.new", typeIdx: promiseTypeIdx },
       { op: "extern.convert_any" },
     ];
@@ -654,24 +671,6 @@ function wrapAsyncCallInTryCatch(ctx: CodegenContext, fctx: FunctionContext, sta
       catchAll,
     ),
   );
-}
-
-/**
- * Check whether the last instruction emitted since bodyLenBefore is a
- * void-returning call.
- */
-function _isLastInstrVoidCall(ctx: CodegenContext, fctx: FunctionContext, bodyLenBefore: number): boolean {
-  if (fctx.body.length <= bodyLenBefore) return true;
-  const lastInstr = fctx.body[fctx.body.length - 1];
-  if (!lastInstr) return false;
-  const op = (lastInstr as any).op;
-  if (op === "call" && (lastInstr as any).funcIdx !== undefined) {
-    return wasmFuncReturnsVoid(ctx, (lastInstr as any).funcIdx);
-  }
-  if (op === "call_ref" && (lastInstr as any).typeIdx !== undefined) {
-    return wasmFuncTypeReturnsVoid(ctx, (lastInstr as any).typeIdx);
-  }
-  return false;
 }
 
 // ── Recursion depth guard ──────────────────────────────────────────────
@@ -722,6 +721,15 @@ function compileExpressionBody(
     return fallbackType;
   }
 
+  // (#680) Literal public fast paths normally avoid inner dispatch. When a
+  // continuation has captured this exact operand, defer those shortcuts so
+  // `compileExpressionInner` supplies the raw spill and this public layer still
+  // performs its ordinary expected-type coercion / boxing. The only local
+  // lookup remains in common inner dispatch below.
+  const hasNativeGeneratorExpressionReplacement = (inner: ts.Expression): boolean =>
+    fctx.nativeGeneratorExpressionValueLocals?.has(expr) === true ||
+    fctx.nativeGeneratorExpressionValueLocals?.has(inner) === true;
+
   // Fast-path: null/undefined in numeric context
   if (expectedType?.kind === "f64" || expectedType?.kind === "i32") {
     let inner: ts.Expression = expr;
@@ -741,7 +749,7 @@ function compileExpressionBody(
     }
     const isNull = inner.kind === ts.SyntaxKind.NullKeyword;
     const isUndefined = (ts.isIdentifier(inner) && inner.text === "undefined") || ts.isOmittedExpression(inner);
-    if (isNull || isUndefined) {
+    if (!hasNativeGeneratorExpressionReplacement(inner) && (isNull || isUndefined)) {
       if (expectedType.kind === "f64") {
         if (isNull) {
           fctx.body.push({ op: "f64.const", value: 0 });
@@ -756,21 +764,15 @@ function compileExpressionBody(
         return { kind: "i32" };
       }
     }
-    if (expectedType.kind === "i32" && ts.isNumericLiteral(inner)) {
+    if (!hasNativeGeneratorExpressionReplacement(inner) && expectedType.kind === "i32" && ts.isNumericLiteral(inner)) {
       const litVal = Number(inner.text.replace(/_/g, ""));
       if (Number.isInteger(litVal) && litVal >= -2147483648 && litVal <= 2147483647) {
         fctx.body.push({ op: "i32.const", value: litVal });
         return { kind: "i32" };
       }
     }
-    if (ts.isVoidExpression(inner)) {
-      const bodyLenBefore = fctx.body.length;
-      const operandType = compileExpressionInner(ctx, fctx, inner.expression);
-      if (operandType !== null && operandType !== VOID_RESULT) {
-        if (!_isLastInstrVoidCall(ctx, fctx, bodyLenBefore)) {
-          fctx.body.push({ op: "drop" });
-        }
-      }
+    if (!hasNativeGeneratorExpressionReplacement(inner) && ts.isVoidExpression(inner)) {
+      emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, inner.expression));
       if (expectedType.kind === "f64") {
         fctx.body.push({ op: "i64.const", value: 0x7ff00000deadc0den });
         fctx.body.push({ op: "f64.reinterpret_i64" });
@@ -804,7 +806,7 @@ function compileExpressionBody(
     }
     const isNull = inner.kind === ts.SyntaxKind.NullKeyword;
     const isUndefined = (ts.isIdentifier(inner) && inner.text === "undefined") || ts.isOmittedExpression(inner);
-    if (isNull || isUndefined) {
+    if (!hasNativeGeneratorExpressionReplacement(inner) && (isNull || isUndefined)) {
       const typeIdx = (expectedType as { typeIdx: number }).typeIdx;
       fctx.body.push({ op: "ref.null", typeIdx });
       return { kind: "ref_null", typeIdx };
@@ -830,7 +832,7 @@ function compileExpressionBody(
     }
     const isNull = inner.kind === ts.SyntaxKind.NullKeyword;
     const isUndefined = (ts.isIdentifier(inner) && inner.text === "undefined") || ts.isOmittedExpression(inner);
-    if (isNull || isUndefined) {
+    if (!hasNativeGeneratorExpressionReplacement(inner) && (isNull || isUndefined)) {
       ensureAnyHelpers(ctx);
       const helperName = isNull ? "__any_box_null" : "__any_box_undefined";
       const funcIdx = ctx.funcMap.get(helperName);
@@ -839,14 +841,8 @@ function compileExpressionBody(
         return expectedType;
       }
     }
-    if (ts.isVoidExpression(inner)) {
-      const bodyLenBefore2 = fctx.body.length;
-      const operandType = compileExpressionInner(ctx, fctx, inner.expression);
-      if (operandType !== null && operandType !== VOID_RESULT) {
-        if (!_isLastInstrVoidCall(ctx, fctx, bodyLenBefore2)) {
-          fctx.body.push({ op: "drop" });
-        }
-      }
+    if (!hasNativeGeneratorExpressionReplacement(inner) && ts.isVoidExpression(inner)) {
+      emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, inner.expression));
       ensureAnyHelpers(ctx);
       const funcIdx = ctx.funcMap.get("__any_box_undefined");
       if (funcIdx !== undefined) {
@@ -854,7 +850,10 @@ function compileExpressionBody(
         return expectedType;
       }
     }
-    if (inner.kind === ts.SyntaxKind.TrueKeyword || inner.kind === ts.SyntaxKind.FalseKeyword) {
+    if (
+      !hasNativeGeneratorExpressionReplacement(inner) &&
+      (inner.kind === ts.SyntaxKind.TrueKeyword || inner.kind === ts.SyntaxKind.FalseKeyword)
+    ) {
       ensureAnyHelpers(ctx);
       const funcIdx = ctx.funcMap.get("__any_box_bool");
       if (funcIdx !== undefined) {
@@ -924,6 +923,11 @@ function compileExpressionBody(
   }
   if (result !== null) {
     if (expectedType && result.kind !== expectedType.kind) {
+      const nullableBindingTarget = nullableErasedLocalBindingProjectionTarget(ctx, fctx, expr, result, expectedType);
+      if (nullableBindingTarget) {
+        coerceType(ctx, fctx, result, nullableBindingTarget);
+        return nullableBindingTarget;
+      }
       if (result.kind === "i32" && isAnyValue(expectedType, ctx)) {
         const tsType = ctx.checker.getTypeAtLocation(expr);
         if (tsType.flags & ts.TypeFlags.BooleanLike) {
@@ -995,6 +999,71 @@ function compileExpressionBody(
   return wasmType;
 }
 
+/**
+ * #1058: TypeScript overloads can promise a non-null structural return while
+ * their body-bearing implementation legitimately returns `undefined` (the
+ * parser's `parseOptionalToken` is exactly this shape). The physical call ABI
+ * is nullable, but a variable's checker-derived slot and assignment hint are
+ * non-null refs of the overload's more-specific struct. Asserting that hint
+ * before the source-level truthiness check turns ordinary `undefined` into a
+ * Wasm null-dereference.
+ *
+ * Local type annotations are erased at runtime. For a direct local initializer
+ * or simple assignment, preserve the physical nullability while structurally
+ * projecting to the expected layout, and widen that local in lockstep. Other
+ * boundaries (parameters, returns, fields, captured cells) retain their normal
+ * ref_null -> ref assertion.
+ */
+function nullableErasedLocalBindingProjectionTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Expression,
+  result: ValType,
+  expectedType: ValType,
+): ValType | undefined {
+  if (result.kind !== "ref_null" || expectedType.kind !== "ref") return undefined;
+
+  let valueExpr = expr;
+  let parent = valueExpr.parent;
+  while (
+    parent &&
+    (ts.isParenthesizedExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isSatisfiesExpression(parent)) &&
+    parent.expression === valueExpr
+  ) {
+    valueExpr = parent;
+    parent = parent.parent;
+  }
+
+  let binding: ts.Identifier | undefined;
+  if (parent && ts.isVariableDeclaration(parent) && parent.initializer === valueExpr && ts.isIdentifier(parent.name)) {
+    binding = parent.name;
+  } else if (
+    parent &&
+    ts.isBinaryExpression(parent) &&
+    parent.right === valueExpr &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+  ) {
+    let left = parent.left;
+    while (ts.isParenthesizedExpression(left)) left = left.expression;
+    if (ts.isIdentifier(left)) binding = left;
+  }
+  if (!binding || fctx.boxedCaptures?.has(binding.text)) return undefined;
+
+  const localIdx = fctx.localMap.get(binding.text);
+  if (localIdx === undefined || localIdx < fctx.params.length) return undefined;
+  const localType = getLocalType(fctx, localIdx);
+  if (localType?.kind !== "ref" || localType.typeIdx !== expectedType.typeIdx) return undefined;
+
+  const nullableExpected: ValType = { kind: "ref_null", typeIdx: expectedType.typeIdx };
+  if (!canStructurallyProjectRef(ctx, result, nullableExpected)) return undefined;
+  widenLocalToNullable(fctx, localIdx);
+  return nullableExpected;
+}
+
 /** Coerce a value on the stack from one type to another */
 export function coerceType(
   ctx: CodegenContext,
@@ -1007,12 +1076,62 @@ export function coerceType(
   return coerceTypeImpl(ctx, fctx, from, to, toPrimitiveHint);
 }
 
+function compileBigIntLiteral(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BigIntLiteral,
+  expectedType: ValType | undefined,
+): ValType | null {
+  const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
+  const hostBigIntRef =
+    usesHostBigIntCarrier(ctx) &&
+    (expectedType?.kind === "externref" || (expectedType !== undefined && isAnyValue(expectedType, ctx)));
+  if (hostBigIntRef) {
+    const stringType = compileHostBigIntLiteralText(ctx, fctx, text);
+    if (!stringType) return null;
+    if (stringType.kind !== "externref") {
+      // `fast`/native-strings still targets the JS host. Convert the native
+      // `$AnyString` value to a real host string before calling BigInt; a bare
+      // `extern.convert_any` would expose an opaque WasmGC object and the host
+      // constructor would throw `Cannot convert [object Object] to a BigInt`.
+      if (!emitNativeStringToHostExternref(ctx, fctx)) {
+        coerceType(ctx, fctx, stringType, { kind: "externref" });
+      }
+    }
+    const ctorIdx = ensureLateImport(ctx, "__bigint_ctor_ref", [{ kind: "externref" }], [{ kind: "externref" }]);
+    flushLateImportShifts(ctx, fctx);
+    const finalIdx = ctx.funcMap.get("__bigint_ctor_ref") ?? ctorIdx;
+    if (finalIdx === undefined) throw new Error("Missing import after ensureLateImport: __bigint_ctor_ref");
+    fctx.body.push({ op: "call", funcIdx: finalIdx });
+    return { kind: "externref" };
+  }
+  const value = BigInt(text);
+  fctx.body.push({ op: "i64.const", value });
+  return { kind: "i64", bigint: true };
+}
+
 function compileExpressionInner(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.Expression,
   expectedType?: ValType,
 ): InnerResult {
+  // (#680) A native generator continuation recompiles the ORIGINAL containing
+  // expression after suspension. Consult operand replacements only in common
+  // inner dispatch: outer wrappers and public expected-type boxing/coercion
+  // therefore still run before the original operand identity is reached.
+  // The planner validates every entry; this has no replay/default fallback.
+  const nativeGeneratorExpressionLocal = fctx.nativeGeneratorExpressionValueLocals?.get(expr);
+  if (nativeGeneratorExpressionLocal !== undefined) {
+    const nativeGeneratorExpressionType = getLocalType(fctx, nativeGeneratorExpressionLocal);
+    if (nativeGeneratorExpressionType === undefined) {
+      reportError(ctx, expr, "Internal error: native generator continuation spill local is unavailable");
+      return null;
+    }
+    fctx.body.push({ op: "local.get", index: nativeGeneratorExpressionLocal });
+    return nativeGeneratorExpressionType;
+  }
+
   if (ts.isNumericLiteral(expr)) {
     const value = Number(expr.text.replace(/_/g, ""));
     if (ctx.fast && Number.isInteger(value) && value >= -2147483648 && value <= 2147483647) {
@@ -1024,10 +1143,7 @@ function compileExpressionInner(
   }
 
   if (ts.isBigIntLiteral(expr)) {
-    const text = expr.text.replace(/_/g, "").replace(/n$/i, "");
-    const value = BigInt(text);
-    fctx.body.push({ op: "i64.const", value });
-    return { kind: "i64", bigint: true };
+    return compileBigIntLiteral(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
@@ -1102,7 +1218,7 @@ function compileExpressionInner(
     if (expr.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword) {
       const rhsResult = resolveInstanceOfRHS(ctx, expr.right);
       if (!rhsResult) {
-        return compileHostInstanceOf(ctx, fctx, expr);
+        return brandBooleanBinaryResult(expr.operatorToken.kind, compileHostInstanceOf(ctx, fctx, expr));
       }
       // (#1366a) Externref-backed subclasses (extends Error / TypeError / ...)
       // have instances that are real JS Error objects whose host-side
@@ -1171,16 +1287,16 @@ function compileExpressionInner(
           const leftType = compileExpression(ctx, fctx, expr.left);
           if (leftType) fctx.body.push({ op: "drop" });
           fctx.body.push({ op: "i32.const", value: staticAnswer ? 1 : 0 });
-          return { kind: "i32" };
+          return { kind: "i32", boolean: true };
         }
         // (#1455) LHS type could not be resolved statically (TS often infers
         // `any` for `class Sub extends WeakRef {}` because WeakRef<T> requires
         // type args). Fall through to the host runtime check, which consults
         // the user-class tag registry attached at construction time.
-        return compileHostInstanceOf(ctx, fctx, expr);
+        return brandBooleanBinaryResult(expr.operatorToken.kind, compileHostInstanceOf(ctx, fctx, expr));
       }
     }
-    return brandBooleanBinaryResult(expr.operatorToken.kind, compileBinaryExpression(ctx, fctx, expr));
+    return brandBooleanBinaryResult(expr.operatorToken.kind, compileBinaryExpression(ctx, fctx, expr, expectedType));
   }
 
   if (ts.isTypeOfExpression(expr)) {
@@ -1315,7 +1431,7 @@ function compileExpressionInner(
   }
 
   if (ts.isConditionalExpression(expr)) {
-    return compileConditionalExpression(ctx, fctx, expr);
+    return compileConditionalExpression(ctx, fctx, expr, expectedType);
   }
 
   if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
@@ -1393,6 +1509,23 @@ function compileExpressionInner(
   // silently compiled to 0 rather than erroring. IR unwraps all three (#3583),
   // so only bodies the IR selector rejects were affected.
   if (ts.isAsExpression(expr) || ts.isTypeAssertionExpression(expr) || ts.isSatisfiesExpression(expr)) {
+    // #1058: a declaration-proven BaseNodeFactory assertion denotes a fresh
+    // structural refinement, not a nominal downcast of the same object. Compile
+    // the property call to its natural Node carrier, then copy that prefix into
+    // the asserted destination before the initializer is stored. The detector
+    // fails closed for all other assertions, which remain type-erased below.
+    if (expectedType && assertedStructFactoryExpression(ctx, expr)) {
+      const sourceType = compileExpressionInner(ctx, fctx, expr.expression);
+      if (
+        sourceType !== null &&
+        sourceType !== VOID_RESULT &&
+        (expectedType.kind === "ref" || expectedType.kind === "ref_null") &&
+        emitAssertedStructExtension(ctx, fctx, sourceType, expectedType)
+      ) {
+        return expectedType;
+      }
+      return sourceType;
+    }
     return compileExpressionInner(ctx, fctx, expr.expression, expectedType);
   }
 
@@ -1401,6 +1534,13 @@ function compileExpressionInner(
   }
 
   if (ts.isAwaitExpression(expr)) {
+    const deliveredLocal = fctx.asyncAwaitValueLocals?.get(expr);
+    if (deliveredLocal !== undefined) {
+      const deliveredType = getLocalType(fctx, deliveredLocal);
+      fctx.body.push({ op: "local.get", index: deliveredLocal });
+      return deliveredType ?? { kind: "externref" };
+    }
+
     // (#2967 2c) The legacy async-CPS lane (`asyncCpsActive` /
     // `emitAsyncStateMachine`) is DELETED — an await in an ACTIVATED async fn
     // is consumed by the $AsyncFrame planners (`planLinearAwaits` / the CFG
@@ -1454,17 +1594,21 @@ function compileExpressionInner(
   }
 
   if (ts.isYieldExpression(expr)) {
+    const nativeGeneratorYieldLocal = fctx.nativeGeneratorYieldValueLocals?.get(expr);
+    if (nativeGeneratorYieldLocal !== undefined) {
+      const nativeGeneratorYieldType = getLocalType(fctx, nativeGeneratorYieldLocal);
+      if (nativeGeneratorYieldType === undefined) {
+        reportError(ctx, expr, "Internal error: native generator sent-value spill local is unavailable");
+        return null;
+      }
+      fctx.body.push({ op: "local.get", index: nativeGeneratorYieldLocal });
+      return nativeGeneratorYieldType;
+    }
     return compileYieldExpression(ctx, fctx, expr);
   }
 
   if (ts.isVoidExpression(expr)) {
-    const voidBodyLen = fctx.body.length;
-    const operandType = compileExpressionInner(ctx, fctx, expr.expression);
-    if (operandType !== null && operandType !== VOID_RESULT) {
-      if (!_isLastInstrVoidCall(ctx, fctx, voidBodyLen)) {
-        fctx.body.push({ op: "drop" });
-      }
-    }
+    emitVoidOperandSideEffects(ctx, fctx, () => compileExpressionInner(ctx, fctx, expr.expression));
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
   }
@@ -1559,5 +1703,6 @@ function compileExpressionInner(
 // call compileExpression / ensureLateImport / flushLateImportShifts without
 // creating circular imports.
 registerCompileExpression(compileExpression);
+registerCompileThisKeyword(compileThisKeyword);
 registerEnsureLateImport(ensureLateImport);
 registerFlushLateImportShifts(flushLateImportShifts);

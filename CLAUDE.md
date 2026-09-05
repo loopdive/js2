@@ -28,6 +28,39 @@ Be concise. Lead with the answer, then only the context needed to act on it.
   first. Internal codenames, gate names, and spec terms only when the reader
   needs to act on them — then with a one-line gloss.
 
+## Hooks and ratchet gates — never skipped, always before the commit
+
+**Never pass `--no-verify` to `git commit` or `git push`** (project-lead order,
+2026-08-22). The pre-commit and pre-push hooks are the last check that runs on a
+human timescale; skipping them moves every failure into CI, where a red gate
+costs a full cycle plus a branch re-sync. If a hook is slow, use the sanctioned
+`SKIP_SLOW_PRECOMMIT=1` (which still runs the fast checks) and run the heavy
+gates by hand — do not disable the hook.
+
+Run every source-ratchet gate BEFORE committing, chained so a failure blocks:
+
+```bash
+node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs \
+  && node scripts/check-coercion-sites.mjs && npm run -s check:oracle-ratchet \
+  && npm run -s check:dead-exports && git commit ...
+```
+
+- **Never pipe a gate whose status you need** (`gate | tail` reports `tail`'s
+  status — a red gate reads as green). Run bare, or `>out 2>&1; echo $?`.
+- **Simulate CI's base too.** CI diffs the merge preview, not your fork point,
+  so a gate can pass locally and still fail `quality`:
+  `LOC_GATE_BASE=$(git rev-parse <upstream-main-tip>) node scripts/check-loc-budget.mjs`
+  (same variable works for check-func-budget). Two failure classes appear ONLY
+  this way: growth whose allowance lives in an issue file this PR does not
+  modify (**stranded grants** — restate the grant in a file the PR touches), and
+  a ceiling reset by main's post-merge baseline refresh.
+- **Run `check:dead-exports` after any supersede-style merge resolution** —
+  taking upstream's version of a mechanism leaves your twin's exports
+  unreferenced, which fails `quality`.
+- Growth allowances go in the PR's own `plan/issues/*.md` YAML frontmatter with
+  a dated rationale; **never** edit `scripts/*-baseline.json` (main is its sole
+  writer).
+
 ## Running Tests
 
 - Run all tests: `npm test` (vitest — may OOM on full suite in constrained envs)
@@ -305,6 +338,57 @@ Two consequences worth knowing:
 
 To validate the baseline on demand, run `pnpm run test:262:validate-baseline` — the validator calls the fetch helper itself, then spot-checks 50 random `pass` entries against current HEAD (uses a deterministic seed; pass `PR_NUMBER=N` to reproduce a specific CI run, or `SAMPLE_SIZE=10 SEED=12345` for a quicker check). Set `SAMPLE_SIZE=50` to match CI exactly. The validator fails fast on the first 5 most-affected entries with a pointer to the fetch helper for forcing a refresh.
 
+### Per-edition conformance ratchet — a completed ES edition may never regress
+
+Every other test262 guard scores the corpus as **one number**: the #2097
+high-water floor, the #1897 net gate and the #1668 catastrophic guard all read
+the aggregate. So **−40 in ES5 against +50 in ES2016 reads as +10 and passes all
+three** — an edition the project has already finished rots silently while
+attention is on the edition being worked, and nothing reports it.
+
+`scripts/test262-edition-ratchet.ts` closes that. It scores each ES edition
+separately against a committed floor in
+`scripts/test262-edition-ratchet-baseline.json` and fails if a **ratcheted**
+edition loses ground, whatever the headline did. It runs inside the required
+`merge shard reports` check (`test262-sharded.yml`), so a breach blocks the
+merge queue.
+
+```bash
+pnpm run check:edition-ratchet -- --results <run.jsonl> [--compare <baseline.jsonl>]
+pnpm run check:edition-ratchet:update -- --results <full-run.jsonl>   # bank an improvement
+```
+
+Five properties worth knowing before you touch it:
+
+- **`--compare` makes it per-TEST, not per-count.** A change that breaks one ES5
+  test and fixes another leaves the count flat, and a count-only ratchet calls
+  that even. It is not even — it is a regression plus an improvement, and the
+  regression still has to be deliberate.
+- **Every edition is ratcheted by default.** A ratchet that guards only the
+  editions someone remembered to list is not a ratchet. Opt an edition out by
+  setting `ratcheted: false` **with a `reason`**, in a reviewed diff.
+- **Partial runs are skipped, never scored, and never banked.** A path-filtered
+  or sharded run sees only some of an edition's tests, so its pass count is not a
+  measurement — and `--update` refuses outright rather than writing a lower bar.
+  This is the #4412 hazard, where a scoped run posted a partial total as if it
+  were a full one.
+- **`--update` refuses to lower any number.** You cannot make this gate green by
+  re-baselining; lowering a floor is a hand edit to the JSON, in the same PR,
+  with a reason. That refusal is the whole point — cf. #3953, where a floor that
+  sat 475 tests too low reported "passed" for 37 consecutive merges, because a
+  floor that is too low never fires.
+- **An edition present in the run but absent from the baseline reports
+  `UNGATED`** with a CI warning, rather than sitting silently unprotected.
+
+The baseline records the `eval_engine` it was measured under, because a
+refusal-only runtime-eval provider fails every eval-dependent test by
+construction (~667 in ES5 alone) and its counts are not comparable to a QuickJS
+run. A mismatch warns rather than refuses: a floor from the weaker engine is a
+lower bound, so it can never cause a false failure.
+
+`tests/test262-edition-ratchet.test.ts` asserts the gate FAILS when it should,
+not just that it passes — including the count-neutral swap case.
+
 ## IR Fallback Budget (#1376) — being phased out (#2855)
 
 The IR retirement gate `pnpm run check:ir-fallbacks` walks every `.ts` file
@@ -564,6 +648,19 @@ points at an unrelated PR, not the plan-file issue. Write
 Commit messages keep plain `#NNNN` (tooling greps them); this rule is for PR
 bodies and PR-visible comments.
 
+**Every agent commit names its model (project-lead order, 2026-08-29).** Any
+commit carrying an agent `Co-authored-by:` trailer (Claude/Codex) must also
+carry a `Model:` trailer naming vendor, family, version/subtype, and the
+configured reasoning effort — e.g. `Model: Claude Fable 5 Max`,
+`Model: Codex GPT-5.6 Sol Max`, `Model: Claude Opus 5 High`. Effort comes from
+the dispatch brief or the issue's `reasoning_effort` frontmatter; if genuinely
+unknown, write `Default`. Enforced by `.husky/commit-msg`; details and
+exemptions (`Merge`/`Revert`/`fixup!`/`squash!`/`chore(assign)` subjects) in
+`AGENTS.md` § Commit Attribution. Rationale: PR #5204 shipped three codegen
+regressions in one agent commit and the producing model was unrecoverable from
+git. This project rule deliberately **overrides** any ambient harness default
+of keeping model identifiers out of pushed artifacts.
+
 **ALWAYS open a PR on `loopdive/js2wasm` when a task is done — do not wait to be
 asked** (project-lead decision, 2026-08-01). Finished work that sits on a pushed
 branch with no PR is invisible: it is not in the merge queue, `auto-enqueue`
@@ -669,7 +766,7 @@ layer on top — GitHub branch protection is the hard block.
    - Planning artifact conflicts (`dashboard/`, `plan/`, `public/`) → `git checkout --theirs` + regen
    - Compiler source conflicts (`src/**/*.ts`) → create a priority `[CONFLICT]` TaskList item; assign to `senior-developer` (Opus); do NOT resolve inline
 2. **Dev runs scoped local checks** — issue-targeted compile/run checks for confidence
-3. **Dev pushes the branch to the `fork` remote and opens a PR against `main`** — PRs MUST target the **upstream** repo (`loopdive/js2wasm`), never the fork (`ttraenkler/js2`). **Push the branch with `git push fork <branch>` FIRST**, then **always pass `-R loopdive/js2wasm --head ttraenkler:<branch>` to `gh pr create`** — the container's gh 2.23 ignores the pinned default (`remote.upstream.gh-resolved=base`) for `pr create` and silently opens the PR on the fork (verified 2026-06-11: fork PRs #6/#7 both had to be closed as misrouted). After creating, verify the PR URL starts with `github.com/loopdive/`. Note the pre-push integrity gate chokes on the fork/upstream divergence — `git push --no-verify` is sanctioned (CI runs the real gate).
+3. **Dev pushes the branch to the `fork` remote and opens a PR against `main`** — PRs MUST target the **upstream** repo (`loopdive/js2wasm`), never the fork (`ttraenkler/js2`). **Push the branch with `git push fork <branch>` FIRST**, then **always pass `-R loopdive/js2wasm --head ttraenkler:<branch>` to `gh pr create`** — the container's gh 2.23 ignores the pinned default (`remote.upstream.gh-resolved=base`) for `pr create` and silently opens the PR on the fork (verified 2026-06-11: fork PRs #6/#7 both had to be closed as misrouted). After creating, verify the PR URL starts with `github.com/loopdive/`. Note the pre-push integrity gate can choke on the fork/upstream divergence. `--no-verify` is NO LONGER sanctioned (project-lead order, 2026-08-22) — fix the gate's complaint, or push from a branch whose base the gate can resolve; see "Hooks and ratchet gates" above.
    - **Push to `fork`, not `origin` — this is load-bearing, not cosmetic (#3343-era, 2026-07-17).** `origin` is **upstream** (`loopdive/js2wasm`) and `push.default=current`, so a plain `git push` puts the branch on **upstream**. `gh pr create --head ttraenkler:<branch>` then fails with "No commits between" (the branch isn't on the fork), and the tempting workaround — dropping the `ttraenkler:` prefix — opens an upstream-head PR. That is how a **duplicate PR** survives: **two lanes run concurrently** (this checkout + a fork-origin lane), and when the same branch NAME exists in two different head repos, GitHub **cannot** apply its normal same-head+base rejection. Both PRs coexist and the work is done twice. Pushing to `fork` restores that free rejection. Do NOT rely on `claim-issue.mjs` to prevent this — it returns **exit 0 to both lanes** (they share the `ttraenkler/senior-dev` slug); the lock is advisory. Before starting an issue, also run `git log origin/main --grep="#<id>"` to check it isn't already merged. A PR that goes **DIRTY on files it itself touched** is a duplicate-merge smell, not an ordinary conflict.
 4. **Dev blocks on CI** — polls `gh pr checks <N>` every 30s for ~2 min wall time, in-context (Sonnet idle is nearly free). Use `gh run watch <run-id>` or a `while ! done; do sleep 30; done` loop with a max timeout (~10 min before noting unusual wait, ~20 min before escalating).
 5. **On CI completion**:
@@ -701,7 +798,7 @@ The issue frontmatter `status:` field tracks where an issue is, set by whichever
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 32,700 / 43,621 (75.0 %)
+**test262 conformance**: 35,498 / 48,232 (73.6 %)
 
 <!-- AUTO:conformance-end -->
 

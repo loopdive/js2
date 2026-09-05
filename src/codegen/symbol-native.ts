@@ -25,6 +25,7 @@ import { ensureSymbolCounter } from "./literals.js";
 import { ensureNativeStringBoundaryBridge, ensureNativeStringHelpers, nativeStringType } from "./native-strings.js";
 import { addFuncType, getOrRegisterArrayType } from "./registry/types.js";
 import { compileNativeStringLiteral } from "./string-ops.js";
+import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4632) $Symbol arm in __any_to_string
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 
 /** Initial capacity of the description table (covers small symbol counts without
@@ -1024,4 +1025,106 @@ export function emitSymbolToString(ctx: CodegenContext, fctx: FunctionContext): 
   // + ")"
   compileNativeStringLiteral(ctx, fctx, ")");
   fctx.body.push({ op: "call", funcIdx: concatIdx });
+}
+
+/**
+ * (#4632) Finalize fill: splice a `$Symbol` arm into `__any_to_string` so a
+ * carrier reaching the generic ToString terminal renders the descriptive
+ * string ("Symbol(desc)") instead of "[object Object]". The carrier carries
+ * its `desc` field (ref_null $AnyString), so the render is pure concat.
+ *
+ * Prepended at body index 0 at FINALIZE — `ensureAnyToStringHelper` may run
+ * long before the module's first Symbol mints the `$Symbol` type, so building
+ * the arm inside the helper would silently miss it (the #3216 ordering hazard
+ * family). No-op unless standalone-native-symbol AND both the helper and the
+ * carrier type exist; js-host/gc lanes never register either, so they stay
+ * byte-identical.
+ */
+export function fillSymbolAnyToStringArm(ctx: CodegenContext): void {
+  if (!usesNativeSymbolProvider(ctx) || ctx.symbolTypeIdx < 0) return;
+  const helperIdx = ctx.nativeStrHelpers.get("__any_to_string");
+  if (helperIdx === undefined) return;
+  const fn = definedFuncAt(ctx, helperIdx);
+  if (!fn) return;
+  const concatIdx = ctx.nativeStrHelpers.get("__str_concat");
+  if (concatIdx === undefined || ctx.anyStrTypeIdx < 0 || ctx.nativeStrTypeIdx < 0 || ctx.nativeStrDataTypeIdx < 0) {
+    return;
+  }
+  const symIdx = ctx.symbolTypeIdx;
+  const anyStr: ValType = { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+  const anyStrNull: ValType = { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
+  const emptyStr: Instr[] = [
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "array.new_fixed", typeIdx: ctx.nativeStrDataTypeIdx, length: 0 },
+    { op: "struct.new", typeIdx: ctx.nativeStrTypeIdx },
+  ];
+  const carrierId: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "ref.cast", typeIdx: symIdx },
+    { op: "struct.get", typeIdx: symIdx, fieldIdx: 0 }, // id: i32
+  ];
+  // descTable[id] as (ref $AnyString), collapsing null/absent to "". Local-free
+  // (the id is recomputed from the carrier) so the fill never has to grow the
+  // native's locals.
+  const descOrEmpty: Instr[] =
+    ctx.symbolDescGlobalIdx >= 0 && ctx.symbolDescArrTypeIdx >= 0
+      ? [
+          { op: "global.get", index: ctx.symbolDescGlobalIdx },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: anyStrNull },
+            then: [{ op: "ref.null", typeIdx: ctx.anyStrTypeIdx }],
+            else: [
+              ...carrierId,
+              { op: "global.get", index: ctx.symbolDescGlobalIdx },
+              { op: "ref.as_non_null" },
+              { op: "array.len" },
+              { op: "i32.lt_s" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: anyStrNull },
+                then: [
+                  { op: "global.get", index: ctx.symbolDescGlobalIdx },
+                  { op: "ref.as_non_null" },
+                  ...carrierId,
+                  { op: "array.get", typeIdx: ctx.symbolDescArrTypeIdx },
+                ],
+                else: [{ op: "ref.null", typeIdx: ctx.anyStrTypeIdx }],
+              },
+            ],
+          },
+        ]
+      : [{ op: "ref.null", typeIdx: ctx.anyStrTypeIdx }];
+  const descLookup: Instr[] = [
+    ...descOrEmpty,
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: anyStr },
+      then: emptyStr,
+      else: [...descOrEmpty, { op: "ref.as_non_null" }],
+    },
+  ];
+  const arm: Instr[] = [
+    { op: "local.get", index: 0 },
+    { op: "ref.test", typeIdx: symIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // "Symbol(" + (descTable[id] ?? "") + ")". The description lives in
+        // the side TABLE keyed by id (the carrier's own desc field is not
+        // populated by __box_symbol) — same source emitSymbolToString reads.
+        ...nativeStringLiteralInstrs(ctx, "Symbol("),
+        ...descLookup,
+        { op: "call", funcIdx: concatIdx },
+        ...nativeStringLiteralInstrs(ctx, ")"),
+        { op: "call", funcIdx: concatIdx },
+        { op: "return" },
+      ],
+    },
+  ];
+  fn.body.splice(0, 0, ...arm);
 }

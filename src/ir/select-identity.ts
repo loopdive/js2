@@ -1,24 +1,52 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts, forEachChild } from "../ts-api.js";
-import type { IrClassId, IrSourceId, IrTerminalUnitRecord, IrUnitId, IrUnitRecord } from "./identity.js";
-import { collectModuleInitPopulation } from "./module-init.js";
+import type { IrCountedStringAppendPlan } from "./analysis/counted-string-append.js";
+import {
+  isIrNestedClassFieldCallProofCurrent,
+  isIrNestedClassFieldCallProofSidecarForInventory,
+  type IrNestedClassFieldCallProofSidecar,
+  type PlanIrNestedClassFieldCallsInput,
+} from "./class-field-call-planning.js";
+import {
+  createIrNestedClassFieldCallAdmission,
+  getIrNestedClassFieldCallInventoryCandidates,
+  irPreparedNestedOrdinaryClass,
+  irPreparedNestedOrdinaryClassBindingName,
+  isIrNestedClassFieldCallAdmissionForInventory,
+  type IrClassId,
+  type IrNestedClassFieldCallAdmission,
+  type IrNestedClassFieldCallAdmittedClass,
+  type IrNestedClassFieldCallAdmittedField,
+  type IrNestedClassFieldCallInventoryCandidate,
+  type IrSourceId,
+  type IrTerminalUnitRecord,
+  type IrUnitId,
+  type IrUnitRecord,
+} from "./identity.js";
+import { sourceOwnsModuleInitUnit } from "./module-init.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningSourceId,
   type IrPlanningIdentityContext,
   type IrPlanningIdentityInvariantCode,
 } from "./planning-identity.js";
-import type { IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
+import type { IrFnctorAdmission, IrUnitTypeMap, TypeMap, TypeMapEntry } from "./propagate.js";
 import type { IrRecursiveTypeEvidence } from "./type-evidence.js";
 import type { IrClassMethodDescriptor } from "./nodes.js";
+import {
+  retainIrFnctorArgumentProjections,
+  type IrFnctorArgumentProjection,
+  type IrFnctorArgumentProjectionAuthority,
+} from "./fnctor-argument-projection.js";
 import { claimPreparedTimerShims } from "./injected-timer-shim.js";
 import { demoteOnLegacyCallerPolicy } from "./legacy-caller-policy.js";
 import {
-  boundedPreparedNestedOrdinaryClassBindingName,
   exactPreparedAccessorSyntaxKey,
   isBoundedPreparedAccessorClass,
-  isBoundedPreparedNestedOrdinaryClass,
+  nestedOrdinaryClassBodyHasAccessor,
+  nestedOrdinaryClassBodyHasNestedExecutable,
+  nestedOrdinaryClassLexicalBindingName,
 } from "./class-accessor-safety.js";
 import {
   assessIrImplicitConstructorSubject,
@@ -29,6 +57,7 @@ import {
   configureIrStructuralSelectorPredicates,
   extendsParentName,
   localClassHasKnownProjectionGap,
+  phase1MethodName,
   phase1MemberName,
   referencesSuper,
   type IrFallback,
@@ -86,6 +115,18 @@ export interface IrIdentitySelection {
   readonly classMembers?: ReadonlyMap<IrUnitId, IrIdentityClassMemberClaim>;
   readonly fallbacks?: ReadonlyMap<IrUnitId, IrIdentityFallback>;
   readonly localCallees?: ReadonlyMap<IrUnitId, ReadonlySet<IrUnitId>>;
+  /** Exact admitted fnctor allocation sites owned by claimed function units. */
+  readonly fnctorAdmissions?: ReadonlyMap<IrUnitId, ReadonlyArray<IrFnctorAdmission>>;
+  /** Dormant exact call-argument evidence collected from the complete function population. */
+  readonly fnctorArgumentProjections?: readonly IrFnctorArgumentProjection[];
+  /** Exact counted-string plans owned by claimed function units. */
+  readonly countedStringAppendPlans?: ReadonlyMap<IrUnitId, readonly IrCountedStringAppendPlan[]>;
+  /** Proof-independent typed inventory population for the still-dormant F3 family. */
+  readonly nestedClassFieldCallCandidates?: readonly IrNestedClassFieldCallInventoryCandidate[];
+  /** Optional dormant proof sidecar; its presence never changes claims. */
+  readonly nestedClassFieldCallProofs?: IrNestedClassFieldCallProofSidecar;
+  /** (#3522 F4) The one proof-derived admitted-class marker, carried never rebuilt. */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
   readonly moduleInit?: IrIdentityModuleInitAssessment;
   /** Policy needed only while projecting back through the legacy name seam. */
   readonly legacyProjection?: {
@@ -94,13 +135,138 @@ export interface IrIdentitySelection {
   };
 }
 
+function collectCountedStringAppendPlans(
+  sourceFile: ts.SourceFile,
+  claimedUnitIds: ReadonlySet<IrUnitId>,
+  functions: readonly IndexedFunction[],
+  plan: IrIdentitySelectionOptions["planCountedStringAppend"],
+): ReadonlyMap<IrUnitId, readonly IrCountedStringAppendPlan[]> | undefined {
+  if (!plan) return undefined;
+  const declarationByUnitId = new Map(functions.map((entry) => [entry.unit.unitId, entry.declaration] as const));
+  const result = new Map<IrUnitId, readonly IrCountedStringAppendPlan[]>();
+  for (const unitId of claimedUnitIds) {
+    const declaration = declarationByUnitId.get(unitId);
+    if (!declaration?.body) continue;
+    const plans: IrCountedStringAppendPlan[] = [];
+    const visit = (node: ts.Node): void => {
+      if (node !== declaration.body && ts.isFunctionLike(node)) return;
+      if (ts.isForStatement(node)) {
+        const candidate = plan(node);
+        if (candidate) {
+          if (candidate.loop !== node || candidate.sourceFile !== sourceFile) {
+            selectorIdentityInvariant(
+              "source-record-mismatch",
+              `counted-string plan for ${unitId} does not retain its exact loop/source identity`,
+            );
+          }
+          plans.push(candidate);
+        }
+      }
+      forEachChild(node, visit);
+    };
+    visit(declaration.body);
+    if (plans.length > 0) result.set(unitId, Object.freeze([...plans]));
+  }
+  return result.size > 0 ? result : undefined;
+}
+
 export type IrIdentitySelectionOptions = Omit<IrSelectionOptions, "recursiveTypeEvidence"> & {
   readonly recursiveTypeEvidence?: IrRecursiveTypeEvidence;
   /** Exact allocator evidence required before a promoted nested accessor may claim its body slot. */
   readonly nestedClassMemberCallableAvailable?: (unitId: IrUnitId) => boolean;
   /** Checker/AST/use proof for the one compiler-owned setTimeout wrapper slice. */
   readonly isPreparedInjectedTimerShim?: (declaration: ts.FunctionDeclaration) => boolean;
+  /** Precomputed dormant fnctor argument edges; structural planning revalidates every identity join. */
+  readonly fnctorArgumentProjections?: readonly IrFnctorArgumentProjection[];
+  /** Exact checker/reservation authority used to re-resolve every retained fnctor AST edge. */
+  readonly fnctorArgumentProjectionAuthority?: IrFnctorArgumentProjectionAuthority;
+  /** Pre-selection dormant field-call evidence over this exact inventory. */
+  readonly nestedClassFieldCallProofs?: IrNestedClassFieldCallProofSidecar;
+  /**
+   * (#3522 F4) The immutable proof-derived admitted-class marker computed once
+   * before local class-expression resolution. The selector consumes it; it
+   * never recomputes admission from syntax.
+   */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
 };
+
+/**
+ * (#3522 F4) Derive the one admitted-class marker from the complete F3 proof.
+ *
+ * Inventory candidacy is not admission. A candidate becomes claimable only when
+ * the sidecar belongs to this exact inventory, EVERY call-bearing field carries
+ * a currently valid proof, each proof's callee is an exact active top-level
+ * function terminal in the same source, and the class resolves one lexical
+ * binding name. Anything else leaves the class unadmitted and therefore
+ * normalized to `class-member-unsupported@select` exactly as in F3.
+ */
+export function computeIrNestedClassFieldCallAdmission(
+  input: PlanIrNestedClassFieldCallsInput & { readonly proofs: IrNestedClassFieldCallProofSidecar },
+): IrNestedClassFieldCallAdmission {
+  const { identityContext, proofs } = input;
+  const { inventory } = identityContext;
+  if (!isIrNestedClassFieldCallProofSidecarForInventory(proofs, inventory) || proofs.inventory !== inventory) {
+    return createIrNestedClassFieldCallAdmission(inventory, []);
+  }
+  const admitted: IrNestedClassFieldCallAdmittedClass[] = [];
+  for (const candidate of getIrNestedClassFieldCallInventoryCandidates(inventory)) {
+    const bindingName = nestedOrdinaryClassLexicalBindingName(candidate.declaration);
+    if (
+      bindingName === undefined ||
+      candidate.fields.length === 0 ||
+      nestedOrdinaryClassBodyHasAccessor(candidate.declaration) ||
+      nestedOrdinaryClassBodyHasNestedExecutable(candidate.declaration)
+    ) {
+      continue;
+    }
+    const fields: IrNestedClassFieldCallAdmittedField[] = [];
+    for (const field of candidate.fields) {
+      const proof = proofs.get(field.call);
+      if (
+        !proof ||
+        proof.candidate !== candidate ||
+        proof.fieldCandidate !== field ||
+        proof.fieldDeclaration !== field.declaration ||
+        proof.fieldSupportUnitId !== field.record.id ||
+        proof.sourceFile !== candidate.sourceFile ||
+        proof.sourceId !== candidate.source.id ||
+        proof.classId !== candidate.classRecord.id ||
+        proof.constructorUnitId !== candidate.constructorRecord.id ||
+        proof.containingTerminalUnitId !== candidate.containingTerminalRecord.id ||
+        proof.target.binding.kind !== "unit" ||
+        proof.target.binding.unitId !== proof.calleeUnitId ||
+        !isIrNestedClassFieldCallProofCurrent(proof, input)
+      ) {
+        fields.length = 0;
+        break;
+      }
+      fields.push(
+        Object.freeze({
+          declaration: field.declaration,
+          call: field.call,
+          fieldSupportUnitId: field.record.id,
+          calleeUnitId: proof.calleeUnitId,
+          calleeName: proof.target.name,
+        }),
+      );
+    }
+    if (fields.length !== candidate.fields.length) continue;
+    admitted.push(
+      Object.freeze({
+        candidate,
+        declaration: candidate.declaration,
+        sourceFile: candidate.sourceFile,
+        sourceId: candidate.source.id,
+        classId: candidate.classRecord.id,
+        constructorUnitId: candidate.constructorRecord.id,
+        containingTerminalUnitId: candidate.containingTerminalRecord.id,
+        bindingName,
+        fields: Object.freeze(fields),
+      }),
+    );
+  }
+  return createIrNestedClassFieldCallAdmission(inventory, admitted);
+}
 
 export interface IrLegacySelectionProjection {
   readonly selection: IrSelection;
@@ -120,6 +286,8 @@ interface IndexedClass {
 interface ImplicitConstructorSelectionContext {
   readonly identityContext: IrPlanningIdentityContext;
   readonly options: IrIdentitySelectionOptions;
+  /** The one validated proof-derived marker; never re-derived from syntax here. */
+  readonly fieldCallAdmission: IrNestedClassFieldCallAdmission | undefined;
   readonly localClasses: ReadonlySet<string>;
   readonly trackFallbacks: boolean;
   readonly classClaims: Map<IrUnitId, IrIdentityClassMemberClaim>;
@@ -148,7 +316,8 @@ function selectImplicitConstructorClaim(
   const parentIsLocal = parentName !== null && context.localClasses.has(parentName);
   const topLevelSourceClass =
     !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === declaration.getSourceFile();
-  const boundedNestedSourceClass = nestedClass && isBoundedPreparedNestedOrdinaryClass(declaration);
+  const boundedNestedSourceClass =
+    nestedClass && irPreparedNestedOrdinaryClass(declaration, context.fieldCallAdmission);
   if (
     (topLevelSourceClass || boundedNestedSourceClass) &&
     sameNameCandidateCount === 1 &&
@@ -474,6 +643,112 @@ function directIdentifierCallees(body: ts.Block): readonly string[] {
   return names;
 }
 
+/**
+ * Collect only resolver-approved allocation sites from exact claimed units.
+ * This is intentionally a second, identity-keyed view: the legacy selector
+ * has no safe way to project a NewExpression through a function name.  The
+ * callback is allowed to return evidence only after proving the same-source
+ * declaration/site, approved+reserved fnctor, fixed unconditional
+ * `this.input: string`, and all no-alias/no-reassignment/no-escape/collision
+ * gates.  Any malformed result is discarded rather than widened.
+ */
+function collectFnctorAdmissions(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  claimed: ReadonlySet<IrUnitId>,
+  functions: readonly IndexedFunction[],
+  identityContext: IrPlanningIdentityContext,
+  resolver: IrIdentitySelectionOptions["resolveFnctorAdmission"] | undefined,
+): ReadonlyMap<IrUnitId, ReadonlyArray<IrFnctorAdmission>> | undefined {
+  if (!resolver) return undefined;
+  const admissions = new Map<IrUnitId, IrFnctorAdmission[]>();
+  for (const indexed of functions) {
+    if (!claimed.has(indexed.unit.unitId)) continue;
+    const sites: IrFnctorAdmission[] = [];
+    const visit = (node: ts.Node): void => {
+      if (node !== indexed.declaration && ts.isFunctionLike(node)) return;
+      if (ts.isNewExpression(node)) {
+        const admission = resolver(node);
+        // Do not trust a resolver's display-name projection.  The site and
+        // source are rechecked at the identity seam before retaining it.
+        if (
+          admission !== undefined &&
+          admission.constructorSite === node &&
+          admission.sourceId === sourceId &&
+          node.getSourceFile() === sourceFile &&
+          identityContext.sourceFileBySourceId.get(admission.sourceId) === sourceFile &&
+          identityContext.declarationByUnitId.get(admission.constructorUnitId) === admission.constructorDeclaration &&
+          identityContext.unitIdByDeclaration.get(admission.constructorDeclaration) === admission.constructorUnitId &&
+          admission.constructorDeclaration.getSourceFile() === sourceFile
+        ) {
+          sites.push(admission);
+        }
+      }
+      forEachChild(node, visit);
+    };
+    visit(indexed.declaration.body!);
+    if (sites.length > 0) admissions.set(indexed.unit.unitId, sites);
+  }
+  return admissions.size > 0 ? admissions : undefined;
+}
+
+function assessIdentityModuleInit(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  identityContext: IrPlanningIdentityContext,
+  functionsByName: ReadonlyMap<string, readonly IndexedFunction[]>,
+  claimed: ReadonlyMap<IrUnitId, IrIdentityFunctionClaim>,
+  uniqueFunctions: ReadonlyMap<string, ts.FunctionDeclaration>,
+  localClasses: ReadonlySet<string>,
+): IrIdentityModuleInitAssessment | undefined {
+  const moduleInitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
+  const inventoryModuleInits = identityContext.inventory.terminalUnits.filter(
+    (terminal) => terminal.sourceId === sourceId && terminal.observedKind === "module-init",
+  );
+  if (
+    inventoryModuleInits.length > 1 ||
+    (moduleInitId === undefined &&
+      (inventoryModuleInits.length !== 0 ||
+        sourceHasModuleInitUnit(sourceFile) ||
+        identityContext.moduleInitUnitIdBySourceId.has(sourceId))) ||
+    (inventoryModuleInits.length === 1 && !sourceHasModuleInitUnit(sourceFile)) ||
+    (moduleInitId !== undefined &&
+      (inventoryModuleInits.length !== 1 ||
+        inventoryModuleInits[0]!.id !== moduleInitId ||
+        identityContext.moduleInitUnitIdBySourceId.get(sourceId) !== moduleInitId))
+  ) {
+    return selectorIdentityInvariant(
+      "invalid-module-init",
+      `IR identity selector has no exact source-owned module-init population for ${sourceId}`,
+    );
+  }
+  if (moduleInitId === undefined) return undefined;
+  const terminal = identityContext.terminalByUnitId.get(moduleInitId);
+  if (
+    !terminal ||
+    terminal !== inventoryModuleInits[0] ||
+    identityContext.unitByUnitId.get(moduleInitId) !== terminal ||
+    terminal.sourceId !== sourceId ||
+    terminal.observedKind !== "module-init"
+  ) {
+    return selectorIdentityInvariant(
+      "invalid-module-init",
+      `IR identity selector module-init ${moduleInitId} is not source-owned`,
+    );
+  }
+  const claimedNames = new Set<string>();
+  for (const [name, candidates] of functionsByName) {
+    if (candidates.length === 1 && claimed.has(candidates[0]!.unit.unitId)) claimedNames.add(name);
+  }
+  const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses);
+  return {
+    unitId: moduleInitId,
+    displayName: terminal.displayName,
+    legacyMatchName: terminal.legacyMatchName,
+    ...assessment,
+  };
+}
+
 function buildIdentityCallGraph(
   functions: readonly IndexedFunction[],
   functionsByName: ReadonlyMap<string, readonly IndexedFunction[]>,
@@ -534,7 +809,7 @@ function fallbackFor(unit: IrIdentitySelectionUnit, reason: IrFallbackReason, de
 }
 
 function sourceHasModuleInitUnit(sourceFile: ts.SourceFile): boolean {
-  if (collectModuleInitPopulation(sourceFile).length !== 0) return true;
+  if (sourceOwnsModuleInitUnit(sourceFile)) return true;
   return sourceFile.statements.some(
     (statement) =>
       ts.isClassDeclaration(statement) &&
@@ -597,6 +872,38 @@ function validateLegacyProjectionInput(structural: IrIdentitySelection): void {
       }
     }
   }
+  for (const projection of structural.fnctorArgumentProjections ?? []) {
+    if (
+      requireProjectedUnit(structural, projection.callerUnitId).kind !== "function" ||
+      requireProjectedUnit(structural, projection.calleeUnitId).kind !== "function" ||
+      requireProjectedUnit(structural, projection.constructorUnitId).kind !== "function"
+    ) {
+      selectorIdentityInvariant("terminal-record-mismatch", "fnctor argument projection has a non-function owner");
+    }
+  }
+}
+
+function selectionFunctionPopulation(
+  sourceFile: ts.SourceFile,
+  sourceId: IrSourceId,
+  identityContext: IrPlanningIdentityContext,
+  options: IrIdentitySelectionOptions,
+) {
+  const functions = collectFunctions(sourceFile, sourceId, identityContext);
+  const fnctorArgumentProjections = retainIrFnctorArgumentProjections(
+    sourceFile,
+    sourceId,
+    identityContext,
+    options.fnctorArgumentProjectionAuthority,
+    options.fnctorArgumentProjections,
+  );
+  const functionsByName = new Map<string, IndexedFunction[]>();
+  const units = new Map<IrUnitId, IrIdentitySelectionUnit>();
+  for (const indexed of functions) {
+    units.set(indexed.unit.unitId, indexed.unit);
+    if (indexed.declaration.name) addNameIndex(functionsByName, indexed.declaration.name.text, indexed);
+  }
+  return { functions, fnctorArgumentProjections, functionsByName, units };
 }
 
 /** Select one exact source using source-qualified unit and class identities. */
@@ -613,14 +920,90 @@ export function planIrCompilationByIdentity(
       `IR identity selector source ${sourceId} does not resolve back to the exact SourceFile`,
     );
   }
-  if (!options?.experimentalIR) return { units: new Map(), funcs: new Map() };
-  const functions = collectFunctions(sourceFile, sourceId, identityContext);
-  const functionsByName = new Map<string, IndexedFunction[]>();
-  const units = new Map<IrUnitId, IrIdentitySelectionUnit>();
-  for (const indexed of functions) {
-    units.set(indexed.unit.unitId, indexed.unit);
-    if (indexed.declaration.name) addNameIndex(functionsByName, indexed.declaration.name.text, indexed);
+  const nestedClassFieldCallCandidates = getIrNestedClassFieldCallInventoryCandidates(identityContext.inventory).filter(
+    (candidate) => candidate.sourceFile === sourceFile && candidate.source.id === sourceId,
+  );
+  const fieldCallCandidateByClassId = new Map<IrClassId, IrNestedClassFieldCallInventoryCandidate>();
+  for (const candidate of nestedClassFieldCallCandidates) {
+    if (
+      candidate.inventory !== identityContext.inventory ||
+      identityContext.classIdByDeclaration.get(candidate.declaration) !== candidate.classRecord.id ||
+      identityContext.declarationByClassId.get(candidate.classRecord.id) !== candidate.declaration ||
+      fieldCallCandidateByClassId.has(candidate.classRecord.id)
+    ) {
+      return selectorIdentityInvariant(
+        "class-record-mismatch",
+        `IR field-call candidate ${candidate.classRecord.id} is detached from its exact inventory class`,
+      );
+    }
+    fieldCallCandidateByClassId.set(candidate.classRecord.id, candidate);
   }
+  if (
+    options?.nestedClassFieldCallProofs &&
+    !isIrNestedClassFieldCallProofSidecarForInventory(options.nestedClassFieldCallProofs, identityContext.inventory)
+  ) {
+    return selectorIdentityInvariant(
+      "unit-record-mismatch",
+      "IR field-call proof sidecar belongs to a different inventory",
+    );
+  }
+  // (#3522 F4) The marker is consumed, never recomputed. It must belong to this
+  // exact inventory, and every class it admits in this source must still be the
+  // exact inventory candidate the proof was minted against.
+  const fieldCallAdmission = options?.nestedClassFieldCallAdmission;
+  if (fieldCallAdmission) {
+    if (!isIrNestedClassFieldCallAdmissionForInventory(fieldCallAdmission, identityContext.inventory)) {
+      return selectorIdentityInvariant(
+        "unit-record-mismatch",
+        "IR field-call admission marker belongs to a different inventory",
+      );
+    }
+    for (const admitted of fieldCallAdmission.classes) {
+      if (admitted.sourceFile !== sourceFile) continue;
+      if (
+        admitted.sourceId !== sourceId ||
+        fieldCallCandidateByClassId.get(admitted.classId) !== admitted.candidate ||
+        admitted.candidate.declaration !== admitted.declaration ||
+        admitted.candidate.constructorRecord.id !== admitted.constructorUnitId ||
+        admitted.candidate.containingTerminalRecord.id !== admitted.containingTerminalUnitId ||
+        admitted.fields.length !== admitted.candidate.fields.length ||
+        admitted.fields.some((field, index) => {
+          const callee = identityContext.terminalByUnitId.get(field.calleeUnitId);
+          const calleeDeclaration = identityContext.declarationByUnitId.get(field.calleeUnitId);
+          return (
+            admitted.candidate.fields[index]?.declaration !== field.declaration ||
+            admitted.candidate.fields[index]?.call !== field.call ||
+            admitted.candidate.fields[index]?.record.id !== field.fieldSupportUnitId ||
+            !callee ||
+            callee.kind !== "top-level-function" ||
+            callee.sourceId !== sourceId ||
+            !calleeDeclaration ||
+            !ts.isFunctionDeclaration(calleeDeclaration) ||
+            calleeDeclaration.parent !== sourceFile ||
+            calleeDeclaration.name?.text !== field.calleeName
+          );
+        })
+      ) {
+        return selectorIdentityInvariant(
+          "class-record-mismatch",
+          `IR field-call admission ${admitted.classId} is detached from its exact inventory candidate`,
+        );
+      }
+    }
+  }
+  if (!options?.experimentalIR) {
+    return {
+      units: new Map(),
+      funcs: new Map(),
+      ...(nestedClassFieldCallCandidates.length ? { nestedClassFieldCallCandidates } : {}),
+      ...(options?.nestedClassFieldCallProofs
+        ? { nestedClassFieldCallProofs: options.nestedClassFieldCallProofs }
+        : {}),
+      ...(fieldCallAdmission ? { nestedClassFieldCallAdmission: fieldCallAdmission } : {}),
+    };
+  }
+  const population = selectionFunctionPopulation(sourceFile, sourceId, identityContext, options);
+  const { functions, fnctorArgumentProjections, functionsByName, units } = population;
 
   const classes = collectClasses(sourceFile, sourceId, identityContext);
   populateClassMemberUnits(sourceId, classes, identityContext, units);
@@ -639,7 +1022,7 @@ export function planIrCompilationByIdentity(
   const projectedClassCandidates = new Map(classesByName);
   for (const candidate of classes) {
     if (candidate.declaration.parent === sourceFile) continue;
-    const bindingName = boundedPreparedNestedOrdinaryClassBindingName(candidate.declaration);
+    const bindingName = irPreparedNestedOrdinaryClassBindingName(candidate.declaration, fieldCallAdmission);
     if (bindingName === undefined) continue;
     if (options.projectedClassShapesById?.has(candidate.classId) !== true) continue;
     addNameIndex(projectedClassCandidates, bindingName, candidate);
@@ -660,8 +1043,32 @@ export function planIrCompilationByIdentity(
       .filter(([, candidates]) => candidates.length === 1 && asyncUnitIds.has(candidates[0]!.unit.unitId))
       .map(([name]) => name),
   );
-  const { recursiveTypeEvidence: _recursive, isPreparedInjectedTimerShim: _timer, ...runtimeOptions } = options;
-  configureIrStructuralSelectorPredicates(sourceFile, runtimeOptions, uniqueClasses, uniqueFunctions, asyncNames);
+  const countedStringAppendPlanCache = options.planCountedStringAppend
+    ? new Map<ts.ForStatement, IrCountedStringAppendPlan | null>()
+    : undefined;
+  const cachedCountedStringAppendPlan = options.planCountedStringAppend
+    ? (loop: ts.ForStatement): IrCountedStringAppendPlan | null => {
+        if (countedStringAppendPlanCache!.has(loop)) return countedStringAppendPlanCache!.get(loop)!;
+        const plan = options.planCountedStringAppend!(loop);
+        countedStringAppendPlanCache!.set(loop, plan);
+        return plan;
+      }
+    : undefined;
+  const {
+    recursiveTypeEvidence: _recursive,
+    isPreparedInjectedTimerShim: _timer,
+    planCountedStringAppend: _countedStringAppend,
+    ...runtimeOptions
+  } = options;
+  configureIrStructuralSelectorPredicates(
+    sourceFile,
+    cachedCountedStringAppendPlan
+      ? { ...runtimeOptions, planCountedStringAppend: cachedCountedStringAppendPlan }
+      : runtimeOptions,
+    uniqueClasses,
+    uniqueFunctions,
+    asyncNames,
+  );
   const trackFallbacks = options.trackFallbacks === true;
   const reasons = new Map<IrUnitId, IrFallbackReason>();
   const details = new Map<IrUnitId, string>();
@@ -689,7 +1096,16 @@ export function planIrCompilationByIdentity(
     }
   }
   const classClaims = new Map<IrUnitId, IrIdentityClassMemberClaim>();
-  const implicitSelection = { identityContext, options, localClasses, trackFallbacks, classClaims, reasons, details };
+  const implicitSelection = {
+    identityContext,
+    options,
+    fieldCallAdmission,
+    localClasses,
+    trackFallbacks,
+    classClaims,
+    reasons,
+    details,
+  };
   const nestedClasses = classes.filter(({ classId }) =>
     identityContext.inventory.terminalUnits.some(
       (terminal) => terminal.lexicalOwnerId === classId && terminal.containingTerminalOwnerId !== undefined,
@@ -710,7 +1126,12 @@ export function planIrCompilationByIdentity(
       const parentName = extendsParentName(declaration);
       const parentIsLocal = parentName !== null && localClasses.has(parentName);
       const boundedAccessorClass = isBoundedPreparedAccessorClass(declaration);
-      const boundedNestedOrdinaryClass = nestedClass && isBoundedPreparedNestedOrdinaryClass(declaration);
+      const boundedNestedOrdinaryClass = nestedClass && irPreparedNestedOrdinaryClass(declaration, fieldCallAdmission);
+      // Inventory candidacy and selector admission are separate decisions: a
+      // candidate whose exact proof-derived marker admits it leaves this
+      // normalization arm and joins the ordinary bounded family below.
+      const nestedFieldCallCandidate =
+        fieldCallAdmission?.getByClassId(classId) === undefined ? fieldCallCandidateByClassId.get(classId) : undefined;
       const boundedTopLevelAccessorClass =
         !nestedClass && ts.isClassDeclaration(declaration) && declaration.parent === sourceFile && boundedAccessorClass;
       // (#3522) Arms the accessor-only WRITEBACK contract (exact syntax-key
@@ -740,6 +1161,28 @@ export function planIrCompilationByIdentity(
           }
         }
       };
+      if (nestedFieldCallCandidate) {
+        // F3 retains exact terminal identities but keeps admission closed. An
+        // implicit constructor may have been tentatively selected above, so
+        // normalize the complete marker-authored terminal set explicitly.
+        for (const { record } of nestedFieldCallCandidate.terminalMembers) {
+          const populated = units.get(record.id);
+          if (
+            !populated ||
+            populated.kind !== "class-member" ||
+            populated.classId !== classId ||
+            identityContext.terminalByUnitId.get(record.id) !== record
+          ) {
+            return selectorIdentityInvariant(
+              "terminal-record-mismatch",
+              `IR field-call candidate terminal ${record.id} is detached from class ${classId}`,
+            );
+          }
+          classClaims.delete(record.id);
+          if (trackFallbacks) reasons.set(record.id, "class-member-unsupported");
+        }
+        continue;
+      }
       if (nestedClass && !boundedAccessorClass && !boundedNestedOrdinaryClass) {
         markBoundedClassFallback();
         continue;
@@ -840,14 +1283,23 @@ export function planIrCompilationByIdentity(
           continue;
         }
 
-        if (ts.isMethodDeclaration(member) && (!member.name || phase1MemberName(member.name) === null)) {
+        if (ts.isMethodDeclaration(member) && (!member.name || phase1MethodName(member) === null)) {
           if (trackFallbacks) reasons.set(unit.unitId, "class-method");
           continue;
         }
         if (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member)) {
           if (
             !member.name ||
-            (!exactAccessorClass && (phase1MemberName(member.name) === null || classElementIsStatic(member)))
+            (!exactAccessorClass &&
+              // (#3522 W1-A) `phase1MemberName` now names a `PrivateIdentifier`,
+              // which admits private METHODS. Private ACCESSORS are a separate,
+              // out-of-scope shape (their descriptor projection has its own
+              // exact-placement rules), so this arm keeps refusing them
+              // explicitly — preserving its pre-slice verdict byte for byte
+              // rather than inheriting the widened predicate.
+              (phase1MemberName(member.name) === null ||
+                ts.isPrivateIdentifier(member.name) ||
+                classElementIsStatic(member)))
           ) {
             if (trackFallbacks) reasons.set(unit.unitId, "class-method");
             continue;
@@ -860,7 +1312,11 @@ export function planIrCompilationByIdentity(
           (options.projectedClassShapes || options.projectedClassShapesById) &&
           !ts.isConstructorDeclaration(member)
         ) {
-          const descriptorName = member.name ? phase1MemberName(member.name) : null;
+          const descriptorName = ts.isMethodDeclaration(member)
+            ? phase1MethodName(member)
+            : member.name
+              ? phase1MemberName(member.name)
+              : null;
           const descriptorKind = ts.isMethodDeclaration(member)
             ? isStaticMethod
               ? "static"
@@ -870,6 +1326,7 @@ export function planIrCompilationByIdentity(
               : "setter";
           const exactAccessorMember =
             exactAccessorClass && (ts.isGetAccessorDeclaration(member) || ts.isSetAccessorDeclaration(member));
+          const computedMethod = ts.isMethodDeclaration(member) && ts.isComputedPropertyName(member.name);
           const descriptors = exactAccessorMember
             ? exactAccessorDescriptors.get(member as ts.GetAccessorDeclaration | ts.SetAccessorDeclaration)
               ? [exactAccessorDescriptors.get(member as ts.GetAccessorDeclaration | ts.SetAccessorDeclaration)!]
@@ -880,7 +1337,13 @@ export function planIrCompilationByIdentity(
                   (candidate) =>
                     candidate.name === descriptorName &&
                     (candidate.memberKind ?? "method") === descriptorKind &&
-                    (!nestedClass || candidate.placement?.classId === classId),
+                    (!nestedClass || candidate.placement?.classId === classId) &&
+                    (!computedMethod ||
+                      (candidate.placement?.classId === classId &&
+                        candidate.placement.unitId === unit.unitId &&
+                        candidate.placement.staticClassMember === isStaticMethod &&
+                        candidate.target?.binding.kind === "unit" &&
+                        candidate.target.binding.unitId === unit.unitId)),
                 ) ?? []);
           exactMemberDescriptor = descriptors.length === 1 ? descriptors[0] : undefined;
           if (!exactMemberDescriptor) {
@@ -959,7 +1422,7 @@ export function planIrCompilationByIdentity(
   // If any body rejects—or the enclosing function itself rejects—withdraw the
   // complete class plus owner before lowering can observe a mixed component.
   for (const { classId, declaration } of classes) {
-    if (!isBoundedPreparedNestedOrdinaryClass(declaration)) continue;
+    if (!irPreparedNestedOrdinaryClass(declaration, fieldCallAdmission)) continue;
     const terminals = identityContext.inventory.terminalUnits.filter(
       (terminal) =>
         terminal.lexicalOwnerId === classId &&
@@ -1011,54 +1474,29 @@ export function planIrCompilationByIdentity(
     }
   }
 
-  const moduleInitId = identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
-  const inventoryModuleInits = identityContext.inventory.terminalUnits.filter(
-    (terminal) => terminal.sourceId === sourceId && terminal.observedKind === "module-init",
+  const fnctorAdmissions = collectFnctorAdmissions(
+    sourceFile,
+    sourceId,
+    new Set(claimed.keys()),
+    functions,
+    identityContext,
+    options.resolveFnctorAdmission,
   );
-  if (
-    inventoryModuleInits.length > 1 ||
-    (moduleInitId === undefined &&
-      (inventoryModuleInits.length !== 0 ||
-        sourceHasModuleInitUnit(sourceFile) ||
-        identityContext.moduleInitUnitIdBySourceId.has(sourceId))) ||
-    (inventoryModuleInits.length === 1 && !sourceHasModuleInitUnit(sourceFile)) ||
-    (moduleInitId !== undefined &&
-      (inventoryModuleInits.length !== 1 ||
-        inventoryModuleInits[0]!.id !== moduleInitId ||
-        identityContext.moduleInitUnitIdBySourceId.get(sourceId) !== moduleInitId))
-  ) {
-    return selectorIdentityInvariant(
-      "invalid-module-init",
-      `IR identity selector has no exact source-owned module-init population for ${sourceId}`,
-    );
-  }
-  let moduleInit: IrIdentityModuleInitAssessment | undefined;
-  if (moduleInitId) {
-    const terminal = identityContext.terminalByUnitId.get(moduleInitId);
-    if (
-      !terminal ||
-      terminal !== inventoryModuleInits[0] ||
-      identityContext.unitByUnitId.get(moduleInitId) !== terminal ||
-      terminal.sourceId !== sourceId ||
-      terminal.observedKind !== "module-init"
-    ) {
-      return selectorIdentityInvariant(
-        "invalid-module-init",
-        `IR identity selector module-init ${moduleInitId} is not source-owned`,
-      );
-    }
-    const claimedNames = new Set<string>();
-    for (const [name, candidates] of functionsByName) {
-      if (candidates.length === 1 && claimed.has(candidates[0]!.unit.unitId)) claimedNames.add(name);
-    }
-    const assessment = assessModuleInit(sourceFile, claimedNames, uniqueFunctions, localClasses);
-    moduleInit = {
-      unitId: moduleInitId,
-      displayName: terminal.displayName,
-      legacyMatchName: terminal.legacyMatchName,
-      ...assessment,
-    };
-  }
+  const countedStringAppendPlans = collectCountedStringAppendPlans(
+    sourceFile,
+    new Set(claimed.keys()),
+    functions,
+    cachedCountedStringAppendPlan,
+  );
+  const moduleInit = assessIdentityModuleInit(
+    sourceFile,
+    sourceId,
+    identityContext,
+    functionsByName,
+    claimed,
+    uniqueFunctions,
+    localClasses,
+  );
 
   const fallbacks = trackFallbacks
     ? new Map(
@@ -1080,6 +1518,12 @@ export function planIrCompilationByIdentity(
     ...(classClaims.size ? { classMembers: classClaims } : {}),
     ...(fallbacks ? { fallbacks } : {}),
     ...(localCallees ? { localCallees } : {}),
+    ...(fnctorAdmissions ? { fnctorAdmissions } : {}),
+    ...(fnctorArgumentProjections ? { fnctorArgumentProjections } : {}),
+    ...(countedStringAppendPlans ? { countedStringAppendPlans } : {}),
+    ...(nestedClassFieldCallCandidates.length ? { nestedClassFieldCallCandidates } : {}),
+    ...(options.nestedClassFieldCallProofs ? { nestedClassFieldCallProofs: options.nestedClassFieldCallProofs } : {}),
+    ...(fieldCallAdmission ? { nestedClassFieldCallAdmission: fieldCallAdmission } : {}),
     ...(moduleInit ? { moduleInit } : {}),
     legacyProjection: { includeEmptyModuleInit: true, demoteOnLegacyCaller },
   };

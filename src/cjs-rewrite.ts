@@ -52,7 +52,7 @@ export function rewriteCjsRequire(source: string): string {
 export function rewriteCjsRequireWithMap(source: string): { source: string; positionMap: PositionMap } {
   // Cheap pre-check: dependency leaves may have no `require()` calls but still
   // need their `module.exports` value surfaced for a rewritten importer.
-  if (!source.includes("require(") && !source.includes("module.exports")) {
+  if (!source.includes("require(") && !source.includes("module.exports") && !source.includes("exports")) {
     return { source, positionMap: PositionMap.identity() };
   }
 
@@ -64,12 +64,20 @@ export function rewriteCjsRequireWithMap(source: string): { source: string; posi
     if (rewrite) rewrites.push(rewrite);
   }
 
+  // A single top-level `module.exports = value` is already a complete default
+  // export. Rewrite the whole assignment in place instead of routing it through
+  // the mutable compatibility object below. Besides being closer to the source,
+  // this preserves callable identity for the ubiquitous
+  // `module.exports = function factory() {}` package leaf.
+  const directDefaultExport = tryRewriteSingleModuleExportsAssignment(sf);
+  if (directDefaultExport) rewrites.push(directDefaultExport);
+
   // A static require rewrite turns a CommonJS file into an ESM file. Surface
   // its `module.exports` value explicitly before that happens, including
   // assignment expressions nested in a UMD wrapper. Otherwise TypeScript no
   // longer exposes a default-export symbol for the rewritten dependency and
   // importers silently receive null.
-  const wrapModuleExports = shouldWrapModuleExports(sf);
+  const wrapModuleExports = directDefaultExport === null && shouldWrapModuleExports(sf);
   if (wrapModuleExports) {
     const visit = (node: ts.Node): void => {
       if (
@@ -99,7 +107,11 @@ export function rewriteCjsRequireWithMap(source: string): { source: string; posi
       "/** @type {any} */ const exports = __cjs_default_export;\n" +
       "/** @type {any} */ const module = {};\n"
     : "";
-  const moduleFooter = wrapModuleExports ? "\nexport default __cjs_default_export;\n" : "";
+  // Export the binding, not an `export default <expression>` snapshot. CommonJS
+  // is allowed to replace `module.exports` while the module executes; importers
+  // must observe that final/live cell rather than the empty object seeded by the
+  // prelude before the assignment runs.
+  const moduleFooter = wrapModuleExports ? "\nexport { __cjs_default_export as default };\n" : "";
 
   const positionMap = new PositionMap([
     ...(modulePrelude ? [{ origStart: 0, origEnd: 0, newLength: modulePrelude.length }] : []),
@@ -115,6 +127,64 @@ export function rewriteCjsRequireWithMap(source: string): { source: string; posi
   }
   result = modulePrelude + result + moduleFooter;
   return { source: result, positionMap };
+}
+
+/**
+ * Rewrite a source whose entire CommonJS surface is one top-level
+ * `module.exports = expression` assignment to an ESM default export.
+ */
+function tryRewriteSingleModuleExportsAssignment(sf: ts.SourceFile): RequireRewrite | null {
+  let candidate: { statement: ts.ExpressionStatement; assignment: ts.BinaryExpression } | undefined;
+  let exportReferences = 0;
+
+  const visit = (node: ts.Node): void => {
+    const isModuleExports =
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "module" &&
+      node.name.text === "exports";
+    const isExportsMember =
+      ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "exports";
+    if (isModuleExports || isExportsMember) exportReferences++;
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  if (exportReferences !== 1) return null;
+
+  for (const statement of sf.statements) {
+    if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) continue;
+    const assignment = statement.expression;
+    if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) continue;
+    if (
+      !ts.isPropertyAccessExpression(assignment.left) ||
+      !ts.isIdentifier(assignment.left.expression) ||
+      assignment.left.expression.text !== "module" ||
+      assignment.left.name.text !== "exports"
+    ) {
+      continue;
+    }
+    candidate = { statement, assignment };
+    break;
+  }
+  if (!candidate) return null;
+  const requiredDefault = extractRequireSpecifier(candidate.assignment.right);
+  if (requiredDefault !== null) {
+    const moduleSpec =
+      isNodeBuiltin(requiredDefault) && !requiredDefault.startsWith("node:")
+        ? `node:${normalizeNodeBuiltin(requiredDefault)}`
+        : requiredDefault;
+    const importName = `__cjs_default_export_value_${candidate.assignment.pos}`.replace(/[^A-Za-z0-9_$]/g, "_");
+    return {
+      start: candidate.statement.getStart(sf),
+      end: candidate.statement.end,
+      text: `import ${importName} from ${JSON.stringify(moduleSpec)};\nexport default ${importName};`,
+    };
+  }
+  return {
+    start: candidate.statement.getStart(sf),
+    end: candidate.statement.end,
+    text: `export default ${candidate.assignment.right.getText(sf)};`,
+  };
 }
 
 /** True for a script that mutates the ambient CommonJS `module.exports`. */
@@ -136,13 +206,16 @@ function shouldWrapModuleExports(sf: ts.SourceFile): boolean {
     return false;
   }
 
-  // Do not shadow a real top-level binding named `module`.
+  // Do not shadow a real top-level binding named `module` or `exports`.
   for (const stmt of sf.statements) {
     if (
-      ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name?.text === "module") ||
+      ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) &&
+        (stmt.name?.text === "module" || stmt.name?.text === "exports")) ||
       (ts.isVariableStatement(stmt) &&
         stmt.declarationList.declarations.some(
-          (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === "module",
+          (declaration) =>
+            ts.isIdentifier(declaration.name) &&
+            (declaration.name.text === "module" || declaration.name.text === "exports"),
         ))
     ) {
       return false;
@@ -153,10 +226,11 @@ function shouldWrapModuleExports(sf: ts.SourceFile): boolean {
   const visit = (node: ts.Node): void => {
     if (found) return;
     if (
-      ts.isPropertyAccessExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === "module" &&
-      node.name.text === "exports"
+      (ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "module" &&
+        node.name.text === "exports") ||
+      (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "exports")
     ) {
       found = true;
       return;
@@ -254,7 +328,22 @@ function bindingIsReassigned(sf: ts.SourceFile, declaration: ts.VariableDeclarat
 function tryRenderRequireImport(decl: ts.VariableDeclaration): string | null {
   if (!decl.initializer) return null;
 
-  const rawModuleSpec = extractRequireSpecifier(decl.initializer);
+  const memberModuleSpec = ts.isPropertyAccessExpression(decl.initializer)
+    ? extractRequireSpecifier(decl.initializer.expression)
+    : null;
+  const requiredMember =
+    memberModuleSpec !== null && ts.isPropertyAccessExpression(decl.initializer)
+      ? { moduleSpec: memberModuleSpec, exportName: decl.initializer.name.text }
+      : null;
+  const factoryModuleSpec = ts.isCallExpression(decl.initializer)
+    ? extractRequireSpecifier(decl.initializer.expression)
+    : null;
+  const requiredFactory =
+    factoryModuleSpec !== null && ts.isCallExpression(decl.initializer)
+      ? { moduleSpec: factoryModuleSpec, args: decl.initializer.arguments }
+      : null;
+  const rawModuleSpec =
+    requiredMember?.moduleSpec ?? requiredFactory?.moduleSpec ?? extractRequireSpecifier(decl.initializer);
   if (rawModuleSpec === null) return null;
   // `compileProject` keeps ESM imports in the TypeScript graph instead of
   // running the single-file import preprocessor. Mark bare Node builtins with
@@ -269,9 +358,35 @@ function tryRenderRequireImport(decl: ts.VariableDeclaration): string | null {
 
   // Now look at the binding pattern to decide between default-import and named-import.
   if (ts.isIdentifier(decl.name)) {
+    // const result = require('factory')(args) → import factory; const result = factory(args)
+    //
+    // The factory call remains ordinary source so its result keeps the original
+    // binding semantics; only the static require edge is converted to the ESM
+    // graph. Include the declaration position in the synthetic binding to avoid
+    // collisions when one statement invokes the same package more than once.
+    if (requiredFactory) {
+      const importName = `__cjs_require_${decl.name.text}_${decl.pos}`.replace(/[^A-Za-z0-9_$]/g, "_");
+      const declarationKind =
+        decl.parent.flags & ts.NodeFlags.Const ? "const" : decl.parent.flags & ts.NodeFlags.Let ? "let" : "var";
+      const args = requiredFactory.args.map((arg) => arg.getText(decl.getSourceFile())).join(", ");
+      return (
+        `import ${importName} from ${JSON.stringify(moduleSpec)};\n` +
+        `${declarationKind} ${decl.name.text} = ${importName}(${args});`
+      );
+    }
+    // const X = require('Y').member → import { member as X } from 'Y'
+    //
+    // This common Node/CommonJS form must be rewritten as a unit. Leaving the
+    // chained read behind makes the unresolved `require(...)` value null in the
+    // compiled module and the `.member` access traps during module init.
+    if (requiredMember) {
+      return `import { ${requiredMember.exportName} as ${decl.name.text} } from ${JSON.stringify(moduleSpec)};`;
+    }
     // const X = require('Y') → import X from 'Y'
     return `import ${decl.name.text} from ${JSON.stringify(moduleSpec)};`;
   }
+
+  if (requiredMember || requiredFactory) return null;
 
   if (ts.isObjectBindingPattern(decl.name)) {
     // const { a, b: c } = require('Y') → import { a, b as c } from 'Y'

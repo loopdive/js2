@@ -107,8 +107,9 @@
 import ts from "typescript";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { emitThrowTypeError, noJsHost } from "./js-errors.js";
-import { compileExpression } from "./shared.js"; // (#4556)
+import { buildThrowJsErrorInstrs, emitThrowTypeError, noJsHost } from "./js-errors.js";
+import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js"; // (#4556)
+import { coerceType } from "./type-coercion.js";
 
 /** WasmGC `none` bottom heap type (signed LEB −18) — `ref.null none`, the
  *  canonical `anyref` null (mirrors receiver-brand.ts / map-runtime.ts). */
@@ -291,6 +292,14 @@ const BRANDED_PROTO_METHODS: ReadonlyMap<string, ReadonlySet<string>> = new Map<
       "toGMTString",
     ]),
   ],
+  // (#5143) §27.2.5.4 / §27.2.5.1 / §27.2.5.3 — `then`/`catch`/`finally` all
+  // begin with `IsPromise(this)` (or, for `catch`/`finally`, an `Invoke` on a
+  // receiver that must be object-coercible). `Promise.prototype` itself has no
+  // [[PromiseState]] slot, so the direct spelling is a TypeError, not a call
+  // (test262 `built-ins/Promise/prototype/no-promise-state.js`). Before this the
+  // receiver compiled to a `$NativeProto` the then-lowering happily accepted and
+  // the call silently returned a promise.
+  ["Promise", new Set(["then", "catch", "finally"])],
 ]);
 
 /**
@@ -500,7 +509,13 @@ function tryBuiltinPrototypeIsPrototypeOf(
  *   - `Object.prototype.isPrototypeOf` — §20.1.3.3 step 1 is
  *     "If V is not an Object, return false", which runs BEFORE ToObject(this).
  *     Whether it throws depends on the ARGUMENT, not the receiver, so a
- *     receiver-only gate cannot decide it.
+ *     receiver-only gate cannot decide it. (#4623) It is now IN the table, with
+ *     the missing half supplied: {@link tryBorrowedPrototypeNullishThisThrow}
+ *     additionally requires the argument to be PROVABLY an object
+ *     ({@link provablyObjectValuedArgument}), so step 1 cannot have returned
+ *     first. A non-object (or unprovable) argument still declines, which is
+ *     what keeps `{null,undefined}-this-and-primitive-arg-returns-false.js`
+ *     answering `false` rather than throwing.
  *   - `String.prototype.*` — already routed through
  *     `emitBorrowedStringReceiverToString` (#3254), which performs
  *     RequireObjectCoercible + ToString on the borrowed receiver. Duplicating it
@@ -522,6 +537,8 @@ const NULLISH_THIS_THROWS: ReadonlyMap<string, ReadonlyMap<string, ValType>> = n
       ["toLocaleString", { kind: "externref" }],
       ["hasOwnProperty", { kind: "i32", boolean: true }],
       ["propertyIsEnumerable", { kind: "i32", boolean: true }],
+      // (#4623) Conditional on the argument — see ARGUMENT_MUST_BE_OBJECT.
+      ["isPrototypeOf", { kind: "i32", boolean: true }],
     ]),
   ],
   [
@@ -531,6 +548,20 @@ const NULLISH_THIS_THROWS: ReadonlyMap<string, ReadonlyMap<string, ValType>> = n
       ["call", { kind: "externref" }],
       ["apply", { kind: "externref" }],
       ["bind", { kind: "externref" }],
+    ]),
+  ],
+  // (#5143) `Promise.prototype.{then,catch,finally}.call(undefined|null, …)`.
+  // `then` step 2 is `IsPromise(this)` → false for a nullish receiver;
+  // `catch`/`finally` reach `GetV`/`Invoke`, whose `ToObject(this)` throws.
+  // Every path is a TypeError, so the borrowed nullish form is decidable here
+  // (test262 `prototype/catch/this-value-non-object.js`). All three return a
+  // promise, hence externref.
+  [
+    "Promise",
+    new Map<string, ValType>([
+      ["then", { kind: "externref" }],
+      ["catch", { kind: "externref" }],
+      ["finally", { kind: "externref" }],
     ]),
   ],
 ]);
@@ -549,11 +580,98 @@ const NULLISH_THIS_THROWS: ReadonlyMap<string, ReadonlyMap<string, ValType>> = n
  * function with no `return` infers `void`, but nothing prevents it from
  * returning a value at run time, so `void` is not a proof.
  */
-function provablyNullishReceiver(ctx: CodegenContext, expr: ts.Expression): boolean {
+function provablyNullishReceiver(ctx: CodegenContext, expr: ts.Expression, dynamicFallback: boolean): boolean {
   const e = skipParens(expr);
   if (e.kind === ts.SyntaxKind.NullKeyword) return true;
+  // (#5197 R3-10) An initializer-less, annotation-less `var`/`let` is an
+  // EVOLVING `any`: TypeScript's control-flow analysis narrows a use that no
+  // assignment dominates to `undefined`, and `typeFactOf` faithfully reports
+  // that narrowing. A narrowing is not a proof — `var resolveFunction;`
+  // assigned only inside a nested executor holds a function by the time the
+  // top-level code runs — so declining here keeps the receiver dynamic instead
+  // of compiling `hasOwnProperty.call(resolveFunction, "prototype")` to a
+  // static TypeError. An explicit `undefined`/`null` type annotation, and the
+  // `null` keyword above, remain proofs.
+  //
+  // (#5197 round-3 review F1) Declining is only right when the lowering the
+  // call falls into READS the receiver and raises the nullish TypeError at run
+  // time. The caller says whether that dynamic path exists for this method
+  // (`dynamicFallback`); where it does not, the static fold is kept — a wrong
+  // static throw on a later-filled `var` is the base behaviour, whereas a
+  // constant `false` that never looks at the receiver is a silent non-throw.
+  if (dynamicFallback && isEvolvingVarIdentifier(ctx, e)) return false;
   const fact = ctx.oracle.typeFactOf(e);
   return fact.kind === "undefined" || fact.kind === "null";
+}
+
+/** An initializer-less, annotation-less `var`/`let`/parameter — the evolving-`any` declaration shape. */
+function isEvolvingVarIdentifier(ctx: CodegenContext, e: ts.Expression): boolean {
+  if (!ts.isIdentifier(e)) return false;
+  const decl = ctx.oracle.valueDeclarationOf(e);
+  return (
+    decl !== undefined &&
+    (ts.isVariableDeclaration(decl) || ts.isParameter(decl)) &&
+    decl.type === undefined &&
+    decl.initializer === undefined
+  );
+}
+
+/**
+ * (#5197 round-3 review F1) The `Object.prototype` methods whose no-host
+ * borrowed lowering is a genuine runtime own-property query over an externref
+ * receiver (`compilePropertyIntrospection` → `__hasOwnProperty` /
+ * `__propertyIsEnumerable`, object-runtime.ts) with the nullish TypeError
+ * raised at run time. Only for these does the static nullish gate DECLINE for
+ * an evolving `var`. `isPrototypeOf` and `valueOf` are deliberately NOT here:
+ * their borrowed `.call` lowers through the builtin method-value carrier,
+ * whose native body does not perform §20.1.3 `ToObject(this)`, so declining
+ * would turn the static TypeError into a silent non-throw (measured 2026-09-03:
+ * `var w; Object.prototype.isPrototypeOf.call(w, {})` returned `false`). They
+ * keep base's static fold, as does every `Function.prototype` method.
+ */
+const EVOLVING_VAR_DYNAMIC_METHODS: ReadonlySet<string> = new Set(["hasOwnProperty", "propertyIsEnumerable"]);
+
+/**
+ * (#5197 round-3 review F1) Is `expr` an evolving `var` that the checker has
+ * narrowed to `undefined`/`null` at this use? This is exactly the shape the
+ * static gate above declines: the receiver's STATIC type is nullish, so a
+ * struct-field fold would answer a constant without ever reading the value.
+ * The dynamic lowerings consult this to (a) take the runtime query instead of
+ * the fold and (b) raise §20.1.3 `RequireObjectCoercible`'s TypeError at run
+ * time when the value really is nullish — see `emitEvolvingNullishReceiverGuard`.
+ */
+export function evolvingVarNullishNarrowed(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const e = skipParens(expr);
+  if (!isEvolvingVarIdentifier(ctx, e)) return false;
+  const fact = ctx.oracle.typeFactOf(e);
+  return fact.kind === "undefined" || fact.kind === "null";
+}
+
+/**
+ * (#5197 round-3 review F1) Runtime half of the R3-10 decline: with the
+ * receiver held as an externref in `recvLocal`, throw the same TypeError the
+ * static gate would have compiled when the value IS nullish at run time. Uses
+ * the object runtime's own nullish predicate under the undefined-singleton
+ * regime (where `undefined` is a non-null externref); under the legacy regime
+ * `undefined` is the null bit pattern, so `ref.is_null` is exact there.
+ */
+export function emitEvolvingNullishReceiverGuard(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  method: string,
+  recvLocal: number,
+): void {
+  const throwInstrs = buildThrowJsErrorInstrs(
+    ctx,
+    "TypeError",
+    `TypeError: Object.prototype.${method} called on null or undefined`,
+    { flush: fctx },
+  );
+  const nullishIdx = ctx.funcMap.get("__extern_is_nullish");
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  if (nullishIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nullishIdx });
+  else fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs });
 }
 
 function skipParens(expr: ts.Expression): ts.Expression {
@@ -574,6 +692,40 @@ function skipParens(expr: ts.Expression): ts.Expression {
  * here. Used only for the `Function.prototype` family, whose step 2 is
  * "If IsCallable(func) is false, throw a TypeError exception" (§20.2.3).
  */
+/**
+ * (#4623) Methods whose nullish-`this` throw is reached ONLY when their first
+ * VALUE argument is an object, because an earlier step answers for a
+ * non-object one. `Object.prototype.isPrototypeOf` (§20.1.3.3) is the whole
+ * population: step 1 "If V is not an Object, return false" precedes step 2's
+ * `ToObject(this value)`.
+ */
+const ARGUMENT_MUST_BE_OBJECT: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ["Object", new Set(["isPrototypeOf"])],
+]);
+
+/**
+ * (#4623) Is `expr` **provably** an object value, whatever the checker infers?
+ *
+ * Syntax proof only, in the same spirit as {@link syntacticallyNotCallable}: a
+ * function/class/object/array literal and a `new` expression each evaluate to
+ * an object in every program (§13.3.5 EvaluateNew yields the freshly created
+ * instance even for a constructor that returns a primitive). An identifier is
+ * deliberately NOT accepted — under `allowJs` its type is routinely `any`, and
+ * a wrong throw here is catchable and therefore observable.
+ */
+export function provablyObjectValuedArgument(expr: ts.Expression | undefined): boolean {
+  if (expr === undefined) return false;
+  const e = skipParens(expr);
+  return (
+    ts.isFunctionExpression(e) ||
+    ts.isArrowFunction(e) ||
+    ts.isClassExpression(e) ||
+    ts.isObjectLiteralExpression(e) ||
+    ts.isArrayLiteralExpression(e) ||
+    ts.isNewExpression(e)
+  );
+}
+
 function syntacticallyNotCallable(expr: ts.Expression): boolean {
   const e = skipParens(expr);
   return (
@@ -642,10 +794,138 @@ export function tryBorrowedPrototypeNullishThisThrow(
   // primitive receiver is perfectly legal there (`hasOwnProperty.call("ab","0")`
   // is `true`). Function.prototype: step 2 is `IsCallable`, so a syntactically
   // non-callable literal fails it too.
+  const dynamicFallback = ctor === "Object" && EVOLVING_VAR_DYNAMIC_METHODS.has(method);
   const invalidThis =
-    provablyNullishReceiver(ctx, receiver) || (ctor === "Function" && syntacticallyNotCallable(receiver));
+    provablyNullishReceiver(ctx, receiver, dynamicFallback) ||
+    (ctor === "Function" && syntacticallyNotCallable(receiver));
   if (!invalidThis) return undefined;
+  // (#4623) …and, for the methods whose earlier step answers for a non-object
+  // argument, the argument must be provably an object or the throw is not the
+  // spec's answer. `.call(recv, V)` puts `V` in argument slot 1.
+  if (ARGUMENT_MUST_BE_OBJECT.get(ctor)?.has(method) === true && !provablyObjectValuedArgument(expr.arguments[1])) {
+    return undefined;
+  }
 
+  // (#5268 r3 R3-9 S) §20.1.3.2 step 1 is `? ToPropertyKey(V)` — it runs
+  // BEFORE step 2's `ToObject(this)`, so a key whose `toString` getter throws
+  // beats the nullish-receiver TypeError, and the key is observably coerced
+  // with hint "string" (`topropertykey_before_toobject.js` asserts
+  // `coercibleKey.hint === "string"` after the throw). Compiling the argument
+  // and dropping it evaluates the EXPRESSION but performs no coercion, so the
+  // getter never ran. Route argument 1 of the two key-taking methods through
+  // `__to_property_key` and drop THAT instead.
+  const coercesKeyFirst = ctor === "Object" && (method === "hasOwnProperty" || method === "propertyIsEnumerable");
+  const toPropertyKeyIdx = coercesKeyFirst
+    ? ensureLateImport(ctx, "__to_property_key", [{ kind: "externref" }], [{ kind: "externref" }])
+    : undefined;
+  for (const [index, arg] of expr.arguments.entries()) {
+    if (coercesKeyFirst && index === 1 && toPropertyKeyIdx !== undefined) {
+      const t = compileArg(arg);
+      if (t === null) {
+        fctx.body.push({ op: "ref.null.extern" });
+      } else if (t.kind !== "externref") {
+        coerceType(ctx, fctx, t, { kind: "externref" });
+      }
+      flushLateImportShifts(ctx, fctx);
+      fctx.body.push({ op: "call", funcIdx: toPropertyKeyIdx }, { op: "drop" });
+      continue;
+    }
+    const t = compileArg(arg);
+    if (t !== null) fctx.body.push({ op: "drop" });
+  }
+  const what =
+    ctor === "Function"
+      ? `Function.prototype.${method} called on non-callable receiver`
+      : `Object.prototype.${method} called on null or undefined`;
+  return emitBrandThrowWithSentinel(ctx, fctx, `TypeError: ${what}`, expectedType ?? result);
+}
+
+/**
+ * (#5143) Borrowed BRAND arm: `<Ctor>.prototype.<brandedMethod>.call(
+ * <AnyCtor>.prototype, …)`.
+ *
+ * The sibling above decides the *nullish* receiver; this one decides the other
+ * statically-provable non-brand receiver — a builtin PROTOTYPE object. Every
+ * method in {@link BRANDED_PROTO_METHODS} opens with a `RequireInternalSlot`
+ * (or, for `Promise.prototype.then`, `IsPromise`), and a builtin prototype is
+ * by construction an ordinary object with none of those slots — §27.2.5.4 spells
+ * that out for Promise, and §21.4.4 / §24.1.3 / §23.2.3 do the same for their
+ * families. So the call is a TypeError whatever the arguments are.
+ *
+ * The receiver proof is `builtinPrototypeReceiver`, the same lib-identity test
+ * the direct arm uses, so a user `class Promise {}` is rejected rather than
+ * mis-claimed. The *borrowing* constructor and the *receiver* constructor need
+ * not match — `Map.prototype.get.call(Date.prototype)` is equally a TypeError —
+ * so no cross-check is made beyond "the receiver is some builtin prototype".
+ *
+ * `compileArg` is injected to avoid a module cycle with `expressions.ts`.
+ */
+export function tryBorrowedPrototypeBrandThisThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  /** The callee's base — `<Ctor>.prototype.<method>` in `<…>.call(recv, …)`. */
+  borrowedMethod: ts.Expression,
+  compileArg: (arg: ts.Expression) => ValType | null,
+  expectedType?: ValType,
+): ValType | undefined {
+  if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
+  let base: ts.Expression = borrowedMethod;
+  while (ts.isParenthesizedExpression(base)) base = base.expression;
+  if (!ts.isPropertyAccessExpression(base)) return undefined;
+  const method = base.name.text;
+  const ctor = builtinPrototypeReceiver(ctx, base.expression);
+  if (ctor === undefined) return undefined;
+  if (BRANDED_PROTO_METHODS.get(ctor)?.has(method) !== true) return undefined;
+  const receiver = expr.arguments[0];
+  if (receiver === undefined) return undefined;
+  const receiverCtor = builtinPrototypeReceiver(ctx, skipParens(receiver));
+  if (receiverCtor === undefined) return undefined;
+
+  for (const arg of expr.arguments) {
+    const t = compileArg(arg);
+    if (t !== null) fctx.body.push({ op: "drop" });
+  }
+  return emitBrandThrowWithSentinel(
+    ctx,
+    fctx,
+    `TypeError: Method ${ctor}.prototype.${method} called on incompatible receiver ${receiverCtor}.prototype`,
+    expectedType ?? { kind: "externref" },
+  );
+}
+
+/**
+ * Emit the nullish-receiver TypeError for a detached builtin-prototype call.
+ *
+ * A comma expression such as `(0, Object.prototype.valueOf)()` evaluates the
+ * member value first and then calls it without a receiver.  Rebuilding the
+ * right-hand side as `Object.prototype.valueOf()` loses that distinction and
+ * incorrectly supplies `Object.prototype` as `this`.  At this call boundary
+ * the absent receiver is unconditionally `undefined`, so the same static
+ * table used by the borrowed `.call` gate can answer the methods whose first
+ * step rejects it.  Methods such as `Object.prototype.toString`, which have a
+ * defined nullish-receiver result, deliberately decline.
+ */
+export function tryDetachedBuiltinPrototypeNullishThisThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  detachedMethod: ts.Expression,
+  compileArg: (arg: ts.Expression) => ValType | null,
+  expectedType?: ValType,
+): ValType | undefined {
+  if (!noJsHost(ctx) && !ctx.strictNoHostImports) return undefined;
+  let base: ts.Expression = detachedMethod;
+  while (ts.isParenthesizedExpression(base)) base = base.expression;
+  if (!ts.isPropertyAccessExpression(base)) return undefined;
+  const method = base.name.text;
+  const ctor = builtinPrototypeReceiver(ctx, base.expression);
+  if (ctor === undefined) return undefined;
+  const result = NULLISH_THIS_THROWS.get(ctor)?.get(method);
+  if (result === undefined) return undefined;
+
+  // ArgumentListEvaluation still precedes the call, even though the receiver
+  // is absent. Preserve every argument's side effects before throwing.
   for (const arg of expr.arguments) {
     const t = compileArg(arg);
     if (t !== null) fctx.body.push({ op: "drop" });

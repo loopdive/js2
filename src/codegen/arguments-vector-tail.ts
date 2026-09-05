@@ -4,6 +4,7 @@
 // declaration driver so the god-file remains within its LOC budget.
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { getArgumentsVecTypeIdx } from "./arguments-carrier-brand.js";
 import { allocLocal } from "./context/locals.js";
 
 interface ArgumentsVecTailOptions {
@@ -11,6 +12,8 @@ interface ArgumentsVecTailOptions {
   readonly paramOffset: number;
   readonly numArgs: number;
   readonly vecTypeIdx: number;
+  /** Concrete subtype used for the arguments object itself. */
+  readonly argumentsVecTypeIdx?: number;
   readonly arrTypeIdx: number;
   readonly argsLocalIdx: number;
   readonly arrTmpIdx: number;
@@ -38,6 +41,7 @@ export function emitArgumentsVecTail(
     paramOffset,
     numArgs,
     vecTypeIdx: vti,
+    argumentsVecTypeIdx = vti,
     arrTypeIdx: ati,
     argsLocalIdx: argsLocal,
     arrTmpIdx: arrTmp,
@@ -101,7 +105,9 @@ export function emitArgumentsVecTail(
         { op: "local.get", index: argcLocal },
         { op: "local.get", index: extrasLocal },
         { op: "ref.as_non_null" },
-        { op: "struct.get", typeIdx: vti, fieldIdx: 1 },
+        // `extrasLocal` is the canonical protocol vec even when `vti` is the
+        // nominal arguments subtype being constructed.
+        { op: "struct.get", typeIdx: ctx.extrasArgvVecTypeIdx, fieldIdx: 1 },
         { op: "i32.const", value: 0 },
         { op: "local.get", index: extrasLenLocal },
         { op: "array.copy", dstTypeIdx: ati, srcTypeIdx: ati },
@@ -109,11 +115,28 @@ export function emitArgumentsVecTail(
     },
     { op: "local.get", index: totalLenLocal },
     { op: "local.get", index: arrTmp },
-    { op: "struct.new", typeIdx: vti },
+    // The nominal standalone arguments subtype appends its ordinary-property
+    // state after the shared vec fields: `lengthAbsent`, an arbitrary
+    // `lengthValue`, and the `lengthOverride` presence bit. Keep the parent
+    // vec construction byte-for-byte unchanged for every other carrier.
+    ...(argumentsVecTypeIdx === vti
+      ? []
+      : ([{ op: "i32.const", value: 0 }, { op: "ref.null.extern" }, { op: "i32.const", value: 0 }] satisfies Instr[])),
+    { op: "struct.new", typeIdx: argumentsVecTypeIdx },
     { op: "local.set", index: argsLocal },
   );
 
-  if (numArgs !== 0) {
+  // An ordinary extras vec cannot be reused as the branded arguments subtype.
+  if (numArgs !== 0 || argumentsVecTypeIdx !== vti) {
+    fctx.body.push(...buildArgsBody);
+    return;
+  }
+
+  // The extras global is the canonical parent vec. A nominal arguments child
+  // cannot alias that value into its more-specific local, so always build the
+  // child for zero-formal arguments objects as well. This preserves the brand
+  // that IsArray must reject while retaining the same indexed contents.
+  if (vti === getArgumentsVecTypeIdx(ctx)) {
     fctx.body.push(...buildArgsBody);
     return;
   }

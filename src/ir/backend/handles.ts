@@ -22,7 +22,7 @@
 
 import type { Instr, ValType } from "../types.js";
 import type { JsTag } from "../js-tag.js";
-import type { IrClassMemberKind, IrFuncRef } from "../nodes.js";
+import type { IrClassMemberKind, IrFuncRef, IrType, IrTypeRef } from "../nodes.js";
 import type {
   LinearAllocationSitePlan,
   LinearRecordLayoutPlan,
@@ -145,6 +145,37 @@ export interface IrClosureLowering {
 export interface IrRefCellLowering {
   readonly typeIdx: number;
   readonly fieldIdx: number;
+}
+
+/**
+ * Exact post-preparation handle for a nominal function-style constructor.
+ * Name-keyed legacy maps are deliberately absent: the resolver must return
+ * this only after source/unit/layout and synthesized-constructor bindings have
+ * been joined against one finalized ABI plan.
+ */
+export interface IrFnctorLowering {
+  /** Physical carrier accepted at fnctor-typed value/parameter positions. */
+  readonly instanceCarrierType: ValType;
+  /** Exact non-null result of the synthesized constructor callable. */
+  readonly constructorResultType: ValType;
+  readonly reservedLayout: IrTypeRef;
+  readonly constructorFunc: IrFuncRef;
+  readonly captureParamTypes: readonly ValType[];
+  readonly tdzFlagParamTypes: readonly ValType[];
+  readonly userParamTypes: readonly ValType[];
+  readonly hiddenIdentity: boolean;
+  readonly constructorIdentityParamIndex: number | null;
+  readonly resultIsExternref: boolean;
+  readonly supportsConstruction: boolean;
+  readonly supportsFieldGet: boolean;
+  readonly structTypeIdx?: number;
+  field(name: string): {
+    readonly fieldIdx: number;
+    readonly logicalType: IrType;
+    readonly physicalType: ValType;
+    readonly refinement: "none" | "nullable-native-string";
+  };
+  fieldIdx(name: string): number;
 }
 
 /** Linear-memory analogue of the one-field mutable ref-cell struct. */

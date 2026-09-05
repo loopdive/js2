@@ -1,11 +1,11 @@
 ---
 id: 1691
 title: "yield* does not delegate throw()/return() to the inner iterator (eager-generator model gap)"
-status: blocked
+status: in_progress
 sprint: Backlog
 created: 2026-05-27
-updated: 2026-05-28
-priority: medium
+updated: 2026-08-27
+priority: high
 feasibility: hard
 reasoning_effort: high
 task_type: bugfix
@@ -13,7 +13,8 @@ area: codegen
 language_feature: generators
 goal: spec-completeness
 parent: 1665
-blocked_by: [1665, 1042]
+assignee: ttraenkler/codex-es6-yieldstar-throw
+related: [1042, 1665, 2170, 2173, 3711]
 ---
 # #1691 — yield* does not delegate throw()/return() to the inner iterator
 
@@ -187,3 +188,46 @@ dev on it. When #1665 lands, this issue's acceptance criteria are
 covered by the same lazy-iterator state machine that implements `next()`
 properly — `throw`/`return` delegation is a few additional dispatch
 arms on the state record's resume handler, not a separate workstream.
+
+## Resume implementation plan — 2026-08-27
+
+The recorded architectural prerequisites are now complete: #1665 and #1042
+are `done`, native suspend/resume generators ship in both relevant compiler
+paths, and #2170/#2173 implemented native `yield*` delegation for generator
+and general iterable subjects. The old “do not spawn” handoff is therefore
+stale. Current ES2015 standalone results still contain 13 members of the
+`star-rhs-iter-thrw-*` / `star-rhs-iter-thrw-violation-*` family under the
+shared complex-native-generator diagnostic, so this issue is reopened for a
+bounded protocol-completion slice.
+
+1. Rebuild the exact current ES2015 throw-delegation cohort from the maintained
+   11,704-path edition filter. Run every row alone in standalone and host modes
+   with the pinned Test262 checkout, QuickJS artifact, LLVM 18, and at most two
+   compiler workers; record exact status/signature and confirm which rows now
+   route to native versus buffer lowering.
+2. Trace the native `yield*` state graph and resume entry for normal, throw, and
+   return completions. Partition missing delegate method, getter/call abrupt,
+   non-object result, return fallback, and successful forwarding branches.
+   Select the largest cohesive native-lowering cluster; do not fold unrelated
+   parser, async-generator, or eager-host residuals into its denominator.
+3. Implement the shared §14.4.14 throw-completion arms in the live delegation
+   state: forward the received value, validate iterator results, perform the
+   required return/close fallback when `throw` is absent, and preserve the
+   outer generator's continuation and abrupt completion.
+4. Add focused host/standalone controls for successful throw forwarding,
+   throwing getter/call, non-callable/non-object results, absent-throw return
+   fallback, delegate final values, and adjacent normal/return delegation.
+5. Rerun the exact cohort and controls in both lanes, native generator/yield-star
+   regression suites, same-base pass-to-nonpass comparison, and mandatory
+   gates. Record artifacts, counts, root cause, residual ownership, commit SHA,
+   and handoff here.
+
+### Resume acceptance
+
+- The current candidate denominator and both-lane baseline are exact.
+- The selected cohesive throw-delegation cluster reaches 100% standalone and
+  host pass with zero failures, compile errors, timeouts, or skips.
+- Normal and return delegation remain green; no eager-host shortcut, fixture
+  rewrite, runner exemption, or host-oracle dependency is introduced.
+- The upstream PR uses the exact Description/CLA template and remains draft
+  until the scoped fix is complete, current-main based, CI-green, and mergeable.

@@ -1,0 +1,7 @@
+language/statements/class/subclass/builtin-objects/Error/message-property-assignment.js
+language/statements/class/subclass/builtin-objects/NativeError/EvalError-message.js
+language/statements/class/subclass/builtin-objects/NativeError/RangeError-message.js
+language/statements/class/subclass/builtin-objects/NativeError/ReferenceError-message.js
+language/statements/class/subclass/builtin-objects/NativeError/SyntaxError-message.js
+language/statements/class/subclass/builtin-objects/NativeError/TypeError-message.js
+language/statements/class/subclass/builtin-objects/NativeError/URIError-message.js

@@ -35,6 +35,7 @@ import {
 } from "./shared.js";
 import { ARRAY_METHODS, compileArrayMethodCall, guardedFuncRefCastInstrs, resolveArrayInfo } from "./array-methods.js";
 import { emitArrayLikeHofArm } from "./array-like-hof-arms.js";
+import { compileArrayConcatNativeSpecFromExprs } from "./array-concat-spec.js"; // (#5145)
 
 /** Methods supported by the array-like (externref receiver) path.
  * NOTE: map/filter/reduce/reduceRight are excluded because:
@@ -225,7 +226,9 @@ function assertThrowsBailApplies(
 function provablyNonCallableCallback(cb: ts.Expression | undefined): boolean {
   if (cb === undefined) return true;
   let e: ts.Expression = cb;
-  while (ts.isParenthesizedExpression(e)) e = e.expression;
+  while (ts.isParenthesizedExpression(e) || ts.isAsExpression(e) || ts.isTypeAssertionExpression(e)) {
+    e = e.expression;
+  }
   return (
     e.kind === ts.SyntaxKind.NullKeyword ||
     e.kind === ts.SyntaxKind.UndefinedKeyword ||
@@ -272,17 +275,19 @@ function emitArrayLikeNonCallableCallbackThrow(
   } else if (recvType.kind !== "externref") {
     coerceType(ctx, fctx, recvType, { kind: "externref" });
   }
-  // #16 — re-resolve by name: compiling the receiver above can shift
-  // defined-func indices (the addUnionImports late-shift hazard).
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_length") ?? lenFn });
-  fctx.body.push({ op: "drop" });
-
-  // Any further `.call` arguments were already evaluated by the OUTER call's
-  // ArgumentListEvaluation; compile + drop them so their side effects survive.
+  // Complete the outer call's ArgumentListEvaluation before method semantics:
+  // receiver, callback, thisArg, and every extra expression are evaluated in
+  // source order before LengthOfArrayLike. A later abrupt argument therefore
+  // wins over a Symbol length conversion, as required by §13.3.6.2.
   for (let i = 1; i < callExpr.arguments.length; i++) {
     const t = compileExpression(ctx, fctx, callExpr.arguments[i]!);
     if (t !== null) fctx.body.push({ op: "drop" });
   }
+
+  // #16 — re-resolve by name: compiling the receiver/arguments above can
+  // shift defined-func indices (the addUnionImports late-shift hazard).
+  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_length") ?? lenFn });
+  fctx.body.push({ op: "drop" });
 
   emitThrowTypeError(ctx, fctx, `TypeError: Array.prototype.${methodName} callback is not a function`);
   // The throw makes everything after it unreachable, so no sentinel value is
@@ -431,6 +436,10 @@ export function compileArrayLikePrototypeCall(
   // every/some/forEach/find/findIndex: callback is args[1]
   if (callExpr.arguments.length < 2) return undefined;
   const cbArg = callExpr.arguments[1]!;
+  // #5120: only find/findIndex use the pre-length argument stash below. Other
+  // HOF arms still compile their method-owned args in their existing arm
+  // builders, so evaluating those args here would duplicate side effects.
+  const preEvaluateMethodArguments = methodName === "find" || methodName === "findIndex";
 
   // Only handle callbacks that produce Wasm closures.
   // If the callback is a real JS function (externref), __proto_method_call handles it correctly.
@@ -505,16 +514,23 @@ export function compileArrayLikePrototypeCall(
   }
   fctx.body.push({ op: "local.set", index: receiverTmp });
 
-  // len = i32(f64(__extern_length(receiver)))
+  // Most array-like HOF arms retain their historical receiver → length →
+  // callback order because their arm builder still owns method arguments. The
+  // #5120 find/findIndex path instead calls this after all arguments below.
   const lenTmp = allocLocal(fctx, `__ali_len_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "local.get", index: receiverTmp });
-  // #16 — re-resolve __extern_length: the receiver compile above can shift
-  // defined-func indices (addUnionImports late-shift hazard); names are stable.
-  fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_length") ?? lenFn });
-  fctx.body.push({ op: "i32.trunc_sat_f64_s" });
-  fctx.body.push({ op: "local.set", index: lenTmp });
+  const emitLengthOfArrayLike = (): void => {
+    fctx.body.push({ op: "local.get", index: receiverTmp });
+    // #16 — re-resolve __extern_length by name after any receiver/argument
+    // lowering that may shift defined-func indices.
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_length") ?? lenFn });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: lenTmp });
+  };
+  if (!preEvaluateMethodArguments) emitLengthOfArrayLike();
 
-  // Compile callback to closure.
+  // Compile callback to closure. This is still ArgumentListEvaluation (the
+  // function value is created now, but its body is not invoked) and therefore
+  // intentionally precedes LengthOfArrayLike below.
   // (#2640) This is the generic `Array.prototype.X.call(arrayLike, cb)` path
   // over a DYNAMIC (non-vec) array-like receiver — the loop passes that
   // receiver to the callback's array parameter (`cb`'s 3rd/4th arg) as an
@@ -550,10 +566,53 @@ export function compileArrayLikePrototypeCall(
   // below. Args layout for the `.call` form: 0=receiver, 1=callback,
   // 2=thisArg — ONLY for methods with a spec thisArg slot (reduce/reduceRight
   // take initialValue at args[2], never a thisArg). Arrow callbacks are
-  // lexically `this`-bound — thisArg MUST be ignored (mirrors compileThisArg).
-  // Runs BEFORE the #16 re-resolves below (this compile can register imports).
+  // lexically `this`-bound — thisArg MUST be ignored for binding but its
+  // expression is still evaluated as part of ArgumentListEvaluation.
+  // Runs BEFORE LengthOfArrayLike and the #16 re-resolves below (this compile
+  // can register imports).
   let thisSlots: { thisArgTmp: number; prevThisTmp: number } | undefined;
-  if (ARRAY_LIKE_THISARG_METHODS.has(methodName) && callExpr.arguments.length >= 3 && !ts.isArrowFunction(cbArg)) {
+  if (preEvaluateMethodArguments) {
+    if (ARRAY_LIKE_THISARG_METHODS.has(methodName) && callExpr.arguments.length >= 3 && !ts.isArrowFunction(cbArg)) {
+      ensureCurrentThisGlobal(ctx);
+      const thisArgTmp = allocLocal(fctx, `__ali_this_${fctx.locals.length}`, { kind: "externref" });
+      const prevThisTmp = allocLocal(fctx, `__ali_prevthis_${fctx.locals.length}`, { kind: "externref" });
+      const tArgType = compileExpression(ctx, fctx, callExpr.arguments[2]!);
+      if (tArgType && tArgType.kind !== "externref") {
+        coerceType(ctx, fctx, tArgType, { kind: "externref" });
+      } else if (!tArgType) {
+        emitUndefined(ctx, fctx);
+      }
+      fctx.body.push({ op: "local.set", index: thisArgTmp });
+      thisSlots = { thisArgTmp, prevThisTmp };
+    } else if (callExpr.arguments.length >= 3) {
+      // The expression is still observable even when the callback is an arrow
+      // (whose lexical this ignores it).
+      const tArgType = compileExpression(ctx, fctx, callExpr.arguments[2]!);
+      if (tArgType !== null) fctx.body.push({ op: "drop" });
+    }
+
+    // Extra arguments are evaluated by the outer call before the borrowed
+    // method starts. They are ignored by find/findIndex, but their side
+    // effects (including abrupt completion) must occur exactly once and before
+    // the receiver's LengthOfArrayLike read.
+    for (let i = 3; i < callExpr.arguments.length; i++) {
+      const t = compileExpression(ctx, fctx, callExpr.arguments[i]!);
+      if (t !== null) fctx.body.push({ op: "drop" });
+    }
+
+    // Complete ArgumentListEvaluation before method semantics. The callback
+    // and all method arguments are now evaluated; only now may a Symbol
+    // `length` conversion throw (and a later abrupt argument has already won).
+    flushLateImportShifts(ctx, fctx);
+    emitLengthOfArrayLike();
+  } else if (
+    ARRAY_LIKE_THISARG_METHODS.has(methodName) &&
+    callExpr.arguments.length >= 3 &&
+    !ts.isArrowFunction(cbArg)
+  ) {
+    // Keep the pre-existing arm-owned evaluation for other HOF methods: their
+    // `thisArg`/initialValue is compiled again by the method-specific arm, so
+    // pre-stashing it here would duplicate side effects.
     ensureCurrentThisGlobal(ctx);
     const thisArgTmp = allocLocal(fctx, `__ali_this_${fctx.locals.length}`, { kind: "externref" });
     const prevThisTmp = allocLocal(fctx, `__ali_prevthis_${fctx.locals.length}`, { kind: "externref" });
@@ -1238,6 +1297,19 @@ export function compileArrayPrototypeCall(
 
   // Check if the method is a known array method
   if (!ARRAY_METHODS.has(methodName)) return undefined;
+
+  // (#5145) `Array.prototype.concat.call(recv, …)` — route straight to the
+  // §23.1.3.1 native spec loop. Everything below either builds a synthetic
+  // `recv.concat(…)` (which re-enters the vec fast paths the borrow shape
+  // cannot satisfy) or falls into the reflective `.call` lowering, whose
+  // arity-shaped `call_ref` against concat's VARIADIC `(this, argsVec)` proto
+  // closure emits an INVALID module ("need 3, got 2"). The spec loop is
+  // receiver-agnostic — it reads through `__extern_length` / `__extern_get_idx`
+  // — so the array-like receivers this spelling exists for work directly.
+  if ((ctx.standalone || ctx.wasi) && methodName === "concat") {
+    const nativeConcat = compileArrayConcatNativeSpecFromExprs(ctx, fctx, receiverArg, callExpr.arguments.slice(1));
+    if (nativeConcat !== undefined) return nativeConcat;
+  }
   // The mutating generic receiver contract for push is not native yet. The
   // typed synthetic-call route can compile this spelling but then traps when
   // the borrowed receiver is dynamically represented. Keep the direct

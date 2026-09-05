@@ -21,19 +21,39 @@ import {
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { evaluateConstantCondition } from "../statements/control-flow.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
+import { nearestDeclaredStructCommonAncestor } from "../struct-hierarchy-layout.js";
+// (#5271 step 5, B3) A constant fold must not erase a TDZ throw.
+import { analyzeTdzAccess, topLevelConstInitializedBeforeAnyUserCode } from "./identifiers.js";
 
 // Re-export for backward compatibility — these helpers now live in property-access.ts.
 export { getIteratorResultValueType, isGeneratorIteratorResultLike, resolveStructName, resolveStructNameForExpr };
+export { tryCompileCallableStaticField } from "./static-callable-field.js";
+
+/** A source `undefined` value that is not shadowed by a local declaration. */
+function isBuiltinUndefinedExpression(ctx: CodegenContext, expression: ts.Expression): boolean {
+  if (expression.kind === ts.SyntaxKind.UndefinedKeyword) return true;
+  if (!ts.isIdentifier(expression) || expression.text !== "undefined") return false;
+  const declaration = ctx.checker.getSymbolAtLocation(expression)?.valueDeclaration;
+  return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+}
 
 function compileConditionalExpression(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.ConditionalExpression,
+  expectedType?: ValType,
 ): ValType | null {
+  const hostBigIntExpected = (branch: ts.Expression): ValType | undefined => {
+    if (!usesHostBigIntCarrier(ctx)) return undefined;
+    return ctx.oracle.staticJsTypeOf(branch) === "bigint" ? { kind: "externref" } : undefined;
+  };
+
   // Constant-folding: if the condition is a compile-time constant, emit only the taken branch.
   const constResult = evaluateConstantCondition(expr.condition);
   if (constResult !== undefined) {
-    return compileExpression(ctx, fctx, constResult ? expr.whenTrue : expr.whenFalse);
+    const branch = constResult ? expr.whenTrue : expr.whenFalse;
+    return compileExpression(ctx, fctx, branch, hostBigIntExpected(branch));
   }
 
   const condType = compileExpression(ctx, fctx, expr.condition);
@@ -45,7 +65,7 @@ function compileConditionalExpression(
   }
 
   const savedBody = pushBody(fctx);
-  const thenResultType = compileExpression(ctx, fctx, expr.whenTrue);
+  const thenResultType = compileExpression(ctx, fctx, expr.whenTrue, hostBigIntExpected(expr.whenTrue));
   // If the then-branch is void (no value on stack), push a default value
   // so the ternary has a consistent result. JS treats void as undefined → NaN for numbers.
   if (!thenResultType) {
@@ -60,7 +80,7 @@ function compileConditionalExpression(
   // function after the else branch pulled in a helper.
   fctx.savedBodies.push(thenInstrs);
   fctx.body = [];
-  const elseResultType = compileExpression(ctx, fctx, expr.whenFalse);
+  const elseResultType = compileExpression(ctx, fctx, expr.whenFalse, hostBigIntExpected(expr.whenFalse));
   if (!elseResultType) {
     fctx.body.push({ op: "f64.const", value: NaN });
   }
@@ -90,17 +110,50 @@ function compileConditionalExpression(
       resultValType = { kind: "f64" };
     } else if (
       (thenType.kind === "ref" || thenType.kind === "ref_null") &&
+      elseType.kind === "externref" &&
+      isBuiltinUndefinedExpression(ctx, expr.whenFalse)
+    ) {
+      // Preserve the WasmGC carrier for `value : undefined`. Joining through
+      // externref would marshal a vec through `__make_iterable`, copying its
+      // indexed elements but dropping NodeArray expando metadata such as
+      // `pos`/`end`. The undefined arm is represented by ref.null instead.
+      resultValType = { kind: "ref_null", typeIdx: thenType.typeIdx };
+    } else if (
+      (elseType.kind === "ref" || elseType.kind === "ref_null") &&
+      thenType.kind === "externref" &&
+      isBuiltinUndefinedExpression(ctx, expr.whenTrue)
+    ) {
+      resultValType = { kind: "ref_null", typeIdx: elseType.typeIdx };
+    } else if (
+      (thenType.kind === "ref" || thenType.kind === "ref_null") &&
       (elseType.kind === "ref" || elseType.kind === "ref_null") &&
       isAnyValue(thenType, ctx) === isAnyValue(elseType, ctx)
     ) {
-      // Both refs but different typeIdx — use ref_null of the then type
-      resultValType =
-        thenType.kind === "ref"
-          ? {
-              kind: "ref_null",
-              typeIdx: (thenType as { typeIdx: number }).typeIdx,
-            }
-          : thenType;
+      // A conditional may join two nominal siblings (`StringLiteral |
+      // Identifier`). Choosing the first arm's struct type without a declared
+      // subtype proof makes the other arm's guarded coercion substitute null.
+      // Join at the nearest declared ancestor instead. When conditional arms
+      // retain precise captured-closure refs, this also preserves their shared
+      // wrapper root rather than degrading the callee to an opaque externref.
+      const commonAncestor = nearestDeclaredStructCommonAncestor(ctx.mod, thenType, elseType);
+      if (expectedType?.kind === "externref" || expectedType?.kind === "ref_extern") {
+        // Contextual externref is already the lossless union carrier. Prefer
+        // it to an internal common ancestor so no later sink has to downcast
+        // that ancestor back to one branch's concrete sibling.
+        resultValType = expectedType;
+      } else if (expectedType?.kind === "ref" || expectedType?.kind === "ref_null") {
+        // Coerce each arm directly to the contextual ref. This is distributive
+        // over carrier projections: vec<number> | vec<any>, for example, can
+        // project the numeric arm element-wise to the expected vec<any>, while
+        // joining first at `$__vec_base` would lose that element ABI and make a
+        // later guarded downcast substitute null. `$AnyValue` uses the same
+        // path to box unrelated ordinary refs independently.
+        resultValType = { kind: "ref_null", typeIdx: expectedType.typeIdx };
+      } else if (commonAncestor !== undefined) {
+        resultValType = { kind: "ref_null", typeIdx: commonAncestor };
+      } else {
+        resultValType = { kind: "externref" };
+      }
     } else if (
       ctx.unionAnyRep &&
       ctx.anyValueTypeIdx >= 0 &&
@@ -547,6 +600,15 @@ export function tryStaticToNumber(
     if (decl && ts.isVariableDeclaration(decl) && decl.initializer) {
       const declList = decl.parent;
       if (ts.isVariableDeclarationList(declList) && (declList.flags & ts.NodeFlags.Const) !== 0) {
+        // (#5271 step 5, B3) A read in the binding's TEMPORAL DEAD ZONE has no
+        // value — it throws. Folding it to the initializer's number erased the
+        // throw at the CALL SITE even though the callee kept its runtime check
+        // (`function f(){ return x + 1; } f(); const x = 1;`). #1607 below is
+        // the narrow self-reference case of the same rule; this is the general
+        // one.
+        if (analyzeTdzAccess(ctx, expr) !== "skip" && !topLevelConstInitializedBeforeAnyUserCode(decl)) {
+          return undefined;
+        }
         // #1607: self-referential lexical initializer (TDZ). If we are already
         // tracing through this exact declaration, the initializer names the
         // very binding it declares (`const x = x;`, `await using x = x + 1;`).

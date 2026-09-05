@@ -7,9 +7,21 @@ import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { InnerResult } from "../shared.js";
 import { coerceType, compileExpression } from "../shared.js";
+import { emitLazyNativeProtoGet } from "../native-proto.js";
+import {
+  ensureTypedArrayIntrinsicNativeProtoGlue,
+  ensureTypedArrayViewNativeProtoGlue,
+  isTypedArrayViewProtoName,
+} from "../array-object-proto.js";
+import { tryEnsureNativeProtoBrand } from "../property-access.js";
 import { isGlobalBuiltinIdentifier } from "./calls.js";
 import { emitThrowTypeError } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { integrityVarKey } from "../widened-var-key.js";
+import { objectLiteralHasColonProto } from "../literals.js"; // (#5270 step 2)
+import { sourceShadowsGlobalName } from "../source-function-members.js"; // (#5194 review F1)
+
+const NATIVE_COLLECTION_NAMES = new Set(["Map", "Set", "WeakMap", "WeakSet"]);
 
 const ES5_FUNCTION_PROTOTYPE_CTORS = new Set([
   "Object",
@@ -22,6 +34,26 @@ const ES5_FUNCTION_PROTOTYPE_CTORS = new Set([
   "RegExp",
   "Error",
 ]);
+
+/**
+ * Constructors `C` for which `Object.getPrototypeOf(C.prototype)` is exactly
+ * `%Object.prototype%`.
+ *
+ * `Function.prototype` (§20.2.3) is the original member: a built-in function
+ * object whose [[Prototype]] is `%Object.prototype%`, carrying no `$proto` link
+ * the native `__getPrototypeOf` walk can follow — so that walk answered `null`.
+ * `Promise.prototype` (§27.2.3.1, #5143) has the same shape: it lowers to a
+ * `$NativeProto` struct whose `$parent` field is left null ("chain walk
+ * deferred", `native-proto.ts`), so the query silently answered `null` too.
+ *
+ * Membership is per-constructor and deliberate: most builtin prototypes do NOT
+ * root directly at `%Object.prototype%` (see the call site's comment).
+ */
+// (#5151) The four keyed-collection prototypes DO uniformly inherit directly
+// from %Object.prototype% (§24.1.3/§24.2.3/§24.3.3/§24.4.3), so they join the
+// rooted set (getPrototypeOf(Map.prototype) must answer %Object.prototype%,
+// not the receiver's own brand page).
+const OBJECT_ROOTED_PROTOTYPE_CTORS = new Set(["Function", "Promise", "Map", "Set", "WeakMap", "WeakSet"]);
 
 const ES5_NATIVE_ERROR_CTORS = new Set([
   "EvalError",
@@ -41,12 +73,15 @@ const ES5_OBJECT_PROTOTYPES = new Map([
   ["Date", "Date"],
   ["RegExp", "RegExp"],
   ["Error", "Error"],
-  ["EvalError", "Error"],
-  ["RangeError", "Error"],
-  ["ReferenceError", "Error"],
-  ["SyntaxError", "Error"],
-  ["TypeError", "Error"],
-  ["URIError", "Error"],
+  // (§20.5.6.4) Each NativeError has its OWN prototype object; collapsing them
+  // onto `Error` made `Object.getPrototypeOf(new EvalError) === Error.prototype`
+  // (test262 `NativeErrors/*/instance-proto.js`, `prototype.js`).
+  ["EvalError", "EvalError"],
+  ["RangeError", "RangeError"],
+  ["ReferenceError", "ReferenceError"],
+  ["SyntaxError", "SyntaxError"],
+  ["TypeError", "TypeError"],
+  ["URIError", "URIError"],
   ["IArguments", "Object"],
 ]);
 
@@ -56,6 +91,53 @@ function isTopLevelThis(expr: ts.Expression): boolean {
     if (ts.isFunctionLike(parent)) return false;
   }
   return true;
+}
+
+/** Emit the identity-stable standalone prototype for a native collection. */
+export function tryNativeCollectionGpo(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+  argTsType: ts.Type,
+): boolean {
+  if (!ctx.standalone && !ctx.wasi) return false;
+  const collectionName = argTsType.getSymbol()?.name;
+  if (collectionName === undefined || !NATIVE_COLLECTION_NAMES.has(collectionName)) return false;
+
+  const argType = compileExpression(ctx, fctx, arg);
+  if (argType) fctx.body.push({ op: "drop" });
+  const brand = tryEnsureNativeProtoBrand(ctx, collectionName);
+  if (brand === undefined || !emitLazyNativeProtoGet(ctx, fctx, brand)) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  return true;
+}
+
+/**
+ * Return true when an expression is a statically-known JSON object parse.
+ *
+ * The standalone JSON codec materialises parsed objects as ordinary open
+ * objects, but their runtime `$Object` carrier intentionally keeps the
+ * prototype link implicit. Recognising a literal object payload here lets
+ * `Object.getPrototypeOf` expose the canonical `%Object.prototype%` value,
+ * matching the ordinary-object result without changing `Object.create(null)`.
+ * Only a literal whose first non-whitespace character is `{` is admitted:
+ * arrays and primitive JSON payloads have different intrinsic prototypes.
+ */
+function isJsonObjectParseCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
+  if (
+    !ts.isCallExpression(expr) ||
+    !ts.isPropertyAccessExpression(expr.expression) ||
+    expr.expression.name.text !== "parse" ||
+    !ts.isIdentifier(expr.expression.expression) ||
+    expr.expression.expression.text !== "JSON" ||
+    !isGlobalBuiltinIdentifier(ctx, fctx, expr.expression.expression)
+  ) {
+    return false;
+  }
+  const source = expr.arguments[0];
+  if (!source || !ts.isStringLiteralLike(source)) return false;
+  return source.text.trim().startsWith("{");
 }
 
 /**
@@ -115,8 +197,25 @@ export function tryCompileEs5GetPrototypeOfEarly(
     return { kind: "externref" };
   }
 
+  // Closed standalone plain objects keep their ordinary prototype implicit.
+  // An integrity call marks the identifier, so preserve the argument read and
+  // answer this exact query with the compiler-owned singleton.
+  if (ctx.standalone && ts.isIdentifier(arg0) && ctx.nonExtensibleVars.has(integrityVarKey(ctx, arg0))) {
+    const argType = compileExpression(ctx, fctx, arg0);
+    if (argType) fctx.body.push({ op: "drop" });
+    return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
+  }
+
   if (ts.isIdentifier(arg0) && isGlobalBuiltinIdentifier(ctx, fctx, arg0)) {
     if (ES5_FUNCTION_PROTOTYPE_CTORS.has(arg0.text)) {
+      return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
+    }
+    // (#4781/#5151) The ES2015 keyed-collection constructors are themselves
+    // built-in function objects, so their [[Prototype]] is %Function.prototype%.
+    // Keep these queries on the intrinsic path in both lanes; the native
+    // collection path below models INSTANCES and must not answer for the
+    // constructor object.
+    if (NATIVE_COLLECTION_NAMES.has(arg0.text)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Function");
     }
     if (ES5_NATIVE_ERROR_CTORS.has(arg0.text)) {
@@ -136,16 +235,17 @@ export function tryCompileEs5GetPrototypeOfEarly(
   // identity-stable singleton this file emits for `Math`/`JSON`, so routing here
   // gives real `ref.eq` identity (test262 `Function/prototype/S15.3.4_A3_T1.js`).
   //
-  // Deliberately narrow: ONLY `Function.prototype`. The other builtin prototypes
-  // do NOT uniformly inherit from %Object.prototype% (`Int8Array.prototype` →
-  // %TypedArray%.prototype, `TypeError.prototype` → `Error.prototype`), and this
-  // hook runs BEFORE the typed-array / generator / class getPrototypeOf arms —
-  // a blanket branch here would preempt them with a wrong answer.
+  // Deliberately narrow — see `OBJECT_ROOTED_PROTOTYPE_CTORS`. The other builtin
+  // prototypes do NOT uniformly inherit from %Object.prototype%
+  // (`Int8Array.prototype` → %TypedArray%.prototype, `TypeError.prototype` →
+  // `Error.prototype`), and this hook runs BEFORE the typed-array / generator /
+  // class getPrototypeOf arms — a blanket branch here would preempt them with a
+  // wrong answer.
   if (
     ts.isPropertyAccessExpression(arg0) &&
     arg0.name.text === "prototype" &&
     ts.isIdentifier(arg0.expression) &&
-    arg0.expression.text === "Function" &&
+    OBJECT_ROOTED_PROTOTYPE_CTORS.has(arg0.expression.text) &&
     isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
   ) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
@@ -163,10 +263,113 @@ export function tryCompileEs5GetPrototypeOfValue(
   expr: ts.CallExpression,
 ): InnerResult | null {
   const arg0 = expr.arguments[0]!;
+  if (isJsonObjectParseCall(ctx, fctx, arg0)) {
+    // Preserve JSON.parse validation and reviver side effects before replacing
+    // only the prototype query with the canonical intrinsic singleton.
+    const parsedType = compileExpression(ctx, fctx, arg0);
+    if (parsedType) fctx.body.push({ op: "drop" });
+    return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
+  }
+  // (§20.5.6.4) `<NativeError>.prototype`'s own [[Prototype]] IS `Error.prototype`.
+  // The declared-name map below sees the type name `EvalError` for BOTH an
+  // EvalError instance and `EvalError.prototype`, so without this arm the
+  // per-NativeError rows would answer the receiver itself
+  // (`NativeErrors/*/prototype/proto.js`).
+  if (
+    ts.isPropertyAccessExpression(arg0) &&
+    arg0.name.text === "prototype" &&
+    ts.isIdentifier(arg0.expression) &&
+    ES5_NATIVE_ERROR_CTORS.has(arg0.expression.text) &&
+    isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
+  ) {
+    return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Error");
+  }
+
+  // (#5194 step 1) The TypedArray family, in TWO shapes that the declared-name
+  // map below cannot tell apart — `Uint8Array.prototype` and
+  // `new Uint8Array(0)` both have the TS type `Uint8Array`.
+  //
+  //   `getPrototypeOf(<View>.prototype)` → `%TypedArray%.prototype` (§23.2.7)
+  //   `getPrototypeOf(<view instance>)`  → `<View>.prototype`      (§23.2.5.6)
+  //
+  // The instance arm MUST stay compile-time: a statically typed view lowers to
+  // a packed carrier that several kinds share (`i8_byte` serves Int8Array,
+  // Uint8Array and Uint8ClampedArray; `f64` serves Float64Array AND
+  // `number[]`), so no runtime test can recover the kind. Dynamic views already
+  // resolve at runtime through the `ta-dyn-mop.ts` `__getPrototypeOf` arm, and
+  // both routes land on the same lazily-materialized glue singleton, so the
+  // identity `getPrototypeOf(new Uint8Array(0)) === Uint8Array.prototype` holds
+  // by `ref.eq` either way.
+  if (ctx.standalone || ctx.wasi) {
+    const protoOfName =
+      ts.isPropertyAccessExpression(arg0) && arg0.name.text === "prototype" && ts.isIdentifier(arg0.expression)
+        ? arg0.expression.text
+        : undefined;
+    // (#5194 review F1) `<View>.prototype` only denotes the intrinsic when the
+    // identifier IS the global builtin. Without this gate a program with its own
+    // `class Uint8Array { … }` had `Object.getPrototypeOf(Uint8Array.prototype)`
+    // answer `%TypedArray%.prototype`. Same guard the NativeError arm above uses.
+    if (
+      protoOfName !== undefined &&
+      isTypedArrayViewProtoName(protoOfName) &&
+      ts.isPropertyAccessExpression(arg0) &&
+      ts.isIdentifier(arg0.expression) &&
+      isGlobalBuiltinIdentifier(ctx, fctx, arg0.expression)
+    ) {
+      const argType = compileExpression(ctx, fctx, arg0);
+      if (argType) fctx.body.push({ op: "drop" });
+      const intrinsicBrand = ensureTypedArrayIntrinsicNativeProtoGlue(ctx);
+      if (intrinsicBrand !== undefined && emitLazyNativeProtoGet(ctx, fctx, intrinsicBrand)) {
+        return { kind: "externref" };
+      }
+      fctx.body.push({ op: "ref.null.extern" });
+      return { kind: "externref" };
+    }
+    // (#5194 review F1) The INSTANCE arm keys on the declared TYPE NAME, and a
+    // user `class Uint8Array { … }` produces exactly the same name — there is no
+    // identifier here to run `isGlobalBuiltinIdentifier` against, so the file's
+    // module-level bindings are the check. Base answered the user class's
+    // prototype correctly; the name-only test regressed it (and minted the whole
+    // TypedArray proto graph into such a program: 405,180 -> 478,540 bytes).
+    const viewName = ctx.oracle.declaredNameOf(arg0) ?? "";
+    if (
+      protoOfName === undefined &&
+      isTypedArrayViewProtoName(viewName) &&
+      !sourceShadowsGlobalName(expr.getSourceFile(), viewName)
+    ) {
+      // (#5194 review F3, DOCUMENTED RESIDUAL — measured, not assumed.) This
+      // fold answers the DECLARED type's prototype, so a SUBCLASS instance in a
+      // base-typed binding (`class Bytes extends Uint8Array {}`;
+      // `const b: Uint8Array = new Bytes(2)`) reports `Uint8Array.prototype`
+      // where the spec says `Bytes.prototype`. Declining the fold for any file
+      // that subclasses the view was tried and REVERTED: it does not move the
+      // work to a better answer, it moves it to a different wrong one — the
+      // runtime arm cannot recover the kind from a statically typed carrier
+      // (`i8_byte` serves Int8/Uint8/Uint8Clamped), so the ORDINARY
+      // `Object.getPrototypeOf(new Uint8Array(1))` in the same file then
+      // answered wrong too (measured: the focused control returned 2). Fixing
+      // this needs a per-binding subclass fact, not a per-file one.
+      const brand = ensureTypedArrayViewNativeProtoGlue(ctx, viewName);
+      if (brand !== undefined) {
+        const argType = compileExpression(ctx, fctx, arg0);
+        if (argType) fctx.body.push({ op: "drop" });
+        if (emitLazyNativeProtoGet(ctx, fctx, brand)) return { kind: "externref" };
+        fctx.body.push({ op: "ref.null.extern" });
+        return { kind: "externref" };
+      }
+    }
+  }
+
   const staticType = ctx.oracle.staticJsTypeOf(arg0);
   if (staticType === "boolean") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Boolean");
   if (staticType === "string") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "String");
   if (staticType === "number") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Number");
+  // (#5269 B-a) §7.1.18 ToObject(symbol) is a Symbol wrapper, whose
+  // [[Prototype]] is `%Symbol.prototype%`. Without this arm the symbol fell to
+  // the declared-name / signature probes below, answered `null`, and every
+  // reflective read off the result (`Symbol.prototype[Symbol.toStringTag]`,
+  // `Object.prototype.toString.call(…)`) then dereferenced a null.
+  if (staticType === "symbol") return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Symbol");
 
   const knownPrototypeName = ES5_OBJECT_PROTOTYPES.get(ctx.oracle.declaredNameOf(arg0) ?? "");
   if (knownPrototypeName) {
@@ -178,15 +381,22 @@ export function tryCompileEs5GetPrototypeOfValue(
   if (ts.isArrayLiteralExpression(arg0)) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
   }
-  if (ts.isObjectLiteralExpression(arg0)) {
+  // (#5270 step 2) A colon-form `__proto__` key REPLACES the literal's
+  // [[Prototype]] during evaluation, so folding to `%Object.prototype%` here
+  // would answer the wrong object (`__proto__-value-obj`, `-value-null`). Let
+  // the runtime `__getPrototypeOf` read the field the literal actually wrote.
+  if (ts.isObjectLiteralExpression(arg0) && !objectLiteralHasColonProto(ctx, arg0)) {
     return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
   }
   if (ts.isIdentifier(arg0)) {
     const initializer = ctx.oracle.variableInitializerOf(arg0);
+    if (initializer && isJsonObjectParseCall(ctx, fctx, initializer)) {
+      return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
+    }
     if (initializer && ts.isArrayLiteralExpression(initializer)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Array");
     }
-    if (initializer && ts.isObjectLiteralExpression(initializer)) {
+    if (initializer && ts.isObjectLiteralExpression(initializer) && !objectLiteralHasColonProto(ctx, initializer)) {
       return emitEs5IntrinsicPrototype(ctx, fctx, expr, "Object");
     }
     if (initializer && (ts.isFunctionExpression(initializer) || ts.isArrowFunction(initializer))) {
@@ -247,7 +457,9 @@ function hasProvablyNonNullOrdinaryPrototype(ctx: CodegenContext, expr: ts.Expre
     seen.add(current);
     if (
       isTopLevelThis(current) ||
-      ts.isObjectLiteralExpression(current) ||
+      // (#5270 step 2) `{ __proto__: null }` is an object literal whose
+      // prototype IS null — the one literal shape this fold must not claim.
+      (ts.isObjectLiteralExpression(current) && !objectLiteralHasColonProto(ctx, current)) ||
       ts.isArrayLiteralExpression(current) ||
       ts.isFunctionExpression(current) ||
       ts.isArrowFunction(current)

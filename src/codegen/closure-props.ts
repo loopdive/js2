@@ -72,6 +72,9 @@ import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { protoIndexRecvGetMissInstrs } from "./proto-index-store.js"; // (#4176) inherited proto-named consult
 import { INSTANCE_BAG_FIELD } from "./closures/closure-header-layout.js"; // (#4241) one spelling of the slot name
+// (#4491 T9) one spelling of the #4008 builtin-instance carrier set, shared with
+// the fold-routing predicates so the two cannot drift apart.
+import { BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES } from "./builtin-instance-key-presence.js";
 import { addFuncType } from "./registry/types.js";
 
 /** WasmGC `eq` abstract heap type (used for `ref.cast`/`ref.null` to eqref). */
@@ -150,17 +153,46 @@ function slottedInstanceCarrierRoots(ctx: CodegenContext): { typeIdx: number; ba
   return out;
 }
 
-/** Build `__extern_get`'s non-object receiver arm. */
-export function buildClosurePropGetMissArm(ctx: CodegenContext, getMiss: () => Instr[]): Instr[] {
+/**
+ * Build `__extern_get`'s non-object receiver arm.
+ *
+ * (#5194 r3 review F2) `explicitReceiverLocal` is `__extern_get`'s consumed
+ * one-shot receiver (param 0 for an ordinary read; the `Reflect.get` / dyn-view
+ * prototype-walk receiver otherwise). For a receiver that is NOT a closure
+ * carrier, `__closure_prop_get` is exactly the receiver-aware companion
+ * consult `__protoidx_get_r(obj, key)` — which runs an inherited accessor with
+ * `this` = `obj`. A `$NativeProto` reached through the walk (`Reflect.get(
+ * Float64Array.prototype, "dbl", view)`, or `view.dbl` inherited) therefore
+ * ran the getter against the PROTOTYPE. Split the two roles: the companion
+ * brand still comes from `obj`, the accessor `this` from the explicit
+ * receiver. Closure carriers keep the bag/prototype-edge route untouched.
+ */
+export function buildClosurePropGetMissArm(
+  ctx: CodegenContext,
+  getMiss: () => Instr[],
+  explicitReceiverLocal?: number,
+): Instr[] {
   const closurePropGetIdx = ctx.funcMap.get(CLOSURE_PROP_GET);
-  return closurePropGetIdx === undefined
-    ? [...getMiss(), { op: "return" }]
-    : [
-        { op: "local.get", index: 0 }, // obj
-        { op: "local.get", index: 1 }, // key
-        { op: "call", funcIdx: closurePropGetIdx },
-        { op: "return" },
-      ];
+  if (closurePropGetIdx === undefined) return [...getMiss(), { op: "return" }];
+  const isClosureIdx = ctx.funcMap.get(IS_CLOSURE_PROP_CARRIER);
+  const receiverAwareConsult =
+    explicitReceiverLocal === undefined || isClosureIdx === undefined
+      ? undefined
+      : protoIndexRecvGetMissInstrs(ctx, 0, 1, explicitReceiverLocal);
+  return [
+    ...(receiverAwareConsult === undefined
+      ? []
+      : ([
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: isClosureIdx! },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: [...receiverAwareConsult, { op: "return" }] },
+        ] satisfies Instr[])),
+    { op: "local.get", index: 0 }, // obj
+    { op: "local.get", index: 1 }, // key
+    { op: "call", funcIdx: closurePropGetIdx },
+    { op: "return" },
+  ];
 }
 
 /** Build `__extern_set`'s non-object receiver arm. */
@@ -316,6 +348,102 @@ function buildProtoNamedMethodMissArm(
 }
 
 /**
+ * Build the dynamic `prototype` write arm for ordinary function objects.
+ *
+ * The closure property setter receives an erased function value, so the
+ * existing inherited-descriptor resolver can otherwise claim the write before
+ * the function's own mandatory writable `prototype` property is consulted.
+ */
+function buildFnctorPrototypeWriteArm(
+  ctx: CodegenContext,
+  sharedSetAvailable: boolean,
+  bagEnsureIdx: number,
+  externSetIdx: number,
+  setOwnIdx: number | undefined,
+  setResultGlobalIdx: number | undefined,
+): Instr[] {
+  const constructibleTypeIdxs = [...ctx.constructibleClosureTypeIdxs];
+  if (constructibleTypeIdxs.length === 0 || ctx.nativeStrings !== true || ctx.nativeStrTypeIdx < 0) return [];
+
+  if (sharedSetAvailable && (setOwnIdx === undefined || setResultGlobalIdx === undefined)) return [];
+  const defineValueIdx = ctx.funcMap.get("__defineProperty_value");
+  const writeOwn = (): Instr[] =>
+    defineValueIdx !== undefined
+      ? [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: bagEnsureIdx },
+          { op: "local.set", index: 3 },
+          { op: "local.get", index: 3 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          // `prototype` is the mandatory own data property created for every
+          // ordinary function. Materialize its exact descriptor while changing
+          // only [[Value]]: writable=true, enumerable/configurable=false. The
+          // host flag word also marks all three attributes and value specified.
+          { op: "f64.const", value: 0xb9 },
+          { op: "call", funcIdx: defineValueIdx },
+          { op: "drop" },
+          ...(sharedSetAvailable
+            ? ([
+                { op: "i32.const", value: 1 }, // SET_RESULT_SUCCESS
+                { op: "global.set", index: setResultGlobalIdx! },
+              ] satisfies Instr[])
+            : []),
+          { op: "return" },
+        ]
+      : sharedSetAvailable
+        ? [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: bagEnsureIdx },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: setOwnIdx! },
+            { op: "global.set", index: setResultGlobalIdx! },
+            { op: "return" },
+          ]
+        : [
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: bagEnsureIdx },
+            { op: "local.get", index: 1 },
+            { op: "local.get", index: 2 },
+            { op: "call", funcIdx: externSetIdx },
+            { op: "return" },
+          ];
+  return [
+    { op: "local.get", index: 1 },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: ctx.nativeStrTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: 1 },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: ctx.nativeStrTypeIdx },
+        ...nativeStringLiteralInstrs(ctx, "prototype"),
+        { op: "ref.eq" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            ...constructibleTypeIdxs.flatMap((typeIdx): Instr[] => [
+              { op: "local.get", index: 0 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: writeOwn(),
+              },
+            ]),
+          ],
+        },
+      ],
+    },
+  ];
+}
+
+/**
  * Register the `$ClosurePropEntry` struct type + `$__closure_prop_head` global
  * and reserve the closure-own-property helper placeholders. Called from
  * `ensureObjectRuntime`'s type section under `ctx.standalone || ctx.wasi`,
@@ -387,13 +515,16 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
  * (#4008) Standalone BUILTIN-INSTANCE carriers for the same identity-keyed
  * side table.
  *
- * `new RegExp()` / `new Date()` are lowered to dedicated WasmGC structs
- * (`__StandaloneRegExp`, `__Date`), not `$Object`s — so, exactly like a
- * closure before #3468, `d.foo = 1` fell off the end of `__extern_set`'s
- * `ref.test $Object` gate and `d.foo` read back `undefined`. Measured
+ * `new RegExp()` / `new Date()` and standalone native Promises are lowered to
+ * dedicated WasmGC structs (`__StandaloneRegExp`, `__Date`, `$Promise`), not
+ * `$Object`s — so, exactly like a closure before #3468, `d.foo = 1` fell off
+ * the end of `__extern_set`'s `ref.test $Object` gate and `d.foo` read back
+ * `undefined`. Measured
  * 2026-08-06 under `--target standalone`: expando write-then-read works on a
  * plain object, array, function, Arguments object and every primitive
- * wrapper, and is silently dropped on exactly RegExp and Date.
+ * wrapper, and was silently dropped on RegExp and Date. The native `$Promise`
+ * carrier had the same representation gap: Deno's private promise-id Symbol
+ * and ordinary string expandos were both discarded.
  *
  * That is a general expando gap, but the reason it is being closed HERE is
  * ES §6.2.5.6: test262 spells "an arbitrary object used as a property
@@ -416,13 +547,36 @@ export function reserveClosurePropHelpers(ctx: CodegenContext): void {
  *     that the externref-backed-subclass own-field path writes directly, so
  *     bagging it would give one receiver two disagreeing stores.
  * Types absent from the module are skipped, so a program that never
- * constructs a Date emits the identical `ref.test` chain as before.
+ * constructs one of these builtins emits the identical `ref.test` chain as
+ * before.
  */
 function builtinInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
   const out: number[] = [];
-  for (const name of ["__StandaloneRegExp", "__Date"]) {
+  for (const name of BUILTIN_INSTANCE_CARRIER_STRUCT_NAMES) {
     const idx = ctx.structMap.get(name);
     if (idx !== undefined) out.push(idx);
+  }
+  return out;
+}
+
+/**
+ * Standalone reconstructed function instances are WasmGC structs rather than
+ * `$Object`s.  They still have ordinary JavaScript expandos: a dynamic
+ * function called with `this = new F()` must be able to create `this.x`, and a
+ * later read through the erased/member path must observe it.  Keep these
+ * carriers on the slotless identity registry (the fnctor layouts do not carry
+ * the intrinsic `$bag` field) instead of widening the predicate to every user
+ * struct, which would conflate class/collection storage with expandos.
+ */
+function fnctorInstanceCarrierTypeIdxs(ctx: CodegenContext): number[] {
+  const out: number[] = [];
+  // Fnctor layouts are reserved before the final struct map is populated;
+  // consume that pass-invariant registry so the carrier predicate sees the
+  // base type even when fillClosurePropHelpers runs before on-demand filling.
+  for (const typeIdx of ctx.fnctorReservedTypeIdx.values()) out.push(typeIdx);
+  // Keep compatibility with any late/non-reserved fnctor registrations.
+  for (const [name, typeIdx] of ctx.structMap) {
+    if (name.startsWith("__fnctor_") && !out.includes(typeIdx)) out.push(typeIdx);
   }
   return out;
 }
@@ -632,6 +786,21 @@ function fillCarrierBagHelpers(
   }
 }
 
+/** Fill the closure carrier predicate shared by the closure property helpers. */
+function fillClosureCarrier(
+  carrierTypeIdxs: number[],
+  setBody: (name: string, locals: { name: string; type: ValType }[], body: Instr[]) => void,
+): void {
+  const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
+  for (const carrierIdx of carrierTypeIdxs) {
+    body.push({ op: "local.get", index: 1 });
+    body.push({ op: "ref.test", typeIdx: carrierIdx });
+    body.push({ op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] });
+  }
+  body.push({ op: "i32.const", value: 0 });
+  setBody(IS_CLOSURE_PROP_CARRIER, [{ name: "__any", type: { kind: "anyref" } }], body);
+}
+
 /**
  * Fill the reserved closure-own-property helper bodies at FINALIZE, after
  * every closure root is registered and `__extern_get`/`__extern_set`/
@@ -671,7 +840,11 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
 
   // (#4241) Computed once and shared by the carrier predicate and BOTH bag
   // helpers, so the slotted/slotless split cannot drift between them.
-  const carrierTypeIdxs = [...collectClosureBaseWrapperTypeIdxs(ctx), ...builtinInstanceCarrierTypeIdxs(ctx)];
+  const carrierTypeIdxs = [
+    ...collectClosureBaseWrapperTypeIdxs(ctx),
+    ...builtinInstanceCarrierTypeIdxs(ctx),
+    ...fnctorInstanceCarrierTypeIdxs(ctx),
+  ];
   const slotted = [
     ...slottedCarrierRoots(ctx, carrierTypeIdxs),
     // (#4241 step 1b) Instance carriers that were given an intrinsic `$bag` at
@@ -684,28 +857,8 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
   ];
 
   // ── __is_closure_prop_carrier(externref value) -> i32 ──
-  // (#3468 F1) ref.test chain over the closure BASE-wrapper types (same set as
-  // `__is_closure`/`__typeof_function` via `collectClosureBaseWrapperTypeIdxs`);
-  // a base-root test also matches every capturing subtype instance, so this
-  // subsumes the previously narrowed capturing-only carrier set. This is the
-  // stakeholder-ruled widening that lets shared noncapturing wrappers — the
-  // test262 `assert` harness receiver — carry own properties, which makes the
-  // harness assertions FIRE (honest floor de-inflation; see the issue file).
-  // Constant 0 when the module has no closures.
-  {
-    const body: Instr[] = [
-      { op: "local.get", index: 0 },
-      { op: "any.convert_extern" },
-      { op: "local.set", index: 1 }, // __any
-    ];
-    for (const carrierIdx of carrierTypeIdxs) {
-      body.push({ op: "local.get", index: 1 });
-      body.push({ op: "ref.test", typeIdx: carrierIdx });
-      body.push({ op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] });
-    }
-    body.push({ op: "i32.const", value: 0 });
-    setBody(IS_CLOSURE_PROP_CARRIER, [{ name: "__any", type: { kind: "anyref" } }], body);
-  }
+  // The base-wrapper ref.test chain also matches every capturing subtype.
+  fillClosureCarrier(carrierTypeIdxs, setBody);
 
   fillCarrierBagHelpers(ctx, { entryTypeIdx, headGlobalIdx, newPlainObjectIdx, slotted, setBody });
 
@@ -849,8 +1002,17 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
       setDecideIdx !== undefined &&
       setOwnIdx !== undefined &&
       setResultGlobalIdx !== undefined;
+    const fnctorProtoWriteArm = buildFnctorPrototypeWriteArm(
+      ctx,
+      sharedSetAvailable,
+      bagEnsureIdx,
+      externSetIdx,
+      setOwnIdx,
+      setResultGlobalIdx,
+    );
     const body: Instr[] = sharedSetAvailable
       ? [
+          ...fnctorProtoWriteArm,
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: isClosureIdx },
           {
@@ -918,6 +1080,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
           },
         ]
       : [
+          ...fnctorProtoWriteArm,
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: isClosureIdx },
           {
@@ -934,7 +1097,7 @@ export function fillClosurePropHelpers(ctx: CodegenContext): void {
         ];
     setBody(
       CLOSURE_PROP_SET,
-      sharedSetAvailable
+      sharedSetAvailable || fnctorProtoWriteArm.length > 0
         ? [
             { name: "__bag", type: { kind: "externref" } },
             { name: "__decision", type: { kind: "i32" } },

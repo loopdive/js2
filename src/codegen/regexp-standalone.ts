@@ -79,21 +79,33 @@ import {
 import { emitReceiverBrandCheck } from "./receiver-brand.js";
 import type { InnerResult } from "./shared.js";
 import { compileExpression } from "./shared.js";
-import { noJsHost } from "./js-errors.js"; // (#4439) pairs the poison with its guard
+import { buildThrowJsErrorInstrs, noJsHost, emitThrowTypeError } from "./js-errors.js"; // (#4439) pairs the poison with its guard
 import { compileStringLiteral } from "./string-ops.js";
 import { tryCompileCoercedStringMatch, tryCompileCoercedStringSearch } from "./string-search-value.js";
 import { isPlainToStringReplacement } from "./string-proto-replace.js";
 import { tryCompileStandaloneRegExpFunctionReplace } from "./regex-replace-fn.js";
+import { tryCompileStandaloneRegExpLegacyStaticRead } from "./regexp-legacy-static.js";
+import {
+  resolveAssignedTransferredProtoMember,
+  tryEmitTransferredObjectToStringCall,
+} from "./expressions/transferred-proto-assignment.js";
 import { nativeStringRepr } from "./builtin-scaffold.js";
+import { emitBuiltinConstructorIdentity } from "./builtin-static-globals.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { addFuncType } from "./registry/types.js";
 import { STANDALONE_REGEXP_CARRIER_TEST_HELPER } from "../ir/regexp-runtime-contract.js";
+import { integrityVarKey } from "./widened-var-key.js";
 import { emitTestCapsAcquire, emitTestCapsRelease } from "./regex-scratch-pool.js";
 import {
   ensureDynamicPatternTokenDecoder,
   makeDynamicPatternAccessors,
   TOKEN_ANY,
+  TOKEN_GROUP_CLOSE,
+  TOKEN_GROUP_OPEN,
+  TOKEN_OPT,
   TOKEN_PIPE,
+  TOKEN_PLUS,
+  TOKEN_STAR,
   TOKEN_UNSUPPORTED,
 } from "./regexp-dynamic-pattern.js";
 
@@ -239,11 +251,11 @@ function isStaticStandaloneRegExpCreation(ctx: CodegenContext, expr: ts.Expressi
   if (unwrapped.kind === ts.SyntaxKind.RegularExpressionLiteral) return true;
   if (ts.isNewExpression(unwrapped)) {
     const callee = stripStaticWrapper(unwrapped.expression);
-    return ts.isIdentifier(callee) && isGlobalRegExpIdentifier(ctx, callee);
+    return isGlobalRegExpConstructorExpression(ctx, callee);
   }
   if (ts.isCallExpression(unwrapped) && !unwrapped.questionDotToken) {
     const callee = stripStaticWrapper(unwrapped.expression);
-    return ts.isIdentifier(callee) && isGlobalRegExpIdentifier(ctx, callee);
+    return isGlobalRegExpConstructorExpression(ctx, callee);
   }
   return false;
 }
@@ -459,6 +471,64 @@ export function isGlobalRegExpIdentifier(ctx: CodegenContext, ident: ts.Identifi
   return isDeclarationFileOnlySymbol(sym);
 }
 
+/**
+ * Whether an expression is the ambient RegExp constructor value.
+ *
+ * TypeScript gives `RegExp.prototype.constructor` the broad `Function` type
+ * (and therefore gives a variable initialized from it no construct signature)
+ * even though the ES5 value is the callable/constructable RegExp intrinsic.
+ * The standalone `new` dispatcher must retain that identity when the
+ * constructor is read through the prototype or a const/var alias; otherwise
+ * the generic externref constructor path sees a plain carrier object and
+ * reports "RegExp is not a constructor" at runtime.
+ *
+ * This is intentionally a syntax-and-binding proof, not a broad name check:
+ * shadowed `RegExp` bindings do not satisfy `isGlobalRegExpIdentifier`, and an
+ * alias is only followed through a variable declaration initializer. Writes or
+ * cycles decline and keep the ordinary dynamic path.
+ */
+export function isGlobalRegExpConstructorExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const seen = new Set<ts.Symbol>();
+
+  const isPrototypeExpression = (candidate: ts.Expression): boolean => {
+    const unwrapped = stripStaticWrapper(candidate);
+    if (!ts.isPropertyAccessExpression(unwrapped) || unwrapped.name.text !== "prototype") return false;
+    const base = stripStaticWrapper(unwrapped.expression);
+    return ts.isIdentifier(base) && isGlobalRegExpIdentifier(ctx, base);
+  };
+
+  const visit = (candidate: ts.Expression): boolean => {
+    const unwrapped = stripStaticWrapper(candidate);
+    if (ts.isIdentifier(unwrapped)) {
+      if (isGlobalRegExpIdentifier(ctx, unwrapped)) return true;
+      const symbol = ctx.checker.getSymbolAtLocation(unwrapped);
+      if (!symbol || seen.has(symbol)) return false;
+      seen.add(symbol);
+      const declarations = symbol.getDeclarations() ?? [];
+      if (declarations.length === 0) return false;
+      let foundVariable = false;
+      for (const declaration of declarations) {
+        if (!ts.isVariableDeclaration(declaration) || declaration.initializer === undefined) return false;
+        // A mutable alias remains claimable only when the whole binding is
+        // never assigned after its declaration. `const` naturally passes;
+        // `var`/`let` are checked because JavaScript's checker still reports
+        // their initializer as the useful identity even after a rebind.
+        if (bindingHasWrites(ctx, declaration, symbol)) return false;
+        foundVariable = true;
+        if (!visit(declaration.initializer)) return false;
+      }
+      return foundVariable;
+    }
+
+    if (ts.isPropertyAccessExpression(unwrapped) && unwrapped.name.text === "constructor") {
+      return isPrototypeExpression(unwrapped.expression);
+    }
+    return false;
+  };
+
+  return visit(expr);
+}
+
 function isDeclarationFileOnlySymbol(sym: ts.Symbol | undefined): boolean {
   if (!sym) return true;
   const decls = sym.getDeclarations();
@@ -534,8 +604,9 @@ function staticConstStringValue(
   expr: ts.Expression,
   seen: Set<ts.Node> = new Set(),
   depth = 0,
+  maxDepth = 16,
 ): string | null | undefined {
-  if (depth > 16) return null;
+  if (depth > maxDepth) return null;
   const cur = stripStaticWrapper(expr);
 
   // Direct literal / undefined — defer to the narrow helper first.
@@ -548,9 +619,9 @@ function staticConstStringValue(
 
   // `a + b` — fold when both operands fold to strings.
   if (ts.isBinaryExpression(cur) && cur.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = staticConstStringValue(ctx, cur.left, seen, depth + 1);
+    const left = staticConstStringValue(ctx, cur.left, seen, depth + 1, maxDepth);
     if (typeof left !== "string") return null;
-    const right = staticConstStringValue(ctx, cur.right, seen, depth + 1);
+    const right = staticConstStringValue(ctx, cur.right, seen, depth + 1, maxDepth);
     if (typeof right !== "string") return null;
     return left + right;
   }
@@ -588,14 +659,15 @@ function staticConstStringValue(
     }
     // A never-written binding with NO initialiser is always `undefined`
     // (`var x; new RegExp(/re/m, x)` — sputnik's hoisted-undefined flags form).
-    if (!decl.initializer) return isConst ? null : undefined;
+    if (!decl.initializer)
+      return ts.isForOfStatement(list.parent) || ts.isForInStatement(list.parent) ? null : isConst ? null : undefined;
     if (seen.has(decl.initializer)) return null;
     // `seen` guards the ACTIVE resolution path (a self-referential cycle), so
     // unwind it after the recursive fold — a diamond (`a + "x" + a`, the same
     // binding referenced twice in one pattern) is legitimate and must fold
     // (#2161 B4: the REX XML-parser concat chains reuse fragments repeatedly).
     seen.add(decl.initializer);
-    const folded = staticConstStringValue(ctx, decl.initializer, seen, depth + 1);
+    const folded = staticConstStringValue(ctx, decl.initializer, seen, depth + 1, maxDepth);
     seen.delete(decl.initializer);
     return folded;
   }
@@ -685,6 +757,7 @@ function staticRegExpPatternFlags(
   ctx: CodegenContext,
   expr: ts.Expression,
   depth = 0,
+  patternOnly = false,
 ): StaticRegExpPatternFlags | null {
   if (depth > 16) return null; // see staticRegExpLiteralCopy's depth guard
   const unwrapped = stripStaticWrapper(expr);
@@ -702,7 +775,7 @@ function staticRegExpPatternFlags(
     const patternArg = unwrapped.arguments?.[0];
     const flagsArg = unwrapped.arguments?.[1];
     // #2161 — a regex-literal first arg is the §22.2.3.1 copy form.
-    if (patternArg !== undefined) {
+    if (patternArg !== undefined && !patternOnly) {
       const copy = staticRegExpLiteralCopy(ctx, patternArg, flagsArg, depth + 1);
       if (copy !== null) return copy;
     }
@@ -710,7 +783,11 @@ function staticRegExpPatternFlags(
     // so a `const re = new RegExp("a"+"b","g")` binding is recognised as a
     // backend-created receiver for downstream `re.test`/`re.exec`/etc.
     const pattern = patternArg === undefined ? "" : staticConstStringValue(ctx, patternArg, new Set(), depth + 1);
-    const flags = flagsArg === undefined ? "" : staticConstStringValue(ctx, flagsArg, new Set(), depth + 1);
+    const flags = patternOnly
+      ? ""
+      : flagsArg === undefined
+        ? ""
+        : staticConstStringValue(ctx, flagsArg, new Set(), depth + 1);
     if (pattern === null || flags === null) return null;
     return { pattern: pattern ?? "", flags: flags ?? "" };
   }
@@ -718,8 +795,8 @@ function staticRegExpPatternFlags(
     const sym = ctx.checker.getSymbolAtLocation(unwrapped);
     if (!sym) return null;
     const decl = sym.getDeclarations()?.find((d) => ts.isVariableDeclaration(d)) as ts.VariableDeclaration | undefined;
-    if (!decl?.initializer || !isTrustedBackendCreatedRegExpBinding(ctx, decl, sym)) return null;
-    return staticRegExpPatternFlags(ctx, decl.initializer, depth + 1);
+    if (!decl?.initializer || (!patternOnly && !isTrustedBackendCreatedRegExpBinding(ctx, decl, sym))) return null;
+    return staticRegExpPatternFlags(ctx, decl.initializer, depth + 1, patternOnly);
   }
   return null;
 }
@@ -793,6 +870,18 @@ export function staticRegExpGroupMeta(
   }
 }
 
+function staticRegExpGroupNames(ctx: CodegenContext, expr: ts.Expression): ReadonlyMap<string, number> | null {
+  const full = staticRegExpGroupMeta(ctx, expr);
+  if (full !== null) return full.groupNames;
+  const pattern = staticRegExpPatternFlags(ctx, expr, 0, true)?.pattern;
+  if (pattern === undefined) return null;
+  try {
+    return compilePattern(pattern, 0).groupNames;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The `$NativeRegExp` struct (#1539). Holds the flags bitfield, the
  * capture-group count, the compiled bytecode program, the class table, and the
@@ -817,6 +906,12 @@ export const RE_FIELD_NSCRATCH = 5; // #1959 — scratch slots for PROGRESS guar
 // resolve the `g` flag and reset `lastIndex` at RUNTIME — the borrowed form has
 // no regex EXPRESSION for `staticRegExpFlags` to read.
 export const RE_FIELD_LASTINDEX = 6;
+// Keep the legacy f64 slot for the common numeric fast path, but preserve a
+// non-numeric assignment opaquely until g/y exec applies ToLength. This mirrors
+// the host lane's deferred-lastIndex contract without widening every existing
+// numeric reflection site.
+export const RE_FIELD_LASTINDEX_RAW = 7;
+export const RE_FIELD_LASTINDEX_RAW_PRESENT = 8;
 
 /**
  * Push `2 * nGroups + nScratch` (the VM caps-array length) onto the stack,
@@ -889,21 +984,27 @@ export function ensureStandaloneRegExpStruct(ctx: CodegenContext): number {
   const i32ArrIdx = regexI32ArrayType(ctx);
   const i32ArrRef: ValType = { kind: "ref", typeIdx: i32ArrIdx };
   const typeIdx = ctx.mod.types.length;
+  // (#5142) The pattern fields are MUTABLE: Annex B §B.2.4.1
+  // `RegExp.prototype.compile` recompiles a regexp IN PLACE, so the receiver's
+  // program / flags / source have to be replaceable on an existing struct.
+  // There is exactly one `$NativeRegExp` heap type and nothing reads it through
+  // a subtype, so widening mutability is additive.
   const fields = [
-    { name: "flags", type: { kind: "i32" } as ValType, mutable: false },
-    { name: "nGroups", type: { kind: "i32" } as ValType, mutable: false },
-    { name: "prog", type: i32ArrRef, mutable: false },
-    { name: "classTable", type: i32ArrRef, mutable: false },
-    { name: "source", type: nativeStringType(ctx), mutable: false },
+    { name: "flags", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "nGroups", type: { kind: "i32" } as ValType, mutable: true },
+    { name: "prog", type: i32ArrRef, mutable: true },
+    { name: "classTable", type: i32ArrRef, mutable: true },
+    { name: "source", type: nativeStringType(ctx), mutable: true },
     // Scratch capture-slot count for PROGRESS empty-loop guards (#1959). The VM
     // caps array is sized `2*nGroups + nScratch`; scratch slots are never
     // reported as captures. Field added after source to keep lastIndex last.
-    { name: "nScratch", type: { kind: "i32" } as ValType, mutable: false },
-    // [[LastIndex]] (§22.2.7.1) — a plain writable number property on the
-    // RegExp object. Stored as f64; exec applies ToLength at use time. Only
-    // g/y exec mutates it (#1913); reads/writes route through the #1914
-    // reflection path below.
+    { name: "nScratch", type: { kind: "i32" } as ValType, mutable: true },
+    // [[LastIndex]] (§22.2.7.1) — keep the numeric slot for the hot path, and
+    // pair it with an opaque raw value/presence bit for deferred ToLength of
+    // object assignments (`re.lastIndex = {valueOf(){...}}`).
     { name: "lastIndex", type: { kind: "f64" } as ValType, mutable: true },
+    { name: "lastIndexRaw", type: { kind: "externref" } as ValType, mutable: true },
+    { name: "lastIndexRawPresent", type: { kind: "i32" } as ValType, mutable: true },
   ];
   ctx.mod.types.push({
     kind: "struct",
@@ -1096,6 +1197,23 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
   // verbatim as its match payload. `.` (ANY) and any multi-unit escape make
   // source text != matched text, which that path has no way to express.
   const PLAIN = 30;
+  // #4516 — Annex B `\\c` fallback quantifiers are only valid immediately
+  // after an atom. Keep malformed/ordinary dynamic quantifiers loud.
+  const CAN_QUANTIFY = 31;
+  // Emission lookahead for a quantifier following the current atom.
+  const NEXT = 32;
+  // Start pc of the current quantified atom's loop.
+  const QSTART = 33;
+  // Group bookkeeping for the bounded dynamic capture-envelope grammar. A
+  // capture group gets two SAVE records; a non-capturing group only changes
+  // the nesting stack. Groups are deliberately refused when mixed with `|`
+  // so the existing alternative counter cannot be fed a mismatched stack.
+  const GROUP_DEPTH = 34;
+  const GROUP_CAPS = 35;
+  const GROUP_STACK = 36;
+  const GROUP_ID = 37;
+  const GROUP_SEEN = 38;
+  const GROUP_TOTAL = 39;
   const readFlatUnit = (dataLocal: number, offLocal: number, indexLocal: number): Instr[] => [
     { op: "local.get", index: dataLocal },
     { op: "local.get", index: offLocal },
@@ -1110,6 +1228,19 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "i32.const", value: index },
     { op: "i32.add" },
     { op: "array.get_u", typeIdx: ctx.nativeStrDataTypeIdx },
+  ];
+
+  const groupStackGet = (index: number): Instr[] => [
+    { op: "local.get", index: GROUP_STACK },
+    { op: "local.get", index },
+    { op: "array.get", typeIdx: i32ArrIdx },
+  ];
+
+  const groupStackSet = (value: Instr[]): Instr[] => [
+    { op: "local.get", index: GROUP_STACK },
+    { op: "local.get", index: GROUP_DEPTH },
+    ...value,
+    { op: "array.set", typeIdx: i32ArrIdx },
   ];
 
   // #4065 — the single shared tokeniser. All FOUR walks over the pattern (count
@@ -1176,6 +1307,9 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "local.get", index: PFLAT },
     { op: "struct.get", typeIdx: ctx.nativeStrTypeIdx, fieldIdx: 0 },
     { op: "local.set", index: PLEN },
+    { op: "local.get", index: PLEN },
+    { op: "array.new_default", typeIdx: i32ArrIdx },
+    { op: "local.set", index: GROUP_STACK },
     { op: "local.get", index: FLAGS },
     { op: "call", funcIdx: flattenIdx },
     { op: "local.tee", index: FFLAT },
@@ -1324,6 +1458,14 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     { op: "local.set", index: CHARS },
     { op: "i32.const", value: 1 },
     { op: "local.set", index: PLAIN },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: CAN_QUANTIFY },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: GROUP_DEPTH },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: GROUP_CAPS },
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: GROUP_SEEN },
     { op: "local.get", index: START },
     { op: "local.set", index: I },
     {
@@ -1358,41 +1500,197 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 { op: "local.set", index: PLAIN },
               ],
             },
-            ...tk.kindIs(TOKEN_PIPE),
+            ...tk.kindIs(TOKEN_GROUP_OPEN),
             {
               op: "if",
               blockType: { kind: "empty" },
               then: [
-                { op: "local.get", index: ANCHORED },
+                { op: "i32.const", value: 1 },
+                { op: "local.set", index: GROUP_SEEN },
+                { op: "i32.const", value: 0 },
+                { op: "local.set", index: PLAIN },
+                ...tk.value(),
+                { op: "i32.eqz" },
                 {
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [
-                    { op: "local.get", index: PIPES },
+                    ...groupStackSet([{ op: "local.get", index: GROUP_CAPS }]),
+                    { op: "local.get", index: GROUP_CAPS },
                     { op: "i32.const", value: 1 },
                     { op: "i32.add" },
-                    { op: "local.set", index: PIPES },
-                  ],
-                  else: [
-                    { op: "i32.const", value: 0 },
-                    { op: "local.set", index: SIMPLE },
-                  ],
-                },
-              ],
-              else: [
-                ...tk.kindIs(TOKEN_UNSUPPORTED),
-                {
-                  op: "if",
-                  blockType: { kind: "empty" },
-                  then: [
-                    { op: "i32.const", value: 0 },
-                    { op: "local.set", index: SIMPLE },
-                  ],
-                  else: [
+                    { op: "local.set", index: GROUP_CAPS },
                     { op: "local.get", index: CHARS },
-                    { op: "i32.const", value: 1 },
+                    { op: "i32.const", value: 2 },
                     { op: "i32.add" },
                     { op: "local.set", index: CHARS },
+                  ],
+                  else: [...groupStackSet([{ op: "i32.const", value: -1 }])],
+                },
+                { op: "local.get", index: GROUP_DEPTH },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: GROUP_DEPTH },
+              ],
+              else: [
+                ...tk.kindIs(TOKEN_GROUP_CLOSE),
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "i32.const", value: 0 },
+                    { op: "local.set", index: PLAIN },
+                    { op: "local.get", index: GROUP_DEPTH },
+                    { op: "i32.eqz" },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "i32.const", value: 0 },
+                        { op: "local.set", index: SIMPLE },
+                      ],
+                      else: [
+                        { op: "local.get", index: GROUP_DEPTH },
+                        { op: "i32.const", value: 1 },
+                        { op: "i32.sub" },
+                        { op: "local.set", index: GROUP_DEPTH },
+                      ],
+                    },
+                  ],
+                  else: [
+                    ...tk.kindIs(TOKEN_PIPE),
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        { op: "local.get", index: GROUP_DEPTH },
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "i32.const", value: 0 },
+                            { op: "local.set", index: SIMPLE },
+                          ],
+                          else: [
+                            { op: "local.get", index: PIPES },
+                            { op: "i32.const", value: 1 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: PIPES },
+                          ],
+                        },
+                      ],
+                      else: [
+                        ...tk.kindIs(TOKEN_UNSUPPORTED),
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "i32.const", value: 0 },
+                            { op: "local.set", index: SIMPLE },
+                            { op: "i32.const", value: 0 },
+                            { op: "local.set", index: CAN_QUANTIFY },
+                          ],
+                          else: [
+                            // `*`, `+`, and `?` are operators rather than program
+                            // records. They add the records needed to wrap the
+                            // immediately preceding atom; a leading/repeated
+                            // quantifier remains a loud unsupported pattern.
+                            ...tk.kindIs(TOKEN_STAR),
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: CAN_QUANTIFY },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: CHARS },
+                                    { op: "i32.const", value: 2 },
+                                    { op: "i32.add" },
+                                    { op: "local.set", index: CHARS },
+                                  ],
+                                  else: [
+                                    { op: "i32.const", value: 0 },
+                                    { op: "local.set", index: SIMPLE },
+                                  ],
+                                },
+                                { op: "i32.const", value: 0 },
+                                { op: "local.set", index: PLAIN },
+                                { op: "i32.const", value: 0 },
+                                { op: "local.set", index: CAN_QUANTIFY },
+                              ],
+                              else: [
+                                ...tk.kindIs(TOKEN_PLUS),
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: CAN_QUANTIFY },
+                                    {
+                                      op: "if",
+                                      blockType: { kind: "empty" },
+                                      then: [
+                                        { op: "local.get", index: CHARS },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "i32.add" },
+                                        { op: "local.set", index: CHARS },
+                                      ],
+                                      else: [
+                                        { op: "i32.const", value: 0 },
+                                        { op: "local.set", index: SIMPLE },
+                                      ],
+                                    },
+                                    { op: "i32.const", value: 0 },
+                                    { op: "local.set", index: PLAIN },
+                                    { op: "i32.const", value: 0 },
+                                    { op: "local.set", index: CAN_QUANTIFY },
+                                  ],
+                                  else: [
+                                    ...tk.kindIs(TOKEN_OPT),
+                                    {
+                                      op: "if",
+                                      blockType: { kind: "empty" },
+                                      then: [
+                                        { op: "local.get", index: CAN_QUANTIFY },
+                                        {
+                                          op: "if",
+                                          blockType: { kind: "empty" },
+                                          then: [
+                                            { op: "local.get", index: CHARS },
+                                            { op: "i32.const", value: 1 },
+                                            { op: "i32.add" },
+                                            { op: "local.set", index: CHARS },
+                                          ],
+                                          else: [
+                                            { op: "i32.const", value: 0 },
+                                            { op: "local.set", index: SIMPLE },
+                                          ],
+                                        },
+                                        { op: "i32.const", value: 0 },
+                                        { op: "local.set", index: PLAIN },
+                                        { op: "i32.const", value: 0 },
+                                        { op: "local.set", index: CAN_QUANTIFY },
+                                      ],
+                                      else: [
+                                        // A literal or `.` is an atom that a later
+                                        // quantifier may decorate.
+                                        { op: "local.get", index: CHARS },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "i32.add" },
+                                        { op: "local.set", index: CHARS },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "local.set", index: CAN_QUANTIFY },
+                                      ],
+                                    },
+                                  ],
+                                },
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
                   ],
                 },
               ],
@@ -1403,6 +1701,19 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
         },
       ],
     },
+    { op: "local.get", index: GROUP_DEPTH },
+    { op: "i32.eqz" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [],
+      else: [
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: SIMPLE },
+      ],
+    },
+    { op: "local.get", index: GROUP_CAPS },
+    { op: "local.set", index: GROUP_TOTAL },
     // SAVE0 + chars + (SPLIT,JMP per pipe) + optional BOL/EOL + SAVE1 + MATCH.
     { op: "local.get", index: CHARS },
     { op: "local.get", index: PIPES },
@@ -1502,6 +1813,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                 },
                 { op: "i32.const", value: 0 }, // nScratch
                 { op: "f64.const", value: 0 }, // lastIndex
+                { op: "ref.null.extern" }, // raw lastIndex
+                { op: "i32.const", value: 0 }, // raw present
                 { op: "struct.new", typeIdx: structTypeIdx },
                 { op: "return" },
               ],
@@ -1520,6 +1833,10 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
         { op: "local.set", index: PROG },
         { op: "i32.const", value: 0 },
         { op: "local.set", index: PC },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: GROUP_DEPTH },
+        { op: "i32.const", value: 1 },
+        { op: "local.set", index: GROUP_CAPS },
         ...emitRecord([{ op: "i32.const", value: ReOp.SAVE }], [{ op: "i32.const", value: 0 }]),
         { op: "local.get", index: ANCHORED },
         {
@@ -1571,10 +1888,52 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         ...readToken(J),
                         ...tk.kindIs(TOKEN_PIPE),
                         { op: "br_if", depth: 1 },
-                        { op: "local.get", index: ALTN },
-                        { op: "i32.const", value: 1 },
-                        { op: "i32.add" },
-                        { op: "local.set", index: ALTN },
+                        // Quantifiers contribute only their loop scaffolding:
+                        // `*` is SPLIT+atom+JMP (+2 records), while `+`/`?`
+                        // each add one. Other tokens contribute one record.
+                        ...tk.kindIs(TOKEN_STAR),
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            { op: "local.get", index: ALTN },
+                            { op: "i32.const", value: 2 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: ALTN },
+                          ],
+                          else: [
+                            ...tk.kindIs(TOKEN_PLUS),
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: ALTN },
+                                { op: "i32.const", value: 1 },
+                                { op: "i32.add" },
+                                { op: "local.set", index: ALTN },
+                              ],
+                              else: [
+                                ...tk.kindIs(TOKEN_OPT),
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: ALTN },
+                                    { op: "i32.const", value: 1 },
+                                    { op: "i32.add" },
+                                    { op: "local.set", index: ALTN },
+                                  ],
+                                  else: [
+                                    { op: "local.get", index: ALTN },
+                                    { op: "i32.const", value: 1 },
+                                    { op: "i32.add" },
+                                    { op: "local.set", index: ALTN },
+                                  ],
+                                },
+                              ],
+                            },
+                          ],
+                        },
                         ...advanceByToken(J),
                         { op: "br", depth: 0 },
                       ],
@@ -1626,10 +1985,189 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
                         // exactly `CHARS` records and stays inside the
                         // `NINSTR * 3` program array.
                         ...readToken(K),
-                        ...tk.value(),
-                        { op: "local.set", index: CH },
-                        ...emitRecord(tk.recordOp(), dynamicCharOperand),
-                        ...advanceByToken(K),
+                        ...tk.kindIs(TOKEN_GROUP_OPEN),
+                        {
+                          op: "if",
+                          blockType: { kind: "empty" },
+                          then: [
+                            ...tk.value(),
+                            { op: "i32.eqz" },
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                ...groupStackSet([{ op: "local.get", index: GROUP_CAPS }]),
+                                ...emitRecord(
+                                  [{ op: "i32.const", value: ReOp.SAVE }],
+                                  [
+                                    { op: "i32.const", value: 2 },
+                                    { op: "local.get", index: GROUP_CAPS },
+                                    { op: "i32.mul" },
+                                  ],
+                                ),
+                                { op: "local.get", index: GROUP_CAPS },
+                                { op: "i32.const", value: 1 },
+                                { op: "i32.add" },
+                                { op: "local.set", index: GROUP_CAPS },
+                              ],
+                              else: [...groupStackSet([{ op: "i32.const", value: -1 }])],
+                            },
+                            { op: "local.get", index: GROUP_DEPTH },
+                            { op: "i32.const", value: 1 },
+                            { op: "i32.add" },
+                            { op: "local.set", index: GROUP_DEPTH },
+                            ...advanceByToken(K),
+                          ],
+                          else: [
+                            ...tk.kindIs(TOKEN_GROUP_CLOSE),
+                            {
+                              op: "if",
+                              blockType: { kind: "empty" },
+                              then: [
+                                { op: "local.get", index: GROUP_DEPTH },
+                                { op: "i32.const", value: 1 },
+                                { op: "i32.sub" },
+                                { op: "local.set", index: GROUP_DEPTH },
+                                ...groupStackGet(GROUP_DEPTH),
+                                { op: "local.set", index: GROUP_ID },
+                                { op: "local.get", index: GROUP_ID },
+                                { op: "i32.const", value: 0 },
+                                { op: "i32.ge_s" },
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    ...emitRecord(
+                                      [{ op: "i32.const", value: ReOp.SAVE }],
+                                      [
+                                        { op: "i32.const", value: 2 },
+                                        { op: "local.get", index: GROUP_ID },
+                                        { op: "i32.mul" },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "i32.add" },
+                                      ],
+                                    ),
+                                  ],
+                                  else: [],
+                                },
+                                ...advanceByToken(K),
+                              ],
+                              else: [
+                                // Quantifiers are operators: wrap the immediately
+                                // preceding atom instead of emitting a standalone
+                                // record. The decoder scopes these tokens to the
+                                // Annex B `\\c` fallback, so ordinary unsupported
+                                // quantifier patterns still take the refusal path.
+                                { op: "local.get", index: K },
+                                ...tk.len(),
+                                { op: "i32.add" },
+                                { op: "local.set", index: NEXT },
+                                ...readToken(NEXT),
+                                ...tk.kindIs(TOKEN_STAR),
+                                {
+                                  op: "if",
+                                  blockType: { kind: "empty" },
+                                  then: [
+                                    { op: "local.get", index: PC },
+                                    { op: "local.set", index: QSTART },
+                                    ...emitRecord(
+                                      [{ op: "i32.const", value: ReOp.SPLIT }],
+                                      [
+                                        { op: "local.get", index: PC },
+                                        { op: "i32.const", value: 1 },
+                                        { op: "i32.add" },
+                                      ],
+                                      [
+                                        { op: "local.get", index: PC },
+                                        { op: "i32.const", value: 3 },
+                                        { op: "i32.add" },
+                                      ],
+                                    ),
+                                    ...readToken(K),
+                                    ...tk.value(),
+                                    { op: "local.set", index: CH },
+                                    ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                    ...emitRecord(
+                                      [{ op: "i32.const", value: ReOp.JMP }],
+                                      [{ op: "local.get", index: QSTART }],
+                                    ),
+                                    ...readToken(NEXT),
+                                    ...advanceByToken(NEXT),
+                                    { op: "local.get", index: NEXT },
+                                    { op: "local.set", index: K },
+                                  ],
+                                  else: [
+                                    ...tk.kindIs(TOKEN_PLUS),
+                                    {
+                                      op: "if",
+                                      blockType: { kind: "empty" },
+                                      then: [
+                                        { op: "local.get", index: PC },
+                                        { op: "local.set", index: QSTART },
+                                        ...readToken(K),
+                                        ...tk.value(),
+                                        { op: "local.set", index: CH },
+                                        ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                        ...emitRecord(
+                                          [{ op: "i32.const", value: ReOp.SPLIT }],
+                                          [{ op: "local.get", index: QSTART }],
+                                          [
+                                            { op: "local.get", index: PC },
+                                            { op: "i32.const", value: 1 },
+                                            { op: "i32.add" },
+                                          ],
+                                        ),
+                                        ...readToken(NEXT),
+                                        ...advanceByToken(NEXT),
+                                        { op: "local.get", index: NEXT },
+                                        { op: "local.set", index: K },
+                                      ],
+                                      else: [
+                                        ...tk.kindIs(TOKEN_OPT),
+                                        {
+                                          op: "if",
+                                          blockType: { kind: "empty" },
+                                          then: [
+                                            { op: "local.get", index: PC },
+                                            { op: "local.set", index: QSTART },
+                                            ...emitRecord(
+                                              [{ op: "i32.const", value: ReOp.SPLIT }],
+                                              [
+                                                { op: "local.get", index: PC },
+                                                { op: "i32.const", value: 1 },
+                                                { op: "i32.add" },
+                                              ],
+                                              [
+                                                { op: "local.get", index: PC },
+                                                { op: "i32.const", value: 2 },
+                                                { op: "i32.add" },
+                                              ],
+                                            ),
+                                            ...readToken(K),
+                                            ...tk.value(),
+                                            { op: "local.set", index: CH },
+                                            ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                            ...readToken(NEXT),
+                                            ...advanceByToken(NEXT),
+                                            { op: "local.get", index: NEXT },
+                                            { op: "local.set", index: K },
+                                          ],
+                                          else: [
+                                            ...readToken(K),
+                                            ...tk.value(),
+                                            { op: "local.set", index: CH },
+                                            ...emitRecord(tk.recordOp(), dynamicCharOperand),
+                                            ...advanceByToken(K),
+                                          ],
+                                        },
+                                      ],
+                                    },
+                                  ],
+                                },
+                              ],
+                            },
+                          ],
+                        },
                         { op: "br", depth: 0 },
                       ],
                     },
@@ -1753,7 +2291,9 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     },
     ...buildIndexedAnchoredLiteralAltProgram(i32ArrIdx, ctx.nativeStrDataTypeIdx),
     { op: "local.get", index: FBITS },
+    { op: "local.get", index: GROUP_TOTAL },
     { op: "i32.const", value: 1 },
+    { op: "i32.add" },
     { op: "local.get", index: PROG },
     { op: "i32.const", value: 0 },
     { op: "array.new_default", typeIdx: i32ArrIdx },
@@ -1767,6 +2307,8 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
     },
     { op: "i32.const", value: 0 },
     { op: "f64.const", value: 0 },
+    { op: "ref.null.extern" },
+    { op: "i32.const", value: 0 },
     { op: "struct.new", typeIdx: structTypeIdx },
   ];
 
@@ -1803,6 +2345,15 @@ export function ensureDynamicStandaloneRegExpCompiler(ctx: CodegenContext): numb
       { name: "tok", type: { kind: "i32" } },
       { name: "altn", type: { kind: "i32" } },
       { name: "plain", type: { kind: "i32" } },
+      { name: "canQuantify", type: { kind: "i32" } },
+      { name: "next", type: { kind: "i32" } },
+      { name: "qstart", type: { kind: "i32" } },
+      { name: "groupDepth", type: { kind: "i32" } },
+      { name: "groupCaps", type: { kind: "i32" } },
+      { name: "groupStack", type: i32ArrRef },
+      { name: "groupId", type: { kind: "i32" } },
+      { name: "groupSeen", type: { kind: "i32" } },
+      { name: "groupTotal", type: { kind: "i32" } },
     ],
     body,
     exported: false,
@@ -1841,6 +2392,8 @@ function emitStandaloneRegExpStruct(
   fctx.body.push({ op: "i32.const", value: compiled.nScratch });
   // field 6: lastIndex — fresh RegExp objects start at 0 (§22.2.3.3).
   fctx.body.push({ op: "f64.const", value: 0 });
+  // fields 7/8: no deferred raw value on a fresh object.
+  fctx.body.push({ op: "ref.null.extern" }, { op: "i32.const", value: 0 });
   fctx.body.push({ op: "struct.new", typeIdx });
   return { kind: "ref", typeIdx };
 }
@@ -1864,6 +2417,99 @@ function compileStandaloneRegExpPattern(
     return null;
   }
   return emitStandaloneRegExpStruct(ctx, fctx, pattern, flags, node);
+}
+
+/**
+ * Recover string candidates from the initializer of an array read such as
+ * `patterns[index]`. The runtime read remains authoritative; these values are
+ * only used to specialize matching contents through the complete static regex
+ * compiler, with the ordinary dynamic compiler retained as the fallback.
+ */
+function finiteRegExpPatternCandidates(ctx: CodegenContext, expression: ts.Expression): readonly string[] | undefined {
+  const access = stripStaticWrapper(expression);
+  if (!ts.isElementAccessExpression(access)) return undefined;
+
+  let initializer = stripStaticWrapper(access.expression);
+  if (ts.isIdentifier(initializer)) {
+    const declaration = ctx.oracle.valueDeclarationOf(initializer);
+    if (!declaration || !ts.isVariableDeclaration(declaration)) return undefined;
+    if (!declaration.initializer) return undefined;
+    initializer = stripStaticWrapper(declaration.initializer);
+  }
+  if (!ts.isArrayLiteralExpression(initializer) || initializer.elements.length > 64) return undefined;
+
+  const candidates = new Set<string>();
+  for (const element of initializer.elements) {
+    if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) continue;
+    const value = staticConstStringValue(ctx, element, new Set(), 0, 64);
+    if (typeof value === "string") candidates.add(value);
+  }
+  return candidates.size === 0 ? undefined : [...candidates];
+}
+
+/** Whether the complete static backend can compile a candidate without emitting diagnostics. */
+function isSupportedStaticRegExpCandidate(pattern: string, flags: string): boolean {
+  try {
+    const flagBits = parseFlags(flags);
+    if ((flagBits & ~SUPPORTED_STANDALONE_FLAGS) !== 0) return false;
+    if ((flagBits & (RE_FLAG_U | RE_FLAG_V)) !== 0 && hostRegExpSyntaxErrorMessage(pattern, flags) !== null)
+      return false;
+    compilePattern(pattern, flagBits);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Emit a value-producing string dispatch for a finite set of static patterns.
+ * Unknown or unsupported runtime contents keep the existing dynamic compiler.
+ */
+function emitFiniteRegExpPatternDispatch(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  patternLocal: number,
+  flagsLocal: number,
+  candidates: readonly string[],
+  flags: string,
+  node: ts.Node,
+): ValType | null {
+  ensureNativeStringHelpers(ctx);
+  const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  if (equalsIdx === undefined) return null;
+  const dynamicCompilerIdx = ensureDynamicStandaloneRegExpCompiler(ctx);
+  const structTypeIdx = ensureStandaloneRegExpStruct(ctx);
+
+  let fallback: Instr[] = [
+    { op: "local.get", index: patternLocal },
+    { op: "local.get", index: flagsLocal },
+    { op: "call", funcIdx: dynamicCompilerIdx },
+  ];
+  const supported = candidates.filter((candidate) => isSupportedStaticRegExpCandidate(candidate, flags));
+  for (let index = supported.length - 1; index >= 0; index--) {
+    const candidate = supported[index]!;
+    const savedBody = fctx.body;
+    const staticBody: Instr[] = [];
+    fctx.body = staticBody;
+    const compiled = emitStandaloneRegExpStruct(ctx, fctx, candidate, flags, node);
+    fctx.body = savedBody;
+    if (compiled === null) continue;
+
+    fallback = [
+      { op: "local.get", index: patternLocal },
+      ...nativeStringLiteralInstrs(ctx, candidate),
+      { op: "call", funcIdx: equalsIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "ref", typeIdx: structTypeIdx } },
+        then: staticBody,
+        else: fallback,
+      },
+    ];
+  }
+  if (supported.length === 0) return null;
+  fctx.body.push(...fallback);
+  return { kind: "ref", typeIdx: structTypeIdx };
 }
 
 export function compileStandaloneRegExpLiteral(
@@ -2017,7 +2663,12 @@ export function compileStandaloneRegExpConstructor(
           { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
         );
       }
-      undefinedArm.push({ op: "f64.const", value: 0 }, { op: "struct.new", typeIdx: structTypeIdx });
+      undefinedArm.push(
+        { op: "f64.const", value: 0 },
+        { op: "ref.null.extern" },
+        { op: "i32.const", value: 0 },
+        { op: "struct.new", typeIdx: structTypeIdx },
+      );
     }
 
     fctx.body.push({ op: "local.get", index: flagsLocal });
@@ -2083,7 +2734,12 @@ export function compileStandaloneRegExpConstructor(
     ]) {
       fctx.body.push({ op: "local.get", index: regexpLocal }, { op: "struct.get", typeIdx: structTypeIdx, fieldIdx });
     }
-    fctx.body.push({ op: "f64.const", value: 0 }, { op: "struct.new", typeIdx: structTypeIdx });
+    fctx.body.push(
+      { op: "f64.const", value: 0 },
+      { op: "ref.null.extern" },
+      { op: "i32.const", value: 0 },
+      { op: "struct.new", typeIdx: structTypeIdx },
+    );
     return { kind: "ref", typeIdx: structTypeIdx };
   }
 
@@ -2121,6 +2777,22 @@ export function compileStandaloneRegExpConstructor(
       for (const instr of nativeStringLiteralInstrs(ctx, flags ?? "")) fctx.body.push(instr);
     }
     fctx.body.push({ op: "local.set", index: flagsLocal });
+
+    if (pattern === null && flags !== null) {
+      const candidates = finiteRegExpPatternCandidates(ctx, patternArg!);
+      if (candidates) {
+        const specialized = emitFiniteRegExpPatternDispatch(
+          ctx,
+          fctx,
+          patternLocal,
+          flagsLocal,
+          candidates,
+          flags ?? "",
+          node,
+        );
+        if (specialized !== null) return specialized;
+      }
+    }
 
     const dynamicCompilerIdx = ensureDynamicStandaloneRegExpCompiler(ctx);
     fctx.body.push({ op: "local.get", index: patternLocal });
@@ -2211,6 +2883,67 @@ export function loadStandaloneRegExpStruct(
   return { regexpLocal, structTypeIdx: storedRegexpType.typeIdx };
 }
 
+/** Emit `ToLength(R.lastIndex)` for a g/y operation. */
+function standaloneRegExpLastIndexAsF64(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  regexpLocal: number,
+  structTypeIdx: number,
+): Instr[] {
+  // Build the raw-value coercion in the real function context so any canonical
+  // ToPrimitive/ToNumber dependencies and temporary locals are registered in
+  // the ordinary way, then embed the resulting instruction sequence in the
+  // value-producing branch below.
+  const rawStart = fctx.body.length;
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW },
+  );
+  coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" }, "number");
+  const rawToNumber = fctx.body.splice(rawStart);
+  return [
+    { op: "local.get", index: regexpLocal },
+    { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "f64" } },
+      then: rawToNumber,
+      else: [
+        { op: "local.get", index: regexpLocal },
+        { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+      ],
+    },
+  ];
+}
+
+/**
+ * Guard an ordinary `lastIndex` Set against a statically recorded non-writable
+ * descriptor. `Object.defineProperty` records explicit `writable: false`
+ * entries in `ctx.nonWritableExternKeys`, the same compile-time companion
+ * consulted by ordinary property assignment. The exact Slice-A call sites all
+ * carry a static RegExp identifier, so this narrow proof is sufficient without
+ * inventing a second runtime descriptor table for closed RegExp carriers.
+ *
+ * The throw sequence is built after the call-site body has evaluated its RHS;
+ * this preserves the strict Set evaluation order while allowing the shared
+ * error builder to flush any late TypeError dependency it registers.
+ */
+function standaloneRegExpLastIndexSetGuardInstrs(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  regexpExpr?: ts.Expression,
+): Instr[] {
+  if (regexpExpr === undefined) return [];
+  const receiver = stripStaticWrapper(regexpExpr);
+  if (!ts.isIdentifier(receiver)) return [];
+  const key = `${integrityVarKey(ctx, receiver)}:lastIndex`;
+  if (!ctx.nonWritableExternKeys.has(key)) return [];
+  const throwInstrs = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot assign to read only property 'lastIndex'", {
+    flush: fctx,
+  });
+  return throwInstrs;
+}
+
 /**
  * (#2175 S1) Brand-recovery prologue for a *dynamic* (externref) RegExp `this`.
  *
@@ -2278,11 +3011,14 @@ export function emitRegexSearchCall(
      * (#1913): start the scan at ToLength(lastIndex) (i32.trunc_sat maps
      * NaN→0 and the search loop rejects starts past the subject, matching
      * the lastIndex>length null result), then on return set lastIndex to
-     * the match end (or 0 on failure). Only passed when the flags are
-     * STATICALLY known to include g or y — non-g/y exec neither reads nor
-     * writes lastIndex.
+     * the match end (or 0 on failure). The separate `readLastIndex` switch
+     * models RegExpBuiltinExec's unconditional Get/ToLength step: non-g/y
+     * exec/test still reads and coerces lastIndex, but always starts at zero
+     * and never writes it back.
      */
     gyLastIndex?: boolean | "runtime";
+    /** Read/ToLength `lastIndex` even when the operation is non-g/non-y. */
+    readLastIndex?: boolean;
     /** Pre-evaluated native-string receiver supplied by guarded dispatch. */
     inputOverride?: () => ValType | null;
     /** (#4016) Pre-materialised `$NativeRegExp` — see `string-search-value.ts`. */
@@ -2346,6 +3082,23 @@ export function emitRegexSearchCall(
   });
   fctx.body.push({ op: "local.set", index: inputLocal });
 
+  // RegExpBuiltinExec performs Get(R, "lastIndex") + ToLength after the
+  // subject has been coerced, regardless of the g/y flags. Keep one execution-
+  // time f64 result so the g/y start path does not invoke a deferred raw value
+  // twice; non-g/y callers deliberately leave the value unused.
+  let lastIndexLocal: number | undefined;
+  if (options?.readLastIndex) {
+    lastIndexLocal = allocLocal(fctx, `__re_lastindex_read_${fctx.locals.length}`, { kind: "f64" });
+    fctx.body.push(...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx), {
+      op: "local.set",
+      index: lastIndexLocal,
+    });
+  }
+  const lastIndexInstrs = (): Instr[] =>
+    lastIndexLocal === undefined
+      ? standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx)
+      : [{ op: "local.get", index: lastIndexLocal }];
+
   // caps = array.new_default(2 * nGroups + nScratch) — scratch slots back the
   // PROGRESS empty-loop guards (#1959); they ride along in the caps array.
   const capsLocal = allocLocal(fctx, `__re_caps_${fctx.locals.length}`, { kind: "ref", typeIdx: i32Arr });
@@ -2387,17 +3140,12 @@ export function emitRegexSearchCall(
     fctx.body.push({
       op: "if",
       blockType: { kind: "val", type: { kind: "i32" } },
-      then: [
-        { op: "local.get", index: regexpLocal },
-        { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
-        { op: "i32.trunc_sat_f64_s" },
-      ],
+      then: [...lastIndexInstrs(), { op: "i32.trunc_sat_f64_s" }],
       else: [{ op: "i32.const", value: 0 }],
     });
   } else if (options?.gyLastIndex) {
     fctx.body.push(
-      { op: "local.get", index: regexpLocal },
-      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+      ...lastIndexInstrs(),
       // trunc_sat: NaN→0 (= ToLength(NaN)); huge values saturate and the search
       // loop's `start > slen` check yields the spec's no-match result. Negative
       // values clamp to 0 inside __regex_search, matching ToLength.
@@ -2415,6 +3163,7 @@ export function emitRegexSearchCall(
     const matchedTmp = allocLocal(fctx, `__re_matched_${fctx.locals.length}`, { kind: "i32" });
     fctx.body.push({ op: "local.set", index: matchedTmp });
     const updateLastIndex: Instr[] = [
+      ...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx, regexpExpr ?? undefined),
       { op: "local.get", index: regexpLocal },
       { op: "local.get", index: matchedTmp },
       {
@@ -2429,6 +3178,9 @@ export function emitRegexSearchCall(
         else: [{ op: "f64.const", value: 0 }],
       },
       { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+      { op: "local.get", index: regexpLocal },
+      { op: "i32.const", value: 0 },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
     ];
     if (options.gyLastIndex === "runtime") {
       fctx.body.push(
@@ -2612,6 +3364,7 @@ export function tryCompileStandaloneRegExpTest(
     const testFlags0 = staticRegExpFlags(ctx, propAccess.expression);
     const emitted0 = emitRegexSearchCall(ctx, fctx, propAccess.expression, propAccess.expression, {
       gyLastIndex: testFlags0 === null ? "runtime" : flagsHaveGlobalOrSticky(testFlags0),
+      readLastIndex: true,
       inputOverride: () => undefinedSubjectOverride(ctx, fctx),
     });
     if (emitted0 === null) return null;
@@ -2640,6 +3393,7 @@ export function tryCompileStandaloneRegExpTest(
   const testFlags = staticRegExpFlags(ctx, propAccess.expression);
   const emitted = emitRegexSearchCall(ctx, fctx, propAccess.expression, expr.arguments[0]!, {
     gyLastIndex: testFlags === null ? "runtime" : flagsHaveGlobalOrSticky(testFlags),
+    readLastIndex: true,
   });
   if (emitted === null) return null;
   return { kind: "i32" };
@@ -2703,13 +3457,13 @@ function coercedNstrToExternref(ctx: CodegenContext, fctx: FunctionContext, nstr
   return buf;
 }
 
+const CREATE_DATA_PROPERTY_FLAGS = 0xbf; // Full value + writable/enumerable/configurable descriptor.
+
 /**
  * #2588 — build the named-groups result object (`m.groups`) and leave it on the
- * stack as an **externref** (`$Object`), or a null externref when `groupNames`
- * is empty. The object is built INLINE via `__new_plain_object` +
- * `__extern_set` (the same path object literals use), so `m.groups.<name>`
- * reads flow through the existing standalone `$Object` property read (no new
- * dispatch).
+ * stack as an **externref** (`$Object`), or null when `groupNames` is empty.
+ * Named captures are installed with CreateDataProperty semantics so
+ * an inherited setter cannot intercept them.
  */
 function emitRegexGroupsObjectExternref(
   ctx: CodegenContext,
@@ -2725,14 +3479,14 @@ function emitRegexGroupsObjectExternref(
     return;
   }
   const newObjIdx = ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]);
-  const setIdx = ensureLateImport(
+  const defineIdx = ensureLateImport(
     ctx,
-    "__extern_set",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
-    [],
+    "__defineProperty_value",
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+    [{ kind: "externref" }],
   );
   flushLateImportShifts(ctx, fctx);
-  if (newObjIdx === undefined || setIdx === undefined) {
+  if (newObjIdx === undefined || defineIdx === undefined) {
     fctx.body.push({ op: "ref.null.extern" });
     return;
   }
@@ -2747,7 +3501,9 @@ function emitRegexGroupsObjectExternref(
     addStringConstantGlobal(ctx, name);
     for (const instr of stringConstantExternrefInstrs(ctx, name)) fctx.body.push(instr);
     pushCaptureValueExternref(ctx, fctx, idx, subjectLocal, capsLocal, strTypeIdx, i32Arr);
-    fctx.body.push({ op: "call", funcIdx: setIdx });
+    fctx.body.push({ op: "f64.const", value: CREATE_DATA_PROPERTY_FLAGS });
+    fctx.body.push({ op: "call", funcIdx: defineIdx });
+    fctx.body.push({ op: "drop" });
   }
   fctx.body.push({ op: "local.get", index: objLocal });
 }
@@ -2782,10 +3538,6 @@ function emitRegexIndicesArrayExternref(
   );
   const newGroupsIdx =
     groupNames.size > 0 ? ensureLateImport(ctx, "__new_plain_object", [], [{ kind: "externref" }]) : undefined;
-  const setGroupsIdx =
-    groupNames.size > 0
-      ? ensureLateImport(ctx, "__extern_set", [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }], [])
-      : undefined;
   const defineIdx = ensureLateImport(
     ctx,
     "__defineProperty_value",
@@ -2819,7 +3571,7 @@ function emitRegexIndicesArrayExternref(
   const indicesGroupsLocal = allocLocal(fctx, `__re_indices_groups_${fctx.locals.length}`, {
     kind: "externref",
   });
-  if (groupNames.size === 0 || newGroupsIdx === undefined || setGroupsIdx === undefined || getIdx === undefined) {
+  if (groupNames.size === 0 || newGroupsIdx === undefined || defineIdx === undefined || getIdx === undefined) {
     fctx.body.push(...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" }]));
     fctx.body.push({ op: "local.set", index: indicesGroupsLocal });
   } else {
@@ -2833,7 +3585,9 @@ function emitRegexIndicesArrayExternref(
       fctx.body.push({ op: "local.get", index: outerLocal });
       fctx.body.push({ op: "f64.const", value: captureIdx });
       fctx.body.push({ op: "call", funcIdx: getIdx });
-      fctx.body.push({ op: "call", funcIdx: setGroupsIdx });
+      fctx.body.push({ op: "f64.const", value: CREATE_DATA_PROPERTY_FLAGS });
+      fctx.body.push({ op: "call", funcIdx: defineIdx });
+      fctx.body.push({ op: "drop" });
     }
   }
   if (defineIdx !== undefined) {
@@ -2842,7 +3596,7 @@ function emitRegexIndicesArrayExternref(
     fctx.body.push(...stringConstantExternrefInstrs(ctx, "groups"));
     fctx.body.push({ op: "local.get", index: indicesGroupsLocal });
     // value + writable/enumerable/configurable, all explicitly specified.
-    fctx.body.push({ op: "f64.const", value: 0xbf });
+    fctx.body.push({ op: "f64.const", value: CREATE_DATA_PROPERTY_FLAGS });
     fctx.body.push({ op: "call", funcIdx: defineIdx });
     fctx.body.push({ op: "drop" });
   }
@@ -2905,6 +3659,7 @@ export function emitRegexExecArrayCall(
   inputExpr: ts.Expression | null,
   options?: {
     gyLastIndex?: boolean | "runtime";
+    readLastIndex?: boolean;
     inputOverride?: () => ValType | null;
     regexpOverride?: { regexpLocal: number; structTypeIdx: number };
   },
@@ -2987,7 +3742,7 @@ export function emitRegexExecArrayCall(
       addStringConstantGlobal(ctx, name);
       fctx.body.push(...stringConstantExternrefInstrs(ctx, name));
       fctx.body.push(...value);
-      fctx.body.push({ op: "f64.const", value: 0xbf });
+      fctx.body.push({ op: "f64.const", value: CREATE_DATA_PROPERTY_FLAGS });
       fctx.body.push({ op: "call", funcIdx: defineIdx });
       fctx.body.push({ op: "drop" });
     };
@@ -3043,6 +3798,7 @@ export function tryCompileStandaloneRegExpExec(
     const flags0 = staticRegExpFlags(ctx, propAccess.expression);
     return emitRegexExecArrayCall(ctx, fctx, propAccess.expression, propAccess.expression, {
       gyLastIndex: flags0 === null ? "runtime" : flagsHaveGlobalOrSticky(flags0),
+      readLastIndex: true,
       inputOverride: () => undefinedSubjectOverride(ctx, fctx),
     });
   }
@@ -3062,9 +3818,11 @@ export function tryCompileStandaloneRegExpExec(
   const flags = staticRegExpFlags(ctx, propAccess.expression);
 
   // §22.2.7.2 — g/y exec starts at [[LastIndex]] and writes back the match
-  // end (or 0 on failure); non-g/y exec ignores lastIndex entirely (#1913).
+  // end (or 0 on failure). All exec calls have already performed the
+  // observable Get/ToLength step above; non-g/y exec simply ignores its value.
   return emitRegexExecArrayCall(ctx, fctx, propAccess.expression, expr.arguments[0]!, {
     gyLastIndex: flags === null ? "runtime" : flagsHaveGlobalOrSticky(flags),
+    readLastIndex: true,
   });
 }
 
@@ -3341,6 +4099,11 @@ function emitStandaloneRegExpMatchCore(
     fctx.body.push({ op: "local.get", index: regexpLocal });
     fctx.body.push({ op: "f64.const", value: 0 });
     fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "i32.const", value: 0 },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+    );
     return { kind: "ref_null", typeIdx: matchVecTypeIdx };
   }
 
@@ -3461,6 +4224,11 @@ function emitStandaloneRegExpMatchAllCore(
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "f64.const", value: 0 });
   fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "i32.const", value: 0 },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+  );
   return { kind: "ref", typeIdx: outerVecTypeIdx };
 }
 
@@ -3539,14 +4307,14 @@ export function tryCompileStandaloneStringReplace(
   if (!usesNativeRegExpProvider(ctx)) return undefined;
 
   const flags = staticRegExpFlags(ctx, reExpr);
-  if (flags === null) return undefined;
-  const reHasGlobal = flags.includes("g");
+  const reHasGlobal = flags?.includes("g") ?? false;
+  if (flags === null && method === "replaceAll") return undefined;
   // `replaceAll` requires a global regex (spec §22.1.3.20 step 4 throws
   // TypeError otherwise). Leave that error to the host path; only handle the
   // well-formed `replaceAll(/…/g, …)` here.
   if (method === "replaceAll" && !reHasGlobal) return undefined;
   // For `replace`, global is honored (replace-all when `g`, first-only else).
-  const globalReplace = method === "replaceAll" || reHasGlobal;
+  const globalReplace = flags === null ? null : method === "replaceAll" || reHasGlobal;
 
   // String-method operand order: subject = receiver, regex = arg[0].
   return emitStandaloneRegExpReplaceCore(
@@ -3613,7 +4381,7 @@ function emitStandaloneRegExpReplaceCore(
   subjExpr: ts.Expression,
   reExpr: ts.Expression,
   replExpr: ts.Expression,
-  globalReplace: boolean,
+  globalReplace: boolean | null,
   diag: string,
   subjectOverride?: () => ValType | null,
 ): ValType | null {
@@ -3674,7 +4442,14 @@ function emitStandaloneRegExpReplaceCore(
   fctx.body.push({ op: "struct.get", typeIdx: strTypeIdx, fieldIdx: 0 }); // len
   fctx.body.push({ op: "local.get", index: subjLocal });
   fctx.body.push({ op: "local.get", index: replLocal });
-  fctx.body.push({ op: "i32.const", value: globalReplace ? 1 : 0 });
+  if (globalReplace === null) {
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS },
+      { op: "i32.const", value: RE_FLAG_G },
+      { op: "i32.and" },
+    );
+  } else fctx.body.push({ op: "i32.const", value: globalReplace ? 1 : 0 });
   // nScratch (#1959) — PROGRESS empty-loop guard slots.
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_NSCRATCH });
@@ -3692,8 +4467,8 @@ function emitStandaloneRegExpReplaceCore(
  */
 function buildRegexNamesTableInstrs(ctx: CodegenContext, reExpr: ts.Expression): Instr[] {
   const values: number[] = [];
-  const meta = staticRegExpGroupMeta(ctx, reExpr);
-  const entries: Array<[string, number]> = meta !== null ? [...meta.groupNames.entries()] : [];
+  const groupNames = staticRegExpGroupNames(ctx, reExpr);
+  const entries: Array<[string, number]> = groupNames !== null ? [...groupNames.entries()] : [];
   values.push(entries.length); // count
   for (const [name, idx] of entries) {
     values.push(idx); // 1-based capture index
@@ -3937,6 +4712,20 @@ export function tryCompileStandaloneRegExpSymbolCall(
       const flags = staticRegExpFlags(ctx, regexExpr);
       if (flags === null) return undefined;
       const globalReplace = flags.includes("g");
+      // (#5142) A CALLABLE replacer routes into the #4224 call-site walk with
+      // the operands swapped (regex = RECEIVER, subject = arg[0]). Only the
+      // route was missing — the machinery is the same one
+      // `String.prototype.replace(re, fn)` already uses — so this form used to
+      // hit the flat refusal below and fail to compile at all.
+      const fnReplace = tryCompileStandaloneRegExpFunctionReplace(
+        ctx,
+        fctx,
+        strExpr,
+        regexExpr,
+        replExpr,
+        globalReplace,
+      );
+      if (fnReplace !== undefined) return fnReplace;
       return emitStandaloneRegExpReplaceCore(ctx, fctx, expr, strExpr, regexExpr, replExpr, globalReplace, "@@replace");
     }
     case "split": {
@@ -3984,7 +4773,8 @@ export const STANDALONE_REGEXP_REFLECTION_PROPS: ReadonlySet<string> = new Set([
  *   from the bitfield (§22.2.6.4).
  * - flag booleans (`.global`, `.ignoreCase`, …) → `(flags & bit) != 0`
  *   (§22.2.6.5–.12 RegExpHasFlag).
- * - `.lastIndex` → struct field 5 (f64).
+ * - `.lastIndex` → the deferred raw value when present, otherwise a boxed
+ *   numeric fast-slot value (externref at the ordinary property boundary).
  *
  * Returns `undefined` when the receiver/property is not a standalone RegExp
  * reflection read (caller falls through), `null` after reporting a narrowed
@@ -3995,20 +4785,35 @@ export function tryCompileStandaloneRegExpPropertyRead(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | null | undefined {
+  const legacyStaticRead = tryCompileStandaloneRegExpLegacyStaticRead(ctx, fctx, expr);
+  if (legacyStaticRead !== undefined) return legacyStaticRead;
   if (!usesNativeRegExpProvider(ctx) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const propName = expr.name.text;
+  // `var re = new RegExp(); re.constructor` is still a RegExp constructor
+  // read when JavaScript checking widens `re` to `any`. The ordinary
+  // reflection set below deliberately only covers fields physically stored on
+  // the native carrier, so keep this identity arm separate. It is guarded by
+  // the same whole-file proof used by RegExp(R)'s identity lowering: an
+  // explicit `.constructor`/descriptor/prototype override must stay on the
+  // dynamic object path rather than being silently replaced with the builtin.
+  if (
+    propName === "constructor" &&
+    regExpIdentityBrandIsProvable(expr.expression) &&
+    isKnownBackendCreatedRegExpReceiver(ctx, expr.expression)
+  ) {
+    const loaded = loadStandaloneRegExpStruct(ctx, fctx, expr.expression);
+    if (loaded === null) return null;
+    return emitBuiltinConstructorIdentity(ctx, fctx, "RegExp");
+  }
   if (!STANDALONE_REGEXP_REFLECTION_PROPS.has(propName)) return undefined;
   const objType = ctx.checker.getTypeAtLocation(expr.expression);
   const nonNull = objType.getNonNullableType?.() ?? objType;
   if (!isGlobalRegExpType(nonNull)) return undefined;
-
   const loaded = loadStandaloneRegExpStruct(ctx, fctx, expr.expression);
   if (loaded === null) return null;
   const { regexpLocal, structTypeIdx } = loaded;
-
   return emitRegExpReflectionFieldRead(ctx, fctx, propName, regexpLocal, structTypeIdx);
 }
-
 /**
  * Shared core for §22.2.6.14 `RegExp.prototype.toString()` rendering of a
  * static / backend-created RegExp *receiver expression* — `"/" + source + "/" +
@@ -4082,7 +4887,72 @@ export function tryCompileStandaloneRegExpToString(
   if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "toString" || expr.arguments.length !== 0) {
     return undefined;
   }
+
+  // `new RegExp; re.toString = Object.prototype.toString; re.toString()` is
+  // the assignment spelling of the genericity idiom.  The native carrier has
+  // no open property bag, so send this one statically-provable transferred
+  // intrinsic through the already-correct Object.prototype classifier before
+  // the intrinsic `/source/flags` renderer claims the call.
+  if (ts.isIdentifier(propAccess.expression)) {
+    const transferred = resolveAssignedTransferredProtoMember(
+      propAccess.expression.getSourceFile(),
+      propAccess.expression.text,
+      "toString",
+      expr.getStart(),
+    );
+    if (transferred !== undefined) {
+      const result = tryEmitTransferredObjectToStringCall(ctx, fctx, expr, propAccess.expression, transferred);
+      if (result !== undefined) return result;
+    }
+  }
   return emitStandaloneRegExpToStringFromExpr(ctx, fctx, propAccess.expression);
+}
+
+/**
+ * (#5142) `re.compile(pattern, flags)` — the DIRECT call spelling of Annex B
+ * §B.2.4.1. It previously had no dispatch arm at all, so the call fell through
+ * to the generic member-call path and silently no-op'd (the receiver kept its
+ * original program). Shares `emitRegExpCompileInPlace` with the reflective
+ * `RegExp.prototype.compile` closure, so the two cannot drift.
+ */
+export function tryCompileStandaloneRegExpCompile(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  propAccess: ts.PropertyAccessExpression,
+): ValType | null | undefined {
+  if (!usesNativeRegExpProvider(ctx) || propAccess.name.text !== "compile" || expr.arguments.length > 2) {
+    return undefined;
+  }
+  const loaded = loadStandaloneRegExpStruct(ctx, fctx, propAccess.expression);
+  if (loaded === null) return null;
+  const { regexpLocal, structTypeIdx } = loaded;
+
+  // Both operands are evaluated (left-to-right) into externref locals BEFORE
+  // any coercion runs, matching the spec's argument-evaluation order.
+  const argLocals: number[] = [];
+  for (let i = 0; i < 2; i++) {
+    const local = allocLocal(fctx, `__re_cmp_arg${i}_${fctx.locals.length}`, { kind: "externref" });
+    const arg = expr.arguments[i];
+    if (arg === undefined) {
+      fctx.body.push(...(undefinedExternInstrs(ctx) ?? [{ op: "ref.null.extern" } as Instr]));
+    } else {
+      const emitted = compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (emitted === null) return null;
+      if (emitted.kind !== "externref") {
+        coerceType(ctx, fctx, emitted, { kind: "externref" }, "string", compileStringLiteral);
+      }
+    }
+    fctx.body.push({ op: "local.set", index: local });
+    argLocals.push(local);
+  }
+
+  if (!emitRegExpCompileInPlace(ctx, fctx, regexpLocal, structTypeIdx, argLocals[0]!, argLocals[1]!)) {
+    return null;
+  }
+  // Step 6 — return the receiver itself.
+  fctx.body.push({ op: "local.get", index: regexpLocal });
+  return { kind: "ref", typeIdx: structTypeIdx };
 }
 
 /**
@@ -4113,8 +4983,30 @@ export function emitRegExpReflectionFieldRead(
     return nativeStringType(ctx);
   }
   if (propName === "lastIndex") {
-    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
-    return { kind: "f64" };
+    // A deferred object/string assignment must retain identity on an ordinary
+    // read (`r.lastIndex === counter`). Box only the numeric fast-slot value
+    // when no raw assignment is pending; callers already consume this result
+    // through the externref property boundary.
+    fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT });
+    const savedBody = fctx.body;
+    const boxedNumber: Instr[] = [];
+    fctx.body = boxedNumber;
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+    );
+    coerceType(ctx, fctx, { kind: "f64" }, { kind: "externref" });
+    fctx.body = savedBody;
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        { op: "local.get", index: regexpLocal },
+        { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW },
+      ],
+      else: boxedNumber,
+    });
+    return { kind: "externref" };
   }
   // Flag boolean getter: (flags & bit) != 0.
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS });
@@ -4178,6 +5070,15 @@ export function emitRegExpTestFromLocals(
   fctx.body.push({ op: "i32.ne" });
   fctx.body.push({ op: "local.set", index: gyLocal });
 
+  // RegExpBuiltinExec reads and ToLength-coerces `lastIndex` even for a
+  // non-global/non-sticky receiver. The recovered closure path has no static
+  // flag spelling, so retain one execution-time value for both branches.
+  const lastIndexLocal = allocLocal(fctx, `__re_tlastindex_${fctx.locals.length}`, { kind: "f64" });
+  fctx.body.push(...standaloneRegExpLastIndexAsF64(ctx, fctx, regexpLocal, structTypeIdx), {
+    op: "local.set",
+    index: lastIndexLocal,
+  });
+
   // __regex_search(prog, classTable, nSlots, inData, inOff, inLen, start=0, sticky, caps)
   fctx.body.push({ op: "local.get", index: regexpLocal });
   fctx.body.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_PROG });
@@ -4194,11 +5095,7 @@ export function emitRegExpTestFromLocals(
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "i32" } },
-    then: [
-      { op: "local.get", index: regexpLocal },
-      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
-      { op: "i32.trunc_sat_f64_s" },
-    ],
+    then: [{ op: "local.get", index: lastIndexLocal }, { op: "i32.trunc_sat_f64_s" }],
     else: [{ op: "i32.const", value: 0 }],
   });
   fctx.body.push({ op: "local.get", index: stickyLocal });
@@ -4214,6 +5111,7 @@ export function emitRegExpTestFromLocals(
     op: "if",
     blockType: { kind: "empty" },
     then: [
+      ...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx),
       { op: "local.get", index: regexpLocal },
       { op: "local.get", index: matchedLocal },
       {
@@ -4228,6 +5126,9 @@ export function emitRegExpTestFromLocals(
         else: [{ op: "f64.const", value: 0 }],
       },
       { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+      { op: "local.get", index: regexpLocal },
+      { op: "i32.const", value: 0 },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
     ],
   });
   emitTestCapsRelease(ctx, fctx, capsLocal); // last read of `caps` is above
@@ -4422,6 +5323,12 @@ const REGEXP_METHOD_LENGTH: Readonly<Record<string, number>> = {
   test: 1,
   toString: 0,
   compile: 2,
+  // §22.2.6.8/.11/.12/.14 — `@@match`/`@@search` take (string);
+  // `@@replace`/`@@split` take (string, replaceValue|limit).
+  "@@7": 1,
+  "@@8": 2,
+  "@@9": 1,
+  "@@10": 2,
 };
 
 /**
@@ -4502,8 +5409,7 @@ function emitRegExpProtoMemberBody(
     // externref so the closure-call ABI and the descriptor `.get` both see one
     // type: native-string refs (`.flags`/`.source`) box via `extern.convert_any`,
     // i32 flag booleans via `__box_boolean` (a JS boolean, not the number 0/1),
-    // and the defensive f64 (lastIndex is a method-kind member, never a getter)
-    // via `__box_number`.
+    // and any numeric field result via `__box_number`.
     const fieldType = emitRegExpReflectionFieldRead(ctx, fctx, member, regexpLocal, structTypeIdx);
     if (fieldType.kind === "ref" || fieldType.kind === "ref_null") {
       fctx.body.push({ op: "extern.convert_any" });
@@ -4528,14 +5434,50 @@ function emitRegExpProtoMemberBody(
   if (recovered === null) return null;
   const { regexpLocal, structTypeIdx } = recovered;
 
-  if (member === "test" || member === "@@9") {
-    // `.test(s)` and `[Symbol.search]`-adjacent forms both run the search and
-    // return an i32-ish result; here we return the i32 match flag for `.test`.
-    // (Full `[Symbol.search]` index semantics are a later refinement; the
-    // dispatch path + brand recovery are what S1 proves.)
+  if (member === "test") {
+    // (#5142) `@@9` (`[Symbol.search]`) used to share this arm, but §22.2.6.12
+    // returns the match INDEX (or -1) as a number, not `.test`'s i32 boolean —
+    // the shared arm handed back a boolean-shaped flag under a Symbol.search
+    // read. Until the real search body lands it falls to the placeholder below.
     const subjLocal = flattenExternrefArgToString(ctx, fctx, 2);
     emitRegExpTestFromLocals(ctx, fctx, regexpLocal, structTypeIdx, subjLocal);
     return { kind: "i32" };
+  }
+
+  if (member === "exec") {
+    // `RegExp.prototype.exec` is a first-class method value just like `test`,
+    // but its result is the capture-array object rather than the i32 match
+    // flag.  The ordinary expression path already owns the capture-array
+    // result shape (`index`, `input`, and the optional `groups`/`indices`
+    // overlays), so feed that engine the receiver recovered above instead of
+    // maintaining a second matcher here.
+    // `gyLastIndex: "runtime"` is intentional: a value-erased receiver has no
+    // compile-time flag spelling, and the engine must select g/y semantics from
+    // the recovered `$NativeRegExp` at runtime.
+    const subjLocal = flattenExternrefArgToString(ctx, fctx, 2);
+    const emitted = emitRegexExecArrayCall(ctx, fctx, null, null, {
+      gyLastIndex: "runtime",
+      readLastIndex: true,
+      inputOverride: () => {
+        fctx.body.push({ op: "local.get", index: subjLocal });
+        return nativeStringType(ctx);
+      },
+      regexpOverride: { regexpLocal, structTypeIdx },
+    });
+    if (emitted === null) return null;
+    // Native match vectors are GC refs; the reflective closure ABI returns an
+    // externref so direct calls, `.call`/`.apply`, and runtime descriptor reads
+    // all share the same result carrier.
+    fctx.body.push({ op: "extern.convert_any" });
+    return { kind: "externref" };
+  }
+
+  if (member === "compile") {
+    // Params: 1 = `this` externref, 2 = pattern, 3 = flags. Step 6 returns the
+    // ORIGINAL receiver externref, so `re.compile(…) === re` holds.
+    if (!emitRegExpCompileInPlace(ctx, fctx, regexpLocal, structTypeIdx, 2, 3)) return null;
+    fctx.body.push({ op: "local.get", index: 1 });
+    return { kind: "externref" };
   }
 
   if (member === "source" || member === "flags") {
@@ -4552,6 +5494,152 @@ function emitRegExpProtoMemberBody(
   // externref (null) until their engine body lands.
   fctx.body.push({ op: "ref.null.extern" });
   return { kind: "externref" };
+}
+
+/**
+ * (#5142) Annex B §B.2.4.1 `RegExp.prototype.compile(pattern, flags)` — the
+ * in-place recompile.
+ *
+ * Closure params: 1 = `this` externref (already brand-recovered into
+ * `regexpLocal`), 2 = pattern, 3 = flags. Steps, observably:
+ *
+ *   3. pattern is a RegExp object ⇒ flags must be `undefined` (else TypeError);
+ *      P is the pattern's [[OriginalSource]], F its [[OriginalFlags]].
+ *   4. otherwise P = ToString(pattern) / `""` when undefined, F likewise.
+ *   Then RegExpInitialize: recompile (a bad pattern/flag pair raises the
+ *   runtime compiler's own SyntaxError), copy the fresh program into the
+ *   receiver's now-mutable fields, set lastIndex to 0, return the receiver.
+ *
+ * Returns the closure result ValType (externref — the receiver), or null if the
+ * runtime compiler / ToString plumbing is unavailable.
+ */
+function emitRegExpCompileInPlace(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  regexpLocal: number,
+  structTypeIdx: number,
+  patternParam: number,
+  flagsParam: number,
+): boolean {
+  ensureNativeStringHelpers(ctx);
+  const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const toStringIdx = ensureRuntimeToStringIdx(ctx, fctx);
+  const dynamicCompilerIdx = ensureDynamicStandaloneRegExpCompiler(ctx);
+  const flagsStrIdx = ensureRegexFlagsStr(ctx);
+  flushLateImportShifts(ctx, fctx);
+  if (isUndefIdx === undefined || toStringIdx === undefined) return false;
+
+  const anyStrRef: ValType = { kind: "ref", typeIdx: ctx.anyStrTypeIdx };
+  const patLocal = allocLocal(fctx, `__re_cmp_pat_${fctx.locals.length}`, anyStrRef);
+  const flgLocal = allocLocal(fctx, `__re_cmp_flg_${fctx.locals.length}`, anyStrRef);
+  const freshLocal = allocLocal(fctx, `__re_cmp_new_${fctx.locals.length}`, {
+    kind: "ref",
+    typeIdx: structTypeIdx,
+  });
+
+  addStringConstantGlobal(ctx, "");
+  const emptyStr: Instr[] = [
+    ...stringConstantExternrefInstrs(ctx, ""),
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+  ];
+  /** `undefined ⇒ ""`, else ToString(param) — as a `ref $AnyString`. */
+  const argAsString = (paramIdx: number): Instr[] => [
+    { op: "local.get", index: paramIdx },
+    { op: "call", funcIdx: isUndefIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: anyStrRef },
+      then: emptyStr.map((i) => ({ ...i })),
+      else: [
+        { op: "local.get", index: paramIdx },
+        { op: "call", funcIdx: toStringIdx },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: ctx.anyStrTypeIdx },
+      ],
+    },
+  ];
+
+  // Step 3 vs 4 — is the pattern argument itself a native RegExp?
+  const reBorrowArm: Instr[] = [];
+  {
+    const srcLocal = allocLocal(fctx, `__re_cmp_src_${fctx.locals.length}`, {
+      kind: "ref",
+      typeIdx: structTypeIdx,
+    });
+    reBorrowArm.push(
+      { op: "local.get", index: patternParam },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: structTypeIdx },
+      { op: "local.set", index: srcLocal },
+    );
+    // Step 3.a — `pattern` is a RegExp and `flags` is not undefined ⇒ TypeError.
+    const throwFctx: FunctionContext = { ...fctx, body: [] };
+    emitThrowTypeError(ctx, throwFctx, "Cannot supply flags when constructing one RegExp from another");
+    reBorrowArm.push(
+      { op: "local.get", index: flagsParam },
+      { op: "call", funcIdx: isUndefIdx },
+      { op: "i32.eqz" },
+      { op: "if", blockType: { kind: "empty" }, then: throwFctx.body },
+    );
+    reBorrowArm.push(
+      { op: "local.get", index: srcLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_SOURCE },
+      { op: "local.set", index: patLocal },
+      { op: "local.get", index: srcLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_FLAGS },
+      { op: "call", funcIdx: flagsStrIdx },
+      { op: "local.set", index: flgLocal },
+    );
+  }
+  const stringArm: Instr[] = [
+    ...argAsString(patternParam),
+    { op: "local.set", index: patLocal },
+    ...argAsString(flagsParam),
+    { op: "local.set", index: flgLocal },
+  ];
+
+  fctx.body.push(
+    { op: "local.get", index: patternParam },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: structTypeIdx },
+    { op: "if", blockType: { kind: "empty" }, then: reBorrowArm, else: stringArm },
+  );
+
+  // RegExpInitialize — recompile, then copy the fresh program in place.
+  fctx.body.push(
+    { op: "local.get", index: patLocal },
+    { op: "local.get", index: flgLocal },
+    { op: "call", funcIdx: dynamicCompilerIdx },
+    { op: "local.set", index: freshLocal },
+  );
+  for (const fieldIdx of [
+    RE_FIELD_FLAGS,
+    RE_FIELD_NGROUPS,
+    RE_FIELD_PROG,
+    RE_FIELD_CLASS_TABLE,
+    RE_FIELD_SOURCE,
+    RE_FIELD_NSCRATCH,
+  ]) {
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "local.get", index: freshLocal },
+      { op: "struct.get", typeIdx: structTypeIdx, fieldIdx },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx },
+    );
+  }
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "f64.const", value: 0 },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX },
+    { op: "local.get", index: regexpLocal },
+    { op: "ref.null.extern" },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW },
+    { op: "local.get", index: regexpLocal },
+    { op: "i32.const", value: 0 },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+  );
+  return true;
 }
 
 /**
@@ -4579,11 +5667,10 @@ function flattenExternrefArgToString(ctx: CodegenContext, fctx: FunctionContext,
 /**
  * `re.lastIndex = value` on a standalone RegExp receiver (#1914).
  *
- * [[LastIndex]] is a plain writable data property (§22.2.7.1); the struct
- * stores it as f64. The spec defers coercion to exec's ToLength, so only
- * numeric writes are accepted here — non-numeric RHS values are a narrowed
- * refusal rather than a silently mis-modelled store. Leaves the RHS f64 on
- * the stack (assignment-expression value).
+ * [[LastIndex]] is a plain writable data property (§22.2.7.1). Numeric writes
+ * stay in the f64 fast slot; all other values are preserved in the raw slot and
+ * converted only when g/y exec performs ToLength. In particular, assignment
+ * itself must not invoke an object's `valueOf`.
  */
 export function tryCompileStandaloneRegExpLastIndexWrite(
   ctx: CodegenContext,
@@ -4603,19 +5690,68 @@ export function tryCompileStandaloneRegExpLastIndexWrite(
   const { regexpLocal, structTypeIdx } = loaded;
 
   fctx.body.push({ op: "local.get", index: regexpLocal });
-  const valType = compileExpression(ctx, fctx, value, { kind: "f64" });
+  // Compile without a numeric expectation: asking for f64 here would run the
+  // observable `valueOf` during assignment, before a surrounding try/catch.
+  const valType = compileExpression(ctx, fctx, value);
   if (!valType) return null;
-  if (valType.kind === "i32") {
-    fctx.body.push({ op: "f64.convert_i32_s" });
-  } else if (valType.kind !== "f64") {
-    reportStandaloneRegExpUnsupported(ctx, value, "non-numeric lastIndex writes");
-    return null;
+  // OrdinarySet evaluates the RHS first, then rejects a non-writable
+  // descriptor before touching the carrier storage. Keep this guard outside
+  // the numeric/raw branches so both assignment representations agree.
+  fctx.body.push(...standaloneRegExpLastIndexSetGuardInstrs(ctx, fctx, target.expression));
+  if (valType.kind === "i32" || valType.kind === "f64") {
+    if (valType.kind === "i32") {
+      fctx.body.push({ op: "f64.convert_i32_s" });
+    }
+    const tmp = allocLocal(fctx, `__re_lastindex_${fctx.locals.length}`, { kind: "f64" });
+    fctx.body.push({ op: "local.tee", index: tmp });
+    fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
+    // A numeric write supersedes any previously deferred raw value.
+    fctx.body.push(
+      { op: "local.get", index: regexpLocal },
+      { op: "i32.const", value: 0 },
+      { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+      { op: "local.get", index: tmp },
+    );
+    return { kind: "f64" };
   }
-  const tmp = allocLocal(fctx, `__re_lastindex_${fctx.locals.length}`, { kind: "f64" });
-  fctx.body.push({ op: "local.tee", index: tmp });
-  fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX });
-  fctx.body.push({ op: "local.get", index: tmp });
-  return { kind: "f64" };
+
+  // Preserve object/string/BigInt/null/undefined values opaquely. `externref`
+  // is the common boundary representation; this conversion does not perform
+  // ToPrimitive and therefore keeps user code deferred until exec.
+  //
+  // A typed object carrying valueOf/toString is normally reified by
+  // `coerceType(ref → externref)` so a later dynamic ToPrimitive can inspect
+  // it. That is the wrong representation for this raw property slot: the
+  // assignment must retain the exact RHS object (`r.lastIndex === value`),
+  // while ToLength is deliberately deferred until the next g/y operation.
+  // Convert the GC reference directly at this identity-preserving boundary.
+  // Keep the native-string undefined sentinel arm in `coerceType`, where the
+  // nullable `$AnyString` → externref mapping is canonicalized to `undefined`.
+  const isNullableNativeString =
+    ctx.nativeStrings && valType.kind === "ref_null" && ctx.anyStrTypeIdx >= 0 && valType.typeIdx === ctx.anyStrTypeIdx;
+  if (valType.kind === "ref" || valType.kind === "ref_null") {
+    // The same nominal object can be observed later by an untyped assertion
+    // helper.  Remember this concrete shape before it crosses the raw slot so
+    // that the generic ref→externref coercion keeps the original GC reference
+    // instead of making a value-semantics `$Object` copy.
+    (fctx.regexpLastIndexIdentityStructTypes ??= new Set()).add(valType.typeIdx);
+  }
+  if (valType.kind === "ref" || valType.kind === "ref_null" || valType.kind === "anyref" || valType.kind === "eqref") {
+    if (isNullableNativeString) coerceType(ctx, fctx, valType, { kind: "externref" });
+    else fctx.body.push({ op: "extern.convert_any" });
+  } else if (valType.kind !== "externref" && valType.kind !== "ref_extern") {
+    coerceType(ctx, fctx, valType, { kind: "externref" });
+  }
+  const rawTmp = allocLocal(fctx, `__re_lastindex_raw_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.tee", index: rawTmp });
+  fctx.body.push({ op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW });
+  fctx.body.push(
+    { op: "local.get", index: regexpLocal },
+    { op: "i32.const", value: 1 },
+    { op: "struct.set", typeIdx: structTypeIdx, fieldIdx: RE_FIELD_LASTINDEX_RAW_PRESENT },
+    { op: "local.get", index: rawTmp },
+  );
+  return { kind: "externref" };
 }
 
 /**

@@ -7,6 +7,24 @@
   "testFileCount": 20,
   "testFilePathSha256": "79e27ef592b9fafc4369a6971417326b66b9d484d906d03087c2f849c6363f6b",
   "registrationSites": 48,
-  "selectedFiles": ["tests/unit/ast-path.js", "tests/unit/errors.js", "tests/unit/make-string.js"],
-  "_note": "The complete tests/unit/*.js inventory is verified. This first adapter selects the three synchronous, self-contained files whose imports stay within Prettier's implementation. Async plugin loading, snapshots, node:path/url, external development dependencies, and larger document/parser graphs remain explicitly deferred. Test callback bodies and inputs are unchanged."
+  "selectedRegistrationSites": 37,
+  "selectedFiles": [
+    "tests/unit/ast-path.js",
+    "tests/unit/doc-builders.js",
+    "tests/unit/doc-printer.js",
+    "tests/unit/editorconfig-to-prettier.js",
+    "tests/unit/errors.js",
+    "tests/unit/get-descendants.js",
+    "tests/unit/get-parser-plugin-by-parser-name.js",
+    "tests/unit/get-printer-plugin-by-ast-format.js",
+    "tests/unit/is-empty-doc.js",
+    "tests/unit/make-string.js",
+    "tests/unit/massage-ast.js",
+    "tests/unit/print-doc-to-string.js",
+    "tests/unit/resolve-parser.js",
+    "tests/unit/strip-trailing-hardline.js",
+    "tests/unit/traverse-doc.js",
+    "tests/unit/whitespace-utilities.js"
+  ],
+  "_note": "The complete tests/unit/*.js inventory is verified. This adapter executes the synchronous, self-contained utility/document/config files whose imports stay within Prettier's implementation, while preserving original callbacks and inputs. Async plugin loading, snapshots, node:path/url, external development dependencies, visitor-key parser graphs, and larger parser graphs remain explicitly deferred."
 }

@@ -24,6 +24,8 @@ oracle-ratchet-allow:
   - src/codegen/regexp-standalone.ts
 # loc-budget (wave-3 PR aggregate vs main): static-pattern tracing, exec arity/shape and ctor-identity arms live in the regexp subsystem module itself
 loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/property-access.ts
   - src/codegen/regexp-standalone.ts
 ---
 

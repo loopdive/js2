@@ -75,7 +75,7 @@ function taggedSyntheticInventory(entries: readonly { text: string; role: string
 }
 
 type LegacyProjectionKind = "function" | "class-member" | "module-init";
-type LegacyProjectionStatus = "emitted" | "unsupported" | "invariant";
+type LegacyProjectionStatus = "emitted" | "unsupported" | "invariant" | "non-executable";
 
 function expectedLegacyProjection(
   file: string,
@@ -413,6 +413,10 @@ describe("#3520 structural IR identity", () => {
         ["User_m", "class-member", "unsupported"],
         ["helper", "function", "emitted"],
         ["main", "function", "emitted"],
+        // (#3523 R4 gap 4) The source has no top-level statements, so its
+        // module init has nothing to do and now says so instead of going
+        // unrecorded.
+        ["<module-init>", "module-init", "non-executable"],
       ]),
     );
   });
@@ -679,6 +683,140 @@ describe("#3520 structural IR identity", () => {
     expect(context.declarationByUnitId.size).toBe(inventory.allUnits.length - 1);
   });
 
+  it("joins initialized fields to the exact terminal constructor without widening unsupported nested classes", () => {
+    const fixture = source(
+      "/repo/field-constructor-owners.ts",
+      `
+        function seed() { return 1; }
+        class TopExplicit {
+          value = 1;
+          constructor() {}
+          read() { return this.value; }
+        }
+        class TopImplicit {
+          value = 2;
+          read() { return this.value; }
+        }
+        function outer() {
+          class NestedExplicit {
+            value = 3;
+            constructor() {}
+            read() { return this.value; }
+          }
+          class NestedImplicit {
+            value = 4;
+            read() { return this.value; }
+          }
+          class UnsupportedNestedExplicit {
+            value = seed();
+            constructor() {}
+            read() { return this.value; }
+          }
+          return 0;
+        }
+      `,
+    );
+    const inventory = buildIrUnitInventory([fixture], { entrySource: fixture });
+    const context = buildIrPlanningIdentityContext(inventory);
+    const sourceId = context.sourceIdBySourceFile.get(fixture)!;
+    expect(context.sourceFileBySourceId.get(sourceId)).toBe(fixture);
+    const outer = collectNodes(fixture, ts.isFunctionDeclaration).find(
+      (declaration) => declaration.name?.text === "outer",
+    )!;
+    const outerId = context.unitIdByDeclaration.get(outer)!;
+    const classes = collectNodes(fixture, ts.isClassDeclaration);
+    const classByName = (name: string): ts.ClassDeclaration => {
+      const declaration = classes.find((candidate) => candidate.name?.text === name);
+      if (!declaration) throw new Error(`missing class ${name}`);
+      return declaration;
+    };
+
+    const expectTerminalFieldOwner = (name: string, containingOwnerId: typeof outerId | null): void => {
+      const declaration = classByName(name);
+      const explicitConstructor = declaration.members.find(ts.isConstructorDeclaration);
+      const constructorDeclaration = explicitConstructor ?? declaration;
+      const field = declaration.members.find(
+        (member): member is ts.PropertyDeclaration =>
+          ts.isPropertyDeclaration(member) && ts.isIdentifier(member.name) && member.name.text === "value",
+      )!;
+      const classId = context.classIdByDeclaration.get(declaration)!;
+      const constructorId = context.unitIdByDeclaration.get(constructorDeclaration)!;
+      const fieldId = context.unitIdByDeclaration.get(field)!;
+      const classRecord = inventory.classes.find((record) => record.id === classId)!;
+      const constructorRecord = context.unitByUnitId.get(constructorId)!;
+      const fieldRecord = context.unitByUnitId.get(fieldId)!;
+
+      expect(context.declarationByClassId.get(classId)).toBe(declaration);
+      expect(context.declarationByUnitId.get(constructorId)).toBe(constructorDeclaration);
+      expect(context.declarationByUnitId.get(fieldId)).toBe(field);
+      expect(classRecord).toMatchObject({
+        id: classId,
+        sourceId,
+        lexicalOwnerId: containingOwnerId,
+      });
+      expect(constructorRecord).toMatchObject({
+        id: constructorId,
+        sourceId,
+        lexicalOwnerId: classId,
+        terminal: true,
+        terminalOwnerId: constructorId,
+      });
+      if (containingOwnerId === null) {
+        expect(constructorRecord).not.toHaveProperty("containingTerminalOwnerId");
+      } else {
+        expect(constructorRecord).toMatchObject({ containingTerminalOwnerId: containingOwnerId });
+      }
+      expect(context.terminalByUnitId.get(constructorId)).toBe(constructorRecord);
+      expect(fieldRecord).toMatchObject({
+        id: fieldId,
+        sourceId,
+        lexicalOwnerId: classId,
+        kind: "class-instance-field-initializer",
+        terminal: false,
+        terminalOwnerId: constructorId,
+      });
+      expect(requireIrPlanningOwnerUnitId(context, field.initializer!)).toBe(constructorId);
+    };
+
+    expectTerminalFieldOwner("TopExplicit", null);
+    expectTerminalFieldOwner("TopImplicit", null);
+    expectTerminalFieldOwner("NestedExplicit", outerId);
+    expectTerminalFieldOwner("NestedImplicit", outerId);
+
+    const unsupported = classByName("UnsupportedNestedExplicit");
+    const unsupportedClassId = context.classIdByDeclaration.get(unsupported)!;
+    const unsupportedConstructor = unsupported.members.find(ts.isConstructorDeclaration)!;
+    const unsupportedField = unsupported.members.find(ts.isPropertyDeclaration)!;
+    const unsupportedConstructorId = context.unitIdByDeclaration.get(unsupportedConstructor)!;
+    const unsupportedFieldId = context.unitIdByDeclaration.get(unsupportedField)!;
+    const unsupportedConstructorRecord = context.unitByUnitId.get(unsupportedConstructorId)!;
+    const unsupportedFieldRecord = context.unitByUnitId.get(unsupportedFieldId)!;
+
+    expect(context.declarationByClassId.get(unsupportedClassId)).toBe(unsupported);
+    expect(context.declarationByUnitId.get(unsupportedConstructorId)).toBe(unsupportedConstructor);
+    expect(context.declarationByUnitId.get(unsupportedFieldId)).toBe(unsupportedField);
+    expect(inventory.classes.find((record) => record.id === unsupportedClassId)).toMatchObject({
+      sourceId,
+      lexicalOwnerId: outerId,
+    });
+    expect(unsupportedConstructorRecord).toMatchObject({
+      sourceId,
+      lexicalOwnerId: unsupportedClassId,
+      terminal: true,
+      terminalOwnerId: unsupportedConstructorId,
+      containingTerminalOwnerId: outerId,
+    });
+    expect(context.terminalByUnitId.get(unsupportedConstructorId)).toBe(unsupportedConstructorRecord);
+    expect(unsupportedFieldRecord).toMatchObject({
+      sourceId,
+      lexicalOwnerId: unsupportedClassId,
+      terminal: false,
+      terminalOwnerId: unsupportedConstructorId,
+    });
+    expect(requireIrPlanningOwnerUnitId(context, unsupportedConstructor.body!)).toBe(unsupportedConstructorId);
+    expect(requireIrPlanningOwnerUnitId(context, unsupportedField.initializer!)).toBe(unsupportedConstructorId);
+  });
+
   it("keeps planning declaration identities stable when source input order reverses", () => {
     const makeRows = (reverse: boolean) => {
       const a = source(
@@ -781,7 +919,12 @@ describe("#3520 structural IR identity", () => {
       "class-instance-method",
     ]);
     expect(new Set(members.map((unit) => unit.id)).size).toBe(members.length);
-    expect(members.filter((unit) => unit.legacyMatchName === "Shape_<computed>")).toHaveLength(2);
+    // #3522 W1-A (PR #5545): a private member carries its mangled name, so only
+    // the genuinely computed member is `<computed>`. Before that fix every
+    // private member collapsed onto `<computed>` and two members shared one
+    // legacy match name — the collision this pin used to encode.
+    expect(members.filter((unit) => unit.legacyMatchName === "Shape_<computed>")).toHaveLength(1);
+    expect(members.filter((unit) => unit.legacyMatchName === "Shape___priv_secret")).toHaveLength(1);
     expect(new Set(members.map((unit) => unit.legacyKey)).size).toBe(members.length);
   });
 
@@ -1073,15 +1216,24 @@ export function user() { return 1; }
     expect(gc.success).toBe(true);
     expect(standalone.success).toBe(true);
     expect(wasi.success).toBe(true);
-    expect(gcOutcomes).toHaveLength(1);
-    expect(standaloneOutcomes).toHaveLength(11);
-    expect(wasiOutcomes).toHaveLength(11);
+    // (#3523 R4 gap 4) Each lane gains the one non-executable module-init row
+    // for this statement-free source; the terminal-unit populations are
+    // unchanged at 1/11/11.
+    expect(gcOutcomes.filter((outcome) => outcome.kind === "non-executable")).toHaveLength(1);
+    expect(standaloneOutcomes.filter((outcome) => outcome.kind === "non-executable")).toHaveLength(1);
+    expect(wasiOutcomes.filter((outcome) => outcome.kind === "non-executable")).toHaveLength(1);
+    const gcTerminals = gcOutcomes.filter((outcome) => outcome.kind !== "non-executable");
+    const standaloneTerminals = standaloneOutcomes.filter((outcome) => outcome.kind !== "non-executable");
+    const wasiTerminals = wasiOutcomes.filter((outcome) => outcome.kind !== "non-executable");
+    expect(gcTerminals).toHaveLength(1);
+    expect(standaloneTerminals).toHaveLength(11);
+    expect(wasiTerminals).toHaveLength(11);
     expect(standaloneMain.unitId).toBe(gcMain.unitId);
     expect(wasiMain.unitId).toBe(gcMain.unitId);
     expect(standaloneMain.key).toBe(gcMain.key);
     expect(wasiMain.key).toBe(gcMain.key);
-    expect(new Set(standaloneOutcomes.map((outcome) => outcome.unitId)).size).toBe(standaloneOutcomes.length);
-    expect(new Set(wasiOutcomes.map((outcome) => outcome.unitId)).size).toBe(wasiOutcomes.length);
+    expect(new Set(standaloneTerminals.map((outcome) => outcome.unitId)).size).toBe(standaloneTerminals.length);
+    expect(new Set(wasiTerminals.map((outcome) => outcome.unitId)).size).toBe(wasiTerminals.length);
     expect(standalone.binary).toEqual(standaloneUntracked.binary);
     expect(wasi.binary).toEqual(wasiUntracked.binary);
   });
@@ -1108,6 +1260,7 @@ export function user() { return 1; }
     await assertProjection("timer-projection.ts", `export function main() { setTimeout(() => {}, 1); return 1; }`, {}, [
       ["setTimeout", "function", "emitted"],
       ["main", "function", "unsupported"],
+      ["<module-init>", "module-init", "non-executable"],
     ]);
     await assertProjection(
       "path-projection.ts",
@@ -1125,6 +1278,7 @@ export function user() { return 1; }
         ["__js2wasm_path_relative", "function", "unsupported"],
         ["join", "function", "unsupported"],
         ["main", "function", "unsupported"],
+        ["<module-init>", "module-init", "non-executable"],
       ],
     );
     await assertProjection(
@@ -1171,6 +1325,7 @@ export function user() { return 1; }
           "__js2wasm_Iterator_from",
           "main",
         ].map((label) => [label, "function", "unsupported"] as const),
+        ["<module-init>", "module-init", "non-executable"] as const,
       ],
     );
   });

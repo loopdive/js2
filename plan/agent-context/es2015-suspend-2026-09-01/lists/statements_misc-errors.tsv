@@ -1,0 +1,84 @@
+test/language/statements/for-in/scope-head-lex-open.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/global-code/decl-lex.js	fail/assertion_fail	Test262Error: `class` binding is mutable Expected SameValue(«[object Object]», «5») to be true
+test/language/statements/for/scope-head-lex-open.js	fail/assertion_fail	Test262Error: Expected SameValue(«"inside"», «"outside"») to be true
+test/language/global-code/block-decl-strict.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/global-code/script-decl-lex.js	fail/type_error	TypeError: TypeError: Cannot define property, object is not extensible
+test/language/statements/try/scope-catch-block-lex-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «"outside"») to be true
+test/language/statements/for/head-lhs-let.js	compile_error/other	L32:11 Variable declaration expected.; L32:13 Variable declaration expected.; L32:18 Declaration or statement expected.
+test/language/block-scope/leave/outermost-binding-updated-in-catch-block-nested-block-let-declaration-unseen-outside-of-block.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/language/eval-code/direct/super-prop-method.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «262») to be true
+test/language/statements/variable/binding-resolution.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «true») to be true
+test/language/arguments-object/mapped/Symbol.iterator.js	fail/assertion_fail	Test262Error: Symbol() should be an own property
+test/language/statements/with/set-mutable-binding-binding-deleted-in-get-unscopables.js	fail/assertion_fail	Test262Error: get [Symbol.unscopables] called once Expected SameValue(«0», «1») to be true
+test/language/statements/for/scope-body-lex-open.js	fail/assertion_fail	Test262Error: Expected SameValue(«"inside"», «"outside"») to be true
+test/language/statements/for-in/scope-body-var-none.js	fail/type_error	TypeError: Cannot access property on null or undefined at 362:18
+test/language/statements/function/params-dflt-ref-arguments.js	fail/type_error	TypeError: Cannot access property on null or undefined at 368:16
+test/language/statementList/eval-class-regexp-literal-flags.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Object]») to be true
+test/language/types/reference/put-value-prop-base-primitive.js	fail/assertion_fail	Test262Error: number Expected SameValue(«0», «1») to be true
+test/language/destructuring/binding/keyed-destructuring-property-reference-target-evaluation-order-with-bindings.js	fail/assertion_fail	Test262Error: Actual [binding::source, binding::sourceKey] and expected [binding::source, binding::sourceKey, sourceKey, binding::varTarget, get source, binding::defaultValue] should have the same contents. 
+test/language/global-code/script-decl-var-collision.js	fail/assertion_fail	Test262Error: function on `let` binding Expected a SyntaxError to be thrown but no exception was thrown at all
+test/language/statements/function/arguments-with-arguments-fn.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true
+test/language/statements/with/get-binding-value-call-with-proxy-env.js	fail/assertion_fail	Test262Error: Actual [] and expected [has:Object, get:Symbol(Symbol.unscopables), has:Object, get:Object] should have the same contents. 
+test/language/statements/function/arguments-with-arguments-lex.js	fail/illegal_cast	illegal cast [in f() ← __module_init]
+test/language/eval-code/direct/super-prop-expr-no-home.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Function]») to be true
+test/language/statementList/eval-class-array-literal.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Array]») to be true
+test/language/statements/for-in/scope-head-lex-close.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/eval-code/indirect/realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 348:1
+test/language/statements/const/fn-name-class.js	fail/assertion_fail	Test262Error: name descriptor value should be cls; name value should be cls
+test/language/statements/const/block-local-use-before-initialization-in-prior-statement.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statements/let/block-local-use-before-initialization-in-prior-statement.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statements/for/dstr/const-ary-ptrn-elision.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/language/global-code/decl-lex-restricted-global.js	fail/negative_test_fail	expected runtime SyntaxError but succeeded
+test/language/statements/const/block-local-closure-get-before-initialization.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/global-code/script-decl-func.js	fail/assertion_fail	Test262Error: brandNew descriptor should not be configurable
+test/language/rest-parameters/arrow-function.js	fail/assertion_fail	Test262Error: Actual argument [null] shouldn't be primitive. 
+test/language/rest-parameters/with-new-target.js	fail/assertion_fail	Test262Error: The value of `arguments.length` is `a.length` Expected SameValue(«1», «3») to be true
+test/language/eval-code/direct/super-prop-dot-no-home.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Function]») to be true
+test/language/statements/with/set-mutable-binding-idref-compound-assign-with-proxy-env.js	compile_error/other	L69:12 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/language/statements/with/get-binding-value-idref-with-proxy-env.js	fail/assertion_fail	Test262Error: Actual [has:Object, get:Object] and expected [has:Object, get:Symbol(Symbol.unscopables), has:Object, get:Object] should have the same contents. 
+test/language/statements/with/set-mutable-binding-idref-with-proxy-env.js	compile_error/other	L61:12 Codegen error: Reflect.set with an explicit receiver argument is not yet supported in --target standalone (#2046); the receiver would be silently dropped and accessor setters would write to the target instead of the receiver.
+test/language/statements/const/syntax/const-outer-inner-let-bindings.js	fail/assertion_fail	Test262Error: Expected SameValue(«"inner_x"», «"outer_x"») to be true
+test/language/statements/with/unscopables-get-err.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/language/statements/with/set-mutable-binding-binding-deleted-with-typed-array-in-proto-chain-strict-mode.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statements/for-in/scope-body-lex-close.js	fail/type_error	TypeError: Cannot access property on null or undefined at 354:18
+test/language/statements/for-in/head-let-bound-names-fordecl-tdz.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statements/for-in/head-let-destructuring.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «"k"») to be true
+test/language/statements/try/scope-catch-block-lex-open.js	fail/assertion_fail	Test262Error: Expected SameValue(«"outside"», «"inside"») to be true
+test/language/statements/for-in/head-var-bound-names-dup.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «"b"») to be true
+test/language/statements/for/dstr/var-ary-ptrn-elision.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/language/statements/with/unscopables-inc-dec.js	compile_error/other	L25:1 #1387: with statement requires a proven closed object-literal shape before codegen; class or method capture is not in the with-environment IR slice. ECMA-262 14.11.2 creates an Object Environment Record, 9.1.1.2.1 checks HasProperty p
+test/language/statements/with/has-binding-call-with-proxy-env.js	fail/assertion_fail	Test262Error: Actual [] and expected [has:Object] should have the same contents. 
+test/language/statements/for/scope-head-lex-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«"inside"», «"outside"») to be true
+test/language/statements/variable/fn-name-class.js	fail/assertion_fail	Test262Error: name descriptor value should be cls; name value should be cls
+test/language/statements/for-in/head-const-bound-names-fordecl-tdz.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statements/let/dstr/ary-ptrn-elision.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/language/statements/with/binding-blocked-by-unscopables.js	fail/assertion_fail	Test262Error: literal `true` value Expected SameValue(«1», «0») to be true
+test/language/statements/for-in/scope-body-lex-open.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statements/let/syntax/let-outer-inner-let-bindings.js	fail/assertion_fail	Test262Error: Expected SameValue(«"inner_x"», «"outer_x"») to be true
+test/language/statements/with/unscopables-prop-get-err.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/language/statements/with/set-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statementList/eval-class-regexp-literal.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Object]») to be true
+test/language/types/reference/get-value-prop-base-primitive.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «"Symbol prototype"») to be true
+test/language/statements/const/global-closure-get-before-initialization.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statements/let/block-local-closure-get-before-initialization.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statements/const/dstr/ary-ptrn-elision.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/language/types/reference/get-value-prop-base-primitive-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 338:1
+test/language/statements/for/dstr/let-ary-ptrn-elision.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/language/global-code/script-decl-var.js	fail/assertion_fail	Test262Error: brandNew descriptor should not be configurable
+test/language/statements/variable/dstr/ary-ptrn-elision.js	fail/assertion_fail	Test262Error: Expected SameValue(«1», «0») to be true
+test/language/statements/function/dflt-params-arg-val-not-undefined.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «false») to be true
+test/language/statements/let/block-local-closure-set-before-initialization.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/global-code/script-decl-lex-restricted-global.js	fail/type_error	TypeError (null/undefined access): Let binding collision with non-configurable global property (not defined through a declaration)
+test/language/statements/for-in/head-lhs-member.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «"attr"») to be true
+test/language/arguments-object/unmapped/Symbol.iterator.js	fail/assertion_fail	Test262Error: Symbol() should be an own property
+test/language/statements/const/syntax/const-invalid-assignment-next-expression-for.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/language/eval-code/indirect/lex-env-heritage.js	fail/assertion_fail	Test262Error: non strict mode Expected SameValue(«"inside"», «"outside"») to be true
+test/language/statements/with/set-mutable-binding-binding-deleted-with-typed-array-in-proto-chain.js	fail/assertion_fail	Test262Error: Expected SameValue(«[object Object]», «undefined») to be true
+test/language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopables-strict-mode.js	fail/assertion_fail	Test262Error: Expected a ReferenceError to be thrown but no exception was thrown at all
+test/language/statements/function/dstr/ary-ptrn-elem-ary-rest-init.js	fail/type_error	TypeError: Cannot access property on null or undefined at 374:20
+test/language/statementList/eval-class-array-literal-with-item.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Array]») to be true
+test/language/statements/function/dstr/dflt-obj-ptrn-prop-ary.js	fail/assertion_fail	Test262Error: Expected SameValue(«NaN», «undefined») to be true
+test/language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopables.js	fail/assertion_fail	Test262Error: get [Symbol.unscopables] called once Expected SameValue(«0», «1») to be true
+test/language/statements/let/fn-name-class.js	fail/assertion_fail	Test262Error: name descriptor value should be cls; name value should be cls
+test/language/types/reference/put-value-prop-base-primitive-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 348:23
+test/language/global-code/script-decl-func-err-non-configurable.js	fail/type_error	TypeError (null/undefined access): Declaration of function when there is a corresponding global property that is non-configurable but *

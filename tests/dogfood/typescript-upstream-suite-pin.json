@@ -7,10 +7,25 @@
   "testFileCount": 256,
   "testFilePathSha256": "5f735da50b2a27e0e9274a21d759cedf845e7b91c1896bc817aaa5f940e97743",
   "registrationSites": 1761,
+  "generatedDiagnostics": {
+    "script": "scripts/processDiagnosticMessages.mjs",
+    "input": "src/compiler/diagnosticMessages.json",
+    "artifacts": [
+      {
+        "path": "src/compiler/diagnosticInformationMap.generated.ts",
+        "sha256": "a6ec09037b989eb06de5419a60bc69dc0d026e4fa16f498a647e74284eed8e06"
+      },
+      {
+        "path": "src/compiler/diagnosticMessages.generated.json",
+        "sha256": "a2e882ead6ad0d0bc5803ce89d78ad36bd8db2b56bdbf9c98df318b6e49819b5"
+      }
+    ]
+  },
   "selectedFiles": [
     "src/testRunner/unittests/base64.ts",
+    "src/testRunner/unittests/comments.ts",
     "src/testRunner/unittests/convertToBase64.ts",
     "src/testRunner/unittests/parsePseudoBigInt.ts"
   ],
-  "_note": "The complete src/testRunner/unittests inventory is verified. The adapter runs the original base64, convertToBase64, and parsePseudoBigInt callbacks against an exact projection of the release-tag implementations. Compiler, server, watch, evaluator, snapshot, async, and filesystem-heavy files remain explicit deferred coverage."
+  "_note": "The complete src/testRunner/unittests inventory is verified. The adapter runs the original base64, comment-scanner, convertToBase64, and parsePseudoBigInt callbacks against an exact projection of the release-tag implementations. Compiler, server, watch, evaluator, snapshot, async, and filesystem-heavy files remain explicit deferred coverage."
 }

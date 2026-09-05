@@ -2,12 +2,18 @@
 
 import { ts } from "../ts-api.js";
 import {
-  collectIrDirectCallLoweringPlans,
+  collectIrDirectCallLoweringPlansByIdentity,
+  irDirectCallLoweringPlanEquals,
   type IrDirectCallTarget,
   type IrIntegrationLoweringPlans,
 } from "../ir/ast-lowering-plans.js";
-import { irUnitFuncRef } from "../ir/callable-bindings.js";
-import type { IrUnitId } from "../ir/identity.js";
+import { irIntrinsicFuncRef, irUnitFuncRef } from "../ir/callable-bindings.js";
+import type {
+  IrNestedClassFieldCallAdmission,
+  IrNestedClassFieldCallInventoryCandidate,
+  IrUnitId,
+} from "../ir/identity.js";
+import type { IrNestedClassFieldCallProofSidecar } from "../ir/class-field-call-planning.js";
 import { irVal } from "../ir/nodes.js";
 import {
   makeIrIdentityImportedFunctionResolver,
@@ -22,12 +28,16 @@ export type { IrIdentityImportedFunctionResolver } from "../ir/imported-function
 import { IrInvariantError } from "../ir/outcomes.js";
 import {
   buildIrLegacyUnitProjection,
+  requireIrPlanningSourceId,
   type IrLegacyUnitProjection,
   type IrPlanningIdentityContext,
 } from "../ir/planning-identity.js";
+import { IR_STRING_REPEAT_FN } from "../ir/string-runtime.js";
+import { createIrCountedStringAppendSiteId } from "../ir/counted-string-append-provenance.js";
 import {
   buildIrUnitTypeMap,
   projectIrUnitTypeMapToLegacy,
+  type IrFnctorPropagationAdmissionResolver,
   type IrUnitTypeMap,
   type TypeMap,
   type TypeMapEntry,
@@ -39,6 +49,8 @@ import {
   type IrIdentitySelectionOptions,
   type IrLegacySelectionProjection,
 } from "../ir/select-identity.js";
+
+export { computeIrNestedClassFieldCallAdmission } from "../ir/select-identity.js";
 
 export interface IrOverlayIdentityFunctionClaim {
   readonly unitId: IrUnitId;
@@ -56,12 +68,23 @@ export interface IrOverlayIdentityPlan {
   readonly unitIdByLegacyName: ReadonlyMap<string, IrUnitId>;
   readonly functionUnitIdByLegacyName: ReadonlyMap<string, IrUnitId>;
   readonly declarationByLegacyName: ReadonlyMap<string, ts.FunctionDeclaration>;
+  /** Typed-but-unclaimed F3 inventory population for this exact source. */
+  readonly nestedClassFieldCallCandidates?: readonly IrNestedClassFieldCallInventoryCandidate[];
+  /** Optional dormant evidence built before selection; never an admission input in F3. */
+  readonly nestedClassFieldCallProofs?: IrNestedClassFieldCallProofSidecar;
+  /** (#3522 F4) The one proof-derived admitted-class marker, carried never rebuilt. */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
   readonly safeFunctionUnitIds: Set<IrUnitId>;
 }
 
 export interface IrOverlayIdentityMaps {
   readonly unitTypeMap: IrUnitTypeMap;
   readonly projectedTypeMap: TypeMap;
+}
+
+export interface IrOverlayIdentityMapOptions {
+  /** Exact source-qualified constructor evidence; absent means no fnctor extension. */
+  readonly resolveFnctorAdmission?: IrFnctorPropagationAdmissionResolver;
 }
 
 function mismatch(detail: string): never {
@@ -75,8 +98,15 @@ export function buildIrOverlayIdentityMaps(
   // (#743) Shared `.d.ts` entrypoint seed map (flag-gated upstream) — the same
   // object the legacy lane consults, so IR/legacy seed facts cannot diverge.
   entrypointSeeds?: import("../checker/dts-entrypoint-seeds.js").DtsEntrypointSeeds,
+  options?: IrOverlayIdentityMapOptions,
 ): IrOverlayIdentityMaps {
-  const unitTypeMap = buildIrUnitTypeMap([sourceFile], checker, identityContext, entrypointSeeds);
+  const unitTypeMap = buildIrUnitTypeMap(
+    [sourceFile],
+    checker,
+    identityContext,
+    entrypointSeeds,
+    options?.resolveFnctorAdmission ? { resolveFnctorAdmission: options.resolveFnctorAdmission } : undefined,
+  );
   const projectedTypeMap = projectIrUnitTypeMapToLegacy([sourceFile], unitTypeMap, identityContext);
   return { unitTypeMap, projectedTypeMap };
 }
@@ -145,6 +175,15 @@ export function planIrOverlayByIdentity(
     unitIdByLegacyName,
     functionUnitIdByLegacyName,
     declarationByLegacyName,
+    ...(identitySelection.nestedClassFieldCallCandidates
+      ? { nestedClassFieldCallCandidates: identitySelection.nestedClassFieldCallCandidates }
+      : {}),
+    ...(identitySelection.nestedClassFieldCallProofs
+      ? { nestedClassFieldCallProofs: identitySelection.nestedClassFieldCallProofs }
+      : {}),
+    ...(identitySelection.nestedClassFieldCallAdmission
+      ? { nestedClassFieldCallAdmission: identitySelection.nestedClassFieldCallAdmission }
+      : {}),
     safeFunctionUnitIds: new Set(),
   };
 }
@@ -282,11 +321,15 @@ export function projectIrIntegrationLoweringPlans(
   plan: {
     readonly identityPlan: IrOverlayIdentityPlan;
     readonly overrideMapByUnitId: IrIntegrationLoweringPlans["signaturesByUnitId"];
+    readonly directCallResolver?: IrIdentityImportedFunctionResolver;
     readonly directCalls?: IrIntegrationLoweringPlans["directCalls"];
     readonly classShapesById?: IrIntegrationLoweringPlans["classShapesById"];
     readonly postWasmStartTdzSafeBindingsByOwnerUnitId?: IrIntegrationLoweringPlans["postWasmStartTdzSafeBindingsByOwnerUnitId"];
     readonly hostDateSnapshots?: IrIntegrationLoweringPlans["hostDateSnapshots"];
     readonly hostDateGetters?: IrIntegrationLoweringPlans["hostDateGetters"];
+    readonly fnctorParameterPreselection?: IrIntegrationLoweringPlans["fnctorParameterPreselection"];
+    readonly fnctorNativeStringBoundaries?: IrIntegrationLoweringPlans["fnctorNativeStringBoundaries"];
+    readonly fnctorParameterPreselectionIsCurrent?: IrIntegrationLoweringPlans["fnctorParameterPreselectionIsCurrent"];
   } & Pick<
     IrIntegrationLoweringPlans,
     "importedCalls" | "topLevelFunctionValues" | "hostVoidCallbacks" | "promiseDelays" | "suspendingAsyncUnitIds"
@@ -303,6 +346,20 @@ export function projectIrIntegrationLoweringPlans(
     ownerProjection.entries.map(({ legacyName, unitId }) => [legacyName, unitId]),
   );
   const activeOwnerUnitIds = new Set(ownerProjection.entries.map(({ unitId }) => unitId));
+  const fnctorParameterPreselection =
+    plan.fnctorParameterPreselection &&
+    activeOwnerUnitIds.has(plan.fnctorParameterPreselection.ownerUnitId) &&
+    (plan.fnctorParameterPreselection.valueConsumer === undefined ||
+      activeOwnerUnitIds.has(plan.fnctorParameterPreselection.valueConsumer.unitId))
+      ? plan.fnctorParameterPreselection
+      : undefined;
+  const fnctorNativeStringBoundaries = fnctorParameterPreselection
+    ? new Map(
+        [...(plan.fnctorNativeStringBoundaries ?? [])].filter(([, boundary]) =>
+          activeOwnerUnitIds.has(boundary.ownerUnitId),
+        ),
+      )
+    : undefined;
   const signaturesByUnitId = new Map(plan.overrideMapByUnitId);
   const callableSignaturesByUnitId = new Map(signaturesByUnitId);
   for (const unitId of plan.suspendingAsyncUnitIds) {
@@ -320,25 +377,96 @@ export function projectIrIntegrationLoweringPlans(
     });
   }
   const directCalls = new Map(plan.directCalls ?? []);
+  const retainDirectCall = (
+    call: ts.CallExpression,
+    directCall: import("../ir/ast-lowering-plans.js").IrDirectCallLoweringPlan,
+  ): void => {
+    const existing = directCalls.get(call);
+    if (existing && !irDirectCallLoweringPlanEquals(existing, directCall)) {
+      mismatch(`direct-call plan at ${call.getSourceFile().fileName}:${call.pos} has conflicting producers`);
+    }
+    if (!existing) directCalls.set(call, directCall);
+  };
   for (const { unitId } of ownerProjection.entries) {
     const declaration = plan.identityPlan.identityContext.declarationByUnitId.get(unitId);
     if (!declaration) continue;
-    for (const [call, directCall] of collectIrDirectCallLoweringPlans(declaration, unitId, directCallTargets)) {
+    if (!plan.directCallResolver) continue;
+    let collected: ReadonlyMap<ts.CallExpression, import("../ir/ast-lowering-plans.js").IrDirectCallLoweringPlan>;
+    try {
+      collected = collectIrDirectCallLoweringPlansByIdentity(declaration, unitId, {
+        identityContext: plan.identityPlan.identityContext,
+        resolver: plan.directCallResolver,
+        activeOwnerUnitIds,
+        signaturesByUnitId: callableSignaturesByUnitId,
+        targetsByLegacyName: directCallTargets,
+      });
+    } catch (error) {
+      mismatch(
+        `direct-call identity for ${unitId} disagrees with the retained source projection: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    for (const [call, directCall] of collected) {
       // The projected callable ABI is authoritative for every exact active
       // source edge. In particular, a prepared suspending async target keeps
       // its numeric fulfillment type in `signaturesByUnitId`, while calls to
       // its source slot observe the Promise-returning externref ABI. A stale
       // pre-projection plan would otherwise unbox that Promise as a number.
-      directCalls.set(call, directCall);
+      retainDirectCall(call, directCall);
+    }
+  }
+  const countedStringAppends = new Map<
+    ts.ForStatement,
+    import("../ir/ast-lowering-plans.js").IrCountedStringAppendLoweringPlan
+  >();
+  for (const [ownerUnitId, syntaxPlans] of plan.identityPlan.identitySelection.countedStringAppendPlans ?? []) {
+    if (!activeOwnerUnitIds.has(ownerUnitId)) continue;
+    const declaration = plan.identityPlan.identityContext.declarationByUnitId.get(ownerUnitId);
+    if (!declaration || !ts.isFunctionDeclaration(declaration) || !declaration.body) {
+      mismatch(`counted-string owner ${ownerUnitId} is not an exact bodyful function declaration`);
+    }
+    for (const syntaxPlan of syntaxPlans) {
+      let cursor: ts.Node | undefined = syntaxPlan.loop;
+      while (cursor && cursor !== declaration) cursor = cursor.parent;
+      if (cursor !== declaration || syntaxPlan.sourceFile !== declaration.getSourceFile()) {
+        mismatch(`counted-string plan for ${ownerUnitId} is detached from its exact declaration/source`);
+      }
+      if (countedStringAppends.has(syntaxPlan.loop)) {
+        mismatch(`counted-string loop for ${ownerUnitId} was planned more than once`);
+      }
+      const sourceFile = syntaxPlan.sourceFile;
+      const sourceId = requireIrPlanningSourceId(plan.identityPlan.identityContext, sourceFile);
+      countedStringAppends.set(
+        syntaxPlan.loop,
+        Object.freeze({
+          ownerUnitId,
+          sourceId,
+          siteId: createIrCountedStringAppendSiteId({
+            sourceId,
+            ownerUnitId,
+            loopStart: syntaxPlan.loop.getStart(sourceFile),
+            loopEnd: syntaxPlan.loop.getEnd(),
+          }),
+          sourceFile,
+          syntaxPlan,
+          provider: irIntrinsicFuncRef(IR_STRING_REPEAT_FN),
+        }),
+      );
     }
   }
   return {
     identityContext: plan.identityPlan.identityContext,
+    ...(plan.directCallResolver ? { directCallResolver: plan.directCallResolver } : {}),
+    ...(fnctorParameterPreselection ? { fnctorParameterPreselection } : {}),
+    ...(fnctorNativeStringBoundaries && fnctorNativeStringBoundaries.size > 0 ? { fnctorNativeStringBoundaries } : {}),
+    ...(fnctorParameterPreselection && plan.fnctorParameterPreselectionIsCurrent
+      ? { fnctorParameterPreselectionIsCurrent: plan.fnctorParameterPreselectionIsCurrent }
+      : {}),
     ...(plan.classShapesById ? { classShapesById: plan.classShapesById } : {}),
     ownerProjection,
     ownerUnitIdByLegacyName,
     directCalls,
     signaturesByUnitId,
+    directCallSignaturesByUnitId: callableSignaturesByUnitId,
     importedCalls: plan.importedCalls,
     topLevelFunctionValues: plan.topLevelFunctionValues,
     hostVoidCallbacks: plan.hostVoidCallbacks,
@@ -348,6 +476,7 @@ export function projectIrIntegrationLoweringPlans(
     hostDateGetters: new Map(
       [...(plan.hostDateGetters ?? [])].filter(([, hostDate]) => activeOwnerUnitIds.has(hostDate.ownerUnitId)),
     ),
+    countedStringAppends,
     promiseDelays: plan.promiseDelays,
     suspendingAsyncUnitIds: new Set(
       [...plan.suspendingAsyncUnitIds].filter((unitId) => activeOwnerUnitIds.has(unitId)),

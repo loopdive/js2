@@ -53,6 +53,7 @@ import {
   IR_STRING_EQUALS_FN,
   IR_STRING_ITERATOR_CHAR_AT_FN,
   IR_STRING_LITERAL_MATERIALIZE_FN,
+  IR_STRING_REPEAT_FN,
 } from "../src/ir/string-runtime.js";
 import { attachIrVecLayouts } from "../src/ir/vec-layout.js";
 import {
@@ -213,6 +214,27 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
         programAbiBindingId: irUnitCallableBindingId(f.second.id),
       }),
     ]);
+  });
+
+  it("keeps a caller-certified atomic population together after its final IR edge disappears", () => {
+    const f = fixture();
+    const input = {
+      module: { functions: [irFunction(f.first), irFunction(f.second)] },
+      terminalUnitIds: new Set([f.first.id, f.second.id]),
+      inventory: f.inventory,
+      abi: abiLookup([sourceCallableEntry(f.first.id), sourceCallableEntry(f.second.id)]),
+    };
+
+    expect(derivePreparedComponentDependencies(input).components).toHaveLength(2);
+    const atomic = derivePreparedComponentDependencies({ ...input, atomicTerminalPopulation: true });
+    expect(atomic.components).toHaveLength(1);
+    expect(atomic.components[0]).toMatchObject({
+      id: `prepared-component:${[f.first.id, f.second.id].sort().join("+")}`,
+      status: "complete",
+      terminalUnitIds: [f.first.id, f.second.id].sort(),
+    });
+    expect(atomic.componentByTerminalUnitId.get(f.first.id)).toBe(atomic.components[0]);
+    expect(atomic.componentByTerminalUnitId.get(f.second.id)).toBe(atomic.components[0]);
   });
 
   it("keeps the local component atomic when the callee ABI reservation is missing", () => {
@@ -383,17 +405,18 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
           irFunction(f.nestedMethod),
         ],
       },
-      terminalUnitIds: new Set([f.first.id]),
+      terminalUnitIds: new Set([f.first.id, f.nestedMethod.id]),
       inventory: f.inventory,
       abi: abiLookup([sourceCallableEntry(f.first.id), sourceCallableEntry(f.nestedMethod.id), classEntry]),
     });
     const component = report.components[0]!;
 
-    expect(component.status).toBe("complete");
+    expect(component.status, JSON.stringify(component.failures)).toBe("complete");
+    expect(new Set(component.terminalUnitIds)).toEqual(new Set([f.first.id, f.nestedMethod.id]));
     expect(component.unitDependencies).toEqual([
       expect.objectContaining({
         referencedUnitId: f.nestedMethod.id,
-        terminalOwnerUnitId: f.first.id,
+        terminalOwnerUnitId: f.nestedMethod.id,
       }),
     ]);
     expect(component.failures).toEqual([]);
@@ -1043,6 +1066,84 @@ describe("#3521 post-pass prepared-component dependency evidence", () => {
     expect(new Set(report.components[0]!.abiDependencies.map((dependency) => dependency.bindingId))).toEqual(
       new Set([carrierRef.binding.bindingId, ...providerIds]),
     );
+  });
+
+  it("accepts only an exact canonical string-repeat carrier ABI", () => {
+    const f = fixture();
+    const provider = irIntrinsicFuncRef(IR_STRING_REPEAT_FN);
+    const providerBindingId = createIrBindingId({
+      ownerId: f.sourceId,
+      domain: "callable",
+      role: "string-repeat-provider",
+    });
+    const call: IrInstr = {
+      kind: "call",
+      result: null,
+      resultType: null,
+      target: provider,
+      args: [],
+    };
+    const dependencies = (
+      carrierParam: string,
+      carrierResult = carrierParam,
+      origin: "source" | "import" | "runtime" | "intrinsic" | "support" = "intrinsic",
+    ) =>
+      derivePreparedComponentDependencies({
+        module: { functions: [irFunction(f.first, [call])] },
+        terminalUnitIds: new Set([f.first.id]),
+        inventory: f.inventory,
+        abi: abiLookup([
+          sourceCallableEntry(f.first.id),
+          {
+            id: providerBindingId,
+            structuralReferenceKey: irCallableBindingKey(provider.binding),
+            slotPolicy: "required",
+            intent: {
+              kind: "callable",
+              origin,
+              signature: {
+                params: [carrierParam, '{"kind":"f64"}'],
+                results: [carrierResult],
+              },
+            },
+          },
+        ]),
+      }).components[0]!;
+
+    expect(dependencies('{"kind":"ref_null","typeIdx":12}')).toMatchObject({
+      status: "complete",
+      failures: [],
+    });
+    expect(dependencies('{"kind":"ref","typeIdx":12}')).toMatchObject({ status: "complete", failures: [] });
+    expect(dependencies('{"kind":"externref"}')).toMatchObject({ status: "complete", failures: [] });
+    expect(dependencies('{"kind":"i32"}')).toMatchObject({ status: "complete", failures: [] });
+    expect(dependencies('{"kind":"externref"}', '{"kind":"externref"}', "import")).toMatchObject({
+      status: "complete",
+      failures: [],
+    });
+    for (const origin of ["source", "runtime", "support"] as const) {
+      expect(dependencies('{"kind":"externref"}', '{"kind":"externref"}', origin)).toMatchObject({
+        status: "blocked",
+        failures: [expect.objectContaining({ code: "abi-binding-contract-mismatch" })],
+      });
+    }
+    expect(dependencies('{"kind":"ref_null","typeIdx":12}', '{"kind":"ref_null","typeIdx":13}')).toMatchObject({
+      status: "blocked",
+      failures: [expect.objectContaining({ code: "abi-binding-contract-mismatch" })],
+    });
+    for (const malformed of [
+      '{"kind":"reference"}',
+      '{"kind":"ref_null"}',
+      '{"kind":"ref_null","typeIdx":01}',
+      '{"kind":"ref_null","typeIdx":-1}',
+      '{"kind":"ref_null","typeIdx":9007199254740992}',
+      '{"kind":"ref_null","typeIdx":12,"extra":true}',
+    ]) {
+      expect(dependencies(malformed)).toMatchObject({
+        status: "blocked",
+        failures: [expect.objectContaining({ code: "abi-binding-contract-mismatch" })],
+      });
+    }
   });
 
   it("turns native string iteration into an exact code-point provider dependency", () => {

@@ -13,6 +13,27 @@ area: codegen, runtime
 es_edition: 5
 goal: es5
 related: [2200, 2552, 3626]
+loc-budget-allow:
+  - src/codegen/statements/loops.ts
+  - src/codegen/string-ops.ts
+  - src/codegen/declarations.ts
+  - src/codegen/regexp-standalone.ts
+  - src/codegen/expressions/calls.ts
+  - src/codegen/array-object-proto.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/builtins.ts
+  # The standalone Boolean constructor delegates object truthiness to the
+  # shared primitive-tail leaf; this driver grows by its import only.
+  - src/codegen/expressions/new-builtin-globals.ts
+func-budget-allow:
+  - src/codegen/statements/loops.ts::compileForInStatement
+  - src/codegen/statements/loops.ts::compileForOfArray
+  - src/codegen/declarations.ts::collectDeclarations
+  - src/codegen/statements/exceptions.ts::compileTryStatement
+  - src/codegen/regexp-standalone.ts::ensureDynamicStandaloneRegExpCompiler
+  - src/codegen/regexp-dynamic-pattern.ts::ensureDynamicPatternTokenDecoder
+  - src/codegen/expressions/assignment.ts::compileAssignment
+  - src/codegen/expressions/builtins.ts::compileDateMethodCall
 ---
 
 # ES5 standalone small bundles — ~39 rows across 6 mechanical buckets
@@ -47,3 +68,38 @@ File lists per bucket are in the analysis doc.
   semantics (fix compiler) or the runner's harness wrapping (file a separate
   runner issue; do not bury a runner defect in a compiler fix).
 - annexB-b33: verify #2200/#2552 claim state on the ledger before touching.
+
+## annexB-regexp — 3
+
+The baseline census recorded 0/3 passing files: the invalid `\\c` fallback
+case refused with `Unsupported dynamic regular expression pattern`, while the
+leading/trailing BMP escape cases observed `pattern.source === undefined`.
+
+The standalone RegExp path now keeps the `\\c` Annex B fallback literal, adds
+the small `*+?` quantifier records needed by the invalid-control-letter cases,
+and routes the exact `eval("/" + pattern + "/")` peephole through the native
+standalone RegExp carrier. The focused standalone tests cover both changes and
+keep ordinary dynamic quantifiers as refusals.
+
+### Test Results
+
+- Standalone runner with `JS2WASM_EVAL_ENGINE=interpreter`: 3/3 pass
+  (`RegExp-control-escape-russian-letter.js`, `RegExp-leading-escape-BMP.js`,
+  `RegExp-trailing-escape-BMP.js`). This is the local refusal/interpreter
+  diagnostic tier, not the QuickJS CI tier.
+- The default QuickJS run passes the control-letter file but cannot execute the
+  two eval files locally because the pinned QuickJS artifact is absent; building
+  it is blocked here by missing `clang-18`/`cmake`.
+- `tests/issue-4516-regexp.test.ts` plus `tests/issue-4065.test.ts`: 36/36.
+- TypeScript 7 typecheck and targeted Prettier check: pass.
+
+## Test Results
+
+The assigned Annex B Date and strict-global-constant slices are complete; the
+other buckets in this umbrella issue remain independently scoped.
+
+- Exact standalone Test262 Annex B Date bucket: 6/6 passing (+6).
+- Exact standalone Test262 strict ambient-global assignment bucket: 2/2
+  passing (+2).
+- Focused Vitest: `tests/issue-4516-date-annex-b.test.ts` and
+  `tests/issue-4516-strict-global-constants.test.ts` — 8/8 tests passing.

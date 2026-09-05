@@ -13,17 +13,19 @@ import type { FuncHandle, GlobalDef, Instr, WasmFunction } from "../ir/types.js"
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 import { hasDeclareModifier } from "./ast-modifiers.js";
-import { compileDeclarations } from "./audited-declarations.js";
-import type { ModuleInitMode } from "./declarations.js";
 import { definedFuncAt } from "./func-space.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import type { IrOverlayIdentityPlan } from "./ir-overlay-identity.js";
 import { prepareIrBodies, type PreparedIrFreeFunctionBodies } from "./ir-prepared-free-functions.js";
-import { correlateIrSkippedFunctionNames, type IrExactFunctionClaim } from "./ir-overlay-safety.js";
+import type { IrExactFunctionClaim } from "./ir-overlay-safety.js";
+import type { DeclarationQueryOracle } from "../checker/oracle-declaration-snapshot.js";
+import { resolveMultiPreparedFunctionValueImportTarget } from "./multi-prepared-function-value-import-target.js";
 import {
-  multiPreparedFunctionValueUseIsCurrent,
-  resolveMultiPreparedFunctionValueImportTarget,
-} from "./multi-prepared-function-value-import-target.js";
+  certifyMultiPreparedDeclarationReplay,
+  exactPreparedReductionDeclarationProof,
+  multiPreparedDeclarationReplayIsCurrent,
+  type MultiPreparedDeclarationReplayReceipt,
+} from "./multi-prepared-function-value-declaration-replay.js";
 import { localGlobalIdx } from "./registry/imports.js";
 
 export interface MultiPreparedScalarLeafGraphSafety {
@@ -261,7 +263,8 @@ export type MultiPreparedScalarLeafReceipt =
       readonly legacyName: string;
     };
 
-interface MultiPreparedLeafRouteBase {
+/** Common immutable prepared-body receipt shared by the narrow multi-source routes. */
+export interface MultiPreparedLeafRouteBase {
   readonly sourceFile: ts.SourceFile;
   readonly declaration: ts.FunctionDeclaration;
   readonly unitId: IrUnitId;
@@ -277,6 +280,51 @@ interface MultiPreparedLeafRouteBase {
 
 export interface MultiPreparedScalarLeafRoute extends MultiPreparedLeafRouteBase {
   readonly routeKind: "scalar";
+}
+
+/**
+ * Frozen ownership evidence passed between early route families.  The arrays
+ * are intentionally identity-bearing snapshots rather than mutable Sets: a
+ * later family must decline before it allocates support for any source,
+ * terminal, or target already claimed by an earlier family.
+ */
+export interface MultiPreparedRouteClaimSnapshot {
+  readonly sourceFiles: readonly ts.SourceFile[];
+  readonly terminalUnitIds: readonly IrUnitId[];
+  readonly targetUnitIds: readonly IrUnitId[];
+}
+
+export const EMPTY_MULTI_PREPARED_ROUTE_CLAIMS: MultiPreparedRouteClaimSnapshot = Object.freeze({
+  sourceFiles: Object.freeze([]),
+  terminalUnitIds: Object.freeze([]),
+  targetUnitIds: Object.freeze([]),
+});
+
+export function multiPreparedRouteClaimsOverlap(
+  claims: MultiPreparedRouteClaimSnapshot,
+  sourceFile: ts.SourceFile,
+  terminalUnitIds: readonly IrUnitId[],
+  targetUnitIds: readonly IrUnitId[],
+): boolean {
+  return (
+    claims.sourceFiles.includes(sourceFile) ||
+    terminalUnitIds.some((unitId) => claims.terminalUnitIds.includes(unitId)) ||
+    targetUnitIds.some((unitId) => claims.targetUnitIds.includes(unitId))
+  );
+}
+
+export function extendMultiPreparedRouteClaims(
+  claims: MultiPreparedRouteClaimSnapshot,
+  sourceFile: ts.SourceFile,
+  terminalUnitIds: readonly IrUnitId[],
+  targetUnitIds: readonly IrUnitId[],
+): MultiPreparedRouteClaimSnapshot {
+  const unique = <T>(values: readonly T[]): readonly T[] => [...new Set(values)];
+  return Object.freeze({
+    sourceFiles: Object.freeze(unique([...claims.sourceFiles, sourceFile])),
+    terminalUnitIds: Object.freeze(unique([...claims.terminalUnitIds, ...terminalUnitIds])),
+    targetUnitIds: Object.freeze(unique([...claims.targetUnitIds, ...targetUnitIds])),
+  });
 }
 
 /** Exact allocator objects frozen before a legacy owner reads a prepared function value. */
@@ -301,11 +349,14 @@ export interface MultiPreparedFunctionValueLeafRoute extends MultiPreparedLeafRo
   readonly importedCall: ts.CallExpression;
   readonly importedTargetUnitId: IrUnitId;
   readonly support: MultiPreparedFunctionValueSupportReceipt;
+  readonly declarationReplay: MultiPreparedDeclarationReplayReceipt;
 }
 
 export type MultiPreparedEarlyLeafRoute =
   | MultiPreparedScalarLeafRoute
+  | import("./multi-prepared-string-leaf.js").MultiPreparedStringLeafRoute
   | MultiPreparedFunctionValueLeafRoute
+  | import("./multi-prepared-array-leaf.js").MultiPreparedArrayLeafRoute
   | import("./multi-prepared-fibonacci-pair.js").MultiPreparedFibonacciPairRoute;
 
 function invariant(stage: "resolve" | "patch", detail: string): never {
@@ -465,16 +516,6 @@ export function collectMultiPreparedScalarLeafCandidates(
   );
 }
 
-function numericLiteralIs(node: ts.Expression | undefined, text: string): node is ts.NumericLiteral {
-  return node !== undefined && ts.isNumericLiteral(node) && node.text === text;
-}
-
-function unwrapParentheses(expression: ts.Expression): ts.Expression {
-  let current = expression;
-  while (ts.isParenthesizedExpression(current)) current = current.expression;
-  return current;
-}
-
 export function identifierResolvesExactly(
   ctx: CodegenContext,
   identifier: ts.Identifier,
@@ -484,88 +525,11 @@ export function identifierResolvesExactly(
 }
 
 /** Exact source-identity-proven i32 reduction; deliberately disjoint from #4589. */
-function isExactPreparedReductionLeaf(ctx: CodegenContext, declaration: ts.FunctionDeclaration): boolean {
-  if (!hasExactNumericDeclarationSignature(declaration) || declaration.parameters.length !== 0 || !declaration.body) {
-    return false;
-  }
-  const [seedStatement, loopStatement, returnStatement] = declaration.body.statements;
-  if (
-    declaration.body.statements.length !== 3 ||
-    !seedStatement ||
-    !ts.isVariableStatement(seedStatement) ||
-    (seedStatement.declarationList.flags & ts.NodeFlags.Let) === 0 ||
-    seedStatement.declarationList.declarations.length !== 1 ||
-    !loopStatement ||
-    !ts.isForStatement(loopStatement) ||
-    !returnStatement ||
-    !ts.isReturnStatement(returnStatement)
-  ) {
-    return false;
-  }
-  const seed = seedStatement.declarationList.declarations[0];
-  if (!seed || !ts.isIdentifier(seed.name) || seed.type !== undefined || !numericLiteralIs(seed.initializer, "0")) {
-    return false;
-  }
-  const initializer = loopStatement.initializer;
-  if (
-    !initializer ||
-    !ts.isVariableDeclarationList(initializer) ||
-    (initializer.flags & ts.NodeFlags.Let) === 0 ||
-    initializer.declarations.length !== 1
-  ) {
-    return false;
-  }
-  const counter = initializer.declarations[0];
-  if (
-    !counter ||
-    !ts.isIdentifier(counter.name) ||
-    counter.type !== undefined ||
-    !numericLiteralIs(counter.initializer, "0")
-  ) {
-    return false;
-  }
-  const condition = loopStatement.condition;
-  const incrementor = loopStatement.incrementor;
-  const body = loopStatement.statement;
-  if (
-    !condition ||
-    !ts.isBinaryExpression(condition) ||
-    condition.operatorToken.kind !== ts.SyntaxKind.LessThanToken ||
-    !ts.isIdentifier(condition.left) ||
-    !identifierResolvesExactly(ctx, condition.left, counter) ||
-    !numericLiteralIs(condition.right, "1000000") ||
-    !incrementor ||
-    !ts.isPostfixUnaryExpression(incrementor) ||
-    incrementor.operator !== ts.SyntaxKind.PlusPlusToken ||
-    !ts.isIdentifier(incrementor.operand) ||
-    !identifierResolvesExactly(ctx, incrementor.operand, counter) ||
-    !ts.isExpressionStatement(body) ||
-    !ts.isBinaryExpression(body.expression) ||
-    body.expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
-    !ts.isIdentifier(body.expression.left) ||
-    !identifierResolvesExactly(ctx, body.expression.left, seed)
-  ) {
-    return false;
-  }
-  const wrapped = unwrapParentheses(body.expression.right);
-  if (
-    !ts.isBinaryExpression(wrapped) ||
-    wrapped.operatorToken.kind !== ts.SyntaxKind.BarToken ||
-    !numericLiteralIs(wrapped.right, "0")
-  ) {
-    return false;
-  }
-  const sum = unwrapParentheses(wrapped.left);
+function isExactPreparedReductionLeaf(oracle: DeclarationQueryOracle, declaration: ts.FunctionDeclaration): boolean {
   return (
-    ts.isBinaryExpression(sum) &&
-    sum.operatorToken.kind === ts.SyntaxKind.PlusToken &&
-    ts.isIdentifier(sum.left) &&
-    identifierResolvesExactly(ctx, sum.left, seed) &&
-    ts.isIdentifier(sum.right) &&
-    identifierResolvesExactly(ctx, sum.right, counter) &&
-    returnStatement.expression !== undefined &&
-    ts.isIdentifier(returnStatement.expression) &&
-    identifierResolvesExactly(ctx, returnStatement.expression, seed)
+    hasExactNumericDeclarationSignature(declaration) &&
+    declaration.parameters.length === 0 &&
+    exactPreparedReductionDeclarationProof(oracle, declaration)
   );
 }
 
@@ -577,7 +541,7 @@ function collectMultiPreparedReductionLeafCandidates(
   return sourceFiles.flatMap((sourceFile) =>
     sourceFile.statements.filter(
       (statement): statement is ts.FunctionDeclaration =>
-        ts.isFunctionDeclaration(statement) && isExactPreparedReductionLeaf(ctx, statement),
+        ts.isFunctionDeclaration(statement) && isExactPreparedReductionLeaf(ctx.oracle, statement),
     ),
   );
 }
@@ -679,6 +643,8 @@ interface MultiPreparedFunctionValueCandidateInput<Plan extends MultiPreparedFun
   readonly plan: Plan;
   readonly safeSelection: IrSelection;
   readonly safety: MultiPreparedScalarLeafGraphSafety;
+  /** Replay-certified declaration authority; never `ctx.oracle` after capture. */
+  readonly declarationOracle: DeclarationQueryOracle;
   readonly hasForeignLateProvider: (unitId: IrUnitId) => boolean;
 }
 
@@ -763,7 +729,7 @@ function resolveExactFunctionValueCandidate<Plan extends MultiPreparedFunctionVa
   if (ctx.wasi) return reject("WASI");
   if (declaration.parent !== sourceFile) return reject("not a source child");
   if (!declaration.name || !declaration.body) return reject("missing name/body");
-  if (!isExactPreparedReductionLeaf(ctx, declaration)) return reject("reduction shape drift");
+  if (!isExactPreparedReductionLeaf(input.declarationOracle, declaration)) return reject("reduction shape drift");
   const legacyName = declaration.name.text;
   const unitId = plan.identityPlan.identityContext.unitIdByDeclaration.get(declaration);
   const terminal = unitId ? plan.identityPlan.identityContext.terminalByUnitId.get(unitId) : undefined;
@@ -804,7 +770,11 @@ function resolveExactFunctionValueCandidate<Plan extends MultiPreparedFunctionVa
     if (
       ts.isIdentifier(node) &&
       node !== declaration.name &&
-      identifierResolvesExactly(ctx, node, declaration) &&
+      // The legacy spelling is only a conservative candidate FILTER, so no
+      // unrelated declaration role is ever queried or recorded. The replayed
+      // source-qualified identity below remains the sole acceptance authority.
+      node.text === legacyName &&
+      input.declarationOracle.valueDeclarationOf(node) === declaration &&
       !(ts.isCallExpression(node.parent) && node.parent.expression === node)
     ) {
       valueReferences.push(node);
@@ -840,7 +810,7 @@ function resolveExactFunctionValueCandidate<Plan extends MultiPreparedFunctionVa
   const callee = call.expression;
   const importedTarget = ts.isIdentifier(callee)
     ? resolveMultiPreparedFunctionValueImportTarget({
-        oracle: ctx.oracle,
+        oracle: input.declarationOracle,
         sourceFile,
         callee,
         identityContext: plan.identityPlan.identityContext,
@@ -1109,6 +1079,7 @@ function tryPrepareMultiSourceFunctionValueLeaf<Plan extends MultiPreparedFuncti
   readonly plan: Plan;
   readonly candidate: MultiPreparedFunctionValueCandidateEvidence;
   readonly support: MultiPreparedFunctionValueSupportReceipt;
+  readonly declarationReplay: MultiPreparedDeclarationReplayReceipt;
   readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
 }): MultiPreparedFunctionValueLeafRoute | undefined {
   const { candidate, ctx, declaration, plan, sourceFile, support } = input;
@@ -1233,6 +1204,7 @@ function tryPrepareMultiSourceFunctionValueLeaf<Plan extends MultiPreparedFuncti
     importedCall: candidate.importedCall,
     importedTargetUnitId: candidate.importedTargetUnitId,
     support,
+    declarationReplay: input.declarationReplay,
   });
 }
 
@@ -1242,27 +1214,8 @@ export interface EarlyMultiPreparedScalarLeafState<Plan extends MultiPreparedSca
   skippedFunctionUnitIds: ReadonlySet<IrUnitId>;
 }
 
-export function compileMultiPreparedScalarLeafDeclarations<Plan extends MultiPreparedScalarLeafPlan>(
-  ctx: CodegenContext,
-  sourceFile: ts.SourceFile,
-  state: EarlyMultiPreparedScalarLeafState<Plan> | undefined,
-  moduleInitMode: ModuleInitMode,
-): void {
-  const skippedNames = compileDeclarations(
-    ctx,
-    sourceFile,
-    state?.route?.preparedFreeFunctions.skipBodies,
-    state?.route?.preparedFreeFunctions.preserveBodies,
-    undefined,
-    moduleInitMode,
-  );
-  if (state?.route) {
-    state.skippedFunctionUnitIds = correlateIrSkippedFunctionNames(
-      state.route.preparedFreeFunctions.requestedSkipProjection,
-      skippedNames ?? [],
-    ).unitIds;
-  }
-}
+/** Additional name-keyed body skips owned by a whole-program component. */
+export { compileMultiPreparedScalarLeafDeclarations } from "./multi-prepared-body-skips.js";
 
 /**
  * Plan every candidate-bearing source at the shared pre-body seam, prove that
@@ -1358,6 +1311,7 @@ export function planEarlyMultiPreparedFunctionValueLeafRoute<Plan extends MultiP
     legacyName: string,
   ) => MultiPreparedFunctionValueSupportReceipt | undefined;
   readonly projectLoweringPlans: (plan: Plan, selection: IrSelection) => IrIntegrationLoweringPlans;
+  readonly claimedRouteClaims?: MultiPreparedRouteClaimSnapshot;
 }): Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>> {
   const states = new Map<ts.SourceFile, EarlyMultiPreparedScalarLeafState<Plan>>();
   if (!input.active || collectMultiPreparedScalarLeafCandidates(input.sourceFiles).length !== 0) {
@@ -1375,23 +1329,40 @@ export function planEarlyMultiPreparedFunctionValueLeafRoute<Plan extends MultiP
   }
   const declaration = candidates[0]!;
   const sourceFile = declaration.getSourceFile();
-  if (sourceFile !== input.entryFile) return states;
+  if (sourceFile !== input.entryFile || !declaration.name || !declaration.body) return states;
   const safety = input.safety();
   const plan = input.planSource(sourceFile);
   const safeSelection = input.safeSelection(plan, sourceFile, safety);
-  const candidate = resolveExactFunctionValueCandidate({
-    ctx: input.ctx,
-    sourceFile,
-    declaration,
-    plan,
-    safeSelection,
-    safety,
-    hasForeignLateProvider: (unitId) => input.hasForeignLateProvider(plan, sourceFile, unitId),
+  // Capture discovers; only the finalized, parsed, no-delegate replay may
+  // authorize support allocation, preparation, or a direct-body skip (#4617).
+  const replay = certifyMultiPreparedDeclarationReplay({
+    liveOracle: input.ctx.oracle,
+    identity: plan.identityPlan.identityContext,
+    reductionBody: declaration.body,
+    legacyName: declaration.name.text,
+    prove: (declarationOracle) =>
+      resolveExactFunctionValueCandidate({
+        ctx: input.ctx,
+        sourceFile,
+        declaration,
+        plan,
+        safeSelection,
+        safety,
+        declarationOracle,
+        hasForeignLateProvider: (unitId) => input.hasForeignLateProvider(plan, sourceFile, unitId),
+      }),
   });
-  if (!candidate) {
+  if (replay.kind !== "certified") {
     if (process.env.JS2WASM_TEST_REQUIRE_MULTI_PREPARED_BENCH_LOOP === "1") {
-      invariant("resolve", "required multi-source function-value route failed exact candidate certification");
+      invariant("resolve", `required multi-source function-value route withdrew before skip: ${replay.detail}`);
     }
+    return states;
+  }
+  const candidate = replay.evidence;
+  if (
+    input.claimedRouteClaims &&
+    multiPreparedRouteClaimsOverlap(input.claimedRouteClaims, sourceFile, [candidate.unitId], [candidate.unitId])
+  ) {
     return states;
   }
   const state: EarlyMultiPreparedScalarLeafState<Plan> = { plan, skippedFunctionUnitIds: new Set() };
@@ -1409,6 +1380,7 @@ export function planEarlyMultiPreparedFunctionValueLeafRoute<Plan extends MultiP
     plan,
     candidate,
     support,
+    declarationReplay: replay.receipt,
     projectLoweringPlans: (selection) => input.projectLoweringPlans(plan, selection),
   });
   if (route) states.set(sourceFile, { plan, route, skippedFunctionUnitIds: new Set() });
@@ -1488,7 +1460,7 @@ export function assertMultiPreparedFunctionValueLeafRouteCurrent(input: {
     allocated.func.body.length !== route.preparedInstructions.length ||
     allocated.func.body.some((instruction, index) => instruction !== route.preparedInstructions[index]) ||
     (route.receipt.kind === "prepared" && allocated.func.body.length === 0) ||
-    !multiPreparedFunctionValueUseIsCurrent(ctx.oracle, ctx.irPlanningIdentityContext, route) ||
+    !multiPreparedDeclarationReplayIsCurrent(route, ctx.irPlanningIdentityContext) ||
     !functionValueSupportIsCurrent(ctx, candidate, route.support, false)
   ) {
     invariant("patch", `multi-source function-value leaf ${route.unitId} drifted after direct-body certification`);

@@ -24,19 +24,27 @@
  * is active (`ctx.standalone || ctx.wasi`). The JS-host path is untouched.
  */
 import { ts } from "../ts-api.js";
+import { isVoidType } from "../checker/type-mapper.js";
 import type { Instr, StructTypeDef, ArrayTypeDef, ValType } from "../ir/types.js";
-import { ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
-import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { canonicalUndefinedExternInstrs, ensureAnyValueType, undefinedSingletonActive } from "./any-helpers.js";
+import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
-import { ensureObjVecBuilders, reserveApplyClosure } from "./object-runtime.js";
+import { ensureObjVecBuilders, reserveApplyClosure, FLAG_DEFAULT } from "./object-runtime.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import type { InnerResult } from "./shared.js";
 import { compileArrowAsClosure, compileExpression, VOID_RESULT } from "./shared.js";
 import { isNullOrUndefinedLiteral } from "./destructuring-params.js";
 import { emitReceiverBrandCheck, type ReceiverBrandSpec } from "./receiver-brand.js";
 import { emitThrowTypeError } from "./js-errors.js";
-import { coercionInstrs } from "./type-coercion.js";
+import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
+import { resolveWasmType, resolveWasmTypeForClosureReturn } from "./index.js";
+import { ensureCurrentThisGlobal } from "./statements/nested-declarations.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2/S3) positional-read chokepoint + stable-regime minting
+import { nativeStringLiteralInstrs } from "./native-string-literals.js"; // (#4629) dyn-dispatch fill key compares
+import { getWellKnownSymbolId } from "./literals.js"; // (#4629) @@iterator id
+import { ensureSymbolCarrier, usesNativeSymbolProvider } from "./symbol-native.js"; // (#5267 A-2) symbol keys box as symbols, not ids
+import { ensureNativeIteratorRuntime } from "./iterator-native.js"; // (#5267 B-2) live collection iterator records
+import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js"; // (#4629) iterator closure singleton
 
 /** WasmGC `eq` abstract heap type, signed-LEB `0x6d` = -19. Used for ref.eq on
  *  object keys (only GC eqrefs can be compared by identity). */
@@ -1106,10 +1114,16 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
 
   // ── __map_iter_next(it) -> ref $MapIterResult ───────────────────────────
   // Walks the entries vector from it.index, skipping tombstones. Produces a
-  // {value, done} result. For entry-kind iteration, returns the value field
-  // (key/value handled by callers; entries() packing deferred — returns value).
+  // {value, done} result. Entry-kind iteration must return a FRESH [key,value]
+  // pair on every poll (§24.1.5.2). Use the canonical `$Vec` carrier so
+  // native-first values-only Map iteration does not initialize the object
+  // runtime just to keep this otherwise-dead entries arm available.
   {
-    // locals: m(1), idx(2), entries(3), entry(4)
+    // locals: m(1), idx(2), entries(3), entry(4), pair data(5)
+    const pairVecTypeIdx = getOrRegisterVecType(ctx, "externref", {
+      kind: "externref",
+    });
+    const pairArrTypeIdx = getArrTypeIdxFromVec(ctx, pairVecTypeIdx);
     const body: Instr[] = [
       { op: "local.get", index: 0 },
       {
@@ -1176,7 +1190,7 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
               { op: "i32.const", value: TOMBSTONE_BIT },
               { op: "i32.and" },
               { op: "br_if", depth: 0 },
-              // result: kind 0=key,1=value (entries→value for now)
+              // result: kind 0=key,1=value,2=entries
               { op: "local.get", index: 0 },
               {
                 op: "struct.get",
@@ -1196,11 +1210,57 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
                   },
                 ],
                 else: [
-                  { op: "local.get", index: 4 },
+                  { op: "local.get", index: 0 },
                   {
                     op: "struct.get",
-                    typeIdx: ctx.mapEntryTypeIdx,
-                    fieldIdx: F_VALUE,
+                    typeIdx: ctx.mapIterTypeIdx,
+                    fieldIdx: IT_KIND,
+                  },
+                  { op: "i32.const", value: 2 },
+                  { op: "i32.eq" },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: anyref },
+                    then: [
+                      // Allocate a fresh canonical two-slot vec for [key,
+                      // value]. Strict native iterator consumers already
+                      // understand this carrier, while the old ObjVec path
+                      // reached the compatibility iterator bridge.
+                      { op: "i32.const", value: 2 },
+                      { op: "array.new_default", typeIdx: pairArrTypeIdx },
+                      { op: "local.set", index: 5 },
+                      { op: "local.get", index: 5 },
+                      { op: "i32.const", value: 0 },
+                      { op: "local.get", index: 4 },
+                      {
+                        op: "struct.get",
+                        typeIdx: ctx.mapEntryTypeIdx,
+                        fieldIdx: F_KEY,
+                      },
+                      { op: "extern.convert_any" },
+                      { op: "array.set", typeIdx: pairArrTypeIdx },
+                      { op: "local.get", index: 5 },
+                      { op: "i32.const", value: 1 },
+                      { op: "local.get", index: 4 },
+                      {
+                        op: "struct.get",
+                        typeIdx: ctx.mapEntryTypeIdx,
+                        fieldIdx: F_VALUE,
+                      },
+                      { op: "extern.convert_any" },
+                      { op: "array.set", typeIdx: pairArrTypeIdx },
+                      { op: "i32.const", value: 2 },
+                      { op: "local.get", index: 5 },
+                      { op: "struct.new", typeIdx: pairVecTypeIdx },
+                    ],
+                    else: [
+                      { op: "local.get", index: 4 },
+                      {
+                        op: "struct.get",
+                        typeIdx: ctx.mapEntryTypeIdx,
+                        fieldIdx: F_VALUE,
+                      },
+                    ],
                   },
                 ],
               },
@@ -1212,6 +1272,14 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
         ],
       },
       // done: {value:null, done:1}
+      // (#5267 R3-1c) Exhaustion is STICKY (§24.1.5.1 step 4: once the
+      // [[Map]] slot is cleared the iterator stays done). Park the cursor at
+      // INT32_MAX so a later `map.set` / `set.add` that grows M_ENTRYCOUNT
+      // cannot revive an already-exhausted iterator: the `idx >= entryCount`
+      // test above stays true for every future poll.
+      { op: "local.get", index: 0 },
+      { op: "i32.const", value: 0x7fffffff },
+      { op: "struct.set", typeIdx: ctx.mapIterTypeIdx, fieldIdx: IT_INDEX },
       { op: "ref.null", typeIdx: NONE_HEAP },
       { op: "i32.const", value: 1 },
       { op: "struct.new", typeIdx: ctx.mapIterResultTypeIdx },
@@ -1226,6 +1294,7 @@ export function ensureMapHelpers(ctx: CodegenContext): void {
         { name: "idx", type: i32 },
         { name: "entries", type: entriesRef },
         { name: "entry", type: entryRef },
+        { name: "pairData", type: { kind: "ref", typeIdx: pairArrTypeIdx } },
       ],
       body,
     );
@@ -1441,6 +1510,28 @@ function coerceArgToAnyref(ctx: CodegenContext, fctx: FunctionContext, t: ValTyp
       return;
     }
     case "i32": {
+      // (#5267 A-2) A BRANDED symbol is a bare i32 id in standalone/WASI
+      // (`ensureSymbolCarrier`, symbol-native.ts) — boxing it with
+      // `__box_number` handed the collection the symbol's *numeric id*, so
+      // `new WeakMap([[Symbol('a'), 42]])` stored the key `100` and the
+      // patched `WeakMap.prototype.set` observed a number
+      // (`iterable-with-symbol-keys.js` / `iterable-with-symbol-values.js`).
+      // `__box_symbol` INTERNS by id, so two boxings of the same symbol stay
+      // `ref.eq`-equal and two same-description symbols stay distinct.
+      // Registered by the callers' addUnionImports/symbol lowering; a funcMap
+      // lookup avoids a mid-body import shift (same note as the boolean arm).
+      if (t.symbol === true) {
+        // The brand is only set under the native provider (literals.ts:2619),
+        // which is exactly where `ensureSymbolCarrier` is legal; it mints a
+        // DEFINED function, so registering it here shifts no baked index.
+        if (ctx.funcMap.get("__box_symbol") === undefined && usesNativeSymbolProvider(ctx)) ensureSymbolCarrier(ctx);
+        const boxSymIdx = ctx.funcMap.get("__box_symbol");
+        if (boxSymIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: boxSymIdx });
+          fctx.body.push({ op: "any.convert_extern" });
+          return;
+        }
+      }
       // (#2712 I2) A BRANDED boolean boxes via __box_boolean so the element/key
       // reifies as a boolean, not the number 1/0 — `new Set([(n<2)]).has(1)` must
       // be false and `.has(true)` true (SameValueZero on a boolean, not a number).
@@ -1602,11 +1693,12 @@ export function tryCompileNativeMapMethodCall(
     return tryCompileNativeCollectionForEach(ctx, fctx, propAccess, callExpr, /* isSet */ false);
   }
 
-  // keys()/values() materialize a canonical externref $Vec of the projection
-  // (24.1.3.*). `entries()` (the `[k, v]`-pair projection) needs the `__iterator`
-  // pair consumer rather than the array fast path — deferred to a #2162 follow-up,
-  // so it falls through to the existing handling here.
-  if (methodName === "keys" || methodName === "values") {
+  // (#5267 B-1/B-2) keys()/values()/entries() yield a LIVE `$__IterRec` cursor
+  // over the `$Map` (24.1.3.*). `entries()` was deferred by #2162 — it needed
+  // the `[k, v]` pair packing that the MAPSET stepper now does (B-3), and while
+  // it fell through here it reached the generic path, where `.next()` read
+  // `undefined` (`Map/prototype/entries/returns-iterator.js`).
+  if (methodName === "keys" || methodName === "values" || methodName === "entries") {
     return compileNativeCollectionIterator(ctx, fctx, propAccess, callExpr, methodName, /* isSet */ false);
   }
 
@@ -1695,14 +1787,48 @@ export function tryCompileNativeMapSizeGet(
   return { kind: "i32" } as ValType;
 }
 
+/** Resolve a function-valued local to the canonical Wasm closure wrapper.
+ *
+ * Function expressions assigned to a variable are represented as externref by
+ * the general expression path. Native forEach still knows their TypeScript
+ * call signature, so it can recover the wrapper type used by call_ref instead
+ * of falling back to a host Map_forEach import. Inline callbacks and statically
+ * known function identifiers continue through the existing ref path.
+ */
+function resolveDynamicCallbackClosure(
+  ctx: CodegenContext,
+  cbArg: ts.Expression,
+): { closureInfo: ClosureInfo; selfStructTypeIdx: number } | undefined {
+  const cbType = ctx.checker.getTypeAtLocation(cbArg);
+  const sigs = cbType.getCallSignatures();
+  if (sigs.length !== 1) return undefined;
+  const sig = sigs[0]!;
+  const paramTypes: ValType[] = [];
+  for (const param of sig.parameters) {
+    const loc = param.valueDeclaration ?? param.declarations?.[0] ?? cbArg;
+    paramTypes.push(resolveWasmType(ctx, ctx.checker.getTypeOfSymbolAtLocation(param, loc)));
+  }
+  const returnType = ctx.checker.getReturnTypeOfSignature(sig);
+  const results: ValType[] =
+    isVoidType(returnType) || (returnType.flags & ts.TypeFlags.Never) !== 0
+      ? []
+      : [resolveWasmTypeForClosureReturn(ctx, returnType)];
+  const wrapper = getOrCreateFuncRefWrapperTypes(ctx, paramTypes, results);
+  if (!wrapper) return undefined;
+  return {
+    closureInfo: wrapper.closureInfo,
+    selfStructTypeIdx: getClosureFuncSelfTypeIdx(ctx, wrapper.liftedFuncTypeIdx) ?? wrapper.structTypeIdx,
+  };
+}
+
 /**
  * (#2162) Intercept `Map.prototype.forEach` / `Set.prototype.forEach` in
  * standalone / `nativeStrings` mode and drive the callback over the native
  * `$Map` backing store. Spec 24.1.3.5 / 24.2.3.6: invoke
  * `callbackfn(value, key, collection)` for every live entry in insertion order
- * (a Set passes the value as both `value` and `key`). The `thisArg` 2nd
- * argument is accepted but, like the array-method native callbacks, only honored
- * when the callback closes over `this` itself — out of scope for this slice.
+ * (a Set passes the value as both `value` and `key`). The optional `thisArg`
+ * is installed in `__current_this` around each callback invocation, matching
+ * the array-method closure path.
  *
  * Reuses the entries-vector walk from `__map_iter_next` (index 0..entryCount,
  * skipping tombstones via `F_HASH & TOMBSTONE_BIT`) and the closure-call shape
@@ -1735,7 +1861,10 @@ export function tryCompileNativeCollectionForEach(
   const willBeClosure =
     ts.isArrowFunction(cbArg) ||
     ts.isFunctionExpression(cbArg) ||
-    (ts.isIdentifier(cbArg) && (ctx.funcMap.has(cbArg.text) || ctx.closureMap.has(cbArg.text)));
+    (ts.isIdentifier(cbArg) &&
+      (ctx.funcMap.has(cbArg.text) ||
+        ctx.closureMap.has(cbArg.text) ||
+        (ctx.nativeStrings && ctx.checker.getTypeAtLocation(cbArg).getCallSignatures().length === 1)));
   if (!willBeClosure) {
     // (#3573) Spec 24.1.3.5 / 24.2.3.6: "If IsCallable(callbackfn) is false,
     // throw a TypeError". A statically non-callable LITERAL argument (`null` /
@@ -1751,6 +1880,10 @@ export function tryCompileNativeCollectionForEach(
       ts.isNumericLiteral(cbArg) ||
       ts.isStringLiteral(cbArg) ||
       ts.isNoSubstitutionTemplateLiteral(cbArg) ||
+      // A Symbol primitive is never callable. Keep this in the same
+      // compile-time guard as the #3573 literal cases so standalone does not
+      // fall through to the host Set_forEach/Map_forEach import. (#5091)
+      ctx.oracle.staticJsTypeOf(cbArg) === "symbol" ||
       (ts.isIdentifier(cbArg) && cbArg.text === "undefined" && !fctx.localMap.has("undefined"));
     if (!staticNonCallable) return undefined;
     // Evaluate the receiver for its side effects first (this native path only
@@ -1799,12 +1932,50 @@ export function tryCompileNativeCollectionForEach(
     ts.isArrowFunction(cbArg) || ts.isFunctionExpression(cbArg)
       ? compileArrowAsClosure(ctx, fctx, cbArg)
       : compileExpression(ctx, fctx, cbArg);
-  if (!cbResult || (cbResult.kind !== "ref" && cbResult.kind !== "ref_null")) return undefined;
-  const closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
-  const closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
-  if (!closureInfo) return undefined;
-  const closureTmp = allocLocal(fctx, `__mfe_cb_${fctx.locals.length}`, cbResult);
+  let closureTypeIdx: number | undefined;
+  let closureInfo: ClosureInfo | undefined;
+  let closureValue = cbResult;
+  if (cbResult && (cbResult.kind === "ref" || cbResult.kind === "ref_null")) {
+    closureTypeIdx = (cbResult as { typeIdx: number }).typeIdx;
+    closureInfo = ctx.closureInfoByTypeIdx.get(closureTypeIdx);
+  } else if (ctx.nativeStrings && cbResult?.kind === "externref") {
+    const dynamic = resolveDynamicCallbackClosure(ctx, cbArg);
+    if (dynamic) {
+      closureInfo = dynamic.closureInfo;
+      closureTypeIdx = dynamic.selfStructTypeIdx;
+      fctx.body.push({ op: "any.convert_extern" });
+      emitGuardedRefCast(fctx, dynamic.selfStructTypeIdx);
+      fctx.body.push({ op: "ref.as_non_null" });
+      closureValue = { kind: "ref", typeIdx: dynamic.selfStructTypeIdx };
+    }
+  }
+  if (!closureInfo || closureTypeIdx === undefined || !closureValue) return undefined;
+  const closureTmp = allocLocal(fctx, `__mfe_cb_${fctx.locals.length}`, closureValue);
   fctx.body.push({ op: "local.set", index: closureTmp });
+
+  // Evaluate the optional thisArg after the callback, as required by call
+  // argument order. Arrow callbacks keep lexical this, but their thisArg is
+  // still evaluated for side effects.
+  let thisArgTmp: number | undefined;
+  let prevThisTmp: number | undefined;
+  let currentThisGlobalIdx: number | undefined;
+  const thisArgExpr = reflective === undefined ? callExpr.arguments[1] : undefined;
+  if (thisArgExpr !== undefined) {
+    const thisArgType = compileExpression(ctx, fctx, thisArgExpr);
+    if (thisArgType && thisArgType.kind !== "externref") {
+      fctx.body.push(...coercionInstrs(ctx, thisArgType, { kind: "externref" }, fctx));
+    } else if (!thisArgType) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    if (!ts.isArrowFunction(cbArg)) {
+      currentThisGlobalIdx = ensureCurrentThisGlobal(ctx);
+      thisArgTmp = allocLocal(fctx, `__mfe_this_${fctx.locals.length}`, { kind: "externref" });
+      prevThisTmp = allocLocal(fctx, `__mfe_prevthis_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.set", index: thisArgTmp });
+    } else {
+      fctx.body.push({ op: "drop" });
+    }
+  }
 
   const numParams = closureInfo.paramTypes.length;
   const iTmp = allocLocal(fctx, `__mfe_i_${fctx.locals.length}`, {
@@ -1854,6 +2025,14 @@ export function tryCompileNativeCollectionForEach(
   // The closure funcref's FIRST param is the closure env itself; push it before
   // the user args (mirrors array-methods.ts callClosure).
   const callClosure: Instr[] = [
+    ...(thisArgTmp !== undefined && prevThisTmp !== undefined && currentThisGlobalIdx !== undefined
+      ? ([
+          { op: "global.get", index: currentThisGlobalIdx },
+          { op: "local.set", index: prevThisTmp },
+          { op: "local.get", index: thisArgTmp },
+          { op: "global.set", index: currentThisGlobalIdx },
+        ] satisfies Instr[])
+      : []),
     { op: "local.get", index: closureTmp },
     // entry.value / entry.key are stored as `anyref` (boxed numbers are
     // `__box_number` externrefs wrapped via any.convert_extern). Externalize to
@@ -1897,6 +2076,12 @@ export function tryCompileNativeCollectionForEach(
     { op: "call_ref", typeIdx: closureInfo.funcTypeIdx },
     // forEach ignores the callback result; drop whatever it returned.
     ...((closureInfo.returnType === null ? [] : [{ op: "drop" }]) satisfies Instr[]),
+    ...(thisArgTmp !== undefined && prevThisTmp !== undefined && currentThisGlobalIdx !== undefined
+      ? ([
+          { op: "local.get", index: prevThisTmp },
+          { op: "global.set", index: currentThisGlobalIdx },
+        ] satisfies Instr[])
+      : []),
   ];
 
   // i = 0; loop { if i >= entryCount break; entry = entries[i]; i++;
@@ -1981,7 +2166,77 @@ export function compileNativeCollectionIterator(
 ): InnerResult | undefined {
   if (!ctx.nativeStrings) return undefined;
   if (callExpr.arguments.length !== 0) return undefined;
+  const live = emitLiveCollectionIterRec(ctx, fctx, propAccess.expression, kind, isSet);
+  if (live !== undefined) return live;
   return emitCollectionIteratorVec(ctx, fctx, propAccess.expression, kind, isSet);
+}
+
+/**
+ * (#5267 B-2) Emit a LIVE `$__IterRec{ITER_KIND_MAPSET}` cursor over a native
+ * `$Map`/`$Set` for `keys()` / `values()` / `entries()` in EXPRESSION position.
+ *
+ * `emitCollectionIteratorVec` materializes an eager `$Vec` snapshot, which is
+ * the right producer for the array-shaped consumers (`[...set]`,
+ * `Array.from(map)`, the for-of head — `compileForOfNativeCollection` calls it
+ * directly and is unaffected) but is NOT an iterator: `map.entries().next()`
+ * read `undefined`, `map.keys()` did not observe a later `delete`, and
+ * `set.entries()` was not routed at all. The record produced here is exactly
+ * the one `fillMapSetDynDispatchArms` builds for `__iterator($Map)`, so every
+ * downstream step (`__iterator_next`'s MAPSET twin, `__iter_next_result`, the
+ * `__iterator` identity-adopt arm) already understands it, and the underlying
+ * `__map_iter_next` index walk skips tombstones — so mutation during iteration
+ * behaves per §24.1.5.1.
+ *
+ * Returns `undefined` (caller keeps the vec producer) when the iterator runtime
+ * is unavailable or the receiver does not lower to the native `$Map` struct.
+ */
+export function emitLiveCollectionIterRec(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  kind: "keys" | "values" | "entries",
+  isSet: boolean,
+): InnerResult | undefined {
+  ensureMapHelpers(ctx);
+  if (ctx.mapTypeIdx < 0 || ctx.mapIterTypeIdx < 0) return undefined;
+  ensureNativeIteratorRuntime(ctx);
+  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+  const iterNewIdx = ctx.mapHelpers.get("__map_iter_new");
+  if (iterRecTypeIdx === undefined || iterNewIdx === undefined) return undefined;
+  const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+
+  const recvType = compileExpression(ctx, fctx, receiver);
+  if (recvType === null) return undefined;
+  if (recvType.kind === "externref") {
+    fctx.body.push({ op: "any.convert_extern" });
+    fctx.body.push({ op: "ref.cast", typeIdx: ctx.mapTypeIdx });
+  } else if (recvType.kind === "anyref" || recvType.kind === "eqref") {
+    fctx.body.push({ op: "ref.cast", typeIdx: ctx.mapTypeIdx });
+  } else if ((recvType.kind === "ref" || recvType.kind === "ref_null") && recvType.typeIdx !== ctx.mapTypeIdx) {
+    // Not the native carrier — the receiver was already compiled, so the caller
+    // cannot retry; drop it and let the vec producer recompile. (Speculative
+    // rollback is the caller's job; here the shapes that reach us are always
+    // Map/Set-typed, so this arm is a safety valve, not a hot path.)
+    return undefined;
+  }
+
+  // `$MapIter` kinds: 0 = key, 1 = value, 2 = entry-pair. A Set stores
+  // key === value, so `keys`/`values` both project the element.
+  const iterKind = kind === "entries" ? 2 : isSet ? 1 : kind === "keys" ? 0 : 1;
+  const mTmp = allocLocal(fctx, `__liveit_m_${fctx.locals.length}`, { kind: "ref", typeIdx: ctx.mapTypeIdx });
+  fctx.body.push({ op: "local.set", index: mTmp });
+  fctx.body.push(
+    { op: "i32.const", value: ITER_KIND_MAPSET },
+    { op: "ref.null", typeIdx: vecTypeIdx },
+    { op: "i32.const", value: 0 },
+    { op: "local.get", index: mTmp },
+    { op: "i32.const", value: iterKind },
+    { op: "call", funcIdx: iterNewIdx },
+    { op: "extern.convert_any" },
+    { op: "struct.new", typeIdx: iterRecTypeIdx },
+    { op: "extern.convert_any" },
+  );
+  return { kind: "externref" } as ValType;
 }
 
 /**
@@ -2464,4 +2719,391 @@ function rehashIfNeededInstrs(ctx: CodegenContext, M_BUCKETS: number, M_LIVECOUN
       else: [],
     },
   ];
+}
+
+/**
+ * (#4629) Finalize fill: dynamic (any-channel) dispatch arms for native Map/Set
+ * carriers, driven by what the test262 deepEqual harness consumes:
+ *
+ *  1. `__extern_get` — `$Map` receiver: string key `"size"` answers
+ *     `__map_size` boxed; a `$Symbol` key whose id is the well-known
+ *     `@@iterator` answers a callable closure singleton delegating to the
+ *     native `__iterator` (so `typeof v[Symbol.iterator] === "function"`
+ *     holds and a manual `f.call(v)` works).
+ *  2. `__iterator` — `$Map` receiver arm: Map iterates entries (currently the
+ *     value-projection `__map_iter_next` provides), Set iterates values,
+ *     Weak* stay non-iterable; wrapped in an `$__IterRec` of kind
+ *     {@link ITER_KIND_MAPSET} carrying the `$MapIter` in `userIter`.
+ *  3. `__iterator_next` — the kind-{@link ITER_KIND_MAPSET} twin: drive
+ *     `__map_iter_next` and hand back the `(i32 done, externref value)` pair.
+ *  4. `__extern_method_call` — an `$__IterRec` receiver's `.next()` (the
+ *     deepEqual manual-drive shape `it.next()`) packages the pair into a
+ *     fresh `$Object {value, done}`; other names fall through to the
+ *     ordinary dispatch (whose miss is undefined, so `if (b.return)` guards
+ *     read undefined rather than trapping).
+ *
+ * Prepended at FINALIZE. The one minted closure body is a DEFINED function
+ * (appending cannot shift baked indices, #608/#794); everything else only
+ * reads already-registered helpers. Every instruction template is minted
+ * FRESH per position (factory functions, never a spread-shared const array) —
+ * the DCE type-remapper's aliased-object guard remaps a shared instruction
+ * object once, which desynchronizes its typeIdx from unshared neighbors
+ * (observed as `struct.get expected (ref null 76), found (ref 74)`). Must run
+ * BEFORE `fillStandaloneTypeofClosureArms` so the minted closure's wrap type
+ * is in the classifier roots when the typeof arms bake. No-op unless the
+ * module built the native map runtime; js-host lanes never register
+ * `__map_*`, so they stay byte-identical.
+ */
+// 9: kinds 1-7 are taken by iterator-native.ts (VEC=3, USER=1, OBJ=4,
+// HOSTGEN=5, ASYNCGEN=6, GENSTATE=7 — colliding with 7 sent sync-generator
+// recs into the $MapIter cast, the exact set-like regression this constant's
+// first value caused); 8 is left spare for iterator-native's next arm.
+export const ITER_KIND_MAPSET = 9;
+
+export function fillMapSetDynDispatchArms(ctx: CodegenContext): void {
+  if (ctx.mapTypeIdx < 0) return;
+  const mapSizeIdx = ctx.mapHelpers.get("__map_size");
+  const iterNewIdx = ctx.mapHelpers.get("__map_iter_new");
+  const mapIterNextIdx = ctx.mapHelpers.get("__map_iter_next");
+  if (mapSizeIdx === undefined || iterNewIdx === undefined || mapIterNextIdx === undefined) return;
+  // Idempotence: both finalize paths may reach this fill in one compile —
+  // splicing twice would double the arms. First caller wins.
+  if (ctx.mapHelpers.has("__mapset_dyn_arms_filled")) return;
+  ctx.mapHelpers.set("__mapset_dyn_arms_filled", 1);
+  const mapIdx = ctx.mapTypeIdx;
+  const mapIterIdx = ctx.mapIterTypeIdx;
+  const iterResultIdx = ctx.mapIterResultTypeIdx;
+  if (mapIterIdx < 0 || iterResultIdx < 0) return;
+
+  const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  const anyStrTypeIdx = ctx.anyStrTypeIdx;
+
+  /** `[…] -> i32` — key (param `keyParam`) is an `$AnyString` equal to `name`. */
+  const keyEqualsStr = (name: string, keyParam: number): Instr[] | null => {
+    if (strFlattenIdx === undefined || strEqualsIdx === undefined || anyStrTypeIdx < 0) return null;
+    return [
+      { op: "local.get", index: keyParam },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: anyStrTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: keyParam },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: anyStrTypeIdx },
+          { op: "call", funcIdx: strFlattenIdx },
+          { op: "ref.as_non_null" },
+          ...nativeStringLiteralInstrs(ctx, name),
+          { op: "call", funcIdx: strEqualsIdx },
+        ],
+        else: [{ op: "i32.const", value: 0 }],
+      },
+    ];
+  };
+
+  const castMap = (): Instr[] => [
+    { op: "local.get", index: 0 },
+    { op: "any.convert_extern" },
+    { op: "ref.cast", typeIdx: mapIdx },
+  ];
+
+  // ── (2) __iterator: $Map arm ─────────────────────────────────────────────
+  const iterIdx = ctx.funcMap.get("__iterator");
+  const iterFn = iterIdx === undefined ? undefined : definedFuncAt(ctx, iterIdx);
+  const iterNextIdx = ctx.funcMap.get("__iterator_next");
+  const iterNextFn = iterNextIdx === undefined ? undefined : definedFuncAt(ctx, iterNextIdx);
+  const iterRecTypeIdx = ctx.structMap.get("__IterRec");
+  if (iterFn && iterRecTypeIdx !== undefined) {
+    const vecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+    iterFn.body.splice(
+      0,
+      0,
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: mapIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          // Weak collections (kind >= 2) are NOT iterable — keep the ladder.
+          ...castMap(),
+          { op: "struct.get", typeIdx: mapIdx, fieldIdx: MAP_LAYOUT.M_KIND },
+          { op: "i32.const", value: 2 },
+          { op: "i32.lt_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "i32.const", value: ITER_KIND_MAPSET },
+              { op: "ref.null", typeIdx: vecTypeIdx },
+              { op: "i32.const", value: 0 },
+              // userIter = __map_iter_new(m, m.kind === SET ? 1 (values) : 2 (entries))
+              ...castMap(),
+              ...castMap(),
+              { op: "struct.get", typeIdx: mapIdx, fieldIdx: MAP_LAYOUT.M_KIND },
+              { op: "i32.const", value: 1 },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [{ op: "i32.const", value: 1 }],
+                else: [{ op: "i32.const", value: 2 }],
+              },
+              { op: "call", funcIdx: iterNewIdx },
+              { op: "extern.convert_any" },
+              { op: "struct.new", typeIdx: iterRecTypeIdx },
+              { op: "extern.convert_any" },
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    );
+  }
+
+  // ── (3) __iterator_next: MAPSET twin ─────────────────────────────────────
+  if (iterNextFn && iterRecTypeIdx !== undefined) {
+    const mrLocal = 1 + iterNextFn.locals.length;
+    iterNextFn.locals.push({ name: "__mapset_mr", type: { kind: "ref_null", typeIdx: iterResultIdx } });
+    const castRec = (): Instr[] => [
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.cast", typeIdx: iterRecTypeIdx },
+    ];
+    /**
+     * (#5267 B-3) Fresh instrs (#2169b) for the projected value:
+     *   done      → the canonical `undefined` (a bare `ref.null.extern`
+     *               surfaces as JS **null**, so `result.value === undefined`
+     *               was false on the exhausted step);
+     *   otherwise → the value `__map_iter_next` produced. The `entries`
+     *               (kind 2) `[key, value]` pair is packed INSIDE
+     *               `__map_iter_next` (#5131, `ensureMapHelpers` above), so
+     *               this arm must pass it through untouched — packing again
+     *               here yielded the doubly-nested `[key, [key, value]]`.
+     */
+    const mapsetValueInstrs = (): Instr[] => [
+      { op: "local.get", index: mrLocal },
+      { op: "ref.as_non_null" },
+      { op: "struct.get", typeIdx: iterResultIdx, fieldIdx: 1 }, // done
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [...canonicalUndefinedExternInstrs(ctx)],
+        else: [
+          { op: "local.get", index: mrLocal },
+          { op: "ref.as_non_null" },
+          { op: "struct.get", typeIdx: iterResultIdx, fieldIdx: 0 }, // value
+          { op: "extern.convert_any" },
+        ],
+      },
+    ];
+    iterNextFn.body.splice(
+      0,
+      0,
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: iterRecTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...castRec(),
+          { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 0 }, // kind
+          { op: "i32.const", value: ITER_KIND_MAPSET },
+          { op: "i32.eq" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...castRec(),
+              { op: "struct.get", typeIdx: iterRecTypeIdx, fieldIdx: 3 }, // userIter externref
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: mapIterIdx },
+              { op: "call", funcIdx: mapIterNextIdx },
+              { op: "local.set", index: mrLocal },
+              { op: "local.get", index: mrLocal },
+              { op: "ref.as_non_null" },
+              { op: "struct.get", typeIdx: iterResultIdx, fieldIdx: 1 }, // done i32
+              ...mapsetValueInstrs(),
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    );
+  }
+
+  // ── (1) __extern_get: $Map "size" + @@iterator arms ──────────────────────
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const externGetFn = externGetIdx === undefined ? undefined : definedFuncAt(ctx, externGetIdx);
+  const boxNumIdx = ctx.funcMap.get("__box_number");
+  if (externGetFn && boxNumIdx !== undefined) {
+    const sizeTest = keyEqualsStr("size", 1);
+    const arms: Instr[] = [];
+    if (sizeTest) {
+      arms.push(...sizeTest, {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...castMap(),
+          { op: "call", funcIdx: mapSizeIdx },
+          { op: "f64.convert_i32_s" },
+          { op: "call", funcIdx: boxNumIdx },
+          { op: "return" },
+        ],
+      });
+    }
+    // @@iterator symbol key → the callable closure singleton (only when the
+    // module minted the $Symbol carrier AND the native __iterator exists).
+    const wkIterId = getWellKnownSymbolId("iterator");
+    if (ctx.symbolTypeIdx >= 0 && iterIdx !== undefined && wkIterId !== undefined) {
+      const closureGlobalIdx = ensureMapSetIteratorClosureSingleton(ctx, iterIdx);
+      if (closureGlobalIdx !== undefined) {
+        arms.push(
+          { op: "local.get", index: 1 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: ctx.symbolTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 1 },
+              { op: "any.convert_extern" },
+              { op: "ref.cast", typeIdx: ctx.symbolTypeIdx },
+              { op: "struct.get", typeIdx: ctx.symbolTypeIdx, fieldIdx: 0 }, // id
+              { op: "i32.const", value: wkIterId },
+              { op: "i32.eq" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "global.get", index: closureGlobalIdx }, { op: "extern.convert_any" }, { op: "return" }],
+              },
+            ],
+          },
+        );
+      }
+    }
+    if (arms.length > 0) {
+      externGetFn.body.splice(
+        0,
+        0,
+        { op: "local.get", index: 0 },
+        { op: "any.convert_extern" },
+        { op: "ref.test", typeIdx: mapIdx },
+        { op: "if", blockType: { kind: "empty" }, then: arms },
+      );
+    }
+  }
+
+  // ── (4) __extern_method_call: `$__IterRec`.next() ────────────────────────
+  const methodCallIdx = ctx.funcMap.get("__extern_method_call");
+  const methodCallFn = methodCallIdx === undefined ? undefined : definedFuncAt(ctx, methodCallIdx);
+  const objCreateIdx = ctx.funcMap.get("__object_create");
+  const definePropIdx = ctx.funcMap.get("__defineProperty_value");
+  const boxBoolIdx = ctx.funcMap.get("__box_boolean");
+  const nextTest = keyEqualsStr("next", 1);
+  if (
+    methodCallFn &&
+    iterRecTypeIdx !== undefined &&
+    iterNextIdx !== undefined &&
+    objCreateIdx !== undefined &&
+    definePropIdx !== undefined &&
+    boxBoolIdx !== undefined &&
+    nextTest
+  ) {
+    const base = 3 + methodCallFn.locals.length;
+    methodCallFn.locals.push(
+      { name: "__mapset_done", type: { kind: "i32" } },
+      { name: "__mapset_val", type: { kind: "externref" } },
+      { name: "__mapset_obj", type: { kind: "externref" } },
+    );
+    const dLocal = base;
+    const vLocal = base + 1;
+    const oLocal = base + 2;
+    methodCallFn.body.splice(
+      0,
+      0,
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: iterRecTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...nextTest,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: iterNextIdx }, // (i32 done, externref value)
+              { op: "local.set", index: vLocal },
+              { op: "local.set", index: dLocal },
+              { op: "ref.null.extern" },
+              { op: "call", funcIdx: objCreateIdx },
+              { op: "local.set", index: oLocal },
+              { op: "local.get", index: oLocal },
+              ...nativeStringLiteralInstrs(ctx, "value"),
+              { op: "extern.convert_any" },
+              { op: "local.get", index: vLocal },
+              { op: "f64.const", value: FLAG_DEFAULT },
+              { op: "call", funcIdx: definePropIdx },
+              { op: "drop" },
+              { op: "local.get", index: oLocal },
+              ...nativeStringLiteralInstrs(ctx, "done"),
+              { op: "extern.convert_any" },
+              { op: "local.get", index: dLocal },
+              { op: "call", funcIdx: boxBoolIdx },
+              { op: "f64.const", value: FLAG_DEFAULT },
+              { op: "call", funcIdx: definePropIdx },
+              { op: "drop" },
+              { op: "local.get", index: oLocal },
+              { op: "return" },
+            ],
+          },
+        ],
+      },
+    );
+  }
+}
+
+/**
+ * (#4629) Mint (once) the `[Symbol.iterator]` closure singleton for Map/Set
+ * receivers: a no-capture `__fn_wrap` whose lifted body is
+ * `(self, this) -> __iterator(this)`. Held in an immutable module global so
+ * repeated reads are identity-stable. Returns the global index.
+ */
+function ensureMapSetIteratorClosureSingleton(ctx: CodegenContext, iterIdx: number): number | undefined {
+  const existing = ctx.mapHelpers.get("__mapset_iterfn_global");
+  if (existing !== undefined) return existing;
+  const wrap = getOrCreateFuncRefWrapperTypes(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
+  if (!wrap) return undefined;
+  const funcIdx = mintDefinedFunc(ctx);
+  pushDefinedFunc(ctx, funcIdx, {
+    name: "__mapset_symbol_iterator",
+    typeIdx: wrap.liftedFuncTypeIdx,
+    locals: [],
+    body: [
+      { op: "local.get", index: 1 },
+      { op: "call", funcIdx: iterIdx },
+    ],
+    exported: false,
+  });
+  const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+  ctx.mod.globals.push({
+    name: "__mapset_iterfn",
+    type: { kind: "ref", typeIdx: wrap.structTypeIdx },
+    mutable: false,
+    // Wrap layout: {func funcref, $arity i32, $bag externref} (closure-header-layout).
+    init: [
+      { op: "ref.func", funcIdx },
+      { op: "i32.const", value: 0 }, // $arity: the @@iterator method takes 0 user args
+      { op: "ref.null.extern" }, // $bag
+      { op: "struct.new", typeIdx: wrap.structTypeIdx },
+    ],
+  });
+  ctx.mapHelpers.set("__mapset_iterfn_global", globalIdx);
+  return globalIdx;
 }

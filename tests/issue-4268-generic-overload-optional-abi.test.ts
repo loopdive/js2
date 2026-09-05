@@ -42,7 +42,9 @@ export function runCase(): number {
     const exports = await instantiate(result);
 
     expect((exports.runCase as () => number)()).toBe(42);
-    expect(result.irOutcomes?.map((outcome) => outcome.displayName)).toEqual(["choose", "runCase"]);
+    // (#3523 R4 gap 4) The source has no top-level statements, so it also
+    // records one observational `non-executable` module-init row.
+    expect(result.irOutcomes?.map((outcome) => outcome.displayName)).toEqual(["choose", "runCase", "<module-init>"]);
   });
 
   it("keeps an unused optional implementation slot instead of crashing", async () => {

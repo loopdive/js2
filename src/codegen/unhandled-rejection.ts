@@ -9,8 +9,8 @@
 // `_start` tail, after the microtask/event-loop drain), report every still-
 // unhandled rejection to stderr and `proc_exit(1)`.
 //
-// Mechanism (self-contained; NO change to the `$Promise` struct layout, so none
-// of the ~17 `struct.new $Promise` sites need touching):
+// Mechanism (self-contained; adds no tracking-specific field to the `$Promise`
+// struct, so Promise construction does not depend on this substrate):
 //   - an intrusive singly-linked list of `$__unhandled_node` records, prepended
 //     (O(1)) whenever a promise rejects with a null callback list — both at the
 //     direct `Promise.reject(x)` mint (`emitStandalonePromiseReject`) and at the

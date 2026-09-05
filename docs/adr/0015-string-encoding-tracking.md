@@ -69,12 +69,13 @@ Phase 2 origins (deferred — see below): `JSON.parse` (UTF-8 per RFC 8259),
   cannot introduce a lone surrogate; concatenating two ASCII strings stays
   ASCII. (A WTF-16 operand forces `wtf16`, which conservatively covers the
   surrogate-split-across-the-seam case.)
+- **Typed `string.repeat`**: preserve the receiver's producer-authenticated
+  encoding evidence. Repetition cannot introduce a new code unit.
 
 Phase 2 propagation (deferred): `.toUpperCase`/`.toLowerCase`/`.trim`/
 `.normalize` (preserve), `.slice` on statically known code-point boundaries
-(preserve else drop), `.repeat`/`.padStart`/`.padEnd` (preserve),
-`.split`/`.replace` (conditional). Any operation without an explicit rule
-drops to `wtf16`.
+(preserve else drop), `.padStart`/`.padEnd` (preserve), `.split`/`.replace`
+(conditional). Any operation without an explicit rule drops to `wtf16`.
 
 ### Component Model boundary integration (deferred to Phase 2/3)
 
@@ -92,9 +93,10 @@ work has data to consume.
 
 The issue (#1588) targets a useful initial version: lattice + analysis pass +
 the canonical origin/propagation set, banking the infrastructure that the
-boundary work depends on. The only string-producing IR instrs that currently
-carry an allocation-site id are `string.const` and `string.concat`, so those
-are the two rules the analysis can attach annotations to today. Call-result
+boundary work depends on. The string-producing IR instrs that currently carry
+an allocation-site id are `string.const`, `string.concat`, and the independently
+prepared `string.repeat` foundation, so those are the direct rules the analysis
+can attach annotations to today. Call-result
 origins (`JSON.parse`, `TextDecoder`) and method propagation require the IR to
 mint string alloc ids on those results first — tracked as Phase 2 follow-up.
 

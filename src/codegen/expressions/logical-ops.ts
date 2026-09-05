@@ -12,8 +12,15 @@ import { ensureI32Condition } from "../index.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { defaultValueInstrs } from "../type-coercion.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 
 type MappedArgsInfo = NonNullable<FunctionContext["mappedArgsInfo"]>;
+
+/** Host BigInts must stay in the externref plane through short-circuiting. */
+function hostBigIntExpected(ctx: CodegenContext, expr: ts.Expression): ValType | undefined {
+  if (!usesHostBigIntCarrier(ctx)) return undefined;
+  return ctx.oracle.staticJsTypeOf(expr) === "bigint" ? { kind: "externref" } : undefined;
+}
 
 /** Runtime half of the mapped-arguments guard. A null state local means no
  * runtime eval has initialized/severed the map yet, so the correspondence is
@@ -49,9 +56,14 @@ function runtimeMappedEntryIsLive(
   ];
 }
 
-export function compileLogicalAnd(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): ValType {
+export function compileLogicalAnd(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  _expectedType?: ValType,
+): ValType {
   // JS semantics: a && b → if a is falsy, return a; else return b
-  const leftType = compileExpression(ctx, fctx, expr.left);
+  const leftType = compileExpression(ctx, fctx, expr.left, hostBigIntExpected(ctx, expr.left));
   if (!leftType) {
     ensureI32Condition(fctx, leftType, ctx);
     return { kind: "i32" };
@@ -64,7 +76,7 @@ export function compileLogicalAnd(ctx: CodegenContext, fctx: FunctionContext, ex
 
   // Compile RHS in a side buffer to discover its natural type
   const savedBody = pushBody(fctx);
-  const rightType = compileExpression(ctx, fctx, expr.right);
+  const rightType = compileExpression(ctx, fctx, expr.right, hostBigIntExpected(ctx, expr.right));
   let thenInstrs = fctx.body;
   fctx.body = savedBody;
 
@@ -128,9 +140,14 @@ export function compileLogicalAnd(ctx: CodegenContext, fctx: FunctionContext, ex
   return resultType;
 }
 
-export function compileLogicalOr(ctx: CodegenContext, fctx: FunctionContext, expr: ts.BinaryExpression): ValType {
+export function compileLogicalOr(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.BinaryExpression,
+  _expectedType?: ValType,
+): ValType {
   // JS semantics: a || b → if a is truthy, return a; else return b
-  const leftType = compileExpression(ctx, fctx, expr.left);
+  const leftType = compileExpression(ctx, fctx, expr.left, hostBigIntExpected(ctx, expr.left));
   if (!leftType) {
     ensureI32Condition(fctx, leftType, ctx);
     return { kind: "i32" };
@@ -143,7 +160,7 @@ export function compileLogicalOr(ctx: CodegenContext, fctx: FunctionContext, exp
 
   // Compile RHS in a side buffer to discover its natural type
   const savedBody = pushBody(fctx);
-  const rightType = compileExpression(ctx, fctx, expr.right);
+  const rightType = compileExpression(ctx, fctx, expr.right, hostBigIntExpected(ctx, expr.right));
   let elseInstrs = fctx.body;
   fctx.body = savedBody;
 
@@ -230,9 +247,10 @@ export function compileNullishCoalescing(
   ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
+  _expectedType?: ValType,
 ): ValType {
   // Compile LHS and store in temp
-  const leftType = compileExpression(ctx, fctx, expr.left);
+  const leftType = compileExpression(ctx, fctx, expr.left, hostBigIntExpected(ctx, expr.left));
   if (!leftType) {
     reportError(ctx, expr, "Failed to compile nullish coalescing LHS");
     return { kind: "externref" };
@@ -288,7 +306,7 @@ function finishNullishBranch(
 ): ValType {
   // Compile RHS in a side buffer to discover its natural type
   const savedBody = pushBody(fctx);
-  const rhsType = compileExpression(ctx, fctx, expr.right);
+  const rhsType = compileExpression(ctx, fctx, expr.right, hostBigIntExpected(ctx, expr.right));
   let thenInstrs = fctx.body;
   fctx.body = savedBody;
 

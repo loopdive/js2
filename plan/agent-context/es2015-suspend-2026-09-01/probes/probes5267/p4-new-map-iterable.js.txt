@@ -1,0 +1,11 @@
+/*---
+description: new Map(custom iterable) drives the iterator protocol
+---*/
+var calls = 0;
+var iterable = {};
+iterable[Symbol.iterator] = function() {
+  return { next: function() { calls++; throw new Test262Error(); } };
+};
+var got = null;
+try { new Map(iterable); } catch (e) { got = e; }
+assert.sameValue(got instanceof Test262Error, true, 'calls=' + calls + ' got=' + got);

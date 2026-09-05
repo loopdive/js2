@@ -11,6 +11,7 @@ import { createTypeOracle } from "../../checker/oracle-backend.js";
 import { UsageInference } from "../../checker/usage-inference.js";
 import { resolveCompileTargetProfile, type CompileTargetProfile } from "../../target-profile.js";
 import { getOrRegisterVecType, registerNativeStringTypes } from "../registry/types.js";
+import { RUNTIME_RECGROUP_ABI_VERSION, RUNTIME_RECGROUP_TYPE_NAMES } from "../../emit/canonical-recgroup.js";
 import { nativeLiteralRegExpEngineConfig } from "../regexp-standalone.js";
 import { createFallbackCounts } from "../fallback-telemetry.js";
 import type { ProgramAbiSession } from "../program-abi-session.js";
@@ -23,6 +24,7 @@ import { ProgramAbiGlobalRegistry } from "../program-abi-global-planning.js";
 import { ProgramAbiModuleInitCallableRegistry } from "../program-abi-module-init-planning.js";
 import { ProgramAbiSourceCallableRegistry } from "../program-abi-source-callable-planning.js";
 import { ProgramAbiTypeRegistry } from "../program-abi-type-planning.js";
+import { ProgramAbiFnctorRegistry } from "../program-abi-fnctor-planning.js";
 import type { CodegenContext, CodegenOptions } from "./types.js";
 
 function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
@@ -30,6 +32,28 @@ function selectNativeRegExpEngine(targetProfile: CompileTargetProfile) {
     (targetProfile.environment === "javascript" && targetProfile.semanticProviders === "native-first")
     ? nativeLiteralRegExpEngineConfig()
     : null;
+}
+
+function createRedeclaredObjectIdentityState() {
+  return {
+    redeclaredObjectIdentityDeclarations: new Set<ts.VariableDeclaration>(),
+    redeclaredObjectIdentityLiterals: new Set<ts.ObjectLiteralExpression>(),
+  };
+}
+
+function createAccessorObjectState() {
+  return {
+    externrefAccessorVars: new Set<string>(),
+    evalAccessorObjectVars: new Set<string>(),
+  };
+}
+
+function createObjectShapeAssignmentState() {
+  return {
+    objectLiteralAssignedPropertyNames: new Set<string>(),
+    objectLiteralAssignedPropertyTypes: new Map<string, ts.Type[]>(),
+    objectLiteralIndexedAssignedPropertyTypes: new Map<ts.Declaration, ts.Type[]>(),
+  };
 }
 
 export function createCodegenContext(
@@ -61,7 +85,11 @@ export function createCodegenContext(
   // both link an explicit Wasm/embedder provider. The internal node:fs lowering
   // remains WASI-specific below so existing non-WASI code generation is byte
   // neutral when the namespace is merely declared as externally provided.
-  const linkedNamespaces: ReadonlySet<string> = new Set(options?.link ?? []);
+  const linkedPackageBindings = options?.linkedPackageBindings ?? new Map();
+  const linkedNamespaces: ReadonlySet<string> = new Set([
+    ...(options?.link ?? []),
+    ...Array.from(linkedPackageBindings.values(), (binding) => binding.module),
+  ]);
   const ctx: CodegenContext = {
     mod,
     targetProfile,
@@ -81,6 +109,7 @@ export function createCodegenContext(
     usageInference: new UsageInference(checker),
     useUsageInfer: options?.useUsageInfer ?? process.env.JS2WASM_USAGE_INFER !== "0",
     funcMap: new Map(),
+    moduleInitChunkHelperNames: new Set(),
     ambientBuiltinFuncMap: new Map(),
     irUnitFuncMap: new Map(),
     structMap: new Map(),
@@ -89,7 +118,6 @@ export function createCodegenContext(
     booleanPropertyNames: new Set(),
     noBrandShapeTypes: new Set(),
     fnctorReservedTypeIdx: new Map(), // #2773 S1 — up-front fnctor struct-type slots
-
     numImportFuncs: 0,
     jsStringImports: new Map(),
     currentFunc: null,
@@ -118,6 +146,7 @@ export function createCodegenContext(
     stringLiteralCounter: 0,
     funcSourceText: new Map(),
     stringGlobalMap: new Map(),
+    hostStringGlobalMap: new Map(),
     numImportGlobals: 0,
     hasStringImports: false,
     enumValues: new Map(),
@@ -144,11 +173,13 @@ export function createCodegenContext(
     holeyArrayFilterCallNodes: new Set(), // (#4222) exact direct filter consumers
     protoIndexDirty: false, // (#2001 S2, widened #4160) scanForArrayHoles: Array/Object.prototype index write
     protoNamedDirty: false, // (#4176) scanForArrayHoles: named write onto a branded builtin's .prototype
+    protoNamedWrittenMembers: new Set<string>(), // (#4492 wave-5) the member NAMES behind that flag
     protoMemberDirty: false, // (#2175 V2-S3b-1) scanForArrayHoles: branded builtin .prototype reaches the dynamic reader as a VALUE
     vecAccessorDescriptorDirty: false, // (#4159) scanForArrayHoles: a non-data descriptor may exist somewhere
     inheritedSetDescriptorDirty: false, // (#4504) scanForArrayHoles: a descriptor may affect inherited [[Set]]
     inheritedSetDirtyKeys: new Set<string>(), // (#4602) scanForArrayHoles: statically-named keys such a descriptor could use
     vecIndexDeleteDirty: false, // (#4222) scanForArrayHoles: a `delete arr[i]` may tombstone an index
+    arraySpeciesDirty: false, // (#5145) scanForArrayHoles: Symbol.species / a `.constructor` assignment is present
     vecOwnKeysDirty: false, // (#4230 L1) scanForArrayHoles: a descriptor define / own-name read is present
     dynamicCodeDirty: false, // (#4159/#4160) scanForArrayHoles: eval/Function present ⇒ both flags above forced
     usesVecValue: false, // (#2083) flipped by genuine getOrRegisterVecType usage
@@ -159,6 +190,7 @@ export function createCodegenContext(
     suppressVecUsageFlag: false, // (#2083) true only during the two prereg calls below
     holeTypeIdx: -1, // (#2001 S1) $Hole struct type; lazily registered
     holeGlobalIdx: undefined, // (#2001 S1) $__hole singleton global
+    usesNativeConcatHoleSubstrate: false, // (#4922) finalizer demand, narrower than general array holes
     importMetaTypeIdx: undefined, // (#2970) shared $ImportMeta struct type
     importMetaGlobals: new Map(), // (#2970) per-source-file import.meta object globals
     inModuleInitFlagReads: undefined, // (#2800) recorded __in_module_init flag reads
@@ -171,6 +203,7 @@ export function createCodegenContext(
     topLevelFunctionNames: new Set(), // (#1983) for class-member funcMap key collision detection
     topLevelFunctionDeclarations: new Map(),
     classMethodSet: new Set(),
+    classFieldShadowedInheritedCallables: new Set(), // (#5309) own instance field beats an inherited callable
     deferredClassBodies: new Set(),
     classAccessorSet: new Set(),
     structAccessorClosure: new Map(), // (#1888 S5c) struct accessors compiled as host-free closures
@@ -179,13 +212,18 @@ export function createCodegenContext(
     staticProps: new Map(),
     protoOverrides: new Map(), // #1719 CPR — captured prototype-member overrides
     staticInitExprs: [],
+    classExpressionStaticInitExprs: new Map(),
     closureCounter: 0,
+    trampolineForwarders: new Set(),
     closureMap: new Map(),
     closureInfoByTypeIdx: new Map(),
+    closureMinimumArgumentCountByFuncTypeIdx: new Map(),
     hostDynamicClassMethodNames: new Set(),
+    hostDynamicClassAccessorReads: new Set(),
     genericResolved: new Map(),
     funcRestParams: new Map(),
     funcUsesArguments: new Set(),
+    objectLiteralMethodFuncIdx: new Map(),
     extrasArgvGlobalIdx: -1,
     extrasArgvVecTypeIdx: -1,
     argcGlobalIdx: -1,
@@ -197,6 +235,11 @@ export function createCodegenContext(
     toPrimitiveSharedClaimed: new Set(),
     toPrimitiveForkedStructs: new Set(),
     exnTagIdx: -1,
+    // (#5226) The shared-tag ABI needs a JS host to own the `WebAssembly.Tag`,
+    // so a wasi/standalone module keeps its module-local tag and its previous
+    // bytes. Only the package linker sets the option.
+    sharedExnTag:
+      options?.sharedExceptionTag === true && targetProfile.target !== "wasi" && targetProfile.target !== "standalone",
     hasUnionImports: false,
     asyncFunctions: new Set(),
     generatorFunctions: new Set(),
@@ -209,9 +252,12 @@ export function createCodegenContext(
     moduleInitStatements: [],
     nestedFuncCaptures: new Map(),
     funcMapOwnerDecl: new Map(),
+    sourceFunctionDeclarationByHandle: new Map(),
+    sourceFunctionHandleByDeclaration: new WeakMap(),
     classParentMap: new Map(),
     classBuiltinParentMap: new Map(),
     classExternrefBackedSet: new Set(),
+    classCtorHostRegistered: new Set(),
     classTagCounter: 0,
     classTagMap: new Map(),
     classExprNameMap: new Map(),
@@ -261,8 +307,7 @@ export function createCodegenContext(
     weakRefTypeIdx: -1,
     mapHelpers: new Map(),
     mapHelpersEmitted: false,
-    objectLiteralAssignedPropertyNames: new Set(),
-    objectLiteralAssignedPropertyTypes: new Map(),
+    ...createObjectShapeAssignmentState(),
     refCellTypeMap: new Map(),
     anyValueTypeIdx: -1,
     anyHelpers: new Map(),
@@ -284,6 +329,7 @@ export function createCodegenContext(
     taDynViewTypeIdx: -1, // (#3054 D) $__ta_dyn_view {length,buf,byteOffset,kind} runtime-kinded view, lazy
     boundFnTypeIdx: -1, // (#3140) $__bound_fn {target,thisArg,boundArgs} native bound-function carrier, lazy
     moduleUsesDynTaView: false, // (#3057) set by pre-scan when a dynamic `new ctorVar(buf)` exists
+    moduleUsesStaticTaView: false, // buffer-backed `new Uint8Array(buf)` etc.; enables any-write dispatch
     errorStructTypeIdx: -1,
     widenedTypeProperties: new Map(),
     widenedVarStructMap: new Map(),
@@ -296,12 +342,14 @@ export function createCodegenContext(
     irWithOpenObjectTargetKeys: new Set(),
     ordinaryToPrimitiveObjectDeclarations: new Set(),
     ordinaryToPrimitiveObjectLiterals: new Set(),
+    ...createRedeclaredObjectIdentityState(),
     hostSpreadObjectGlobals: new Set(),
-    externrefAccessorVars: new Set(),
+    ...createAccessorObjectState(),
     pendingMathMethods: new Set(),
     pendingMethodTrampolines: [],
     needsToUint32: false,
     classDeclarationMap: new Map(),
+    compiledClassBodies: new Set(),
     wrapperNumberTypeIdx: -1,
     wrapperStringTypeIdx: -1,
     wrapperBooleanTypeIdx: -1,
@@ -331,6 +379,9 @@ export function createCodegenContext(
     pendingLateImportShift: null,
     protoGlobals: new Map(),
     classMethodNames: new Map(),
+    classDynamicMembers: new Map(),
+    classDynamicKeyGlobals: new Map(),
+    classStaticSidecarGlobals: new Map(),
     classMethodsCsvGlobal: new Map(),
     classObjectGlobals: new Map(),
     classStaticMethodNames: new Map(),
@@ -339,16 +390,20 @@ export function createCodegenContext(
     methodClosureGlobals: new Map(),
     nullThisTypeErrorReady: false, // (#2025)
     funcClosureGlobals: new Map(),
+    funcClosureSingletonKeyByFuncIdx: new Map(),
     wasi: targetProfile.target === "wasi",
-    nodeGlobals: options?.nodeGlobals ?? false,
+    nodeGlobals: targetProfile.ambientPlatform === "node",
     // #2783 — namespaces left as link-time imports (WASI-gated above).
     linkedNamespaces,
+    linkedPackageBindings,
+    runtimeProvider: options?.runtimeProvider ?? false,
     // #2625/#2783 — the linkable js2wasm:node-<mod> std-IO path only applies under
     // WASI; derived from `node:fs` membership in the (already WASI-gated) link set.
     linkNodeShims: targetProfile.target === "wasi" && linkedNamespaces.has("node:fs"),
     nodeFsReadSyncIdx: -1,
     nodeFsWriteSyncIdx: -1,
     standalone: targetProfile.target === "standalone",
+    ...(options?.standaloneGlobalThisImport ? { standaloneGlobalThisImport: options.standaloneGlobalThisImport } : {}),
     directEvalMode: options?.directEval ?? "legacy",
     // (#2141 S1) Honest generic any-boxing regime — default OFF (legacy tag-5
     // box-the-externref ABI, byte-identical modules). Flips in S4.
@@ -412,6 +467,8 @@ export function createCodegenContext(
     ...(options?.importMemory ? { importMemory: options.importMemory } : {}),
     strictNoHostImports,
     tdzGlobals: new Map(),
+    modulePatternTdzGlobals: new Map(),
+    modulePatternTdzBindings: new Map(),
     tdzLetConstNames: new Set(),
     definedPropertyFlags: new Map(),
     nonWritableExternKeys: new Set(),
@@ -450,6 +507,7 @@ export function createCodegenContext(
         ctx,
         irPlanningIdentityContext,
       );
+      ctx.programAbiFnctors = new ProgramAbiFnctorRegistry(programAbiSession, ctx, irPlanningIdentityContext);
       ctx.programAbiTypes = new ProgramAbiTypeRegistry(programAbiSession, ctx, irPlanningIdentityContext);
     }
   }
@@ -464,7 +522,36 @@ export function createCodegenContext(
   getOrRegisterVecType(ctx, "f64", { kind: "f64" });
   ctx.suppressVecUsageFlag = false;
 
-  if (ctx.nativeStrings) registerNativeStringTypes(ctx);
+  if (ctx.nativeStrings) {
+    registerNativeStringTypes(ctx);
+
+    // #2527 P2a — artifacts crossing the package/runtime core-Wasm boundary
+    // carry one complete, frozen runtime GC rec group. Keep this opt-in: older
+    // provider seams (notably QuickJS runtime-eval) already share their own
+    // established type layout, and regrouping those otherwise unrelated
+    // modules changes their runtime exception/value ABI.
+    const members = RUNTIME_RECGROUP_TYPE_NAMES.map((name) => {
+      const index = ctx.mod.types.findIndex((type) => type.kind !== "rec" && type.name === name);
+      if (index < 0) throw new Error(`canonical runtime rec-group member '${name}' was not registered`);
+      return index;
+    });
+    const start = members[0]!;
+    for (let i = 0; i < members.length; i++) {
+      if (members[i] !== start + i) {
+        throw new Error(
+          `canonical runtime rec-group is not contiguous: '${RUNTIME_RECGROUP_TYPE_NAMES[i]}' ` +
+            `is type ${members[i]}, expected ${start + i}`,
+        );
+      }
+    }
+    if (options?.canonicalRuntimeTypes === true || ctx.runtimeProvider || linkedNamespaces.has("js2wasm:runtime")) {
+      ctx.mod.canonicalRuntimeRecGroup = {
+        start,
+        end: start + members.length - 1,
+        abiVersion: RUNTIME_RECGROUP_ABI_VERSION,
+      };
+    }
+  }
 
   return ctx;
 }

@@ -44,14 +44,13 @@
  * time, and the real body is installed from `fillObjVecReflectionHelpers`. A
  * skipped fill degrades to exactly the previous behaviour, never a trap.
  *
- * ## Deliberately NOT widened here
+ * ## Object.keys integration
  *
- * `Object.keys` / `getOwnPropertyNames` over a vec have the same gap (measured:
- * `Object.keys(a)` still answers `["0"]` for the array above) but reach it
- * through `__vec_overlay_push_keys` and the `__object_keys` vec arm — different
- * wiring, no test in this bucket asserting it, and widening both at once would
- * make one regression indistinguishable from the other. Recorded so the next
- * reader does not have to re-derive it.
+ * `fillDynamicForinVecArms` now reserves and calls this same helper for the
+ * `__object_keys` vec arm when the own-key demand gate is active. Keeping the
+ * check at that arm, rather than folding descriptor flags into the generic
+ * index loop, preserves the no-descriptor fast path and keeps `for…in` and
+ * `Object.keys` on one overlay-aware answer.
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
@@ -71,6 +70,51 @@ const FLAG_ENUMERABLE = 0x02;
 const EXT: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
 
+/**
+ * Build one vec index push for the standalone Object.keys/for-in arm.
+ * Presence remains the first gate; when a descriptor-aware module has the
+ * enumerable helper, its overlay predicate wraps that same push.
+ */
+export function buildVecIndexKeyPush(
+  ctx: CodegenContext,
+  args: {
+    objLocal: number;
+    outLocal: number;
+    indexLocal: number;
+    numToStringIdx: number;
+    objVecPushIdx: number;
+    externHasIdxIdx?: number;
+    gatePresence: boolean;
+  },
+): Instr[] {
+  const push: Instr[] = [
+    { op: "local.get", index: args.outLocal },
+    { op: "local.get", index: args.indexLocal },
+    { op: "f64.convert_i32_s" },
+    { op: "call", funcIdx: args.numToStringIdx },
+    { op: "call", funcIdx: args.objVecPushIdx },
+  ];
+  const gatedPush: Instr[] =
+    args.gatePresence && args.externHasIdxIdx !== undefined
+      ? [
+          { op: "local.get", index: args.objLocal },
+          { op: "local.get", index: args.indexLocal },
+          { op: "f64.convert_i32_s" },
+          { op: "call", funcIdx: args.externHasIdxIdx },
+          { op: "if", blockType: { kind: "empty" }, then: push },
+        ]
+      : push;
+  const enumerableIdx = ctx.funcMap.get(VEC_INDEX_ENUMERABLE);
+  if (enumerableIdx === undefined) return gatedPush;
+  return [
+    { op: "local.get", index: args.objLocal },
+    { op: "local.get", index: args.indexLocal },
+    { op: "f64.convert_i32_s" },
+    { op: "call", funcIdx: args.numToStringIdx },
+    { op: "call", funcIdx: enumerableIdx },
+    { op: "if", blockType: { kind: "empty" }, then: gatedPush },
+  ];
+}
 /**
  * Reserve the native so a for-in site can bake `call <idx>` before
  * `__vec_overlay_lookup` exists. Append-only mint (defined funcs live after the

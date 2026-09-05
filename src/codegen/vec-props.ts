@@ -91,8 +91,12 @@ const F_BAG = 2;
  * otherwise the UNCHANGED #3468 closure arm (which itself answers the
  * undefined-read sentinel for every other brand).
  */
-export function buildVecOrClosurePropGetMissArm(ctx: CodegenContext, getMiss: () => Instr[]): Instr[] {
-  const closureArm = buildClosurePropGetMissArm(ctx, getMiss);
+export function buildVecOrClosurePropGetMissArm(
+  ctx: CodegenContext,
+  getMiss: () => Instr[],
+  explicitReceiverLocal?: number,
+): Instr[] {
+  const closureArm = buildClosurePropGetMissArm(ctx, getMiss, explicitReceiverLocal);
   const isVecIdx = ctx.funcMap.get(IS_VEC_PROP_CARRIER);
   const vecGetIdx = ctx.funcMap.get(VEC_PROP_GET);
   if (isVecIdx === undefined || vecGetIdx === undefined) return closureArm;
@@ -288,6 +292,9 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
   const bagEnsureIdx = ctx.funcMap.get(VEC_BAG_ENSURE);
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const externSetIdx = ctx.funcMap.get("__extern_set");
+  const hasOwnIdx = ctx.funcMap.get("__hasOwnProperty");
+  const reflectGetReceiverIdx = ctx.funcMap.get("__reflect_get_receiver");
+  const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
   const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
   const setDecideIdx = ctx.funcMap.get("__extern_set_decide");
   const setOwnIdx = ctx.funcMap.get("__extern_set_own");
@@ -403,10 +410,50 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
   // `undefined` unless the store was reserved, so a flag-clear module keeps
   // this body byte-identical.
   if (isVecIdx !== undefined && bagLookupIdx !== undefined && externGetIdx !== undefined) {
+    // A vec's bag represents only the receiver's OWN named properties.  The
+    // presence of an unrelated entry must not terminate the inherited lookup:
+    // runtime eval builds `[1]` through a dynamic index write, which gives the
+    // vec a bag; an unconditional bag read then made `[1].every` undefined
+    // while `[].every` still worked.  This is the vec twin of #4563's callable
+    // carrier fix.  Test own presence rather than the loaded value so an own
+    // property whose value is `undefined` still shadows Array.prototype.
+    const bagRead: Instr[] =
+      reflectGetReceiverIdx !== undefined
+        ? [
+            { op: "local.get", index: 2 }, // bag (target)
+            { op: "local.get", index: 1 }, // key
+            { op: "local.get", index: 0 }, // receiver = the vec itself
+            { op: "call", funcIdx: reflectGetReceiverIdx },
+          ]
+        : [
+            { op: "local.get", index: 2 }, // bag
+            { op: "local.get", index: 1 }, // key
+            { op: "call", funcIdx: externGetIdx },
+          ];
+    const bagOwnGuardedRead: Instr[] =
+      hasOwnIdx === undefined
+        ? [...bagRead, { op: "return" }]
+        : [
+            { op: "local.get", index: 2 }, // bag
+            { op: "local.get", index: 1 }, // key
+            { op: "call", funcIdx: hasOwnIdx },
+            { op: "if", blockType: { kind: "empty" }, then: [...bagRead, { op: "return" }] },
+          ];
     setBody(
       VEC_PROP_GET,
       [{ name: "__bag", type: { kind: "externref" } }],
       [
+        // The guarded bag path probes and then reads the same key. Normalize
+        // it once here so an object key's observable ToPropertyKey hook runs
+        // once; both downstream `$Object` helpers then take their idempotent
+        // already-string/Symbol fast path.
+        ...(toPropertyKeyIdx === undefined
+          ? []
+          : [
+              { op: "local.get", index: 1 } as Instr,
+              { op: "call", funcIdx: toPropertyKeyIdx } as Instr,
+              { op: "local.set", index: 1 } as Instr,
+            ]),
         { op: "local.get", index: 0 },
         { op: "call", funcIdx: isVecIdx },
         {
@@ -421,12 +468,7 @@ export function fillVecPropHelpers(ctx: CodegenContext): void {
             {
               op: "if",
               blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 2 }, // bag
-                { op: "local.get", index: 1 }, // key
-                { op: "call", funcIdx: externGetIdx },
-                { op: "return" },
-              ],
+              then: bagOwnGuardedRead,
             },
           ],
         },

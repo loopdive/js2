@@ -17,6 +17,13 @@ export interface StringBackendEmitter<Sink> {
     materializer?: IrFuncRef,
   ): void;
   emitStringConcat(alloc: AllocSiteId | undefined, mode: IrStringConcatMode, out: Sink, provider?: IrFuncRef): void;
+  emitStringRepeat(
+    alloc: AllocSiteId | undefined,
+    inputEncoding: IrStringEncoding,
+    out: Sink,
+    provider?: IrFuncRef,
+    countedStringAppendTripCount?: number,
+  ): void;
   emitStringEquals(negate: boolean, out: Sink, provider?: IrFuncRef): void;
   emitStringLength(inputEncoding: IrStringEncoding | undefined, out: Sink, provider?: IrStringLengthProvider): void;
   emitStringCharAt(

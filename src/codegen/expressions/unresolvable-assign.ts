@@ -32,6 +32,7 @@ import { coerceType } from "../type-coercion.js";
 import { compileExpression } from "../expressions.js";
 import { emitRuntimeEvalAotCallableAdapter } from "../runtime-eval-callable.js";
 import { skipTransparentExpressions } from "../shared.js";
+import { currentSourceModuleGlobalIndex, identifierHasOnlyAmbientDeclarations } from "./identifier-module-storage.js";
 
 /**
  * Returned when the assignment is NOT an unresolvable-identifier assignment, so
@@ -65,7 +66,7 @@ export function isUnresolvableIdent(ctx: CodegenContext, fctx: FunctionContext, 
   if (fctx.localMap.has(name)) return false;
   if (fctx.boxedCaptures?.has(name)) return false;
   if (ctx.capturedGlobals.has(name)) return false;
-  if (ctx.moduleGlobals.has(name)) return false;
+  if (currentSourceModuleGlobalIndex(ctx, id) !== undefined) return false;
   if (ctx.funcMap.has(name)) return false;
   // For shorthand property assignments `{x}` the checker returns the synthetic
   // property symbol (SymbolFlags.Property = 4) even when `x` has no value
@@ -78,14 +79,13 @@ export function isUnresolvableIdent(ctx: CodegenContext, fctx: FunctionContext, 
     ).getShorthandAssignmentValueSymbol?.(id.parent);
     return !valSym;
   }
-  const sym = ctx.checker.getSymbolAtLocation(id);
-  if (!sym) return true;
-  const decls = sym.declarations;
-  if (!decls || decls.length === 0) return true;
-  for (const d of decls) {
-    if (d !== id) return false;
+  const declarations = ctx.oracle.declarationsOf(id);
+  if (declarations.length === 0) return true;
+  if (identifierHasOnlyAmbientDeclarations(ctx, id)) return true;
+  if (ctx.sourceIsModule && declarations.every((declaration) => declaration.getSourceFile() !== id.getSourceFile())) {
+    return true;
   }
-  return true;
+  return false;
 }
 
 export function findUnresolvableInObjectPattern(
@@ -157,6 +157,30 @@ export function tryCompileUnresolvableIdentifierAssign(
   if (!isUnresolvableIdent(ctx, fctx, left)) return NOT_UNRESOLVABLE;
   const name = left.text;
   const strict = isStrictContext(left, ctx.inferModuleStrictArguments);
+
+  // An ambient declaration is a statically resolved GlobalEnvironmentRecord
+  // binding, not an unresolvable Reference. The flat module-global registry
+  // may contain a foreign collision, but strict PutValue must still update the
+  // declared global without a runtime HasBinding probe.
+  if (identifierHasOnlyAmbientDeclarations(ctx, left)) {
+    if (!emitGlobalEnvironmentObject(ctx, fctx)) return NOT_UNRESOLVABLE;
+    const objectLocal = allocLocal(fctx, `__ambient_global_obj_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: objectLocal });
+    const resultType = compileExpression(ctx, fctx, right);
+    if (!resultType) return null;
+    const resultLocal = allocLocal(fctx, `__ambient_global_rhs_${fctx.locals.length}`, resultType);
+    fctx.body.push({ op: "local.set", index: resultLocal }, { op: "local.get", index: objectLocal });
+    emitGlobalEnvironmentKey(ctx, fctx, name);
+    fctx.body.push({ op: "local.get", index: resultLocal });
+    if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, { kind: "externref" });
+    const setIdx = ensureGlobalEnvironmentOperation(ctx, fctx, "__extern_set");
+    if (setIdx === undefined) return null;
+    fctx.body.push(
+      { op: "call", funcIdx: ctx.funcMap.get("__extern_set") ?? setIdx },
+      { op: "local.get", index: resultLocal },
+    );
+    return resultType;
+  }
 
   // Resolve the provider-created activation binding BEFORE the RHS. The
   // captured value cell is a stable Reference: an RHS that performs another

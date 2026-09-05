@@ -224,6 +224,24 @@ describe("#3101 calls, closures, recursion, this-binding", () => {
     expectValue("function g(){return this === globalThis ? 1 : 2;} g()", 1));
   it("nested function sees a global var (global resolution, not capture)", () =>
     expectValue("var g=0; function inc(){ g=g+1; return g; } inc(); inc(); inc()", 3));
+  it("captures a parameter in a nested function", () =>
+    expectValue("function outer(a,b){return (function(){return b;})()} outer(1,42)", 42));
+  it("initializes a duplicate sloppy parameter from its last argument", () =>
+    expectValue("function f(a,a){return function(){return a;};} f(1,2)()", 2));
+  it("keeps captured parameter writes live after closure creation", () =>
+    expectValue("function f(x){var g=function(){return x;}; x=2; return g();} f(1)", 2));
+  it("shares one live cell between sibling closures", () =>
+    expectValue(
+      "function f(x){var set=function(v){x=v;}; var get=function(){return x;}; set(9); return get();} f(1)",
+      9,
+    ));
+  it("keeps escaped function activations isolated per call", () =>
+    expectValue("function f(n){return ()=>++n;} var a=f(0), b=f(10); a()+b()", 12));
+  it("captures both sides of an array higher-order callback", () =>
+    expectValue(
+      "function equal(a,b){return a.length===b.length && a.every((v,i)=>v===b[i]);} equal([1,2],[1,2])",
+      true,
+    ));
   it("constructs a non-interpreted callable through the fixed-arity runtime seam", () =>
     expectValue("new Array(1, 2, 3).length", 3));
   it("keeps construction beyond the Phase-1 arity ceiling catchable", () =>
@@ -240,6 +258,11 @@ describe("#3101 exceptions (side-table, cross-call unwind)", () => {
     expectValue("var caught='no'; try { try { throw 'x'; } finally {} } catch(e){ caught=e; } caught", "x"));
   it("unwinds a throw across a call boundary into a caller's catch", () =>
     expectValue("function boom(){ throw 'x'; } var r='no'; try { boom(); } catch(e){ r=e; } r", "x"));
+  it("restores nested call state before and after an unwind into the original caller", () =>
+    expectValue(
+      "function leaf(n){if(n===0)throw 'boom';return n;} function middle(n){return leaf(n)+1;} function outer(){var returned=middle(2);try{return returned*10+middle(0);}catch(e){return e==='boom'?returned+middle(3):-1;}} outer()",
+      7,
+    ));
   it("host TypeError on a non-callable is catchable", () =>
     expectValue("var r = 'no'; try { var n = 5; n(); } catch(e) { r = e.name; } r", "TypeError"));
   it("constructs an unshadowed native Error through CallBuiltin", () =>

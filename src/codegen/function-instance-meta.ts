@@ -65,7 +65,7 @@
  * reflective property path, so the extra field would be pure cost; every entry
  * point here is a no-op unless `ctx.standalone`.
  */
-import type { FieldDef, Instr, ValType } from "../ir/types.js";
+import type { FieldDef, GlobalDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { ts } from "../ts-api.js";
 import { expectedArgumentCountOfParams } from "./function-expected-argument-count.js";
@@ -84,6 +84,29 @@ export const FN_META_LENGTH_FIELD_IDX = 1;
 export interface FnInstanceMeta {
   readonly name: string;
   readonly length: number;
+}
+
+/**
+ * Allocation-only recipe for one `$fnmeta` slot.
+ *
+ * D1a's certified function-value path prepares the structural field and its
+ * singleton global during the early support phase, then materializes a fresh
+ * initializer only when the one direct consumer takes its receipt.  Retaining
+ * the `GlobalDef` object instead of an absolute index is deliberate: late
+ * imported globals shift every module-global index, while this object remains
+ * the exact physical allocation the recipe certified.
+ */
+export interface PreparedFnMetaSlot {
+  readonly kind: "prepared-fn-meta-slot";
+  readonly field: FieldDef;
+  readonly meta: FnInstanceMeta;
+  readonly key: string;
+  readonly structTypeIdx: number;
+  readonly global: GlobalDef;
+}
+
+function moduleGlobalAt(ctx: CodegenContext, absIdx: number): GlobalDef | undefined {
+  return ctx.mod.globals[absIdx - ctx.numImportGlobals];
 }
 
 /**
@@ -135,40 +158,108 @@ export function fnMetaField(ctx: CodegenContext): FieldDef {
  * function bodies, never `ctx.mod.globals[].init`. Keeping the sequence in a
  * shift-covered array makes the choice of materialization irrelevant here.
  */
-function pushFnInstanceMetaValueInstrs(ctx: CodegenContext, meta: FnInstanceMeta): Instr[] {
-  const structTypeIdx = ensureFnInstanceMetaStructType(ctx);
+function fnInstanceMetaKey(meta: FnInstanceMeta): string {
   // `<length>:<name>` — unambiguous for ANY name, because `length` is
   // digits-only, so the first `:` is always the separator even when the name
   // itself contains one (a computed key like `{ "a:b": function () {} }`).
-  const key = `${meta.length}:${meta.name}`;
+  return `${meta.length}:${meta.name}`;
+}
+
+/**
+ * Prepare the physical `$fnmeta` field and singleton global without emitting
+ * the lazy value initializer.  This is intentionally allocation-only.
+ */
+export function prepareFnMetaSlotOfMeta(ctx: CodegenContext, meta: FnInstanceMeta): PreparedFnMetaSlot {
+  if (typeof meta.name !== "string" || !Number.isSafeInteger(meta.length) || meta.length < 0) {
+    throw new Error("invalid fn metadata recipe");
+  }
+  const canonicalMeta = Object.freeze({ name: meta.name, length: meta.length });
+  const structTypeIdx = ensureFnInstanceMetaStructType(ctx);
+  const field = fnMetaField(ctx);
+  const key = fnInstanceMetaKey(canonicalMeta);
   const cache = (ctx.fnInstanceMetaGlobalByKey ??= new Map<string, number>());
   let globalIdx = cache.get(key);
+  let global: GlobalDef | undefined;
   if (globalIdx === undefined) {
     globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
+    global = {
       name: `__fn_instance_meta_${cache.size}`,
       type: { kind: "ref_null", typeIdx: structTypeIdx },
       mutable: true,
       init: [{ op: "ref.null", typeIdx: structTypeIdx }],
-    });
+    };
+    ctx.mod.globals.push(global);
     cache.set(key, globalIdx);
+  } else {
+    global = moduleGlobalAt(ctx, globalIdx);
   }
-  return [
-    { op: "global.get", index: globalIdx },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...nativeStringLiteralInstrs(ctx, meta.name),
-        { op: "extern.convert_any" },
-        { op: "i32.const", value: meta.length },
-        { op: "struct.new", typeIdx: structTypeIdx },
-        { op: "global.set", index: globalIdx },
-      ],
-    },
-    { op: "global.get", index: globalIdx },
-  ];
+  if (
+    global === undefined ||
+    global.type.kind !== "ref_null" ||
+    global.type.typeIdx !== structTypeIdx ||
+    !global.mutable
+  ) {
+    throw new Error(`prepared fn metadata global '${key}' no longer has its certified layout`);
+  }
+
+  return Object.freeze({
+    kind: "prepared-fn-meta-slot" as const,
+    field,
+    meta: canonicalMeta,
+    key,
+    structTypeIdx,
+    global,
+  });
+}
+
+/**
+ * Materialize fresh lazy-initializer instructions for a prepared metadata
+ * recipe.  The current map value is re-read after all import shifts and then
+ * proven to name the exact global object prepared above.
+ */
+export function materializePreparedFnMetaSlot(
+  ctx: CodegenContext,
+  prepared: PreparedFnMetaSlot,
+): { field: FieldDef; init: Instr[]; meta: FnInstanceMeta } {
+  if (prepared.kind !== "prepared-fn-meta-slot") {
+    throw new Error("invalid prepared fn metadata slot");
+  }
+  // Native string materialization may add an imported global and shift every
+  // module-global absolute index.  It therefore has to happen before reading
+  // the metadata side-table; the map shift below is the authoritative current
+  // location of the retained `GlobalDef` object.
+  const nameInit = nativeStringLiteralInstrs(ctx, prepared.meta.name);
+  const globalIdx = ctx.fnInstanceMetaGlobalByKey?.get(prepared.key);
+  if (globalIdx === undefined || moduleGlobalAt(ctx, globalIdx) !== prepared.global) {
+    throw new Error(`prepared fn metadata global '${prepared.key}' is no longer current`);
+  }
+  if (
+    prepared.global.type.kind !== "ref_null" ||
+    prepared.global.type.typeIdx !== prepared.structTypeIdx ||
+    !prepared.global.mutable
+  ) {
+    throw new Error(`prepared fn metadata global '${prepared.key}' no longer has its certified layout`);
+  }
+  return {
+    field: prepared.field,
+    meta: prepared.meta,
+    init: [
+      { op: "global.get", index: globalIdx },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...nameInit,
+          { op: "extern.convert_any" },
+          { op: "i32.const", value: prepared.meta.length },
+          { op: "struct.new", typeIdx: prepared.structTypeIdx },
+          { op: "global.set", index: globalIdx },
+        ],
+      },
+      { op: "global.get", index: globalIdx },
+    ],
+  };
 }
 
 /**
@@ -243,6 +334,74 @@ function isSynthesizedEvalDeclaration(decl: ts.Node): boolean {
 }
 
 /**
+ * (#5149 cluster B) §10.2.9 step 1: when the property key is a SYMBOL, the
+ * function's `name` is the symbol's description wrapped in brackets —
+ * `{ [Symbol('test262')]() {} }` is named `"[test262]"`, and a symbol with NO
+ * description is named `""` (not `"[]"`, not the compiler's internal
+ * `"__computed"`).
+ *
+ * Only the two statically decidable spellings are answered here:
+ *   • a well-known `Symbol.foo` key                → `"[Symbol.foo]"`
+ *   • an identifier bound ONCE to `Symbol("desc")` → `"[desc]"` / `""`
+ *
+ * The binding walk is syntactic on purpose — the question ("which literal built
+ * this symbol") is about SYNTAX, not about a type, so no type query belongs
+ * here at all. It is deliberately conservative:
+ * more than one declaration of the name, any later assignment to it, or a
+ * non-literal description all decline, and declining leaves the pre-existing
+ * answer untouched.
+ *
+ * Returns `undefined` when the key is not a statically decidable symbol.
+ */
+export function symbolComputedKeyFunctionName(key: ts.Expression): string | undefined {
+  let expr = key;
+  while (ts.isParenthesizedExpression(expr)) expr = expr.expression;
+  // `[Symbol.iterator]() {}` → "[Symbol.iterator]".
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Symbol" &&
+    ts.isIdentifier(expr.name)
+  ) {
+    return `[Symbol.${expr.name.text}]`;
+  }
+  if (!ts.isIdentifier(expr)) return undefined;
+  const name = expr.text;
+  const file = expr.getSourceFile?.();
+  if (file === undefined) return undefined;
+  let decls = 0;
+  let initializer: ts.Expression | undefined;
+  let reassigned = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name) {
+      decls++;
+      initializer = node.initializer;
+    } else if (
+      ts.isBinaryExpression(node) &&
+      ts.isIdentifier(node.left) &&
+      node.left.text === name &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      reassigned = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  if (decls !== 1 || reassigned || initializer === undefined) return undefined;
+  let init: ts.Expression = initializer;
+  while (ts.isParenthesizedExpression(init)) init = init.expression;
+  if (!ts.isCallExpression(init) || !ts.isIdentifier(init.expression) || init.expression.text !== "Symbol") {
+    return undefined;
+  }
+  const arg = init.arguments[0];
+  // §20.4.1.1: an absent or `undefined` description leaves [[Description]]
+  // undefined, and §10.2.9 then names the function `""`.
+  if (arg === undefined || (ts.isIdentifier(arg) && arg.text === "undefined")) return "";
+  if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) return `[${arg.text}]`;
+  return undefined;
+}
+
+/**
  * §10.2.9 SetFunctionName for a function-like declaration, as far as it is
  * statically decidable at the closure's mint site.
  *
@@ -271,7 +430,9 @@ export function fnInstanceNameOf(decl: ts.Node): string {
 
   // NamedEvaluation: the anonymous definition takes the name of what it is
   // being bound to. Only the syntactic forms that carry an identifier/literal
-  // key are resolvable here; computed keys are runtime values.
+  // key are resolvable here; computed keys are runtime values. Private names
+  // are syntactic keys too, and their `#` spelling is the observable function
+  // name (the class-field layout's `__priv_` spelling must not leak here).
   //
   // Parentheses are TRANSPARENT to NamedEvaluation — the CoverParenthesized
   // production keeps `var cover = (function () {});` anonymous, so the binding
@@ -286,14 +447,31 @@ export function fnInstanceNameOf(decl: ts.Node): string {
   if ((ts.isVariableDeclaration(parent) || ts.isBindingElement(parent)) && parent.initializer === node) {
     return ts.isIdentifier(parent.name) ? parent.name.text : "";
   }
+  // (#5144 cluster F) Shorthand DEFAULT in an object ASSIGNMENT pattern —
+  // `for ({ fn = function () {} } of [{}])`. §13.15.5.4 step 6.d applies
+  // NamedEvaluation with the property key, which is also the shorthand's own
+  // identifier. (The binding-pattern twin arrives as a BindingElement above.)
+  if (ts.isShorthandPropertyAssignment(parent) && parent.objectAssignmentInitializer === node) {
+    return parent.name.text;
+  }
   if (ts.isPropertyAssignment(parent) && parent.initializer === node) {
     const key = parent.name;
     if (ts.isIdentifier(key) || ts.isStringLiteral(key) || ts.isNumericLiteral(key)) return key.text;
+    // (#5149 cluster B) A symbol-keyed property names its anonymous function
+    // value after the symbol's description: `{ [Symbol('test262')]: () => {} }`
+    // is `"[test262]"`. Undecidable computed keys keep the `""` answer.
+    if (ts.isComputedPropertyName(key)) return symbolComputedKeyFunctionName(key.expression) ?? "";
     return "";
+  }
+  // (#5146 cluster E) `({ x = function () {} } = {})` — the shorthand
+  // property's assignment initializer is an AssignmentElement default, and
+  // §13.15.5.5 applies NamedEvaluation with the shorthand's own name.
+  if (ts.isShorthandPropertyAssignment(parent) && parent.objectAssignmentInitializer === node) {
+    return parent.name.text;
   }
   if (ts.isPropertyDeclaration(parent) && parent.initializer === node) {
     const key = parent.name;
-    return ts.isIdentifier(key) || ts.isStringLiteral(key) ? key.text : "";
+    return ts.isIdentifier(key) || ts.isPrivateIdentifier(key) || ts.isStringLiteral(key) ? key.text : "";
   }
   if (
     ts.isBinaryExpression(parent) &&
@@ -370,9 +548,5 @@ export function fnMetaSlotOfMeta(
   ctx: CodegenContext,
   meta: FnInstanceMeta,
 ): { field: FieldDef; init: Instr[]; meta: FnInstanceMeta } {
-  return {
-    field: fnMetaField(ctx),
-    init: pushFnInstanceMetaValueInstrs(ctx, meta),
-    meta,
-  };
+  return materializePreparedFnMetaSlot(ctx, prepareFnMetaSlotOfMeta(ctx, meta));
 }

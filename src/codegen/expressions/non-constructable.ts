@@ -7,6 +7,7 @@
 // answered at two different STRENGTHS, and keeping the strengths straight is
 // what makes the analysis safe. See `classifyNonConstructableValue`.
 import { ts } from "../../ts-api.js";
+import { isSingleAssignmentBinding } from "../proxy-value-provenance.js";
 import type { CodegenContext } from "../context/types.js";
 
 /**
@@ -24,6 +25,33 @@ export function resolvesToAmbientGlobal(ctx: CodegenContext, id: ts.Identifier):
   if (!decls || decls.length === 0) return true;
   return decls.every((d) => d.getSourceFile().isDeclarationFile);
 }
+
+/**
+ * (#5158) Ambient global FUNCTIONS that the spec gives no `[[Construct]]`.
+ * `new escape('')` must throw a TypeError, and — the part that used to be
+ * missed — `Reflect.construct(fn, [], escape)` must throw too, because
+ * test262's `isConstructor` helper probes exactly that. Their declarations live
+ * in the TypeScript lib `.d.ts` as ordinary `declare function`s, which the
+ * "statically constructible" analysis otherwise reads as an ordinary function.
+ * A user shadow (`function escape() {}`) IS constructable, so every consumer
+ * pairs this set with `resolvesToAmbientGlobal`.
+ */
+export const GLOBAL_NON_CONSTRUCTOR_FUNCTION_NAMES: ReadonlySet<string> = new Set([
+  "decodeURI",
+  "decodeURIComponent",
+  "encodeURI",
+  "encodeURIComponent",
+  "escape",
+  "unescape",
+  "parseInt",
+  "parseFloat",
+  "isNaN",
+  "isFinite",
+  "eval",
+  // (#5156, §20.4.1) `Symbol` is callable but has NO [[Construct]] — `new
+  // Symbol()` is a TypeError, and `isConstructor(Symbol)` is false.
+  "Symbol",
+]);
 
 /** Ambient-global proof with the source spelling checked at the same boundary. */
 export function resolvesToNamedAmbientGlobal(ctx: CodegenContext, expr: ts.Expression, name: string): boolean {
@@ -92,6 +120,31 @@ export function classifyNonConstructableValue(ctx: CodegenContext, calleeExpr: t
           : (e as ts.NonNullExpression).expression;
     }
     if (ts.isArrowFunction(e)) return "provable";
+    // (#5196 R3-4) `var revoke = Proxy.revocable(t, h).revoke` — §28.2.2.1.1
+    // makes the revocation function a built-in function that is NOT a
+    // constructor, so `new revoke()` is a §13.3.5.1 step-5 TypeError. Before
+    // this arm the callee reached no construct path at all and `new revoke()`
+    // evaluated to null with no diagnostic. The `Proxy` receiver is proven an
+    // ambient intrinsic at the same boundary every other arm here uses, so a
+    // user object with its own `revocable` method can never be intercepted.
+    if (
+      ts.isPropertyAccessExpression(e) &&
+      e.name.text === "revoke" &&
+      ts.isCallExpression(e.expression) &&
+      ts.isPropertyAccessExpression(e.expression.expression) &&
+      e.expression.expression.name.text === "revocable" &&
+      resolvesToNamedAmbientGlobal(ctx, e.expression.expression.expression, "Proxy") &&
+      // (#5196 R3 review F3) …and the binding is PROVABLY single-assignment.
+      // The classification is read off the DECLARATION initializer, so without
+      // this a later `r = K` still produced the §13.3.5.1 static throw: measured
+      // 2026-09-04, standalone, `var r = Proxy.revocable(t,h).revoke; class K{};
+      // r = K; new r()` threw a TypeError where node and the base tree both
+      // construct a `K`. An unproven binding returns "no" — exactly the base
+      // tree's behaviour, since this arm did not exist there.
+      isSingleAssignmentBinding(ctx, calleeExpr)
+    ) {
+      return "provable";
+    }
     if (ts.isPropertyAccessExpression(e)) {
       const obj = e.expression;
       if (ts.isPropertyAccessExpression(obj) && obj.name.text === "prototype") {

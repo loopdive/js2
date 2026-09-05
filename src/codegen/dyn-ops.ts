@@ -447,6 +447,11 @@ function ensureDynamicStringReplace(ctx: CodegenContext, carrier: ValType): void
       ...nativeStringLiteralInstrs(ctx, "_"),
       { op: "i32.const", value: compiledRegExp.nScratch },
       { op: "f64.const", value: 0 },
+      // Deferred `lastIndex` storage was added to the standalone RegExp
+      // carrier after this helper was introduced. Keep the dynamic literal
+      // constructor in lockstep with `emitStandaloneRegExpStruct`.
+      { op: "ref.null.extern" },
+      { op: "i32.const", value: 0 },
       { op: "struct.new", typeIdx: regexpTypeIdx },
       { op: "extern.convert_any" },
     ];

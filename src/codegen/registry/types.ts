@@ -7,6 +7,7 @@
  */
 import type { ArrayTypeDef, FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { getArgumentsVecTypeIdx } from "../arguments-carrier-brand.js";
 import { closureBagField } from "../closures/funcref-wrapper-types.js"; // (#4241)
 
 /**
@@ -57,6 +58,13 @@ function funcTypeKey(params: ValType[], results: ValType[]): string {
     // branded i64 signature distinct.
     else if (v.kind === "i64") {
       if ((v as { bigint?: true }).bigint) s += ":big";
+    }
+    // An f64 undefined sentinel has the same Wasm carrier as an ordinary
+    // number, but callers must preserve the brand so boxing can recover
+    // `undefined`. Keep it out of the plain-number cache entry just like the
+    // i32/i64 semantic carriers above.
+    else if (v.kind === "f64") {
+      if ((v as { undefSentinel?: true }).undefSentinel) s += ":undef";
     }
     return s;
   };
@@ -194,6 +202,7 @@ export function withSuppressedVecUsage<T>(ctx: CodegenContext, fn: () => T): T {
  * The vec struct has {length: i32, data: (ref $__arr_<elemKind>)}.
  */
 export function getOrRegisterVecType(ctx: CodegenContext, elemKind: string, elemTypeOverride?: ValType): number {
+  if (elemKind === "arguments") return getOrRegisterArgumentsVecType(ctx);
   // (#2083) Any request for a vec type — whether it allocates a new struct or
   // reuses a pre-registered one (`externref`/`f64`, baked into every context for
   // type-index stability) — means the module genuinely materialises an array
@@ -290,6 +299,49 @@ export function getOrRegisterHoleyArrayType(ctx: CodegenContext): number {
   return idx;
 }
 
+/**
+ * Register the nominal standalone `arguments` carrier.
+ *
+ * `arguments` is array-like but §15.4.3.2 must reject it from IsArray. A
+ * dedicated subtype preserves the canonical externref-vec prefix, so all
+ * existing vec length/index/property machinery continues to accept it, while
+ * the standalone IsArray finalizer can exclude this exact type. The subtype
+ * repeats the two vec fields for the same field layout convention used by the
+ * sparse-array carrier above.
+ */
+export function getOrRegisterArgumentsVecType(ctx: CodegenContext): number {
+  // Host-backed arguments objects already have a real JS Object identity and
+  // prototype registration. Keep their established canonical vec ABI; the
+  // nominal brand is only needed in the host-free lanes where IsArray is
+  // answered by the module-local carrier predicate.
+  if (!ctx.standalone && !ctx.wasi) return getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  if (getArgumentsVecTypeIdx(ctx) >= 0) return getArgumentsVecTypeIdx(ctx);
+
+  const parentVecTypeIdx = getOrRegisterVecType(ctx, "externref", { kind: "externref" });
+  const arrTypeIdx = getArrTypeIdxFromVec(ctx, parentVecTypeIdx);
+  if (arrTypeIdx < 0) throw new Error("arguments carrier requires the canonical externref vec layout");
+
+  const idx = ctx.mod.types.length;
+  const name = "__arguments_vec_externref";
+  ctx.mod.types.push({
+    kind: "struct",
+    name,
+    superTypeIdx: parentVecTypeIdx,
+    fields: [
+      { name: "length", type: { kind: "i32" }, mutable: true },
+      { name: "data", type: { kind: "ref", typeIdx: arrTypeIdx }, mutable: true },
+    ],
+  });
+  (ctx as CodegenContext & { argumentsVecTypeIdx?: number }).argumentsVecTypeIdx = idx;
+  ctx.structMap.set(name, idx);
+  ctx.typeIdxToStructName.set(idx, name);
+  ctx.structFields.set(name, [
+    { name: "length", type: { kind: "i32" as const }, mutable: true },
+    { name: "data", type: { kind: "ref" as const, typeIdx: arrTypeIdx }, mutable: true },
+  ]);
+  return idx;
+}
+
 /** True exactly for the dedicated sparse `new Array(n)` carrier. */
 export function isHoleyArrayType(ctx: CodegenContext, typeIdx: number): boolean {
   return ctx.holeyArrayTypeIdx >= 0 && typeIdx === ctx.holeyArrayTypeIdx;
@@ -361,7 +413,7 @@ export function isSubviewTypeIdx(ctx: CodegenContext, typeIdx: number): boolean 
 /**
  * (#3054 B1) Get or register the `$__ta_view_<name>` struct — a byte-backed
  * TypedArray view over an ArrayBuffer that SHARES the buffer's backing store:
- *   `{length: i32, buf: (ref null $__vec_i32_byte), byteOffset: i32}`.
+ *   `{length: i32, buf: (ref null $__vec_i32_byte), byteOffset: i32, kind: i32}`.
  *
  * Unlike `$__subview` (which pins the parent's raw *element* array), a
  * `$__ta_view` holds a ref to the ArrayBuffer's `$__vec_i32_byte` **vec struct**
@@ -376,10 +428,12 @@ export function isSubviewTypeIdx(ctx: CodegenContext, typeIdx: number): boolean 
  * access — observes it, so length-tracking falls out for free.
  *
  * `length` is field 0 (subtypes `$__vec_base`) so uniform `.length` reads and the
- * externref-length helper keep working. Keyed per TS view NAME (each view kind
- * needs a distinct typeIdx so element access can recover its byte width /
- * signedness / float / clamp behaviour purely from the receiver's static
- * ValType.typeIdx — no runtime tag). Idempotent.
+ * externref-length helper keep working. The immutable `kind` field is appended
+ * so a view that crosses an `any`/externref slot retains its exact TypedArray
+ * brand. WasmGC canonicalizes the otherwise-identical per-kind structs, so RTT
+ * alone cannot distinguish `Uint8Array` from `Int16Array`; the tag is the
+ * runtime source of truth while statically typed element access keeps using the
+ * receiver's ValType/typeIdx. Keyed per TS view name. Idempotent.
  */
 export function getOrRegisterTaViewType(ctx: CodegenContext, viewName: string): number {
   const existing = ctx.taViewTypeMap.get(viewName);
@@ -399,6 +453,7 @@ export function getOrRegisterTaViewType(ctx: CodegenContext, viewName: string): 
       { name: "length", type: { kind: "i32" }, mutable: true },
       { name: "buf", type: { kind: "ref_null", typeIdx: bufVecTypeIdx }, mutable: false },
       { name: "byteOffset", type: { kind: "i32" }, mutable: false },
+      { name: "kind", type: { kind: "i32" }, mutable: false },
     ],
   });
   ctx.taViewTypeMap.set(viewName, idx);
@@ -408,6 +463,7 @@ export function getOrRegisterTaViewType(ctx: CodegenContext, viewName: string): 
     { name: "length", type: { kind: "i32" as const }, mutable: true },
     { name: "buf", type: { kind: "ref_null" as const, typeIdx: bufVecTypeIdx }, mutable: false },
     { name: "byteOffset", type: { kind: "i32" as const }, mutable: false },
+    { name: "kind", type: { kind: "i32" as const }, mutable: false },
   ]);
   return idx;
 }
@@ -482,20 +538,32 @@ export function taCtorKindOf(name: string): number {
  * (index into `TA_CTOR_KINDS`) drives the runtime-switch dynamic construct and
  * `ctor.BYTES_PER_ELEMENT`. A plain struct (NOT a vec subtype) so it never collides
  * with buffer/view `ref.test`s. Registered late+once, memoized on `ctx.taCtorTypeIdx`.
+ *
+ * (#5194 r3 review F1) The struct carries a SECOND immutable `brand` field
+ * (constant `TA_CTOR_BRAND`, never read) purely so its shape is not
+ * `(struct (field i32))`. WasmGC canonicalizes structurally-identical types,
+ * and that one-field shape is ALSO `__box_boolean_struct` (`registry/imports.ts`),
+ * so `__typeof_function`'s `ref.test $__ta_ctor` arm
+ * (`builtin-callable-brand.ts`) matched every boxed boolean in a module that
+ * held a TypedArray constructor value: `id(true) instanceof Function` → true,
+ * `(true + "")` → `"function () { [native code] }"`, and a `typeof x ===
+ * "function"` guard CALLED the boolean. Two fields keep the two singletons
+ * distinct types; `struct.get` of field 0 is unchanged everywhere.
  */
+export const TA_CTOR_BRAND = 0x5441; // "TA"
 export function getOrRegisterTaCtorType(ctx: CodegenContext): number {
   if (ctx.taCtorTypeIdx >= 0) return ctx.taCtorTypeIdx;
   const idx = ctx.mod.types.length;
   const name = "__ta_ctor";
-  ctx.mod.types.push({
-    kind: "struct",
-    name,
-    fields: [{ name: "kind", type: { kind: "i32" }, mutable: false }],
-  });
+  const fields = [
+    { name: "kind", type: { kind: "i32" as const }, mutable: false },
+    { name: "brand", type: { kind: "i32" as const }, mutable: false },
+  ];
+  ctx.mod.types.push({ kind: "struct", name, fields: fields.map((f) => ({ ...f })) });
   ctx.taCtorTypeIdx = idx;
   ctx.structMap.set(name, idx);
   ctx.typeIdxToStructName.set(idx, name);
-  ctx.structFields.set(name, [{ name: "kind", type: { kind: "i32" as const }, mutable: false }]);
+  ctx.structFields.set(name, fields);
   return idx;
 }
 

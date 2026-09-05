@@ -1,0 +1,3 @@
+built-ins/Proxy/getPrototypeOf/not-extensible-same-proto.js
+built-ins/Proxy/getPrototypeOf/instanceof-target-not-extensible-not-same-proto-throws.js
+built-ins/Proxy/getPrototypeOf/instanceof-custom-return-accepted.js

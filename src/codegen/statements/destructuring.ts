@@ -25,9 +25,11 @@ import { ensureStrToCharVecHelper } from "../native-strings.js";
 import {
   type BindingKind,
   buildDestructureNullThrow,
+  coerceArrayBindingExternrefToAnyValue,
   destructureParamArray,
   destructureParamObject,
   emitExternrefDestructureGuard,
+  patternIteratorStepCount,
 } from "../destructuring-params.js";
 import { addImport, addStringConstantGlobal, ensureExnTag, localGlobalIdx } from "../registry/imports.js";
 import { emitWasiErrorConstructor } from "../registry/error-types.js";
@@ -45,11 +47,12 @@ import {
   valTypesMatch,
 } from "../shared.js";
 import { collectInstrs } from "./shared.js";
-import { emitLocalTdzInit } from "./tdz.js";
+import { emitBindingElementTdzInit, emitLocalTdzInit, emitTdzInit } from "./tdz.js";
 import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "../expressions/proto-override.js";
 import { ensureNativeIteratorRuntime } from "../iterator-native.js";
 import { emitDrainCustomIterableToVec, isCustomIterable } from "../custom-iterable.js";
 import { emitNativeGeneratorToVec, nativeGeneratorInfoForForOfSubject } from "../generators-native.js";
+import { currentSourceModuleGlobalIndex } from "../expressions/identifier-module-storage.js";
 
 /**
  * (#1719 S1) Gate predicate for the array object-value representation track.
@@ -176,8 +179,26 @@ export function tryEmitArrayProtoIteratorReadDrive(
       if (ts.isOmittedExpression(el) || !ts.isIdentifier(el.name)) continue; // elision: just advance
 
       const name = el.name.text;
-      const localIdx = fctx.localMap.get(name);
-      if (localIdx === undefined) continue;
+      let localIdx = fctx.localMap.get(name);
+      if (localIdx === undefined) {
+        // (#5144 cluster A) A for-of HEAD binding (`for (var [x,y,z] of …)`)
+        // at module scope lives in a module global, not a local — the drain
+        // silently skipped every such element, so the override's values were
+        // never bound. Materialize the local; the caller's
+        // `syncDestructuredLocalsToGlobals` writes it back.
+        const moduleGlobalIdx = ctx.moduleGlobals.get(name);
+        if (moduleGlobalIdx !== undefined) {
+          const globalType =
+            ctx.mod.globals[localGlobalIdx(ctx, moduleGlobalIdx)]?.type ?? ({ kind: "externref" } as ValType);
+          localIdx = allocLocal(fctx, name, globalType);
+        } else {
+          // A `let`/`const` for-of head binding has no slot yet at drive time.
+          const declType = resolveBindingElementType(el, ctx.checker.getTypeAtLocation(el), (t) =>
+            resolveWasmType(ctx, t),
+          );
+          localIdx = allocLocal(fctx, name, declType);
+        }
+      }
       const localType = getLocalType(fctx, localIdx) ?? ({ kind: "externref" } as ValType);
 
       // value-present arm: coerce `value` externref → the binding's local type.
@@ -309,7 +330,7 @@ export function syncDestructuredLocalsToGlobals(
         // the central "destructure complete" callsite — and is a
         // no-op for non-let/const bindings, which have no TDZ flag.
         emitLocalTdzInit(fctx, name);
-        const moduleGlobalIdx = isModuleLevel ? ctx.moduleGlobals.get(name) : undefined;
+        const moduleGlobalIdx = isModuleLevel ? currentSourceModuleGlobalIndex(ctx, element.name) : undefined;
         const localIdx = fctx.localMap.get(name);
         if (moduleGlobalIdx !== undefined && localIdx !== undefined) {
           const localType = getLocalType(fctx, localIdx);
@@ -321,6 +342,10 @@ export function syncDestructuredLocalsToGlobals(
             coerceType(ctx, fctx, localType, globalType);
           }
           fctx.body.push({ op: "global.set", index: moduleGlobalIdx });
+          // Pattern leaves own exact TDZ sidecars. Never also initialize the
+          // legacy name-keyed flag: a different source may own that spelling.
+          if (ctx.modulePatternTdzGlobals.has(element)) emitBindingElementTdzInit(ctx, fctx, element);
+          else emitTdzInit(ctx, fctx, name);
         }
       } else if (ts.isObjectBindingPattern(element.name) || ts.isArrayBindingPattern(element.name)) {
         syncDestructuredLocalsToGlobals(ctx, fctx, element.name);
@@ -640,7 +665,9 @@ export function emitDefaultValueCheck(
     if (coerceTo && !valTypesMatch(fieldType, coerceTo)) {
       return collectInstrs(fctx, () => {
         fctx.body.push({ op: "local.get", index: tmpField });
-        coerceType(ctx, fctx, fieldType, coerceTo);
+        if (!coerceArrayBindingExternrefToAnyValue(ctx, fctx, fieldType, coerceTo)) {
+          coerceType(ctx, fctx, fieldType, coerceTo);
+        }
         fctx.body.push({ op: "local.set", index: localIdx });
       });
     }
@@ -1142,7 +1169,25 @@ export function compileArrayDestructuring(
       // destructure path bounds-checks against `array.len(data)`, so the
       // backing array must be sized to exactly the logical length for
       // out-of-length binding defaults (`const [a,b=9]=g()`) to fire.
-      emitNativeGeneratorToVec(ctx, fctx, genInfo, resultType, genVecTypeIdx, genArrTypeIdx, true);
+      //
+      // (#5271 step 1) Bound the drain by the pattern's iterator-step count
+      // (§8.5.3 IteratorBindingInitialization: every element — elision holes
+      // included — costs exactly one IteratorStep). Without the limit
+      // `let [,] = g()` ran the generator to completion, so statements after
+      // the first `yield` executed (probe p10: `second === 1`). A rest element
+      // returns the `-1` sentinel and keeps the unbounded drain, exactly as the
+      // param lane does at `destructuring-params.ts` (#4768).
+      const genStepLimit = patternIteratorStepCount(pattern.elements);
+      emitNativeGeneratorToVec(
+        ctx,
+        fctx,
+        genInfo,
+        resultType,
+        genVecTypeIdx,
+        genArrTypeIdx,
+        true,
+        genStepLimit < 0 ? undefined : genStepLimit,
+      );
       // struct.new yields a non-null ref; type the local `ref` (not `ref_null`)
       // so the typed-vec destructure's OOB→default logic matches the
       // literal-array path (mirrors the custom-iterable drain below).

@@ -36,6 +36,9 @@ name: Auto-refresh BEHIND PR branches with main
 #   - skip PRs whose current head is already ALL-GREEN and quiescent — those are
 #     enqueue-eligible RIGHT NOW (#4094 behind-eligible); a refresh would only
 #     knock them back to pending and reopen the livelock window.
+#   - skip the bot-owned `ci/npm-compat-refresh` promotion branch — its
+#     coordinator has its own freshness and check-state guards; a generic
+#     rebase emits `pull_request:synchronize` and cancels its artifact checks.
 #
 # TRIGGER: cron only (every 20 min) + manual dispatch — NOT push:main. A per-merge
 # push trigger races the SERIAL merge queue's merge_group formation (the churn
@@ -111,10 +114,11 @@ jobs:
           # in-flight/green-head classification below can query this head's
           # check runs without a second PR lookup.
           mapfile -t BEHIND < <(gh pr list --state open --limit 200 \
-            --json number,mergeStateStatus,isDraft,labels,headRefOid \
+            --json number,mergeStateStatus,isDraft,labels,headRefName,headRefOid \
             --jq '.[]
                     | select(.mergeStateStatus == "BEHIND")
                     | select(.isDraft == false)
+                    | select(.headRefName != "ci/npm-compat-refresh")
                     | select([.labels[].name]
                         | any(. == "hold" or . == "do-not-merge" or . == "do not merge" or . == "wip" or . == "blocked")
                         | not)

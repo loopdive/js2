@@ -5,7 +5,7 @@ import type { CodegenContext, FunctionContext } from "../codegen/context/types.j
 import { definedFuncAt, funcSignatureOf, isImportFuncIdx } from "../codegen/func-space.js";
 import { prepareStandaloneExternrefToNumberProviders } from "../codegen/tonumber-fast-paths.js";
 import { irCallableBindingKey, irImportFuncRef, irRuntimeFuncRef, irUnitFuncRef } from "./callable-bindings.js";
-import type { IrUnitId, IrUnitInventory } from "./identity.js";
+import type { IrBindingId, IrUnitId, IrUnitInventory } from "./identity.js";
 import {
   asVal,
   forEachInstrDeep,
@@ -23,9 +23,12 @@ import {
   type PreparedDynamicInstructionSupportEvidence,
 } from "./prepared-component-dependencies.js";
 import {
+  prepareDependencyCompletePreparedComponents,
   sealDependencyCompletePreparedComponents,
   type PreparedComponentArtifactEntry,
+  type PreparedComponentOpenScope,
 } from "./prepared-component-sealing.js";
+import type { PreparedComponentModuleCallableAliasDescriptor } from "./prepared-component-publication.js";
 import type { FuncHandle, Import, ValType } from "./types.js";
 
 interface CompilerTimerShimEntry extends PreparedComponentArtifactEntry {
@@ -43,6 +46,8 @@ type PreparedTimerDynamicHelperName = "__box_number" | "__unbox_number" | "__to_
 
 export interface CompilerTimerShimLateSealTransaction {
   readonly componentIds: ReadonlyMap<IrUnitId, string>;
+  readonly openScopes: readonly PreparedComponentOpenScope[];
+  readonly abortOpenScopes: () => void;
   sealDeferred(): void;
 }
 
@@ -50,6 +55,13 @@ export interface CompilerTimerShimLoweringBoundary<Entry extends { readonly term
   order(entries: readonly Entry[]): readonly Entry[];
   prepare(entry: Entry): boolean;
 }
+
+// (#5297) The IR layer must not grow a NEW `src/ir/ -> src/codegen/` edge
+// (`scripts/check-ir-layering.mjs`, #3113 S1). This file already holds that
+// edge for the dynamic-support vocabulary, so `prepared-dynamic-support.ts`
+// consumes both symbols THROUGH it rather than opening a second edge.
+export { resolveIrDynamicCarrierType };
+export type { CodegenContext };
 
 export function compilerTimerShimTerminalUnitIds(inventory: IrUnitInventory): ReadonlySet<IrUnitId> {
   return new Set(
@@ -76,7 +88,7 @@ function isCompilerTimerShimTerminalEntry(
   );
 }
 
-function isDynamicInstruction(instr: IrInstr): boolean {
+export function isDynamicInstruction(instr: IrInstr): boolean {
   if (instr.kind === "box") return instr.toType.kind === "dynamic";
   if (instr.kind === "unbox" || instr.kind === "tag.test") return instr.tagId !== undefined;
   return (
@@ -88,7 +100,7 @@ function isDynamicInstruction(instr: IrInstr): boolean {
   );
 }
 
-function exactPreparedDynamicHelperRef(
+export function exactPreparedDynamicHelperRef(
   ctx: CodegenContext,
   callableImports: ReadonlyMap<string, Import>,
   name: PreparedTimerDynamicHelperName,
@@ -295,9 +307,13 @@ export function prepareCompilerTimerShimLateSealTransaction<Entry extends Compil
   readonly ctx: CodegenContext;
   readonly entries: readonly Entry[];
   readonly inventory: IrUnitInventory;
+  readonly atomicTerminalPopulation?: boolean;
   readonly closureSupport: PreparedComponentClosureSupportEvidence;
   readonly classAccessorWritebacks: ReadonlyMap<IrUnitId, PreparedClassAccessorWritebackEvidence>;
   readonly callableImports: ReadonlyMap<string, Import>;
+  readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
+  readonly deferPublication?: boolean;
+  readonly preparedModuleCallableAliasDescriptor?: PreparedComponentModuleCallableAliasDescriptor;
   readonly onSealFailure: (terminalUnitId: IrUnitId, error: IrUnsupportedError) => void;
 }): CompilerTimerShimLateSealTransaction {
   const timerTerminalUnitIds = compilerTimerShimTerminalUnitIds(input.inventory);
@@ -392,17 +408,32 @@ export function prepareCompilerTimerShimLateSealTransaction<Entry extends Compil
       !rejectedConnectedTerminalUnitIds.has(entry.terminalOwnerUnitId),
   );
   const componentIds = new Map<IrUnitId, string>();
+  const openScopes: PreparedComponentOpenScope[] = [];
   if (immediateEntries.length > 0) {
-    for (const [unitId, componentId] of sealDependencyCompletePreparedComponents({
-      ...input,
-      entries: immediateEntries,
-    })) {
+    const prepared = input.deferPublication
+      ? prepareDependencyCompletePreparedComponents({
+          ...input,
+          entries: immediateEntries,
+        })
+      : {
+          componentIds: sealDependencyCompletePreparedComponents({
+            ...input,
+            entries: immediateEntries,
+          }),
+          openScopes: [] as const,
+        };
+    for (const [unitId, componentId] of prepared.componentIds) {
       componentIds.set(unitId, componentId);
     }
+    openScopes.push(...prepared.openScopes);
   }
   let timerSealAttempted = false;
   return {
     componentIds,
+    openScopes,
+    abortOpenScopes: () => {
+      for (const open of openScopes) open.scope.abort();
+    },
     sealDeferred: () => {
       if (timerSealAttempted || deferredTimerEntries.length === 0) return;
       timerSealAttempted = true;
@@ -424,13 +455,24 @@ export function prepareCompilerTimerShimLateSealTransaction<Entry extends Compil
         new Map([...timerDynamicShapes].filter(([unitId]) => deferredTimerTerminalUnitIds.has(unitId))),
         input.callableImports,
       );
-      for (const [unitId, componentId] of sealDependencyCompletePreparedComponents({
-        ...input,
-        entries: deferredTimerEntries,
-        ...(dynamicInstructionSupport.size > 0 ? { dynamicInstructionSupport } : {}),
-      })) {
+      const prepared = input.deferPublication
+        ? prepareDependencyCompletePreparedComponents({
+            ...input,
+            entries: deferredTimerEntries,
+            ...(dynamicInstructionSupport.size > 0 ? { dynamicInstructionSupport } : {}),
+          })
+        : {
+            componentIds: sealDependencyCompletePreparedComponents({
+              ...input,
+              entries: deferredTimerEntries,
+              ...(dynamicInstructionSupport.size > 0 ? { dynamicInstructionSupport } : {}),
+            }),
+            openScopes: [] as const,
+          };
+      for (const [unitId, componentId] of prepared.componentIds) {
         componentIds.set(unitId, componentId);
       }
+      openScopes.push(...prepared.openScopes);
     },
   };
 }

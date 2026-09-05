@@ -8,7 +8,8 @@
 // finalize passes and re-exports `reserveVecMethodHelper` for its compile-time
 // callers (calls.ts, property-access.ts, closed-method-dispatch.ts).
 
-import type { FuncHandle, Instr, ValType, WasmFunction } from "../ir/types.js";
+import { STABLE_FUNC_BASE } from "../emit/resolve-layout.js";
+import type { FuncHandle, Instr, ValType, WasmExport, WasmFunction } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import { undefinedExternInstrs } from "./any-helpers.js"; // (#3315)
 import { ensureHoleType } from "./array-holes.js";
@@ -20,7 +21,7 @@ import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import { addUnionImports } from "./registry/imports.js";
 import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecType } from "./registry/types.js";
 import { flushLateImportShifts } from "./shared.js";
-import { UNDEF_F64_BITS } from "./value-tags.js"; // (#3315)
+import { HOLE_F64_BITS, UNDEF_F64_BITS } from "./value-tags.js"; // (#3315, #4491 T11)
 import { emitVecDefineWritebackExports } from "./vec-define-writeback.js";
 import { guardVecElementRead } from "./vec-oob-read.js";
 
@@ -40,6 +41,12 @@ interface VecHostBridgeDefinition {
 interface VecHostBridgeAllocation {
   readonly definition: VecHostBridgeDefinition;
   readonly func: WasmFunction;
+}
+
+interface VecHostBridgePublishedExport {
+  readonly allocation: VecHostBridgeAllocation;
+  readonly entry: WasmExport;
+  readonly name: string;
 }
 
 const VEC_HOST_BRIDGE_DEFINITIONS: readonly VecHostBridgeDefinition[] = Object.freeze([
@@ -117,7 +124,89 @@ export function vecHostBridgeMaterializerOrdinal(kind: VecHostBridgeMaterializer
   return VEC_HOST_BRIDGE_MATERIALIZER_ORDINALS[kind];
 }
 
+/**
+ * (#3520 W1-E) The third sub-family of the vec host bridge: the `#3116`
+ * array-exotic write-back pair emitted by `vec-define-writeback.ts`.
+ *
+ * They belong here rather than in a role of their own because they share the
+ * bridge's anchor (the entry source), its emission gate family, and its
+ * `externref`-in / `i32`-out host shape. Closing the table at 9/10 is what
+ * makes their identity immovable: the ordinal is a compile-time constant, so —
+ * unlike the positional `retained-module-function` fallback they used to land
+ * on — nothing a program contains can renumber them.
+ *
+ * The pair deliberately does NOT get rows in `VEC_HOST_BRIDGE_DEFINITIONS`.
+ * That table also drives the reserved physical `$v<ordinal>` export namespace
+ * and the six-bridge placeholder allocation; the write-back helpers keep their
+ * logical exports and are emitted only under their own gate.
+ */
+export type VecHostBridgeWritebackKind = "setElem" | "setLen";
+
+const VEC_HOST_BRIDGE_WRITEBACK_ORDINALS: Readonly<Record<VecHostBridgeWritebackKind, number>> = (() => {
+  const firstWritebackOrdinal = Math.max(...Object.values(VEC_HOST_BRIDGE_MATERIALIZER_ORDINALS)) + 1;
+  if (firstWritebackOrdinal !== 9) {
+    throw new Error(`vec host bridge write-back ABI must start at ordinal 9, got ${firstWritebackOrdinal}`);
+  }
+  return Object.freeze({
+    setElem: firstWritebackOrdinal,
+    setLen: firstWritebackOrdinal + 1,
+  });
+})();
+
+/** Program ABI derived ordinal for the vec write-back helper family. */
+export function vecHostBridgeWritebackOrdinal(kind: VecHostBridgeWritebackKind): number {
+  return VEC_HOST_BRIDGE_WRITEBACK_ORDINALS[kind];
+}
+
 const vecHostBridgeAllocations = new WeakMap<CodegenContext, ReadonlyMap<VecHostBridgeKind, VecHostBridgeAllocation>>();
+const vecHostBridgePublishedExports = new WeakMap<CodegenContext, readonly VecHostBridgePublishedExport[]>();
+
+/**
+ * Exact public names reserved by the six core vec bridge helpers.
+ *
+ * The logical names are compiler-owned only when their descriptor provenance
+ * says so. The physical `$v<ordinal>` family has the same rule, including
+ * only literal `$` suffixes; a near-prefix such as `$v00` or `$v0x` is a
+ * normal user export and must not enter this namespace.
+ */
+export function isCoreVecHostBridgePublicName(name: string): boolean {
+  return VEC_HOST_BRIDGE_DEFINITIONS.some((definition) => {
+    if (name === definition.name) return true;
+    const physicalBase = `$v${definition.ordinal}`;
+    return name.startsWith(physicalBase) && /^\$*$/.test(name.slice(physicalBase.length));
+  });
+}
+
+/** Resolve a public function descriptor under C36's two handle regimes. */
+function resolveVecHostBridgeExportTarget(ctx: CodegenContext, entry: WasmExport): WasmFunction | undefined {
+  if (entry.desc.kind !== "func") return undefined;
+  if (entry.desc.index < STABLE_FUNC_BASE) {
+    const currentImportCount = ctx.mod.imports.filter((candidate) => candidate.desc.kind === "func").length;
+    const currentPosition = entry.desc.index - currentImportCount;
+    return currentPosition < 0 ? undefined : ctx.mod.functions[currentPosition];
+  }
+  return definedFuncAt(ctx, entry.desc.index);
+}
+
+/**
+ * Authenticate one export descriptor as a compiler-published core vec bridge.
+ *
+ * Standalone/WASI stripping must use descriptor identity rather than widening
+ * the reserved-name matcher: collision publication can append `$` suffixes,
+ * and those same suffixes remain a valid user-export namespace.
+ */
+export function isCompilerOwnedVecHostBridgeExport(ctx: CodegenContext, entry: WasmExport): boolean {
+  const published = vecHostBridgePublishedExports.get(ctx);
+  if (!published) return false;
+  if (published.some((candidate) => candidate.entry === entry)) return true;
+  // A copied descriptor is still compiler-owned when it resolves to the exact
+  // allocator object captured at publication. Restrict this inference to the
+  // bounded core namespace so an arbitrary user alias cannot become a bridge
+  // export merely by targeting a compiler helper.
+  if (!isCoreVecHostBridgePublicName(entry.name)) return false;
+  const target = resolveVecHostBridgeExportTarget(ctx, entry);
+  return target !== undefined && published.some((candidate) => candidate.allocation.func === target);
+}
 
 function vecHostBridgeDefinition(kind: VecHostBridgeKind): VecHostBridgeDefinition {
   const definition = VEC_HOST_BRIDGE_DEFINITIONS.find((candidate) => candidate.kind === kind);
@@ -195,6 +284,15 @@ function ensureVecHostBridgeAllocations(ctx: CodegenContext): ReadonlyMap<VecHos
  */
 function publishVecHostBridgeExports(ctx: CodegenContext): void {
   const allocations = ensureVecHostBridgeAllocations(ctx);
+  if (vecHostBridgePublishedExports.has(ctx)) {
+    throw new Error("vec host bridge exports were published more than once");
+  }
+  const published: VecHostBridgePublishedExport[] = [];
+  const publishOwnedExport = (name: string, funcIdx: FuncHandle, allocation: VecHostBridgeAllocation): void => {
+    const entry: WasmExport = { name, desc: { kind: "func", index: funcIdx } };
+    ctx.mod.exports.push(entry);
+    published.push(Object.freeze({ allocation, entry, name }));
+  };
   const occupied = new Set(ctx.mod.exports.map((entry) => entry.name));
   for (const definition of VEC_HOST_BRIDGE_DEFINITIONS) {
     const allocation = allocations.get(definition.kind);
@@ -211,7 +309,7 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
     }
     const logicalNameOccupied = occupied.has(definition.name);
     if (!logicalNameOccupied) {
-      exportFunc(ctx.mod, definition.name, funcIdx);
+      publishOwnedExport(definition.name, funcIdx, allocation);
       occupied.add(definition.name);
     }
     if (logicalNameOccupied || maxOccupiedSuffix >= 0) {
@@ -222,47 +320,80 @@ function publishVecHostBridgeExports(ctx: CodegenContext): void {
       for (let suffixLength = 0; suffixLength <= maxOccupiedSuffix + 1; suffixLength++) {
         const physicalName = `${physicalBase}${"$".repeat(suffixLength)}`;
         if (occupied.has(physicalName)) continue;
-        exportFunc(ctx.mod, physicalName, funcIdx);
+        publishOwnedExport(physicalName, funcIdx, allocation);
         occupied.add(physicalName);
       }
     }
     allocation.func.exported = true;
   }
+  vecHostBridgePublishedExports.set(ctx, Object.freeze(published));
 }
 
 /**
- * Rebase the public vec bridge exports after dead-layout elimination and the
- * final import batch. The bridge functions are allocated early with live
- * indices, while later compatibility imports can move the defined-function
- * suffix. Most emitters are repaired by the late-import shifter, but exports
- * published before the last batch have no function-body traversal to repair
- * them. Resolve by the allocator-owned function object at the freeze point.
+ * Authenticate and freeze the compiler-owned vec bridge exports after
+ * dead-layout elimination and the final import batch. The bridge functions
+ * are published initially with stable handles, while a previously finalized
+ * descriptor can carry its already-rebased live index. Later compatibility
+ * imports can move the live defined-function suffix. Most emitters are
+ * repaired by the late-import shifter, but exports published before the last
+ * batch have no function-body traversal to repair them. Resolve both regimes
+ * by the captured allocator-owned function object at this boundary.
  */
 export function finalizeVecHostBridgeExports(ctx: CodegenContext): void {
   const allocations = vecHostBridgeAllocations.get(ctx);
   if (!allocations) return;
-  // Dead-import elimination can remove speculative imports without updating
-  // the context's cached `numImportFuncs`. Public export descriptors are raw
-  // Wasm indices at this point, so derive the live prefix from the module.
-  const numImportFuncs = ctx.mod.imports.filter((entry) => entry.desc.kind === "func").length;
-  const occupied = new Map<string, VecHostBridgeDefinition>();
-  for (const definition of VEC_HOST_BRIDGE_DEFINITIONS) {
-    occupied.set(definition.name, definition);
-    const physicalBase = vecHostBridgePhysicalExportBase(definition.kind);
-    for (const entry of ctx.mod.exports) {
-      if (entry.name.startsWith(physicalBase) && /^\$*$/.test(entry.name.slice(physicalBase.length))) {
-        occupied.set(entry.name, definition);
-      }
-    }
+  const published = vecHostBridgePublishedExports.get(ctx);
+  if (!published || published.length === 0) {
+    throw new Error("vec host bridge allocations have no compiler-owned export descriptors");
   }
-  for (const entry of ctx.mod.exports) {
-    if (entry.desc.kind !== "func") continue;
-    const definition = occupied.get(entry.name);
-    if (!definition) continue;
-    const allocation = allocations.get(definition.kind);
-    if (!allocation) continue;
+  // Standalone/WASI deliberately remove the complete JS-host bridge surface
+  // before DCE. Authenticate that policy as an all-or-nothing removal of the
+  // exact compiler-owned entries; a partial survivor is a policy/finalization
+  // invariant, while a complete removal needs no public-slot rebase.
+  if (!ctx.emitHostBridge) {
+    const surviving = published.find(({ entry }) => ctx.mod.exports.includes(entry));
+    if (surviving) {
+      throw new Error(`vec host bridge export descriptor ${surviving.name} survived disabled host-bridge policy`);
+    }
+    return;
+  }
+  // Dead-import elimination can remove speculative imports without updating
+  // the context's cached `numImportFuncs`. Derive the current prefix used to
+  // interpret any live-regime public descriptor directly from the module.
+  const numImportFuncs = ctx.mod.imports.filter((entry) => entry.desc.kind === "func").length;
+  const seen = new Set<WasmExport>();
+  for (const { allocation, entry, name } of published) {
+    if (seen.has(entry)) {
+      throw new Error(`vec host bridge export descriptor ${name} is recorded more than once`);
+    }
+    seen.add(entry);
+    if (allocations.get(allocation.definition.kind) !== allocation) {
+      throw new Error(`vec host bridge export descriptor ${name} changed allocator ownership`);
+    }
+    if (entry.name !== name) {
+      throw new Error(`vec host bridge export descriptor ${name} changed its published name to ${entry.name}`);
+    }
+    if (entry.desc.kind !== "func") {
+      throw new Error(`vec host bridge export descriptor ${name} changed kind to ${entry.desc.kind}`);
+    }
+    if (ctx.mod.exports.indexOf(entry) < 0) {
+      throw new Error(`vec host bridge export descriptor ${name} disappeared before finalization`);
+    }
+    if (ctx.mod.exports.indexOf(entry) !== ctx.mod.exports.lastIndexOf(entry)) {
+      throw new Error(`vec host bridge export descriptor ${name} appears more than once in the module`);
+    }
     const position = ctx.mod.functions.indexOf(allocation.func);
-    if (position < 0) continue;
+    if (position < 0) {
+      throw new Error(`vec host bridge export descriptor ${name} lost its allocator function`);
+    }
+    const currentPosition = entry.desc.index - numImportFuncs;
+    if (currentPosition < 0) {
+      throw new Error(`vec host bridge export descriptor ${name} resolves to a function import`);
+    }
+    const currentAllocation = resolveVecHostBridgeExportTarget(ctx, entry);
+    if (currentAllocation !== allocation.func) {
+      throw new Error(`vec host bridge export descriptor ${name} resolves to a different allocator function`);
+    }
     entry.desc.index = numImportFuncs + position;
   }
 }
@@ -414,9 +545,23 @@ function collectVecMutationEntries(
     // of truth for mutation, just as __vec_get already does (#2669).
     const physicalExternref =
       arrDef?.kind === "array" && (arrDef.element.kind === "externref" || arrDef.element.kind === "ref_extern");
-    const mutationKey = physicalExternref ? "externref" : elemKey;
+    // (#4531/#4527) Struct-ref element carrier (`[{ f, g }]` — a typed vec of
+    // closed object structs). Push/pop through the host boundary previously
+    // reported UNSUPPORTED for these, so `callbacks.push({...})` on a vec that
+    // crossed an `any`-typed parameter silently mutated only the materialized
+    // mirror — diff-sequences' transposed-callbacks push read back null. The
+    // push arm guard-tests the incoming value against the element type and
+    // answers -1 (unsupported) on a mismatch, so only provably-compatible
+    // elements take the native store.
+    const elemIsStructRef =
+      !physicalExternref &&
+      arrDef?.kind === "array" &&
+      (arrDef.element.kind === "ref" || arrDef.element.kind === "ref_null") &&
+      nativeStrVecElemTypeIdx(ctx, vecTypeIdx) < 0;
+    const mutationKey = physicalExternref ? "externref" : elemIsStructRef ? "structref" : elemKey;
     const supported =
       mutationKey === "externref" ||
+      mutationKey === "structref" ||
       ((mutationKey === "f64" || mutationKey === "i32") && unboxNumIdx !== undefined && boxNumIdx !== undefined) ||
       // (#3311) native-string carrier (`string[]` standalone) — no numeric
       // unbox; recover the `$AnyString` ref at the store.
@@ -503,6 +648,9 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     ];
     // Pre-check if __box_number is available (don't add late imports)
     const boxNumIdx = ctx.funcMap.get("__box_number");
+    // (#3481) Same pre-check for the symbol box — only a module that already
+    // registered `__box_symbol` can have a `symbol[]` vec here.
+    const boxSymIdx = ctx.funcMap.get("__box_symbol");
     // (#2001 S1 regress) `__vec_get` is the chokepoint the HOST reads a vec
     // element through (`__make_iterable`'s convertToJS, `__array_entries`,
     // `wrapExports`, etc.). An externref slot may hold the `$Hole` sentinel for an
@@ -542,7 +690,17 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
       return gu !== undefined ? [{ op: "call", funcIdx: gu } as Instr] : undefined;
     })();
     const f64ScratchIdx = holeMapInVecGet ? 4 : 3;
+    // (#4491 T11) The ABSENCE-marker compare is gated on the marker having been
+    // EMITTED, not merely on the program containing some elision — a module
+    // whose only elisions sit in `any[]` literals sets `usesArrayHoles` and
+    // never mints an f64 marker. `__vec_get` is built at FINALIZE, after every
+    // body, so the narrower flag is readable here. Measured: without it
+    // `benchmarks/array.ts` grew 19 bytes for a compare that cannot fire.
+    const f64HoleMapInVecGet = ctx.f64HoleMarkerEmitted === true;
+    /** Second scratch, holding the reinterpreted bits so both payloads compare without re-reading. */
+    const bitsScratchIdx = f64ScratchIdx + 1;
     let usedF64Scratch = false;
+    let usedF64BitsScratch = false;
     const oobUndefinedInstrs = f64SentinelUndefInstrs?.map((instr) => ({ ...instr })) ?? [
       { op: "ref.null.extern" as const },
     ];
@@ -600,11 +758,25 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         // (#3315) Sentinel-aware f64 box — see f64SentinelUndefInstrs above.
         if (f64SentinelUndefInstrs !== undefined) {
           usedF64Scratch = true;
+          // (#4491 T11) BOTH f64 markers leave as `undefined`: the value one
+          // (an explicit `undefined` element) and the absence one (a hole).
+          // The host cannot see the difference, and per Get neither may cross
+          // as a sNaN number.
+          if (f64HoleMapInVecGet) usedF64BitsScratch = true;
           boxInstrs = [
             { op: "local.tee", index: f64ScratchIdx },
             { op: "i64.reinterpret_f64" },
-            { op: "i64.const", value: UNDEF_F64_BITS },
-            { op: "i64.eq" },
+            ...(f64HoleMapInVecGet
+              ? ([
+                  { op: "local.tee", index: bitsScratchIdx },
+                  { op: "i64.const", value: UNDEF_F64_BITS },
+                  { op: "i64.eq" },
+                  { op: "local.get", index: bitsScratchIdx },
+                  { op: "i64.const", value: HOLE_F64_BITS },
+                  { op: "i64.eq" },
+                  { op: "i32.or" },
+                ] satisfies Instr[])
+              : ([{ op: "i64.const", value: UNDEF_F64_BITS }, { op: "i64.eq" }] satisfies Instr[])),
             {
               op: "if",
               blockType: { kind: "val", type: { kind: "externref" } },
@@ -618,6 +790,14 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
         } else {
           boxInstrs = [{ op: "call", funcIdx: boxNumIdx }];
         }
+      } else if (elemKey === "i32_symbol" && boxSymIdx !== undefined) {
+        // (#3481) A `symbol[]` element is a symbol ID, not a number. Boxing it
+        // with `__box_number` would hand the host the integer `101` where a
+        // dynamic read of `(syms as any)[0]` must yield the Symbol itself.
+        // `__box_symbol` resolves the id through the per-instance symbol cache,
+        // which is the same cache `__unbox_symbol` filled on the way in, so the
+        // round trip is identity.
+        boxInstrs = [{ op: "call", funcIdx: boxSymIdx }];
       } else if (elemKey === "i32" && boxNumIdx !== undefined) {
         boxInstrs = [{ op: "f64.convert_i32_s" }, { op: "call", funcIdx: boxNumIdx }];
       } else if (
@@ -697,6 +877,9 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     // without it keep byte-identical `__vec_get` bodies.
     if (usedF64Scratch) {
       getLocals.push({ name: "__f64_scratch", type: { kind: "f64" } as ValType });
+      if (usedF64BitsScratch) {
+        getLocals.push({ name: "__f64_bits_scratch", type: { kind: "i64" } as ValType }); // (#4491 T11)
+      }
     }
     fillVecHostBridge(ctx, "get", getLocals, body);
   }
@@ -788,6 +971,16 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
       );
       // value unboxing per element kind (value param is local 1)
       const strElemIdx = nativeStrVecElemTypeIdx(ctx, vecTypeIdx);
+      // (#4531/#4527) Struct-ref element: recover the typed element from the
+      // externref value. The guard below already proved the ref.test, so the
+      // cast cannot trap.
+      const pushArrDef = ctx.mod.types[arrTypeIdx];
+      const structElemTypeIdx =
+        elemKey === "structref" &&
+        pushArrDef?.kind === "array" &&
+        (pushArrDef.element.kind === "ref" || pushArrDef.element.kind === "ref_null")
+          ? pushArrDef.element.typeIdx
+          : -1;
       const valueInstrs: Instr[] =
         elemKey === "externref"
           ? [{ op: "local.get", index: 1 }]
@@ -798,11 +991,37 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
               ]
             : elemKey === "i32"
               ? [{ op: "local.get", index: 1 }, { op: "call", funcIdx: unboxNumIdx! }, { op: "i32.trunc_sat_f64_s" }]
-              : // (#3311) native-string carrier: the boxed externref value is a
-                // `$NativeString` (<: `$AnyString`); recover the ref element for
-                // `array.set` — no numeric unbox.
-                [{ op: "local.get", index: 1 }, { op: "any.convert_extern" }, { op: "ref.cast", typeIdx: strElemIdx }];
+              : elemKey === "structref"
+                ? [
+                    { op: "local.get", index: 1 },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: structElemTypeIdx },
+                  ]
+                : // (#3311) native-string carrier: the boxed externref value is a
+                  // `$NativeString` (<: `$AnyString`); recover the ref element for
+                  // `array.set` — no numeric unbox.
+                  [
+                    { op: "local.get", index: 1 },
+                    { op: "any.convert_extern" },
+                    { op: "ref.cast", typeIdx: strElemIdx },
+                  ];
       const thenBranch: Instr[] = [
+        // (#4531/#4527) An incompatible value must NOT trap the cast in
+        // `valueInstrs` — answer the -1 unsupported sentinel so the runtime
+        // keeps its legacy fallback for that call.
+        ...(elemKey === "structref"
+          ? ([
+              { op: "local.get", index: 1 },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: structElemTypeIdx },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: -1 }, { op: "return" }],
+              },
+            ] as Instr[])
+          : []),
         { op: "local.get", index: 2 },
         { op: "ref.cast", typeIdx: vecTypeIdx },
         { op: "local.set", index: vecL },
@@ -919,7 +1138,8 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
           ? []
           : // (#3311) native-string element (`ref null $AnyString`) → externref via
             // the plain anyref→externref box (no `__box_number`).
-            isNativeStr
+            // (#4531/#4527) struct-ref elements box the same way.
+            isNativeStr || elemKey === "structref"
             ? [{ op: "extern.convert_any" }]
             : elemKey === "f64"
               ? [{ op: "call", funcIdx: boxNumIdx2! }]
@@ -987,7 +1207,23 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
     ctx.funcMap.has("__defineProperty_accessor") ||
     ctx.funcMap.has("__defineProperties");
   const wantsDynamicWriteback =
-    !ctx.standalone && !ctx.wasi && (ctx.funcMap.has("__extern_set") || ctx.funcMap.has("__extern_set_strict"));
+    !ctx.standalone &&
+    !ctx.wasi &&
+    (ctx.funcMap.has("__extern_set") ||
+      ctx.funcMap.has("__extern_set_strict") ||
+      ctx.funcMap.has("__unwrap_for_wasm") ||
+      // Host calls can receive an Array/TypedArray facade and mutate it
+      // without changing its length (`reverse`, `sort`, `fill`, ...). Their
+      // runtime bracketing needs the element writer to reconcile that mirror
+      // before compiled aliases observe the vec again.
+      ctx.funcMap.has("__proto_method_call") ||
+      ctx.funcMap.has("__extern_method_call") ||
+      ctx.funcMap.has("__call_function") ||
+      ctx.funcMap.has("__call_function_0") ||
+      ctx.funcMap.has("__call_function_1") ||
+      ctx.funcMap.has("__call_function_2") ||
+      ctx.funcMap.has("__call_function_3") ||
+      ctx.funcMap.has("__call_function_4"));
   const wantsNativeBoundaryWriteback =
     ctx.targetProfile.semanticProviders === "native-first" &&
     ctx.emitHostBridge &&
@@ -1019,7 +1255,15 @@ export function emitVecSetByteExport(ctx: CodegenContext): void {
   // (#1700) Now also needed by the JS-host `wrapExports` to populate freshly
   // allocated f64 vecs with Uint8Array bytes. Emit when either consumer is
   // present.
-  if (!ctx.funcMap.has("__crypto_get_random_values") && !hasExportedVecParam(ctx)) return;
+  // Linked/deferred projects can retain the imported function in the module
+  // even after their per-source funcMap entry has been projected away. The
+  // binary import is the authoritative reachability signal at finalize time.
+  const hasCryptoConsumer =
+    ctx.funcMap.has("__crypto_get_random_values") ||
+    ctx.mod.imports.some(
+      (entry) => entry.desc.kind === "func" && entry.module === "env" && entry.name === "__crypto_get_random_values",
+    );
+  if (!hasCryptoConsumer && !hasExportedVecParam(ctx)) return;
   try {
     _emitVecSetByteExportInner(ctx);
   } catch {

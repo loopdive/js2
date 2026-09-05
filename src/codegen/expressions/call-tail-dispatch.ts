@@ -10,6 +10,8 @@
 // tail is a single `return compileTailDispatch(...)`. Moved verbatim: the
 // emitted Wasm is byte-identical.
 import { forEachChild, ts } from "../../ts-api.js";
+import { profilePhase } from "../../compile-profile.js";
+import { planAsyncClosureActivation } from "../async-activation.js";
 import { isNumberType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { compileArrayMethodCall, resolveArrayInfo } from "../array-methods.js";
@@ -22,10 +24,13 @@ import {
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal } from "../context/locals.js";
-import { rollbackSpeculative } from "../context/speculative.js";
+import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
+import { emitLiveCollectionIterRec } from "../map-runtime.js"; // (#5267 R3-1a)
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { collectDirectEvalBindingNames, functionMayReachDirectEval } from "../direct-eval-environment.js";
 import {
+  destructureParamArray,
+  destructureParamObject,
   getArrTypeIdxFromVec,
   getOrRegisterVecType,
   hoistLetConstWithTdz,
@@ -53,6 +58,7 @@ import {
   compileCallableElementAccessCall,
   compileClosureCall,
   emitMatchedClosureCallArguments, // (#4394) rest-aware matched-closure args
+  runtimeSignatureParameters, // (#4491) drops the synthetic `arguments` rest
 } from "./calls-closures.js";
 import { tsSignatureHasRest } from "./closure-sig-match.js"; // (#4394)
 import {
@@ -71,7 +77,10 @@ import { compileCallDispatchTail, tryEmitStoredMemberClosureCall } from "./store
 import { classMemberFuncKey } from "../class-member-keys.js";
 import { matchClosureInfoBySignature } from "./closure-sig-match.js"; // (#4394) exact-first closure pick
 import { emitPlainObjectDynamicCallWithReceiver } from "./plain-object-dynamic-receiver-call.js";
+import { tryEmitClassDynamicMemberCall } from "./class-dynamic-member-call.js"; // (#5195 F1/F3)
 import { tryEmitDynamicElementHostMethodCall } from "./dynamic-element-host-call.js";
+import { tryNormalizeStaticStringElementCallee } from "./element-access-callee-normalization.js"; // (#4625)
+import { tryDetachedBuiltinPrototypeNullishThisThrow } from "../builtin-prototype-brand.js";
 import {
   classInstanceHasField,
   coerceNumberMethodArgToF64,
@@ -79,6 +88,7 @@ import {
   compileConditionalCallee,
   compileFunctionBind,
   compileIIFE,
+  elemAccessReceiverClassName,
   elemAccessReceiverIsPlainObject,
   elemAccessReceiverIsUserClass,
   emitBoundFunctionCall,
@@ -89,6 +99,7 @@ import {
   tryEmitInlineDynamicCall,
 } from "./calls.js";
 import { enterInlineIifeBindingScope, argumentsEscapesIife } from "./inline-iife-scope.js"; // (#4555)
+import { compileInlineIifeArguments } from "./inline-iife-arguments.js"; // (#5207)
 
 function isPristineStringPrototypeExpression(fctx: FunctionContext, expression: ts.Expression): boolean {
   return (
@@ -150,10 +161,31 @@ export function compileTailDispatch(
       // shape inline would either expose caller bindings or omit IIFE-owned
       // bindings from the eval environment. Use the normal closure path.
       const reachesDirectEval = functionMayReachDirectEval(callee, ctx.oracle);
-      if (isGeneratorIIFE || isRecursiveNamedFnExprIIFE || reachesDirectEval || argumentsEscapesIife(callee, expr)) {
+      // Likewise, a function expression that reads its own `arguments` needs
+      // the argc/extras carrier. The inline path can materialize only the
+      // values it chooses to bind and cannot preserve the call-site ABI (in
+      // particular surplus strings/objects), so route it through a real
+      // closure activation.
+      const observesOwnArguments = ts.isFunctionExpression(callee) && needsImplicitArgumentsObject(callee);
+      // A genuinely-suspending async IIFE needs its own Promise/frame
+      // activation. Inlining its statements into a synchronous caller makes
+      // `await` use the legacy identity lowering, so a pending Promise is
+      // consumed as the awaited value (for numeric results, unboxed to NaN).
+      // Route only engine-claimed async shapes through the ordinary closure
+      // path; await-free/elidable IIFEs keep the byte-identical fast path.
+      const isAsyncIIFE = callee.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
+      const isDrivenAsyncIIFE = isAsyncIIFE && planAsyncClosureActivation(ctx, callee, /*isAsync*/ true) !== null;
+      if (
+        isGeneratorIIFE ||
+        isRecursiveNamedFnExprIIFE ||
+        reachesDirectEval ||
+        observesOwnArguments ||
+        argumentsEscapesIife(callee, expr) ||
+        isDrivenAsyncIIFE
+      ) {
         // Cannot inline: a generator IIFE needs a generator context for `yield`,
         // and a recursive named-fn-expr IIFE needs a real callable to bind its
-        // own name to. Compile as closure, store in temp local, invoke via
+        // own name to; a driven async IIFE needs a real frame. Compile as closure, store in temp local, invoke via
         // call_ref — the closure path binds `function*`'s context and a named
         // expression's own name (self-reference) correctly.
         const closureType = compileArrowFunction(ctx, fctx, callee as ts.FunctionExpression);
@@ -183,6 +215,17 @@ export function compileTailDispatch(
         if (params.length <= args.length) {
           const iifeBindingNames = collectDirectEvalBindingNames(callee);
           if (ts.isFunctionExpression(callee) && callee.name) iifeBindingNames.add(callee.name.text);
+          // (#5207) The ARGUMENT LIST belongs to the CALLER, so it is compiled
+          // BEFORE the callee's binding scope is entered — see
+          // `inline-iife-arguments.ts` for why the moment is the whole fix.
+          const { paramLocals, paramLocalTypes, allArgLocals } = compileInlineIifeArguments(
+            ctx,
+            fctx,
+            params,
+            args,
+            iifeNeedsArguments,
+          );
+
           const leaveIifeBindingScope = enterInlineIifeBindingScope(fctx, iifeBindingNames);
           try {
             // (#3128) Record that this function node is being INLINED into the
@@ -194,43 +237,12 @@ export function compileTailDispatch(
             // outside the IIFE (`p2 = (function(){ return () => p2; })()`)
             // misses the write and captures a stale by-value copy.
             (fctx.inlinedIifeNodes ??= new Set()).add(callee);
-            // Allocate locals for parameters and compile arguments
-            const paramLocals: number[] = [];
-            const allArgLocals: { idx: number; type: ValType }[] = [];
+            // (#5207) Bind the parameter names to the slots filled above, now
+            // that the callee's scope is active. Binding-pattern params are
+            // materialized further down by `destructureParamObject`/`Array`.
             for (let i = 0; i < params.length; i++) {
-              const param = params[i]!;
-              const paramName = ts.isIdentifier(param.name) ? param.name.text : `__iife_p${i}`;
-              const argType = compileExpression(ctx, fctx, args[i]!);
-              const localType = argType ?? { kind: "f64" as const };
-              const idx = allocLocal(fctx, paramName, localType);
-              fctx.body.push({ op: "local.set", index: idx });
-              paramLocals.push(idx);
-              if (iifeNeedsArguments) {
-                allArgLocals.push({ idx, type: localType });
-              }
-            }
-            // Extra arguments beyond declared params
-            if (iifeNeedsArguments) {
-              // Store extra args in locals for the arguments object
-              for (let i = params.length; i < args.length; i++) {
-                const t = compileExpression(ctx, fctx, args[i]!);
-                const localType = t ?? { kind: "f64" as const };
-                if (t === null) {
-                  // No value produced — push a default
-                  fctx.body.push({ op: "f64.const", value: 0 });
-                }
-                const idx = allocLocal(fctx, `__iife_extra_${i}`, localType as ValType);
-                fctx.body.push({ op: "local.set", index: idx });
-                allArgLocals.push({ idx, type: localType as ValType });
-              }
-            } else {
-              // Drop extra arguments (evaluate for side effects)
-              for (let i = params.length; i < args.length; i++) {
-                const t = compileExpression(ctx, fctx, args[i]!);
-                if (t) {
-                  fctx.body.push({ op: "drop" });
-                }
-              }
+              const paramName = params[i]!.name;
+              if (ts.isIdentifier(paramName)) fctx.localMap.set(paramName.text, paramLocals[i]!);
             }
 
             // Set up `arguments` vec for the IIFE if needed
@@ -293,6 +305,25 @@ export function compileTailDispatch(
               fctx.body.push({ op: "local.set", index: argsLocal });
             }
 
+            // An inlined IIFE still performs ordinary parameter binding
+            // initialization. The fast path previously stored a binding-
+            // pattern argument only in its synthetic `__iife_pN` local and
+            // never created or initialized the pattern's lexical bindings.
+            // A nested closure therefore could not capture them and could
+            // fall through to an unrelated same-named module global (Axios's
+            // `hasOwnProperty` helper then called itself forever). Run this
+            // after every argument has been evaluated and after `arguments`
+            // exists, matching function-entry ordering without sacrificing
+            // the inline path.
+            for (let i = 0; i < params.length; i++) {
+              const param = params[i]!;
+              if (ts.isObjectBindingPattern(param.name)) {
+                destructureParamObject(ctx, fctx, paramLocals[i]!, param.name, paramLocalTypes[i]!);
+              } else if (ts.isArrayBindingPattern(param.name)) {
+                destructureParamArray(ctx, fctx, paramLocals[i]!, param.name, paramLocalTypes[i]!);
+              }
+            }
+
             // Compile body
             if (ts.isArrowFunction(callee) && !ts.isBlock(callee.body)) {
               // Concise body: expression — no return issue
@@ -344,12 +375,20 @@ export function compileTailDispatch(
             // returns — nested function boundaries keep their own return type.
             if (iifeWasmRetType && (iifeWasmRetType.kind === "ref" || iifeWasmRetType.kind === "ref_null")) {
               let divertedObjlitReturn = false;
+              let realmGlobalReturn = false;
               const scanReturns = (node: ts.Node): void => {
-                if (divertedObjlitReturn) return;
+                if (divertedObjlitReturn || realmGlobalReturn) return;
                 if (ts.isFunctionLike(node) && node !== callee) return;
                 if (ts.isReturnStatement(node) && node.expression) {
                   let retExpr: ts.Expression = node.expression;
-                  while (ts.isParenthesizedExpression(retExpr)) retExpr = retExpr.expression;
+                  while (
+                    ts.isParenthesizedExpression(retExpr) ||
+                    ts.isAsExpression(retExpr) ||
+                    ts.isTypeAssertionExpression(retExpr) ||
+                    ts.isNonNullExpression(retExpr)
+                  ) {
+                    retExpr = retExpr.expression;
+                  }
                   if (
                     ts.isObjectLiteralExpression(retExpr) &&
                     objectLiteralTakesStandaloneAnyObjectPath(ctx, retExpr)
@@ -357,11 +396,26 @@ export function compileTailDispatch(
                     divertedObjlitReturn = true;
                     return;
                   }
+                  // The realm global object is a host externref (or native open
+                  // object), never the enormous closed `typeof globalThis`
+                  // struct inferred by TypeScript. Axios's global-object IIFE
+                  // returns it from a statement body; typing this return local
+                  // as that struct guard-casts the real global to null.
+                  if (
+                    ts.isIdentifier(retExpr) &&
+                    retExpr.text === "globalThis" &&
+                    !ctx.moduleGlobals.has("globalThis")
+                  ) {
+                    if (!ctx.oracle.declarationsOf(retExpr).some((decl) => !decl.getSourceFile().isDeclarationFile)) {
+                      realmGlobalReturn = true;
+                      return;
+                    }
+                  }
                 }
                 forEachChild(node, scanReturns);
               };
               for (const stmt of bodyStmts) scanReturns(stmt);
-              if (divertedObjlitReturn) {
+              if (divertedObjlitReturn || realmGlobalReturn) {
                 iifeWasmRetType = { kind: "externref" };
               }
             }
@@ -396,16 +450,33 @@ export function compileTailDispatch(
               // body evaluation. Besides read-before-declaration semantics, this
               // pre-allocation makes an IIFE-local var shadow a same-named module
               // global while the body is compiled.
-              hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist let/const with TDZ flags so accesses before init throw (#790)
-              hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist function declarations so they're available before textual position
-              hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              const isLargeIife = bodyStmts.length >= 1_000;
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-hoist-vars", () =>
+                  hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-let-const", () =>
+                  hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-functions", () =>
+                  hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+              } else {
+                hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist let/const with TDZ flags so accesses before init throw (#790)
+                hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist function declarations so they're available before textual position
+                hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              }
 
               // Increase block depth so return→br targets the right level
               fctx.blockDepth++;
-              for (const stmt of bodyStmts) {
-                compileStatement(ctx, fctx, stmt);
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-compile-statements", () => {
+                  for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
+                });
+              } else {
+                for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
               }
               fctx.blockDepth--;
 
@@ -481,16 +552,33 @@ export function compileTailDispatch(
 
               // See the returning arm above: function-scoped vars must exist
               // before the first statement and must shadow outer/global names.
-              hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist let/const with TDZ flags so accesses before init throw (#790)
-              hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
-              // Hoist function declarations so they're available before textual position
-              hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              const isLargeIife = bodyStmts.length >= 1_000;
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-hoist-vars", () =>
+                  hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-let-const", () =>
+                  hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+                profilePhase("inline-large-iife-hoist-functions", () =>
+                  hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]),
+                );
+              } else {
+                hoistVarDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist let/const with TDZ flags so accesses before init throw (#790)
+                hoistLetConstWithTdz(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+                // Hoist function declarations so they're available before textual position
+                hoistFunctionDeclarations(ctx, fctx, bodyStmts as unknown as ts.Statement[]);
+              }
 
               // Increase block depth so return→br targets the right level
               fctx.blockDepth++;
-              for (const stmt of bodyStmts) {
-                compileStatement(ctx, fctx, stmt);
+              if (isLargeIife) {
+                profilePhase("inline-large-iife-compile-statements", () => {
+                  for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
+                });
+              } else {
+                for (const stmt of bodyStmts) compileStatement(ctx, fctx, stmt);
               }
               fctx.blockDepth--;
 
@@ -598,6 +686,21 @@ export function compileTailDispatch(
       if (leftType) {
         fctx.body.push({ op: "drop" });
       }
+      // Preserve the absent receiver when the right side is a builtin
+      // prototype method. Rebuilding `Object.prototype.valueOf()` here would
+      // turn the detached call into a receiver call and hide its required
+      // nullish-`this` TypeError.
+      if (ts.isPropertyAccessExpression(callee.right)) {
+        const detached = tryDetachedBuiltinPrototypeNullishThisThrow(
+          ctx,
+          fctx,
+          expr,
+          callee.right,
+          (arg) => compileExpression(ctx, fctx, arg),
+          expectedType,
+        );
+        if (detached !== undefined) return detached;
+      }
       // Create a synthetic call with the right side as callee
       const syntheticCall = ts.factory.createCallExpression(
         callee.right as ts.Expression as ts.LeftHandSideExpression,
@@ -660,7 +763,55 @@ export function compileTailDispatch(
         // already native; this closes the `[Symbol.iterator]()` gap. Host/gc mode
         // keeps the existing `__iterator` bridge (byte-inert). Async iterator and
         // non-array receivers fall through unchanged.
+        // (#5267 R3-1a) Standalone/WASI: `Map.prototype[@@iterator]` IS
+        // `Map.prototype.entries` and `Set.prototype[@@iterator]` IS
+        // `Set.prototype.values` (§24.1.3.12 / §24.2.3.11) — the SAME live
+        // `$__IterRec` cursor, not a separate producer. Routing a Map/Set
+        // receiver through the dynamic `__iterator` ladder produced a record
+        // whose `.next()` answered `null`; emit the live record directly so
+        // `map[Symbol.iterator]().next()` is by construction what
+        // `map.entries().next()` is.
+        if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && ctx.nativeStrings) {
+          const recvSymName = receiverType.getSymbol()?.name;
+          if (recvSymName === "Map" || recvSymName === "Set") {
+            const isSet = recvSymName === "Set";
+            // Confirm the receiver genuinely lowers to the native `$Map`
+            // struct without leaving code behind (#1919 transactional probe).
+            const snap = snapshotSpeculative(ctx, fctx);
+            const probeType = compileExpression(ctx, fctx, elemAccess.expression);
+            rollbackSpeculative(ctx, fctx, snap);
+            if (
+              probeType &&
+              (probeType.kind === "ref" || probeType.kind === "ref_null") &&
+              probeType.typeIdx === ctx.mapTypeIdx &&
+              ctx.mapTypeIdx >= 0
+            ) {
+              const live = emitLiveCollectionIterRec(
+                ctx,
+                fctx,
+                elemAccess.expression,
+                isSet ? "values" : "entries",
+                isSet,
+              );
+              if (live !== undefined && live !== null && live !== VOID_RESULT) {
+                // Iterator methods take no arguments; evaluate extras for
+                // side effects only (the record is already on the stack).
+                for (const arg of expr.arguments) {
+                  const argType = compileExpression(ctx, fctx, arg);
+                  if (argType) fctx.body.push({ op: "drop" });
+                }
+                return live as ValType;
+              }
+            }
+          }
+        }
         if (methodName === "@@iterator" && (ctx.standalone || ctx.wasi) && resolveArrayInfo(ctx, receiverType)) {
+          // (#5147 note) This SNAPSHOT-vec result is why `.next()` on
+          // `[1,2][Symbol.iterator]()` still answers null: a vec has no cursor.
+          // Switching it to `__iterator(recv)` (a real `$__IterRec`) was tried
+          // and is NOT a drop-in — the array-iterator prototype/metadata rows
+          // key off the vec carrier — so the carrier migration is left to the
+          // follow-up that also moves `%ArrayIteratorPrototype%`.
           const nativeResult = compileArrayMethodCall(ctx, fctx, elemAccess, expr, receiverType, "values");
           if (nativeResult !== undefined && nativeResult !== null) return nativeResult as ValType;
           // Fall through to the host bridge if the native path declined.
@@ -985,7 +1136,7 @@ export function compileTailDispatch(
               fctx.body.push({
                 op: "if",
                 blockType: { kind: "empty" },
-                then: eaReceiverWasCast ? [] : typeErrorThrowInstrs(ctx),
+                then: eaReceiverWasCast ? [] : typeErrorThrowInstrs(ctx, elemAccess.expression),
                 else: elseInstrs,
               });
               return VOID_RESULT;
@@ -1001,7 +1152,9 @@ export function compileTailDispatch(
               fctx.body.push({
                 op: "if",
                 blockType: { kind: "val" as const, type: resultType },
-                then: eaReceiverWasCast ? defaultValueInstrs(resultType) : typeErrorThrowInstrs(ctx),
+                then: eaReceiverWasCast
+                  ? defaultValueInstrs(resultType)
+                  : typeErrorThrowInstrs(ctx, elemAccess.expression),
                 else: elseInstrs,
               });
               return resultType;
@@ -1283,12 +1436,61 @@ export function compileTailDispatch(
         if (arrMethodResult !== undefined) return arrMethodResult;
       }
 
+      // (#4625) `x["toString"]()` — a static identifier-shaped string key naming
+      // an AMBIENT member is the bracket spelling of a method call, not a
+      // callable-element read. Route it onto the property-access path (the one
+      // #4619/#4481 taught about wrapper receivers) instead of letting the
+      // `cea` arm below read a value the compiler never materialises. Every arm
+      // that already lowers a bracket call correctly runs above this point, so
+      // their bytes cannot move; see the module header for the placement
+      // argument and the ambient-declaration condition.
+      {
+        const normalized = tryNormalizeStaticStringElementCallee(ctx, fctx, expr, elemAccess, compileCallExpression);
+        if (normalized !== undefined) return normalized;
+      }
+
       // ELEM ACCESS RESOLVED, NO METHOD MATCHED — try callable element type
       // (#1306). Covers `fns[0](args)` and `fns[ConstKey](args)` where
       // `fns` is an array (or other element-access-able value) of callables.
       {
         const cea = compileCallableElementAccessCall(ctx, fctx, expr, elemAccess);
         if (cea !== undefined) return cea;
+      }
+
+      // A JavaScript empty-array literal starts as an evolving `any[]` in
+      // TypeScript.  Its element call signature is therefore absent even when
+      // the program has populated it with closures (`let fns = [];
+      // fns.push(() => 1); fns[0]()`); the callable-element helper correctly
+      // declines a statically non-callable element type, but the old fallback
+      // then evaluated and dropped the call.  Preserve JS's dynamic call
+      // semantics for this narrow array/any-element shape.  Typed arrays and
+      // arrays with a concrete primitive element type keep their existing
+      // TypeError/fallback behavior.
+      {
+        const elementFact = ctx.oracle.typeFactOf(elemAccess);
+        const elementIsUnresolved =
+          elementFact.kind === "any" || elementFact.kind === "unknown" || elementFact.kind === "unresolvable";
+        const receiverArrayInfo = resolveArrayInfo(ctx, receiverType);
+        const externrefArrayElement = receiverArrayInfo?.elemType.kind === "externref";
+        const undefinedExternrefElement = elementFact.kind === "undefined" && externrefArrayElement;
+        // (#5154 C2a) `var a = []; a.push(function(){…}); a[0]()` — TypeScript's
+        // evolving-array analysis widens the element type to the SHAPELESS
+        // object type `{}` (not `any`), so the guard above declined and the
+        // call was silently dropped to `ref.null.extern`. A shapeless `{}`
+        // element in an externref-backed array carries no static evidence
+        // either way; the dynamic dispatch below is ref.test-guarded and its
+        // default arm reproduces the historical null, so a genuinely
+        // non-callable element keeps today's behaviour.
+        const shapelessObjectExternrefElement =
+          elementFact.kind === "object" && elementFact.shape === undefined && externrefArrayElement;
+        if (
+          (elementIsUnresolved || undefinedExternrefElement || shapelessObjectExternrefElement) &&
+          (ctx.standalone || externrefArrayElement) &&
+          receiverArrayInfo
+        ) {
+          const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+          if (dyn !== null) return dyn;
+        }
       }
 
       // (#3166 S1) Computed-key call on a class-instance FIELD holding a
@@ -1301,6 +1503,18 @@ export function compileTailDispatch(
       // closure dispatch. The runtime
       // ref.test guards make this safe for a non-closure field value (the
       // default arm reproduces the historical `ref.null.extern`).
+      // (#5195 F1/F3) A class whose hierarchy carries a member installed under a
+      // RUNTIME key (`class C { [ID(2)]() {…} }`) takes the runtime member
+      // dispatch instead: that member has no source-spellable name, so nothing
+      // here can match it, and `__extern_method_call` is the only lowering that
+      // both resolves it through the prototype chain at runtime and binds the
+      // receiver. Placed BEFORE the field arm because a class with such a
+      // member may also have a closure-valued field, and the runtime dispatch
+      // serves that shape correctly too.
+      {
+        const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
+        if (classDyn !== undefined) return classDyn;
+      }
       if (elemAccessReceiverIsUserClass(ctx, elemAccess) && classInstanceHasField(ctx, elemAccess, methodName)) {
         const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
         if (dyn !== null) return dyn;
@@ -1371,6 +1585,12 @@ export function compileTailDispatch(
     // dropped. Route the read + ref.test-guarded dynamic closure dispatch, gated
     // on a user-class-instance receiver so primitive/array receivers keep their
     // historical behaviour. A non-closure read value hits the safe default arm.
+    // (#5195 F1/F3) The runtime-keyed twin of the resolved-key arm above — same
+    // reason, and it must precede the receiver-less dispatch below.
+    {
+      const classDyn = tryEmitClassDynamicMemberCall(ctx, fctx, expr, elemAccess);
+      if (classDyn !== undefined) return classDyn;
+    }
     if (elemAccessReceiverIsUserClass(ctx, elemAccess)) {
       const dyn = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
       if (dyn !== null) return dyn;
@@ -1634,12 +1854,14 @@ export function compileTailDispatch(
       // aware) — the old kind-only scan picked whichever same-arity closure
       // registered first; a wrong ref-result typeIdx makes the guarded funcref
       // cast below null → call_ref trap (standalone deepEqual-* family).
-      const sigParamCount = sig.parameters.length;
+      // (#4491) Drop the checker's synthetic `arguments`-derived rest symbol.
+      const runtimeSigParams = runtimeSignatureParameters(sig);
+      const sigParamCount = runtimeSigParams.length;
       const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
       const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
-        const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+        const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
         sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
       }
 
@@ -1716,6 +1938,22 @@ export function compileTailDispatch(
         return matchedClosureInfo.returnType ?? VOID_RESULT;
       }
     }
+
+    // A JavaScript implementation imported without declarations commonly
+    // leaves the inner result typed as `any`, even when the value returned at
+    // runtime is one of our compiled closure wrappers. In that case there is
+    // no checker call signature for the exact arm above to match, and the
+    // generic tail used to evaluate both calls but silently answer
+    // `undefined`. Reuse the ordinary dynamic-call ladder for the outer call:
+    // it evaluates the inner call exactly once, dispatches a Wasm closure by
+    // its runtime funcref shape, and retains the host-call fallback for a real
+    // host function. This is the untyped twin of the exact signature path, not
+    // a package-specific compose optimization. Typed call results continue to
+    // the established exact/fallback paths below.
+    if (!callSigs || callSigs.length === 0) {
+      const dynamicCallOfCall = tryEmitInlineDynamicCall(ctx, fctx, expr, true);
+      if (dynamicCallOfCall !== null) return dynamicCallOfCall;
+    }
   }
 
   // Handle ConditionalExpression as callee (not wrapped in parens):
@@ -1759,12 +1997,14 @@ export function compileTailDispatch(
     if (callSigs && callSigs.length > 0) {
       const sig = callSigs[0]!;
 
-      const sigParamCount = sig.parameters.length;
+      // (#4491) See the sibling site above.
+      const runtimeSigParams = runtimeSignatureParameters(sig);
+      const sigParamCount = runtimeSigParams.length;
       const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
       const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
       const sigParamWasmTypes: ValType[] = [];
       for (let i = 0; i < sigParamCount; i++) {
-        const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
+        const paramType = ctx.checker.getTypeOfSymbol(runtimeSigParams[i]!);
         sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
       }
 

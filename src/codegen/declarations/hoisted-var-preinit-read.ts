@@ -84,6 +84,10 @@ import type { CodegenContext } from "../context/types.js";
 
 /** Per-(context, container) memo — one walk per function body, not per `var`. */
 const analysisCache = new WeakMap<CodegenContext, WeakMap<ts.Node, ReadonlySet<ts.VariableDeclaration>>>();
+const moduleDirectAnalysisCache = new WeakMap<
+  CodegenContext,
+  WeakMap<ts.SourceFile, ReadonlySet<ts.VariableDeclaration>>
+>();
 
 /**
  * The nearest enclosing function-like BODY, or the source file. `var` bindings
@@ -151,18 +155,29 @@ function readDeclarationOf(
  * Every initialized `var` declaration in `container` that some identifier
  * references from a position BEFORE the declaration's own name.
  */
-function collectPreInitReadVarDecls(ctx: CodegenContext, container: ts.Node): ReadonlySet<ts.VariableDeclaration> {
+function collectPreInitReadVarDecls(
+  ctx: CodegenContext,
+  container: ts.Node,
+  skipNestedFunctions = false,
+): ReadonlySet<ts.VariableDeclaration> {
   const observed = new Set<ts.VariableDeclaration>();
   let cachedByName: Map<string, ts.VariableDeclaration> | undefined;
   const byName = (): Map<string, ts.VariableDeclaration> => (cachedByName ??= initializedVarDeclsByName(container));
   const visit = (node: ts.Node): void => {
+    if (skipNestedFunctions && ts.isFunctionLike(node)) return;
     if (ts.isIdentifier(node)) {
       const decl = readDeclarationOf(ctx, node, container, byName);
+      const parent = node.parent;
+      const isWriteOnlyAssignment =
+        ts.isBinaryExpression(parent) &&
+        parent.left === node &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken;
       if (
         decl !== undefined &&
         decl.initializer !== undefined &&
         ts.isIdentifier(decl.name) &&
         decl.name !== node &&
+        !isWriteOnlyAssignment &&
         node.getStart() < decl.name.getStart()
       ) {
         observed.add(decl);
@@ -193,6 +208,29 @@ export function hoistedVarPreInitValueIsObserved(ctx: CodegenContext, decl: ts.V
   if (observed === undefined) {
     observed = collectPreInitReadVarDecls(ctx, container);
     perContainer.set(container, observed);
+  }
+  return observed.has(decl);
+}
+
+/**
+ * Module-global twin limited to reads executed directly by the source-file
+ * body. A reference captured in a function declared above the `var` does not
+ * observe the hoisted `undefined` merely by being declared; widening those
+ * slots breaks native array carriers used by Test262 callback harnesses.
+ */
+export function moduleVarDirectPreInitValueIsObserved(ctx: CodegenContext, decl: ts.VariableDeclaration): boolean {
+  if (decl.initializer === undefined || !ts.isIdentifier(decl.name)) return false;
+  if ((decl.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0) return false;
+  const sourceFile = decl.getSourceFile();
+  let perSourceFile = moduleDirectAnalysisCache.get(ctx);
+  if (perSourceFile === undefined) {
+    perSourceFile = new WeakMap();
+    moduleDirectAnalysisCache.set(ctx, perSourceFile);
+  }
+  let observed = perSourceFile.get(sourceFile);
+  if (observed === undefined) {
+    observed = collectPreInitReadVarDecls(ctx, sourceFile, true);
+    perSourceFile.set(sourceFile, observed);
   }
   return observed.has(decl);
 }

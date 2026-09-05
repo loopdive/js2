@@ -85,9 +85,14 @@ let hits = 0;
 let slots = 0;
 
 function shapeKey(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Node): string {
+  // `undefined` means ordinary source inference, while `false` is an explicit
+  // strict direct-eval override. They must not share a cache entry: the eval
+  // AST's parent chain cannot prove strictness on its own.
+  const evalThisShape =
+    fctx.directEvalSloppyThisFallback === undefined ? "-" : fctx.directEvalSloppyThisFallback ? "e" : "s";
   return `${thisContainerPos(expr)}:${unboundThisIsGlobalObject(ctx, expr) ? "g" : "-"}${
     explicitNullReceiverActive(ctx, expr) ? "n" : "-"
-  }${fctx.directEvalSloppyThisFallback ? "e" : "-"}`;
+  }${evalThisShape}`;
 }
 
 /**

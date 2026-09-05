@@ -1,0 +1,20 @@
+// Print test262 test bodies (frontmatter + license stripped) for a list of
+// language/expressions-relative names given on argv.
+import { readFileSync } from "node:fs";
+const max = Number(process.env.MAXL ?? 40);
+for (const rel of process.argv.slice(2)) {
+  const p = rel.startsWith("test/") ? `test262/${rel}` : `test262/test/language/${rel}.js`;
+  let s;
+  try {
+    s = readFileSync(p, "utf-8");
+  } catch (e) {
+    console.log(`=== ${rel}: MISSING`);
+    continue;
+  }
+  s = s.replace(/\/\*---[\s\S]*?---\*\//, "");
+  const lines = s
+    .split("\n")
+    .filter((l) => l.trim() !== "" && !l.startsWith("//"));
+  console.log(`=== ${rel}`);
+  console.log(lines.slice(0, max).join("\n"));
+}

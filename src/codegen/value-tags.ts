@@ -88,6 +88,28 @@ export function jsStaticType(t: ts.Type | undefined): JsStaticType {
  */
 export const UNDEF_F64_BITS = 0x7ff00000deadc0den;
 
+/**
+ * (#4491 T11) The **absence** twin of {@link UNDEF_F64_BITS}: a second,
+ * distinct signaling-NaN payload meaning *this index is not present*, as
+ * opposed to *this index holds the value `undefined`*.
+ *
+ * The two must be distinct because they answer PRESENCE differently:
+ * `[0, , 2]` and `[0, undefined, 2]` agree on every VALUE question (`x[1]` is
+ * `undefined` for both, `join` renders `""` for both) and disagree on every
+ * PRESENCE question (`1 in x`, `x.hasOwnProperty("1")`, `Object.keys(x)`, and
+ * the §23.1.3 HOF hole-skip). One payload cannot carry both answers.
+ *
+ * Same signaling-NaN exponent as `UNDEF_F64_BITS`, so the same "JS arithmetic
+ * only ever produces the QUIET NaN `0x7FF8000000000000`" argument applies: the
+ * pattern cannot collide with a computed value.
+ *
+ * **Invariant** (inherited from `array-holes.ts`): a hole is never observed AS
+ * the marker. Every value-producing read of a slot that may hold it maps
+ * `HOLE → UNDEF` at the read boundary (`vec-f64-hole-presence.ts`), so the ~28
+ * existing `UNDEF_F64_BITS` observers keep working unchanged.
+ */
+export const HOLE_F64_BITS = 0x7ff00000deadc01en;
+
 /** Push the undefined-f64 sentinel onto the stack (`i64.const` + reinterpret). */
 export function pushUndefF64(body: Instr[]): void {
   body.push({ op: "i64.const", value: UNDEF_F64_BITS });
@@ -148,14 +170,10 @@ export function boxToAny(ctx: CodegenContext, fctx: FunctionContext, from: ValTy
     case "null":
       // Only honor when the value is a discardable reference carrier; otherwise
       // fall through (a non-ref "null" hint shouldn't drop a live scalar).
-      // (#2106 S1) Under the `undefinedSingleton` regime (inline mirror of
-      // any-helpers' `undefinedSingletonActive` — kept import-free here), a
-      // statically-null reference carrier boxes tag-0 directly instead of
-      // falling into the Wasm-kind dispatch (whose externref arm tags it 5,
-      // the #1888 lie, or — honest — routes through __any_from_extern).
+      // A statically-null reference must always box as tag 0.  Keeping this
+      // dispatch in the canonical entry point lets specialized callers retain
+      // null identity without opening a direct __any_box_null site (#2104).
       if (
-        ctx.undefinedSingleton === true &&
-        (ctx.standalone || ctx.nativeStrings) &&
         (from.kind === "externref" || from.kind === "ref" || from.kind === "ref_null") &&
         emit("__any_box_null", [{ op: "drop" }])
       ) {

@@ -5,7 +5,7 @@ status: done
 completed: 2026-07-12
 assignee: ttraenkler/dev-array-hof
 created: 2026-07-12
-updated: 2026-07-13
+updated: 2026-08-25
 priority: high
 feasibility: hard
 task_type: bug
@@ -31,6 +31,10 @@ loc-budget-allow:
   - src/codegen/context/types.ts
   - src/codegen/index.ts
   - src/codegen/array-methods.ts
+  # 2026-08-25 ES5 forEach tail: a constructor instance stored in an object
+  # literal's `length` field must cross the dynamic prototype/ToPrimitive
+  # boundary. The escape classifier owns that representation decision.
+  - src/codegen/fnctor-escape-gate.ts
 # (#2108) The added coercion sites INVOKE the sealed engine helpers, not
 # hand-rolled vocabulary: `__str_to_number` applies §7.1.20 ToLength →
 # §7.1.4 ToNumber to a STRING-ref `length` field (`length: "2"`, the -3-*

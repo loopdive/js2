@@ -1,0 +1,4 @@
+built-ins/Proxy/has/return-false-target-not-extensible.js
+built-ins/Proxy/has/return-false-target-not-extensible-using-with.js
+built-ins/Proxy/has/return-false-targetdesc-not-configurable.js
+built-ins/Proxy/has/return-false-targetdesc-not-configurable-using-with.js

@@ -27,6 +27,8 @@
  * @module
  */
 
+import type { RuntimeGroupFingerprint } from "./emit/canonical-recgroup.js";
+
 /**
  * A single host capability an emitted module may need from its import object.
  *
@@ -136,7 +138,7 @@ export type ImportIntent =
  */
 export interface ImportDescriptor {
   /** Wasm import namespace the entry lives in. */
-  module: "env" | "wasm:js-string" | "string_constants";
+  module: string;
   /** Import field name within {@link ImportDescriptor.module}. */
   name: string;
   /** Whether the import is a function or a global. */
@@ -157,6 +159,75 @@ export interface ImportDescriptor {
    */
   paramCount?: number;
 }
+
+/** A separately compiled core-Wasm provider used by a project link plan. */
+export interface LinkedModuleArtifact {
+  /** Deterministic import namespace exported by this provider. */
+  namespace: string;
+  /** Content-addressed provider Wasm bytes. */
+  binary: Uint8Array;
+  /** Stable cache identity including source, compiler ABI, and dependencies. */
+  cacheKey: string;
+  /** Provider namespaces that must be instantiated first. */
+  dependencies: string[];
+  /** Exported boundary names and their Wasm fields. */
+  exports: string[];
+  /** Canonical declaration signatures used by the package manifest. */
+  exportSignatures?: Readonly<Record<string, string>>;
+  /**
+   * Boundary kind and Wasm field for every logical package export.  Function
+   * exports retain their logical name as the field; values/classes and
+   * namespace objects are exposed through deterministic getter functions.
+   */
+  exportBoundaries?: Readonly<Record<string, { kind: "function" | "getter" | "namespaceGetter"; field: string }>>;
+  /** Package name as resolved from node_modules, when available. */
+  packageName?: string;
+  /** True when the provider bytes came from the content-addressed cache. */
+  cacheHit?: boolean;
+  /** Provider-owned imported string globals, retained for direct instantiation. */
+  stringPool?: string[];
+  /** Serializable adapter/import metadata for an isolated provider runtime. */
+  providerMetadata?: LinkedProviderMetadata;
+  /** Deferred provider initialization export, when present. */
+  initExport?: "__module_init";
+}
+
+/** Serializable subset of a provider CompileResult used at instantiation. */
+export interface LinkedProviderMetadata {
+  imports: ImportDescriptor[];
+  stringPool: string[];
+  targetProfile?: import("./target-profile.js").CompileTargetProfile;
+  adapterManifest?: import("./adapter-manifest.js").JavaScriptAdapterManifestV1;
+  capabilityRequirements?: import("./capability-registry.js").PlatformCapabilityRequirement[];
+  capabilityProviderDiagnostics?: readonly import("./capability-registry.js").CapabilityProviderDiagnostic[];
+  exportBoundaryPolicies?: Readonly<Record<string, import("./boundary-policy.js").ExportBoundaryPolicy>>;
+}
+
+/** Project-level decision and diagnostics for npm package module linking. */
+export interface PackageLinkPlan {
+  /** Selected package output: runtime-linked providers, one merged module, or source bundling. */
+  mode: "separate" | "merged" | "bundled";
+  /** Stable planner version, bumped when the provider ABI changes. */
+  version: 1;
+  /** Human-readable reason when the planner deliberately bundled the graph. */
+  fallbackReason?: string;
+  /** Package namespaces in provider-before-consumer order. */
+  namespaces: string[];
+  /** Number of provider source compilations performed during this call. */
+  compiledProviders: number;
+  /** Number of providers served from the binary cache during this call. */
+  cachedProviders: number;
+  /** Requested static linking fell back to separate modules for this explicit reason. */
+  mergeFallbackReason?: string;
+}
+
+export {
+  BUNDLE_MANIFEST_FORMAT_VERSION,
+  BUNDLE_MANIFEST_SECTION_NAME,
+  bundleArtifactHash,
+  decodeBundleManifest,
+} from "./bundle-manifest.js";
+export type { BundleManifestV1, BundleProviderManifest } from "./bundle-manifest.js";
 
 export type { ExportBoundaryKind, ExportSignature, TypedArrayKind } from "./ir/types.js";
 import type { ExternCImportSpec as LinearExternCImportSpec } from "./codegen-linear/c-abi.js";
@@ -199,6 +270,9 @@ export type {
   IrOutcomePolicyVerdict,
   IrUnsupportedCode,
 } from "./ir/outcomes.js";
+// (#5285) The `<module-init>` row's diagnostic refusal list. Public because the
+// census and the `check:ir-only` lane read it off `CompileResult.irOutcomes`.
+export type { IrModuleBindingRefusal, IrModuleBindingRefusalArm } from "./ir/module-bindings.js";
 // Outcome rows expose these opaque IDs; inventory/ABI construction remains an
 // internal IR seam until later R1 commits wire it into compiler ownership.
 export type { IrSourceId, IrUnitId } from "./ir/identity.js";
@@ -228,6 +302,15 @@ export interface CompileResult {
   sourceMap?: string;
   /** Import descriptors for closed import building */
   imports: ImportDescriptor[];
+  /**
+   * Structural identity of the frozen runtime GC rec group (#2527).
+   *
+   * Native-string artifacts expose this sidecar so a linker can verify that
+   * a separately compiled provider and consumer share the same WasmGC type
+   * identity. It is intentionally absent for modules that do not participate
+   * in the native-string runtime ABI.
+   */
+  runtimeRecGroupFingerprint?: RuntimeGroupFingerprint;
   /** Frozen compile policy used for provider and interop decisions (#4396). */
   targetProfile?: import("./target-profile.js").CompileTargetProfile;
   /**
@@ -290,6 +373,14 @@ export interface CompileResult {
    * low-level `compile*Source` helpers in compiler.ts do not attach it.
    */
   readonly importObject?: WebAssembly.Imports;
+  /** Separate npm provider artifacts, when package linking was selected. */
+  linkedModules?: LinkedModuleArtifact[];
+  /** Authoritative metadata embedded in a statically merged package bundle. */
+  bundleManifest?: import("./bundle-manifest.js").BundleManifestV1;
+  /** SHA-256 identity of the finalized merged bytes, including the bundle manifest. */
+  bundleCacheKey?: string;
+  /** Explicit package-linking decision and cache telemetry. */
+  linkPlan?: PackageLinkPlan;
   /**
    * #2089 — silent-fallback telemetry counters captured during codegen
    * (per class → per site → count). Only populated when the
@@ -431,6 +522,24 @@ export interface CompileOptions {
    *  `nativeStrings: true` and refuses to emit any `wasm:js-string` or
    *  `env` JS-host string imports. */
   target?: "gc" | "linear" | "wasi" | "standalone";
+  /**
+   * Import the canonical realm-global object for a linked standalone runtime.
+   *
+   * Standalone modules normally allocate a private native `globalThis`
+   * singleton. Embedders that instantiate several independently compiled
+   * modules in one realm can instead provide a zero-argument getter returning
+   * the shared object. The provider namespace must also be listed in `link` so
+   * the import is treated as an intentional Wasm-to-Wasm edge.
+   *
+   * An optional `call` import provides `(callable, receiver, args) -> result`
+   * for values owned by that realm. Module-local closure shapes still use the
+   * normal direct dispatcher; only its terminal miss crosses this bridge.
+   *
+   * This option is valid only with `target: "standalone"`. It is deliberately
+   * explicit and has no default, preserving host-free standalone output for
+   * all existing callers.
+   */
+  standaloneGlobalThisImport?: { module: string; name: string; call?: string };
   /**
    * Dynamic direct-eval lowering for the WasmGC JavaScript-host target.
    *
@@ -818,6 +927,9 @@ export interface CompileOptions {
    * `readSync`/`writeSync` + its linear memory from `node:fs` and carries no
    * `wasi_snapshot_preview1` import for stream IO; console.log /
    * process.std*.write lower to `writeSync(1|2, …)`, stdin is `readSync(0, …)`).
+   * The compiler-owned `js2wasm:runtime` namespace leaves native-string
+   * number-format helpers as imports, satisfied by
+   * `scripts/build-runtime-provider.mjs`.
    *
    * Target-neutral: any target may retain a declared provider namespace as an
    * explicit link-time import. The special `node:fs` std-IO rewrite remains
@@ -825,6 +937,33 @@ export interface CompileOptions {
    * standalone / inline-lowered path. CLI: `--link <ns>` (repeatable).
    */
   link?: string[];
+  /**
+   * Compile bare npm package edges as cached core-Wasm providers when using
+   * {@link compileProject}. `true` automatically attempts independent provider
+   * modules while retaining the compatibility fallback to a monolithic source
+   * compile. `"separate"` also instantiates providers independently, but treats
+   * a linked consumer compiler failure as authoritative instead of recompiling
+   * cached provider sources. `"merge"` asks Binaryen to statically combine safe
+   * direct-function providers and embeds `js2wasm.bundle.v1`. `false` retains
+   * monolithic source compilation. Unsupported package boundaries report their
+   * explicit fallback through {@link CompileResult.linkPlan}. Defaults to
+   * `true` for project compiles.
+   */
+  packageLinking?: boolean | "separate" | "merge";
+  /** Optional directory for content-addressed npm provider binaries. */
+  packageCacheDir?: string;
+  /** Internal package-link import map populated by compileProject's planner. */
+  linkedPackageBindings?: ReadonlyMap<string, { module: string; field: string }>;
+  /**
+   * Internal provider-build switch for the shared `js2wasm:runtime` artifact
+   * (#2527). Not needed for application compilation; the runtime build script
+   * uses it to publish compiler-owned formatter exports.
+   */
+  runtimeProvider?: boolean;
+  /** Internal package-linker switch for the frozen cross-module runtime type group. */
+  canonicalRuntimeTypes?: boolean;
+  /** Internal package-linker switch (#5226): one imported `env.__exn` tag for the whole linked graph. */
+  sharedExceptionTag?: boolean;
   /**
    * Node API emulation (#2603). Opt-in via `--emulate node`. When set, the
    * checker is given an ambient `process` declaration so Node globals js2wasm
@@ -965,6 +1104,10 @@ import { compileFilesSource, compileMultiSource, compileSource, compileToObjectS
 import { withIrCompileRoute } from "./compiler/ir-cutover-invocation.js";
 import { ModuleResolver, resolveAllImports } from "./resolve.js";
 import { buildCompiledImports as buildCompiledImportsRuntime } from "./runtime.js";
+import { buildStringConstants, buildStringConstants16 } from "./runtime/string-constants.js";
+import { compileLinkedProject } from "./package-linker.js";
+import { mergePackageProviders } from "./package-bundler.js";
+import { instantiateLinkedProviders, wireCompiledInstance } from "./linked-provider-runtime.js";
 
 /**
  * Compile TypeScript source to Wasm GC binary.
@@ -999,6 +1142,59 @@ export async function compile(source: string, options?: CompileOptions): Promise
  * (`WebAssembly.instantiate(binary, importObject)` with no extra options),
  * which is what the issue's example uses.
  */
+function buildHostImportObject(result: CompileResult): WebAssembly.Imports {
+  // Failed compile or genuinely import-free (standalone / wasi) output needs
+  // no host runtime — return an empty, harmless import object.
+  //
+  // (#4029) `result.imports` counts FUNCTION imports only. A module with no
+  // host function imports can still declare imported string-constant GLOBALS,
+  // built from `result.stringPool`; linked projects additionally need their
+  // provider namespaces even when the root has no host function imports.
+  if (
+    !result.success ||
+    (result.imports.length === 0 && result.stringPool.length === 0 && (result.linkedModules?.length ?? 0) === 0)
+  ) {
+    return {};
+  }
+  const built = buildCompiledImportsRuntime(result);
+  const imports = {
+    env: built.env,
+    "wasm:js-string": built["wasm:js-string"],
+    string_constants: built.string_constants,
+    string_constants16: built.string_constants16,
+  } as unknown as WebAssembly.Imports;
+  // (#1712) Expose the runtime's exports hook. Without it, the host runtime's
+  // callback state is never wired on this convenience path. Non-enumerable so
+  // WebAssembly.instantiate never treats these helpers as import namespaces.
+  if (built.setExports) {
+    Object.defineProperty(imports, "__setExports", {
+      value: built.setExports,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  if (built.setInstance) {
+    Object.defineProperty(imports, "__setInstance", {
+      value: built.setInstance,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  if (built.startImportCounting && built.takeImportCounts) {
+    Object.defineProperty(imports, "__startImportCounting", {
+      value: built.startImportCounting,
+      enumerable: false,
+      configurable: true,
+    });
+    Object.defineProperty(imports, "__takeImportCounts", {
+      value: built.takeImportCounts,
+      enumerable: false,
+      configurable: true,
+    });
+  }
+  return imports;
+}
+
 function withImportObject(result: CompileResult): CompileResult {
   let cached: WebAssembly.Imports | undefined;
   Object.defineProperty(result, "importObject", {
@@ -1006,68 +1202,36 @@ function withImportObject(result: CompileResult): CompileResult {
     configurable: true,
     get() {
       if (cached) return cached;
-      // Failed compile or genuinely import-free (standalone / wasi) output needs
-      // no host runtime — return an empty, harmless import object.
-      //
-      // (#4029) `result.imports` counts FUNCTION imports only. A module with no
-      // host function imports can still declare imported string-constant
-      // GLOBALS, built from `result.stringPool` — a two-file graph whose whole
-      // content is `add(a, b)` has 0 imports and 4 string constants. Taking the
-      // short-circuit there handed back `{}` for a module that declares the
-      // `string_constants` namespace, so instantiating through this convenience
-      // path died with "Import #0 module=\"string_constants\": module is not an
-      // object or function". That is why tests/multi-file.test.ts was 9 failed /
-      // 1 passed on a clean checkout. Require BOTH to be empty.
-      if (!result.success || (result.imports.length === 0 && result.stringPool.length === 0)) {
-        cached = {};
-        return cached;
-      }
-      const built = buildCompiledImportsRuntime(result);
-      cached = {
-        env: built.env,
-        "wasm:js-string": built["wasm:js-string"],
-        string_constants: built.string_constants,
-      } as unknown as WebAssembly.Imports;
-      // (#1712) Expose the runtime's exports hook. Without it, the host
-      // runtime's `callbackState.getExports()` is permanently undefined on
-      // this convenience path, silently disabling every exports-backed
-      // capability (closure wrapping via __call_fn_N/__call_fn_method_N,
-      // __sget_* struct reads, __is_closure gating). Callers wire it after
-      // instantiation:
-      //   const { instance } = await WebAssembly.instantiate(r.binary, r.importObject);
-      //   (r.importObject as any).__setInstance?.(instance);
-      // Non-enumerable so WebAssembly.instantiate's import resolution (which
-      // only reads the module-declared namespaces) never sees it.
-      if (built.setExports) {
-        Object.defineProperty(cached, "__setExports", {
-          value: built.setExports,
-          enumerable: false,
-          configurable: true,
-        });
-      }
-      if (built.setInstance) {
-        Object.defineProperty(cached, "__setInstance", {
-          value: built.setInstance,
-          enumerable: false,
-          configurable: true,
-        });
-      }
-      if (built.startImportCounting && built.takeImportCounts) {
-        Object.defineProperty(cached, "__startImportCounting", {
-          value: built.startImportCounting,
-          enumerable: false,
-          configurable: true,
-        });
-        Object.defineProperty(cached, "__takeImportCounts", {
-          value: built.takeImportCounts,
-          enumerable: false,
-          configurable: true,
-        });
+      cached = buildHostImportObject(result);
+      // Package providers are real Wasm modules, not source-cache aliases.
+      // Populate their namespaces before returning the object so legacy
+      // `WebAssembly.instantiate(result.binary, result.importObject)` callers
+      // remain valid for linked projects. `instantiateLinkedProject` below
+      // creates fresh provider instances when lifecycle isolation is desired.
+      if (result.linkedModules && result.linkedModules.length > 0) {
+        instantiateLinkedProviders(result.linkedModules, cached);
       }
       return cached;
     },
   });
   return result;
+}
+
+/** Instantiate a linked project with fresh provider and consumer instances. */
+export async function instantiateLinkedProject(
+  result: CompileResult,
+  imports?: WebAssembly.Imports,
+): Promise<{ instance: WebAssembly.Instance; providers: ReadonlyMap<string, WebAssembly.Exports> }> {
+  if (!result.success)
+    throw new Error(`Cannot instantiate a failed compile: ${result.errors.map((e) => e.message).join("; ")}`);
+  const rootImports: WebAssembly.Imports = imports ? { ...imports } : buildHostImportObject(result);
+  const providerExports = instantiateLinkedProviders(result.linkedModules ?? [], rootImports);
+  const instance = new WebAssembly.Instance(
+    new WebAssembly.Module(result.binary as unknown as BufferSource),
+    rootImports,
+  );
+  wireCompiledInstance(rootImports, instance, providerExports.size > 0);
+  return { instance, providers: providerExports };
 }
 
 /**
@@ -1188,15 +1352,54 @@ export async function compileProject(entryFile: string, options?: CompileOptions
     }
   }
 
-  return withImportObject(
-    await compileMultiSource(
-      files,
-      entryKey,
-      withIrCompileRoute(effectiveOptions, "compileProject"),
-      undefined,
-      projectResolutions,
-    ),
+  const linkedAttempt = await compileLinkedProject({
+    allFiles,
+    fileKeys,
+    entryKey,
+    resolvedEntry,
+    rootDir,
+    projectResolutions,
+    options: withIrCompileRoute(effectiveOptions, "compileProject"),
+  });
+  if (linkedAttempt.kind === "separate") {
+    // A strict separate-module attempt can return the consumer's authoritative
+    // compiler diagnostic. Keep its plan visible, but do not attach or
+    // instantiate provider artifacts when there is no consumer binary.
+    if (!linkedAttempt.result.success) {
+      linkedAttempt.result.linkPlan = linkedAttempt.plan;
+      return withImportObject(linkedAttempt.result);
+    }
+    if (effectiveOptions?.packageLinking === "merge") {
+      const merged = mergePackageProviders(linkedAttempt.result, linkedAttempt.artifacts, {
+        optimize: effectiveOptions.optimize,
+      });
+      if (merged.kind === "merged") {
+        linkedAttempt.result.binary = merged.bundle.binary;
+        linkedAttempt.result.wat = merged.bundle.wat;
+        linkedAttempt.result.bundleManifest = merged.bundle.manifest;
+        linkedAttempt.result.bundleCacheKey = merged.bundle.cacheKey;
+        linkedAttempt.result.stringPool = merged.bundle.manifest.hostMetadata.stringPool;
+        linkedAttempt.result.runtimeRecGroupFingerprint = undefined;
+        linkedAttempt.result.linkPlan = { ...linkedAttempt.plan, mode: "merged" };
+        return withImportObject(linkedAttempt.result);
+      }
+      linkedAttempt.result.linkedModules = linkedAttempt.artifacts;
+      linkedAttempt.result.linkPlan = { ...linkedAttempt.plan, mergeFallbackReason: merged.reason };
+      return withImportObject(linkedAttempt.result);
+    }
+    linkedAttempt.result.linkedModules = linkedAttempt.artifacts;
+    linkedAttempt.result.linkPlan = linkedAttempt.plan;
+    return withImportObject(linkedAttempt.result);
+  }
+  const bundled = await compileMultiSource(
+    files,
+    entryKey,
+    withIrCompileRoute(effectiveOptions, "compileProject"),
+    undefined,
+    projectResolutions,
   );
+  if (linkedAttempt.kind === "fallback") bundled.linkPlan = linkedAttempt.plan;
+  return withImportObject(bundled);
 }
 
 /**
@@ -1278,8 +1481,13 @@ export {
   fingerprintRuntimeGroup,
   RUNTIME_RECGROUP_ABI_VERSION,
   RUNTIME_RECGROUP_TYPE_NAMES,
+  verifyRuntimeRecGroupBinary,
 } from "./emit/canonical-recgroup.js";
-export type { RuntimeGroupFingerprint, RuntimeGroupMember } from "./emit/canonical-recgroup.js";
+export type {
+  RuntimeGroupFingerprint,
+  RuntimeGroupMember,
+  RuntimeRecGroupBinaryVerification,
+} from "./emit/canonical-recgroup.js";
 
 export {
   buildCompiledAdapterImports,

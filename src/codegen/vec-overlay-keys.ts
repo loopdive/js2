@@ -76,6 +76,7 @@
  */
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
+import { getArgumentsVecTypeIdx } from "./arguments-carrier-brand.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
@@ -415,14 +416,43 @@ export function fillVecOverlayPushKeys(ctx: CodegenContext): void {
  * "own" ⇒ return 1; anything else falls through to the caller's existing bag /
  * proto-companion consult, so this can add a `true` and never remove one.
  * Emitted only for a non-index, non-`length` string key (both already returned
- * above it), and only under the demand gate.
+ * above it). Ordinary vecs keep the demand gate, but an arguments vec gets a
+ * narrow subtype arm even without an own-key pre-scan: ES5 §10.6 creates its
+ * non-enumerable `callee` property during function construction, and `with`
+ * must see that own binding through the same descriptor source as `hasOwn`.
  */
 export function buildVecOverlayHasArm(ctx: CodegenContext): Instr[] {
-  if (!vecOwnKeysEnumerationActive(ctx)) return [];
   const vecGopdIdx = ctx.funcMap.get("__vec_gopd");
   const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
   if (vecGopdIdx === undefined || isUndefinedIdx === undefined) return [];
+  const argumentsVecTypeIdx = getArgumentsVecTypeIdx(ctx);
+  const argumentsOwnNamedArm: Instr[] =
+    ctx.standalone && argumentsVecTypeIdx >= 0
+      ? [
+          { op: "local.get", index: 0 },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: argumentsVecTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 0 },
+              { op: "local.get", index: 1 },
+              { op: "call", funcIdx: vecGopdIdx },
+              { op: "call", funcIdx: isUndefinedIdx },
+              { op: "i32.eqz" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+              },
+            ],
+          },
+        ]
+      : [];
+  if (!vecOwnKeysEnumerationActive(ctx)) return argumentsOwnNamedArm;
   return [
+    ...argumentsOwnNamedArm,
     { op: "local.get", index: 0 },
     { op: "local.get", index: 1 },
     { op: "call", funcIdx: vecGopdIdx },

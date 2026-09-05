@@ -201,11 +201,12 @@ export function emitOverlayRoutedElementSet(
   fctx: FunctionContext,
   keyExpr: ts.Expression,
   valueExpr: ts.Expression,
+  strict: boolean,
   compileExpr: (e: ts.Expression, hint?: ValType) => ValType | null,
 ): ValType | null {
   const setFn = ensureLateImport(
     ctx,
-    "__extern_set",
+    strict ? "__extern_set_strict" : "__extern_set",
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [],
   );

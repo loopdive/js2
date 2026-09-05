@@ -12,7 +12,7 @@
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
-import { addStringConstantGlobal, addUnionImports } from "./registry/imports.js";
+import { addStringConstantGlobals, addUnionImports } from "./registry/imports.js";
 import { isSyntheticStructName } from "./emit-helpers.js";
 import type { PresenceSlot } from "./fnctor-presence-bits.js"; // (#3780) packed own-presence flags
 import { presenceSlotOf, presenceTestInstrs } from "./fnctor-presence-bits.js";
@@ -20,6 +20,9 @@ import { UNDEF_F64_BITS } from "./value-tags.js";
 import { DATA_STRUCT_HOST_BRIDGE_ORDINAL, publishDataStructHostBridge } from "./data-struct-host-bridge.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
 import { recordStructFieldAccessor } from "./struct-field-accessor-abi.js"; // (#3520 C34) structural ownership
+import { buildShapeGuardedArm } from "./shape-guarded-arm.js"; // (#4645) single-`next` dispatch arm
+import { walkChildren } from "./walk-instructions.js";
+import { profileCount } from "../compile-profile.js";
 
 /**
  * Emit exported getter/setter helper functions so the JS runtime can read
@@ -36,6 +39,21 @@ import { recordStructFieldAccessor } from "./struct-field-accessor-abi.js"; // (
  * The runtime discovers these exports and uses them as fallback when
  * direct JS property access on a WasmGC struct returns undefined.
  */
+
+/**
+ * (#4616) Field names travel to the host as one comma-JOINED CSV string
+ * (`__struct_field_names`), so a field name CONTAINING a comma (cookie's
+ * snapshot table keys — `"Expires=Sun, 26 Jul …"`) made the host's split
+ * re-derive phantom names: the key was never found, and even a literal-key
+ * property read answered undefined. Escape commas with U+0001 (never present
+ * in real keys); the runtime's `_structFieldNamesRaw` reverses it after the
+ * split. The `__sget_`/`__shas_`/`__sset_` export names keep the RAW name —
+ * only the CSV wire format is escaped.
+ */
+function escapeStructFieldNameForCsv(name: string): string {
+  return name.includes(",") ? name.split(",").join("\u0001") : name;
+}
+
 export function emitStructFieldGetters(ctx: CodegenContext): void {
   try {
     _emitStructFieldGettersInner(ctx);
@@ -189,6 +207,11 @@ function _emitStructFieldGettersInner(ctx: CodegenContext): void {
   }
 
   if (fieldMap.size === 0) return;
+  profileCount("struct-field-getter-names", fieldMap.size);
+  profileCount(
+    "struct-field-getter-entries",
+    [...fieldMap.values()].reduce((sum, entries) => sum + entries.length, 0),
+  );
 
   const hasSymbolField = [...fieldMap.values()].some((entries) =>
     entries.some((entry) => entry.fieldType.kind === "i32" && entry.fieldType.symbol === true),
@@ -394,6 +417,8 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
     fieldType: ValType;
     shapeId?: number;
     shapeFieldIdx?: number;
+    classTags?: number[];
+    classTagFieldIdx?: number;
   };
   const fieldMap = new Map<string, SetterEntry[]>();
 
@@ -405,6 +430,26 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
 
     const shapeId = ctx.shapeIdByStructName.get(structName);
     const shapeFieldIdx = shapeId !== undefined ? fields.findIndex((f) => f && f.name === "$shape") : -1;
+    const classTag = ctx.classTagMap.get(structName);
+    const classTagFieldIdx = classTag !== undefined ? fields.findIndex((f) => f && f.name === "__tag") : -1;
+    const classTags =
+      classTag !== undefined && classTagFieldIdx >= 0
+        ? [
+            classTag,
+            ...[...ctx.classTagMap]
+              .filter(([candidate]) => {
+                let parent = ctx.classParentMap.get(candidate);
+                const seen = new Set<string>();
+                while (parent !== undefined && !seen.has(parent)) {
+                  if (parent === structName) return true;
+                  seen.add(parent);
+                  parent = ctx.classParentMap.get(parent);
+                }
+                return false;
+              })
+              .map(([, tag]) => tag),
+          ]
+        : undefined;
 
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
@@ -424,6 +469,7 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
         fieldIdx: i,
         fieldType: field.type,
         ...(shapeId !== undefined && shapeFieldIdx >= 0 ? { shapeId, shapeFieldIdx } : {}),
+        ...(classTags !== undefined && classTagFieldIdx >= 0 ? { classTags, classTagFieldIdx } : {}),
       });
     }
   }
@@ -570,7 +616,15 @@ function _emitStructFieldSettersInner(ctx: CodegenContext): void {
 /** Build nested if/else for struct field setter dispatch. */
 function buildSetterNestedIfElse(
   ctx: CodegenContext,
-  entries: { typeIdx: number; fieldIdx: number; fieldType: ValType; shapeId?: number; shapeFieldIdx?: number }[],
+  entries: {
+    typeIdx: number;
+    fieldIdx: number;
+    fieldType: ValType;
+    shapeId?: number;
+    shapeFieldIdx?: number;
+    classTags?: number[];
+    classTagFieldIdx?: number;
+  }[],
   anyLocal: number,
   valMode: "extern" | "f64" | "i32",
   wroteLocal: number,
@@ -589,22 +643,76 @@ function buildSetterNestedIfElse(
 
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i]!;
-    let thenBranch = buildSetterStore(ctx, entry, anyLocal, valMode, wroteLocal, unboxNumIdx, unboxSymbolIdx);
+    const thenBranch = buildSetterStore(ctx, entry, anyLocal, valMode, wroteLocal, unboxNumIdx, unboxSymbolIdx);
+    const condition: Instr[] = [
+      { op: "local.get", index: anyLocal },
+      { op: "ref.test", typeIdx: entry.typeIdx },
+    ];
+
+    // Refinements that run only AFTER `ref.test typeIdx` says yes. Every one of
+    // them dereferences the receiver as `typeIdx`, so they may not be evaluated
+    // unless the test passed — see the short-circuit below.
+    const refinements: Instr[][] = [];
 
     // (#2009) Colliding struct: `ref.test typeIdx` matched, but same-shape
     // canonicalization means the instance might be a DIFFERENT struct that
-    // lacks this field. Gate the store on `struct.get $shape === entry.shapeId`
-    // so a mismatched write no-ops (sidecar carries it) instead of corrupting
-    // a same-slot field of the wrong struct.
+    // lacks this field. Include the shape identity in the OUTER arm condition
+    // so a mismatch falls through to the next structurally-equal candidate;
+    // an inner no-op would incorrectly stop before the receiver's real shape.
     if (entry.shapeId !== undefined && entry.shapeFieldIdx !== undefined) {
-      thenBranch = [
+      refinements.push([
         { op: "local.get", index: anyLocal },
         { op: "ref.cast", typeIdx: entry.typeIdx },
         { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
         { op: "i32.const", value: entry.shapeId },
         { op: "i32.eq" },
-        { op: "if", blockType: { kind: "empty" }, then: thenBranch },
+      ]);
+    }
+
+    // (#4618) User classes carry a nominal `__tag`, but WasmGC `ref.test`
+    // remains structural. Same-layout sibling classes therefore match each
+    // other's field setter arms. A host write such as React's `instance.state`
+    // could otherwise overwrite an unrelated field at the same physical slot
+    // (`mutativeValue` in the forceUpdate test). Require the declaring class's
+    // tag (or a descendant tag for inherited fields) before the struct.set.
+    if (entry.classTags !== undefined && entry.classTagFieldIdx !== undefined) {
+      const readTag: Instr[] = [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.cast", typeIdx: entry.typeIdx },
+        { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.classTagFieldIdx },
       ];
+      const tagCondition: Instr[] = [...readTag, { op: "i32.const", value: entry.classTags[0]! }, { op: "i32.eq" }];
+      for (const tag of entry.classTags.slice(1)) {
+        tagCondition.push(...readTag, { op: "i32.const", value: tag }, { op: "i32.eq" }, { op: "i32.or" });
+      }
+      refinements.push(tagCondition);
+    }
+
+    // (#5244) The refinements MUST short-circuit on `ref.test`. `i32.and` is a
+    // plain arithmetic operator — Wasm evaluates BOTH operands — so appending
+    // them to the condition made the `ref.cast typeIdx` inside them run for
+    // EVERY receiver, including the ones `ref.test` had just rejected. That is
+    // an unconditional trap, thrown from an exported setter the runtime calls
+    // inside a `try`/`catch` (`_safeSet`'s "not a field of this struct's
+    // runtime type" arm), so the failure was invisible: `__sset_<field>`
+    // aborted at its FIRST guarded arm and never reached the arm that owned
+    // the receiver. The write then landed in the JS sidecar only, while a
+    // compiled `struct.get` kept reading the untouched slot.
+    //
+    // It needs two struct types sharing the field name — one of them
+    // collision-shaped or class-tagged — for a guard to exist at all, which is
+    // why a single-record reduction passes and the polyfill (dozens of records
+    // carrying `days`) does not: `Temporal.Duration.from({days: 1})` read
+    // `PT0S` because `n[k] = o` never reached the record's slot.
+    if (refinements.length > 0) {
+      const refined: Instr[] = [...refinements[0]!];
+      for (const extra of refinements.slice(1)) refined.push(...extra, { op: "i32.and" });
+      condition.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: refined,
+        else: [{ op: "i32.const", value: 0 }],
+      });
     }
 
     const ifInstr: Instr = {
@@ -614,7 +722,7 @@ function buildSetterNestedIfElse(
       else: current,
     };
 
-    current = [{ op: "local.get", index: anyLocal }, { op: "ref.test", typeIdx: entry.typeIdx }, ifInstr];
+    current = [...condition, ifInstr];
   }
 
   body.push(...current);
@@ -860,11 +968,11 @@ export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): readon
   };
 
   for (const group of byShape.values()) {
-    const distinctNameCsvs = new Set(group.map((m) => m.names.join(",")));
+    const distinctNameCsvs = new Set(group.map((m) => m.names.map(escapeStructFieldNameForCsv).join(",")));
     if (distinctNameCsvs.size < 2) continue;
 
     for (const m of group) {
-      const csv = m.names.join(",");
+      const csv = m.names.map(escapeStructFieldNameForCsv).join(",");
       const shapeId = allocateShapeId(csv);
       ctx.shapeIdByStructName.set(m.structName, shapeId);
       collidingTypeIdxs.push({ typeIdx: m.typeIdx, structName: m.structName, shapeId });
@@ -878,6 +986,7 @@ export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): readon
   // every compiled body to insert `i32.const <shapeId>` immediately before it,
   // matching the new operand count. The `$`-prefix excludes `$shape` from name
   // enumeration and getter/setter emission.
+  const shapeIdByTypeIdx = new Map<number, number>();
   for (const { typeIdx, structName, shapeId } of collidingTypeIdxs) {
     const typeDef = ctx.mod.types[typeIdx] as { kind: string; fields?: FieldDef[] } | undefined;
     if (!typeDef || typeDef.kind !== "struct" || !typeDef.fields) continue;
@@ -891,9 +1000,14 @@ export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): readon
       const sf = ctx.structFields.get(structName);
       if (sf && sf !== typeDef.fields) sf.push({ name: "$shape", type: { kind: "i32" }, mutable: false });
     }
-    patchStructNewWithShapeId(ctx, typeIdx, shapeId);
+    const priorShapeId = shapeIdByTypeIdx.get(typeIdx);
+    if (priorShapeId !== undefined && priorShapeId !== shapeId) {
+      throw new Error(`struct type ${typeIdx} was assigned conflicting shape ids ${priorShapeId} and ${shapeId}`);
+    }
+    shapeIdByTypeIdx.set(typeIdx, shapeId);
   }
-  return [...new Set(collidingTypeIdxs.map(({ typeIdx }) => typeIdx))];
+  patchStructNewsWithShapeIds(ctx, shapeIdByTypeIdx);
+  return [...shapeIdByTypeIdx.keys()];
 }
 
 /**
@@ -904,30 +1018,36 @@ export function resolveSameShapeFieldNameCollisions(ctx: CodegenContext): readon
  * the legacy and IR construction paths uniformly. Mirrors the structural walk of
  * `patchStructNewForAddedField` but inserts a specific value, not a default.
  */
-function patchStructNewWithShapeId(ctx: CodegenContext, typeIdx: number, shapeId: number): void {
+function patchStructNewsWithShapeIds(ctx: CodegenContext, shapeIdByTypeIdx: ReadonlyMap<number, number>): void {
+  // Function bodies can share instruction-array children after helper-body
+  // reuse and late rewrites. Array identity is the mutation unit: visiting a
+  // shared child once both prevents duplicate stamp operands and keeps this
+  // finalizer linear in the physical IR size. Keep the set module-wide because
+  // the same helper body may be referenced by more than one function/global.
+  const visited = new WeakSet<Instr[]>();
   const patch = (root: Instr[]): void => {
     const work: Instr[][] = [root];
     while (work.length > 0) {
       const arr = work.pop()!;
+      if (visited.has(arr)) continue;
+      visited.add(arr);
       for (let i = arr.length - 1; i >= 0; i--) {
         const instr = arr[i]!;
-        if (instr.op === "struct.new" && (instr as { typeIdx?: number }).typeIdx === typeIdx) {
+        const shapeId =
+          instr.op === "struct.new" ? shapeIdByTypeIdx.get((instr as { typeIdx?: number }).typeIdx ?? -1) : undefined;
+        if (shapeId !== undefined) {
           arr.splice(i, 0, { op: "i32.const", value: shapeId });
         }
-        const anyInstr = instr as Record<string, unknown>;
-        if (Array.isArray(anyInstr.body)) work.push(anyInstr.body);
-        if (Array.isArray(anyInstr.then)) work.push(anyInstr.then);
-        if (Array.isArray(anyInstr.else)) work.push(anyInstr.else);
-        if (Array.isArray(anyInstr.catches)) {
-          for (const c of anyInstr.catches as { body?: Instr[] }[]) {
-            if (Array.isArray(c.body)) work.push(c.body);
-          }
-        }
-        if (Array.isArray(anyInstr.catchAll)) work.push(anyInstr.catchAll);
+        walkChildren(instr, (children) => work.push(children));
       }
     }
   };
-  for (const func of ctx.mod.functions) patch(func.body);
+  for (const func of ctx.mod.functions) {
+    if (func.body.length > 0) patch(func.body);
+  }
+  for (const global of ctx.mod.globals) {
+    if (global.init.length > 0) patch(global.init);
+  }
 }
 
 /**
@@ -997,12 +1117,18 @@ function emitStructFieldNamesExport(
   }
 
   if (legacyEntries.length === 0 && shapeEntries.length === 0) return;
+  profileCount("struct-field-name-legacy-entries", legacyEntries.length);
+  profileCount("struct-field-name-shape-entries", shapeEntries.length);
+  profileCount("struct-field-name-shape-ids", ctx.shapeNameCsvById.length);
 
   // Register comma-separated field name strings as string constants.
+  const legacyCsvEntries = legacyEntries.map(({ typeIdx, names }) => ({
+    typeIdx,
+    csv: names.map(escapeStructFieldNameForCsv).join(","),
+  }));
+  addStringConstantGlobals(ctx, [...legacyCsvEntries.map(({ csv }) => csv), ...ctx.shapeNameCsvById]);
   const legacyTypeIdxToGlobalIdx = new Map<number, number>();
-  for (const { typeIdx, names } of legacyEntries) {
-    const csv = names.join(",");
-    addStringConstantGlobal(ctx, csv);
+  for (const { typeIdx, csv } of legacyCsvEntries) {
     const globalIdx = ctx.stringGlobalMap.get(csv);
     if (globalIdx !== undefined) legacyTypeIdxToGlobalIdx.set(typeIdx, globalIdx);
   }
@@ -1010,7 +1136,6 @@ function emitStructFieldNamesExport(
   const shapeIdToGlobalIdx = new Map<number, number>();
   for (let id = 0; id < ctx.shapeNameCsvById.length; id++) {
     const csv = ctx.shapeNameCsvById[id]!;
-    addStringConstantGlobal(ctx, csv);
     const globalIdx = ctx.stringGlobalMap.get(csv);
     if (globalIdx !== undefined) shapeIdToGlobalIdx.set(id, globalIdx);
   }
@@ -1025,7 +1150,10 @@ function emitStructFieldNamesExport(
   body.push({ op: "any.convert_extern" });
   body.push({ op: "local.set", index: anyLocal });
 
-  // Helper: dispatch on a shape-id value (on stack) → CSV global.
+  // Helper: dispatch the shape-id already stored in `shapeLocal` to its CSV.
+  // Keep exactly one physical ladder. Rebuilding this D-entry chain inside
+  // each of C colliding-type arms made both finalize time and emitted IR
+  // quadratic in the number of shapes.
   const buildShapeIdDispatch = (): Instr[] => {
     const ids = [...shapeIdToGlobalIdx.entries()];
     let chain: Instr[] = [{ op: "ref.null.extern" }];
@@ -1043,7 +1171,7 @@ function emitStructFieldNamesExport(
         },
       ];
     }
-    return [{ op: "local.set", index: shapeLocal }, ...chain];
+    return chain;
   };
 
   // Build nested if-else chain: legacy arms first, then colliding $shape arms.
@@ -1065,21 +1193,38 @@ function emitStructFieldNamesExport(
     ];
   }
 
-  for (let i = shapeEntries.length - 1; i >= 0; i--) {
-    const { typeIdx, shapeFieldIdx } = shapeEntries[i]!;
-    const thenBranch: Instr[] = [
-      { op: "local.get", index: anyLocal },
-      { op: "ref.cast", typeIdx },
-      { op: "struct.get", typeIdx, fieldIdx: shapeFieldIdx },
-      ...buildShapeIdDispatch(),
-    ];
+  if (shapeEntries.length > 0) {
+    // First find one physically compatible stamped struct and read its shape
+    // id. `-1` means no stamped shape matched. Stamp 0 deliberately remains a
+    // matched-but-invalid identity and therefore routes to the shape table's
+    // null fallback instead of aliasing a legacy structural arm.
+    let readShapeId: Instr[] = [{ op: "i32.const", value: -1 }];
+    for (let i = shapeEntries.length - 1; i >= 0; i--) {
+      const { typeIdx, shapeFieldIdx } = shapeEntries[i]!;
+      readShapeId = [
+        { op: "local.get", index: anyLocal },
+        { op: "ref.test", typeIdx },
+        {
+          op: "if",
+          blockType: { kind: "val", type: { kind: "i32" } },
+          then: [
+            { op: "local.get", index: anyLocal },
+            { op: "ref.cast", typeIdx },
+            { op: "struct.get", typeIdx, fieldIdx: shapeFieldIdx },
+          ],
+          else: readShapeId,
+        },
+      ];
+    }
     fallback = [
-      { op: "local.get", index: anyLocal },
-      { op: "ref.test", typeIdx },
+      ...readShapeId,
+      { op: "local.tee", index: shapeLocal },
+      { op: "i32.const", value: -1 },
+      { op: "i32.ne" },
       {
         op: "if",
         blockType: { kind: "val", type: { kind: "externref" } },
-        then: thenBranch,
+        then: buildShapeIdDispatch(),
         else: fallback,
       },
     ];
@@ -1162,31 +1307,17 @@ function buildNestedIfElse(
       boxSymbolIdx,
       sentinelArms,
     );
-    const thenBranch: Instr[] =
-      entry.shapeId !== undefined && entry.shapeFieldIdx !== undefined
-        ? [
-            { op: "local.get", index: anyLocal },
-            { op: "ref.cast", typeIdx: entry.typeIdx },
-            { op: "struct.get", typeIdx: entry.typeIdx, fieldIdx: entry.shapeFieldIdx },
-            { op: "i32.const", value: entry.shapeId },
-            { op: "i32.eq" },
-            {
-              op: "if",
-              blockType: { kind: "val", type: blockRetType },
-              then: extractBranch,
-              else: current,
-            },
-          ]
-        : extractBranch;
-
-    const ifInstr: Instr = {
-      op: "if",
-      blockType: { kind: "val", type: blockRetType },
-      then: thenBranch,
-      else: current,
-    };
-
-    current = [{ op: "local.get", index: anyLocal }, { op: "ref.test", typeIdx: entry.typeIdx }, ifInstr];
+    // (#4645) single-`current` arm — see `buildShapeGuardedArm`. The nested
+    // form this replaced referenced `current` twice per stamped entry, so a
+    // k-arm chain cost 2^k walk steps and emitted 2^k copies of its own tail.
+    current = buildShapeGuardedArm(
+      anyLocal,
+      entry.typeIdx,
+      entry,
+      { kind: "val", type: blockRetType },
+      extractBranch,
+      current,
+    );
   }
 
   body.push(...current);

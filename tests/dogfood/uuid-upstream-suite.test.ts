@@ -40,8 +40,20 @@ describe("uuid v14.0.1 upstream suite", () => {
     expect(report.extraction.rejected).toBe(0);
     expect(report.results.nativePassed).toBe(75);
     expect(report.results.scored).toBe(75);
-    expect(report.results.passed).toBeGreaterThanOrEqual(3);
+    expect(report.results.passed).toBe(75);
+    expect(report.results.failed).toBe(0);
     expect(report.results.passed + report.results.failed).toBe(report.results.scored);
     expect(report.compile.files).toHaveLength(10);
+    // `success`/`validates`, not `compiled`/`validated` — the driver has never
+    // emitted the latter, so both assertions read `undefined` and this opt-in
+    // test has been failing since it was written. CI does not set
+    // DOGFOOD_UUID_UPSTREAM_SUITE, so nobody saw it (#5326, same class of
+    // defect: an assertion with no reader).
+    expect(report.compile.files.every((file: { success: boolean; validates: boolean }) => file.success)).toBe(true);
+    expect(report.compile.files.every((file: { success: boolean; validates: boolean }) => file.validates)).toBe(true);
+    // Completeness is part of the score (#5326).
+    expect(report.summary.selectedFilesRun).toBe(10);
+    expect(report.summary.filesWithoutResult).toBe(0);
+    expect(report.summary.filesWithoutResultDetail).toEqual([]);
   });
 });

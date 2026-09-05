@@ -21,7 +21,9 @@ export function createHostCallImport(name: string, callbackState: CallbackState,
       const wrapped = adapters.maybeWrapCallable(fn, callbackState);
       if (typeof wrapped === "function") fn = wrapped;
     }
-    if (typeof fn !== "function") throw new TypeError(String(fn) + " is not a function");
+    if (typeof fn !== "function") {
+      throw new TypeError(String(fn) + " is not a function");
+    }
 
     const exports = callbackState?.getExports();
     const wrapHostValue = (value: any): any => {

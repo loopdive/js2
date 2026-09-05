@@ -61,14 +61,21 @@ import { runtimeToPrimitiveInstrs } from "./coercion-engine.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
 /** Operand types the cascade must not take — it has no i64 arm. */
-const EXCLUDED = ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.BigInt | ts.TypeFlags.BigIntLiteral;
+export const TO_PRIMITIVE_EXCLUDED_FLAGS =
+  ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.BigInt | ts.TypeFlags.BigIntLiteral;
+const EXCLUDED = TO_PRIMITIVE_EXCLUDED_FLAGS;
 
 /**
  * Is this operand type an ordinary OBJECT — something §7.2.12 must reduce with
  * ToPrimitive before comparing? A union qualifies only when every constituent
  * does, so `number | {}` keeps its existing numeric lowering.
+ *
+ * (#4491 T4) Exported so the §13.15.3 `+` twin (`add-to-primitive.ts`) asks the
+ * SAME question the relational cascade asks — the two operators share one
+ * "this operand needs ToPrimitive first" notion, and forking it is how the two
+ * paths drift out of agreement.
  */
-function isObjectOperandType(t: ts.Type): boolean {
+export function isObjectOperandType(t: ts.Type): boolean {
   const parts = t.isUnion() ? t.types : [t];
   if (parts.length === 0) return false;
   for (const p of parts) {

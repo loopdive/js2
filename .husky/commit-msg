@@ -45,4 +45,36 @@ if case_insensitive_match "$author_name" "$CLAUDE_PATTERN" \
   exit 1
 fi
 
+
+# Model-attribution guard (2026-08-29, project-lead order): every AGENT commit
+# must name the model that produced it — vendor, family, version/subtype, and
+# configured reasoning effort — in a `Model:` trailer, e.g.
+#   Model: Claude Fable 5 Max
+#   Model: Codex GPT-5.6 Sol Max
+#   Model: Claude Opus 5 High
+# Scope: enforced only when the message carries an agent Co-authored-by
+# trailer (Claude/Codex). Human-only commits, bot commits, and auto-generated
+# merges without an agent trailer are unaffected. Rationale: PR #5204 shipped
+# three codegen regressions in one Codex-co-authored commit and the model
+# (and effort tier) that produced it could not be recovered from git —
+# per-commit model attribution is what makes that question answerable.
+if grep -qiE '^Co-authored-by: *(Claude|Codex)' "$msg_file"; then
+  subject=$(sed -n '1p' "$msg_file")
+  case "$subject" in
+    "Merge "*|"Revert "*|"fixup! "*|"squash! "*|"chore(assign)"*) ;;
+    *)
+      if ! grep -qE '^Model: (Claude|Codex) [A-Za-z0-9][A-Za-z0-9.-]*( [A-Za-z0-9.-]+)+$' "$msg_file"; then
+        echo "commit-msg: BLOCKED — agent commit without a valid 'Model:' trailer." >&2
+        echo "  Add a trailer naming vendor, family, version/subtype and effort:" >&2
+        echo "    Model: Claude Fable 5 Max" >&2
+        echo "    Model: Codex GPT-5.6 Sol Max" >&2
+        echo "  Use the reasoning effort your session/task was configured with" >&2
+        echo "  (dispatch brief / issue frontmatter reasoning_effort); if truly" >&2
+        echo "  unknown, write 'Default'. See AGENTS.md 'Commit Attribution'." >&2
+        exit 1
+      fi
+      ;;
+  esac
+fi
+
 exit 0

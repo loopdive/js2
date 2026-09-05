@@ -90,6 +90,16 @@ export function runtimeToPrimitiveInstrs(ctx: CodegenContext, hint: "string" | "
   return [...stringConstantExternrefInstrs(ctx, hint), { op: "call", funcIdx }];
 }
 
+/**
+ * Build a raw-runtime ToNumber call for an externref already on the stack.
+ * Keeping this lookup in the coercion engine prevents detached runtime
+ * emitters from growing their own `__unbox_number` vocabulary.
+ */
+export function runtimeToNumberInstrs(ctx: CodegenContext): Instr[] | null {
+  const funcIdx = ctx.funcMap.get("__unbox_number");
+  return funcIdx === undefined ? null : [{ op: "call", funcIdx }];
+}
+
 /** True when the active mode represents strings as a native `$AnyString` GC ref. */
 function isNativeStringMode(mode: CoercionMode): boolean {
   return mode === "standalone" || mode === "native-strings-host";
@@ -301,7 +311,45 @@ export function emitToString(
     // (the native `+`-concat and template callers both used the string-hint
     // tail there regardless of `+` vs template), then back to a native ref.
     const finalIdx = ensureExternrefToStringProviderImpl(ctx, fctx, hint);
-    if (finalIdx !== undefined) fctx.body.push({ op: "call", funcIdx: finalIdx });
+    if (native && finalIdx !== undefined) {
+      // A linked provider can rebuild a boolean into a caller-local box while
+      // its static type remains `any`. Preserve that primitive lane before the
+      // generic object/callable ToPrimitive dispatcher.
+      ensureAnyHelpers(ctx);
+      const isBooleanIdx = ctx.funcMap.get("__typeof_boolean");
+      const unboxBooleanIdx = ctx.funcMap.get("__unbox_boolean");
+      if (isBooleanIdx !== undefined && unboxBooleanIdx !== undefined) {
+        const valueLocal = allocTempLocal(fctx, { kind: "externref" });
+        fctx.body.push(
+          { op: "local.set", index: valueLocal },
+          { op: "local.get", index: valueLocal },
+          { op: "call", funcIdx: isBooleanIdx },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: valueLocal },
+              { op: "call", funcIdx: unboxBooleanIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "externref" } },
+                then: stringConstantExternrefInstrs(ctx, "true"),
+                else: stringConstantExternrefInstrs(ctx, "false"),
+              },
+            ],
+            else: [
+              { op: "local.get", index: valueLocal },
+              { op: "call", funcIdx: finalIdx },
+            ],
+          },
+        );
+        releaseTempLocal(fctx, valueLocal);
+      } else {
+        fctx.body.push({ op: "call", funcIdx: finalIdx });
+      }
+    } else if (finalIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: finalIdx });
+    }
     if (native) {
       emitNativeStringRefFromExternref(ctx, fctx);
       return nativeStringType(ctx);

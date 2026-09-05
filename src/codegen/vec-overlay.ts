@@ -78,7 +78,7 @@ import { inheritedSetAnyDirty } from "./inherited-set-gate.js"; // (#4602) per-k
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { addFuncType, getArrTypeIdxFromVec, getOrRegisterVecBaseType } from "./registry/types.js";
+import { addFuncType, getOrRegisterVecBaseType } from "./registry/types.js";
 import { ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { emitWasiErrorConstructor } from "./registry/error-types.js";
 import { reserveAccessorGetDriver } from "./accessor-driver.js";
@@ -101,7 +101,19 @@ import { undefinedExternInstrs } from "./any-helpers.js";
 import { nonExtensibleFreshIndexGuard, nonWritableLengthIndexGuard } from "./vec-define-rejections.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { canonicalNumericKeyGuard } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
+import { SPARSE_INDEX_CEILING } from "./vec-sparse-index.js";
+import { growHighArrayIndexLength, markNumericLikeNamedKey } from "./vec-overlay-high-index.js";
 import { holeTestInstrs } from "./array-holes.js";
+import { buildVecGopdHoleBail } from "./vec-overlay-hole-bail.js"; // (#4491 T11) sparse marker descriptor guard
+import { buildLengthSeedFlags, buildVecLengthConfig } from "./vec-length-descriptor.js";
+import { buildArgumentsLengthDeletedBail, fillArgumentsLengthBrand } from "./arguments-length-brand.js"; // (#4658)
+import {
+  allowedCarriers,
+  carrierDefaultInstrs,
+  carrierRefWriteBack,
+  type CarrierDefaultMode,
+  type OverlayCarrier,
+} from "./vec-overlay-carriers.js";
 
 /**
  * `$PropEntry.$flags` bit claimed by the overlay (see the flag table in
@@ -119,6 +131,19 @@ const FLAG_WRITABLE = 0x01;
 const FLAG_ENUMERABLE = 0x02;
 const FLAG_CONFIGURABLE = 0x04;
 const FLAG_ACCESSOR = 0x08;
+
+/**
+ * (#4491 wave-4) Mirrors of the (unexported) `$Object.flags` INTEGRITY bits in
+ * object-runtime.ts — `OBJ_FLAG_SEALED` / `OBJ_FLAG_FROZEN`, set by
+ * `__object_seal` / `__object_freeze` on the carrier's integrity bag
+ * (`object-runtime-integrity.ts` `emitSetFlags`). Read here so a vec's IMPLICIT
+ * element descriptor can report the level: `__object_freeze` clears W/C on the
+ * BAG's own entries, but a vec's elements have no bag entries at all, so
+ * without this consult `Object.freeze([0,1,2])` left
+ * `gOPD(arr,"0").writable === true`.
+ */
+const OBJ_FLAG_SEALED = 0x02;
+const OBJ_FLAG_FROZEN = 0x04;
 
 /** Host f64 flag-word bits (computeRuntimeFlags, object-ops.ts). */
 const HOST_HAS_VALUE = 1 << 7;
@@ -197,58 +222,6 @@ export function reserveVecOverlayHelpers(ctx: CodegenContext): VecOverlayReserve
   // driver — reserve it now (idempotent) so its funcIdx is stable.
   reserveAccessorGetDriver(ctx);
   return { dpValueIdx, dpAccessorIdx, gopdIdx };
-}
-
-/** JS-array element carriers the overlay serves (TypedArray storage + subviews
- *  keep the legacy no-op — integer-indexed-exotic semantics are out of scope). */
-interface OverlayCarrier {
-  vecTypeIdx: number;
-  arrTypeIdx: number;
-  elemType: ValType;
-  kind: "f64" | "externref" | "anystr";
-}
-
-function allowedCarriers(ctx: CodegenContext): OverlayCarrier[] {
-  const seen = new Set<number>();
-  const out: OverlayCarrier[] = [];
-  const addCarrier = (vecTypeIdx: number): void => {
-    if (seen.has(vecTypeIdx)) return;
-    seen.add(vecTypeIdx);
-    const arrTypeIdx = getArrTypeIdxFromVec(ctx, vecTypeIdx);
-    if (arrTypeIdx < 0) return;
-    const arrDef = ctx.mod.types[arrTypeIdx];
-    if (!arrDef || arrDef.kind !== "array") return;
-    const elemType = arrDef.element as ValType;
-    if (elemType.kind === "f64") {
-      out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "f64" });
-    } else if (elemType.kind === "externref") {
-      out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "externref" });
-    } else if (elemType.kind === "ref" || elemType.kind === "ref_null") {
-      const ti = (elemType as { typeIdx: number }).typeIdx;
-      if (ti >= 0 && (ti === ctx.anyStrTypeIdx || ti === ctx.nativeStrTypeIdx)) {
-        out.push({ vecTypeIdx, arrTypeIdx, elemType, kind: "anystr" });
-      }
-    }
-  };
-  for (const vecTypeIdx of ctx.vecTypeMap.values()) {
-    addCarrier(vecTypeIdx);
-  }
-  // `$ObjVec` is the growable externref-array carrier used by Object
-  // enumeration and RegExp `d`-flag indices. It deliberately lives outside
-  // `vecTypeMap`, but is still a genuine Array and therefore participates in
-  // the same dense-index and named-property descriptor overlay.
-  const objVec = ctx.objectRuntimeTypes;
-  if (objVec) addCarrier(objVec.objVecTypeIdx);
-  // RegExp exec results are an extended native-string vec subtype rather than
-  // a direct `vecTypeMap` entry. Include that exact exotic so its spec own
-  // properties (`index`, `input`, `groups`, `indices`) can be materialised in
-  // the overlay without broadening the carrier whitelist to arbitrary structs.
-  const regexpMatchVecTypeIdx = ctx.structMap.get("__regexp_match_vec");
-  if (regexpMatchVecTypeIdx !== undefined) {
-    addCarrier(regexpMatchVecTypeIdx);
-  }
-  out.sort((a, b) => a.vecTypeIdx - b.vecTypeIdx);
-  return out;
 }
 
 /** Overlay-core state minted by the fill (types, global, lookup/ensure). */
@@ -669,6 +642,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   const callAccessorSetIdx = ctx.funcMap.get("__call_accessor_set");
   const strFlattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
   const strEqualsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  // (#4491 wave-4) OPTIONAL: the read-only carrier-bag lookup (never allocates).
+  // Absent ⇒ the implicit element descriptor keeps its pre-#4491 all-true
+  // answer, byte-identical.
+  const vecBagLookupIdx = ctx.funcMap.get("__vec_bag_lookup");
   if (
     objFindIdx === undefined ||
     dpValueIdx === undefined ||
@@ -697,6 +674,8 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   if (carriers.length === 0) return;
   const vecBaseIdx = getOrRegisterVecBaseType(ctx);
   const core = ensureOverlayCore(ctx, objectTypeIdx, newPlainObjectIdx);
+  // (#4658) Fill the reserved brand stubs — needs the overlay core.
+  fillArgumentsLengthBrand(ctx, objectTypeIdx, core.ensureIdx, core.lookupIdx);
   // #4504 only needs this extra logical-own screen in modules that can observe
   // an inherited descriptor. Keep the historical gOPD/hasOwn tree untouched
   // otherwise; the existing `$Hole` carrier is still used by the write path
@@ -706,15 +685,22 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
   const findFn = (name: string) => ctx.mod.functions.find((f) => f.name === name);
   const missExtern = (): Instr[] => undefinedExternInstrs(ctx)?.map((i) => ({ ...i })) ?? [{ op: "ref.null.extern" }];
 
-  /** `if !(any-local is an allowed JS-array carrier) → <bail>` */
-  const carrierWhitelistGuard = (anyLocal: number, bail: Instr[]): Instr[] => {
+  /** Push whether `anyLocal` is one of the exact JS-array carriers served by the overlay. */
+  const carrierWhitelistTest = (anyLocal: number): Instr[] => {
     const orChain: Instr[] = [];
     carriers.forEach((c, i) => {
       orChain.push({ op: "local.get", index: anyLocal }, { op: "ref.test", typeIdx: c.vecTypeIdx });
       if (i > 0) orChain.push({ op: "i32.or" });
     });
-    return [...orChain, { op: "i32.eqz" }, { op: "if", blockType: { kind: "empty" }, then: bail }];
+    return orChain;
   };
+
+  /** `if !(any-local is an allowed JS-array carrier) → <bail>` */
+  const carrierWhitelistGuard = (anyLocal: number, bail: Instr[]): Instr[] => [
+    ...carrierWhitelistTest(anyLocal),
+    { op: "i32.eqz" },
+    { op: "if", blockType: { kind: "empty" }, then: bail },
+  ];
 
   /** `if key (externref local) is not an $AnyString → <bail>` */
   const stringKeyGuard = (keyLocal: number, bail: Instr[]): Instr[] => [
@@ -756,38 +742,6 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
     { op: "i32.eqz" },
     { op: "if", blockType: { kind: "empty" }, then: inner },
   ];
-
-  /**
-   * (#4434) Mark the module as carrying an indexed-lane-reachable companion
-   * entry when the key is a canonical numeric STRING that is not an array
-   * index (`"4294967295"`, `"4294967296"`, `"1e21"`).
-   *
-   * The `__extern_get_idx` prologue is gated on this flag, and the define path
-   * set it only for keys with an index `>= 0` — but `arr[4294967295]` reaches
-   * that same prologue as an f64 whose `number_toString` is the stored key. So
-   * the flag has to follow reachability, not index-ness; see
-   * `canonicalNumericKeyGuard`'s doc comment. Returns `[]` (no-op) when
-   * `__str_to_number` is unavailable, leaving today's behaviour.
-   */
-  const markNumericLikeNamedKey = (keyLocal: number, scratchF64: number): Instr[] => {
-    const strToNumberIdx = ctx.funcMap.get("__str_to_number");
-    if (strToNumberIdx === undefined) return [];
-    return canonicalNumericKeyGuard(
-      keyLocal,
-      scratchF64,
-      {
-        strToNumber: strToNumberIdx,
-        numberToString: numToStringIdx,
-        strFlatten: strFlattenIdx,
-        strEquals: strEqualsIdx,
-        anyStrTypeIdx,
-      },
-      [
-        { op: "i32.const", value: 1 },
-        { op: "global.set", index: core.numericFlagGlobalIdx },
-      ],
-    );
-  };
 
   /** `idxLocal = __obj_index_of_key(cast key)` — canonical array index or -1. */
   const parseIndex = (keyLocal: number, idxLocal: number): Instr[] => [
@@ -907,27 +861,14 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
    * has to exist so length/iteration see the index. Intermediate holes read
    * as the carrier default (null/0) rather than undefined — the documented
    * S1/S3 boundary (real hole semantics ride with ArraySetLength, and the
-   * dominant cluster shape `var arr = []` is an externref carrier whose null
-   * default observes as undefined-ish).
+   * dominant `var arr = []` shape is an externref carrier whose null default observes as undefined-ish).
    */
-  const growDefaultArms = (anyLocal: number, idxLocal: number, externAsUndefined = false): Instr[] => {
+  const growDefaultArms = (anyLocal: number, idxLocal: number, mode: CarrierDefaultMode = "default"): Instr[] => {
     const arms: Instr[] = [];
     for (const c of carriers) {
       const elemSetIdx = ensureVecElemSet(ctx, c.vecTypeIdx);
       if (elemSetIdx === null) continue;
-      const defaultVal: Instr[] =
-        c.kind === "f64"
-          ? [{ op: "f64.const", value: 0 }]
-          : c.kind === "externref"
-            ? // (#4491) A DATA define with no [[Value]] gives the property
-              // `undefined` (CompletePropertyDescriptor), not the carrier's
-              // null hole — `arr[0]` must read `undefined`. Opt-in, so the
-              // accessor arm (whose slot is dead, the getter answers) and the
-              // ArraySetLength growth keep the null default.
-              externAsUndefined
-              ? missExtern()
-              : [{ op: "ref.null.extern" }]
-            : [{ op: "ref.null", typeIdx: NONE_HEAP }];
+      const defaultVal = carrierDefaultInstrs(ctx, c, mode, missExtern);
       arms.push(
         { op: "local.get", index: anyLocal },
         { op: "ref.test", typeIdx: c.vecTypeIdx },
@@ -1021,7 +962,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               { op: "struct.get", typeIdx: vecBaseIdx, fieldIdx: 0 },
               { op: "f64.convert_i32_s" },
               { op: "call", funcIdx: s3.boxNumIdx },
-              { op: "f64.const", value: LENGTH_SEED_FLAGS },
+              ...buildLengthSeedFlags(ctx, l.any, LENGTH_SEED_FLAGS),
               { op: "call", funcIdx: dpValueIdx },
               { op: "drop" },
             ],
@@ -1318,7 +1259,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                           { op: "i32.const", value: 1 },
                           { op: "i32.sub" },
                           { op: "local.set", index: 17 },
-                          ...growDefaultArms(4, 17),
+                          ...growDefaultArms(4, 17, "holes"),
                         ],
                       },
                     ],
@@ -1448,27 +1389,26 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           }
           inner = arms;
         } else {
-          // anystr carrier: value must be an $AnyString.
-          inner = [
-            { op: "local.get", index: 12 },
-            { op: "ref.test", typeIdx: anyStrTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                ...castVecAndIdx,
-                { op: "local.get", index: 12 },
-                { op: "ref.cast", typeIdx: anyStrTypeIdx },
-                { op: "call", funcIdx: elemSetIdx },
-                ...wrote,
-              ],
-            },
-          ];
+          inner = carrierRefWriteBack(c, castVecAndIdx, wrote, elemSetIdx, anyStrTypeIdx);
         }
+        // The descriptor companion is authoritative for an unbacked sparse
+        // tail. Keep the physical write-back helper on its dense domain: its
+        // normal growth sequence intentionally traps on a four-billion-slot
+        // request, while a dynamic ordinary assignment must remain a
+        // companion-only write.
         writeBackArms.push(
-          { op: "local.get", index: 4 },
-          { op: "ref.test", typeIdx: c.vecTypeIdx },
-          { op: "if", blockType: { kind: "empty" }, then: inner },
+          { op: "local.get", index: 7 },
+          { op: "i32.const", value: SPARSE_INDEX_CEILING },
+          { op: "i32.lt_u" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: 4 },
+              { op: "ref.test", typeIdx: c.vecTypeIdx },
+              { op: "if", blockType: { kind: "empty" }, then: inner },
+            ],
+          },
         );
       }
 
@@ -1545,7 +1485,17 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: markNumericLikeNamedKey(1, 20),
+          then: markNumericLikeNamedKey(
+            ctx,
+            1,
+            20,
+            core.numericFlagGlobalIdx,
+            numToStringIdx,
+            strFlattenIdx,
+            strEqualsIdx,
+            anyStrTypeIdx,
+            13,
+          ),
         },
         // (#4010 S1′) Named-key twin of the index seed above — see `vec-bag-seed.ts`.
         // Deliberately NOT applied on the accessor path: converting a data
@@ -1558,6 +1508,13 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.get", index: 3 },
         { op: "call", funcIdx: dpValueIdx },
         { op: "drop" },
+        // Ordinary sparse assignment already uses the companion store/read
+        // lane. Growing its logical length to u32::MAX makes the legacy vec
+        // read guard swallow lower dynamic indices before that companion can
+        // answer. Descriptor defines still need §10.4.2.2 length growth; the
+        // all-true ordinary-set flags distinguish the existing assignment
+        // call sites from the descriptor API's partial descriptor here.
+        ...growHighArrayIndexLength(4, 20, 13, vecBaseIdx, 3, SEED_FLAGS),
         // Write-back for index-keyed DATA defines carrying a [[Value]].
         { op: "local.get", index: 3 },
         { op: "i32.trunc_f64_s" },
@@ -1594,6 +1551,10 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             { op: "local.get", index: 7 },
             { op: "local.get", index: 8 },
             { op: "i32.ge_s" },
+            { op: "local.get", index: 7 },
+            { op: "i32.const", value: SPARSE_INDEX_CEILING },
+            { op: "i32.lt_u" },
+            { op: "i32.and" },
             { op: "i32.and" },
             {
               op: "if",
@@ -1661,11 +1622,15 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.get", index: 7 },
         { op: "local.get", index: 8 },
         { op: "i32.ge_s" },
+        { op: "local.get", index: 7 },
+        { op: "i32.const", value: SPARSE_INDEX_CEILING },
+        { op: "i32.lt_u" },
+        { op: "i32.and" },
         { op: "i32.and" },
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: growDefaultArms(4, 7, /* externAsUndefined */ true),
+          then: growDefaultArms(4, 7, "undefined"),
         },
         { op: "local.get", index: 0 },
       ];
@@ -1773,7 +1738,16 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         {
           op: "if",
           blockType: { kind: "empty" },
-          then: markNumericLikeNamedKey(1, 13),
+          then: markNumericLikeNamedKey(
+            ctx,
+            1,
+            13,
+            core.numericFlagGlobalIdx,
+            numToStringIdx,
+            strFlattenIdx,
+            strEqualsIdx,
+            anyStrTypeIdx,
+          ),
         },
         // Delegate the accessor define (validation + merge live in the native).
         { op: "local.get", index: 7 },
@@ -1818,38 +1792,60 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { name: "len", type: { kind: "i32" } },
         { name: "d", type: { kind: "externref" } },
         { name: "e", type: { kind: "ref_null", typeIdx: propEntryTypeIdx } },
+        // (#4491 wave-4) integrity-bag scratch for the implicit element
+        // descriptor's writable/configurable answer.
+        { name: "bag", type: { kind: "externref" } },
       ];
+      const L_BAG = 8;
+      /**
+       * (#4491 wave-4) `i32` — is `bit` set on this vec's integrity bag?
+       * A FACTORY (never a shared `Instr[]`): the result is spliced into two
+       * arms of the same body, and aliasing one array into both makes the
+       * finalize walks remap it twice (`reference_shared_instr_object_dce_
+       * double_remap`, the same rule `decodeIntegrityFlag` documents).
+       *
+       * `__vec_bag_lookup` READS — it must never be `__vec_bag_ensure` here: a
+       * gOPD on an element is a pure query and must not allocate a bag for
+       * every array that is merely inspected.
+       */
+      const integrityBit = (bit: number): Instr[] =>
+        vecBagLookupIdx === undefined
+          ? [{ op: "i32.const", value: 0 }]
+          : [
+              { op: "local.get", index: 0 },
+              { op: "call", funcIdx: vecBagLookupIdx },
+              { op: "local.tee", index: L_BAG },
+              { op: "ref.is_null" },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [{ op: "i32.const", value: 0 }],
+                else: [
+                  { op: "local.get", index: L_BAG },
+                  { op: "any.convert_extern" },
+                  { op: "ref.test", typeIdx: objectTypeIdx },
+                  {
+                    op: "if",
+                    blockType: { kind: "val", type: { kind: "i32" } },
+                    then: [
+                      { op: "local.get", index: L_BAG },
+                      { op: "any.convert_extern" },
+                      { op: "ref.cast", typeIdx: objectTypeIdx },
+                      { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+                      { op: "i32.const", value: bit },
+                      { op: "i32.and" },
+                      { op: "i32.const", value: 0 },
+                      { op: "i32.ne" },
+                    ],
+                    else: [{ op: "i32.const", value: 0 }],
+                  },
+                ],
+              },
+            ];
       const bailMiss = (): Instr[] => [...missExtern(), { op: "return" }];
-      // A backed externref `$Hole` is storage, not an implicit array-element
-      // descriptor. `__vec_gopd` feeds both getOwnPropertyDescriptor and the
-      // vec hasOwn prologue, so screening it here keeps the public own view in
-      // step with the active #4504 write decision. This runs only after the
-      // index has passed the backed-length test below.
-      const holeBail = (): Instr[] => {
-        if (!inheritedSetHolePresenceActive) return [];
-        const arms: Instr[] = [];
-        for (const carrier of carriers) {
-          if (carrier.kind !== "externref") continue;
-          arms.push(
-            { op: "local.get", index: 2 },
-            { op: "ref.test", typeIdx: carrier.vecTypeIdx },
-            {
-              op: "if",
-              blockType: { kind: "empty" },
-              then: [
-                { op: "local.get", index: 2 },
-                { op: "ref.cast", typeIdx: carrier.vecTypeIdx },
-                { op: "struct.get", typeIdx: carrier.vecTypeIdx, fieldIdx: 1 },
-                { op: "local.get", index: 4 },
-                { op: "array.get", typeIdx: carrier.arrTypeIdx },
-                ...holeTestInstrs(ctx),
-                { op: "if", blockType: { kind: "empty" }, then: bailMiss() },
-              ],
-            },
-          );
-        }
-        return arms;
-      };
+      // A backed sparse marker is storage, not an implicit array-element
+      // descriptor. Keep the public own view aligned with the live overlay.
+      const holeBail = (): Instr[] => buildVecGopdHoleBail(ctx, carriers, inheritedSetHolePresenceActive, bailMiss);
       const setKey = (key: string, valueInstrs: Instr[]): Instr[] => [
         { op: "local.get", index: 6 },
         ...nativeStringLiteralInstrs(ctx, key),
@@ -1866,6 +1862,9 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         s3 === null
           ? bailMiss()
           : [
+              // (#4658) `length` deleted from a branded arguments object ⇒ no
+              // own property; must agree with the `__hasOwnProperty` arm.
+              ...buildArgumentsLengthDeletedBail(ctx, bailMiss),
               // wbit (reuse local 4): default 1, else the companion entry's bit
               { op: "i32.const", value: 1 },
               { op: "local.set", index: 4 },
@@ -1918,8 +1917,23 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
                 { op: "i32.const", value: 0 },
                 { op: "call", funcIdx: boxBoolIdx },
               ]),
+              // (#4658) `configurable` is `false` for an Array (§10.4.2.1) and
+              // `true` for an `arguments` exotic object (§10.4.4 steps 4/7),
+              // which shares this representation. The #4658 brand on the
+              // `$__arguments_vec` type identity is the runtime fact that
+              // separates them; unlike the old companion brand, this is an
+              // O(1) ref.test and does not retain each arguments object.
+              // (#4658) `false` for an Array (§10.4.2.1), `true` for an
+              // `arguments` object (§10.4.4) — ANDed with §7.3.14 integrity, so
+              // a sealed/frozen arguments object stays non-configurable.
               ...setKey("configurable", [
-                { op: "i32.const", value: 0 },
+                ...buildVecLengthConfig(
+                  ctx.structMap.get("__arguments_vec"),
+                  7,
+                  propEntryTypeIdx,
+                  integrityBit,
+                  OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN,
+                ),
                 { op: "call", funcIdx: boxBoolIdx },
               ]),
               { op: "local.get", index: 6 },
@@ -2003,8 +2017,16 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               { op: "f64.convert_i32_s" },
               { op: "call", funcIdx: externGetIdxIdx },
             ]),
+            // (#4491 wave-4) §7.3.14 SetIntegrityLevel applied to an ARRAY
+            // element. `Object.freeze(arr)` / `Object.seal(arr)` record the
+            // level on the carrier's integrity bag; the elements themselves
+            // have no bag entry, so the implicit descriptor must read the
+            // level here or `Object.freeze([0,1,2])` keeps answering
+            // `{writable: true, configurable: true}` for index 0.
+            // `enumerable` is untouched by either operation.
             ...setKey("writable", [
-              { op: "i32.const", value: 1 },
+              ...integrityBit(OBJ_FLAG_FROZEN),
+              { op: "i32.eqz" },
               { op: "call", funcIdx: boxBoolIdx },
             ]),
             ...setKey("enumerable", [
@@ -2012,7 +2034,8 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               { op: "call", funcIdx: boxBoolIdx },
             ]),
             ...setKey("configurable", [
-              { op: "i32.const", value: 1 },
+              ...integrityBit(OBJ_FLAG_SEALED),
+              { op: "i32.eqz" },
               { op: "call", funcIdx: boxBoolIdx },
             ]),
             { op: "local.get", index: 6 },
@@ -2064,6 +2087,99 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
             ] as const)
           : []),
       );
+      // (#4491 wave-4) Two extra scratch slots for the frozen-element guard,
+      // allocated AFTER the conditional block above so their indices are read
+      // off the final local list rather than assumed.
+      const setBagLocal = 3 + fn.locals.length;
+      const setFrozenLenLocal = setBagLocal + 1;
+      fn.locals.push(
+        { name: "__ov_set_bag", type: { kind: "externref" } },
+        { name: "__ov_set_frozen_len", type: { kind: "i32" } },
+      );
+      /**
+       * (#4491 wave-4) §10.1.9.2 OrdinarySetWithOwnDescriptor step 2.b —
+       * a write to an own, BACKED element of a FROZEN array is rejected.
+       *
+       * `Object.freeze` records the level on the carrier's integrity bag
+       * (#4032) and clears W/C on the BAG's entries; a vec's elements have no
+       * bag entry, so nothing refused `arr[0] = x` on a frozen array. Measured
+       * on this base: `Object.freeze([0,1,2])` then propertyHelper's
+       * `isWritable(arr, "0")` answered **true** (the store landed and was
+       * reverted), which is what `freeze/15.2.3.9-2-a-{11,14}` report as
+       * "0 descriptor should not be writable".
+       *
+       * Scoped to an index INSIDE the backed length — i.e. an own element.
+       * A key the frozen array does NOT own must still walk the prototype
+       * chain (an inherited setter is legitimately reachable), so the guard
+       * deliberately does not blanket-refuse every write to a frozen vec.
+       * `vecBagLookupIdx` absent ⇒ `[]`, byte-identical.
+       */
+      const frozenOwnIndexGuard = (): Instr[] => {
+        if (vecBagLookupIdx === undefined) return [];
+        const frozenBit: Instr[] = [
+          { op: "local.get", index: 0 },
+          { op: "call", funcIdx: vecBagLookupIdx },
+          { op: "local.tee", index: setBagLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "i32" } },
+            then: [{ op: "i32.const", value: 0 }],
+            else: [
+              { op: "local.get", index: setBagLocal },
+              { op: "any.convert_extern" },
+              { op: "ref.test", typeIdx: objectTypeIdx },
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "i32" } },
+                then: [
+                  { op: "local.get", index: setBagLocal },
+                  { op: "any.convert_extern" },
+                  { op: "ref.cast", typeIdx: objectTypeIdx },
+                  { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+                  { op: "i32.const", value: OBJ_FLAG_FROZEN },
+                  { op: "i32.and" },
+                  { op: "i32.const", value: 0 },
+                  { op: "i32.ne" },
+                ],
+                else: [{ op: "i32.const", value: 0 }],
+              },
+            ],
+          },
+        ];
+        return [
+          ...frozenBit,
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              ...vecBackedLen(anyLocal, setFrozenLenLocal),
+              { op: "local.get", index: indexLocal },
+              { op: "i32.const", value: 0 },
+              { op: "i32.ge_s" },
+              { op: "local.get", index: indexLocal },
+              { op: "local.get", index: setFrozenLenLocal },
+              { op: "i32.lt_s" },
+              { op: "i32.and" },
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                // Refusal, not silence: the shared result global is how a
+                // STRICT-mode assignment learns to throw (#4504). Absent ⇒
+                // plain sloppy no-op, today's behaviour for the strict case.
+                then:
+                  setResultGlobalIdx === undefined
+                    ? [{ op: "return" }]
+                    : [
+                        { op: "i32.const", value: 2 },
+                        { op: "global.set", index: setResultGlobalIdx },
+                        { op: "return" },
+                      ],
+              },
+            ],
+          },
+        ];
+      };
       const publishSuccess = (): Instr[] =>
         !descriptorDecisionAvailable
           ? []
@@ -2152,7 +2268,12 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
         { op: "local.get", index: 0 },
         { op: "any.convert_extern" },
         { op: "local.tee", index: anyLocal },
-        { op: "ref.test", typeIdx: vecBaseIdx },
+        // The overlay intentionally excludes integer TypedArray carriers. A
+        // broad `$__vec_base` test admitted those carriers here anyway, then
+        // the descriptor helper refused them and the numeric-key arm returned
+        // before the packed `fillExternSetVecArms` store could run. Gate on the
+        // exact overlay whitelist so excluded vec subtypes fall through.
+        ...carrierWhitelistTest(anyLocal),
         {
           op: "if",
           blockType: { kind: "empty" },
@@ -2266,6 +2387,7 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
               blockType: { kind: "empty" },
               then: [
                 ...parseIndex(keyLocal, indexLocal),
+                ...frozenOwnIndexGuard(),
                 { op: "local.get", index: indexLocal },
                 { op: "i32.const", value: 0 },
                 { op: "i32.ge_s" },
@@ -2686,7 +2808,25 @@ export function fillVecOverlayHelpers(ctx: CodegenContext): void {
           ],
         },
       ];
-      fn.body.splice(0, 0, ...prologue);
+      // `__vec_prop_get` canonicalizes its key once before consulting either
+      // the own-property bag or the inherited Array companion. Keep that
+      // normalization ahead of this late-spliced overlay probe as well: an
+      // object key whose ToPropertyKey result names an overlay entry must be
+      // visible, and its user hook must still run exactly once. `__extern_get`
+      // has no equivalent prefix here and retains the historical front splice.
+      const toPropertyKeyIdx = ctx.funcMap.get("__to_property_key");
+      const afterCanonicalKey =
+        overlayGetLane === "__vec_prop_get" &&
+        toPropertyKeyIdx !== undefined &&
+        fn.body[0]?.op === "local.get" &&
+        fn.body[0].index === 1 &&
+        fn.body[1]?.op === "call" &&
+        fn.body[1].funcIdx === toPropertyKeyIdx &&
+        fn.body[2]?.op === "local.set" &&
+        fn.body[2].index === 1
+          ? 3
+          : 0;
+      fn.body.splice(afterCanonicalKey, 0, ...prologue);
     }
   }
 

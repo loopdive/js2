@@ -242,6 +242,38 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     Object.assign(env, buildRuntimeImports(errorConstructorImports, undefined, result.stringPool).env);
   }
 
+  // (#4616) The `__call_fn_N` dispatchers' unmatched-callee terminal now calls
+  // the fixed-arity `__call_function_<N>` host bridge instead of yielding a
+  // silent null, so any host-lane module that exports closure dispatchers
+  // imports that ABI. Provide it here the same way #3529 P5 provides the
+  // Error-family constructors — via the production resolver — so
+  // manual-instantiation equivalence tests keep instantiating.
+  const hostCallImports = result.imports.filter(
+    (descriptor) =>
+      descriptor.module === "env" && descriptor.kind === "func" && /^__call_function(_[0-4])?$/.test(descriptor.name),
+  );
+  if (hostCallImports.length > 0) {
+    Object.assign(env, buildRuntimeImports(hostCallImports, undefined, result.stringPool).env);
+  }
+
+  // (#5203) Same shape again. The module-init start-export channel
+  // (#5193 `__register_init_export`, #5202/#5203 `__register_init_class_export`)
+  // is imported by any host-lane module with top-level code once #5203 added
+  // the closure-dispatch family to the registration list — which is nearly all
+  // of them, including modules with no classes at all. Without this overlay a
+  // hand-built import object fails to LINK ("function import requires a
+  // callable"), which is what `optimize-differential`'s closure-trampoline case
+  // hit. Provided via the production resolver, like the two overlays above.
+  const initRegisterImports = result.imports.filter(
+    (descriptor) =>
+      descriptor.module === "env" &&
+      descriptor.kind === "func" &&
+      /^__register_init_(class_)?export$/.test(descriptor.name),
+  );
+  if (initRegisterImports.length > 0) {
+    Object.assign(env, buildRuntimeImports(initRegisterImports, undefined, result.stringPool).env);
+  }
+
   return {
     env,
     "wasm:js-string": jsStringPolyfill,

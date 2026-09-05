@@ -1,13 +1,10 @@
 // Thin vitest wrapper around the marked dogfood harness (#3716).
 //
-// This asserts the HARNESS contract, not marked conformance:
-//   - the harness runs to completion and emits a structured report even when
-//     the compiled surface is red (mirrors acorn's #1710 acceptance bar),
-//   - the pinned-tarball integrity gate holds.
-//
-// marked FULLY compiling/rendering correctly is NOT asserted here — the
-// current surface is red (#3715, evolving-array-type inference), and a red
-// surface is an expected, recorded outcome, same as acorn's early history.
+// This asserts the harness contract, not full marked conformance:
+//   - the pinned-tarball integrity gate holds,
+//   - the plain-JavaScript entry compiles and validates despite checker-only
+//     diagnostics (the #3715 evolving-array issue remains a compiler gap),
+//   - runtime rendering failures remain recorded for separate triage.
 
 import { describe, it, expect } from "vitest";
 import { dirname, join } from "node:path";
@@ -42,13 +39,14 @@ describe("marked dogfood harness (#3716)", () => {
       expect(report.validation).toBeTruthy();
       expect(report.summary?.headline).toBeTypeOf("string");
 
-      // Robust to a red surface: even if compile fails outright, the harness
-      // must have produced a compile record, not crashed.
-      expect(typeof report.compile.success).toBe("boolean");
-      if (!report.compile.success) {
-        expect(report.diff.runnable).toBe(false);
-        expect(report.diff.skippedReason).toBeTypeOf("string");
-      }
+      // Marked is plain published JavaScript. The harness deliberately skips
+      // checker-only semantic diagnostics, so #3715 must not prevent a binary
+      // from being emitted and validated. Runtime failures are measured below
+      // the compile/validation boundary and belong to separate issues.
+      expect(report.compile.success).toBe(true);
+      expect(report.compile.binaryBytes).toBeGreaterThan(0);
+      expect(report.validation.validates).toBe(true);
+      expect(report.diff.runnable).toBe(true);
     },
   );
 });

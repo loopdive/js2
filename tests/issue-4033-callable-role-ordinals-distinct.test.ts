@@ -52,6 +52,11 @@ describe("#4033 — Program ABI callable role ordinals", () => {
     expect(PROGRAM_ABI_CALLABLE_ROLE.callableProvider).not.toBe(PROGRAM_ABI_CALLABLE_ROLE.moduleInit);
   });
 
+  it("reserves the fnctor constructor role after the existing callable families", () => {
+    expect(PROGRAM_ABI_CALLABLE_ROLE.fnctorConstructor).toBe(19);
+    expect(PROGRAM_ABI_CALLABLE_ROLE.fnctorConstructor).not.toBe(PROGRAM_ABI_CALLABLE_ROLE.structFieldAccessor);
+  });
+
   it("are non-negative integers", () => {
     // A structural ordinal must satisfy the session's `validOrdinal` check;
     // a negative or fractional value would be rejected as an invalid draft

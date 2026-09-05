@@ -8,54 +8,17 @@ import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { FuncHandle, FuncTypeDef, GlobalDef, WasmFunction } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncHandleOf } from "./func-space.js";
+import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-callable-roles.js";
 import {
   canonicalProgramAbiCallableTypeContract,
+  canonicalProgramAbiTypeDef,
   canonicalProgramAbiValType,
   cloneProgramAbiCallableTypeContract,
+  cloneProgramAbiValType,
+  programAbiCallableSignaturesEqual,
+  type ProgramAbiCallableTypeContract,
 } from "./program-abi-signatures.js";
-
-export const PROGRAM_ABI_CALLABLE_ROLE = Object.freeze({
-  body: 0,
-  functionValueTrampoline: 1,
-  classMethodAdapter: 3,
-  classHostConstructor: 4,
-  moduleInit: 5,
-  retainedModuleFunction: 6,
-  typedThisTwin: 7,
-  vecHostBridge: 8,
-  closureHostBridge: 9,
-  dateCivilSupport: 10,
-  dataStructHostBridge: 11,
-  // (#4033) Callable providers (`runtime-provider` / `intrinsic-provider`) used
-  // a bare `PROGRAM_ABI_PROVIDER_ROLE_ORDINAL = 5` literal in
-  // program-abi-provider-planning.ts, duplicating `moduleInit: 5` above.
-  // Nothing tied the two together, so nothing kept them distinct: a provider
-  // and a `legacy-module-init-pass` support callable anchored to the same entry
-  // source both landed on structural order `<src>:0:0:5:0` and the session's
-  // duplicate-order check aborted the compile. Every role ordinal now lives in
-  // this one table, and `programAbiCallableRoleOrdinalsAreDistinct()` below is
-  // the guard that keeps it that way.
-  callableProvider: 12,
-  classConstructorNew: 13,
-  // (#3520 C34) Per-field host accessors (`__sget_*` / `__sset_*` / `__shas_*` /
-  // `__sbool_*`). See struct-field-accessor-abi.ts for the derived-ordinal
-  // encoding; the family was previously the largest population left on the
-  // positional `retainedModuleFunction` fallback.
-  structFieldAccessor: 14,
-} as const);
-
-/**
- * (#4033) True iff every role in {@link PROGRAM_ABI_CALLABLE_ROLE} has a unique
- * ordinal. Structural order is `(source, declaration, domain, role, derived)`,
- * so two roles sharing an ordinal are indistinguishable whenever their other
- * components coincide — which is exactly how #4033 aborted the ESLint compile.
- * Exported so a test can assert it directly rather than waiting for a graph
- * large enough to collide.
- */
-export function programAbiCallableRoleOrdinalsAreDistinct(): boolean {
-  const ordinals = Object.values(PROGRAM_ABI_CALLABLE_ROLE);
-  return new Set(ordinals).size === ordinals.length;
-}
+export { PROGRAM_ABI_CALLABLE_ROLE, programAbiCallableRoleOrdinalsAreDistinct } from "./program-abi-callable-roles.js";
 
 export const PROGRAM_ABI_GLOBAL_ROLE = Object.freeze({
   moduleValue: 0,

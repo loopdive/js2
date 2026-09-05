@@ -11,15 +11,20 @@
 
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import { ts } from "../../ts-api.js";
-import { captureSourceSlot, pushBoxedTdzFlagRef } from "./capture-source-slot.js";
+import { captureSourceSlot, expectsBoxedCaptureValue, pushBoxedTdzFlagRef } from "./capture-source-slot.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { getOrRegisterRefCellType } from "../index.js";
-import { mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
-import { observeProgramAbiFunctionValue } from "../program-abi-source-callable-planning.js";
-import { noJsHost } from "../js-errors.js";
+import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "../func-space.js";
+import { valTypesMatch } from "../shared.js";
+import {
+  observeProgramAbiFunctionValue,
+  sourceFunctionDeclarationForHandle,
+} from "../program-abi-source-callable-planning.js";
 import { emitCachedFuncClosureAccess } from "./method-trampolines.js";
+import { ensureCurrentThisGlobal } from "../statements/nested-declarations.js";
+import { coercionInstrs } from "../type-coercion.js";
 // (#4437) per-declaration `name` / §15.1.5 `length` carrier
 import { ensureFnMetaSubtype, fnMetaSlot, registerFnMetaFamily } from "../function-instance-meta.js";
 import { fnMetaSlotForMemberName } from "../function-instance-meta-methods.js"; // (#4440) static methods
@@ -32,6 +37,67 @@ import {
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
 } from "./funcref-wrapper-types.js";
+
+function hasExplicitThisParameter(declaration: ts.Node | undefined): declaration is ts.FunctionDeclaration {
+  if (!declaration || !ts.isFunctionDeclaration(declaration)) return false;
+  const first = declaration.parameters[0];
+  return first !== undefined && ts.isIdentifier(first.name) && first.name.text === "this";
+}
+
+/**
+ * (#5270 step 1.3) A `__fn_tramp_*` body is a PURE FORWARDER — it re-pushes the
+ * closure ABI's arguments and calls the lifted function, with nothing after the
+ * call. Its frame therefore must not survive: with a plain `call` the recursion
+ * `f → __fn_tramp_f → f` grows two frames per iteration, so a self-recursive
+ * function reached through its closure VALUE (`var eval = f; return eval(n-1)`)
+ * overflows even when `f`'s own tail call is promoted. `return_call` replaces
+ * the trampoline frame with the callee's, which is exactly what the forwarder
+ * means.
+ *
+ * The promotion is NOT decided here (merge-queue park of PR #5534, 2026-09-03):
+ * at mint time the callee's registered type can still be a placeholder — an
+ * async function's `() -> ()` record is rewritten to `() -> externref` by
+ * `rewriteFuncResultType` only after its body compiles — so a result match read
+ * now is not a result match at emission. The trampoline is emitted with a plain
+ * `call` and recorded in `ctx.trampolineForwarders`; `promoteTrampolineTailCalls`
+ * re-decides against the FINAL types once the index spaces are frozen.
+ */
+function trampolineForwardCall(funcIdx: number): Instr {
+  return { op: "call", funcIdx };
+}
+
+/**
+ * (#5270 step 1.3, finalize) Promote each recorded trampoline's trailing
+ * `call` to `return_call` when that is provably valid under the Wasm tail-call
+ * rule: the callee's result list is IDENTICAL to the trampoline's own declared
+ * results (same kind, same typeIdx, `ref` vs `ref null` distinguished). Because
+ * the `call` is the LAST instruction of a body that already validates, the
+ * operand stack at that point is exactly the callee's parameters over whatever
+ * lies below — and `return_call` ignores everything below — so identical
+ * results make the swap type-preserving with no further condition. Anything
+ * else keeps the plain `call`, exactly as before #5270.
+ *
+ * Must run after every pass that can retype a function or edit a body
+ * (`rewriteFuncResultType`, inlining, late-import shifts, `stackBalance`, the
+ * extern.convert_any repair): it reads the final module and only rewrites the
+ * opcode of one instruction.
+ */
+export function promoteTrampolineTailCalls(ctx: CodegenContext): void {
+  for (const trampIdx of ctx.trampolineForwarders) {
+    const tramp = definedFuncAt(ctx, trampIdx);
+    const last = tramp?.body[tramp.body.length - 1];
+    if (!tramp || !last || last.op !== "call") continue;
+    const callee = definedFuncAt(ctx, last.funcIdx);
+    const trampType = ctx.mod.types[tramp.typeIdx];
+    const calleeType = callee ? ctx.mod.types[callee.typeIdx] : undefined;
+    if (trampType?.kind !== "func" || calleeType?.kind !== "func") continue;
+    const a = trampType.results;
+    const b = calleeType.results;
+    if (a.length === b.length && a.every((t, i) => valTypesMatch(t, b[i]!))) {
+      tramp.body[tramp.body.length - 1] = { op: "return_call", funcIdx: last.funcIdx };
+    }
+  }
+}
 
 /**
  * (#2976) Emit the memoized, `ref.is_null`-guarded VALUE instance of a
@@ -125,7 +191,7 @@ function emitMemoizedNestedFnClosure(
     // local directly would otherwise snapshot its initial null value. Keep the
     // lazy timing (important when the function captures later initializers),
     // but fill the binding immediately before this closure copies it.
-    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name);
+    materializeHoistedFunctionValueBinding(ctx, fctx, cap.name, cap.mutable !== true);
     // (#2029 family A) Cross-fctx capture sourcing. `cap.outerLocalIdx` is a
     // slot in the function that DECLARED the nested fn; when this
     // materialization runs inside a DIFFERENT function (an object-literal
@@ -165,6 +231,11 @@ function emitMemoizedNestedFnClosure(
       (liveBoxType?.kind === "ref" || liveBoxType?.kind === "ref_null") &&
       liveBoxType.typeIdx === liveBox.refCellTypeIdx &&
       !recordedSlotHasLiveBoxType;
+    // (#5303) The closure ABI wants the box's inner VALUE — asked directly
+    // rather than through the old non-reference proxy, which mis-answered for a
+    // read-only capture whose own value type is a GC reference and forwarded the
+    // raw cell into the closure (`illegal cast` at moment's module init). See
+    // `expectsBoxedCaptureValue`.
     const useLiveImmutableBoxValue =
       !cap.mutable &&
       liveBoxLocalIdx !== undefined &&
@@ -172,9 +243,7 @@ function emitMemoizedNestedFnClosure(
       liveBoxType !== undefined &&
       (liveBoxType.kind === "ref" || liveBoxType.kind === "ref_null") &&
       liveBoxType.typeIdx === liveBox.refCellTypeIdx &&
-      cap.valType !== undefined &&
-      cap.valType.kind !== "ref" &&
-      cap.valType.kind !== "ref_null";
+      expectsBoxedCaptureValue(cap.valType, liveBox);
     if (cap.mutable && cap.valType) {
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
       const boxGlobal = capUnresolvedHere ? ctx.capturedBoxGlobals?.get(cap.name) : undefined;
@@ -197,8 +266,18 @@ function emitMemoizedNestedFnClosure(
         }
         fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
       } else {
-        // Stage 1 localMap-first lookup reverted — see calls.ts comment.
-        fctx.body.push({ op: "local.get", index: cap.outerLocalIdx });
+        // `cap.outerLocalIdx` belongs to the frame that declared the nested
+        // function.  When a lifted transitive caller materializes that
+        // function as a VALUE, the same binding lives in one of the caller's
+        // recorded capture slots instead.  This is the function-value twin of
+        // the direct-call repair in call-identifier.ts: keep the deliberately
+        // narrow resolver so owner-frame behaviour remains unchanged while an
+        // explicitly recorded lifted capture cannot reuse a stale parent
+        // index.  Deno's published `runImmediateCallbacks` closure reaches
+        // this path while materializing `runImmediates` and forwarding its
+        // mutable `queue` / `runNextTicks` dependencies.
+        const capSourceIdx = captureSourceSlot(fctx, cap);
+        fctx.body.push({ op: "local.get", index: capSourceIdx });
         fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
         const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
           kind: "ref",
@@ -238,9 +317,7 @@ function emitMemoizedNestedFnClosure(
         sourceType !== undefined &&
         (sourceType.kind === "ref" || sourceType.kind === "ref_null") &&
         sourceType.typeIdx === liveBox.refCellTypeIdx &&
-        cap.valType !== undefined &&
-        cap.valType.kind !== "ref" &&
-        cap.valType.kind !== "ref_null";
+        expectsBoxedCaptureValue(cap.valType, liveBox);
       fctx.body.push({ op: "local.get", index: capSourceIdx });
       if (sourceIsCanonicalBox) {
         fctx.body.push({ op: "struct.get", typeIdx: liveBox!.refCellTypeIdx, fieldIdx: 0 });
@@ -332,7 +409,8 @@ export function emitFuncRefAsClosure(
   // ONCE here (both paths below need it) but materialized lazily — `fnMetaSlot`
   // mints an interned string global, and a path that ends up not carrying the
   // slot should not leave one behind.
-  const metaDecl = ctx.funcMapOwnerDecl.get(funcName) ?? ctx.topLevelFunctionDeclarations.get(funcName);
+  const metaDecl = sourceFunctionDeclarationForHandle(ctx, funcIdx);
+  const explicitThisParam = hasExplicitThisParameter(metaDecl);
   // Constructibility belongs to the source function, not to whichever value
   // read happened to materialize its cached capture struct first. A self-read
   // can mint an ordinary function's artifact with `__constructible`, followed
@@ -340,10 +418,11 @@ export function emitFuncRefAsClosure(
   // Since artifacts are keyed by function identity, that disagreement omitted
   // one operand from the later `struct.new`. Normalize ordinary declarations
   // here so every materialization uses one stable layout.
+  // (#4661) Lane-INDEPENDENT (was `noJsHost || native-first`) — see the note at
+  // the function-EXPRESSION mint site in `closures.ts`.
   constructible =
     constructible ||
-    ((noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
-      metaDecl !== undefined &&
+    (metaDecl !== undefined &&
       ts.isFunctionDeclaration(metaDecl) &&
       metaDecl.asteriskToken === undefined &&
       !(metaDecl.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false));
@@ -378,7 +457,10 @@ export function emitFuncRefAsClosure(
     const tdzFlaggedNested = nestedCaptures.filter((c) => c.hasTdzFlag);
     const numTdzFlags = tdzFlaggedNested.length;
     // The lifted fn's signature is [valueCaps..., tdzFlagBoxes..., userParams...].
-    const userParams = sig.params.slice(numCaptures + numTdzFlags);
+    const sourceUserParams = sig.params.slice(numCaptures + numTdzFlags);
+    // Captures stay leading raw ABI slots; only the declaration's TS-only
+    // pseudo-this slot is removed from the first-class callable signature.
+    const userParams = explicitThisParam ? sourceUserParams.slice(1) : sourceUserParams;
     const results = sig.results;
 
     const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, userParams, results);
@@ -485,12 +567,19 @@ export function emitFuncRefAsClosure(
         trampolineBody.push({ op: "struct.get", typeIdx: structTypeIdx, fieldIdx: i + CLOSURE_CAPTURE_FIELD_BASE });
       }
     }
+    if (explicitThisParam) {
+      // Dynamic call/apply dispatch publishes its receiver out-of-band, just
+      // as it does for function-expression closures.
+      trampolineBody.push({ op: "global.get", index: ensureCurrentThisGlobal(ctx) });
+      trampolineBody.push(...coercionInstrs(ctx, { kind: "externref" }, sourceUserParams[0]!));
+    }
     for (let i = 0; i < userParams.length; i++) {
       trampolineBody.push({ op: "local.get", index: i + 1 });
     }
-    trampolineBody.push({ op: "call", funcIdx });
+    trampolineBody.push(trampolineForwardCall(funcIdx));
 
     const trampolineFuncIdx = mintDefinedFunc(ctx);
+    ctx.trampolineForwarders.add(trampolineFuncIdx);
     pushDefinedFunc(ctx, trampolineFuncIdx, {
       name: trampolineName,
       typeIdx: liftedFuncTypeIdx,
@@ -507,7 +596,7 @@ export function emitFuncRefAsClosure(
     // trailing args into the rest vec — without it a dynamic call of a
     // rest-param nested fn coerced arg0 straight to the vec param (guarded
     // cast → null) and the callee trapped reading `rest.length`.
-    const ownerDecl = ctx.funcMapOwnerDecl.get(funcName);
+    const ownerDecl = sourceFunctionDeclarationForHandle(ctx, funcIdx);
     const ownerHasRest =
       ownerDecl !== undefined &&
       ts.isFunctionLike(ownerDecl) &&
@@ -517,6 +606,9 @@ export function emitFuncRefAsClosure(
       funcTypeIdx: wrapperTypes.closureInfo.funcTypeIdx,
       returnType: results.length > 0 ? results[0]! : null,
       paramTypes: userParams,
+      minimumArgumentCount:
+        ctx.closureMinimumArgumentCountByFuncTypeIdx.get(wrapperTypes.closureInfo.funcTypeIdx) ??
+        wrapperTypes.closureInfo.minimumArgumentCount,
       ...(ownerHasRest ? { hasRestParam: true } : {}),
     };
     ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
@@ -543,7 +635,7 @@ export function emitFuncRefAsClosure(
     return { kind: "ref", typeIdx: structTypeIdx };
   }
 
-  const userParams = sig.params;
+  const userParams = explicitThisParam ? sig.params.slice(1) : sig.params;
 
   const wrapperTypes = constructible
     ? getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, sig.results)
@@ -557,13 +649,20 @@ export function emitFuncRefAsClosure(
   const trampolineName = `__fn_tramp_${funcName}_${ctx.closureCounter++}`;
   const trampolineBody: Instr[] = [];
 
+  if (explicitThisParam) {
+    // Bridge the closure ABI back to the raw declaration ABI's pseudo-this
+    // param without making it a positional user argument.
+    trampolineBody.push({ op: "global.get", index: ensureCurrentThisGlobal(ctx) });
+    trampolineBody.push(...coercionInstrs(ctx, { kind: "externref" }, sig.params[0]!));
+  }
   // Push the user-visible params (skip self at param 0)
   for (let i = 0; i < userParams.length; i++) {
     trampolineBody.push({ op: "local.get", index: i + 1 });
   }
-  trampolineBody.push({ op: "call", funcIdx });
+  trampolineBody.push(trampolineForwardCall(funcIdx));
 
   const trampolineFuncIdx = mintDefinedFunc(ctx);
+  ctx.trampolineForwarders.add(trampolineFuncIdx);
   pushDefinedFunc(ctx, trampolineFuncIdx, {
     name: trampolineName,
     typeIdx: liftedFuncTypeIdx,
@@ -601,19 +700,25 @@ export function materializeHoistedFunctionValueBinding(
   ctx: CodegenContext,
   fctx: FunctionContext,
   name: string,
+  reemitForImmutableCapture = false,
 ): boolean {
+  const alreadyMaterialized = fctx.materializedHoistedFunctionValueBindings?.has(name) === true;
   if (
     !fctx.hoistedFunctionValueBindings?.has(name) ||
     fctx.liftedCaptureNames?.has(name) ||
-    fctx.materializedHoistedFunctionValueBindings?.has(name) ||
+    (alreadyMaterialized && !reemitForImmutableCapture) ||
     fctx.materializingHoistedFunctionValueBindings?.has(name)
   ) {
-    return (
-      fctx.materializedHoistedFunctionValueBindings?.has(name) ||
-      fctx.materializingHoistedFunctionValueBindings?.has(name) ||
-      false
-    );
+    return alreadyMaterialized || fctx.materializingHoistedFunctionValueBindings?.has(name) || false;
   }
+
+  // Compilation visits both conditional arms, while only one arm runs. A
+  // sibling Function value emitted in the first arm therefore does not
+  // dominate a closure constructed in the second arm. Immutable captures may
+  // safely re-emit the materializer here: capture-carrying declarations reuse
+  // their per-activation memo and capture-free declarations reuse their module
+  // singleton, so this publishes the same Function object without changing
+  // assignment semantics. Mutable captures keep the one-site behavior above.
 
   const localIdx = fctx.localMap.get(name);
   const funcIdx = ctx.funcMap.get(name);
@@ -631,9 +736,15 @@ export function materializeHoistedFunctionValueBinding(
   // path too. Ordinary identifier reads make the same distinction; omitting
   // it here would make a hoisted `function f() {}` callable but report false
   // from IsConstructor once the stable lexical value had been materialized.
-  const declaration = ctx.funcMapOwnerDecl.get(name) ?? ctx.topLevelFunctionDeclarations.get(name);
+  // Prefer the handle-owned declaration so same-named cross-module functions
+  // keep their own constructibility; retain the legacy maps as a compatibility
+  // fallback for declarations registered before the structural index exists.
+  const declaration =
+    sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
+    ctx.funcMapOwnerDecl.get(name) ??
+    ctx.topLevelFunctionDeclarations.get(name);
+  // (#4661) Lane-INDEPENDENT (was `noJsHost || native-first`).
   const constructible =
-    (noJsHost(ctx) || ctx.targetProfile.semanticProviders === "native-first") &&
     declaration !== undefined &&
     ts.isFunctionDeclaration(declaration) &&
     declaration.asteriskToken === undefined &&

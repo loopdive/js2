@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://loopdive.github.io/js2wasm/ir/ir-module.schema.json",
-  "title": "js2wasm IR interchange module (v5.1)",
+  "title": "js2wasm IR interchange module (v5.4)",
   "description": "One serialized IR module (#3030 D1). Normative companion: docs/ir/ir-contract.md — the schema is the syntax gate; per-instruction operand/result typing is enforced by the IR verifier (the semantic conformance checker). Enum tables are append-only with frozen order (D2); any shape change requires an IR_FORMAT_VERSION bump.",
   "type": "object",
   "properties": {
@@ -468,7 +468,8 @@
         "if.stmt",
         "await",
         "async.return",
-        "async.throw"
+        "async.throw",
+        "string.repeat"
       ]
     },
     "instr": {
@@ -522,8 +523,32 @@
         {
           "if": { "properties": { "kind": { "const": "closure.new" } } },
           "then": { "properties": { "liftedFunc": { "$ref": "#/$defs/funcRef" } }, "required": ["liftedFunc"] }
+        },
+        {
+          "if": { "properties": { "kind": { "const": "string.repeat" } } },
+          "then": {
+            "properties": {
+              "value": { "$ref": "#/$defs/valueId" },
+              "count": { "$ref": "#/$defs/valueId" },
+              "encodingEvidence": { "enum": ["ascii", "utf8-guaranteed", "wtf16"] },
+              "provider": { "$ref": "#/$defs/funcRef" },
+              "countedStringAppendSite": { "$ref": "#/$defs/countedStringAppendSiteId" },
+              "countedStringAppendTripCount": {
+                "description": "Exact checker-authenticated f64 constant eligible for the bounded string.const native i32 repeat provider.",
+                "type": "integer",
+                "minimum": 2,
+                "maximum": 2147483647
+              }
+            },
+            "required": ["value", "count", "encodingEvidence", "provider", "alloc"]
+          }
         }
       ]
+    },
+    "countedStringAppendSiteId": {
+      "description": "Canonical source-qualified identity for one checker-proven counted string-append loop. The schema closes the encoded source kind, non-derived unit kind, safe fixed-width identity ordinals, fixed-width span fields, and canonical outer escaping. Safe-integer span ordering, recursive lexical-owner grammar, embedded-source equality, enclosing-function ownership, and exact inventoried source/owner/span membership are semantic checks: the parser/verifier authenticate grammar and the enclosing owner; projection/from-AST and final association recompute the exact retained tuple.",
+      "type": "string",
+      "pattern": "^ir-counted-string-append-site:v1:ir-source%3Av1%3A(?:[0-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]|900719925474099[0-1])%3A(?:entry|source|library|synthetic)%3A(?:[A-Za-z0-9_.!~*'()\\-]|%25(?!(?:2[1789ADE]|3[0-9]|4[1-9A-F]|5[0-9A]|5F|6[1-9A-F]|7[0-9A]|7E))[0-9A-F]{2})+:ir-unit%3Av1%3Air-source%253Av1%253A(?:[0-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]|900719925474099[0-1])%253A(?:entry|source|library|synthetic)%253A(?:[A-Za-z0-9_.!~*'()\\-]|%2525(?!(?:2[1789ADE]|3[0-9]|4[1-9A-F]|5[0-9A]|5F|6[1-9A-F]|7[0-9A]|7E))[0-9A-F]{2})+%3A(?:root|(?:[A-Za-z0-9_.!~*'()\\-]|%25[0-9A-F]{2})+)%3A(?:top-level-function|nested-function|function-expression|arrow-function|class-constructor|class-implicit-constructor|class-instance-method|class-static-method|class-instance-getter|class-static-getter|class-instance-setter|class-static-setter|class-instance-field-initializer|class-static-field-initializer|class-static-block|object-method|object-getter|object-setter|export-assignment|module-init|synthetic-support)%3A(?:[0-8][0-9]{15}|900[0-6][0-9]{12}|90070[0-9]{11}|90071[0-8][0-9]{10}|900719[0-8][0-9]{9}|9007199[0-1][0-9]{8}|90071992[0-4][0-9]{7}|900719925[0-3][0-9]{6}|9007199254[0-6][0-9]{5}|90071992547[0-3][0-9]{4}|9007199254740[0-8][0-9]{2}|90071992547409[0-8][0-9]|900719925474099[0-1]):[0-9]{16}:[0-9]{16}$"
     },
     "branch": {
       "type": "object",

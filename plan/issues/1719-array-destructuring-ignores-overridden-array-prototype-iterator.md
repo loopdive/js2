@@ -1,23 +1,22 @@
 ---
 id: 1719
 title: "Array destructuring ignores overridden Array.prototype[Symbol.iterator] ('items[Symbol.iterator] must be a function', 71 fails)"
-status: done
+status: in-progress
 created: 2026-05-29
-updated: 2026-05-30
-completed: 2026-05-30
+updated: 2026-08-27
 priority: high
 feasibility: hard
 reasoning_effort: high
 task_type: feature
 area: codegen, runtime
 language_feature: array-object-identity, destructuring-iterator-protocol
-goal: object-representation
-sprint: Backlog
-followups: [1749, 1750]
+goal: standalone-mode
+sprint: current
+followups: [1750]
 es_edition: 2015
 test262_fail: 71
 test262_category: language/expressions, language/statements
-related: [1016, 1320, 1021, 1130, 1732, 1632, 1665]
+related: [1016, 1021, 1130, 1320, 1632, 1665, 1732, 1749, 2038, 3164, 3302]
 canonical_tracking: array-object-value-representation
 supersedes_approach: intactness-gate (PR #937 / branch issue-1719-impl) — invalid premise
 dispatch: senior-dev-led foundational (multi-PR slices)
@@ -1013,3 +1012,315 @@ iterator is drained with the multi-value `__iterator_next` host import. See
   reverted because the cast-form closure misses arity-0 `__call_fn_method_0`
   dispatch (null iterator); the null-guard keeps it falling back cleanly. Hand-written
   shape, not in test262.
+
+## Reopened 2026-08-26 — standalone CPR returns a raw iterator to `__iterator_next`
+
+The original four-context CPR acceptance was complete only in the GC/host lane.
+The override-free byte lock was target-neutral, but every behavioral invocation
+used the JavaScript host runtime. The issue therefore closed the original 71
+test262 rows without proving the stronger claim that the same producer/consumer
+contract works in standalone mode.
+
+#4755's direct assignment-TDZ matrix supplied the missing observation. Its
+canonical assignment-destructuring CPR row compiles in standalone with zero
+host imports and reaches both `__drive_proto_iterator` and
+`__iterator_next`, then traps with an illegal cast before the first assignment
+target can run. Removing the TDZ guard produces the same trap. This is an
+existing iterator-carrier defect, not a #4755 regression and not evidence that
+the module-lexical writer is wrong.
+
+### Measured contract mismatch
+
+`emitArrayProtoIteratorDrive` in
+`src/codegen/expressions/proto-override.ts` returns the raw externref produced
+by the captured override closure. The declaration, parameter, for-of-head,
+assignment, and separately-landed #1749 spread consumers pass that raw value
+directly to `__iterator_next`.
+
+Those values happen to share a contract in the GC lane: the host helper accepts
+the compiled generator object and dispatches its `.next()`. The standalone
+runtime has a stricter, deliberately normalized ABI:
+
+1. `__iterator(raw iterable-or-iterator)` creates an `$IterRec` externref;
+2. `__iterator_next($IterRec)` returns `(done, value)`; and
+3. the native `__iterator_next` body casts its input to `$IterRec` before
+   dispatch.
+
+The CPR producer currently hands it a raw `$GenState_*`. The cast therefore
+traps even though the generator/iterator itself is valid. #2038 established the
+normalizer/consumer contract, while #3164 and #3302 already teach the native
+iterator finalizer how to drive non-capturing and capturing compiled-generator
+states after normalization. The missing operation is the single normalization
+boundary between the CPR driver and those existing consumers.
+
+### Native-generator receiver prerequisite
+
+The existing CPR fixtures are deliberately receiver-sensitive: their override
+is a generator function expression whose body yields `this[i]`. Native generator
+admission currently rejects any function expression whose body references
+`this`. Normalizing the resulting `$GenState_*` cannot help if that state was
+never compiled in the first place, so receiver preservation is a prerequisite
+of this repair rather than a weaker follow-up.
+
+Do not remove the general `this` rejection. The closure receiver-install plan
+explicitly excludes generators, and a lifted function expression's Wasm param 0
+is `__self`, not a JavaScript receiver. Broad admission would therefore
+miscompile ordinary `g.call(o)`/`g.apply(o)` generators and change unrelated
+override-free artifacts.
+
+In standalone only, admit this non-escaping shape through one pure AST predicate
+shared by the import prescan and emit-time candidate check:
+
+- a generator `FunctionExpression` is the direct RHS of an assignment;
+- that assignment is itself a standalone `ExpressionStatement`;
+- the LHS is exactly an already-supported CPR target,
+  `Array.prototype[Symbol.iterator]` or `Array.prototype.values`; and
+- the generator uses own-scope `this`, but not `super` or a nested-arrow
+  receiver shape.
+
+Extract the existing CPR target recognizer into a TS-AST-only leaf so
+`generators-native.ts` and `proto-override.ts` share the exact predicate without
+forming a codegen cycle. The exception is exactly
+`ctx.standalone && exactCprReceiverAssignmentShape(decl)`;
+`sourceNeedsGeneratorHostImports` already delegates to the native-candidate
+check, so the shared positive gate must keep host import prescan and actual
+admission in lockstep. WASI retains the old `this` rejection and `__gen_*` host
+route.
+
+For only that standalone positive shape, add optional
+`callTimeThisFieldIdx` metadata to `NativeGeneratorInfo` and append one
+immutable externref `receiver_this` field to its GenState after
+params/spills/delegation slots and before optional `pending`. Leave every
+existing candidate's layout byte-exact, including the same source compiled for
+WASI. At generator factory invocation, snapshot the live
+`ctx.currentThisGlobalIdx` into that field immediately before optional pending
+initialization and `struct.new`. The CPR driver invokes the closure through
+`__call_fn_method_0`, which has already installed the array receiver into
+`__current_this` at precisely that point.
+
+On resume, load `state.receiver_this` into a fresh externref local and bind
+`resumeFctx.localMap["this"]` to it before compiling the trampoline/body.
+`compileThisKeyword` gives that local precedence, so suspension and later
+resumption cannot observe the restored ambient `__current_this`. Do not set or
+reuse `synthesizedThis`: that path assumes a real receiver parameter and would
+alias the lifted closure's `__self`. Closure/funcref signatures, the CPR driver,
+the GenState iterator arms, and the `__iterator_next` ABI stay unchanged.
+
+### Implementation plan
+
+1. Normalize the CPR result once in the shared
+   `emitArrayProtoIteratorDrive`; do not patch its five consumers separately.
+   Resolve/register the canonical `__iterator` helper before capturing any
+   shiftable function/global index used by the driver. Change the helper seam
+   so it re-resolves `arrayIteratorOverrideGlobalIdx(ctx)` after that settlement
+   (or carries the allocator entry rather than a raw number); the callers'
+   pre-registration numeric index is not a stable identity.
+2. In standalone only, pass the raw override result through
+   `ensureLateImport(ctx, "__iterator", ...)`, flush the late-import shifts,
+   and store the resulting `$IterRec` externref as the drive result. The
+   existing `__iterator_next` consumers remain unchanged. WASI is outside this
+   standalone completion and must remain byte-exact.
+3. Keep GC/host byte-exact: no `__iterator` registration, no second override
+   lookup, no extra call, and no new branch in the emitted body. Keep every
+   override-free module byte-exact in all lanes.
+4. Reuse `ensureNativeIteratorRuntime` and its existing
+   `fillNativeIteratorLateArms` composition. Do not add a CPR-specific cast,
+   duplicate generator-state dispatcher, or teach `__iterator_next` to accept
+   an unnormalized union.
+5. Add the bounded, `ctx.standalone`-only CPR receiver-positive gate and keep an
+   unconditional `super`, WASI, and unrelated-generator `this` rejection. Split
+   the current body scan as needed so own-scope `this` is distinguishable from
+   `super`; nested-arrow receiver capture remains conservatively unsupported in
+   this slice.
+6. Under that same standalone gate, add the optional GenState `receiver_this`
+   field, snapshot live
+   `__current_this` at factory invocation, and rehydrate the resume function's
+   local `this` binding from the state. Preserve the pending-last invariant and
+   every old candidate's field indices.
+7. Give the issue-bearing `generateMultiModule` graph exact single-source
+   finalizer parity, guarded by
+   `ctx.standalone && ctx.protoIteratorDriverReserved`. Immediately after
+   `emitIteratorMethodExport(ctx)`, mirror the full conditional
+   truthiness-dependency/`addUnionImports(ctx)` block and then call
+   `fillNativeIteratorLateArms(ctx)`. This is after bodies/field getters settle
+   and before closure-method exports, so any reserved apply closure is still
+   completed by the existing later `fillApplyClosure` phase. Override-free
+   standalone, GC, and WASI graphs never enter the block.
+8. Under the same `ctx.standalone && ctx.protoIteratorDriverReserved` guard,
+   call `fillProtoIteratorDriver(ctx)` immediately after the multi-source
+   `emitClosureMethodCallExportN` loop and before `fillAccessorDrivers(ctx)`. At
+   that point `__call_fn_method_0` exists and neither DCE nor module freeze has
+   run.
+9. Fail closed if the standalone normalizer, receiver field, or either late
+   finalizer cannot be reserved/resolved. Mutate the native-iterator fill and
+   proto-driver fill independently; one must expose the raw-GenState trap and
+   the other the reserved `unreachable` stub.
+10. Do not silently fall back to the backing-store fast path after the override
+    has been observed, and do not reintroduce a host import.
+
+The order remains load-bearing even though the five current consumers already
+ensure `__iterator_next`, which installs the append-only standalone iterator
+runtime before this helper runs. Idempotently ensure/read `__iterator` first,
+then resolve the live override global and driver, call the driver, and normalize
+its returned externref. Re-resolution protects the allocator identity if a
+future caller reaches the shared helper before that eager consumer setup; it is
+not a claim that today's standalone lookup shifts every defined function.
+
+### Required proof
+
+- Run the existing declaration, parameter, for-of-head, assignment, and #1749
+  spread CPR shapes in standalone under the exnref-enabled child/runtime
+  harness. Require the override values, termination, and zero host imports.
+- Cover both `Array.prototype[Symbol.iterator]` and `.values` capture keys.
+- Exercise a non-capturing compiled generator (#3164) and a capturing generator
+  (#3302) so both native iterator-finalizer arms cross the normalized boundary;
+  include one receiver-plus-outer-capture fixture.
+- Exercise a re-entrant nested two-array drive: begin the outer CPR generator,
+  drain an inner array while the outer GenState is suspended, then resume the
+  outer drive. Each GenState must retain its exact call-time receiver. Pin the factory
+  `global.get $__current_this -> receiver_this` store and the resume
+  `struct.get receiver_this -> local this` load in caller-scoped WAT.
+- Keep an unrelated `g = function* () { yield this.x }` plus `g.call(o)` control
+  rejected or host-routed exactly as before, proving the positive admission gate
+  did not broaden.
+- Assert the standalone artifact contains live `__drive_proto_iterator`,
+  `__iterator`, and `__iterator_next` calls in that order, with no raw
+  `$GenState_*` value supplied directly to `__iterator_next`.
+- Because raw `$GenState_*` and `$IterRec` cross the same externref Wasm ABI,
+  bypassing normalization remains Wasm-valid and fails only at the native cast.
+  Require caller-scoped WAT adjacency/count (`drive -> iterator` exactly once;
+  `iterator_next` consumes only the normalized local) plus a runtime mutant that
+  bypasses normalization and reproduces the illegal-cast failure.
+- Mutate receiver admission, factory initialization, and resume rehydration
+  independently: restoring the old admission bail must regain a host import or
+  fail import-free instantiation; a null receiver field and an omitted resume
+  binding must each produce the wrong receiver-sensitive result.
+- Compare GC behavioral and binary artifacts before/after byte-for-byte for
+  both override keys. Compare override-free GC and standalone artifacts
+  byte-for-byte.
+- Compile a multi-source graph with the override producer and destructuring
+  consumer in separate sources; require exact source/closure identity and the
+  same standalone result in both source orders.
+- Prove WASI, GC/host, and every override-free artifact remain byte-exact, and
+  rerun the originating #4755 standalone assignment/destructuring TDZ-order row.
+- Rerun the #2038, #3164, #3302, native-iterator, four-context CPR, fallback,
+  layering, optimization, LOC/function-budget, and normal precommit/prepush
+  controls without baseline growth.
+
+### Acceptance criteria for the reopened issue
+
+- [ ] All five existing CPR consumers terminate and return the override values
+      in standalone with zero host imports.
+- [ ] The shared producer returns a normalized iterator record to the native
+      consumer; no consumer-local workaround or widened `__iterator_next` ABI
+      exists.
+- [ ] Capturing and non-capturing compiled generators both retain their current
+      native finalizer behavior, including exact call-time receiver identity
+      across suspension and a receiver-plus-capture composition.
+- [ ] In standalone, only the two non-escaping CPR assignment shapes gain
+      receiver state. Ordinary receiver-bearing generator function expressions
+      and every WASI candidate remain outside the native admission exception.
+- [ ] GC/host, WASI, and all override-free artifacts are byte-exact.
+- [ ] A source-separated producer/consumer graph preserves exact identity and
+      cannot fall back to the typed backing-store walk.
+- [ ] Focused iterator suites, mutation proof, TypeScript 7 and 5, formatting,
+      layering, fallback/oracle/coercion/optimization ratchets, LOC/function
+      budgets, and the unskipped precommit/prepush hooks pass.
+
+This repair is a standalone contract completion for the already-landed CPR,
+not a reopening of the old intactness-gate design. #1749 remains separately
+landed, but its shared-producer standalone lane is mandatory regression proof;
+#1750 remains outside this repair. No LOC or function-budget allowance is
+pre-authorized. Before every heavy command, commit, and push, require a finite,
+non-negative one-minute load strictly below `logical cores - 2`; run
+`pnpm run check:loc-budget` immediately before the signed commit.
+
+### 2026-08-26 implementation handover
+
+PR #4999 is a plan-only draft; no compiler source or runtime behavior changes
+belong to it. The architecture amendment above incorporates the receiver-state
+prerequisite exposed by the completed #4755 matrix and has received an
+independent read-only Sol review. It replaces the earlier assumption that
+normalizing the raw CPR result alone was sufficient.
+
+The next implementation session should start from current `main`, claim #1719,
+and execute the numbered plan without broadening generator receiver admission:
+first extract the shared AST-only CPR assignment predicate, then add the
+standalone-only GenState receiver slot/rehydration, normalize the shared driver
+result, and finally mirror the guarded multi-source finalizers. Land frequent
+signed checkpoints, keep GC/WASI and override-free artifacts byte-exact, run the
+strict `cores - 2` load gate before every heavy command/commit/push, and never
+skip precommit or prepush hooks. The #4755 regression in PR #4997 is the
+mandatory downstream ordering control.
+
+## 2026-08-27 dispatch update — finish the standalone CPR contract
+
+The reopened residual is still the standalone producer/consumer contract, not
+the historical intactness-gate approach. Before dispatch, refresh live
+`upstream/main`, verify the #4755 prerequisite and open-PR collision state, and
+re-run the exact raw-iterator reproducer against the current baseline.
+
+The bounded implementation sequence is:
+
+1. Land the shared AST-only CPR assignment predicate and the standalone-only
+   normalizer/fill/finalization parity. The first checkpoint must prove all five
+   existing consumers use `drive → __iterator → __iterator_next` with a
+   non-receiver generator and must leave GC/WASI and override-free artifacts
+   unchanged.
+2. Add only the immutable call-time-`this` receiver slot to `GenState`, with
+   resume rehydration and the capture/two-array reentrancy controls. Preserve
+   the current receiver until the generator completes; no broad generator or
+   `Array.prototype` admission is allowed.
+3. Mirror the guarded multi-source finalizers and add the exact standalone
+   receiver/override matrix. Require structural driver/next evidence, zero
+   host imports, strict native fill, and a value-level result; a compilation
+   that merely returns the expected value without the iterator path is not
+   acceptance evidence.
+
+This work is file-bounded to the CPR producer/consumer and its focused tests.
+Route unrelated iterator, GC eager-buffering, `#1750`, and array object-value
+representation findings to their existing owners. Land each coherent
+checkpoint as a ready PR only after its own static, focused, and normal hook
+gates pass.
+
+## 2026-08-27 checkpoint 1a — normalize the shared standalone CPR result
+
+The first implementation checkpoint closes only the already-admitted
+non-receiver producer/consumer ABI edge. It extracts one exact AST-only
+predicate for direct `Array.prototype[Symbol.iterator] = value` and
+`Array.prototype.values = value` statements, then changes the shared
+`emitArrayProtoIteratorDrive` producer in standalone mode to reserve and settle
+the canonical `__iterator` helper before retaining shiftable identities. The
+producer re-resolves the override global and CPR driver after settlement,
+drives the captured override once, normalizes the raw generator state exactly
+once, and stores that `$IterRec`-compatible externref for every existing
+`__iterator_next` consumer. No consumer-local workaround and no widened
+`__iterator_next` ABI is introduced.
+
+The non-standalone branch deliberately retains its prior caller-supplied
+override-global index and the direct `reserveProtoIteratorDriver` result. Exact
+artifact comparison pins GC and WASI unchanged for both override keys and pins
+the override-free standalone artifact unchanged. Focused WAT evidence requires
+one `__iterator` call and one authoritative store of its result. When the
+mandatory peephole pass fuses the first `local.set`/`local.get` pair, the exact
+`local.tee` value must feed only the established null guard, after which every
+`__iterator_next` reloads that same local; without fusion, every consumer also
+loads the stored local. Runtime evidence covers declaration, parameter,
+for-of-head, assignment, and #1749 spread for both override keys with zero host
+imports. The shipped-default inliner remains runtime-correct, while the
+structural probe explicitly disables and restores its environment setting.
+Child execution is bounded by timeout and rejects spawn errors, signals, and
+nonzero status.
+
+Checkpoint evidence is 19/19 focused tests across the new regression and the
+existing #1719 S1 controls, TypeScript 7 and 5, targeted formatting/lint, and
+the LOC/function ratchets. Production growth is +103 LOC without a budget
+baseline change. GC, WASI, and override-free standalone binaries/WAT are
+byte-identical to the exact parent; only the intended standalone override
+artifacts change.
+
+This does not close #1719. The bounded receiver-state/capture and re-entrant
+generator proof, guarded multi-source finalizer parity, source-order matrix,
+mutation proof, and test262 denominator remain the next checkpoints. The issue
+therefore stays `in-progress`; #1750 and the broader array object-value model
+remain out of scope.

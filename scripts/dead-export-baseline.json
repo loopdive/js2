@@ -1,4 +1,8 @@
 [
+  "src/codegen/array-tolocalestring.ts#buildExternJoinElementToString",
+  "src/codegen/array-tolocalestring.ts#elementToLocaleStringTail",
+  "src/codegen/array-tolocalestring.ts#ensureElementToLocaleStringInvoke",
+  "src/codegen/array-tolocalestring.ts#isLocalizedJoin",
   "src/codegen/builtin-tags.ts#getBuiltinParent",
   "src/codegen/extern-declarations.ts#getPseudoExternClassInfo",
   "src/codegen/extern-declarations.ts#resolveMethodDispatchTarget",
@@ -6,7 +10,10 @@
   "src/codegen/fallback-telemetry.ts#totalFallbackHits",
   "src/codegen/fnctor-field-provenance.ts#fnctorFieldProvenanceRecords",
   "src/codegen/fnctor-field-provenance.ts#resetFnctorFieldProvenance",
-  "src/codegen/program-abi-planning.ts#programAbiCallableRoleOrdinalsAreDistinct",
+  "src/codegen/generic-callback-result.ts#genericCallbackResultCall",
+  "src/codegen/program-abi-callable-roles.ts#programAbiCallableRoleOrdinalsAreDistinct",
+  "src/codegen/program-abi-module-callable-alias-planning.ts#assertPreparedModuleCallableAliasDescriptorCurrent",
+  "src/codegen/program-abi-module-callable-alias-planning.ts#preparedModuleCallableAliasBindings",
   "src/codegen/proven-receiver-stats.ts#resetProvenReceiverStats",
   "src/codegen/regex/vm.ts#asciiFold",
   "src/codegen/regex/vm.ts#classMatch",
@@ -16,6 +23,5 @@
   "src/codegen/regex/vm.ts#runAt",
   "src/codegen/regex/vm.ts#search",
   "src/codegen/regexp-standalone.ts#quickJsLibRegexpEngineConfig",
-  "src/codegen/value-tags.ts#jsStaticType",
-  "src/codegen/value-tags.ts#pushUndefF64"
+  "src/codegen/value-tags.ts#jsStaticType"
 ]

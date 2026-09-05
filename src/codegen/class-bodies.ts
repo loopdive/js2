@@ -5,23 +5,30 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts } from "../ts-api.js";
-import { findConstructorImplementation, hasStaticModifier } from "./ast-modifiers.js";
+import {
+  findConstructorImplementation,
+  hasDeclareModifier,
+  hasStaticModifier,
+  isStaticCtorMethod,
+} from "./ast-modifiers.js";
 import { nativeTypeFromTypeNode, nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
-import { isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
+import { isUndefinedDefaultOnlyParam, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType } from "../ir/types.js";
-import type { IrUnitId } from "../ir/identity.js";
-import { isBoundedPreparedNestedOrdinaryClass } from "../ir/class-accessor-safety.js"; // (#3522) nested implicit-ctor family
+// (#3522) nested implicit-ctor family
+import { irPreparedNestedOrdinaryClass, type IrNestedClassFieldCallAdmission, type IrUnitId } from "../ir/identity.js";
 import { isHostConstructibleBuiltin, isNativeCollectionBuiltin } from "./builtin-tags.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2637 B2) host-only Promise-subclass ctor gate
+import { emitStandalonePromiseFromExecutorValue } from "./promise-executor.js"; // native standalone Promise-subclass super(executor)
 // (#3132 S2a) Bounded async-generator METHOD drive: no-`this`/`super`/
 // `arguments` methods route through the same native producer as fn
 // declarations/expressions (the drive gate self-limits to standalone/wasi).
 import { emitAsyncGenerator, isAsyncGenDriveCandidate } from "./async-frame.js";
 import { genBodyReferencesThis, genBodyReferencesSuper, emitCachedFuncClosureAccess } from "./closures.js"; // (#3132 / #3123 fnctor parent closure)
 import { classMemberFuncKey, fnctorAncestorOfClass } from "./class-member-keys.js"; // (#1983 / #3123)
+import { dynamicClassKeyGlobalKey, dynamicClassMemberName, isDynamicClassMemberName } from "./class-dynamic-keys.js"; // (#5195 Step 1 / F1)
 import { recordFnMetaMemberDeclaration } from "./function-instance-meta-methods.js"; // (#4440)
-import { exactClassExpressionTypeName } from "./class-expression-identity.js";
+import { resolveClassHeritageAlias } from "./class-expression-identity.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
 import { commitClassStructLayout } from "./class-layout-registration.js";
 import { mintDefinedFunc, pushProgramAbiClassCallable } from "./program-abi-class-callable-planning.js";
@@ -32,7 +39,7 @@ import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";
-import type { CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
+import type { ClassDynamicMember, CodegenContext, FunctionContext, OptionalParamInfo } from "./context/types.js";
 import {
   buildDestructureNullThrow,
   destructureParamArray,
@@ -40,7 +47,14 @@ import {
   isNullOrUndefinedLiteral,
   structHintForBindingPattern,
 } from "./destructuring-params.js";
-import { emitThrowReferenceError, getFuncParamTypes } from "./expressions/helpers.js";
+import {
+  emitThrowReferenceError,
+  emitThrowTypeError,
+  getFuncParamTypes,
+  wasmFuncReturnsVoid,
+} from "./expressions/helpers.js";
+import { compileSpreadCallArgsWithArguments } from "./expressions/spread-arguments-call.js";
+import { findTdzViolatingParamRef, paramDefaultsReferenceArguments } from "./param-tdz.js";
 import { pushDefaultValue } from "./type-coercion.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import {
@@ -57,9 +71,11 @@ import {
 } from "./index.js";
 import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) string-builder fast-path parity in class methods
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
+import { compileStringLiteral } from "./string-ops.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
+import { UNDEF_F64_BITS } from "./value-tags.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
 import {
   emitStandaloneArrayConstructor, // (#2917) native `class Sub extends Array`
@@ -75,6 +91,7 @@ import {
   cacheParamDefaultArgc,
   emitF64ParamSentinelCheck,
   emitParamDefaultArgMissingCheck,
+  emitSetExtrasArgv,
   ensureCurrentThisGlobal, // (#2637 B2.3) read host `this` (__current_this) in the run-on-host ctor
   maybeSetArgcForKnownCall,
   paramDefaultNeedsArgc,
@@ -476,8 +493,75 @@ function computeImplicitDerivedCtorPrefix(
   return { implicitBuiltinParent, implicitForwarderArity, implicitStructCtorParams, prefixParams };
 }
 
-function compileExternrefArgument(ctx: CodegenContext, fctx: FunctionContext, arg: ts.Expression): void {
-  const argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
+/**
+ * A standalone Map/Set subclass constructor's first parameter is the parent
+ * iterable boundary. Keep that boundary open as externref even when a user
+ * annotation (for example `ReadonlyArray<readonly [K, V]>`) would otherwise
+ * register a `vec<tuple>` ABI. The native subclass provider consumes the
+ * already-evaluated carrier through its dynamic array readers; preserving the
+ * typed tuple ABI here would force a real `vec<externref>` carrier back through
+ * an incompatible tuple conversion before the constructor call.
+ */
+function standaloneCollectionCtorFirstArgType(
+  ctx: CodegenContext,
+  className: string,
+  paramIndex: number,
+  wasmType: ValType,
+): ValType {
+  const parentName = ctx.classBuiltinParentMap.get(className);
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    paramIndex === 0 &&
+    (parentName === "Map" || parentName === "Set") &&
+    (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
+    [...ctx.vecTypeMap.values()].includes(wasmType.typeIdx)
+  ) {
+    return { kind: "externref" };
+  }
+  return wasmType;
+}
+
+function compileExternrefArgument(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  arg: ts.Expression,
+  forceArrayLiteralVec = false,
+): void {
+  // A Map/Set iterable is an actual JavaScript array value at this boundary.
+  // TypeScript may contextually type its nested `[key, value]` elements as
+  // tuples, but the standalone subclass provider receives only the boxed
+  // value and reads it through `__extern_get_idx`. Reuse the established
+  // `_arrayLiteralForceVec` seam plus its collection-only nested-carrier mode
+  // so both the outer iterable and nested pair literals stay native vector
+  // carriers; do not reconstruct or re-evaluate the AST in the provider.
+  let carrier = arg;
+  while (
+    ts.isParenthesizedExpression(carrier) ||
+    ts.isAsExpression(carrier) ||
+    ts.isTypeAssertionExpression(carrier) ||
+    ts.isSatisfiesExpression(carrier) ||
+    ts.isNonNullExpression(carrier)
+  ) {
+    carrier = carrier.expression;
+  }
+  const shouldForceVec = forceArrayLiteralVec && (ctx.standalone || ctx.wasi) && ts.isArrayLiteralExpression(carrier);
+  const previousForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
+  const previousCollectionForceVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
+    ._arrayLiteralForceCollectionVec;
+  if (shouldForceVec) {
+    (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
+    (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })._arrayLiteralForceCollectionVec = true;
+  }
+  let argResult: ValType | null;
+  try {
+    argResult = compileExpression(ctx, fctx, arg, { kind: "externref" });
+  } finally {
+    if (shouldForceVec) {
+      (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = previousForceVec;
+      (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })._arrayLiteralForceCollectionVec =
+        previousCollectionForceVec;
+    }
+  }
   if (argResult === null) {
     emitUndefined(ctx, fctx);
     return;
@@ -616,6 +700,60 @@ function emitSetSubclassUserBrand(
   });
 }
 
+/**
+ * (#5195 Step 1) The kind tag {@link classDynamicMemberKind} answers for the
+ * member kinds that carry an installable value.
+ */
+function classDynamicMemberKind(member: ts.ClassElement): ClassDynamicMember["kind"] | undefined {
+  if (ts.isMethodDeclaration(member)) return "method";
+  if (ts.isGetAccessorDeclaration(member)) return "get";
+  if (ts.isSetAccessorDeclaration(member)) return "set";
+  return undefined;
+}
+
+/**
+ * (#5195 Step 1) The name to register a class METHOD or ACCESSOR under.
+ *
+ * Identical to {@link resolveClassMemberName} except that a ComputedPropertyName
+ * which does not fold yields the synthetic `__cmdyn$<ordinal>` name instead of
+ * `undefined`, and the member is recorded in `ctx.classDynamicMembers` so the
+ * key-evaluation and prototype-install lanes can find it. Every caller is a
+ * collection or emit loop that previously said `continue` on `undefined`; they
+ * keep that behaviour for the shapes this still declines (private names, and
+ * every non-standalone lane).
+ *
+ * Idempotent: the collection and emit passes both call it for the same member.
+ */
+export function resolveInstallableClassMemberName(
+  ctx: CodegenContext,
+  className: string,
+  decl: ts.ClassLikeDeclaration,
+  member: ts.ClassElement,
+): string | undefined {
+  if (!member.name) return undefined;
+  const folded = resolveClassMemberName(ctx, member.name);
+  if (folded !== undefined) return folded;
+  // Only an unfoldable COMPUTED key gets a synthetic name. A private name is
+  // already mangled by `resolveClassMemberName`; anything else that answers
+  // `undefined` is a shape this lane does not model.
+  if (!ctx.standalone || !ts.isComputedPropertyName(member.name)) return undefined;
+  const kind = classDynamicMemberKind(member);
+  if (kind === undefined) return undefined;
+  const ordinal = decl.members.indexOf(member);
+  if (ordinal < 0) return undefined;
+  const syntheticName = dynamicClassMemberName(ordinal);
+  let entries = ctx.classDynamicMembers.get(className);
+  if (entries === undefined) {
+    entries = [];
+    ctx.classDynamicMembers.set(className, entries);
+  }
+  if (!entries.some((e) => e.ordinal === ordinal)) {
+    entries.push({ ordinal, member, kind, isStatic: hasStaticModifier(member), syntheticName });
+    entries.sort((a, b) => a.ordinal - b.ordinal);
+  }
+  return syntheticName;
+}
+
 export function resolveClassMemberName(ctx: CodegenContext, name: ts.PropertyName): string | undefined {
   if (ts.isIdentifier(name)) return name.text;
   if (ts.isPrivateIdentifier(name)) return "__priv_" + name.text.slice(1);
@@ -625,6 +763,99 @@ export function resolveClassMemberName(ctx: CodegenContext, name: ts.PropertyNam
     return resolveComputedKeyExpression(ctx, name.expression);
   }
   return undefined;
+}
+
+/**
+ * (#5139) True when this class member needs an `arguments` object ONLY because a
+ * parameter default reads one (`method(x = arguments[2])`). Consulted at two
+ * sites that must agree: the collection phase (which registers the member in
+ * `ctx.funcUsesArguments` so CALLERS publish the overflow args through
+ * `__extras_argv`) and the emit phase (which materializes the object before the
+ * defaults run, per §10.2.11). A parameter literally named `arguments` shadows
+ * the object, so it is excluded.
+ */
+function methodParamDefaultsNeedArguments(member: ts.FunctionLikeDeclarationBase): boolean {
+  return (
+    member.body !== undefined &&
+    paramDefaultsReferenceArguments(member) &&
+    !member.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === "arguments")
+  );
+}
+
+const voidClearedInstanceFieldsCache = new WeakMap<ts.ClassLikeDeclaration, ReadonlySet<string>>();
+
+/**
+ * Collect instance fields that are explicitly cleared with `void` in this
+ * class's own lexical `this` scope.
+ *
+ * JavaScript packages commonly initialize a field with an array or class
+ * instance and later use `field = void 0` as a state transition. The checker
+ * keeps the initializer's narrow type in untyped JavaScript, but a native ref
+ * slot cannot preserve the distinct `undefined` value: coercing it back to the
+ * narrow carrier can materialize an empty object/array. Such fields need the
+ * ordinary dynamic externref carrier. Arrow functions are included because
+ * they inherit class `this`; nested ordinary functions and classes are not.
+ */
+function collectVoidClearedInstanceFields(ctx: CodegenContext, decl: ts.ClassLikeDeclaration): ReadonlySet<string> {
+  const cached = voidClearedInstanceFieldsCache.get(decl);
+  if (cached !== undefined) return cached;
+  const fields = new Set<string>();
+
+  const bareExpression = (expression: ts.Expression): ts.Expression => {
+    let bare = expression;
+    while (
+      ts.isParenthesizedExpression(bare) ||
+      ts.isAsExpression(bare) ||
+      ts.isTypeAssertionExpression(bare) ||
+      ts.isSatisfiesExpression(bare) ||
+      ts.isNonNullExpression(bare)
+    ) {
+      bare = bare.expression;
+    }
+    return bare;
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (
+      node !== decl &&
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isConstructorDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node))
+    ) {
+      return;
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      bareExpression(node.left.expression).kind === ts.SyntaxKind.ThisKeyword &&
+      ts.isVoidExpression(bareExpression(node.right))
+    ) {
+      const fieldName = resolveClassMemberName(ctx, node.left.name);
+      if (fieldName !== undefined) fields.add(fieldName);
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  for (const member of decl.members) {
+    if (ts.isPropertyDeclaration(member) && member.initializer) visit(member.initializer);
+    else if (
+      (ts.isConstructorDeclaration(member) ||
+        ts.isMethodDeclaration(member) ||
+        ts.isGetAccessorDeclaration(member) ||
+        ts.isSetAccessorDeclaration(member)) &&
+      member.body
+    ) {
+      visit(member.body);
+    }
+  }
+  voidClearedInstanceFieldsCache.set(decl, fields);
+  return fields;
 }
 
 // (#1983) `classMemberFuncKey` lives in the leaf module `class-member-keys.ts`
@@ -657,6 +888,48 @@ function resolveClassAccessorParameterType(
     if (selectedValueType !== undefined) return selectedValueType;
   }
   return nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, ctx.checker.getTypeAtLocation(param));
+}
+
+/**
+ * (#4618/#4646) Give a class DECLARATION its own per-site identity when its
+ * source name is already owned by a DIFFERENT declaration node.
+ *
+ * All the graph-wide class tables (`structMap`, `classSet`, `structFields`,
+ * `methodTable`, …) are keyed by class NAME. Two `class MySubclass` declarations
+ * in two different scopes are two different classes, but they collide on that
+ * one key: the second collection is a silent no-op and every use of the second
+ * class runs the FIRST one's compiled body — no invalid wasm, no compile error.
+ *
+ * Rather than re-key a map that also holds compiler-synthesised structs
+ * (`__regexp_match_vec`, `DisposableStack`, the native proto) and is read from
+ * ~50 sites, disambiguate at COLLECTION time: mint the same per-site synthetic
+ * identity class EXPRESSIONS already use. Scoping of the source name is then
+ * provided by the local binding the statement-position compiler emits.
+ *
+ * Returns the synthetic identity, or `undefined` when the declaration legitimately
+ * owns its name (nothing to disambiguate).
+ */
+export function mintScopedClassIdentity(ctx: CodegenContext, decl: ts.ClassDeclaration): string | undefined {
+  const existing = ctx.anonClassExprNames.get(decl);
+  if (existing !== undefined) return existing;
+  const sourceName = decl.name?.text;
+  if (sourceName === undefined) return undefined;
+  const owner = ctx.classDeclarationMap.get(sourceName);
+  // No owner yet, or this declaration IS the owner: the plain name is correct.
+  if (owner === undefined || owner === decl) return undefined;
+  const syntheticName = `__anonClass_${sourceName}_${ctx.anonTypeCounter++}`;
+  ctx.anonClassExprNames.set(decl, syntheticName);
+  collectClassDeclaration(ctx, decl, syntheticName);
+  // Bodies are compiled at the statement position — without the deferred flag
+  // the structMap-membership early-return would leave every method a stub.
+  ctx.deferredClassBodies.add(syntheticName);
+  // collectClassDeclaration publishes the source symbol GLOBALLY
+  // (`classExprNameMap`) — right for the one-per-name `const C = class {}`
+  // shape, but for a same-named class in another scope it would hijack every
+  // OTHER scope's reads of that name.
+  if (ctx.classExprNameMap.get(sourceName) === syntheticName) ctx.classExprNameMap.delete(sourceName);
+  ctx.functionNameMap.set(syntheticName, sourceName);
+  return syntheticName;
 }
 
 /** Collect all function declarations and interfaces */
@@ -697,17 +970,25 @@ export function collectClassDeclaration(
   let parentClassName: string | undefined;
   let parentStructTypeIdx: number | undefined;
   let parentFields: FieldDef[] = [];
+  // A property/element-access heritage expression is resolved at runtime and
+  // may be a host framework class (React.Component is the canonical case).
+  // Such a parent is allowed to replace derived instance fields with ordinary
+  // host objects. Keep closed-object fields on the externref carrier so that
+  // the host writeback and subsequent compiled reads observe one live slot.
+  let hasDynamicHostParent = false;
   if (decl.heritageClauses) {
     for (const clause of decl.heritageClauses) {
       if (clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0) {
         const baseExpr = clause.types[0]!.expression;
+        if (!ctx.standalone && !ctx.wasi)
+          hasDynamicHostParent = !ts.isIdentifier(baseExpr) && !ts.isClassExpression(baseExpr);
         if (ts.isIdentifier(baseExpr)) {
           // (#4291) The local import spelling is not the class identity. Hono's
           // published base is declared as `var Hono = class _Hono {}`, exported
           // as `HonoBase`, and imported through that alias. Resolve the exact
           // class-expression declaration so the derived struct is registered
           // as a subtype of the synthetic base struct whose bodies actually run.
-          parentClassName = exactClassExpressionTypeName(ctx, ctx.checker.getTypeAtLocation(baseExpr)) ?? baseExpr.text;
+          parentClassName = resolveClassHeritageAlias(ctx, baseExpr, new Set(), decl) ?? baseExpr.text;
           // Guard against circular inheritance (e.g., class X extends X)
           if (parentClassName === className) {
             parentClassName = undefined;
@@ -814,19 +1095,18 @@ export function collectClassDeclaration(
             ctx.classBuiltinParentMap.set(className, builtinAncestor);
             ctx.classExternrefBackedSet.add(className);
           }
-          // Mark parent struct as non-final so it can be extended
-          if (parentStructTypeIdx !== undefined) {
-            const parentTypeDef = ctx.mod.types[parentStructTypeIdx] as StructTypeDef;
-            if (parentTypeDef && parentTypeDef.superTypeIdx === undefined) {
-              // Mark parent as extensible (superTypeIdx = -1 means "sub with no super")
-              parentTypeDef.superTypeIdx = -1;
-            }
+        } else if (ts.isClassExpression(baseExpr)) {
+          parentClassName = ctx.anonClassExprNames.get(baseExpr);
+          if (parentClassName && parentClassName !== className) {
+            parentStructTypeIdx = ctx.structMap.get(parentClassName);
+            parentFields = ctx.structFields.get(parentClassName) ?? [];
+            ctx.classParentMap.set(className, parentClassName);
           }
         }
       }
     }
   }
-
+  if (parentStructTypeIdx !== undefined) (ctx.mod.types[parentStructTypeIdx] as StructTypeDef).superTypeIdx ??= -1;
   // Pre-register the struct type index BEFORE resolving field types.
   // This allows self-referencing fields (e.g. `next: ListNode | null` in class ListNode)
   // to resolve to `ref null $structTypeIdx` instead of falling back to externref.
@@ -848,6 +1128,7 @@ export function collectClassDeclaration(
     const declaredName = resolveClassMemberName(ctx, member.name);
     if (declaredName !== undefined) declaredPropertyByName.set(declaredName, member);
   }
+  const voidClearedInstanceFields = collectVoidClearedInstanceFields(ctx, decl);
 
   if (ctor?.body) {
     for (const stmt of ctor.body.statements) {
@@ -877,11 +1158,28 @@ export function collectClassDeclaration(
         // class that both declares and constructor-assigns its fields (the
         // ordinary TypeScript shape) silently keeps the f64 slot while its
         // locals narrow, which measures WORSE than no narrowing at all.
-        const fieldType =
-          nativeTypeOfDeclaration(ctx.checker, declaredPropertyByName.get(fieldName)) ??
-          resolveWasmType(ctx, fieldTsType);
+        const nativeFieldType = nativeTypeOfDeclaration(ctx.checker, declaredPropertyByName.get(fieldName));
+        let fieldType = nativeFieldType ?? resolveWasmType(ctx, fieldTsType);
+        if (
+          nativeFieldType === null &&
+          voidClearedInstanceFields.has(fieldName) &&
+          (fieldType.kind === "ref" || fieldType.kind === "ref_null")
+        ) {
+          fieldType = { kind: "externref" };
+        }
+        if (hasDynamicHostParent && (fieldType.kind === "ref" || fieldType.kind === "ref_null")) {
+          fieldType = { kind: "externref" };
+        }
         if (!ownFields.some((f) => f.name === fieldName)) {
-          ownFields.push({ name: fieldName, type: fieldType, mutable: true });
+          const declaration = declaredPropertyByName.get(fieldName);
+          ownFields.push({
+            name: fieldName,
+            type: fieldType,
+            mutable: true,
+            ...(declaration?.questionToken && !declaration.initializer && fieldType.kind === "f64"
+              ? { undefinedDefault: true as const }
+              : {}),
+          });
         }
       }
     }
@@ -902,8 +1200,26 @@ export function collectClassDeclaration(
         // narrowing locals without the fields they flow into measurably
         // pessimises (see the issue's round-34 table), so the field, the
         // params and the locals must move together.
-        const fieldType = nativeTypeOfDeclaration(ctx.checker, member) ?? resolveWasmType(ctx, fieldTsType);
-        ownFields.push({ name: fieldName, type: fieldType, mutable: true });
+        const nativeFieldType = nativeTypeOfDeclaration(ctx.checker, member);
+        let fieldType = nativeFieldType ?? resolveWasmType(ctx, fieldTsType);
+        if (
+          nativeFieldType === null &&
+          voidClearedInstanceFields.has(fieldName) &&
+          (fieldType.kind === "ref" || fieldType.kind === "ref_null")
+        ) {
+          fieldType = { kind: "externref" };
+        }
+        if (hasDynamicHostParent && (fieldType.kind === "ref" || fieldType.kind === "ref_null")) {
+          fieldType = { kind: "externref" };
+        }
+        ownFields.push({
+          name: fieldName,
+          type: fieldType,
+          mutable: true,
+          ...(member.questionToken && !member.initializer && fieldType.kind === "f64"
+            ? { undefinedDefault: true as const }
+            : {}),
+        });
       }
     }
   }
@@ -1007,9 +1323,9 @@ export function collectClassDeclaration(
   // (#1395) Register a class-object singleton global (externref, lazily
   // initialized). The bare class identifier `C` resolves to this global,
   // giving `Object.getOwnPropertyDescriptor(C, "m")` a real receiver to
-  // inspect. Skip for externref-backed builtin subclasses (#1366a) — those
-  // don't have a `$ClassName` WasmGC struct.
-  if (!ctx.classBuiltinParentMap.has(className)) {
+  // inspect. (#5191) NOT skipped for externref-backed builtin subclasses any
+  // more — that #1366a guard left them null-valued; see emitLazyClassObjectGet.
+  {
     const classObjectGlobalIdx = nextModuleGlobalIdx(ctx);
     ctx.mod.globals.push({
       name: `__class_${className}`,
@@ -1064,6 +1380,7 @@ export function collectClassDeclaration(
         const paramType = ctx.checker.getTypeAtLocation(param);
         // (#3673) explicit native annotation pins the constructor parameter type
         let wasmType = nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, paramType);
+        wasmType = standaloneCollectionCtorFirstArgType(ctx, className, i, wasmType);
         // Widen ref to ref_null for params with defaults
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
@@ -1174,6 +1491,14 @@ export function collectClassDeclaration(
     if (ctorOptionals) ctx.funcOptionalParams.set(initName, ctorOptionals);
     const ctorRest = ctx.funcRestParams.get(ctorName);
     if (ctorRest) ctx.funcRestParams.set(initName, ctorRest);
+    // (#5153 A.2) A constructor that reads `arguments` needs its call sites —
+    // `new C(...)` AND `super(...)` — to publish `__argc`/`__extras_argv`, the
+    // same contract methods get at L1502. Without this the `_init` body's
+    // arguments object saw argc 0 and no extras.
+    if (ctor && needsImplicitArgumentsObject(ctor)) {
+      ctx.funcUsesArguments.add(initName);
+      ctx.funcUsesArguments.add(ctorName);
+    }
   }
 
   // Register method functions (own methods defined on this class).
@@ -1185,7 +1510,7 @@ export function collectClassDeclaration(
   // first in source order.
   for (const member of decl.members) {
     if (!ts.isMethodDeclaration(member) || !member.name || !member.body) continue;
-    const methodName = resolveClassMemberName(ctx, member.name);
+    const methodName = resolveInstallableClassMemberName(ctx, className, decl, member);
     if (methodName === undefined) continue;
     const fullName = `${className}_${methodName}`;
     if (hasStaticModifier(member)) ctx.staticMethodSet.add(fullName);
@@ -1193,7 +1518,7 @@ export function collectClassDeclaration(
   }
   for (const member of decl.members) {
     if (ts.isMethodDeclaration(member) && member.name) {
-      const methodName = resolveClassMemberName(ctx, member.name);
+      const methodName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (methodName === undefined) continue; // dynamic computed name — skip
       ownMethodNames.add(methodName);
 
@@ -1264,6 +1589,12 @@ export function collectClassDeclaration(
         }
         // (#3673) explicit native annotation pins the parameter type
         let wasmType = nativeTypeOfDeclaration(ctx.checker, param) ?? resolveWasmType(ctx, paramType);
+        // (#5221) `m(item, options = void 0)` — an undefined-only parameter type
+        // is an absence of information, not a scalar contract. Must match the
+        // fctx-build phase below exactly. See `isUndefinedDefaultOnlyParam`.
+        if (isUndefinedDefaultOnlyParam(param, paramType)) {
+          wasmType = { kind: "externref" };
+        }
         // Widen ref to ref_null for params with defaults (caller passes ref.null as sentinel)
         if (param.initializer && wasmType.kind === "ref") {
           wasmType = { kind: "ref_null", typeIdx: (wasmType as any).typeIdx };
@@ -1318,7 +1649,7 @@ export function collectClassDeclaration(
       // Track methods that read `arguments` (#1053) so callers can
       // populate the __extras_argv global with runtime args beyond the
       // formal param count.
-      if (needsImplicitArgumentsObject(member)) {
+      if (needsImplicitArgumentsObject(member) || methodParamDefaultsNeedArguments(member)) {
         ctx.funcUsesArguments.add(fullName);
       }
 
@@ -1358,7 +1689,7 @@ export function collectClassDeclaration(
     }
 
     if (ts.isGetAccessorDeclaration(member) && member.name) {
-      const propName = resolveClassMemberName(ctx, member.name);
+      const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const accessorKey = `${className}_${propName}`;
       ctx.classAccessorSet.add(accessorKey);
@@ -1401,7 +1732,7 @@ export function collectClassDeclaration(
     }
 
     if (ts.isSetAccessorDeclaration(member) && member.name) {
-      const propName = resolveClassMemberName(ctx, member.name);
+      const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const accessorKey = `${className}_${propName}`;
       ctx.classAccessorSet.add(accessorKey);
@@ -1447,6 +1778,26 @@ export function collectClassDeclaration(
         if (accName) ownAccessorNames.add(accName);
       }
     }
+    // (#5309) A child's own INSTANCE FIELD shadows a same-named parent method or
+    // accessor — the field initializers install it on the instance, so `this.m`
+    // and `this.#m` are the field. Aliasing `Child_m` → `Parent_m` below is a
+    // PROGRAM-ABI claim that the child HAS that method, and three consumers
+    // believe it: the call site's `classMethodSet` probe, `classifyPrivateMember`
+    // (which reads `classMethodSet` before `structFields`, so `this.#m = v`
+    // raised the §13.15.2 "write to a private method" TypeError), and
+    // `resolveReceiverMethodClassName`. Excluding own field names drops all
+    // three; `#m` mangles to `__priv_m`, matching the alias suffix.
+    //
+    // INSTANCE and non-`declare` only: a static field must not stop an instance
+    // method of the same spelling from being inherited (statics go through
+    // `staticMethodSet`), and `declare m: T` installs no property at all.
+    const ownInstanceFieldNames = new Set<string>();
+    for (const member of decl.members) {
+      if (!ts.isPropertyDeclaration(member) || !member.name) continue;
+      if (hasStaticModifier(member) || hasDeclareModifier(member)) continue;
+      const fieldName = resolveClassMemberName(ctx, member.name);
+      if (fieldName !== undefined) ownInstanceFieldNames.add(fieldName);
+    }
 
     // Walk the parent chain to find all inherited methods and accessors
     // Guard against circular inheritance (e.g., class X extends X)
@@ -1465,13 +1816,30 @@ export function collectClassDeclaration(
           const suffix = legacyKey.substring(ancestor.length + 1);
           // Skip constructor-related entries
           if (suffix === "new" || suffix.startsWith("new_") || suffix === "init") continue;
+          // (#5195 F1) A parent member registered under the synthetic
+          // `__cmdyn$<ordinal>` name (its computed key is only known at runtime)
+          // must NOT be aliased into the child. The alias is a PROGRAM-ABI
+          // claim — `program-abi-class-callable-planning.ts` resolves it back to
+          // the canonical source member and asks `structuralClassMemberName` for
+          // its spec key, which is `undefined` for an unfoldable computed name;
+          // the planner then throws `no complete exact canonical class-member
+          // authority` and the whole module fails to compile. The ordinal is
+          // also the PARENT's, so the name is meaningless in the child's frame.
+          // Inheritance of these members is a runtime `[[Prototype]]` walk
+          // instead: `emitStandaloneClassProtoObject` links the child prototype
+          // `$Object` to the parent's, and `__class_proto_lookup` covers every
+          // class in such a hierarchy.
+          if (isDynamicClassMemberName(suffix.replace(/^(get|set)_/, ""))) continue;
           // Check if this is a getter/setter (get_X or set_X)
           const getMatch = suffix.match(/^get_(.+)$/);
           const setMatch = suffix.match(/^set_(.+)$/);
           if (getMatch || setMatch) {
             // Accessor inheritance
             const accPropName = (getMatch || setMatch)![1]!;
-            if (!ownAccessorNames.has(accPropName)) {
+            if (ownInstanceFieldNames.has(accPropName) && !ownAccessorNames.has(accPropName)) {
+              ctx.classFieldShadowedInheritedCallables.add(`${className}_${accPropName}`); // (#5309)
+            }
+            if (!ownAccessorNames.has(accPropName) && !ownInstanceFieldNames.has(accPropName)) {
               const childFullName = `${className}_${suffix}`;
               const childKey = classMemberFuncKey(ctx, childFullName); // (#1983)
               if (!ctx.funcMap.has(childKey)) {
@@ -1489,7 +1857,10 @@ export function collectClassDeclaration(
             // including those with underscores like my_method) (#799 WI6)
             const childFullName = `${className}_${suffix}`;
             const childKey = classMemberFuncKey(ctx, childFullName); // (#1983)
-            if (!ownMethodNames.has(suffix) && !ctx.funcMap.has(childKey)) {
+            if (ownInstanceFieldNames.has(suffix) && !ownMethodNames.has(suffix)) {
+              ctx.classFieldShadowedInheritedCallables.add(childFullName); // (#5309)
+            }
+            if (!ownMethodNames.has(suffix) && !ownInstanceFieldNames.has(suffix) && !ctx.funcMap.has(childKey)) {
               setProgramAbiInheritedClassCallableAlias(ctx, decl, childKey, funcIdx);
               ctx.classMethodSet.add(childFullName);
             }
@@ -1515,7 +1886,12 @@ export function collectClassDeclaration(
         ts.isSetAccessorDeclaration(member)
       ) {
         if (!member.name) continue;
-        const n = resolveClassMemberName(ctx, member.name);
+        // (#5195 Step 1) A member whose computed key is only known at runtime
+        // is carried under its synthetic name here so the prototype-`$Object`
+        // install walks it in declaration order; the install substitutes the
+        // runtime key. The host `__register_prototype` CSV never sees one —
+        // synthetic names are minted in the standalone lane only.
+        const n = resolveInstallableClassMemberName(ctx, className, decl, member);
         if (n === undefined) continue;
         if (seen.has(n)) continue;
         seen.add(n);
@@ -1523,6 +1899,43 @@ export function collectClassDeclaration(
       }
     }
     ctx.classMethodNames.set(className, protoMethodNames);
+  }
+
+  // (#5195 Step 1) One externref module global per runtime-keyed member, to
+  // carry the ToPropertyKey'd key from ClassDefinitionEvaluation (where the key
+  // expression must run, exactly once, in source order) to the prototype
+  // `$Object` install. Registered after every member loop above so the dynamic
+  // member ledger is complete; byte-inert for a class with no such member.
+  for (const dyn of ctx.classDynamicMembers.get(className) ?? []) {
+    const mapKey = dynamicClassKeyGlobalKey(className, dyn.ordinal);
+    if (ctx.classDynamicKeyGlobals.has(mapKey)) continue;
+    const keyGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: `__cmkey_${className}_${dyn.ordinal}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.classDynamicKeyGlobals.set(mapKey, keyGlobalIdx);
+  }
+
+  // (#5195 Step 2) The static sidecar `$Object`, for a class with a static
+  // member whose key is only known at runtime. Registered here so the global
+  // index is stable before any body bakes a read of it; the object itself is
+  // built lazily at ClassDefinitionEvaluation (`class-static-sidecar.ts`).
+  if (
+    ctx.standalone &&
+    !ctx.classStaticSidecarGlobals.has(className) &&
+    (ctx.classDynamicMembers.get(className) ?? []).some((member) => member.isStatic)
+  ) {
+    const sidecarGlobalIdx = nextModuleGlobalIdx(ctx);
+    ctx.mod.globals.push({
+      name: `__static_${className}`,
+      type: { kind: "externref" },
+      mutable: true,
+      init: [{ op: "ref.null.extern" }],
+    });
+    ctx.classStaticSidecarGlobals.set(className, sidecarGlobalIdx);
   }
 
   // (#1395) Collect own static method names — analog of the prototype loop
@@ -1538,9 +1951,14 @@ export function collectClassDeclaration(
     const seenStatic = new Set<string>();
     for (const member of decl.members) {
       if (!hasStaticModifier(member)) continue;
-      if (!ts.isMethodDeclaration(member)) continue;
-      if (!member.name) continue;
-      const n = resolveClassMemberName(ctx, member.name);
+      // (#5195 r3-4) `static constructor(){}` parses as a ConstructorDeclaration
+      // but is a static METHOD whose PropName is "constructor" (§15.7), so it
+      // owns a key on the class object like any other static method.
+      const n = isStaticCtorMethod(member)
+        ? "constructor"
+        : ts.isMethodDeclaration(member) && member.name
+          ? resolveClassMemberName(ctx, member.name)
+          : undefined;
       if (n === undefined) continue;
       if (seenStatic.has(n)) continue;
       seenStatic.add(n);
@@ -1552,10 +1970,28 @@ export function collectClassDeclaration(
   // Register static properties as module globals, and queue static `{ ... }`
   // blocks for execution. Both field initializers and static blocks must run
   // in source order during class evaluation (§15.7.10), so we iterate members
-  // once and push to the shared `staticInitExprs` queue in declaration order.
+  // once. Class DECLARATIONS join the module source-order queue; class
+  // EXPRESSIONS retain a per-expression queue that is emitted inline by
+  // ClassDefinitionEvaluation. Scheduling expression statics at module scope
+  // moves them past the rest of their containing expression/statement.
+  const classExpressionStaticEntries = ts.isClassExpression(decl)
+    ? (ctx.classExpressionStaticInitExprs.get(decl) ?? [])
+    : undefined;
+  if (ts.isClassExpression(decl) && !ctx.classExpressionStaticInitExprs.has(decl)) {
+    ctx.classExpressionStaticInitExprs.set(decl, classExpressionStaticEntries!);
+  }
   for (const member of decl.members) {
     if (ts.isClassStaticBlockDeclaration(member)) {
-      ctx.staticInitExprs.push({ staticBlock: member, className });
+      if (classExpressionStaticEntries) {
+        // The declaration collector intentionally registers a variable-bound
+        // class expression under both a visible and a synthetic identity.
+        // A static block is source syntax and must nevertheless execute once.
+        if (!classExpressionStaticEntries.some((entry) => entry.staticBlock === member)) {
+          classExpressionStaticEntries.push({ staticBlock: member, className });
+        }
+      } else {
+        ctx.staticInitExprs.push({ staticBlock: member, className });
+      }
       continue;
     }
     if (ts.isPropertyDeclaration(member) && member.name && hasStaticModifier(member)) {
@@ -1608,11 +2044,19 @@ export function collectClassDeclaration(
       // (e.g. `static f = () => this`) resolves to the class-object singleton
       // via `emitLazyClassObjectGet`, NOT to `undefined`.
       if (member.initializer) {
-        ctx.staticInitExprs.push({
-          globalIdx,
-          initializer: member.initializer,
-          className,
-        });
+        if (classExpressionStaticEntries) {
+          classExpressionStaticEntries.push({
+            initializer: member.initializer,
+            className,
+            staticPropKey: fullName,
+          });
+        } else {
+          ctx.staticInitExprs.push({
+            globalIdx,
+            initializer: member.initializer,
+            className,
+          });
+        }
       }
     }
   }
@@ -1675,7 +2119,13 @@ export function buildShapePropFlagsTable(ctx: CodegenContext): void {
  */
 export function collectDeclaredFuncRefs(ctx: CodegenContext, opts?: { additive?: boolean }): void {
   const refs = new Set<number>(opts?.additive ? ctx.mod.declaredFuncRefs : []);
+  const visited = new WeakSet<Instr[]>();
   function scanInstrs(instrs: Instr[]): void {
+    // Late IR is a DAG: helper/finalizer rewrites may share one instruction
+    // array between multiple parents. Its ref.func set is identity-invariant,
+    // so scan each array once rather than once per incoming edge.
+    if (visited.has(instrs)) return;
+    visited.add(instrs);
     for (const instr of instrs) {
       if (instr.op === "ref.func") {
         refs.add((instr as { op: "ref.func"; funcIdx: number }).funcIdx);
@@ -1728,6 +2178,11 @@ export interface ClassBodyCompileRouting {
   /** Exact non-terminal implicit-constructor support units installed during preparation. */
   readonly skipImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
   readonly skippedImplicitConstructorUnitIds?: IrUnitId[];
+  /**
+   * (#3522 F4) The one proof-derived admitted-class marker computed before
+   * selection. This routing consumes it; it never re-runs a syntax predicate.
+   */
+  readonly nestedClassFieldCallAdmission?: IrNestedClassFieldCallAdmission;
 }
 
 export function skipExactPreparedClassBody(
@@ -1789,6 +2244,11 @@ export function compileClassBodies(
     reportError(ctx, decl, `Unknown class struct type: ${className}`);
     return;
   }
+  // (#4646) Record by DECLARATION NODE that this class's bodies are emitted.
+  // The nested-class entry point used `structMap.has(className)` — a NAME test
+  // — as its "already compiled" guard; a same-named class in another scope
+  // therefore skipped its own bodies and inherited the first declaration's.
+  ctx.compiledClassBodies.add(decl);
 
   // (#779a) A nested class's enclosing function can remain mid-compilation,
   // with captured-global copies in its `fctx.body`. Compiling members replaces
@@ -1837,7 +2297,9 @@ export function skipPreparedClassConstructorBody(
       // bounded ordinary-class family — which excludes heritage, statics,
       // computed keys, and initialized fields, and therefore cannot reach the
       // shadow-identity inheritance surface (#4448).
-      const nestedFamilyOk = unit?.terminalOwnerId === null || isBoundedPreparedNestedOrdinaryClass(classDeclaration);
+      const nestedFamilyOk =
+        unit?.terminalOwnerId === null ||
+        irPreparedNestedOrdinaryClass(classDeclaration, routing.nestedClassFieldCallAdmission);
       if (
         unit?.kind !== "class-implicit-constructor" ||
         !nestedFamilyOk ||
@@ -1944,6 +2406,7 @@ function compileClassBodiesInner(
         const paramName = ts.isIdentifier(param.name) ? param.name.text : `__param${pi}`;
         const paramType = ctx.checker.getTypeAtLocation(param);
         let wasmType = resolveWasmType(ctx, paramType);
+        wasmType = standaloneCollectionCtorFirstArgType(ctx, className, pi, wasmType);
         // Widen ref to ref_null for params with defaults or optional params
         // (caller passes ref.null as sentinel). Must match collection phase (#702)
         if ((param.initializer || param.questionToken) && wasmType.kind === "ref") {
@@ -2035,7 +2498,12 @@ function compileClassBodiesInner(
           const tagValue = ctx.classTagMap.get(className) ?? 0;
           fctx.body.push({ op: "i32.const", value: tagValue });
         } else if (field.type.kind === "f64") {
-          fctx.body.push({ op: "f64.const", value: 0 });
+          if (field.undefinedDefault) {
+            fctx.body.push({ op: "i64.const", value: UNDEF_F64_BITS });
+            fctx.body.push({ op: "f64.reinterpret_i64" });
+          } else {
+            fctx.body.push({ op: "f64.const", value: 0 });
+          }
         } else if (field.type.kind === "i32") {
           fctx.body.push({ op: "i32.const", value: 0 });
         } else if (field.type.kind === "externref") {
@@ -2065,6 +2533,21 @@ function compileClassBodiesInner(
     // Compile constructor body — `this` maps to __self local
     fctx.localMap.set("this", selfLocal);
     ctx.currentFunc = fctx;
+
+    // (#5153 A.2) §10.2.11: a constructor that reads `arguments` gets its
+    // (unmapped — class bodies are strict) arguments object materialized
+    // BEFORE the parameter defaults run, exactly like the method arm below.
+    // Only the user ctor params are formals; `self` is the trailing param of
+    // `_init` and must stay out of the object.
+    if (ctor && needsImplicitArgumentsObject(ctor)) {
+      emitArgumentsObject(
+        ctx,
+        fctx,
+        params.map((p) => p.type),
+        0,
+        /* unmapped */ true,
+      );
+    }
 
     // (#1965) Does this implicit ctor forward to a real parent `_init`?
     // If so, the parent's init applies the forwarded params' defaults — this
@@ -2120,16 +2603,43 @@ function compileClassBodiesInner(
         // default's array literals to compile as vec (not tuple) — same
         // rationale as the method site below. See function-body.ts:701.
         const ctorIsArrayPatternExternref = ts.isArrayBindingPattern(param.name) && paramType.kind === "externref";
+        let defaultCarrier = param.initializer;
+        while (
+          defaultCarrier &&
+          (ts.isParenthesizedExpression(defaultCarrier) ||
+            ts.isAsExpression(defaultCarrier) ||
+            ts.isTypeAssertionExpression(defaultCarrier) ||
+            ts.isSatisfiesExpression(defaultCarrier) ||
+            ts.isNonNullExpression(defaultCarrier))
+        ) {
+          defaultCarrier = defaultCarrier.expression;
+        }
+        const collectionParent = ctx.classBuiltinParentMap.get(className);
+        const ctorIsCollectionArrayDefault =
+          (ctx.standalone || ctx.wasi) &&
+          paramIdx === 0 &&
+          (collectionParent === "Map" || collectionParent === "Set") &&
+          defaultCarrier !== undefined &&
+          ts.isArrayLiteralExpression(defaultCarrier);
         const ctorPrevForceVec = (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec;
-        if (ctorIsArrayPatternExternref) {
+        const ctorPrevCollectionForceVec = (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })
+          ._arrayLiteralForceCollectionVec;
+        if (ctorIsArrayPatternExternref || ctorIsCollectionArrayDefault) {
           (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = true;
+        }
+        if (ctorIsCollectionArrayDefault) {
+          (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })._arrayLiteralForceCollectionVec = true;
         }
         let ctorDfltType: ValType | null;
         try {
           ctorDfltType = compileExpression(ctx, fctx, param.initializer, paramType);
         } finally {
-          if (ctorIsArrayPatternExternref) {
+          if (ctorIsArrayPatternExternref || ctorIsCollectionArrayDefault) {
             (ctx as unknown as { _arrayLiteralForceVec?: boolean })._arrayLiteralForceVec = ctorPrevForceVec;
+          }
+          if (ctorIsCollectionArrayDefault) {
+            (ctx as unknown as { _arrayLiteralForceCollectionVec?: boolean })._arrayLiteralForceCollectionVec =
+              ctorPrevCollectionForceVec;
           }
         }
         if (ctorDfltType && !valTypesMatch(ctorDfltType, paramType)) {
@@ -2283,15 +2793,39 @@ function compileClassBodiesInner(
     const ctorMissingSuper = isDerivedClass && ctor?.body !== undefined && !constructorBodyHasSuperCall(ctor.body);
 
     if (ctorMissingSuper) {
-      // (#1682) Throw a real ReferenceError instance (not a bare string) so
-      // `e instanceof ReferenceError` holds for the caller. emitThrowReferenceError
-      // constructs via __new_ReferenceError and degrades to a string throw only
-      // when the constructor import is unavailable.
-      emitThrowReferenceError(
-        ctx,
-        fctx,
-        "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-      );
+      // A derived constructor that returns a primitive before calling
+      // `super()` still reaches [[Construct]]'s return-value check.  The
+      // missing-`super` ReferenceError is correct when the body falls through
+      // (or returns undefined), but a primitive return is the specified
+      // TypeError instead.  Keep this deliberately narrow: a single return
+      // statement with a checker-proven primitive can be diagnosed without
+      // replaying the whole constructor body, while all other missing-super
+      // bodies retain the established ReferenceError path. (#4450)
+      const onlyStatement = ctor?.body?.statements.length === 1 ? ctor.body.statements[0] : undefined;
+      if (
+        onlyStatement &&
+        ts.isReturnStatement(onlyStatement) &&
+        onlyStatement.expression &&
+        (ctx.checker.getTypeAtLocation(onlyStatement.expression).flags &
+          (ts.TypeFlags.NumberLike |
+            ts.TypeFlags.BooleanLike |
+            ts.TypeFlags.BigIntLike |
+            ts.TypeFlags.StringLike |
+            ts.TypeFlags.ESSymbolLike)) !==
+          0
+      ) {
+        emitThrowTypeError(ctx, fctx, "Derived constructors may only return an object or undefined");
+      } else {
+        // (#1682) Throw a real ReferenceError instance (not a bare string) so
+        // `e instanceof ReferenceError` holds for the caller. emitThrowReferenceError
+        // constructs via __new_ReferenceError and degrades to a string throw only
+        // when the constructor import is unavailable.
+        emitThrowReferenceError(
+          ctx,
+          fctx,
+          "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
+        );
+      }
     } else if (ctor?.body) {
       // (#2641) Hoist var + let/const declarations BEFORE the body loop, just
       // like free functions (function-body.ts). Without this, a constructor-local
@@ -2460,7 +2994,7 @@ function compileClassBodiesInner(
   for (const member of decl.members) {
     if (ts.isMethodDeclaration(member) && member.name && member.body) {
       if (skipExactPreparedClassBody(ctx, member, routing)) continue;
-      const methodName = resolveClassMemberName(ctx, member.name);
+      const methodName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (methodName === undefined) continue; // dynamic computed name — skip
       const fullName = `${className}_${methodName}`;
       const isStatic = hasStaticModifier(member);
@@ -2528,6 +3062,12 @@ function compileClassBodiesInner(
           wasmType = { kind: "ref_null", typeIdx: vecTypeIdx };
         } else {
           wasmType = bindingPatternNeedsWiden ? ({ kind: "externref" } as ValType) : resolveWasmType(ctx, paramType);
+          // (#5221) Mirror of the collection phase's undefined-default widening.
+          // These two lists MUST agree — a mismatch is invalid Wasm, not a wrong
+          // value. See `isUndefinedDefaultOnlyParam`.
+          if (isUndefinedDefaultOnlyParam(param, paramType)) {
+            wasmType = { kind: "externref" };
+          }
         }
         // Widen ref to ref_null for params with defaults or optional params
         // (caller passes ref.null as sentinel). Must match collection phase (#702)
@@ -2598,6 +3138,25 @@ function compileClassBodiesInner(
 
       ctx.currentFunc = fctx;
 
+      // (#5139) §10.2.11 creates the arguments object BEFORE the parameter
+      // defaults run, so `method(x = arguments[2])` must see a materialized
+      // object. The emission below the parameter loop is too late — the default
+      // read an unallocated slot and threw "Cannot access property on null or
+      // undefined". Hoist it (only for the bodies that need it; every other
+      // method keeps the original emission point and its bytes).
+      // `needsImplicitArgumentsObject` only scans the BODY, so a method whose
+      // `arguments` use lives solely in a default got no object at all.
+      const argumentsHoisted = methodParamDefaultsNeedArguments(member);
+      if (argumentsHoisted) {
+        emitArgumentsObject(
+          ctx,
+          fctx,
+          params.slice(isStatic ? 0 : 1).map((p) => p.type),
+          isStatic ? 0 : 1,
+          true,
+        );
+      }
+
       // Emit default-value initialization for method parameters with initializers.
       const defaultArgcLocal = member.parameters.some((param, i) => {
         if (!param.initializer) return false;
@@ -2628,9 +3187,20 @@ function compileClassBodiesInner(
           (ts.isObjectBindingPattern(param.name) || ts.isArrayBindingPattern(param.name)) &&
           isNullOrUndefinedLiteral(param.initializer);
 
+        // (#2121/#5139) Parameter-scope TDZ: a default that reads its own
+        // parameter or a later one (`m(x = x)`, `m(x = y, y)`) observes that
+        // binding uninitialized (§10.2.11) and must throw ReferenceError when it
+        // fires. `function-body.ts` has done this for plain functions since
+        // #2121; the class method/accessor lane read the still-zeroed local
+        // instead and returned silently. Shared detector: `param-tdz.ts`.
+        const tdzViolatingName = findTdzViolatingParamRef(member, pi);
+
         // Build the "then" block: compile default expression, local.set
         const savedBody = pushBody(fctx);
-        if (dstrNullDefault) {
+        if (tdzViolatingName !== undefined) {
+          emitThrowReferenceError(ctx, fctx, `Cannot access '${tdzViolatingName}' before initialization`);
+          fctx.body.push({ op: "unreachable" });
+        } else if (dstrNullDefault) {
           for (const ins of buildDestructureNullThrow(ctx, fctx)) fctx.body.push(ins);
         } else {
           // (#1451) For array binding patterns with externref param, force the
@@ -2700,7 +3270,7 @@ function compileClassBodiesInner(
       // Set up `arguments` object if the method body references it (#820).
       // Class methods (like standalone functions) need an arguments vec struct
       // so that `arguments.length` and `arguments[n]` work at runtime.
-      if (needsImplicitArgumentsObject(member)) {
+      if (needsImplicitArgumentsObject(member) && !argumentsHoisted) {
         const methodParamTypes = params.slice(isStatic ? 0 : 1).map((p) => p.type);
         const paramOffset = isStatic ? 0 : 1; // skip 'this' param for instance methods
         // Class bodies are always strict code → unmapped arguments (#779e).
@@ -2864,18 +3434,34 @@ function compileClassBodiesInner(
     }
   }
 
-  // Compile getter/setter accessor bodies
-  // Track which accessors have been compiled to avoid overwriting when
-  // both static and instance accessors share the same computed property name.
-  const compiledAccessors = new Set<string>();
+  // Compile getter/setter accessor bodies.
+  //
+  // (#5195 Step 1.6) Records the KIND each accessor slot was compiled for, not
+  // merely that it was compiled. Two rules meet on this one funcMap key:
+  //
+  //  - a static and an instance accessor of the same name share it today
+  //    (#5195 cluster B item 5), and the instance one must keep it — that is
+  //    the collision this set was introduced for;
+  //  - two accessors of the SAME kind and key are a legal redefinition, and
+  //    §15.7.14 installs the elements in source order, so the LAST one wins
+  //    (`get b(){throw}` then `get ['b'](){return 'B'}` must answer 'B').
+  //    Skipping the second kept the FIRST body, which is the opposite.
+  //
+  // Recompiling overwrites `func.body`/`func.locals` in the same slot, so the
+  // earlier body simply never ships.
+  const compiledAccessors = new Map<string, "static" | "instance">();
+  const accessorKindOf = (member: ts.ClassElement): "static" | "instance" =>
+    hasStaticModifier(member) ? "static" : "instance";
   for (const member of decl.members) {
     if (ts.isGetAccessorDeclaration(member) && member.name) {
       if (skipExactPreparedClassBody(ctx, member, routing)) continue;
-      const propName = resolveClassMemberName(ctx, member.name);
+      const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const getterName = `${className}_get_${propName}`;
-      if (compiledAccessors.has(getterName)) continue; // already compiled
-      compiledAccessors.add(getterName);
+      const getterKind = accessorKindOf(member);
+      const priorGetterKind = compiledAccessors.get(getterName);
+      if (priorGetterKind !== undefined && priorGetterKind !== getterKind) continue; // other kind owns the slot
+      compiledAccessors.set(getterName, getterKind);
       const getterLocalIdx = funcByName.get(classMemberFuncKey(ctx, getterName)); // (#1983)
       if (getterLocalIdx === undefined) continue;
 
@@ -2891,8 +3477,15 @@ function compileClassBodiesInner(
       const sig = ctx.checker.getSignatureFromDeclaration(member);
       const retType = sig ? ctx.checker.getReturnTypeOfSignature(sig) : undefined;
 
+      // (#5204) Mirror the METHOD rule three hundred lines above: a host-backed
+      // subclass's instance is a real JS object, not a WasmGC `$Class` value,
+      // so its accessor ABI must take the receiver as externref. This site
+      // hardcoded the struct ref, which is why the getter of a
+      // `class D extends Array` could not be bridged at all — the emitted
+      // signature was uncallable with the actual receiver, so `a.g` read NaN
+      // at init AND after init.
       const params: { name: string; type: ValType }[] = [
-        { name: "this", type: { kind: "ref", typeIdx: structTypeIdx } },
+        { name: "this", type: isExternrefBacked ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx } },
       ];
 
       // (#1681) Static accessor bodies reach `this` as the class-constructor
@@ -2979,11 +3572,13 @@ function compileClassBodiesInner(
 
     if (ts.isSetAccessorDeclaration(member) && member.name) {
       if (skipExactPreparedClassBody(ctx, member, routing)) continue;
-      const propName = resolveClassMemberName(ctx, member.name);
+      const propName = resolveInstallableClassMemberName(ctx, className, decl, member);
       if (propName === undefined) continue; // dynamic computed name — skip
       const setterName = `${className}_set_${propName}`;
-      if (compiledAccessors.has(setterName)) continue; // already compiled
-      compiledAccessors.add(setterName);
+      const setterKind = accessorKindOf(member);
+      const priorSetterKind = compiledAccessors.get(setterName);
+      if (priorSetterKind !== undefined && priorSetterKind !== setterKind) continue; // other kind owns the slot
+      compiledAccessors.set(setterName, setterKind);
       const setterLocalIdx = funcByName.get(classMemberFuncKey(ctx, setterName)); // (#1983)
       if (setterLocalIdx === undefined) continue;
 
@@ -2997,9 +3592,10 @@ function compileClassBodiesInner(
       }
       assertDirectClassBodyAllowed(ctx, setterName, member);
 
-      // First param is self, remaining are the setter parameters
+      // First param is self, remaining are the setter parameters.
+      // (#5204) Same externref-backed receiver rule as the getter above.
       const params: { name: string; type: ValType }[] = [
-        { name: "this", type: { kind: "ref", typeIdx: structTypeIdx } },
+        { name: "this", type: isExternrefBacked ? { kind: "externref" } : { kind: "ref", typeIdx: structTypeIdx } },
       ];
       for (let pi = 0; pi < member.parameters.length; pi++) {
         const param = member.parameters[pi]!;
@@ -3217,6 +3813,21 @@ function emitPromiseSubclassOnHostCtor(
   fctx.localMap.set("this", selfLocal);
   ctx.currentFunc = fctx;
 
+  // The host-side Promise species constructor is invoked by V8 through the
+  // dynamic closure bridge. Materialize its ordinary `arguments` object when
+  // the source constructor reads it (the bridge seeds `__argc` so the object
+  // preserves the native call's argument count). The direct-new constructor
+  // path remains unchanged; this is only the run-on-host capability path.
+  if (needsImplicitArgumentsObject(ctor)) {
+    emitArgumentsObject(
+      ctx,
+      fctx,
+      params.map((param) => param.type),
+      0,
+      /* unmapped */ true,
+    );
+  }
+
   // Default-value initialization for ctor params with initializers — identical
   // to the direct-new ctor path (defaultInitBase = 0 for a user ctor).
   {
@@ -3341,7 +3952,56 @@ export function compileSuperCall(
   onHost = false,
 ): void {
   const parentClassName = ctx.classParentMap.get(childClassName);
-  if (!parentClassName) return;
+  if (!parentClassName) {
+    const childDecl = ctx.classDeclarationMap.get(childClassName);
+    const hasRuntimeParent =
+      childDecl?.heritageClauses?.some(
+        (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword && clause.types.length > 0,
+      ) === true && !ctx.classBuiltinParentMap.has(childClassName);
+    const args = callExpr.arguments;
+
+    // (#4618) `class C extends runtimeValue { constructor(props) {
+    // super(props); ... } }` has no statically-resolved parent init function.
+    // The class-definition path already registered that live parent by the
+    // synthetic class identity; invoke it here with the allocated derived
+    // receiver, at the source-level SuperCall position. This preserves the
+    // critical ordering that a host-mirror pre/post hook cannot: code before
+    // super runs first, the parent initializes `this`, then subsequent
+    // constructor statements and derived fields observe that state.
+    if (hasRuntimeParent && !(ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
+      const importName = `__call_dynamic_class_parent_${args.length}`;
+      const funcIdx = ensureLateImport(
+        ctx,
+        importName,
+        Array.from({ length: args.length + 2 }, () => ({ kind: "externref" }) as ValType),
+        [],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (funcIdx !== undefined) {
+        addStringConstantGlobal(ctx, childClassName);
+        const nameIdx = ctx.stringGlobalMap.get(childClassName);
+        if (nameIdx !== undefined && nameIdx >= 0) {
+          fctx.body.push({ op: "global.get", index: nameIdx });
+        } else {
+          compileStringLiteral(ctx, fctx, childClassName);
+        }
+        fctx.body.push({ op: "local.get", index: selfLocal });
+        fctx.body.push({ op: "extern.convert_any" });
+        for (const arg of args) compileExternrefArgument(ctx, fctx, arg);
+        fctx.body.push({
+          op: "call",
+          funcIdx: ctx.funcMap.get(importName) ?? funcIdx,
+        });
+        return;
+      }
+    }
+
+    // Preserve ArgumentListEvaluation even when the dynamic-parent bridge is
+    // unavailable (standalone/WASI or a runtime spread not representable by
+    // the fixed-arity import yet).
+    for (const arg of args) evaluateArgumentForSideEffects(ctx, fctx, arg);
+    return;
+  }
 
   // (#1366a) Externref-backed subclass (extends Error / TypeError / ...).
   // `super(msg)` lowers to `__self = __new_<Parent>(msg)`. The host import
@@ -3374,14 +4034,45 @@ export function compileSuperCall(
       }
       return;
     }
+    // Deno's `SafePromise` is a direct subclass whose constructor is the pure
+    // forwarder `constructor(executor) { super(executor); }`.  The generic
+    // standalone builtin-subclass ladder represents Promise with an
+    // identity-only plain object, so routing this call through that ladder
+    // silently drops the executor and produces a value that native `.then`
+    // cannot consume.  Construct the real `$Promise` carrier through the same
+    // runtime-value executor bridge used by `new Promise(executor)` instead.
+    //
+    // Keep this before `resolveStandaloneBuiltinSuperCtorIdx`: once that
+    // resolver registers `__new_Promise@N`, the call is already committed to
+    // the placeholder carrier.  Arguments after the executor are still
+    // evaluated left-to-right for their side effects even though Promise
+    // ignores their values.
+    if (
+      builtinParent === "Promise" &&
+      isStandalonePromiseActive(ctx) &&
+      args.length > 0 &&
+      !ts.isSpreadElement(args[0]!) &&
+      emitStandalonePromiseFromExecutorValue(ctx, fctx, () => compileExternrefArgument(ctx, fctx, args[0]!))
+    ) {
+      for (let i = 1; i < args.length; i++) {
+        evaluateArgumentForSideEffects(ctx, fctx, args[i]!);
+      }
+      fctx.body.push({ op: "local.set", index: selfLocal });
+      emitSetSubclassProto(ctx, fctx, selfLocal, childClassName, builtinParent);
+      emitSetSubclassUserBrand(ctx, fctx, selfLocal, childClassName);
+      return;
+    }
     const hasSpread = args.some((a) => ts.isSpreadElement(a));
     const importName = getParentConstructorImportName(ctx, builtinParent);
     const forwardArity = getBuiltinConstructorForwardArity(ctx, builtinParent);
+    const forceCollectionArrayVec = builtinParent === "Map" || builtinParent === "Set";
     const forwardParams = externrefParams(forwardArity);
     // Standalone / WASI: explicit `super(...)` routes through the same shared
     // native-`__new_<Parent>` dispatch ladder as the implicit forwarder
     // (`resolveStandaloneBuiltinSuperCtorIdx`). Args are still evaluated below
-    // and forwarded (Array honors them; Object/vec builtins ignore them).
+    // and forwarded: Array honors them, Map/Set consume their first native
+    // array carrier, and Object/identity/vec/Weak* providers keep their
+    // existing bounded behavior.
     // JS-host mode / parents with no native ctor yet keep the host import.
     let funcIdx: number | undefined;
     const nativeCtorIdx = resolveStandaloneBuiltinSuperCtorIdx(ctx, builtinParent, forwardArity);
@@ -3396,7 +4087,11 @@ export function compileSuperCall(
       if (flatArgs) {
         for (let i = 0; i < forwardArity; i++) {
           if (i < flatArgs.length) {
-            compileExternrefArgument(ctx, fctx, flatArgs[i]!);
+            // Map/Set consume only the first parent argument as their iterable;
+            // keep any later constructor arguments on their ordinary lowering
+            // path so a tuple-typed second argument is not widened by this
+            // collection-specific carrier hint.
+            compileExternrefArgument(ctx, fctx, flatArgs[i]!, forceCollectionArrayVec && i === 0);
           } else {
             emitUndefined(ctx, fctx);
           }
@@ -3454,10 +4149,72 @@ export function compileSuperCall(
   const parentInitName = `${parentClassName}_init`;
   const parentInitIdx = ctx.funcMap.get(parentInitName);
   if (parentInitIdx === undefined) {
+    // A statically named parent can still be a plain top-level function
+    // (`class C extends Component`). There is intentionally no compiled class
+    // `_init` for that fnctor, but `super(args)` must call it with the already
+    // allocated derived receiver. Forward the canonical closure through the
+    // same host bridge used for runtime-valued heritage. React.Component is
+    // this exact ES5-constructor shape.
+    const fnctorParent = fnctorAncestorOfClass(ctx, childClassName);
+    const args = callExpr.arguments;
+    if (fnctorParent !== undefined && !(ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
+      const importName = `__call_dynamic_class_parent_${args.length}`;
+      const bridgeIdx = ensureLateImport(
+        ctx,
+        importName,
+        Array.from({ length: args.length + 2 }, () => ({ kind: "externref" }) as ValType),
+        [],
+      );
+      flushLateImportShifts(ctx, fctx);
+      const fnctorIdx = ctx.funcMap.get(fnctorParent);
+      if (bridgeIdx !== undefined && fnctorIdx !== undefined) {
+        const parentClosureType = emitCachedFuncClosureAccess(ctx, fctx, fnctorParent, fnctorIdx);
+        if (parentClosureType !== null) {
+          if (parentClosureType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+          fctx.body.push({ op: "local.get", index: selfLocal });
+          fctx.body.push({ op: "extern.convert_any" });
+          for (const arg of args) compileExternrefArgument(ctx, fctx, arg);
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(importName) ?? bridgeIdx });
+          return;
+        }
+      }
+    }
+    // (#5153 F) Standalone has no host bridge, and the old lowering evaluated
+    // the arguments and returned — the parent function was never CALLED, so a
+    // parent constructor that throws completed normally
+    // (`call-construct-error.js`). Call the compiled fnctor directly with the
+    // derived receiver installed as `__current_this`, so its body observes a
+    // `this` and any abrupt completion propagates out of `super()`.
+    //
+    // Deliberately NOT covered here: §10.2.2 step 13's return-override, where a
+    // parent returning an object REBINDS the derived `this`. That needs the
+    // ctor body's `this` slot to be re-pointed after `super()` and is filed as
+    // a residual (`call-expr-value.js`, `call-bind-this-value.js`).
+    if (fnctorParent !== undefined && (ctx.standalone || ctx.wasi) && !args.some((arg) => ts.isSpreadElement(arg))) {
+      const fnctorIdx = ctx.funcMap.get(fnctorParent);
+      const fnctorParamTypes = fnctorIdx === undefined ? undefined : getFuncParamTypes(ctx, fnctorIdx);
+      if (fnctorIdx !== undefined && fnctorParamTypes !== undefined && args.length <= fnctorParamTypes.length) {
+        const currentThisIdx = ensureCurrentThisGlobal(ctx);
+        fctx.body.push({ op: "local.get", index: selfLocal });
+        fctx.body.push({ op: "extern.convert_any" });
+        fctx.body.push({ op: "global.set", index: currentThisIdx });
+        for (let i = 0; i < args.length; i++) {
+          compileExpression(ctx, fctx, args[i]!, fnctorParamTypes[i]);
+        }
+        for (let i = args.length; i < fnctorParamTypes.length; i++) {
+          pushDefaultValue(fctx, fnctorParamTypes[i]!, ctx);
+        }
+        const finalFnctorIdx = ctx.funcMap.get(fnctorParent) ?? fnctorIdx;
+        fctx.body.push({ op: "call", funcIdx: finalFnctorIdx });
+        if (!wasmFuncReturnsVoid(ctx, finalFnctorIdx)) fctx.body.push({ op: "drop" });
+        return;
+      }
+    }
     // Parent is not a struct-backed user class with an init (should not
-    // happen — builtin parents took the branch above). Evaluate args for
-    // side effects to preserve §13.3.7.1 ArgumentListEvaluation.
-    for (const arg of callExpr.arguments) {
+    // happen outside a host fnctor parent — builtin parents took the branch
+    // above). Evaluate args for side effects to preserve
+    // §13.3.7.1 ArgumentListEvaluation.
+    for (const arg of args) {
       evaluateArgumentForSideEffects(ctx, fctx, arg);
     }
     return;
@@ -3473,6 +4230,7 @@ export function compileSuperCall(
   const flatArgs: ts.Expression[] | undefined = hasSpread ? (flattenStaticallyKnownArgs(args) ?? undefined) : [...args];
 
   let actualArgCount = 0;
+  let argcPublished = false;
   if (restInfo && !hasSpread) {
     // Parent ctor has a rest parameter: pack trailing args into a vec, the
     // same shape regular rest-param call sites build.
@@ -3513,19 +4271,43 @@ export function compileSuperCall(
     }
     actualArgCount = flatArgs.length;
   } else {
-    // Runtime spread that cannot be statically unpacked (#1551): evaluate
-    // operands left-to-right for side effects, then call the parent with
-    // default-padded params and argc 0 so the parent's own defaults fire.
-    for (const arg of args) {
-      evaluateArgumentForSideEffects(ctx, fctx, arg);
-    }
-    for (const t of paramTypes) {
-      pushDefaultValue(fctx, t, ctx);
+    // (#5153 A.1) Runtime spread. The old lowering evaluated the operands for
+    // side effects only, so `super(...iterable)` never ran GetIterator /
+    // IteratorStep / IteratorValue — an abrupt completion from a poisoned
+    // iterator was silently swallowed and the parent saw argc 0. Route through
+    // the same flatten-then-bind machinery ordinary spread calls use, which
+    // evaluates each argument exactly once and drives the full iterator
+    // protocol. `self` is the TRAILING param of `_init` and is pushed by the
+    // caller below, hence `trailingParamCount = 1` / the explicit param slice.
+    if (
+      paramTypes.length > 0 &&
+      compileSpreadCallArgsWithArguments(ctx, fctx, callExpr, parentInitIdx, 0, parentInitName, 1)
+    ) {
+      // The helper published `__argc`/`__extras_argv` itself.
+      argcPublished = true;
+    } else if (paramTypes.length === 0) {
+      // Zero-formal parent ctor: every flattened element is an "extra"
+      // (#2202's arm). `emitSetExtrasArgv` is stack-neutral and still walks the
+      // iterator protocol, so abrupt completions propagate.
+      emitSetExtrasArgv(ctx, fctx, args as unknown as ts.Expression[], 0);
+      maybeSetArgcForKnownCall(ctx, fctx, parentInitName, 0, 0);
+      argcPublished = true;
+    } else {
+      // Preconditions for the flatten path failed (e.g. no object runtime).
+      // Keep the historical best-effort lowering.
+      for (const arg of args) {
+        evaluateArgumentForSideEffects(ctx, fctx, arg);
+      }
+      for (const t of paramTypes) {
+        pushDefaultValue(fctx, t, ctx);
+      }
     }
     actualArgCount = 0;
   }
   // Let the parent's defaults/`arguments` machinery see the real arg count.
-  maybeSetArgcForKnownCall(ctx, fctx, parentInitName, actualArgCount, paramTypes.length);
+  if (!argcPublished) {
+    maybeSetArgcForKnownCall(ctx, fctx, parentInitName, actualArgCount, paramTypes.length);
+  }
   fctx.body.push({ op: "local.get", index: selfLocal });
   // Re-resolve: compiling arguments may have added late imports and shifted
   // function indices.

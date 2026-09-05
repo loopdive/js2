@@ -44,36 +44,47 @@ import {
   RE_FLAG_Y,
 } from "./regex/bytecode.js";
 
-/** Token kinds, packed into bits 0..2 of the decoder's result. */
+/** Token kinds, packed into bits 0..3 of the decoder's result. */
 export const TOKEN_UNSUPPORTED = 0;
-/** A single literal code unit; the unit is in bits 8..23. */
+/** A single literal code unit; the unit is in bits 9..24. */
 export const TOKEN_LITERAL = 1;
 /** `.` — compiles to `ReOp.ANY`. */
 export const TOKEN_ANY = 2;
 /** `|` — alternation separator. */
 export const TOKEN_PIPE = 3;
+/** `*` — greedy zero-or-more quantifier (Annex B `\\c` fallback only). */
+export const TOKEN_STAR = 4;
+/** `+` — greedy one-or-more quantifier (Annex B `\\c` fallback only). */
+export const TOKEN_PLUS = 5;
+/** `?` — greedy zero-or-one quantifier (Annex B `\\c` fallback only). */
+export const TOKEN_OPT = 6;
+/** `(` or `(?:` — a group opener; value 1 denotes non-capturing `(?:`. */
+export const TOKEN_GROUP_OPEN = 7;
+/** `)` — a group closer. */
+export const TOKEN_GROUP_CLOSE = 8;
 
 /**
  * The decoder packs its answer into one i32 so the callers need no
  * multi-value plumbing:
  *
- *   bits 0..2   kind      (TOKEN_*)
- *   bits 3..7   len       source code units consumed (always >= 1)
- *   bits 8..23  value     literal code unit, for TOKEN_LITERAL
+ *   bits 0..3   kind      (TOKEN_*)
+ *   bits 4..8   len       source code units consumed (always >= 1)
+ *   bits 9..24  value     literal code unit, for TOKEN_LITERAL
  */
-export const TOKEN_KIND_MASK = 0x7;
-export const TOKEN_LEN_SHIFT = 3;
+export const TOKEN_KIND_MASK = 0xf;
+export const TOKEN_LEN_SHIFT = 4;
 export const TOKEN_LEN_MASK = 0x1f;
-export const TOKEN_VALUE_SHIFT = 8;
+export const TOKEN_VALUE_SHIFT = 9;
 
 const DYN_TOKEN_HELPER = "__regex_dyn_token";
+const DYN_NAMED_GROUP_HELPER = "__regex_dyn_named_group";
 
-/** `kind | len << 3 | value << 8`, as a constant-folded i32 where possible. */
+/** `kind | len << 4 | value << 9`, as a constant-folded i32 where possible. */
 function packConst(kind: number, len: number, value: number): Instr[] {
   return [{ op: "i32.const", value: kind | (len << TOKEN_LEN_SHIFT) | (value << TOKEN_VALUE_SHIFT) }];
 }
 
-/** `kind | len << 3 | (<value instrs>) << 8` for a runtime-computed unit. */
+/** `kind | len << 4 | (<value instrs>) << 9` for a runtime-computed unit. */
 function packDynamic(kind: number, len: number, value: Instr[]): Instr[] {
   return [
     ...value,
@@ -105,6 +116,46 @@ const inRange = (local: number, lo: number, hi: number): Instr[] => [
   { op: "i32.and" },
 ];
 
+/** Decode a conservative ASCII IdentifierName in `(?<name>` to a group token. */
+// prettier-ignore
+function ensureDynamicNamedGroupTokenDecoder(ctx: CodegenContext, strDataRef: ValType): number {
+  const existing = ctx.nativeRegexHelpers.get(DYN_NAMED_GROUP_HELPER);
+  if (existing !== undefined) return existing;
+  const typeIdx = addFuncType(ctx, [strDataRef, { kind: "i32" }, { kind: "i32" }, { kind: "i32" }], [{ kind: "i32" }]);
+  const funcIdx = mintDefinedFunc(ctx);
+  ctx.nativeRegexHelpers.set(DYN_NAMED_GROUP_HELPER, funcIdx); ctx.funcMap.set(DYN_NAMED_GROUP_HELPER, funcIdx);
+  const [PDATA, POFF, I, END, START, NAME, CH, VALID, LEN] = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+  const dataTypeIdx = (strDataRef as { typeIdx: number }).typeIdx;
+  const load = (local: number): Instr[] => [{ op: "local.get", index: local }];
+  const read = (local: number): Instr[] => [{ op: "local.get", index: PDATA }, { op: "local.get", index: POFF }, { op: "local.get", index: local }, { op: "i32.add" }, { op: "array.get_u", typeIdx: dataTypeIdx }];
+  const set = (local: number): Instr[] => [{ op: "local.set", index: local }];
+  const c = (value: number): Instr[] => [{ op: "i32.const", value }];
+  const anyOf = (local: number, units: number[]): Instr[] => units.flatMap((unit, n) => [...eqConst(local, unit), ...(n ? ([{ op: "i32.or" }] as Instr[]) : [])]);
+  const letters = [...Array.from({ length: 26 }, (_, n) => 0x41 + n), ...Array.from({ length: 26 }, (_, n) => 0x61 + n)];
+  const start = anyOf(CH, [...letters, 0x24, 0x5f]);
+  const cont = anyOf(CH, [...letters, 0x24, 0x5f, ...Array.from({ length: 10 }, (_, n) => 0x30 + n)]);
+  const loopBody: Instr[] = [
+    ...load(NAME), ...load(END), { op: "i32.ge_s" }, { op: "br_if", depth: 1 }, ...read(NAME), ...set(CH), ...eqConst(CH, 0x3e),
+    { op: "if", blockType: { kind: "empty" }, then: [{ op: "br", depth: 2 }], else: [
+      ...eqConst(NAME, START), { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: start, else: cont },
+      { op: "local.get", index: VALID }, { op: "i32.and" }, ...set(VALID), ...load(NAME), ...c(1), { op: "i32.add" }, ...set(NAME),
+    ] },
+    { op: "br", depth: 0 },
+  ];
+  const scan: Instr[] = [
+    ...load(I), ...c(3), { op: "i32.add" }, ...set(START), ...load(START), ...set(NAME), ...c(1), ...set(VALID),
+    { op: "block", blockType: { kind: "empty" }, body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }] },
+    ...load(NAME), ...load(I), { op: "i32.sub" }, ...c(1), { op: "i32.add" }, ...set(LEN),
+    { op: "local.get", index: VALID },
+    { op: "local.get", index: NAME }, { op: "local.get", index: END }, { op: "i32.lt_s" }, { op: "i32.and" },
+    { op: "local.get", index: NAME }, { op: "local.get", index: START }, { op: "i32.gt_s" }, { op: "i32.and" },
+    { op: "local.get", index: LEN }, ...c(TOKEN_LEN_MASK), { op: "i32.le_s" }, { op: "i32.and" },
+    { op: "if", blockType: { kind: "val", type: { kind: "i32" } }, then: [...load(LEN), ...c(TOKEN_LEN_SHIFT), { op: "i32.shl" }, ...c(TOKEN_GROUP_OPEN), { op: "i32.or" }], else: packConst(TOKEN_UNSUPPORTED, 1, 0) },
+  ];
+  pushDefinedFunc(ctx, funcIdx, { name: DYN_NAMED_GROUP_HELPER, typeIdx, locals: [{ name: "start", type: { kind: "i32" } }, { name: "name", type: { kind: "i32" } }, { name: "ch", type: { kind: "i32" } }, { name: "valid", type: { kind: "i32" } }, { name: "len", type: { kind: "i32" } }], body: scan, exported: false });
+  return funcIdx;
+}
+
 /**
  * Emit (once) `__regex_dyn_token(pdata, poff, i, end) -> i32`.
  *
@@ -121,13 +172,20 @@ const inRange = (local: number, lo: number, hi: number): Instr[] => [
  * | `\c` + other      | LITERAL(`\`)  (Annex B)      | 1   |
  * | `\f\n\r\t\v`      | LITERAL(control)             | 2   |
  * | `\` + non-alnum   | LITERAL(that unit)           | 2   |
+ * | `\\c` + `*+?`       | STAR/PLUS/OPT quantifier      | 1   |
+ * | `\\c` + `{}`        | LITERAL(that unit)            | 1   |
+ * | `(`                 | GROUP_OPEN (capturing)        | 1   |
+ * | `(?:`               | GROUP_OPEN (non-capturing)    | 3   |
+ * | `)`                 | GROUP_CLOSE                   | 1   |
  * | ordinary unit     | LITERAL(unit)                | 1   |
  * | anything else     | UNSUPPORTED                  | 1   |
  *
  * Deliberately UNSUPPORTED (each would need engine features this runtime
  * grammar does not have, and guessing would risk a wrong match):
  * `\d \D \s \S \w \W \b \B \k \p \P`, octal / back-references (`\1`),
- * every other `\`+alphanumeric, and the metacharacters `^ $ * + ? ( ) [ ] { }`.
+ * every other `\`+alphanumeric, and the metacharacters `^ $ * + ? [ ] { }`.
+ * Plain and non-capturing group envelopes are tokenised explicitly; the
+ * runtime compiler validates their nesting before emitting SAVE records.
  *
  * `\c` not followed by an ASCII letter decodes as a **literal backslash of
  * width 1**, so the trailing `c` is re-scanned as its own literal token. That
@@ -143,6 +201,7 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
   const funcIdx = mintDefinedFunc(ctx);
   ctx.nativeRegexHelpers.set(DYN_TOKEN_HELPER, funcIdx);
   ctx.funcMap.set(DYN_TOKEN_HELPER, funcIdx);
+  const namedGroupDecoderIdx = ensureDynamicNamedGroupTokenDecoder(ctx, strDataRef);
 
   const PDATA = 0;
   const POFF = 1;
@@ -179,6 +238,29 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
         { op: "local.get", index: I },
         { op: "i32.add" },
         { op: "i32.const", value: delta },
+        { op: "i32.add" },
+        { op: "array.get_u", typeIdx: dataTypeIdx },
+      ],
+      else: [{ op: "i32.const", value: -1 }],
+    },
+  ];
+
+  /** Read a preceding source unit, or -1 before the pattern start. */
+  const readBehind = (delta: number): Instr[] => [
+    { op: "local.get", index: I },
+    { op: "i32.const", value: delta },
+    { op: "i32.add" },
+    { op: "i32.const", value: 0 },
+    { op: "i32.ge_s" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: PDATA },
+        { op: "local.get", index: POFF },
+        { op: "local.get", index: I },
+        { op: "i32.const", value: delta },
+        { op: "i32.add" },
         { op: "i32.add" },
         { op: "array.get_u", typeIdx: dataTypeIdx },
       ],
@@ -327,6 +409,29 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
     return out;
   })();
 
+  // Annex B's `\\c` fallback consumes only the backslash. The following `c`
+  // is an ordinary atom, so `\\c*`, `\\c+`, and `\\c?` quantify that `c`;
+  // unmatched braces remain literal identity escapes. Keep this context local
+  // to the fallback so ordinary dynamic `a*b` remains a loud refusal.
+  const annexBControlFallbackMeta: Instr[] = [
+    ...readBehind(-1),
+    { op: "i32.const", value: 0x63 },
+    { op: "i32.eq" },
+    ...readBehind(-2),
+    { op: "i32.const", value: 0x5c },
+    { op: "i32.eq" },
+    { op: "i32.and" },
+  ];
+
+  const annexBControlFallbackLiteral = cond(
+    annexBControlFallbackMeta,
+    packDynamic(TOKEN_LITERAL, 1, [{ op: "local.get", index: C }]),
+    cond(isMeta, UNSUPPORTED, packDynamic(TOKEN_LITERAL, 1, [{ op: "local.get", index: C }])),
+  );
+
+  const annexBControlFallbackQuantifier = (kind: number): Instr[] =>
+    cond(annexBControlFallbackMeta, packConst(kind, 1, 0), annexBControlFallbackLiteral);
+
   const body: Instr[] = [
     ...readAhead(0),
     { op: "local.set", index: C },
@@ -356,9 +461,43 @@ export function ensureDynamicPatternTokenDecoder(ctx: CodegenContext, strDataRef
         eqConst(C, 0x2e),
         packConst(TOKEN_ANY, 1, 0),
         cond(
-          eqConst(C, 0x5c),
-          backslash,
-          cond(isMeta, UNSUPPORTED, packDynamic(TOKEN_LITERAL, 1, [{ op: "local.get", index: C }])),
+          eqConst(C, 0x28),
+          cond(
+            eqConst(D, 0x3f),
+            cond(
+              eqConst(E, 0x3a),
+              packConst(TOKEN_GROUP_OPEN, 3, 1),
+              cond(
+                eqConst(E, 0x3c),
+                [
+                  { op: "local.get", index: PDATA },
+                  { op: "local.get", index: POFF },
+                  { op: "local.get", index: I },
+                  { op: "local.get", index: END },
+                  { op: "call", funcIdx: namedGroupDecoderIdx },
+                ],
+                UNSUPPORTED,
+              ),
+            ),
+            packConst(TOKEN_GROUP_OPEN, 1, 0),
+          ),
+          cond(
+            eqConst(C, 0x29),
+            packConst(TOKEN_GROUP_CLOSE, 1, 0),
+            cond(
+              eqConst(C, 0x2a),
+              annexBControlFallbackQuantifier(TOKEN_STAR),
+              cond(
+                eqConst(C, 0x2b),
+                annexBControlFallbackQuantifier(TOKEN_PLUS),
+                cond(
+                  eqConst(C, 0x3f),
+                  annexBControlFallbackQuantifier(TOKEN_OPT),
+                  cond(eqConst(C, 0x5c), backslash, annexBControlFallbackLiteral),
+                ),
+              ),
+            ),
+          ),
         ),
       ),
     ),

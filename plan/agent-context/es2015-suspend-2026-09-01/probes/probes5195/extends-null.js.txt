@@ -1,0 +1,7 @@
+/*---
+description: probe .tmp/es2015/probes5195/extends-null.js
+includes: [propertyHelper.js, compareArray.js]
+---*/
+class Foo extends null {}
+assert.sameValue(Object.getPrototypeOf(Foo.prototype), null);
+assert.sameValue(Foo, Foo.prototype.constructor);

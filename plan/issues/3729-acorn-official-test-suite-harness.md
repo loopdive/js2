@@ -16,6 +16,12 @@ language_feature: n/a
 goal: core-semantics
 origin: "user asked whether the dogfood harness runs the packages' own bundled unit tests — it didn't (npm tarballs strip test/); this adds the real suite via source acquisition"
 related: [1710, 3717, 3730, 3728]
+# 2026-09-02 regression fix (3/3518 → 3518/3518): `__register_fnctor_instance`
+# must canonicalize a host-mirror constructor value (+1 line in resolveImport).
+loc-budget-allow:
+  - src/runtime.ts
+func-budget-allow:
+  - src/runtime.ts::resolveImport
 ---
 
 # #3729 — acorn official test-suite harness
@@ -109,3 +115,15 @@ here — this issue is the harness):
       existing #2962 mechanism, not a new one.
 - [x] Residual failures triaged into buckets and filed as separate,
       properly scoped issues (#3730, #3728).
+
+## 2026-09-02 regression: 3410 → 3 / 3518 ("curPosition is not a function")
+
+Bisected to 839225bc52 (`fix(codegen): preserve dynamic Proxy and class-expression
+values`, PR #5374): `_maybeWrapCallableUnknownArity` now hands a closure that
+carries user static props (`Parser.parse`, `Parser.extend`) to the host as its
+`_wrapCallableForHost` mirror. `Parser.parse = function (input) { return new
+this(input) }` then reaches `__register_fnctor_instance` with `this` = the
+mirror, whose sidecar has no `prototype`, so every `Parser.prototype.m` method
+was invisible on `new this(...)` instances. Fix: canonicalize the constructor
+via `_unwrapForHost` before linking (src/runtime.ts). Verified locally:
+3518/3518 (100%). Regression test: `tests/npm-compat-acorn-react-regressions.test.ts`.

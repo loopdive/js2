@@ -56,6 +56,7 @@ import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { emitCachedMethodClosureAccess } from "./closures.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
+import { dynamicClassKeyGlobalKey, dynamicClassMemberOrdinal } from "./class-dynamic-keys.js"; // (#5195 Step 1)
 
 /** The `__priv_` prefix `resolveClassMemberName` gives `#private` element names. */
 const PRIVATE_NAME_PREFIX = "__priv_";
@@ -75,6 +76,43 @@ const PRIVATE_NAME_PREFIX = "__priv_";
  * a previous entry.
  */
 const ACCESSOR_FLAGS = (1 << 4) | (1 << 5) | (1 << 2);
+
+/**
+ * (#5318 Step 1) …with ONE exception: a RUNTIME-KEYED accessor pair.
+ *
+ * `class C { get [k]() {} set [k](v) {} }` registers its two halves under two
+ * DIFFERENT synthetic names (`__cmdyn$0` / `__cmdyn$1`), because the collector
+ * cannot know at compile time that the two key expressions evaluate to the same
+ * property key — only ClassDefinitionEvaluation does. So the two halves arrive
+ * as two separate `__defineProperty_accessor` calls carrying the SAME runtime
+ * key, and the legacy "both halves specified" reading makes the second install
+ * blank the first: `c[k]` read back `undefined` on every `cpn-class-*-accessors`
+ * row because the trailing `set` erased the `get`.
+ *
+ * §10.1.6.3 is a MERGE for exactly this case — a descriptor that specifies only
+ * `[[Get]]` preserves a live `[[Set]]` — so a dynamic half sets its own
+ * specified bit (8 = `[[Get]]`, 9 = `[[Set]]`) and leaves the other clear. A
+ * statically-named accessor keeps the legacy encoding: its two halves are ONE
+ * entry, so replace-both is already the right answer and the bytes do not move.
+ */
+const ACCESSOR_GET_SPECIFIED = 1 << 8;
+const ACCESSOR_SET_SPECIFIED = 1 << 9;
+
+/**
+ * The `__defineProperty_accessor` flag word for one installable accessor entry.
+ *
+ * Byte-identical to {@link ACCESSOR_FLAGS} for every accessor whose key folds at
+ * compile time; a runtime-keyed half additionally marks WHICH half it defines,
+ * so a sibling half under the same evaluated key merges instead of replacing.
+ */
+export function classAccessorInstallFlags(accessor: InstallableClassAccessor): number {
+  if (dynamicClassMemberOrdinal(accessor.name) === undefined) return ACCESSOR_FLAGS;
+  return (
+    ACCESSOR_FLAGS |
+    (accessor.getterFuncIdx !== undefined ? ACCESSOR_GET_SPECIFIED : 0) |
+    (accessor.setterFuncIdx !== undefined ? ACCESSOR_SET_SPECIFIED : 0)
+  );
+}
 
 /** One installable accessor member and the halves that resolved for it. */
 export interface InstallableClassAccessor {
@@ -125,6 +163,36 @@ export function installableClassAccessors(ctx: CodegenContext, className: string
  * with a half-written member — the stack is left unbalanced on that path, which
  * is exactly why the caller discards the body wholesale on `false`.
  */
+/**
+ * (#5195 Step 1) Push the spec-visible property KEY for `memberName` onto the
+ * stack as an externref.
+ *
+ * For an ordinary member that is the interned string constant. For a member
+ * registered under a synthetic `__cmdyn$<ordinal>` name the key is only known at
+ * runtime, and ClassDefinitionEvaluation has already stored the ToPropertyKey'd
+ * value in the member's `__cmkey_` global — read that instead. Returns `false`
+ * when a synthetic name has no global (nothing is pushed), which makes the
+ * caller abandon the whole prototype rather than install the bookkeeping name
+ * as if it were a property key.
+ */
+export function emitClassMemberKeyOperand(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  className: string,
+  memberName: string,
+): boolean {
+  const ordinal = dynamicClassMemberOrdinal(memberName);
+  if (ordinal === undefined) {
+    addStringConstantGlobal(ctx, memberName);
+    for (const instr of stringConstantExternrefInstrs(ctx, memberName)) fctx.body.push(instr);
+    return true;
+  }
+  const keyGlobalIdx = ctx.classDynamicKeyGlobals.get(dynamicClassKeyGlobalKey(className, ordinal));
+  if (keyGlobalIdx === undefined) return false;
+  fctx.body.push({ op: "global.get", index: keyGlobalIdx });
+  return true;
+}
+
 export function emitClassProtoAccessorInstalls(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -140,8 +208,7 @@ export function emitClassProtoAccessorInstalls(
   for (const accessor of accessors) {
     // Stack: [obj, key, getter | null, setter | null, flags]
     fctx.body.push({ op: "local.get", index: objLocal });
-    addStringConstantGlobal(ctx, accessor.name);
-    for (const instr of stringConstantExternrefInstrs(ctx, accessor.name)) fctx.body.push(instr);
+    if (!emitClassMemberKeyOperand(ctx, fctx, className, accessor.name)) return false;
 
     if (accessor.getterFuncIdx !== undefined) {
       if (
@@ -175,7 +242,7 @@ export function emitClassProtoAccessorInstalls(
       fctx.body.push({ op: "ref.null.extern" });
     }
 
-    fctx.body.push({ op: "f64.const", value: ACCESSOR_FLAGS });
+    fctx.body.push({ op: "f64.const", value: classAccessorInstallFlags(accessor) });
     fctx.body.push({ op: "call", funcIdx: defineAccessorIdx });
     fctx.body.push({ op: "drop" }); // helper returns the target; discard
   }

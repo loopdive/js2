@@ -23,6 +23,7 @@
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { getStringToNumberProvider, getToPrimitiveProvider } from "./coercion-engine.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js";
 import { addUnionImportsViaRegistry } from "./shared.js";
 import { getOrRegisterVecBaseType } from "./registry/types.js";
@@ -32,6 +33,8 @@ import { bagKeysTail, buildBagPushKeys } from "./carrier-bag-visibility.js"; // 
 // (#4160) prototype-index companion consult for the vec OOB Has (resolves to
 // `undefined` unless `ctx.standalone && ctx.protoIndexDirty` reserved it).
 import { protoIndexForInPushInstrs, protoIndexHasIdxInstrs } from "./proto-index-store.js";
+import { stringExoticPushKeysPrologue } from "./string-exotic-own-props.js"; // (#4491) §10.4.3 own index keys
+import { definedFuncAt } from "./func-space.js";
 
 /**
  * Everything the enumeration/array-like/object-static block reads from the
@@ -47,6 +50,8 @@ export interface ObjectEnumerationHelperState {
   ) => number;
   /** `ctx.standalone` — gates the native $Object array-like arms. */
   objArrayLikeArms: boolean;
+  /** Native `$Symbol` carrier index, ensured before this helper is built. */
+  symbolTypeIdx: number;
   anyStrTypeIdx: number;
   propEntryTypeIdx: number;
   propMapTypeIdx: number;
@@ -109,7 +114,7 @@ function nonObjectForInKeysIf(ctx: CodegenContext, boundaryObjectForInKeysIdx?: 
  * Locals it uses, as registered by the caller: 1=any(anyref), 2=lenF64(f64),
  * 3=lenTrunc(f64), 4=primExt(externref, the ToPrimitive scratch).
  */
-function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: number): Instr[] {
+function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: number, symbolTypeIdx: number): Instr[] {
   const MAX_SAFE = 9007199254740991; // 2^53 - 1
   const externGetIdx2036 = ctx.funcMap.get("__extern_get")!;
   const unboxIdx2036 = ctx.funcMap.get("__unbox_number")!;
@@ -137,12 +142,34 @@ function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: numbe
   const typeofStrIdx2036 = ctx.funcMap.get("__typeof_string");
   const strToNumIdx2036 = getStringToNumberProvider(ctx);
   const L_PRIM = 4; // scratch externref local (registered below)
+  // §7.1.4 ToNumber(Symbol) is abrupt.  Native Symbols cross the externref
+  // boundary as the `$Symbol` carrier, which otherwise falls through
+  // `__unbox_number`'s opaque-value NaN result and makes ToLength answer zero.
+  // Keep this discriminator local to the array-like length conversion: the
+  // `__unbox_number` fallback remains permissive for valid opaque object/array
+  // carriers used by unrelated numeric coercions.
+  const symbolToNumberGuard: Instr[] =
+    symbolTypeIdx >= 0
+      ? [
+          { op: "local.get", index: L_PRIM },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert a Symbol value to a number", {
+              forceInModuleCtor: true,
+            }),
+          },
+        ]
+      : [];
   const toNumberInstrs: Instr[] =
     toPrimIdx2036 !== undefined && typeofStrIdx2036 !== undefined && strToNumIdx2036 !== undefined
       ? [
           { op: "ref.null.extern" }, // hint: number/default (valueOf → toString)
           { op: "call", funcIdx: toPrimIdx2036 },
           { op: "local.tee", index: L_PRIM },
+          ...symbolToNumberGuard,
           { op: "call", funcIdx: typeofStrIdx2036 },
           {
             op: "if",
@@ -157,7 +184,12 @@ function buildObjectArrayLikeLengthArm(ctx: CodegenContext, objectTypeIdx: numbe
             ],
           },
         ]
-      : [{ op: "call", funcIdx: unboxIdx2036 }];
+      : [
+          { op: "local.set", index: L_PRIM },
+          ...symbolToNumberGuard,
+          { op: "local.get", index: L_PRIM },
+          { op: "call", funcIdx: unboxIdx2036 },
+        ];
   return [
     { op: "local.get", index: 1 },
     { op: "ref.test", typeIdx: objectTypeIdx },
@@ -252,6 +284,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       // vec = __objvec_new()
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: 7 },
+      // (#4491) §10.4.3 String-exotic own INDEX keys — see the native's doc.
+      ...stringExoticPushKeysPrologue(ctx, 7),
       // any = any.convert_extern(obj); if !$Object → an explicitly admitted
       // JS-owned object's own enumerable keys, otherwise the native carrier
       // bag's keys (or the empty vec).
@@ -369,10 +403,27 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   //   2. ALL own keys (`__obj_ordered_all`, incl. non-enumerable): add each to
   //      `seen` so it shadows the same name at lower (proto) levels.
   // The `seen` set is a fresh empty `$Object` (null $proto) used purely as a
-  // membership table via `__object_hasOwn`/`__extern_set` — this reuses the exact
-  // key hashing + equality the property map uses, so there is no native-string
-  // representation mismatch. The own-only test remains correct even after the
-  // Object.prototype companion has gained properties of its own.
+  // membership table via `__object_hasOwn`/`__extern_set_own` — this reuses the
+  // exact key hashing + equality the property map uses, so there is no
+  // native-string representation mismatch. The own-only test remains correct
+  // even after the Object.prototype companion has gained properties of its own.
+  //
+  // (#4653) The membership WRITE must be own-only. A null-`$proto` `$Object` is
+  // exactly how an ordinary object literal is represented in this runtime, so
+  // `__extern_set` treats `seen` as one and — after the explicit chain runs out
+  // — probes the IMPLICIT `Object.prototype` companion (`__extern_set_decide`'s
+  // `protoIndexSetDecisionInstrs` tail). Once a test installs an accessor on
+  // `Object.prototype` (the `propertyHelper.js` / `verifyProperty` family does
+  // this constantly), `seen[key] = key` INVOKES that user setter with the
+  // enumerated key as its argument and the shadow entry is never recorded. Two
+  // observable defects fall out: the setter fires from a bare `for (x in o)`
+  // (`language/statements/function/13.2-17-1` fails on `data === "data"` — the
+  // setter received the string `"constructor"`), and the shadow set stays empty
+  // so a name owned at two chain levels is yielded twice. `__extern_set_own` is
+  // the same data-write tail without any descriptor/proto consult; it exists
+  // only when the #4504 inherited-set runtime is active, which is also the only
+  // configuration in which `__extern_set` can walk a chain at all, so the
+  // fallback below is exact.
   //
   // params: 0=obj(externref)
   // locals: 1=any(anyref) 2=cur(ref null $Object) 3=arr(ref null $PropMap)
@@ -381,13 +432,22 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
   {
     const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object")!;
     const objectHasOwnIdx = ctx.funcMap.get("__object_hasOwn")!;
-    const externSetIdx = ctx.funcMap.get("__extern_set")!;
+    // (#4653) Prefer the own-only data write; see the note above.
+    const externSetOwnIdx = ctx.funcMap.get("__extern_set_own");
+    const seenSetIdx = externSetOwnIdx ?? ctx.funcMap.get("__extern_set")!;
+    /** `__extern_set_own` answers an i32 result code the shadow set ignores. */
+    const seenSetTail: Instr[] = externSetOwnIdx === undefined ? [] : [{ op: "drop" }];
     const body: Instr[] = [
       // vec = __objvec_new() ; seen = __new_plain_object()
       { op: "call", funcIdx: objVecNewIdx },
       { op: "local.set", index: 7 },
       { op: "call", funcIdx: newPlainObjectIdx },
       { op: "local.set", index: 8 },
+      // (#4491) Same §10.4.3 index keys as `__object_keys` above, and it MUST
+      // move in lockstep with it — `Object/keys/15.2.3.14-6-3` asserts the two
+      // agree on a String object, so teaching only one turns a vacuous
+      // both-empty pass into a real mismatch.
+      ...stringExoticPushKeysPrologue(ctx, 7),
       // any = any.convert_extern(obj); if !$Object → the carrier bag's keys, else empty (#4010 S3)
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
@@ -506,7 +566,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                       { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
                       { op: "extern.convert_any" },
                       { op: "local.set", index: 9 },
-                      // if !__object_hasOwn(seen, keyExt) → __extern_set(seen, keyExt, keyExt)
+                      // if !__object_hasOwn(seen, keyExt) → set_own(seen, keyExt, keyExt)
                       { op: "local.get", index: 8 },
                       { op: "local.get", index: 9 },
                       { op: "call", funcIdx: objectHasOwnIdx },
@@ -518,7 +578,8 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                           { op: "local.get", index: 8 },
                           { op: "local.get", index: 9 },
                           { op: "local.get", index: 9 },
-                          { op: "call", funcIdx: externSetIdx },
+                          { op: "call", funcIdx: seenSetIdx },
+                          ...seenSetTail,
                         ],
                       },
                       { op: "local.get", index: 5 },
@@ -581,7 +642,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     // arm is omitted and the body stays the original $ObjVec-or-0 to keep host
     // output byte-identical.
     const objLengthArm: Instr[] = objArrayLikeArms
-      ? buildObjectArrayLikeLengthArm(ctx, objectTypeIdx)
+      ? buildObjectArrayLikeLengthArm(ctx, objectTypeIdx, s.symbolTypeIdx)
       : [{ op: "f64.const", value: 0 }];
     // (#2186) `$__vec_base` arm: a real array literal / array result boxed to
     // externref is a `__vec_<elemKind>` struct subtyping `$__vec_base`. Its
@@ -694,6 +755,19 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     if (objArrayLikeArms) ctx.externGetIdxReserved = true;
   }
   const externSetIdx = ctx.funcMap.get("__extern_set")!;
+  // (#5148 cluster 4b/4c) `Object.assign`'s copy loop is a §20.1.2.1 step 5.c
+  // `Get(from, key)` + `Set(to, key, value, true)` pair, NOT a raw table copy:
+  // a source getter must RUN (and its abrupt completion propagate), and a
+  // refused write on a frozen / sealed / non-extensible / non-writable target
+  // must THROW. Both helpers are registered earlier in `ensureObjectRuntime`
+  // (`__extern_get` with the enumeration natives, `__extern_set_strict` right
+  // after `__reflect_set`), so their funcIdx is stable here. When either is
+  // absent the loop keeps its historical raw-read/lenient-write pair.
+  const assignGetIdx = ctx.funcMap.get("__extern_get");
+  const assignStrictSetIdx = ctx.funcMap.get("__extern_set_strict");
+  const objectKeysIdx = ctx.funcMap.get("__object_keys");
+  const externLengthIdx = ctx.funcMap.get("__extern_length");
+  const externGetIdx = ctx.funcMap.get("__extern_get_idx");
 
   // ── __object_values(externref obj) -> externref ──────────────────────────
   //
@@ -1017,23 +1091,130 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
     );
   }
 
+  // Finalized once the complete closed-struct shape set is known. Keeping this
+  // false while eager helpers are built prevents arbitrary externref sources
+  // (builtins, strings, symbols, proxies) from being mistaken for structs.
+  const closedSourceClassifierIdx = ctx.standalone
+    ? registerNative(
+        "__object_assign_closed_struct_source",
+        [{ kind: "externref" }],
+        [{ kind: "i32" }],
+        [],
+        [{ op: "i32.const", value: 0 }],
+      )
+    : undefined;
+
   // ── __object_assign(externref target, externref sources) -> externref ─────
   //
-  // ES §20.1.2.1 Object.assign(target, ...sources). `sources` is a $ObjVec of
+  // ES §20.1.2.1 Object.assign(target, ...sources). Step 1 applies §7.1.20
+  // ToObject to the target before any source is inspected; null and undefined
+  // therefore throw a TypeError. `sources` is a $ObjVec of
   // source externrefs (the call sites build it via __js_array_new/__js_array_push,
   // which standalone routes to __objvec_new/__objvec_push — same signatures). For
-  // each source that is one of our $Objects, copy every LIVE + enumerable own
-  // property into `target` via the native __extern_set (which itself grows/inserts
-  // and is a no-op on a non-$Object target). Sources that are not $Objects (e.g.
-  // null/undefined/primitives) are skipped, matching the spec's "ignore nullish
-  // sources" + our open-object-only own-key enumeration. Returns `target`.
+  // each open `$Object` source, copy every LIVE + enumerable own property into
+  // `target` via the native __extern_set. Finalization additionally admits
+  // user-declared closed structs through a screened classifier, then delegates
+  // their enumeration to `__object_keys` plus `__extern_get`. Other non-$Object
+  // sources (including nullish values, primitives, builtins, and proxies) retain
+  // their established paths. Returns `target`.
   //
   // params: 0=target(externref) 1=sources(externref)
   // locals: 2=any(anyref) 3=sv(ref null $ObjVec) 4=slen 5=si
   //         6=srcAny(anyref) 7=so(ref null $Object) 8=arr(ref $PropMap) 9=cap 10=i
   //         11=e(ref null $PropEntry) 12=srcExt(externref)
   {
+    // The helper is selected only for native-first/no-host lowering. Keep the
+    // host body byte-identical (its JS import already performs ToObject), but
+    // make the native path use the singleton-aware nullish predicate when the
+    // S1 representation is active. In legacy mode `ref.is_null` covers both
+    // null and the null-backed undefined representation.
+    const nullishPredicateIdx = ctx.funcMap.get("__extern_is_nullish");
+    const targetNullishCheck: Instr =
+      nullishPredicateIdx !== undefined ? { op: "call", funcIdx: nullishPredicateIdx } : { op: "ref.is_null" };
+    const nativeTargetGuard: Instr[] =
+      ctx.standalone || ctx.wasi || ctx.targetProfile.semanticProviders === "native-first"
+        ? [
+            { op: "local.get", index: 0 },
+            targetNullishCheck,
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot convert undefined or null to object", {
+                forceInModuleCtor: true,
+              }),
+            },
+          ]
+        : [];
+    // The `$Object` table walk remains the fast path. A stored builtin function
+    // value can receive a closed compiler struct through its uniform externref
+    // ABI, though: Deno reflectively copies `Object.assign` into primordials,
+    // then calls `ObjectAssign(globalThis, { __infra: infra })`. Such a source
+    // fails the `$Object` test, so the former helper silently copied nothing.
+    // The finalized `__object_keys` and `__extern_get` helpers already model
+    // closed-struct enumerable properties; reuse them only for that miss.
+    const classifiedClosedStructSourceCopy: Instr[] =
+      ctx.standalone &&
+      closedSourceClassifierIdx !== undefined &&
+      objectKeysIdx !== undefined &&
+      externLengthIdx !== undefined &&
+      externGetIdx !== undefined &&
+      assignGetIdx !== undefined &&
+      assignStrictSetIdx !== undefined
+        ? [
+            { op: "local.get", index: 12 },
+            { op: "call", funcIdx: closedSourceClassifierIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 12 },
+                { op: "call", funcIdx: objectKeysIdx },
+                { op: "local.set", index: 13 },
+                { op: "local.get", index: 13 },
+                { op: "call", funcIdx: externLengthIdx },
+                { op: "i32.trunc_sat_f64_s" },
+                { op: "local.set", index: 14 },
+                { op: "i32.const", value: 0 },
+                { op: "local.set", index: 15 },
+                {
+                  op: "block",
+                  blockType: { kind: "empty" },
+                  body: [
+                    {
+                      op: "loop",
+                      blockType: { kind: "empty" },
+                      body: [
+                        { op: "local.get", index: 15 },
+                        { op: "local.get", index: 14 },
+                        { op: "i32.ge_s" },
+                        { op: "br_if", depth: 1 },
+                        { op: "local.get", index: 13 },
+                        { op: "local.get", index: 15 },
+                        { op: "f64.convert_i32_s" },
+                        { op: "call", funcIdx: externGetIdx },
+                        { op: "local.set", index: 16 },
+                        // Set(target, key, Get(source, key), true)
+                        { op: "local.get", index: 0 },
+                        { op: "local.get", index: 16 },
+                        { op: "local.get", index: 12 },
+                        { op: "local.get", index: 16 },
+                        { op: "call", funcIdx: assignGetIdx },
+                        { op: "call", funcIdx: assignStrictSetIdx },
+                        { op: "local.get", index: 15 },
+                        { op: "i32.const", value: 1 },
+                        { op: "i32.add" },
+                        { op: "local.set", index: 15 },
+                        { op: "br", depth: 0 },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ]
+        : [];
     const body: Instr[] = [
+      ...nativeTargetGuard,
       // any = any.convert_extern(sources) ; if !$ObjVec → return target
       { op: "local.get", index: 1 },
       { op: "any.convert_extern" },
@@ -1133,20 +1314,44 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                               {
                                 op: "if",
                                 blockType: { kind: "empty" },
-                                then: [
-                                  // __extern_set(target, extern.convert_any(e.key),
-                                  //              extern.convert_any(e.value))
-                                  { op: "local.get", index: 0 },
-                                  { op: "local.get", index: 11 },
-                                  { op: "ref.as_non_null" },
-                                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
-                                  { op: "extern.convert_any" },
-                                  { op: "local.get", index: 11 },
-                                  { op: "ref.as_non_null" },
-                                  { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
-                                  { op: "extern.convert_any" },
-                                  { op: "call", funcIdx: externSetIdx },
-                                ],
+                                then:
+                                  assignGetIdx !== undefined && assignStrictSetIdx !== undefined
+                                    ? ([
+                                        // §20.1.2.1 step 5.c.ii:
+                                        //   propValue = ? Get(from, nextKey)
+                                        //   ? Set(to, nextKey, propValue, true)
+                                        // Reading through `__extern_get` runs a
+                                        // source ACCESSOR (and lets its throw
+                                        // escape); writing through
+                                        // `__extern_set_strict` turns a refused
+                                        // write into the spec's TypeError.
+                                        { op: "local.get", index: 0 },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                        { op: "extern.convert_any" },
+                                        { op: "local.get", index: 12 },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                        { op: "extern.convert_any" },
+                                        { op: "call", funcIdx: assignGetIdx },
+                                        { op: "call", funcIdx: assignStrictSetIdx },
+                                      ] satisfies Instr[])
+                                    : ([
+                                        // __extern_set(target, extern.convert_any(e.key),
+                                        //              extern.convert_any(e.value))
+                                        { op: "local.get", index: 0 },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 0 },
+                                        { op: "extern.convert_any" },
+                                        { op: "local.get", index: 11 },
+                                        { op: "ref.as_non_null" },
+                                        { op: "struct.get", typeIdx: propEntryTypeIdx, fieldIdx: 1 },
+                                        { op: "extern.convert_any" },
+                                        { op: "call", funcIdx: externSetIdx },
+                                      ] satisfies Instr[]),
                               },
                             ],
                           },
@@ -1161,6 +1366,7 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
                   },
                 ],
               },
+              ...classifiedClosedStructSourceCopy,
               // si++
               { op: "local.get", index: 5 },
               { op: "i32.const", value: 1 },
@@ -1190,6 +1396,10 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
         { name: "i", type: { kind: "i32" } },
         { name: "e", type: entryRefNull },
         { name: "srcExt", type: { kind: "externref" } },
+        { name: "closedKeys", type: { kind: "externref" } },
+        { name: "closedKeyCount", type: { kind: "i32" } },
+        { name: "closedKeyIndex", type: { kind: "i32" } },
+        { name: "closedKey", type: { kind: "externref" } },
       ],
       body,
     );
@@ -1364,4 +1574,180 @@ export function buildObjectEnumerationHelpers(ctx: CodegenContext, s: ObjectEnum
       nullArm(numberArm(boolArm(bigintArm(identityArm)))),
     );
   }
+}
+
+/**
+ * (#4749) Prepend the standalone Proxy-source arm to `__object_assign`.
+ *
+ * `$Proxy` is deliberately not a subtype of `$Object`, so the original
+ * open-object loop skips it entirely.  CopyDataProperties must instead ask
+ * the Proxy for its own keys, retrieve each own descriptor (which invokes the
+ * getOwnPropertyDescriptor trap), filter on `enumerable`, then read and set
+ * the value through the existing Proxy-aware helpers.  This is filled after
+ * the descriptor and Proxy runtimes are registered so all dispatch indices
+ * are available and their front-guards are already installed.
+ */
+export function fillObjectAssignProxySourceArm(ctx: CodegenContext, proxyTypeIdx: number, objectTypeIdx: number): void {
+  if (!ctx.standalone) return;
+
+  const objectAssignIdx = ctx.funcMap.get("__object_assign");
+  const objectAssign = objectAssignIdx === undefined ? undefined : definedFuncAt(ctx, objectAssignIdx);
+  if (!objectAssign) return;
+
+  const objectKeysIdx = ctx.funcMap.get("__object_keys");
+  const externLengthIdx = ctx.funcMap.get("__extern_length");
+  const externGetIdxIdx = ctx.funcMap.get("__extern_get_idx");
+  const getOwnPropertyDescriptorIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
+  const externGetIdx = ctx.funcMap.get("__extern_get");
+  const externSetIdx = ctx.funcMap.get("__extern_set");
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  const isTruthyIdx = ctx.funcMap.get("__is_truthy");
+  if (
+    objectKeysIdx === undefined ||
+    externLengthIdx === undefined ||
+    externGetIdxIdx === undefined ||
+    getOwnPropertyDescriptorIdx === undefined ||
+    externGetIdx === undefined ||
+    externSetIdx === undefined ||
+    isUndefinedIdx === undefined ||
+    isTruthyIdx === undefined
+  ) {
+    return;
+  }
+
+  // The original source loop has one distinctive source-object test. Avoid a
+  // second insertion if a later runtime pass happens to call this fill twice.
+  if (
+    objectAssign.body.some(
+      (instr, index) =>
+        instr.op === "local.get" &&
+        instr.index === 6 &&
+        objectAssign.body[index + 1]?.op === "ref.test" &&
+        (objectAssign.body[index + 1] as { typeIdx?: number } | undefined)?.typeIdx === proxyTypeIdx,
+    )
+  ) {
+    return;
+  }
+
+  // Params 0/1 are followed by the eleven locals registered by the original
+  // helper (indices 2..12). Append scratch locals for the Proxy arm.
+  const keyListLocal = 2 + objectAssign.locals.length;
+  const keyListLengthLocal = keyListLocal + 1;
+  const keyIndexLocal = keyListLocal + 2;
+  const keyLocal = keyListLocal + 3;
+  const descriptorLocal = keyListLocal + 4;
+  const enumerableLocal = keyListLocal + 5;
+  objectAssign.locals.push(
+    { name: "proxyKeys", type: { kind: "externref" } },
+    { name: "proxyKeysLength", type: { kind: "i32" } },
+    { name: "proxyKeyIndex", type: { kind: "i32" } },
+    { name: "proxyKey", type: { kind: "externref" } },
+    { name: "proxyDescriptor", type: { kind: "externref" } },
+    { name: "proxyEnumerable", type: { kind: "externref" } },
+  );
+
+  const proxyArm: Instr[] = [
+    { op: "local.get", index: 6 },
+    { op: "ref.test", typeIdx: proxyTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        // keys = [[OwnPropertyKeys]](source)
+        { op: "local.get", index: 12 },
+        { op: "call", funcIdx: objectKeysIdx },
+        { op: "local.set", index: keyListLocal },
+        // length = ToLength(keys.length), narrowed to the bounded native loop
+        { op: "local.get", index: keyListLocal },
+        { op: "call", funcIdx: externLengthIdx },
+        { op: "i32.trunc_sat_f64_s" },
+        { op: "local.set", index: keyListLengthLocal },
+        { op: "i32.const", value: 0 },
+        { op: "local.set", index: keyIndexLocal },
+        {
+          op: "block",
+          blockType: { kind: "empty" },
+          body: [
+            {
+              op: "loop",
+              blockType: { kind: "empty" },
+              body: [
+                { op: "local.get", index: keyIndexLocal },
+                { op: "local.get", index: keyListLengthLocal },
+                { op: "i32.ge_s" },
+                { op: "br_if", depth: 1 },
+                // key = keys[index]
+                { op: "local.get", index: keyListLocal },
+                { op: "local.get", index: keyIndexLocal },
+                { op: "f64.convert_i32_s" },
+                { op: "call", funcIdx: externGetIdxIdx },
+                { op: "local.set", index: keyLocal },
+                // desc = source.[[GetOwnProperty]](key)
+                { op: "local.get", index: 12 },
+                { op: "local.get", index: keyLocal },
+                { op: "call", funcIdx: getOwnPropertyDescriptorIdx },
+                { op: "local.set", index: descriptorLocal },
+                // Missing descriptors are skipped; otherwise test desc.enumerable.
+                { op: "local.get", index: descriptorLocal },
+                { op: "call", funcIdx: isUndefinedIdx },
+                { op: "i32.eqz" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: [
+                    { op: "local.get", index: descriptorLocal },
+                    ...nativeStringLiteralInstrs(ctx, "enumerable"),
+                    { op: "extern.convert_any" },
+                    { op: "call", funcIdx: externGetIdx },
+                    { op: "local.set", index: enumerableLocal },
+                    { op: "local.get", index: enumerableLocal },
+                    { op: "call", funcIdx: isTruthyIdx },
+                    {
+                      op: "if",
+                      blockType: { kind: "empty" },
+                      then: [
+                        // target[key] = source[key] via Proxy-aware Get/Set.
+                        { op: "local.get", index: 0 },
+                        { op: "local.get", index: keyLocal },
+                        { op: "local.get", index: 12 },
+                        { op: "local.get", index: keyLocal },
+                        { op: "call", funcIdx: externGetIdx },
+                        { op: "call", funcIdx: externSetIdx },
+                      ],
+                    },
+                  ],
+                },
+                { op: "local.get", index: keyIndexLocal },
+                { op: "i32.const", value: 1 },
+                { op: "i32.add" },
+                { op: "local.set", index: keyIndexLocal },
+                { op: "br", depth: 0 },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+
+  const insertBeforeSourceObjectTest = (body: Instr[]): boolean => {
+    for (let index = 0; index < body.length; index++) {
+      const instr = body[index]!;
+      const next = body[index + 1];
+      const nextTypeIdx =
+        next && (next.op === "ref.test" || next.op === "ref.cast") ? (next as { typeIdx: number }).typeIdx : undefined;
+      if (instr.op === "local.tee" && instr.index === 6 && next?.op === "ref.test" && nextTypeIdx === objectTypeIdx) {
+        body.splice(index + 1, 0, ...proxyArm);
+        return true;
+      }
+      if (instr.op === "if") {
+        if (insertBeforeSourceObjectTest(instr.then)) return true;
+        if (instr.else && insertBeforeSourceObjectTest(instr.else)) return true;
+      } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try" || instr.op === "try_table") {
+        if (insertBeforeSourceObjectTest(instr.body)) return true;
+      }
+    }
+    return false;
+  };
+  insertBeforeSourceObjectTest(objectAssign.body);
 }

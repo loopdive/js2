@@ -171,13 +171,25 @@ export function bindingUsesOnlyIrPlannedOpenObjectOperations(
   const moduleBinding = isModuleScopedDeclaration(declaration);
 
   let safe = true;
+  const isForInReceiver = (node: ts.Identifier): boolean => {
+    let current: ts.Expression = node;
+    while (ts.isParenthesizedExpression(current.parent)) current = current.parent;
+    return ts.isForInStatement(current.parent) && current.parent.expression === current;
+  };
   const visit = (node: ts.Node, crossedNestedCallable: boolean): void => {
     if (!safe) return;
     const insideNestedCallable = crossedNestedCallable || isFunctionOrClassBoundary(node);
     if (ts.isIdentifier(node) && node !== declaration && checker.getSymbolAtLocation(node) === symbol) {
       if (
         (insideNestedCallable && !moduleBinding) ||
-        (!isIrWithTargetIdentifier(node) && !isOpenObjectPropertyReceiver(node) && !isObjectMopCallArg(node))
+        (!isIrWithTargetIdentifier(node) &&
+          !isOpenObjectPropertyReceiver(node) &&
+          !isObjectMopCallArg(node) &&
+          // `for (k in target)` enumerates the same live object environment
+          // as the planned `with (target)`. Keeping this receiver on the
+          // canonical open carrier avoids static-unrolling stale literal keys
+          // (and prevents cloning a dynamic-with body once per key).
+          !isForInReceiver(node))
       ) {
         safe = false;
         return;

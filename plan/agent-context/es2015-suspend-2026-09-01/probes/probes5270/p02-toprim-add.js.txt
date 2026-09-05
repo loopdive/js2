@@ -1,0 +1,10 @@
+/*---
+description: probe
+includes: []
+flags: [noStrict]
+---*/
+var left = {}; var right = {}; var log = '';
+left[Symbol.toPrimitive] = function(h) { log += 'L' + h; return 1; };
+right[Symbol.toPrimitive] = function(h) { log += 'R' + h; return 2; };
+var r = left + right;
+assert.sameValue(log, 'LdefaultRdefault', 'log=' + log + ' r=' + r);

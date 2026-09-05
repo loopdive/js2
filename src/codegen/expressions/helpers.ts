@@ -20,6 +20,7 @@ import { stringConstantExternrefInstrs } from "../native-strings.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression, valTypesMatch } from "../shared.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+export { tryCompileCallableStaticField } from "./static-callable-field.js";
 
 // (#3191 — bloat S1) The JS-error-throw lowering was hoisted into the
 // layering-safe leaf module `../js-errors.ts` so runtime modules (dataview-
@@ -46,6 +47,74 @@ export {
   usesNativeJsErrors,
 };
 export type { JsErrorKind } from "../js-errors.js";
+
+/**
+ * (#5195 Step 9 I) True when `id` sits inside one of `decl`'s own class
+ * elements — a method/accessor/field/static-block body, a parameter default,
+ * or a computed key — rather than in its name or heritage clause. That is
+ * exactly the region §15.7.14 step 3's immutable inner binding covers.
+ *
+ * A nested class or function inside a member body is still inside the outer
+ * class's element, and the binding is still visible there, so the walk does not
+ * stop at function boundaries. A same-named inner class SHADOWS the binding,
+ * but then the oracle resolves `id` to that inner declaration instead and this
+ * predicate is asked about the inner one.
+ */
+function writeIsInsideOwnClassBody(decl: ts.ClassLikeDeclaration, id: ts.Identifier): boolean {
+  for (let node: ts.Node | undefined = id.parent; node !== undefined; node = node.parent) {
+    if (node === decl) return false; // reached the class without passing an element
+    if (node.parent === decl) return decl.members.indexOf(node as ts.ClassElement) >= 0;
+  }
+  return false;
+}
+
+/**
+ * Whether this exact identifier reference resolves to a const binding.
+ *
+ * `constBindings` models currently-active local scopes, while the oracle is
+ * necessary for a module lexical whose declaration was emitted by an earlier
+ * physical module-init helper.  Keep both halves together: a name-only carry
+ * between helpers would confuse an unrelated later binding with the same text.
+ */
+export function isConstIdentifierAssignmentTarget(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  id: ts.Identifier,
+): boolean {
+  // The oracle is authoritative when it resolves the reference: an active
+  // same-text local set can belong to a different static block / namespace
+  // binding and must not override that identity. Its `variableDeclarationOf`
+  // intentionally declines destructured bindings, so walk a resolved
+  // BindingElement through its binding pattern to the owning declaration.
+  const declaration = ctx.oracle.valueDeclarationOf(id);
+  if (declaration !== undefined) {
+    // (#5195 Step 9 I) §15.7.14 step 3: ClassDefinitionEvaluation creates a
+    // second, IMMUTABLE binding of the class name inside the class body's own
+    // scope. `class C { m() { C = 42; } }` must therefore TypeError, while the
+    // OUTER binding stays an ordinary mutable `let`-like one — `class C {};
+    // C = 42;` is legal. The discriminator is purely lexical: the write is
+    // inside one of this declaration's own elements.
+    if (
+      (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) &&
+      writeIsInsideOwnClassBody(declaration, id)
+    ) {
+      return true;
+    }
+    let current: ts.Node | undefined = declaration;
+    while (current !== undefined && !ts.isVariableDeclaration(current)) {
+      if (!ts.isBindingElement(current) && !ts.isObjectBindingPattern(current) && !ts.isArrayBindingPattern(current)) {
+        return false;
+      }
+      current = current.parent;
+    }
+    return (
+      current !== undefined &&
+      ts.isVariableDeclarationList(current.parent) &&
+      (current.parent.flags & ts.NodeFlags.Const) !== 0
+    );
+  }
+  return fctx.constBindings?.has(id.text) === true;
+}
 
 /**
  * #1365 — Resolve the class struct that declared a `#name` PrivateIdentifier.
@@ -102,8 +171,18 @@ export function resolveDeclaringClassForPrivateName(
         // was skipped → a wrong-brand receiver (`C.B.fieldAccess(C)`) read the
         // field instead of throwing TypeError (#3045). Same-named `#m` on a
         // nested class now each resolve to their own synthetic struct.
-        const className =
-          current.name?.text ?? (ts.isClassExpression(current) ? ctx.anonClassExprNames.get(current) : undefined);
+        // A NAMED class expression has two source spellings: its lexical
+        // self-name (`class _Node`) and the outer binding (`var Node = ...`).
+        // The registered Wasm class identity is still the per-declaration
+        // synthetic name. Prefer that exact identity for every class
+        // expression, named or anonymous; falling back to `_Node` makes a
+        // widened receiver such as `let cur = this; cur = cur.#children[key]`
+        // miss the private-field arm and incorrectly reach the host property
+        // bridge, where private slots are intentionally invisible. Hono's
+        // recursive TrieRouter then observes `cur.#methods` as null.
+        const className = ts.isClassExpression(current)
+          ? (ctx.anonClassExprNames.get(current) ?? current.name?.text)
+          : current.name?.text;
         // Guard: the field must exist in the resolved struct (own private
         // *fields* live in structFields; a private method/getter is handled by
         // the accessor path in property-access, so require the field slot here).
@@ -118,6 +197,59 @@ export function resolveDeclaringClassForPrivateName(
     current = current.parent;
   }
   return undefined;
+}
+
+/**
+ * Resolve the physical struct that carries a private field on `this`.
+ *
+ * A variable-bound class expression is collected under both its visible
+ * binding and a declaration-identity synthetic name. Both registrations point
+ * at the same class-expression node, but a method compiled for the visible
+ * binding receives that binding's struct while the private-name resolver
+ * correctly returns the synthetic lexical identity. Coercing the former to
+ * the latter before a `struct.set` materializes a field-by-field projection --
+ * a fresh object -- so the write never reaches the original `this`.
+ *
+ * Preserve the method's actual self carrier only when both registrations are
+ * proven to describe the exact same class declaration and the physical struct
+ * owns the private slot. Declaration identity keeps same-named private fields
+ * in unrelated classes distinct.
+ */
+export function resolvePrivateThisFieldCarrier(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  name: ts.PrivateIdentifier,
+  receiver: ts.Expression,
+): string | undefined {
+  let bare = receiver;
+  while (
+    ts.isParenthesizedExpression(bare) ||
+    ts.isAsExpression(bare) ||
+    ts.isTypeAssertionExpression(bare) ||
+    ts.isSatisfiesExpression(bare) ||
+    ts.isNonNullExpression(bare)
+  ) {
+    bare = bare.expression;
+  }
+  if (bare.kind !== ts.SyntaxKind.ThisKeyword) return undefined;
+
+  const declared = resolveDeclaringClassForPrivateName(ctx, name);
+  if (declared === undefined) return undefined;
+  const selfLocal = fctx.localMap.get("this");
+  const selfType = selfLocal === undefined ? undefined : getLocalType(fctx, selfLocal);
+  if (selfType?.kind !== "ref" && selfType?.kind !== "ref_null") return undefined;
+
+  const physicalClassName = ctx.typeIdxToStructName.get(selfType.typeIdx);
+  if (physicalClassName === undefined || physicalClassName === declared.className) return undefined;
+  const lexicalDeclaration = ctx.classDeclarationMap.get(declared.className);
+  if (
+    lexicalDeclaration === undefined ||
+    ctx.classDeclarationMap.get(physicalClassName) !== lexicalDeclaration ||
+    !ctx.structFields.get(physicalClassName)?.some((field) => field.name === declared.fieldName)
+  ) {
+    return undefined;
+  }
+  return physicalClassName;
 }
 
 function collectClassAndDescendantTags(ctx: CodegenContext, className: string): number[] {
@@ -315,8 +447,41 @@ export type PrivateMemberKind = "method" | "accessor-readonly" | "accessor-write
 export function classifyPrivateMember(
   ctx: CodegenContext,
   name: ts.PrivateIdentifier,
+  classNameHint?: string,
 ): { className: string; fieldName: string; kind: PrivateMemberKind } | undefined {
   const fieldName = "__priv_" + name.text.slice(1);
+
+  // A folded direct-eval body is parsed into a synthetic SourceFile, so its
+  // PrivateIdentifier has no parent chain leading back to the class that owns
+  // the private name. The caller still carries that lexical class context on
+  // the FunctionContext; use it as a narrow first probe before walking the
+  // foreign AST below.
+  const classifyInClass = (
+    className: string,
+  ): { className: string; fieldName: string; kind: PrivateMemberKind } | undefined => {
+    const fullName = `${className}_${fieldName}`;
+    if (ctx.classMethodSet.has(fullName) || ctx.staticMethodSet.has(fullName)) {
+      return { className, fieldName, kind: "method" };
+    }
+    if (ctx.classAccessorSet.has(fullName)) {
+      const hasGetter = ctx.funcMap.has(`${className}_get_${fieldName}`);
+      const hasSetter = ctx.funcMap.has(`${className}_set_${fieldName}`);
+      if (hasGetter && !hasSetter) return { className, fieldName, kind: "accessor-readonly" };
+      if (hasSetter && !hasGetter) return { className, fieldName, kind: "accessor-writeonly" };
+      return { className, fieldName, kind: "accessor" };
+    }
+    const structFields = ctx.structFields.get(className);
+    if (structFields?.some((f) => f.name === fieldName)) {
+      return { className, fieldName, kind: "field" };
+    }
+    return undefined;
+  };
+
+  if (classNameHint !== undefined) {
+    const hinted = classifyInClass(classNameHint);
+    if (hinted !== undefined) return hinted;
+  }
+
   // Walk up parent links to find the lexically enclosing class that declares `#name`.
   // Unlike resolveDeclaringClassForPrivateName, we need to consider classes whose
   // PrivateIdentifier was registered as a method or accessor — those entries do
@@ -332,24 +497,8 @@ export function classifyPrivateMember(
         current = current.parent;
         continue;
       }
-      const fullName = `${className}_${fieldName}`;
-      // Method: registered in classMethodSet (instance) or staticMethodSet (static).
-      if (ctx.classMethodSet.has(fullName) || ctx.staticMethodSet.has(fullName)) {
-        return { className, fieldName, kind: "method" };
-      }
-      // Accessor: classAccessorSet has the accessor key.
-      if (ctx.classAccessorSet.has(fullName)) {
-        const hasGetter = ctx.funcMap.has(`${className}_get_${fieldName}`);
-        const hasSetter = ctx.funcMap.has(`${className}_set_${fieldName}`);
-        if (hasGetter && !hasSetter) return { className, fieldName, kind: "accessor-readonly" };
-        if (hasSetter && !hasGetter) return { className, fieldName, kind: "accessor-writeonly" };
-        return { className, fieldName, kind: "accessor" };
-      }
-      // Field: declared as a struct field on this class.
-      const structFields = ctx.structFields.get(className);
-      if (structFields?.some((f) => f.name === fieldName)) {
-        return { className, fieldName, kind: "field" };
-      }
+      const classified = classifyInClass(className);
+      if (classified !== undefined) return classified;
     }
     current = current.parent;
   }

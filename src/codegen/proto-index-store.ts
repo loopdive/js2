@@ -106,7 +106,7 @@ import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { BUILTIN_BRAND_BASE, BUILTIN_BRAND_COUNT, builtinBrandOffsetOf } from "./builtin-brands.js";
 import { nativeStringLiteralInstrs } from "./native-strings.js"; // (#4176) wrapper-slot key at FILL time
-import { nativeProtoSeedersByBrandOffset } from "./native-proto.js"; // (#2175 V2-S3b-1) companion seeding
+import { nativeProtoParentBrands, nativeProtoSeedersByBrandOffset } from "./native-proto.js"; // (#2175 V2-S3b-1) companion seeding
 import { addFuncType } from "./registry/types.js";
 
 /** Reserved helper names (all internal, never exported from the module). */
@@ -133,9 +133,32 @@ const FUN_OFF = builtinBrandOffsetOf("Function")!;
 const REGEXP_OFF = builtinBrandOffsetOf("RegExp")!;
 const DATE_OFF = builtinBrandOffsetOf("Date")!;
 const ERROR_OFF = builtinBrandOffsetOf("Error")!;
+const PROMISE_OFF = builtinBrandOffsetOf("Promise")!;
 const STRING_OFF = builtinBrandOffsetOf("String")!;
 const NUMBER_OFF = builtinBrandOffsetOf("Number")!;
 const BOOLEAN_OFF = builtinBrandOffsetOf("Boolean")!;
+const SET_OFF = builtinBrandOffsetOf("Set")!;
+const MAP_OFF = builtinBrandOffsetOf("Map")!;
+const WEAKMAP_OFF = builtinBrandOffsetOf("WeakMap")!;
+const WEAKSET_OFF = builtinBrandOffsetOf("WeakSet")!;
+
+/** `$Map.kind` field / `COLLECTION_KIND` values (map-runtime.ts). Kept as
+ * literals here to avoid an import cycle: map-runtime already consumes the
+ * receiver-brand helper. */
+const MAP_KIND_FIELD = 4;
+const MAP_KIND = 0;
+const SET_KIND = 1;
+const WEAKMAP_KIND = 2;
+const WEAKSET_KIND = 3;
+
+/** (#5151) `$Map.kind` → the brand offset whose companion holds that
+ *  collection's prototype overrides. All four share the `$Map` carrier. */
+const COLLECTION_KIND_OFFSETS: readonly (readonly [number, number])[] = [
+  [MAP_KIND, MAP_OFF],
+  [SET_KIND, SET_OFF],
+  [WEAKMAP_KIND, WEAKMAP_OFF],
+  [WEAKSET_KIND, WEAKSET_OFF],
+];
 
 /**
  * (#4176) The boxed-primitive wrapper internal-slot key — MUST equal
@@ -302,9 +325,33 @@ export function protoIndexRecvGetMissInstrs(
   ctx: CodegenContext,
   recvLocal: number,
   keyLocal: number,
+  accessorRecvLocal?: number,
 ): Instr[] | undefined {
   const getRIdx = ctx.funcMap.get(PROTOIDX_GET_R);
   if (getRIdx === undefined) return undefined;
+  // (#5194 r3 review F2) §7.3.2 OrdinaryGet step 3 / §6.2.5.5 — the brand
+  // (which companion to consult) comes from the object the walk is ON
+  // (`recvLocal`), but an accessor found there runs with `this` = the
+  // ORIGINAL receiver the [[Get]] started on. `__extern_get` hands its
+  // `explicitReceiverLocal` here (param 0, or the one-shot Reflect.get /
+  // dyn-view-walk receiver); the two coincide for every ordinary read, so
+  // this is `__protoidx_get_r`'s body inlined with the receiver split.
+  const getKIdx = ctx.funcMap.get(PROTOIDX_GET_K);
+  const brandOffIdx = ctx.funcMap.get(PROTOIDX_BRAND_OFF);
+  if (
+    accessorRecvLocal !== undefined &&
+    accessorRecvLocal !== recvLocal &&
+    getKIdx !== undefined &&
+    brandOffIdx !== undefined
+  ) {
+    return [
+      { op: "local.get", index: accessorRecvLocal },
+      { op: "local.get", index: keyLocal },
+      { op: "local.get", index: recvLocal },
+      { op: "call", funcIdx: brandOffIdx },
+      { op: "call", funcIdx: getKIdx },
+    ];
+  }
   return [
     { op: "local.get", index: recvLocal },
     { op: "local.get", index: keyLocal },
@@ -434,6 +481,75 @@ export function protoIndexRecvHasMissInstrs(
     { op: "call", funcIdx: hasRIdx },
   ];
 }
+
+/**
+ * (#4663) Presence probe against ONE brand companion, with **no
+ * `Object.prototype` fallthrough** — `[] -> i32`, leaving the companion in
+ * `scratchLocal` (an `externref` local of the caller).
+ *
+ * ## Why this is not `__protoidx_has_r`
+ *
+ * `has_r` = `has_k(key, brand_off(recv))`, and {@link fillHasKBody} probes the
+ * receiver's brand companion **and then Object's** — the two-level walk every
+ * ordinary Get needs. That tail is exactly wrong for a caller standing at a
+ * level the builtin ALREADY owns. `Array.prototype.toString` is a real builtin
+ * (§23.1.3.32), so it SHADOWS `Object.prototype.toString`: a module that writes
+ * only `Object.prototype.toString = f` must still render `"" + [1,2]` as
+ * `"1,2"`. Consulting Object's companion there is not merely coarse, it answers
+ * wrongly — and `ctx.protoNamedWrittenMembers` cannot rule it out, being member
+ * names only with no constructor qualification (`array-holes.ts` records the
+ * bare `lhs.name.text`).
+ *
+ * So the compile-time gate stays coarse ("some builtin prototype's `toString`
+ * was written") and the RUNTIME probe is made precise. The alternative —
+ * ctor-qualifying the pre-scan — means editing `isProtoNamedWrite`, whose Array
+ * exclusions are load-bearing for `protoIndexDirty`.
+ *
+ * LOOKUP, never ensure: `create = 0`, so a read cannot mint a companion. Under
+ * `protoNamedDirty` alone the companion is seeded with nothing (see
+ * builtin-proto-member-override.ts), so a hit is exactly "the user overrode
+ * this member on THIS brand's prototype".
+ *
+ * `undefined` when the store is unreserved or a dependency is missing — the
+ * caller must then emit nothing and keep its previous lowering byte-for-byte.
+ */
+export function protoIndexBrandCompanionHasInstrs(
+  ctx: CodegenContext,
+  brandOff: number,
+  key: string,
+  scratchLocal: number,
+): Instr[] | undefined {
+  const deps = resolveFillDeps(ctx);
+  if (deps === null) return undefined;
+  if (ctx.anyStrTypeIdx < 0) return undefined;
+  return [
+    { op: "i32.const", value: brandOff },
+    { op: "i32.const", value: 0 }, // LOOKUP — a read must not allocate.
+    { op: "call", funcIdx: deps.companionIdx },
+    { op: "local.tee", index: scratchLocal },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: scratchLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: deps.objectTypeIdx },
+        // Finalize-safe key (no import-global add) — same construction as
+        // `fillBrandOffBody`'s [[PrimitiveValue]] probe.
+        ...nativeStringLiteralInstrs(ctx, key),
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: deps.objFindIdx },
+        { op: "ref.is_null" },
+        { op: "i32.eqz" },
+      ],
+    },
+  ];
+}
+
+/** (#4663) The `Array.prototype` brand offset, for the probe above. */
+export const PROTOIDX_ARRAY_BRAND_OFF = ARR_OFF;
 
 /**
  * Numeric-index consult `[idx, firstOff] -> i32` for the `$__vec_base` /
@@ -836,15 +952,16 @@ function buildCompanionSeedArms(ctx: CodegenContext, whichOffLocal: number, comp
  * #4160 canonical-integer gate protected nothing — a refused key was a
  * silent no-op on the proto singleton, not a store elsewhere). Boxed-number /
  * i31 keys canonicalise via `number_toString` so `p[1]` and `p["1"]` share a
- * slot. Symbols/objects return null-extern (do not participate — the
- * fall-through path coerces object keys exactly once, and running a user
- * `toString` twice would double its side effects).
+ * slot. Native Symbol carriers participate AS-IS, preserving identity without
+ * coercion. Other objects return null-extern so a user `toString` cannot run
+ * twice on the fall-through path.
  */
 function fillNormKeyBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   const fn = findFn(ctx, PROTOIDX_NORM_KEY);
   if (!fn || ctx.anyStrTypeIdx < 0) return;
   const anyStr = ctx.anyStrTypeIdx;
   const boxNumTypeIdx = ctx.nativeBoxNumberTypeIdx;
+  const symbolTypeIdx = ctx.symbolTypeIdx;
   // locals: 1=any(anyref)
   fn.locals = [{ name: "any", type: { kind: "anyref" } }];
   const miss = (): Instr[] => [{ op: "ref.null.extern" }, { op: "return" }];
@@ -858,6 +975,17 @@ function fillNormKeyBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
       blockType: { kind: "empty" },
       then: [{ op: "local.get", index: 0 }, { op: "return" }],
     },
+    ...(symbolTypeIdx >= 0
+      ? ([
+          { op: "local.get", index: 1 },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "local.get", index: 0 }, { op: "return" }],
+          },
+        ] satisfies Instr[])
+      : []),
     ...(boxNumTypeIdx >= 0
       ? ([
           { op: "local.get", index: 1 },
@@ -919,6 +1047,51 @@ function companionProbeArm(
   ];
 }
 
+/**
+ * (#5194 step 1) The PARENT-level probe spliced between a receiver brand's own
+ * companion and `Object.prototype`'s. `<View>.prototype` owns nothing but
+ * `constructor`/`BYTES_PER_ELEMENT` (§23.2.7), so a dynamic
+ * `uint8ArrayProto.forEach` / `"forEach" in Uint8Array.prototype` has to reach
+ * `%TypedArray%.prototype`'s companion, which sits between the two levels this
+ * two-level store models. Emits one `if firstOff === <off>` arm per registered
+ * `parentBrand` link and nothing at all when no glue declares one, so every
+ * module without a chained prototype keeps a byte-identical body.
+ *
+ * `guard` is invoked once PER ARM and its result prepended inside that arm (the
+ * get body only walks the parent when nothing was found yet); `probe` builds the
+ * probe for a constant parent offset.
+ */
+function parentLevelProbeArms(
+  ctx: CodegenContext,
+  firstOffParam: number,
+  probe: (parentOff: number) => Instr[],
+  // (#5194 review F5) A FACTORY, not an array: the guard is spliced into every
+  // emitted arm (one per declared parent link -- 11 for the TypedArray family),
+  // and spreading one shared `Instr[]` put the SAME objects into all of them.
+  // This file's own discipline is that a spliced sequence is minted fresh per
+  // arm (the #1058 hazard: a later per-arm rewrite -- an index shift, a peephole
+  // -- would silently edit every other arm too).
+  guard?: () => Instr[],
+): Instr[] {
+  const arms: Instr[] = [];
+  const links = [...nativeProtoParentBrands(ctx).entries()].sort((a, b) => a[0] - b[0]);
+  for (const [brand, parentBrand] of links) {
+    const off = brand - BUILTIN_BRAND_BASE;
+    const parentOff = parentBrand - BUILTIN_BRAND_BASE;
+    if (off < 0 || off >= BUILTIN_BRAND_COUNT || parentOff < 0 || parentOff >= BUILTIN_BRAND_COUNT) continue;
+    if (parentOff === OBJ_OFF) continue; // already the implicit chain end
+    arms.push(
+      ...(guard === undefined ? [] : guard()),
+      { op: "local.get", index: firstOffParam },
+      { op: "i32.const", value: off },
+      { op: "i32.eq" },
+      ...(guard === undefined ? [] : [{ op: "i32.and" } satisfies Instr]),
+      { op: "if", blockType: { kind: "empty" }, then: probe(parentOff) },
+    );
+  }
+  return arms;
+}
+
 /** `__protoidx_has_k(key, firstOff) -> i32` — §7.3.12 presence. */
 function fillHasKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
   const fn = findFn(ctx, PROTOIDX_HAS_K);
@@ -930,6 +1103,11 @@ function fillHasKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
     // firstOff companion, then — when firstOff is not Object's — the implicit
     // chain end Object.prototype.
     ...companionProbeArm(deps, [{ op: "local.get", index: 1 }], 0, 2, hit()),
+    // (#5194 step 1) …with the declared PARENT level in between, when the
+    // receiver's brand declares one.
+    ...parentLevelProbeArms(ctx, 1, (parentOff) =>
+      companionProbeArm(deps, [{ op: "i32.const", value: parentOff }], 0, 2, hit()),
+    ),
     { op: "local.get", index: 1 },
     { op: "i32.const", value: OBJ_OFF },
     { op: "i32.ne" },
@@ -939,6 +1117,63 @@ function fillHasKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
       then: companionProbeArm(deps, [{ op: "i32.const", value: OBJ_OFF }], 0, 2, hit()),
     },
     { op: "i32.const", value: 0 },
+  ];
+}
+
+/**
+ * (#4491 T10) `key !== "constructor"` as an i32, built at FILL time.
+ *
+ * Guards the Object.prototype FALLTHROUGH in {@link fillGetKBody}. `constructor`
+ * is an own data property of EVERY builtin prototype (§19.2.3.1, §20.2.3.1,
+ * §22.1.3.1, …), so for a receiver whose implicit prototype is any brand other
+ * than `Object` the correct answer never comes from `Object.prototype` — the
+ * nearer level always shadows it. The two-level walk this store models
+ * (brand companion, then Object's) has no way to express "the nearer level owns
+ * this key but has no companion", so it has to be said for the one key where a
+ * missing companion is common: `Function` and `Date` decline a `constructor`
+ * seed (no identity-stable carrier — see builtin-proto-constructor-seed.ts), and
+ * without this guard a closure's `f.constructor` walks past the absent
+ * `Function.prototype` companion straight into `Object.prototype.constructor`
+ * and answers `Object`.
+ *
+ * That is exactly what regressed the QuickJS provider's function-parity canary:
+ * `new Function(…).constructor === Function` reads through
+ * `__closure_prop_get`'s #4176 miss consult, and once the T9 seed put
+ * `constructor` on `Object.prototype`'s companion the consult started answering
+ * `Object` — which then shadowed the runtime-eval carrier's own marker
+ * `constructor` field (the provider-realm `%Function%`), because a non-undefined
+ * consult result is taken as final by the carrier's property-get trampoline.
+ *
+ * A MISS here is the pre-T9 answer and lets each caller's own fallback run (the
+ * carrier's marker metadata, #4442's `%Function%` arm for a statically
+ * function-typed receiver). Returns `undefined` when the native-string helpers
+ * are unavailable, in which case the caller keeps its body byte-identical.
+ */
+function keyIsNotConstructorInstrs(ctx: CodegenContext, keyParam: number): Instr[] | undefined {
+  const anyStr = ctx.anyStrTypeIdx;
+  const flattenIdx = ctx.nativeStrHelpers.get("__str_flatten");
+  const equalsIdx = ctx.nativeStrHelpers.get("__str_equals");
+  if (anyStr < 0 || flattenIdx === undefined || equalsIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: keyParam },
+    { op: "any.convert_extern" },
+    { op: "ref.test", typeIdx: anyStr },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        { op: "local.get", index: keyParam },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: anyStr },
+        { op: "call", funcIdx: flattenIdx },
+        ...nativeStringLiteralInstrs(ctx, "constructor"),
+        { op: "call", funcIdx: equalsIdx },
+        { op: "i32.eqz" },
+      ],
+      // A non-string key (symbol / already-normalised index) can never be
+      // `constructor`, so the fallthrough stays available.
+      else: [{ op: "i32.const", value: 1 }],
+    },
   ];
 }
 
@@ -976,9 +1211,19 @@ function fillGetKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
       ],
     },
   ];
+  // (#4491 T10) …and never for `constructor`, which every builtin prototype owns.
+  const notConstructor = keyIsNotConstructorInstrs(ctx, 1);
   fn.body = [
     // firstOff companion first (the receiver's own proto brand)…
     ...probeInto([{ op: "local.get", index: 2 }]),
+    // (#5194 step 1) …then the declared PARENT level, when nothing was found
+    // there and the receiver's brand declares one (§23.2.7 view prototypes).
+    ...parentLevelProbeArms(
+      ctx,
+      2,
+      (parentOff) => probeInto([{ op: "i32.const", value: parentOff }]),
+      () => [{ op: "local.get", index: 4 }, { op: "ref.is_null" }],
+    ),
     // …then Object.prototype's when nothing was found and firstOff differs.
     { op: "local.get", index: 4 },
     { op: "ref.is_null" },
@@ -986,6 +1231,7 @@ function fillGetKBody(ctx: CodegenContext, deps: ProtoIndexFillDeps): void {
     { op: "i32.const", value: OBJ_OFF },
     { op: "i32.ne" },
     { op: "i32.and" },
+    ...(notConstructor === undefined ? [] : [...notConstructor, { op: "i32.and" } satisfies Instr]),
     { op: "if", blockType: { kind: "empty" }, then: probeInto([{ op: "i32.const", value: OBJ_OFF }]) },
     // No entry anywhere → undefined miss.
     { op: "local.get", index: 4 },
@@ -1310,8 +1556,42 @@ function fillBrandOffBody(ctx: CodegenContext): void {
     }
   }
   body.push(...testArm(ctx.vecPropBaseTypeIdx, ARR_OFF));
+  // The native keyed collections are the one non-`$Object` carrier family whose
+  // implicit prototype participates in the companion store. The collection
+  // runtime shares `$Map` for Map/Set/WeakMap/WeakSet, so discriminate by the
+  // immutable kind tag before the generic Object fallback. This lets a
+  // standalone constructor honor a user-installed `X.prototype.<adder>` without
+  // changing the native fast path when the companion has no override.
+  //
+  // (#5151) Only SET was classified until now, so `Map.prototype.set = null`
+  // (and the WeakMap/WeakSet twins) were invisible to every receiver-aware
+  // consult: the Map receiver answered `Object`, whose companion has no `set`.
+  // All four kinds map to their own brand offset here.
+  if (ctx.mapTypeIdx >= 0) {
+    body.push(
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: ctx.mapTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: COLLECTION_KIND_OFFSETS.flatMap(([kind, off]): Instr[] => [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: ctx.mapTypeIdx },
+          { op: "struct.get", typeIdx: ctx.mapTypeIdx, fieldIdx: MAP_KIND_FIELD },
+          { op: "i32.const", value: kind },
+          { op: "i32.eq" },
+          { op: "if", blockType: { kind: "empty" }, then: ret(off) },
+        ]),
+      },
+    );
+  }
   body.push(...testArm(ctx.structMap.get("__StandaloneRegExp"), REGEXP_OFF));
   body.push(...testArm(ctx.structMap.get("__Date"), DATE_OFF));
+  // `$Promise` participates in the generic carrier-bag predicate so promise
+  // expandos work, but its implicit prototype is Promise.prototype rather
+  // than Function.prototype. Classify it before the widened closure-carrier
+  // fallback or a dynamic `promise.then` read consults the wrong companion.
+  body.push(...testArm(ctx.structMap.get("$Promise"), PROMISE_OFF));
   // (#4207) BARE primitive receiver — a native string / boxed number / boxed
   // boolean that never went through `ToObject`. The wrapper arm above only
   // classifies a `$Object` carrying [[PrimitiveValue]]; a primitive reaching a

@@ -4,11 +4,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   ASYNC_HOST_ADAPTERS,
+  ASYNC_HOST_CAPABILITY_RECORDS,
   ASYNC_HOST_CAPABILITY_IDS,
+  ASYNC_OPTIONAL_HOST_ADAPTERS,
   ASYNC_OPTIONAL_RUNTIME_FEATURES,
   ASYNC_RUNTIME_FEATURES,
   ASYNC_RUNTIME_PROVIDERS,
+  type AsyncHostAdapter,
 } from "../src/ir/async-runtime-providers.js";
+import {
+  RUNTIME_HOST_CAPABILITY_RECORDS,
+  type RuntimeHostCapabilityRecord,
+} from "../src/ir/runtime-host-capabilities.js";
 import {
   PURE_MATH_RUNTIME_PROVIDERS,
   RUNTIME_PROVIDERS,
@@ -41,10 +48,29 @@ function asyncProviderIdsForTarget(target: RuntimeTarget, features: ReadonlySet<
     .sort();
 }
 
+// (#3526 F1-S1) The catalogue the builder validates is the ONE central
+// host-capability table, not the async-only projection of it. Mutation
+// fixtures therefore start from the central records; the async rows inside are
+// the very same frozen objects, so the async projections below are unaffected.
+function capabilityCatalogWith(
+  capability: AsyncHostAdapter["capability"],
+  update: (record: AsyncHostAdapter) => unknown,
+): readonly RuntimeHostCapabilityRecord[] {
+  return RUNTIME_HOST_CAPABILITY_RECORDS.map((record) =>
+    record.capability === capability ? update(record as AsyncHostAdapter) : record,
+  ) as readonly RuntimeHostCapabilityRecord[];
+}
+
 describe("#4103 IR async runtime provider schema", () => {
   it("closes all seven semantic requirements to the exact six existing host imports", () => {
     const forward = builder();
-    const reverse = builder();
+    const reverse = new RuntimeManifestBuilder(
+      { target: "host", backend: "wasmgc" },
+      {
+        providers: [...RUNTIME_PROVIDERS].reverse(),
+        hostCapabilityRecords: [...RUNTIME_HOST_CAPABILITY_RECORDS].reverse(),
+      },
+    );
     requestAll(forward, ASYNC_RUNTIME_FEATURES);
     requestAll(reverse, [...ASYNC_RUNTIME_FEATURES].reverse());
 
@@ -67,10 +93,34 @@ describe("#4103 IR async runtime provider schema", () => {
     ]);
     expect(manifest.hostCapabilities).toHaveLength(6);
     expect(new Set(manifest.hostCapabilities)).toHaveLength(6);
-    const semanticManifest = JSON.stringify(manifest);
+    expect(manifest.hostCapabilityRecords).toEqual(ASYNC_HOST_ADAPTERS);
+    expect(
+      manifest.hostCapabilityRecords.every((record, index) => record === ASYNC_HOST_CAPABILITY_RECORDS[index]),
+    ).toBe(true);
+    const semanticManifest = JSON.stringify({
+      features: manifest.features,
+      providers: manifest.providers,
+      providerComponents: manifest.providerComponents,
+      hostCapabilities: manifest.hostCapabilities,
+    });
     for (const adapter of ASYNC_HOST_ADAPTERS) {
       expect(semanticManifest).not.toContain(adapter.field);
     }
+    expect(JSON.stringify(manifest.hostCapabilityRecords)).toContain("Promise_resolve");
+  });
+
+  it("adds only the exact optional undefined record when its provider edge is selected", () => {
+    const mandatory = builder();
+    requestAll(mandatory, ASYNC_RUNTIME_FEATURES);
+    const optional = builder();
+    requestAll(optional, [...ASYNC_RUNTIME_FEATURES, ...ASYNC_OPTIONAL_RUNTIME_FEATURES]);
+
+    const before = mandatory.freeze();
+    const after = optional.freeze();
+    expect(before.hostCapabilityRecords).toEqual(ASYNC_HOST_ADAPTERS);
+    expect(after.hostCapabilityRecords).toEqual(ASYNC_HOST_CAPABILITY_RECORDS);
+    expect(after.hostCapabilityRecords.slice(0, -1)).toEqual(before.hostCapabilityRecords);
+    expect(after.hostCapabilityRecords.at(-1)).toBe(ASYNC_OPTIONAL_HOST_ADAPTERS[0]);
   });
 
   it("closes the standalone catalogue to native-managed providers without host capabilities", () => {
@@ -87,6 +137,7 @@ describe("#4103 IR async runtime provider schema", () => {
       manifest.providers.map(() => ({ kind: "native-managed", service: "native-promise-runtime" })),
     );
     expect(manifest.hostCapabilities).toEqual([]);
+    expect(manifest.hostCapabilityRecords).toEqual([]);
     expect(manifest.providers).toContainEqual(
       expect.objectContaining({
         id: "native.value.undefined",
@@ -251,6 +302,79 @@ describe("#4103 IR async runtime provider schema", () => {
     expect(() => malformedNative.freeze()).toThrowError(thrown("unknown-host-capability"));
   });
 
+  it("rejects every malformed, incomplete, duplicated, or non-canonical capability catalog", () => {
+    const freezeWith = (hostCapabilityRecords: readonly RuntimeHostCapabilityRecord[]) => {
+      const value = new RuntimeManifestBuilder({ target: "host", backend: "wasmgc" }, { hostCapabilityRecords });
+      value.requestFeature("promise.react");
+      return () => value.freeze();
+    };
+    const invalid = thrown("invalid-host-capability-catalog");
+    const callback = RUNTIME_HOST_CAPABILITY_RECORDS[0]!;
+    const resolve = ASYNC_HOST_CAPABILITY_RECORDS.find((record) => record.capability === "async.promise.resolve")!;
+
+    expect(freezeWith(RUNTIME_HOST_CAPABILITY_RECORDS.slice(1))).toThrowError(invalid);
+    expect(freezeWith([...RUNTIME_HOST_CAPABILITY_RECORDS, callback])).toThrowError(invalid);
+    expect(freezeWith([callback, callback, ...RUNTIME_HOST_CAPABILITY_RECORDS.slice(2)])).toThrowError(invalid);
+    expect(
+      freezeWith(
+        capabilityCatalogWith("async.promise.resolve", (record) => ({
+          ...record,
+          capability: "async.promise.unknown",
+        })),
+      ),
+    ).toThrowError(invalid);
+
+    const mutations: readonly ((record: AsyncHostAdapter) => unknown)[] = [
+      (record) => ({ ...record, module: "host" }),
+      (record) => ({ ...record, field: "Promise_resolve_other" }),
+      (record) => ({ ...record, kind: "global" }),
+      (record) => ({ ...record, params: ["i32"] }),
+      (record) => ({ ...record, results: [] }),
+      (record) => {
+        const { field: _field, ...withoutField } = record;
+        return withoutField;
+      },
+      (record) => ({ ...record, extra: true }),
+      (record) => ({ ...record }),
+    ];
+    for (const mutate of mutations) {
+      expect(freezeWith(capabilityCatalogWith("async.promise.resolve", mutate))).toThrowError(invalid);
+    }
+    expect(
+      freezeWith(
+        capabilityCatalogWith("async.promise.resolve", (record) => ({
+          ...record,
+          exceptionPolicy: "module-tag-payload",
+        })),
+      ),
+    ).toThrowError(invalid);
+    expect(
+      freezeWith(
+        capabilityCatalogWith("async.callback.wrap", (record) => ({
+          ...record,
+          exceptionPolicy: undefined,
+        })),
+      ),
+    ).toThrowError(invalid);
+    expect(
+      freezeWith(
+        capabilityCatalogWith("async.callback.wrap", (record) => {
+          const { exceptionPolicy: _exceptionPolicy, ...withoutExceptionPolicy } = record;
+          return withoutExceptionPolicy;
+        }),
+      ),
+    ).toThrowError(invalid);
+    expect(
+      freezeWith(
+        capabilityCatalogWith("async.callback.wrap", (record) => ({
+          ...record,
+          exceptionPolicy: "raw-exception",
+        })),
+      ),
+    ).toThrowError(invalid);
+    expect(resolve).not.toBe(callback);
+  });
+
   it("publishes deeply frozen provider and capability records", () => {
     const value = builder();
     value.requestFeature("promise.react");
@@ -260,8 +384,13 @@ describe("#4103 IR async runtime provider schema", () => {
     expect(Object.isFrozen(manifest)).toBe(true);
     expect(Object.isFrozen(manifest.providers)).toBe(true);
     expect(Object.isFrozen(manifest.hostCapabilities)).toBe(true);
+    expect(Object.isFrozen(manifest.hostCapabilityRecords)).toBe(true);
+    expect(Object.isFrozen(manifest.hostCapabilityRecords[0])).toBe(true);
+    expect(Object.isFrozen(manifest.hostCapabilityRecords[0]!.params)).toBe(true);
+    expect(Object.isFrozen(manifest.hostCapabilityRecords[0]!.results)).toBe(true);
     expect(Object.isFrozen(provider.hostCapabilities)).toBe(true);
     expect(Object.isFrozen(ASYNC_HOST_ADAPTERS[0]!.params)).toBe(true);
     expect(() => (provider.hostCapabilities as string[]).push("async.promise.resolve")).toThrow(TypeError);
+    expect(() => (manifest.hostCapabilityRecords as AsyncHostAdapter[]).reverse()).toThrow(TypeError);
   });
 });

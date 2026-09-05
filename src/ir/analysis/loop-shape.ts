@@ -469,8 +469,11 @@ export function findHeadBindingsCapturedByClosures(stmt: ts.ForStatement, headNa
     }
     forEachChild(node, visit);
   }
-  // Walk condition + incrementor + body. Closures may appear in any of them
-  // (e.g. `for (let i=0; (f = () => i, true); i++) {}`).
+  // Walk the initializer, condition, incrementor, and body. A closure in a
+  // later declarator of the head is created before the first iteration and
+  // must keep the initial per-iteration environment (for example
+  // `for (let i = 0, f = () => i; i < 5; ++i)`).
+  visit(stmt.initializer);
   visit(stmt.condition);
   visit(stmt.incrementor);
   visit(stmt.statement);
@@ -637,7 +640,7 @@ export function isStaticNullishReceiver(expr: ts.Expression): boolean {
  * environment. Mirrors `findHeadBindingsCapturedByClosures` (the C-style-loop
  * analogue) but walks the for-in's receiver/ForDeclaration/body.
  */
-export function collectForInHeadClosureCaptures(stmt: ts.ForInStatement, headNames: ReadonlySet<string>): Set<string> {
+function collectForInClosureCaptures(node: ts.Node | undefined, headNames: ReadonlySet<string>): Set<string> {
   const captured = new Set<string>();
   if (headNames.size === 0) return captured;
   function visit(node: ts.Node | undefined): void {
@@ -659,8 +662,21 @@ export function collectForInHeadClosureCaptures(stmt: ts.ForInStatement, headNam
     }
     forEachChild(node, visit);
   }
-  visit(stmt.expression); // receiver (head TDZ scope)
-  visit(stmt.initializer); // ForDeclaration — binding-pattern default initializers
-  visit(stmt.statement); // body
+  visit(node);
+  return captured;
+}
+
+export function collectForInHeadClosureCaptures(
+  stmt: ts.ForInStatement,
+  headNames: ReadonlySet<string>,
+  bodyOnly = false,
+): Set<string> {
+  const captured = new Set<string>();
+  // The receiver owns a distinct TDZ environment. Callers that need
+  // per-iteration body cells must scan only the body, not receiver closures.
+  const roots = bodyOnly ? [stmt.statement] : [stmt.expression, stmt.initializer, stmt.statement];
+  for (const root of roots) {
+    for (const name of collectForInClosureCaptures(root, headNames)) captured.add(name);
+  }
   return captured;
 }

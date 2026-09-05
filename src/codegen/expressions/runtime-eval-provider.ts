@@ -3,7 +3,7 @@
 import { ts } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { ensureAnyHelpers } from "../any-helpers.js";
-import { emitCachedFuncClosureAccess } from "../closures.js";
+import { emitCachedFuncClosureAccess, emitFuncRefAsClosure } from "../closures.js";
 import { emitBuiltinNamespaceObject } from "../builtin-static-globals.js";
 import { allocLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -50,6 +50,8 @@ export const HOST_RUNTIME_DIRECT_EVAL_IMPORT = "__extern_direct_eval";
  * provider reads the structurally canonical cells into ENV_GLOBAL.names/slots;
  * the slot itself is deliberately non-enumerable and non-configurable. */
 export const RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY = "__js2wasm_runtime_eval_global_lexical_cells__";
+/** Extensible map for lexical names introduced by a global Script source. */
+export const RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY = "__js2wasm_runtime_eval_global_dynamic_lexicals__";
 /**
  * (#4308 slice C) One extra activation-seed entry emitted at every
  * FUNCTION-scoped direct-eval call site, so a provider can tell an activation
@@ -186,6 +188,28 @@ const RUNTIME_EVAL_INTRINSIC_GLOBALS = [
   "AggregateError",
 ];
 
+/**
+ * (#4633) Non-error intrinsics that must ALSO cross the provider seam by
+ * identity. Same mechanism as {@link RUNTIME_EVAL_INTRINSIC_GLOBALS} — the
+ * caller's own singleton is published on the shared realm carrier, and the
+ * provider seeds its handle registry from it (`qjsSeedIntrinsicErrorIdentities`)
+ * so the realm's same-named intrinsic maps to that singleton in BOTH
+ * directions. Kept as a separate list because these are not error constructors:
+ * the `isWasiErrorName` / `$Error_struct` family registration above applies only
+ * to the error list.
+ *
+ * Measured motivation (test262 `harness/wellKnownIntrinsicObjects.js`): with the
+ * name unseeded, `new Function("return " + src)()` for `Array` handed back an
+ * opaque provider callback carrier — `typeof "function"` and `name "Array"`, but
+ * `prototype === undefined`, `isArray === undefined`, and `new a(3)` producing a
+ * zero-length non-array. So this fixes behaviour, not only `Object.is`.
+ *
+ * Scope is deliberately narrow: only names whose bare-identifier read already
+ * resolves to an identity-stable singleton via `emitBuiltinNamespaceObject`. A
+ * name that emitter declines simply stays unseeded (old box behaviour).
+ */
+const RUNTIME_EVAL_INTRINSIC_VALUE_GLOBALS = ["Array"];
+
 function runtimeEvalGlobalBindingNames(ctx: CodegenContext): string[] {
   const names: string[] = [];
   const append = (name: string): void => {
@@ -193,7 +217,10 @@ function runtimeEvalGlobalBindingNames(ctx: CodegenContext): string[] {
   };
   for (const name of ctx.globalObjectVarBindings ?? []) append(name);
   for (const name of ctx.topLevelFunctionNames) append(name);
-  for (const name of RUNTIME_EVAL_INTRINSIC_GLOBALS) append(name);
+  if (ctx.standalone) {
+    for (const name of RUNTIME_EVAL_INTRINSIC_GLOBALS) append(name);
+    for (const name of RUNTIME_EVAL_INTRINSIC_VALUE_GLOBALS) append(name);
+  }
   return names;
 }
 
@@ -226,8 +253,8 @@ function ensureRuntimeEvalGlobalLexicalCell(
   return { globalIdx, refCellTypeIdx };
 }
 
-function runtimeEvalSyncFunctionContext(name: string): FunctionContext {
-  return {
+function runtimeEvalSyncFunctionContext(ctx: CodegenContext, name: string): FunctionContext {
+  const fctx: FunctionContext = {
     name,
     params: [],
     locals: [],
@@ -240,6 +267,14 @@ function runtimeEvalSyncFunctionContext(name: string): FunctionContext {
     labelMap: new Map(),
     savedBodies: [],
   };
+  // Attach the reserved body before populating it. Global-string imports may
+  // be registered by later names while this helper is still being built;
+  // fixupModuleGlobalIndices walks module function bodies, so keeping this
+  // array reachable makes earlier global.get/set instructions shift with them.
+  const funcIdx = ctx.funcMap.get(name);
+  const func = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
+  if (func) func.body = fctx.body;
+  return fctx;
 }
 
 function reserveRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
@@ -257,12 +292,31 @@ function reserveRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
     ctx.funcMap.set(name, funcIdx);
   }
   ctx.runtimeEvalGlobalSyncReserved = true;
-  refreshRuntimeEvalCallableTrampolines(ctx);
+  if (ctx.standalone) refreshRuntimeEvalCallableTrampolines(ctx);
 }
 
-function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: FunctionContext): void {
+/**
+ * §19.1 value properties of the global object. These are non-writable AND
+ * non-configurable, so a define that specifies any attribute throws — which
+ * the module mirror's `configurable: true` does.
+ *
+ * `var undefined;` at module scope is a common idiom in published packages
+ * (axios pulls in several through `get-intrinsic`/`function-bind`). These
+ * names therefore keep the pre-existing `configurable: false` spelling, which
+ * matches the descriptor already there and so defines without throwing. They
+ * are dropped from the MODULE carve-out only, never from the mirror itself —
+ * the push and pull helpers must publish the same set of names or the pull's
+ * lexical-cell invariant traps.
+ */
+const IMMUTABLE_GLOBAL_PROPERTY_NAMES: ReadonlySet<string> = new Set(["undefined", "NaN", "Infinity"]);
+
+function emitRuntimeEvalGlobalBindingPushBody(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  includeLexicals = true,
+): void {
   const names = runtimeEvalGlobalBindingNames(ctx);
-  const lexicalNames = runtimeEvalGlobalLexicalBindingNames(ctx);
+  const lexicalNames = includeLexicals ? runtimeEvalGlobalLexicalBindingNames(ctx) : [];
   if (names.length === 0 && lexicalNames.length === 0) return;
   if (lexicalNames.length > 0) {
     addStringConstantGlobal(ctx, RUNTIME_EVAL_GLOBAL_LEXICAL_CELLS_PROPERTY);
@@ -340,7 +394,7 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
     );
   }
 
-  const wrapCallableIdx = ensureRuntimeEvalCallableWrapHelper(ctx);
+  const wrapCallableIdx = ctx.standalone ? ensureRuntimeEvalCallableWrapHelper(ctx) : undefined;
   for (const name of names) {
     let valueType: ValType | null = null;
     let needsAotAdapter = false;
@@ -357,7 +411,9 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
           const isOrdinary =
             declaration.asteriskToken === undefined &&
             !(declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
-          valueType = emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx, isOrdinary);
+          valueType = ctx.standalone
+            ? emitCachedFuncClosureAccess(ctx, fctx, name, funcIdx, isOrdinary)
+            : emitFuncRefAsClosure(ctx, fctx, name, funcIdx, isOrdinary);
           needsAotAdapter = true;
         }
       }
@@ -375,8 +431,8 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
         // its carrier in the module global permanently (declarations.ts, #2928).
         // Externref-typed globals only — a typed closure global would reject the
         // store, and its AOT reads are static enough not to need the carrier.
-        if (valueType.kind === "externref") wrapGlobalName = name;
-      } else if (RUNTIME_EVAL_INTRINSIC_GLOBALS.includes(name)) {
+        if (ctx.standalone && valueType.kind === "externref") wrapGlobalName = name;
+      } else if (RUNTIME_EVAL_INTRINSIC_GLOBALS.includes(name) || RUNTIME_EVAL_INTRINSIC_VALUE_GLOBALS.includes(name)) {
         // Provider-originated native Error payloads cross as externrefs. Give
         // this module the structurally canonical `$Error_struct` and register
         // each ctor as an emitted family member even when AOT never constructs
@@ -396,11 +452,26 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
     }
     if (valueType === null) continue;
     if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
-    if (needsAotAdapter) emitRuntimeEvalAotCallableAdapter(ctx, fctx);
+    if (needsAotAdapter) {
+      if (ctx.standalone) {
+        emitRuntimeEvalAotCallableAdapter(ctx, fctx);
+      } else {
+        const wrapIdx = ensureLateImport(
+          ctx,
+          "__wrap_callable_for_host",
+          [{ kind: "externref" }],
+          [{ kind: "externref" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (wrapIdx !== undefined) {
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__wrap_callable_for_host") ?? wrapIdx });
+        }
+      }
+    }
     const liveWrapGlobalIdx = wrapGlobalName === undefined ? undefined : ctx.moduleGlobals.get(wrapGlobalName);
     if (liveWrapGlobalIdx !== undefined) {
       fctx.body.push(
-        { op: "call", funcIdx: ctx.funcMap.get(RUNTIME_EVAL_WRAP_CALLABLE) ?? wrapCallableIdx },
+        { op: "call", funcIdx: ctx.funcMap.get(RUNTIME_EVAL_WRAP_CALLABLE) ?? wrapCallableIdx! },
         { op: "global.set", index: liveWrapGlobalIdx },
         { op: "global.get", index: liveWrapGlobalIdx },
       );
@@ -425,7 +496,27 @@ function emitRuntimeEvalGlobalBindingPushBody(ctx: CodegenContext, fctx: Functio
       // synthetic configurable property to the descriptor ScriptDeclaration-
       // Instantiation created conceptually. Writable/enumerable stay
       // unspecified on updates so user changes to those attributes survive.
-      const attributes = isScriptBinding ? 0x23 : 0x05;
+      // §9.1.1.4.16 is a SCRIPT rule. A MODULE's top-level function/var
+      // bindings are not global-object properties at all, so stamping
+      // `configurable: false` onto the eval mirror is not the spec attribute —
+      // it is a fabricated one, and it takes the name away from the program.
+      // Its own `Object.defineProperty(globalThis, name, {configurable: true})`
+      // then throws `Cannot redefine property`, inside `__module_init`, so
+      // nothing in the module runs. The upstream-suite shim installs
+      // `beforeEach`/`beforeAll`/`afterEach`/`afterAll` in exactly that shape.
+      // HOST LANE ONLY. On the JS host the global environment object IS the
+      // real `globalThis`, so the program's own
+      // `Object.defineProperty(globalThis, name, …)` competes with the mirror —
+      // that is the conflict being fixed. Standalone/WASI mirror onto a
+      // synthesized carrier the program never defines properties on, and the
+      // quickjs eval-provider's build-time canary proves the existing
+      // attributes are load-bearing there: widening them made its inward
+      // membrane probe throw (`membraneProbe() returned -1, expected 4321`).
+      // Leaving those lanes byte-identical keeps the fix to the lane whose
+      // defect is actually observed.
+      const moduleOwnsTheName =
+        ctx.sourceIsModule && !ctx.standalone && !ctx.wasi && !IMMUTABLE_GLOBAL_PROPERTY_NAMES.has(name);
+      const attributes = isScriptBinding ? (moduleOwnsTheName ? 0x2d : 0x23) : 0x05;
       fctx.body.push(
         { op: "f64.const", value: 0x80 | attributes },
         { op: "call", funcIdx: liveDefineIdx },
@@ -486,9 +577,9 @@ function emitRuntimeEvalGlobalBindingPullBody(ctx: CodegenContext, fctx: Functio
 function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
   reserveRuntimeEvalGlobalBindingSync(ctx);
   if (ctx.runtimeEvalGlobalSyncFilled) return;
-  const pushFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PUSH_GLOBALS);
+  const pushFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PUSH_GLOBALS);
   emitRuntimeEvalGlobalBindingPushBody(ctx, pushFctx);
-  const pullFctx = runtimeEvalSyncFunctionContext(RUNTIME_EVAL_PULL_GLOBALS);
+  const pullFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PULL_GLOBALS);
   emitRuntimeEvalGlobalBindingPullBody(ctx, pullFctx);
   const pushFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS)!);
   const pullFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PULL_GLOBALS)!);
@@ -510,12 +601,30 @@ function ensureRuntimeEvalGlobalBindingSync(ctx: CodegenContext): void {
  * correctly resolve them through GlobalEnvironmentRecord. Seeding the shared
  * object closes the AOT→interpreter visibility half without exposing compiler
  * helper globals or requiring a second provider-side callable ABI. */
-export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: FunctionContext): void {
+export function emitRuntimeEvalGlobalBindingSeed(ctx: CodegenContext, fctx: FunctionContext, activate = true): void {
   if (!ctx.standalone) return;
   ensureRuntimeEvalGlobalBindingSync(ctx);
   const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
   if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
-  emitRuntimeEvalProviderActive(ctx, fctx, true);
+  if (activate) emitRuntimeEvalProviderActive(ctx, fctx, true);
+}
+
+/** Publish AOT script bindings before a captured host `%eval%` can run. */
+export function emitHostEvalGlobalBindingSeed(ctx: CodegenContext, fctx: FunctionContext): void {
+  if (ctx.standalone || ctx.wasi) return;
+  reserveRuntimeEvalGlobalBindingSync(ctx);
+  if (!ctx.runtimeEvalGlobalSyncFilled) {
+    const pushFctx = runtimeEvalSyncFunctionContext(ctx, RUNTIME_EVAL_PUSH_GLOBALS);
+    emitRuntimeEvalGlobalBindingPushBody(ctx, pushFctx, false);
+    const pushFn = definedFuncAt(ctx, ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS)!);
+    if (pushFn) {
+      pushFn.locals = pushFctx.locals;
+      pushFn.body = pushFctx.body;
+    }
+    ctx.runtimeEvalGlobalSyncFilled = true;
+  }
+  const pushIdx = ctx.funcMap.get(RUNTIME_EVAL_PUSH_GLOBALS);
+  if (pushIdx !== undefined) fctx.body.push({ op: "call", funcIdx: pushIdx });
 }
 
 /** Mark whether carrier calls are executing across the provider boundary. */

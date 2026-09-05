@@ -7,7 +7,7 @@ import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
-import { addUnionImports } from "../index.js";
+import { addUnionImports, preallocateBlockScopedSlots } from "../index.js";
 import { addStringConstantGlobal, ensureExnTag } from "../registry/imports.js";
 import { coerceType, compileExpression, compileStatement, ensureLateImport, flushLateImportShifts } from "../shared.js";
 import { walkChildren, walkInstructions } from "../walk-instructions.js";
@@ -19,6 +19,7 @@ import {
 import { emitExternrefDestructureGuard } from "../destructuring-params.js";
 import { collectBindingNames } from "../../ir/analysis/loop-shape.js";
 import { adjustRethrowDepth, restoreBlockScopedShadows, saveBlockScopedShadows } from "./shared.js";
+import { beginFinallyCompletionSnapshot, endFinallyCompletionSnapshot } from "./eval-completion-value.js";
 import { buildStandardTryTable } from "../../ir/try-table.js";
 
 type BoxedCapture = { refCellTypeIdx: number; valType: ValType };
@@ -311,11 +312,22 @@ export function compileThrowStatement(ctx: CodegenContext, fctx: FunctionContext
 
   if (stmt.expression) {
     // Compile the thrown expression — coerce to externref for the exception tag
-    const resultType = compileExpression(ctx, fctx, stmt.expression, {
-      kind: "externref",
-    });
-    // If the expression didn't produce externref, coerce it properly
-    if (resultType && resultType.kind !== "externref") {
+    // Do not pass an externref result hint here: compileExpression applies that
+    // hint eagerly, which can materialize a GC object before this function gets
+    // a chance to preserve the throw identity. Convert the native result only
+    // after it has been emitted.
+    const resultType = compileExpression(ctx, fctx, stmt.expression);
+    // Throw evaluates and transports the value itself; it never applies
+    // ToPrimitive. In standalone, the general ref→externref coercion may
+    // materialize an object-literal struct carrying user `valueOf`/`toString`
+    // fields into a fresh `$Object` so a later dynamic coercion can find those
+    // methods. That boundary copy is incorrect for `throw`: a caught object
+    // must retain identity, so `catch (e) { e.x = v }` updates the original
+    // object. GC refs are already anyrefs; erase only the Wasm representation.
+    if (resultType && (resultType.kind === "ref" || resultType.kind === "ref_null")) {
+      fctx.body.push({ op: "extern.convert_any" });
+    } else if (resultType && resultType.kind !== "externref") {
+      // If the expression didn't produce externref, coerce it properly.
       coerceType(ctx, fctx, resultType, { kind: "externref" });
     } else if (!resultType) {
       // Expression produced no value (void) — push null externref
@@ -368,12 +380,17 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
     adjustRethrowDepth(fctx, 1);
 
     const savedForFinally = pushBody(fctx);
+    // (#4515) §14.15.3 step 5 — see eval-completion-value.ts.
+    const completionSnapshot = beginFinallyCompletionSnapshot(fctx);
     // Save/restore block-scoped shadows for let/const in the finally block (#817).
     const savedFinallyScope = saveBlockScopedShadows(fctx, stmt.finallyBlock);
+    // (#5271 step 2.3) block-entry lexical slots — see statements.ts.
+    preallocateBlockScopedSlots(ctx, fctx, stmt.finallyBlock.statements);
     for (const s of stmt.finallyBlock.statements) {
       compileStatement(ctx, fctx, s);
     }
     restoreBlockScopedShadows(fctx, savedFinallyScope);
+    endFinallyCompletionSnapshot(fctx, completionSnapshot);
     finallyInstrs = fctx.body;
     popBody(fctx, savedForFinally);
 
@@ -438,6 +455,8 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
   // Save/restore block-scoped shadows for let/const in the try block (#817).
   const savedTryScope = saveBlockScopedShadows(fctx, stmt.tryBlock);
+  // (#5271 step 2.3) block-entry lexical slots — see statements.ts.
+  preallocateBlockScopedSlots(ctx, fctx, stmt.tryBlock.statements);
   // While compiling the try body, record that a catch handler encloses it so
   // `return f()` is NOT rewritten to `return_call` — return_call replaces the
   // caller frame and a throw from the callee would skip this catch (#1972).
@@ -591,6 +610,8 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
 
       // Save/restore block-scoped shadows for let/const in the catch block (#817).
       const savedCatchScope = saveBlockScopedShadows(fctx, stmt.catchClause.block);
+      // (#5271 step 2.3) block-entry lexical slots — see statements.ts.
+      preallocateBlockScopedSlots(ctx, fctx, stmt.catchClause.block.statements);
       for (const s of stmt.catchClause.block.statements) {
         compileStatement(ctx, fctx, s);
       }
@@ -729,16 +750,18 @@ export function compileTryStatement(ctx: CodegenContext, fctx: FunctionContext, 
         fctx.localMap.set(varName, savedCatchVarIdx);
         // (#4305) The slot and its cell metadata move together — see the helper.
         restoreCatchBoxedCapture(fctx, varName, savedCatchBoxed.get(varName));
-      } else if (fctx.name === "__module_init" && ctx.annexBModuleBindings?.has(varName)) {
-        // (#4182) With no prior local to restore, the catch parameter used to
-        // LEAK in the flat localMap past the catch scope, shadowing the
-        // module-scope Annex B live-binding global forever after the `try`
-        // (`annexB/language/global-code/*-no-skip-try`: post-try `typeof f`
-        // read the leaked catch local instead of the updated global). Delete
-        // it so resolution falls back to the module global. Scoped to the
-        // normally-empty `annexBModuleBindings` set — the general leak is
-        // pre-existing behavior other resolution paths may lean on.
+      } else {
+        // A catch parameter is block-scoped even when no outer local existed.
+        // Leaving the fresh catch slot in the flat localMap made a post-catch
+        // read resolve to the exception instead of the outer var/global. This
+        // is especially visible in Annex B's `catch (foo) { var foo = ... }`:
+        // the var initializer mutates the catch binding, but the outer `foo`
+        // must retain its pre-throw value. Drop both the binding and any cell
+        // metadata that a closure/direct-eval path may have installed inside
+        // the catch; with an outer slot the branch above restores both.
         fctx.localMap.delete(varName);
+        fctx.boxedCaptures?.delete(varName);
+        fctx.boxedTdzFlags?.delete(varName);
       }
     }
   }

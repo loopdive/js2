@@ -75,12 +75,14 @@ import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { allocLocal } from "../context/locals.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
 import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js";
 import { addStringConstantGlobal } from "../registry/imports.js";
 import { coerceType, compileExpression } from "../shared.js";
 import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
 import { sourceHasMethodOverride } from "./member-override-scan.js";
-import { flushLateImportShifts } from "./late-imports.js";
+import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { compileArrayConcatNativeSpec } from "../array-concat-spec.js";
 
 /**
  * `fillApplyClosure` dispatches arities 0..8 and answers the undefined sentinel
@@ -113,6 +115,13 @@ export function compileCallDispatchTail(ctx: CodegenContext, fctx: FunctionConte
   const inherited = tryEmitProtoInheritedMethodCall(ctx, fctx, expr);
   if (inherited !== undefined) return inherited;
 
+  // (#4640 D1) The callee is a plain identifier whose RUNTIME value is nullish.
+  // A nullish value can never be callable, so this is the one slice of the
+  // silence below that is provably a §13.3.6.1 TypeError rather than an
+  // unrecognised shape.
+  const nullishCallee = tryEmitNullishIdentifierCalleeTypeError(ctx, fctx, expr);
+  if (nullishCallee !== undefined) return nullishCallee;
+
   // Graceful fallback: compile the callee expression and all arguments for side
   // effects, then push `ref.null.extern`. This avoids hard compile errors for
   // unrecognized call patterns (chained calls, dynamic dispatch, uncommon AST
@@ -125,6 +134,148 @@ export function compileCallDispatchTail(ctx: CodegenContext, fctx: FunctionConte
     if (argType) fctx.body.push({ op: "drop" });
   }
   fctx.body.push({ op: "ref.null.extern" });
+  return { kind: "externref" };
+}
+
+/**
+ * (#4640 D1) `var x = undefined; x()` / `var x = null; x()` — §13.3.6.1
+ * EvaluateCall step 4: after the callee reference and the argument list are
+ * evaluated, `IsCallable(func)` is checked and a **TypeError** is thrown.
+ *
+ * ## What was actually wrong (it is not what the issue's map said)
+ *
+ * The map read this family as "the thrown thing is `[object Object]`, not a
+ * TypeError instance". Measured on the base branch, the call threw **nothing at
+ * all**: `try { var x = undefined; x(); } catch (e) {}` fell through with no
+ * exception. The `[object Object]` in the failure text is the test's OWN
+ * `Test262Error` — thrown on the line after the call that should have thrown,
+ * then rendered by the catch block. So this is not an error-identity fix; the
+ * `emitThrowTypeError` lowering already mints a real `$Error_struct` TypeError.
+ * It is a missing throw.
+ *
+ * ## Why it lands HERE and not in `tryNonCallableValueCall`
+ *
+ * That static guard (#4221) is the natural home, and it declines on purpose:
+ * `var x = undefined` is an unannotated mutable binding with a nullish
+ * initializer, which `isEvolvingAnyBinding` treats as committing NOTHING (the
+ * #4616 carve-out — `let x = null; … x = function(){…}; x()` is a real idiom and
+ * a static throw there would be a hard miscompile). Relaxing that guard to catch
+ * this row would reintroduce exactly the miscompile it was added to prevent. The
+ * runtime check has no such tension: a value that IS nullish when the call
+ * executes cannot be callable, whatever the checker believed.
+ *
+ * ## Why it is a narrowing, not a new risk
+ *
+ * It sits immediately before the graceful fallback, so every shape it can claim
+ * already answers the VALUE `undefined` with the callee never invoked. It only
+ * replaces that silent wrong answer when the callee is nullish AT RUNTIME —
+ * every non-nullish value keeps the fallback's behaviour byte-for-byte
+ * (`ref.null.extern`), because "our dispatch did not recognise this shape" and
+ * "this value is not callable" are different claims and only the second is
+ * provable here.
+ *
+ * Restricted to a plain **identifier** callee. A member callee (`o.f()`) reads
+ * `null` on this lane for reasons that are frequently OUR gap rather than the
+ * program's — a member our object model failed to resolve is indistinguishable
+ * from an absent one, so throwing there would convert compiler gaps into hard
+ * runtime throws. An identifier read is a local/global slot read: if it answers
+ * nullish, the binding really holds `null`/`undefined`.
+ *
+ * Host-lane untouched (`standalone`/`wasi` only) — the JS-host lane routes
+ * these calls through `__extern_call`, which already throws.
+ *
+ * Order is §13.3.6.1's: callee, then arguments, THEN the throw.
+ */
+export function tryEmitNullishIdentifierCalleeTypeError(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): ValType | undefined {
+  if (!ctx.standalone && !ctx.wasi) return undefined;
+  if (expr.questionDotToken !== undefined || ts.isOptionalChain(expr)) return undefined;
+  const callee = expr.expression;
+  if (!ts.isIdentifier(callee)) return undefined;
+  // A name the module compiled to a real function never reaches this tail; if it
+  // somehow does, the binding is not a value slot and must not be second-guessed.
+  if (ctx.funcMap.has(callee.text)) return undefined;
+  if (ctx.classSet.has(callee.text)) return undefined;
+  if (BUILTIN_CLASS_NAMES.has(callee.text)) return undefined;
+
+  // Register the undefined-sentinel probe BEFORE anything is emitted for this
+  // call, and flush against the already-emitted body — the #1839/#117/#1886
+  // late-registration index-shift class.
+  const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  // (#5148 checkpoint) The non-nullish half of this arm used to answer
+  // `undefined` with the callee never invoked — which silently swallowed any
+  // callable stored through an erased slot (a computed carrier read like
+  // Deno's `realm["Symbol"]["for"]`, or a value peeled out of a runtime-eval
+  // slot). Dispatch it through the native open-`any` `__apply_closure`
+  // classifier instead: a genuine non-callable still degrades to the same
+  // undefined sentinel, while a real closure value is now actually applied.
+  const canApply =
+    !expr.arguments.some((a) => ts.isSpreadElement(a)) && expr.arguments.length <= APPLY_CLOSURE_MAX_ARITY;
+  const applyIdx = canApply ? reserveApplyClosure(ctx) : undefined;
+  const vecBuilders = canApply ? ensureObjVecBuilders(ctx) : { newIdx: undefined, pushIdx: undefined };
+  flushLateImportShifts(ctx, fctx);
+  const dispatchable = applyIdx !== undefined && vecBuilders.newIdx !== undefined && vecBuilders.pushIdx !== undefined;
+
+  const calleeLocal = allocLocal(fctx, `__nc_callee_${fctx.locals.length}`, { kind: "externref" });
+  const calleeType = compileExpression(ctx, fctx, callee, { kind: "externref" });
+  if (calleeType === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  } else if (calleeType.kind !== "externref") {
+    coerceType(ctx, fctx, calleeType, { kind: "externref" });
+  }
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  let vecLocal: number | undefined;
+  if (dispatchable) {
+    vecLocal = allocLocal(fctx, `__nc_args_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_new") ?? vecBuilders.newIdx! });
+    fctx.body.push({ op: "local.set", index: vecLocal });
+    for (const arg of expr.arguments) {
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      const t = compileExpression(ctx, fctx, arg, { kind: "externref" });
+      if (t === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? vecBuilders.pushIdx! });
+    }
+  } else {
+    for (const arg of expr.arguments) {
+      const argType = compileExpression(ctx, fctx, arg);
+      if (argType) fctx.body.push({ op: "drop" });
+    }
+  }
+
+  // nullish = ref.is_null(callee) || __extern_is_undefined(callee). The #2106
+  // `undefined` singleton is a DISTINCT non-null externref standalone, so
+  // `ref.is_null` alone misses the `var x = undefined` half of the family.
+  fctx.body.push({ op: "local.get", index: calleeLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  const resolvedIsUndef = ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx;
+  if (resolvedIsUndef !== undefined) {
+    fctx.body.push({ op: "local.get", index: calleeLocal });
+    fctx.body.push({ op: "call", funcIdx: resolvedIsUndef });
+    fctx.body.push({ op: "i32.or" });
+  }
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    // `forceInModuleCtor` for the same reason `typeErrorThrowInstrs` uses it:
+    // this builds a half-detached `then:` array, and registering an import from
+    // inside one is the index-shift trap.
+    then: buildThrowJsErrorInstrs(ctx, "TypeError", `${callee.text} is not a function`, { forceInModuleCtor: true }),
+  });
+  if (dispatchable && vecLocal !== undefined) {
+    fctx.body.push(
+      { op: "local.get", index: calleeLocal },
+      { op: "ref.null.extern" }, // bare identifier call — undefined `this` (§13.3.6.1)
+      { op: "local.get", index: vecLocal },
+      { op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? applyIdx! },
+    );
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
   return { kind: "externref" };
 }
 
@@ -211,6 +362,22 @@ export function tryEmitStoredMemberClosureCall(
   // intrinsic with `defineProperty` in block #1 and by assignment in block #2,
   // and only block #2 threw.
   if (!sourceHasMethodOverride(ctx, expr, memberName)) return undefined;
+
+  // The ES5 generic-concat rows install the actual intrinsic as a stored
+  // value (`x.concat = Array.prototype.concat`) and then invoke it through
+  // this dynamic shape. Keep that coherent two-row cluster on the same
+  // host-free §23.1.3.1 lowering as a direct `x.concat(...)` call. The generic
+  // apply bridge intentionally remains the fallback for arbitrary overrides;
+  // this narrow RHS check avoids turning a user-defined `concat` into the
+  // builtin by accident.
+  if (
+    memberName === "concat" &&
+    ts.isPropertyAccessExpression(callee) &&
+    sourceInstallsArrayConcat(ctx, recvExpr, memberName)
+  ) {
+    const nativeResult = compileArrayConcatNativeSpec(ctx, fctx, callee, expr);
+    if (nativeResult !== undefined && nativeResult !== null) return nativeResult;
+  }
 
   // Register the bridge + the arg-vector builders BEFORE compiling anything, so
   // any import they pull in shifts function indices while the body is still
@@ -307,6 +474,44 @@ export function tryEmitStoredMemberClosureCall(
     else: applyCall,
   });
   return { kind: "externref" };
+}
+
+function sourceInstallsArrayConcat(ctx: CodegenContext, receiver: ts.Expression, memberName: string): boolean {
+  if (!ts.isIdentifier(receiver) || memberName !== "concat") return false;
+  const sf = receiver.getSourceFile();
+  if (!sf) return false;
+  // The assembled Test262 source is intentionally preserved byte-for-byte;
+  // this lexical prefilter also keeps the AST walk out of the common path.
+  const assignment = new RegExp(
+    `\\b${receiver.text}\\s*\\.\\s*concat\\s*=\\s*Array\\s*\\.\\s*prototype\\s*\\.\\s*concat\\b`,
+  );
+  if (assignment.test(sf.text)) return true;
+  let found = false;
+  const isNativeConcat = (node: ts.Expression): boolean =>
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === "concat" &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "prototype" &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === "Array";
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      ts.isIdentifier(node.left.expression) &&
+      node.left.expression.text === receiver.text &&
+      node.left.name.text === memberName &&
+      isNativeConcat(node.right)
+    ) {
+      found = true;
+      return;
+    }
+    for (const child of node.getChildren(sf)) visit(child);
+  };
+  visit(sf);
+  return found;
 }
 
 /**

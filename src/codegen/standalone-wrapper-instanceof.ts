@@ -23,7 +23,7 @@ import { ensureObjectRuntime, FLAG_INTERNAL, WRAPPER_PRIMITIVE_KEY } from "./obj
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { addFuncType } from "./registry/types.js";
 
-export type StandaloneWrapperConstructorName = "Number" | "String" | "Boolean";
+export type StandaloneWrapperConstructorName = "Number" | "String" | "Boolean" | "BigInt";
 
 export function ensureStandaloneWrapperInstanceOfHelper(
   ctx: CodegenContext,
@@ -60,6 +60,14 @@ export function ensureStandaloneWrapperInstanceOfHelper(
         ];
       case "Boolean":
         return [...slotValue(), { op: "ref.test", typeIdx: ctx.nativeBoxBooleanTypeIdx }];
+      case "BigInt":
+        // (#4631) `Object(1n) instanceof BigInt` — the [[PrimitiveValue]] slot
+        // holds the native bigint carrier. A module with no bigint carrier
+        // type registered can never mint the wrapper, so a constant-false
+        // brand test is exact there.
+        return ctx.nativeBigIntTypeIdx >= 0
+          ? [...slotValue(), { op: "ref.test", typeIdx: ctx.nativeBigIntTypeIdx }]
+          : [{ op: "i32.const", value: 0 }];
     }
   };
 

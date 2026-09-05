@@ -6,6 +6,7 @@
  * the responsibility of eval-inline's conservative dynamic-eval fallback.
  */
 import { ts } from "../../ts-api.js";
+import { isUseStrictDirectiveExpression } from "../helpers/use-strict-directive.js";
 
 const STRICT_RESERVED_WORDS = new Set([
   "implements",
@@ -20,9 +21,37 @@ const STRICT_RESERVED_WORDS = new Set([
 ]);
 const STRICT_BINDING_NAMES = new Set(["eval", "arguments"]);
 
+/**
+ * Caller-context permissions for the §15.1.1 Script early-error rules that
+ * cannot be answered from the eval source alone (#5157). Each flag is true only
+ * when the *call site* licenses the construct:
+ *
+ * - `newTarget` — direct eval contained in function code that is not the
+ *   function code of an ArrowFunction.
+ * - `superProperty` — direct eval inside a method / accessor / constructor
+ *   (a function with a [[HomeObject]]).
+ * - `superCall` — direct eval inside a derived-class constructor.
+ *
+ * Indirect eval never licenses any of them.
+ */
+export interface EvalCallerCapabilities {
+  newTarget: boolean;
+  superProperty: boolean;
+  superCall: boolean;
+}
+
+const NO_CAPABILITIES: EvalCallerCapabilities = { newTarget: false, superProperty: false, superCall: false };
+
 /** Return the first early-error message, or undefined when the body is valid. */
-export function foldedEvalEarlyError(sourceFile: ts.SourceFile, scriptIsStrict: boolean): string | undefined {
+export function foldedEvalEarlyError(
+  sourceFile: ts.SourceFile,
+  scriptIsStrict: boolean,
+  caller: EvalCallerCapabilities = NO_CAPABILITIES,
+): string | undefined {
   let error: string | undefined;
+
+  const metaError = evalMetaPropertyEarlyError(sourceFile, caller);
+  if (metaError !== undefined) return metaError;
 
   const visit = (node: ts.Node): void => {
     if (error !== undefined) return;
@@ -99,6 +128,97 @@ export function foldedEvalEarlyError(sourceFile: ts.SourceFile, scriptIsStrict: 
   return error;
 }
 
+/**
+ * §15.1.1 Script early errors for `new.target` / SuperProperty / SuperCall.
+ *
+ * `Contains` deliberately does NOT descend into ordinary function forms (they
+ * introduce their own NewTarget / [[HomeObject]]), but DOES descend into arrow
+ * functions, which inherit both from the enclosing code. That asymmetry is the
+ * whole point of the rule, so it is modelled here rather than reusing the
+ * generic visitor above.
+ */
+function evalMetaPropertyEarlyError(sourceFile: ts.SourceFile, caller: EvalCallerCapabilities): string | undefined {
+  let error: string | undefined;
+
+  const visit = (node: ts.Node): void => {
+    if (error !== undefined) return;
+    // Opaque to `Contains` for these symbols — their own code supplies them.
+    if (isMetaOpaqueFunctionForm(node)) return;
+
+    if (!caller.newTarget && isNewTargetMetaProperty(node)) {
+      error = "'new.target' is only allowed in eval code processed by a direct eval inside non-arrow function code";
+      return;
+    }
+    if (node.kind === ts.SyntaxKind.SuperKeyword) {
+      const parent = node.parent;
+      const isCall = parent !== undefined && ts.isCallExpression(parent) && parent.expression === node;
+      if (isCall) {
+        if (!caller.superCall) {
+          error = "'super' call is not allowed in this eval code";
+          return;
+        }
+      } else if (!caller.superProperty) {
+        error = "'super' property access is not allowed in this eval code";
+        return;
+      }
+    }
+    node.forEachChild(visit);
+  };
+
+  sourceFile.forEachChild(visit);
+  return error;
+}
+
+function isNewTargetMetaProperty(node: ts.Node): boolean {
+  return ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.NewKeyword && node.name.text === "target";
+}
+
+/** Function forms that `Contains` treats as opaque for new.target / super. */
+function isMetaOpaqueFunctionForm(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isClassStaticBlockDeclaration(node) ||
+    ts.isClassDeclaration(node) ||
+    ts.isClassExpression(node)
+  );
+}
+
+/**
+ * Classify a direct-eval CALL SITE for the rules above. Arrow functions are
+ * transparent for `super` (an arrow borrows its method's [[HomeObject]]) but
+ * NOT for `new.target` when the arrow is the outermost function form: §15.1.1
+ * names ArrowFunction code explicitly as ineligible.
+ */
+export function evalCallerCapabilities(callSite: ts.Node, directEval: boolean): EvalCallerCapabilities {
+  if (!directEval) return NO_CAPABILITIES;
+  for (let cur: ts.Node | undefined = callSite; cur && !ts.isSourceFile(cur); cur = cur.parent) {
+    if (ts.isArrowFunction(cur)) continue;
+    if (ts.isMethodDeclaration(cur) || ts.isGetAccessorDeclaration(cur) || ts.isSetAccessorDeclaration(cur)) {
+      return { newTarget: true, superProperty: true, superCall: false };
+    }
+    if (ts.isPropertyDeclaration(cur)) return { newTarget: true, superProperty: true, superCall: false };
+    if (ts.isConstructorDeclaration(cur)) {
+      return { newTarget: true, superProperty: true, superCall: constructorIsDerived(cur) };
+    }
+    if (ts.isFunctionDeclaration(cur) || ts.isFunctionExpression(cur)) {
+      return { newTarget: true, superProperty: false, superCall: false };
+    }
+  }
+  // Reached Script/Module top level: global code licenses none of the three.
+  return NO_CAPABILITIES;
+}
+
+function constructorIsDerived(ctor: ts.ConstructorDeclaration): boolean {
+  const cls = ctor.parent;
+  if (cls === undefined || (!ts.isClassDeclaration(cls) && !ts.isClassExpression(cls))) return false;
+  return (cls.heritageClauses ?? []).some((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
+}
+
 function evalNodeHasStrictScope(node: ts.Node): boolean {
   for (let current: ts.Node | undefined = node; current && !ts.isSourceFile(current); current = current.parent) {
     if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) return true;
@@ -112,7 +232,8 @@ function evalNodeHasStrictScope(node: ts.Node): boolean {
 function hasUseStrictDirective(statements: readonly ts.Statement[]): boolean {
   for (const statement of statements) {
     if (!ts.isExpressionStatement(statement) || !ts.isStringLiteral(statement.expression)) return false;
-    if (statement.expression.text === "use strict") return true;
+    // §11.2.2 matches the RAW token — see helpers/use-strict-directive.ts.
+    if (isUseStrictDirectiveExpression(statement.expression)) return true;
   }
   return false;
 }

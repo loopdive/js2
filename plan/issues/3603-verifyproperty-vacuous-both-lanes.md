@@ -4,7 +4,7 @@ title: "verifyProperty is vacuous on BOTH lanes — two distinct root causes (st
 status: in-progress
 sprint: current
 created: 2026-07-25
-updated: 2026-07-25
+updated: 2026-08-31
 assignee: ttraenkler/opus-loop-a
 loc-budget-allow:
   - src/runtime.ts
@@ -877,3 +877,28 @@ is touched, and there is no committed force-disable switch.**
 obj[name]`, `isWritable` writes) and the host lane shares real host builtins
    across in-process runs. Probing `Math.abs` twice in one process without
    `{restore:true}` contaminates the second probe. Use a fresh subject per case.
+
+## 2026-08-31 — residual: vector mirror writeback is skipped on abrupt calls
+
+The fixed-arity host call bridge still brackets mirror writeback only on normal
+completion. `src/runtime/host-call-abi.ts:43-46` snapshots vector mirrors,
+calls `Reflect.apply`, and reconciles afterwards without `finally`. The live
+`__proto_method_call` path in `src/runtime.ts:14077-14079` has the same shape.
+
+A direct probe mutating the host mirror and then throwing leaves the mirror
+changed while the compiled vector remains unchanged. This violates the abrupt
+completion rule already implemented correctly by the sibling prototype-method
+path at `src/runtime.ts:14293-14304`, whose comment explicitly says committed
+writes must be reconciled before rethrow.
+
+This remains within #3603 because the affected bridges are the same host
+uncurried-call/vector-mirror surface the issue owns.
+
+### Added acceptance criteria
+
+- [ ] Every bridge that calls host code after `snapshotVecMirrors` reconciles in
+      `finally` before an abrupt completion is rethrown.
+- [ ] A host callback that mutates a mirrored vector and then throws leaves the
+      compiled vector observing the committed mutation.
+- [ ] Normal return, failed assertion, and non-vector controls preserve their
+      current identity/exception behavior.

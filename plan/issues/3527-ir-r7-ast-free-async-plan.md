@@ -3,7 +3,7 @@ id: 3527
 title: "IR-only R7: AST-free async suspension plans and canonical Promise ABI"
 status: blocked
 created: 2026-07-21
-updated: 2026-08-20
+updated: 2026-09-05
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -42,6 +42,13 @@ files:
   - src/codegen/declarations/import-collector.ts
   - src/codegen/expressions.ts
   - tests/issue-3527-ir-async-plan.test.ts
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/codegen/ir-prepared-free-functions.ts
+func-budget-allow:
+  - src/ir/from-ast.ts::lowerExpr
+oracle-ratchet-allow:
+  - src/codegen/async-linear-planning.ts
 ---
 # #3527 — IR-only R7: AST-free async suspension plans and canonical Promise ABI
 
@@ -411,3 +418,266 @@ settlement provider behavior behind #3526 intents. General deletion is R10.
 - **Protocol/cross-file gaps:** iterator close, `yield*`, laziness, operation
   Promise identity, same-name units, and declaration order need dedicated
   anti-vacuity traces rather than corpus counts.
+
+## Implementation Plan — 2026-09-05 — B2 linear suspension chains and liveness
+
+**Planning source:** `5da655f286fcd569203cd2012b23dc21bf1c626d`; the lead
+verified no IR delta in the subsequently fetched `4946cf` main. Re-ground the
+implementation against its assigned current-main worktree. Proposed slice
+claim: `3527:r7-b2-linear-suspension-liveness`, reserved by the lead before
+dispatch. Astra plans and Luna `max` implements, per the user. This phase is
+ready independently of the remaining epic dependencies; it does not close R7
+or change its acceptance checkboxes.
+
+### Current production boundary
+
+The older “Current IR does not represent suspension” evidence above is
+superseded by production source. `IrAsyncPlan` already has a canonical Promise
+ABI, typed spills/updates, verifier and full semantic serialization.
+`src/codegen/ir-async-frame.ts:388` lowers it through the existing
+`emitPreparedAsyncFrameStateMachine`; its adapter restores typed spills
+(`:322`) and consumes multiple states. A new frame engine or plan schema is
+not required for linear chains.
+
+The producer still constrains the population. `async-prepare.ts:745` handles
+one await and rejects a slot used on both sides; its continuation receives
+only the resumed value. The separate loop and two-await producers test
+`fetchAllSequential`/`fetchUser` and `main` names (`:139`, `:373`). Source
+selection independently admits exact forms and rejects pre-await captures
+(`async-ir-planning.ts:445`, `:507`); native admission follows another named
+family (`:565–650`). None of those names is a semantic suspension proof.
+
+There is also an earlier blocker: the await arm in `from-ast.ts:4044` erases
+statically settled `Promise.resolve` and non-reference awaits. A general
+splitter cannot recover an erased microtask boundary. Exact prepared-owner
+await evidence must reach this arm before source admission widens.
+
+### Bounded structural result
+
+Prepare top-level ordinary async declarations with a linear sequence of
+awaits, ordinary intervening computation, and a final return/void completion.
+There is no fixed await count, statement count, identifier spelling, constant,
+or particular callee required. Use the existing callable/frame carrier and
+runtime-provider capabilities; this phase does not widen their representation
+vocabulary. At least the existing real-suspension population must be covered,
+and every await within an admitted chain survives, including settled operands.
+
+Branches/back-edges that cross suspension, try/catch/finally, nested executable
+containers, receivers/captured ref cells, `for await`, async generators, WASI
+and cross-source ownership remain separate phases. Existing specialized
+loop/main routes remain until the generic producer plus their runtime
+capabilities can replace them with measured parity. Their remaining name
+guards must be reported as unfinished work, not described as general R7
+coverage. Fully settled owners still using the old C-1 route are likewise
+outside this phase's completion claim.
+
+### Implementation and exclusive write scope
+
+1. **One exact source eligibility record.** Add
+   `src/codegen/async-linear-planning.ts` and consume it from `async-ir-planning.ts` in
+   `preparedIrAsyncSourceShape`, `prepareAsyncCallableAbi`, selector options,
+   thenable-call resolution and owner collection. Reuse `analyzeAsyncBody`
+   and `planLinearAwaits` (`async-cps.ts:659`) only as frontend structural
+   preflight; retain every exact await node in source evaluation order and
+   prove none is hidden in a nested scope/unsupported control region. Do not
+   copy their AST/callback plan into `IrAsyncPlan`. Source eligibility,
+   allocated canonical Promise result ABI, and final IR preparation must
+   agree; an unproved callable must not be changed to a Promise ABI and then
+   fall back to a raw-value emitter.
+2. **Preserve suspension at AST lowering.** Extend the prepared resolver in
+   `src/ir/async-from-ast.ts` with exact owner/await-site evidence and the
+   prepared resume type. Consume it only in `from-ast.ts`'s await arm, before
+   C-1 await elision. Evaluate the operand once, retaining an explicit `await`
+   even when an existing valid static substitution supplies its value. Use
+   the existing typed externref conversion when the operand needs the await
+   carrier; provider preparation must see that conversion. Do not add an
+   extra reaction or hand-written Promise wrapper: the existing frame engine
+   owns PromiseResolve/adoption and suspension. Reconcile the produced await
+   population with the exact source record; a missing, duplicate or foreign
+   site is an invariant, not a shorter successful plan.
+3. **General IR segmentation.** Add `src/ir/async-linear-prepare.ts`, called
+   from `prepareSuspendingIrFunction:678`. Consume one linear IR block with
+   no suspension hidden in nested buffers; split at every await, in order.
+   Retain the existing return-carrier optimization only after this general
+   analysis proves it valid. Do not use owner/callee/local names as admission.
+   Produce deterministic state IDs and `ir-async-state` derived `UnitId`s
+   anchored to the exact source owner and stable helper ordinal.
+4. **Compute values crossing boundaries.** Build a complete definition/use
+   and type table. Resolve ordinary linear `slot.write`/`slot.read` sequences
+   through reaching definitions before splitting; preserve explicit
+   conversions and logical types. A read without a proved reaching definition
+   or a refinement that cannot be preserved is a typed preparation refusal,
+   never an invented default. Compute live-in/live-out backwards over the
+   resulting state edges, excluding the successor-defined resume value.
+   Retain a value through intermediate states even when they do not use it;
+   omit dead values and overwritten slot versions. Populate exact typed
+   `spills` and each suspend's `live` set. Reuse the existing analysis
+   vocabulary and have `verifyIrAsyncPlan` (`async-plan.ts:1107–1171`)
+   independently recompute the result from the completed plan.
+5. **Outline computation into ordinary IR helpers.** The current frame
+   adapter intentionally accepts `const`/`call` state bodies
+   (`ir-async-frame.ts:230`); do not expand it into another instruction
+   lowerer. Partition non-suspending computation into deterministic ordinary
+   helper calls with explicit free-value parameters and zero/one result,
+   as the existing async producers do. A region with several values needed
+   later must expose each value through ordered helper boundaries; returning
+   only its final Promise loses the others. Never recompute effectful
+   prefixes to manufacture extra outputs. Preserve instruction order,
+   effects, allocation/site provenance, and exact symbolic call bindings.
+   Keep intermediate values inside helpers where their carrier is not a
+   valid frame boundary. Every helper and its final allocation provenance
+   must pass the ordinary IR verifier before component sealing.
+6. **Reuse canonical target preparation.** The semantic chain uses
+   `canonicalPromiseAbi`, `createIrAsyncPlan`, the existing runtime intents,
+   and rejection edges to the existing rejection sink. Numeric/reference
+   spills and helper interfaces must have exact preplanned carrier evidence.
+   For standalone, replace named-leaf certification for the new chain with a
+   structural call/provider closure: each awaited Promise producer is an
+   exact prepared async owner or an already-supported Promise-delay/provider
+   plan. Reconcile the whole candidate dependency component before reserving
+   ownership, independent of declaration order. Unknown producer/carrier
+   provenance remains a refusal. Do not enable the global native Promise
+   carrier gate, import host services into standalone, or let one unsupported
+   sibling poison unrelated prepared components.
+
+Own the new `src/ir/async-linear-prepare.ts` and `src/codegen/async-linear-planning.ts`,
+`src/ir/async-prepare.ts`, `src/codegen/async-ir-planning.ts`,
+`src/ir/async-from-ast.ts`, and only the named await arm/import in
+`src/ir/from-ast.ts`. A small pure liveness extraction from `async-plan.ts`
+is permitted if useful; do not weaken its verifier or change the codec/schema.
+Add `tests/issue-3527-linear-suspension-preparation.test.ts` and
+`tests/issue-3527-linear-suspension-runtime.test.ts`, updating old near-miss
+expectations only after their new route is measured.
+
+R2-B1 owns `lower.ts`, `integration.ts`, source-callable registry, and component
+sealing; this slice reuses those seams and does not edit them. R5 M2-P1 owns
+`multi-prepared-*`; this slice does not touch those files. Ordinary async
+callable allocation stays in `prepareAsyncCallableAbi`; any required shared
+boundary change must be coordinated with the R2 owner before editing. No
+changes to `async-frame.ts`, scheduler, runtime adapters or new providers are
+assumed: a missing capability is a concrete prerequisite to report, not a
+reason to bypass preparation or silently widen a backend.
+
+### Validation and landing bar
+
+- First measure baseline/candidate SHAs and explicit target/options. Include
+  two and three awaits with a parameter and a computed value live across
+  both, a mutable local updated between awaits, dead/overwritten values,
+  numeric-vector identity, an unused await result, and final `return await`.
+  Vary names, constants, helper declaration order and await count. Compare
+  exact attempted units, state/await counts, helpers, spill sets, direct/IR
+  body counts and runtime results. No gain is asserted from source inspection.
+- Use controlled pending fulfillment and rejection at each suspension. Assert
+  the event order before the first call returns, between resolutions, and
+  after final settlement; a rejected first await cannot run later effects or
+  evaluate the second operand. Test a synchronous throw while evaluating an
+  awaited expression and after a resume. Add a mixed pending/settled chain
+  containing `await Promise.resolve(value)` and a settled non-thenable; every
+  admitted await must still yield a microtask. Compare with native JavaScript
+  and the direct engine control, documenting any baseline ordering defect.
+- Corruption tests remove/add a live value, use an old slot version, drop or
+  duplicate an await, substitute a source owner, and remove a runtime/carrier
+  receipt. Missing liveness, invalid provenance or post-claim evidence must
+  fail before publication; deliberately unsupported control regions retain
+  a source-located refusal and do not emit a partial prepared body. Poison
+  the direct body of newly prepared owners and require direct `0` / IR `1`.
+  Revert the generic producer and prepared-await retention independently to
+  prove both ownership and ordering tests fail for the intended reason.
+- Run `pnpm typecheck` and
+  `VITEST_MAX_FORKS=1 node node_modules/vitest/dist/cli.js run` with the two
+  new suites, `tests/ir/issue-1373b-async-plan.test.ts`,
+  `tests/issue-4104-ir-async-plan-runtime-consumer.test.ts`,
+  `tests/issue-4106-ir-async-fetch-user.test.ts`,
+  `tests/issue-4124-ir-final-async.test.ts`,
+  `tests/issue-4573-standalone-native-promise-delay.test.ts`,
+  `tests/issue-4574-standalone-native-async-family.test.ts`, and
+  `tests/issue-2906-async-multiawait.test.ts`. Run native controls in fresh
+  processes; also retain host rejection/engine-convergence and existing WASI
+  controls as no-regression evidence, not newly prepared WASI coverage.
+- Run both `node --import tsx scripts/check-ir-only.ts --json --policy=hybrid`
+  and `node --import tsx scripts/check-ir-only.ts --json --policy=ir-only`,
+  `node --import tsx scripts/check-ir-fallbacks.ts`,
+  async equivalence, normal dialect/layering/format/size gates and full
+  merge-group Test262. Report remaining fixture producers, C-1 await elision,
+  unsupported containers/handlers and target gaps explicitly. A green
+  playground family or the small IR-only corpus cannot close this issue.
+
+### B2 implementation checkpoint — 2026-09-05
+
+The B2 implementation is published in signed merge head
+`873e5fa140f65040bab224a1d147582a55a615c9`, whose parents are the signed B2
+implementation `a8bc547795f47ec0847466b0bb0ebb5a75cb01f8` and current upstream
+`470ceba797a2822ead2a4060fc65fb78c0b52887`. The branch is
+`codex/3527-b2-luna-20260905`; PR #5602 is open against `loopdive/js2:main`
+from `ttraenkler:codex/3527-b2-luna-20260905`.
+
+The structural source record and AST free producer now admit arbitrary positive
+await counts in supported top level straight line async declarations. The
+runtime fixture measures five source awaits and five emitted frame state edges:
+pending `delay`, settled `Promise.resolve`, an unused settled
+`Promise.resolve`, settled non thenable `await 42`, and a second pending
+`delay`. The IR and native controls both produce the event sequence
+`schedule:0:1`, `fire:0`, `observer:1`, `observer:2`, `schedule:0:1`,
+`fire:0`; the independent Promise observer distinguishes retained settled
+awaits from static erasure. Controlled first and second rejection cases stop
+later state effects, and final void owners resolve `undefined` through the
+canonical ABI. The direct engine value comparison remains supplemental.
+
+The pure preparation suite verifies three states/two suspensions, computed
+SSA liveness `[[0], [0, 4]]` with SSA spills `{0, 4}`, mutable slot reaching
+definitions with slot spill `{3}`, and verifier refusal of missing liveness,
+missing spills, duplicate states, and missing runtime intent. The direct body
+poison control observes direct `0` / IR `1` for newly prepared owners.
+
+Post merge validation: the two B2 suites passed 10/10 tests and the adjacent
+async plan suite passed 12/12. Typecheck, format, fallback, IR only hybrid and
+IR only, dialect, neutrality, layering, stack, host import, LOC/function,
+oracle/coercion, numeric local parity (18/18), issue integrity, and normal
+pre push checks passed. The focused #4106 suite passed 7/8 with its existing
+host free invalid `WebAssembly.validate` baseline red; the #4104 suite passed
+16/17 with its existing `functionPrototypeCall` policy expectation red.
+
+This checkpoint does not close R7. Loops/back edges, handlers, nested
+executable containers, async generators, `for await`, WASI, and fully settled
+owners on the historical C 1 route remain separate work. Existing standalone
+and WASI invalid opcode validation reds remain unchanged, and no baseline was
+weakened.
+
+### B2 settled owner admission repair checkpoint — 2026-09-05
+
+Root's independent settled await controls found a regression at the published
+B2 head before this repair. With `experimentalIR: true`,
+`nativeStrings: false`, and `trackIrOutcomes: true`, the one await literal
+owner and the two await literal owner both failed compilation with
+`IR async runtime attachment for test has no valid async plan owner`. One
+direct body was emitted before the fatal IR error, and the result had zero IR
+bodies. The historical C 1 controls returned 43 and 85. The provider only
+`Promise.resolve` control remained a
+valid B2 owner and returned native Promise value 6 with matching independent
+native observer order.
+
+The narrow fix makes prepared await retention require the existing
+potentially suspending owner analysis in addition to the linear source shape.
+Fully static owners therefore remain on their established C 1 route until a
+separate cutover, while provider only and pending mixed chains retain the B2
+producer and canonical await ordering. The regression suite independently
+asserts that both static owners' synthetic helpers are absent, then validates
+their direct results 43 and 85; the existing mixed, pending, rejection, and
+provider controls remain active.
+
+Repair commits `96defcfe84d9753e5352e20b60a0c86236f5dda0` and
+`18352307cb7cb6bede526bf496e10ba3846624d7` are signed with the required
+Thomas Tränkler author, Codex coauthor, and Luna Max model trailer. PR #5602
+is open and unqueued at exact head
+`18352307cb7cb6bede526bf496e10ba3846624d7`.
+
+The focused runtime regression suite passed 7/7 and the pure preparation suite
+passed 4/4. Typecheck, formatting, fallback, IR policy, dialect, layering,
+neutrality, stack, oracle/coercion, numeric local parity (18/18), issue
+integrity, and the normal pre push hooks passed. Root independently reran the
+three source controls 3/3: static one and two await owners compile and return
+43/85 with the baseline route, and the provider only owner remains direct 0 /
+IR 1 with native observer parity. The exact upstream merge head still needs to
+be integrated before the final R7 publication review; this repair does not
+close R7 or broaden its remaining loop, handler, container, generator,
+`for await`, WASI, or settled owner limits.

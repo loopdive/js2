@@ -33,15 +33,101 @@
 //     it, so it never reaches this file.
 import { ts } from "../../ts-api.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
+import { allocLocal } from "../context/locals.js";
 import type { ValType } from "../../ir/types.js";
-import { compileExpression } from "../shared.js";
-import { emitThrowTypeError } from "./helpers.js";
+import { coerceType, compileExpression } from "../shared.js";
+import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
+import { emitThrowTypeError, noJsHost } from "./helpers.js";
 import {
   NEVER_CALLABLE_FACT_KINDS,
   isEvolvingAnyBinding,
   isFreshlyConstructedNonCallable,
   unwrapCallee,
 } from "./calls-guards.js";
+
+/**
+ * Host-lane `[[Construct]]` for a constructor expression evaluated at runtime.
+ * In particular, `new (Function(...).call())` and `new (Function(...).apply())`
+ * first evaluate the reflective call and then construct the function it
+ * returns. The old unknown-constructor fallback skipped that call expression
+ * and left a null externref in its place.
+ *
+ * Spread arguments deliberately decline here: their runtime arity needs the
+ * dynamic argv machinery used by the identifier-based path in new-super.ts.
+ * Fixed arguments are evaluated once, in ordinary `new` order, and passed
+ * through the existing host bridge so IsConstructor and Reflect.construct keep
+ * their standard semantics.
+ */
+export function tryEmitHostConstructExpression(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.NewExpression,
+): boolean {
+  let calleeExpr: ts.Expression = expr.expression;
+  while (
+    ts.isParenthesizedExpression(calleeExpr) ||
+    ts.isAsExpression(calleeExpr) ||
+    ts.isNonNullExpression(calleeExpr) ||
+    ts.isTypeAssertionExpression(calleeExpr)
+  ) {
+    calleeExpr = ts.isParenthesizedExpression(calleeExpr)
+      ? calleeExpr.expression
+      : ts.isAsExpression(calleeExpr)
+        ? calleeExpr.expression
+        : ts.isNonNullExpression(calleeExpr)
+          ? calleeExpr.expression
+          : (calleeExpr as ts.TypeAssertion).expression;
+  }
+  const args = expr.arguments ?? [];
+  if (!ts.isCallExpression(calleeExpr) || noJsHost(ctx) || args.some((arg) => ts.isSpreadElement(arg))) return false;
+
+  // Evaluate the constructor expression before any `new` arguments, as
+  // required by EvaluateNew. The expression may itself be a dynamic
+  // Function/call/apply chain and therefore may register late imports.
+  const calleeTy = compileExpression(ctx, fctx, calleeExpr, { kind: "externref" });
+  if (calleeTy && calleeTy.kind !== "externref") {
+    coerceType(ctx, fctx, calleeTy, { kind: "externref" });
+  } else if (calleeTy === null) {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  const calleeLocal = allocLocal(fctx, `__newexpr_callee_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+
+  // Register the bridge as one batch after the callee has been compiled. The
+  // terminal flush keeps call indices above nested-expression imports stable
+  // (#608/#794).
+  const arrNewIdx = ensureLateImport(ctx, "__js_array_new", [], [{ kind: "externref" }]);
+  const arrPushIdx = ensureLateImport(ctx, "__js_array_push", [{ kind: "externref" }, { kind: "externref" }], []);
+  const ccIdx = ensureLateImport(
+    ctx,
+    "__construct_closure",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  flushLateImportShifts(ctx, fctx);
+  const finalArrNew = ctx.funcMap.get("__js_array_new") ?? arrNewIdx;
+  const finalArrPush = ctx.funcMap.get("__js_array_push") ?? arrPushIdx;
+  const finalCc = ctx.funcMap.get("__construct_closure") ?? ccIdx;
+  if (finalArrNew === undefined || finalArrPush === undefined || finalCc === undefined) return false;
+
+  fctx.body.push({ op: "call", funcIdx: finalArrNew });
+  const argvLocal = allocLocal(fctx, `__newexpr_argv_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: argvLocal });
+  for (const arg of args) {
+    fctx.body.push({ op: "local.get", index: argvLocal });
+    const argTy = compileExpression(ctx, fctx, arg, { kind: "externref" });
+    if (argTy && argTy.kind !== "externref") {
+      coerceType(ctx, fctx, argTy, { kind: "externref" });
+    } else if (argTy === null) {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    fctx.body.push({ op: "call", funcIdx: finalArrPush });
+  }
+  fctx.body.push({ op: "local.get", index: calleeLocal });
+  fctx.body.push({ op: "local.get", index: argvLocal });
+  fctx.body.push({ op: "call", funcIdx: finalCc });
+  return true;
+}
 
 /**
  * (#4246) `new <provably-not-a-constructor>` → TypeError.

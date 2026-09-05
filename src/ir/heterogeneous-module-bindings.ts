@@ -115,6 +115,7 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
   if (cached) return cached;
 
   const widened = new Set<string>();
+  const propagationEdges = new Map<string, string[]>();
   const moduleVarsByName = sourceFile.text.includes("with")
     ? collectModuleScopedVarsByName(sourceFile)
     : new Map<string, ts.VariableDeclaration>();
@@ -142,6 +143,19 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
     return tag;
   };
 
+  const unwrapIdentifier = (expression: ts.Expression): ts.Identifier | undefined => {
+    let current = expression;
+    while (
+      ts.isParenthesizedExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isTypeAssertionExpression(current) ||
+      ts.isNonNullExpression(current)
+    ) {
+      current = current.expression;
+    }
+    return ts.isIdentifier(current) ? current : undefined;
+  };
+
   const visit = (node: ts.Node): void => {
     if (
       ts.isBinaryExpression(node) &&
@@ -152,7 +166,23 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
       const declaration = oracle.variableDeclarationOf(node.left);
       if (declaration !== undefined && declaration.getSourceFile() === sourceFile) {
         const declTag = initializerTagOf(declaration);
-        if (declTag !== "none" && assignmentWidens(oracle, declTag, node.right)) widened.add(node.left.text);
+        if (declTag !== "none") {
+          if (assignmentWidens(oracle, declTag, node.right)) widened.add(node.left.text);
+          const rhs = unwrapIdentifier(node.right);
+          if (rhs !== undefined) {
+            const rhsDeclaration = oracle.variableDeclarationOf(rhs);
+            if (
+              rhsDeclaration !== undefined &&
+              ts.isIdentifier(rhsDeclaration.name) &&
+              rhsDeclaration.getSourceFile() === sourceFile &&
+              isModuleScoped(rhsDeclaration)
+            ) {
+              const targets = propagationEdges.get(rhsDeclaration.name.text) ?? [];
+              targets.push(node.left.text);
+              propagationEdges.set(rhsDeclaration.name.text, targets);
+            }
+          }
+        }
       } else if (declaration === undefined && moduleVarsByName.size > 0 && isInsideWithBody(node.left)) {
         // `with` can dynamically resolve the target to the object environment,
         // so only an unresolved identifier may use this deliberately name-keyed
@@ -165,6 +195,21 @@ export function collectHeterogeneouslyAssignedModuleVarNames(
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
+
+  // A specialized binding can also receive values through another mutable
+  // binding. Resolve that small dependency graph to keep dynamic assignments
+  // in the same externref carrier (`var a = false; var b = a; a = null;
+  // b = a`). The direct pass above seeds the graph; propagation is bounded by
+  // the number of module bindings and does not inspect unrelated locals.
+  const pending = [...widened];
+  for (let index = 0; index < pending.length; index++) {
+    const sourceName = pending[index]!;
+    for (const target of propagationEdges.get(sourceName) ?? []) {
+      if (widened.has(target)) continue;
+      widened.add(target);
+      pending.push(target);
+    }
+  }
   bySource.set(sourceFile, widened);
   return widened;
 }

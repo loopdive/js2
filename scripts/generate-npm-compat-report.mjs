@@ -43,6 +43,7 @@ import { runHarness as runClsxUpstreamSuite } from "../tests/dogfood/clsx-upstre
 import { runHarness as runCookie } from "../tests/dogfood/cookie-harness.mjs";
 import { runHarness as runCookieUpstreamSuite } from "../tests/dogfood/cookie-upstream-suite.mjs";
 import { correctnessRollup, correctnessVerdict } from "./lib/npm-compat-correctness.mjs"; // (#4127)
+import { classifyPackageRow, esEditionRollup } from "./lib/npm-compat-es-edition.mjs";
 import { runHarness as runEslint } from "../tests/dogfood/eslint-harness.mjs";
 import { runHarness as runEslintWorkload } from "../tests/dogfood/eslint-workload-harness.mjs";
 import { runHarness as runEslintUpstreamSuite } from "../tests/dogfood/eslint-upstream-suite.mjs";
@@ -69,7 +70,7 @@ import { runHarness as runWebpackUpstreamSuite } from "../tests/dogfood/webpack-
 import { runHarness as runJestUpstreamSuite } from "../tests/dogfood/jest-upstream-suite.mjs";
 import { runHarness as runTailwindcssUpstreamSuite } from "../tests/dogfood/tailwindcss-upstream-suite.mjs";
 import { runHarness as runTypescriptUpstreamSuite } from "../tests/dogfood/typescript-upstream-suite.mjs";
-import { NPM_COMPAT_CATALOG, NPM_COMPAT_CATALOG_NAMES } from "../tests/dogfood/npm-compat-catalog.mjs";
+import { NPM_COMPAT_ALL_PACKAGE_NAMES, NPM_COMPAT_CATALOG } from "../tests/dogfood/npm-compat-catalog.mjs";
 import { runNpmCompatCatalogHarness } from "../tests/dogfood/npm-compat-catalog-harness.mjs";
 import { NPM_COMPAT_UPSTREAM_SOURCES } from "../tests/dogfood/npm-compat-upstream-sources.mjs";
 
@@ -100,9 +101,7 @@ import { summarizePlaygroundFiles } from "./lib/npm-compat-playground.mjs";
 import { renderHarnessThrownText } from "./lib/wasm-exn-render.mjs";
 
 const ROOT = resolve(import.meta.dirname, "..");
-const PACKAGE_NAMES = [
-  ...new Set(["acorn", "marked", "clsx", "cookie", "eslint", "prettier", "react", ...NPM_COMPAT_CATALOG_NAMES]),
-];
+const PACKAGE_NAMES = [...NPM_COMPAT_ALL_PACKAGE_NAMES];
 const UPSTREAM_SUITE_RUNNERS = new Map([
   ["acorn", runAcornOfficialSuite],
   ["axios", runAxiosUpstreamSuite],
@@ -2277,7 +2276,22 @@ async function buildPackageEntry({
   };
 }
 
-const packages = [];
+// Every row records WHEN ITS OWN measurement finished, not when the run
+// ended. Packages are measured in independent CI rows now (one per package,
+// see npm-compat-refresh.yml), so a single run-level timestamp would describe
+// a moment that applies to no package in particular — and on the dashboard it
+// read as "everything here was measured at 15:27" while react-dom's numbers
+// were three days old. `measuredAt` is the per-package truth the page renders;
+// the summary's `generatedAt` stays what it always was (when this artifact was
+// assembled) and is still what the promotion freshness compare comes down to.
+class MeasuredPackageList extends Array {
+  push(...rows) {
+    const measuredAt = new Date().toISOString();
+    return super.push(...rows.map((row) => (row?.measuredAt ? row : { ...row, measuredAt })));
+  }
+}
+
+const packages = new MeasuredPackageList();
 
 if (perfOnly) {
   const name = [...selectedPackages][0];
@@ -2756,7 +2770,15 @@ if (!perfOnly && selectedPackages.has("react-dom")) {
   console.log("[npm-compat] react-dom — package entry + react-dom's own upstream unit tests...");
   const reactDomEntry = NPM_COMPAT_CATALOG.find((entry) => entry.name === "react-dom");
   const reactDomReport = await runNpmCompatCatalogHarness("react-dom", { quiet: true });
-  const reactDomSuite = await runConfiguredUpstreamSuite("react-dom", { quiet: true });
+  // (#4604) react-dom is the roster's largest suite by an order of magnitude
+  // and has twice burned a whole CI run with `quiet: true` hiding all
+  // progress — a 350-min timeout and a genuine hang produce the same
+  // single-line log. NPM_COMPAT_SUITE_LOGS=1 (set by npm-compat-refresh.yml)
+  // keeps its per-batch [dogfood] lines so the job log shows which lane and
+  // batch the clock went to.
+  const reactDomSuite = await runConfiguredUpstreamSuite("react-dom", {
+    quiet: process.env.NPM_COMPAT_SUITE_LOGS !== "1",
+  });
   const reactDomImplementationReport = {
     ...reactDomReport,
     // The package-entry probe only compiles the small environment selector.
@@ -3012,6 +3034,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
 
 for (const pkg of packages) {
   pkg.esSyntax = await measurePackageSyntax(pkg);
+  pkg.esEdition = classifyPackageRow(pkg, ROOT);
   pkg.weeklyDownloads = NPM_DOWNLOADS_SNAPSHOT.packages[pkg.name] ?? null;
   pkg.playground ??= {
     kind: "unavailable",
@@ -3026,12 +3049,27 @@ packages.sort(
     (right.weeklyDownloads ?? Number.NEGATIVE_INFINITY) - (left.weeklyDownloads ?? Number.NEGATIVE_INFINITY) ||
     left.name.localeCompare(right.name),
 );
+const measuredAtStamps = packages.map((packageRow) => packageRow.measuredAt).filter(Boolean);
 const summary = {
   generatedAt: new Date().toISOString(),
+  // The spread of per-package measurement times (see MeasuredPackageList).
+  // The dashboard headline is built from this rather than `generatedAt`, so a
+  // corpus whose oldest and newest numbers are days apart says so.
+  measuredRange:
+    measuredAtStamps.length > 0
+      ? {
+          oldest: measuredAtStamps.reduce((left, right) => (left < right ? left : right)),
+          newest: measuredAtStamps.reduce((left, right) => (left > right ? left : right)),
+        }
+      : null,
   // (#4127) How much of the corpus carries correctness evidence at all. The
   // `unverified` list is named, not just counted, so the size of the blind spot
   // is legible rather than implied.
   correctness: correctnessRollup(packages),
+  // Which ECMAScript edition each package actually needs — the corpus
+  // ordered as a timeline, so "what must the compiler support to run real npm
+  // code" is answerable from the artifact rather than by reading bundles.
+  esEditions: esEditionRollup(packages),
   note: "Only packages with a committed, reproducible tests/dogfood harness are listed. Original upstream tests are preferred; when npm omits them, the card says so instead of substituting harness-authored tests.",
   popularity: {
     metric: "weekly npm downloads",
@@ -3139,3 +3177,12 @@ if (writeArtifacts) {
   console.log("[npm-compat] skipped aggregate artifact writes");
   console.log(JSON.stringify({ ...summary, perfRows, perfHistory }, null, 2));
 }
+
+// (#4604) Every report is written at this point, but a timed-out upstream test
+// can leave live host timer chains behind (React's scheduler shim reschedules
+// `setTimeout(run, 0)` while render work remains), and those keep the event
+// loop — and therefore the CI step — alive indefinitely after the run is
+// complete. Unref'd so a clean drain still exits naturally and immediately;
+// the forced exit only fires when leaked handles would otherwise hang a
+// finished run. All artifact writes above are synchronous.
+setTimeout(() => process.exit(process.exitCode ?? 0), 10_000).unref();

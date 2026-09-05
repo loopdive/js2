@@ -6,7 +6,8 @@ import { describe, it } from "vitest";
 import { assertEquivalent } from "./equivalence/helpers.js";
 
 describe("#3979 callable values in heterogeneous containers", () => {
-  it.fails("calls a function element in a mixed array literal", async () => {
+  // Passes since the #4531 struct-ref vec mutation arms + escape widening landed.
+  it("calls a function element in a mixed array literal", async () => {
     await assertEquivalent(
       `export function test(): number {
          const pair = [1, () => 7];

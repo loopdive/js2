@@ -31,11 +31,10 @@
 //      types in a module's flat type table and produce a stable fingerprint
 //      usable as a drift gate (CI / post-`wasm-opt` verification).
 //
-// This is pure analysis: it reads a module's type table and computes a hash. It
-// emits nothing and changes no codegen, so wiring it (behind a verification
-// gate) is behavior-neutral. The follow-on phases (emit the types as one frozen
-// contiguous rec group; import the helpers from `runtime.wasm`) build on this
-// primitive.
+// The analysis is also usable as a raw-byte drift gate: it reads the emitted
+// type section without depending on Binaryen's names or absolute indices. The
+// codegen side records one contiguous group for native-string modules, and the
+// shared runtime provider exports the first helper family that consumes it.
 
 import type {
   ArrayTypeDef,
@@ -52,42 +51,47 @@ import type {
  * The closed, ordered set of runtime GC type names that form the shared
  * runtime-type boundary rec group (#2514). These are the WasmGC types whose
  * objects cross a core-wasm link boundary between a user module and the shared
- * runtime: the string family and the vec/array family.
+ * runtime: the string family and the eagerly reserved vec/array family.
  *
- * Order here is the *canonical* member order the ABI freezes; the emit phase
- * (follow-on) will lay these out contiguously in this order so every artifact
- * produces a byte-identical group. The hash below is order-sensitive, so this
- * list IS the versioned ABI contract for membership + order.
+ * Order here is the *canonical* member order the ABI freezes. Codegen lays
+ * these out contiguously in this order so every native-string artifact emits
+ * the same recursive group. The hash below is order-sensitive, so this list
+ * IS the versioned ABI contract for membership + order.
  *
- * NOTE: not every module declares every one of these (DCE prunes unused types),
- * so the verifier works on the *subset present*, preserving relative order.
+ * Native-string codegen eagerly declares every member and the DCE pass roots
+ * the whole range. The extractor still accepts subsets for analysis of older
+ * or hand-built modules, but a linkable fingerprint must contain all members.
  *
  * IMPORTANT — names are the *in-memory* TypeDef names (no `$` prefix). The `$`
  * appears only in WAT rendering, not in the IR `name` field, so the verifier
  * (which reads `mod.types[i].name`) matches the bare names below.
  *
- * Only types with a *name-stable* identity belong here. The externref vec/arr
- * variants are emitted with an index-suffixed name (`__arr_ref_6`,
- * `__vec_ref_6`, where `6` is the referenced type index) which is NOT stable
- * across modules — so they are intentionally excluded from the name-keyed ABI
- * boundary. Their structural identity is still verified transitively when a
- * group member refs them (as an external `x` token).
+ * Only types with a *name-stable* identity belong here. The two eagerly
+ * reserved externref/f64 vec families use stable names. Later
+ * element-specific vec/array variants (for example `__arr_ref_6`, where `6`
+ * is a referenced type index) are intentionally outside this closed ABI;
+ * native-string modules still retain the reserved family even when no user
+ * array is used.
  */
 export const RUNTIME_RECGROUP_TYPE_NAMES: readonly string[] = [
-  // String family (i16-array native-string backend).
+  // These are eagerly registered, in this exact order, by
+  // createCodegenContext. Keeping the complete prefix closed makes the group
+  // independent of which subset an individual consumer happens to exercise.
+  "__vec_base",
+  "__arr_externref",
+  "__vec_externref",
+  "__arr_f64",
+  "__vec_f64",
+  "__str_data",
   "AnyString",
   "NativeString",
   "ConsString",
-  "__str_data",
-  // Vec / array family (name-stable members only).
-  "__vec_base",
-  "__vec_f64",
-  "__arr_f64",
+  "HashedString",
 ];
 
 /** ABI version of the canonical runtime rec group. Bump on any membership,
  *  order, or structural change to a type in {@link RUNTIME_RECGROUP_TYPE_NAMES}. */
-export const RUNTIME_RECGROUP_ABI_VERSION = 1;
+export const RUNTIME_RECGROUP_ABI_VERSION = 2;
 
 const RUNTIME_NAME_SET = new Set(RUNTIME_RECGROUP_TYPE_NAMES);
 
@@ -258,6 +262,340 @@ export interface RuntimeGroupFingerprint {
   members: string[];
   /** Number of runtime types present. */
   count: number;
+}
+
+/**
+ * Result of checking the type section of an emitted binary against a frozen
+ * runtime-group fingerprint.
+ *
+ * This deliberately reports a structured result instead of throwing. The
+ * optimizer can then fail safe to the pre-optimized bytes while keeping the
+ * diagnostic actionable for callers that want to reject the artifact.
+ */
+export interface RuntimeRecGroupBinaryVerification {
+  /** ABI version used by the expected fingerprint. */
+  abiVersion: number;
+  /** Whether an exact matching recursive group was found. */
+  valid: boolean;
+  /** Structural hash observed in the matching candidate, when available. */
+  hash?: string;
+  /** Absolute type-table start of the candidate group, when available. */
+  start?: number;
+  /** Absolute type-table end of the candidate group, when available. */
+  end?: number;
+  /** Number of members in the candidate group, when available. */
+  count?: number;
+  /** Human-readable reason for a failed check. */
+  detail?: string;
+}
+
+interface BinaryCursor {
+  readonly bytes: Uint8Array;
+  offset: number;
+}
+
+interface ParsedBinaryTypeGroup {
+  start: number;
+  end: number;
+  recursive: boolean;
+  defs: FlatTypeDef[];
+}
+
+const BINARY_TYPE = {
+  i32: 0x7f,
+  i64: 0x7e,
+  f32: 0x7d,
+  f64: 0x7c,
+  v128: 0x7b,
+  funcref: 0x70,
+  externref: 0x6f,
+  struct: 0x5f,
+  array: 0x5e,
+  func: 0x60,
+  rec: 0x4e,
+  sub: 0x50,
+  subFinal: 0x4f,
+  ref: 0x64,
+  refNull: 0x63,
+  any: 0x6e,
+  eq: 0x6d,
+  i31: 0x6c,
+  structHeap: 0x6b,
+  arrayHeap: 0x6a,
+  none: 0x71,
+  noExtern: 0x72,
+  noFunc: 0x73,
+  i8: 0x78,
+  i16: 0x77,
+} as const;
+
+function readByte(c: BinaryCursor): number {
+  if (c.offset >= c.bytes.length) throw new Error("truncated Wasm type section");
+  return c.bytes[c.offset++]!;
+}
+
+function readUnsignedLeb(c: BinaryCursor): number {
+  let value = 0;
+  let shift = 0;
+  for (let i = 0; i < 5; i++) {
+    const byte = readByte(c);
+    value += (byte & 0x7f) * 2 ** shift;
+    if ((byte & 0x80) === 0) return value;
+    shift += 7;
+  }
+  throw new Error("invalid u32 LEB in Wasm type section");
+}
+
+function readSignedLeb33(c: BinaryCursor): number {
+  let value = 0;
+  let shift = 0;
+  let byte = 0;
+  for (let i = 0; i < 5; i++) {
+    byte = readByte(c);
+    value += (byte & 0x7f) * 2 ** shift;
+    shift += 7;
+    if ((byte & 0x80) === 0) {
+      if ((byte & 0x40) !== 0 && shift < 33) value -= 2 ** shift;
+      return value;
+    }
+  }
+  throw new Error("invalid s33 LEB in Wasm type section");
+}
+
+/**
+ * Decode the heap type that follows the binary `ref` / `ref null` prefix.
+ * Abstract heap types use the same signed-LEB encoding as type indices, but
+ * are represented by their one-byte tags (for example `any` = 0x6e), so they
+ * must be recognized before treating the byte as a numeric index.
+ */
+function parseBinaryRefType(c: BinaryCursor, nullable: boolean): ValType {
+  const next = c.bytes[c.offset];
+  switch (next) {
+    case BINARY_TYPE.any:
+      c.offset++;
+      return { kind: "anyref" };
+    case BINARY_TYPE.eq:
+      c.offset++;
+      return { kind: "eqref" };
+    case BINARY_TYPE.i31:
+    case BINARY_TYPE.structHeap:
+    case BINARY_TYPE.arrayHeap:
+    case BINARY_TYPE.none:
+      c.offset++;
+      return { kind: "anyref" };
+    case BINARY_TYPE.noExtern:
+      c.offset++;
+      return { kind: "externref" };
+    case BINARY_TYPE.noFunc:
+    case BINARY_TYPE.funcref:
+      c.offset++;
+      return { kind: "funcref" };
+    case BINARY_TYPE.externref:
+      c.offset++;
+      return nullable ? { kind: "externref" } : { kind: "ref_extern" };
+    default: {
+      const typeIdx = readSignedLeb33(c);
+      return nullable ? { kind: "ref_null", typeIdx } : { kind: "ref", typeIdx };
+    }
+  }
+}
+
+function parseBinaryValType(c: BinaryCursor, storage: boolean): ValType {
+  const tag = readByte(c);
+  switch (tag) {
+    case BINARY_TYPE.i32:
+      return { kind: "i32" };
+    case BINARY_TYPE.i64:
+      return { kind: "i64" };
+    case BINARY_TYPE.f32:
+      return { kind: "f32" };
+    case BINARY_TYPE.f64:
+      return { kind: "f64" };
+    case BINARY_TYPE.v128:
+      return { kind: "v128" };
+    case BINARY_TYPE.funcref:
+      return { kind: "funcref" };
+    case BINARY_TYPE.externref:
+      return { kind: "externref" };
+    case BINARY_TYPE.i8:
+      if (!storage) throw new Error("packed i8 in a value position");
+      return { kind: "i8" };
+    case BINARY_TYPE.i16:
+      if (!storage) throw new Error("packed i16 in a value position");
+      return { kind: "i16" };
+    case BINARY_TYPE.ref:
+      return parseBinaryRefType(c, false);
+    case BINARY_TYPE.refNull:
+      return parseBinaryRefType(c, true);
+    case BINARY_TYPE.any:
+      return { kind: "anyref" };
+    case BINARY_TYPE.eq:
+      return { kind: "eqref" };
+    case BINARY_TYPE.i31:
+      // The IR does not model Wasm's abstract heap-type lattice separately.
+      // The canonical runtime group never contains these abstract bottoms,
+      // but parsing them as the nearest existing opaque carrier lets the
+      // verifier skip unrelated groups without rejecting a valid module.
+      return { kind: "anyref" };
+    case BINARY_TYPE.none:
+      return { kind: "anyref" };
+    case BINARY_TYPE.noExtern:
+      return { kind: "externref" };
+    case BINARY_TYPE.noFunc:
+      return { kind: "funcref" };
+    case BINARY_TYPE.structHeap:
+      return { kind: "anyref" };
+    case BINARY_TYPE.arrayHeap:
+      return { kind: "anyref" };
+    default:
+      throw new Error(`unsupported Wasm value type byte 0x${tag.toString(16)}`);
+  }
+}
+
+function parseBinaryTypeDef(c: BinaryCursor): FlatTypeDef {
+  const tag = readByte(c);
+  if (tag === BINARY_TYPE.func) {
+    const paramCount = readUnsignedLeb(c);
+    const params = Array.from({ length: paramCount }, () => parseBinaryValType(c, false));
+    const resultCount = readUnsignedLeb(c);
+    const results = Array.from({ length: resultCount }, () => parseBinaryValType(c, false));
+    return { kind: "func", params, results };
+  }
+  if (tag === BINARY_TYPE.struct) {
+    const fieldCount = readUnsignedLeb(c);
+    const fields: FieldDef[] = [];
+    for (let i = 0; i < fieldCount; i++) {
+      fields.push({
+        name: `field${i}`,
+        type: parseBinaryValType(c, true),
+        mutable: readByte(c) === 1,
+      });
+    }
+    return { kind: "struct", name: `#${c.offset}`, fields };
+  }
+  if (tag === BINARY_TYPE.array) {
+    const element = parseBinaryValType(c, true);
+    return { kind: "array", name: `#${c.offset}`, element, mutable: readByte(c) === 1 };
+  }
+  if (tag === BINARY_TYPE.sub || tag === BINARY_TYPE.subFinal) {
+    const superCount = readUnsignedLeb(c);
+    // The compiler emits at most one supertype. Rejecting a wider shape keeps
+    // this verifier conservative if a future optimizer introduces multiple
+    // supertypes that this ABI hash does not model yet.
+    if (superCount > 1) throw new Error("multiple supertypes are not supported by the ABI verifier");
+    const superType = superCount === 1 ? readUnsignedLeb(c) : null;
+    const inner = parseBinaryTypeDef(c);
+    if (inner.kind === "sub") throw new Error("nested subtype is not supported by the ABI verifier");
+    return {
+      kind: "sub",
+      name: `#${c.offset}`,
+      superType,
+      final: tag === BINARY_TYPE.subFinal,
+      type: inner,
+    };
+  }
+  throw new Error(`unsupported Wasm type definition byte 0x${tag.toString(16)}`);
+}
+
+function parseBinaryTypeGroups(binary: Uint8Array): ParsedBinaryTypeGroup[] {
+  if (binary.length < 8 || binary[0] !== 0 || binary[1] !== 0x61 || binary[2] !== 0x73 || binary[3] !== 0x6d) {
+    throw new Error("not a Wasm binary");
+  }
+  const groups: ParsedBinaryTypeGroup[] = [];
+  let offset = 8;
+  let typeSection: Uint8Array | undefined;
+  while (offset < binary.length) {
+    const sectionId = binary[offset++]!;
+    const lengthCursor: BinaryCursor = { bytes: binary, offset };
+    const sectionLength = readUnsignedLeb(lengthCursor);
+    offset = lengthCursor.offset;
+    const end = offset + sectionLength;
+    if (end > binary.length) throw new Error("truncated Wasm section");
+    if (sectionId === 1) typeSection = binary.subarray(offset, end);
+    offset = end;
+  }
+  if (!typeSection) return groups;
+  const c: BinaryCursor = { bytes: typeSection, offset: 0 };
+  const typeCount = readUnsignedLeb(c);
+  let absolute = 0;
+  for (let i = 0; i < typeCount; i++) {
+    const tag = typeSection[c.offset];
+    if (tag === BINARY_TYPE.rec) {
+      readByte(c);
+      const count = readUnsignedLeb(c);
+      const start = absolute;
+      const defs = Array.from({ length: count }, () => parseBinaryTypeDef(c));
+      absolute += count;
+      groups.push({ start, end: absolute - 1, recursive: true, defs });
+    } else {
+      const start = absolute++;
+      groups.push({ start, end: start, recursive: false, defs: [parseBinaryTypeDef(c)] });
+    }
+  }
+  if (c.offset !== typeSection.length) throw new Error("trailing bytes in Wasm type section");
+  return groups;
+}
+
+/**
+ * Verify that raw emitted bytes still contain the exact canonical runtime
+ * recursive group. This is intentionally independent of names and absolute
+ * type indices, so it works after Binaryen has renamed and renumbered types.
+ */
+export function verifyRuntimeRecGroupBinary(
+  binary: Uint8Array,
+  expected: RuntimeGroupFingerprint,
+): RuntimeRecGroupBinaryVerification {
+  const base = { abiVersion: expected.abiVersion };
+  if (expected.abiVersion !== RUNTIME_RECGROUP_ABI_VERSION) {
+    return {
+      ...base,
+      valid: false,
+      detail: `unsupported runtime rec-group ABI version ${expected.abiVersion} (expected ${RUNTIME_RECGROUP_ABI_VERSION})`,
+    };
+  }
+  let groups: ParsedBinaryTypeGroup[];
+  try {
+    groups = parseBinaryTypeGroups(binary);
+  } catch (error) {
+    return {
+      ...base,
+      valid: false,
+      detail: `could not parse Wasm type section: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const candidates = groups.filter((group) => group.recursive && group.defs.length === expected.count);
+  if (candidates.length === 0) {
+    return {
+      ...base,
+      valid: false,
+      detail: `missing recursive runtime group (expected ${expected.count} members)`,
+    };
+  }
+  const hashes = candidates.map((group) => ({
+    group,
+    hash: canonicalHashOfTypeGroup(
+      group.defs,
+      Array.from({ length: group.defs.length }, (_, i) => group.start + i),
+    ),
+  }));
+  const match = hashes.find(({ hash }) => hash === expected.hash);
+  if (!match) {
+    return {
+      ...base,
+      valid: false,
+      detail: `runtime rec-group fingerprint changed (expected ${expected.hash}, observed ${hashes
+        .map(({ hash }) => hash)
+        .join(", ")})`,
+    };
+  }
+  return {
+    ...base,
+    valid: true,
+    hash: match.hash,
+    start: match.group.start,
+    end: match.group.end,
+    count: match.group.defs.length,
+  };
 }
 
 /**

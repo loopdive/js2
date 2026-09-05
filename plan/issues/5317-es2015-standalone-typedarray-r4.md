@@ -1,0 +1,823 @@
+---
+id: 5317
+title: "ES2015 standalone typedarray — r4: species protocol, coercion order, sort, join traps, integer-indexed internals"
+status: in-progress
+sprint: current
+created: 2026-09-04
+updated: 2026-09-04
+priority: high
+horizon: xl
+feasibility: hard
+model: opus
+reasoning_effort: medium
+task_type: conformance
+area: codegen, runtime
+language_feature: typedarray, arraybuffer
+es_edition: ES2015
+goal: standalone-mode
+requested_by: claude.ai@loopdive.com/fable-es6
+related: [5194, 5561, 3371, 2175, 4444]
+loc-budget-allow:
+  # 2026-09-04 r4 plan: species-constructor validation, element-coercion
+  # ordering and the integer-indexed [[DefineOwnProperty]]/[[OwnPropertyKeys]]
+  # arms are new emitted natives; existing files grow by dispatch wiring.
+  - src/codegen/dataview-native.ts
+  - src/codegen/ta-dyn-mop.ts
+  - src/codegen/builtin-static-gopd.ts
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/index.ts
+  # 2026-09-04 r4 step 4 (Opus): the join separator's `ref.cast $AnyString`
+  # TRAPS on every non-string separator (§23.1.3.15 step 3 wants
+  # undefined ⇒ "," / Symbol ⇒ TypeError / else ToString). The emitter lives
+  # in the new `src/codegen/join-separator.ts`; array-methods.ts grows only by
+  # the two dispatch arms that call it (+15 LOC, measured
+  # `node scripts/check-loc-budget.mjs` 2026-09-04).
+  - src/codegen/array-methods.ts
+coercion-sites-allow:
+  # 2026-09-05 r4 review round 1 (Opus), F1: `buildJoinSeparatorToString` must
+  # ARM `__extern_toString`, not merely look it up. Only looking it up made the
+  # whole emitter INERT — in a module whose elements are plain numbers and whose
+  # separator is the only ToString consumer, nothing else mints the provider, so
+  # the emitter returned `null` and the caller kept the trapping
+  # `ref.cast $AnyString`. Measured on standalone AND wasi, byte-identical to the
+  # git-archive base f9bf876899: `[1,2,3].join({toString(){…}})`, `join(null)`,
+  # `new Uint8Array([1,2,3]).join(true)` and `join(c)` with `var c=0` all still
+  # trapped `illegal cast`. The arming goes through `ensureLateImport` — the
+  # SAME single chokepoint every other consumer uses, which routes to the
+  # Wasm-native object-runtime provider under standalone/wasi and to the host
+  # import otherwise. This is +1 site of EXISTING vocabulary at the canonical
+  # chokepoint, not a hand-rolled ToString matrix; the gate counts the arming
+  # call, hence this grant.
+  - src/codegen/join-separator.ts
+---
+
+## Problem
+
+The 2026-09-04 census (post-#5576 baseline) has **201 non-pass typedarray
+rows** in ES2015 standalone: 183 `fail`, 18 `compile_error`. 14 of the fails
+are the other team's (#2175: "`Object.prototype.toString` /
+`Function.prototype.call` is not yet implemented in --target standalone") and
+11 of the CEs are #3371's view rows (reflect lane, this wave). The remaining
+**169 fails** group by mechanism; the families below are the plan's steps, in
+the order that maximises rows per mechanism. The r3 handover in #5194 (its
+last two sections) is required reading: it names the two `$__ta_ctor` mint
+sites, the `descTypeIdx` carrier and `emitTaDynCtorConstructFromLocals`.
+
+### Rows by family (from the census TSV; the `reflection-gated` block is NOT claimed)
+
+```
+## reflection-gated (14)
+built-ins/TypedArray/Symbol.species/result.js
+built-ins/TypedArray/prototype/Symbol.toStringTag/this-has-no-typedarrayname-internal.js
+built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-null.js
+built-ins/ArrayBuffer/prototype/slice/species-constructor-is-undefined.js
+built-ins/TypedArrayConstructors/ctors/typedarray-arg/same-ctor-buffer-ctor-species-undefined.js
+built-ins/ArrayBuffer/prototype/slice/species-is-undefined.js
+built-ins/TypedArrayConstructors/of/custom-ctor-returns-other-instance.js
+built-ins/TypedArrayConstructors/ctors/no-species.js
+built-ins/TypedArrayConstructors/from/custom-ctor-returns-other-instance.js
+built-ins/TypedArray/prototype/Symbol.toStringTag/this-is-not-object.js
+built-ins/ArrayBuffer/prototype/slice/species-is-null.js
+built-ins/TypedArrayConstructors/ctors/object-arg/as-generator-iterable-returns.js
+built-ins/ArrayBuffer/newtarget-prototype-is-not-object.js
+built-ins/TypedArrayConstructors/ctors/length-arg/toindex-length.js
+## built-ins/TypedArray/prototype/sort (12)
+built-ins/TypedArray/prototype/sort/comparefn-nonfunction-call-throws.js
+built-ins/TypedArray/prototype/sort/detached-buffer.js
+built-ins/TypedArray/prototype/sort/stability.js
+built-ins/TypedArray/prototype/sort/sort-tonumber.js
+built-ins/TypedArray/prototype/sort/sortcompare-with-no-tostring.js
+built-ins/TypedArray/prototype/sort/comparefn-calls.js
+built-ins/TypedArray/prototype/sort/return-same-instance.js
+built-ins/TypedArray/prototype/sort/sorted-values.js
+built-ins/TypedArray/prototype/sort/sorted-values-nan.js
+built-ins/TypedArray/prototype/sort/comparefn-is-undefined.js
+built-ins/TypedArray/prototype/sort/arraylength-internal.js
+built-ins/TypedArray/prototype/sort/comparefn-call-throws.js
+## built-ins/TypedArrayConstructors/ctors/object-arg (11)
+built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-valueof.js
+built-ins/TypedArrayConstructors/ctors/object-arg/iterator-is-null-as-array-like.js
+built-ins/TypedArrayConstructors/ctors/object-arg/iterating-throws.js
+built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-to-primitive-typeerror.js
+built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-valueof-typeerror.js
+built-ins/TypedArrayConstructors/ctors/object-arg/length-excessive-throws.js
+built-ins/TypedArrayConstructors/ctors/object-arg/iterator-not-callable-throws.js
+built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-tostring.js
+built-ins/TypedArrayConstructors/ctors/object-arg/iterated-array-with-modified-array-iterator.js
+built-ins/TypedArrayConstructors/ctors/object-arg/iterator-throws.js
+built-ins/TypedArrayConstructors/ctors/object-arg/throws-setting-obj-to-primitive.js
+## built-ins/ArrayBuffer/prototype/slice (10)
+built-ins/ArrayBuffer/prototype/slice/species-returns-smaller-arraybuffer.js
+built-ins/ArrayBuffer/prototype/slice/species-returns-same-arraybuffer.js
+built-ins/ArrayBuffer/prototype/slice/species.js
+built-ins/ArrayBuffer/prototype/slice/species-is-not-object.js
+built-ins/ArrayBuffer/prototype/slice/species-returns-not-arraybuffer.js
+built-ins/ArrayBuffer/prototype/slice/context-is-not-arraybuffer-object.js
+built-ins/ArrayBuffer/prototype/slice/species-is-not-constructor.js
+built-ins/ArrayBuffer/prototype/slice/context-is-not-object.js
+built-ins/ArrayBuffer/prototype/slice/species-returns-larger-arraybuffer.js
+built-ins/ArrayBuffer/prototype/slice/species-constructor-is-not-object.js
+## built-ins/TypedArray/prototype/toLocaleString (10)
+built-ins/TypedArray/prototype/toLocaleString/calls-tolocalestring-from-each-value.js
+built-ins/TypedArray/prototype/toLocaleString/calls-valueof-from-each-value.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-nextelement-tolocalestring.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-firstelement-valueof.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-nextelement-valueof.js
+built-ins/TypedArray/prototype/toLocaleString/calls-tostring-from-each-value.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-firstelement-tostring.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-firstelement-tolocalestring.js
+built-ins/TypedArray/prototype/toLocaleString/detached-buffer.js
+built-ins/TypedArray/prototype/toLocaleString/return-abrupt-from-nextelement-tostring.js
+## built-ins/TypedArray/prototype/subarray (8)
+built-ins/TypedArray/prototype/subarray/detached-buffer.js
+built-ins/TypedArray/prototype/subarray/result-is-new-instance-from-same-ctor.js
+built-ins/TypedArray/prototype/subarray/byteoffset-with-detached-buffer.js
+built-ins/TypedArray/prototype/subarray/return-abrupt-from-end-symbol.js
+built-ins/TypedArray/prototype/subarray/speciesctor-get-species-custom-ctor-invocation.js
+built-ins/TypedArray/prototype/subarray/speciesctor-get-ctor-inherited.js
+built-ins/TypedArray/prototype/subarray/return-abrupt-from-begin-symbol.js
+built-ins/TypedArray/prototype/subarray/speciesctor-get-species-custom-ctor-returns-another-instance.js
+## built-ins/TypedArray/prototype/slice (7)
+built-ins/TypedArray/prototype/slice/return-abrupt-from-end-symbol.js
+built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js
+built-ins/TypedArray/prototype/slice/invoked-as-method.js
+built-ins/TypedArray/prototype/slice/return-abrupt-from-start-symbol.js
+built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-returns-another-instance.js
+built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-invocation.js
+built-ins/TypedArray/prototype/slice/speciesctor-get-ctor-inherited.js
+## built-ins/TypedArray/prototype/join (6)
+built-ins/TypedArray/prototype/join/return-abrupt-from-separator.js
+built-ins/TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-value.js
+built-ins/TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-simple-value.js
+built-ins/TypedArray/prototype/join/invoked-as-method.js
+built-ins/TypedArray/prototype/join/detached-buffer.js
+built-ins/TypedArray/prototype/join/return-abrupt-from-separator-symbol.js
+## built-ins/TypedArray/prototype/filter (6)
+built-ins/TypedArray/prototype/filter/callbackfn-arguments-with-thisarg.js
+built-ins/TypedArray/prototype/filter/callbackfn-set-value-during-iteration.js
+built-ins/TypedArray/prototype/filter/callbackfn-arguments-without-thisarg.js
+built-ins/TypedArray/prototype/filter/result-empty-callbackfn-returns-false.js
+built-ins/TypedArray/prototype/filter/speciesctor-get-ctor-inherited.js
+built-ins/TypedArray/prototype/filter/speciesctor-get-species-custom-ctor-invocation.js
+## built-ins/TypedArray/prototype/map (6)
+built-ins/TypedArray/prototype/map/speciesctor-get-species-custom-ctor-invocation.js
+built-ins/TypedArray/prototype/map/speciesctor-get-ctor-inherited.js
+built-ins/TypedArray/prototype/map/return-new-typedarray-from-empty-length.js
+built-ins/TypedArray/prototype/map/callbackfn-arguments-without-thisarg.js
+built-ins/TypedArray/prototype/map/callbackfn-set-value-during-interaction.js
+built-ins/TypedArray/prototype/map/callbackfn-arguments-with-thisarg.js
+## built-ins/TypedArray/prototype/fill (5)
+built-ins/TypedArray/prototype/fill/coerced-indexes.js
+built-ins/TypedArray/prototype/fill/coerced-value-detach.js
+built-ins/TypedArray/prototype/fill/coerced-end-detach.js
+built-ins/TypedArray/prototype/fill/coerced-start-detach.js
+built-ins/TypedArray/prototype/fill/detached-buffer.js
+## built-ins/TypedArray/prototype/copyWithin (5)
+built-ins/TypedArray/prototype/copyWithin/detached-buffer.js
+built-ins/TypedArray/prototype/copyWithin/coerced-values-end.js
+built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached.js
+built-ins/TypedArray/prototype/copyWithin/coerced-values-end-detached-prototype.js
+built-ins/TypedArray/prototype/copyWithin/coerced-values-start-detached.js
+## built-ins/TypedArrayConstructors/internals/DefineOwnProperty (5)
+built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-numeric-index.js
+built-ins/TypedArrayConstructors/internals/DefineOwnProperty/desc-value-throws.js
+built-ins/TypedArrayConstructors/internals/DefineOwnProperty/non-extensible-redefine-key.js
+built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-symbol.js
+built-ins/TypedArrayConstructors/internals/DefineOwnProperty/key-is-not-canonical-index.js
+## built-ins/TypedArrayConstructors/internals/OwnPropertyKeys (4)
+built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-and-symbol-keys-.js
+built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes-and-string-keys.js
+built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/integer-indexes.js
+built-ins/TypedArrayConstructors/internals/OwnPropertyKeys/not-enumerable-keys.js
+## built-ins/TypedArray/prototype/some (3)
+built-ins/TypedArray/prototype/some/detached-buffer.js
+built-ins/TypedArray/prototype/some/callbackfn-not-callable-throws.js
+built-ins/TypedArray/prototype/some/callbackfn-detachbuffer.js
+## built-ins/TypedArray/prototype/entries (3)
+built-ins/TypedArray/prototype/entries/detached-buffer.js
+built-ins/TypedArray/prototype/entries/return-itor.js
+built-ins/TypedArray/prototype/entries/iter-prototype.js
+## built-ins/TypedArray/prototype/forEach (3)
+built-ins/TypedArray/prototype/forEach/callbackfn-detachbuffer.js
+built-ins/TypedArray/prototype/forEach/callbackfn-is-not-callable.js
+built-ins/TypedArray/prototype/forEach/detached-buffer.js
+## built-ins/TypedArray/prototype/values (3)
+built-ins/TypedArray/prototype/values/return-itor.js
+built-ins/TypedArray/prototype/values/detached-buffer.js
+built-ins/TypedArray/prototype/values/iter-prototype.js
+## built-ins/TypedArray/prototype/every (3)
+built-ins/TypedArray/prototype/every/callbackfn-detachbuffer.js
+built-ins/TypedArray/prototype/every/callbackfn-not-callable-throws.js
+built-ins/TypedArray/prototype/every/detached-buffer.js
+## built-ins/TypedArray/prototype/keys (3)
+built-ins/TypedArray/prototype/keys/detached-buffer.js
+built-ins/TypedArray/prototype/keys/return-itor.js
+built-ins/TypedArray/prototype/keys/iter-prototype.js
+## built-ins/TypedArrayConstructors/ctors/buffer-arg (2)
+built-ins/TypedArrayConstructors/ctors/buffer-arg/toindex-byteoffset.js
+built-ins/TypedArrayConstructors/ctors/buffer-arg/toindex-bytelength.js
+## built-ins/TypedArrayConstructors/ctors/typedarray-arg (2)
+built-ins/TypedArrayConstructors/ctors/typedarray-arg/returns-new-instance.js
+built-ins/TypedArrayConstructors/ctors/typedarray-arg/other-ctor-returns-new-typedarray.js
+## built-ins/TypedArray/prototype/reduce (2)
+built-ins/TypedArray/prototype/reduce/callbackfn-detachbuffer.js
+built-ins/TypedArray/prototype/reduce/callbackfn-is-not-callable-throws.js
+## built-ins/TypedArrayConstructors/internals/Set (2)
+built-ins/TypedArrayConstructors/internals/Set/key-is-canonical-invalid-index-prototype-chain-set.js
+built-ins/TypedArrayConstructors/internals/Set/key-is-valid-index-prototype-chain-set.js
+## built-ins/TypedArray/prototype/reduceRight (2)
+built-ins/TypedArray/prototype/reduceRight/callbackfn-detachbuffer.js
+built-ins/TypedArray/prototype/reduceRight/callbackfn-is-not-callable-throws.js
+## built-ins/TypedArrayConstructors/from/invoked-as-func.js (1)
+built-ins/TypedArrayConstructors/from/invoked-as-func.js
+## built-ins/TypedArrayConstructors/of/invoked-as-func.js (1)
+built-ins/TypedArrayConstructors/of/invoked-as-func.js
+## built-ins/TypedArrayConstructors/from/mapfn-arguments.js (1)
+built-ins/TypedArrayConstructors/from/mapfn-arguments.js
+## built-ins/TypedArrayConstructors/of/inherited.js (1)
+built-ins/TypedArrayConstructors/of/inherited.js
+## built-ins/DataView/instance-extensibility.js (1)
+built-ins/DataView/instance-extensibility.js
+## built-ins/TypedArray/from/iter-next-value-error.js (1)
+built-ins/TypedArray/from/iter-next-value-error.js
+## built-ins/ArrayBuffer/isView/arg-is-typedarray-subclass-instance.js (1)
+built-ins/ArrayBuffer/isView/arg-is-typedarray-subclass-instance.js
+## built-ins/DataView/return-instance.js (1)
+built-ins/DataView/return-instance.js
+## built-ins/TypedArray/prototype/findIndex (1)
+built-ins/TypedArray/prototype/findIndex/detached-buffer.js
+## built-ins/ArrayBuffer/isView/arg-is-dataview-subclass-instance.js (1)
+built-ins/ArrayBuffer/isView/arg-is-dataview-subclass-instance.js
+## built-ins/ArrayBuffer/isView/arg-is-typedarray.js (1)
+built-ins/ArrayBuffer/isView/arg-is-typedarray.js
+## built-ins/TypedArray/prototype/reverse (1)
+built-ins/TypedArray/prototype/reverse/detached-buffer.js
+## built-ins/TypedArrayConstructors/of/new-instance-using-custom-ctor.js (1)
+built-ins/TypedArrayConstructors/of/new-instance-using-custom-ctor.js
+## built-ins/TypedArrayConstructors/from/custom-ctor.js (1)
+built-ins/TypedArrayConstructors/from/custom-ctor.js
+## built-ins/DataView/proto-from-ctor-realm.js (1)
+built-ins/DataView/proto-from-ctor-realm.js
+## built-ins/TypedArray/from/iter-next-error.js (1)
+built-ins/TypedArray/from/iter-next-error.js
+## built-ins/TypedArray/prototype/length (1)
+built-ins/TypedArray/prototype/length/invoked-as-accessor.js
+## built-ins/DataView/dataview.js (1)
+built-ins/DataView/dataview.js
+## built-ins/TypedArrayConstructors/from/inherited.js (1)
+built-ins/TypedArrayConstructors/from/inherited.js
+## built-ins/TypedArray/from/from-array-mapper-detaches-result.js (1)
+built-ins/TypedArray/from/from-array-mapper-detaches-result.js
+## built-ins/TypedArrayConstructors/from/mapfn-is-not-callable.js (1)
+built-ins/TypedArrayConstructors/from/mapfn-is-not-callable.js
+## built-ins/ArrayBuffer/isView/invoked-as-a-fn.js (1)
+built-ins/ArrayBuffer/isView/invoked-as-a-fn.js
+## built-ins/TypedArrayConstructors/from/new-instance-using-custom-ctor.js (1)
+built-ins/TypedArrayConstructors/from/new-instance-using-custom-ctor.js
+## built-ins/TypedArray/from/iter-access-error.js (1)
+built-ins/TypedArray/from/iter-access-error.js
+## built-ins/TypedArray/from/not-a-constructor.js (1)
+built-ins/TypedArray/from/not-a-constructor.js
+## built-ins/TypedArray/prototype/byteLength (1)
+built-ins/TypedArray/prototype/byteLength/invoked-as-accessor.js
+## built-ins/TypedArrayConstructors/of/custom-ctor.js (1)
+built-ins/TypedArrayConstructors/of/custom-ctor.js
+## built-ins/TypedArrayConstructors/from/set-value-abrupt-completion.js (1)
+built-ins/TypedArrayConstructors/from/set-value-abrupt-completion.js
+## built-ins/TypedArray/prototype/find (1)
+built-ins/TypedArray/prototype/find/detached-buffer.js
+## built-ins/DataView/custom-proto-if-not-object-fallbacks-to-default-prototype.js (1)
+built-ins/DataView/custom-proto-if-not-object-fallbacks-to-default-prototype.js
+## built-ins/TypedArray/of/not-a-constructor.js (1)
+built-ins/TypedArray/of/not-a-constructor.js
+## built-ins/DataView/defined-byteoffset.js (1)
+built-ins/DataView/defined-byteoffset.js
+## built-ins/DataView/proto.js (1)
+built-ins/DataView/proto.js
+## built-ins/TypedArray/from/arylk-to-length-error.js (1)
+built-ins/TypedArray/from/arylk-to-length-error.js
+## built-ins/TypedArray/from/iter-invoke-error.js (1)
+built-ins/TypedArray/from/iter-invoke-error.js
+## built-ins/TypedArray/invoked.js (1)
+built-ins/TypedArray/invoked.js
+## built-ins/TypedArray/from/iterated-array-changed-by-tonumber.js (1)
+built-ins/TypedArray/from/iterated-array-changed-by-tonumber.js
+## built-ins/DataView/defined-bytelength-and-byteoffset.js (1)
+built-ins/DataView/defined-bytelength-and-byteoffset.js
+## built-ins/TypedArray/from/arylk-get-length-error.js (1)
+built-ins/TypedArray/from/arylk-get-length-error.js
+## built-ins/ArrayBuffer/prop-desc.js (1)
+built-ins/ArrayBuffer/prop-desc.js
+## built-ins/ArrayBuffer/proto-from-ctor-realm.js (1)
+built-ins/ArrayBuffer/proto-from-ctor-realm.js
+## built-ins/TypedArray/prototype/toString (1)
+built-ins/TypedArray/prototype/toString/detached-buffer.js
+## built-ins/DataView/defined-byteoffset-undefined-bytelength.js (1)
+built-ins/DataView/defined-byteoffset-undefined-bytelength.js
+## built-ins/ArrayBuffer/isView/arg-is-typedarray-buffer.js (1)
+built-ins/ArrayBuffer/isView/arg-is-typedarray-buffer.js
+## built-ins/TypedArray/prototype/Symbol.toStringTag (1)
+built-ins/TypedArray/prototype/Symbol.toStringTag/invoked-as-func.js
+## built-ins/TypedArray/from/from-typedarray-mapper-detaches-result.js (1)
+built-ins/TypedArray/from/from-typedarray-mapper-detaches-result.js
+```
+
+## Implementation Plan — r4 (2026-09-04, Fable)
+
+**Step 0 — inventory.** Isolate-run all 169 claimed rows on a `git archive
+origin/main` base tree and the lane tree; record error per row. Control
+corpus: every ES2015 row under `test/built-ins/TypedArray`,
+`test/built-ins/TypedArrayConstructors`, `test/built-ins/ArrayBuffer`,
+`test/built-ins/DataView` (the r3 lane's sweep lists in #5194 —
+`ta-controls.txt`, `arrobj-controls.txt` — plus the 59-control
+`tests/issue-5194-es2015-typedarray-set-r2.test.ts`). Keep the passing list.
+
+**Step 1 — species protocol (slice 7, subarray 8, filter 6, map 6, ArrayBuffer
+.prototype.slice 10 ≈ 37 rows).** `TypedArraySpeciesCreate` / `SpeciesConstructor`
+(§23.2.4.1, §7.3.22): read `C = O.constructor` (undefined ⇒ default;
+non-Object ⇒ TypeError), `S = C[@@species]` (undefined/null ⇒ default;
+non-constructor ⇒ TypeError), construct `S(args)` and VALIDATE the result:
+`ValidateTypedArray` (not a TypedArray ⇒ TypeError; detached ⇒ TypeError),
+same content type (BigInt vs Number ⇒ TypeError), and for `slice`/`subarray`/
+`filter`/`map` the length rule each row pins ("result is new instance from
+same ctor", "speciesctor-get-species-custom-ctor-length-throws",
+"speciesctor-get-species-returns-smaller-length" ⇒ TypeError). `this` inside
+the @@species getter is the constructor being read (`this-value-in-species`).
+`ArrayBuffer.prototype.slice`: species result must be an ArrayBuffer, not
+detached, not the SAME buffer (`species-returns-same-arraybuffer` ⇒
+TypeError), length ≥ newLen, and the source must be re-checked for
+detachment AFTER the species construct (`species-constructor-is-not-object`,
+`species-is-not-constructor`, `species-returns-not-arraybuffer`,
+`species-returns-smaller-arraybuffer`, `species-returns-larger-arraybuffer`).
+Anchor the runtime in `ta-dyn-mop.ts` / `dataview-native.ts` where the
+existing species fast path lives (grep `species`); the fast path (no own
+`constructor`, `Symbol.species` untouched) must stay byte-identical.
+
+**Step 2 — element coercion order and abrupt completion (ctors/object-arg
+11, toLocaleString 10, fill 5, copyWithin 5 ≈ 31 rows).** Object-arg
+constructor: `IterableToList` / array-like read, then per element
+`ToNumber`/`ToBigInt` in index order with the abrupt completion propagated
+(`abrupt completion from ToNumber(sample)`, `… @@toPrimitive`, `… valueOf`)
+and the `length` read before the element reads. `toLocaleString`: for each
+element `Invoke(element, "toLocaleString")` with the abrupt completion
+propagated and the separator `","`; a detached buffer mid-way ⇒ TypeError
+(`detached-buffer-during-fromNumber`); `return-abrupt-from-firstelement-
+tolocalestring` / `-nextelement-`. `fill`: `ToNumber(value)` (or ToBigInt)
+FIRST, then `ToIntegerOrInfinity(start)`, `(end)`, then the detached check
+(`coerced-indexes`, `coerced-value-detach` ⇒ TypeError after coercion).
+`copyWithin`: `ToIntegerOrInfinity(target)`, `(start)`, `(end)` in that
+order, then the detached check; `coerced-values-end-detached` etc.
+
+**Step 3 — sort (12 rows).** `comparefn` must be callable or undefined at
+entry (else TypeError, BEFORE ValidateTypedArray? — check the row
+`comparefn-nonfunction-call-throws` vs `invoked-as-func`); the comparator's
+abrupt completion propagates; the sort is stable and the default comparator
+orders numerically with `-0 < +0` and `NaN` last (`sorted-values`,
+`sorted-values-nan`, `stability`, `pre-sorted`); a detached buffer inside
+the comparator: the sort completes on the (now stale) values without a throw
+(`detached-buffer-comparefn-coerce` rows pin the exact rule — read them).
+
+**Step 4 — `join` traps (6 rows, all `illegal cast [in __closure_N ← …]`).**
+A trap is worse than a fail: find the cast (likely the separator/element
+`ToString` on a BigInt array or an `undefined` separator through the closure
+ABI) with `--isolate` + the wasm stack; fix the conversion in the join
+native; the fix must not change the `Array.prototype.join` lowering.
+
+**Step 5 — integer-indexed exotic internals (DefineOwnProperty 5,
+OwnPropertyKeys 4, buffer-arg 2, typedarray-arg 2, HasProperty/Get residue).**
+`[[DefineOwnProperty]]` (§10.4.5.3): a numeric key ⇒ not a valid integer
+index ⇒ false; accessor descriptor ⇒ false; configurable false / enumerable
+false / writable false ⇒ false; value present ⇒ `IntegerIndexedElementSet`;
+`[[OwnPropertyKeys]]` (§10.4.5.7): integer indices ascending, then string
+keys in creation order, then symbols — through `Reflect.ownKeys` and
+`Object.getOwnPropertyNames`. Anchor `ta-dyn-mop.ts` (the "MOP" = the
+per-internal-method dispatch for typed arrays).
+
+**Step 6 — iteration methods (some / every / forEach / entries / values /
+keys, 3 each = 18 rows).** Read the three rows per method first — they are
+usually the same three shapes: `callbackfn` abrupt completion, a detached
+buffer during iteration (the callback detaches ⇒ subsequent reads yield
+`undefined`, no throw, for `forEach`/`some`/`every`; the iterator's `next()`
+throws TypeError for `entries`/`values`/`keys`), and `%ArrayIteratorPrototype%`
+identity/`toStringTag`. Implement the shared rule once in the
+integer-indexed read helper rather than per method.
+
+**Order-preservation constraints.** Modules with no typed array / ArrayBuffer
+/ DataView reference are byte-identical to base on every target. The r3
+pins (`tests/issue-5194*.test.ts`, 4 files) stay green unchanged.
+
+## Acceptance criteria
+
+- Claimed rows `pass` under `--isolate --standalone` or given up with the
+  mechanism; `reflection-gated` and #3371 rows recorded as gated, not
+  claimed.
+- Zero rows lost in the control corpus vs the base tree.
+- `tests/issue-5317-r4-*.test.ts` per step: kept rows + node-parity probes
+  (species matrix, coercion-order call logs, sort matrix, join separators,
+  ownKeys order).
+- Gates, typecheck, lint green; growth granted above with the measurement.
+
+## Lane protocol (applies to every step above)
+
+- **Worktree only.** Work in the worktree the workflow gave you; branch from the
+  merge-base you were spawned on and `git pull --no-rebase --no-edit origin main`
+  before the first source edit. `git merge` is hook-blocked in the repo root;
+  `git pull --no-rebase` is not. Link `node_modules` and `test262` DIRECTLY to
+  `/home/user/js2/node_modules` and `$(readlink -f /home/user/js2/test262)` (no
+  symlink chains through sibling worktrees). Copy
+  `/home/user/js2/.test262-cache/quickjs*` into the worktree's `.test262-cache/`
+  and run `node scripts/build-quickjs-eval-provider.mjs` there, or every
+  eval-dependent row fails fast with "quickjs provider is not built" and hides
+  both wins and regressions.
+- **Measure, do not predict.** Every row you claim flips is run with
+  `npx tsx scripts/run-test262-paths.mts --isolate <list> --standalone` on BOTH
+  a `git archive origin/main` base tree and the lane tree; the enclosing control
+  corpus named in the plan is re-run the same way and every base-pass row must
+  still pass. A `compile_timeout` under load is re-run alone before it counts.
+  Name the artifact and the time for every number you write down.
+- **The failure family to hunt for is "a working program now throws."** Every
+  confirmed regression across the last four waves was a "provable" predicate
+  resolving by NAME or by declaration shape without a single-assignment /
+  shadowing proof. Decline to base unless the proof holds under reassignment,
+  destructuring, loop heads, parameters, `eval`/`with` and shadowing — and
+  never let a new arm change the answer of a program that worked on base.
+- **Node is the oracle, but the engine differs.** CI runs node 25; this
+  container runs node 22 (a node 25 lives at
+  `/home/user/js2/.tmp/wrap/node25/cache/_npx/8758e404b5eed2f3/node_modules/node/bin`).
+  A pin that asserts node's answer must probe the running engine, not assert a
+  fixed value, when the two disagree (sloppy-function own `caller`/`arguments`
+  is the known case).
+- **Do not touch the other team's territory:** the generator carrier (#2864,
+  every `__gen_*`/`__create_generator` row), the promise/microtask carrier
+  (#2867), and built-in method reflection (#2175 — `length.js`/`name.js`/
+  `prop-desc.js`/`not-a-constructor.js` rows and the
+  "`Object.prototype.toString` / `Function.prototype.call` is not yet
+  implemented in --target standalone" rows). Leave those rows out of your
+  claims and your acceptance list; record them as gated.
+- **Gates before every commit, chained:** `node scripts/check-loc-budget.mjs &&
+  node scripts/check-func-budget.mjs && node scripts/check-coercion-sites.mjs
+  && npm run -s check:oracle-ratchet && npm run -s check:dead-exports`, then
+  again with `LOC_GATE_BASE=$(git rev-parse origin/main)`; plus
+  `pnpm run -s check:speculative-rollback` (a raw `fctx.body.length = n`
+  rollback outside `context/speculative.ts` fails CI — use
+  `withSpeculativeCompile`/`probeCompiledType`), `check:stack-balance`,
+  `check:codegen-fallbacks`, `check:any-box-sites`, TS7 typecheck
+  (`node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`)
+  and `pnpm run -s lint`. Growth grants go in THIS issue's frontmatter
+  (`loc-budget-allow` / `func-budget-allow`) with a dated rationale; never edit
+  `scripts/*-baseline.json`. New codegen type queries go through `ctx.oracle`.
+- **Tests:** `tests/issue-<id>-r4-*.test.ts` pin every kept row through
+  `runTest262File(file, "issue-<id>", 60_000, "standalone")` plus node-parity
+  probes compiled with `compile(source, { target: "standalone", allowJs: true,
+  skipSemanticDiagnostics: true })`, asserting `result.imports` is `[]`. Run
+  them at the CI fork heap, single fork:
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 npx vitest run tests/issue-<id>*.test.ts
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+  --dangerouslyIgnoreUnhandledErrors`.
+- **Commits:** author stays the repo's configured identity; subject ends with
+  ` ✓`; `SKIP_SLOW_PRECOMMIT=1`; never `--no-verify`; trailers
+  `Model: Claude Opus 5 Medium`, `Co-Authored-By: Claude Opus 5
+  <noreply@anthropic.com>`. Commit each step separately with the measurement
+  in the body. Do NOT push, open a PR, or enqueue — the integrator merges the
+  lane branch, validates the combined tree and opens the PR.
+- **Report** (your final message): the per-step row table (base → lane, kept /
+  given up), the control-corpus result, gate status, the worktree path and head
+  sha, and every residual with its mechanism.
+
+
+## 2026-09-04 r4 implementation (Opus)
+
+Worktree `/home/user/js2/.claude/worktrees/wf_a9776683-b00-2`, branch
+`worktree-wf_a9776683-b00-2`, base `origin/main` = `f9bf876899`. Two of the
+plan's six steps landed; the other four are given up this round with their
+mechanism named below.
+
+### Measurement vehicle — read this before trusting any number here
+
+`npx tsx scripts/run-test262-paths.mts --isolate` is **unusable on this box
+right now**. Its child passes `undefined` as the per-row budget, i.e. the
+runner's 15 s default, and with four lanes sharing four cores that budget is
+exceeded by rows that compile fine. The base sweep of all 169 claimed rows
+(2026-09-04, `git archive origin/main` tree) returned:
+
+```
+part 0: { fail: 33, compile_error: 44 }
+part 1: { fail: 43, compile_error: 49 }
+```
+
+and **every one of those 93 `compile_error`s is the string
+`compilation timeout`** — including every row this lane touches. So the sweep
+establishes only that 76 rows fail for real reasons and that **no claimed row
+passes on base**; its `compile_error` verdicts are load artifacts, not
+evidence. Everything claimed below was therefore A/B'd with a 120 s per-row
+budget instead — the same budget the pin test files use — via
+`.tmp/row-one.mts` / `.tmp/rows.mjs` (scratch, gitignored) and via
+`vitest --pool=forks --poolOptions.forks.singleFork=true` run in BOTH the base
+tree and the lane tree.
+
+### Rows kept (base → lane)
+
+| row | base | lane |
+| --- | --- | --- |
+| `TypedArray/prototype/join/return-abrupt-from-separator.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/join/return-abrupt-from-separator-symbol.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-value.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-simple-value.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/fill/coerced-indexes.js` | fail (``​`null` end coerced to 0``) | pass |
+| `TypedArray/prototype/copyWithin/coerced-values-end.js` | fail | pass |
+
+**6 of the 169 claimed rows.** Five further rows flipped as collateral and
+were not claimed: `Array/prototype/join/S15.4.4.5_A1.2_T2.js`,
+`.../S15.4.4.5_A3.1_T1.js`, `.../S15.4.4.5_A3.1_T2.js`, and the two BigInt
+twins `TypedArray/prototype/join/BigInt/return-abrupt-from-separator{,-symbol}.js`.
+
+### Control corpora — 259 rows, zero lost
+
+Both corpora were run row-for-row on the base tree and the lane tree with the
+120 s budget.
+
+| corpus | rows | base pass | lane pass | lost | gained |
+| --- | --- | --- | --- | --- | --- |
+| `Array` + `TypedArray` `prototype/{join,toString,toLocaleString}` | 120 | 57 | 66 | **0** | 9 |
+| `TypedArray/prototype/{fill,copyWithin,reverse}` | 139 | 86 | 88 | **0** | 2 |
+
+The r3 pins are unchanged and green: `tests/issue-5194-es2015-typedarray-r2`,
+`-r3`, `-set-r2` — 80 tests, all passing, single-fork at the CI heap.
+
+### Step 4 — join separator (mechanism)
+
+Both native join lanes (`compileArrayJoinNative` for a `$__vec_*` receiver,
+`compileArrayJoinExternNative` for an `externref` one) compiled the separator
+argument to `externref` and then `ref.cast $AnyString` it. That is correct only
+when the argument already IS a string; every other separator — a plain object
+with a user `toString`, `null`, a number, a Symbol — **trapped**, which is
+unrecoverable and strictly worse than a wrong answer.
+
+`src/codegen/join-separator.ts` (new) emits §23.1.3.15 step 3 instead:
+`undefined` ⇒ `","`; a Symbol ⇒ TypeError; anything else ⇒ the coercion
+engine's own ToString provider (so a throwing user `toString` propagates).
+`null` is not `undefined` and still renders `"null"`.
+
+Byte-identity: a string LITERAL separator keeps the old cast, so no module
+whose only separator is `join(",")` changes. The emitter resolves the provider
+through `getExternrefToStringProvider` and returns `null` when it is absent
+rather than arming a second cascade — `check-coercion-sites` reports no net
+vocabulary growth.
+
+### Step 2 — `fill` / `copyWithin` end argument (mechanism)
+
+`__ta_dyn_fill` and `__ta_dyn_copywithin` decided "the `end` argument is
+absent, use len" with `__nullish_to_null` followed by `ref.is_null`, which
+answers TRUE for `null` too. §23.2.3.8 step 5 / §23.2.3.6 step 8 only treat
+`undefined` that way: `null` is ToIntegerOrInfinity'd to 0. Both now use
+`__extern_is_undefined` and fall back to the old shape when that helper is not
+registered, so an explicit `undefined` end and an omitted end still mean `len`.
+
+The observable coercion ORDER was already correct on base (value → start → end
+for `fill`; target → start → end for `copyWithin`) and is now pinned.
+
+### Residuals — 163 claimed rows given up, by mechanism
+
+- **`detached-buffer` / `coerced-*-detach*` (fill 4, copyWithin 4, sort 1,
+  join 1, and the per-method `detached-buffer.js` rows across
+  some/every/forEach/reduce/reduceRight/find/findIndex/reverse/entries/keys/
+  values/toString/toLocaleString).** ValidateTypedArray's detached arm
+  (§23.2.3.5.1 step 5) is missing: a detached buffer is the shared byte vec's
+  negative length, which `pushTaDynViewInBoundsLen` floors to an effective
+  element length of 0 — right for the §10.4.5 element MOP, wrong for the
+  prototype methods, which must throw TypeError before observing anything
+  else. **A guard was written and reverted unmeasured**: a probe showed the
+  detach is not observable through the dyn view in the shape these rows use
+  (`a.length` stayed 4 after `a.buffer.transfer()`), so the guard would never
+  have fired. The detach representation reaching the dyn view has to be
+  settled first; adding the arm before that would make rows "pass" for the
+  wrong reason.
+- **`invoked-as-method` / `invoked-as-func` (join, slice, Symbol.toStringTag,
+  length, byteLength).** The native-proto method closures carry no
+  ValidateTypedArray receiver brand check: probed directly,
+  `%TypedArray%.prototype.join()` returns instead of throwing TypeError.
+  Shared mechanism, one place to fix, not attempted this round.
+- **Species protocol (slice 7, subarray 8, filter 6, map 6,
+  `ArrayBuffer.prototype.slice` 10 ≈ 37 rows).** `emitTaDynSpeciesCreate`
+  (#4449) already exists in `dataview-native.ts`; the base failures are in its
+  VALIDATION arms (`species-is-not-object`, `species-is-not-constructor`,
+  `species-returns-same-arraybuffer`, `species-returns-smaller-arraybuffer`
+  all report "Expected a TypeError … no exception was thrown"), plus the
+  `ArrayBuffer.prototype.slice` lane which does not consult `@@species` at all
+  (`slice/species.js` returned the sliced bytes, not the species result). Not
+  started — this is the largest single family left.
+- **`ctors/object-arg` (11).** Element `ToNumber`/`@@toPrimitive` abrupt
+  completions are swallowed: base reports "abrupt completion from
+  ToNumber(sample) Expected a Test262Error … no exception was thrown" for the
+  `valueOf` / `toString` / `@@toPrimitive` variants, and the iterator variants
+  report the wrong error type. `length-excessive-throws.js` traps instead
+  (`RuntimeError: requested new array is too large`).
+- **`sort` (12).** Base shows the comparator is never called
+  (`comparefn-calls.js`: "calls comparefn" with 0 calls) and the default
+  comparator does not order numerically (`sorted-values.js`,
+  `sortcompare-with-no-tostring.js`), i.e. the dyn-view `sort` is not wired to
+  the element comparator at all. `return-same-instance.js` shows it returns
+  `null` rather than the receiver.
+- **`toLocaleString` (10), iteration methods (some/every/forEach/entries/
+  values/keys, 18), `TypedArrayConstructors/internals/{DefineOwnProperty,
+  OwnPropertyKeys,Set}` (11), `from`/`of` (14), `DataView`/`ArrayBuffer`
+  residue.** Not started. Note for the next round: the `OwnPropertyKeys` rows
+  need **expando properties on a `$__ta_dyn_view`** (`sample.test262 = 42`
+  then `Reflect.ownKeys`), which `ta-dyn-mop.ts` explicitly defers — its
+  `__object_keys` arm enumerates integer indices only.
+- **`reflection-gated` (14) and the #3371 view rows.** Not claimed, per the
+  plan; recorded as gated.
+
+### Gates
+
+`check-loc-budget` and `check-func-budget` (bare **and** with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`), `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+typecheck (`tsconfig.ts7.json`) and `lint` — all green. Growth grants for
+`src/codegen/array-methods.ts` (+15) and `src/codegen/dataview-native.ts`
+(+19) are in this file's frontmatter with the dated rationale.
+
+### Review round 1 (2026-09-05)
+
+An adversarial review with two independent skeptics per finding ran the r4 lane
+branch against a `git archive` tree of the merge-base **f9bf876899**. Four
+findings; one was a real defect that made a whole step inert, one is a genuine
+but differently-shaped defect left recorded, two are record-only.
+
+Every number below is a run executed in this round on both trees — the probe
+modules and the driver live in `.tmp/` and were compiled through
+`src/index.ts` directly, with `imports` asserted and the module instantiated
+against an EMPTY import object on the host-free lanes.
+
+#### F1 (high) — the join-separator fix was INERT. Fixed.
+
+`buildJoinSeparatorToString` resolved the §7.1.17 ToString provider with
+`getExternrefToStringProvider(ctx)` — a bare `ctx.funcMap.get("__extern_toString")`
+— and returned `null` when it was absent, on the belief (stated in the file's
+own comment) that "both join lanes already arm it for their element path".
+**That belief is false for every numeric / boolean / plain-object element set**:
+those element paths stringify through `number_toString` and friends and never
+mint `__extern_toString`. So in exactly the modules the step was written for,
+the emitter bailed and the caller kept the trapping `ref.cast $AnyString`.
+
+The lane's own two controls hid this because their `Symbol` /
+`instanceof TypeError` / throwing-`toString` machinery pulls in the object
+runtime and *incidentally* arms the provider.
+
+Measured before the fix — standalone and wasi, **byte-identical to base**:
+
+| probe | shape | base & lane (pre-fix) | node |
+| --- | --- | --- | --- |
+| m1 | `[1,2,3].join({toString(){return "*"}})` | `illegal cast` | 5 |
+| m2 | `[1,2,3].join(null)` | `illegal cast` | 11 |
+| m3 | `new Uint8Array([1,2,3]).join({toString(){return "**"}})` | `illegal cast` | 7 |
+| m4 | `new Uint8Array([1,2,3]).join(true)` | `illegal cast` | 11 |
+| o3 | `[1,2,3].join(c)` with `var c = 0` | `illegal cast` | 5 |
+| m5 | same as m1 **plus** an unrelated `String({})` | 5 (works) | 5 |
+
+**Fix**: arm the provider inside `buildJoinSeparatorToString` with
+`ensureLateImport(ctx, "__extern_toString", …)` — the same single chokepoint
+every other consumer uses, which routes to the Wasm-native object-runtime
+provider under standalone/wasi and to the `env::__extern_toString` host import
+otherwise, so no second cascade is grown. After the fix all of m1–m5, o1–o3
+answer node's values on **both** standalone and wasi with **`imports === []`**.
+m5's module is byte-identical to its pre-fix self (`a17130244cefc17e`
+standalone / `f8b341c407486859` wasi), confirming the arming is idempotent
+where something else already armed it.
+
+**String-literal fast path holds.** `b1.js`
+(`join(",")` / `join()` / `join("-")`) is byte-identical to base on all three
+targets — standalone `a55e84185bca84fe`, wasi `34c0cc2486d294fb`, JS-host
+`99325378bf480f13` — and returns the same three checksums as node.
+
+`check-coercion-sites` counts the arming call as +1 site of existing
+vocabulary; the grant with this rationale is in this file's frontmatter under
+`coercion-sites-allow:`.
+
+#### F2 (medium) — JS-host lane: unchanged, still the pre-existing trap.
+
+Re-measured after the arming. **Every probe compiles to a byte-identical
+module on the default JS-host target, before and after** (m1 `955d197b75240c9a`,
+m2 `e5c8497b62781840`, m3 `6bccda4d5b028f6b`, m4 `6b4057f195aa517d`,
+o3 `74bbb1df60aa2d45`, b1 `99325378bf480f13`, w1 `88d31d0fe08ea796`) — the
+native join lanes this emitter serves are not reached at all under
+`wasm:js-string`. So the host lane's behaviour is exactly what it was on base:
+
+| probe | host, base = host, lane | node |
+| --- | --- | --- |
+| `join(null)` / `join(true)` / `join(c)` with `var c=0` | `illegal cast` (trap) | 11 / 11 / 5 |
+| `join({toString(){return "*"}})` | 33 (wrong — generic object stringification) | 5 |
+
+**Not fixed by the arming, and not a regression.** Bringing the host lane to
+spec is a separate piece of work on the `wasm:js-string` join path.
+
+#### F3 (medium) — a DIFFERENT mechanism. Recorded, not fixed.
+
+The step-2 rule ("only `undefined` is an absent `end`") was applied to the
+dyn-view helpers, which see the raw `externref` and can ask the runtime's §7.1
+predicate. Two other lanes handle the same argument differently. Probes
+(`.tmp/f3.js`, `.tmp/f3b.js`, `.tmp/lanes.mts`) compile **byte-identically on
+this tree and on base** — `ce1d03537b5d4661` / `1e57ef94a54a5afc` standalone —
+so both divergences below are pre-existing and untouched by step 2.
+
+Signature = the four element values after the call; `9999` filled, `1234`
+untouched.
+
+| receiver | `end` | measured | node |
+| --- | --- | --- | --- |
+| `const a = new Uint8Array([…])` | literal `undefined` | 9999 ✓ | 9999 |
+| " | omitted | 9999 ✓ | 9999 |
+| " | `null` / `NaN` / `2` / `-0` / `"2"` / `{valueOf}` | ✓ all | — |
+| " | **`const e: any = undefined`** | **1234 ✗** | 9999 |
+| `const a: any = new Uint8Array([…])` | literal `undefined` | **1234 ✗** | 9999 |
+| " | **omitted** (2-arg call) | **1234 ✗** | 9999 |
+| `Array.prototype` twins | literal `undefined` / `null` | ✓ | — |
+| " | `const e: any = undefined` | **1234 ✗** | 9999 |
+
+Two distinct mechanisms, neither the one-line predicate swap step 2 made:
+
+1. **Static lane, dynamic end** — `compileArrayFill` / `compileArrayCopyWithin`
+   (`src/codegen/array-methods.ts` ~L9199 and ~L9790) coerce the end argument
+   straight to `f64` and so recognise "absent" only **syntactically** (the
+   literal identifier `undefined`, or a `void` expression). Their own comment
+   states the limitation: "once coerced to f64 we cannot distinguish them from
+   `NaN`". Fixing it means testing the argument **before** the f64 coercion —
+   a re-shape of the hottest array lanes, not a rule swap.
+2. **`any`-typed receiver** — a third lane again, and a worse one: even an
+   OMITTED `end` is lost (`a.fill(9,0)` fills nothing), so the argc is not
+   reaching the decision. This is the more valuable of the two to chase, since
+   it costs a correct case that the other lanes get right.
+
+Both are left for a follow-up. What IS pinned (new
+`standalone control: static fill/copyWithin lane` in
+`tests/issue-5317-r4-fill-copywithin-end.test.ts`) is the eleven rows measured
+CORRECT — pinning a divergence would entrench it.
+
+Incidental, unrelated to the separator: on **wasi**, `.length` of an
+`any`-typed native string reads back `NaN`, and reading a typed-array element
+inside an `any`-typed helper likewise reads `NaN`. Both are pre-existing wasi
+defects; they only matter here because they dictate how the new pins assert
+(string equality rather than `.length`, and standalone-only for the element
+signatures).
+
+#### F4 (low) — array-valued separators. Recorded, not fixed.
+
+`w1.js`. On base both rows **trapped** `illegal cast`; after F1 they are
+non-trapping but not all correct:
+
+| row | standalone | wasi | node |
+| --- | --- | --- | --- |
+| `[1,2,3].join([";","!"])` | 959 ✓ | 3391 ✗ | 959 |
+| `[1,2,3].join([1,[2,3]])` | 37 ✗ | 33 ✗ | 13 |
+
+Standalone gets the flat case right and goes one level deep on the nested one;
+wasi stringifies through the generic object path (`"[object Object]"`). A
+strict improvement over a trap in every case, and out of scope here.
+
+#### New pins
+
+`tests/issue-5317-r4-join-separator.test.ts` gains five **minimal-module**
+controls (object / `null` / boolean / dynamic-number separators, Array and
+TypedArray receivers) run on **standalone and wasi**, each deliberately free of
+any other ToString consumer so it cannot be un-tested by incidental arming, and
+each asserting `imports === []`. `tests/issue-5317-r4-fill-copywithin-end.test.ts`
+gains the eleven-row static-lane control described under F3.
+
+#### Validation runs for this round — and what could NOT be established
+
+Green, on this tree:
+
+- **Pins, 100/100.** `tests/issue-5317*` + `tests/issue-5194*`, single fork at
+  the CI heap — the five r4/r3 pin files, including the five new minimal-module
+  join controls (standalone AND wasi, `imports === []`) and the new eleven-row
+  static-lane fill/copyWithin control.
+- **Node 25**, the two changed test files: 20/20.
+- **Exact Test262 rows** through the vitest runner (120 s budget) inside those
+  pins: `join/return-abrupt-from-separator.js`,
+  `join/return-abrupt-from-separator-symbol.js`,
+  `join/custom-separator-result-from-tostring-on-each-value.js`,
+  `join/custom-separator-result-from-tostring-on-each-simple-value.js`,
+  `fill/coerced-indexes.js` — all pass.
+- **Gates**: `check-loc-budget` / `check-func-budget` bare AND with
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`, `check-coercion-sites`,
+  `check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+  `check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+  typecheck, lint.
+
+**NOT established: the two 120/139-row control corpora were not re-validated.**
+The `--isolate` row runner was run on the 120-row corpus and returned
+`44 pass / 15 fail / 61 compile_error`, where **all 61 `compile_error`s are
+`compilation timeout`** (15–29 s each) against the lane's recorded `57 base →
+66 lane`. The box was at **1-min load 11–13 on 4 cores** for the whole run —
+several other lanes active — which is the same load-artifact condition the lane
+documented in step 2, and under it the runner's `compile_error` verdicts are
+not evidence about this tree. A 16-row focused re-run behaved identically:
+`6 pass / 1 fail / 9 compile_error`, with the 9 timeouts landing exactly on the
+detached-buffer family this step already recorded as given up, and the 1 fail
+on `join/invoked-as-method.js` (a `TypedArrayPrototype` reflection row, the
+`#2175` class). So nothing in either run contradicts the lane's numbers — but
+**neither run confirms them**, and the "zero rows lost" claim for the two
+corpora therefore still rests on the lane's own earlier measurement, not on a
+repeat under review. It should be re-run when the box is quiet (≤2 lanes).

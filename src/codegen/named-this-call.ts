@@ -117,7 +117,14 @@ function receiverIsAdmitted(
   // dispatch. The trampoline still runtime-splits a null value to the legacy
   // unbound call, so a detached/nullish reach does not enter the fast arm.
   if (inner.kind === ts.SyntaxKind.ThisKeyword) {
-    return fctx.readsCurrentThis === true || thisReceiverIsGlobalObject(ctx, fctx, inner);
+    // (#4536/#3729) A CLASS METHOD's own `this` is its receiver param
+    // (`localMap` carries "this"), not `__current_this` — acorn's
+    // `finishNode(node, type) { return finishNodeAt.call(this, …) }` is
+    // exactly this shape. The compiled receiver value is param 0 either way,
+    // so the trampoline install is as sound as for the readsCurrentThis rung;
+    // refusing it dropped the receiver and silently skipped every
+    // `this.options.ranges`-guarded write in the callee.
+    return fctx.readsCurrentThis === true || fctx.localMap.has("this") || thisReceiverIsGlobalObject(ctx, fctx, inner);
   }
   const fact = ctx.oracle.typeFactOf(inner);
   if (!factIsStaticallyNullish(fact)) return true;
@@ -129,13 +136,90 @@ function receiverIsAdmitted(
   return explicitNullAdmitted && factIsStaticallyNull(fact);
 }
 
+function staticPropertyName(node: ts.PropertyName | ts.BindingName | undefined): string | undefined {
+  if (!node) return undefined;
+  if (ts.isIdentifier(node) || ts.isStringLiteral(node) || ts.isNumericLiteral(node)) return node.text;
+  return undefined;
+}
+
+/**
+ * Resolve a stable object-destructured function back to the declaration stored
+ * in the source object. Axios exposes `merge` through a default object and its
+ * test imports it as `const { merge } = utils`; the binding is immutable, but
+ * the ordinary symbol lookup stops at that BindingElement and therefore used
+ * to miss the receiver-preserving named `.call` trampoline.
+ */
+function resolveObjectBindingFunction(
+  ctx: CodegenContext,
+  binding: ts.BindingElement,
+): ts.FunctionDeclaration | undefined {
+  if (!ts.isObjectBindingPattern(binding.parent)) return undefined;
+  const variable = binding.parent.parent;
+  if (
+    !ts.isVariableDeclaration(variable) ||
+    !variable.initializer ||
+    !ts.isVariableDeclarationList(variable.parent) ||
+    (variable.parent.flags & ts.NodeFlags.Const) === 0
+  ) {
+    return undefined;
+  }
+
+  const key = staticPropertyName(binding.propertyName ?? binding.name);
+  if (key === undefined) return undefined;
+  let source: ts.Expression = variable.initializer;
+  while (ts.isParenthesizedExpression(source)) source = source.expression;
+
+  let object: ts.ObjectLiteralExpression | undefined;
+  if (ts.isObjectLiteralExpression(source)) {
+    object = source;
+  } else if (ts.isIdentifier(source)) {
+    const binding = ctx.oracle.valueDeclarationOf(source);
+    const sourceDeclaration =
+      binding && (ts.isImportClause(binding) || ts.isImportSpecifier(binding))
+        ? ctx.importBindingTargets?.get(binding)
+        : binding;
+    if (sourceDeclaration && ts.isExportAssignment(sourceDeclaration)) {
+      let expression = sourceDeclaration.expression;
+      while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+      if (ts.isObjectLiteralExpression(expression)) object = expression;
+    } else if (sourceDeclaration && ts.isVariableDeclaration(sourceDeclaration) && sourceDeclaration.initializer) {
+      let initializer = sourceDeclaration.initializer;
+      while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
+      if (ts.isObjectLiteralExpression(initializer)) object = initializer;
+    }
+  }
+  if (!object) return undefined;
+
+  const property = object.properties.find((entry): entry is ts.ShorthandPropertyAssignment | ts.PropertyAssignment => {
+    if (!ts.isShorthandPropertyAssignment(entry) && !ts.isPropertyAssignment(entry)) return false;
+    return staticPropertyName(entry.name) === key;
+  });
+  if (!property) return undefined;
+  let valueDeclaration: ts.Declaration | undefined;
+  if (ts.isShorthandPropertyAssignment(property)) {
+    valueDeclaration = ctx.oracle.valueDeclarationOf(property.name);
+  } else {
+    let initializer = property.initializer;
+    while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
+    if (ts.isIdentifier(initializer)) valueDeclaration = ctx.oracle.valueDeclarationOf(initializer);
+  }
+  return valueDeclaration && ts.isFunctionDeclaration(valueDeclaration) ? valueDeclaration : undefined;
+}
+
 function resolveDeclaration(ctx: CodegenContext, callee: ts.Identifier): ts.FunctionDeclaration | undefined {
-  const declaration = ctx.oracle.valueDeclarationOf(callee);
-  // This slice only has an exact allocator identity for unique source-file
-  // declarations. Requiring the declaration in the callee's source file also
-  // refuses imported aliases without exposing checker Symbols outside Oracle.
+  let declaration = ctx.oracle.valueDeclarationOf(callee);
+  if (declaration && ts.isBindingElement(declaration)) {
+    declaration = resolveObjectBindingFunction(ctx, declaration);
+  }
+  if (declaration && (ts.isImportClause(declaration) || ts.isImportSpecifier(declaration))) {
+    declaration = ctx.importBindingTargets?.get(declaration);
+  }
+  // `declarationOwnsHandle` below is the allocator-identity check. Do not also
+  // require the declaration to live in the caller's source file: a statically
+  // linked default import can name the exact same top-level declaration, and
+  // reflective `.call` must preserve its receiver across that module edge.
   // Nested declarations can shadow a top-level function with the same funcMap
-  // key; name equality is not declaration identity.
+  // key; name equality alone is not declaration identity.
   if (
     !declaration ||
     !ts.isFunctionDeclaration(declaration) ||
@@ -143,8 +227,7 @@ function resolveDeclaration(ctx: CodegenContext, callee: ts.Identifier): ts.Func
     declaration.name?.text !== callee.text ||
     declaration.asteriskToken !== undefined ||
     declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true ||
-    declaration.parent !== declaration.getSourceFile() ||
-    declaration.getSourceFile() !== callee.getSourceFile()
+    declaration.parent !== declaration.getSourceFile()
   ) {
     return undefined;
   }
@@ -220,21 +303,50 @@ function ensureNamedThisCallTrampoline(
   const installAndCall = (receiver: readonly Instr[]): Instr[] => {
     const blockType =
       resultType === undefined ? ({ kind: "empty" } as const) : ({ kind: "val", type: resultType } as const);
+    // (#4620) A CONCRETE-ref `try_table` block type is a shape no lane can use
+    // on today's engine. Isolated in a HAND-BUILT module (no compiler
+    // involved), on Node v22.22.2 / V8 12.4.254.21: a `try_table` whose block
+    // type is `(ref null <typeidx>)` traps `RuntimeError: unreachable` on
+    // ENTRY, with nothing thrown, while the same module with an `i32` or
+    // `externref` block type runs fine. Abstract single-byte ref types
+    // (`externref`, `funcref`) are unaffected; only the two-byte
+    // `0x63 <typeidx>` form is.
+    //
+    // Here that killed every `.call` on a named function that reads `this` and
+    // returns a ref — a string or an object, i.e. the whole
+    // `10.4.3-1-{1,2,4,5}-s` primitive-`this` family — before the protected
+    // call ever ran (a side-effect probe showed the callee never executed;
+    // patching the two try_tables in the emitted binary to plain `block`s made
+    // the same module return the right value).
+    //
+    // The ordinary `try`/`catch` lowering never hits it because it emits an
+    // EMPTY try_table block type and `return`s out of the protected body. This
+    // does the same thing with a local: the call's result is parked in
+    // `__result` inside the try body, so the try_table carries no value across
+    // its own boundary, and the value is read after the scaffold. Scalar
+    // results keep the pre-existing (working) value-typed shape so their bytes
+    // do not move.
+    const parkResultInLocal = standardizedEh && (resultType?.kind === "ref" || resultType?.kind === "ref_null");
+    const tryBlockType = parkResultInLocal ? ({ kind: "empty" } as const) : blockType;
     const protectedCall: Instr = standardizedEh
-      ? buildStandardTryTable(blockType, exactCall(), [
-          {
-            kind: "catch",
-            tagIdx: ensureExnTag(ctx),
-            payloadType: { kind: "externref" },
-            body: [
-              { op: "local.set", index: unwindExnLocal },
-              { op: "local.get", index: prevThisLocal },
-              { op: "global.set", index: currentThisGlobalIdx },
-              { op: "local.get", index: unwindExnLocal },
-              { op: "throw", tagIdx: ensureExnTag(ctx) },
-            ],
-          },
-        ])
+      ? buildStandardTryTable(
+          tryBlockType,
+          parkResultInLocal ? [...exactCall(), { op: "local.set", index: resultLocal }] : exactCall(),
+          [
+            {
+              kind: "catch",
+              tagIdx: ensureExnTag(ctx),
+              payloadType: { kind: "externref" },
+              body: [
+                { op: "local.set", index: unwindExnLocal },
+                { op: "local.get", index: prevThisLocal },
+                { op: "global.set", index: currentThisGlobalIdx },
+                { op: "local.get", index: unwindExnLocal },
+                { op: "throw", tagIdx: ensureExnTag(ctx) },
+              ],
+            },
+          ],
+        )
       : {
           op: "try",
           blockType,
@@ -252,7 +364,8 @@ function ensureNamedThisCallTrampoline(
       ...receiver,
       { op: "global.set", index: currentThisGlobalIdx },
       protectedCall,
-      ...(resultLocal < 0 ? [] : ([{ op: "local.set", index: resultLocal }] satisfies Instr[])),
+      // The parked-result shape already stored it inside the try body.
+      ...(resultLocal < 0 || parkResultInLocal ? [] : ([{ op: "local.set", index: resultLocal }] satisfies Instr[])),
       { op: "local.get", index: prevThisLocal },
       { op: "global.set", index: currentThisGlobalIdx },
       ...(resultLocal < 0 ? [] : ([{ op: "local.get", index: resultLocal }] satisfies Instr[])),
@@ -310,6 +423,14 @@ export function resolveNamedThisCallTarget(
   userArguments: readonly ts.Expression[],
 ): NamedThisCallTarget | undefined {
   const declaration = resolveDeclaration(ctx, callee);
+  const restIndex = declaration?.parameters.findIndex((parameter) => parameter.dotDotDotToken !== undefined) ?? -1;
+  // Rest arguments are packed into the declaration's single vec parameter by
+  // the ordinary `.call` lowering before it invokes this trampoline. Their
+  // source count therefore does not need to equal the Wasm parameter count;
+  // only every non-rest prefix parameter must be present.
+  const arityAdmitted =
+    declaration !== undefined &&
+    (restIndex >= 0 ? userArguments.length >= restIndex : userArguments.length === declaration.parameters.length);
   // (#4203) Strictness of the TARGET, not of the call site: §10.4.3 keys the
   // receiver's treatment on the callee's own code. Only a strict target can
   // observe explicit-null differently from absent, so only a strict target
@@ -322,8 +443,7 @@ export function resolveNamedThisCallTarget(
     !declaration?.body ||
     ctx.liveFuncBindingGlobals?.has(callee.text) === true ||
     !declarationOwnsHandle(ctx, declaration, targetFuncIdx) ||
-    declaration.parameters.some((parameter) => parameter.dotDotDotToken !== undefined) ||
-    userArguments.length !== declaration.parameters.length ||
+    !arityAdmitted ||
     userArguments.some((argument) => ts.isSpreadElement(argument)) ||
     (declaration.parameters[0] &&
       ts.isIdentifier(declaration.parameters[0].name) &&

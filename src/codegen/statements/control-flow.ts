@@ -3,19 +3,23 @@
  * Control flow statement lowering: return, if, switch, break, continue, labeled.
  */
 import { ts } from "../../ts-api.js";
+import { conditionRequiresDocumentPresence } from "../../ir/dom-capability.js";
 import { isBooleanType, isNumberType, isStringType } from "../../checker/type-mapper.js";
 import type { TypeFact } from "../../checker/oracle.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType } from "../context/locals.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
-import { emitToNumber } from "../coercion-engine.js";
+import { emitEagerAsyncPromiseWrap } from "../async-eager-promise.js"; // (#4630)
+import { emitToBoolean, emitToNumber } from "../coercion-engine.js";
+import { retUnboxAbiEnabled } from "../ret-unbox-abi.js"; // (#4406) JS2WASM_RET_UNBOX_ABI
 import { emitThrowTypeError } from "../expressions/helpers.js";
 import {
   addStringImports,
   addUnionImports,
   ensureI32Condition,
   ensureNativeStringHelpers,
+  hoistLetConstWithTdz,
   resolveWasmType,
 } from "../index.js";
 import {
@@ -29,10 +33,20 @@ import {
   valTypesMatch,
 } from "../shared.js";
 import { emitLinearU8ArenaReset } from "../linear-uint8-arena.js";
-import { adjustRethrowDepth } from "./shared.js";
+import {
+  adjustRethrowDepth,
+  collectSwitchCaseBlockScopedNames,
+  discardBlockScopedShadows,
+  saveBlockScopedShadowsForNames,
+} from "./shared.js";
 import { definedFuncAt } from "../func-space.js"; // (#1916 S2) positional-read chokepoint
 import { emitUndefined } from "../expressions/late-imports.js";
 import { emitConstructReturnSelect } from "../construct-return-value.js"; // (#4464)
+import {
+  emitHostTypedArrayCarrierRegistration,
+  isHostTypedArrayCarrierName,
+} from "../expressions/typed-array-host-carrier.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js";
 
 /**
  * (#2061) Compute the extra nesting depth between a finally-inline site and the
@@ -63,6 +77,58 @@ function finallyInlineDelta(
   return 0;
 }
 
+/**
+ * (#5270 step 1) The ONE soundness requirement for `return_call` /
+ * `return_call_ref`: the callee's result list must satisfy the CALLER's return
+ * type, because the callee returns straight to the caller's caller.
+ *
+ * Wasm validates `return_call x : [t1* t3*] → [t2*]` for
+ * `C.funcs[x] = [t3*] → [t4*]` with `C.return = [t4*]` — the operand stack
+ * BELOW the callee's arguments is polymorphic, so the CALLER's own parameter
+ * count is irrelevant. The old `typeDef.params.length !== fctx.params.length`
+ * refusal was a proxy for #822 WI1's "not enough arguments on the stack" CE,
+ * but that CE is about the operands the call site actually pushed (which a
+ * well-formed `call` always has) — not about the caller's arity. Dropping it
+ * lets a closure tail-call a lifted body whose leading `self` / capture params
+ * make the counts differ (the `__fn_tramp_*` and `getF()(n-1)` shapes).
+ *
+ * The standalone/wasi `externref` refusal that used to sit here carried no
+ * comment, no issue id and no test pin (`git log -S` finds only the tree
+ * import; #822 / #839 / #1972 are about ARGUMENT types, try/catch and stack
+ * setup, never about an externref RESULT). `return_call` type-checks exactly
+ * like `call` followed by `return`, so an externref result that equals the
+ * caller's externref result is a match like any other. Its only effect was to
+ * refuse every value-returning standalone tail call — including `return
+ * undefined`, which lowers to an externref result — so no standalone JS
+ * function was ever tail-call optimised (cluster A, 11 test262 rows).
+ */
+function tailCallResultsMatch(fctx: FunctionContext, calleeResults: readonly ValType[]): boolean {
+  if (!fctx.returnType) {
+    // Caller is void — callee must also return nothing
+    return calleeResults.length === 0;
+  }
+  // Caller has a return type — callee must return exactly one matching type
+  if (calleeResults.length !== 1) return false;
+  const calleeRet = calleeResults[0]!;
+  const callerRet = fctx.returnType;
+  // (#5270 review N1) `valTypesMatch` compares the heap type too, where the
+  // old `calleeRet.kind === callerRet.kind` test did not: it matched `ref $A`
+  // against an unrelated `ref $B`, and cross-matched `ref` against `ref_null`
+  // in BOTH directions. `return_call` requires the callee's results to satisfy
+  // the CALLER's declared results, so only the widening direction is sound —
+  // a non-null `ref $T` result may flow into a `ref null $T` return, never the
+  // reverse. Nothing reproduced end-to-end (an inserted `ref.cast` makes
+  // `peelToTailCallIdx` decline the shapes that would have differed), but step
+  // 1 removed the param-count filter, so strictly more call sites reach this
+  // check and it should not rest on that accident.
+  if (valTypesMatch(calleeRet, callerRet)) return true;
+  return (
+    calleeRet.kind === "ref" &&
+    callerRet.kind === "ref_null" &&
+    (calleeRet as { typeIdx: number }).typeIdx === (callerRet as { typeIdx: number }).typeIdx
+  );
+}
+
 function canTailCall(ctx: CodegenContext, fctx: FunctionContext, calleeIdx: number): boolean {
   let calleeTypeIdx: number | undefined;
   if (calleeIdx < ctx.numImportFuncs) {
@@ -77,31 +143,7 @@ function canTailCall(ctx: CodegenContext, fctx: FunctionContext, calleeIdx: numb
   if (calleeTypeIdx === undefined) return false;
   const typeDef = ctx.mod.types[calleeTypeIdx];
   if (!typeDef || typeDef.kind !== "func") return false;
-
-  // Parameter count must match — return_call requires the stack to contain
-  // exactly the callee's params, so mismatched counts cause "not enough
-  // arguments" CE (#822 Work Item 1)
-  if (typeDef.params.length !== fctx.params.length) return false;
-
-  // Compare callee results with caller return type
-  const calleeResults = typeDef.results;
-  if (!fctx.returnType) {
-    // Caller is void — callee must also return nothing
-    return calleeResults.length === 0;
-  }
-  // Caller has a return type — callee must return exactly one matching type
-  if (calleeResults.length !== 1) return false;
-  const calleeRet = calleeResults[0]!;
-  const callerRet = fctx.returnType;
-  // Exact kind match (we allow ref subtyping — same kind is sufficient)
-  if (calleeRet.kind === callerRet.kind) return true;
-  // ref/ref_null are compatible for return purposes
-  if (
-    (calleeRet.kind === "ref" || calleeRet.kind === "ref_null") &&
-    (callerRet.kind === "ref" || callerRet.kind === "ref_null")
-  )
-    return true;
-  return false;
+  return tailCallResultsMatch(fctx, typeDef.results);
 }
 
 /**
@@ -110,22 +152,7 @@ function canTailCall(ctx: CodegenContext, fctx: FunctionContext, calleeIdx: numb
 function canTailCallRef(ctx: CodegenContext, fctx: FunctionContext, typeIdx: number): boolean {
   const typeDef = ctx.mod.types[typeIdx];
   if (!typeDef || typeDef.kind !== "func") return false;
-
-  // Parameter count must match (#822 Work Item 1)
-  if (typeDef.params.length !== fctx.params.length) return false;
-
-  const calleeResults = typeDef.results;
-  if (!fctx.returnType) return calleeResults.length === 0;
-  if (calleeResults.length !== 1) return false;
-  const calleeRet = calleeResults[0]!;
-  const callerRet = fctx.returnType;
-  if (calleeRet.kind === callerRet.kind) return true;
-  if (
-    (calleeRet.kind === "ref" || calleeRet.kind === "ref_null") &&
-    (callerRet.kind === "ref" || callerRet.kind === "ref_null")
-  )
-    return true;
-  return false;
+  return tailCallResultsMatch(fctx, typeDef.results);
 }
 
 function emitLinearU8ArenaResetBeforeReturn(ctx: CodegenContext, fctx: FunctionContext): boolean {
@@ -139,6 +166,40 @@ function emitLinearU8ArenaResetBeforeReturn(ctx: CodegenContext, fctx: FunctionC
     emitLinearU8ArenaReset(ctx, fctx, fctx.linearU8ArenaMarkLocalIdx);
   }
   return true;
+}
+
+function normalizeReturnExpression(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expression: ts.Expression,
+  exprType: ValType | null,
+): void {
+  if (exprType && fctx.returnType && !valTypesMatch(exprType, fctx.returnType)) {
+    // (#4406) A BOOLEAN-branded i32 return target wants ToBoolean, and
+    // `coerceType(externref → i32)` is ToNumber + `i32.trunc_sat_f64_s`. On the
+    // proven domain the two agree — ToNumber(true) is 1, ToNumber(false) is 0 —
+    // but they diverge the moment the whole-program verdict is imprecise: a
+    // return expression that lowered to a boxed `"abc"` truncates to 0 where
+    // ToBoolean says 1. This is the one place #3754's "the refined type is
+    // IMPOSED, not asserted" argument does NOT transfer from f64 to i32, so
+    // close it rather than inherit it. Gated on the return-ABI flag purely to
+    // keep the OFF build byte-identical: a DECLARED `boolean` return reaches
+    // this same coercion today.
+    if (fctx.returnType.kind === "i32" && fctx.returnType.boolean === true && retUnboxAbiEnabled()) {
+      emitToBoolean(ctx, exprType, fctx.body);
+      return;
+    }
+    coerceType(ctx, fctx, exprType, fctx.returnType);
+  }
+  if (!exprType || (fctx.returnType?.kind !== "ref" && fctx.returnType?.kind !== "ref_null")) return;
+
+  // A host TypedArray materialized into a native vec did not pass through the
+  // constructor emission site. Preserve its brand here without branding
+  // ordinary Array returns that happen to share the same vec representation.
+  const returnedName = ctx.oracle.builtinReceiverOf(expression) ?? ctx.oracle.declaredNameOf(expression);
+  if (isHostTypedArrayCarrierName(returnedName)) {
+    emitHostTypedArrayCarrierRegistration(ctx, fctx, returnedName, fctx.returnType);
+  }
 }
 
 export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContext, stmt: ts.ReturnStatement): void {
@@ -238,12 +299,92 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
 
   const hasPendingFinally = fctx.finallyStack && fctx.finallyStack.length > 0;
 
-  // Derived class constructors: per §10.2.1.3 step 13c, returning a non-object
-  // non-undefined value must throw TypeError. Detect this statically via the
-  // TS type of the expression BEFORE compiling, since compileExpression will
-  // otherwise silently coerce a primitive to the struct ref type — producing a
-  // null ref that traps at the caller's `new` site with an uncatchable
-  // "dereferencing a null pointer" Wasm error. (#825)
+  // Externref-backed derived constructors (the standalone native built-in
+  // families, e.g. `class C extends Object`) cannot use the nominal-struct
+  // return path below.  Their return operand is a genuine runtime value, so
+  // §10.2.1.3 must classify it after evaluating the expression: undefined is
+  // discarded in favour of `this`, an object/function replaces `this`, and a
+  // primitive throws TypeError.  The old static-only check missed JavaScript
+  // tests because allowJs gives an unannotated `return 42` the `any` type; it
+  // then returned the boxed number as the constructed instance. (#4450)
+  if (fctx.isDerivedConstructor && fctx.returnType?.kind === "externref") {
+    const selfIdx = fctx.localMap.get("this");
+    if (selfIdx !== undefined && stmt.expression) {
+      // Compile the operand first.  Both the expression and the typeof
+      // predicates may register late imports; the throw template must be
+      // captured only after those shifts have been flushed, otherwise its
+      // detached call index can point at the wrong helper (#1839).
+      const exprType = compileExpression(ctx, fctx, stmt.expression, { kind: "externref" });
+      if (exprType === null || exprType === undefined) {
+        fctx.body.push({ op: "local.get", index: selfIdx });
+      } else {
+        if (exprType.kind !== "externref") coerceType(ctx, fctx, exprType, { kind: "externref" });
+        const typeofUndefinedIdx = ensureLateImport(
+          ctx,
+          "__typeof_undefined",
+          [{ kind: "externref" }],
+          [{ kind: "i32" }],
+        );
+        const typeofObjectIdx = ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+        const typeofFunctionIdx = ensureLateImport(
+          ctx,
+          "__typeof_function",
+          [{ kind: "externref" }],
+          [{ kind: "i32" }],
+        );
+        flushLateImportShifts(ctx, fctx);
+        const throwInstrs = buildThrowJsErrorInstrs(
+          ctx,
+          "TypeError",
+          "Derived constructors may only return an object or undefined",
+          { flush: fctx },
+        );
+        const callInstr = (funcIdx: number | undefined): Instr[] =>
+          funcIdx === undefined ? [] : [{ op: "call", funcIdx }];
+        const returned = allocLocal(fctx, `__derived_ret_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: returned });
+        // `null` is not an Object for [[Construct]], even though its JS
+        // typeof is "object".  Check it before the typeof predicates.
+        fctx.body.push({ op: "local.get", index: returned });
+        fctx.body.push({ op: "ref.is_null" });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: throwInstrs,
+          else: [
+            { op: "local.get", index: returned },
+            ...callInstr(typeofUndefinedIdx),
+            {
+              op: "if",
+              blockType: { kind: "val", type: { kind: "externref" } },
+              then: [{ op: "local.get", index: selfIdx }],
+              else: [
+                { op: "local.get", index: returned },
+                ...callInstr(typeofObjectIdx),
+                { op: "local.get", index: returned },
+                ...callInstr(typeofFunctionIdx),
+                { op: "i32.or" },
+                {
+                  op: "if",
+                  blockType: { kind: "val", type: { kind: "externref" } },
+                  then: [{ op: "local.get", index: returned }],
+                  else: throwInstrs,
+                },
+              ],
+            },
+          ],
+        });
+      }
+    } else if (selfIdx !== undefined) {
+      fctx.body.push({ op: "local.get", index: selfIdx });
+    }
+    emitReturnTail(ctx, fctx, hasPendingFinally);
+    return;
+  }
+
+  // Other derived class constructors have nominal struct results. Detect
+  // statically-provable primitive returns before the struct coercion path;
+  // this preserves the existing bounded behaviour for that representation.
   if (fctx.isDerivedConstructor && stmt.expression) {
     const tsType = ctx.checker.getTypeAtLocation(stmt.expression);
     const primitiveFlags =
@@ -305,7 +446,6 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
 
   if (
     (fctx.isConstructor || fctx.isFnctorConstructor) &&
-    !fctx.isDerivedConstructor &&
     fctx.returnType &&
     fctx.returnType.kind === "ref" &&
     fctx.localMap.has("this")
@@ -314,6 +454,13 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
     const structTypeIdx = fctx.returnType.typeIdx;
     if (!stmt.expression) {
       // Bare `return;` → return `this` (the guard-clause idiom). #2018
+      // (#5195 Step 11 E) …including in a DERIVED constructor with a nominal
+      // struct result, which this arm used to decline outright: the statement
+      // fell to the generic value-return below, which pushes `ref.null
+      // <struct>`, and `new Derived()` then trapped "dereferencing a null
+      // pointer". §10.2.1.3 step 13 makes `undefined` the ordinary case, not an
+      // error — the TypeError is reserved for a non-Object, non-undefined
+      // value.
       fctx.body.push({ op: "local.get", index: selfIdx });
     } else {
       const tsType = ctx.checker.getTypeAtLocation(stmt.expression);
@@ -331,6 +478,22 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
       // for a primitive / foreign object) before we can apply the §10.2.1.3
       // override/discard logic. Let it yield its natural type instead.
       const exprType = compileExpression(ctx, fctx, stmt.expression, undefined);
+      if (
+        fctx.isDerivedConstructor &&
+        (tsType.flags & (ts.TypeFlags.Null | ts.TypeFlags.Never | ts.TypeFlags.Unknown)) !== 0 &&
+        (tsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) === 0
+      ) {
+        // (#5195 Step 11 E) §10.2.1.3 step 12: a DERIVED constructor may return
+        // only an Object or `undefined`. `null` has typeof "object" but is not
+        // an Object, so it is the one value the base-class discard rule above
+        // gets wrong for a derived ctor. The operand is already evaluated (spec:
+        // GetValue precedes the check); discard it, then throw. The other
+        // primitives are caught statically further up (#825); `undefined`/`void`
+        // stay on the discard-and-return-`this` path.
+        if (exprType) fctx.body.push({ op: "drop" });
+        emitThrowTypeError(ctx, fctx, "Derived constructors may only return an object or undefined");
+        return;
+      }
       if (tsType.flags & primitiveFlags) {
         // Statically a primitive / null / undefined → discard, return `this`.
         if (exprType) fctx.body.push({ op: "drop" });
@@ -379,10 +542,7 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
 
   if (stmt.expression) {
     const exprType = compileExpression(ctx, fctx, stmt.expression, fctx.returnType ?? undefined);
-    // Coerce expression result to match function return type if they differ
-    if (exprType && fctx.returnType && !valTypesMatch(exprType, fctx.returnType)) {
-      coerceType(ctx, fctx, exprType, fctx.returnType);
-    }
+    normalizeReturnExpression(ctx, fctx, stmt.expression, exprType);
     // (#585) If the function is void (no return type) but the expression produced
     // a value, drop it — Wasm requires an empty stack before `return` in void funcs.
     if (exprType && !fctx.returnType) {
@@ -396,6 +556,13 @@ export function compileReturnStatement(ctx: CodegenContext, fctx: FunctionContex
     else if (fctx.returnType.kind === "externref") emitUndefined(ctx, fctx);
     else if (fctx.returnType.kind === "ref_null") fctx.body.push({ op: "ref.null", typeIdx: fctx.returnType.typeIdx });
     else if (fctx.returnType.kind === "ref") fctx.body.push({ op: "ref.null", typeIdx: fctx.returnType.typeIdx });
+  }
+
+  // (#4630) A parked async closure whose result was promoted to a `$Promise`
+  // settles its completion value here — `Promise.resolve(v)`, idempotent for a
+  // value that already IS a native `$Promise` (§27.2.4.7 step 2).
+  if (fctx.eagerAsyncPromiseReturn === true) {
+    emitEagerAsyncPromiseWrap(ctx, fctx);
   }
 
   emitReturnTail(ctx, fctx, hasPendingFinally);
@@ -793,7 +960,11 @@ export function compileIfStatement(ctx: CodegenContext, fctx: FunctionContext, s
   // Constant-folding: if the condition is a compile-time constant (e.g. after
   // --define substitution of process.env.NODE_ENV), emit only the taken branch.
   // Handles: "x" === "y", "x" !== "y", true, false, !true, !false
-  const constResult = evaluateConstantCondition(stmt.expression);
+  const optionalHostGuardIsFalse =
+    (ctx.standalone || ctx.wasi) &&
+    ctx.requiresStandaloneDomCapability !== true &&
+    conditionRequiresDocumentPresence(stmt.expression);
+  const constResult = optionalHostGuardIsFalse ? false : evaluateConstantCondition(stmt.expression);
   if (constResult !== undefined) {
     // Route the taken branch through compileStatement so its Block case runs
     // block-scope save/restore — a const-folded `if (true) { let x = ... }`
@@ -1172,7 +1343,7 @@ function emitSwitchStrictEq(ctx: CodegenContext, fctx: FunctionContext, lTmp: nu
     }
     if (!stringArmEmitted) refArm.push(...identityArm);
 
-    fctx.body.push(
+    const taggedCascade: Instr[] = [
       { op: "local.get", index: lTmp },
       { op: "call", funcIdx: typeofNum },
       { op: "local.get", index: rTmp },
@@ -1225,6 +1396,39 @@ function emitSwitchStrictEq(ctx: CodegenContext, fctx: FunctionContext, lTmp: nu
             ],
           },
         ],
+      },
+    ];
+
+    // (#4621 D) NULL arm, ahead of the tag cascade. `null` is the null
+    // externref, so `any.convert_extern` hands the identity arm a null anyref —
+    // and `ref.test (ref eq)` on a null answers 0. The cascade therefore fell
+    // all the way through to an identity test that CANNOT be true for two
+    // nulls, making `switch (null) { case null: }` miss its own case and take
+    // `default` (measured: `language/statements/switch/S12.11_A1_T{3,4}`,
+    // "SwitchTest(null) === 192. Actual: 32"). §7.2.16 step 1: same Type ⇒
+    // Null === Null is true.
+    //
+    // `undefined` is NOT null in this representation — it is the tag-1
+    // singleton (#4489), so `ref.is_null` is false for it and `null ===
+    // undefined` still answers false through the both-must-be-null test below.
+    // The JS-host branch further down needs no arm: `__host_eq` is JS `===`.
+    fctx.body.push(
+      { op: "local.get", index: lTmp },
+      { op: "ref.is_null" },
+      { op: "local.get", index: rTmp },
+      { op: "ref.is_null" },
+      { op: "i32.or" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "i32" } },
+        then: [
+          { op: "local.get", index: lTmp },
+          { op: "ref.is_null" },
+          { op: "local.get", index: rTmp },
+          { op: "ref.is_null" },
+          { op: "i32.and" },
+        ],
+        else: taggedCascade,
       },
     );
     return;
@@ -1385,6 +1589,56 @@ export function compileSwitchStatement(ctx: CodegenContext, fctx: FunctionContex
   } else {
     compileExpression(ctx, fctx, stmt.expression, wasmType);
     fctx.body.push({ op: "local.set", index: tmpLocalIdx });
+  }
+
+  // §14.12.2 creates the CaseBlock declarative environment only AFTER the
+  // discriminant has been evaluated.  Keep that ordering observable while
+  // making every direct clause `let`/`const` binding available to selector
+  // expressions and all fall-through bodies.  The ordinary function-body
+  // hoister may already have allocated an outer same-named local; hiding it
+  // here forces a fresh CaseBlock slot and lets closures created by selectors
+  // capture the correct binding.
+  const caseScopeNames = collectSwitchCaseBlockScopedNames(stmt.caseBlock);
+
+  // Function-body hoisting walks through switches ahead of statement codegen.
+  // A direct CaseBlock declaration can therefore already occupy `localMap`.
+  // Keep that pre-hoisted slot active (nested function declarations may have
+  // captured it); only hide names that are genuinely outer bindings.
+  const caseScopeOuterNames: string[] = [];
+  const directIdentifierNames = new Set<string>();
+  if (fctx.preHoistedLetConstSlots) {
+    for (const clause of stmt.caseBlock.clauses) {
+      for (const clauseStmt of clause.statements) {
+        if (!ts.isVariableStatement(clauseStmt)) continue;
+        const flags = clauseStmt.declarationList.flags;
+        if (
+          !(flags & ts.NodeFlags.Let) &&
+          !(flags & ts.NodeFlags.Const) &&
+          !(flags & ts.NodeFlags.Using) &&
+          !(flags & ts.NodeFlags.AwaitUsing)
+        ) {
+          continue;
+        }
+        for (const decl of clauseStmt.declarationList.declarations) {
+          if (!ts.isIdentifier(decl.name)) continue;
+          const name = decl.name.text;
+          directIdentifierNames.add(name);
+          const record = fctx.preHoistedLetConstSlots.get(decl);
+          if (!record || fctx.localMap.get(name) !== record.valueSlot) caseScopeOuterNames.push(name);
+        }
+      }
+    }
+  }
+  for (const name of caseScopeNames) {
+    if (!directIdentifierNames.has(name)) caseScopeOuterNames.push(name);
+  }
+  const caseScopeSaved = saveBlockScopedShadowsForNames(fctx, caseScopeOuterNames);
+  if (caseScopeNames.length > 0) {
+    hoistLetConstWithTdz(
+      ctx,
+      fctx,
+      stmt.caseBlock.clauses.flatMap((clause) => Array.from(clause.statements)),
+    );
   }
 
   // Use a "target" local to track which clause index to start executing from.
@@ -1588,6 +1842,7 @@ export function compileSwitchStatement(ctx: CodegenContext, fctx: FunctionContex
     blockType: { kind: "empty" },
     body: switchBody,
   });
+  discardBlockScopedShadows(fctx, caseScopeNames, caseScopeSaved);
 }
 
 /**

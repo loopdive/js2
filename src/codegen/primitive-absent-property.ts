@@ -60,7 +60,7 @@ import { compileExpression } from "./shared.js";
  * plus the `Symbol.toPrimitive`-adjacent spellings a receiver may be probed
  * with. A property in this set is PRESENT, so this module must not answer.
  */
-const WRAPPER_CHAIN_MEMBERS = new Set([
+export const WRAPPER_CHAIN_MEMBERS = new Set([
   // Number.prototype / Boolean.prototype
   "toFixed",
   "toPrecision",
@@ -105,7 +105,7 @@ function isPrimitiveProtoTarget(expr: ts.Expression): boolean {
  * fold for the whole module, because the fold's premise is "this property is
  * provably absent from the chain".
  */
-function moduleExtendsPrimitiveProtos(sourceFile: ts.SourceFile): boolean {
+export function moduleExtendsPrimitiveProtos(sourceFile: ts.SourceFile): boolean {
   const cached = primitiveProtoExtensionCache.get(sourceFile);
   if (cached !== undefined) return cached;
   let found = false;
@@ -150,7 +150,7 @@ function moduleExtendsPrimitiveProtos(sourceFile: ts.SourceFile): boolean {
 }
 
 /** True when this member expression is being written to or deleted. */
-function isWriteOrDeleteTarget(expr: ts.PropertyAccessExpression): boolean {
+export function isWriteOrDeleteTarget(expr: ts.PropertyAccessExpression): boolean {
   const parent = expr.parent as ts.Node | undefined;
   if (parent === undefined) return false;
   if (ts.isDeleteExpression(parent)) return true;

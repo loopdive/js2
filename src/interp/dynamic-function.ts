@@ -31,11 +31,66 @@ import {
   type RuntimeDirectEvalHook,
   type RuntimeFunctionHook,
 } from "./loop.js";
-import { ENV_DECLARATIVE, ENV_OBJECT, EnvRec, type EvalBindingCell, type FuncMeta, type JSValue } from "./types.js";
+import {
+  ENV_DECLARATIVE,
+  ENV_OBJECT,
+  EnvRec,
+  RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY,
+  type EvalBindingCell,
+  type FuncMeta,
+  type JSValue,
+} from "./types.js";
 
 /** Host-free Acorn entry shape. `source` uses the compiler's native string
  * carrier; both `options` and the result use the shared open-$Object carrier. */
 export type DynamicParser = (source: string, options: JSValue) => JSValue;
+
+/** A global Script's declarative record outlives the provider call. Keep the
+ * canonical environment in the provider realm so a later host Script call
+ * observes the same lexical cells instead of rehydrating a fresh eval record. */
+const PERSISTENT_GLOBAL_SCRIPT_ENVIRONMENTS: WeakMap<object, EnvRec> = new WeakMap();
+
+function persistentGlobalScriptEnvironment(globalObject: JSValue): EnvRec {
+  const existing = PERSISTENT_GLOBAL_SCRIPT_ENVIRONMENTS.get(globalObject as object);
+  if (existing !== undefined) return existing;
+  const created = createRuntimeEvalGlobalEnvironment(globalObject);
+  registerVariableEnvironment(created, created);
+  PERSISTENT_GLOBAL_SCRIPT_ENVIRONMENTS.set(globalObject as object, created);
+  return created;
+}
+
+/** Publish provider-owned global Script lexical values in an extensible
+ * realm-side map. The AOT module cannot know a dynamic source's identifier at
+ * compile time, while this map remains reachable through the global object and
+ * is read by the canonical runtime-eval global lookup. */
+export function exposeRuntimeEvalGlobalDynamicLexicals(globalObject: JSValue, env: EnvRec): void {
+  if (
+    globalObject === undefined ||
+    globalObject === null ||
+    env.names === undefined ||
+    env.names === null ||
+    env.slots === undefined ||
+    env.slots === null
+  )
+    return;
+  let map: JSValue = globalObject[RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY];
+  if (map === undefined || map === null) {
+    map = {};
+    Object.defineProperty(globalObject, RUNTIME_EVAL_GLOBAL_DYNAMIC_LEXICALS_PROPERTY, {
+      value: map,
+      writable: true,
+      enumerable: false,
+      configurable: false,
+    });
+  }
+  for (let i = 0; i < env.names.length; i += 1) {
+    const name = env.names[i];
+    if (typeof name !== "string") continue;
+    const cell = env.slots[i] as EvalBindingCell;
+    if (cell === undefined || cell === null) continue;
+    map[name] = exposeRuntimeEvalSharedValue(cell.value);
+  }
+}
 
 /** Parse direct-eval source under the caller's strictness. Prefixing a strict
  * directive asks Acorn to apply strict Script early errors; removing that
@@ -205,7 +260,12 @@ export function createDynamicFunction(
  * as Script and entered through the same global EnvRec used by dynamic
  * Function, so it cannot capture caller locals.
  */
-export function executeIndirectEval(parse: DynamicParser, source: JSValue, globalObject: JSValue): JSValue {
+export function executeIndirectEval(
+  parse: DynamicParser,
+  source: JSValue,
+  globalObject: JSValue,
+  referrer?: string,
+): JSValue {
   if (typeof source !== "string") return source;
 
   ensureRuntimeEvalRealm(parse, globalObject);
@@ -213,6 +273,10 @@ export function executeIndirectEval(parse: DynamicParser, source: JSValue, globa
   const options: JSValue = {};
   options.ecmaVersion = 2025;
   options.sourceType = "script";
+  if (referrer !== undefined) {
+    options.locations = true;
+    options.sourceFile = referrer;
+  }
   const ast = parse(source, options);
   const globalEnv = createRuntimeEvalGlobalEnvironment(globalObject);
   registerVariableEnvironment(globalEnv, globalEnv);
@@ -220,6 +284,26 @@ export function executeIndirectEval(parse: DynamicParser, source: JSValue, globa
   const strictEval = programIsStrict(ast);
   const env = prepareEvalEnvironment(ast, globalEnv, globalEnv, strictEval);
   return interpEnter(emitProgram(ast, strictEval, true), env, globalObject, []);
+}
+
+/** Execute a host-facing global Script (the Test262 evalScript contract).
+ * Unlike ordinary indirect eval, top-level lexical declarations remain in the
+ * realm's GlobalEnvironmentRecord and therefore participate in later global
+ * Script redeclaration checks. */
+export function executeGlobalScript(parse: DynamicParser, source: JSValue, globalObject: JSValue): JSValue {
+  if (typeof source !== "string") return source;
+
+  ensureRuntimeEvalRealm(parse, globalObject);
+  const options: JSValue = {};
+  options.ecmaVersion = 2025;
+  options.sourceType = "script";
+  const ast = parse(source, options);
+  const globalEnv = persistentGlobalScriptEnvironment(globalObject);
+  const strictScript = programIsStrict(ast);
+  const env = prepareEvalEnvironment(ast, globalEnv, globalEnv, strictScript, undefined, true);
+  const result = interpEnter(emitProgram(ast, strictScript, true), env, globalObject, []);
+  exposeRuntimeEvalGlobalDynamicLexicals(globalObject, globalEnv);
+  return result;
 }
 
 /** Execute direct eval against live caller binding cells.

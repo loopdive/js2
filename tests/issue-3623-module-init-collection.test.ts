@@ -52,6 +52,7 @@ describe("#3623 the six historical silent drops are all `keep`", () => {
     ["#3615 parenthesized read", `(o.p);`, "accessor"],
     ["call", `f();`, "invokes"],
     ["new", `new C();`, "invokes"],
+    ["tagged template", "tag`hello`;", "tagged"],
     ["increment", `x++;`, "PutValue"],
   ];
 
@@ -109,7 +110,7 @@ describe("#3623 the DEFAULT is loud — this is the property that ends the class
   const UNHANDLED: [string, string][] = [
     ["bare identifier (ReferenceError / TDZ)", `x;`],
     ["typeof on a TDZ binding throws", `typeof x;`],
-    ["tagged template calls the tag function", "tag`hello`;"],
+    ["synchronous top-level-await parser recovery", "await``;"],
     ["comma expression can contain calls", `a = f(), b = g();`.replace(/^/, "0, ")],
     ["conditional evaluates a branch", `c ? f() : g();`],
     ["binary operand can be a call", `f() + g();`],
@@ -135,6 +136,14 @@ describe("#3623 the DEFAULT is loud — this is the property that ends the class
   it("labels binary expressions with their operator, so the report is actionable", () => {
     expect(classify(`a + b;`).shape).toBe("BinaryExpression(PlusToken)");
     expect(classify(`a, b;`).shape).toBe("BinaryExpression(CommaToken)");
+  });
+
+  it("does not mistake synchronous top-level-await recovery for a tag call", () => {
+    const recovery = classify("await``;");
+    expect(recovery.disposition).toBe("unhandled");
+    expect(recovery.reason).toContain("top-level-await parse recovery");
+    expect(classify("tag``;").disposition).toBe("keep");
+    expect(classify("(function () {})``;").disposition).toBe("keep");
   });
 
   it("is TOTAL — every classification is one of the three dispositions", () => {

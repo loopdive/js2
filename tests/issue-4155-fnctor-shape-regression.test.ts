@@ -196,7 +196,8 @@ describe("#4155 Phase 0 — known-broken instance flow positions (pre-existing)"
     ).toBe(42);
   });
 
-  it.fails("field added by a method, never seeded in the ctor → NaN", async () => {
+  // Passes since the #4611-era fnctor field work landed (flow-grown slot reads).
+  it("field added by a method, never seeded in the ctor → NaN", async () => {
     expect(
       await runStandalone(`
         function P(n: number) { this.pos = n; }

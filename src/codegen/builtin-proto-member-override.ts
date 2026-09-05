@@ -49,10 +49,14 @@
  * byte-identically — `protoNamedDirty` is a pre-scan flag, so the arm is not
  * merely dead, it is never built.
  *
- * IDENTIFIER RECEIVERS ONLY. The else arm re-dispatches the whole call so the
- * builtin lowering runs verbatim, which compiles the receiver a second time;
- * that is only sound when evaluating it has no side effects. Same restriction,
- * for the same reason, as the dyn-view two-arm.
+ * IDENTIFIER RECEIVERS are the general case. The else arm re-dispatches the
+ * whole call so the builtin lowering runs verbatim, which compiles the
+ * receiver a second time; that is only sound when evaluating it has no side
+ * effects. The one non-identifier exception is the zero-argument `new Array`
+ * expression synthesized for `String(new Array)`: constructing a fresh empty
+ * Array has no user-observable evaluation effect, and the native join branch
+ * must still see the same inline receiver shape. Same restriction, for the
+ * same reason, as the dyn-view two-arm.
  */
 import { ts } from "../ts-api.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -82,6 +86,26 @@ import {
 /** `skipTransparentExpressions` takes an Expression; narrow before calling. */
 function isExpressionNode(n: ts.Node): n is ts.Expression {
   return typeof (n as ts.Expression).kind === "number" && "getSourceFile" in n;
+}
+
+/**
+ * The override two-arm re-compiles the call in its builtin branch. Keep the
+ * non-identifier exception deliberately exact: `String(new Array)` lowers to
+ * an inline synthetic `toString()` call, and a zero-argument native Array
+ * construction is the only inline receiver needed by that ES5 row that can be
+ * evaluated twice without running user code. Calls with constructor arguments,
+ * array literals, and arbitrary expressions stay on the single-evaluation
+ * path until they have a receiver-local lowering of their own.
+ */
+function isSideEffectFreeInlineArrayReceiver(receiverExpr: ts.Expression, ctorName: string): boolean {
+  if (ctorName !== "Array") return false;
+  const n = skipTransparentExpressions(receiverExpr);
+  return (
+    ts.isNewExpression(n) &&
+    ts.isIdentifier(skipTransparentExpressions(n.expression)) &&
+    (skipTransparentExpressions(n.expression) as ts.Identifier).text === "Array" &&
+    (n.arguments?.length ?? 0) === 0
+  );
 }
 
 export function sourceOverridesBuiltinPrototypeMember(anchor: ts.Node, ctorName: string, memberName: string): boolean {
@@ -226,7 +250,8 @@ function emitProtoOverrideApply(
  *
  * Returns the branch's ValType, or `undefined` to leave the caller on its
  * ordinary single path — which is what happens for every module that does not
- * override, for a non-identifier receiver, and whenever an arm declines.
+ * override, for a receiver whose evaluation is not safe to repeat, and
+ * whenever an arm declines.
  */
 export function tryEmitProtoOverrideTwoArm(
   ctx: CodegenContext,
@@ -246,7 +271,7 @@ export function tryEmitProtoOverrideTwoArm(
   // unwrap, which is what keeps the else arm's re-compile of the receiver
   // side-effect-free.
   const receiverExpr = skipTransparentExpressions(propAccess.expression);
-  if (!ts.isIdentifier(receiverExpr)) return undefined;
+  if (!ts.isIdentifier(receiverExpr) && !isSideEffectFreeInlineArrayReceiver(receiverExpr, ctorName)) return undefined;
   if (callExpr.arguments.some((a) => ts.isSpreadElement(a))) return undefined;
   if (!sourceOverridesBuiltinPrototypeMember(callExpr, ctorName, memberName)) return undefined;
 

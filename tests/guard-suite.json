@@ -1,15 +1,15 @@
 {
   "$comment": [
-    "#3552 — REQUIRED per-PR guard suite, run by the `quality` job (ci.yml)",
+    "#3552 \u2014 REQUIRED per-PR guard suite, run by the `quality` job (ci.yml)",
     "on every pull_request, merge_group, and push via",
     "`node scripts/run-guard-suite.mjs` (`pnpm run test:guard` locally).",
     "",
-    "Why this exists: untouched root test files do NOT run at PR time — the",
+    "Why this exists: untouched root test files do NOT run at PR time \u2014 the",
     "#3008 two-layer design runs only PR-touched tests/*.test.ts per PR and",
     "defers the full ~2,100-file suite (~9 CPU-hours) to the post-merge",
     "issue-tests.yml detector, which detects but does not ENFORCE. #3503",
     "proved the gap on 2026-07-23: it regressed tests/issue-3471.test.ts",
-    "without touching it — green PR, red main (#3551). This manifest brings",
+    "without touching it \u2014 green PR, red main (#3551). This manifest brings",
     "a SMALL curated set of invariant-guard tests into the required check.",
     "",
     "Entry criteria (all must hold):",
@@ -18,7 +18,14 @@
     "  2. It completes in <60s locally and needs NO test262 submodule or",
     "     other prepared harness inputs (plain `vitest run <file>` works on",
     "     a bare checkout + pnpm install).",
-    "  3. It is green on current main — a red entry blocks EVERY PR.",
+    "  3. It is green on current main \u2014 a red entry blocks EVERY PR.",
+    "",
+    "Second proof, 2026-08-23: #4792 and #4796 each silently reddened the",
+    "npm-compat workflow guards on main by editing the workflow/scripts they",
+    "pin WITHOUT touching the test files, so `test:changed-root` never ran",
+    "them. Nine tests were red on main for hours behind green PRs. Guards",
+    "that pin a FILE OTHER than themselves are exactly the shape this suite",
+    "is for: the edit that breaks them never selects them.",
     "Keep the suite cheap: total budget ~2 minutes. If it outgrows that,",
     "split the slowest entries back to post-merge and say why here."
   ],
@@ -26,47 +33,47 @@
     {
       "path": "tests/issue-3471.test.ts",
       "guards": "polymorphic (any-typed) params must not be narrowed to f64 by body-usage inference; the test262 propertyHelper isSameValue shape",
-      "broken_by": "#3503 (silently, untouched — the motivating regression)"
+      "broken_by": "#3503 (silently, untouched \u2014 the motivating regression)"
     },
     {
       "path": "tests/issue-3536.test.ts",
-      "guards": "standalone declared-fn object-literal arguments cross the call boundary intact (the counterpart invariant #3503 fixed — keeps the 3471/3536 tension resolved BOTH ways)",
+      "guards": "standalone declared-fn object-literal arguments cross the call boundary intact (the counterpart invariant #3503 fixed \u2014 keeps the 3471/3536 tension resolved BOTH ways)",
       "broken_by": "pre-#3503 main (standalone lane)"
     },
     {
       "path": "tests/issue-3551.test.ts",
-      "guards": "IR ABI-parity withdrawal cascades to committed IR callers — no partial commit of a calleeTypes cluster",
+      "guards": "IR ABI-parity withdrawal cascades to committed IR callers \u2014 no partial commit of a calleeTypes cluster",
       "broken_by": "#3503 partial-commit semantics"
     },
     {
       "path": "tests/issue-2906-gap3-tryfinally.test.ts",
       "guards": "wasi async try/finally runs on every completion path AND the module stays JS-host-free (no env.* imports; wasi_snapshot_preview1 system imports allowed per #2968)",
-      "broken_by": "#2968/PR #2533 (2026-07-04) invalidated the bare-{} instantiation silently — red 19 days, found+reconciled by #3558"
+      "broken_by": "#2968/PR #2533 (2026-07-04) invalidated the bare-{} instantiation silently \u2014 red 19 days, found+reconciled by #3558"
     },
     {
       "path": "tests/issue-2980-carrier-fallback.test.ts",
       "guards": "standalone Promise carrier lane split: all-drivable async-gen modules import-free (native $Promise), non-drivable ones host-consistent (legacy __gen_* buffer, no mixing)",
-      "broken_by": "#3132 PR-2/PR #3013 (2026-07-13) superseded the blanket #2980 fallback silently — red 10 days, found+reconciled by #3558"
+      "broken_by": "#3132 PR-2/PR #3013 (2026-07-13) superseded the blanket #2980 fallback silently \u2014 red 10 days, found+reconciled by #3558"
     },
     {
       "path": "tests/issue-2961.test.ts",
-      "guards": "standalone host-import leak scan (warning severity): a non-allowlisted leak (user extern class → env::Widget_*) WARNS + still emits (floor-neutral); an allowlisted import (Math_random) is silent; console.log is host-free (native strings+console); the wasi strict path stays a hard error",
-      "broken_by": "native strings + native console retired the __str_from_mem string bridge, so the old console.log leak example went host-free and the 4 console.log assertions silently rotted — a #3558-class invisible stale guard; refreshed to the durable extern-class example + folded into the required gate by #3561"
+      "guards": "standalone host-import leak scan (warning severity): a non-allowlisted leak (user extern class \u2192 env::Widget_*) WARNS + still emits (floor-neutral); an allowlisted import (Math_random) is silent; console.log is host-free (native strings+console); the wasi strict path stays a hard error",
+      "broken_by": "native strings + native console retired the __str_from_mem string bridge, so the old console.log leak example went host-free and the 4 console.log assertions silently rotted \u2014 a #3558-class invisible stale guard; refreshed to the durable extern-class example + folded into the required gate by #3561"
     },
     {
       "path": "tests/issue-680.test.ts",
       "guards": "a basic standalone generator (function* g(){yield 1;yield 2;return 3}) + a caller doing g.next() compiles host-free (native __GenState state machine, no __gen_* imports) and runs (1235); default-target generators are native too",
-      "broken_by": "#3341/#3519 (PR #3249, 2026-07-17) promoted the generator IR path's host-only unknown-function-ref AND the caller's untyped '.next() not in slice 4' throw to HARD compile errors — broke basic standalone generators for 7 days, invisible outside required checks (#3008); found+fixed by #680"
+      "broken_by": "#3341/#3519 (PR #3249, 2026-07-17) promoted the generator IR path's host-only unknown-function-ref AND the caller's untyped '.next() not in slice 4' throw to HARD compile errors \u2014 broke basic standalone generators for 7 days, invisible outside required checks (#3008); found+fixed by #680"
     },
     {
       "path": "tests/issue-2047.test.ts",
-      "guards": "standalone Array.isArray discriminates byte carriers per §7.2.2: ArrayBuffer/DataView/Uint8Array → false, real number[]/boolean[]/string[] → true; value-read agrees with direct call across carrier kinds",
-      "broken_by": "the $__vec_base common-supertype WasmGC refactor silently defeated #2047's leaf-exclusion — collectStandaloneArrayCarrierTypeIdxs matched the abstract $__vec_base via its __vec_* name prefix, so ref.test against it subsumed the byte-vec subtypes → Array.isArray(ArrayBuffer/Uint8Array)===true (regression >2026-07-04, another weeks-old invisible one outside required checks #3008); found+fixed by #3562"
+      "guards": "standalone Array.isArray discriminates byte carriers per \u00a77.2.2: ArrayBuffer/DataView/Uint8Array \u2192 false, real number[]/boolean[]/string[] \u2192 true; value-read agrees with direct call across carrier kinds",
+      "broken_by": "the $__vec_base common-supertype WasmGC refactor silently defeated #2047's leaf-exclusion \u2014 collectStandaloneArrayCarrierTypeIdxs matched the abstract $__vec_base via its __vec_* name prefix, so ref.test against it subsumed the byte-vec subtypes \u2192 Array.isArray(ArrayBuffer/Uint8Array)===true (regression >2026-07-04, another weeks-old invisible one outside required checks #3008); found+fixed by #3562"
     },
     {
       "path": "tests/issue-4524-closed-struct-data-define.test.ts",
-      "guards": "standalone: an out-of-shape DATA descriptor define on a closed-struct object literal lands as a real own property (readable, `in`, hasOwnProperty, Object.keys) — and an Object.prototype.<m>.call(o, …) elsewhere in the module does NOT revert the receiver to a closed struct; plus the narrowness side, that an in-shape define and an unrelated literal keep the struct path",
-      "broken_by": "two silent-wrong-answer defects that hid each other: (1) an out-of-shape data define had nowhere to write on a closed struct and was DROPPED with no diagnostic, while the accessor-define and dynamic-write siblings were already covered; (2) the consumer-safety guard read the borrowed idiom `Object.prototype.hasOwnProperty.call(o, …)` as a concrete-struct consumer and UN-POISONED the receiver — action at a distance, a read changing an object's representation — which silently disabled (1) in every harness-linked compile, making the first fix measure as zero. Found+fixed by #4524 (2026-08-16)"
+      "guards": "standalone: an out-of-shape DATA descriptor define on a closed-struct object literal lands as a real own property (readable, `in`, hasOwnProperty, Object.keys) \u2014 and an Object.prototype.<m>.call(o, \u2026) elsewhere in the module does NOT revert the receiver to a closed struct; plus the narrowness side, that an in-shape define and an unrelated literal keep the struct path",
+      "broken_by": "two silent-wrong-answer defects that hid each other: (1) an out-of-shape data define had nowhere to write on a closed struct and was DROPPED with no diagnostic, while the accessor-define and dynamic-write siblings were already covered; (2) the consumer-safety guard read the borrowed idiom `Object.prototype.hasOwnProperty.call(o, \u2026)` as a concrete-struct consumer and UN-POISONED the receiver \u2014 action at a distance, a read changing an object's representation \u2014 which silently disabled (1) in every harness-linked compile, making the first fix measure as zero. Found+fixed by #4524 (2026-08-16)"
     },
     {
       "path": "tests/issue-1539-standalone-regex-replace.test.ts",
@@ -75,28 +82,53 @@
     },
     {
       "path": "tests/issue-3565.test.ts",
-      "guards": "four DESIGNED demote-to-legacy sites compile (fall back to legacy) instead of hard-erroring — TypedArray element STORE (lowerElementStore), slice-12 element ACCESS on an extern receiver (lowerElementAccess), the verify.ts #1798 return-value gate, and compound-assign with a non-f64 RHS (the issue-2079 generator for-of `s += v` shape, runs =3) — AND a GENERIC invariant (block-id/type desync, injected build throw) STILL hard-fails (no masking of real invalid-Wasm)",
-      "broken_by": "#3341/#3519 (PR #3249, 2026-07-17) made outcome.kind==='invariant' a hard compile error, silently promoting these 4 documented 'clean throw → legacy' demotes; #680 exempted only the generator+method-call cases, leaving these 4 hard for ~7 days (invisible outside required checks, #3008); found+fixed by #3565"
+      "guards": "four DESIGNED demote-to-legacy sites compile (fall back to legacy) instead of hard-erroring \u2014 TypedArray element STORE (lowerElementStore), slice-12 element ACCESS on an extern receiver (lowerElementAccess), the verify.ts #1798 return-value gate, and compound-assign with a non-f64 RHS (the issue-2079 generator for-of `s += v` shape, runs =3) \u2014 AND a GENERIC invariant (block-id/type desync, injected build throw) STILL hard-fails (no masking of real invalid-Wasm)",
+      "broken_by": "#3341/#3519 (PR #3249, 2026-07-17) made outcome.kind==='invariant' a hard compile error, silently promoting these 4 documented 'clean throw \u2192 legacy' demotes; #680 exempted only the generator+method-call cases, leaving these 4 hard for ~7 days (invisible outside required checks, #3008); found+fixed by #3565"
     },
     {
       "path": "tests/issue-3164.test.ts",
-      "guards": "standalone generator FUNCTION EXPRESSIONS go native and stay host-free (zero env imports): dstr-harness IIFE laziness, .next() body-runs-once, for-of / destructuring over an any-held native generator, §27.5 first-next() suspension, and the #1344 host-mix arm (a real HOST generator does NOT take the TypeError arm)",
-      "broken_by": "#3032 W6 (PR #3356, 1fbb1810, 2026-07-19) silently broke 3 of these — a module-scope generator fn-expr is lifted once per compileModuleInitBody pass with a DIFFERENT state-struct type, while .next()'s inline ref.test dispatch is frozen between the passes on pass 1's dead type. Green at the parent 8bc6e1c3, red on main for 5 days, invisible because #3356 touched neither suite and the #3008 per-PR gate only runs PR-TOUCHED root tests. Root-caused + skipped-with-pointer as #3591; the remaining 10 cases guard the rest"
+      "guards": "standalone generator FUNCTION EXPRESSIONS go native and stay host-free (zero env imports): dstr-harness IIFE laziness, .next() body-runs-once, for-of / destructuring over an any-held native generator, \u00a727.5 first-next() suspension, and the #1344 host-mix arm (a real HOST generator does NOT take the TypeError arm)",
+      "broken_by": "#3032 W6 (PR #3356, 1fbb1810, 2026-07-19) silently broke 3 of these \u2014 a module-scope generator fn-expr is lifted once per compileModuleInitBody pass with a DIFFERENT state-struct type, while .next()'s inline ref.test dispatch is frozen between the passes on pass 1's dead type. Green at the parent 8bc6e1c3, red on main for 5 days, invisible because #3356 touched neither suite and the #3008 per-PR gate only runs PR-TOUCHED root tests. Root-caused + skipped-with-pointer as #3591; the remaining 10 cases guard the rest"
     },
     {
       "path": "tests/issue-3386.test.ts",
-      "guards": "standalone sync-generator PATTERN PARAMS are host-free and spec-correct: array/object patterns incl. renamed+defaulted elements, elisions, nested sub-patterns, whole-param defaults, two pattern params, and the §27.5 call-time-vs-first-next() split (destructure + throwing defaults fire at CALL, body at first .next())",
+      "guards": "standalone sync-generator PATTERN PARAMS are host-free and spec-correct: array/object patterns incl. renamed+defaulted elements, elisions, nested sub-patterns, whole-param defaults, two pattern params, and the \u00a727.5 call-time-vs-first-next() split (destructure + throwing defaults fire at CALL, body at first .next())",
       "broken_by": "#3032 W6 (PR #3356, 1fbb1810, 2026-07-19) silently broke the fn-expr case via the same stale pass-1 state-struct type as tests/issue-3164.test.ts (#3591); green at parent 8bc6e1c3. The other 16 cases pin the call-time/lazy split that #3386 established"
     },
     {
       "path": "tests/issue-3597-auto-park-step-aware.test.ts",
-      "guards": "the auto-park bot's infra-vs-verdict step classification: an infra-only merge_group failure (artifact download) must NOT park, a verdict-step failure MUST park, and anything unclassifiable parks conservatively — plus the unchanged #2547 cancellation invariant (0 failed jobs never parks) and the REAL workflow step names (a rename surfaces here). 48 cases, 5ms",
-      "broken_by": "criterion 1 applies via the SCRIPT-vs-TEST gap: editing scripts/auto-park-merge-group-failure.mjs alone does NOT trigger the #3008 per-PR gate (that gate runs changed tests/*.test.ts files, not tests RELATED to changed scripts), so without this entry the classification is unguarded against exactly the silent drift this manifest exists for. The incident it encodes: on 2026-07-24 the bot emitted THREE parks, two with textually identical comments for opposite causes — #3566 (artifact download 403'd, verdict never ran, merged cleanly once unparked), #3563 (verdict ran, real uncatchable-trap regression), #3581 (duplicate issue id). Held PRs are SKIPPED by auto-enqueue, so a wrong park STRANDS the PR. The classification is only safe in one direction: widening INFRA_STEP_PATTERNS makes the bot park LESS, which is how a real regression reaches main (#3597)"
+      "guards": "the auto-park bot's infra-vs-verdict step classification: an infra-only merge_group failure (artifact download) must NOT park, a verdict-step failure MUST park, and anything unclassifiable parks conservatively \u2014 plus the unchanged #2547 cancellation invariant (0 failed jobs never parks) and the REAL workflow step names (a rename surfaces here). 48 cases, 5ms",
+      "broken_by": "criterion 1 applies via the SCRIPT-vs-TEST gap: editing scripts/auto-park-merge-group-failure.mjs alone does NOT trigger the #3008 per-PR gate (that gate runs changed tests/*.test.ts files, not tests RELATED to changed scripts), so without this entry the classification is unguarded against exactly the silent drift this manifest exists for. The incident it encodes: on 2026-07-24 the bot emitted THREE parks, two with textually identical comments for opposite causes \u2014 #3566 (artifact download 403'd, verdict never ran, merged cleanly once unparked), #3563 (verdict ran, real uncatchable-trap regression), #3581 (duplicate issue id). Held PRs are SKIPPED by auto-enqueue, so a wrong park STRANDS the PR. The classification is only safe in one direction: widening INFRA_STEP_PATTERNS makes the bot park LESS, which is how a real regression reaches main (#3597)"
     },
     {
       "path": "tests/issue-3613-vacuity-machinery.test.ts",
       "guards": "the anti-vacuity machinery itself: the vacuous-verifier guard (a checker answering for 0 of N non-empty inputs is a BROKEN checker, not a clean result), its wiring into diff-test262's trap-frame verifier, the vacuity detector's probe shape (CONDITIONAL throw, harness-guarded, marker-tagged) + eligibility exclusions + seeded sampling, AND the ratchet-at-zero on identifier-gate-defeating `new (X as any)(...)` callees in our OWN tests. Hermetic, no test262 inputs; ~22s, almost all of it the repo-wide AST scan for the last one",
       "broken_by": "criterion 1 applies via the SCRIPT-vs-TEST gap AND the class's own history: the #3601 park's `trapInnermostFrame` silently answered for 0 of 65 CI trap rows (grammar drift) and reported it as '0 verified unmasked pre-existing traps', while a throw-probe audit on a pre-#3592 base reported a spurious '43/43 vacuous' from a probe that had been compiled away. Both are silent zeros from a checker that stopped working; editing scripts/diff-test262.ts or scripts/detect-vacuity.ts alone does not trigger the #3008 per-PR gate, so without this entry the guard against them is itself unguarded (#3613)"
+    },
+    {
+      "path": "tests/npm-compat-partials.test.ts",
+      "guards": "npm-compat refresh pipeline wiring: per-package concurrency groups, catalog-planned matrices, two promotion lanes, and stale carry-forward that keeps each package's OWN measurement time",
+      "broken_by": "#4796 (silently, untouched \u2014 the per-package split moved the coordinator into npm-compat-promote.yml and left these guards reading the wrong file)"
+    },
+    {
+      "path": "tests/issue-4130-npm-compat-refresh-staleness-gate.test.ts",
+      "guards": "npm-compat promotion never pushes to main: PR-only promotion, no [skip ci], non-GITHUB_TOKEN actor, sanity check before push",
+      "broken_by": "#4792 and #4796 (silently, untouched \u2014 the sanity check moved to scripts/ and the coordinator to a second workflow file)"
+    },
+    {
+      "path": "tests/npm-compat-page-freshness.test.ts",
+      "guards": "the dashboard header describes the measurement SPREAD and every card carries its own measuredAt \u2014 never one timestamp over an out-of-sync corpus",
+      "broken_by": "#4796 (the per-package split made a single header timestamp wrong; react-dom showed 3-day-old numbers under a current one)"
+    },
+    {
+      "path": "tests/issue-4780-devirtualization-routes.test.ts",
+      "guards": "all THREE devirtualization admission routes into tryEmitDirectTwinCall, pinned separately: (a) this.m() in a typed twin reaches the UNGUARDED __dc_*, (b) this.m() in a generic lifted body reaches the guarded one, (c) recv.m() on a proven non-this receiver devirtualizes instead of falling to compileCallablePropertyCall's __fsd_/__extern_method_call ladder \u2014 plus every trampoline reaching a typed twin (not a silent legacy degradation), an unprovable two-class receiver still DECLINING, and both lanes at shipped-default and IR_INLINE=0 flags. 8 cases, ~5s of test time",
+      "broken_by": "ad543a660e (2026-08-24, an npm-compat package-suite commit) gave struct-receiver resolution a wasm-carrier fallback that claimed every standalone fnctor local, so route (c) stopped devirtualizing entirely \u2014 28.5x on the cross-engine `method` axis, red on main for 3 days behind six green required checks, fixed in #4775/PR #5076. Criterion 1 applies through the FILE-OTHER-THAN-ITSELF gap twice over: the breaking edit was ~1400 lines away in src/codegen/expressions/call-receiver-method.ts and touched no test, so test:changed-root never selected the one suite that did go red (tests/issue-3754-numeric-return-twin.test.ts, in no gating lane); and the acorn dogfood corpus is structurally BLIND to route (c) \u2014 its sites are all this.m(), so its census is byte-identical with and without the regression (#4780)"
+    },
+    {
+      "path": "tests/issue-3754-numeric-return-twin.test.ts",
+      "guards": "the numeric-return twin ABI: a definitely-numeric prototype method's twin is declared results:[f64] with no exit box, the __dc_* trampoline's result FOLLOWS the twin's (else every devirtualized site silently degrades to the legacy dispatcher), the call site consumes the f64 without __to_primitive/__unbox_number, and five negative cases (mixed returns, bare `return;`, fall-off-the-end, string return, a same-named non-numeric method elsewhere) keep the boxed ABI",
+      "broken_by": "ad543a660e \u2014 9 of its 10 tests were red on main 2026-08-24 to 2026-08-27 and nobody saw it, because this file is in no gating lane (it lives under tests/, not tests/equivalence/, so equivalence-gate does not run it). Not one assertion was wrong: with the offending lowering disabled it was 10/10 unmodified. Listing it here is the half of #4780 that #4775 asked for \u2014 promoting the shape suite that DID catch the regression into a lane where a red run is visible"
     }
   ]
 }

@@ -81,6 +81,16 @@ export interface BlockScopeSave {
    * binding became active. Direct-eval state may shadow that outer capture,
    * but never the active block binding with the same spelling. */
   directEvalOuterBindings: Map<string, boolean> | null;
+  /**
+   * (#5271 step 2.2) EVERY block-scoped name this scope introduced, saved or
+   * not. `locals`/`tdzFlags` only carry names that had an OUTER entry to hide,
+   * so a block name whose outer twin was a module GLOBAL left its block-fresh
+   * local in `localMap` after the block closed — later top-level reads kept
+   * hitting the dead local while writes went to the global (probe p02:
+   * `x === null` after the catch). Restore deletes the entries of every name
+   * that had nothing saved.
+   */
+  blockNames: readonly string[];
 }
 
 function collectBindingPatternNames(pattern: ts.BindingPattern, names: string[]): void {
@@ -125,13 +135,57 @@ export function collectBlockScopedNames(stmt: ts.Block): string[] {
 }
 
 /**
+ * Collect the direct CaseBlock `let`/`const` (and resource) bindings.  A
+ * switch's clauses share one declarative environment; nested blocks recurse
+ * through the ordinary block path instead of contributing names here.
+ */
+export function collectSwitchCaseBlockScopedNames(caseBlock: ts.CaseBlock): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const clause of caseBlock.clauses) {
+    for (const stmt of clause.statements) {
+      if (!ts.isVariableStatement(stmt)) continue;
+      const flags = stmt.declarationList.flags;
+      if (
+        !(flags & ts.NodeFlags.Let) &&
+        !(flags & ts.NodeFlags.Const) &&
+        !(flags & ts.NodeFlags.Using) &&
+        !(flags & ts.NodeFlags.AwaitUsing)
+      ) {
+        continue;
+      }
+      for (const decl of stmt.declarationList.declarations) {
+        const bindingNames: string[] = [];
+        if (ts.isIdentifier(decl.name)) bindingNames.push(decl.name.text);
+        else if (ts.isObjectBindingPattern(decl.name) || ts.isArrayBindingPattern(decl.name)) {
+          collectBindingPatternNames(decl.name, bindingNames);
+        }
+        for (const name of bindingNames) {
+          if (seen.has(name)) continue;
+          seen.add(name);
+          names.push(name);
+        }
+      }
+    }
+  }
+  return names;
+}
+
+/**
  * Save localMap (and TDZ flag) entries for block-scoped names that shadow
  * existing locals.  Also removes the shadow entries from localMap (and
  * tdzFlagLocals) so that compileVariableStatement will allocate fresh locals.
  * Returns the saved state to restore after the block.
  */
 export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): BlockScopeSave | null {
-  const blockNames = collectBlockScopedNames(block);
+  return saveBlockScopedShadowsForNames(fctx, collectBlockScopedNames(block));
+}
+
+/** Save and hide a known set of block-scoped names. */
+export function saveBlockScopedShadowsForNames(
+  fctx: FunctionContext,
+  blockNames: readonly string[],
+): BlockScopeSave | null {
   if (blockNames.length === 0) return null;
 
   let savedLocals: Map<string, number> | null = null;
@@ -188,7 +242,32 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
     nullGuardAliases: savedNullGuardAliases,
     boxedCaptures: savedBoxedCaptures,
     directEvalOuterBindings: savedDirectEvalOuterBindings,
+    blockNames,
   };
+}
+
+/**
+ * End a CaseBlock scope.  Unlike an ordinary block, the switch helper
+ * pre-hoists fresh locals even when there was no same-named outer local, so
+ * those active entries must be removed before restoring any saved outer state.
+ */
+export function discardBlockScopedShadows(
+  fctx: FunctionContext,
+  names: readonly string[],
+  saved: BlockScopeSave | null,
+): void {
+  const savedNames = new Set<string>();
+  for (const name of saved?.locals?.keys() ?? []) savedNames.add(name);
+  for (const name of saved?.tdzFlags?.keys() ?? []) savedNames.add(name);
+  for (const name of names) {
+    if (!savedNames.has(name)) fctx.localMap.delete(name);
+    fctx.tdzFlagLocals?.delete(name);
+    fctx.constBindings?.delete(name);
+    fctx.nullGuardAliases?.delete(name);
+    fctx.boxedCaptures?.delete(name);
+    fctx.directEvalOuterBindingNames?.delete(name);
+  }
+  restoreBlockScopedShadows(fctx, saved);
 }
 
 /**
@@ -197,6 +276,16 @@ export function saveBlockScopedShadows(fctx: FunctionContext, block: ts.Block): 
  */
 export function restoreBlockScopedShadows(fctx: FunctionContext, saved: BlockScopeSave | null): void {
   if (!saved) return;
+  // (#5271 step 2.2) A block name with NO saved outer entry got a block-fresh
+  // local; the block's end must forget it, or the dead slot keeps answering
+  // reads of a same-spelled module global after the block. Names that DO have
+  // a saved entry are overwritten by the restore loops below.
+  const savedLocalNames = saved.locals;
+  for (const name of saved.blockNames) {
+    if (savedLocalNames?.has(name)) continue;
+    fctx.localMap.delete(name);
+    fctx.tdzFlagLocals?.delete(name);
+  }
   if (saved.locals) {
     for (const [name, idx] of saved.locals) {
       fctx.localMap.set(name, idx);

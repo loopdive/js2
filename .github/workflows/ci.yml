@@ -295,6 +295,22 @@ jobs:
         # scripts/harness-compile-budget.json (set from post-#3433 main).
         run: pnpm run check:harness-compile-budget
 
+      - name: Dogfood emitted-binary validation floor (#5336)
+        if: steps.npm_compat.outputs.only != 'true'
+        # Compiles the pinned npm-compat tarball entry of six dogfood packages
+        # (no test execution, no upstream clone) and asserts the one thing that
+        # is always a compiler bug when it breaks: `compile.success` ⇒ the
+        # emitted binary passes WebAssembly validation. #5390 broke exactly
+        # that for moment — codegen reported success, the module would not
+        # load ("call[25] expected type (ref null 84), found struct.get of type
+        # i32") — and it survived FIVE merges with all six required checks
+        # green because nothing asserted the field. NOT a pass-count gate and
+        # NOT a baseline: pass counts move legitimately, and asserting
+        # `compile.success` itself is measurably noisy (one npm-compat refresh
+        # revision flipped five packages at once). Re-derive the package set
+        # with `pnpm run survey:dogfood-validation`.
+        run: pnpm run check:dogfood-validation
+
       - name: IR adoption table freshness (#2145)
         if: steps.npm_compat.outputs.only != 'true'
         # Fails when plan/log/ir-adoption.md drifts from its generator data or
@@ -687,12 +703,22 @@ jobs:
             echo "Requested cancellation of ${REQUESTED} Test262 sibling run(s)."
           fi
 
-  # #4448 — Run the `tests/issue-*.test.ts` files a PR actually touches, plus a
-  # tiny pinned set. NO required check executes that suite (equivalence-gate =
-  # tests/equivalence/, quality = lint/ratchets/named files, test262 jobs =
-  # conformance, linear-tests = the linear subset), so a file can be BORN red
-  # (#4430's was) or go red later (`6203320a` silently reddened 3 tests for two
-  # days) with every gate green.
+  # #4448 — Run the `tests/issue-*.test.ts` and `tests/ir/*.test.ts` files a PR
+  # actually touches, plus a tiny pinned set. NO required check executes those
+  # suites (equivalence-gate = tests/equivalence/, quality = lint/ratchets/named
+  # files, test262 jobs = conformance, linear-tests = the linear subset), so a
+  # file can be BORN red (#4430's was) or go red later (`6203320a` silently
+  # reddened 3 tests for two days) with every gate green.
+  #
+  # #3521 R2-T1 added `tests/ir/` for the same reason: `cb733cde37` reddened
+  # `tests/ir/fnctor-producer.test.ts` and `0f42c1fde4` reddened
+  # `tests/ir/counted-string-append-provenance.test.ts`, both invisibly. Both
+  # are src-only commits, so it is the PIN that catches that shape, not the
+  # advisory directory match (which selects on changed TEST paths). Six
+  # R2-named tests/ir files are pinned (44.8 s together); the other 13 green
+  # ones are advisory-on-touch only — pinning all 19 costs ~96 s more per PR
+  # and makes an unrelated red fatal for every PR — so a src-only PR that
+  # reddens one of those 13 is still invisible.
   #
   # Deliberately NOT a required check, NOT the whole suite, and split in two:
   #
@@ -708,8 +734,10 @@ jobs:
   #
   # Grow the pinned list as files are verified green; promote the whole job to
   # required once the suite is clean.
-  # Measured 2026-08-15 on the 4-core dev box: ~45 s of vitest for the pinned
-  # file, so a typical PR (pinned + 1-2 touched files) stays far under the cap.
+  # Measured 2026-08-15 on the 4-core dev box: ~45 s of vitest for the first
+  # pinned file; #3521's six tests/ir pins add 44.8 s (measured 2026-09-02,
+  # same flags), so a typical PR (pinned + 1-2 touched files) stays far under
+  # the cap.
   issue-tests:
     needs: changes
     if: needs.changes.outputs.code == 'true'

@@ -370,6 +370,49 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     });
   }
 
+  // TextEncoder / TextDecoder are Web and Node globals, but JavaScript
+  // packages frequently use them without importing a DOM or Node declaration
+  // file.  In that case the checker has no nominal class to hand to the
+  // normal extern collector and `new TextEncoder()` used to compile as a
+  // null/undefined value.  Register the small host surface synthetically so
+  // the existing extern-class constructor and method dispatch can bind the
+  // real constructors supplied by `getWebHostConstructors()` in runtime.ts.
+  // Host-free targets deliberately keep the native UTF-8 lowering and must
+  // not acquire TextEncoder_* imports (#1752/#1780).
+  if (!ctx.nativeStrings && !ctx.strictNoHostImports) {
+    if (!ctx.externClasses.has("TextEncoder")) {
+      const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
+      methods.set("encode", externMethod(1)); // encode(input?) -> Uint8Array
+      methods.set("encodeInto", externMethod(2)); // encodeInto(input, destination) -> result
+      ctx.externClasses.set("TextEncoder", {
+        importPrefix: "TextEncoder",
+        namespacePath: [],
+        className: "TextEncoder",
+        constructorParams: [],
+        methods,
+        properties: new Map([["encoding", { type: { kind: "externref" }, readonly: true }]]),
+      });
+    }
+    if (!ctx.externClasses.has("TextDecoder")) {
+      const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
+      methods.set("decode", externMethod(2)); // decode(input?, options?) -> string
+      ctx.externClasses.set("TextDecoder", {
+        importPrefix: "TextDecoder",
+        namespacePath: [],
+        className: "TextDecoder",
+        // label? and options? are both optional; null padding is stripped by
+        // the generic extern_class constructor adapter in runtime.ts.
+        constructorParams: [{ kind: "externref" }, { kind: "externref" }],
+        methods,
+        properties: new Map([
+          ["encoding", { type: { kind: "externref" }, readonly: true }],
+          ["fatal", { type: { kind: "externref" }, readonly: true }],
+          ["ignoreBOM", { type: { kind: "externref" }, readonly: true }],
+        ]),
+      });
+    }
+  }
+
   // #1238 — synthetic ExternClassInfo for String and Array.
   //
   // String and Array are JS built-ins, not declared classes (`declare class
@@ -437,6 +480,10 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     methods.set("toUpperCase", methodEntry([], { kind: "externref" }));
     methods.set("toLowerCase", methodEntry([], { kind: "externref" }));
     methods.set("trim", methodEntry([], { kind: "externref" }));
+    methods.set("trimStart", methodEntry([], { kind: "externref" }));
+    methods.set("trimEnd", methodEntry([], { kind: "externref" }));
+    methods.set("trimLeft", methodEntry([], { kind: "externref" }));
+    methods.set("trimRight", methodEntry([], { kind: "externref" }));
 
     // String.length is f64-typed in JS engine semantics (Number, not
     // i32). Read-only — `(str).length = N` is a no-op in JS, but we
@@ -1289,6 +1336,7 @@ export function collectDeclaredGlobals(
   libFile: ts.SourceFile,
   userFile: ts.SourceFile,
   libIndex?: LibDeclIndex,
+  allUserFiles?: readonly ts.SourceFile[],
 ): void {
   // First collect identifiers referenced in user source
   const referencedNames = new Set<string>();
@@ -1329,8 +1377,51 @@ export function collectDeclaredGlobals(
     }
     forEachChild(node, collectRefs);
   };
-  for (const stmt of userFile.statements) {
-    forEachChild(stmt, collectRefs);
+  const bindingSourceFiles = allUserFiles ?? [userFile];
+  for (const sourceFile of bindingSourceFiles) {
+    for (const stmt of sourceFile.statements) {
+      forEachChild(stmt, collectRefs);
+    }
+  }
+
+  // Do not register a host global when the module owns a same-named top-level
+  // binding.  lib.dom has callable globals such as `dispatchEvent`; ReactDOM's
+  // package graph also defines an internal `dispatchEvent` helper.  Letting
+  // the ambient collector install `global_dispatchEvent` beside that module
+  // binding changes the closure value selected by `.bind` and turns a real
+  // function into a non-callable externref.  Nested bindings are resolved by
+  // their lexical local maps, so only module-scope declarations need this
+  // pre-pass exclusion.
+  const userModuleBindings = new Set<string>();
+  const addBindingName = (name: ts.BindingName): void => {
+    if (ts.isIdentifier(name)) userModuleBindings.add(name.text);
+    else
+      for (const element of name.elements)
+        if (!ts.isOmittedExpression(element) && element.name) addBindingName(element.name);
+  };
+  for (const sourceFile of bindingSourceFiles) {
+    for (const stmt of sourceFile.statements) {
+      if (ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) {
+        if (stmt.name) userModuleBindings.add(stmt.name.text);
+      } else if (ts.isVariableStatement(stmt)) {
+        // An ambient declaration is a type-level promise that the host owns
+        // this binding; it does not create a module runtime cell. Treating
+        // `declare const document: any` as a user-owned module binding
+        // suppresses the matching lib.dom `global_document` import and makes
+        // every bare read lower to null. Only concrete variable statements
+        // shadow ambient host globals here.
+        if (!hasDeclareModifier(stmt)) {
+          for (const decl of stmt.declarationList.declarations) addBindingName(decl.name);
+        }
+      } else if (ts.isImportDeclaration(stmt) && stmt.importClause) {
+        const clause = stmt.importClause;
+        if (clause.name) userModuleBindings.add(clause.name.text);
+        if (clause.namedBindings) {
+          if (ts.isNamespaceImport(clause.namedBindings)) userModuleBindings.add(clause.namedBindings.name.text);
+          else for (const specifier of clause.namedBindings.elements) userModuleBindings.add(specifier.name.text);
+        }
+      }
+    }
   }
 
   for (const stmt of libFile.statements) {
@@ -1338,7 +1429,7 @@ export function collectDeclaredGlobals(
     for (const decl of stmt.declarationList.declarations) {
       if (!ts.isIdentifier(decl.name)) continue;
       const name = decl.name.text;
-      if (!referencedNames.has(name)) continue; // only register used globals
+      if (!referencedNames.has(name) || userModuleBindings.has(name)) continue; // only register used, unshadowed globals
       if (ctx.declaredGlobals.has(name)) continue;
       // (#4218) Extern-class classification + declared-type class name:
       // syntactic on the lib path (`declare var document: Document` → the
@@ -1393,6 +1484,49 @@ export function collectDeclaredGlobals(
         // as `IrType.extern { className }` and dispatch member access on it.
         ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx, className: declaredClassName });
       }
+    }
+  }
+
+  // Ambient browser/JS APIs such as `queueMicrotask`, `parseInt`, and
+  // `requestAnimationFrame` are declared as `declare function` rather than
+  // `declare var` in lib.dom/lib.es*.  Treat those declarations as first-class
+  // globals too.  Previously the checker knew their callable type (so
+  // `typeof queueMicrotask` folded to "function"), but identifier lowering had
+  // no value binding: assigning the function to a local produced a null
+  // externref and the eventual indirect call trapped.  Register the same
+  // cached host-global thunk used by declared variables so both direct and
+  // first-class calls observe the real host function.
+  for (const stmt of libFile.statements) {
+    if (!ts.isFunctionDeclaration(stmt) || !hasDeclareModifier(stmt) || !stmt.name) continue;
+    const name = stmt.name.text;
+    // Timer call sites have a dedicated callback-aware ABI. Do not also
+    // expose the lib.dom declarations as `global_<name>` externrefs in the
+    // multi-file path: that shadows the timer import and passes a Wasm
+    // closure directly to the host timer, so the callback can never run.
+    // queueMicrotask follows the same rule until its multi-file lowering is
+    // available; treating it as an ordinary host function has the same
+    // unwrapped-callback failure mode.
+    if (
+      name === "setTimeout" ||
+      name === "setInterval" ||
+      name === "clearTimeout" ||
+      name === "clearInterval" ||
+      name === "queueMicrotask"
+    ) {
+      continue;
+    }
+    if (!referencedNames.has(name) || userModuleBindings.has(name) || ctx.declaredGlobals.has(name)) continue;
+    // No JS host exists for standalone/WASI modules.  Keep the host-free
+    // behavior used by the variable-global path above.
+    if (ctx.strictNoHostImports || ctx.standalone || ctx.wasi) continue;
+    const importName = `global_${name}`;
+    if (!ctx.funcMap.has(importName)) {
+      const typeIdx = addFuncType(ctx, [], [{ kind: "externref" }]);
+      addImport(ctx, "env", importName, { kind: "func", typeIdx });
+    }
+    const funcIdx = ctx.funcMap.get(importName);
+    if (funcIdx !== undefined) {
+      ctx.declaredGlobals.set(name, { type: { kind: "externref" }, funcIdx });
     }
   }
 
@@ -1570,9 +1704,28 @@ export function registerNodeBuiltinImports(ctx: CodegenContext, builtins: NodeBu
     }
     const funcIdx = ctx.funcMap.get(importName);
     if (funcIdx !== undefined) {
-      // Register as a declared global so identifier resolution picks it up
-      ctx.declaredGlobals.set(builtin.localName, { type: { kind: "externref" }, funcIdx });
-      ctx.nodeBuiltinGlobals.set(builtin.localName, funcIdx);
+      // (#4616-adjacent, jest-docblock) NAMED bindings are MEMBER reads, not
+      // the module object. Binding `import { EOL } from 'os'` to the module
+      // thunk made `EOL` read the whole `os` module (string-concatenated as
+      // "[object Object]"). Register each named binding with its member name;
+      // the identifier read emits `__extern_get(__node_<mod>(), member)`.
+      if (builtin.namedBindings !== undefined && builtin.namedBindings.length > 0) {
+        for (const member of builtin.namedBindings) {
+          if (ctx.declaredGlobals.has(member)) continue;
+          ctx.declaredGlobals.set(member, { type: { kind: "externref" }, funcIdx, member });
+          ctx.nodeBuiltinGlobals.set(member, funcIdx);
+        }
+        // A default import alongside the named list still binds the module
+        // object under its own name.
+        if (!builtin.namedBindings.includes(builtin.localName) && !ctx.declaredGlobals.has(builtin.localName)) {
+          ctx.declaredGlobals.set(builtin.localName, { type: { kind: "externref" }, funcIdx });
+          ctx.nodeBuiltinGlobals.set(builtin.localName, funcIdx);
+        }
+      } else {
+        // Register as a declared global so identifier resolution picks it up
+        ctx.declaredGlobals.set(builtin.localName, { type: { kind: "externref" }, funcIdx });
+        ctx.nodeBuiltinGlobals.set(builtin.localName, funcIdx);
+      }
     }
   }
 }
@@ -1654,6 +1807,13 @@ const LIB_GLOBALS = new Set([
   "Element",
   "Node",
   "Event",
+  // Ambient callable globals are scanned alongside DOM constructors. These
+  // are declared as `function` in lib.dom rather than `var`, so without a
+  // trigger here their value bindings were never collected (for example
+  // ReactDOM's scheduler stores `queueMicrotask` before calling it).
+  "queueMicrotask",
+  "requestAnimationFrame",
+  "cancelAnimationFrame",
   // #1065 — ambient builtin constructors that need host-global resolution
   // for bare-identifier uses (e.g. `x.constructor === Array`). Call-site
   // fast paths intercept before identifier resolution runs.
@@ -1841,6 +2001,22 @@ export function collectEnumDeclarations(ctx: CodegenContext, sourceFile: ts.Sour
     for (const member of stmt.members) {
       const memberName = (member.name as ts.Identifier).text;
       const key = `${enumName}.${memberName}`;
+      // Ask the checker first: unlike the literal-only fallback below, this
+      // resolves aliases (`Alias = Earlier` / `E.Earlier`) and constant enum
+      // expressions. The following implicit member must advance from the
+      // resolved value, not from the collector's stale pre-alias counter.
+      // TypeScript's SyntaxKind relies on this for its deprecated aliases;
+      // drifting after one of them assigns computed object-table entries to
+      // the wrong numeric slot.
+      const checkerValue = ctx.checker.getConstantValue(member);
+      if (typeof checkerValue === "string") {
+        ctx.enumStringValues.set(key, checkerValue);
+        if (!ctx.stringGlobalMap.has(checkerValue)) stringEnumLiterals.push(checkerValue);
+        continue;
+      }
+      if (typeof checkerValue === "number") {
+        nextValue = checkerValue;
+      }
       if (member.initializer) {
         if (ts.isStringLiteral(member.initializer)) {
           // String enum member — store in enumStringValues
@@ -1851,9 +2027,10 @@ export function collectEnumDeclarations(ctx: CodegenContext, sourceFile: ts.Sour
           }
           continue;
         }
-        if (ts.isNumericLiteral(member.initializer)) {
+        if (checkerValue === undefined && ts.isNumericLiteral(member.initializer)) {
           nextValue = Number(member.initializer.text.replace(/_/g, ""));
         } else if (
+          checkerValue === undefined &&
           ts.isPrefixUnaryExpression(member.initializer) &&
           member.initializer.operator === ts.SyntaxKind.MinusToken &&
           ts.isNumericLiteral(member.initializer.operand)

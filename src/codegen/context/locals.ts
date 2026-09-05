@@ -15,6 +15,14 @@ export function allocLocal(fctx: FunctionContext, name: string, type: ValType): 
   return index;
 }
 
+/** Reuse/allocate an inline `var` for-in target and retain its string carrier. */
+export function ensureForInIdentifierLocal(fctx: FunctionContext, name: string): number {
+  const existing = fctx.localMap.get(name);
+  const index = existing !== undefined ? existing : allocLocal(fctx, name, { kind: "externref" });
+  (fctx.forInIdentifierVars ??= new Set()).add(name);
+  return index;
+}
+
 /**
  * #1847 — snapshot of the local-allocation state, for tentative compilation
  * that may be rolled back. Captures the locals-vector length so callers can
@@ -46,7 +54,9 @@ export interface LocalsSnapshot {
   /** Exact `boxedCaptures` metadata at snapshot time. A speculative promotion
    * can replace an existing entry's cell type, so preserving names alone is
    * insufficient even when the corresponding localMap entry is restored. */
-  readonly boxedEntries: ReadonlyArray<readonly [string, { refCellTypeIdx: number; valType: ValType }]> | null;
+  readonly boxedEntries: ReadonlyArray<
+    readonly [string, { refCellTypeIdx: number; valType: ValType; rawLocalIdx?: number }]
+  > | null;
   /**
    * (#3032) Exact `boxedTdzFlags` / `tdzFlagLocals` entries at snapshot time
    * (`null` when the map was absent). The call-site TDZ-flag prepend
@@ -61,6 +71,33 @@ export interface LocalsSnapshot {
    */
   readonly tdzBoxEntries: ReadonlyArray<readonly [string, { refCellTypeIdx: number; localIdx: number }]> | null;
   readonly tdzFlagEntries: ReadonlyArray<readonly [string, number]> | null;
+  /**
+   * (#5302) Exact `nestedFnClosureMemos` entries at snapshot time
+   * (`null` when the map was absent) — the third member of the same family as
+   * `mapEntries` (#2029) and `tdzBoxEntries` (#3032), and the one that was
+   * still leaking.
+   *
+   * `emitMemoizedNestedFnClosure` allocates ONE per-activation memo local per
+   * capture-carrying nested function declaration, typed `ref_null
+   * <closureStruct>`, and caches its slot here so every later reference reuses
+   * the same closure instance (JS `f === f`). A speculative compile that
+   * allocated that memo local and then rolled back had its slot truncated out
+   * of `fctx.locals` while this map kept pointing at it. The slot was then
+   * re-allocated at an unrelated type, and the committed re-compile took the
+   * cache-hit branch and baked `local.get`/`local.set <stale slot>` at the
+   * closure-struct type — invalid wasm (`local.set[0] expected type (ref null
+   * N), found ref.as_non_null of type (ref extern)`).
+   */
+  readonly nestedFnClosureMemoEntries: ReadonlyArray<readonly [string, number]> | null;
+  /**
+   * Exact `liftedCaptureBoxes` entries at snapshot time (`null` when the map was
+   * absent) — the fourth member of the family above, and for the identical
+   * reason: the entry names a LOCAL SLOT holding a capture's canonical ref cell.
+   * A speculative compile that minted that cell at a forwarding call site and
+   * then rolled back would otherwise leave the record pointing at a truncated
+   * slot, which a later alloc re-uses at an unrelated type.
+   */
+  readonly liftedCaptureBoxEntries: ReadonlyArray<readonly [string, number]> | null;
   /** Stable direct-eval activation cells must roll back with their locals. */
   readonly directEvalActivationEntries: ReadonlyArray<readonly [string, number]> | null;
   /** Hidden direct-eval state-pool local allocated by a speculative route. */
@@ -76,6 +113,8 @@ export function snapshotLocals(fctx: FunctionContext): LocalsSnapshot {
       : null,
     tdzBoxEntries: fctx.boxedTdzFlags ? Array.from(fctx.boxedTdzFlags.entries()) : null,
     tdzFlagEntries: fctx.tdzFlagLocals ? Array.from(fctx.tdzFlagLocals.entries()) : null,
+    nestedFnClosureMemoEntries: fctx.nestedFnClosureMemos ? Array.from(fctx.nestedFnClosureMemos.entries()) : null,
+    liftedCaptureBoxEntries: fctx.liftedCaptureBoxes ? Array.from(fctx.liftedCaptureBoxes.entries()) : null,
     directEvalActivationEntries: fctx.directEvalActivationBindings
       ? Array.from(fctx.directEvalActivationBindings.entries())
       : null,
@@ -144,6 +183,32 @@ export function restoreLocals(fctx: FunctionContext, snap: LocalsSnapshot): void
       if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
       fctx.tdzFlagLocals.clear();
       for (const [name, idx] of snap.tdzFlagEntries) fctx.tdzFlagLocals.set(name, idx);
+    }
+  }
+  // (#5302) Restore the per-activation nested-function closure memo
+  // slots to their EXACT snapshot state, for the same reason as `localMap` and
+  // the TDZ maps above: the entry names a LOCAL SLOT, and a rolled-back probe's
+  // slot no longer exists. Guarded on either side being non-empty so a frame
+  // that never memoized a nested closure keeps the previous byte-identical
+  // behaviour.
+  if (fctx.nestedFnClosureMemos || snap.nestedFnClosureMemoEntries) {
+    if (snap.nestedFnClosureMemoEntries === null) {
+      fctx.nestedFnClosureMemos = undefined;
+    } else {
+      if (!fctx.nestedFnClosureMemos) fctx.nestedFnClosureMemos = new Map();
+      fctx.nestedFnClosureMemos.clear();
+      for (const [name, idx] of snap.nestedFnClosureMemoEntries) fctx.nestedFnClosureMemos.set(name, idx);
+    }
+  }
+  // Same reason, same family: a capture's canonical cell slot must roll back
+  // with the locals vector that holds it.
+  if (fctx.liftedCaptureBoxes || snap.liftedCaptureBoxEntries) {
+    if (snap.liftedCaptureBoxEntries === null) {
+      fctx.liftedCaptureBoxes = undefined;
+    } else {
+      if (!fctx.liftedCaptureBoxes) fctx.liftedCaptureBoxes = new Map();
+      fctx.liftedCaptureBoxes.clear();
+      for (const [name, idx] of snap.liftedCaptureBoxEntries) fctx.liftedCaptureBoxes.set(name, idx);
     }
   }
   if (snap.directEvalActivationEntries === null) {

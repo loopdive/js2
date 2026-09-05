@@ -99,6 +99,90 @@ export function sourceHasMethodOverride(ctx: CodegenContext, anchor: ts.Node, me
 }
 
 /**
+ * True when this source mutates the exact ambient
+ * `<builtin>.prototype.<methodName>` property.  This is intentionally more
+ * precise than the historical whole-file reassignment scan: the Test262
+ * harness commonly assigns `Test262Error.prototype.toString`, which must not
+ * disable an unrelated Number/Boolean prototype fast path, while a direct
+ * `Number.prototype.toString = …` write must.  When the optional final pair
+ * is supplied, the write must also transfer that exact builtin intrinsic and
+ * precede `anchor`; this is used for the one carrier whose static callable
+ * arm otherwise hides `Object.prototype.toString`.
+ */
+const _builtinPrototypeOverrideCache = new WeakMap<ts.SourceFile, Map<string, boolean>>();
+export function sourceOverridesBuiltinPrototypeMember(
+  ctx: CodegenContext,
+  anchor: ts.Node,
+  builtinName: string,
+  methodName: string,
+  valueBuiltinName?: string,
+  valueMethodName?: string,
+): boolean {
+  const sf = anchor.getSourceFile();
+  if (!sf) return false;
+  if ((valueBuiltinName === undefined) !== (valueMethodName === undefined)) return false;
+  const exactTransfer = valueBuiltinName !== undefined;
+  const key = `${builtinName}.prototype.${methodName}${exactTransfer ? `=${valueBuiltinName}.prototype.${valueMethodName}` : ""}`;
+  let perFile = _builtinPrototypeOverrideCache.get(sf);
+  if (perFile === undefined) {
+    perFile = new Map<string, boolean>();
+    _builtinPrototypeOverrideCache.set(sf, perFile);
+  }
+  const cached = perFile.get(key);
+  if (cached !== undefined) return cached;
+
+  const isAmbientBuiltin = (id: ts.Identifier): boolean => {
+    const declaration = ctx.oracle.valueDeclarationOf(id);
+    return declaration === undefined || declaration.getSourceFile().isDeclarationFile;
+  };
+  const isBuiltinPrototypeMember = (node: ts.Node, name: string, member: string): boolean =>
+    ts.isPropertyAccessExpression(node) &&
+    node.name.text === member &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    node.expression.name.text === "prototype" &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === name &&
+    isAmbientBuiltin(node.expression.expression);
+  const isTarget = (node: ts.Node): boolean => isBuiltinPrototypeMember(node, builtinName, methodName);
+
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      isTarget(node.left) &&
+      (!exactTransfer ||
+        (node.getStart() < anchor.getStart() &&
+          isBuiltinPrototypeMember(node.right, valueBuiltinName!, valueMethodName!)))
+    ) {
+      found = true;
+      return;
+    }
+    if (!exactTransfer && ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const callee = node.expression;
+      if (
+        callee.name.text === "defineProperty" &&
+        node.arguments.length >= 2 &&
+        ts.isIdentifier(callee.expression) &&
+        callee.expression.text === "Object" &&
+        isAmbientBuiltin(callee.expression) &&
+        isTarget(node.arguments[0]!) &&
+        ts.isStringLiteralLike(node.arguments[1]!) &&
+        node.arguments[1]!.text === methodName
+      ) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sf);
+  perFile.set(key, found);
+  return found;
+}
+
+/**
  * (#4482) The RECEIVER-PRECISE form of {@link sourceHasMethodOverride}: the
  * source installs `<methodName>` **on the same identifier** this call reads —
  * `d.valueOf = …` or `Object.defineProperty(d, "valueOf", …)` for a call
@@ -233,5 +317,51 @@ function constructedInstanceInstallsMethod(
     forEachChild(node, visit);
   }
   visit(body);
+  if (installs) return true;
+  return ctorPrototypeInstallsMethod(init.expression, methodName);
+}
+
+/**
+ * (#2875 b2) The PROTOTYPE-INSTALLED half of {@link constructedInstanceInstallsMethod}.
+ *
+ * `constructedInstanceInstallsMethod` only sees slots the constructor writes on
+ * `this`. The other ES5 way to give an instance a `toString` is the prototype:
+ *
+ *     function F(v){ this.value = v; }
+ *     F.prototype.toString = function(){ return this.value + ""; };
+ *     new F(7).toString();          // must be "7"
+ *
+ * — and that write's receiver is `F.prototype`, which neither the binding scan
+ * nor the `this` scan matches. So the caller kept the static
+ * `Object.prototype.toString` arm and answered "[object Object]".
+ *
+ * Matches a WHOLE-property write `<Ctor>.prototype.<methodName> = …` anywhere
+ * in the constructor's file. Deliberately not receiver-precise beyond the
+ * constructor identity: the prototype object is shared by every instance of
+ * `F`, so one such write shadows the inherited member for all of them.
+ */
+function ctorPrototypeInstallsMethod(ctorId: ts.Identifier, methodName: string): boolean {
+  const sf = ctorId.getSourceFile();
+  if (!sf) return false;
+  let installs = false;
+  function visit(node: ts.Node): void {
+    if (installs) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(node.left) &&
+      !ts.isPrivateIdentifier(node.left.name) &&
+      node.left.name.text === methodName &&
+      ts.isPropertyAccessExpression(node.left.expression) &&
+      node.left.expression.name.text === "prototype" &&
+      ts.isIdentifier(node.left.expression.expression) &&
+      node.left.expression.expression.text === ctorId.text
+    ) {
+      installs = true;
+      return;
+    }
+    forEachChild(node, visit);
+  }
+  visit(sf);
   return installs;
 }

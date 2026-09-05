@@ -1,0 +1,5 @@
+var r = Proxy.revocable({}, {});
+var t = typeof r.revoke;
+var d = Object.getOwnPropertyDescriptor(r.revoke, "length");
+if (t !== "function") throw new Error("typeof revoke = " + t);
+if (!d || d.value !== 0) throw new Error("length desc = " + JSON.stringify(d));

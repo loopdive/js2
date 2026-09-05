@@ -89,6 +89,24 @@ import { forkAllocInInstr } from "./alloc-discipline.js";
 const MAX_CALLEE_INSTRS = 10;
 const CALLER_SIZE_BUDGET_MULTIPLIER = 4;
 
+function hasCountedStringAppendProvenance(fn: IrFunction): boolean {
+  const buffers = [
+    ...fn.blocks.map((block) => block.instrs),
+    ...(fn.asyncPlan?.states.map((state) => state.body) ?? []),
+    ...(fn.asyncRuntime?.states.map((state) => state.body) ?? []),
+  ];
+  for (const buffer of buffers) {
+    for (const instr of buffer) {
+      let found = false;
+      forEachInstrDeep(instr, (nested) => {
+        found ||= nested.kind === "string.repeat" && nested.countedStringAppendSite !== undefined;
+      });
+      if (found) return true;
+    }
+  }
+  return false;
+}
+
 /**
  * Inline small, non-recursive, single-block callees across the module.
  * Returns the same `IrModule` reference when no function changes.
@@ -105,6 +123,9 @@ export function inlineSmall(mod: IrModule, registry?: AllocSiteRegistry): IrModu
   const recursiveSet = computeRecursiveSet(mod, byUnitId);
   const localUnitCallSiteCounts = computeLocalUnitCallSiteCounts(mod, byUnitId);
   const externalCapabilityBoundaryUnits = computeExternalCapabilityBoundaryUnits(mod);
+  const provenanceBearingUnitIds = new Set(
+    mod.functions.filter(hasCountedStringAppendProvenance).map((fn) => fn.unitId),
+  );
 
   const newFunctions: IrFunction[] = [];
   let anyChanged = false;
@@ -115,6 +136,7 @@ export function inlineSmall(mod: IrModule, registry?: AllocSiteRegistry): IrModu
       recursiveSet,
       localUnitCallSiteCounts,
       externalCapabilityBoundaryUnits,
+      provenanceBearingUnitIds,
       registry,
     );
     if (inlined !== fn) anyChanged = true;
@@ -134,8 +156,13 @@ function inlineIntoFunction(
   recursiveSet: ReadonlySet<IrUnitId>,
   localUnitCallSiteCounts: ReadonlyMap<IrUnitId, number>,
   externalCapabilityBoundaryUnits: ReadonlySet<IrUnitId>,
+  provenanceBearingUnitIds: ReadonlySet<IrUnitId>,
   registry?: AllocSiteRegistry,
 ): IrFunction {
+  // Moving a provenance-bearing repeat across terminal owners requires an
+  // explicit ownership-transfer receipt. Until that exists, inline neither
+  // from nor into such a function.
+  if (provenanceBearingUnitIds.has(caller.unitId)) return caller;
   // Nested instruction buffers have their own def/use walk and can retain
   // caller values defined outside the buffer. `callerRename` is intentionally
   // flat; applying it only to an instruction's direct operands leaves those
@@ -197,7 +224,16 @@ function inlineIntoFunction(
 
       const binding = rewritten.target.binding;
       const callee = binding.kind === "unit" ? byUnitId.get(binding.unitId) : undefined;
-      if (!callee || !canInline(callee, recursiveSet, localUnitCallSiteCounts, externalCapabilityBoundaryUnits)) {
+      if (
+        !callee ||
+        !canInline(
+          callee,
+          recursiveSet,
+          localUnitCallSiteCounts,
+          externalCapabilityBoundaryUnits,
+          provenanceBearingUnitIds,
+        )
+      ) {
         newInstrs.push(rewritten);
         continue;
       }
@@ -295,7 +331,9 @@ function canInline(
   recursiveSet: ReadonlySet<IrUnitId>,
   localUnitCallSiteCounts: ReadonlyMap<IrUnitId, number>,
   externalCapabilityBoundaryUnits: ReadonlySet<IrUnitId>,
+  provenanceBearingUnitIds: ReadonlySet<IrUnitId>,
 ): boolean {
+  if (provenanceBearingUnitIds.has(callee.unitId)) return false;
   if (callee.blocks.length !== 1) return false;
   if (recursiveSet.has(callee.unitId)) return false;
   // Preserve a shared host/capability boundary when duplicating it would fan
@@ -575,6 +613,12 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       if (l === inst.lhs && r === inst.rhs) return inst;
       return { ...inst, lhs: l, rhs: r };
     }
+    case "string.repeat": {
+      const value = mapId(rename, inst.value);
+      const count = mapId(rename, inst.count);
+      if (value === inst.value && count === inst.count) return inst;
+      return { ...inst, value, count };
+    }
     case "dyn.member_get": {
       const recv = mapId(rename, inst.recv);
       const key = mapId(rename, inst.key);
@@ -599,6 +643,28 @@ export function renameInstrOperands(inst: IrInstr, rename: ReadonlyMap<IrValueId
       const index = mapId(rename, inst.index);
       if (value === inst.value && index === inst.index) return inst;
       return { ...inst, value, index };
+    }
+    case "fnctor.new": {
+      let changed = false;
+      const captureArgs = inst.captureArgs.map((value) => {
+        const next = mapId(rename, value);
+        changed ||= next !== value;
+        return next;
+      });
+      const args = inst.args.map((value) => {
+        const next = mapId(rename, value);
+        changed ||= next !== value;
+        return next;
+      });
+      const constructorIdentity = inst.constructorIdentity === null ? null : mapId(rename, inst.constructorIdentity);
+      changed ||= constructorIdentity !== inst.constructorIdentity;
+      if (!changed) return inst;
+      return { ...inst, captureArgs, args, constructorIdentity };
+    }
+    case "fnctor.get": {
+      const value = mapId(rename, inst.value);
+      if (value === inst.value) return inst;
+      return { ...inst, value };
     }
     case "object.new": {
       let changed = false;

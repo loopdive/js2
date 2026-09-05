@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { irClassTypeRef, irSupportTypeRef, irTypeBindingKey } from "../ir/abi-bindings.js";
-import type { IrBindingId, IrClassId, IrSourceId } from "../ir/identity.js";
+import { irClassTypeRef, irFnctorLayoutTypeRef, irSupportTypeRef, irTypeBindingKey } from "../ir/abi-bindings.js";
+import { irCallableBindingKey } from "../ir/callable-bindings.js";
+import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "../ir/identity.js";
 import type { IrClosureSignature, IrType, IrTypeRef, IrVecLayoutRef } from "../ir/nodes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
@@ -16,6 +17,11 @@ import {
   isCanonicalClosureHeader,
 } from "./closures/closure-header-layout.js";
 import { requireIrClassShapeClassId } from "./ir-class-shapes.js";
+import {
+  describePreparedClassLayouts as describePreparedClassLayoutDescriptor,
+  type PreparedClassLayoutDescriptor,
+  type PreparedClassLayoutObservation,
+} from "./program-abi-prepared-transaction.js";
 import type { ProgramAbiSession, ProgramAbiTypeCell } from "./program-abi-session.js";
 import { canonicalProgramAbiTypeDef, canonicalProgramAbiValType } from "./program-abi-signatures.js";
 import { DOM_CALLBACK_AUTHORITY_FIELD } from "../dom-capability-contract.js";
@@ -34,6 +40,8 @@ const PROGRAM_ABI_TYPE_ROLE = Object.freeze({
   refCell: 10,
   objectLayout: 11,
   nativeMapCarrier: 12,
+  /** (#3521) Source/unit-qualified reserved fnctor struct layout. */
+  fnctorLayout: 13,
   classLayout: 0,
 } as const);
 
@@ -172,6 +180,14 @@ function canonicalClosureSupportIrType(type: IrType, active: Set<object>): unkno
         return { kind: type.kind, classId: type.shape.classId };
       case "extern":
         return { kind: type.kind, className: type.className };
+      case "fnctor":
+        return {
+          kind: type.kind,
+          sourceId: type.shape.sourceId,
+          constructorUnitId: type.shape.constructorUnitId,
+          constructorTarget: irCallableBindingKey(type.shape.constructorTarget.binding),
+          reservedLayout: irTypeBindingKey(type.shape.reservedLayout.binding),
+        };
       case "union":
         return {
           kind: type.kind,
@@ -232,12 +248,6 @@ export function canonicalProgramAbiObjectShapeKey(objectType: Extract<IrType, { 
   return JSON.stringify(canonicalClosureSupportIrType(objectType, new Set<object>()));
 }
 
-interface ProgramAbiClassLayoutObservation {
-  readonly classId: IrClassId;
-  readonly displayName: string;
-  readonly cell: ProgramAbiTypeCell;
-}
-
 /** True when every index-bearing edge can participate in Program-ABI remapping. */
 export function isEarlyPreparableClassLayout(type: StructTypeDef): boolean {
   // `-1` is the module IR's explicit "no supertype" sentinel for hierarchy
@@ -260,22 +270,48 @@ function canonicalEntrySource(session: ProgramAbiSession): IrSourceId {
   return entrySources[0]!.id;
 }
 
+/**
+ * Leaf element kinds a vector carrier can bottom out in, in their historical
+ * Program ABI order. Index IS the depth-1 ordinal, so `vec<f64>` stays 0,
+ * `vec<i32>` 1, `vec<externref>` 2, `vec<string>` 3 — unchanged bytes for
+ * every module that only uses flat vectors.
+ */
+const VECTOR_LEAF_ORDINALS = ["f64", "i32", "externref", "string"] as const;
+
+/**
+ * Stable Program ABI ordinal for one logical vector carrier.
+ *
+ * (#5166) The key grammar is `irTypeKey`'s: `vec<ELEM>` with an optional `?`
+ * nullability suffix on a nested element, so a `number[][]` carrier is
+ * `vec<vec<f64>?>`. Nested carriers used to fall off the end of a four-entry
+ * switch and throw — an INVARIANT, i.e. a hard compile error for any function
+ * whose claim reached preparation with a nested vec.
+ *
+ * The ordinal is now a pure structural function of the key: depth-major,
+ * leaf-minor. That gives the two properties the ordering sidecar needs — it is
+ * identical on every compilation of the same program (no encounter-order
+ * counter), and it is distinct for every distinct nesting, so two carriers
+ * never collide on one ordering tuple. Laying deeper nestings out AFTER the
+ * depth-1 block also means adding a nesting never renumbers a shallower
+ * carrier.
+ */
 function vectorLogicalOrdinal(logicalKey: string): number {
-  switch (logicalKey) {
-    case "vec<f64>":
-      return 0;
-    case "vec<i32>":
-      return 1;
-    case "vec<externref>":
-      return 2;
-    case "vec<string>":
-      return 3;
-    default:
-      throw new ProgramAbiInvariantError(
-        "unknown-order-anchor",
-        `vector layout ${logicalKey} has no stable Program ABI order`,
-      );
+  let depth = 0;
+  let body = logicalKey;
+  for (;;) {
+    if (body.endsWith("?")) body = body.slice(0, -1);
+    if (!body.startsWith("vec<") || !body.endsWith(">")) break;
+    depth += 1;
+    body = body.slice(4, -1);
   }
+  const leaf = (VECTOR_LEAF_ORDINALS as readonly string[]).indexOf(body);
+  if (depth === 0 || leaf < 0) {
+    throw new ProgramAbiInvariantError(
+      "unknown-order-anchor",
+      `vector layout ${logicalKey} has no stable Program ABI order`,
+    );
+  }
+  return (depth - 1) * VECTOR_LEAF_ORDINALS.length + leaf;
 }
 
 /**
@@ -289,7 +325,7 @@ function vectorLogicalOrdinal(logicalKey: string): number {
  * generic retained-type entry.
  */
 export class ProgramAbiTypeRegistry {
-  private readonly classes = new Map<IrClassId, ProgramAbiClassLayoutObservation[]>();
+  private readonly classes = new Map<IrClassId, PreparedClassLayoutObservation[]>();
   private readonly vectorLayouts = new Map<
     string,
     {
@@ -378,28 +414,19 @@ export class ProgramAbiTypeRegistry {
     return layout !== undefined && isEarlyPreparableClassLayout(layout.type);
   }
 
-  /** Publish one remappable class layout for an early prepared component. */
-  prepareClassLayout(classId: IrClassId): void {
-    if (this.planned) {
-      throw new ProgramAbiInvariantError(
-        "planning-sealed",
-        `cannot prepare class layout ${classId} after retained type planning`,
-      );
-    }
-    const classRecord = this.session.inventory.classes.find((record) => record.id === classId);
-    const observations = this.classes.get(classId) ?? [];
-    const canonical = observations.filter((observation) => observation.cell.current !== null).at(-1);
-    const current = canonical?.cell.current;
-    if (!classRecord || !canonical || !current || current.kind !== "struct" || !isEarlyPreparableClassLayout(current)) {
-      throw new ProgramAbiInvariantError(
-        "type-remap-mismatch",
-        `prepared class ${classId} has no retained remappable layout ` +
-          `(inventory=${classRecord ? "present" : "missing"}, observations=${observations.length}, ` +
-          `canonical=${canonical ? "present" : "missing"}, current=${current?.kind ?? "missing"}, ` +
-          `preparable=${current?.kind === "struct" ? isEarlyPreparableClassLayout(current) : false})`,
-      );
-    }
-    this.planClass(classId, canonical.displayName, current, canonical.cell);
+  /** Describe exact remappable class rows without publishing Program-ABI state. */
+  describePreparedClassLayouts(classIds: ReadonlySet<IrClassId>): PreparedClassLayoutDescriptor {
+    return describePreparedClassLayoutDescriptor(
+      {
+        session: this.session,
+        module: this.ctx.mod,
+        planningSealed: () => this.planned,
+        observation: (classId) => this.classes.get(classId)?.at(-1),
+        isPreparable: isEarlyPreparableClassLayout,
+        roleOrdinal: PROGRAM_ABI_TYPE_ROLE.classLayout,
+      },
+      classIds,
+    );
   }
 
   /** Return the backend-neutral Program-ABI identity used by final string IR. */
@@ -519,6 +546,70 @@ export class ProgramAbiTypeRegistry {
     const support = Object.freeze({ carrierRef: ref, valueType });
     this.dynamicCarrierSupport = Object.freeze({ support, ...(nativeType ? { type: nativeType, cell: cell! } : {}) });
     return support;
+  }
+
+  /**
+   * Plan the exact reserved struct layout of one admitted source-local
+   * function-style constructor.  Unlike entry-source support layouts, a
+   * fnctor belongs to its inventoried constructor unit so two same-named
+   * constructors in different source units cannot alias a type slot.
+   */
+  prepareFnctorLayoutType(unitId: IrUnitId, ref: IrTypeRef, type: StructTypeDef): IrTypeRef {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        `cannot prepare fnctor layout ${ref.name} after retained type planning`,
+      );
+    }
+    if (ref.kind !== "type" || ref.binding.kind !== "support") {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `fnctor layout ${ref.name} is not a support type reference`,
+      );
+    }
+    if (type.kind !== "struct") {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `fnctor layout ${ref.name} must point to a struct, got ${type.kind}`,
+      );
+    }
+    const physicalIndices = this.ctx.mod.types.reduce<number[]>((indices, candidate, index) => {
+      if (candidate === type) indices.push(index);
+      return indices;
+    }, []);
+    if (physicalIndices.length !== 1) {
+      throw new ProgramAbiInvariantError(
+        "type-remap-mismatch",
+        `fnctor layout ${ref.name} must identify one live allocator struct object`,
+      );
+    }
+    const expected = irFnctorLayoutTypeRef(unitId, ref.name);
+    if (expected.binding.bindingId !== ref.binding.bindingId) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        `fnctor layout ${ref.name} is not owned by constructor unit ${unitId}`,
+      );
+    }
+    const cell = this.session.typeCellFor(type) ?? this.session.createTypeCell(type);
+    const structuralReferenceKey = irTypeBindingKey(ref.binding);
+    this.session.ensurePlan({
+      id: ref.binding.bindingId,
+      structuralOrder: this.session.structuralOrder.forUnit(unitId, {
+        domain: "type",
+        roleOrdinal: PROGRAM_ABI_TYPE_ROLE.fnctorLayout,
+      }),
+      structuralReferenceKey,
+      displayName: ref.name,
+      slotPolicy: "required",
+      slotSpace: "type",
+      intent: {
+        kind: "type",
+        shapeKey: canonicalProgramAbiTypeDef(type),
+      },
+    });
+    this.session.registerStructuralReference(ref.binding.bindingId, structuralReferenceKey);
+    this.attachTypeLocator(ref.binding.bindingId, cell);
+    return ref;
   }
 
   /**

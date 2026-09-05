@@ -14,12 +14,14 @@ import { widenedVarKeyFromDecl } from "../widened-var-key.js";
 import type { FieldDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { createDeclaredNestedWriteClassifier } from "./declared-nested-write.js";
-import { collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206)
+import { collectEvalAccessorObjectNames, collectEvalMutableNames } from "./eval-reachable-object-shape.js"; // (#4206/#4249)
 import { fnctorBodyMayReturnForeignObject } from "../fnctor-foreign-return.js"; // (#2071)
 import {
   bindingHasIrPlannedOpenWithTarget,
   bindingUsesOnlyIrPlannedOpenObjectOperations,
 } from "./dynamic-with-shape.js";
+import { collectRedeclarationWidenedModuleVarNames } from "./redeclared-var-widening.js";
+import { sourceContainsWithStatement } from "../source-scan-predicates.js"; // (#5313)
 
 function isUnboxedPrimitiveCarrier(type: ValType): boolean {
   return ["f64", "f32", "i64", "i32", "i16", "i8"].includes(type.kind);
@@ -77,28 +79,66 @@ function resolveWidenedPropertyType(ctx: CodegenContext, tsType: ts.Type): ValTy
 export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
   // Avoid an AST walk for files that cannot contain a direct property write.
   // The scanner skips comments and strings, so this is a conservative lexical
-  // preflight: every `PropertyAccessExpression = ...` has the token sequence
-  // `. <property-name> =`, including keyword-named properties.
+  // preflight: every direct property write has either `. <property-name> =` or
+  // `[<key>] =`. The latter is admitted because a numeric/string literal key
+  // is still a fixed struct field at codegen time.
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, sourceFile.text);
   let token = scanner.scan();
   let hasPropertyAssignment = false;
   while (token !== ts.SyntaxKind.EndOfFileToken) {
     if (token === ts.SyntaxKind.DotToken) {
       scanner.scan();
-      if (scanner.scan() === ts.SyntaxKind.EqualsToken) {
+      const next = scanner.scan();
+      if (next === ts.SyntaxKind.EqualsToken) {
         hasPropertyAssignment = true;
         break;
       }
+      token = next;
+      continue;
+    }
+    if (token === ts.SyntaxKind.OpenBracketToken) {
+      let depth = 1;
+      let next = scanner.scan();
+      while (next !== ts.SyntaxKind.EndOfFileToken && depth > 0) {
+        if (next === ts.SyntaxKind.OpenBracketToken) depth++;
+        else if (next === ts.SyntaxKind.CloseBracketToken) depth--;
+        next = scanner.scan();
+      }
+      if (depth === 0 && next === ts.SyntaxKind.EqualsToken) {
+        hasPropertyAssignment = true;
+        break;
+      }
+      token = next;
+      continue;
     }
     token = scanner.scan();
   }
   if (!hasPropertyAssignment) return;
 
+  const staticElementKey = (expr: ts.Expression | undefined): string | undefined => {
+    if (!expr) return undefined;
+    while (
+      ts.isParenthesizedExpression(expr) ||
+      ts.isAsExpression(expr) ||
+      ts.isSatisfiesExpression(expr) ||
+      ts.isTypeAssertionExpression(expr) ||
+      ts.isNonNullExpression(expr)
+    ) {
+      expr = expr.expression;
+    }
+    if (ts.isStringLiteralLike(expr)) return expr.text;
+    if (ts.isNumericLiteral(expr)) {
+      const value = Number(expr.text);
+      return Number.isFinite(value) ? String(value) : undefined;
+    }
+    return undefined;
+  };
+
   const visit = (node: ts.Node): void => {
     if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(node.left)
+      (ts.isPropertyAccessExpression(node.left) || ts.isElementAccessExpression(node.left))
     ) {
       let rhs: ts.Expression = node.right;
       while (
@@ -108,6 +148,17 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
         ts.isTypeAssertionExpression(rhs)
       ) {
         rhs = rhs.expression;
+      }
+      // Element writes were added to this pre-pass after the direct-property
+      // path. Test262's synthetic harness installs many computed methods as
+      // `obj[key] = function () {}`; asking the checker for the contextual
+      // type of those detached function nodes can enter TypeScript's
+      // late-bound-symbol path before their parent symbol exists and throw.
+      // The pre-element-write behavior was to leave these callable carriers to
+      // the dynamic element-write lowering, so retain that proven fallback.
+      if (ts.isElementAccessExpression(node.left) && (ts.isFunctionExpression(rhs) || ts.isArrowFunction(rhs))) {
+        forEachChild(node, visit);
+        return;
       }
       const rhsType = getTypeAtLocationBounded(ctx.checker, rhs);
       const mayCarryObject =
@@ -119,7 +170,22 @@ export function collectObjectLiteralAssignedPropertyNames(ctx: CodegenContext, s
         (rhsType.flags &
           (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Object | ts.TypeFlags.NonPrimitive)) !==
           0;
-      if (mayCarryObject) {
+      const indexedName = ts.isElementAccessExpression(node.left)
+        ? staticElementKey(node.left.argumentExpression)
+        : undefined;
+      if (indexedName !== undefined && ts.isElementAccessExpression(node.left)) {
+        // Indexed writes are the narrow dynamic-carrier case: a closed field
+        // may start as a string/number and receive a different primitive on a
+        // later `obj["key"] = rhs`. Record every concrete RHS type so the
+        // field-registration pass can widen the slot before any body emits.
+        const indexedProperty =
+          ctx.oracle.declarationsOf(node.left.argumentExpression)[0] ?? ctx.oracle.declarationsOf(node.left)[0];
+        if (indexedProperty && (rhsType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) === 0) {
+          const writes = ctx.objectLiteralIndexedAssignedPropertyTypes.get(indexedProperty) ?? [];
+          writes.push(rhsType);
+          ctx.objectLiteralIndexedAssignedPropertyTypes.set(indexedProperty, writes);
+        }
+      } else if (mayCarryObject && ts.isPropertyAccessExpression(node.left)) {
         const name = node.left.name.text;
         ctx.objectLiteralAssignedPropertyNames.add(name);
         const writes = ctx.objectLiteralAssignedPropertyTypes.get(name) ?? [];
@@ -417,6 +483,18 @@ export function collectEmptyObjectWidening(
           // hold: the #2849 host arms pass AND compiled-acorn parses.
           for (const s of stmts) {
             markObjectHashConsumers(s, varName, ctx.objectHashConsumerVars);
+          }
+
+          // #2573 — `length` explicitly written as `undefined` or `null`
+          // must not be represented by the primitive default of a widened
+          // field. Pin this receiver to the open object store so the missing
+          // read, explicit null, and later writes share one presence-aware
+          // carrier. Ordinary primitive-only widened objects keep their
+          // existing closed-struct fast path.
+          if (!ctx.objectHashConsumerVars.has(varName)) {
+            for (const s of stmts) {
+              markNullishPropertyWrites(s, varName, ctx.objectHashConsumerVars);
+            }
           }
 
           // (#2071) Returned from a foreign-return-capable constructor → the
@@ -766,6 +844,13 @@ function isOrdinaryToPrimitiveLiteralCandidate(literal: ts.ObjectLiteralExpressi
 function isNumericOrdinaryToPrimitiveUse(identifier: ts.Identifier): boolean {
   const parent = identifier.parent;
   if (!parent) return false;
+  // A computed property key applies ToPropertyKey (and therefore the
+  // OrdinaryToPrimitive valueOf/toString sequence) to the identifier. Treat
+  // this as a coercive use too: ES5 Array tests commonly redeclare the same
+  // `var object` with different valueOf/toString shapes before using it as
+  // `array[object]`. Keeping those sibling literals as closed structs loses
+  // the later shape behind the checker-identity-selected first declaration.
+  if (ts.isElementAccessExpression(parent) && parent.argumentExpression === identifier) return true;
   if (ts.isPrefixUnaryExpression(parent) && parent.operand === identifier) {
     return (
       parent.operator === ts.SyntaxKind.PlusToken ||
@@ -864,6 +949,235 @@ function collectRepeatedOrdinaryToPrimitiveObjects(
 }
 
 /**
+ * Preserve the identity of object-literal fields fed by a redeclaration-
+ * widened module binding (#4491 residual).  A declaration such as
+ * `var x = true; ... var x = new Boolean(true)` is one externref binding after
+ * the redeclaration pass, but `{ prop: x }` still has a closed field whose
+ * carrier was inferred from the first initializer.  Route only those exact
+ * literal/declaration nodes through `$Object`; unrelated literals and locals
+ * keep their existing closed-shape lowering.
+ */
+function collectRedeclaredObjectIdentityLiterals(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): void {
+  if (!ctx.standalone) return;
+  const widenedNames = collectRedeclarationWidenedModuleVarNames(ctx.oracle, sourceFile);
+  if (widenedNames.size === 0) return;
+
+  const widenedSymbols = new Set<ts.Symbol>();
+  const collectBindings = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      widenedNames.has(node.name.text) &&
+      isModuleScopedDeclaration(node)
+    ) {
+      const symbol = checker.getSymbolAtLocation(node.name);
+      if (symbol) widenedSymbols.add(symbol);
+    }
+    forEachChild(node, collectBindings);
+  };
+  collectBindings(sourceFile);
+
+  if (widenedSymbols.size === 0) return;
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      isModuleScopedDeclaration(node) &&
+      node.type === undefined &&
+      node.initializer !== undefined &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      node.initializer.properties.length > 0
+    ) {
+      const readsWidenedBinding = node.initializer.properties.some((property) => {
+        const value = ts.isPropertyAssignment(property)
+          ? property.initializer
+          : ts.isShorthandPropertyAssignment(property)
+            ? property.name
+            : undefined;
+        if (!value || !ts.isIdentifier(value)) return false;
+        const symbol = checker.getSymbolAtLocation(value);
+        return symbol !== undefined && widenedSymbols.has(symbol);
+      });
+      if (readsWidenedBinding) {
+        ctx.redeclaredObjectIdentityDeclarations.add(node);
+        ctx.redeclaredObjectIdentityLiterals.add(node.initializer);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+}
+
+/**
+ * (#5270 step 3, cluster M) The SAME hazard as
+ * `collectRedeclaredWithTargetObjects` below, without the `with`-target
+ * requirement that made it apply to almost nothing.
+ *
+ * `var obj = {a: 1}; var obj = {b: 2};` is ONE binding with two differently
+ * shaped initializers. The shared slot takes the first declaration's anonymous
+ * struct, so the second literal's `b` is written into the field the first
+ * literal called `a` — measured on HEAD: `obj.a` reads `2` and `obj.b` reads
+ * `2`, where the spec says `undefined` and `2`. The #4491 T4 redeclaration
+ * widening only widens PRIMITIVE-tag clashes, and
+ * `collectRedeclaredObjectIdentityLiterals` above only admits a literal that
+ * READS a widened binding, so two object literals of different shapes matched
+ * neither.
+ *
+ * Shape divergence is judged by `literalShapeNames`, which answers `null` for
+ * anything but static data/shorthand keys — a METHOD literal, an accessor, a
+ * computed key or a spread. A `null` shape is treated as "not comparable", so
+ * `var obj = Object.defineProperty({}, …); var obj = { method() {} };` also
+ * diverges. Only declarations whose initializer IS an object literal are
+ * marked; a non-literal declaration keeps its own lowering.
+ */
+function collectRedeclaredShapeDivergentObjects(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): void {
+  if (!ctx.standalone) return;
+  const declarationsBySymbol = new Map<ts.Symbol, ts.VariableDeclaration[]>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      isModuleScopedDeclaration(node) &&
+      node.type === undefined &&
+      node.initializer !== undefined
+    ) {
+      const symbol = checker.getSymbolAtLocation(node.name);
+      if (symbol) {
+        const declarations = declarationsBySymbol.get(symbol) ?? [];
+        declarations.push(node);
+        declarationsBySymbol.set(symbol, declarations);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  for (const declarations of declarationsBySymbol.values()) {
+    if (declarations.length < 2) continue;
+    if (!declarations.some((d) => ts.isObjectLiteralExpression(d.initializer!))) continue;
+    const shapes = declarations.map((d) =>
+      ts.isObjectLiteralExpression(d.initializer!) ? literalShapeNames(d.initializer) : null,
+    );
+    const first = shapes[0];
+    const allSame =
+      first !== null &&
+      shapes.every((shape) => shape !== null && shape.size === first.size && [...shape].every((n) => first.has(n)));
+    if (allSame) continue;
+    for (const declaration of declarations) {
+      const initializer = declaration.initializer!;
+      if (!ts.isObjectLiteralExpression(initializer)) continue;
+      ctx.redeclaredObjectIdentityDeclarations.add(declaration);
+      ctx.redeclaredObjectIdentityLiterals.add(initializer);
+      recordOpenObjectConsumerTypes(ctx, checker, declaration, (declaration.name as ts.Identifier).text);
+    }
+  }
+}
+
+/**
+ * A module `var` may be redeclared with a differently shaped object literal and
+ * then used as a `with` target after each initializer. Both declarations are
+ * one binding, so selecting the first declaration's anonymous struct for the
+ * shared slot loses keys introduced by the later literal. Keep only this
+ * identity-sensitive shape on the open-object carrier; declaration-keyed
+ * markers avoid changing unrelated same-named locals.
+ */
+function collectRedeclaredWithTargetObjects(
+  ctx: CodegenContext,
+  checker: ts.TypeChecker,
+  sourceFile: ts.SourceFile,
+): void {
+  // (#5313) A pure skip, not a narrowing: the result loop below `continue`s on
+  // `!withTargetSymbols.has(symbol)`, and only a `ts.WithStatement` can populate
+  // that set — so on a `with`-free source this walk provably marks nothing and
+  // the declaration half it also collects is discarded unread. It ran
+  // unconditionally, at a full pass (3,919 traversals on the #3437 fixture).
+  if (!sourceContainsWithStatement(sourceFile)) return;
+  const declarationsBySymbol = new Map<ts.Symbol, ts.VariableDeclaration[]>();
+  const withTargetSymbols = new Set<ts.Symbol>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const | ts.NodeFlags.Using | ts.NodeFlags.AwaitUsing)) ===
+        0 &&
+      isModuleScopedDeclaration(node) &&
+      node.initializer &&
+      ts.isObjectLiteralExpression(node.initializer) &&
+      literalShapeNames(node.initializer) !== null
+    ) {
+      const symbol = checker.getSymbolAtLocation(node.name);
+      if (symbol) {
+        const declarations = declarationsBySymbol.get(symbol) ?? [];
+        declarations.push(node);
+        declarationsBySymbol.set(symbol, declarations);
+      }
+    }
+    if (ts.isWithStatement(node)) {
+      let target: ts.Expression = node.expression;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isIdentifier(target)) {
+        const symbol = checker.getSymbolAtLocation(target);
+        if (symbol) withTargetSymbols.add(symbol);
+      }
+    }
+    forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  for (const [symbol, declarations] of declarationsBySymbol) {
+    if (declarations.length < 2 || !withTargetSymbols.has(symbol)) continue;
+    const shapes = declarations.map(
+      (declaration) => literalShapeNames(declaration.initializer as ts.ObjectLiteralExpression)!,
+    );
+    const first = shapes[0]!;
+    if (shapes.every((shape) => shape.size === first.size && [...shape].every((name) => first.has(name)))) continue;
+    for (const declaration of declarations) {
+      recordOpenObjectConsumerTypes(ctx, checker, declaration, (declaration.name as ts.Identifier).text, false);
+      ctx.irWithOpenObjectTargetKeys.add(widenedVarKeyFromDecl(declaration.name as ts.Identifier));
+    }
+  }
+}
+
+/** True for a declaration hoisted to this source file's module/script scope. */
+function isModuleScopedDeclaration(node: ts.Node): boolean {
+  for (let parent = node.parent; parent !== undefined && !ts.isSourceFile(parent); parent = parent.parent) {
+    if (
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isArrowFunction(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isConstructorDeclaration(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isModuleDeclaration(parent)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * (#2837) Detection pre-pass: mark variables initialized by a NON-EMPTY object
  * literal that later receive an OUT-OF-SHAPE property write, so `compileObjectLiteral`
  * (literals.ts) routes them through the recursive externref `$Object` builder
@@ -895,7 +1209,34 @@ export function collectGrowableObjectLiterals(
   checker: ts.TypeChecker,
   sourceFile: ts.SourceFile,
 ): void {
+  const markRealmGlobalWithTargets = (node: ts.Node): void => {
+    if (ts.isWithStatement(node)) {
+      let target: ts.Expression = node.expression;
+      while (ts.isParenthesizedExpression(target)) target = target.expression;
+      if (ts.isIdentifier(target)) {
+        const declaration = ctx.oracle.valueDeclarationOf(target);
+        if (
+          declaration !== undefined &&
+          ts.isBinaryExpression(declaration) &&
+          declaration.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          ts.isPropertyAccessExpression(declaration.left) &&
+          declaration.left.expression.kind === ts.SyntaxKind.ThisKeyword &&
+          declaration.left.name.text === target.text &&
+          ts.isObjectLiteralExpression(declaration.right)
+        ) {
+          ctx.redeclaredObjectIdentityLiterals.add(declaration.right);
+          ctx.growableObjectLiteralVars.add(target.text);
+        }
+      }
+    }
+    forEachChild(node, markRealmGlobalWithTargets);
+  };
+  // (#5313) Same pure skip: every effect above is inside the `isWithStatement` test.
+  if (sourceContainsWithStatement(sourceFile)) markRealmGlobalWithTargets(sourceFile);
   collectRepeatedOrdinaryToPrimitiveObjects(ctx, checker, sourceFile);
+  collectRedeclaredObjectIdentityLiterals(ctx, checker, sourceFile);
+  collectRedeclaredShapeDivergentObjects(ctx, checker, sourceFile); // (#5270 step 3, cluster M)
+  collectRedeclaredWithTargetObjects(ctx, checker, sourceFile);
   // Emergency rollback for the closed-outer-table refinement below. Keeping
   // this narrow switch makes the performance claim directly A/B measurable:
   // `0` restores the old "every depth-2 write opens the root" policy.
@@ -903,6 +1244,15 @@ export function collectGrowableObjectLiterals(
   const nestedWriteTargetsDeclaredField = createDeclaredNestedWriteClassifier(ctx, sourceFile);
   // (#4206) Names a direct `eval(<literal>)` in this module could mutate.
   const evalMutableNames = collectEvalMutableNames(sourceFile);
+  // (#4249) An accessor-bearing object created by foreign eval syntax must
+  // stay on the dynamic host-object path after the eval assignment as well.
+  // The declaration pass cannot see a variable-declaration parent on that
+  // foreign AST, so seed the same representation guard used by ordinary
+  // accessor literals before shape inference runs.
+  for (const name of collectEvalAccessorObjectNames(sourceFile)) {
+    ctx.evalAccessorObjectVars.add(name);
+    ctx.externrefAccessorVars.add(name);
+  }
 
   // Does a contextual type at a use site REQUIRE the closed-struct representation?
   // True only for a CONCRETE nominal struct (named own properties, not any/unknown/
@@ -1021,8 +1371,15 @@ export function collectGrowableObjectLiterals(
             for (const s of stmts) {
               markStandaloneDeleteTargets(s, varName, mopSet);
               markStandaloneAccessorDefineTargets(s, varName, mopSet);
-              markStandaloneOutOfShapeDataDefineTargets(s, varName, shape, mopSet); // #4524
+              markStandaloneOutOfShapeDataDefineTargets(ctx, s, varName, shape, mopSet); // #4524
+              // (#4491) `m.foo++` on a field the literal typed non-numerically —
+              // or on no field at all — cannot land in the closed struct.
+              markStandaloneNumericUpdateKindChangeTargets(s, varName, decl.initializer, mopSet);
             }
+            // (#4491) `for…in` over a literal that out-of-shape writes GREW:
+            // the closed struct has no slots for the added keys, so the
+            // enumeration is a reason to OPEN the object, not to leave it shut.
+            markStandaloneEnumeratedGrowthTargets(stmts, varName, shape, mopSet);
             if (evalMutableNames.has(varName)) mopSet.add(varName); // (#4206)
             // Consumer-safety (#1897/#2837): when the var ALSO flows into a
             // CONCRETE nominal-struct-typed position (call/new arg, return,
@@ -1403,6 +1760,168 @@ function isValueUseOfIdentifier(id: ts.Identifier): boolean {
  * (#2872) already proved correct in every lane. Parenthesized targets
  * (`delete (o.k)`) are unwrapped like the module-init collector does.
  */
+/**
+ * (#4491) Compound/update operators whose result is ALWAYS a Number, whatever the
+ * current value is (§13.4 UpdateExpression, §13.15.3 with a numeric operator).
+ * `+=` is deliberately ABSENT: `"a" += x` stays a String, so it does not change
+ * a string field's kind.
+ */
+function isAlwaysNumericCompoundOperator(kind: ts.SyntaxKind): boolean {
+  return (
+    kind === ts.SyntaxKind.MinusEqualsToken ||
+    kind === ts.SyntaxKind.AsteriskEqualsToken ||
+    kind === ts.SyntaxKind.SlashEqualsToken ||
+    kind === ts.SyntaxKind.PercentEqualsToken ||
+    kind === ts.SyntaxKind.AsteriskAsteriskEqualsToken
+  );
+}
+
+/**
+ * (#4491) Does an ALWAYS-numeric update of `propName` disagree with the kind the
+ * object literal's own initializer pins into the closed struct slot?
+ *
+ * Returns true only when we can PROVE the disagreement from the literal's own
+ * syntax — the field is absent (the update must CREATE it), or its initializer is
+ * a syntactically non-numeric primitive/aggregate. Anything we cannot read off the
+ * initializer (a call, an identifier, a numeric literal) answers false and stays
+ * on the closed-struct path: the same when-in-doubt-don't-mark discipline the rest
+ * of this pass uses.
+ */
+function numericUpdateChangesLiteralFieldKind(literal: ts.ObjectLiteralExpression, propName: string): boolean {
+  for (const property of literal.properties) {
+    const name = property.name;
+    if (!name || (!ts.isIdentifier(name) && !ts.isStringLiteral(name) && !ts.isNumericLiteral(name))) continue;
+    if (name.text !== propName) continue;
+    if (!ts.isPropertyAssignment(property)) return false; // shorthand/method — unknown kind
+    let initializer: ts.Expression = property.initializer;
+    while (ts.isParenthesizedExpression(initializer)) initializer = initializer.expression;
+    return (
+      ts.isStringLiteral(initializer) ||
+      ts.isNoSubstitutionTemplateLiteral(initializer) ||
+      ts.isTemplateExpression(initializer) ||
+      initializer.kind === ts.SyntaxKind.TrueKeyword ||
+      initializer.kind === ts.SyntaxKind.FalseKeyword ||
+      initializer.kind === ts.SyntaxKind.NullKeyword ||
+      ts.isObjectLiteralExpression(initializer) ||
+      ts.isArrayLiteralExpression(initializer) ||
+      ts.isFunctionExpression(initializer) ||
+      ts.isArrowFunction(initializer)
+    );
+  }
+  return true; // absent from the literal — the update has to CREATE the property
+}
+
+/**
+ * (#4491, standalone-only caller) Poison `varName` when an ALWAYS-numeric member
+ * UPDATE (`V.k++`, `--V.k`, `V.k -= n`, …) targets a field whose closed-struct slot
+ * cannot hold the numeric result.
+ *
+ * Two shapes, one defect — the slot's storage type is pinned by the literal:
+ *
+ * | source                                   | closed struct  | observed        | spec |
+ * | ---------------------------------------- | -------------- | --------------- | ---- |
+ * | `var m = {foo:"bar"}; m.foo++`           | `foo: stringref` | `m.foo` is null | NaN  |
+ * | `var m = {a:1};       m.foo++`           | no `foo` slot  | write DROPPED   | NaN, `"foo" in m` |
+ *
+ * The first stores a boxed NaN through a string-typed slot (later reads null-deref
+ * in `__str_concat`); the second takes `unary-updates.ts`'s unknown-field arm,
+ * which emits `f64.const NaN` and drops the write entirely, so the property is
+ * never created. Routing the var to the open `$Object` builder puts BOTH on the
+ * `__extern_get`/`__extern_set` read-modify-write, which stores a boxed number
+ * under a fresh key. Mirrors the #4250 write-kind-disagreement pattern.
+ */
+function markStandaloneNumericUpdateKindChangeTargets(
+  node: ts.Node,
+  varName: string,
+  literal: ts.ObjectLiteralExpression,
+  poisonSet: Set<string>,
+): void {
+  const considerTarget = (target: ts.Expression): void => {
+    let expression: ts.Expression = target;
+    while (ts.isParenthesizedExpression(expression)) expression = expression.expression;
+    if (!ts.isPropertyAccessExpression(expression)) return;
+    if (!ts.isIdentifier(expression.expression) || expression.expression.text !== varName) return;
+    if (ts.isPrivateIdentifier(expression.name)) return;
+    if (numericUpdateChangesLiteralFieldKind(literal, expression.name.text)) poisonSet.add(varName);
+  };
+  const visit = (n: ts.Node): void => {
+    if (ts.isPostfixUnaryExpression(n)) {
+      considerTarget(n.operand);
+    } else if (
+      ts.isPrefixUnaryExpression(n) &&
+      (n.operator === ts.SyntaxKind.PlusPlusToken || n.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      considerTarget(n.operand);
+    } else if (ts.isBinaryExpression(n) && isAlwaysNumericCompoundOperator(n.operatorToken.kind)) {
+      considerTarget(n.left);
+    }
+    ts.forEachChild(n, visit);
+  };
+  visit(node);
+}
+
+/**
+ * (#4491, standalone-only caller) Poison `varName` when a NON-EMPTY literal is
+ * both GROWN by an out-of-shape write and ENUMERATED by `for…in`.
+ *
+ *     var o = { bar: true };
+ *     o.some = 1; o.foo = "a";
+ *     for (var k in o) count++;      // observed 1, spec 3
+ *
+ * The #2837 growable pre-pass already recognises the growth, but its
+ * consumer-safety poison for `for…in` then cancels the marking — and that
+ * poison is a HOST-lane statement ("for…in lowers against V's STATIC struct
+ * type, so an externref `$Object` would fail the cast"). In standalone the
+ * relation inverts, exactly as #2992 S6 argued for `delete`: the closed struct
+ * is precisely what cannot serve the consumer, because the added keys have no
+ * slots to enumerate. So the enumeration is a REASON to open the object here,
+ * not a reason to leave it closed.
+ *
+ * The one #2837 poison that still has force in standalone is kept by hand: an
+ * ARITHMETIC read of a field off `V` wants the `struct.get` f64 contract
+ * (#1897), so a var with one declines and keeps its closed struct — with the
+ * enumeration gap intact, which is the documented trade.
+ */
+function markStandaloneEnumeratedGrowthTargets(
+  stmts: readonly ts.Statement[],
+  varName: string,
+  shape: ReadonlySet<string>,
+  poisonSet: Set<string>,
+): void {
+  let enumerated = false;
+  let grown = false;
+  let arithmeticFieldRead = false;
+  const visit = (n: ts.Node): void => {
+    if (ts.isForInStatement(n) && ts.isIdentifier(n.expression) && n.expression.text === varName) {
+      enumerated = true;
+    }
+    if (
+      ts.isBinaryExpression(n) &&
+      n.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(n.left) &&
+      ts.isIdentifier(n.left.expression) &&
+      n.left.expression.text === varName &&
+      !ts.isPrivateIdentifier(n.left.name) &&
+      !shape.has(n.left.name.text)
+    ) {
+      grown = true;
+    }
+    if (
+      ts.isBinaryExpression(n) &&
+      isArithmeticOperator(n.operatorToken.kind) &&
+      (isFieldReadOf(n.left, varName) || isFieldReadOf(n.right, varName))
+    ) {
+      arithmeticFieldRead = true;
+    }
+    ts.forEachChild(n, visit);
+  };
+  // The three signals routinely sit in DIFFERENT statements (the literal, the
+  // writes, the loop), so the scan is over the whole statement list at once —
+  // a per-statement call would never see them together.
+  for (const s of stmts) visit(s);
+  if (enumerated && grown && !arithmeticFieldRead) poisonSet.add(varName);
+}
+
 function markStandaloneDeleteTargets(node: ts.Node, varName: string, poisonSet: Set<string>): void {
   const visit = (n: ts.Node): void => {
     if (ts.isDeleteExpression(n)) {
@@ -1587,13 +2106,28 @@ function staticDefineKey(keyArg: ts.Expression | undefined): string | undefined 
  * #739. This decides only whether the define can land at all.
  */
 function markStandaloneOutOfShapeDataDefineTargets(
+  ctx: CodegenContext,
   node: ts.Node,
   varName: string,
   shapeNames: ReadonlySet<string>,
   poisonSet: Set<string>,
 ): void {
   const outOfShapeDataDefine = (keyArg: ts.Expression | undefined, descArg: ts.Expression | undefined): boolean => {
-    if (!descArg || descriptorHasAccessorKey(descArg)) return false; // accessors: other marker
+    // A descriptor variable is applied through the native `$Object` runtime,
+    // even when its eventual key is already in the literal shape.  Keeping the
+    // receiver as a closed struct would split the define from subsequent reads:
+    // `__obj_define_from_desc` updates the open runtime store while a typed
+    // member access still reads the fixed field.  The empty-literal widening
+    // pass already guards this case; keep non-empty literals on the same
+    // representation for parity.
+    if (!descArg) return false;
+    if (!ts.isObjectLiteralExpression(descArg)) {
+      ctx.dynamicDescriptorWidenVars.add(varName);
+      const key = staticDefineKey(keyArg);
+      if (key !== undefined) ctx.sidecarDefinedPropertyKeys.add(`${varName}:${key}`);
+      return true;
+    }
+    if (descriptorHasAccessorKey(descArg)) return false; // accessors: other marker
     const key = staticDefineKey(keyArg);
     return key === undefined || !shapeNames.has(key);
   };
@@ -1850,6 +2384,33 @@ function markObjectHashConsumers(node: ts.Node, varName: string, poisonSet: Set<
 }
 
 /**
+ * #2573 — An empty object whose later `length` writes include an explicit
+ * `null`/`undefined` value cannot use a primitive widened field as its carrier.
+ * The field initializer is the absent-property default, while the later write
+ * is an observable value; a closed numeric slot collapses both states to zero.
+ */
+function markNullishPropertyWrites(node: ts.Node, varName: string, poisonSet: Set<string>): void {
+  const visit = (current: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(current) &&
+      current.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isPropertyAccessExpression(current.left) &&
+      ts.isIdentifier(current.left.expression) &&
+      current.left.expression.text === varName &&
+      current.left.name.text === "length"
+    ) {
+      const rhs = current.right;
+      if (rhs.kind === ts.SyntaxKind.NullKeyword || (ts.isIdentifier(rhs) && rhs.text === "undefined")) {
+        poisonSet.add(varName);
+      }
+    }
+    ts.forEachChild(current, visit);
+  };
+
+  visit(node);
+}
+
+/**
  * (#3268) Extract the `value` type from an `Object.defineProperty` descriptor
  * object literal (defaulting to externref) and record the widened property plus
  * its `${varName}:${propName}` key. Shared by the ExpressionStatement and
@@ -1972,6 +2533,7 @@ export function collectPropsFromStatements(
           // reflects back through the live-mirror Proxy onto the struct sidecar).
           if (ctx.standalone && !ts.isObjectLiteralExpression(descArg)) {
             ctx.dynamicDescriptorWidenVars.add(varName);
+            ctx.sidecarDefinedPropertyKeys.add(`${varName}:${propName}`);
           }
           recordDefinePropertyWiden(ctx, checker, varKey, propName, descArg, extraProps, seenProps);
         }
@@ -2063,6 +2625,15 @@ export function applyShapeInference(ctx: CodegenContext, checker: ts.TypeChecker
   for (const [varName, shape] of shapes) {
     const globalIdx = ctx.moduleGlobals.get(varName);
     if (globalIdx === undefined) continue;
+
+    // Standalone accessor/MOP analysis deliberately keeps these receivers on
+    // the identity-bearing open-object carrier.  Shape inference runs after
+    // that analysis and used to overwrite the decision for a plain `{}` whose
+    // accessor body happened to write a numeric key (for example the
+    // self-writing `length` getter in Array.prototype.filter's generic
+    // receiver tests).  A vec has Array-exotic `length` semantics, so applying
+    // the shape here makes the accessor define throw before filter runs.
+    if (ctx.objectHashConsumerVars.has(varName) || ctx.growableObjectLiteralVars.has(varName)) continue;
 
     // Determine element type for the vec struct from the shape's numeric value type
     let elemType: ValType;

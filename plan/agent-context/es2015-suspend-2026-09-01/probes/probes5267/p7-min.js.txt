@@ -1,0 +1,7 @@
+var calls = 0;
+var iterable = {};
+iterable[Symbol.iterator] = function() {
+  return { next: function() { calls++; return { value: 7, done: calls > 1 }; } };
+};
+var s = new Set(iterable);
+var m = new WeakMap([1, 1]);

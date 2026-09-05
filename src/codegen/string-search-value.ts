@@ -439,7 +439,27 @@ export function tryCompileStandaloneStringValueReplace(
     emitReceiver();
     fctx.body.push({ op: "call", funcIdx: flattenIdx });
   };
+  // (#4639 C6) §22.1.3.19 step 3 is `ToString(searchValue)`, and for the two
+  // nullish values that is the LITERAL TEXT "null"/"undefined" — the string a
+  // conforming `"gnulluna".replace(null, …)` searches for. `emitArgAsNativeString`
+  // does not answer that: a `null` literal compiles to `ref.null.extern`, and the
+  // dynamic `$__any_to_string` tail leaves the needle empty/absent, so
+  // `__str_indexOf` reported -1 and the subject came back UNCHANGED
+  // (`built-ins/String/prototype/replace/S15.5.4.11_A1_T5`, measured "gnulluna"
+  // for an expected "gundefineduna"). The value is fixed at compile time here, so
+  // emit the literal rather than routing a known constant through the engine.
+  const nullishSearchText =
+    searchValueOperand(searchExpr).kind === ts.SyntaxKind.NullKeyword
+      ? "null"
+      : isDefinitelyUndefinedExpr(ctx, searchExpr)
+        ? "undefined"
+        : undefined;
   const emitSearch = (): void => {
+    if (nullishSearchText !== undefined) {
+      for (const instr of nativeStringLiteralInstrs(ctx, nullishSearchText)) fctx.body.push(instr);
+      fctx.body.push({ op: "call", funcIdx: flattenIdx });
+      return;
+    }
     // Emit from the same node the gate proved on — see `searchValueOperand`.
     emitArgAsNativeString(ctx, fctx, searchValueOperand(searchExpr));
     fctx.body.push({ op: "call", funcIdx: flattenIdx });

@@ -55,11 +55,29 @@ describe("#1806 Phase 1 — standalone ToPrimitive (string hint)", () => {
     // §7.1.1.1 OrdinaryToPrimitive("string"): toString is tried first. The
     // f64-returning valueOf must NOT be dispatched for a string coercion (doing
     // so previously called the wrong closure signature → null-deref trap).
+    //
+    // (#4564) This case used to probe the string hint through `o + "Y"` and
+    // assert "XY". That is the wrong operation: `+` is §13.15.3, which reduces
+    // with hint DEFAULT — valueOf first — and only then, because the other
+    // operand is a string, concatenates. Node agrees: the expression is "1Y",
+    // and test262 `language/expressions/equals/S9.1_A1_T3` asserts exactly that
+    // shape the other way round. The old expectation also contradicted this
+    // file's own "numeric `+` still uses valueOf" case two tests below. So the
+    // string hint is now probed where it actually applies — `String(o)` — and
+    // the `+` shape is asserted at its real value.
     expect(
       await runStandalone(
         `export function test(): number {
            var o = { valueOf: function() { return 1; }, toString: function() { return "X"; } };
-           return (o + "Y") === "XY" ? 1 : 0;
+           return String(o) === "X" ? 1 : 0;
+         }`,
+      ),
+    ).toBe(1);
+    expect(
+      await runStandalone(
+        `export function test(): number {
+           var o = { valueOf: function() { return 1; }, toString: function() { return "X"; } };
+           return (o + "Y") === "1Y" ? 1 : 0;
          }`,
       ),
     ).toBe(1);

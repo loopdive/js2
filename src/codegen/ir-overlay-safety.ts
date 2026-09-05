@@ -2,6 +2,7 @@
 
 import type { IrUnitId } from "../ir/identity.js";
 import type { IrIntegrationReport } from "../ir/integration-report.js";
+import { requireValidPreparedCountedStringAppendReceipt } from "../ir/counted-string-append-provenance.js";
 import { asVal, type IrType } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import {
@@ -134,7 +135,7 @@ export function correlateIrSkippedBodyNames(
 export function correlateIrSkippedBodyUnitIds(
   requestedUnitIds: ReadonlySet<IrUnitId>,
   returnedUnitIds: readonly IrUnitId[],
-  kind: "class member" | "implicit constructor support",
+  kind: "function" | "class member" | "implicit constructor support",
 ): ReadonlySet<IrUnitId> {
   const completed = new Set<IrUnitId>();
   for (const unitId of returnedUnitIds) {
@@ -251,6 +252,42 @@ export function mergeIrIntegrationReports(
       "split IR integration reports must both retain exact terminal evidence",
     );
   }
+  const requireTerminalReceiptEvidence = (report: IrIntegrationReport, side: "first" | "second"): void => {
+    if (!report.preparedCountedStringAppendReceipts?.length) return;
+    const terminalOwners = new Set(
+      (report.compiledArtifactEvidence ?? [])
+        .filter((artifact) => artifact.artifactUnitId === artifact.terminalOwnerUnitId)
+        .map((artifact) => artifact.terminalOwnerUnitId),
+    );
+    for (const receipt of report.preparedCountedStringAppendReceipts) {
+      const identity = requireValidPreparedCountedStringAppendReceipt(receipt);
+      if (!terminalOwners.has(identity.ownerUnitId)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          `${side} split IR report has a counted-string receipt without an exact terminal patch for ${identity.ownerUnitId}`,
+        );
+      }
+    }
+  };
+  requireTerminalReceiptEvidence(first, "first");
+  requireTerminalReceiptEvidence(second, "second");
+  const countedStringReceipts = [
+    ...(first.preparedCountedStringAppendReceipts ?? []),
+    ...(second.preparedCountedStringAppendReceipts ?? []),
+  ];
+  const receiptSites = new Set<string>();
+  for (const receipt of countedStringReceipts) {
+    requireValidPreparedCountedStringAppendReceipt(receipt);
+    if (receiptSites.has(receipt.siteId)) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "patch",
+        `split IR integration reports duplicate counted-string site ${receipt.siteId}`,
+      );
+    }
+    receiptSites.add(receipt.siteId);
+  }
   return {
     compiled: [...first.compiled, ...second.compiled],
     errors: [...first.errors, ...second.errors],
@@ -268,6 +305,9 @@ export function mergeIrIntegrationReports(
       ...(first.syntheticCompiledArtifacts ?? []),
       ...(second.syntheticCompiledArtifacts ?? []),
     ],
+    ...(countedStringReceipts.length > 0
+      ? { preparedCountedStringAppendReceipts: Object.freeze(countedStringReceipts) }
+      : {}),
   };
 }
 
@@ -328,6 +368,7 @@ export function computeIrFirstSkipUnitIds(input: IrFirstSkipIdentityInput): Read
   const positionDomain = (annotation: ts.TypeNode | undefined, resolved: IrType): ValueDomain | null => {
     if (isF64(resolved)) return "number";
     if (isI32(resolved) && annotation?.kind === ts.SyntaxKind.BooleanKeyword) return "bool";
+    if (resolved.kind === "string" && annotation?.kind === ts.SyntaxKind.StringKeyword) return "string";
     return null;
   };
   const signatureDomains = (

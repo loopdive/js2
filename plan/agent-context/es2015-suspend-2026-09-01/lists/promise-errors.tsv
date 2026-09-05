@@ -1,0 +1,140 @@
+test/built-ins/Promise/all/S25.4.4.1_A5.1_T1.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: The value of reason is expected to equal the value of error Expected SameValue(«TypeError: Promise.all argument is not iterable», «Test262Error: ») to be true
+test/built-ins/Promise/all/invoke-resolve-get-error-reject.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: The promise should be rejected
+test/built-ins/Promise/all/call-resolve-element.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/race/invoke-resolve-on-values-every-iteration-of-promise.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race (#2961)
+test/built-ins/Promise/resolve/capability-executor-called-twice.js	fail/type_error	TypeError
+test/built-ins/Promise/exec-args.js	fail/assertion_fail	Test262Error: type of first argument Expected SameValue(«"undefined"», «"function"») to be true
+test/built-ins/Promise/prototype/then/S25.4.5.3_A1.1_T2.js	fail/assertion_fail	Test262Error: The value of !!(p.then instanceof Function) is expected to be true
+test/built-ins/Promise/all/resolve-before-loop-exit-from-same.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/executor-function-property-order.js	fail/assertion_fail	Test262Error: The `length` property comes before the `name` property on built-in functions
+test/built-ins/Promise/resolve-function-prototype.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Function]») to be true
+test/built-ins/Promise/all/invoke-resolve.js	fail/assertion_fail	Test262Error: `resolve` invoked once for each iterated value Expected SameValue(«0», «3») to be true
+test/built-ins/Promise/all/new-resolve-function.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/race/invoke-resolve.js	fail/assertion_fail	Test262Error: `resolve` invoked once for each iterated value Expected SameValue(«0», «3») to be true
+test/built-ins/Promise/get-prototype-abrupt.js	compile_error/runtime_error	L33:3 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Promise/any/resolve-throws-iterator-return-null-or-undefined.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_any (#2961)
+test/built-ins/Promise/reject/capability-invocation.js	fail/assertion_fail	Test262Error: Expected SameValue(«undefined», «[object Object]») to be true
+test/built-ins/Promise/prototype/then/ctor-poisoned.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Promise/get-prototype-abrupt-executor-not-callable.js	compile_error/runtime_error	L34:3 Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget without a statically-resolved NewTarget.prototype assignment (#3371).
+test/built-ins/Promise/prototype/then/S25.4.5.3_A5.1_T1.js	fail/other	Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«3», «4») to be true
+test/built-ins/Promise/resolve/capability-invocation-error.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Promise/race/invoke-then-error-reject.js	fail/other	async completion marker not observed
+test/built-ins/Promise/race/iter-next-val-err-reject.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: Promise.race argument is not iterable», «Test262Error: ») to be true
+test/built-ins/Promise/prototype/then/capability-executor-not-callable.js	compile_error/wasm_compile	L30:1 invalid Wasm binary (WebAssembly.Module(): Compiling function #555:"__module_init_chunk_0" failed: extern.convert_any[0] expected type anyref, found call of type externref @+319873) [in __module_init_chunk_0()] [@+319873] [wat: (func 
+test/built-ins/Promise/all/same-reject-function.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/exception-after-resolve-in-thenable-job.js	fail/other	Test262:AsyncTestFailure:Test262Error: Error: ignored exception
+test/built-ins/Promise/race/invoke-resolve-on-promises-every-iteration-of-custom.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race, env::__promise_subclass_ctor (#2961)
+test/built-ins/Promise/race/S25.4.4.3_A4.1_T1.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: The value of reason is expected to equal the value of error Expected SameValue(«TypeError: Promise.race argument is not iterable», «Test262Error: ») to be true
+test/built-ins/Promise/resolve-function-property-order.js	fail/assertion_fail	Test262Error: The `length` property comes before the `name` property on built-in functions
+test/built-ins/Promise/prototype/catch/this-value-then-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Promise/prototype/then/capability-executor-called-twice.js	compile_error/wasm_compile	L28:1 invalid Wasm binary (WebAssembly.Module(): Compiling function #578:"__module_init_chunk_0" failed: extern.convert_any[0] expected type anyref, found call of type externref @+332962) [in __module_init_chunk_0()] [@+332962] [wat: (func 
+test/built-ins/Promise/race/invoke-resolve-get-once-no-calls.js	fail/assertion_fail	Test262Error: Got `resolve` only once for each iterated value Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/executor-function-prototype.js	fail/type_error	TypeError: Function.prototype.call is not yet implemented in --target standalone
+test/built-ins/Promise/all/invoke-resolve-get-once-no-calls.js	fail/assertion_fail	Test262Error: Got `resolve` only once for each iterated value Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/prototype/then/deferred-is-resolved-value.js	fail/assertion_fail	Test262Error: then() returns object Expected SameValue(«[object Object]», «[object Object]») to be true
+test/built-ins/Promise/all/resolve-from-same-thenable.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/executor-function-name.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/Promise/prototype/then/ctor-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Promise/all/iter-step-err-reject.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: Promise.all argument is not iterable», «Test262Error: ») to be true
+test/built-ins/Promise/executor-function-length.js	fail/type_error	TypeError: Cannot convert undefined or null to object
+test/built-ins/Promise/resolve/ctx-ctor-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Promise/race/capability-executor-called-twice.js	fail/type_error	TypeError
+test/built-ins/Promise/prototype/catch/this-value-then-not-callable.js	fail/assertion_fail	Test262Error: undefined Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Promise/race/ctx-ctor.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race, env::__js_array_new, env::__promise_subclass_ctor (#2961)
+test/built-ins/Promise/exception-after-resolve-in-executor.js	fail/other	Test262:AsyncTestFailure:Test262Error: Error: ignored exception
+test/built-ins/Promise/all/invoke-resolve-error-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/resolve/ctx-ctor.js	compile_error/host_import_leak	standalone target emitted host imports: env::__promise_subclass_ctor (#2961)
+test/built-ins/Promise/executor-function-not-a-constructor.js	fail/type_error	TypeError: TypeError: Object.prototype.hasOwnProperty called on null or undefined
+test/built-ins/Promise/all/ctx-ctor.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__promise_subclass_ctor (#2961)
+test/built-ins/Promise/reject-function-name.js	fail/assertion_fail	Test262Error: name should be an own property
+test/built-ins/Promise/prototype/catch/this-value-obj-coercible.js	fail/assertion_fail	Test262Error: boolean Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/reject/capability-executor-not-callable.js	fail/assertion_fail	Test262Error: executor not called at all Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Promise/prototype/catch/S25.4.5.1_A2.1_T1.js	fail/assertion_fail	Test262Error: The value of !!(p.catch instanceof Function) is expected to be true
+test/built-ins/Promise/all/resolve-throws-iterator-return-is-not-callable.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all (#2961)
+test/built-ins/Promise/race/invoke-resolve-return.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/race/S25.4.4.3_A3.1_T1.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/race/resolve-prms-cstm-then.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: The promise should be resolved with the correct value.
+test/built-ins/Promise/all/invoke-then-get-error-reject.js	fail/other	async completion marker not observed
+test/built-ins/Promise/race/invoke-resolve-error-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/executor-function-extensible.js	fail/assertion_fail	Test262Error: Expected true but got false
+test/built-ins/Promise/reject-function-nonconstructor.js	fail/type_error	TypeError: TypeError: Object.prototype.hasOwnProperty called on null or undefined
+test/built-ins/Promise/all/invoke-then-error-reject.js	fail/other	async completion marker not observed
+test/built-ins/Promise/race/invoke-resolve-get-error.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: Promise.race argument is not iterable», «[object Object]») to be true
+test/built-ins/Promise/prototype/then/ctor-null.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Promise/all/invoke-resolve-return.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/prototype/then/resolve-pending-fulfilled-prms-cstm-then.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: The promise should be fulfilled with the resolution value of the provided promise.
+test/built-ins/Promise/allSettled/resolve-throws-iterator-return-null-or-undefined.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_allSettled (#2961)
+test/built-ins/Promise/race/reject-from-same-thenable.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/all/invoke-resolve-on-promises-every-iteration-of-custom.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__promise_subclass_ctor (#2961)
+test/built-ins/Promise/race/iter-step-err-reject.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: Promise.race argument is not iterable», «Test262Error: ») to be true
+test/built-ins/Promise/all/invoke-resolve-on-promises-every-iteration-of-promise.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all (#2961)
+test/built-ins/Promise/prototype/catch/invokes-then.js	fail/assertion_fail	Test262Error: Invokes `then` method exactly once Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/race/resolved-sequence.js	fail/other	Test262:AsyncTestFailure:Test262Error: Test262Error: Actual [1, 1, 1] and expected [true, true, true] should have the same contents. 
+test/built-ins/Promise/all/iter-arg-is-string-resolve.js	fail/illegal_cast	async continuation threw before completion: illegal cast [in __then_fulfill_4() ← __drain_microtasks]
+test/built-ins/Promise/all/resolve-element-function-nonconstructor.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/all/resolve-poisoned-then.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: The promise should not be fulfilled.
+test/built-ins/Promise/resolve/arg-uniq-ctor.js	fail/assertion_fail	Test262Error: Expected SameValue(«true», «false») to be true
+test/built-ins/Promise/all/S25.4.4.1_A4.1_T1.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new (#2961)
+test/built-ins/Promise/all/resolve-element-function-property-order.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/resolve-function-name.js	fail/assertion_fail	Test262Error: name should be an own property
+test/built-ins/Promise/race/same-reject-function.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/all/capability-resolve-throws-reject.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new (#2961)
+test/built-ins/Promise/all/capability-executor-called-twice.js	fail/type_error	TypeError
+test/built-ins/Promise/prototype/then/context-check-on-entry.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Promise/all/resolve-element-function-prototype.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/all/resolve-element-function-length.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/reject/capability-executor-called-twice.js	fail/assertion_fail	Test262Error: executor initially called with no arguments Expected SameValue(«""», «"abc"») to be true
+test/built-ins/Promise/all/invoke-resolve-get-error.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: Promise.all argument is not iterable», «[object Object]») to be true
+test/built-ins/Promise/reject-function-property-order.js	fail/assertion_fail	Test262Error: The `length` property comes before the `name` property on built-in functions
+test/built-ins/Promise/prototype/then/ctor-access-count.js	fail/other	Test262:AsyncTestFailure:Test262Error: Expected constructor access count: 1. Actual: 0
+test/built-ins/Promise/all/invoke-resolve-get-once-multiple-calls.js	fail/assertion_fail	Test262Error: Got `resolve` only once for each iterated value Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/reject-function-prototype.js	fail/assertion_fail	Test262Error: Expected SameValue(«null», «[object Function]») to be true
+test/built-ins/Promise/resolve-function-nonconstructor.js	fail/type_error	TypeError: TypeError: Object.prototype.hasOwnProperty called on null or undefined
+test/built-ins/Promise/all/call-resolve-element-items.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/all/invoke-resolve-on-values-every-iteration-of-promise.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all (#2961)
+test/built-ins/Promise/race/resolved-sequence-with-rejections.js	fail/other	Test262:AsyncTestFailure:Test262Error: Test262Error: Actual [1, 1, 1] and expected [true, true, true] should have the same contents. 
+test/built-ins/Promise/race/resolve-throws-iterator-return-null-or-undefined.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race (#2961)
+test/built-ins/Promise/all/invoke-resolve-error-reject.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: The promise should not be fulfilled.
+test/built-ins/Promise/all/capability-resolve-throws-no-close.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all (#2961)
+test/built-ins/Promise/race/capability-executor-not-callable.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race, env::__js_array_new (#2961)
+test/built-ins/Promise/race/resolve-from-same-thenable.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/all/invoke-then-error-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/all/resolve-before-loop-exit.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/allSettled/resolve-throws-iterator-return-is-not-callable.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_allSettled (#2961)
+test/built-ins/Promise/all/resolve-element-function-name.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/all/invoke-then-get-error-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/all/invoke-then.js	fail/assertion_fail	Test262Error: `then` invoked once for every iterated value Expected SameValue(«0», «3») to be true
+test/built-ins/Promise/race/invoke-resolve-on-promises-every-iteration-of-promise.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race (#2961)
+test/built-ins/Promise/race/same-resolve-function.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/race/invoke-resolve-get-error-reject.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: The promise should be rejected
+test/built-ins/Promise/any/resolve-throws-iterator-return-is-not-callable.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_any (#2961)
+test/built-ins/Promise/all/resolve-thenable.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: The promise should be resolved with the expected value.
+test/built-ins/Promise/prototype/catch/this-value-then-poisoned.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Promise/reject/S25.4.4.4_A3.1_T1.js	fail/assertion_fail	Test262Error: Expected a TypeError to be thrown but no exception was thrown at all
+test/built-ins/Promise/resolve-prms-cstm-then-deferred.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: The promise should be fulfilled with the provided value.
+test/built-ins/Promise/race/resolve-self.js	fail/other	async completion marker not observed
+test/built-ins/Promise/race/resolve-throws-iterator-return-is-not-callable.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race (#2961)
+test/built-ins/Promise/race/invoke-then-error-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/all/call-resolve-element-after-return.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/reject/capability-invocation-error.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Promise/prototype/then/resolve-settled-fulfilled-prms-cstm-then.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: The promise should be fulfilled with the resolution value of the provided promise.
+test/built-ins/Promise/reject/ctx-ctor.js	compile_error/host_import_leak	standalone target emitted host imports: env::__promise_subclass_ctor (#2961)
+test/built-ins/Promise/race/invoke-then-get-error-reject.js	fail/other	async completion marker not observed
+test/built-ins/Promise/race/invoke-then-get-error-close.js	fail/assertion_fail	Test262Error: Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/prototype/then/ctor-custom.js	fail/assertion_fail	Test262Error: The constructor is invoked exactly once Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/race/invoke-resolve-error-reject.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/prototype/then/resolve-settled-rejected-prms-cstm-then.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: The promise should be fulfilled with the resolution value of the provided promise.
+test/built-ins/Promise/all/resolve-throws-iterator-return-null-or-undefined.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all (#2961)
+test/built-ins/Promise/all/resolve-not-callable-reject-with-typeerror.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: The promise should not be resolved.
+test/built-ins/Promise/race/ctx-ctor-throws.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_race (#2961)
+test/built-ins/Promise/all/resolve-element-function-extensible.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all, env::__js_array_new, env::__js_array_push (#2961)
+test/built-ins/Promise/resolve-prms-cstm-then-immed.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: The promise should be fulfilled with the provided value.
+test/built-ins/Promise/proto-from-ctor-realm.js	fail/type_error	TypeError: Cannot access property on null or undefined at 347:44
+test/built-ins/Promise/promise.js	fail/assertion_fail	Test262Error: Promise should be an own property
+test/built-ins/Promise/reject/ctx-ctor-throws.js	fail/assertion_fail	Test262Error: Expected a Test262Error to be thrown but no exception was thrown at all
+test/built-ins/Promise/all/ctx-ctor-throws.js	compile_error/host_import_leak	standalone target emitted host imports: env::Promise_all (#2961)
+test/built-ins/Promise/race/invoke-then.js	fail/assertion_fail	Test262Error: `then` invoked once for every iterated value Expected SameValue(«0», «3») to be true
+test/built-ins/Promise/race/invoke-resolve-get-once-multiple-calls.js	fail/assertion_fail	Test262Error: Got `resolve` only once for each iterated value Expected SameValue(«0», «1») to be true
+test/built-ins/Promise/all/iter-next-val-err-reject.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: Test262Error: Expected SameValue(«TypeError: Promise.all argument is not iterable», «Test262Error: ») to be true
+test/built-ins/Promise/prototype/then/resolve-pending-rejected-prms-cstm-then.js	fail/promise_error	Test262:AsyncTestFailure:Test262Error: The promise should be fulfilled with the resolution value of the provided promise.
+test/built-ins/Promise/resolve/resolve-from-promise-capability.js	fail/assertion_fail	Test262Error: Expected SameValue(«"undefined"», «"object"») to be true

@@ -1,10 +1,14 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { runDogfoodScript } from "./run-dogfood-script";
+import { compileProject, instantiateLinkedProject } from "../../src/index.ts";
 
 // @ts-expect-error — .mjs dogfood setup has no declaration file
-import { loadLitUpstreamSuitePin } from "./setup-lit-upstream-suite.mjs";
+import { loadLitUpstreamSuitePin, setupLitImplementation } from "./setup-lit-upstream-suite.mjs";
+// @ts-expect-error — .mjs dogfood harness has no declaration file
+import { buildProjectImportPrelude } from "./lit-upstream-suite.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -24,6 +28,40 @@ const SCORED_FLOOR = 16;
 const IMPLEMENTATION_INVALID_TEST_CEILING = 480;
 
 describe("lit upstream suite", () => {
+  it("keeps published package imports external for provider caching", () => {
+    const source = buildProjectImportPrelude({
+      imports: [
+        { from: "lit-html/directives/when.js", bindings: [{ imported: "when", local: "choose" }] },
+        { from: "lit", bindings: [{ imported: "*", local: "Lit" }] },
+        { from: "../test-utils/helpers.js", bindings: [{ imported: "fixture", local: "fixture" }] },
+      ],
+    });
+    expect(source).toContain('import { when as choose } from "lit-html/directives/when.js";');
+    expect(source).toContain('import * as Lit from "lit";');
+    expect(source).not.toContain("lit-html/directives/when.js is not shipped");
+    expect(source).toContain("../test-utils/helpers.js is not shipped by the published package");
+  });
+
+  it("compiles a published Lit provider once across test entries", async () => {
+    const implementation = setupLitImplementation();
+    const projectRoot = join(implementation.root, ".js2wasm-link-test");
+    const entry = join(projectRoot, "entry.ts");
+    mkdirSync(projectRoot, { recursive: true });
+    const cacheDir = mkdtempSync(join(projectRoot, ".cache-"));
+    writeFileSync(
+      entry,
+      'import { isServer } from "lit-html/is-server.js"; export function run(): number { return isServer ? 1 : 0; }\n',
+    );
+    const options = { allowJs: true, emitWat: false, skipSemanticDiagnostics: true, packageCacheDir: cacheDir };
+    const first = await compileProject(entry, options);
+    expect(first.linkPlan).toMatchObject({ mode: "separate", compiledProviders: 1, cachedProviders: 0 });
+    const linked = await instantiateLinkedProject(first);
+    expect(linked.instance.exports.run?.()).toBe(0);
+
+    const second = await compileProject(entry, options);
+    expect(second.linkPlan).toMatchObject({ mode: "separate", compiledProviders: 0, cachedProviders: 1 });
+  });
+
   it("pins the source revision matching the published implementation packages", () => {
     const pin = loadLitUpstreamSuitePin();
     expect(pin.tag).toBe("lit@3.3.3");

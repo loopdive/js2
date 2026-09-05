@@ -97,6 +97,55 @@ function isFunctionPrototypeMethodReceiver(identifier: ts.Identifier): boolean {
   return false;
 }
 
+/**
+ * (#4621 family H) True when this `eval` / `Function` identifier sits in a
+ * position that is NOT a reference to a binding — a member NAME or an object /
+ * class member KEY. `e.eval()`, `{ eval: fn }`, `class C { eval() {} }` and
+ * `var { eval: x } = o` all mention the token without being able to reach the
+ * global evaluator, so counting them as escaped evaluators is a pure
+ * over-approximation.
+ *
+ * It is not a harmless one. Line 330 below revives EVERY dropped candidate when
+ * an unknown dynamic position survives, so one property named `eval` anywhere
+ * in the file resurrects the whole dead harness prelude — including the
+ * `$262.evalScript` shim, whose own computed `eval` then poisons the module into
+ * runtime-eval carrier mode. That is the failure this module's own doc comment
+ * at `isFunctionPrototypeMethodReceiver` describes for `Function.prototype.*`;
+ * the member-name case is the same bug one position over. Measured on
+ * `language/statements/{try/S12.14_A18_T6, throw/S12.13_A2_T6}`: with the
+ * module in carrier mode, a top-level `myObj.i = 6` routes through the global
+ * environment record, whose realm object was never seeded, so the receiver
+ * null-check throws "Cannot access property on null or undefined" — while a
+ * plain `myObj` READ in the same module still answers the live object.
+ *
+ * SHORTHAND IS DELIBERATELY EXCLUDED. `{ eval }` (ShorthandPropertyAssignment)
+ * IS a reference to the binding, and so is a computed key `{ [eval]: 1 }`;
+ * both must keep counting. The mirror predicate in
+ * `src/ir/runtime-eval-boundary-plan.ts` (`isMemberName`) makes the same
+ * distinction — keep the two in sync.
+ */
+function isNonReferenceEvalMention(identifier: ts.Identifier): boolean {
+  const parent = identifier.parent;
+  if (!parent) return false;
+  // `e.eval` — the member name half of a property access.
+  if (ts.isPropertyAccessExpression(parent)) return parent.name === identifier;
+  // `{ eval: fn }`, `class C { eval() {} }`, `{ get eval() {} }`.
+  if (
+    ts.isPropertyAssignment(parent) ||
+    ts.isMethodDeclaration(parent) ||
+    ts.isPropertyDeclaration(parent) ||
+    ts.isGetAccessorDeclaration(parent) ||
+    ts.isSetAccessorDeclaration(parent) ||
+    ts.isPropertySignature(parent) ||
+    ts.isMethodSignature(parent)
+  ) {
+    return parent.name === identifier;
+  }
+  // `var { eval: x } = o` — the SOURCE key, never the bound name.
+  if (ts.isBindingElement(parent)) return parent.propertyName === identifier;
+  return false;
+}
+
 const identityResult = (source: string): DeadBindingElisionResult => ({
   source,
   positionMap: PositionMap.identity(),
@@ -166,6 +215,13 @@ export function elideDeadTopLevelBindings(
       names.push(decl.name.text);
     }
     if (!ok || names.length === 0) continue;
+    // A script `var toString = fn` / `var valueOf = fn` is observable through
+    // the realm object even when the source never reads the binding by name:
+    // OrdinaryToPrimitive(globalThis) consults these own conversion hooks.
+    // Host-free targets reify that carrier, so dead-binding elision must keep
+    // these declarations alive for the same reason it keeps dynamic property
+    // mentions alive below.
+    if (names.some((name) => name === "toString" || name === "valueOf")) continue;
     // (#4464) The `EARLY_ERROR_BINDING_NAMES` guard above covers early errors
     // carried by the binding NAME; this covers the ones carried by the
     // INITIALIZER. A dead `var f = function (param, param) { }` under
@@ -275,7 +331,8 @@ export function elideDeadTopLevelBindings(
       if (
         (node.text === "eval" || node.text === "Function") &&
         !handledDynamicIdentifiers.has(pos) &&
-        !isFunctionPrototypeMethodReceiver(node)
+        !isFunctionPrototypeMethodReceiver(node) &&
+        !isNonReferenceEvalMention(node)
       ) {
         // An escaped/aliased evaluator may later receive computed source. This
         // also covers `var Ctor = Function; new Ctor(dynamicBody)` once the

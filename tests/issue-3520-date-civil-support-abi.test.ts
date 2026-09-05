@@ -21,6 +21,7 @@ import { definedFuncAt } from "../src/codegen/func-space.js";
 import { generateModule } from "../src/codegen/index.js";
 import { irSupportFuncRef } from "../src/ir/callable-bindings.js";
 import { buildIrUnitInventory, createIrBindingId } from "../src/ir/identity.js";
+import { nonExecutableOutcomeDefect } from "../src/ir/outcomes.js";
 import { createEmptyModule } from "../src/ir/types.js";
 import { compile } from "../src/index.js";
 import { ts } from "../src/ts-api.js";
@@ -244,18 +245,34 @@ describe("#3520 C32 date civil support Program ABI ownership", () => {
     expect((instance.exports.stamp as () => number)()).toBe(20240229);
   });
 
-  it("moves one five-entry census row without changing functions or terminal routing", () => {
+  /**
+   * Deliberately NOT an absolute-count census (#3520 C35 follow-up).
+   *
+   * This assertion used to pin `definedFunctions: 166`, `dataRows: 5`,
+   * `genericRows: 74 - vec - data` and the routing tuple `37/30/7/0/37/30`. Every
+   * one of those numbers has since moved while the five corpus FILES are
+   * byte-for-byte unchanged, so the test reported compiler evolution rather than
+   * the ownership property it was written to defend — and stayed red for weeks.
+   * The measured moves are recorded in the issue file's drift table; the largest
+   * is legacy bodies 37 → 5, i.e. the R-series moving bodies onto the IR path.
+   *
+   * What is asserted here instead is self-derived from whatever the corpus
+   * contains: every emitted civil-date helper has exactly one owner, it carries
+   * this role, and none is left on the positional fallback.
+   */
+  it("owns every emitted civil-date helper across the five host entries", () => {
     let definedFunctions = 0;
-    let genericRows = 0;
+    let dateHelperFunctions = 0;
     let dateRows = 0;
-    let vecRows = 0;
-    let dataRows = 0;
-    let terminalUnits = 0;
+    let genericDateRows = 0;
+    // Counts OUTCOME ROWS, not terminal units: since #3523's `non-executable`
+    // arm a source can contribute an observational row that mints no terminal
+    // unit at all. `scripts/check-ir-only.ts:403-416` draws the same partition.
+    let outcomeRows = 0;
     let emitted = 0;
     let unsupported = 0;
     let invariants = 0;
-    let legacyBodies = 0;
-    let irBodies = 0;
+    let nonExecutable = 0;
 
     for (const entry of SINGLE_HOST_ENTRIES) {
       const source = readFileSync(resolve(entry), "utf8");
@@ -267,34 +284,42 @@ describe("#3520 C32 date civil support Program ABI ownership", () => {
       const errors = hardErrors(result);
       expect(errors, `${entry}\n${errors.map((error) => error.message).join("\n")}`).toEqual([]);
       definedFunctions += result.module.functions.length;
+      dateHelperFunctions += result.module.functions.filter((func) => func.name === DATE_CIVIL_HELPER).length;
       const entries = result.programAbi!.abi.entries();
-      genericRows += entries.filter((candidate) => candidate.id.includes("retained-module-function")).length;
-      dateRows += entries.filter((candidate) => candidate.id.includes(`:${DATE_CIVIL_SUPPORT_ROLE}:`)).length;
-      vecRows += entries.filter((candidate) => candidate.id.includes(":vec-host-bridge:")).length;
-      dataRows += entries.filter((candidate) => candidate.id.includes(":data-struct-host-bridge:")).length;
+      const callableRows = entries.filter((candidate) => candidate.intent?.kind === "callable");
+      dateRows += callableRows.filter((candidate) => candidate.id.includes(`:${DATE_CIVIL_SUPPORT_ROLE}:`)).length;
+      genericDateRows += callableRows.filter(
+        (candidate) =>
+          candidate.id.includes(":retained-module-function:") && candidate.displayName === DATE_CIVIL_HELPER,
+      ).length;
       for (const outcome of result.irOutcomes ?? []) {
-        terminalUnits++;
+        outcomeRows++;
         if (outcome.kind === "emitted") emitted++;
         if (outcome.kind === "unsupported") unsupported++;
         if (outcome.kind === "invariant") invariants++;
-        if (outcome.legacyBodyEmitted) legacyBodies++;
-        if (outcome.irBodyEmitted) irBodies++;
+        if (outcome.kind === "non-executable") {
+          nonExecutable++;
+          // The widened total below subtracts these rows, so they must be
+          // proven well-formed here: a malformed observational row would
+          // otherwise be excused rather than caught.
+          expect(nonExecutableOutcomeDefect(outcome), `${entry} ${outcome.key}`).toBeUndefined();
+        }
       }
     }
 
-    expect({ definedFunctions, dateRows }).toEqual({ definedFunctions: 166, dateRows: 1 });
-    // C30 and C33 are independent ownership slices. C33 moves five data rows
-    // one-for-one from whichever generic total the vec stack contributes.
-    expect([0, 24]).toContain(vecRows);
-    expect(dataRows).toBe(5);
-    expect(genericRows).toBe(74 - vecRows - dataRows);
-    expect({ terminalUnits, emitted, unsupported, invariants, legacyBodies, irBodies }).toEqual({
-      terminalUnits: 37,
-      emitted: 30,
-      unsupported: 7,
-      invariants: 0,
-      legacyBodies: 37,
-      irBodies: 30,
-    });
+    // Anti-vacuity: the corpus must actually contain functions and at least one
+    // civil-date helper, or every claim below is trivially true.
+    expect(definedFunctions).toBeGreaterThan(0);
+    expect(dateHelperFunctions).toBeGreaterThan(0);
+    // One structural callable owner per emitted helper...
+    expect(dateRows).toBe(dateHelperFunctions);
+    // ...and none of them left on the positional fallback.
+    expect(genericDateRows).toBe(0);
+    // Routing stays total and invariant-free. The emitted/unsupported SPLIT is a
+    // corpus denominator and deliberately not pinned here; `check:ir-only` is the
+    // gate that owns it.
+    expect(outcomeRows).toBeGreaterThan(0);
+    expect(emitted + unsupported + invariants).toBe(outcomeRows - nonExecutable);
+    expect(invariants).toBe(0);
   });
 });

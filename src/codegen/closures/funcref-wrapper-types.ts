@@ -85,6 +85,11 @@ export function getOrCreateFuncRefWrapperTypes(
 
   const cached = ctx.funcRefWrapperCache.get(sigKey);
   if (cached) {
+    const observedMinimum = ctx.closureMinimumArgumentCountByFuncTypeIdx.get(cached.funcTypeIdx);
+    if (observedMinimum !== undefined) {
+      const current = cached.minimumArgumentCount ?? cached.paramTypes.length;
+      cached.minimumArgumentCount = Math.min(current, observedMinimum);
+    }
     observeAllocation(cached, allocationMode);
     return {
       structTypeIdx: cached.structTypeIdx,
@@ -130,6 +135,7 @@ export function getOrCreateFuncRefWrapperTypes(
     funcTypeIdx: liftedFuncTypeIdx,
     returnType: resultTypes.length > 0 ? resultTypes[0]! : null,
     paramTypes: userParams,
+    minimumArgumentCount: ctx.closureMinimumArgumentCountByFuncTypeIdx.get(liftedFuncTypeIdx),
   };
   observeAllocation(closureInfo, allocationMode);
   ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
@@ -187,6 +193,8 @@ export function getOrCreateConstructibleFuncRefWrapperTypes(
     funcTypeIdx: base.liftedFuncTypeIdx,
     returnType: resultTypes.length > 0 ? resultTypes[0]! : null,
     paramTypes: userParams,
+    minimumArgumentCount:
+      ctx.closureMinimumArgumentCountByFuncTypeIdx.get(base.liftedFuncTypeIdx) ?? base.closureInfo.minimumArgumentCount,
   };
   ctx.closureInfoByTypeIdx.set(structTypeIdx, closureInfo);
   ctx.constructibleFuncRefWrapperCache.set(sigKey, closureInfo);

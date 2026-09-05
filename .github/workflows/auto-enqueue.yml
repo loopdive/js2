@@ -38,6 +38,14 @@ name: Auto-enqueue green PRs
 # This workflow reinforces that with a LOWERED cron (~30 min; the
 # workflow_run trigger covers the responsive case) and a single-flight
 # concurrency guard so two sweeps never overlap.
+#
+# SELF-HEALING VIA NATIVE AUTO-MERGE (2026-08-23, PR #4785 incident): the
+# script additionally ARMS GitHub auto-merge on every fully-eligible PR before
+# the direct enqueue. Arming is not an enqueue mutation (it cannot poke a
+# forming head), and it makes GitHub itself retry queue entry after a
+# main-advance drop or a green transition the workflow_run allowlist missed —
+# closing the ≤30-min cron gap and mitigating the #3889 allowlist trap. See
+# armAutoMerge() in scripts/enqueue-green-prs.mjs for the safety argument.
 
 on:
   # PRIMARY (responsive): fire right after the workflows whose completion can make
@@ -126,5 +134,25 @@ jobs:
           # delta is narrow: the only thing that can make this app author a PR
           # is a workflow already on `main`, and the app already holds enqueue
           # authority — an external contributor cannot reach either.
-          TRUSTED_AUTHOR_LOGINS: ttraenkler,${{ steps.app-token.outputs.app-slug }}[bot]
+          # BOTH spellings of the app's login, deliberately. `gh pr list --json
+          # author` resolves through GraphQL, where a GitHub App's `Bot.login`
+          # is the BARE slug; REST reports the same account as `<slug>[bot]`.
+          # The allowlist was written in the REST form, so the comparison against
+          # the GraphQL form never matched and the promotion PR was rejected
+          # `untrusted-author:CONTRIBUTOR` — measured 2026-08-24 00:32 on #4817,
+          # which had been CLEAN and unenqueued for three hours while the
+          # npm-compat dashboard stayed frozen. Naming both forms grants no new
+          # trust: it is the same app, spelled the way each API returns it.
+          #
+          # `claude` / `claude[bot]` — the Claude GitHub App (project-lead order,
+          # 2026-09-01). Implementation PRs opened by Claude Code sessions the
+          # maintainer dispatches are authored by this app with
+          # `authorAssociation: NONE`, so they matched none of the three layers
+          # and stranded fully green + CLEAN: #5364/#5367 (manual enqueue),
+          # then #5424 (skipped `untrusted-author:NONE (login=claude)` on four
+          # consecutive sweeps and replaced by the hand-reopened #5425). Both
+          # spellings for the same GraphQL-vs-REST reason as above. The trust
+          # delta: only sessions the maintainer runs can make this app author a
+          # PR, and `cla-check` stays the deeper merge gate.
+          TRUSTED_AUTHOR_LOGINS: ttraenkler,${{ steps.app-token.outputs.app-slug }},${{ steps.app-token.outputs.app-slug }}[bot],claude,claude[bot]
         run: node scripts/enqueue-green-prs.mjs

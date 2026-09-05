@@ -1,0 +1,8 @@
+#!/bin/bash
+# Run the #5270 probes (one process, sequential) then the timeout row alone.
+cd "$(dirname "$0")/../.." || exit 1
+npx tsx .tmp/es2015/probe-one.mts .tmp/es2015/probes5270/*.js > .tmp/es2015/probes5270.out 2>&1
+echo "probes exit=$?" >> .tmp/es2015/probes5270.out
+printf '%s\n' 'test/language/expressions/instanceof/primitive-prototype-with-object.js' > .tmp/es2015/expr-one.txt
+npx tsx scripts/run-test262-paths.mts .tmp/es2015/expr-one.txt --standalone > .tmp/es2015/expr-one.log 2>&1
+echo "one exit=$?" >> .tmp/es2015/expr-one.log

@@ -44,7 +44,18 @@ describe("#3529 P5 — equivalence Error-family imports", () => {
       name === "AggregateError"
         ? { type: "builtin" as const, name: importName }
         : { type: "extern_class" as const, className: name, action: "new" as const };
-    expect(result.imports).toContainEqual({ module: "env", name: importName, kind: "func", intent: expectedIntent });
+    // `a41115bc78` (perf(#4150), 2026-08-04, "kill per-crossing arg-array
+    // allocation in host imports") added `paramCount` to every ImportDescriptor,
+    // so this exact-shape `toContainEqual` stopped matching for all eight cases.
+    // Pin the arity too rather than loosening to a partial match — the ABI width
+    // is exactly what #4150 made load-bearing.
+    expect(result.imports).toContainEqual({
+      module: "env",
+      name: importName,
+      kind: "func",
+      intent: expectedIntent,
+      paramCount: name === "AggregateError" ? 3 : 1,
+    });
 
     const imports = buildImports(result);
     const constructorImport = (imports.env as Record<string, Function>)[importName];

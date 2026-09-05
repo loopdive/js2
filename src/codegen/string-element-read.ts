@@ -15,8 +15,11 @@ import { allocLocal } from "./context/locals.js";
 import { undefinedExternInstrs } from "./any-helpers.js";
 import { redundantFlattenCall } from "./lazy-str-flatten.js"; // (#4157)
 import { ensureNativeStringHelpers } from "./native-strings.js";
+import { buildTaDynViewElementGetDispatch } from "./dataview-native.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
-import { compileExpression, ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { compileExpression, ensureLateImport, flushLateImportShifts, skipTransparentExpressions } from "./shared.js";
+import { ensureExternIsUndefinedImport } from "./expressions/late-imports.js";
 
 /**
  * (#3973) Emit a runtime-guarded native-string ELEMENT read (`recv[idx]`) for a
@@ -46,9 +49,9 @@ import { compileExpression, ensureLateImport, flushLateImportShifts } from "./sh
  * `1.5`, `NaN`, `±Infinity` and anything outside i32 range; the subsequent
  * unsigned compare rejects negatives and `>= len` in one instruction.
  *
- * Non-string receivers keep the EXACT prior lowering (`__extern_get_idx`) in
- * the else arm, so arrays / `$ObjVec` / array-like `$Object` are byte-identical
- * to before. Receiver and index are each compiled ONCE into locals, so a
+ * Non-string receivers keep the exact prior lowering, with the dynamic/static
+ * TypedArray classifier inserted before `__extern_get_idx` when that feature
+ * is active. Receiver and index are each compiled ONCE into locals, so a
  * side-effecting receiver or index expression is not re-evaluated.
  */
 export function emitGuardedNativeStringElementGet(
@@ -66,7 +69,27 @@ export function emitGuardedNativeStringElementGet(
   // Receiver ONCE → externref local.
   const recvLocal = allocLocal(fctx, `__strix_recv_${fctx.locals.length}`, { kind: "externref" });
   compileExpression(ctx, fctx, recvExpr, { kind: "externref" });
+  // `__extern_get` represents a missing property with standalone's distinct
+  // undefined singleton.  This helper owns the fallback arm for `any[i]`, so
+  // it must enforce RequireObjectCoercible on the captured receiver before
+  // either string probing or the dynamic index read.
+  const receiverExpr = skipTransparentExpressions(recvExpr);
+  const isUndefinedIdx =
+    ctx.standalone && !ts.isIdentifier(receiverExpr) ? ensureExternIsUndefinedImport(ctx) : undefined;
+  flushLateImportShifts(ctx, fctx);
   fctx.body.push({ op: "local.set", index: recvLocal });
+  const receiverTypeError = (): Instr[] =>
+    buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot access property on null or undefined", {
+      forceInModuleCtor: true,
+    });
+  fctx.body.push({ op: "local.get", index: recvLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: receiverTypeError(), else: [] });
+  if (isUndefinedIdx !== undefined) {
+    fctx.body.push({ op: "local.get", index: recvLocal });
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: receiverTypeError(), else: [] });
+  }
 
   // Index ONCE → f64 local (shared by the string arm and the fallback call).
   const idxF64 = allocLocal(fctx, `__strix_idx_${fctx.locals.length}`, { kind: "f64" });
@@ -81,8 +104,14 @@ export function emitGuardedNativeStringElementGet(
     [{ kind: "externref" }, { kind: "f64" }],
     [{ kind: "externref" }],
   );
+  const needsTaViewDispatch = ctx.moduleUsesDynTaView || ctx.moduleUsesStaticTaView;
+  const boxNumFn = needsTaViewDispatch
+    ? ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }])
+    : undefined;
   flushLateImportShifts(ctx, fctx);
-  if (getIdxFn === undefined) return null;
+  const liveGetIdxFn = ctx.funcMap.get("__extern_get_idx") ?? getIdxFn;
+  const liveBoxNumFn = ctx.funcMap.get("__box_number") ?? boxNumFn;
+  if (liveGetIdxFn === undefined || (needsTaViewDispatch && liveBoxNumFn === undefined)) return null;
 
   const anyLocal = allocLocal(fctx, `__strix_any_${fctx.locals.length}`, { kind: "anyref" });
   const idxI32 = allocLocal(fctx, `__strix_i_${fctx.locals.length}`, { kind: "i32" });
@@ -133,13 +162,37 @@ export function emitGuardedNativeStringElementGet(
     },
   ];
 
-  // ELSE arm — any other receiver keeps the EXACT existing behaviour.
-  const elseArm: Instr[] = [
-    { op: "local.get", index: recvLocal },
-    { op: "local.get", index: idxF64 },
-    { op: "call", funcIdx: getIdxFn },
-    { op: "local.set", index: resultLocal },
-  ];
+  // ELSE arm — a dynamic/static typed view gets its runtime-kind element
+  // dispatch before the established generic indexed-read fallback. Build it
+  // from the locals above so this composes with the string arm without a
+  // second receiver/index evaluation.
+  let elseArm: Instr[];
+  if (!needsTaViewDispatch) {
+    elseArm = [
+      { op: "local.get", index: recvLocal },
+      { op: "local.get", index: idxF64 },
+      { op: "call", funcIdx: liveGetIdxFn },
+      { op: "local.set", index: resultLocal },
+    ];
+  } else {
+    elseArm = [];
+    const savedBody = fctx.body;
+    fctx.body = elseArm;
+    try {
+      fctx.body.push(
+        ...buildTaDynViewElementGetDispatch(ctx, fctx, {
+          recvLocal,
+          idxF64,
+          rawAnyLocal: anyLocal,
+          resultLocal,
+          getIdxFn: liveGetIdxFn,
+          boxNumFn: liveBoxNumFn!,
+        }),
+      );
+    } finally {
+      fctx.body = savedBody;
+    }
+  }
 
   fctx.body.push({ op: "local.get", index: anyLocal });
   fctx.body.push({ op: "ref.test", typeIdx: ctx.anyStrTypeIdx });

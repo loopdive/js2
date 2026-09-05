@@ -56,6 +56,7 @@
 
 import {
   asBlockId,
+  forEachInstrDeep,
   type IrBlock,
   type IrFuncRef,
   type IrFunction,
@@ -70,6 +71,7 @@ import type { AllocSiteRegistry } from "../alloc-registry.js";
 import { createDerivedIrUnitId, type IrDerivedUnitProvenance, type IrUnitId } from "../identity.js";
 import { irUnitFuncRef } from "../callable-bindings.js";
 import { forkAllocInInstr } from "./alloc-discipline.js";
+import { irFnctorShapeKey } from "../type-key.js";
 
 /** Maximum number of distinct type tuples we'll clone a single callee for. */
 const MAX_VARIANTS_PER_CALLEE = 4;
@@ -450,6 +452,19 @@ function buildLocalTypeOf(fn: IrFunction): (v: IrValueId) => IrType | null {
  *     terminator shape)
  */
 function isMonomorphizable(fn: IrFunction): boolean {
+  for (const buffer of [
+    ...fn.blocks.map((block) => block.instrs),
+    ...(fn.asyncPlan?.states.map((state) => state.body) ?? []),
+    ...(fn.asyncRuntime?.states.map((state) => state.body) ?? []),
+  ]) {
+    for (const instr of buffer) {
+      let hasCountedSite = false;
+      forEachInstrDeep(instr, (nested) => {
+        hasCountedSite ||= nested.kind === "string.repeat" && nested.countedStringAppendSite !== undefined;
+      });
+      if (hasCountedSite) return false;
+    }
+  }
   if (fn.blocks.length !== 1) return false;
   const block = fn.blocks[0]!;
   if (block.instrs.length > MAX_CALLEE_SIZE) return false;
@@ -507,6 +522,9 @@ function irTypeKey(t: IrType): string {
   if (t.kind === "class") return `cls:${t.shape.classId}`;
   // Slice 10 (#1169i): extern is keyed solely on className.
   if (t.kind === "extern") return `ext:${t.className}`;
+  if (t.kind === "fnctor") {
+    return irFnctorShapeKey(t.shape);
+  }
   // #1926 — union members / boxed inner are IrTypes; recurse via irTypeKey.
   if (t.kind === "union") {
     const parts = [...t.members].map(irTypeKey).sort();
@@ -538,6 +556,7 @@ function simplifyForName(s: string): string {
   if (s.startsWith("v:")) return s.slice(2);
   if (s.startsWith("u:")) return `union_${s.slice(2).replace(/\|/g, "_")}`;
   if (s.startsWith("b:")) return `boxed_${s.slice(2)}`;
+  if (s.startsWith("fnctor:")) return `fnctor_${s.slice("fnctor:".length)}`;
   return s;
 }
 
@@ -747,11 +766,21 @@ function collectUses(instr: IrInstr): readonly IrValueId[] {
     case "string.concat":
     case "string.eq":
       return [instr.lhs, instr.rhs];
+    case "string.repeat":
+      return [instr.value, instr.count];
     case "string.len":
       return [instr.value];
     case "string.char_at":
     case "string.char_code_at":
       return [instr.value, instr.index];
+    case "fnctor.new":
+      return [
+        ...instr.captureArgs,
+        ...instr.args,
+        ...(instr.constructorIdentity === null ? [] : [instr.constructorIdentity]),
+      ];
+    case "fnctor.get":
+      return [instr.value];
     case "object.new":
       return instr.values;
     case "object.get":
