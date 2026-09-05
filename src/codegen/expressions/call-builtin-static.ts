@@ -3095,6 +3095,13 @@ export function compileBuiltinStaticCall(
                     );
                     if (dynGopdIdx !== undefined) {
                       flushLateImportShifts(ctx, fctx);
+                      // The raw native-literal emitter, not
+                      // `stringConstantExternrefInstrs`: this arm is gated on
+                      // `ctx.standalone`, and standalone FORCES
+                      // `nativeStrings: true` (`create-context.ts`), so there is
+                      // no second string regime to dispatch over here — and
+                      // registering a `stringGlobalMap` entry for the key would
+                      // push it into `ctx.mod.stringPool` for no reader.
                       return [
                         { op: "local.get", index: gopdTmp },
                         { op: "extern.convert_any" },
