@@ -32,6 +32,19 @@ loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/native-construct.ts
   - src/codegen/index.ts
+  # 2026-09-05 r5 step 2: the `Object.getOwnPropertyDescriptor` literal-key
+  # fold's else arm (reached only when its own guarded `ref.test` has FAILED)
+  # stops answering a flat `undefined` and routes to the dynamic
+  # `__getOwnPropertyDescriptor` native instead, so a `$Proxy` receiver reaches
+  # its trap. The emitted arm is five instructions; the rest of the growth is
+  # the comment recording WHY a miss is not `undefined` here — the next reader
+  # of this arm has to know that the guard failing is the interesting case, not
+  # the boring one. The arm has to live at the fold, which is in this file.
+  - src/codegen/expressions/call-builtin-static.ts
+  # 2026-09-05 r5 step 1: the fourth `__integrity_bag` arm (#4194 instance
+  # expando carrier). Ten instructions plus the comment that records why ENSURE
+  # is right here while `carrier-bag-visibility.ts` refuses to ensure.
+  - src/codegen/object-integrity-carrier.ts
 func-budget-allow:
   # 2026-09-04 r4 step 1: `registerProxyInvariantValidators` is ONE function
   # only in the TypeScript sense — its body is seven independent
@@ -45,6 +58,19 @@ func-budget-allow:
   # `validateTrapResult` splice helper and the per-arm wiring.
   - src/codegen/object-runtime-proxy-invariants.ts::registerProxyInvariantValidators
   - src/codegen/object-runtime-proxy.ts::ensureProxyRuntime
+  # 2026-09-05 r5 step 2: see the LOC rationale above — the else arm of the
+  # gopd literal-key fold is inside this one dispatcher function, and moving it
+  # out would mean re-threading `gopdTmp`, `propLiteral`, `fctx` and the
+  # late-import flush order (which is load-bearing: the else arm must resolve
+  # AFTER the then arm's imports) through a new signature for five instructions.
+  - src/codegen/expressions/call-builtin-static.ts::compileBuiltinStaticCall
+  # 2026-09-05 r5 step 3: `in` stops folding a positive answer when the receiver
+  # is a directly-bound `new Proxy(...)`. Two lines of logic (the route
+  # predicate and its place in the existing `has` cascade + runtime-route
+  # disjunction); the rest is the comment recording why `isDirectProxyBinding`
+  # and not the wider `tracesToProxyValue`, whose aliases the documented
+  # widening defect nulls. Both lines have to sit inside this cascade.
+  - src/codegen/binary-ops-in.ts::compileInOperator
 coercion-sites-allow:
   # 2026-09-04 r4 step 1: the two hits are `__is_truthy` and the `__host_eq`
   # fallback arm of `ensureExternStrictEqHelper`. Neither hand-rolls a
