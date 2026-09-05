@@ -1107,6 +1107,59 @@ export function compileNamespaceStaticCall(
             }
             return fallbackReturn(4, "i32-false");
           }
+          // (#5316 r5 step 6) The refusal is replaced by the real thing:
+          // `__reflect_set_receiver` is §10.1.9.2 OrdinarySetWithOwnDescriptor
+          // with the receiver as an explicit parameter (see
+          // `object-runtime-ordinary-set.ts`). Same argument machinery as the
+          // 3-argument form — locals rather than the bare stack, so a throwing
+          // `toString` in ToPropertyKey still escapes (§7.1.19) — and the same
+          // §26.1.13 step 1 Object-target guard. The 3-argument path below is
+          // untouched and keeps its byte-identical lowering.
+          //
+          // The probe is done BEFORE any operand is emitted: this name is in
+          // `OBJECT_RUNTIME_HELPER_NAMES`, so `ensureLateImport` resolves it to
+          // the DEFINED native and adds no import (hence no funcIdx shift), and
+          // it answers `undefined` on a target where the native was not
+          // registered — wasi, and any tree where a primitive it needs is
+          // missing. Then the refusal below still stands, unchanged.
+          if (
+            ensureLateImport(ctx, "__reflect_set_receiver", [externRef, externRef, externRef, externRef], [i32Ty]) !==
+            undefined
+          ) {
+            const targetArg4 = expr.arguments[0]!;
+            if (emitNonObjectArgGuard(ctx, fctx, targetArg4, "Reflect.set")) {
+              fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+              return { kind: "i32" };
+            }
+            const recvLocals = emitReflectArgumentLocals();
+            coerceReflectPropertyKey(recvLocals[1]);
+            for (let i = 0; i < 4; i++) {
+              const local = recvLocals[i];
+              if (local === undefined) fctx.body.push({ op: "ref.null.extern" });
+              else fctx.body.push({ op: "local.get", index: local });
+            }
+            const recvSetIdx = ensureLateImport(
+              ctx,
+              "__reflect_set_receiver",
+              [externRef, externRef, externRef, externRef],
+              [i32Ty],
+            );
+            flushLateImportShifts(ctx, fctx);
+            if (recvSetIdx !== undefined) {
+              fctx.body.push({ op: "call", funcIdx: recvSetIdx });
+              releaseReflectArgumentLocals(recvLocals);
+              return { kind: "i32" };
+            }
+            releaseReflectArgumentLocals(recvLocals);
+            fctx.body.push(
+              { op: "drop" },
+              { op: "drop" },
+              { op: "drop" },
+              { op: "drop" },
+              { op: "i32.const", value: 0 },
+            );
+            return { kind: "i32" };
+          }
           reportError(
             ctx,
             expr,
