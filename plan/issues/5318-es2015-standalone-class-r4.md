@@ -696,3 +696,60 @@ growth in 30 changed src files, net -657 LOC") · `check-coercion-sites` ·
 `check:dead-exports` · `check:speculative-rollback` · `check:stack-balance` ·
 `check:codegen-fallbacks` · `check:any-box-sites` · TS7 `--noEmit` · `lint` —
 all exit 0, each run bare with its status read directly. No growth grant needed.
+
+### Review round 1 — reviewer verdict, and the round-2 residual (2026-09-05, Fable)
+
+A single Opus reviewer attacked the round-1 commit (415184a693) against the
+pre-fix lane, base and node. The declaration-order pass and the `HOST_HAS_VALUE`
+bit checked out: bit 7 is read only on the existing-key arm of the descriptor
+runtime, a fresh key's descriptor is unchanged from base, and every collision
+probe (method↔field both orders, runtime↔folded keys, split getter/setter halves
+with a method between, setter-only pairs) answers node. `wasi` and the JS-host
+target are byte-identical to the lane on six class programs. Pins 45/45 and the
+r3 pins 225/225 on node 22 and node 25.
+
+**One real regression against the LANE (not against main) — left in, recorded
+here for round 2.** The compiled-body gate `compiledBodyReadsThis` answers
+`undefined` when the half's funcMap body is still empty, and it is empty for
+every class nested inside a function, arrow or method, because
+`emitClassStaticSidecar` runs at ClassDefinitionEvaluation while the enclosing
+function is still being compiled. So every runtime-keyed static *accessor* on a
+nested class is silently declined (the method half still installs). Minimal
+repro, standalone:
+
+```js
+let x = 0;
+export function probeH() {
+  class H { static get [x || "k"]() { return 23; } }
+  const v = H[x || "k"]; return v === undefined ? -1 : v;
+}
+// node 23 · base -1 · r4 lane 23 · round 1 -1
+```
+
+Six placements of the same getter: top-level class and top-level if-block class
+keep the lane's answer; class inside an arrow / a function declaration / a
+static method / the probe function itself all revert to base's `-1`. The fix
+tree's binaries for those programs are sha256-identical to BASE — the sidecar
+disappears rather than degrading. Not a regression versus `main` (base answers
+`-1` too), no throw, no diagnostic, and the 783-row control is unchanged at 246
+non-pass, which is why it ships; but it gives back part of what r4 bought.
+
+**Round 2 (not done — wind-down).** Make the gate
+`readsThis === false || (readsThis === undefined && syntacticallyReceiverFree(half))`,
+where the syntactic walker is the HARDENED one round 1 measured and discarded
+(descends into nested class-likes; counts `this` in a nested function-like's
+computed name, in parameter defaults and computed keys; anything
+`genBodyReferencesThis` skips but `methodBodyReadsThis` would flag counts as
+receiver-reading). That keeps t1.js (nested class whose static field initializer
+reads `this`) at base's `-1` with no trap, and restores the nested-class installs.
+Before shipping it, measure the walker against every nested-class shape
+(`this` in a nested arrow, in a default parameter, in a computed key of a nested
+member, via `arguments`, in a nested class's static block / field / method,
+`super.x`, `eval`) and confirm `compiledBodyReadsThis` agrees once the enclosing
+function has finished compiling — a disagreement in the unsafe direction is a
+decline, never an install. Pin h3/h4/g1/d1-style shapes in
+`tests/issue-5318-r4-computed-accessor-keys.test.ts` (today every class in that
+file is lexically top-level, which is why the suite did not catch this). A
+round-2 agent was dispatched twice on 2026-09-05 and did not finish: the first
+launch died with a container restart, the second was stopped at wind-down; its
+worktree `wf_28a520bf-7c3-1` holds only the merge commit.

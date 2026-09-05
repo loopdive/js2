@@ -596,3 +596,38 @@ lane's own note said so and it still cost a cycle.
 
 No change. The decline note above (the `IsExtensible` clause, two rows) stands
 as the lane wrote it.
+
+## Handoff (2026-09-05, session claude/es6-test262-standalone-g10c7u)
+
+**Shipped in this PR:** step 1 (§10.5 descriptor-model invariants, 19 rows) plus
+the round-1 wasi gate (`if (ctx.wasi) return null;` at the top of
+`registerProxyInvariantValidators`, four load-bearing wasi pins). The fix-round
+review found no regression across 40 programs × 3 targets: standalone
+byte-identical to the unfixed lane, wasi byte-identical to base, host untouched.
+Standalone control (464 rows under `built-ins/Proxy` + `built-ins/Reflect`):
+348 pass vs 312 on main, zero rows lost.
+
+**Still open — in priority order:**
+
+1. **The standalone attribute model does not describe object-literal own
+   properties through a proxy dispatch.** This one gap blocks 3 gopd rows
+   directly, forced the `IsExtensible` clause to be declined (2 rows), and is
+   what makes the receiver-threaded `Reflect.set` (step 2, 15 rows) unsafe to
+   build — it would inherit the same false-positive family into every
+   `Reflect.set` call. Fix this first; the probe files are named in the r4
+   residuals above.
+2. **Step 2 — `Reflect.set` 4-arg receiver (15 rows)**, after 1. The design
+   from PR #5397 (`.tmp/wave4/pr5397-2046-reflect-set-receiver.diff` when that
+   scratch dir exists; otherwise the PR itself) is the starting point.
+3. **Step 3 — Proxy `[[Construct]]` NewTarget forwarding (10 rows)**, after
+   #3371's r1 arm and its refusal gate (see that issue's 2026-09-05 sections):
+   the driver route can only install a prototype on the DataView window and the
+   ordinary-function struct, so a Proxy NewTarget needs its own carrier.
+4. **wasi attribute-model primitives are broken for object literals** — three
+   concrete wrong answers measured on main
+   (`Object.isExtensible({a:1,b:2}) → false`, `getOwnPropertyNames → 0`,
+   `getOwnPropertyDescriptor` traps). Pre-existing, owned by the wasi target,
+   not by this issue; the wasi gate stays until it is fixed.
+
+Remaining `-realm` rows (6) and the two exotic-target-is-proxy rows are
+documented in the residuals; none is reachable without a cross-realm model.
