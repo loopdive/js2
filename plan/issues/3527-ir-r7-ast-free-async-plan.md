@@ -909,3 +909,62 @@ This removes C-1 only for owners carrying the new complete proof. Promise-valued
 settled operands, no-await async functions, remaining containers/carriers and
 caller-contract gaps remain explicit follow-ups. R7 and full #3518 retirement
 acceptance remain open.
+
+### B3 implementation record — 2026-09-05 — Luna Max
+
+B3 implementation is present on the settled-owner slice in
+`async-linear-planning.ts`, `async-ir-planning.ts`, `async-from-ast.ts`, and
+`from-ast.ts`. The source proof now requires one exact top-level linear owner
+carrying checker-backed numeric, non-thenable evidence for every await operand.
+Its immutable receipt is owned by the planning `UnitId`/`SourceId`, freezes the
+ordered await sites and facts, and records incoming/outgoing source callable
+UnitIds. The declaration ABI gate, selector gate, retained-owner collection,
+R3 acceptance input, and prepared await resolver all consume the same cached
+receipt; a stale or withdrawn issued receipt raises
+`selection-preparation-mismatch` before a direct body can retry. The prepared
+await handoff carries the receipt owner and source fingerprint, and AST lowering
+retains the original numeric operand exactly once. Existing `Promise.resolve`
+substitution and cast/unknown refusals remain on their prior policy.
+
+Measured integrated B2 baseline is `d658f8964b1fd106f28a243e273211db968afaac`:
+the repaired fully literal one/two-await controls returned raw `43`/`85` with
+direct `1` / IR `1`, while the Promise-valued provider control returned a native
+Promise with direct `0` / IR `1`. On the B3 candidate, literal one/two-await,
+single and multiple settled owners, `return await`, void-tail, and a numeric
+helper call all return native Promises with direct `0` / IR `1`; the settled
+three-await owner resolves to `192` and preserves the observed native sequence
+`after-call:1`, `observer-1:2`, `after-flush-1:2`, `observer-2:3`,
+`after-flush-2:3`, `after-promise:4`. A closed prepared caller resolves to
+`42`. The raw-value consumer withdraws the owner before ABI projection; the
+same-spelling foreign callable binding, Promise/unknown casts, shadowed
+`Promise.resolve`, no-await, and standalone static controls receive no B3
+receipt. A forced owner-proof withdrawal after ABI issuance fails before state
+publication with the invariant above.
+
+The focused B3/runtime and adjacent preparation denominator is `33/33`: new
+settled-owner runtime `10/10`, existing linear runtime `7/7`, linear preparation
+`4/4`, and the adjacent async-plan suite `12/12`. TypeScript typecheck also
+passes. The broader requested async controls retain environment/base reds: the
+six-file #4106/#4104/#4124/#2906 run was `34` passing and `21` failing; #4104
+has its existing standalone `functionPrototypeCall` policy mismatch, #4106's
+standalone host-free binary row is already false on the baseline, #4124's child
+`tsx` process is blocked by the sandbox `listen EPERM` pipe, and the #2906 WASI
+rows fail `WebAssembly.validate` under this local runtime. No local full
+test262 run was attempted. Broader R7 ownership, Promise-valued operands,
+no-await owners, remaining caller contracts, and CI acceptance remain open.
+
+The branch first recorded the signed current-main refresh at
+`9cc5826906db09eacf9007b7faf3b9bb02d207d5` and then integrated fetched current
+main `b67ab1fc0eb2bafe959c3100df6e68d03325ce4f` in signed merge
+`04b4a59dbf19c9fa61e8e01ec2ad6bd192cedc1b`. The fresh ten-file async matrix
+on that candidate was `67` passing / `34` failing (`101` total): the B3,
+linear, preparation, and async-plan files remained green; the retained failures
+were #4104 `1`, #4106 `1`, #4124 `1` (sandbox `tsx` IPC), #4573 `11`, #4574
+`14`, and #2906 `6` (standalone/WASI `WebAssembly.validate` environment
+controls). The direct `node --import tsx` forms of the harness, stack-balance,
+and codegen-fallback checks passed after their `npx tsx` forms hit the sandbox
+IPC pipe restriction. The repository-wide dead-export, any-box, and
+speculative-rollback scripts resolve the space-containing worktree as an
+encoded `%20` path; the JSR package budget has no local `dist` artifact; and
+the godfile check reports 44 current-main regressions outside this slice.
+These are recorded gate/environment residuals, not B3 acceptance evidence.
