@@ -4622,3 +4622,40 @@ is verified on main. Do not amend, reopen or push the merged PR's branch.
 Exclusive ownership is these two files and this issue record. Preserve active
 R5 initializer transactions, R8 body-handoff work and all other agents' changes.
 R2 and the full IR retirement epic remain open after this narrow repair.
+
+## Implementation Results — 2026-09-05 — R2-B1 missing brand guard repair
+
+**Status:** in-progress; the callable-boundary repair is complete on this
+forward branch, while the broader R2 work and the IR migration epic remain
+open.
+
+**Baseline:** current main plus the signed follow-up plan is
+`81e0d5d0e19f97466179fe14c603c70d4a44afeb`. The unchanged source was tested
+with the reviewed 13-test contract file in the worktree-local `.tmp` probe:
+8 controls passed and 5 controls failed. The five failures are the expected
+missing-guard negatives: nested `i32.boolean`, nested `i32.symbol`, nested
+`i64.bigint=false`, nested `i64.bigint=true` after candidate issuance, and
+nested `f64.undefSentinel` after certification. Each incorrectly certified or
+remained current while retaining the same outer physical signature and
+provider evidence; the other eight previously landed controls passed.
+
+**Repair:** restored only `semanticValTypeBrandKey` and its
+`valTypeBrands` contribution to the existing recursive `irTypeKey` receipt in
+`src/ir/prepared-callable-boundary.ts`, plus the five omitted mutation controls
+in `tests/issue-3521-prepared-callable-boundary.test.ts`. The fingerprint
+preserves absent/false/true states and leaves global `irTypeEquals` unchanged.
+The repaired contract suite is **13/13 passing**.
+
+**Validation:** the R2 withdrawal, scoped sealing, prepared dependency, and
+outside-caller controls are **73/73 passing**. Typecheck, IR layering, IR
+dialect, IR kind-neutrality, formatting, both hybrid and strict IR-only
+readiness checks, and the fallback ratchet pass. Both IR-only policies report
+5/5 entries, 41 terminal units, 38 IR-emitted units, 0 unsupported, 0
+invariants, 3 non-executable units, and 0 legacy body emissions in the GC and
+standalone lanes. No new residual was observed in these focused controls; the
+broader receipt-census residual recorded in the preceding R2 results remains
+outside this two-file repair.
+
+The signed implementation commit and issue-record update are published on the
+forward repair branch; the PR and exact final head are reported with the
+landing evidence. Full merge-group Test262 validation remains required.
