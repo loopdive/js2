@@ -5491,10 +5491,13 @@ Required checks pass: TypeScript 7 typecheck, IR fallback, hybrid and
 IR-only readiness (each 5/5 entries, 41 units, 38 emitted, 0 unsupported,
 0 invariants, 0 legacy bodies), dialect, kind-neutrality, layering,
 coercion, oracle ratchet, LOC/function budgets, targeted Biome/Prettier, and
-`git diff --check`. The candidate emit snapshot enumerates **15** `.ts`
-files across four targets (**60** records: 36 successful compiles, 24
-expected CEs, 0 throws). No pre-edit emit baseline was present in the
-inherited `.tmp` directory, so byte-identity drift could not be compared.
-Repository-wide lint remains an inherited failure (1,824 diagnostics), and
-dead-export checking still stops on its existing space-encoded path
-(`.../Volumes/Archiv%20Mini/...`).
+`git diff --check`. For the required A/B emit proof, only the W1-D-owned
+source/test files were copied aside and restored to base
+`a53b1bd17338c01f4bffe2df6b3463d216990a6b`; the base snapshot enumerates
+**15** `.ts` files across four targets (**60** records: 36 successful
+compiles, 24 expected CEs, 0 throws), and the restored candidate check is
+**IDENTICAL for all 60** records. The base file-copy lint run reports the
+same repository diagnostic cap (**1,824** diagnostics across 5,229 files),
+and the W1-B standalone failure reproduces at base with the same exnref
+opcode error. Dead-export checking also reproduces its existing
+space-encoded path failure (`.../Volumes/Archiv%20Mini/...`).
