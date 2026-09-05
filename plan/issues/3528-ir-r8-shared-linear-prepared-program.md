@@ -721,6 +721,12 @@ also remained green. Direct post-merge ratchets remained green with the same
 `check-ir-only` lane, and zero unsupported/invariant/legacy bodies; fallback
 counts stayed unchanged with deferred `string-builder-candidate` at 2.
 
+The branch was then advanced by the ordinary signed merge
+`1b09760a21473e1f1246a50be51cef2f59f2c1cf` of upstream
+`39e4a13b94273dc9074e5b45e9a4cec661605ef0` (PR #5613, no owned-file overlap);
+the final-head focused rerun remained 2 files/20 tests green, with typecheck,
+budgets, lint, formatting and `git diff --check` also green.
+
 The frontmatter contains one scoped `loc-budget-allow` for
 `src/ir/backend/linear-integration.ts`, which the ratchet measured as
 `1936 → 2034 (+98)` for this plan's explicitly owned production capture and
