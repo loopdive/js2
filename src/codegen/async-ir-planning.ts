@@ -551,6 +551,8 @@ export function preparedIrAsyncSourceShape(
 export function preparedIrAsyncSourceCanSuspend(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
   const shape = preparedIrAsyncSourceShape(ctx, fn);
   const linearPlan = shape?.kind === "linear" ? analyzeAsyncBody(ctx, fn) : undefined;
+  const linearCalleesPrepared =
+    shape?.kind !== "linear" || linearAwaitCalleesArePrepared(ctx, shape.awaitedExpressions);
   const linearHasSupportedAwaitTypes =
     shape?.kind !== "linear" ||
     shape.awaitSites.every(
@@ -565,6 +567,7 @@ export function preparedIrAsyncSourceCanSuspend(ctx: CodegenContext, fn: ts.Func
     );
   return (
     shape !== null &&
+    linearCalleesPrepared &&
     linearHasSupportedAwaitTypes &&
     linearHasRealSuspension &&
     (shape.kind === "promise-all-continuation" ||
@@ -573,6 +576,17 @@ export function preparedIrAsyncSourceCanSuspend(ctx: CodegenContext, fn: ts.Func
       shape.kind === "linear" ||
       asyncEngineWouldActivate(ctx, fn))
   );
+}
+
+/** A linear owner may call only async declarations that the same producer can prepare. */
+function linearAwaitCalleesArePrepared(ctx: CodegenContext, expressions: readonly ts.Expression[]): boolean {
+  for (const expression of expressions) {
+    if (!ts.isCallExpression(expression)) continue;
+    const callee = sourceFunctionForCall(ctx, expression);
+    if (!callee || !callee.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) continue;
+    if (!preparedIrAsyncSourceCanSuspend(ctx, callee)) return false;
+  }
+  return true;
 }
 
 const promiseDelayResolverByContext = new WeakMap<CodegenContext, IrPromiseDelayResolver>();
