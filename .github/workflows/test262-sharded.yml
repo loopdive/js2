@@ -716,6 +716,85 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  temporal-provider:
+    name: build compiled Temporal provider (#5353)
+    needs: [changes, mg-artifact-probe]
+    # Same arms as `runtime-eval-provider` directly above, for the same reason:
+    # a host-only merge_group still needs this job to SUCCEED so the shard
+    # matrix is not cascade-skipped through `needs`.
+    if: |
+      always() &&
+      (
+        (github.event_name == 'merge_group' && needs.changes.outputs.run_shards == 'true') ||
+        ((github.event_name == 'push' && github.actor != 'github-actions[bot]') && needs.mg-artifact-probe.outputs.hit != 'true') ||
+        github.event_name == 'workflow_dispatch'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
+    steps:
+      # Every expensive step is gated on the HOST lane: the provider is
+      # `--target gc` with the JS host adapter (`src/temporal-provider.ts`),
+      # standalone shards never link it, and a standalone-only merge_group
+      # should not pay ~1 min for an artifact nobody downloads. The no-op job
+      # still reports success so `needs` stays satisfied.
+      - name: Checkout
+        if: needs.changes.outputs.run_host != 'false'
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Setup Node and pnpm (cached)
+        if: needs.changes.outputs.run_host != 'false'
+        uses: ./.github/actions/setup-node-pnpm
+
+      - name: Install dependencies
+        if: needs.changes.outputs.run_host != 'false'
+        run: pnpm install --frozen-lockfile
+
+      # The provider binary is content-addressed on the POLYFILL source, but the
+      # compiler that PRODUCED it is not part of that key (#5227) — a cache hit
+      # can serve a binary built by a different compiler. So the Actions cache
+      # key carries `src/**` and the pinned polyfill acquisition; on any
+      # compiler change it misses and the ~42 s build runs again. Cross-run
+      # reuse is therefore limited to re-runs of the same tree, which is exactly
+      # when it is safe.
+      - name: Restore Temporal provider cache
+        if: needs.changes.outputs.run_host != 'false'
+        uses: actions/cache@v4
+        with:
+          path: .test262-cache/temporal
+          key: temporal-provider-v1-${{ hashFiles('src/**/*.ts', 'tests/dogfood/temporal-polyfill-pin.json', 'tests/dogfood/setup-temporal-polyfill.mjs') }}
+
+      - name: Build compiler bundles
+        if: needs.changes.outputs.run_host != 'false'
+        run: |
+          pnpm run build:compiler-bundle
+          pnpm run build:runtime-bundle
+
+      # HARD failure on purpose. A shard that silently ran unlinked would post
+      # ~6,600 Temporal rows as regressions against a baseline measured WITH the
+      # provider — a loud but thoroughly misleading signal that costs a
+      # merge-queue cycle to diagnose. One failed step naming its own cause is
+      # cheaper than that.
+      - name: Build and stamp the provider
+        if: needs.changes.outputs.run_host != 'false'
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: node scripts/prewarm-temporal-provider.mjs
+
+      - name: Upload Temporal provider
+        if: needs.changes.outputs.run_host != 'false'
+        uses: actions/upload-artifact@v6
+        with:
+          name: temporal-provider-${{ github.run_id }}
+          path: .test262-cache/temporal
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
   test262-shard:
     # Heavy 57-shard test262 (#2519) fires ONLY for baseline/manual contexts
     # — NOT on every PR:
@@ -740,7 +819,7 @@ jobs:
     # scripts/gen-test262-mg-matrix.mjs. This job keeps
     # its ORIGINAL 57-shard x 2-target matrix, UNCHANGED, for push (baseline
     # update) and workflow_dispatch (manual reruns).
-    needs: [changes, mg-artifact-probe, runtime-eval-provider]
+    needs: [changes, mg-artifact-probe, runtime-eval-provider, temporal-provider]
     # #3448 — the push arm is now AND-ed with a MISS on the merge_group
     # baseline-artifact probe: on a HIT the merge_group already produced the
     # merged JSONLs for this exact SHA, so this 114-job matrix is SKIPPED and
@@ -904,6 +983,13 @@ jobs:
       # Applied in runTest262Chunk BEFORE source read/compile, so out-of-scope
       # tests cost nothing. Only ever non-empty on pull_request events.
       TEST262_PATH_FILTER: ${{ needs.changes.outputs.test262_scope }}
+      # (#5353) The compile-once `Temporal` provider, pre-warmed by the
+      # `temporal-provider` job and downloaded above. The worker links it only
+      # when this directory carries a stamp whose key matches the provider it
+      # would build — a cold build is ~42 s against a 30 s fork kill, so an
+      # absent/mismatched stamp means the rows run unlinked (announced on
+      # stderr), never a per-row timeout. Standalone cells never link it.
+      JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
 
     steps:
       - name: Checkout
@@ -933,6 +1019,13 @@ jobs:
           pnpm run build:compiler-bundle
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+
+      - name: Download compiled Temporal provider (#5353)
+        if: matrix.target.test262_target != 'standalone'
+        uses: actions/download-artifact@v7
+        with:
+          name: temporal-provider-${{ github.run_id }}
+          path: .test262-cache/temporal
 
       - name: Download selected runtime-eval provider (#2928/#4242)
         if: matrix.target.test262_target == 'standalone'
@@ -1052,7 +1145,7 @@ jobs:
     # pure function of (chunkIndex, totalChunks), so this is behaviorally
     # equivalent to the static tests/test262-chunkN.test.ts files, just
     # parameterized by env vars instead of baked into a filename.
-    needs: [changes, runtime-eval-provider]
+    needs: [changes, runtime-eval-provider, temporal-provider]
     # `runtime-eval-provider` runs under `always()` because its own
     # `mg-artifact-probe` ancestor is intentionally skipped on merge_group.
     # Without an explicit `always()` here, GitHub propagates that skipped
@@ -1064,6 +1157,7 @@ jobs:
       github.event_name == 'merge_group' &&
       needs.changes.result == 'success' &&
       needs.runtime-eval-provider.result == 'success' &&
+      needs.temporal-provider.result == 'success' &&
       needs.changes.outputs.run_shards == 'true'
     name: test262 ${{ matrix.target_name }} shard ${{ matrix.chunk_label }}/${{ matrix.chunk_total }}
     runs-on: ubuntu-latest
@@ -1121,6 +1215,13 @@ jobs:
       # #1954 — always empty on merge_group (scope directives are
       # pull_request-only), kept for symmetry with `test262-shard`.
       TEST262_PATH_FILTER: ${{ needs.changes.outputs.test262_scope }}
+      # (#5353) The compile-once `Temporal` provider, pre-warmed by the
+      # `temporal-provider` job and downloaded above. The worker links it only
+      # when this directory carries a stamp whose key matches the provider it
+      # would build — a cold build is ~42 s against a 30 s fork kill, so an
+      # absent/mismatched stamp means the rows run unlinked (announced on
+      # stderr), never a per-row timeout. Standalone cells never link it.
+      JS2WASM_TEMPORAL_CACHE: .test262-cache/temporal
 
     steps:
       - name: Checkout
@@ -1143,6 +1244,13 @@ jobs:
           pnpm run build:compiler-bundle
           ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+
+      - name: Download compiled Temporal provider (#5353)
+        if: matrix.test262_target != 'standalone'
+        uses: actions/download-artifact@v7
+        with:
+          name: temporal-provider-${{ github.run_id }}
+          path: .test262-cache/temporal
 
       - name: Download selected runtime-eval provider (#2928/#4242)
         if: matrix.test262_target == 'standalone'
