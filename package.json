@@ -116,6 +116,8 @@
     "check:ir-kind-neutrality": "node scripts/check-ir-kind-neutrality.mjs",
     "check:jstag-seam": "node scripts/check-jstag-seam.mjs",
     "check:ir-layering": "node scripts/check-ir-layering.mjs",
+    "check:edition-ratchet": "npx tsx scripts/test262-edition-ratchet.ts",
+    "check:edition-ratchet:update": "npx tsx scripts/test262-edition-ratchet.ts --update",
     "check:ir-fallbacks": "npx tsx scripts/check-ir-fallbacks.ts",
     "check:host-import-policy": "node --import tsx scripts/check-host-import-policy.ts",
     "check:ir-only": "npx tsx scripts/check-ir-only.ts",
