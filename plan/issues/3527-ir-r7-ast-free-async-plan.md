@@ -968,3 +968,7 @@ speculative-rollback scripts resolve the space-containing worktree as an
 encoded `%20` path; the JSR package budget has no local `dist` artifact; and
 the godfile check reports 44 current-main regressions outside this slice.
 These are recorded gate/environment residuals, not B3 acceptance evidence.
+
+The scoped B3 source, tests, and measured record are committed in
+`7c60d5c5873d0b164f1aa99b85b2995897fe8233` on top of the signed current-main
+merge above.
