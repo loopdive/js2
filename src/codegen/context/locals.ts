@@ -87,6 +87,15 @@ export interface LocalsSnapshot {
    * N), found ref.as_non_null of type (ref extern)`).
    */
   readonly nestedFnClosureMemoEntries: ReadonlyArray<readonly [string, number]> | null;
+  /**
+   * Exact `liftedCaptureBoxes` entries at snapshot time (`null` when the map was
+   * absent) — the fourth member of the family above, and for the identical
+   * reason: the entry names a LOCAL SLOT holding a capture's canonical ref cell.
+   * A speculative compile that minted that cell at a forwarding call site and
+   * then rolled back would otherwise leave the record pointing at a truncated
+   * slot, which a later alloc re-uses at an unrelated type.
+   */
+  readonly liftedCaptureBoxEntries: ReadonlyArray<readonly [string, number]> | null;
   /** Stable direct-eval activation cells must roll back with their locals. */
   readonly directEvalActivationEntries: ReadonlyArray<readonly [string, number]> | null;
   /** Hidden direct-eval state-pool local allocated by a speculative route. */
@@ -103,6 +112,7 @@ export function snapshotLocals(fctx: FunctionContext): LocalsSnapshot {
     tdzBoxEntries: fctx.boxedTdzFlags ? Array.from(fctx.boxedTdzFlags.entries()) : null,
     tdzFlagEntries: fctx.tdzFlagLocals ? Array.from(fctx.tdzFlagLocals.entries()) : null,
     nestedFnClosureMemoEntries: fctx.nestedFnClosureMemos ? Array.from(fctx.nestedFnClosureMemos.entries()) : null,
+    liftedCaptureBoxEntries: fctx.liftedCaptureBoxes ? Array.from(fctx.liftedCaptureBoxes.entries()) : null,
     directEvalActivationEntries: fctx.directEvalActivationBindings
       ? Array.from(fctx.directEvalActivationBindings.entries())
       : null,
@@ -186,6 +196,17 @@ export function restoreLocals(fctx: FunctionContext, snap: LocalsSnapshot): void
       if (!fctx.nestedFnClosureMemos) fctx.nestedFnClosureMemos = new Map();
       fctx.nestedFnClosureMemos.clear();
       for (const [name, idx] of snap.nestedFnClosureMemoEntries) fctx.nestedFnClosureMemos.set(name, idx);
+    }
+  }
+  // Same reason, same family: a capture's canonical cell slot must roll back
+  // with the locals vector that holds it.
+  if (fctx.liftedCaptureBoxes || snap.liftedCaptureBoxEntries) {
+    if (snap.liftedCaptureBoxEntries === null) {
+      fctx.liftedCaptureBoxes = undefined;
+    } else {
+      if (!fctx.liftedCaptureBoxes) fctx.liftedCaptureBoxes = new Map();
+      fctx.liftedCaptureBoxes.clear();
+      for (const [name, idx] of snap.liftedCaptureBoxEntries) fctx.liftedCaptureBoxes.set(name, idx);
     }
   }
   if (snap.directEvalActivationEntries === null) {

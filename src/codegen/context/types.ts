@@ -752,6 +752,13 @@ export interface FunctionContext {
   /** Stable frame slots for leading captures, retained when a body-local shadows the same name. */
   liftedCaptureSlots?: Map<string, number>;
   /**
+   * (#5323) This frame's CANONICAL `__boxed_<name>` cell for one of its own
+   * leading capture params, recorded only where the cell was minted from
+   * {@link liftedCaptureSlots}`.get(name)` itself — see `recordLiftedCaptureBox`
+   * / `liftedCaptureBoxSlot` in closures/capture-source-slot.ts.
+   */
+  liftedCaptureBoxes?: Map<string, number>;
+  /**
    * Source-visible bindings owned by a function whose lexical descendants may
    * perform direct eval. These functions alone promote bindings to the shared
    * boxed-cell carrier; functions without this set remain byte-identical.
