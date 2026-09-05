@@ -49,6 +49,7 @@ files:
   - tests/issue-3525-multi-prepared-module-init.test.ts
   - tests/issue-3525-ir-whole-program-multi-source.test.ts
 loc-budget-allow:
+  - src/codegen/context/types.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
   - src/codegen/multi-prepared-program.ts
