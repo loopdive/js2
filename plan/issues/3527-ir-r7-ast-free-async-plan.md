@@ -681,3 +681,209 @@ IR 1 with native observer parity. The exact upstream merge head still needs to
 be integrated before the final R7 publication review; this repair does not
 close R7 or broaden its remaining loop, handler, container, generator,
 `for await`, WASI, or settled owner limits.
+
+## Implementation Plan — 2026-09-05 — B3 settled non-thenable owners
+
+**Next bounded cutover, conditional on final B2 author handoff.** Canonical
+claim `3527:r7-b3-settled-nonthenable-owners` is held by
+`ttraenkler/luna-ir-r7-b3-20260905` for branch
+`codex/3527-b3-luna-20260905`. Root prepared its isolated worktree at verified
+published B2 repair head `76fb2f31258ec90aef96aa81fe287e285a6a7221`.
+The preceding B2 implementation and repair records are preserved from that
+exact head. The complete ten-open-PR file census and canonical claims read at
+`a7a7a28affed7db816f1a645d4e4fc8ad21a207d` found no duplicate B3 slice.
+Astra plans; Luna Max implements after root records the author's completed
+current-main integration and releases the final source handoff. Worktree
+creation alone is not implementation dispatch or proof that B2 has merged.
+
+### B2 repair prerequisite and source cause
+
+Root ran five isolated GC/JS-host rows with `experimentalIR:true`,
+`nativeStrings:false`, `trackIrOutcomes:true`: two fully literal one/two-await
+sources at each of B2 and planning head
+`a5fbaa544046f854daba8881d80c72bc56b87bf9` (source equals main `470ceba`), plus
+one B2 `Promise.resolve(parameter expression)` positive control. Main's two
+literal sources compiled/validated and returned raw numbers `43`/`85` (2/2).
+B2's same two sources failed compilation (0/2), reporting
+`IR async runtime attachment for test has no valid async plan owner`. Its
+positive control compiled and returned a real Promise fulfilled with `6`, with
+native observer ordering. Artifacts: root scratch `r7-settled-*.jsonl` under
+`.tmp/ir-completion-20260905` and the corresponding probe script. These results
+establish a B2 regression for those two controls, not a complete async census.
+
+The original B2 author owns its narrow repair. Do not repair it again in B3 or
+claim the old C-1 population remained unchanged before the repaired head passes.
+Root subsequently verified three repair controls (3/3) on local candidate HEAD
+`96defcfe84d9753e5352e20b60a0c86236f5dda0` plus final comment edits, with
+`async-ir-planning.ts` SHA-256
+`d84b1bc8252361afcdd9c5ac3cd67750f0950f220fa954d5e45875296b124ead`
+stable across the runs. The literal sources again compiled/validated and returned
+raw `43`/`85`; the provider control retained direct `0` / IR `1`, a real Promise
+fulfilled with `6`, and native observer ordering. Outputs are
+`r7-settled-{one,two,provider}-fix.jsonl`. This verifies the narrow regression
+repair locally. The original author subsequently reports 7/7 runtime and 4/4
+pure-preparation controls plus normal gates passing. Root's complete PR file
+census independently confirms published head `76fb2f3` with the eleven intended
+files, including the repair and its record. Current-main integration and the
+final B2 author handoff remain prerequisites for B3 implementation.
+The source discrepancy is exact: `preparedIrAsyncAwaitSite`
+(`async-ir-planning.ts:759`) checks a linear source shape/site, while
+`preparedIrAsyncSourceCanSuspend:551` additionally requires a non-static await.
+Consequently retention can run for an owner absent from
+`collectPreparedIrAsyncOwners:970` and without an `IrAsyncPlan`. B3 must inherit
+the repaired ownership guard, not remove it to gain coverage.
+
+Other decisions that must move together:
+
+- `prepareAsyncCallableAbi:869`, called by `declarations.ts:1856/2995`, projects
+  `externref` only for the prepared source proof. Otherwise the declaration
+  retains the unwrapped fulfillment ABI. `isAsyncIrReady`
+  (`ir/async-selection.ts:26`) still admits historical C-1 owners separately.
+- `preparedIrAsyncSourceShape:511` prioritizes the old one-await identity source
+  shape. A settled `return await ...` must receive exact retained-await evidence
+  even when that source-shape priority would otherwise select identity.
+- `selectR3PreparedSuspendingAsyncFunctions`
+  (`ir-prepared-free-functions.ts:1203`) joins exact owners, allocated Promise
+  signatures and outgoing prepared dependencies. It does not by itself prove
+  every incoming source consumer compatible with a changed Promise ABI.
+- `prepareSuspendingAsyncLowering` (`ir/integration.ts:476`) splits only the
+  recorded owner set. `prepareSuspendingIrFunction` (`ir/async-prepare.ts:679`)
+  already tries the one-await optimization before B2's generic splitter.
+  `lowerPreparedIrAsyncFunction` (`codegen/ir-async-frame.ts:365`) verifies the
+  allocated `externref` result and drives the existing frame engine.
+
+### Scope and ordered implementation
+
+Own top-level ordinary async free functions on the existing JS-host WasmGC
+provider profile, with B2's flat source/control proof, existing supported
+parameter carriers, numeric awaited values and numeric/void fulfillment. Every
+await operand must have exact non-thenable evidence after transparent wrappers
+are removed. This is a semantic proof, independent of spelling, constants,
+source-file identity or an await-count limit. A function with no await needs a
+separate entry/settlement plan and remains outside this increment. Keep loops,
+handlers, nested executables, methods, generators, `for await`, standalone/WASI
+and new carrier families on their existing policies.
+
+1. **Prepare one exact owner proof before ABI projection.** Extend the existing
+   async source planning with an explicit settled-owner record containing source/
+   unit/declaration identity, ordered await sites, their actual operand and
+   delivery types, fulfillment signature, and existing number-box/unbox and
+   async-runtime capability requirements. Reuse `preparedIrAsyncLinearSource`
+   and the ordinary selector's body/signature proof. Unknown evidence is not
+   non-thenability; a cast of a Promise/unknown value to `number` is not proof.
+   Do not use the old static classifier's scheduling-elision verdict as the
+   authority. Parameters, helpers and retained calls must use their existing
+   supported ABI, with the existing exact function-value exclusions.
+2. **Close the callable boundary before changing it.** Join incoming and outgoing
+   source call sites by UnitId and require the selected declaration's canonical
+   Promise result to agree with each prepared/direct call contract. Preserve
+   numeric fulfillment separately from the physical callable `externref` result.
+   External JS callers receive the real Promise; old source raw-value/await
+   consumers cannot be assumed compatible. If an existing caller contract cannot
+   express this distinction, leave the affected component unadmitted before ABI
+   projection and identify the required caller-contract prerequisite. Do not
+   broaden the R2 transaction or infer compatibility from a bare function name.
+3. **Use that same proof at every handoff.** Declaration ABI projection,
+   selection, the repaired `preparedAsyncAwaitSite` guard, collected owner IDs and
+   final R3 routing must agree. Unselected owners receive neither the new ABI nor
+   retained awaits. Once a Promise ABI has been promised, losing its prepared
+   owner must be an Invariant or a proven rollback before any consumer/ABI
+   publication; falling back to the old C-1/direct body is invalid because its
+   activation predicate still declines settled owners. Do not globally enable
+   `asyncFnNeedsHostDrive` or change legacy activation for unrelated functions.
+4. **Retain and split the actual operands.** For these non-thenable sites, evaluate
+   the source operand once, use B2's existing carrier conversion and emit one
+   `await` per site. Reconcile the exact ordered source sites with final IR awaits
+   before splitting. Reuse B2 liveness, slot reaching definitions, derived-unit
+   provenance and `canonicalPromiseAbi`; do not add a second state builder.
+   Preserve `prepareSingleAwaitIrFunction`'s proven carrier optimization before
+   the generic splitter. Optimizing carrier conversions must retain the await
+   edge and its job boundary.
+5. **Prepare providers, seal, then emit.** Use the existing runtime manifest and
+   `materializePreparedAsyncHostAdapters` to reserve number boundaries, Promise
+   resolve/react/capability/settlement and void-undefined support before component
+   seal. Validate final logical/physical signatures, helpers, state/spill/await
+   census and exact runtime receipts before the source slot is published once.
+   The exported Wasm function itself returns a real Promise. A call-site
+   `Promise.resolve` wrapper cannot be used to hide a raw result. Unknown support
+   is a pre-ownership refusal; broken promised evidence is an Invariant with no
+   partial body publication or direct retry.
+
+**Promise.resolve is an explicit dependent proof.**
+`staticPromiseResolveSettledExpr` (`ir/async-static.ts`) recognizes textual
+`Promise.resolve` chains without binding or mutation evidence. Both the C-1
+selector and B2's prepared-await arm reuse it (`select.ts:9319`,
+`from-ast.ts:4058/4073`). A nonempty declaration-file check alone does not prove
+an unmodified builtin property or justify erasing a callable evaluation.
+Promise-valued operands therefore do not qualify for B3's non-thenable proof.
+Their next increment must either evaluate the original call exactly once with
+its resolved callable/receiver/effects and Promise carrier, or supply a sound
+immutable-builtin substitution proof covering aliases, shadowing, mutation,
+getters and nested calls. No new name-only substitution is permitted here.
+The current host async normalization itself uses `Promise_resolve`
+(`runtime-host-capabilities.ts:589`, `runtime.ts:16250`); distinguish that
+intrinsic-await obligation from the source-visible static call when planning the
+follow-up. Do not call this separate existing hazard a B2 regression without a
+controlled baseline. Existing B2 Promise-valued owners remain on their current
+policy; this phase does not certify or broaden them.
+
+### Finite validation and ownership
+
+Use the repaired B2 head as the measured base and record its exact SHA. Add
+`tests/issue-3527-settled-owner-runtime.test.ts` and focused owner-proof negatives:
+
+- Real exported functions with one and multiple numeric/non-thenable awaits,
+  a parameter/computed value live across both, mutable-local updates, unused
+  await results, `return await`, and a void tail. Vary names, constants and
+  helper order. Check raw export return is a native Promise, expected fulfillment,
+  exact await/state/liveness evidence and direct `0` / IR `1` per admitted owner.
+- Native-JS controls with independent `Promise.resolve().then(...)` observers
+  and observable effects before the first await, between awaits and after the
+  last. Compare the full event sequence, including what happens before the call
+  returns. Awaiting a raw number in the test harness is not Promise-ABI proof.
+- A supported effectful call that throws before the first await and after a
+  resume must return a rejected Promise, never throw out of the exported call,
+  and must stop subsequent effects. Use controlled host imports/helpers with
+  matching native controls. Retain B2's controlled first/second awaited rejection
+  tests as adjacent engine coverage; those Promise-valued inputs are not new B3
+  admission evidence. A raw cast consumer is not a compatibility oracle.
+- At least one closed prepared caller of a new owner, plus an incompatible
+  historical raw-value caller and a same-spelling foreign binding. Verify exact
+  Promise call ABI or refusal before projection, never a wrong executable.
+- Delete/substitute the owner proof, a source await, spill, helper provenance or
+  runtime/ABI receipt; withdraw the owner after Promise projection; poison the
+  source direct/C-1 body and the unprepared await arm for admitted owners.
+  Corruption must fail before publication. Unselected and kill-switch controls
+  keep their existing route and ABI; empty/no-await input cannot satisfy the
+  positive denominator. Preserve the existing one-await optimization checks.
+- Shadowed/aliased/mutated `Promise.resolve` and cast thenables must not gain the
+  new settled-owner proof. Compare main/repaired-B2 controls where practical;
+  report any existing failure separately rather than changing a baseline.
+
+One Luna Max worker owns only the relevant owner-proof/ABI/await-site functions
+in `codegen/async-ir-planning.ts`, the source-proof helper in
+`codegen/async-linear-planning.ts`, the exact proof fields in
+`ir/async-from-ast.ts` and their prepared-await consumption in `ir/from-ast.ts`,
+plus focused tests and this issue record. Existing declaration call sites,
+selector, splitters, runtime providers and frame engine should consume the
+shared proof without redesign. If needed, a narrow change to the R3-specific
+functions `r3SuspendingAsyncSignatureMatchesAllocatedSlot` /
+`selectR3PreparedSuspendingAsyncFunctions` requires the lead to confirm the
+R2 worker's file ownership is clear. No changes to R2 sealing/publication,
+P2A initializer transactions, R8, broad `codegen/index.ts`/`ir/integration.ts`
+lifecycle, or the legacy activation engine are authorized by this slice.
+
+Run `pnpm typecheck`; the new suites; both B2 suites; the adjacent
+`tests/ir/issue-1373b-async-plan.test.ts`; the existing #4106 one-await,
+#4104 runtime-consumer, #4124 final-async and #2906 multi-await suites; and
+standalone/native-async controls as no-regression evidence. Run
+`node --import tsx scripts/check-ir-only.ts --json` in both hybrid and IR-only
+policies, `node --import tsx scripts/check-ir-fallbacks.ts`, plus the repository's
+applicable async-equivalence, layering/dialect/format/size gates. Record exact
+baseline/candidate denominators and existing reds; the earlier B2 checkpoint is
+not a substitute for fresh validation. No new pass count is asserted here.
+
+This removes C-1 only for owners carrying the new complete proof. Promise-valued
+settled operands, no-await async functions, remaining containers/carriers and
+caller-contract gaps remain explicit follow-ups. R7 and full #3518 retirement
+acceptance remain open.
