@@ -2535,9 +2535,17 @@ function recordObservedIrOutcomes(
   if (ctx.irOutcomes === undefined) return;
   const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
   const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
+  const preparedModuleInitUnitIds = new Set<IrUnitId>([
+    ...(ctx.irProgramPreparedModuleInitUnitId ? [ctx.irProgramPreparedModuleInitUnitId] : []),
+    ...(ctx.irProgramPreparedModuleInitUnitIds ?? []),
+  ]);
   const existingOutcomes = preparedCallableUnitIds
-    ? ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId))
-    : ctx.irOutcomes;
+    ? ctx.irOutcomes.filter(
+        (outcome) =>
+          (!outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId)) &&
+          (!outcome.unitId || !preparedModuleInitUnitIds.has(outcome.unitId)),
+      )
+    : ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedModuleInitUnitIds.has(outcome.unitId));
   const directFunctionBodyReceiptAudit = ctx.irBodyRouteAuditSession?.directFunctionBodyReceiptAudit(sourceFile);
   // (#5263) Units the prepared-callable publication path already owns. Reconcile
   // cannot see that preparation, so it reached `late-preparation-unsupported`
@@ -2548,6 +2556,7 @@ function recordObservedIrOutcomes(
   const ownedElsewhereUnitIds = new Set<IrUnitId>([
     ...(ctx.irProgramCallablePreparedUnitIds ?? []),
     ...(ctx.irProgramPreparedModuleInitUnitId ? [ctx.irProgramPreparedModuleInitUnitId] : []),
+    ...(ctx.irProgramPreparedModuleInitUnitIds ?? []),
   ]);
   const reconciled = reconcileIrOverlayOutcomes({
     sourceFile,
@@ -2576,7 +2585,8 @@ function recordObservedIrOutcomes(
       .filter(
         (outcome) =>
           (!outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)) &&
-          outcome.unitId !== preparedModuleInitUnitId,
+          outcome.unitId !== preparedModuleInitUnitId &&
+          (!outcome.unitId || !preparedModuleInitUnitIds.has(outcome.unitId)),
       )
       .map((outcome) =>
         moduleBindingRefusals && outcome.unitKind === "module-init" ? { ...outcome, moduleBindingRefusals } : outcome,
@@ -3954,10 +3964,11 @@ function compileMultiIrOverlaySource(
   safeSelection = removeMultiIrAttemptedCallableUnits(ctx, plan, safeSelection);
   // M2 owns the exact contributor's module-init body at the program level.
   // The ordinary per-source overlay must not rediscover or patch that unit.
+  const sourceModuleInitUnitId = plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
   if (
-    ctx.irProgramPreparedModuleInitUnitId !== undefined &&
-    plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile) ===
-      ctx.irProgramPreparedModuleInitUnitId
+    sourceModuleInitUnitId !== undefined &&
+    (ctx.irProgramPreparedModuleInitUnitId === sourceModuleInitUnitId ||
+      ctx.irProgramPreparedModuleInitUnitIds?.has(sourceModuleInitUnitId) === true)
   ) {
     safeSelection = { ...safeSelection, moduleInit: undefined };
   }
@@ -5040,6 +5051,11 @@ export interface GeneratedCodegenModule extends CodegenResult {
   irPostClaimErrors?: { kind: string; func: string; message: string }[];
   irCompiledFuncs?: readonly string[];
   programAbi?: PublishedProgramAbi;
+  /** Test-only evidence that aggregate initializer receipts were revoked. */
+  irPreparedModuleInitBatchAbortAudit?: {
+    readonly attempted: number;
+    readonly aborted: number;
+  };
   /** Internal M0 whole-program Prepared ownership evidence. */
   multiPreparedProgramAudit?: MultiPreparedProgramAudit;
 }
@@ -11568,6 +11584,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     irOutcomes: ctx.irOutcomes,
     irBodyRouteAudit: snapshotLegacyBodyAudit(ctx),
     programAbi: ctx.programAbiSession?.publication,
+    ...(ctx.irPreparedModuleInitBatchAbortAudit
+      ? { irPreparedModuleInitBatchAbortAudit: ctx.irPreparedModuleInitBatchAbortAudit }
+      : {}),
     multiPreparedProgramAudit: multiPreparedProgram?.audit,
   };
 }

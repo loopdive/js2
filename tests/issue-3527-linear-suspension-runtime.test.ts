@@ -335,7 +335,7 @@ describe("#3527 generic linear async runtime", () => {
     expect(irHarness.events).toEqual(nativeHarness.events);
   });
 
-  it("keeps fully settled literal awaits on the established route", async () => {
+  it("prepares fully settled literal awaits with the canonical Promise ABI", async () => {
     const result = await compile(STATIC_ONLY_SOURCE, {
       fileName: "issue-3527-linear-static-only.ts",
       target: "gc",
@@ -345,28 +345,32 @@ describe("#3527 generic linear async runtime", () => {
     });
     expectSuccessful(result);
 
-    // B2 requires the existing source analysis to report a potentially
-    // suspending await. A fully statically resolved chain must therefore not
-    // acquire synthetic B2 state helpers until the separately planned
-    // settled-await cutover.
-    expect(result.irCompiledFuncs ?? []).not.toContain("literalOne__ir_async_state_0");
-    expect(result.irCompiledFuncs ?? []).not.toContain("literalTwo__ir_async_state_0");
     const outcomes = new Map((result.irOutcomes ?? []).map((outcome) => [outcome.displayName, outcome]));
     expect(outcomes.get("literalOne")).toMatchObject({
       kind: "emitted",
-      r2Withdrawal: { stage: "admission", reason: "async-declaration" },
+      directBodyEmissions: 0,
+      irBodyEmissions: 1,
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
     });
     expect(outcomes.get("literalTwo")).toMatchObject({
       kind: "emitted",
-      r2Withdrawal: { stage: "admission", reason: "async-declaration" },
+      directBodyEmissions: 0,
+      irBodyEmissions: 1,
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
     });
 
     const imports = buildCompiledImports(result);
     const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
     imports.setInstance?.(instance);
-    const exports = instance.exports as unknown as Record<string, (seed: number) => number>;
-    expect(exports.literalOne(0)).toBe(43);
-    expect(exports.literalTwo(0)).toBe(85);
+    const exports = instance.exports as unknown as Record<string, (seed: number) => Promise<number>>;
+    const one = exports.literalOne(0);
+    const two = exports.literalTwo(0);
+    expect(one).toBeInstanceOf(Promise);
+    expect(two).toBeInstanceOf(Promise);
+    await expect(one).resolves.toBe(43);
+    await expect(two).resolves.toBe(85);
   });
 
   it("propagates a rejection from either suspension without executing later states", async () => {
