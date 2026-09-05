@@ -544,6 +544,26 @@ function targetReadsNewTarget(ctx: CodegenContext, target: ts.Expression): boole
  * without a word, leaving the instance on `%Object.prototype%`. A pristine
  * binding cannot be in that state, so the driver route is limited to one.
  *
+ * That rationale is MEASURED, not assumed (r2 step 4): with every clause that
+ * would refuse it disabled, `.tmp/p/d1_defineprop_slot.js` — an ordinary
+ * function target and `Object.defineProperty(NT, "prototype", { value: P })`
+ * — compiles and answers 1 where node answers 7, i.e. the instance lands on
+ * `%Object.prototype%` and neither `Object.getPrototypeOf(o) === P` nor
+ * `o.tag === 9` holds. The shape is refused twice over, since TypeScript also
+ * synthesises an expando declaration for that `defineProperty`, which the
+ * declaration-count check below rejects on its own.
+ *
+ * ## Mutation is not replacement (r2 step 4, measured)
+ * `NT.prototype.tag = 9`, `Object.assign(NT.prototype, …)` and
+ * `Object.defineProperty(NT.prototype, …)` MUTATE the object the slot already
+ * holds; the slot still holds the plain `$Object` the declaration installed,
+ * so the `ref.test` above still passes and all three answer node (7, 7, 7 —
+ * `.tmp/p/b2_driver_protomut.js`, `b7_object_assign_proto.js`,
+ * `c3_defineprop_on_proto.js`, each a `(#3371)` compile error on base). Only a
+ * write whose target is the SLOT — `NT.prototype = …`, `NT["prototype"] = …`,
+ * a computed `NT[k] = …`, or an `Object.*` call whose RECEIVER is the bare
+ * `NT` — replaces it.
+ *
  * ## Why the WRITE clauses stay keyed on the NAME (r2 step 3, measured)
  * The plan asked for the whole predicate to resolve through `ctx.oracle`.
  * Only the BINDING-COUNT clause can: the compiler's own model of a function's
@@ -587,8 +607,7 @@ function prototypeIsPristine(ctx: CodegenContext, newTarget: ts.Identifier): boo
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
       node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-      // Covers `NT = …`, `[NT] = …` and `NT.prototype = …` in one predicate.
-      mentions(node.left, name)
+      replacesSlot(node.left, name)
     ) {
       touched = true;
     } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
@@ -599,7 +618,13 @@ function prototypeIsPristine(ctx: CodegenContext, newTarget: ts.Identifier): boo
           method === "setPrototypeOf" ||
           method === "assign") &&
         node.arguments.length > 0 &&
-        mentions(node.arguments[0]!, name)
+        // The RECEIVER, not any mention. `Object.assign(NT, {prototype: P})`
+        // and `Object.defineProperty(NT, "prototype", …)` write the slot;
+        // `Object.assign(NT.prototype, …)` and
+        // `Object.defineProperty(NT.prototype, …)` mutate the object the slot
+        // already holds, which stays a plain `$Object` and still passes
+        // `__native_construct_N`'s `ref.test $Object`.
+        isNamed(node.arguments[0]!, name)
       ) {
         touched = true;
       }
@@ -608,6 +633,36 @@ function prototypeIsPristine(ctx: CodegenContext, newTarget: ts.Identifier): boo
   };
   visit(newTarget.getSourceFile());
   return !touched;
+}
+
+/** Is `node` the bare identifier `name`? */
+function isNamed(node: ts.Node, name: string): boolean {
+  return ts.isIdentifier(node) && node.text === name;
+}
+
+/**
+ * Does assigning to `left` REPLACE the `name` binding or its `prototype` slot?
+ *
+ * Replacement is `NT = …`, a destructuring target that binds `NT`,
+ * `NT.prototype = …`, `NT["prototype"] = …` and any computed `NT[k] = …` whose
+ * key is not a literal. MUTATION of the object the slot already holds
+ * (`NT.prototype.tag = 9`) is not replacement: the slot still holds the plain
+ * `$Object` the declaration installed, which is what the driver route needs.
+ */
+function replacesSlot(left: ts.Node, name: string): boolean {
+  if (ts.isParenthesizedExpression(left)) return replacesSlot(left.expression, name);
+  if (ts.isPropertyAccessExpression(left)) {
+    return isNamed(left.expression, name) && left.name.text === "prototype";
+  }
+  if (ts.isElementAccessExpression(left)) {
+    if (!isNamed(left.expression, name)) return false;
+    const key = left.argumentExpression;
+    // A non-literal key could be "prototype" at runtime; assume it is.
+    if (!ts.isStringLiteral(key) && !ts.isNoSubstitutionTemplateLiteral(key)) return true;
+    return key.text === "prototype";
+  }
+  // A bare identifier or a destructuring pattern: rebinding `NT` itself.
+  return mentions(left, name);
 }
 
 /**
