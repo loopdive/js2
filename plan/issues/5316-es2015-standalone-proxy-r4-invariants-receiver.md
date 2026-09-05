@@ -406,3 +406,117 @@ standalone`, host, wasi) — verify with a Proxy-free probe module. The
   given up), the control-corpus result, gate status, the worktree path and head
   sha, and every residual with its mechanism.
 
+
+## 2026-09-04 r4 implementation (Opus)
+
+**Delivered: step 1 only.** Steps 2 (`Reflect.set` receiver) and 3 (Proxy
+[[Construct]] NewTarget forwarding) are **given up** in this pass, with the
+mechanism named below — they are untouched, so their 25 rows are byte-for-byte
+the refusals the plan describes.
+
+Worktree `/home/user/js2/.claude/worktrees/wf_a9776683-b00-1`, branch
+`worktree-wf_a9776683-b00-1`. Base tree for every A/B: `.tmp/base`
+(`git archive origin/main`, main at `f9bf876899`), both trees provisioned with
+the same `node_modules`/`test262` links, compiler+runtime bundles and a
+tree-local quickjs eval adapter. **The quickjs adapter is keyed on the compiler
+bundle hash — it must be rebuilt after every source change**, or every `-realm`
+row fails "quickjs provider is not built" and hides both wins and regressions
+(cost this lane one full 36-row cycle).
+
+### Step 1 — §10.5 descriptor-model invariants
+
+New `src/codegen/object-runtime-proxy-invariants.ts`: seven validator natives,
+one per trap, `(target, key, …, trapResult) -> trapResult | throw`, called from
+the matching dispatch arm in `object-runtime-proxy.ts` immediately after the
+trap driver. The target's own descriptor comes from
+`__getOwnPropertyDescriptor`, whose `$Proxy` front-guard gives the
+proxy-of-proxy recursion §10.5 requires for free.
+
+Rows, `npx tsx scripts/run-test262-paths.mts --isolate .tmp/step1-rows.txt
+--standalone`, base tree vs lane, 2026-09-04/05:
+
+| | base | lane |
+| --- | ---: | ---: |
+| pass | 0 | **19** |
+| fail | 36 | 8 |
+| compile_error | 0 | 9 |
+
+Kept (19): the four `getOwnPropertyDescriptor/resultdesc-*` +
+`result-is-undefined-targetdesc-is-not-configurable` rows; six
+`defineProperty/targetdesc-*` rows; `deleteProperty/targetdesc-is-not-
+configurable`; `has/return-false-targetdesc-not-configurable`; both `get/*`
+rows; both `set/target-property-*` rows; all three `ownKeys/*` key-set rows.
+
+### The regression this lane found in its own work
+
+The first cut also implemented `IsExtensible(target)` — §10.5.7 step 9.b.ii and
+§10.5.10 step 15 — and flipped 21 rows. The control corpus caught it: two rows
+that **pass on `origin/main`** started throwing.
+
+- `built-ins/Proxy/deleteProperty/call-parameters.js`
+- `built-ins/Proxy/has/return-false-target-prop-exists-using-with.js`
+
+Both have an ordinary extensible object-literal target (`{attr: 1}`). Isolated
+by temporarily tagging each validator's TypeError with its own name: the `has`
+and `delete` validators were the ones firing, and removing only the
+extensibility clause made both rows pass again. Called on the proxy's `ptarget`
+from inside the dispatch, `__object_isExtensible` answers *non-extensible* for
+a target that never saw `preventExtensions` — a direct `Object.isExtensible` on
+the same shapes answers correctly (probed both, `.tmp/probe/ext2.ts`), so the
+discrepancy is specific to the dispatch-internal call and was not pinned down
+further here. **The clause is declined**, costing exactly two rows
+(`has/return-false-target-not-extensible.js`,
+`deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js`) and
+buying back both regressions. A missed throw is a residual; a wrong throw
+breaks a working program.
+
+### Control corpus
+
+Every ES2015 row under `built-ins/Proxy` + `built-ins/Reflect` (464 files),
+`--isolate --standalone`, base tree vs lane:
+
+| | base | lane |
+| --- | ---: | ---: |
+| pass | 312 | **349** |
+| fail | 115 | 93 |
+| compile_error | 37 | 22 |
+
+**Rows lost (base `pass` → lane non-pass): ZERO.** 37 rows gained. The three
+apparent losses in the FIRST lane control run
+(`preventExtensions/call-parameters.js`,
+`preventExtensions/return-true-target-is-not-extensible.js`, `Proxy/proxy.js`)
+were **compile timeouts under 4-lane load** — all three pass when re-run alone
+at `COMPILER_POOL_SIZE=1`. A second run was additionally poisoned by the
+worktree's `test262` symlink being replaced by an empty submodule stub
+mid-flight (223 `ENOENT` rows); restoring the symlink and re-running gave the
+table above. Watch for that: an `error`/`ENOENT` bucket is an infrastructure
+failure, not a measurement.
+
+### Order preservation — one deviation, measured
+
+A program that touches no MOP helper is **byte-identical** to base on host,
+standalone and wasi (`.tmp/probe/plain.ts`). A **Proxy-free** program that uses
+`Object.defineProperty`/`getOwnPropertyDescriptor`/`in`/
+`Reflect.deleteProperty` is byte-identical on **host** but grows on standalone
+(128,970 → 135,186 bytes, +4.8 %) and wasi (102,209 → 107,656, +5.3 %). Cause:
+those helpers already carry the `$Proxy` front-guard on `main`, so the proxy
+dispatch bodies were already reachable in such a module; the validators join an
+already-live set. Avoiding it would mean gating the whole proxy-dispatch
+subsystem on an actual `new Proxy` site — a pre-existing property of the
+design, not something this slice introduced, and out of scope here.
+
+### Residuals
+
+| rows | mechanism |
+| ---: | --- |
+| 15 | `Reflect.set` 4-arg — **step 2 not built.** The refusal at `call-namespace-static.ts` ~L1106 stands. The receiver-threaded §10.1.9.2 `OrdinarySet` is a new walk over own-descriptor / prototype / proxy-`set`-trap arms; building it on top of an attribute model that already mis-describes object-literal own properties (see the two regressions above) would have shipped the same false-positive family into every `Reflect.set`. |
+| 10 | Proxy [[Construct]] NewTarget — **step 3 not built.** The refusal at ~L1940 stands. The site rewrites `Reflect.construct(T, a, NT)` into a synthesized `new T(...)` AST node and compiles that; inserting a runtime `ref.test $Proxy` arm means evaluating the target once into a local before that rewrite, which double-evaluates the target expression on the non-proxy arm unless the whole site is restructured. |
+| 6 | `-realm` rows: cross-realm proxies from `$262.createRealm()` do not reach this runtime's dispatch; several also compile-time out at ~15 s even at `COMPILER_POOL_SIZE=1`. |
+| 3 | `getOwnPropertyDescriptor/{result-type-is-not-object-nor-undefined, result-is-undefined-target-is-not-extensible, resultdesc-is-not-configurable-targetdesc-is-configurable}` — the target is an object literal whose own property the standalone attribute model does not describe through the dispatch, so `target.[[GetOwnProperty]]` has nothing to reconcile against. Same root cause as the pre-existing `has/return-false-target-prop-exists.js` failure (verified identical on the base tree). |
+| 2 | `has/return-false-target-not-extensible.js`, `deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js` — the declined extensibility clause above. |
+| 1 | `defineProperty/null-handler.js` — a revoked proxy is not caught on the `__obj_define_from_desc` path. |
+| 2 | `deleteProperty/trap-is-null-target-is-proxy.js`, `defineProperty/trap-is-undefined-target-is-proxy.js` — string/array exotic own properties reached through a proxy chain. |
+
+Not claimed and not touched, per the lane protocol: the generator carrier
+(#2864), the promise/microtask carrier (#2867) and built-in method reflection
+(#2175).

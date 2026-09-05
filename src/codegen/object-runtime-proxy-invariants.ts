@@ -401,6 +401,23 @@ export function registerProxyInvariantValidators(
   );
 
   // ── §10.5.7 [[HasProperty]] step 9 ────────────────────────────────────────
+  //
+  // DECLINED: step 9.b.ii (`IsExtensible(target)` is false ⇒ throw). Measured
+  // 2026-09-05: adding it turned `has/return-false-target-prop-exists-using-
+  // with.js` — a row that PASSES on `origin/main` — into a TypeError, and the
+  // same clause in [[Delete]] did the same to `deleteProperty/
+  // call-parameters.js`. Both targets are ordinary extensible object literals
+  // (`{attr: 1}`), so the throw is a false positive: called on the proxy's
+  // `ptarget` from inside the dispatch, the standalone `__object_isExtensible`
+  // answers non-extensible for a target that never saw `preventExtensions`.
+  // (A direct `Object.isExtensible` on the same shapes answers correctly, so
+  // this is specific to the dispatch-internal call and was not pinned down
+  // further here.) Dropping the clause costs exactly two rows —
+  // `has/return-false-target-not-extensible.js` and `deleteProperty/
+  // targetdesc-is-configurable-target-is-not-extensible.js` — and buys back
+  // both regressions. A missed throw is a residual; a wrong throw breaks a
+  // working program.
+  //
   // params 0=target 1=key 2=trapResult ; locals 3=td
   const has = registerNative(
     "__proxy_inv_has",
@@ -417,7 +434,7 @@ export function registerProxyInvariantValidators(
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [...truthyField(3, "configurable"), { op: "i32.eqz" }, ...throwIf(), ...notExtensible(0), ...throwIf()],
+        then: [...truthyField(3, "configurable"), { op: "i32.eqz" }, ...throwIf()],
       },
       { op: "local.get", index: 2 },
     ],
@@ -568,9 +585,8 @@ export function registerProxyInvariantValidators(
           ...truthyField(3, "configurable"),
           { op: "i32.eqz" },
           ...throwIf(),
-          // Step 13 (ES2020+): nor any property of a non-extensible target.
-          ...notExtensible(0),
-          ...throwIf(),
+          // Step 13 (ES2020+, "nor any property of a non-extensible target")
+          // is DECLINED for the reason recorded on `__proxy_inv_has` above.
         ],
       },
       { op: "local.get", index: 2 },

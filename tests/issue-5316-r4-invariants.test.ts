@@ -45,8 +45,6 @@ const FLIPPED_ROWS = [
   "built-ins/Proxy/defineProperty/targetdesc-undefined-not-configurable-descriptor.js",
   "built-ins/Proxy/defineProperty/targetdesc-undefined-target-is-not-extensible.js",
   "built-ins/Proxy/deleteProperty/targetdesc-is-not-configurable.js",
-  "built-ins/Proxy/deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js",
-  "built-ins/Proxy/has/return-false-target-not-extensible.js",
   "built-ins/Proxy/has/return-false-targetdesc-not-configurable.js",
   "built-ins/Proxy/get/accessor-get-is-undefined-throws.js",
   "built-ins/Proxy/get/not-same-value-configurable-false-writable-false-throws.js",
@@ -65,6 +63,8 @@ const CONTROL_ROWS = [
   "built-ins/Proxy/deleteProperty/return-is-abrupt.js",
   "built-ins/Proxy/has/return-true-target-prop-exists.js",
   "built-ins/Proxy/ownKeys/return-is-abrupt.js",
+  "built-ins/Proxy/deleteProperty/call-parameters.js",
+  "built-ins/Proxy/has/return-false-target-prop-exists-using-with.js",
   "built-ins/Proxy/getOwnPropertyDescriptor/resultdesc-return-not-configurable.js",
 ] as const;
 
