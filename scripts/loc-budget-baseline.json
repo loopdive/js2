@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-05",
   "threshold": 1500,
-  "totalCeiling": 834154,
+  "totalCeiling": 834151,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -77,7 +77,7 @@
     "src/codegen/statements/destructuring.ts": 1505,
     "src/codegen/statements/for-of-destructuring.ts": 2954,
     "src/codegen/statements/loops.ts": 4461,
-    "src/codegen/statements/nested-declarations.ts": 4371,
+    "src/codegen/statements/nested-declarations.ts": 4368,
     "src/codegen/statements/variables.ts": 2635,
     "src/codegen/string-ops.ts": 4137,
     "src/codegen/ta-dyn-mop.ts": 1786,
