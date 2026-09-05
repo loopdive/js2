@@ -1848,6 +1848,53 @@ export function compileBuiltinStaticCall(
         releaseTempLocal(fctx, boundaryResultLocal);
         return { kind: "externref" };
       }
+      // (#5316) §20.1.2.19 steps 3-4: `Object.preventExtensions(O)` THROWS when
+      // `O.[[PreventExtensions]]()` reports false, and returns O — not the
+      // status. For an ordinary receiver the native helper's answer is the
+      // object itself and step 3 can never fire, which is why nothing was lost
+      // before Proxy existed. For a `$Proxy` the helper returns the trap's
+      // booleanish externref, so a handler answering `false` silently succeeded
+      // (probe `y1`: node throws, base returns). Gate the check on a runtime
+      // `ref.test $Proxy` rather than on truthiness alone — the helper hands
+      // back its ARGUMENT for a non-proxy, and `Object.preventExtensions(0)` is
+      // a legal no-op whose falsy return must not become a throw.
+      //
+      // `preventExtensions` only: `seal`/`freeze` call `__object_seal` /
+      // `__object_freeze`, which carry no proxy front guard, so there is no
+      // status to honour there and their emitted bytes are untouched.
+      const proxyTypeIdxPE = ctx.standalone ? ctx.objectRuntimeTypes?.proxyTypeIdx : undefined;
+      if (hostIdx !== undefined && method === "preventExtensions" && proxyTypeIdxPE !== undefined) {
+        const truthyIdx = ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
+        const throwNotPrevented = buildThrowJsErrorInstrs(
+          ctx,
+          "TypeError",
+          "Object.preventExtensions called on object that refused to become non-extensible",
+          { flush: fctx },
+        );
+        flushLateImportShifts(ctx, fctx);
+        if (truthyIdx !== undefined) {
+          const statusLocal = allocTempLocal(fctx, { kind: "externref" });
+          fctx.body.push({ op: "local.get", index: objLocal });
+          fctx.body.push({ op: "call", funcIdx: hostIdx });
+          fctx.body.push({ op: "local.set", index: statusLocal });
+          fctx.body.push({ op: "local.get", index: objLocal });
+          fctx.body.push({ op: "any.convert_extern" });
+          fctx.body.push({ op: "ref.test", typeIdx: proxyTypeIdxPE });
+          fctx.body.push({
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              { op: "local.get", index: statusLocal },
+              { op: "call", funcIdx: truthyIdx },
+              { op: "i32.eqz" },
+              { op: "if", blockType: { kind: "empty" }, then: throwNotPrevented },
+            ],
+          });
+          releaseTempLocal(fctx, statusLocal);
+          fctx.body.push({ op: "local.get", index: objLocal });
+          return { kind: "externref" };
+        }
+      }
       if (hostIdx !== undefined) {
         fctx.body.push({ op: "local.get", index: objLocal });
         fctx.body.push({ op: "call", funcIdx: hostIdx });
@@ -2078,6 +2125,61 @@ export function compileBuiltinStaticCall(
         fctx.body.push({ op: "i32.eqz" });
         fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwRefused });
         fctx.body.push({ op: "local.get", index: protoLocal });
+      }
+      // (#5316) §20.1.2.21 step 4 for a `$Proxy` receiver. The check above asks
+      // `__object_setPrototypeOf_status`, which has no proxy front guard and
+      // answers the ORDINARY status (1), so a handler returning `false` fell
+      // through and `Object.setPrototypeOf(proxy, null)` succeeded silently
+      // (probe `y2`: node throws, base returns). `__object_setPrototypeOf` DOES
+      // carry the front guard, so its own return value is the trap's booleanish
+      // result — the status and the write are one call, and honouring the
+      // result here costs no extra trap invocation. That is the whole reason
+      // the check is at the CALL SITE and not in the status helper: giving that
+      // helper a proxy guard would run the trap once for the status and again
+      // for the write, which is observable.
+      const proxyTypeIdxSPO = ctx.standalone ? ctx.objectRuntimeTypes?.proxyTypeIdx : undefined;
+      const spoTruthyIdx =
+        proxyTypeIdxSPO === undefined || resolvedSpoIdx === undefined || !specChecksAvailable
+          ? undefined
+          : ensureLateImport(ctx, "__is_truthy", [{ kind: "externref" }], [{ kind: "i32" }]);
+      if (spoTruthyIdx !== undefined && resolvedSpoIdx !== undefined && proxyTypeIdxSPO !== undefined) {
+        // A FRESH throw sequence — `throwRefused` is already spliced above and
+        // a shared `Instr[]` is remapped once per occurrence by the finalize
+        // funcIdx walk.
+        const throwProxyRefused = buildThrowJsErrorInstrs(ctx, "TypeError", "Cannot set prototype of this object", {
+          flush: fctx,
+        });
+        flushLateImportShifts(ctx, fctx);
+        // The obj/proto pair pushed for the ordinary call is discarded and
+        // re-pushed inside the arms: a wasm `if` cannot reach values already on
+        // the stack below it, so there is no cheaper way to make the tail
+        // conditional. Behaviour for a non-proxy receiver is unchanged — the
+        // same two operands reach the same single `__object_setPrototypeOf`.
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "drop" });
+        fctx.body.push({ op: "local.get", index: objLocal });
+        fctx.body.push({ op: "any.convert_extern" });
+        fctx.body.push({ op: "ref.test", typeIdx: proxyTypeIdxSPO });
+        fctx.body.push({
+          op: "if",
+          blockType: { kind: "val", type: { kind: "externref" } },
+          then: [
+            { op: "local.get", index: objLocal },
+            { op: "local.get", index: protoLocal },
+            { op: "call", funcIdx: resolvedSpoIdx },
+            { op: "call", funcIdx: spoTruthyIdx },
+            { op: "i32.eqz" },
+            { op: "if", blockType: { kind: "empty" }, then: throwProxyRefused },
+            // Step 5: return O, not the status.
+            { op: "local.get", index: objLocal },
+          ],
+          else: [
+            { op: "local.get", index: objLocal },
+            { op: "local.get", index: protoLocal },
+            { op: "call", funcIdx: resolvedSpoIdx },
+          ],
+        });
+        return { kind: "externref" };
       }
       if (resolvedSpoIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx: resolvedSpoIdx });

@@ -71,6 +71,13 @@ func-budget-allow:
   # and not the wider `tracesToProxyValue`, whose aliases the documented
   # widening defect nulls. Both lines have to sit inside this cascade.
   - src/codegen/binary-ops-in.ts::compileInOperator
+  # 2026-09-05 r5 step 6: `ensureObjectRuntime` grows by ONE call plus the
+  # comment explaining its position — `registerOrdinarySetWithReceiver` must run
+  # after every native it reads (`__getOwnPropertyDescriptor`,
+  # `__getPrototypeOf`, `__extern_get/set/has`, the `__call_accessor_set`
+  # driver), which is only true at the end of this function, and appending there
+  # shifts no existing funcIdx. The §10.1.9.2 body itself is a new module.
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
 coercion-sites-allow:
   # 2026-09-04 r4 step 1: the two hits are `__is_truthy` and the `__host_eq`
   # fallback arm of `ensureExternStrictEqHelper`. Neither hand-rolls a
@@ -81,6 +88,17 @@ coercion-sites-allow:
   # operations. The preferred `__object_is` is used when present; `__host_eq`
   # is only the last fallback, mirroring `buildOwnKeysDispatch`.
   - src/codegen/object-runtime-proxy-invariants.ts
+  # 2026-09-05 r5 steps 5-6: three `__is_truthy` uses, all of them a spec step
+  # that literally says ToBoolean, and none of them a hand-rolled matrix:
+  #   • §20.1.2.19 step 3 and §20.1.2.21 step 4 — "if status is false, throw a
+  #     TypeError" over a Proxy trap's booleanish result (call-builtin-static);
+  #   • §10.1.9.2 steps 3.a / 3.d.ii — "if ownDesc.[[Writable]] is false, return
+  #     false" over a descriptor field (object-runtime-ordinary-set).
+  # `__is_truthy` IS the shared engine's ToBoolean; the alternative here would
+  # be reference truthiness, which the #5140 half already established is wrong
+  # for a trap result.
+  - src/codegen/expressions/call-builtin-static.ts
+  - src/codegen/object-runtime-ordinary-set.ts
 ---
 
 ## Problem
