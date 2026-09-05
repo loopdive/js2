@@ -5051,6 +5051,11 @@ export interface GeneratedCodegenModule extends CodegenResult {
   irPostClaimErrors?: { kind: string; func: string; message: string }[];
   irCompiledFuncs?: readonly string[];
   programAbi?: PublishedProgramAbi;
+  /** Test-only evidence that aggregate initializer receipts were revoked. */
+  irPreparedModuleInitBatchAbortAudit?: {
+    readonly attempted: number;
+    readonly aborted: number;
+  };
   /** Internal M0 whole-program Prepared ownership evidence. */
   multiPreparedProgramAudit?: MultiPreparedProgramAudit;
 }
@@ -11579,6 +11584,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     irOutcomes: ctx.irOutcomes,
     irBodyRouteAudit: snapshotLegacyBodyAudit(ctx),
     programAbi: ctx.programAbiSession?.publication,
+    ...(ctx.irPreparedModuleInitBatchAbortAudit
+      ? { irPreparedModuleInitBatchAbortAudit: ctx.irPreparedModuleInitBatchAbortAudit }
+      : {}),
     multiPreparedProgramAudit: multiPreparedProgram?.audit,
   };
 }

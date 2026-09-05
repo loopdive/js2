@@ -1476,6 +1476,11 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   programAbiGlobals?: import("../program-abi-global-planning.js").ProgramAbiGlobalRegistry;
   /** Source-qualified storage gaps observed before an atomic initializer batch reservation. */
   irProgramPreparedModuleInitBatchPreclaimGaps?: ReadonlyMap<ts.SourceFile, readonly string[]>;
+  /** Test-only receipt cleanup evidence for an aborted aggregate initializer batch. */
+  irPreparedModuleInitBatchAbortAudit?: {
+    readonly attempted: number;
+    readonly aborted: number;
+  };
   programAbiExports?: import("../program-abi-export-planning.js").ProgramAbiExportRegistry;
   programAbiTypes?: import("../program-abi-type-planning.js").ProgramAbiTypeRegistry;
   irPlanningIdentityContext?: import("../../ir/planning-identity.js").IrPlanningIdentityContext;

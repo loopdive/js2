@@ -303,4 +303,48 @@ describe("#3525 M2-P2A atomic module-init batch", () => {
     expect(mutated.errors.map((error) => error.message).join("\n")).toContain("allocator");
     expect(moduleInitOutcomes(mutated).filter((outcome) => outcome.kind === "emitted")).toHaveLength(0);
   }, 120_000);
+
+  it("revokes every real receipt when a late partition is malformed", async () => {
+    vi.stubEnv("JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER", "1");
+    vi.stubEnv("JS2WASM_TEST_MALFORM_MULTI_PREPARED_RECEIPT_PARTITION", "1");
+    vi.stubEnv("JS2WASM_TEST_AUDIT_MULTI_PREPARED_RECEIPTS", "1");
+    const files = {
+      "./a.ts": `let countA: number = 0; countA = countA + 1; export { countA };`,
+      "./b.ts": `let countB: number = 10; countB = countB + 1; export { countB };`,
+      "./entry.ts": `import { countA } from "./a"; import { countB } from "./b";
+        export function run(): number { return countA * 100 + countB; }`,
+    };
+    const generated = generate(files);
+    expect(generated.irPreparedModuleInitBatchAbortAudit).toEqual({ attempted: 2, aborted: 2 });
+    expect(generated.errors.map((error) => error.message).join("\n")).toContain(
+      "initializer batch did not produce one exact detached module-init/resource receipt",
+    );
+    expect(generated.errors.map((error) => error.message).join("\n")).not.toContain("open prepared ABI scopes");
+    expect(generated.multiPreparedProgramAudit?.moduleInit).toBeUndefined();
+
+    const result = await compileMulti(files, "./entry.ts", OPTIONS);
+    expect(result.success).toBe(false);
+    expect(result.binary).toHaveLength(0);
+  }, 120_000);
+
+  it("keeps an invariant aggregate failure fatal instead of retrying direct init", async () => {
+    vi.stubEnv("JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER", "1");
+    vi.stubEnv("JS2WASM_TEST_INJECT_IR_PHASE_THROW", "tagged-union");
+    const files = {
+      "./a.ts": `let countA: number = 0; countA = countA + 1; export { countA };`,
+      "./b.ts": `let countB: number = 10; countB = countB + 1; export { countB };`,
+      "./entry.ts": `import { countA } from "./a"; import { countB } from "./b";
+        export function run(): number { return countA * 100 + countB; }`,
+    };
+    const generated = generate(files);
+    const messages = generated.errors.map((error) => error.message).join("\n");
+    expect(messages).toContain("initializer batch encountered invariant");
+    expect(messages).not.toContain("graph-global module-init requires exactly one live pass");
+    expect(generated.multiPreparedProgramAudit?.moduleInit).toBeUndefined();
+
+    const result = await compileMulti(files, "./entry.ts", OPTIONS);
+    expect(result.success).toBe(false);
+    expect(result.binary).toHaveLength(0);
+    expect(result.errors.map((error) => error.message).join("\n")).toContain("initializer batch encountered invariant");
+  }, 120_000);
 });

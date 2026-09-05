@@ -18,7 +18,7 @@ import type { IrBindingId, IrSourceId, IrUnitId } from "../ir/identity.js";
 import type { IrModuleInitBindingIntent } from "../ir/module-init-plan.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { IrInvariantError } from "../ir/outcomes.js";
-import type { IrIntegrationReport } from "../ir/integration-report.js";
+import type { IrIntegrationError, IrIntegrationReport } from "../ir/integration-report.js";
 import { collectModuleInitPopulation } from "../ir/module-init.js";
 import type { IrSelection } from "../ir/select.js";
 import type { GlobalDef, Instr, ValType, WasmFunction } from "../ir/types.js";
@@ -481,6 +481,57 @@ function invariant(detail: string, cause?: unknown): never {
   throw new IrInvariantError("selection-preparation-mismatch", "patch", detail, cause);
 }
 
+/**
+ * Only the resolver-stage capability refusal is allowed to return ownership
+ * to the legacy route.  Build/verify/patch failures happen after the batch
+ * has crossed its preparation promise and must remain fatal even when a
+ * producer happened to label them Unsupported.
+ */
+function isRecoverableInitializerDecline(error: IrIntegrationError): boolean {
+  return (
+    error.outcome.kind === "unsupported" &&
+    error.outcome.code === "late-preparation-unsupported" &&
+    error.outcome.stage === "resolve"
+  );
+}
+
+/** Revoke every receipt returned by the aggregate integration boundary. */
+function abortRawPreparedReceipts(
+  ctx: CodegenContext,
+  receipts: readonly PendingPreparedProgramComponentReceipt[],
+): void {
+  let aborted = 0;
+  for (const receipt of receipts) {
+    let abortSucceeded = false;
+    try {
+      abortPendingPreparedProgramComponentReceipt(receipt);
+      abortSucceeded = true;
+    } catch {
+      // Preserve the primary aggregate failure. The audit below makes a
+      // failed cleanup visible to the focused transaction tests.
+    }
+    if (process.env.JS2WASM_TEST_AUDIT_MULTI_PREPARED_RECEIPTS !== "1" || !abortSucceeded) continue;
+    let assertCurrentRejected = false;
+    try {
+      receipt.assertCurrent();
+    } catch {
+      assertCurrentRejected = true;
+    }
+    let claimRejected = false;
+    try {
+      takePendingPreparedProgramComponentReceipt(receipt);
+    } catch {
+      claimRejected = true;
+    }
+    // Count a receipt as revoked only after both opaque capabilities reject
+    // post-abort. This is stronger evidence than counting abort() returns.
+    if (assertCurrentRejected && claimRejected) aborted++;
+  }
+  if (process.env.JS2WASM_TEST_AUDIT_MULTI_PREPARED_RECEIPTS === "1") {
+    ctx.irPreparedModuleInitBatchAbortAudit = Object.freeze({ attempted: receipts.length, aborted });
+  }
+}
+
 function adapterType(ctx: CodegenContext): number {
   return addFuncType(ctx, [], [], "__ir_r5_m2p2a_module_init_adapter");
 }
@@ -706,29 +757,52 @@ export function planMultiPreparedModuleInitBatch(
         preparedModuleInitBatchSources: preparedBuildSources,
       },
     );
-    const receiptPartition = partitionPreparedReceipts(
-      result.pendingReceipts ?? (result.pendingReceipt ? Object.freeze([result.pendingReceipt]) : undefined),
-      unitIds,
-    );
+    const rawPendingReceipts =
+      result.pendingReceipts ?? (result.pendingReceipt ? Object.freeze([result.pendingReceipt]) : Object.freeze([]));
+    // This test-only late corruption exercises cleanup after aggregate
+    // integration has produced real receipts. The production partition still
+    // consumes the exact frozen vector returned by the integration boundary.
+    const partitionReceipts =
+      process.env.JS2WASM_TEST_MALFORM_MULTI_PREPARED_RECEIPT_PARTITION === "1"
+        ? Object.freeze(rawPendingReceipts.slice(0, Math.max(0, rawPendingReceipts.length - 1)))
+        : rawPendingReceipts;
+    const receiptPartition = partitionPreparedReceipts(partitionReceipts, unitIds);
     const reportExact = receiptPartition ? reportIsExact(result.report, receiptPartition.receipts, unitIds) : false;
     const censusExact = resourceCensusIsExact(result.resourceCensus, unitIds);
     if (!receiptPartition || !reportExact || !censusExact) {
-      for (const receipt of receiptPartition?.receipts ?? []) receipt.abort();
+      // Partitioning may fail before it can return a useful subset. Always
+      // revoke the raw integration vector so a malformed late receipt cannot
+      // strand an open ABI scope behind a failed owner decision.
+      abortRawPreparedReceipts(ctx, rawPendingReceipts);
       // A known per-owner preparation/resource refusal is a typed decline of
       // this aggregate route.  Keep its exact terminal details as an explicit
       // preclaim gap so the legacy route can report the refusal without
       // turning a late resource check into a generated-code error.  Structural
       // receipt corruption remains an invariant below.
-      if (
-        result.report.errors.length > 0 ||
-        (result.report.terminalEvidence ?? []).some((entry) => entry.kind === "failed")
-      ) {
-        const details = [
-          ...result.report.errors.map(({ outcome }) => `${outcome.code}:${outcome.detail}`),
-          ...(result.report.terminalEvidence ?? [])
-            .filter((entry): entry is Extract<typeof entry, { kind: "failed" }> => entry.kind === "failed")
-            .flatMap((entry) => (entry.errors ?? []).map(({ outcome }) => `${outcome.code}:${outcome.detail}`)),
-        ];
+      const failureErrors = [
+        ...result.report.errors,
+        ...(result.report.terminalEvidence ?? [])
+          .filter((entry): entry is Extract<typeof entry, { kind: "failed" }> => entry.kind === "failed")
+          .flatMap((entry) =>
+            entry.errors && entry.errors.length > 0
+              ? entry.errors
+              : entry.diagnosticVisibility === "outcome-only"
+                ? [entry.error]
+                : [],
+          ),
+      ];
+      const invariantFailure = failureErrors.find(({ outcome }) => outcome.kind === "invariant");
+      if (invariantFailure) {
+        return invariant(
+          `initializer batch encountered invariant ${invariantFailure.outcome.code}: ${invariantFailure.outcome.detail}`,
+          invariantFailure.outcome,
+        );
+      }
+      if (failureErrors.length > 0) {
+        if (!failureErrors.every(isRecoverableInitializerDecline)) {
+          return invariant("initializer batch reported an unclassified preparation failure", failureErrors[0]);
+        }
+        const details = [...failureErrors.map(({ outcome }) => `${outcome.code}:${outcome.detail}`)];
         ctx.irProgramPreparedModuleInitBatchPreclaimGaps = new Map([
           [multiAst.entryFile, Object.freeze(details.length > 0 ? details : ["resource-census-unavailable"])],
         ]);

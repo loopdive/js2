@@ -57,6 +57,7 @@ loc-budget-allow:
   - src/ir/prepared-component-dependencies.ts
 func-budget-allow:
   - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/index.ts::generateMultiModule
   - src/ir/integration.ts::compileIrPathFunctions
   - src/codegen/multi-prepared-module-init-batch.ts::planMultiPreparedModuleInitBatch
 ---
@@ -2833,6 +2834,18 @@ resource, body, terminal and adapter failures abort all pending receipts before
 publication. Existing singleton M2, disabled cutover, ordinary deferred
 initialization, and mixed callable/init admission remain outside this slice.
 
+The post-review transaction repair retains the complete raw receipt vector
+through exact partition validation and revokes every receipt when a late
+partition, report, resource, or owner check fails. Only a fully typed
+resolver-stage `late-preparation-unsupported` outcome may decline the
+aggregate route; lower, verify, patch, and other post-promise failures remain
+fatal and cannot retry direct module-init emission. The test-only revocation
+audit counts a receipt only after both its post-abort `assertCurrent` and
+claim capabilities reject, rather than counting `abort()` callback returns.
+The focused malformed-partition control observed two real pending receipts and
+aborted both (`attempted: 2, aborted: 2`), while the tagged-union injection
+control remained fatal with no direct-init fallback or published prefix.
+
 The positive two-contributor production control has two executable source
 plans, two IR body emissions, zero direct module-init roots, two resource
 artifact IDs matching the contributor UnitIds, and one ordered adapter. Its
@@ -2857,7 +2870,8 @@ Validation on the merged candidate:
 
 - `pnpm run typecheck` — pass.
 - The required single-fork suite over the eight P2A/M2/R2 files — 8 files,
-  119 tests passed.
+  121 tests passed, including the late-partition receipt-revocation and
+  tagged-union fatal-routing controls.
 - `pnpm run check:ir-fallbacks`, `check:ir-layering`, `check:ir-dialect`,
   `check:ir-kind-neutrality`, `check:ir-optimization-retirement`,
   `check:ir-adoption`, `check:issues`, and `check:issue-spec-coverage` — pass.
