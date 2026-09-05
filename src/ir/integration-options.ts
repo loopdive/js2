@@ -7,6 +7,7 @@ import type {
   PreparedComponentModuleCallableAliasDescriptor,
   PreparedComponentPublicationDraft,
 } from "./prepared-component-publication.js";
+import type { PreparedCallableBoundaryCandidate } from "./prepared-callable-boundary.js";
 
 /** Configuration shared by single-source and aggregate IR integration. */
 export interface IrIntegrationOptions {
@@ -31,6 +32,8 @@ export interface IrIntegrationOptions {
   };
   /** Opaque module-callable-alias descriptor staged with the open scope. */
   readonly preparedModuleCallableAliasDescriptor?: PreparedComponentModuleCallableAliasDescriptor;
+  /** Source-qualified callable boundaries awaiting final pre-seal proof. */
+  readonly preparedCallableBoundaryCandidates?: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
   /**
    * (#3523 R4 gap 3) Construct the module-init body around the reserved WASI
    * `__init_done` idempotence guard (`ctx.preparedWasiModuleInitGuard`).

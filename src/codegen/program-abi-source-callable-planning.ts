@@ -17,6 +17,12 @@ import {
 } from "./program-abi-planning.js";
 import type { ProgramAbiSession } from "./program-abi-session.js";
 import { localGlobalIdx } from "./registry/imports.js";
+import {
+  issuePreparedCallableBoundary,
+  type PreparedCallableBoundaryCandidate,
+  type PreparedCallableBoundaryIssueInput,
+  type PreparedCallableBoundarySemanticSignature,
+} from "../ir/prepared-callable-boundary.js";
 
 interface SourceCallableObservation {
   readonly unitId: IrUnitId;
@@ -396,6 +402,35 @@ export class ProgramAbiSourceCallableRegistry {
   handleForUnit(unitId: IrUnitId): FuncHandle | undefined {
     const observation = this.observations.get(unitId)?.at(-1);
     return observation && definedFuncAt(this.ctx, observation.funcIdx) ? observation.funcIdx : undefined;
+  }
+
+  /**
+   * Issue a source-qualified pending boundary for an already observed source
+   * callable. The targeted plan is recorded before the receipt is issued, so
+   * a later prepared scope can consume the exact same ABI draft.
+   */
+  issuePreparedCallableBoundary(
+    unitId: IrUnitId,
+    semanticSignature: PreparedCallableBoundarySemanticSignature,
+  ): PreparedCallableBoundaryCandidate | undefined {
+    const { session, identityContext } = this;
+    if (!session || !identityContext) return undefined;
+    const issue: PreparedCallableBoundaryIssueInput = {
+      unitId,
+      semanticSignature,
+      inventory: session.inventory,
+      module: this.ctx.mod,
+      hasUnit: (id) => identityContext.unitByUnitId.has(id),
+      assertModule: () => session.assertModule(this.ctx.mod),
+      inventoryIsCurrent: () => session.inventory === identityContext.inventory,
+      planUnit: () => this.planUnits([unitId]),
+      handleForUnit: (id) => this.handleForUnit(id),
+      functionForUnit: (id) => this.functionForUnit(id),
+      definedFunctionAt: (handle) => definedFuncAt(this.ctx, handle),
+      hasPlan: (id) => session.hasPlan(id),
+      hasLocator: (id, allocatorObject) => session.hasLocator(id, allocatorObject),
+    };
+    return issuePreparedCallableBoundary(issue);
   }
 
   private unitForFunction(func: WasmFunction): IrUnitId | undefined {
