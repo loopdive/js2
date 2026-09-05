@@ -2,10 +2,11 @@
   "id": "3520",
   "slice": "w1h-equality-reference-operands",
   "assignee": "ttraenkler/luna-ir-equality-20260905",
-  "requested_by": "ttraenkler/luna-ir-equality-20260905",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3520-w1h-luna-20260905",
   "claimed_at": "2026-09-04T23:51:00Z",
-  "updated_at": "2026-09-04T23:51:00Z",
-  "write_id": "87176-10bxxo2r"
+  "updated_at": "2026-09-05T08:37:13Z",
+  "write_id": "53461-j4bylnbm",
+  "released_at": "2026-09-05T08:37:13Z"
 }
