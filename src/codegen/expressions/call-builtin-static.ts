@@ -2971,6 +2971,37 @@ export function compileBuiltinStaticCall(
                   return thenInstrs;
                 })(),
                 else: (() => {
+                  // (#5316) The guarded `ref.test` has FAILED, so this receiver
+                  // is not the shape the fold was written for — most often a
+                  // `$Proxy` standing in front of it, whose whole point is that
+                  // `[[GetOwnProperty]]` must be ASKED. Answering a flat
+                  // `undefined` there is not a conservative miss, it is a wrong
+                  // answer that also swallows the trap call. Under standalone the
+                  // dynamic native can answer it (it carries the `$Proxy` front
+                  // guard, so a proxy receiver reaches its trap and a
+                  // proxy-of-proxy recurses), so route there instead.
+                  //
+                  // Resolved AFTER the then-arm's late imports, for the same
+                  // source-order reason the `ensureGetUndefined` comment below
+                  // gives: the then-arm's funcIdx are already baked.
+                  if (ctx.standalone) {
+                    const dynGopdIdx = ensureLateImport(
+                      ctx,
+                      "__getOwnPropertyDescriptor",
+                      [{ kind: "externref" }, { kind: "externref" }],
+                      [{ kind: "externref" }],
+                    );
+                    if (dynGopdIdx !== undefined) {
+                      flushLateImportShifts(ctx, fctx);
+                      return [
+                        { op: "local.get", index: gopdTmp },
+                        { op: "extern.convert_any" },
+                        ...nativeStringLiteralInstrs(ctx, propLiteral),
+                        { op: "extern.convert_any" },
+                        { op: "call", funcIdx: dynGopdIdx },
+                      ] satisfies Instr[];
+                    }
+                  }
                   // (#3321) Cast would fail — the runtime miss must be JS
                   // `undefined` on every lane: host/gc → the real
                   // `__get_undefined` sentinel (bare null externref is `null`
