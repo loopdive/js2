@@ -22,6 +22,7 @@ import {
   getFuncSignature,
 } from "../closures.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js";
 import { emitNativeGlobalThisObject } from "../array-object-proto.js";
 import { tryEmitNativeUserCtorInstanceOf } from "../native-user-instanceof.js";
 import { emitLazyClassObjectGet } from "./extern.js";
@@ -1256,6 +1257,10 @@ function compileIdentifierCore(
       // Read through ref cell: local.get → null guard → struct.get $ref_cell 0
       // The ref cell local is ref_null — if the closure capture is uninitialized,
       // the local is null and struct.get would trap (#702).
+      // A cell whose `struct.new` sits in a conditional arm is null on every
+      // path that skipped that arm; the guard below would then read the value
+      // type's DEFAULT rather than the binding. Mint it from the pre-box slot.
+      emitConditionalCaptureBoxRepair(fctx, name, localIdx);
       fctx.body.push({ op: "local.get", index: localIdx });
       emitNullGuardedStructGet(
         ctx,
