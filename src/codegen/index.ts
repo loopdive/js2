@@ -4053,6 +4053,11 @@ interface IrFirstBodyRouting {
   readonly preparedImplicitConstructorUnitIds?: ReadonlySet<IrUnitId>;
   readonly preparedReport?: IrIntegrationReport;
   readonly preparedSelection?: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
+  /** Callable boundary candidates awaiting pre-seal certification. */
+  readonly preparedCallableBoundaryCandidates?: ReadonlyMap<
+    IrUnitId,
+    import("../ir/prepared-callable-boundary.js").PreparedCallableBoundaryCandidate
+  >;
   /** Exact free-function body authority for the direct declaration seam. */
   readonly skipBodyUnitIds?: ReadonlySet<IrUnitId>;
   /** Exact prepared free-function bodies whose installed IR bodies survive direct traversal. */
@@ -4703,6 +4708,7 @@ function planIrFirstBodyRouting(
         freeFunctionNames: new Set<string>(),
         classMemberUnitIds: classIds,
         withdrawals: new Map<IrUnitId, IrR2Withdrawal>(),
+        pendingCallableBoundaryCandidates: new Map(),
       };
   // (#3521 R2-T1) One reason per compile-twice row. The selector's own
   // withdrawals are per-unit; a name the timer routing never handed it was
@@ -4794,6 +4800,7 @@ function planIrFirstBodyRouting(
       selection: preparedSelection,
       preliminaryClassMemberUnitIds,
       preliminaryR2Names,
+      preliminaryCallableBoundaryCandidates: preliminaryOwnerPopulation.pendingCallableBoundaryCandidates,
       promiseDelayNames,
       projectLoweringPlans: (selection) => irOverlayIdentity.projectIrIntegrationLoweringPlans(plan, selection),
     });
@@ -4803,6 +4810,7 @@ function planIrFirstBodyRouting(
       classMemberNames: finalClassMemberNames,
       classMemberUnitIds: finalClassMemberUnitIds,
       freeFunctionNames: preparedFreeFunctionNames,
+      callableBoundaryCandidates,
     } = preparedPopulation;
     const finalModuleInit =
       preliminaryModuleInit === undefined
@@ -4856,6 +4864,7 @@ function planIrFirstBodyRouting(
         classShapes: plan.classShapes,
         classShapesById: plan.classShapesById,
         projectLoweringPlans,
+        callableBoundaryCandidates,
       });
       const preparedFreeFunctions = preparedBodies.freeFunctions;
       const preparedClassMembers = preparedBodies.classMembers;
@@ -4878,6 +4887,7 @@ function planIrFirstBodyRouting(
         ...(preparedImplicitConstructorUnitIds.size > 0 ? { preparedImplicitConstructorUnitIds } : {}),
         preparedReport,
         preparedSelection,
+        preparedCallableBoundaryCandidates: callableBoundaryCandidates,
         skipBodyUnitIds: requestedSkipUnitIds,
         preserveBodyUnitIds: preparedFreeFunctions.preserveBodyUnitIds,
         skipBodies: new Set(requestedSkipProjection.entries.map(({ legacyName }) => legacyName)),

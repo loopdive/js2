@@ -268,6 +268,7 @@ import {
 import {
   lowerIrFunctionToWasm,
   lowerIrTypeToValType,
+  projectIrFunctionSignature,
   type IrClassLowering,
   type IrClosureLowering,
   type IrDynamicLowering,
@@ -425,12 +426,20 @@ import {
   prepareDependencyCompleteClosureSupport,
   type PreparedDerivedCallableSlot,
 } from "./prepared-closure-support.js";
-import type { PreparedClassAccessorWritebackEvidence } from "./prepared-component-dependencies.js";
+import {
+  assertPreparedCallableBoundaryCandidate,
+  type PreparedCallableBoundaryCandidate,
+} from "./prepared-callable-boundary.js";
+import type {
+  PreparedClassAccessorWritebackEvidence,
+  PreparedComponentClosureSupportEvidence,
+} from "./prepared-component-dependencies.js";
 import type {
   PreparedComponentOpenScope,
   PreparedComponentScopeLookup,
   PreparedComponentSealFailureHandler,
 } from "./prepared-component-sealing.js";
+import { assertPreparedComponentCallableBoundaryLookup } from "./prepared-component-sealing.js";
 import {
   createPendingPreparedProgramComponentReceipt,
   type PendingPreparedProgramComponentReceipt,
@@ -529,6 +538,66 @@ function lowerIrEntryFunction(
         existing,
       )
     : lowerIrFunctionToWasm(fn, resolver).func;
+}
+
+/**
+ * Reconcile source-qualified callable boundaries after all final IR support
+ * has been prepared, while the component scopes are still open.  Returning
+ * component IDs lets the caller withdraw an entire dependency component when
+ * a supported candidate proves incomplete; no body has been lowered yet.
+ */
+function certifyPreparedCallableBoundaries(
+  candidates: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>,
+  entries: readonly BuiltFn[],
+  resolver: IrLowerResolver,
+  preparedClosure: PreparedClosureTransaction,
+): ReadonlySet<string> {
+  const failedComponentIds = new Set<string>();
+  for (const candidate of candidates.values()) {
+    assertPreparedCallableBoundaryCandidate(candidate);
+    const entry = entries.find(
+      (item) => item.artifactUnitId === candidate.unitId && item.terminalOwnerUnitId === candidate.unitId,
+    );
+    if (!entry) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared callable boundary ${candidate.unitId} has no exact final IR artifact`,
+      );
+    }
+    const componentId = preparedClosure.componentIds.get(candidate.unitId);
+    if (componentId === undefined) {
+      // The component may already have reported a typed Unsupported during
+      // dependency discovery. Its owner is retained for the ordinary direct
+      // fallback and has no boundary left to certify.
+      continue;
+    }
+    const openScope = preparedClosure.openScopes.find((scope) => scope.componentId === componentId);
+    if (!openScope) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `prepared callable boundary ${candidate.unitId} has no authenticated open component scope`,
+      );
+    }
+    candidate.assertCurrent(entry.fn);
+    assertPreparedComponentCallableBoundaryLookup({
+      lookup: openScope.lookup,
+      componentId,
+      bindingId: candidate.bindingId,
+      allocator: candidate.allocated,
+      structuralReferenceKey: irCallableBindingKey({ kind: "unit", unitId: candidate.unitId }),
+    });
+    const projectedSignature = projectIrFunctionSignature(entry.fn, resolver);
+    const contract = candidate.certify({
+      fn: entry.fn,
+      projectedSignature,
+      support: preparedClosure.closureSupport,
+      scopeLookup: openScope.lookup,
+    });
+    if (contract === undefined) failedComponentIds.add(componentId);
+  }
+  return failedComponentIds;
 }
 
 /**
@@ -688,8 +757,11 @@ interface PreparedClosureTransaction {
   readonly freshSlots: readonly PreparedDerivedCallableSlot[];
   readonly componentIds: ReadonlyMap<IrUnitId, string>;
   readonly openScopes: readonly PreparedComponentOpenScope[];
+  readonly closureSupport: PreparedComponentClosureSupportEvidence;
   readonly preparedScopeLookup?: PreparedComponentScopeLookup;
   readonly abortOpenScopes: () => void;
+  readonly abortPreparedComponent: (componentId: string) => void;
+  readonly sealPreparedScopes: () => void;
   sealCompilerTimerShim(): void;
   bindLowerResolver(resolver: IrLowerResolver): void;
 }
@@ -948,6 +1020,8 @@ function prepareClosureTransaction(input: {
   // P2A itself has no timer owners, but the shared preparation boundary must
   // not silently discard that scope when it is used by another aggregate.
   const preparedScopeLookup = mergePreparedScopeLookups(input.ctx, timerTransaction.openScopes);
+  const abortedComponentIds = new Set<string>();
+  const sealedComponentIds = new Set<string>();
   return {
     registry,
     refCells,
@@ -955,7 +1029,22 @@ function prepareClosureTransaction(input: {
     componentIds: timerTransaction.componentIds,
     openScopes: timerTransaction.openScopes,
     preparedScopeLookup,
+    closureSupport,
     abortOpenScopes: timerTransaction.abortOpenScopes,
+    abortPreparedComponent: (componentId) => {
+      if (abortedComponentIds.has(componentId) || sealedComponentIds.has(componentId)) return;
+      abortedComponentIds.add(componentId);
+      for (const open of timerTransaction.openScopes) {
+        if (open.componentId === componentId) open.scope.abort();
+      }
+    },
+    sealPreparedScopes: () => {
+      for (const open of timerTransaction.openScopes) {
+        if (abortedComponentIds.has(open.componentId) || sealedComponentIds.has(open.componentId)) continue;
+        open.scope.seal();
+        sealedComponentIds.add(open.componentId);
+      }
+    },
     sealCompilerTimerShim: () => {
       timerTransaction.sealDeferred();
     },
@@ -2506,6 +2595,7 @@ export function compileIrPathFunctions(
   options?: IrIntegrationOptions,
 ): IrIntegrationReport {
   const integrationSourceFiles = resolveIntegrationSourceFiles(sourceFile, options?.integrationSourceFiles);
+  const callableBoundaryRequested = (options?.preparedCallableBoundaryCandidates?.size ?? 0) > 0;
   const inlineOptions = parseInlineOptions(process.env.JS2WASM_IR_INLINE);
   const fuseNativeNumberFormatCarriers =
     inlineOptions.adapters && !inlineOptions.report && !inlineOptions.count && inlineOptions.poison === "off";
@@ -2832,6 +2922,7 @@ export function compileIrPathFunctions(
   const detachedPreparedPatches: PreparedComponentDetachedPatch<BuiltFn>[] = [];
   const pendingPreparedReceipts: PendingPreparedProgramComponentReceipt[] = [];
   let abortDeferredOpenScopes: (() => void) | undefined;
+  let preparedClosure: PreparedClosureTransaction | undefined;
   let deferredPublicationFinalizing = false;
   // Test-only state captured immediately before the aggregate neutral
   // preflight.  It is checked at the final unsupported report boundary so a
@@ -2843,7 +2934,7 @@ export function compileIrPathFunctions(
   const preparedResourceArtifactUnitIds: { value?: readonly IrUnitId[] } = {};
   let preparedIrPreLoweringAllocator: PreparedIrResourceAllocatorSnapshot | undefined;
   const abortDeferredPublication = (): void => {
-    if (!options?.deferPreparedPublication) return;
+    if (!options?.deferPreparedPublication && !callableBoundaryRequested) return;
     try {
       abortDeferredOpenScopes?.();
     } catch {
@@ -2859,7 +2950,11 @@ export function compileIrPathFunctions(
     reportCompiledArtifactEvidence: readonly IrIntegrationCompiledArtifactEvidence[] = compiledArtifactEvidence,
     reportCountedStringAppendReceipts: readonly PreparedCountedStringAppendReceipt[] = preparedCountedStringAppendReceipts,
   ): IrIntegrationReport => {
-    if (options?.deferPreparedPublication && !deferredPublicationFinalizing && pendingPreparedReceipts.length === 0) {
+    if (
+      (options?.deferPreparedPublication || callableBoundaryRequested) &&
+      !deferredPublicationFinalizing &&
+      pendingPreparedReceipts.length === 0
+    ) {
       abortDeferredPublication();
     }
     if (
@@ -5000,7 +5095,8 @@ export function compileIrPathFunctions(
   const importedCallableCatalog = catalogProgramAbiCallableImports(ctx);
   const freshSlots: PreparedDerivedCallableSlot[] = [];
   let preparedComponentIdByTerminalUnitId: ReadonlyMap<IrUnitId, string> = new Map();
-  let preparedClosure: PreparedClosureTransaction | undefined;
+  const preparedCallableBoundaryCandidates = options?.preparedCallableBoundaryCandidates ?? new Map();
+  const deferForCallableBoundary = preparedCallableBoundaryCandidates.size > 0;
   if (options?.sealPreparedComponents) {
     if (
       !runGlobalPreparation(() => {
@@ -5017,7 +5113,7 @@ export function compileIrPathFunctions(
           ...(options.preparedBindingIdsByTerminalUnitId
             ? { preparedBindingIdsByTerminalUnitId: options.preparedBindingIdsByTerminalUnitId }
             : {}),
-          ...(options.deferPreparedPublication ? { deferPublication: true as const } : {}),
+          ...(options.deferPreparedPublication || deferForCallableBoundary ? { deferPublication: true as const } : {}),
           ...(options.preparedModuleCallableAliasDescriptor
             ? { preparedModuleCallableAliasDescriptor: options.preparedModuleCallableAliasDescriptor }
             : {}),
@@ -5443,6 +5539,59 @@ export function compileIrPathFunctions(
     return finishReport();
   }
 
+  if (preparedCallableBoundaryCandidates.size > 0) {
+    if (!preparedClosure) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        "prepared callable boundaries require a dependency-sealed preparation transaction",
+      );
+    }
+    const activeCandidates = new Map(
+      [...preparedCallableBoundaryCandidates].filter(([unitId]) =>
+        healthyForLower.some((entry) => entry.artifactUnitId === unitId && entry.terminalOwnerUnitId === unitId),
+      ),
+    );
+    const failedBoundaryComponentIds = certifyPreparedCallableBoundaries(
+      activeCandidates,
+      healthyForLower,
+      resolver,
+      preparedClosure,
+    );
+    if (failedBoundaryComponentIds.size > 0) {
+      for (const componentId of failedBoundaryComponentIds) {
+        preparedClosure.abortPreparedComponent(componentId);
+        const terminalUnitIds = new Set(
+          [...preparedClosure.componentIds].filter(([, id]) => id === componentId).map(([unitId]) => unitId),
+        );
+        for (const terminalUnitId of terminalUnitIds) {
+          const owner = activeOwnerProjection.requireUnit(terminalUnitId);
+          markOwnerFailure(
+            owner,
+            terminalUnitId,
+            owner.legacyName,
+            new IrUnsupportedError(
+              "late-preparation-unsupported",
+              "resolve",
+              `prepared callable boundary ${terminalUnitId} did not certify its final IR signature/support contract`,
+            ),
+            "resolve",
+          );
+        }
+      }
+      preparedComponentIdByTerminalUnitId = new Map(
+        [...preparedComponentIdByTerminalUnitId].filter(
+          ([, componentId]) => !failedBoundaryComponentIds.has(componentId),
+        ),
+      );
+      healthyForLower = retainHealthyOwners(healthyForLower);
+    }
+    // The production R2 route keeps scopes open only for this boundary check.
+    // Detached aggregate publication owns its own open-scope lifetime and is
+    // intentionally left untouched here.
+    if (!options?.deferPreparedPublication) preparedClosure.sealPreparedScopes();
+  }
+
   const replaceUnitCallableAt = (
     unitId: IrUnitId,
     terminalOwnerUnitId: IrUnitId,
@@ -5457,6 +5606,20 @@ export function compileIrPathFunctions(
         "patch",
         `ir/integration: exact unit ${unitId} replacement does not match its allocator function`,
       );
+    }
+    const boundary = preparedCallableBoundaryCandidates.get(unitId);
+    if (boundary) {
+      assertPreparedCallableBoundaryCandidate(boundary);
+      const entry = healthyForLower.find((candidate) => candidate.artifactUnitId === unitId);
+      if (!entry || !preparedClosure) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          `prepared callable boundary ${unitId} lost its final artifact before publication`,
+        );
+      }
+      boundary.assertCurrent(entry.fn);
+      boundary.assertSupportCurrent(entry.fn, preparedClosure.closureSupport);
     }
     const preparedComponentId = preparedComponentIdByTerminalUnitId.get(terminalOwnerUnitId);
     if (preparedComponentId !== undefined) {
@@ -5475,7 +5638,17 @@ export function compileIrPathFunctions(
   const pendingPatches: PreparedIrPendingPatch<BuiltFn>[] = [];
   const timerLoweringBoundary = createCompilerTimerShimLoweringBoundary<BuiltFn>({
     inventory: moduleBindingIdentityContext.inventory,
-    sealDeferred: () => preparedClosure?.sealCompilerTimerShim(),
+    sealDeferred: () => {
+      preparedClosure?.sealCompilerTimerShim();
+      // A callable-boundary candidate keeps all prepared scopes open until its
+      // final signature/support check.  Timer entries are prepared lazily at
+      // the end of this loop, so seal the newly opened timer scopes as soon as
+      // their deferred preparation completes.  Detached aggregate publication
+      // owns the scopes itself and must keep them open.
+      if (callableBoundaryRequested && !options?.deferPreparedPublication) {
+        preparedClosure?.sealPreparedScopes();
+      }
+    },
     ownerFailed: (unitId) => failedOwners.has(unitId),
   });
   const lowerEntries = timerLoweringBoundary.order(healthyForLower);

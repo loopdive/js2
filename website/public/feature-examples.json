@@ -60542,7 +60542,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">export</span><span style=\"color:#C792EA\"> function</span><span style=\"color:#82AAFF\"> bar</span><span style=\"color:#89DDFF\">():</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span><span style=\"color:#89DDFF;font-style:italic\"> return</span><span style=\"color:#F78C6C\"> 1</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#89DDFF\"> }</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">export</span><span style=\"color:#C792EA\"> const</span><span style=\"color:#BABED8\"> version </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#89DDFF\"> \"</span><span style=\"color:#C3E88D\">1.0</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#89DDFF\">;</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $bar</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 390,
+      "passCount": 386,
       "totalCount": 731,
       "tests": [
         {
@@ -63570,7 +63570,7 @@
         },
         {
           "edition": "ES2025",
-          "pass": 4,
+          "pass": 3,
           "total": 30
         },
         {
@@ -63585,12 +63585,12 @@
         },
         {
           "edition": "Unclassified (legacy)",
-          "pass": 1,
+          "pass": 0,
           "total": 1
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 138,
+          "pass": 136,
           "total": 225
         }
       ]

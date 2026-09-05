@@ -20,6 +20,7 @@ import { WasmTreemap, parseWasm, parseWasmSpans, SECTION_COLORS } from "./wasm-t
 import type { WasmData, WasmSection, WasmFunctionBody, ByteSpan } from "./wasm-treemap.js";
 import { LayoutManager, clearSavedLayout, getDefaultLayout, getMobileDefaultLayout } from "./layout.js";
 import { AstExplorer } from "./ast-explorer.js";
+import { eraseTypesPreservingOffsets } from "./ts-erase-types.js";
 import DEFAULT_SOURCE from "./examples/dom/calendar.ts?raw";
 import BENCH_HELPERS_SOURCE from "./examples/benchmarks/helpers.ts?raw";
 
@@ -3005,28 +3006,52 @@ astExplorer.onNodeSelect = (range) => {
   });
 };
 
-/** Feed the explorer after a compile. Cheap when nothing changed. */
-function updateAstPanel(editorSource: string, compiledJs: string): void {
-  astExplorer.setSources(editorSource, compiledJs);
+/**
+ * The JavaScript the AST panel should parse.
+ *
+ * acorn parses JavaScript; the editor holds TypeScript. Erase the TS-only
+ * syntax by blanking it with spaces, which keeps every remaining character at
+ * its ORIGINAL offset — so a node's range still points at the editor text and
+ * hover/click keep working. Constructs that need code generation rather than
+ * deletion (enum, namespace, parameter properties) can't be blanked; those fall
+ * back to a real transpile, which is correct JS at shifted offsets.
+ */
+function javascriptForAst(editorSource: string): { code: string; mapsToEditor: boolean } {
+  try {
+    const erased = eraseTypesPreservingOffsets(ts, editorSource, "playground.ts");
+    if (erased && !erased.unsupported) return { code: erased.code, mapsToEditor: true };
+  } catch {
+    // A malformed source can trip the eraser's AST walk; transpile instead.
+  }
+  try {
+    const out = ts.transpileModule(editorSource, {
+      compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext, removeComments: false },
+      reportDiagnostics: false,
+    });
+    return { code: out.outputText, mapsToEditor: false };
+  } catch {
+    // Give acorn the raw text and let it report the real syntax error.
+    return { code: editorSource, mapsToEditor: true };
+  }
+}
+
+/** Feed the explorer. Cheap when nothing changed. */
+function updateAstPanel(editorSource: string): void {
+  const { code, mapsToEditor } = javascriptForAst(editorSource);
+  astExplorer.setSource(code, mapsToEditor);
 }
 
 /**
- * Keep the tree live while typing — parsing costs milliseconds and needs no
- * compile.
- *
- * Only when the panel is already showing the EDITOR's text, though: a
- * TypeScript source is on screen as its compiled JS (acorn cannot parse the
- * annotations), and the compiled output is cleared the moment the source
- * changes. Re-parsing there would replace a correct tree with a parse error on
- * every keystroke, so that case waits for the next compile.
+ * Keep the tree live while typing. Erasing types and parsing costs milliseconds
+ * and needs no compile, so the panel follows the editor rather than the last
+ * build.
  */
 let astRefreshTimer: number | null = null;
 function scheduleAstRefreshFromEditor(): void {
-  if (!astExplorer.showsEditorSource) return;
   if (astRefreshTimer !== null) window.clearTimeout(astRefreshTimer);
   astRefreshTimer = window.setTimeout(() => {
     astRefreshTimer = null;
-    astExplorer.setSources(inputFile.model.getValue(), "");
+    updateAstPanel(inputFile.model.getValue());
   }, 250);
 }
 
@@ -4261,9 +4286,8 @@ async function compileOnly() {
     wasmFile.binaryData = new Uint8Array(bin);
     annotateHexEditor(bin, wasmData, lineLabels);
   }
-  const modularOutput = generateModularOutput(result);
-  fileMap.get("output/example.js")!.model.setValue(modularOutput);
-  updateAstPanel(source, modularOutput);
+  fileMap.get("output/example.js")!.model.setValue(generateModularOutput(result));
+  updateAstPanel(source);
 
   // Mark output files as compiled
   for (const f of files) {
