@@ -774,6 +774,14 @@ export function classifyRuntimeNewTargetSite(
     // 0). A generator function target DOES throw correctly there (node 1,
     // admitted 1) and is not excluded.
     if (resolvesToAsyncFunction(ctx, target)) return undefined;
+    // RESIDUAL, recorded rather than refused: a dynamic target whose binding is
+    // annotated `any` (`let T: any = F; T = G;`) traps here. That trap is the
+    // `any`-callee construct lowering, not this arm — on BASE, with no distinct
+    // NewTarget at all, `Reflect.construct(T, [1])` on the same binding traps
+    // identically, and `new T(1)` answers 1 where node answers 0. The untyped
+    // spelling `let T = F` answers node. Refusing on a declared type would put
+    // a wasm-lowering question inside a source-shape gate; the fix belongs in
+    // that lowering.
     return prototypeIsPristine(ctx, newTarget) ? "carrier" : undefined;
   }
   if (targetKind.kind === "foreign") {
