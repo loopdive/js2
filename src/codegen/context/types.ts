@@ -741,8 +741,13 @@ export interface FunctionContext {
   evalCompletionLocal?: number; // §13 eval completion register — statements/eval-completion-value.ts
   /** Depth for `return` inside generator body -- adjusted by loop/block nesting */
   generatorReturnDepth?: number;
-  /** Map from variable name → ref cell info (for mutable closure captures) */
-  boxedCaptures?: Map<string, { refCellTypeIdx: number; valType: ValType }>;
+  /** Map from variable name → ref cell info (for mutable closure captures).
+   * (#5320) `rawLocalIdx` names the ORPHANED pre-box slot this frame's cell was
+   * minted from — set only for a NULLABLE cell, whose `struct.new` may sit at a
+   * construction site that does not dominate later uses of the rebound name. It
+   * seeds the lazy repair in `closures/conditional-capture-box.ts`; a cell that
+   * arrives as a capture parameter has no pre-box slot here and leaves it unset. */
+  boxedCaptures?: Map<string, { refCellTypeIdx: number; valType: ValType; rawLocalIdx?: number }>;
   /**
    * Names this lifted nested function receives as leading capture parameters.
    * A sibling-forwarding site must read these names through this function's
@@ -751,6 +756,13 @@ export interface FunctionContext {
   liftedCaptureNames?: Set<string>;
   /** Stable frame slots for leading captures, retained when a body-local shadows the same name. */
   liftedCaptureSlots?: Map<string, number>;
+  /**
+   * (#5323) This frame's CANONICAL `__boxed_<name>` cell for one of its own
+   * leading capture params, recorded only where the cell was minted from
+   * {@link liftedCaptureSlots}`.get(name)` itself — see `recordLiftedCaptureBox`
+   * / `liftedCaptureBoxSlot` in closures/capture-source-slot.ts.
+   */
+  liftedCaptureBoxes?: Map<string, number>;
   /**
    * Source-visible bindings owned by a function whose lexical descendants may
    * perform direct eval. These functions alone promote bindings to the shared

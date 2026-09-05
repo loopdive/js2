@@ -28,7 +28,7 @@ import {
   skipUnobservedHoistedCapture,
 } from "../function-declaration-observation.js";
 import { getOrRegisterArgumentsVecType, reserveArgumentsLengthBrand } from "../arguments-length-brand.js";
-import { recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
+import { recordLiftedCaptureBox, recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
 import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
@@ -2599,6 +2599,7 @@ function emitEagerCaptureBoxes(ctx: CodegenContext, fctx: FunctionContext, funcN
     fctx.localMap.set(cap.name, boxedLocalIdx);
     if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
     fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.valType });
+    recordLiftedCaptureBox(fctx, cap.name, cap.outerLocalIdx, boxedLocalIdx);
   }
 }
 
@@ -2697,6 +2698,10 @@ function emitEagerNestedCallCaptureBoxes(
     liftedFctx.localMap.set(cap.name, boxedLocalIdx);
     if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
     liftedFctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: calleeValType });
+    // (#5323) Publish the cell, or the forwarding call site reads the still-raw
+    // frozen capture slot and mints a SECOND one — the identity split this
+    // pass's own "no second `struct.new`" contract assumes cannot happen.
+    recordLiftedCaptureBox(liftedFctx, cap.name, paramIdx, boxedLocalIdx);
   }
 }
 

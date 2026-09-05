@@ -9,7 +9,13 @@
 // identifier cases, so the caller in calls.ts continues its dispatch chain.
 // Moved verbatim: the emitted Wasm is byte-identical.
 import { ts } from "../../ts-api.js";
-import { captureSourceSlot, expectsBoxedCaptureValue, pushBoxedTdzFlagRef } from "../closures/capture-source-slot.js";
+import {
+  captureSourceSlot,
+  expectsBoxedCaptureValue,
+  liftedCaptureBoxSlot,
+  pushBoxedTdzFlagRef,
+  recordLiftedCaptureBox,
+} from "../closures/capture-source-slot.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
@@ -3542,8 +3548,13 @@ export function compileIdentifierCall(
             // function still captures the module-level `root`).  The leading
             // capture parameter is the cell we must forward; the name-based
             // localMap entry is the shadow value and has the wrong ABI type.
-            const currentLocalIdx = fctx.liftedCaptureSlots?.has(cap.name)
-              ? captureSourceSlot(fctx, cap)
+            // (#5323) …unless this frame already minted the shared cell for
+            // that very capture param — the frozen slot keeps naming the RAW
+            // param, so reading it here re-mints a SECOND cell and splits the
+            // binding's identity. See `liftedCaptureBoxSlot`.
+            const isLiftedCapture = fctx.liftedCaptureSlots?.has(cap.name) === true;
+            const currentLocalIdx = isLiftedCapture
+              ? (liftedCaptureBoxSlot(fctx, cap.name, refCellTypeIdx) ?? captureSourceSlot(fctx, cap))
               : (fctx.localMap.get(cap.name) ?? cap.outerLocalIdx);
             const refCellType: ValType = { kind: "ref", typeIdx: refCellTypeIdx };
             const sourceType = getLocalType(fctx, currentLocalIdx);
@@ -3568,6 +3579,9 @@ export function compileIdentifierCall(
               fctx.localMap.set(cap.name, boxedLocalIdx);
               if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
               fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.valType });
+              // (#5323) Minted from the frozen capture slot ⇒ this IS the
+              // frame's storage; publish it so later sites converge here.
+              recordLiftedCaptureBox(fctx, cap.name, currentLocalIdx, boxedLocalIdx);
             } else {
               fctx.body.push({ op: "local.get", index: currentLocalIdx });
             }

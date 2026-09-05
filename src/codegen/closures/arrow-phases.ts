@@ -1153,7 +1153,20 @@ function pushCaptureCell(ctx: CodegenContext, fctx: FunctionContext, cap: ArrowC
   const boxedLocalIdx = mappedIsCell ? mappedLocalIdx! : cap.localIdx;
   const boxedType = getLocalType(fctx, boxedLocalIdx);
   const valueType = boxed?.valType;
-  const rawLocalIdx = valueType ? findUnboxedCaptureLocal(fctx, cap.name, boxedLocalIdx, valueType) : undefined;
+  // Prefer the slot the box RECORDED over the name+type scan: the scan walks
+  // `fctx.locals` only, so a boxed PARAMETER has no discoverable raw slot and
+  // the repair silently declined for it.
+  const recordedRawIdx = boxed?.rawLocalIdx;
+  const recordedRawType = recordedRawIdx === undefined ? undefined : getLocalType(fctx, recordedRawIdx);
+  const rawLocalIdx =
+    valueType === undefined
+      ? undefined
+      : recordedRawIdx !== undefined &&
+          recordedRawIdx !== boxedLocalIdx &&
+          recordedRawType !== undefined &&
+          valTypesMatch(recordedRawType, valueType)
+        ? recordedRawIdx
+        : findUnboxedCaptureLocal(fctx, cap.name, boxedLocalIdx, valueType);
   const nullableBox =
     boxed !== undefined &&
     valueType !== undefined &&
@@ -1243,7 +1256,11 @@ export function emitClosureConstruction(
         // Re-register the original name to point to the boxed local
         fctx.localMap.set(cap.name, boxedLocalIdx);
         if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
-        fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type });
+        // The rebind is FUNCTION-wide but this `struct.new` runs only where the
+        // closure is constructed. Record the slot it wrapped so the frame's own
+        // reads/writes can mint the cell lazily on a path that skipped this
+        // site — see closures/conditional-capture-box.ts.
+        fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.type, rawLocalIdx: cap.localIdx });
       }
     } else {
       if (cap.alreadyBoxed && fctx.boxedCaptures?.has(cap.name)) {

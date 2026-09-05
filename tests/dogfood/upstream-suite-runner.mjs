@@ -928,6 +928,98 @@ function nativePathFor(generatedPath) {
   return `${generatedPath.slice(0, -extension.length)}.native.mjs`;
 }
 
+/**
+ * A write path to the terminal that upstream test code cannot take away.
+ *
+ * The native oracle lane executes upstream test bodies IN THIS PROCESS, so any
+ * global a test replaces stays replaced. `console.log` is the one that matters:
+ * a harness whose own progress output goes through the same binding the guest
+ * just hijacked reports nothing and looks finished.
+ */
+const HOST_STDOUT_WRITE = process.stdout.write.bind(process.stdout);
+const HOST_STDERR_WRITE = process.stderr.write.bind(process.stderr);
+
+/**
+ * Console methods an upstream suite is likely to stub. Snapshotting the listed
+ * methods is not enough on its own — a test can also *add* keys — so
+ * `restoreHostConsole` diffs the key set as well.
+ */
+const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug", "trace", "dir", "table", "group", "groupEnd"];
+
+function snapshotHostConsole() {
+  const methods = new Map();
+  for (const name of CONSOLE_METHODS) {
+    if (name in console) methods.set(name, console[name]);
+  }
+  return { methods, keys: new Set(Reflect.ownKeys(console)) };
+}
+
+function restoreHostConsole(snapshot) {
+  const replaced = [];
+  for (const [name, original] of snapshot.methods) {
+    if (console[name] !== original) {
+      replaced.push(name);
+      try {
+        console[name] = original;
+      } catch {
+        /* a frozen console is the host's business, not ours */
+      }
+    }
+  }
+  for (const key of Reflect.ownKeys(console)) {
+    if (snapshot.keys.has(key)) continue;
+    try {
+      delete console[key];
+    } catch {
+      /* non-configurable additions are harmless */
+    }
+  }
+  return replaced;
+}
+
+/**
+ * Run `body` with the host console guaranteed to survive it.
+ *
+ * Hono's `showRoutes()` suite is the motivating case (#5326): its `beforeAll`
+ * swaps `console.log` for a collector array and its `afterAll` puts the real
+ * one back — but the shim only runs a test's `afterAll` hooks when that test is
+ * the module's LAST registered test, and hono's last test lives in a different
+ * `describe`. The collector therefore outlived the file and swallowed every
+ * later harness line, in this process, for the rest of the run. The suite kept
+ * working; only the reporting went dark. Containment belongs here rather than
+ * in the shim because the hazard is structural: upstream tests are guests in
+ * the harness process and any of them may stub a global. Same policy as
+ * `installNativeLateErrorBoundary` above — record and keep going.
+ */
+export async function withHostConsole(body) {
+  const snapshot = snapshotHostConsole();
+  try {
+    return await body();
+  } finally {
+    const replaced = restoreHostConsole(snapshot);
+    if (replaced.length > 0) {
+      HOST_STDERR_WRITE(
+        `[dogfood] restored host console.${replaced.join(", console.")} left stubbed by upstream test code\n`,
+      );
+    }
+  }
+}
+
+/**
+ * Print through the write path captured at module load.
+ *
+ * Drivers used to build their logger as `(...v) => console.log(...v)`, which
+ * re-reads the (mutable) global on every call. `createHarnessLogger` resolves
+ * the write path once, at import time, so harness output is independent of
+ * whatever the code under measurement does to `console`.
+ */
+export function createHarnessLogger({ quiet = false } = {}) {
+  if (quiet) return () => {};
+  return (...values) => {
+    HOST_STDOUT_WRITE(`${values.map((value) => (typeof value === "string" ? value : String(value))).join(" ")}\n`);
+  };
+}
+
 // (#4604 S7, generalized) Late host errors from NATIVE upstream test runs must
 // cost a report entry, never the process. `runNative` imports the generated
 // module IN-PROCESS and try/catches only the awaited test body — but upstream
@@ -974,37 +1066,41 @@ async function runNative(generatedPath, source) {
   });
   const nativePath = nativePathFor(generatedPath);
   writeFileSync(nativePath, transpiled.outputText);
-  const module = await import(`${pathToFileURL(nativePath).href}?run=${Date.now()}-${Math.random()}`);
-  const count = Number(module.upstreamTestCount());
-  const statuses = [];
-  const errors = [];
-  if (typeof module.runUpstreamTest === "function") {
-    for (let index = 0; index < count; index++) {
-      let value;
-      try {
-        value = await module.runUpstreamTest(index);
-      } catch (error) {
-        value = 0;
-        errors.push(errorText(error));
+  // Everything from the dynamic import onward is guest code: the module's
+  // top-level `describe` bodies and then every registered test body.
+  return withHostConsole(async () => {
+    const module = await import(`${pathToFileURL(nativePath).href}?run=${Date.now()}-${Math.random()}`);
+    const count = Number(module.upstreamTestCount());
+    const statuses = [];
+    const errors = [];
+    if (typeof module.runUpstreamTest === "function") {
+      for (let index = 0; index < count; index++) {
+        let value;
+        try {
+          value = await module.runUpstreamTest(index);
+        } catch (error) {
+          value = 0;
+          errors.push(errorText(error));
+        }
+        statuses.push(Number(value) === 1);
+        if (errors.length < index + 1) errors.push(String(module.upstreamTestErrors()[index] ?? ""));
       }
-      statuses.push(Number(value) === 1);
-      if (errors.length < index + 1) errors.push(String(module.upstreamTestErrors()[index] ?? ""));
+    } else {
+      statuses.push(...Array.from(module.runUpstreamTests(), (value) => Number(value) === 1));
+      errors.push(...Array.from(module.upstreamTestErrors(), String));
     }
-  } else {
-    statuses.push(...Array.from(module.runUpstreamTests(), (value) => Number(value) === 1));
-    errors.push(...Array.from(module.upstreamTestErrors(), String));
-  }
-  module.cleanupUpstreamTestEnvironment?.();
-  return {
-    count,
-    names: Array.from(module.upstreamTestNames(), String),
-    statuses,
-    errors,
-    // Late async throws recorded (not fatal) since this file's native run
-    // started — see installNativeLateErrorBoundary above. Drained per run so
-    // one file's stray timers are not attributed to the next.
-    lateHostErrors: nativeLateHostErrors.splice(0, nativeLateHostErrors.length),
-  };
+    module.cleanupUpstreamTestEnvironment?.();
+    return {
+      count,
+      names: Array.from(module.upstreamTestNames(), String),
+      statuses,
+      errors,
+      // Late async throws recorded (not fatal) since this file's native run
+      // started — see installNativeLateErrorBoundary above. Drained per run so
+      // one file's stray timers are not attributed to the next.
+      lateHostErrors: nativeLateHostErrors.splice(0, nativeLateHostErrors.length),
+    };
+  });
 }
 
 /**
@@ -1131,6 +1227,80 @@ export async function compileAndRunUpstreamModule({
   return { native, ...isolated };
 }
 
+/** Degenerate per-file result recorded when a file never produced one. */
+function unmeasuredUpstreamResult(reason) {
+  return {
+    native: { fatal: reason, count: 0, names: [], statuses: [], errors: [] },
+    compile: { success: false, validates: false, durationMs: 0, binaryBytes: 0, errors: [{ message: reason }] },
+    wasm: null,
+    harnessError: reason,
+  };
+}
+
+/**
+ * Run one upstream file so that the suite always survives it.
+ *
+ * The native oracle lane is in-process, so it has no hard deadline of its own:
+ * a test body that awaits a promise nothing will ever settle simply parks the
+ * driver's `await` forever. With nothing else pending, Node's event loop
+ * drains and the process **exits 0** — a suite that measured a fraction of its
+ * files is indistinguishable from one that finished. The watchdog below is
+ * deliberately NOT `unref`'d for exactly that reason: a ref'd timer keeps the
+ * loop alive while a file is in flight, so a wedged file becomes a recorded
+ * timeout instead of a silent success.
+ *
+ * The wedged microtask itself cannot be reclaimed in-process; the file is
+ * scored as unmeasured and the loop moves on.
+ */
+export async function runUpstreamFile(file, body, { timeoutMs = 600_000 } = {}) {
+  let timer;
+  const watchdog = new Promise((resolve) => {
+    timer = setTimeout(
+      () => resolve(unmeasuredUpstreamResult(`harness watchdog: no result after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
+  });
+  try {
+    const result = await Promise.race([
+      Promise.resolve()
+        .then(body)
+        .catch((error) => unmeasuredUpstreamResult(`harness error: ${errorText(error)}`)),
+      watchdog,
+    ]);
+    if (!result || typeof result !== "object" || !result.native) {
+      return { file, result: unmeasuredUpstreamResult("harness error: runner returned no native result") };
+    }
+    return { file, result };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Why a run produced nothing measurable, or `null` when it did.
+ *
+ * A selected upstream file registering zero tests is degenerate by
+ * construction — the file was chosen because it has tests — so it counts as
+ * unmeasured rather than as an honest zero.
+ */
+export function unmeasuredUpstreamReason(run) {
+  if (run?.result?.harnessError) return String(run.result.harnessError);
+  if (run?.result?.native?.fatal) return `native lane failed: ${run.result.native.fatal}`;
+  if (!(Number(run?.result?.native?.count) > 0)) return "no upstream tests registered";
+  return null;
+}
+
+/** The `N of M files produced no result` line drivers print after the headline. */
+export function unmeasuredFilesLine(report) {
+  const missing = report.extraction?.filesWithoutResult ?? 0;
+  const total = report.compile?.modules ?? 0;
+  if (missing === 0) return `[dogfood] ${total} of ${total} selected files produced a result`;
+  const detail = (report.extraction?.filesWithoutResultDetail ?? [])
+    .map((entry) => `${entry.file} (${entry.reason})`)
+    .join("; ");
+  return `[dogfood] ${missing} of ${total} selected files produced NO result: ${detail}`;
+}
+
 /**
  * Compile a generated source file in an isolated worker without executing its
  * exports. Large package implementations (notably ReactDOM) must pass this
@@ -1194,10 +1364,23 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
       unavailableInfra: 0,
       nativePassed: 0,
       nativeFailed: 0,
+      // A selected file that hung, threw, or registered nothing is NOT a
+      // legitimate zero — it is an unmeasured file, and a score computed over
+      // the rest is a fraction of the suite reported as if it were the whole.
+      filesWithoutResult: 0,
+      filesWithoutResultDetail: [],
     },
     compile: { modules: runs.length, succeeded: 0, validated: 0, durationMs: 0, binaryBytes: 0 },
     results: { scored: 0, passed: 0, failed: 0, runtimeFailed: 0, tests: [] },
   };
+
+  for (const run of runs) {
+    const unmeasured = unmeasuredUpstreamReason(run);
+    if (unmeasured) {
+      report.extraction.filesWithoutResult++;
+      report.extraction.filesWithoutResultDetail.push({ file: run.file, reason: unmeasured });
+    }
+  }
 
   for (const run of runs) {
     const native = run.result.native;
@@ -1259,6 +1442,9 @@ export function summarizeUpstreamRuns({ name, pin, testFiles, selectedFiles, run
     exactDenominator: report.results.scored,
     upstreamFiles: report.extraction.filesSeen,
     deferredFiles: report.extraction.filesDeferred,
+    selectedFilesRun: runs.length,
+    filesWithoutResult: report.extraction.filesWithoutResult,
+    filesWithoutResultDetail: report.extraction.filesWithoutResultDetail,
     nativePassed: report.extraction.nativePassed,
     nativeFailed: report.extraction.nativeFailed,
     unavailableInfra: report.extraction.unavailableInfra,
@@ -1276,15 +1462,21 @@ export function writeUpstreamReport(reportPath, report) {
 
 export function cliUpstreamHarness(runHarness, { reportSucceeded } = {}) {
   const jsonOnly = process.argv.includes("--json");
+  // Exit 0 must mean "the harness reached its summary", nothing less. Upstream
+  // test bodies run in this process; one that never settles drains the event
+  // loop and Node exits 0 with a partial measurement and no error anywhere.
+  // Starting non-zero and clearing it only on completion makes that failure
+  // mode observable to any caller that checks the status (#5326).
+  process.exitCode = 3;
   return runHarness({ quiet: jsonOnly })
     .then((report) => {
       if (jsonOnly) process.stdout.write(`${JSON.stringify(report)}\n`);
-      if (reportSucceeded && !reportSucceeded(report)) process.exitCode = 1;
+      process.exitCode = reportSucceeded && !reportSucceeded(report) ? 1 : 0;
       return report;
     })
     .catch((error) => {
       if (jsonOnly) process.stdout.write(`${JSON.stringify({ fatal: errorText(error) })}\n`);
-      else console.error("[dogfood] upstream suite crashed:", error);
+      else HOST_STDERR_WRITE(`[dogfood] upstream suite crashed: ${errorText(error)}\n${error?.stack ?? ""}\n`);
       process.exitCode = 2;
     });
 }

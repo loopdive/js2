@@ -150,6 +150,7 @@ import { recordLiftedCaptureSlots as recordCaptureSlots } from "./closures/captu
 import { EXTERNREF_PARAM, setAccessorParamIsDynamic } from "./closures/set-accessor-param.js";
 import { collectTransitiveCaptureNames } from "./function-declaration-observation.js";
 import { prepareLiftedFrameDeclarations } from "./closures/lifted-declaration-hoisting.js";
+import { closeLiftedFrameNameScope, openLiftedFrameNameScope } from "./closures/lifted-frame-name-scope.js"; // (#5324)
 export { getClosureFuncSelfTypeIdx, getFuncSignature, getOrCreateFuncRefWrapperTypes, getFuncRefWrapperRootTypeIdx };
 import {
   isVecOrArrayRefType,
@@ -3034,6 +3035,7 @@ export function compileLiftedClosureBody(
   // accesses before the declaration site throw ReferenceError (#790).
   // Async/generator state machines own their frame initialization. Ordinary
   // closure hoisting before that transform corrupts suspended-state layout.
+  const liftedNameScope = openLiftedFrameNameScope(ctx); // (#5324) see lifted-frame-name-scope.ts
   prepareLiftedFrameDeclarations(ctx, liftedFctx, body, true, !asyncDecision && !isGenerator);
 
   // (#3164) Native generator FUNCTION EXPRESSION (standalone/wasi). When the
@@ -3334,6 +3336,7 @@ export function compileLiftedClosureBody(
   if (savedFunc) ctx.funcStack.pop();
   if (savedFunc) ctx.parentBodiesStack.pop();
   ctx.currentFunc = savedFunc;
+  closeLiftedFrameNameScope(ctx, liftedNameScope); // (#5324) paired with the open above
 
   return { liftedFctx, closureReturnType, liftedFuncTypeIdx };
 }
@@ -4595,7 +4598,17 @@ export function compileArrowAsCallback(
         // pushes the SAME cell.
         if (needsThis || options?.deferredInvocation === true) {
           fctx.localMap.set(cap.name, refCellLocal);
-          (fctx.boxedCaptures ??= new Map()).set(cap.name, { refCellTypeIdx, valType: cap.type });
+          // (#5320) The rebind is FUNCTION-wide while the `local.tee` above runs
+          // only where the callback is created. Record the wrapped slot so a
+          // path that skipped that site mints the cell lazily instead of
+          // no-op'ing its writes (closures/conditional-capture-box.ts); the
+          // cell→raw writebacks keep the slot authoritative on exactly those
+          // paths.
+          (fctx.boxedCaptures ??= new Map()).set(cap.name, {
+            refCellTypeIdx,
+            valType: cap.type,
+            rawLocalIdx: cap.localIdx,
+          });
         }
       } else {
         // Immutable capture or already-boxed: push directly

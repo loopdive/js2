@@ -359,6 +359,19 @@ function arrayReceiverMayCarryReferenceElements(ctx: CodegenContext, receiver: t
   return false;
 }
 
+/**
+ * (#5319, generalising #4527) The single-callback array HOFs whose unresolved
+ * callback must reach the element through the reference-preserving
+ * `__call_dyn_1` bridge rather than the numeric `__call_1_f64` one. #4527 armed
+ * `map` alone; every other member of this family lowered the SAME
+ * `setupArrayCallback` fallback and therefore applied ToNumber to a reference
+ * element — `["x","y"].filter(Boolean)` dropped every entry.
+ *
+ * `reduce`/`reduceRight` are deliberately absent: they take a 2-arg callback and
+ * there is no `__call_dyn_2` bridge yet.
+ */
+const DYNAMIC_ELEMENT_BRIDGE_METHODS = new Set(["map", "filter", "forEach", "find", "findIndex", "some", "every"]);
+
 function collectFunctionalArrayImports(ctx: CodegenContext, state: UnifiedCollectorState, node: ts.Node): void {
   if (!ts.isCallExpression(node) || !ts.isPropertyAccessExpression(node.expression)) return;
   const method = node.expression.name.text;
@@ -366,7 +379,7 @@ function collectFunctionalArrayImports(ctx: CodegenContext, state: UnifiedCollec
     if (method === "reduce" || method === "reduceRight") state.funcArrayNeed2 = true;
     else state.funcArrayNeed1 = true;
     if (
-      method === "map" &&
+      DYNAMIC_ELEMENT_BRIDGE_METHODS.has(method) &&
       !ctx.standalone &&
       !ctx.wasi &&
       node.arguments.length > 0 &&
