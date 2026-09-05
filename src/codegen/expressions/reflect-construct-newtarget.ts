@@ -396,6 +396,33 @@ export function tryEmitOrdinaryConstructWithNewTarget(
  * prototype those programs observe is wrong with or without this arm — a
  * pre-existing carrier gap, not a refusal turned into a wrong answer. They are
  * listed as residuals in the issue file.
+ *
+ * Re-measured 2026-09-05 (r2 step 2), all nine named entries, with the set
+ * emptied, `--target standalone`, oracle node 22 — `getPrototypeOf` identity
+ * AND one method read through the patched chain:
+ *
+ *   | target  | node | admitted | verdict                                     |
+ *   | ------- | ---- | -------- | ------------------------------------------- |
+ *   | Array   | 1    | 0        | proto not recorded — keep                    |
+ *   | Map     | 1    | 0        | proto not recorded — keep                    |
+ *   | RegExp  | 1    | 0        | proto not recorded — keep                    |
+ *   | Set     | 1    | 0        | proto not recorded — keep                    |
+ *   | Function| 1    | LEAK     | pulls a `js2wasm:runtime-eval` import — keep |
+ *   | Boolean | 5    | 7        | proto recorded, dispatch nominal — keep      |
+ *   | Number  | 5    | 7        | proto recorded, dispatch nominal — keep      |
+ *   | String  | 5    | 3        | proto recorded, dispatch nominal — keep      |
+ *   | Symbol  | 1    | 1        | never constructs; TypeError = node — DROPPED |
+ *
+ * Boolean/Number/String are the correction to the r2 plan's premise: a probe
+ * that only compares `Object.getPrototypeOf(o)` says they take the patch, and
+ * they do — but a probe that also calls `o.valueOf()` through the patched
+ * chain shows the wrapper carrier still dispatches NOMINALLY, so the program
+ * answers 7/7/3 where node answers 5/5/5. That is a compile error turned into
+ * a wrong answer, which this arm may not do. The nominal dispatch is itself
+ * pre-existing (on BASE, with no `Reflect.construct` in the program at all,
+ * `Object.setPrototypeOf(new Boolean(true), P)` reads back 2 where node reads
+ * 1) — but a defect being older does not make it acceptable to newly compile a
+ * program onto it.
  */
 const UNSETTABLE_PROTOTYPE_CONSTRUCTORS: ReadonlySet<string> = new Set([
   "Array",
@@ -407,7 +434,6 @@ const UNSETTABLE_PROTOTYPE_CONSTRUCTORS: ReadonlySet<string> = new Set([
   "RegExp",
   "Set",
   "String",
-  "Symbol",
   "WeakMap",
   "WeakRef",
   "WeakSet",
