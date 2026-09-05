@@ -1,7 +1,7 @@
 ---
 id: 5317
 title: "ES2015 standalone typedarray — r4: species protocol, coercion order, sort, join traps, integer-indexed internals"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-04
 updated: 2026-09-04
@@ -27,6 +27,29 @@ loc-budget-allow:
   - src/codegen/expressions/call-builtin-static.ts
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/index.ts
+  # 2026-09-04 r4 step 4 (Opus): the join separator's `ref.cast $AnyString`
+  # TRAPS on every non-string separator (§23.1.3.15 step 3 wants
+  # undefined ⇒ "," / Symbol ⇒ TypeError / else ToString). The emitter lives
+  # in the new `src/codegen/join-separator.ts`; array-methods.ts grows only by
+  # the two dispatch arms that call it (+15 LOC, measured
+  # `node scripts/check-loc-budget.mjs` 2026-09-04).
+  - src/codegen/array-methods.ts
+coercion-sites-allow:
+  # 2026-09-05 r4 review round 1 (Opus), F1: `buildJoinSeparatorToString` must
+  # ARM `__extern_toString`, not merely look it up. Only looking it up made the
+  # whole emitter INERT — in a module whose elements are plain numbers and whose
+  # separator is the only ToString consumer, nothing else mints the provider, so
+  # the emitter returned `null` and the caller kept the trapping
+  # `ref.cast $AnyString`. Measured on standalone AND wasi, byte-identical to the
+  # git-archive base f9bf876899: `[1,2,3].join({toString(){…}})`, `join(null)`,
+  # `new Uint8Array([1,2,3]).join(true)` and `join(c)` with `var c=0` all still
+  # trapped `illegal cast`. The arming goes through `ensureLateImport` — the
+  # SAME single chokepoint every other consumer uses, which routes to the
+  # Wasm-native object-runtime provider under standalone/wasi and to the host
+  # import otherwise. This is +1 site of EXISTING vocabulary at the canonical
+  # chokepoint, not a hand-rolled ToString matrix; the gate counts the arming
+  # call, hence this grant.
+  - src/codegen/join-separator.ts
 ---
 
 ## Problem
@@ -462,3 +485,339 @@ pins (`tests/issue-5194*.test.ts`, 4 files) stay green unchanged.
   given up), the control-corpus result, gate status, the worktree path and head
   sha, and every residual with its mechanism.
 
+
+## 2026-09-04 r4 implementation (Opus)
+
+Worktree `/home/user/js2/.claude/worktrees/wf_a9776683-b00-2`, branch
+`worktree-wf_a9776683-b00-2`, base `origin/main` = `f9bf876899`. Two of the
+plan's six steps landed; the other four are given up this round with their
+mechanism named below.
+
+### Measurement vehicle — read this before trusting any number here
+
+`npx tsx scripts/run-test262-paths.mts --isolate` is **unusable on this box
+right now**. Its child passes `undefined` as the per-row budget, i.e. the
+runner's 15 s default, and with four lanes sharing four cores that budget is
+exceeded by rows that compile fine. The base sweep of all 169 claimed rows
+(2026-09-04, `git archive origin/main` tree) returned:
+
+```
+part 0: { fail: 33, compile_error: 44 }
+part 1: { fail: 43, compile_error: 49 }
+```
+
+and **every one of those 93 `compile_error`s is the string
+`compilation timeout`** — including every row this lane touches. So the sweep
+establishes only that 76 rows fail for real reasons and that **no claimed row
+passes on base**; its `compile_error` verdicts are load artifacts, not
+evidence. Everything claimed below was therefore A/B'd with a 120 s per-row
+budget instead — the same budget the pin test files use — via
+`.tmp/row-one.mts` / `.tmp/rows.mjs` (scratch, gitignored) and via
+`vitest --pool=forks --poolOptions.forks.singleFork=true` run in BOTH the base
+tree and the lane tree.
+
+### Rows kept (base → lane)
+
+| row | base | lane |
+| --- | --- | --- |
+| `TypedArray/prototype/join/return-abrupt-from-separator.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/join/return-abrupt-from-separator-symbol.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-value.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-simple-value.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/fill/coerced-indexes.js` | fail (``​`null` end coerced to 0``) | pass |
+| `TypedArray/prototype/copyWithin/coerced-values-end.js` | fail | pass |
+
+**6 of the 169 claimed rows.** Five further rows flipped as collateral and
+were not claimed: `Array/prototype/join/S15.4.4.5_A1.2_T2.js`,
+`.../S15.4.4.5_A3.1_T1.js`, `.../S15.4.4.5_A3.1_T2.js`, and the two BigInt
+twins `TypedArray/prototype/join/BigInt/return-abrupt-from-separator{,-symbol}.js`.
+
+### Control corpora — 259 rows, zero lost
+
+Both corpora were run row-for-row on the base tree and the lane tree with the
+120 s budget.
+
+| corpus | rows | base pass | lane pass | lost | gained |
+| --- | --- | --- | --- | --- | --- |
+| `Array` + `TypedArray` `prototype/{join,toString,toLocaleString}` | 120 | 57 | 66 | **0** | 9 |
+| `TypedArray/prototype/{fill,copyWithin,reverse}` | 139 | 86 | 88 | **0** | 2 |
+
+The r3 pins are unchanged and green: `tests/issue-5194-es2015-typedarray-r2`,
+`-r3`, `-set-r2` — 80 tests, all passing, single-fork at the CI heap.
+
+### Step 4 — join separator (mechanism)
+
+Both native join lanes (`compileArrayJoinNative` for a `$__vec_*` receiver,
+`compileArrayJoinExternNative` for an `externref` one) compiled the separator
+argument to `externref` and then `ref.cast $AnyString` it. That is correct only
+when the argument already IS a string; every other separator — a plain object
+with a user `toString`, `null`, a number, a Symbol — **trapped**, which is
+unrecoverable and strictly worse than a wrong answer.
+
+`src/codegen/join-separator.ts` (new) emits §23.1.3.15 step 3 instead:
+`undefined` ⇒ `","`; a Symbol ⇒ TypeError; anything else ⇒ the coercion
+engine's own ToString provider (so a throwing user `toString` propagates).
+`null` is not `undefined` and still renders `"null"`.
+
+Byte-identity: a string LITERAL separator keeps the old cast, so no module
+whose only separator is `join(",")` changes. The emitter resolves the provider
+through `getExternrefToStringProvider` and returns `null` when it is absent
+rather than arming a second cascade — `check-coercion-sites` reports no net
+vocabulary growth.
+
+### Step 2 — `fill` / `copyWithin` end argument (mechanism)
+
+`__ta_dyn_fill` and `__ta_dyn_copywithin` decided "the `end` argument is
+absent, use len" with `__nullish_to_null` followed by `ref.is_null`, which
+answers TRUE for `null` too. §23.2.3.8 step 5 / §23.2.3.6 step 8 only treat
+`undefined` that way: `null` is ToIntegerOrInfinity'd to 0. Both now use
+`__extern_is_undefined` and fall back to the old shape when that helper is not
+registered, so an explicit `undefined` end and an omitted end still mean `len`.
+
+The observable coercion ORDER was already correct on base (value → start → end
+for `fill`; target → start → end for `copyWithin`) and is now pinned.
+
+### Residuals — 163 claimed rows given up, by mechanism
+
+- **`detached-buffer` / `coerced-*-detach*` (fill 4, copyWithin 4, sort 1,
+  join 1, and the per-method `detached-buffer.js` rows across
+  some/every/forEach/reduce/reduceRight/find/findIndex/reverse/entries/keys/
+  values/toString/toLocaleString).** ValidateTypedArray's detached arm
+  (§23.2.3.5.1 step 5) is missing: a detached buffer is the shared byte vec's
+  negative length, which `pushTaDynViewInBoundsLen` floors to an effective
+  element length of 0 — right for the §10.4.5 element MOP, wrong for the
+  prototype methods, which must throw TypeError before observing anything
+  else. **A guard was written and reverted unmeasured**: a probe showed the
+  detach is not observable through the dyn view in the shape these rows use
+  (`a.length` stayed 4 after `a.buffer.transfer()`), so the guard would never
+  have fired. The detach representation reaching the dyn view has to be
+  settled first; adding the arm before that would make rows "pass" for the
+  wrong reason.
+- **`invoked-as-method` / `invoked-as-func` (join, slice, Symbol.toStringTag,
+  length, byteLength).** The native-proto method closures carry no
+  ValidateTypedArray receiver brand check: probed directly,
+  `%TypedArray%.prototype.join()` returns instead of throwing TypeError.
+  Shared mechanism, one place to fix, not attempted this round.
+- **Species protocol (slice 7, subarray 8, filter 6, map 6,
+  `ArrayBuffer.prototype.slice` 10 ≈ 37 rows).** `emitTaDynSpeciesCreate`
+  (#4449) already exists in `dataview-native.ts`; the base failures are in its
+  VALIDATION arms (`species-is-not-object`, `species-is-not-constructor`,
+  `species-returns-same-arraybuffer`, `species-returns-smaller-arraybuffer`
+  all report "Expected a TypeError … no exception was thrown"), plus the
+  `ArrayBuffer.prototype.slice` lane which does not consult `@@species` at all
+  (`slice/species.js` returned the sliced bytes, not the species result). Not
+  started — this is the largest single family left.
+- **`ctors/object-arg` (11).** Element `ToNumber`/`@@toPrimitive` abrupt
+  completions are swallowed: base reports "abrupt completion from
+  ToNumber(sample) Expected a Test262Error … no exception was thrown" for the
+  `valueOf` / `toString` / `@@toPrimitive` variants, and the iterator variants
+  report the wrong error type. `length-excessive-throws.js` traps instead
+  (`RuntimeError: requested new array is too large`).
+- **`sort` (12).** Base shows the comparator is never called
+  (`comparefn-calls.js`: "calls comparefn" with 0 calls) and the default
+  comparator does not order numerically (`sorted-values.js`,
+  `sortcompare-with-no-tostring.js`), i.e. the dyn-view `sort` is not wired to
+  the element comparator at all. `return-same-instance.js` shows it returns
+  `null` rather than the receiver.
+- **`toLocaleString` (10), iteration methods (some/every/forEach/entries/
+  values/keys, 18), `TypedArrayConstructors/internals/{DefineOwnProperty,
+  OwnPropertyKeys,Set}` (11), `from`/`of` (14), `DataView`/`ArrayBuffer`
+  residue.** Not started. Note for the next round: the `OwnPropertyKeys` rows
+  need **expando properties on a `$__ta_dyn_view`** (`sample.test262 = 42`
+  then `Reflect.ownKeys`), which `ta-dyn-mop.ts` explicitly defers — its
+  `__object_keys` arm enumerates integer indices only.
+- **`reflection-gated` (14) and the #3371 view rows.** Not claimed, per the
+  plan; recorded as gated.
+
+### Gates
+
+`check-loc-budget` and `check-func-budget` (bare **and** with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`), `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+typecheck (`tsconfig.ts7.json`) and `lint` — all green. Growth grants for
+`src/codegen/array-methods.ts` (+15) and `src/codegen/dataview-native.ts`
+(+19) are in this file's frontmatter with the dated rationale.
+
+### Review round 1 (2026-09-05)
+
+An adversarial review with two independent skeptics per finding ran the r4 lane
+branch against a `git archive` tree of the merge-base **f9bf876899**. Four
+findings; one was a real defect that made a whole step inert, one is a genuine
+but differently-shaped defect left recorded, two are record-only.
+
+Every number below is a run executed in this round on both trees — the probe
+modules and the driver live in `.tmp/` and were compiled through
+`src/index.ts` directly, with `imports` asserted and the module instantiated
+against an EMPTY import object on the host-free lanes.
+
+#### F1 (high) — the join-separator fix was INERT. Fixed.
+
+`buildJoinSeparatorToString` resolved the §7.1.17 ToString provider with
+`getExternrefToStringProvider(ctx)` — a bare `ctx.funcMap.get("__extern_toString")`
+— and returned `null` when it was absent, on the belief (stated in the file's
+own comment) that "both join lanes already arm it for their element path".
+**That belief is false for every numeric / boolean / plain-object element set**:
+those element paths stringify through `number_toString` and friends and never
+mint `__extern_toString`. So in exactly the modules the step was written for,
+the emitter bailed and the caller kept the trapping `ref.cast $AnyString`.
+
+The lane's own two controls hid this because their `Symbol` /
+`instanceof TypeError` / throwing-`toString` machinery pulls in the object
+runtime and *incidentally* arms the provider.
+
+Measured before the fix — standalone and wasi, **byte-identical to base**:
+
+| probe | shape | base & lane (pre-fix) | node |
+| --- | --- | --- | --- |
+| m1 | `[1,2,3].join({toString(){return "*"}})` | `illegal cast` | 5 |
+| m2 | `[1,2,3].join(null)` | `illegal cast` | 11 |
+| m3 | `new Uint8Array([1,2,3]).join({toString(){return "**"}})` | `illegal cast` | 7 |
+| m4 | `new Uint8Array([1,2,3]).join(true)` | `illegal cast` | 11 |
+| o3 | `[1,2,3].join(c)` with `var c = 0` | `illegal cast` | 5 |
+| m5 | same as m1 **plus** an unrelated `String({})` | 5 (works) | 5 |
+
+**Fix**: arm the provider inside `buildJoinSeparatorToString` with
+`ensureLateImport(ctx, "__extern_toString", …)` — the same single chokepoint
+every other consumer uses, which routes to the Wasm-native object-runtime
+provider under standalone/wasi and to the `env::__extern_toString` host import
+otherwise, so no second cascade is grown. After the fix all of m1–m5, o1–o3
+answer node's values on **both** standalone and wasi with **`imports === []`**.
+m5's module is byte-identical to its pre-fix self (`a17130244cefc17e`
+standalone / `f8b341c407486859` wasi), confirming the arming is idempotent
+where something else already armed it.
+
+**String-literal fast path holds.** `b1.js`
+(`join(",")` / `join()` / `join("-")`) is byte-identical to base on all three
+targets — standalone `a55e84185bca84fe`, wasi `34c0cc2486d294fb`, JS-host
+`99325378bf480f13` — and returns the same three checksums as node.
+
+`check-coercion-sites` counts the arming call as +1 site of existing
+vocabulary; the grant with this rationale is in this file's frontmatter under
+`coercion-sites-allow:`.
+
+#### F2 (medium) — JS-host lane: unchanged, still the pre-existing trap.
+
+Re-measured after the arming. **Every probe compiles to a byte-identical
+module on the default JS-host target, before and after** (m1 `955d197b75240c9a`,
+m2 `e5c8497b62781840`, m3 `6bccda4d5b028f6b`, m4 `6b4057f195aa517d`,
+o3 `74bbb1df60aa2d45`, b1 `99325378bf480f13`, w1 `88d31d0fe08ea796`) — the
+native join lanes this emitter serves are not reached at all under
+`wasm:js-string`. So the host lane's behaviour is exactly what it was on base:
+
+| probe | host, base = host, lane | node |
+| --- | --- | --- |
+| `join(null)` / `join(true)` / `join(c)` with `var c=0` | `illegal cast` (trap) | 11 / 11 / 5 |
+| `join({toString(){return "*"}})` | 33 (wrong — generic object stringification) | 5 |
+
+**Not fixed by the arming, and not a regression.** Bringing the host lane to
+spec is a separate piece of work on the `wasm:js-string` join path.
+
+#### F3 (medium) — a DIFFERENT mechanism. Recorded, not fixed.
+
+The step-2 rule ("only `undefined` is an absent `end`") was applied to the
+dyn-view helpers, which see the raw `externref` and can ask the runtime's §7.1
+predicate. Two other lanes handle the same argument differently. Probes
+(`.tmp/f3.js`, `.tmp/f3b.js`, `.tmp/lanes.mts`) compile **byte-identically on
+this tree and on base** — `ce1d03537b5d4661` / `1e57ef94a54a5afc` standalone —
+so both divergences below are pre-existing and untouched by step 2.
+
+Signature = the four element values after the call; `9999` filled, `1234`
+untouched.
+
+| receiver | `end` | measured | node |
+| --- | --- | --- | --- |
+| `const a = new Uint8Array([…])` | literal `undefined` | 9999 ✓ | 9999 |
+| " | omitted | 9999 ✓ | 9999 |
+| " | `null` / `NaN` / `2` / `-0` / `"2"` / `{valueOf}` | ✓ all | — |
+| " | **`const e: any = undefined`** | **1234 ✗** | 9999 |
+| `const a: any = new Uint8Array([…])` | literal `undefined` | **1234 ✗** | 9999 |
+| " | **omitted** (2-arg call) | **1234 ✗** | 9999 |
+| `Array.prototype` twins | literal `undefined` / `null` | ✓ | — |
+| " | `const e: any = undefined` | **1234 ✗** | 9999 |
+
+Two distinct mechanisms, neither the one-line predicate swap step 2 made:
+
+1. **Static lane, dynamic end** — `compileArrayFill` / `compileArrayCopyWithin`
+   (`src/codegen/array-methods.ts` ~L9199 and ~L9790) coerce the end argument
+   straight to `f64` and so recognise "absent" only **syntactically** (the
+   literal identifier `undefined`, or a `void` expression). Their own comment
+   states the limitation: "once coerced to f64 we cannot distinguish them from
+   `NaN`". Fixing it means testing the argument **before** the f64 coercion —
+   a re-shape of the hottest array lanes, not a rule swap.
+2. **`any`-typed receiver** — a third lane again, and a worse one: even an
+   OMITTED `end` is lost (`a.fill(9,0)` fills nothing), so the argc is not
+   reaching the decision. This is the more valuable of the two to chase, since
+   it costs a correct case that the other lanes get right.
+
+Both are left for a follow-up. What IS pinned (new
+`standalone control: static fill/copyWithin lane` in
+`tests/issue-5317-r4-fill-copywithin-end.test.ts`) is the eleven rows measured
+CORRECT — pinning a divergence would entrench it.
+
+Incidental, unrelated to the separator: on **wasi**, `.length` of an
+`any`-typed native string reads back `NaN`, and reading a typed-array element
+inside an `any`-typed helper likewise reads `NaN`. Both are pre-existing wasi
+defects; they only matter here because they dictate how the new pins assert
+(string equality rather than `.length`, and standalone-only for the element
+signatures).
+
+#### F4 (low) — array-valued separators. Recorded, not fixed.
+
+`w1.js`. On base both rows **trapped** `illegal cast`; after F1 they are
+non-trapping but not all correct:
+
+| row | standalone | wasi | node |
+| --- | --- | --- | --- |
+| `[1,2,3].join([";","!"])` | 959 ✓ | 3391 ✗ | 959 |
+| `[1,2,3].join([1,[2,3]])` | 37 ✗ | 33 ✗ | 13 |
+
+Standalone gets the flat case right and goes one level deep on the nested one;
+wasi stringifies through the generic object path (`"[object Object]"`). A
+strict improvement over a trap in every case, and out of scope here.
+
+#### New pins
+
+`tests/issue-5317-r4-join-separator.test.ts` gains five **minimal-module**
+controls (object / `null` / boolean / dynamic-number separators, Array and
+TypedArray receivers) run on **standalone and wasi**, each deliberately free of
+any other ToString consumer so it cannot be un-tested by incidental arming, and
+each asserting `imports === []`. `tests/issue-5317-r4-fill-copywithin-end.test.ts`
+gains the eleven-row static-lane control described under F3.
+
+#### Validation runs for this round — and what could NOT be established
+
+Green, on this tree:
+
+- **Pins, 100/100.** `tests/issue-5317*` + `tests/issue-5194*`, single fork at
+  the CI heap — the five r4/r3 pin files, including the five new minimal-module
+  join controls (standalone AND wasi, `imports === []`) and the new eleven-row
+  static-lane fill/copyWithin control.
+- **Node 25**, the two changed test files: 20/20.
+- **Exact Test262 rows** through the vitest runner (120 s budget) inside those
+  pins: `join/return-abrupt-from-separator.js`,
+  `join/return-abrupt-from-separator-symbol.js`,
+  `join/custom-separator-result-from-tostring-on-each-value.js`,
+  `join/custom-separator-result-from-tostring-on-each-simple-value.js`,
+  `fill/coerced-indexes.js` — all pass.
+- **Gates**: `check-loc-budget` / `check-func-budget` bare AND with
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`, `check-coercion-sites`,
+  `check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+  `check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+  typecheck, lint.
+
+**NOT established: the two 120/139-row control corpora were not re-validated.**
+The `--isolate` row runner was run on the 120-row corpus and returned
+`44 pass / 15 fail / 61 compile_error`, where **all 61 `compile_error`s are
+`compilation timeout`** (15–29 s each) against the lane's recorded `57 base →
+66 lane`. The box was at **1-min load 11–13 on 4 cores** for the whole run —
+several other lanes active — which is the same load-artifact condition the lane
+documented in step 2, and under it the runner's `compile_error` verdicts are
+not evidence about this tree. A 16-row focused re-run behaved identically:
+`6 pass / 1 fail / 9 compile_error`, with the 9 timeouts landing exactly on the
+detached-buffer family this step already recorded as given up, and the 1 fail
+on `join/invoked-as-method.js` (a `TypedArrayPrototype` reflection row, the
+`#2175` class). So nothing in either run contradicts the lane's numbers — but
+**neither run confirms them**, and the "zero rows lost" claim for the two
+corpora therefore still rests on the lane's own earlier measurement, not on a
+repeat under review. It should be re-run when the box is quiet (≤2 lanes).
