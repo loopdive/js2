@@ -1474,6 +1474,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   programAbiFnctors?: import("../program-abi-fnctor-planning.js").ProgramAbiFnctorRegistry;
   programAbiCallables?: import("../program-abi-callable-planning.js").ProgramAbiCallableRegistry;
   programAbiGlobals?: import("../program-abi-global-planning.js").ProgramAbiGlobalRegistry;
+  /** Source-qualified storage gaps observed before an atomic initializer batch reservation. */
+  irProgramPreparedModuleInitBatchPreclaimGaps?: ReadonlyMap<ts.SourceFile, readonly string[]>;
   programAbiExports?: import("../program-abi-export-planning.js").ProgramAbiExportRegistry;
   programAbiTypes?: import("../program-abi-type-planning.js").ProgramAbiTypeRegistry;
   irPlanningIdentityContext?: import("../../ir/planning-identity.js").IrPlanningIdentityContext;

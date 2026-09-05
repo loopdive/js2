@@ -84,11 +84,57 @@ function countCallsTo(ctx: CodegenContext, body: readonly Instr[], target: WasmF
   return count;
 }
 
+/** Collect statically emitted direct call handles in structural order. */
+function directCallTargets(body: readonly Instr[]): readonly FuncHandle[] {
+  const targets: FuncHandle[] = [];
+  const visit = (instructions: readonly Instr[]): void => {
+    for (const instruction of instructions) {
+      if (instruction.op === "call" || instruction.op === "return_call") targets.push(instruction.funcIdx);
+      if (instruction.op === "block" || instruction.op === "loop") visit(instruction.body);
+      else if (instruction.op === "if") {
+        visit(instruction.then);
+        if (instruction.else !== undefined) visit(instruction.else);
+      } else if (instruction.op === "try") {
+        visit(instruction.body);
+        for (const clause of instruction.catches) visit(clause.body);
+        if (instruction.catchAll !== undefined) visit(instruction.catchAll);
+      } else if (instruction.op === "try_table") visit(instruction.body);
+    }
+  };
+  visit(body);
+  return targets;
+}
+
+/**
+ * Return calls only when the adapter is exactly a straight-line call list.
+ * A recursive call census is useful for legacy diagnostics, but it cannot
+ * prove that a conditional, loop, catch, or nested block invokes each
+ * contributor exactly once at runtime.
+ */
+function exactSequentialCallTargets(body: readonly Instr[]): readonly FuncHandle[] | undefined {
+  const targets: FuncHandle[] = [];
+  for (const instruction of body) {
+    if (instruction.op !== "call") return undefined;
+    targets.push(instruction.funcIdx);
+  }
+  return targets;
+}
+
+function sameIdentityArray<T>(actual: readonly T[], expected: readonly T[]): boolean {
+  return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
+}
+
 interface ModuleInitCallableObservation {
   readonly ordinal: number;
   readonly unitId?: IrUnitId;
   readonly funcIdx: FuncHandle;
   /** Allocator object observed at the handle before any later slot mutation. */
+  readonly func: WasmFunction;
+}
+
+interface PreparedModuleInitUnitObservation {
+  readonly unitId: IrUnitId;
+  readonly handle: FuncHandle;
   readonly func: WasmFunction;
 }
 
@@ -154,6 +200,19 @@ export class ProgramAbiModuleInitCallableRegistry {
   private preparedExactUnitId?: IrUnitId;
   private preparedExactFunction?: WasmFunction;
   private preparedExactHandle?: FuncHandle;
+  /** Exact source-owned slots retained by the R5 initializer batch. */
+  private preparedExactUnitsById = new Map<IrUnitId, PreparedModuleInitUnitObservation>();
+  /** Semantic order is part of the reservation, not just set membership. */
+  private preparedExactUnitIds?: readonly IrUnitId[];
+  /** One graph adapter retained by the R5 initializer batch. */
+  private preparedGraphAdapter?: {
+    readonly bindingId: IrBindingId;
+    readonly handle: FuncHandle;
+    readonly func: WasmFunction;
+    readonly entrySourceId: IrSourceId;
+    readonly unitIds: readonly IrUnitId[];
+    readonly invocation: ModuleInitInvocationPolicy;
+  };
   /** (#3523 R4 gap 3) The exact source-owned module-init pass, when one exists. */
   private exactUnitPass?: {
     readonly bindingId: IrBindingId;
@@ -254,60 +313,84 @@ export class ProgramAbiModuleInitCallableRegistry {
    * cannot infer the Prepared owner from source count or observation order.
    */
   reservePreparedExactUnit(unitId: IrUnitId): void {
+    this.reservePreparedExactUnits([unitId]);
+  }
+
+  /**
+   * Reserve every source-owned initializer slot before lowering any member of
+   * an R5 batch. Validation is completed for the whole vector before the
+   * registry records a reservation, so a missing terminal or ABI slot cannot
+   * leave a successful prefix behind.
+   */
+  reservePreparedExactUnits(unitIds: readonly IrUnitId[]): void {
     if (this.planned) {
       throw new ProgramAbiInvariantError(
         "planning-sealed",
-        `cannot reserve Prepared module-init unit ${unitId} after retained planning`,
+        `cannot reserve Prepared module-init units after retained planning`,
       );
     }
     if (!this.session || !this.identityContext) {
       throw new ProgramAbiInvariantError(
         "context-session-mismatch",
-        `Prepared module-init unit ${unitId} requires an identity-bound Program ABI session`,
+        `Prepared module-init units require an identity-bound Program ABI session`,
       );
     }
-    if (this.preparedExactUnitId !== undefined) {
-      if (this.preparedExactUnitId !== unitId) {
+    if (unitIds.length === 0 || new Set(unitIds).size !== unitIds.length) {
+      throw new ProgramAbiInvariantError(
+        "duplicate-slot-locator",
+        "Prepared module-init batch requires a non-empty unique unit vector",
+      );
+    }
+    if (this.preparedExactUnitsById.size > 0) {
+      if (this.preparedExactUnitIds === undefined || !sameIdentityArray(this.preparedExactUnitIds, unitIds)) {
         throw new ProgramAbiInvariantError(
           "duplicate-slot-locator",
-          `Prepared module-init selected both ${this.preparedExactUnitId} and ${unitId}`,
+          "Prepared module-init batch was reserved more than once with a different unit vector",
         );
       }
       return;
     }
-    const terminal = this.identityContext.terminalByUnitId.get(unitId);
-    const sourceFile = terminal ? this.identityContext.sourceFileBySourceId.get(terminal.sourceId) : undefined;
-    if (
-      !terminal ||
-      terminal.kind !== "module-init" ||
-      terminal.observedKind !== "module-init" ||
-      terminal.terminalOwnerId !== unitId ||
-      sourceFile === undefined ||
-      this.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile) !== unitId
-    ) {
-      throw new ProgramAbiInvariantError(
-        "missing-source-unit",
-        `Prepared module-init unit ${unitId} is not an exact source-owned terminal`,
-      );
+    const prepared: PreparedModuleInitUnitObservation[] = [];
+    for (const unitId of unitIds) {
+      const terminal = this.identityContext.terminalByUnitId.get(unitId);
+      const sourceFile = terminal ? this.identityContext.sourceFileBySourceId.get(terminal.sourceId) : undefined;
+      if (
+        !terminal ||
+        terminal.kind !== "module-init" ||
+        terminal.observedKind !== "module-init" ||
+        terminal.terminalOwnerId !== unitId ||
+        sourceFile === undefined ||
+        this.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile) !== unitId
+      ) {
+        throw new ProgramAbiInvariantError(
+          "missing-source-unit",
+          `Prepared module-init unit ${unitId} is not an exact source-owned terminal`,
+        );
+      }
+      const observation = this.uniqueObservationForUnit(unitId);
+      const func = observation ? definedFuncAt(this.ctx, observation.funcIdx) : undefined;
+      if (!observation || !func) {
+        throw new ProgramAbiInvariantError(
+          "missing-required-locator",
+          `Prepared module-init unit ${unitId} has no unique preallocated callable`,
+        );
+      }
+      const signature = functionSignature(this.ctx, func);
+      if (signature.params.length !== 0 || signature.results.length !== 0) {
+        throw new ProgramAbiInvariantError(
+          "alias-signature-mismatch",
+          `Prepared module-init unit ${unitId} must use the exact [] -> [] ABI`,
+        );
+      }
+      prepared.push(Object.freeze({ unitId, handle: observation.funcIdx, func }));
     }
-    const observation = this.uniqueObservationForUnit(unitId);
-    const func = observation ? definedFuncAt(this.ctx, observation.funcIdx) : undefined;
-    if (!observation || !func) {
-      throw new ProgramAbiInvariantError(
-        "missing-required-locator",
-        `Prepared module-init unit ${unitId} has no unique preallocated callable`,
-      );
+    this.preparedExactUnitIds = Object.freeze([...unitIds]);
+    for (const entry of prepared) this.preparedExactUnitsById.set(entry.unitId, entry);
+    if (prepared.length === 1) {
+      this.preparedExactUnitId = prepared[0]!.unitId;
+      this.preparedExactFunction = prepared[0]!.func;
+      this.preparedExactHandle = prepared[0]!.handle;
     }
-    const signature = functionSignature(this.ctx, func);
-    if (signature.params.length !== 0 || signature.results.length !== 0) {
-      throw new ProgramAbiInvariantError(
-        "alias-signature-mismatch",
-        `Prepared module-init unit ${unitId} must use the exact [] -> [] ABI`,
-      );
-    }
-    this.preparedExactUnitId = unitId;
-    this.preparedExactFunction = func;
-    this.preparedExactHandle = observation.funcIdx;
   }
 
   get preparedExactUnit(): IrUnitId | undefined {
@@ -320,6 +403,106 @@ export class ProgramAbiModuleInitCallableRegistry {
 
   get preparedExactHandleValue(): FuncHandle | undefined {
     return this.preparedExactHandle;
+  }
+
+  /** Exact source-owned initializer slots retained by the current batch. */
+  get preparedExactUnits(): ReadonlyMap<IrUnitId, PreparedModuleInitUnitObservation> {
+    return new Map(this.preparedExactUnitsById);
+  }
+
+  /** Exact semantic order captured when the batch was reserved. */
+  get preparedExactUnitIdVector(): readonly IrUnitId[] {
+    return this.preparedExactUnitIds ?? [];
+  }
+
+  /** Record one ordered graph adapter after every source slot is reserved. */
+  reservePreparedGraphAdapter(handle: FuncHandle, func: WasmFunction, unitIds: readonly IrUnitId[]): void {
+    if (this.planned) {
+      throw new ProgramAbiInvariantError(
+        "planning-sealed",
+        "cannot reserve a Prepared module-init graph adapter after retained planning",
+      );
+    }
+    if (!this.session || !this.identityContext) {
+      throw new ProgramAbiInvariantError(
+        "context-session-mismatch",
+        "Prepared module-init graph adapter requires an identity-bound Program ABI session",
+      );
+    }
+    if (this.preparedGraphAdapter) {
+      if (
+        this.preparedGraphAdapter.handle !== handle ||
+        this.preparedGraphAdapter.func !== func ||
+        !sameIdentityArray(this.preparedGraphAdapter.unitIds, unitIds)
+      ) {
+        throw new ProgramAbiInvariantError(
+          "duplicate-slot-locator",
+          "Prepared module-init graph adapter was reserved more than once",
+        );
+      }
+      return;
+    }
+    if (
+      unitIds.length === 0 ||
+      !sameIdentityArray(this.preparedExactUnitIds ?? [], unitIds) ||
+      unitIds.some((unitId) => !this.preparedExactUnitsById.has(unitId)) ||
+      new Set(unitIds).size !== unitIds.length
+    ) {
+      throw new ProgramAbiInvariantError(
+        "missing-source-unit",
+        "Prepared module-init graph adapter does not cover the exact reserved unit vector",
+      );
+    }
+    const signature = functionSignature(this.ctx, func);
+    if (signature.params.length !== 0 || signature.results.length !== 0) {
+      throw new ProgramAbiInvariantError(
+        "alias-signature-mismatch",
+        "Prepared module-init graph adapter must use the exact [] -> [] ABI",
+      );
+    }
+    const expectedHandles = unitIds.map((unitId) => this.preparedExactUnitsById.get(unitId)!.handle);
+    const calls = exactSequentialCallTargets(func.body);
+    if (calls === undefined) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        "Prepared module-init graph adapter must be a flat sequential call list",
+      );
+    }
+    if (calls.length !== expectedHandles.length || calls.some((target, index) => target !== expectedHandles[index])) {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        "Prepared module-init graph adapter does not retain the exact semantic contributor order",
+      );
+    }
+    const entrySourceId = canonicalEntrySource(this.session);
+    const adapterRef = irSupportFuncRef(entrySourceId, "prepared-module-init-graph-adapter", func.name, 0);
+    if (adapterRef.binding.kind !== "support") {
+      throw new ProgramAbiInvariantError(
+        "invalid-binding-reference",
+        "Prepared module-init graph adapter did not produce a support binding",
+      );
+    }
+    this.preparedGraphAdapter = Object.freeze({
+      bindingId: adapterRef.binding.bindingId,
+      handle,
+      func,
+      entrySourceId,
+      unitIds: Object.freeze([...unitIds]),
+      invocation: moduleInitInvocationPolicy(this.ctx),
+    });
+  }
+
+  get preparedGraphAdapterInfo():
+    | Readonly<{
+        readonly bindingId: IrBindingId;
+        readonly handle: FuncHandle;
+        readonly func: WasmFunction;
+        readonly entrySourceId: IrSourceId;
+        readonly unitIds: readonly IrUnitId[];
+        readonly invocation: ModuleInitInvocationPolicy;
+      }>
+    | undefined {
+    return this.preparedGraphAdapter;
   }
 
   /** Exact preallocated function object for one source before unit planning seals. */
@@ -393,10 +576,13 @@ export class ProgramAbiModuleInitCallableRegistry {
       return [{ observation, func }];
     });
     const moduleInitUnitIds = [...identityContext.moduleInitUnitIdBySourceId.values()];
+    const preparedUnitIds = new Set(this.preparedExactUnitsById.keys());
     // M2 explicitly reserves its chosen unit before this generic sweep. The
     // single-unit compatibility path remains exact, but never guesses from
     // the last physical observation in a multi-source graph.
-    const exactUnitId = this.preparedExactUnitId ?? (moduleInitUnitIds.length === 1 ? moduleInitUnitIds[0] : undefined);
+    const exactUnitId =
+      this.preparedExactUnitId ??
+      (preparedUnitIds.size === 0 && moduleInitUnitIds.length === 1 ? moduleInitUnitIds[0] : undefined);
     const exactObservation = exactUnitId
       ? liveObservations.find(({ observation }) => observation.unitId === exactUnitId)?.observation
       : undefined;
@@ -416,23 +602,87 @@ export class ProgramAbiModuleInitCallableRegistry {
         );
       }
     }
+    if (preparedUnitIds.size > 1) {
+      for (const [unitId, prepared] of this.preparedExactUnitsById) {
+        const matches = liveObservations.filter(({ observation }) => observation.unitId === unitId);
+        if (
+          matches.length !== 1 ||
+          matches[0]!.func !== prepared.func ||
+          matches[0]!.observation.funcIdx !== prepared.handle
+        ) {
+          throw new ProgramAbiInvariantError(
+            "duplicate-slot-locator",
+            `Prepared module-init unit ${unitId} lost its exact retained callable`,
+          );
+        }
+      }
+    }
     const entrySourceId = canonicalEntrySource(session);
 
     const isExact = (observation: ModuleInitCallableObservation): boolean =>
-      exactUnitId !== undefined && exactObservation !== undefined && observation === exactObservation;
+      (observation.unitId !== undefined && preparedUnitIds.has(observation.unitId)) ||
+      (exactUnitId !== undefined && exactObservation !== undefined && observation === exactObservation);
     for (const { observation, func } of liveObservations) {
       if (!isExact(observation)) continue;
-      this.planExactUnit(exactUnitId!, func);
+      const unitId = observation.unitId ?? exactUnitId;
+      if (unitId === undefined) {
+        throw new ProgramAbiInvariantError(
+          "missing-source-unit",
+          "Prepared module-init observation has no exact source-owned unit",
+        );
+      }
+      this.planExactUnit(unitId, func);
       // (#3523 R4 gap 3) Retain the exact unit's pass shape. Recording it costs
       // nothing and changes no behavior; `assertGraphGlobalInvocationPolicy`
       // consults it only under the Prepared WASI policy (see
       // `preparedInvocationPass`), which is the one case where no adapter check
       // would otherwise run at all.
       this.exactUnitPass = Object.freeze({
-        bindingId: irUnitCallableBindingId(exactUnitId!),
+        bindingId: irUnitCallableBindingId(unitId),
         handle: observation.funcIdx,
         func,
         entrySourceId,
+      });
+    }
+
+    if (this.preparedGraphAdapter) {
+      const adapter = this.preparedGraphAdapter;
+      const adapterRef = irSupportFuncRef(
+        adapter.entrySourceId,
+        "prepared-module-init-graph-adapter",
+        adapter.func.name,
+        0,
+      );
+      const bindingId =
+        adapterRef.binding.kind === "support"
+          ? planProgramAbiSupportCallable(this.ctx, {
+              ref: adapterRef,
+              anchor: { kind: "source", sourceId: adapter.entrySourceId },
+              role: "prepared-module-init-graph-adapter",
+              roleOrdinal: PROGRAM_ABI_CALLABLE_ROLE.moduleInit,
+              derivedOrdinal: 0,
+              signature: functionSignature(this.ctx, adapter.func),
+              func: adapter.func,
+            })
+          : undefined;
+      if (adapterRef.binding.kind !== "support" || bindingId !== adapter.bindingId) {
+        throw new ProgramAbiInvariantError(
+          "invalid-binding-reference",
+          "Prepared module-init graph adapter was not accepted by Program ABI planning",
+        );
+      }
+      if (!session.hasPlan(bindingId) || !session.hasLocator(bindingId, adapter.func)) {
+        throw new ProgramAbiInvariantError(
+          "missing-required-locator",
+          "Prepared module-init graph adapter is not retained on its exact allocator object",
+        );
+      }
+      this.graphGlobalPass = Object.freeze({
+        bindingId,
+        handle: adapter.handle,
+        func: adapter.func,
+        entrySourceId: adapter.entrySourceId,
+        invocation: adapter.invocation,
       });
     }
 
@@ -454,9 +704,8 @@ export class ProgramAbiModuleInitCallableRegistry {
     // other executable multi-source graphs have the unitless graph-global pass
     // regardless of whether initialization is deferred, a Wasm start, or WASI.
     const hasActualInitializer = this.ctx.mod.hasTopLevelStatements === true;
-    const hasExactSourceUnit = exactUnitId !== undefined;
-    const requiresGraphGlobalPass =
-      hasActualInitializer && !hasExactSourceUnit && this.preparedExactUnitId === undefined;
+    const hasExactSourceUnit = exactUnitId !== undefined || preparedUnitIds.size > 0;
+    const requiresGraphGlobalPass = hasActualInitializer && !hasExactSourceUnit;
     if (!hasActualInitializer) {
       if (graphGlobalRaw.length !== 0 || graphGlobalLive.length !== 0) {
         throw new ProgramAbiInvariantError(
@@ -467,7 +716,7 @@ export class ProgramAbiModuleInitCallableRegistry {
       return;
     }
     if (!requiresGraphGlobalPass && graphGlobalRaw.length === 0 && graphGlobalLive.length === 0) return;
-    if (!requiresGraphGlobalPass && this.preparedExactUnitId !== undefined) {
+    if (!requiresGraphGlobalPass && preparedUnitIds.size > 0) {
       throw new ProgramAbiInvariantError(
         "duplicate-slot-locator",
         `Prepared module-init ${this.preparedExactUnitId} has an unexpected graph-global callable population`,
@@ -577,6 +826,22 @@ export class ProgramAbiModuleInitCallableRegistry {
         "missing-required-locator",
         `graph-global module-init pass zero ${pass.bindingId} lost its exact allocator handle ${pass.handle}`,
       );
+    }
+    if (this.preparedGraphAdapter) {
+      const expected = this.preparedGraphAdapter.unitIds.map(
+        (unitId) => this.preparedExactUnitsById.get(unitId)!.handle,
+      );
+      const contributorCalls = exactSequentialCallTargets(pass.func.body);
+      if (
+        contributorCalls === undefined ||
+        contributorCalls.length !== expected.length ||
+        contributorCalls.some((target, index) => target !== expected[index])
+      ) {
+        throw new ProgramAbiInvariantError(
+          "invalid-export-target",
+          "Prepared module-init graph adapter does not retain one ordered call to every contributor",
+        );
+      }
     }
 
     const initExports: NamedExportObservation[] = this.ctx.mod.exports.flatMap((entry, ordinal) =>

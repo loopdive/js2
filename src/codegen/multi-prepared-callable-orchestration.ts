@@ -12,6 +12,7 @@ import {
   planMultiPreparedModuleInit,
   type MultiPreparedModuleInitPlanningInput,
 } from "./multi-prepared-module-init.js";
+import { planMultiPreparedModuleInitBatch } from "./multi-prepared-module-init-batch.js";
 import { reconcileMultiPreparedModuleInitCensus } from "./multi-prepared-module-init-census.js";
 import {
   createMultiPreparedProgramOwner,
@@ -1276,6 +1277,24 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
   if (semanticCensus.sourcePlans.some((sourcePlan) => sourcePlan.executable)) {
     input.ctx.irProgramCallableCutoverEnabled = false;
   }
+  // P2A freezes and prepares the complete initializer population before any
+  // other early route can reserve a body. A typed decline leaves the existing
+  // singleton/callable route decisions untouched and publishes no prefix.
+  const preparedModuleInitBatch = input.moduleInit
+    ? planMultiPreparedModuleInitBatch({
+        ...input.moduleInit,
+        ctx: input.ctx,
+        multiAst: input.multiAst,
+        identityContext: input.identityContext,
+        ...(input.options ? { options: input.options } : {}),
+        census: input.owner.moduleInitCensus,
+        planSource,
+        planResolvedSource: input.planResolvedModuleInitSource,
+        safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
+        projectLoweringPlans: input.projectLoweringPlans,
+      })
+    : undefined;
+  if (preparedModuleInitBatch) input.owner.registerPreparedModuleInitBatch(preparedModuleInitBatch);
   input.owner.planExistingRoutes({
     active,
     scalarCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
@@ -1296,22 +1315,23 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     projectLoweringPlans: input.projectLoweringPlans,
     stringShapes,
   });
-  const preparedModuleInit = input.moduleInit
-    ? planMultiPreparedModuleInit({
-        ...input.moduleInit,
-        ctx: input.ctx,
-        multiAst: input.multiAst,
-        identityContext: input.identityContext,
-        ...(input.options ? { options: input.options } : {}),
-        census: input.owner.moduleInitCensus,
-        planSource,
-        planResolvedSource: input.planResolvedModuleInitSource,
-        safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
-        projectLoweringPlans: input.projectLoweringPlans,
-      })
-    : undefined;
+  const preparedModuleInit =
+    input.moduleInit && !preparedModuleInitBatch
+      ? planMultiPreparedModuleInit({
+          ...input.moduleInit,
+          ctx: input.ctx,
+          multiAst: input.multiAst,
+          identityContext: input.identityContext,
+          ...(input.options ? { options: input.options } : {}),
+          census: input.owner.moduleInitCensus,
+          planSource,
+          planResolvedSource: input.planResolvedModuleInitSource,
+          safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
+          projectLoweringPlans: input.projectLoweringPlans,
+        })
+      : undefined;
   if (preparedModuleInit) input.owner.registerPreparedModuleInit(preparedModuleInit);
-  if (input.ctx.irProgramCallableCutoverEnabled && !preparedModuleInit) {
+  if (input.ctx.irProgramCallableCutoverEnabled && !preparedModuleInit && !preparedModuleInitBatch) {
     planMultiPreparedCallableComponents({
       owner: input.owner,
       multiAst: input.multiAst,
