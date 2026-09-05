@@ -3790,8 +3790,8 @@
   {
     "edition": "ES2027",
     "pass": 381,
-    "fail": 504,
-    "ce": 12,
+    "fail": 498,
+    "ce": 18,
     "skip": 0,
     "total": 897,
     "pct": 42,
@@ -3817,8 +3817,8 @@
       {
         "name": "joint-iteration",
         "pass": 23,
-        "fail": 59,
-        "ce": 0,
+        "fail": 53,
+        "ce": 6,
         "skip": 0,
         "total": 82,
         "pct": 28

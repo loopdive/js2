@@ -62,7 +62,15 @@ node tests/dogfood/typescript-upstream-build-probe.mjs \
   --invoke-case src/compiler/builderStatePublic.ts=13386537220945 \
   --invoke-case src/compiler/corePublic.ts=40098163538143 \
   --invoke-case src/compiler/performanceCore.ts=49645738923599 \
-  --timeout-ms 300000 --heap-mb 4096 --json
+  --timeout-ms 600000 --heap-mb 4096 --json
+
+node tests/dogfood/typescript-upstream-build-probe.mjs \
+  --root tests/dogfood/.npm-upstream-suites/typescript --prepare-pinned-typescript --mode source \
+  --entry ../../fixtures/typescript-binder-workload.ts \
+  --consumer-driven-barrels --invoke-export runCase --require-invocations 2 \
+  --invoke-case ../../fixtures/typescript-binder/const-local.ts=65792 \
+  --invoke-case ../../fixtures/typescript-binder/duplicate-let.ts=131330 \
+  --timeout-ms 900000 --heap-mb 4096 --json
 ```
 
 `--mode source` selects `src/typescript/typescript.ts`; `--mode bundle`
@@ -78,6 +86,10 @@ use `--invoke-string` plus `--expected-number`. The parser gate instead repeats
 unchanged upstream file and match each independently verified structural AST
 fingerprint. A constant result, ignored input, invalid binary, missing case, or
 reported match whose actual value differs all fail the command.
+The binder gate uses the same fail-closed multi-case contract. Its first packed
+count is deliberately only a bounded smoke oracle; the exact tracked input
+files make the two native values reproducible while a later milestone adds a
+sorted locals/exports name-and-flags fingerprint.
 `--prepare-pinned-typescript` verifies the exact v5.9.3 checkout, runs
 TypeScript's checked-in `processDiagnosticMessages.mjs` generator, and verifies
 both generated diagnostic artifacts against pinned SHA-256 digests before the

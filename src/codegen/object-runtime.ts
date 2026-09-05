@@ -7403,11 +7403,12 @@ function buildVariadicNativeApplyDispatch(
  *   if n==0: __call_fn_method_0(recv, fn)
  *   if n==1: __call_fn_method_1(recv, fn, idx0)
  *   ... up to 8 (#3310 G2 — matches the `emitClosureMethodCallExportN` cap) ...
- *   else (n>8): return undefined (sentinel)
+ *   else (n>8): trap (the fixed bridge has no sound ABI arm)
  *
- * S1 SCOPE — NO THROWS. This bridge returns the undefined sentinel
- * (`ref.null.extern`) for the not-a-function and arity-overflow cases rather
- * than raising a `TypeError`. Reason: emitting a spec-correct throw here would
+ * S1 SCOPE — NO JS ERROR CONSTRUCTION. This bridge returns the undefined
+ * sentinel (`ref.null.extern`) for not-a-function and missing-dispatcher cases.
+ * Arity overflow traps before dispatch rather than silently succeeding with an
+ * undefined result (#1058). Emitting a spec-correct `TypeError` here would
  * pull `__new_TypeError` + the exn tag + a string constant into the object
  * runtime, and those late registrations land AFTER the string helpers have
  * already baked `call` targets at finalize — shifting func indices and
@@ -7434,9 +7435,8 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   const externGetIdxArr = ctx.funcMap.get("__extern_get_idx");
   const hasGenericArgsReader = externLengthIdx !== undefined && externGetIdxArr !== undefined;
 
-  // S1 undefined sentinel: every non-dispatchable case (arity > 8, or a missing
-  // arity-N dispatcher) returns undefined rather than throwing. S2 replaces
-  // these with spec-correct TypeError throws once the late-shift is fixed.
+  // S1 undefined sentinel: non-callables and missing arity-N dispatchers return
+  // undefined. Arity overflow is rejected separately after widening below.
   const undefinedSentinel = (): Instr[] => [{ op: "ref.null.extern" }];
 
   // Build the arity dispatch from the bottom up (n>MAX → undefined), each arm
@@ -7473,6 +7473,10 @@ export function fillApplyClosure(ctx: CodegenContext): void {
   // (#3592) An UNDER-APPLIED call (`assert.sameValue(a, b)` into a 3-formal
   // `sameValue`) matched no `__call_fn_method_N` arm and silently returned the
   // undefined sentinel — it never happened. Rationale: see the builder.
+  // The widening helper appends its declared-arity probe at this first new
+  // local. Keep that local distinct from `n`: linked/native callables may carry
+  // more than eight actual arguments through their full-vector fallback.
+  const declaredArityLocal = 3 + locals.length;
   const widen = buildApplyClosureArityWidening(ctx, locals, 0, 3, 3);
   const resultLocal = 3 + locals.length;
   locals.push({ name: "result", type: { kind: "externref" } });
@@ -7642,6 +7646,22 @@ export function fillApplyClosure(ctx: CodegenContext): void {
     { op: "global.set", index: argcGlobalIdx },
     ...buildVariadicNativeApplyDispatch(ctx, variadicNativeApply, objVecTypeIdx, objVecArrTypeIdx),
     ...widen,
+    // The fixed closure ABI ends at eight positional values. The special
+    // native/proxy/cross-module front guards are prepended below and therefore
+    // still run first; a compiled closure above the cap must fail loudly rather
+    // than falling through to the undefined sentinel.
+    ...(widen.length > 0
+      ? ([
+          { op: "local.get", index: declaredArityLocal },
+          { op: "i32.const", value: APPLY_CLOSURE_MAX_ARITY },
+          { op: "i32.gt_s" },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [{ op: "unreachable" }],
+          },
+        ] satisfies Instr[])
+      : []),
     ...dispatch,
     { op: "local.set", index: resultLocal },
     { op: "i32.const", value: -1 },

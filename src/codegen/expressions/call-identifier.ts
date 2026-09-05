@@ -302,6 +302,153 @@ function bindingIsGenericCallableFactoryResult(ctx: CodegenContext, identifier: 
 }
 
 /**
+ * True for a cross-source stable callable snapshot taken from an object
+ * property:
+ *
+ *   export const getTarget: (o: Options) => number = table.target.computeValue;
+ *
+ * The public annotation can intentionally be wider than the stored closure's
+ * implementation ABI.  TypeScript's compiler options table is the production
+ * witness: the alias promises `CompilerOptions -> ScriptTarget`, while the
+ * generic object-literal arrow is compiled with erased externref parameters
+ * and an externref result.  A call-site ladder built from the public annotation
+ * can therefore miss the real funcref when that arrow is registered by a later
+ * source unit.
+ *
+ * Const is load-bearing here.  The call must invoke the value captured during
+ * module evaluation, not re-read the property (which may since have changed).
+ */
+function bindingIsImmutablePropertyCallableAlias(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+  let declaration = ctx.oracle.valueDeclarationOf(identifier);
+  if (
+    declaration &&
+    (ts.isImportSpecifier(declaration) || ts.isImportClause(declaration) || ts.isNamespaceImport(declaration))
+  ) {
+    declaration = ctx.importBindingTargets?.get(declaration) ?? declaration;
+  }
+  if (!declaration || !ts.isVariableDeclaration(declaration) || !declaration.initializer) return false;
+  // Same-source aliases compile after their initializer's closure metadata is
+  // available and stay on the smaller typed path. The deferred driver is for
+  // linked/imported aliases whose implementation source can register later;
+  // this also avoids pulling the ObjVec/apply runtime into ordinary standalone
+  // property aliases.
+  if (declaration.getSourceFile() === identifier.getSourceFile()) return false;
+  // Genuine host-function property aliases already have a dedicated fallback
+  // later in this dispatcher. A module with no compiled closures may not emit
+  // `__call_fn_method_N` at all, so claiming `Math.max` here would turn the
+  // finalize-filled driver into its defensive undefined result.
+  if (bindingMayReceiveHostCallable(ctx, declaration)) return false;
+  if (!ts.isVariableDeclarationList(declaration.parent) || (declaration.parent.flags & ts.NodeFlags.Const) === 0) {
+    return false;
+  }
+  if (ctx.oracle.declarationsOf(identifier).filter((candidate) => ts.isVariableDeclaration(candidate)).length > 1) {
+    return false;
+  }
+
+  let initializer = declaration.initializer;
+  while (
+    ts.isParenthesizedExpression(initializer) ||
+    ts.isAsExpression(initializer) ||
+    ts.isTypeAssertionExpression(initializer) ||
+    ts.isNonNullExpression(initializer) ||
+    ts.isSatisfiesExpression(initializer)
+  ) {
+    initializer = initializer.expression;
+  }
+  if (!ts.isPropertyAccessExpression(initializer) && !ts.isElementAccessExpression(initializer)) return false;
+
+  // Both finalize-time dynamic bridges are intentionally capped at arity 8.
+  // The public signature keeps ordinary wider aliases off this path. Because
+  // contextual typing and pre-snapshot writes can hide the live closure's true
+  // arity, each bridge independently traps when its runtime arity exceeds the
+  // cap instead of silently returning undefined.
+  const withinDriverArity = (value: ts.Expression): boolean => {
+    const signatures = ctx.checker.getTypeAtLocation(value).getCallSignatures();
+    return signatures.length > 0 && signatures.every((signature) => signature.getParameters().length <= 8);
+  };
+  return withinDriverArity(identifier);
+}
+
+/**
+ * Invoke an immutable property-derived callable through the finalize-filled
+ * dynamic driver.  The driver is populated only after the complete linked
+ * graph has registered every closure ABI, so a later-source implementation is
+ * not omitted from a body-time candidate scan.  The stored binding is loaded
+ * directly; this preserves const snapshot identity and never re-reads the
+ * initializer property.
+ */
+function tryCompileImmutablePropertyCallableAlias(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+): InnerResult | null {
+  if (!ts.isIdentifier(expr.expression)) return null;
+  if (!bindingIsImmutablePropertyCallableAlias(ctx, expr.expression)) return null;
+  if (expr.arguments.some((argument) => ts.isSpreadElement(argument))) return null;
+  if (expr.arguments.length > 8) return null;
+
+  const emitExternValue = (value: ts.Expression): void => {
+    const valueType = compileExpression(ctx, fctx, value, { kind: "externref" });
+    if (valueType === null) fctx.body.push({ op: "ref.null.extern" });
+    else if (valueType.kind !== "externref") coerceType(ctx, fctx, valueType, { kind: "externref" });
+  };
+
+  if (!ctx.standalone && !ctx.wasi) {
+    const arity = expr.arguments.length;
+    reserveHostFnctorMethodDriver(ctx, arity);
+    const undefinedIdx = ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+    ensureLateImport(
+      ctx,
+      hostFnctorCallableFallbackImportName(arity),
+      Array.from({ length: arity + 2 }, () => ({ kind: "externref" }) as ValType),
+      [{ kind: "externref" }],
+    );
+    flushLateImportShifts(ctx, fctx);
+    reserveHostFnctorMethodDriver(ctx, arity);
+
+    // A bare identifier call has no Reference base: `this` is undefined.
+    if (undefinedIdx !== undefined) {
+      const liveUndefinedIdx = ctx.funcMap.get("__get_undefined") ?? undefinedIdx;
+      fctx.body.push({ op: "call", funcIdx: liveUndefinedIdx });
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    emitExternValue(expr.expression);
+    for (const argument of expr.arguments) emitExternValue(argument);
+    // Callee/argument compilation can add a late import and shift every
+    // defined function. Re-read the driver's stable handle only after all
+    // operands have been materialized.
+    fctx.body.push({ op: "call", funcIdx: reserveHostFnctorMethodDriver(ctx, arity) });
+    return { kind: "externref" };
+  }
+
+  // Host-free targets use the matching finalize-filled closure application
+  // bridge and an ObjVec containing the true source argument count.
+  reserveApplyClosure(ctx);
+  ensureObjVecBuilders(ctx);
+  flushLateImportShifts(ctx, fctx);
+  reserveApplyClosure(ctx);
+  ensureObjVecBuilders(ctx);
+
+  emitExternValue(expr.expression);
+  const calleeLocal = allocLocal(fctx, `__property_alias_callee_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: calleeLocal });
+  fctx.body.push({ op: "call", funcIdx: ensureObjVecBuilders(ctx).newIdx });
+  const argsLocal = allocLocal(fctx, `__property_alias_args_${fctx.locals.length}`, { kind: "externref" });
+  fctx.body.push({ op: "local.set", index: argsLocal });
+  for (const argument of expr.arguments) {
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    emitExternValue(argument);
+    fctx.body.push({ op: "call", funcIdx: ensureObjVecBuilders(ctx).pushIdx });
+  }
+  fctx.body.push({ op: "local.get", index: calleeLocal });
+  fctx.body.push({ op: "ref.null.extern" });
+  fctx.body.push({ op: "local.get", index: argsLocal });
+  fctx.body.push({ op: "call", funcIdx: reserveApplyClosure(ctx) });
+  return { kind: "externref" };
+}
+
+/**
  * True when this local callable is populated from a runtime element read in
  * its own function, for example Hono's `handler = middleware[i][0][0]` or
  * Redux's `const reducer = reducers[key]`.
@@ -1638,6 +1785,8 @@ export function compileIdentifierCall(
     // identifiers and assignment targets, so a BindingElement's by-name hit is
     // always some OTHER binding's info.
     const calleeBindingDecl = ctx.oracle.valueDeclarationOf(expr.expression);
+    const propertyCallableAlias = tryCompileImmutablePropertyCallableAlias(ctx, fctx, expr);
+    if (propertyCallableAlias !== null) return propertyCallableAlias;
     const calleeBindingMayReceiveHostCallable =
       calleeBindingDecl !== undefined &&
       ts.isVariableDeclaration(calleeBindingDecl) &&
