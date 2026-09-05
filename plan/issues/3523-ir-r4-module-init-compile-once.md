@@ -4,7 +4,7 @@ title: "IR-only R4: typed ordered module-init compile-once ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-09-02
+updated: 2026-09-05
 priority: critical
 horizon: xl
 complexity: XL
@@ -5380,3 +5380,92 @@ an entire syntactic form with no coverage in either corpus this slice is
 measured against. So the dogfood count neither establishes nor bounds the real
 weight of the `function` category; it establishes only that this slice's arm
 is exercised at all. Any figure quoted downstream must name its corpus.
+
+## Implementation Plan — 2026-09-05
+
+### Dispatch reconciliation and queued ambient-population slice
+
+Planner: **Astra**; source reviewed at
+`a53b1bd17338c01f4bffe2df6b3463d216990a6b`. No compiler tests were run by the
+planner. The R4-W2-B function-storage arm is absent from this source, but it is
+**not available for duplicate dispatch**: the lead read the authoritative
+`3523:w2b` assignment as `in-progress`, owner `ttraenkler/fable-3523-w2b`, and
+found remote branch `fable-3523-w2b` at
+`5d80d12343e23b73ac27bf338875c2aa00e5e406`. Reconcile that owner before
+dispatching function storage. The previous plan remains its design record.
+
+The completed #5283 receipt fix left a separate mechanism unimplemented:
+ambient declarations still enter the executable module-init population.
+Queue **`3523:ambient-module-init-scan-roots`**, unclaimed and **not part of
+the September 5 implementation wave**. It shares `identity.ts` with R3 W1-D;
+dispatch after that source is integrated and claims/PRs are rechecked. R4
+remains `in-progress`; this is not a reason to reopen the completed receipt fix.
+
+`collectModuleInitPopulation` (`src/ir/module-init.ts:9-28`) includes ambient
+namespaces and `declare const` statements. `InventoryBuilder.build`
+(`src/ir/identity.ts:845-929`) uses the list both to mint an executable terminal
+(`:907`) and to scan nested imported classes (`:925`). The #5283 landing record
+documents why simply filtering declarations lost those classes. The next
+bounded change must separate these jobs:
+
+1. **`src/ir/module-init.ts`**: preserve the old broad list as a distinct
+   scan-root collector, and narrow the runtime-population collector only for
+   explicit ambient statements/declaration-file context. Keep non-ambient
+   namespaces and real runtime statements conservative.
+2. **`identity.ts`, `InventoryBuilder.build`**: create a module-init terminal
+   only from the runtime population or existing static-class initialization
+   evidence. Independently scan every root exactly once, including ambient
+   wrappers when no runtime terminal exists. `scanNode` (`:1453`) currently
+   requires a non-null lexical owner; a source-root scan needs truthful null
+   ancestry passed to `processClass`/`addSupportUnit`, which already accept it.
+   Keep syntax placement separate from runtime ownership. Do not retain a fake
+   module-init UnitId just to preserve the old parent id.
+3. **Audit all consumers before editing** with
+   `rg -n 'collectModuleInitPopulation' src`. Selection, planning,
+   integration, multi-source orchestration and codegen all consume it; classify
+   each as runtime population or declaration discovery. Start at
+   `planning-identity.ts:487`, `integration-identity.ts:327`,
+   `integration.ts:559,2603,3691`, `select.ts:10796`, and
+   `select-identity.ts:811`. Extra edits need a named consumer requirement.
+4. **Preserve outcome refusals**: `buildNonExecutableModuleInitOutcome`
+   (`codegen/ir-overlay-outcomes.ts:871-913`) already requires no terminal,
+   empty runtime population, exact source identity and no duplicate row.
+   Keep those guards and the physical-body receipts. Add no Wasm instruction,
+   fallback body, import or representation conversion.
+
+The ambient classes' old phantom lexical parent disappears, so do not promise
+their ClassIds stay identical. Require truthful deterministic ancestry and
+exact layout/callable associations, retained class records, stable unrelated
+executable identities, and unchanged emitted bytes.
+
+**First proof before implementation:** reproduce
+`tests/fixtures/extern-demo.ts` and
+`tests/dogfood/corpus/import-attributes.module.js` through the real compiler
+on `gc` and `standalone`; inspect the transformed source seen by inventory,
+not a raw reparse of the JSON import. Add a namespace-wrapped imported-class
+positive control. Ambient-only sources must have one `non-executable` row,
+zero runtime init bodies, retained imported classes and no audit violations.
+Mixed ambient/runtime sources, non-ambient namespaces and static class
+initializers must retain execution and order. Removing the population filter
+must fail the outcome pin; removing the ambient scan must fail the class pin.
+
+Future Luna / max ownership: the collector/scanner split, only consumers whose
+need was established, a new
+`tests/issue-3523-ambient-module-init-population.test.ts`, and this issue's
+measured landing record. Run these existing files separately on base and
+candidate: `tests/issue-5283-legacy-body-receipt.test.ts`,
+`tests/issue-3520-ir-unit-identity.test.ts`,
+`tests/issue-3520-program-abi-unitless-class-order.test.ts`,
+`tests/issue-3520-module-init-callable-abi.test.ts`,
+`tests/issue-3523-module-init-discovery-static.test.ts`, and
+`tests/issue-3525-multi-prepared-module-init.test.ts`, using
+`pnpm exec vitest run <file> --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism`.
+Then run typecheck, current required IR/quality/equivalence gates and all five
+source ratchets against branch and verified main bases. Use `node --import tsx`
+for TypeScript scripts in this sandbox; enumerate fresh manifest/target/SHA
+evidence instead of copying historical corpus totals.
+
+This remains **queued** if any consumer's ownership contract is unclassified,
+class retention needs fabricated identity, or runtime order changes. The future
+implementer is not alone: preserve peers' edits, use a verified isolated
+worktree and do not take over W2-B's live storage claim.
