@@ -784,3 +784,40 @@ TypedArray receivers) run on **standalone and wasi**, each deliberately free of
 any other ToString consumer so it cannot be un-tested by incidental arming, and
 each asserting `imports === []`. `tests/issue-5317-r4-fill-copywithin-end.test.ts`
 gains the eleven-row static-lane control described under F3.
+
+#### Validation runs for this round — and what could NOT be established
+
+Green, on this tree:
+
+- **Pins, 100/100.** `tests/issue-5317*` + `tests/issue-5194*`, single fork at
+  the CI heap — the five r4/r3 pin files, including the five new minimal-module
+  join controls (standalone AND wasi, `imports === []`) and the new eleven-row
+  static-lane fill/copyWithin control.
+- **Node 25**, the two changed test files: 20/20.
+- **Exact Test262 rows** through the vitest runner (120 s budget) inside those
+  pins: `join/return-abrupt-from-separator.js`,
+  `join/return-abrupt-from-separator-symbol.js`,
+  `join/custom-separator-result-from-tostring-on-each-value.js`,
+  `join/custom-separator-result-from-tostring-on-each-simple-value.js`,
+  `fill/coerced-indexes.js` — all pass.
+- **Gates**: `check-loc-budget` / `check-func-budget` bare AND with
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`, `check-coercion-sites`,
+  `check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+  `check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+  typecheck, lint.
+
+**NOT established: the two 120/139-row control corpora were not re-validated.**
+The `--isolate` row runner was run on the 120-row corpus and returned
+`44 pass / 15 fail / 61 compile_error`, where **all 61 `compile_error`s are
+`compilation timeout`** (15–29 s each) against the lane's recorded `57 base →
+66 lane`. The box was at **1-min load 11–13 on 4 cores** for the whole run —
+several other lanes active — which is the same load-artifact condition the lane
+documented in step 2, and under it the runner's `compile_error` verdicts are
+not evidence about this tree. A 16-row focused re-run behaved identically:
+`6 pass / 1 fail / 9 compile_error`, with the 9 timeouts landing exactly on the
+detached-buffer family this step already recorded as given up, and the 1 fail
+on `join/invoked-as-method.js` (a `TypedArrayPrototype` reflection row, the
+`#2175` class). So nothing in either run contradicts the lane's numbers — but
+**neither run confirms them**, and the "zero rows lost" claim for the two
+corpora therefore still rests on the lane's own earlier measurement, not on a
+repeat under review. It should be re-run when the box is quiet (≤2 lanes).
