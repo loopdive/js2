@@ -1,5 +1,14 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +16,11 @@ import { describe, expect, it } from "vitest";
 
 // @ts-expect-error — .mjs dogfood helpers have no declaration files
 import {
+  publishTypescriptBuildProbeArtifact,
+  publishTypescriptBuildProbeArtifactAfterExit,
+  takeTypescriptBuildProbeArtifactCandidate,
+  typescriptBuildProbeArtifactPath,
+  typescriptBuildProbeErrorSummary,
   typescriptBuildProbeExitCode,
   typescriptBuildProbeSucceeded,
   typescriptInvocationMatches,
@@ -44,6 +58,314 @@ function passingProbeResult() {
 }
 
 describe("TypeScript dogfood acceptance verdicts", () => {
+  it("keeps transferred diagnostic bytes and source maps out of the rendered result", () => {
+    const message = {
+      type: "result",
+      binaryBytes: 20,
+      diagnosticArtifactCandidate: {
+        binary: Buffer.from("candidate-wasm-bytes"),
+        sourceMap: "candidate-source-map",
+      },
+    };
+
+    const candidate = takeTypescriptBuildProbeArtifactCandidate(message);
+    expect(candidate?.binary).toEqual(Buffer.from("candidate-wasm-bytes"));
+    expect(candidate?.sourceMap).toBe("candidate-source-map");
+    expect(message).not.toHaveProperty("diagnosticArtifactCandidate");
+    expect(JSON.stringify(message)).toBe('{"type":"result","binaryBytes":20}');
+  });
+
+  it("keeps parser and binder diagnostic artifacts separate without moving the parser path", () => {
+    expect(typescriptBuildProbeArtifactPath("/fixtures/typescript-parser-workload.ts")).toBe(
+      "/private/tmp/ts2wasm-typescript-parser-latest.wasm",
+    );
+    expect(typescriptBuildProbeArtifactPath("/fixtures/typescript-binder-workload.ts")).toBe(
+      "/private/tmp/ts2wasm-typescript-binder-latest.wasm",
+    );
+    expect(typescriptBuildProbeArtifactPath("/fixtures/type checker workload.ts", "/artifacts")).toBe(
+      "/artifacts/ts2wasm-type-checker-workload-latest.wasm",
+    );
+    expect(typescriptBuildProbeArtifactPath("/typescript/src/typescript/typescript.ts", "/artifacts", "source")).toBe(
+      "/artifacts/ts2wasm-typescript-source-latest.wasm",
+    );
+    expect(typescriptBuildProbeArtifactPath("/typescript/lib/typescript.js", "/artifacts", "bundle")).toBe(
+      "/artifacts/ts2wasm-typescript-bundle-latest.wasm",
+    );
+    expect(typescriptBuildProbeArtifactPath("../../escape/evil workload.ts", "/artifacts", "../bundle")).toBe(
+      "/artifacts/ts2wasm-evil-workload-bundle-latest.wasm",
+    );
+  });
+
+  it("publishes only accepted diagnostic artifacts and preserves the last-good pair on failure", () => {
+    const root = mkdtempSync(join(tmpdir(), "ts2wasm-typescript-artifact-"));
+    const artifactPath = join(root, "ts2wasm-typescript-parser-latest.wasm");
+    const mapPath = `${artifactPath}.map`;
+    const oldBinary = Buffer.from("last-good-wasm");
+    const oldMap = "last-good-map";
+    try {
+      writeFileSync(artifactPath, oldBinary);
+      writeFileSync(mapPath, oldMap);
+
+      expect(
+        publishTypescriptBuildProbeArtifact({
+          artifactPath,
+          binary: new Uint8Array(0),
+          sourceMap: "failed-map",
+          accepted: false,
+        }),
+      ).toEqual({ artifactPath, mapPath, published: false, sourceMapPublished: false });
+      expect(readFileSync(artifactPath)).toEqual(oldBinary);
+      expect(readFileSync(mapPath, "utf8")).toBe(oldMap);
+      expect(readdirSync(root).sort()).toEqual([
+        "ts2wasm-typescript-parser-latest.wasm",
+        "ts2wasm-typescript-parser-latest.wasm.map",
+      ]);
+
+      expect(() =>
+        publishTypescriptBuildProbeArtifact({
+          artifactPath,
+          binary: {} as unknown as Uint8Array,
+          sourceMap: "uncommitted-map",
+          accepted: true,
+        }),
+      ).toThrow();
+      expect(readFileSync(artifactPath)).toEqual(oldBinary);
+      expect(readFileSync(mapPath, "utf8")).toBe(oldMap);
+      expect(readdirSync(root).sort()).toEqual([
+        "ts2wasm-typescript-parser-latest.wasm",
+        "ts2wasm-typescript-parser-latest.wasm.map",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("restores the previous map even when moving the rejected map aside fails", () => {
+    const root = mkdtempSync(join(tmpdir(), "ts2wasm-typescript-artifact-rollback-"));
+    const artifactPath = join(root, "ts2wasm-typescript-parser-latest.wasm");
+    const mapPath = `${artifactPath}.map`;
+    const oldBinary = Buffer.from("last-good-wasm");
+    let binaryCommitFailed = false;
+    let rejectedMapMoveAttempted = false;
+    let previousMapRestoreAttempted = false;
+    try {
+      writeFileSync(artifactPath, oldBinary);
+      writeFileSync(mapPath, "last-good-map");
+
+      let thrown: unknown;
+      try {
+        publishTypescriptBuildProbeArtifact(
+          {
+            artifactPath,
+            binary: Buffer.from("candidate-wasm"),
+            sourceMap: "candidate-map",
+            accepted: true,
+          },
+          {
+            existsSync,
+            writeFileSync,
+            rmSync,
+            renameSync(from: string, to: string) {
+              if (to === artifactPath) {
+                binaryCommitFailed = true;
+                throw new Error("forced binary commit failure");
+              }
+              if (binaryCommitFailed && from === mapPath && to.endsWith(".tmp")) {
+                rejectedMapMoveAttempted = true;
+                throw new Error("forced rejected-map rollback failure");
+              }
+              if (binaryCommitFailed && from.endsWith(".previous") && to === mapPath) {
+                previousMapRestoreAttempted = true;
+              }
+              renameSync(from, to);
+            },
+          },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      const aggregate = thrown as AggregateError & { cause?: unknown };
+      expect((aggregate.cause as Error).message).toBe("forced binary commit failure");
+      expect(aggregate.errors.map((error: Error) => error.message)).toEqual([
+        "forced binary commit failure",
+        "forced rejected-map rollback failure",
+      ]);
+      expect(aggregate.message).toContain("the previous map was restored despite the rollback error");
+      expect(rejectedMapMoveAttempted).toBe(true);
+      expect(previousMapRestoreAttempted).toBe(true);
+      expect(readFileSync(artifactPath)).toEqual(oldBinary);
+      expect(readFileSync(mapPath, "utf8")).toBe("last-good-map");
+      expect(readdirSync(root).sort()).toEqual([
+        "ts2wasm-typescript-parser-latest.wasm",
+        "ts2wasm-typescript-parser-latest.wasm.map",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("retains the previous map as a recovery file when restoration itself fails", () => {
+    const root = mkdtempSync(join(tmpdir(), "ts2wasm-typescript-artifact-rollback-"));
+    const artifactPath = join(root, "ts2wasm-typescript-parser-latest.wasm");
+    const mapPath = `${artifactPath}.map`;
+    const oldBinary = Buffer.from("last-good-wasm");
+    let binaryCommitFailed = false;
+    try {
+      writeFileSync(artifactPath, oldBinary);
+      writeFileSync(mapPath, "last-good-map");
+
+      let thrown: unknown;
+      try {
+        publishTypescriptBuildProbeArtifact(
+          {
+            artifactPath,
+            binary: Buffer.from("candidate-wasm"),
+            sourceMap: "candidate-map",
+            accepted: true,
+          },
+          {
+            existsSync,
+            writeFileSync,
+            rmSync,
+            renameSync(from: string, to: string) {
+              if (to === artifactPath) {
+                binaryCommitFailed = true;
+                throw new Error("forced binary commit failure");
+              }
+              if (binaryCommitFailed && from.endsWith(".previous") && to === mapPath) {
+                throw new Error("forced previous-map restoration failure");
+              }
+              renameSync(from, to);
+            },
+          },
+        );
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(AggregateError);
+      const aggregate = thrown as AggregateError & { cause?: unknown };
+      expect((aggregate.cause as Error).message).toBe("forced binary commit failure");
+      expect(aggregate.errors.map((error: Error) => error.message)).toEqual([
+        "forced binary commit failure",
+        "forced previous-map restoration failure",
+      ]);
+      const recoveryFile = readdirSync(root).find((name) => name.endsWith(".previous"));
+      expect(recoveryFile).toBeDefined();
+      expect(aggregate.message).toContain(join(root, recoveryFile!));
+      expect(readFileSync(artifactPath)).toEqual(oldBinary);
+      expect(existsSync(mapPath)).toBe(false);
+      expect(readFileSync(join(root, recoveryFile!), "utf8")).toBe("last-good-map");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("atomically replaces an accepted diagnostic artifact and retires a stale map", () => {
+    const root = mkdtempSync(join(tmpdir(), "ts2wasm-typescript-artifact-"));
+    const artifactPath = join(root, "ts2wasm-typescript-binder-latest.wasm");
+    const mapPath = `${artifactPath}.map`;
+    try {
+      writeFileSync(artifactPath, "old-wasm");
+      writeFileSync(mapPath, "old-map");
+      const binary = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+
+      expect(
+        publishTypescriptBuildProbeArtifact({
+          artifactPath,
+          binary,
+          sourceMap: "new-map",
+          accepted: true,
+        }),
+      ).toEqual({ artifactPath, mapPath, published: true, sourceMapPublished: true });
+      expect(readFileSync(artifactPath)).toEqual(binary);
+      expect(readFileSync(mapPath, "utf8")).toBe("new-map");
+      expect(readdirSync(root).sort()).toEqual([
+        "ts2wasm-typescript-binder-latest.wasm",
+        "ts2wasm-typescript-binder-latest.wasm.map",
+      ]);
+
+      expect(
+        publishTypescriptBuildProbeArtifact({
+          artifactPath,
+          binary,
+          sourceMap: undefined,
+          accepted: true,
+        }),
+      ).toEqual({ artifactPath, mapPath, published: true, sourceMapPublished: false });
+      expect(readFileSync(artifactPath)).toEqual(binary);
+      expect(existsSync(mapPath)).toBe(false);
+      expect(readdirSync(root)).toEqual(["ts2wasm-typescript-binder-latest.wasm"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("waits for a clean worker exit before replacing a diagnostic artifact", () => {
+    const root = mkdtempSync(join(tmpdir(), "ts2wasm-typescript-artifact-exit-"));
+    const artifactPath = join(root, "ts2wasm-typescript-parser-latest.wasm");
+    const mapPath = `${artifactPath}.map`;
+    const oldBinary = Buffer.from("last-good-wasm");
+    const candidateBinary = Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    try {
+      writeFileSync(artifactPath, oldBinary);
+      writeFileSync(mapPath, "last-good-map");
+
+      for (const lifecycle of [
+        { timedOut: true, workerExitCode: 0 },
+        { timedOut: false, workerExitCode: 1 },
+      ]) {
+        expect(
+          publishTypescriptBuildProbeArtifactAfterExit({
+            artifactPath,
+            binary: candidateBinary,
+            sourceMap: "candidate-map",
+            finalMessage: passingProbeResult(),
+            invocationRequirement: true,
+            ...lifecycle,
+          }),
+        ).toEqual({ artifactPath, mapPath, published: false, sourceMapPublished: false });
+        expect(readFileSync(artifactPath)).toEqual(oldBinary);
+        expect(readFileSync(mapPath, "utf8")).toBe("last-good-map");
+      }
+
+      expect(
+        publishTypescriptBuildProbeArtifactAfterExit({
+          artifactPath,
+          binary: candidateBinary,
+          sourceMap: "candidate-map",
+          finalMessage: passingProbeResult(),
+          invocationRequirement: true,
+          timedOut: false,
+          workerExitCode: 0,
+        }),
+      ).toEqual({ artifactPath, mapPath, published: true, sourceMapPublished: true });
+      expect(readFileSync(artifactPath)).toEqual(candidateBinary);
+      expect(readFileSync(mapPath, "utf8")).toBe("candidate-map");
+      expect(readdirSync(root).sort()).toEqual([
+        "ts2wasm-typescript-parser-latest.wasm",
+        "ts2wasm-typescript-parser-latest.wasm.map",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not let the bounded warning prefix hide a tail compile error", () => {
+    const warnings = Array.from({ length: 25 }, (_, index) => ({
+      message: `warning ${index}`,
+      severity: "warning",
+    }));
+    const failure = { message: "binary emission failed", code: 9001, severity: "error" };
+
+    const summary = typescriptBuildProbeErrorSummary([...warnings, failure]);
+    expect(summary).toHaveLength(20);
+    expect(summary[0]).toEqual(expect.objectContaining(failure));
+    expect(summary.slice(1).every((diagnostic: { severity: string }) => diagnostic.severity === "warning")).toBe(true);
+  });
+
   it("runs the pinned official diagnostics generator and verifies every generated artifact", () => {
     const root = mkdtempSync(join(tmpdir(), "ts2wasm-typescript-diagnostics-"));
     const informationMap = "export const Diagnostics = { synthetic: true };\r\n";

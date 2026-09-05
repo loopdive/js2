@@ -38,10 +38,16 @@ function wasmBytes(binary: Uint8Array): BufferSource {
  * way two graphs' frames interleave is one calling the other, where sharing is
  * exactly what is wanted.
  */
-let sharedExceptionTag: WebAssembly.Tag | undefined;
+// TypeScript 5's DOM library predates the Wasm exception-handling API. This
+// runtime only needs the tag's object identity, so describe that narrow common
+// surface locally instead of requiring TypeScript 7's ambient declaration.
+type SharedExceptionTag = object;
+type SharedExceptionTagConstructor = new (type: { parameters: WebAssembly.ValueType[] }) => SharedExceptionTag;
+
+let sharedExceptionTag: SharedExceptionTag | undefined;
 
 export function installSharedExceptionTag(imports: WebAssembly.Imports): void {
-  const Tag = (WebAssembly as unknown as { Tag?: new (t: { parameters: string[] }) => WebAssembly.Tag }).Tag;
+  const Tag = (WebAssembly as unknown as { Tag?: SharedExceptionTagConstructor }).Tag;
   if (!Tag) return;
   sharedExceptionTag ??= new Tag({ parameters: ["externref"] });
   const env = ((imports as Record<string, unknown>).env ??= {}) as Record<string, unknown>;

@@ -76,15 +76,21 @@ export function fillHostFnctorMethodDrivers(ctx: CodegenContext): void {
     if (!driver) continue;
 
     const closureArityIdx = ctx.funcMap.get("__closure_arity");
-    const argcGlobalIdx = ensureArgcGlobal(ctx);
     const undefinedIdx = ctx.funcMap.get("__get_undefined");
-    const methodIdx = ctx.funcMap.get(`__call_fn_method_${arity}`);
     const fallbackIdx = ctx.funcMap.get(hostFnctorCallableFallbackImportName(arity));
-    if (methodIdx === undefined || closureArityIdx === undefined || fallbackIdx === undefined) {
+    if (fallbackIdx === undefined || closureArityIdx === undefined) {
       driver.body = [{ op: "ref.null.extern" }];
       continue;
     }
 
+    const fallbackCall: Instr[] = [];
+    for (let local = 1; local < arity + 2; local++) {
+      fallbackCall.push({ op: "local.get", index: local });
+    }
+    fallbackCall.splice(1, 0, { op: "local.get", index: 0 });
+    fallbackCall.push({ op: "call", funcIdx: fallbackIdx });
+
+    const argcGlobalIdx = ensureArgcGlobal(ctx);
     const declaredLocal = arity + 2;
     const callAtArity = (dispatchArity: number): Instr[] => {
       const target = ctx.funcMap.get(`__call_fn_method_${dispatchArity}`);
@@ -125,13 +131,19 @@ export function fillHostFnctorMethodDrivers(ctx: CodegenContext): void {
         },
       ];
     }
-    const fallbackCall: Instr[] = [];
-    for (let local = 1; local < arity + 2; local++) {
-      fallbackCall.push({ op: "local.get", index: local });
-    }
-    fallbackCall.splice(1, 0, { op: "local.get", index: 0 });
-    fallbackCall.push({ op: "call", funcIdx: fallbackIdx });
-
+    const boundedDispatch: Instr[] = [
+      { op: "local.get", index: declaredLocal },
+      { op: "i32.const", value: 8 },
+      { op: "i32.gt_s" },
+      {
+        op: "if",
+        blockType: { kind: "val", type: EXTERNREF },
+        // The bridge has no ABI arm above eight formals. Trap rather than
+        // silently returning undefined when contextual typing hid that arity.
+        then: [{ op: "unreachable" }],
+        else: dispatch,
+      },
+    ];
     const body: Instr[] = [
       { op: "i32.const", value: arity },
       { op: "global.set", index: argcGlobalIdx },
@@ -145,7 +157,7 @@ export function fillHostFnctorMethodDrivers(ctx: CodegenContext): void {
         op: "if",
         blockType: { kind: "val", type: EXTERNREF },
         then: fallbackCall,
-        else: dispatch,
+        else: boundedDispatch,
       },
     ];
     driver.locals = [{ name: "__declared_arity", type: { kind: "i32" } }];
