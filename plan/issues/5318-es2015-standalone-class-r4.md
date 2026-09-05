@@ -510,3 +510,189 @@ so nothing was added to the frontmatter.
 - **Gated, not claimed:** the 30 `subclass/builtin-objects/**` rows (#3371),
   the generator rows (#2864) and the 16 `dstr` rows (step 4 was conditional on
   steps 1-3 being green).
+
+### Review round 1 (2026-09-05)
+
+Opus fix round in `/home/user/js2/.claude/worktrees/wf_05fc6ce9-91e-2`, branch
+`worktree-wf_05fc6ce9-91e-2`, the lane branch merged in fast-forward. Same A/B
+trees as the r4 pass: `base` = `.tmp/rev5318/base` (`origin/main` 46c12b01d6),
+`lane` = the lane worktree, `fix` = this one. Every probe below was run on all
+three with `node` (v25.9.0) as the oracle; the harness is
+`.tmp/r1/multi.mts` (a three-tree version of the reviewer's `multi.mts`).
+
+Three findings were reported, all standalone-only. Two are FIXED, one is
+RECORDED with its repro. `wasi` and the JS-host lane are untouched — nothing
+outside `ctx.standalone`'s sidecar path changed.
+
+#### Finding 1 (high) — §15.7.14 declaration order: FIXED
+
+Reported as an ordering defect. It is TWO defects, and the ordering one alone
+does not fix it — measured, not assumed:
+
+1. **Order.** `emitClassStaticSidecar` emitted every `collectStaticMethods`
+   entry, then every `collectStaticAccessors` entry, discarding `decl.members`
+   order. Replaced by ONE pass building an ordered `StaticSidecarEntry[]`, with
+   methods and accessor entries interleaved: a later member under the same
+   FOLDED key replaces the earlier one in place (matching
+   `OrdinaryDefineOwnProperty`, which does not move an existing key), and the
+   two halves of one accessor merge into a single entry. A RUNTIME key cannot
+   be deduplicated at compile time at all — its registered name is a synthetic
+   `__cmdyn$<n>` and only ClassDefinitionEvaluation knows which collide — so
+   for those the emitted install ORDER is the entire mechanism.
+2. **The install was a silent no-op.** With the order corrected, `t2.js`
+   still answered 11. The static method's flag word (`METHOD_FLAGS = 0x01|0x04`)
+   omits bit 7, `HOST_HAS_VALUE`. §10.1.6.3 step 6 reads a descriptor with
+   neither `[[Value]]` nor `[[Writable]]` as GENERIC, and
+   `object-runtime-descriptors.ts`'s `keepAccessor` arm then updates the
+   attributes and leaves the accessor's halves LIVE. So the method install
+   never replaced anything, in EITHER order. `METHOD_FLAGS` now carries bit 7.
+   The prototype installs (`class-proto-object.ts`) keep the old constant and
+   are byte-identical: they only ever define a fresh key, where the bit is not
+   read.
+
+Measured (`probeP3`, node = 9):
+
+| probe | node | base | lane | fix |
+|---|---|---|---|---|
+| `t2.js` accessor-then-method | 9 | 9 | **11** | **9** |
+| `t7` method-then-accessor (node 11) | 11 | 9 | 11 | **11** |
+| `m2.js probeP3` | 2 | 2 | **11** | **2** |
+| `m2.js probeP9` | 2 | -1 | -1 | **2** |
+| distinct keys `k`/`m` both reachable | 11/9 | -1/9 | 11/9 | 11/9 |
+
+#### Finding 2 (high) — a nested class hid a receiver read: FIXED
+
+`staticAccessorHalfIsReceiverFree` used `genBodyReferencesThis`, which stops
+descending at `ts.isClassLike`. `static get [k]() { class X { static f = this; }
+return 6; }` therefore read as receiver-free, the half was installed, and the
+call trapped uncatchably ("dereferencing a null pointer") where base had merely
+answered `undefined` — strictly worse than the missing property it was meant to
+fix.
+
+Two candidate fixes were both implemented and measured:
+
+- A **conservative syntactic walker** (descend into nested classes; count a
+  nested function-like's computed name). It fixes the trap, but it also
+  DECLINES halves that are genuinely receiver-free — measured on `m5.js`, it
+  turned `probeA7`-shaped correct answers into missing properties.
+- **The compiled body**, which is what shipped: `compiledBodyReadsThis` (a new
+  tri-state export of the `local.get 0` scan `closures/method-trampolines.ts`
+  already runs for its own trampolines). The half's funcMap body is already
+  filled when the sidecar is emitted — verified, it answers `false`, not
+  `undefined`, for the whole `cpn-class-*-accessors-*` family — so this is
+  available AND cannot be wrong by construction. `undefined` (no defined
+  function, or a minted-but-EMPTY body) is a decline; an empty instruction list
+  must never read as "receiver-free", which is the hazard the original header
+  named as the reason to stay syntactic.
+
+Measured on `m5.js` and `t1.js` (node / base / lane / fix):
+
+| probe | node | base | lane | fix |
+|---|---|---|---|---|
+| `t1.js probeC2` (nested class `this`) | 6 | -1 | **TRAP** | **-1** |
+| `t1.js probeCatch` (is the trap catchable?) | 6 | undefined | **TRAP** | **undefined** |
+| `m5 probeA2` (same shape) | 6 | -1 | **TRAP** | **-1** |
+| `m5 probeA4` (`typeof this`) | 2 | -1 | -1 | **2** |
+| `m5 probeA1/A6/A7` | 5/7/7 | -1 | 5/7/7 | 5/7/7 |
+| `m5 probeA3/A5` (arrow `this`, `super.f`) | 2/3 | -1 | -1 | -1 |
+
+`t1` answers base's `-1` and no longer throws, which is the pin the review
+asked for. It is a WRONG answer (node says 6) — closing it needs the per-half
+dummy-receiver trampoline the module header already names, not a predicate
+change. `probeA4` is a bonus: the compiled-body gate installs a half the
+syntactic one declined, and it agrees with node.
+
+**Cost of the gate, pinned:** it over-declines one measured shape. A half
+containing an object literal whose computed key only COMPARES `this`
+(`{ [this === undefined ? "a" : "b"]() {} }`) emits a `local.get 0` that never
+dereferences, so installing it was safe and the lane answered node's 6; the fix
+answers `-1`. The gate cannot tell a comparing read from a dereferencing one,
+and a dereferencing one is an uncatchable trap, so the decline is the deliberate
+direction. Pinned as `OVER-DECLINE` in the test file so the cost is visible if
+the gate is ever refined.
+
+#### Finding 3 (low) — a static FIELD does not shadow the sidecar: RECORDED
+
+Not fixed, and the declaration-order pass cannot reach it. Static fields keep
+the `staticProps` global lowering and never enter the sidecar; mirroring a
+mutable slot there would give it two sources of truth, which is the module's
+standing exclusion. §15.7.14 runs static field initializers AFTER every method
+and accessor is installed, so node answers the FIELD in BOTH orders:
+
+| probe (`m3.js`) | node | base | lane | fix |
+|---|---|---|---|---|
+| `probeQ1` accessor-then-field | 7 | -1 | 11 | 11 |
+| `probeQ2` field-then-accessor | 7 | -1 | 11 | 11 |
+
+Base answers `undefined`, the lane and the fix answer the accessor — all three
+are wrong, and this is not a regression against a working program. Closing it
+means widening the sidecar to static fields (with an ordering rule that puts
+every field after every method and accessor, regardless of source position) and
+resolving the mutable-slot duplication. Recorded in the module header and
+pinned in the test file with the node answer alongside.
+
+#### Also found, RECORDED not fixed — the prototype twin of finding 1
+
+`class G { get [k]() { return 2; } [k]() { return 1; } }` — a prototype method
+textually after a same-key accessor — answers the accessor where node answers
+the method. Same two causes: `class-proto-object.ts` installs methods first and
+accessors second (its own #4455 note), and its method flag word omits bit 7 for
+the same reason. It is **base-equal**: on `m13.js probeG2` base, lane and fix
+all answer 2 where node answers 1, so the r4 work neither caused nor changed it.
+
+The first pin written for this asserted 2 and FAILED — the isolated one-class
+shape reaches NEITHER member on base or on this tree, so the ordering never gets
+a chance to be wrong there. `m13.js`, which puts four such classes in one
+module, is where the members ARE reached and the ordering shows. The pin now
+records the measured isolated answer with that distinction written next to it;
+fixing the ordering needs its own control sweep and is not this round's.
+
+Also base-equal and unchanged: `m4 probeN2`/`probeZ` (a `[x + 2]` key and its
+side effect), `m2 probeP7` (a nested class expression's static accessor),
+`m5 probeA3`/`probeA5` (an arrow-captured `this`, `super.f` in a static
+accessor), and `m13 probeG1`.
+
+#### Rows and controls
+
+- **`tests/issue-5318-r4-computed-accessor-keys.test.ts`: 45/45**, single fork
+  at `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, under BOTH node 22 (local) and node
+  25 (CI's version). The file grew from 32 to 45 tests: the three findings plus
+  the two residuals above, each with its node oracle.
+- **r3 pins: 225/225** — `tests/issue-5195-es2015-class-r2.test.ts`,
+  `issue-5195-r3-heritage-check`, `issue-5195-r3-restricted-properties`,
+  `issue-5195-r3-review`, `issue-5309-child-field-shadows-parent-method`,
+  `issue-5312-uninitialised-field-reads-undefined`.
+- **The 24-row `cpn` list: 18 pass / 6 fail**, unchanged from the r4 pass. The
+  6 are the four `-assignment-expression-assignment` rows whose decline #5195's
+  review set, plus the two `accessor-name-{inst,static}-computed-in` rows that
+  need an `__extern_set` class arm.
+- **The 783-row class control, re-run whole on this tree: 246 non-pass** —
+  identical to the lane's 246, against base's 271. **Zero rows worse than the
+  lane and zero worse than base**; the 25 rows the r4 pass flipped are all still
+  flipped.
+
+  Two rows read as regressions in the raw sweep (`cptn-decl.js`, which base
+  passes, and `subclass/builtin-objects/Function/super-must-be-called.js`, the
+  r4 pass's #3371-gated bonus). Both are an INFRASTRUCTURE artifact, diagnosed
+  and re-measured rather than assumed: the quickjs eval adapter is cached under
+  a key derived from `compiler-bundle.mjs`, and this session built the bundle
+  BEFORE editing `src/`, so every runtime-eval row in the sweep hit "the quickjs
+  provider is not built" for the new key. 40 rows carried that error. Rebuilding
+  the provider and re-running all 40 alone: exactly those 2 pass, and the other
+  38 are non-pass on the lane and on base too, so nothing else was masked.
+  **Rebuild the eval provider AFTER the last `src/` edit, not before** — the
+  bundle key moves with the source.
+- **Reviewer matrices `m4`, `m13`, `m2`, `m5`, `t1`, `t2`, `m3`** re-run on
+  base / lane / fix / node: every probe is lane-or-better. `m4` and `m13` are
+  byte-for-byte the lane's answers; `m2`, `m5`, `t1`, `t2` and `m3` improve as
+  tabled above; nothing regressed against the lane.
+
+#### Gates
+
+`check-loc-budget` · `check-func-budget` (both bare AND with
+`LOC_GATE_BASE=b08dd4589c`, `origin/main` at the time of the run: "no unallowed
+growth in 30 changed src files, net -657 LOC") · `check-coercion-sites` ·
+`check:oracle-ratchet` ·
+`check:dead-exports` · `check:speculative-rollback` · `check:stack-balance` ·
+`check:codegen-fallbacks` · `check:any-box-sites` · TS7 `--noEmit` · `lint` —
+all exit 0, each run bare with its status read directly. No growth grant needed.

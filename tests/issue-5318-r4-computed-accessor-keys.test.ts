@@ -206,3 +206,165 @@ describe("#5318 r4 Step 1 — order preservation", () => {
     expect(await runStandalone(RECEIVER_READING_SOURCE, "probe", "issue-5318-receiver.js")).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review round 1 (2026-09-05) — the three findings the reviewer confirmed.
+// ---------------------------------------------------------------------------
+
+describe("#5318 r4 review — §15.7.14 declaration order on the static sidecar", () => {
+  // Finding 1. `emitClassStaticSidecar` emitted every static METHOD first and
+  // every static ACCESSOR second, discarding `decl.members` order, AND the
+  // method install's flag word omitted bit 7 (`HOST_HAS_VALUE`) — which
+  // §10.1.6.3 step 6 reads as a GENERIC descriptor, so it updated attributes
+  // and left a live accessor's halves in place. Together those made a
+  // same-key accessor win in BOTH declaration orders. node is the oracle:
+  // whichever member is textually LAST wins.
+  const ACCESSOR_THEN_METHOD = `
+    let x = 0;
+    class P { static get [x || "k"]() { return 11; } static k() { return 9; } }
+    class Q { static k = 7; }
+    export function probe() { const v = P[x || "k"]; return typeof v === "function" ? v() : (v === 11 ? 11 : -1); }
+  `;
+  const METHOD_THEN_ACCESSOR = `
+    let x = 0;
+    class P { static k() { return 9; } static get [x || "k"]() { return 11; } }
+    class Q { static k = 7; }
+    export function probe() { const v = P[x || "k"]; return typeof v === "function" ? v() : (v === 11 ? 11 : -1); }
+  `;
+
+  it("standalone: a static method textually AFTER a same-key accessor wins", async () => {
+    expect(await runStandalone(ACCESSOR_THEN_METHOD, "probe", "issue-5318-order-a.js")).toBe(9);
+  });
+
+  it("host lane agrees (accessor then method)", () => {
+    expect(runHost(ACCESSOR_THEN_METHOD, "probe")).toBe(9);
+  });
+
+  it("standalone: a static accessor textually AFTER a same-key method wins", async () => {
+    expect(await runStandalone(METHOD_THEN_ACCESSOR, "probe", "issue-5318-order-b.js")).toBe(11);
+  });
+
+  it("host lane agrees (method then accessor)", () => {
+    expect(runHost(METHOD_THEN_ACCESSOR, "probe")).toBe(11);
+  });
+
+  // Two static members under DIFFERENT keys must both stay reachable — the
+  // order pass must not drop either.
+  const DISTINCT_KEYS = `
+    let x = 0;
+    class P { static get [x || "k"]() { return 11; } static m() { return 9; } }
+    class Q { static k = 7; }
+    export function probeK() { const v = P[x || "k"]; return v === 11 ? 11 : -1; }
+    export function probeM() { const v = P[x || "m"]; return typeof v === "function" ? v() : -1; }
+  `;
+
+  it("standalone: distinct keys both stay installed", async () => {
+    expect(await runStandalone(DISTINCT_KEYS, "probeK", "issue-5318-order-c.js")).toBe(11);
+    expect(await runStandalone(DISTINCT_KEYS, "probeM", "issue-5318-order-c.js")).toBe(9);
+  });
+
+  // The INSTANCE twin of the same defect, RECORDED not fixed. The prototype
+  // `$Object` (`class-proto-object.ts`) installs methods first and accessors
+  // second by the same #4455 decision, and its method flag word omits bit 7 for
+  // the same reason. This is base-equal — the r4 work neither caused nor changed
+  // it — and fixing it moves the bytes of every class that has a prototype
+  // object, which needs its own control sweep.
+  //
+  // Measured, NOT assumed: in this ISOLATED shape standalone reaches NEITHER
+  // member — the probe answers -1 on base AND on this tree — so the ordering
+  // never gets a chance to be wrong here. The reviewer's `m13.js` (four such
+  // classes in one module, where the members ARE reached) is where the ordering
+  // itself shows: `probeG2` answers the accessor (2) on base, lane and this tree
+  // where node answers the method (1).
+  const INSTANCE_ORDER = `
+    let x = 0;
+    class G { get [x || "k"]() { return 2; } [x || "k"]() { return 1; } }
+    export function probe() {
+      const v = new G()[x || "k"];
+      if (typeof v === "function") return v();
+      return v === 2 ? 2 : -1;
+    }
+  `;
+
+  it("standalone: RESIDUAL — the prototype twin is unreached here (node: 1)", async () => {
+    expect(await runStandalone(INSTANCE_ORDER, "probe", "issue-5318-order-inst.js")).toBe(-1);
+  });
+
+  it("host lane shows what the prototype residual costs", () => {
+    expect(runHost(INSTANCE_ORDER, "probe")).toBe(1);
+  });
+});
+
+describe("#5318 r4 review — a nested class hides a receiver read", () => {
+  // Finding 2. The install predicate used `genBodyReferencesThis`, which stops
+  // descending at `ts.isClassLike`, so the `this` in a NESTED class's static
+  // field initializer was invisible. The half was installed, its compiled body
+  // really does read `local 0`, and the call TRAPPED uncatchably — strictly
+  // worse than the missing-property answer it replaced. The predicate now
+  // descends into nested classes (and consults the compiled body when it
+  // exists), so this half is declined again. `undefined` here is a WRONG
+  // answer (node returns 6) but it is not a throw; a future dummy-receiver
+  // trampoline flips it to 6.
+  const NESTED_CLASS_THIS = `
+    let x = 0;
+    class C2 { static get [x || "k"]() { class X { static f = this; } return 6; } }
+    export function probe() { const v = C2[x || "k"]; return v === undefined ? -1 : v; }
+    export function probeCatch() { try { C2[x || "k"]; return 0; } catch (e) { return -2; } }
+  `;
+
+  it("standalone: declines the install instead of trapping", async () => {
+    expect(await runStandalone(NESTED_CLASS_THIS, "probe", "issue-5318-nested.js")).toBe(-1);
+  });
+
+  it("standalone: the read does not throw", async () => {
+    expect(await runStandalone(NESTED_CLASS_THIS, "probeCatch", "issue-5318-nested.js")).toBe(0);
+  });
+
+  // The compiled-body gate OVER-declines in one measured shape: an object
+  // literal inside the half whose computed key merely COMPARES `this` emits a
+  // `local.get 0` that never dereferences, so installing it would have been
+  // safe and would have answered 6 (node's answer). Declining costs a correct
+  // answer here. That is the deliberate direction of the trade — a `local.get
+  // 0` that DOES dereference is an uncatchable trap, and the gate cannot tell
+  // the two apart. Pinned so the cost is visible if the gate is ever refined.
+  const COMPUTED_KEY_THIS = `
+    let x = 0;
+    class C3 { static get [x || "k"]() { const o = { [this === undefined ? "a" : "b"]() { return 1; } }; return 6; } }
+    export function probe() { const v = C3[x || "k"]; return v === undefined ? -1 : v; }
+  `;
+
+  it("standalone: OVER-DECLINE — a half that only compares `this` also declines (node: 6)", async () => {
+    expect(await runStandalone(COMPUTED_KEY_THIS, "probe", "issue-5318-nested-key.js")).toBe(-1);
+  });
+});
+
+describe("#5318 r4 review — RESIDUAL: a static FIELD does not shadow the sidecar", () => {
+  // Finding 3, recorded not fixed. Static fields keep the `staticProps` global
+  // lowering and never enter the sidecar (mirroring a mutable slot there would
+  // give it two sources of truth). §15.7.14 runs static field initializers
+  // AFTER every method and accessor is installed, so in BOTH declaration
+  // orders node answers the FIELD (7); the sidecar answers its accessor (11).
+  // Base answered `undefined` — both are wrong, and this is not a regression
+  // the r4 work introduced relative to a working program. Closing it means
+  // widening the sidecar to fields.
+  const FIELD_COLLISION = `
+    let x = 0;
+    class Q1 { static get [x || "k"]() { return 11; } static k = 7; }
+    class Q2 { static k = 7; static get [x || "k"]() { return 11; } }
+    export function probeQ1() { const v = Q1[x || "k"]; return v === undefined ? -1 : v; }
+    export function probeQ2() { const v = Q2[x || "k"]; return v === undefined ? -1 : v; }
+  `;
+
+  it("standalone: accessor-then-field answers the accessor (node says 7)", async () => {
+    expect(await runStandalone(FIELD_COLLISION, "probeQ1", "issue-5318-field.js")).toBe(11);
+  });
+
+  it("standalone: field-then-accessor answers the accessor (node says 7)", async () => {
+    expect(await runStandalone(FIELD_COLLISION, "probeQ2", "issue-5318-field.js")).toBe(11);
+  });
+
+  it("host lane shows what the residual costs", () => {
+    expect(runHost(FIELD_COLLISION, "probeQ1")).toBe(7);
+    expect(runHost(FIELD_COLLISION, "probeQ2")).toBe(7);
+  });
+});
