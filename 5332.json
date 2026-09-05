@@ -1,10 +1,11 @@
 {
   "id": "5332",
   "assignee": "ttraenkler/senior-dev",
-  "requested_by": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5332-export-default-identifier-census",
   "claimed_at": "2026-09-05T15:37:25Z",
-  "updated_at": "2026-09-05T15:37:25Z",
-  "write_id": "69202-mjhzgow9"
+  "updated_at": "2026-09-05T19:05:24Z",
+  "write_id": "35681-bwctdsh9",
+  "released_at": "2026-09-05T19:05:24Z"
 }
