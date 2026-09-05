@@ -5500,4 +5500,8 @@ compiles, 24 expected CEs, 0 throws), and the restored candidate check is
 same repository diagnostic cap (**1,824** diagnostics across 5,229 files),
 and the W1-B standalone failure reproduces at base with the same exnref
 opcode error. Dead-export checking also reproduces its existing
-space-encoded path failure (`.../Volumes/Archiv%20Mini/...`).
+space-encoded path failure (`.../Volumes/Archiv%20Mini/...`). The later
+current-main merge (`5da655f286fcd569203cd2012b23dc21bf1c626d`, included in
+candidate merge commit `f8037b04efed8373a7013d400ab4f0588c74645d`) changes
+one unrelated corpus emit (`website/playground/examples/js/async.ts::gc`);
+the W1-D candidate A/B comparison itself was identical before that merge.
