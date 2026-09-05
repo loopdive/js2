@@ -1,10 +1,11 @@
 {
   "id": "5329",
   "assignee": "ttraenkler/claude",
-  "requested_by": "ttraenkler/claude",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5329-tuple-rest-carrier",
   "claimed_at": "2026-09-05T13:02:35Z",
-  "updated_at": "2026-09-05T13:02:35Z",
-  "write_id": "96988-r3otr3zq"
+  "updated_at": "2026-09-05T15:26:54Z",
+  "write_id": "73253-r98e0ts8",
+  "released_at": "2026-09-05T15:26:54Z"
 }
