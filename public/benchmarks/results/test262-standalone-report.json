@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-04T23:45:37.501Z",
-  "baseline_generated_at": "2026-09-04T23:45:37.501Z",
-  "baseline_sha": "a53b1bd17338c01f4bffe2df6b3463d216990a6b",
+  "timestamp": "2026-09-05T01:10:11.897Z",
+  "baseline_generated_at": "2026-09-05T01:10:11.897Z",
+  "baseline_sha": "9ace2eda0ae21e8d90faa307d68eb35edfc8cac0",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -1287,16 +1287,16 @@
         },
         "sample_files": [
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
           "test/built-ins/Temporal/Duration/prototype/round/subclassing-ignored.js"
         ],
         "sample_signatures": [
           "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
+          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
           "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
-          "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
           "other:ReferenceError: Temporal is not defined"
         ]
       },
