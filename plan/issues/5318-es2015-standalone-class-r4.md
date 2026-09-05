@@ -28,6 +28,19 @@ loc-budget-allow:
   - src/codegen/expressions/new-super.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  # 2026-09-05 r5 step 2: object-literal accessors whose ComputedPropertyName is
+  # only known at evaluation time. The install itself was put in a NEW subsystem
+  # module (src/codegen/objlit-dynamic-accessors.ts), which is what the gate
+  # asks for; what remains in literals.ts is the call site plus generalizing the
+  # two capture scans (#2128 / #3051) from paired accessors to every accessor in
+  # the literal, so a dynamic half's captured locals share the same ref cells as
+  # its siblings. Measured +25 LOC after the extraction (was +77 before it).
+  - src/codegen/literals.ts
+func-budget-allow:
+  # 2026-09-05 r5 step 2, same change: +20 lines in the accessor walk of
+  # compileObjectLiteralWithAccessors — the `propName === undefined` arm that
+  # delegates to objlit-dynamic-accessors.ts, and the flattened capture scans.
+  - src/codegen/literals.ts::compileObjectLiteralWithAccessors
 ---
 
 ## Problem

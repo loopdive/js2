@@ -49,6 +49,11 @@ import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./e
 import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
 import { isSealedNominalStructParent } from "./struct-hierarchy-layout.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
+import {
+  OBJLIT_ACCESSOR_FLAGS,
+  collectDynamicAccessorHalves,
+  emitDynamicObjectLiteralAccessorHalf,
+} from "./objlit-dynamic-accessors.js"; // (#5318 r5) evaluated-key accessor halves
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
@@ -938,18 +943,30 @@ function compileObjectLiteralWithAccessors(
     else pair.setter = p;
   }
 
+  // (#5318 r5) Accessor halves whose key does NOT fold at compile time — see
+  // `objlit-dynamic-accessors.ts`. Exactly complementary to `accessorPairs`:
+  // both partitions ask `resolveAccessorPropName`.
+  const dynamicAccessorHalves = collectDynamicAccessorHalves(ctx, expr, resolveAccessorPropName);
+
+  // Every accessor function in this literal, paired or not. The capture scans
+  // below must see the dynamic halves too, or a variable a dynamic getter reads
+  // and its sibling setter writes ends up in two storages.
+  const allAccessorFns: ts.AccessorDeclaration[] = [];
+  for (const pair of accessorPairs.values()) {
+    if (pair.getter) allAccessorFns.push(pair.getter);
+    if (pair.setter) allAccessorFns.push(pair.setter);
+  }
+  for (const half of dynamicAccessorHalves) allAccessorFns.push(half);
+
   // (#2128) Pre-compute, across ALL accessors in this literal, which outer
   // locals any accessor body writes. Each such local is captured through ONE
   // shared ref cell by every accessor in the literal, so a getter observes
   // its paired setter's writes. The map is per-literal: each evaluation of
   // the literal re-runs the creation sequence and re-fills the cell local.
   const accessorForceMutable = new Set<string>();
-  for (const pair of accessorPairs.values()) {
-    for (const accFn of [pair.getter, pair.setter]) {
-      if (!accFn) continue;
-      for (const n of collectMutatedCaptureNames(fctx, accFn as unknown as ts.FunctionExpression)) {
-        accessorForceMutable.add(n);
-      }
+  for (const accFn of allAccessorFns) {
+    for (const n of collectMutatedCaptureNames(fctx, accFn as unknown as ts.FunctionExpression)) {
+      accessorForceMutable.add(n);
     }
   }
   // (#3051 Slice 3) Also capture-by-reference any local an accessor READS that
@@ -963,24 +980,21 @@ function compileObjectLiteralWithAccessors(
   // so the conservative superset is safe.
   {
     const accessorCaptured = new Set<string>();
-    for (const pair of accessorPairs.values()) {
-      for (const accFn of [pair.getter, pair.setter]) {
-        if (!accFn) continue;
-        const fnNode = accFn as unknown as ts.FunctionExpression;
-        const own = new Set<string>();
-        addFunctionOwnLocals(fnNode, own);
-        const refd = new Set<string>();
-        const b = fnNode.body;
-        if (b !== undefined) {
-          if (ts.isBlock(b)) {
-            for (const s of b.statements) collectReferencedIdentifiers(s, refd, own);
-          } else {
-            collectReferencedIdentifiers(b, refd, own);
-          }
+    for (const accFn of allAccessorFns) {
+      const fnNode = accFn as unknown as ts.FunctionExpression;
+      const own = new Set<string>();
+      addFunctionOwnLocals(fnNode, own);
+      const refd = new Set<string>();
+      const b = fnNode.body;
+      if (b !== undefined) {
+        if (ts.isBlock(b)) {
+          for (const s of b.statements) collectReferencedIdentifiers(s, refd, own);
+        } else {
+          collectReferencedIdentifiers(b, refd, own);
         }
-        for (const n of refd) {
-          if (fctx.localMap.has(n)) accessorCaptured.add(n);
-        }
+      }
+      for (const n of refd) {
+        if (fctx.localMap.has(n)) accessorCaptured.add(n);
       }
     }
     if (accessorCaptured.size > 0) {
@@ -1298,7 +1312,24 @@ function compileObjectLiteralWithAccessors(
       // for the same name are skipped (their info was merged into the pair
       // during the pre-pass).
       const propName = resolveAccessorPropName(ctx, prop.name); // (#820b)
-      if (propName === undefined) continue;
+      if (propName === undefined) {
+        // (#5318 r5) A key only the literal's evaluation knows.
+        emitDynamicObjectLiteralAccessorHalf(
+          ctx,
+          fctx,
+          prop,
+          objLocal,
+          currentAccIdx,
+          (expression) => compileRuntimeComputedPropertyKey(ctx, fctx, expression),
+          (half, isGetter) =>
+            emitObjectLiteralAccessorFn(ctx, fctx, half as unknown as ts.FunctionExpression, {
+              forceMutableCaptures: accessorForceMutable,
+              sharedRefCells: accessorSharedRefCells,
+              ...(isGetter ? {} : { forceExternrefParams: true }),
+            }),
+        );
+        continue;
+      }
       const pair = accessorPairs.get(propName);
       if (!pair) continue;
       if (emittedAccessors.has(propName)) continue;
@@ -1346,13 +1377,7 @@ function compileObjectLiteralWithAccessors(
         fctx.body.push({ op: "ref.null.extern" });
       }
 
-      // Flags: enumerable=true, configurable=true (writable is N/A for
-      // accessor descriptors; matches `computeRuntimeFlags(undefined,
-      // true, true, false)` from object-ops.ts).
-      // Bits: enumerable_specified (1<<4) | enumerable_value (1<<1)
-      //     | configurable_specified (1<<5) | configurable_value (1<<2)
-      const flags = (1 << 4) | (1 << 1) | (1 << 5) | (1 << 2);
-      fctx.body.push({ op: "f64.const", value: flags });
+      fctx.body.push({ op: "f64.const", value: OBJLIT_ACCESSOR_FLAGS });
 
       fctx.body.push({ op: "call", funcIdx: currentAccIdx() });
       fctx.body.push({ op: "drop" }); // returns the same externref
