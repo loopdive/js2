@@ -364,3 +364,149 @@ the single-assignment / shadowing proof or a runtime check — never a name.
   given up), the control-corpus result, gate status, the worktree path and head
   sha, and every residual with its mechanism.
 
+
+## 2026-09-04 r4 implementation (Opus)
+
+Worktree `/home/user/js2/.claude/worktrees/wf_a9776683-b00-3`, branch
+`worktree-wf_a9776683-b00-3`, spawned at `f9bf876899`, `git pull --no-rebase`
+of `origin/main` = `46c12b01d6` merged in after Step 1. Base tree for every A/B
+is `git archive origin/main` (`46c12b01d6`) unpacked in `.tmp/base`, with its
+own compiler + runtime bundles and its own quickjs eval adapter. All row runs
+are `npx tsx scripts/run-test262-paths.mts --isolate <list> --standalone`,
+`COMPILER_POOL_SIZE=2`.
+
+### Step 0 — inventory (2026-09-05 02:10–02:17 UTC)
+
+The 64 claimed non-`dstr` rows on the base tree: **0 pass, 64 fail**, zero
+compile errors. That matches the plan's census, so the plan's row list is the
+one measured here.
+
+### Step 1 — computed accessor names (committed)
+
+Diagnosis first, because the plan's guess ("the collector handles methods and
+fields but not the accessor pair") is not what the probes found. The collector
+(`class-dynamic-keys.ts::classMemberComputedKeyIsRuntime`) has covered
+`get`/`set` since #5195. Two DIFFERENT defects downstream of it made every row
+in the family read `undefined`:
+
+1. **The pair erases itself.** A runtime-keyed `get [k]` and `set [k]` register
+   under two different synthetic names (`__cmdyn$0`, `__cmdyn$1`) — the
+   collector cannot know at compile time that the two key expressions evaluate
+   to one property key. `emitClassProtoAccessorInstalls` then issued two
+   `__defineProperty_accessor` calls with the same runtime key under the legacy
+   flag word, whose documented meaning is "both halves specified", so the
+   trailing `set` blanked the `get`. The runtime already implements the
+   §10.1.6.3 merge behind bits 8/9; a dynamic half now sets only its own bit.
+   A folding key keeps the legacy encoding — its two halves are ONE entry, so
+   replace-both is already correct and those modules are byte-identical.
+2. **Static accessors were never installed.** `class-static-sidecar.ts`
+   collected static METHODS only; its module header recorded the reason
+   (an installed half takes the class STRUCT as `this` while
+   `__call_accessor_get` hands it the sidecar `$Object`, and that cast traps).
+   They are installed now, gated on a SYNTACTIC predicate: the half's body
+   never mentions `this` or `super` in its own receiver scope
+   (`genBodyReferencesThis`). A half that reads the receiver is still declined
+   and keeps base's missing-property answer — a wrong answer, not a new throw.
+   The predicate is syntactic, not a read of the compiled body, because the
+   sidecar is emitted at ClassDefinitionEvaluation, possibly before that body
+   exists, where an empty instruction list would read as "receiver-free".
+
+**Measured 2026-09-05 02:43–02:50 UTC**, 64 claimed rows, lane vs the `.tmp/base`
+tree: **0 → 18 pass**, no row moved the other way. The 18 are 9
+`cpn-class-expr-accessors-*` and 9 `cpn-class-decl-accessors-*`. Three rows
+reported `compilation timeout` under four-lane load and were re-run alone.
+
+Pins: `tests/issue-5318-r4-computed-accessor-keys.test.ts` — the 18 rows
+through `runTest262File(..., "standalone")`, an 11-probe node-parity matrix
+(get-only / set-only / pair / static get / static pair, plus keys from `+`,
+`??` and a call), the folded-key order-preservation control, and the
+receiver-reading static accessor that must still decline. Every standalone
+control asserts `result.imports` is `[]`.
+
+### Control corpus — 783-row class sweep
+
+Same corpus #5195 r3 used: the non-recursive rows of
+`language/{statements,expressions}/class`, plus
+`statements/class/{definition,subclass}` and `expressions/super` — 783 rows,
+isolated, standalone.
+
+| | non-pass |
+|---|---|
+| base (`.tmp/base`, `46c12b01d6`) | 271 |
+| this lane | **246** |
+
+**25 rows flip non-pass → pass, ZERO rows move the other way, and no row that
+passes on base changes status.** 24 of the 25 are the `cpn-class-*-accessors-*`
+family this step fixed — 18 the plan claimed plus **6 the plan did not list**
+(`-assignment-expression-coalesce`, `-assignment-expression-logical-or` and
+`-await-expression`, in both the decl and expr lanes). The 25th,
+`subclass/builtin-objects/Function/super-must-be-called.js`, is a #3371-gated
+row and is not this step's; it is reported as a bonus, not a claim.
+
+Two measurement caveats, both resolved rather than assumed:
+
+- 246 rows of the first lane sweep returned `error` with `ENOENT` — the shared
+  `test262` checkout was momentarily mid-checkout under another lane. They were
+  re-run afterwards and their real statuses folded in.
+- 19 rows (16 `private-*-multiple-evaluations-of-class-*`, plus
+  `definition/{methods-restricted-properties,basics}.js` and
+  `subclass/class-definition-null-proto.js`) reported `compile_error:
+  compilation timeout` under four-lane load. Re-run alone on an idle box they
+  are **`fail` on BOTH trees, 19/19** — load artifacts, not status changes.
+
+### Gates (merged tree, `origin/main` = `46c12b01d6` merged in)
+
+`check-loc-budget` · `check-func-budget` (both bare AND with
+`LOC_GATE_BASE=46c12b01d6`: "no unallowed growth in 2 changed src files, net
++167 LOC") · `check-coercion-sites` · `check:oracle-ratchet` ·
+`check:dead-exports` · `check:speculative-rollback` · `check:stack-balance` ·
+`check:codegen-fallbacks` · `check:any-box-sites` · TS7 `--noEmit` ·
+`lint` — all exit 0. `tests/issue-5318-r4-computed-accessor-keys.test.ts`:
+32/32 at the CI fork heap, single fork, under BOTH node 22 (local) and node 25
+(CI's version).
+
+No growth grant was needed: the two touched files are already on this issue's
+`loc-budget-allow`-adjacent surface and the gate reported no unallowed growth,
+so nothing was added to the frontmatter.
+
+### Given up this pass, with the mechanism
+
+- **`c[k] = v` never reaches an installed setter.** The class prototype/sidecar
+  lookup arm is prepended into `__extern_get` / `__extern_get_idx` only
+  (`class-proto-lookup.ts::fillClassProtoLookupArm`); there is no
+  `__extern_set` twin, so a write through a runtime-keyed setter is silently
+  dropped. Base behaves the same way — this step neither fixed nor broke it —
+  and it is exactly why `accessor-name-inst-computed-in.js` and
+  `accessor-name-static-computed-in.js` still fail: both assert through
+  `C.prototype.<key> = …`. Pinned as `RESIDUAL:` cases in the test file.
+- **The four `-computed-property-name-from-assignment-expression-assignment`
+  rows** are the r3-3 shape #5195's review reverted. The decline is kept.
+- **Every `definition/*` descriptor row** (`accessors.js`,
+  `getters-prop-desc.js`, `setters-prop-desc.js`, `methods.js`,
+  `numeric-property-names.js`, `getters-restricted-ids.js`,
+  `setters-restricted-ids.js`) and the six `grammar-static-ctor-*-valid` rows
+  need the same thing: an own-property surface on the CLASS OBJECT
+  (`gOPD(C, 'staticX')`, `C.hasOwnProperty('constructor')`). The static sidecar
+  is built only for a class that has a static member with a RUNTIME key, and
+  widening it to every class with statics additionally needs the reflective
+  natives redirected, not just `__extern_get` — that is #5195 cluster B, and it
+  is a bigger piece than this pass could take safely.
+- **`dflt-params-arg-val-not-undefined` (4 rows)** is not a default-parameter
+  bug. The method's parameters take their wasm type from the default
+  expression (`aFalse = falseCount += 1` ⇒ f64), so the call
+  `C.prototype.method(false, '', NaN, 0, null, obj)` coerces `false` to `0`
+  before the body sees it. Fixing it means widening a parameter whose default
+  and call sites disagree to the any-channel — a value-representation change,
+  not a class change.
+- **`this-access-restriction*.js` / `this-check-ordering.js`,
+  `name-binding/const.js`, `strict-mode/arguments-callee.js`** all require
+  ADDING a throw. The lane rule is that a predicate may only throw where it
+  holds under reassignment, shadowing, destructuring, parameters and `eval`;
+  none of these was measured to that standard this pass, so none was started.
+- **`arguments/{access,default-constructor}.js`, `default-constructor-2.js`**
+  need the implicit derived constructor to forward ALL arguments
+  (`args.length` reads 0 where node reads 3). That is the constructor ABI, and
+  it is shared with the #3371 NewTarget work; left to that lane.
+- **Gated, not claimed:** the 30 `subclass/builtin-objects/**` rows (#3371),
+  the generator rows (#2864) and the 16 `dstr` rows (step 4 was conditional on
+  steps 1-3 being green).
