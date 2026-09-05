@@ -1,11 +1,10 @@
 {
   "id": "5332",
-  "assignee": "",
-  "requested_by": "ttraenkler/claude",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-09-05T14:21:08Z",
-  "updated_at": "2026-09-05T14:21:08Z",
-  "write_id": "15776-733otc86",
-  "pr_scan": "ok"
+  "assignee": "ttraenkler/senior-dev",
+  "requested_by": "ttraenkler/senior-dev",
+  "status": "in-progress",
+  "branch": "issue-5332-export-default-identifier-census",
+  "claimed_at": "2026-09-05T15:37:25Z",
+  "updated_at": "2026-09-05T15:37:25Z",
+  "write_id": "69202-mjhzgow9"
 }
