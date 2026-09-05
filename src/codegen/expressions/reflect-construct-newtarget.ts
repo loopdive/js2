@@ -443,13 +443,47 @@ function resolveBindingKind(ctx: CodegenContext, expr: ts.Expression, depth = 4)
   return { kind: "unknown" };
 }
 
-/** Does `node`'s subtree read the `new.target` meta-property? */
+/**
+ * Does `node` introduce a `new.target` binding of its OWN?
+ *
+ * `new.target` is scoped to the nearest enclosing non-arrow function
+ * environment (ES §9.1.1.3). An ordinary function, a method, an accessor and a
+ * class constructor each get their own; an arrow function, a class field
+ * initialiser and a class static block do NOT — they read the enclosing one.
+ */
+function ownsNewTarget(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
+  );
+}
+
+/**
+ * Does `node`'s BODY read the `new.target` that `node` itself introduces?
+ *
+ * The scan stops at every nested scope that owns a `new.target` of its own, so
+ * `function F(){ function inner(){ return new.target; } }` does not count as a
+ * read by `F` — `inner`'s `new.target` is `inner`'s, and under
+ * `Reflect.construct(F, [], NT)` node answers `undefined` for it, which is what
+ * the compiled i32 class-id lowering already answers. Descent continues through
+ * arrows, class field initialisers and static blocks, which inherit.
+ */
 function readsNewTarget(node: ts.Node): boolean {
-  if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.NewKeyword) return true;
   let found = false;
-  forEachChild(node, (child) => {
-    if (!found && readsNewTarget(child)) found = true;
-  });
+  const visit = (child: ts.Node): void => {
+    if (found) return;
+    if (ts.isMetaProperty(child) && child.keywordToken === ts.SyntaxKind.NewKeyword) {
+      found = true;
+      return;
+    }
+    if (ownsNewTarget(child)) return;
+    forEachChild(child, visit);
+  };
+  forEachChild(node, visit);
   return found;
 }
 
