@@ -3263,9 +3263,9 @@
   },
   {
     "edition": "ES2025",
-    "pass": 830,
+    "pass": 829,
     "fail": 150,
-    "ce": 21,
+    "ce": 22,
     "skip": 0,
     "total": 1001,
     "pct": 83,
@@ -3299,12 +3299,12 @@
       },
       {
         "name": "import-attributes",
-        "pass": 49,
+        "pass": 48,
         "fail": 34,
-        "ce": 12,
+        "ce": 13,
         "skip": 0,
         "total": 95,
-        "pct": 52
+        "pct": 51
       },
       {
         "name": "dynamic-import",
@@ -3326,12 +3326,12 @@
       },
       {
         "name": "globalThis",
-        "pass": 12,
+        "pass": 11,
         "fail": 3,
-        "ce": 8,
+        "ce": 9,
         "skip": 0,
         "total": 23,
-        "pct": 52
+        "pct": 48
       },
       {
         "name": "RegExp.escape",
@@ -3790,8 +3790,8 @@
   {
     "edition": "ES2027",
     "pass": 381,
-    "fail": 504,
-    "ce": 12,
+    "fail": 498,
+    "ce": 18,
     "skip": 0,
     "total": 897,
     "pct": 42,
@@ -3817,8 +3817,8 @@
       {
         "name": "joint-iteration",
         "pass": 23,
-        "fail": 59,
-        "ce": 0,
+        "fail": 53,
+        "ce": 6,
         "skip": 0,
         "total": 82,
         "pct": 28
@@ -4295,18 +4295,18 @@
   },
   {
     "edition": "Unclassified (legacy)",
-    "pass": 273,
+    "pass": 272,
     "fail": 0,
-    "ce": 0,
+    "ce": 1,
     "skip": 0,
     "total": 273,
     "pct": 100
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4399,
+    "pass": 4397,
     "fail": 900,
-    "ce": 146,
+    "ce": 148,
     "skip": 0,
     "total": 5445,
     "pct": 81
