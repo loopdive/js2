@@ -126,9 +126,102 @@ const COPYWITHIN_SOURCE = `
   }
 `;
 
+/**
+ * Review round 1 (2026-09-05), F3 — the STATIC lane.
+ *
+ * The two controls above go through the DYN-view helpers (`__ta_dyn_fill` /
+ * `__ta_dyn_copywithin`), which see the raw `externref` end and can therefore
+ * ask the runtime's §7.1 "is undefined" predicate. A receiver the compiler
+ * types concretely — `const a = new Uint8Array([…])`, or a plain array literal
+ * — takes a DIFFERENT lane (`compileArrayFill` / `compileArrayCopyWithin`,
+ * src/codegen/array-methods.ts ~L9199 and ~L9790), which coerces the end
+ * argument straight to `f64` and therefore recognises "absent" only
+ * SYNTACTICALLY: the literal identifier `undefined`, or a `void` expression.
+ * Its own comment says so ("once coerced to f64 we cannot distinguish them
+ * from `NaN`").
+ *
+ * Measured 2026-09-05 on this tree AND on the git-archive base f9bf876899 —
+ * byte-identical modules, so everything below is pre-existing and untouched by
+ * the r4 step-2 fix. Signature is the four element values after the call;
+ * `9999` = filled, `1234` = untouched (node's answers in brackets):
+ *
+ *   correct   typed receiver, LITERAL end      undefined 9999 · null 1234 ·
+ *             omitted 9999 · NaN 1234 · 2 · -0 · "2" · {valueOf} — and the
+ *             `Array.prototype` and `copyWithin` twins
+ *   WRONG     typed receiver, DYNAMIC end      `const e: any = undefined;
+ *             a.fill(9,0,e)` ⇒ 1234 [node 9999]. The f64 coercion cannot tell
+ *             `undefined` from `NaN`, so it takes the NaN arm (⇒ 0).
+ *   WRONG     `any`-typed receiver             `const a: any = new
+ *             Uint8Array([…]); a.fill(9,0,undefined)` ⇒ 1234 [9999], and even
+ *             the two-argument `a.fill(9,0)` ⇒ 1234 [9999] — a third lane
+ *             again, and one where an OMITTED end is lost too.
+ *
+ * Only the CORRECT rows are pinned here — pinning a divergence would entrench
+ * it. The two divergences are recorded in the issue's r4 section instead;
+ * both need a re-shape (test the argument before the f64 coercion / carry the
+ * real argc through the dynamic dispatch), which is a different mechanism from
+ * the one-line dyn-helper predicate swap and out of scope for this round.
+ *
+ * Standalone only: on wasi, reading a typed-array element inside an
+ * `any`-typed helper reads back `NaN` — a separate pre-existing wasi defect
+ * that would make these pins fail for an unrelated reason.
+ */
+const STATIC_LANE_SOURCE = `
+  export function test(): number {
+    const a = new Uint8Array([1, 2, 3, 4]);
+    a.fill(9, 0, undefined);
+    if (a[0] !== 9 || a[3] !== 9) return 1;
+
+    const b = new Uint8Array([1, 2, 3, 4]);
+    b.fill(9, 0, null as any);
+    if (b[0] !== 1 || b[3] !== 4) return 2;
+
+    const c = new Uint8Array([1, 2, 3, 4]);
+    c.fill(9, 0);
+    if (c[0] !== 9 || c[3] !== 9) return 3;
+
+    const d = new Uint8Array([1, 2, 3, 4]);
+    d.fill(9, 0, 2);
+    if (d[0] !== 9 || d[1] !== 9 || d[2] !== 3 || d[3] !== 4) return 4;
+
+    const e = new Uint8Array([1, 2, 3, 4]);
+    e.fill(9, 0, NaN);
+    if (e[0] !== 1 || e[3] !== 4) return 5;
+
+    const f = [1, 2, 3, 4];
+    f.fill(9, 0, undefined);
+    if (f[0] !== 9 || f[3] !== 9) return 6;
+
+    const g = [1, 2, 3, 4];
+    g.fill(9, 0, null as any);
+    if (g[0] !== 1 || g[3] !== 4) return 7;
+
+    const h = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    h.copyWithin(0, 3, undefined);
+    if (h[0] !== 4 || h[1] !== 5 || h[2] !== 6) return 8;
+
+    const i = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    i.copyWithin(0, 3, null as any);
+    if (i[0] !== 1 || i[1] !== 2) return 9;
+
+    const j = new Uint8Array([1, 2, 3, 4, 5, 6]);
+    j.copyWithin(0, 3);
+    if (j[0] !== 4 || j[1] !== 5 || j[2] !== 6) return 10;
+
+    const k = [1, 2, 3, 4, 5, 6];
+    k.copyWithin(0, 3, undefined);
+    if (k[0] !== 4 || k[1] !== 5 || k[2] !== 6) return 11;
+    return 0;
+  }
+`;
+
 describe("#5317 r4 — TypedArray fill/copyWithin treat only `undefined` as an absent end", () => {
   it("standalone control: fill", { timeout: CORPUS_TIMEOUT }, async () => {
     expect(await runStandalone(FILL_SOURCE, "issue-5317-r4-fill.ts")).toBe(0);
+  });
+
+  it("standalone control: static fill/copyWithin lane", { timeout: CORPUS_TIMEOUT }, async () => {
+    expect(await runStandalone(STATIC_LANE_SOURCE, "issue-5317-r4-static-end.ts")).toBe(0);
   });
 
   it("standalone control: copyWithin", { timeout: CORPUS_TIMEOUT }, async () => {

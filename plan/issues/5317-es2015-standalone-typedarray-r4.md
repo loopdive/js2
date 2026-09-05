@@ -34,6 +34,22 @@ loc-budget-allow:
   # the two dispatch arms that call it (+15 LOC, measured
   # `node scripts/check-loc-budget.mjs` 2026-09-04).
   - src/codegen/array-methods.ts
+coercion-sites-allow:
+  # 2026-09-05 r4 review round 1 (Opus), F1: `buildJoinSeparatorToString` must
+  # ARM `__extern_toString`, not merely look it up. Only looking it up made the
+  # whole emitter INERT — in a module whose elements are plain numbers and whose
+  # separator is the only ToString consumer, nothing else mints the provider, so
+  # the emitter returned `null` and the caller kept the trapping
+  # `ref.cast $AnyString`. Measured on standalone AND wasi, byte-identical to the
+  # git-archive base f9bf876899: `[1,2,3].join({toString(){…}})`, `join(null)`,
+  # `new Uint8Array([1,2,3]).join(true)` and `join(c)` with `var c=0` all still
+  # trapped `illegal cast`. The arming goes through `ensureLateImport` — the
+  # SAME single chokepoint every other consumer uses, which routes to the
+  # Wasm-native object-runtime provider under standalone/wasi and to the host
+  # import otherwise. This is +1 site of EXISTING vocabulary at the canonical
+  # chokepoint, not a hand-rolled ToString matrix; the gate counts the arming
+  # call, hence this grant.
+  - src/codegen/join-separator.ts
 ---
 
 ## Problem
@@ -622,3 +638,149 @@ for `fill`; target → start → end for `copyWithin`) and is now pinned.
 typecheck (`tsconfig.ts7.json`) and `lint` — all green. Growth grants for
 `src/codegen/array-methods.ts` (+15) and `src/codegen/dataview-native.ts`
 (+19) are in this file's frontmatter with the dated rationale.
+
+### Review round 1 (2026-09-05)
+
+An adversarial review with two independent skeptics per finding ran the r4 lane
+branch against a `git archive` tree of the merge-base **f9bf876899**. Four
+findings; one was a real defect that made a whole step inert, one is a genuine
+but differently-shaped defect left recorded, two are record-only.
+
+Every number below is a run executed in this round on both trees — the probe
+modules and the driver live in `.tmp/` and were compiled through
+`src/index.ts` directly, with `imports` asserted and the module instantiated
+against an EMPTY import object on the host-free lanes.
+
+#### F1 (high) — the join-separator fix was INERT. Fixed.
+
+`buildJoinSeparatorToString` resolved the §7.1.17 ToString provider with
+`getExternrefToStringProvider(ctx)` — a bare `ctx.funcMap.get("__extern_toString")`
+— and returned `null` when it was absent, on the belief (stated in the file's
+own comment) that "both join lanes already arm it for their element path".
+**That belief is false for every numeric / boolean / plain-object element set**:
+those element paths stringify through `number_toString` and friends and never
+mint `__extern_toString`. So in exactly the modules the step was written for,
+the emitter bailed and the caller kept the trapping `ref.cast $AnyString`.
+
+The lane's own two controls hid this because their `Symbol` /
+`instanceof TypeError` / throwing-`toString` machinery pulls in the object
+runtime and *incidentally* arms the provider.
+
+Measured before the fix — standalone and wasi, **byte-identical to base**:
+
+| probe | shape | base & lane (pre-fix) | node |
+| --- | --- | --- | --- |
+| m1 | `[1,2,3].join({toString(){return "*"}})` | `illegal cast` | 5 |
+| m2 | `[1,2,3].join(null)` | `illegal cast` | 11 |
+| m3 | `new Uint8Array([1,2,3]).join({toString(){return "**"}})` | `illegal cast` | 7 |
+| m4 | `new Uint8Array([1,2,3]).join(true)` | `illegal cast` | 11 |
+| o3 | `[1,2,3].join(c)` with `var c = 0` | `illegal cast` | 5 |
+| m5 | same as m1 **plus** an unrelated `String({})` | 5 (works) | 5 |
+
+**Fix**: arm the provider inside `buildJoinSeparatorToString` with
+`ensureLateImport(ctx, "__extern_toString", …)` — the same single chokepoint
+every other consumer uses, which routes to the Wasm-native object-runtime
+provider under standalone/wasi and to the `env::__extern_toString` host import
+otherwise, so no second cascade is grown. After the fix all of m1–m5, o1–o3
+answer node's values on **both** standalone and wasi with **`imports === []`**.
+m5's module is byte-identical to its pre-fix self (`a17130244cefc17e`
+standalone / `f8b341c407486859` wasi), confirming the arming is idempotent
+where something else already armed it.
+
+**String-literal fast path holds.** `b1.js`
+(`join(",")` / `join()` / `join("-")`) is byte-identical to base on all three
+targets — standalone `a55e84185bca84fe`, wasi `34c0cc2486d294fb`, JS-host
+`99325378bf480f13` — and returns the same three checksums as node.
+
+`check-coercion-sites` counts the arming call as +1 site of existing
+vocabulary; the grant with this rationale is in this file's frontmatter under
+`coercion-sites-allow:`.
+
+#### F2 (medium) — JS-host lane: unchanged, still the pre-existing trap.
+
+Re-measured after the arming. **Every probe compiles to a byte-identical
+module on the default JS-host target, before and after** (m1 `955d197b75240c9a`,
+m2 `e5c8497b62781840`, m3 `6bccda4d5b028f6b`, m4 `6b4057f195aa517d`,
+o3 `74bbb1df60aa2d45`, b1 `99325378bf480f13`, w1 `88d31d0fe08ea796`) — the
+native join lanes this emitter serves are not reached at all under
+`wasm:js-string`. So the host lane's behaviour is exactly what it was on base:
+
+| probe | host, base = host, lane | node |
+| --- | --- | --- |
+| `join(null)` / `join(true)` / `join(c)` with `var c=0` | `illegal cast` (trap) | 11 / 11 / 5 |
+| `join({toString(){return "*"}})` | 33 (wrong — generic object stringification) | 5 |
+
+**Not fixed by the arming, and not a regression.** Bringing the host lane to
+spec is a separate piece of work on the `wasm:js-string` join path.
+
+#### F3 (medium) — a DIFFERENT mechanism. Recorded, not fixed.
+
+The step-2 rule ("only `undefined` is an absent `end`") was applied to the
+dyn-view helpers, which see the raw `externref` and can ask the runtime's §7.1
+predicate. Two other lanes handle the same argument differently. Probes
+(`.tmp/f3.js`, `.tmp/f3b.js`, `.tmp/lanes.mts`) compile **byte-identically on
+this tree and on base** — `ce1d03537b5d4661` / `1e57ef94a54a5afc` standalone —
+so both divergences below are pre-existing and untouched by step 2.
+
+Signature = the four element values after the call; `9999` filled, `1234`
+untouched.
+
+| receiver | `end` | measured | node |
+| --- | --- | --- | --- |
+| `const a = new Uint8Array([…])` | literal `undefined` | 9999 ✓ | 9999 |
+| " | omitted | 9999 ✓ | 9999 |
+| " | `null` / `NaN` / `2` / `-0` / `"2"` / `{valueOf}` | ✓ all | — |
+| " | **`const e: any = undefined`** | **1234 ✗** | 9999 |
+| `const a: any = new Uint8Array([…])` | literal `undefined` | **1234 ✗** | 9999 |
+| " | **omitted** (2-arg call) | **1234 ✗** | 9999 |
+| `Array.prototype` twins | literal `undefined` / `null` | ✓ | — |
+| " | `const e: any = undefined` | **1234 ✗** | 9999 |
+
+Two distinct mechanisms, neither the one-line predicate swap step 2 made:
+
+1. **Static lane, dynamic end** — `compileArrayFill` / `compileArrayCopyWithin`
+   (`src/codegen/array-methods.ts` ~L9199 and ~L9790) coerce the end argument
+   straight to `f64` and so recognise "absent" only **syntactically** (the
+   literal identifier `undefined`, or a `void` expression). Their own comment
+   states the limitation: "once coerced to f64 we cannot distinguish them from
+   `NaN`". Fixing it means testing the argument **before** the f64 coercion —
+   a re-shape of the hottest array lanes, not a rule swap.
+2. **`any`-typed receiver** — a third lane again, and a worse one: even an
+   OMITTED `end` is lost (`a.fill(9,0)` fills nothing), so the argc is not
+   reaching the decision. This is the more valuable of the two to chase, since
+   it costs a correct case that the other lanes get right.
+
+Both are left for a follow-up. What IS pinned (new
+`standalone control: static fill/copyWithin lane` in
+`tests/issue-5317-r4-fill-copywithin-end.test.ts`) is the eleven rows measured
+CORRECT — pinning a divergence would entrench it.
+
+Incidental, unrelated to the separator: on **wasi**, `.length` of an
+`any`-typed native string reads back `NaN`, and reading a typed-array element
+inside an `any`-typed helper likewise reads `NaN`. Both are pre-existing wasi
+defects; they only matter here because they dictate how the new pins assert
+(string equality rather than `.length`, and standalone-only for the element
+signatures).
+
+#### F4 (low) — array-valued separators. Recorded, not fixed.
+
+`w1.js`. On base both rows **trapped** `illegal cast`; after F1 they are
+non-trapping but not all correct:
+
+| row | standalone | wasi | node |
+| --- | --- | --- | --- |
+| `[1,2,3].join([";","!"])` | 959 ✓ | 3391 ✗ | 959 |
+| `[1,2,3].join([1,[2,3]])` | 37 ✗ | 33 ✗ | 13 |
+
+Standalone gets the flat case right and goes one level deep on the nested one;
+wasi stringifies through the generic object path (`"[object Object]"`). A
+strict improvement over a trap in every case, and out of scope here.
+
+#### New pins
+
+`tests/issue-5317-r4-join-separator.test.ts` gains five **minimal-module**
+controls (object / `null` / boolean / dynamic-number separators, Array and
+TypedArray receivers) run on **standalone and wasi**, each deliberately free of
+any other ToString consumer so it cannot be un-tested by incidental arming, and
+each asserting `imports === []`. `tests/issue-5317-r4-fill-copywithin-end.test.ts`
+gains the eleven-row static-lane control described under F3.

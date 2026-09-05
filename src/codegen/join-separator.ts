@@ -52,13 +52,25 @@ export function buildJoinSeparatorToString(
   anyStrTypeIdx: number,
 ): Instr[] | null {
   if (anyStrTypeIdx < 0) return null;
-  // The §7.1.17 ToString provider is resolved through the coercion engine's own
-  // accessor and NOT armed here: both join lanes already arm it for their
-  // element path, and where it is genuinely absent this returns `null` so the
-  // caller keeps its existing lowering rather than growing a second cascade.
-  if (getExternrefToStringProvider(ctx) === undefined) return null;
+  // ARM the §7.1.17 ToString provider here (#5317 r4 review round 1, F1). The
+  // first cut only *looked it up* through the coercion engine's accessor, on
+  // the belief that "both join lanes already arm it for their element path".
+  // That is false for every numeric / boolean / plain-object element set —
+  // those element paths stringify through `number_toString` and friends and
+  // never mint `__extern_toString` — so the whole emitter fell through its
+  // `return null` and the caller kept the trapping `ref.cast`. Measured: on
+  // BOTH standalone and wasi, `[1,2,3].join({toString(){…}})`, `join(null)`,
+  // `join(true)` and `join(c)` with `var c=0` all still trapped `illegal cast`
+  // byte-identically to base; only a module that separately contained e.g.
+  // `String({})` worked. Arming through `ensureLateImport` — the SAME
+  // chokepoint every other consumer uses — routes to the Wasm-native
+  // object-runtime provider under standalone/wasi (`imports === []` preserved)
+  // and to the `env::__extern_toString` host import on the JS-host target, so
+  // this grows no second cascade.
+  //
   // Armed before any funcIdx is read into a JS variable (the #2043 late-shift
   // class): a late import registered afterwards renumbers everything below.
+  ensureLateImport(ctx, "__extern_toString", [{ kind: "externref" }], [{ kind: "externref" }]);
   const undefinedIdx = ensureLateImport(ctx, "__typeof_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
   const symbolTypeIdx = usesNativeSymbolProvider(ctx) ? ensureSymbolCarrier(ctx) : -1;
   flushLateImportShifts(ctx, fctx);

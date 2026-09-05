@@ -22,7 +22,7 @@ import { buildImports, compile, instantiateWasm } from "../src/index.js";
 import { restoreHostBuiltins } from "./test262-restore-builtins.js";
 import { runTest262File } from "./test262-runner.js";
 
-type Lane = "host" | "standalone";
+type Lane = "host" | "standalone" | "wasi";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TEST262_ROOT = join(REPO_ROOT, "test262");
@@ -45,6 +45,7 @@ async function runControl(source: string, lane: Lane): Promise<{ value: number; 
     fileName: "issue-5317-r4-join-separator.ts",
     skipSemanticDiagnostics: true,
     ...(lane === "standalone" ? { target: "standalone" as const } : {}),
+    ...(lane === "wasi" ? { target: "wasi" as const } : {}),
   });
   expect(
     result.success,
@@ -54,8 +55,8 @@ async function runControl(source: string, lane: Lane): Promise<{ value: number; 
 
   const module = await WebAssembly.compile(result.binary);
   const imports = WebAssembly.Module.imports(module).map((entry) => `${entry.module}::${entry.name}`);
-  if (lane === "standalone") {
-    expect(imports, "standalone join controls must emit zero imports").toEqual([]);
+  if (lane === "standalone" || lane === "wasi") {
+    expect(imports, `${lane} join controls must emit zero imports`).toEqual([]);
     const { instance } = await WebAssembly.instantiate(result.binary, {});
     return { value: (instance.exports as { test: () => number }).test(), imports };
   }
@@ -123,6 +124,69 @@ const ARRAY_SEPARATOR_SOURCE = `
   }
 `;
 
+/**
+ * Review round 1 (2026-09-05), F1 — the MINIMAL shapes.
+ *
+ * The two controls above both mint `__extern_toString` incidentally (their
+ * `Symbol`/`instanceof TypeError`/throwing-`toString` machinery pulls in the
+ * object runtime), which is exactly why they passed while the emitter was
+ * inert: `buildJoinSeparatorToString` only LOOKED the provider up, so in a
+ * module whose element set is plain numbers and whose separator is the only
+ * ToString consumer it returned `null` and the caller kept the trapping
+ * `ref.cast`. Measured on this tree BEFORE the arming fix, standalone AND
+ * wasi, byte-identical to the git-archive base f9bf876899:
+ *
+ *   [1,2,3].join({toString(){return "*"}})              illegal cast   (node 5)
+ *   [1,2,3].join(null)                                  illegal cast   (node 11)
+ *   new Uint8Array([1,2,3]).join({toString(){…"**"}})    illegal cast   (node 7)
+ *   new Uint8Array([1,2,3]).join(true)                   illegal cast   (node 11)
+ *   [1,2,3].join(c) with `var c = 0`                     illegal cast   (node 5)
+ *
+ * Each case below is therefore deliberately kept free of any other ToString
+ * consumer — adding one would re-arm the provider and silently un-test the
+ * regression. The assertion is string EQUALITY, not `.length`: on the wasi
+ * lane `.length` of an `any`-typed native string reads back `NaN` (a separate,
+ * pre-existing wasi defect, unrelated to the separator and unchanged by this
+ * fix), which would make these pins fail for the wrong reason.
+ */
+const MINIMAL_ARRAY_OBJECT_SEPARATOR = `
+  export function test(): number {
+    const sample: any = [1, 2, 3];
+    const separator: any = { toString: function(): string { return "*"; } };
+    return sample.join(separator) === "1*2*3" ? 0 : 1;
+  }
+`;
+
+const MINIMAL_ARRAY_NULL_SEPARATOR = `
+  export function test(): number {
+    const sample: any = [1, 2, 3];
+    return sample.join(null) === "1null2null3" ? 0 : 1;
+  }
+`;
+
+const MINIMAL_TA_OBJECT_SEPARATOR = `
+  export function test(): number {
+    const sample: any = new Uint8Array([1, 2, 3]);
+    const separator: any = { toString: function(): string { return "**"; } };
+    return sample.join(separator) === "1**2**3" ? 0 : 1;
+  }
+`;
+
+const MINIMAL_TA_BOOLEAN_SEPARATOR = `
+  export function test(): number {
+    const sample: any = new Uint8Array([1, 2, 3]);
+    return sample.join(true) === "1true2true3" ? 0 : 1;
+  }
+`;
+
+const MINIMAL_ARRAY_NUMBER_SEPARATOR = `
+  export function test(): number {
+    const separator: any = 0;
+    const sample: any = [1, 2, 3];
+    return sample.join(separator) === "10203" ? 0 : 1;
+  }
+`;
+
 const CONTROL_CASES = [
   {
     name: "typed-array join coerces undefined/null/object/Symbol separators per §23.1.3.15 step 3",
@@ -134,6 +198,31 @@ const CONTROL_CASES = [
     source: ARRAY_SEPARATOR_SOURCE,
     lanes: ["standalone"],
   },
+  {
+    name: "minimal module: Array join with an object separator (no other ToString consumer)",
+    source: MINIMAL_ARRAY_OBJECT_SEPARATOR,
+    lanes: ["standalone", "wasi"],
+  },
+  {
+    name: "minimal module: Array join(null) is `null`, not the `,` default",
+    source: MINIMAL_ARRAY_NULL_SEPARATOR,
+    lanes: ["standalone", "wasi"],
+  },
+  {
+    name: "minimal module: TypedArray join with an object separator",
+    source: MINIMAL_TA_OBJECT_SEPARATOR,
+    lanes: ["standalone", "wasi"],
+  },
+  {
+    name: "minimal module: TypedArray join(true) stringifies the boolean",
+    source: MINIMAL_TA_BOOLEAN_SEPARATOR,
+    lanes: ["standalone", "wasi"],
+  },
+  {
+    name: "minimal module: Array join with a dynamic number separator",
+    source: MINIMAL_ARRAY_NUMBER_SEPARATOR,
+    lanes: ["standalone", "wasi"],
+  },
 ] as const;
 
 describe("#5317 r4 — TypedArray.prototype.join separator coercion", () => {
@@ -143,9 +232,10 @@ describe("#5317 r4 — TypedArray.prototype.join separator coercion", () => {
         expect((await runControl(source, "host")).value).toBe(0);
       });
     }
-    if (lanes.some((lane) => lane === "standalone")) {
-      it(`standalone control: ${name}`, { timeout: CORPUS_TIMEOUT }, async () => {
-        const outcome = await runControl(source, "standalone");
+    for (const hostFreeLane of ["standalone", "wasi"] as const) {
+      if (!lanes.some((lane) => lane === hostFreeLane)) continue;
+      it(`${hostFreeLane} control: ${name}`, { timeout: CORPUS_TIMEOUT }, async () => {
+        const outcome = await runControl(source, hostFreeLane);
         expect(outcome.value).toBe(0);
         expect(outcome.imports).toEqual([]);
       });
