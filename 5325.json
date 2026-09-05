@@ -1,10 +1,11 @@
 {
   "id": "5325",
   "assignee": "ttraenkler/senior-dev",
-  "requested_by": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5325-getprototypeof-wasmgc-carriers",
   "claimed_at": "2026-09-05T05:36:42Z",
-  "updated_at": "2026-09-05T05:36:42Z",
-  "write_id": "54462-4pt3p37g"
+  "updated_at": "2026-09-05T08:39:21Z",
+  "write_id": "43041-15407m5w",
+  "released_at": "2026-09-05T08:39:21Z"
 }
