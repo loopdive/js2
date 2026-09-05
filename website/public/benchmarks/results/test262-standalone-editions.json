@@ -1924,8 +1924,8 @@
   {
     "edition": "ES2021",
     "pass": 309,
-    "fail": 103,
-    "ce": 60,
+    "fail": 104,
+    "ce": 59,
     "skip": 0,
     "total": 472,
     "pct": 65,
@@ -1942,8 +1942,8 @@
       {
         "name": "Promise.any",
         "pass": 27,
-        "fail": 40,
-        "ce": 25,
+        "fail": 41,
+        "ce": 24,
         "skip": 0,
         "total": 92,
         "pct": 29
@@ -1978,8 +1978,8 @@
       {
         "name": "arrow-function",
         "pass": 13,
-        "fail": 16,
-        "ce": 11,
+        "fail": 17,
+        "ce": 10,
         "skip": 0,
         "total": 40,
         "pct": 33
@@ -4305,8 +4305,8 @@
   {
     "edition": "Unclassified (untagged)",
     "pass": 4410,
-    "fail": 952,
-    "ce": 83,
+    "fail": 951,
+    "ce": 84,
     "skip": 0,
     "total": 5445,
     "pct": 81
