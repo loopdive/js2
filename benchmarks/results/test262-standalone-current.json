@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-05T14:28:49.213Z",
-  "baseline_generated_at": "2026-09-05T14:28:49.213Z",
-  "baseline_sha": "cd45544246d0048beeb8479a9fbe02ac75ac4083",
+  "timestamp": "2026-09-05T16:00:45.416Z",
+  "baseline_generated_at": "2026-09-05T16:00:45.416Z",
+  "baseline_sha": "c95ba81953a59ba3f77f80c6f8a07cc49e7816d1",
   "oracle_version": 13,
   "mode": {
     "target": "standalone",
@@ -11,22 +11,22 @@
   "summary": {
     "total": 48232,
     "pass": 34884,
-    "fail": 9627,
+    "fail": 9629,
     "compile_error": 3694,
-    "compile_timeout": 9,
+    "compile_timeout": 7,
     "skip": 18,
-    "compilable": 44511,
+    "compilable": 44513,
     "host_free_pass": 34884,
     "stale": 0,
     "by_category": {
       "standard": {
         "total": 47146,
         "pass": 33855,
-        "fail": 9590,
+        "fail": 9592,
         "compile_error": 3674,
-        "compile_timeout": 9,
+        "compile_timeout": 7,
         "skip": 18,
-        "compilable": 43445,
+        "compilable": 43447,
         "host_free_pass": 33855,
         "stale": 0,
         "label": "ECMAScript current standard"
@@ -58,11 +58,11 @@
       "official": {
         "total": 48232,
         "pass": 34884,
-        "fail": 9627,
+        "fail": 9629,
         "compile_error": 3694,
-        "compile_timeout": 9,
+        "compile_timeout": 7,
         "skip": 18,
-        "compilable": 44511,
+        "compilable": 44513,
         "host_free_pass": 34884,
         "stale": 0,
         "label": "standard + annex_b (default)"
@@ -70,11 +70,11 @@
       "full": {
         "total": 48735,
         "pass": 35119,
-        "fail": 9643,
+        "fail": 9645,
         "compile_error": 3850,
-        "compile_timeout": 9,
+        "compile_timeout": 7,
         "skip": 114,
-        "compilable": 44762,
+        "compilable": 44764,
         "host_free_pass": 35119,
         "stale": 0,
         "label": "standard + annex_b + proposals"
@@ -84,33 +84,33 @@
   "official_summary": {
     "total": 48232,
     "pass": 34884,
-    "fail": 9627,
+    "fail": 9629,
     "compile_error": 3694,
-    "compile_timeout": 9,
+    "compile_timeout": 7,
     "skip": 18,
-    "compilable": 44511,
+    "compilable": 44513,
     "host_free_pass": 34884,
     "stale": 0
   },
   "full_summary": {
     "total": 48735,
     "pass": 35119,
-    "fail": 9643,
+    "fail": 9645,
     "compile_error": 3850,
-    "compile_timeout": 9,
+    "compile_timeout": 7,
     "skip": 114,
-    "compilable": 44762,
+    "compilable": 44764,
     "host_free_pass": 35119,
     "stale": 0
   },
   "strict_summary": {
     "total": 45721,
     "pass": 32618,
-    "fail": 9487,
+    "fail": 9488,
     "compile_error": 3590,
-    "compile_timeout": 8,
+    "compile_timeout": 7,
     "skip": 18,
-    "compilable": 42105,
+    "compilable": 42106,
     "host_free_pass": 32618,
     "stale": 0
   },
@@ -140,11 +140,11 @@
     "standard": {
       "total": 47146,
       "pass": 33855,
-      "fail": 9590,
+      "fail": 9592,
       "compile_error": 3674,
-      "compile_timeout": 9,
+      "compile_timeout": 7,
       "skip": 18,
-      "compilable": 43445,
+      "compilable": 43447,
       "host_free_pass": 33855,
       "stale": 0
     }
@@ -298,8 +298,8 @@
       "path": "built-ins/Atomics",
       "pass": 64,
       "fail": 63,
-      "compile_error": 261,
-      "compile_timeout": 1,
+      "compile_error": 262,
+      "compile_timeout": 0,
       "skip": 0,
       "total": 389,
       "host_free_pass": 64
@@ -638,8 +638,8 @@
       "name": "built-ins/Promise",
       "path": "built-ins/Promise",
       "pass": 373,
-      "fail": 187,
-      "compile_error": 169,
+      "fail": 188,
+      "compile_error": 168,
       "compile_timeout": 0,
       "skip": 0,
       "total": 729,
@@ -990,9 +990,9 @@
       "name": "language/expressions",
       "path": "language/expressions",
       "pass": 8928,
-      "fail": 1072,
+      "fail": 1073,
       "compile_error": 1083,
-      "compile_timeout": 1,
+      "compile_timeout": 0,
       "skip": 18,
       "total": 11102,
       "host_free_pass": 8928
@@ -1203,7 +1203,7 @@
     "negative_test_fail": 4,
     "null_deref": 30,
     "oob": 7,
-    "other": 3252,
+    "other": 3253,
     "promise_error": 50,
     "range_error": 14,
     "runtime_error": 149,
@@ -1280,9 +1280,9 @@
           "host_free_pass": 0
         },
         "error_categories": {
+          "type_error": 1214,
           "assertion_fail": 1257,
           "host_import_leak": 459,
-          "type_error": 1214,
           "other": 1501,
           "null_deref": 2
         },
@@ -1290,17 +1290,17 @@
           "ES2026": 4433
         },
         "sample_files": [
-          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
-          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
-          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/until/roundingmode-halfTrunc.js",
+          "test/built-ins/Temporal/ZonedDateTime/prototype/with/overflow-wrong-type.js",
+          "test/built-ins/Temporal/PlainDateTime/prototype/round/roundingmode-trunc.js",
+          "test/built-ins/Temporal/PlainDate/prototype/add/leap-year-arithmetic.js",
           "test/built-ins/Temporal/ZonedDateTime/prototype/with/disambiguation-wrong-type.js"
         ],
         "sample_signatures": [
-          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
-          "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
-          "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
           "type_error:TypeError: Cannot read properties of undefined (reading 'until')",
+          "assertion_fail:Test262Error: null Expected a RangeError but got a TypeError",
+          "type_error:TypeError: Cannot read properties of undefined (reading 'round')",
+          "host_import_leak:standalone target emitted host imports: env::__temporal_plain_date_add_field, env::__temporal_plain_date_from_string_field (##)",
           "other:ReferenceError: Temporal is not defined"
         ]
       },
@@ -1333,8 +1333,8 @@
         "sample_files": [
           "test/built-ins/AsyncDisposableStack/prototype/move/not-a-constructor.js",
           "test/built-ins/AsyncDisposableStack/prototype/move/sets-state-to-disposed.js",
-          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/instance-extensible.js",
+          "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.asyncDispose-property-not-callable.js",
           "test/built-ins/AsyncDisposableStack/prototype/use/throws-if-value-Symbol.dispose-property-not-callable.js"
         ],
         "sample_signatures": [
@@ -2523,19 +2523,19 @@
           "#990"
         ],
         "label": "Eval and `new Function` semantics",
-        "count": 445,
+        "count": 446,
         "statuses": {
           "pass": 0,
-          "fail": 436,
+          "fail": 438,
           "compile_error": 8,
-          "compile_timeout": 1,
+          "compile_timeout": 0,
           "skip": 0,
-          "total": 445,
+          "total": 446,
           "host_free_pass": 0
         },
         "error_categories": {
           "assertion_fail": 260,
-          "other": 153,
+          "other": 154,
           "promise_error": 19,
           "runtime_error": 2,
           "host_import_leak": 7,
@@ -2546,7 +2546,7 @@
           "ES2015": 106,
           "ES2018": 40,
           "ES2020": 86,
-          "ES2021": 35,
+          "ES2021": 36,
           "ES2027": 37,
           "ES2023": 39,
           "Unclassified (untagged)": 76,
@@ -2616,8 +2616,8 @@
         "statuses": {
           "pass": 0,
           "fail": 60,
-          "compile_error": 81,
-          "compile_timeout": 1,
+          "compile_error": 82,
+          "compile_timeout": 0,
           "skip": 0,
           "total": 142,
           "host_free_pass": 0
@@ -2629,6 +2629,7 @@
           "other": 2,
           "syntax_error": 6,
           "illegal_cast": 3,
+          "wasm_compile": 1,
           "range_error": 1,
           "oob": 2
         },
@@ -2641,15 +2642,15 @@
           "test/language/expressions/bitwise-xor/bigint-non-primitive.js",
           "test/language/expressions/unsigned-right-shift/bigint-non-primitive.js",
           "test/built-ins/Atomics/store/bigint/non-shared-bufferdata.js",
-          "test/built-ins/Atomics/or/bigint/bad-range.js",
-          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js"
+          "test/built-ins/Atomics/notify/bigint/non-shared-bufferdata-returns-0.js",
+          "test/built-ins/Atomics/or/bigint/bad-range.js"
         ],
         "sample_signatures": [
           "type_error:TypeError: Cannot mix BigInt and other types, use explicit conversions",
           "assertion_fail:Test262Error: Object(0b101n) >>> Object(1n) throws TypeError Expected a TypeError to be thrown but no exception was thrown at all",
           "type_error:TypeError: Atomics.store requires a shared integer TypedArray, which is unsupported in --target standalone",
-          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
-          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone"
+          "type_error:TypeError: Atomics.notify requires a shared integer TypedArray, which is unsupported in --target standalone",
+          "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)"
         ]
       },
       {
@@ -2715,14 +2716,14 @@
           "#1694"
         ],
         "label": "Promise and async standalone semantics",
-        "count": 228,
+        "count": 227,
         "statuses": {
           "pass": 0,
           "fail": 97,
-          "compile_error": 131,
+          "compile_error": 130,
           "compile_timeout": 0,
           "skip": 0,
-          "total": 228,
+          "total": 227,
           "host_free_pass": 0
         },
         "error_categories": {
@@ -2731,13 +2732,13 @@
           "runtime_error": 2,
           "assertion_fail": 17,
           "promise_error": 20,
-          "wasm_compile": 3,
+          "wasm_compile": 2,
           "type_error": 18,
           "illegal_cast": 3,
           "range_error": 2
         },
         "by_edition": {
-          "ES2021": 32,
+          "ES2021": 31,
           "ES2027": 27,
           "ES2022": 6,
           "ES2024": 44,
@@ -2807,7 +2808,7 @@
           "assertion_fail:Test262Error: Expected true but got false",
           "other:[object WebAssembly.Exception]",
           "type_error:TypeError: Cannot convert undefined or null to object",
-          "other:L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or identifier.; L#:## Identifier expected.; L#:## Unexpected keyword or ident"
+          "other:L#:## ':' expected.; L#:## '=>' expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected.; L#:## Declaration or statement expected."
         ]
       },
       {
@@ -2956,7 +2957,7 @@
           "test/built-ins/WeakRef/throws-when-target-cannot-be-held-weakly.js",
           "test/built-ins/Atomics/wait/cannot-suspend-throws.js",
           "test/built-ins/FinalizationRegistry/prototype/register/return-undefined-register-symbol.js",
-          "test/built-ins/FinalizationRegistry/prototype/unregister/custom-this.js"
+          "test/built-ins/FinalizationRegistry/target-not-callable-throws.js"
         ],
         "sample_signatures": [
           "host_import_leak:standalone target emitted host imports: env::SharedArrayBuffer_new (##)",
@@ -3038,8 +3039,8 @@
           "ES2022": 20
         },
         "sample_files": [
-          "test/built-ins/Atomics/add/validate-arraytype-before-index-coercion.js",
           "test/built-ins/Atomics/xor/validate-arraytype-before-index-coercion.js",
+          "test/built-ins/Atomics/add/validate-arraytype-before-index-coercion.js",
           "test/built-ins/Atomics/or/non-views.js",
           "test/built-ins/Atomics/notify/notify-nan.js",
           "test/built-ins/Atomics/add/non-views.js"
