@@ -1,7 +1,7 @@
 ---
 id: 5316
 title: "ES2015 standalone proxy — r4: §10.5 descriptor-model invariants, Reflect.set receiver, [[Construct]] NewTarget forwarding"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-04
 updated: 2026-09-04
@@ -32,6 +32,29 @@ loc-budget-allow:
   - src/codegen/expressions/call-namespace-static.ts
   - src/codegen/native-construct.ts
   - src/codegen/index.ts
+func-budget-allow:
+  # 2026-09-04 r4 step 1: `registerProxyInvariantValidators` is ONE function
+  # only in the TypeScript sense — its body is seven independent
+  # `registerNative` calls, one per §10.5 trap, each an instruction-building
+  # block that shares nothing but the local emitter helpers (isAbsent /
+  # hasField / truthyField / loadTargetDesc) declared above them. Splitting it
+  # would mean re-threading those 13 baked funcIdx + the shared
+  # `throwInvariant` factory through seven signatures, which buys no
+  # comprehension and multiplies the double-remap hazard the module header
+  # documents. `ensureProxyRuntime` grows only by the registration call, the
+  # `validateTrapResult` splice helper and the per-arm wiring.
+  - src/codegen/object-runtime-proxy-invariants.ts::registerProxyInvariantValidators
+  - src/codegen/object-runtime-proxy.ts::ensureProxyRuntime
+coercion-sites-allow:
+  # 2026-09-04 r4 step 1: the two hits are `__is_truthy` and the `__host_eq`
+  # fallback arm of `ensureExternStrictEqHelper`. Neither hand-rolls a
+  # coercion matrix — §10.5 states its invariants literally in terms of
+  # ToBoolean (`If <trapResult> is true`) and SameValue (`SameValue(V,
+  # targetDesc.[[Value]])`), and these are the same two helpers the #5140
+  # target-independent half already calls for exactly those two spec
+  # operations. The preferred `__object_is` is used when present; `__host_eq`
+  # is only the last fallback, mirroring `buildOwnKeysDispatch`.
+  - src/codegen/object-runtime-proxy-invariants.ts
 ---
 
 ## Problem
@@ -383,3 +406,193 @@ standalone`, host, wasi) — verify with a Proxy-free probe module. The
   given up), the control-corpus result, gate status, the worktree path and head
   sha, and every residual with its mechanism.
 
+
+## 2026-09-04 r4 implementation (Opus)
+
+**Delivered: step 1 only.** Steps 2 (`Reflect.set` receiver) and 3 (Proxy
+[[Construct]] NewTarget forwarding) are **given up** in this pass, with the
+mechanism named below — they are untouched, so their 25 rows are byte-for-byte
+the refusals the plan describes.
+
+Worktree `/home/user/js2/.claude/worktrees/wf_a9776683-b00-1`, branch
+`worktree-wf_a9776683-b00-1`. Base tree for every A/B: `.tmp/base`
+(`git archive origin/main`, main at `f9bf876899`), both trees provisioned with
+the same `node_modules`/`test262` links, compiler+runtime bundles and a
+tree-local quickjs eval adapter. **The quickjs adapter is keyed on the compiler
+bundle hash — it must be rebuilt after every source change**, or every `-realm`
+row fails "quickjs provider is not built" and hides both wins and regressions
+(cost this lane one full 36-row cycle).
+
+### Step 1 — §10.5 descriptor-model invariants
+
+New `src/codegen/object-runtime-proxy-invariants.ts`: seven validator natives,
+one per trap, `(target, key, …, trapResult) -> trapResult | throw`, called from
+the matching dispatch arm in `object-runtime-proxy.ts` immediately after the
+trap driver. The target's own descriptor comes from
+`__getOwnPropertyDescriptor`, whose `$Proxy` front-guard gives the
+proxy-of-proxy recursion §10.5 requires for free.
+
+Rows, `npx tsx scripts/run-test262-paths.mts --isolate .tmp/step1-rows.txt
+--standalone`, base tree vs lane, 2026-09-04/05:
+
+| | base | lane |
+| --- | ---: | ---: |
+| pass | 0 | **19** |
+| fail | 36 | 8 |
+| compile_error | 0 | 9 |
+
+Kept (19): the four `getOwnPropertyDescriptor/resultdesc-*` +
+`result-is-undefined-targetdesc-is-not-configurable` rows; six
+`defineProperty/targetdesc-*` rows; `deleteProperty/targetdesc-is-not-
+configurable`; `has/return-false-targetdesc-not-configurable`; both `get/*`
+rows; both `set/target-property-*` rows; all three `ownKeys/*` key-set rows.
+
+### The regression this lane found in its own work
+
+The first cut also implemented `IsExtensible(target)` — §10.5.7 step 9.b.ii and
+§10.5.10 step 15 — and flipped 21 rows. The control corpus caught it: two rows
+that **pass on `origin/main`** started throwing.
+
+- `built-ins/Proxy/deleteProperty/call-parameters.js`
+- `built-ins/Proxy/has/return-false-target-prop-exists-using-with.js`
+
+Both have an ordinary extensible object-literal target (`{attr: 1}`). Isolated
+by temporarily tagging each validator's TypeError with its own name: the `has`
+and `delete` validators were the ones firing, and removing only the
+extensibility clause made both rows pass again. Called on the proxy's `ptarget`
+from inside the dispatch, `__object_isExtensible` answers *non-extensible* for
+a target that never saw `preventExtensions` — a direct `Object.isExtensible` on
+the same shapes answers correctly (probed both, `.tmp/probe/ext2.ts`), so the
+discrepancy is specific to the dispatch-internal call and was not pinned down
+further here. **The clause is declined**, costing exactly two rows
+(`has/return-false-target-not-extensible.js`,
+`deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js`) and
+buying back both regressions. A missed throw is a residual; a wrong throw
+breaks a working program.
+
+### Control corpus
+
+Every ES2015 row under `built-ins/Proxy` + `built-ins/Reflect` (464 files),
+`--isolate --standalone`, base tree vs lane:
+
+| | base | lane |
+| --- | ---: | ---: |
+| pass | 312 | **349** |
+| fail | 115 | 93 |
+| compile_error | 37 | 22 |
+
+**Rows lost (base `pass` → lane non-pass): ZERO.** 37 rows gained. The three
+apparent losses in the FIRST lane control run
+(`preventExtensions/call-parameters.js`,
+`preventExtensions/return-true-target-is-not-extensible.js`, `Proxy/proxy.js`)
+were **compile timeouts under 4-lane load** — all three pass when re-run alone
+at `COMPILER_POOL_SIZE=1`. A second run was additionally poisoned by the
+worktree's `test262` symlink being replaced by an empty submodule stub
+mid-flight (223 `ENOENT` rows); restoring the symlink and re-running gave the
+table above. Watch for that: an `error`/`ENOENT` bucket is an infrastructure
+failure, not a measurement.
+
+### Order preservation — one deviation, measured
+
+A program that touches no MOP helper is **byte-identical** to base on host,
+standalone and wasi (`.tmp/probe/plain.ts`). A **Proxy-free** program that uses
+`Object.defineProperty`/`getOwnPropertyDescriptor`/`in`/
+`Reflect.deleteProperty` is byte-identical on **host** but grows on standalone
+(128,970 → 135,186 bytes, +4.8 %) and wasi (102,209 → 107,656, +5.3 %). Cause:
+those helpers already carry the `$Proxy` front-guard on `main`, so the proxy
+dispatch bodies were already reachable in such a module; the validators join an
+already-live set. Avoiding it would mean gating the whole proxy-dispatch
+subsystem on an actual `new Proxy` site — a pre-existing property of the
+design, not something this slice introduced, and out of scope here.
+
+### Residuals
+
+| rows | mechanism |
+| ---: | --- |
+| 15 | `Reflect.set` 4-arg — **step 2 not built.** The refusal at `call-namespace-static.ts` ~L1106 stands. The receiver-threaded §10.1.9.2 `OrdinarySet` is a new walk over own-descriptor / prototype / proxy-`set`-trap arms; building it on top of an attribute model that already mis-describes object-literal own properties (see the two regressions above) would have shipped the same false-positive family into every `Reflect.set`. |
+| 10 | Proxy [[Construct]] NewTarget — **step 3 not built.** The refusal at ~L1940 stands. The site rewrites `Reflect.construct(T, a, NT)` into a synthesized `new T(...)` AST node and compiles that; inserting a runtime `ref.test $Proxy` arm means evaluating the target once into a local before that rewrite, which double-evaluates the target expression on the non-proxy arm unless the whole site is restructured. |
+| 6 | `-realm` rows: cross-realm proxies from `$262.createRealm()` do not reach this runtime's dispatch; several also compile-time out at ~15 s even at `COMPILER_POOL_SIZE=1`. |
+| 3 | `getOwnPropertyDescriptor/{result-type-is-not-object-nor-undefined, result-is-undefined-target-is-not-extensible, resultdesc-is-not-configurable-targetdesc-is-configurable}` — the target is an object literal whose own property the standalone attribute model does not describe through the dispatch, so `target.[[GetOwnProperty]]` has nothing to reconcile against. Same root cause as the pre-existing `has/return-false-target-prop-exists.js` failure (verified identical on the base tree). |
+| 2 | `has/return-false-target-not-extensible.js`, `deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js` — the declined extensibility clause above. |
+| 1 | `defineProperty/null-handler.js` — a revoked proxy is not caught on the `__obj_define_from_desc` path. |
+| 2 | `deleteProperty/trap-is-null-target-is-proxy.js`, `defineProperty/trap-is-undefined-target-is-proxy.js` — string/array exotic own properties reached through a proxy chain. |
+
+Not claimed and not touched, per the lane protocol: the generator carrier
+(#2864), the promise/microtask carrier (#2867) and built-in method reflection
+(#2175).
+
+### Review round 1 (2026-09-05)
+
+Fix-round lane, worktree `/home/user/js2/.claude/worktrees/wf_05fc6ce9-91e-1`,
+branch `worktree-wf_05fc6ce9-91e-1` (fresh worktree of
+`claude/es6-test262-standalone-g10c7u`, then `git merge worktree-wf_a9776683-b00-1`).
+Base tree for every A/B: `.tmp/rev5316/base` (`origin/main` at `f9bf876899`).
+One confirmed finding, fixed; one refuted, left as the lane wrote it.
+
+#### F1 — the validators were wired on `--target wasi` too, and broke it (FIXED)
+
+**What went wrong.** `--target wasi` sets `ctx.wasi` and leaves `ctx.standalone`
+false, and `ensureProxyRuntime` runs on both. So the §10.5 validators were live
+under wasi, where **10 of 10 compliant Proxy probes that work on `origin/main`
+and in node threw a TypeError** (`.tmp/rev5316/p/final`, harness
+`.tmp/rev5316/p/batch.mts` with `TGT=wasi`):
+
+| probe | node | base wasi | lane wasi (before fix) | fixed wasi |
+| --- | ---: | ---: | --- | ---: |
+| c09 c13 c14 c27 f01 f02 f06 f07 q12 z06 | 3 2 3 99 1 1 1 1 1 1 | same | **TypeError ×10** | same as node |
+
+**Why — the validators are sound, their inputs are not on wasi.** Measured on
+the BASE tree with **Proxy-free** probes (`.tmp/rev5316/p/w5`), i.e. this is a
+pre-existing `origin/main` defect, not something r4 introduced. Three of the
+primitives the validators consume answer wrongly for an ordinary object literal
+under wasi, while standalone answers all three correctly:
+
+| probe | program | node | standalone | **wasi** |
+| --- | --- | ---: | ---: | --- |
+| `w5/e1` | `Object.isExtensible({a:1,b:2})` | 1 | 1 | **0 (says non-extensible)** |
+| `w5/e2` | `Object.getOwnPropertyNames({a:1,b:2}).length` | 2 | 2 | **0 (no own names)** |
+| `w5/e3`, `w5/e4` | `Object.getOwnPropertyDescriptor({a:1},"a")` | 1, 1 | 1, 1 | **traps** |
+
+Feed those to a correct §10.5 check and every ordinary target looks
+non-extensible with no own properties, so the trap answer "violates" an
+invariant that was never violated. This is the same family as the
+`IsExtensible` clause the lane already declined for standalone.
+
+**Fix.** `registerProxyInvariantValidators` now returns `null` at the top when
+`ctx.wasi`, before any registration or string-constant side effect. Every call
+site already handles `null` by keeping the pre-#5316 unvalidated dispatch, so
+wasi reverts to base behaviour with no new arm. Standalone is untouched — the
+gate is on the target discriminator, and `ctx.wasi` is false there.
+
+**Outcome, measured:**
+
+| pin | result |
+| --- | --- |
+| 10 wasi probes vs node and base | **10/10 equal** (were 0/10) |
+| wasi byte-identity vs base — 5 Proxy-free MOP probes + 1 Proxy program | **6/6 identical sha256** (e.g. `pxy.ts` 106,150 B `ed1042c80008` on both) |
+| standalone byte-identity vs the unfixed lane, same 6 programs | **6/6 identical sha256** — the fix cannot move standalone |
+| step-1 rows, `run-test262-paths.mts --isolate .tmp/step1-rows.txt --standalone` | **pass 19** — the lane's 19 kept rows, unchanged |
+| 464-row control (`built-ins/Proxy` + `built-ins/Reflect`), same command | **pass 348, fail 91, compile_error 25** — vs base 312/115/37 and vs the lane 349/93/22. **Rows lost against base: ZERO** (set-diff of the non-pass lists, not just the totals). The single row below the lane, `Proxy/construct/null-handler-realm.js`, is a **compile timeout at 15.3 s** under load 7 on this box, is non-pass on base too, and **passes when re-run alone at `COMPILER_POOL_SIZE=1`** — the same timeout-under-load artifact the lane documented. |
+| `tests/issue-5316-r4-invariants.test.ts`, node 22 and node 25 | 45/45 pass on both (one vitest `onTaskUpdate` IPC timeout under concurrent load — infrastructure, no failed test) |
+
+**Regression pin added.** Four `wasi probe stays working — …` cases in
+`tests/issue-5316-r4-invariants.test.ts` compile the compliant get / ownKeys /
+gopd / set shapes at `target: "wasi"` and assert the node value. A/B by file
+copy: **4/4 fail with the gate reverted, 4/4 pass with it** — so a future
+wiring change that forgets the gate turns them red instead of shipping silently.
+
+**Ownership.** The three wrong answers above are the **wasi attribute model's**,
+not r4's; they are unfixed and out of this slice. Until they are, the wasi lane
+cannot carry any descriptor-model invariant. Probe file for whoever picks it up:
+`.tmp/rev5316/p/w5/{e1,e2,e3,e4}.ts`.
+
+**Re-learned the hard way:** the quickjs eval adapter is keyed on the compiler
+bundle hash, so the first step-1 re-run after the source edit reported six
+`-realm` rows as "quickjs provider is not built". Rebuild
+`scripts/build-quickjs-eval-provider.mjs` after **every** bundle rebuild — the
+lane's own note said so and it still cost a cycle.
+
+#### F2 — refuted
+
+No change. The decline note above (the `IsExtensible` clause, two rows) stands
+as the lane wrote it.
