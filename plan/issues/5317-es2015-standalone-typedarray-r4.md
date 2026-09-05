@@ -469,3 +469,156 @@ pins (`tests/issue-5194*.test.ts`, 4 files) stay green unchanged.
   given up), the control-corpus result, gate status, the worktree path and head
   sha, and every residual with its mechanism.
 
+
+## 2026-09-04 r4 implementation (Opus)
+
+Worktree `/home/user/js2/.claude/worktrees/wf_a9776683-b00-2`, branch
+`worktree-wf_a9776683-b00-2`, base `origin/main` = `f9bf876899`. Two of the
+plan's six steps landed; the other four are given up this round with their
+mechanism named below.
+
+### Measurement vehicle — read this before trusting any number here
+
+`npx tsx scripts/run-test262-paths.mts --isolate` is **unusable on this box
+right now**. Its child passes `undefined` as the per-row budget, i.e. the
+runner's 15 s default, and with four lanes sharing four cores that budget is
+exceeded by rows that compile fine. The base sweep of all 169 claimed rows
+(2026-09-04, `git archive origin/main` tree) returned:
+
+```
+part 0: { fail: 33, compile_error: 44 }
+part 1: { fail: 43, compile_error: 49 }
+```
+
+and **every one of those 93 `compile_error`s is the string
+`compilation timeout`** — including every row this lane touches. So the sweep
+establishes only that 76 rows fail for real reasons and that **no claimed row
+passes on base**; its `compile_error` verdicts are load artifacts, not
+evidence. Everything claimed below was therefore A/B'd with a 120 s per-row
+budget instead — the same budget the pin test files use — via
+`.tmp/row-one.mts` / `.tmp/rows.mjs` (scratch, gitignored) and via
+`vitest --pool=forks --poolOptions.forks.singleFork=true` run in BOTH the base
+tree and the lane tree.
+
+### Rows kept (base → lane)
+
+| row | base | lane |
+| --- | --- | --- |
+| `TypedArray/prototype/join/return-abrupt-from-separator.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/join/return-abrupt-from-separator-symbol.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-value.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/join/custom-separator-result-from-tostring-on-each-simple-value.js` | fail (`illegal cast`) | pass |
+| `TypedArray/prototype/fill/coerced-indexes.js` | fail (``​`null` end coerced to 0``) | pass |
+| `TypedArray/prototype/copyWithin/coerced-values-end.js` | fail | pass |
+
+**6 of the 169 claimed rows.** Five further rows flipped as collateral and
+were not claimed: `Array/prototype/join/S15.4.4.5_A1.2_T2.js`,
+`.../S15.4.4.5_A3.1_T1.js`, `.../S15.4.4.5_A3.1_T2.js`, and the two BigInt
+twins `TypedArray/prototype/join/BigInt/return-abrupt-from-separator{,-symbol}.js`.
+
+### Control corpora — 259 rows, zero lost
+
+Both corpora were run row-for-row on the base tree and the lane tree with the
+120 s budget.
+
+| corpus | rows | base pass | lane pass | lost | gained |
+| --- | --- | --- | --- | --- | --- |
+| `Array` + `TypedArray` `prototype/{join,toString,toLocaleString}` | 120 | 57 | 66 | **0** | 9 |
+| `TypedArray/prototype/{fill,copyWithin,reverse}` | 139 | 86 | 88 | **0** | 2 |
+
+The r3 pins are unchanged and green: `tests/issue-5194-es2015-typedarray-r2`,
+`-r3`, `-set-r2` — 80 tests, all passing, single-fork at the CI heap.
+
+### Step 4 — join separator (mechanism)
+
+Both native join lanes (`compileArrayJoinNative` for a `$__vec_*` receiver,
+`compileArrayJoinExternNative` for an `externref` one) compiled the separator
+argument to `externref` and then `ref.cast $AnyString` it. That is correct only
+when the argument already IS a string; every other separator — a plain object
+with a user `toString`, `null`, a number, a Symbol — **trapped**, which is
+unrecoverable and strictly worse than a wrong answer.
+
+`src/codegen/join-separator.ts` (new) emits §23.1.3.15 step 3 instead:
+`undefined` ⇒ `","`; a Symbol ⇒ TypeError; anything else ⇒ the coercion
+engine's own ToString provider (so a throwing user `toString` propagates).
+`null` is not `undefined` and still renders `"null"`.
+
+Byte-identity: a string LITERAL separator keeps the old cast, so no module
+whose only separator is `join(",")` changes. The emitter resolves the provider
+through `getExternrefToStringProvider` and returns `null` when it is absent
+rather than arming a second cascade — `check-coercion-sites` reports no net
+vocabulary growth.
+
+### Step 2 — `fill` / `copyWithin` end argument (mechanism)
+
+`__ta_dyn_fill` and `__ta_dyn_copywithin` decided "the `end` argument is
+absent, use len" with `__nullish_to_null` followed by `ref.is_null`, which
+answers TRUE for `null` too. §23.2.3.8 step 5 / §23.2.3.6 step 8 only treat
+`undefined` that way: `null` is ToIntegerOrInfinity'd to 0. Both now use
+`__extern_is_undefined` and fall back to the old shape when that helper is not
+registered, so an explicit `undefined` end and an omitted end still mean `len`.
+
+The observable coercion ORDER was already correct on base (value → start → end
+for `fill`; target → start → end for `copyWithin`) and is now pinned.
+
+### Residuals — 163 claimed rows given up, by mechanism
+
+- **`detached-buffer` / `coerced-*-detach*` (fill 4, copyWithin 4, sort 1,
+  join 1, and the per-method `detached-buffer.js` rows across
+  some/every/forEach/reduce/reduceRight/find/findIndex/reverse/entries/keys/
+  values/toString/toLocaleString).** ValidateTypedArray's detached arm
+  (§23.2.3.5.1 step 5) is missing: a detached buffer is the shared byte vec's
+  negative length, which `pushTaDynViewInBoundsLen` floors to an effective
+  element length of 0 — right for the §10.4.5 element MOP, wrong for the
+  prototype methods, which must throw TypeError before observing anything
+  else. **A guard was written and reverted unmeasured**: a probe showed the
+  detach is not observable through the dyn view in the shape these rows use
+  (`a.length` stayed 4 after `a.buffer.transfer()`), so the guard would never
+  have fired. The detach representation reaching the dyn view has to be
+  settled first; adding the arm before that would make rows "pass" for the
+  wrong reason.
+- **`invoked-as-method` / `invoked-as-func` (join, slice, Symbol.toStringTag,
+  length, byteLength).** The native-proto method closures carry no
+  ValidateTypedArray receiver brand check: probed directly,
+  `%TypedArray%.prototype.join()` returns instead of throwing TypeError.
+  Shared mechanism, one place to fix, not attempted this round.
+- **Species protocol (slice 7, subarray 8, filter 6, map 6,
+  `ArrayBuffer.prototype.slice` 10 ≈ 37 rows).** `emitTaDynSpeciesCreate`
+  (#4449) already exists in `dataview-native.ts`; the base failures are in its
+  VALIDATION arms (`species-is-not-object`, `species-is-not-constructor`,
+  `species-returns-same-arraybuffer`, `species-returns-smaller-arraybuffer`
+  all report "Expected a TypeError … no exception was thrown"), plus the
+  `ArrayBuffer.prototype.slice` lane which does not consult `@@species` at all
+  (`slice/species.js` returned the sliced bytes, not the species result). Not
+  started — this is the largest single family left.
+- **`ctors/object-arg` (11).** Element `ToNumber`/`@@toPrimitive` abrupt
+  completions are swallowed: base reports "abrupt completion from
+  ToNumber(sample) Expected a Test262Error … no exception was thrown" for the
+  `valueOf` / `toString` / `@@toPrimitive` variants, and the iterator variants
+  report the wrong error type. `length-excessive-throws.js` traps instead
+  (`RuntimeError: requested new array is too large`).
+- **`sort` (12).** Base shows the comparator is never called
+  (`comparefn-calls.js`: "calls comparefn" with 0 calls) and the default
+  comparator does not order numerically (`sorted-values.js`,
+  `sortcompare-with-no-tostring.js`), i.e. the dyn-view `sort` is not wired to
+  the element comparator at all. `return-same-instance.js` shows it returns
+  `null` rather than the receiver.
+- **`toLocaleString` (10), iteration methods (some/every/forEach/entries/
+  values/keys, 18), `TypedArrayConstructors/internals/{DefineOwnProperty,
+  OwnPropertyKeys,Set}` (11), `from`/`of` (14), `DataView`/`ArrayBuffer`
+  residue.** Not started. Note for the next round: the `OwnPropertyKeys` rows
+  need **expando properties on a `$__ta_dyn_view`** (`sample.test262 = 42`
+  then `Reflect.ownKeys`), which `ta-dyn-mop.ts` explicitly defers — its
+  `__object_keys` arm enumerates integer indices only.
+- **`reflection-gated` (14) and the #3371 view rows.** Not claimed, per the
+  plan; recorded as gated.
+
+### Gates
+
+`check-loc-budget` and `check-func-budget` (bare **and** with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`), `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+typecheck (`tsconfig.ts7.json`) and `lint` — all green. Growth grants for
+`src/codegen/array-methods.ts` (+15) and `src/codegen/dataview-native.ts`
+(+19) are in this file's frontmatter with the dated rationale.
