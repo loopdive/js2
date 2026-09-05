@@ -13,6 +13,7 @@ import {
   STANDALONE_TIMER_CALLBACK_MARKER_EXPORT,
   STANDALONE_TIMER_CALLBACK_MARKER_PHYSICAL_BASE,
 } from "../timer-capability-contract.js";
+import { sameExportedFunction } from "./exported-function-identity.js";
 import { installNativeFunctionSourceFacade, normalizeModuleCallbackException } from "./native-function-source.js";
 
 export interface StandaloneTimerCallbackState {
@@ -135,7 +136,7 @@ function readAuthority(
   const dispatch = terminalAlias(exports, STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE);
   if (typeof dispatch !== "function") return undefined;
   try {
-    if (bindings.get(0) !== dispatch) return undefined;
+    if (!sameExportedFunction(dispatch, bindings.get(0))) return undefined;
   } catch {
     return undefined;
   }
