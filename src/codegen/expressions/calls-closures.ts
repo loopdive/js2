@@ -24,6 +24,7 @@ import { ensureObjVecBuilders, reserveApplyClosure } from "../object-runtime.js"
 import { emitRuntimeEvalCarrierUnwrapAny } from "../runtime-eval-callable.js";
 import { expressionDescendsFromRealmStructuralBinding } from "../analysis/realm-global-structural-carrier.js";
 import { allocLocal } from "../context/locals.js";
+import { compileTupleRestClosureArgument } from "../closures/tuple-rest-carrier.js";
 import type {
   ClosureInfo,
   CodegenContext,
@@ -825,17 +826,13 @@ function compileRestClosureArguments(
     pushDefaultValue(fctx, restType, ctx);
     return { fixedParamCount, restExternLocals: [] };
   }
-  // TypeScript represents an unused `...rest` parameter as an empty tuple
-  // struct rather than the ordinary `(length, data)` vec.  It is still a
-  // non-null lifted formal, so padding it with `pushDefaultValue(ref)` emits
-  // `ref.null; ref.as_non_null` and traps before the callee can materialize its
-  // `arguments` object.  Construct the canonical empty tuple instead; the
-  // arguments-object builder treats the parameter as a normal boxed formal.
-  const restDef = ctx.mod.types[restType.typeIdx];
-  if (restDef?.kind === "struct" && restDef.fields.length === 0) {
-    fctx.body.push({ op: "struct.new", typeIdx: restType.typeIdx });
-    return { fixedParamCount, restExternLocals: [] };
-  }
+  // (#5329) A struct-shaped rest carrier — the empty tuple (`...a: []`) and the
+  // fixed-width tuple (`...a: [Error]`) alike — has one FIELD per element, not a
+  // `(length, data)` vec. Both used to reach a `pushDefaultValue(ref …)` tail
+  // that emits `ref.null; ref.as_non_null` and traps before the callee runs.
+  // See closures/tuple-rest-carrier.ts.
+  const tupleRest = compileTupleRestClosureArgument(ctx, fctx, callArgs, fixedParamCount, restType.typeIdx);
+  if (tupleRest !== null) return tupleRest;
   const vecInfo = getVecInfo(ctx, restType.typeIdx);
   if (vecInfo === null) {
     pushDefaultValue(fctx, restType, ctx);
