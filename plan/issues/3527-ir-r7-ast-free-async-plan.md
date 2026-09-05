@@ -642,3 +642,41 @@ executable containers, async generators, `for await`, WASI, and fully settled
 owners on the historical C 1 route remain separate work. Existing standalone
 and WASI invalid opcode validation reds remain unchanged, and no baseline was
 weakened.
+
+### B2 settled owner admission repair checkpoint — 2026-09-05
+
+Root's independent settled await controls found a regression at the published
+B2 head before this repair. With `experimentalIR: true`,
+`nativeStrings: false`, and `trackIrOutcomes: true`, the one await literal
+owner and the two await literal owner both failed compilation with
+`IR async runtime attachment for test has no valid async plan owner` and fell
+back to one direct body with zero IR bodies. The historical C 1 controls
+returned 43 and 85. The provider only `Promise.resolve` control remained a
+valid B2 owner and returned native Promise value 6 with matching independent
+native observer order.
+
+The narrow fix makes prepared await retention require the existing
+potentially suspending owner analysis in addition to the linear source shape.
+Fully static owners therefore remain on their established C 1 route until a
+separate cutover, while provider only and pending mixed chains retain the B2
+producer and canonical await ordering. The regression suite independently
+asserts that both static owners' synthetic helpers are absent, then validates
+their direct results 43 and 85; the existing mixed, pending, rejection, and
+provider controls remain active.
+
+Repair commits `96defcfe84d9753e5352e20b60a0c86236f5dda0` and
+`18352307cb7cb6bede526bf496e10ba3846624d7` are signed with the required
+Thomas Tränkler author, Codex coauthor, and Luna Max model trailer. PR #5602
+is open and unqueued at exact head
+`18352307cb7cb6bede526bf496e10ba3846624d7`.
+
+The focused runtime regression suite passed 7/7 and the pure preparation suite
+passed 4/4. Typecheck, formatting, fallback, IR policy, dialect, layering,
+neutrality, stack, oracle/coercion, numeric local parity (18/18), issue
+integrity, and the normal pre push hooks passed. Root independently reran the
+three source controls 3/3: static one and two await owners compile and return
+43/85 with the baseline route, and the provider only owner remains direct 0 /
+IR 1 with native observer parity. The exact upstream merge head still needs to
+be integrated before the final R7 publication review; this repair does not
+close R7 or broaden its remaining loop, handler, container, generator,
+`for await`, WASI, or settled owner limits.
