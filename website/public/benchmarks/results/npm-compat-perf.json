@@ -282,11 +282,11 @@
   {
     "name": "lit · JS host · runtime dynamic",
     "path": "index.js#jsHost",
-    "wasmUs": 0.48153276118279487,
-    "jsUs": 0.005628767694224954,
-    "wasmStdUs": 0.01763496380547102,
-    "jsStdUs": 0.000011323220855965269,
-    "ratioStd": 0.0003832195665701229,
+    "wasmUs": 0.5504769939747569,
+    "jsUs": 0.005252758576168481,
+    "wasmStdUs": 0.005822966751277426,
+    "jsStdUs": 0.00012581465079653474,
+    "ratioStd": 0.0002527413551605054,
     "wasmOptimized": true,
     "wasmOptimizeLevel": 4,
     "wasmOmittedPasses": [],
@@ -297,3 +297,5 @@
     "inputMode": "runtime-dynamic"
   }
 ]
+
+
