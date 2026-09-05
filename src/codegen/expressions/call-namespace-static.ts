@@ -104,6 +104,13 @@ import {
 } from "./helpers.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolvePromiseSubclassName } from "./promise-subclass.js";
+import {
+  applyRuntimeNewTargetPrototype,
+  classifyRuntimeNewTargetSite,
+  emitRuntimeNewTargetPrototype,
+  prepareRuntimeNewTargetProto,
+  tryEmitOrdinaryConstructWithNewTarget,
+} from "./reflect-construct-newtarget.js"; // (#3371 r4)
 import { objectPrototypeIsImmutableInstrs } from "../object-proto-proto-accessor.js"; // (#5268 step 1)
 import {
   compileCallExpression,
@@ -1887,13 +1894,54 @@ export function compileNamespaceStaticCall(
         }
 
         const distinctNewTarget = newTargetArg !== undefined && !sameReflectConstructTarget(targetArg, newTargetArg);
+        // (#3371 r4) The static `NewTarget.prototype = …` scan is a source-text
+        // approximation of `? Get(NewTarget, "prototype")`. Where it finds
+        // nothing this arm used to emit a hard compile error; instead, take the
+        // runtime read. Evaluating NewTarget here — once, before the argument
+        // list — is what makes that read safe against an argument expression
+        // reassigning the NewTarget binding. Only the previously-erroring
+        // branch is affected, so no program that compiled before changes.
+        const staticNewTargetProto = distinctNewTarget
+          ? assignedNewTargetPrototype(ctx, newTargetArg!, expr.getStart())
+          : undefined;
+        // (#3371 review r1) …but only for the shapes whose read AND write are
+        // sound. `classifyRuntimeNewTargetSite` answers `undefined` for every
+        // shape measured to answer wrongly (a class NewTarget, a target that
+        // reads `new.target`, a non-identifier NewTarget expression, a target
+        // whose carrier has no settable prototype); those keep base's refusal
+        // below rather than silently returning the wrong prototype.
+        const newTargetRoute =
+          distinctNewTarget && staticNewTargetProto === undefined
+            ? classifyRuntimeNewTargetSite(
+                ctx,
+                unwrapReflectConstructExpr(targetArg),
+                unwrappedList.elements as readonly ts.Expression[],
+                newTargetArg!,
+              )
+            : undefined;
+        const runtimeNewTargetProto = newTargetRoute !== undefined;
+        const refuseDistinctNewTarget =
+          distinctNewTarget && staticNewTargetProto === undefined && !runtimeNewTargetProto;
+        let ntValueLocal: number | undefined;
+        if (runtimeNewTargetProto) {
+          prepareRuntimeNewTargetProto(ctx, fctx);
+          ntValueLocal = allocLocal(fctx, `__reflect_construct_nt_${fctx.locals.length}`, externRef);
+          const ntv = compileExpression(ctx, fctx, newTargetArg!, externRef);
+          if (ntv && ntv.kind !== "externref") coerceType(ctx, fctx, ntv, externRef);
+          else if (ntv === null) fctx.body.push({ op: "ref.null.extern" });
+          fctx.body.push({ op: "local.set", index: ntValueLocal });
+        }
         if (newTargetArg !== undefined && !isStaticallyConstructible(ctx, newTargetArg)) {
           // Evaluate the runtime NewTarget exactly once, then use the finalize-
           // filled nominal carrier classifier. Ordinary functions have a
           // constructible wrapper subtype; arrows/method closures do not.
-          const ntType = compileExpression(ctx, fctx, newTargetArg, externRef);
-          if (ntType && ntType.kind !== "externref") coerceType(ctx, fctx, ntType, externRef);
-          else if (ntType === null) fctx.body.push({ op: "ref.null.extern" });
+          if (ntValueLocal !== undefined) {
+            fctx.body.push({ op: "local.get", index: ntValueLocal });
+          } else {
+            const ntType = compileExpression(ctx, fctx, newTargetArg, externRef);
+            if (ntType && ntType.kind !== "externref") coerceType(ctx, fctx, ntType, externRef);
+            else if (ntType === null) fctx.body.push({ op: "ref.null.extern" });
+          }
           const isCtorIdx = ensureReflectIsConstructor(ctx);
           fctx.body.push({ op: "call", funcIdx: isCtorIdx });
           fctx.body.push({ op: "i32.eqz" });
@@ -1919,6 +1967,26 @@ export function compileNamespaceStaticCall(
           }
         }
 
+        // (#3371 r4) An ordinary user function is the one target whose ordinary
+        // `new` lowering CANNOT carry an arbitrary NewTarget prototype — the
+        // instance is a closed struct with no `$proto` field, so patching it
+        // afterwards is a silent no-op. Route it through the native ordinary
+        // [[Construct]] driver, which creates the instance FROM the prototype
+        // and therefore also gives the body's own `Object.getPrototypeOf(this)`
+        // the right answer.
+        if (
+          newTargetRoute === "driver" &&
+          tryEmitOrdinaryConstructWithNewTarget(
+            ctx,
+            fctx,
+            unwrapReflectConstructExpr(targetArg),
+            unwrappedList.elements as readonly ts.Expression[],
+            ntValueLocal!,
+          )
+        ) {
+          return { kind: "externref" };
+        }
+
         const newExpr = ts.factory.createNewExpression(targetArg, undefined, [
           ...unwrappedList.elements,
         ] as ts.Expression[]);
@@ -1932,8 +2000,9 @@ export function compileNamespaceStaticCall(
 
         if (!distinctNewTarget) return { kind: "externref" };
 
-        const assignedProto = assignedNewTargetPrototype(ctx, newTargetArg!, expr.getStart());
-        if (assignedProto === undefined) {
+        if (refuseDistinctNewTarget) {
+          // Verbatim the pre-r4 refusal, emitted at the pre-r4 point (after the
+          // ordinary construction, with its value on the stack).
           reportError(
             ctx,
             expr,
@@ -1943,14 +2012,32 @@ export function compileNamespaceStaticCall(
           return { kind: "externref" };
         }
 
-        if (isDefinitelyPrimitivePrototype(ctx, assignedProto)) return { kind: "externref" };
+        const assignedProto = staticNewTargetProto;
+        if (assignedProto !== undefined && isDefinitelyPrimitivePrototype(ctx, assignedProto)) {
+          return { kind: "externref" };
+        }
 
         // Preserve the constructed value while evaluating the selected proto.
         const resultLocal = allocLocal(fctx, `__reflect_construct_result_${fctx.locals.length}`, externRef);
         fctx.body.push({ op: "local.set", index: resultLocal });
-        const protoType = compileExpression(ctx, fctx, assignedProto, externRef);
-        if (protoType && protoType.kind !== "externref") coerceType(ctx, fctx, protoType, externRef);
-        else if (protoType === null) fctx.body.push({ op: "ref.null.extern" });
+        if (assignedProto === undefined) {
+          // (#3371 r4) `? Get(NewTarget, "prototype")` — a real property read on
+          // the once-evaluated NewTarget value, so a getter runs (and its throw
+          // propagates) exactly as the spec requires.
+          if (!emitRuntimeNewTargetPrototype(ctx, fctx, ntValueLocal!)) {
+            reportError(
+              ctx,
+              expr,
+              "Codegen error: standalone Reflect.construct cannot read NewTarget.prototype at runtime (#3371).",
+            );
+            fctx.body.push({ op: "local.get", index: resultLocal });
+            return { kind: "externref" };
+          }
+        } else {
+          const protoType = compileExpression(ctx, fctx, assignedProto, externRef);
+          if (protoType && protoType.kind !== "externref") coerceType(ctx, fctx, protoType, externRef);
+          else if (protoType === null) fctx.body.push({ op: "ref.null.extern" });
+        }
         const protoLocal = allocLocal(fctx, `__reflect_construct_proto_${fctx.locals.length}`, externRef);
         fctx.body.push({ op: "local.set", index: protoLocal });
 
@@ -1959,6 +2046,25 @@ export function compileNamespaceStaticCall(
         fctx.body.push({ op: "local.get", index: resultLocal });
         fctx.body.push({ op: "any.convert_extern" });
         fctx.body.push({ op: "local.set", index: resultAny });
+
+        if (assignedProto === undefined) {
+          // (#3371 r4) Runtime path: the nominal view carriers keep their direct
+          // struct write; everything else takes the ordinary [[SetPrototypeOf]]
+          // instead of the "not implemented for this target carrier" refusal.
+          const carriers: { typeIdx: number; fieldIdx: number }[] = [];
+          if (ctx.dvWindowTypeIdx >= 0) carriers.push({ typeIdx: ctx.dvWindowTypeIdx, fieldIdx: 3 });
+          if (ctx.taDynViewTypeIdx >= 0) carriers.push({ typeIdx: ctx.taDynViewTypeIdx, fieldIdx: 5 });
+          if (!applyRuntimeNewTargetPrototype(ctx, fctx, resultAny, resultLocal, protoLocal, carriers)) {
+            reportError(
+              ctx,
+              expr,
+              "Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget " +
+                "without a statically-resolved NewTarget.prototype assignment (#3371).",
+            );
+          }
+          fctx.body.push({ op: "local.get", index: resultLocal });
+          return { kind: "externref" };
+        }
 
         const setCarrierProto = (typeIdx: number, fieldIdx: number): Instr[] => [
           { op: "local.get", index: resultAny },

@@ -3,7 +3,7 @@ id: 4617
 title: "Frontend-neutral semantic IR snapshot for TypeScript 7 and Acorn"
 status: in-progress
 created: 2026-08-22
-updated: 2026-09-01
+updated: 2026-09-05
 assignee: ttraenkler/codex
 branch: codex/4617-frontend-neutral-semantic-ir
 priority: critical
@@ -32,6 +32,7 @@ files:
   - src/ir/program.ts
   - src/ir/prepared-component-sealing.ts
   - src/codegen/certified-function-value-authority.ts
+  - src/codegen/certified-function-value-bindings.ts
   - src/codegen/certified-function-value-evidence.ts
   - src/codegen/certified-function-value-materialization.ts
   - src/codegen/closures.ts
@@ -57,6 +58,8 @@ files:
   - tests/issue-4591-fib-pair-prepared-cutover.test.ts
   - tests/issue-4617-declaration-replay-mutations.test.ts
   - tests/issue-4617-certified-function-value-materialization.test.ts
+  - tests/issue-4617-function-value-evidence.test.ts
+  - tests/issue-4617-metadata-preparation.test.ts
   - tests/issue-4617-semantic-declaration-snapshot.test.ts
   - tests/issue-4617-semantic-function-value-source-projection.test.ts
   - tests/dogfood/acorn-harness.mjs
@@ -3811,6 +3814,182 @@ protected merge queue, D1a-before-D1b order, and full #4590 artifact/runtime
 parity remain mandatory.
 
 ### Frozen implementation handoff
+
+#### 2026-09-05 resumption audit
+
+Resumption starts from protected main `470ceba797a2822ead2a4060fc65fb78c0b52887`
+in an isolated worktree. The former temporary implementation worktree is no
+longer present, and neither core leaf appears in reachable Git history. The
+frozen hashes below remain recovery targets, not available validated source.
+Recover task-specific patch records before reconstructing the draft; do not
+represent the prior static checks as checks of newly reconstructed bytes.
+
+The focused existing C1 control, “routes the exact reduction from replayed facts
+with both live declaration methods poisoned,” passes on this main: one test
+passed, 25 excluded by the explicit filter. This is a baseline check only.
+The subsequent unfiltered suite exited with a V8 heap exhaustion at its
+configured 512 MB worker limit and an IPC channel-closed error; it provides no
+full-suite acceptance result. Resume that measurement with an appropriate
+worker-memory budget or isolated test processes after resource availability
+permits it. A subsequent strict-gated run using the supported
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=2048 VITEST_MAX_FORKS=1` configuration completed:
+23/26 passed. Three pre-existing main failures remain: the raw Prepared binary
+is 137,618 bytes where the direct-relative assertion expects 137,304; optimized
+Prepared is 60,324 bytes versus direct 60,219; and the Prepared cache binding
+resolves to global index 12 versus the pinned 10. These failures predate any
+resumed compiler edits. Preserve the assertions while tracing allocation and
+layout differences; they do not authorize a baseline relaxation or establish
+optimization parity.
+
+Independent current-main review additionally measured the direct ABI slots as
+source/trampoline/cache = 76/300/144, against the old 76/291/139 pins; Prepared
+is 76/78/12. The absolute-index failure therefore includes allocation drift in
+both lanes. The early false-constructibility defect also predates the current
+binary failures, so attributing all three failures to that defect would be
+unsupported. Reconstructed D1a must prove the exact constructible metadata
+family, a single materialization, and the late provider's zero-write behavior,
+then compare complete artifacts against both current controls. Preserve the
+optimizer and investigate any remaining size difference independently.
+
+PR #5600 (certify callable R2 boundaries before emit) changes integration,
+prepared free functions, and the codegen entry point. PR #5598 (retain ordered
+multi-source module-init census) changes the shared multi-prepared owner and
+callable orchestration. Reconcile their merged boundaries before applying D1a
+wiring in those paths. Recovery and the isolated bottom evidence leaf can
+proceed without editing the concurrently owned integration paths.
+
+The evidence extraction owns focused tests in
+`tests/issue-4617-function-value-evidence.test.ts`. These isolate physical
+identity, canonical projection, alias-edge multiplicity, cycle rejection,
+native-name side-space deltas, and identity-preserving remapping from the
+larger lifecycle test. They do not replace the full materialization or #4590
+acceptance suites. A physical reprojection helper checks an independently
+constructed expected recipe and retains all original object/array identities;
+its caller must first authenticate the one-shot settlement authority. The
+evidence leaf neither accepts a caller-supplied lifecycle phase nor changes
+that phase itself.
+
+The metadata support seam was recovered from the recorded successful patch
+lineage: `function-instance-meta.ts` matches its reviewed SHA-256
+`6e41de6649258f47e13897c52846bd8ad854833d002b6c47d478e1b3e8a3f300`
+at 552 lines. It exposes the allocation-only recipe and materializes the name
+before resolving the retained metadata-global object. The current import
+fixup now shifts both metadata and native-string maps, preserving intervening
+main changes; the existing prototype-map loop uses the same shared shift
+helper to keep that oversized file non-growing. The function-metadata suite
+passes all 19 tests, and TS7 typechecking passed after restoring the seam.
+The complete #4590 rerun after this support restoration remains 23/26 with
+exactly the same three failing assertions and numeric values as current main.
+Both LOC and function regrowth gates pass for the two modified source files.
+Full lifecycle and optimization acceptance remains outstanding.
+
+The metadata prerequisite additionally owns
+`tests/issue-4617-metadata-preparation.test.ts`: exercise the real context,
+prepare a metadata slot without materializing its name, insert a real imported
+global, and prove the initializer resolves the same retained object at its new
+absolute index. Cover the native-name cache across a later import as well, and
+reject structural replacement of the prepared metadata global. These controls
+make the two side-table shifts non-vacuous before lifecycle integration.
+
+Use the actual late-import fixup owner (`addHostStringConstantGlobal` in a
+host/native-string context) for positive relocation controls. Raw `addImport`
+does not itself run module-global fixups; treating it as a complete relocation
+operation would invent a broader contract. Keep standalone preparation and
+immediate-materialization equivalence controls separate. No general import
+registration behavior changes are authorized by this prerequisite.
+
+The focused metadata prerequisite tests pass 5/5 (one file, 127 lines,
+SHA-256 `3afc03e9c9f310d777baf99bd06682bb4874791f7afb11804c204cbf6c1317c3`).
+Both native-map relocation controls use the real host-string import owner;
+standalone no-name-allocation and immediate-helper equivalence remain separate
+positive controls. This does not validate the unfinished receipt lifecycle.
+
+The six retained physical arrays are specifically target locals/body,
+trampoline locals/body, cache-global initializer, and metadata-global
+initializer. They are not six emitted instruction sequences. Publication
+evidence follows the real emitted initializer recipe and its exact owner-body
+occurrences, retaining the six physical arrays independently during settlement.
+
+Recovery reached a hash-exact 1,649-line materialization artifact
+(`c853e9ef6946cfd4ec248bdbe1d0cd4b17ac7e51b5559fa9ab99f9406e2bbaa5`).
+The best verified-event authority reconstruction is 1,725 lines but hashes to
+`521448ab1297d5c41525fc51307d80a30b1d3422cf20df8796bec4438448c458`,
+not the frozen authority hash below. Conflicting transcript lineage prevents
+claiming exact recovery. Treat that artifact as a new implementation candidate:
+retain its authority contracts, extract only physical canonical/array helpers
+to the bottom evidence leaf, and require fresh semantic and mutation review.
+Do not inherit historical approval. The old lifecycle test is not recovered;
+its required negative matrix must be reconstructed from the signed plan rather
+than guessed from incomplete patch history.
+
+### Resumption implementation sequence
+
+1. Restore the authority candidate as new source, not as previously approved
+   bytes. Import/re-export the physical canonical, array, and six-array
+   projection helpers from the evidence leaf; keep every Program-ABI join,
+   type-lineage label resolution, active receipt census, owner transition,
+   layout revision, and settlement brand in authority. Repair the missing
+   `assertPhysicalArrayIdentities` definition from the earlier complete
+   snapshot: settlement must compare the six original array identities before
+   accepting remapped canonicals. It must not replace that check with equality
+   of newly captured values. Preserve original API contracts while measuring
+   the remaining source budget; do not compress code or grant an allowance.
+2. Restore the hash-exact materialization source, replacing its independent
+   physical occurrence/native-name walkers with the evidence leaf. Keep the
+   actual metadata/cache publication recipe and current ABI-derived expected
+   operands in materialization. Capture one pushed instruction sequence and
+   its nested initializer, not an invented fixed sequence count. Authenticate
+   the uncommitted settlement token before asking evidence to reproject, then
+   perform the sole layout revision commit after every currentness check.
+3. Rebuild the lifecycle mutation tests from this issue's required matrix,
+   including physical clone replacement, duplicate occurrence, failed native
+   callback/consume replay, second active receipt, stale transition, and
+   post-DCE revision-one terminal checks. Then adapt method-trampoline and
+   source-owner wiring against current main's R2 boundary hooks, preserving
+   their ownership and withdrawal evidence. No route is enabled before the
+   standalone control matrix and fresh Sol review pass.
+
+### Measured authority-query split
+
+The three-leaf estimate did not survive reconstruction: extracting the actual
+physical helpers leaves authority at 1,673 lines, while the evidence leaf's
+required identity, occurrence, native-witness, and remapping checks occupy
+about 1,450. Do not erase invariants, hide lines in dense expressions, or
+increase the 1,500-line ceiling. Separate the existing read-only binding query
+responsibility into `src/codegen/certified-function-value-bindings.ts`:
+
+- It owns `programAbiSession`, required-draft/role joins, target/support
+  binding absence/currentness queries, exact current function/global object
+  and stable-handle joins, and target signature/physical-ABI checks. It may
+  share the deterministic invariant and scalar-validation helpers used by
+  these queries. It reads Program-ABI/context/Wasm state but performs no
+  allocation, body write, brand minting, registry mutation, or transition.
+- Authority retains all prewrite/support/receipt/owner/layout/settlement brands
+  and all lifecycle state. Query success alone must never mint or consume
+  those authorities. Existing public authority exports remain compatible
+  through re-exports; this is not a new route or a generic validation framework.
+- Runtime imports are `materialization -> authority -> bindings -> evidence`,
+  with direct evidence imports where needed. Bindings must not runtime-import
+  authority/materialization or a frontend; type-only receipt projections are
+  permissible. This supersedes the earlier exact three-leaf dependency sketch,
+  not its safety boundary. Every leaf remains at or below 1,500 lines and
+  needs exact-byte Sol review before the D1a implementation PR is ready.
+
+The isolated resumption branch subsequently fast-forwarded to upstream main
+`e4ef2c3ef01cc04126203551240fe95b3513f92e`, incorporating PR #5600
+(`feat(ir): certify callable R2 boundaries before emit`) and PR #5598
+(`feat(ir): retain ordered multi-source module-init census`). Upstream changed
+no metadata/evidence-owned path, and the three reviewed metadata source/test
+hashes remained unchanged after sync. Re-evaluate integration against these
+new boundaries; do not replay the historical index/integration diff blindly.
+The 5/5 and 19/19 measurements above were made before this fast-forward and
+must be rerun on the updated composition before publication.
+The new metadata preparation file has since passed again on `e4ef2c3e`
+(one file, 5/5 tests). The separate existing `tests/issue-4437.test.ts`
+also passed 19/19 on that composition after a fresh load sample of 7.851
+(10 cores, required strictly below 8). An earlier attempt was blocked by
+load 8.615 before spawning a runner. Sol approved the three exact metadata
+source/test hashes above; this approval is limited to the metadata prerequisite.
 
 The 2026-09-01 repair session stopped before publication and left no staged,
 committed, or pushed compiler/test bytes. Its reproducible local checkpoint is

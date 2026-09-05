@@ -135,6 +135,8 @@
     "check:func-budget": "node scripts/check-func-budget.mjs",
     "check:jsr-package-budget": "node scripts/check-jsr-package-budget.mjs",
     "check:harness-compile-budget": "npx tsx scripts/check-harness-compile-budget.ts",
+    "check:dogfood-validation": "node scripts/check-dogfood-validation.mjs",
+    "survey:dogfood-validation": "node scripts/check-dogfood-validation.mjs --survey",
     "inventory:test262-linked-harness": "npx tsx scripts/test262-linked-harness-inventory.ts",
     "check:dead-exports": "node scripts/audit-legacy-reachability.mjs --check",
     "check:godfiles": "node scripts/profile-godfiles.mjs --check",
