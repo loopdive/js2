@@ -1,10 +1,11 @@
 {
   "id": "5333",
   "assignee": "ttraenkler/senior-dev",
-  "requested_by": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5333-nested-capture-abi-live-carrier",
   "claimed_at": "2026-09-05T15:02:07Z",
-  "updated_at": "2026-09-05T15:02:07Z",
-  "write_id": "37163-ylkx4ipm"
+  "updated_at": "2026-09-05T17:25:15Z",
+  "write_id": "95417-0gz9twqo",
+  "released_at": "2026-09-05T17:25:15Z"
 }
