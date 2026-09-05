@@ -202,13 +202,20 @@ describe("#3525 ordered whole-program module-init census", () => {
 
   it("rejects changed AST syntax and changed queues after their authority is retained", () => {
     const syntaxValue = fixture({
-      "./dep.ts": `let value: number = 40;`,
+      "./dep.ts": `export let value: number = 40; value = value + 2;`,
       "./entry.ts": `export interface Entry { readonly tag: "entry"; }`,
     });
     const declaration = syntaxValue.ast.sourceFiles
       .find((source) => source.fileName === "dep.ts")!
       .statements.find((statement) => ts.isVariableStatement(statement)) as ts.VariableStatement;
     const variable = declaration.declarationList.declarations[0]!;
+    const literal = variable.initializer as ts.NumericLiteral & { text: string };
+    literal.text = "41";
+    expect(() => assertMultiPreparedModuleInitCensusCurrent(syntaxValue.census)).toThrow(
+      /multi-prepared-module-init-census:syntax-changed/,
+    );
+    literal.text = "40";
+    expect(() => assertMultiPreparedModuleInitCensusCurrent(syntaxValue.census)).not.toThrow();
     (variable as ts.VariableDeclaration & { initializer?: ts.Expression }).initializer =
       ts.factory.createNumericLiteral("41");
     expect(() => assertMultiPreparedModuleInitCensusCurrent(syntaxValue.census)).toThrow(

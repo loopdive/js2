@@ -130,6 +130,7 @@ type CensusInvariantCode =
 interface SourceSyntaxSnapshot {
   readonly statements: readonly ts.Statement[];
   readonly nodes: readonly ts.Node[];
+  readonly scalarFields: readonly string[];
   readonly text: string;
 }
 
@@ -192,27 +193,63 @@ function terminalRecordsFor(inventory: IrUnitInventory, sourceId: IrSourceId): r
 
 function snapshotSourceSyntax(sourceFile: ts.SourceFile): SourceSyntaxSnapshot {
   const nodes: ts.Node[] = [];
+  const scalarFields: string[] = [];
   const visit = (node: ts.Node): void => {
     nodes.push(node);
+    scalarFields.push(nodeSyntaxScalarFields(node));
     ts.forEachChild(node, visit);
   };
   for (const statement of sourceFile.statements) visit(statement);
   return Object.freeze({
     statements: freezeArray(sourceFile.statements),
     nodes: freezeArray(nodes),
+    scalarFields: freezeArray(scalarFields),
     text: sourceFile.text,
   });
+}
+
+/**
+ * Keep the AST identity check sensitive to in-place parser-field edits. The
+ * compiler normally treats these fields as immutable, but a retained plan must
+ * fail closed if a producer mutates a node after discovery. Cache fields such
+ * as `transformFlags` are intentionally excluded because the checker may fill
+ * them lazily without changing source semantics.
+ */
+function nodeSyntaxScalarFields(node: ts.Node): string {
+  const value = node as ts.Node & {
+    readonly escapedText?: string | number;
+    readonly hasExtendedUnicodeEscape?: boolean;
+    readonly isUnterminated?: boolean;
+    readonly multiLine?: boolean;
+    readonly numericLiteralFlags?: number;
+    readonly rawText?: string;
+    readonly singleQuote?: boolean;
+    readonly text?: string;
+  };
+  return JSON.stringify([
+    node.kind,
+    value.text,
+    value.escapedText,
+    value.rawText,
+    value.hasExtendedUnicodeEscape,
+    value.isUnterminated,
+    value.multiLine,
+    value.numericLiteralFlags,
+    value.singleQuote,
+  ]);
 }
 
 function currentSourceSyntax(snapshot: SourceSyntaxSnapshot, sourceFile: ts.SourceFile): boolean {
   if (snapshot.text !== sourceFile.text || !sameIdentityArray(sourceFile.statements, snapshot.statements)) return false;
   const nodes: ts.Node[] = [];
+  const scalarFields: string[] = [];
   const visit = (node: ts.Node): void => {
     nodes.push(node);
+    scalarFields.push(nodeSyntaxScalarFields(node));
     ts.forEachChild(node, visit);
   };
   for (const statement of sourceFile.statements) visit(statement);
-  return sameIdentityArray(nodes, snapshot.nodes);
+  return sameIdentityArray(nodes, snapshot.nodes) && sameIdentityArray(scalarFields, snapshot.scalarFields);
 }
 
 function sourceLiveFunctionNames(
@@ -502,6 +539,20 @@ export function reconcileMultiPreparedModuleInitCensus(
   metadataByCensus.set(observedCensus, observedMetadata);
   observedMetadata.legacyByCensus.set(observedCensus, observed.bySource);
   return observedCensus;
+}
+
+/**
+ * The queue observation is tied to the exact codegen context and ABI session
+ * that will consume it. A matching inventory alone is insufficient: another
+ * context may have a distinct queue population or session lifecycle.
+ */
+export function isMultiPreparedModuleInitCensusObservedFor(
+  census: MultiPreparedModuleInitCensus,
+  ctx: CodegenContext,
+  session: NonNullable<CodegenContext["programAbiSession"]>,
+): boolean {
+  const metadata = metadataByCensus.get(census);
+  return census.parityObserved && metadata?.ctx === ctx && ctx.programAbiSession === session;
 }
 
 function sameParity(actual: IrModuleInitParityReport | undefined, expected: IrModuleInitParityReport): boolean {

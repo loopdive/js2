@@ -52,6 +52,7 @@ import type { IrExactFunctionClaim } from "./ir-overlay-safety.js";
 import {
   assertMultiPreparedModuleInitCensusCurrent,
   buildMultiPreparedModuleInitCensus,
+  isMultiPreparedModuleInitCensusObservedFor,
   projectMultiPreparedModuleInitCensus,
   type MultiPreparedModuleInitCensus,
   type MultiPreparedModuleInitCensusProjection,
@@ -512,6 +513,35 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       )
     ) {
       this.#fail("module-init-census-mismatch", "module-init census belongs to another owner or source order");
+    }
+    const retainedSourcePlans = this.#moduleInitCensus.sourcePlans;
+    const retainedCanonicalSources = this.#moduleInitCensus.canonicalSources;
+    if (
+      census.sourcePlans.length !== retainedSourcePlans.length ||
+      census.sourcePlans.some(
+        (sourcePlan, index) =>
+          sourcePlan.sourceFile !== retainedSourcePlans[index]?.sourceFile ||
+          sourcePlan.sourceId !== retainedSourcePlans[index]?.sourceId ||
+          sourcePlan.plan !== retainedSourcePlans[index]?.plan,
+      ) ||
+      census.canonicalSources.length !== retainedCanonicalSources.length ||
+      census.canonicalSources.some(
+        (sourcePlan, index) =>
+          sourcePlan.sourceFile !== retainedCanonicalSources[index]?.sourceFile ||
+          sourcePlan.sourceId !== retainedCanonicalSources[index]?.sourceId ||
+          sourcePlan.plan !== retainedCanonicalSources[index]?.plan,
+      )
+    ) {
+      this.#fail(
+        "module-init-census-mismatch",
+        "module-init census was rebuilt instead of derived from the owner’s retained semantic plans",
+      );
+    }
+    if (!isMultiPreparedModuleInitCensusObservedFor(census, this.#ctx, this.#programAbiSession)) {
+      this.#fail(
+        "module-init-census-mismatch",
+        "module-init queue evidence belongs to another codegen context or ABI session",
+      );
     }
     try {
       assertMultiPreparedModuleInitCensusCurrent(census);
