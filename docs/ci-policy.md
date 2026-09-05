@@ -863,13 +863,30 @@ gh api repos/loopdive/js2wasm/rules/branches/main \
 | ----------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cheap gate (main-ancestor + lint)` | `test262-sharded.yml` | fast pre-flight reject: lint + typecheck on the PR branch before any test262 shard runs. Catches obvious failures cheaply and stops the queue from spending compute on a doomed PR.                                                                                                                                                                                                                                                                                                   |
 | `merge shard reports`               | `test262-sharded.yml` | semantic conformance, **both lanes**: aggregates the 57 sharded test262 runs (host + standalone) into a single pass/fail. Authoritative gate via the merge queue (build/merge up to 5 concurrently since #1956; predecessor-group diffing preserves per-PR attribution, so no ALLGREEN hiding) — each PR validated on its own merge_group ref. Hosts the host catastrophic guard (#1668), the standalone net-regression guard (#1897), and the stale-baseline guard (#1668) — see §3. |
-| `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                                                                                    |
+| `quality`                           | `ci.yml`              | source quality regressions: lint, formatting, typecheck failures, IR fallback budget exceeded (#1376), planning-artifact regeneration, **and the dogfood emitted-binary validation floor (#5336)**. Also runs the "origin/main is merged into branch" pre-check that catches stale PR branches.                                                                                                                                                                                       |
 | `equivalence-gate`                  | `ci.yml`              | semantic equivalence regressions across the sharded equivalence suite after the shard partials are merged.                                                                                                                                                                                                                                                                                                                                                                            |
 | `check for test262 regressions`     | `test262-sharded.yml` | full rolling-baseline test262 diff, including pass→fail changes that stay below the inline catastrophic thresholds.                                                                                                                                                                                                                                                                                                                                                                   |
 | `cla-check`                         | `cla-check.yml`       | CLA acceptance for external contributors while preserving internal and bot exemptions.                                                                                                                                                                                                                                                                                                                                                                                                |
 
 The CODEOWNERS file gates **who** can approve. The required checks gate
 **what** must pass. Both must clear for a PR to merge.
+
+### Dogfood emitted-binary validation floor (#5336) — a step, not a seventh context
+
+`pnpm run check:dogfood-validation` runs as a **step inside `quality`**, so it
+gates without changing the required-checks ruleset. It compiles the pinned
+tarball entry of six npm-compat packages (no test execution, no upstream
+clone) and fails when `compile.success` is true but the emitted binary is
+rejected by `WebAssembly.compile`. That implication is a theorem about the
+compiler, not a target — a module that codegens but will not load is always a
+bug — which is why it needs no baseline and no golden number.
+
+Why it exists: #5390 broke it for moment and survived **five merges with all
+six required checks green**, because no check read `compile.validated`. Cost:
+**~20 s wall** at concurrency 4 (bounded by moment's ~15 s compile) against a
+~10 min `quality` job. If it ever needs to become its own required context —
+e.g. to move it off `quality`'s critical path — that is a ruleset change and
+goes through §8, not through a workflow edit.
 
 `benchmark-refresh.yml` (the playground perf gate) is not in the required-
 checks list but its `pull_request` event path is a hard fail on regression
