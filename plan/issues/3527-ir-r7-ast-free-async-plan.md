@@ -601,3 +601,44 @@ reason to bypass preparation or silently widen a backend.
   merge-group Test262. Report remaining fixture producers, C-1 await elision,
   unsupported containers/handlers and target gaps explicitly. A green
   playground family or the small IR-only corpus cannot close this issue.
+
+### B2 implementation checkpoint — 2026-09-05
+
+The B2 implementation is published in signed merge head
+`873e5fa140f65040bab224a1d147582a55a615c9`, whose parents are the signed B2
+implementation `a8bc547795f47ec0847466b0bb0ebb5a75cb01f8` and current upstream
+`470ceba797a2822ead2a4060fc65fb78c0b52887`. The branch is
+`codex/3527-b2-luna-20260905`; PR #5602 is open against `loopdive/js2:main`
+from `ttraenkler:codex/3527-b2-luna-20260905`.
+
+The structural source record and AST free producer now admit arbitrary positive
+await counts in supported top level straight line async declarations. The
+runtime fixture measures five source awaits and five emitted frame state edges:
+pending `delay`, settled `Promise.resolve`, an unused settled
+`Promise.resolve`, settled non thenable `await 42`, and a second pending
+`delay`. The IR and native controls both produce the event sequence
+`schedule:0:1`, `fire:0`, `observer:1`, `observer:2`, `schedule:0:1`,
+`fire:0`; the independent Promise observer distinguishes retained settled
+awaits from static erasure. Controlled first and second rejection cases stop
+later state effects, and final void owners resolve `undefined` through the
+canonical ABI. The direct engine value comparison remains supplemental.
+
+The pure preparation suite verifies three states/two suspensions, computed
+SSA liveness `[[0], [0, 4]]` with SSA spills `{0, 4}`, mutable slot reaching
+definitions with slot spill `{3}`, and verifier refusal of missing liveness,
+missing spills, duplicate states, and missing runtime intent. The direct body
+poison control observes direct `0` / IR `1` for newly prepared owners.
+
+Post merge validation: the two B2 suites passed 10/10 tests and the adjacent
+async plan suite passed 12/12. Typecheck, format, fallback, IR only hybrid and
+IR only, dialect, neutrality, layering, stack, host import, LOC/function,
+oracle/coercion, numeric local parity (18/18), issue integrity, and normal
+pre push checks passed. The focused #4106 suite passed 7/8 with its existing
+host free invalid `WebAssembly.validate` baseline red; the #4104 suite passed
+16/17 with its existing `functionPrototypeCall` policy expectation red.
+
+This checkpoint does not close R7. Loops/back edges, handlers, nested
+executable containers, async generators, `for await`, WASI, and fully settled
+owners on the historical C 1 route remain separate work. Existing standalone
+and WASI invalid opcode validation reds remain unchanged, and no baseline was
+weakened.
