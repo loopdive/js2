@@ -37,6 +37,14 @@ files:
   - scripts/check-linear-ir.ts
   - scripts/linear-ir-baseline.json
   - tests/issue-3528-linear-shared-prepared-program.test.ts
+loc-budget-allow:
+  # L0-P1's production capture/consumer seam is explicitly owned here; the
+  # driver grows only for the required frozen handoff and remains bounded.
+  - src/ir/backend/linear-integration.ts
+func-budget-allow:
+  # The same bounded handoff is assembled at the existing linear entrypoint;
+  # keep its allowance scoped to that one production function.
+  - src/ir/backend/linear-integration.ts::compileLinearIrFunctions
 ---
 
 # #3528 — IR-only R8: linear consumes the shared Prepared IR program
@@ -647,3 +655,75 @@ runtime intents and R7 the same immutable async plans. Only that cutover can
 remove linear's independent selector/from-AST fixed point, followed by its
 multi-source direct frontend and the full R8 retirement gate. All R8 acceptance
 boxes and full #3518 retirement acceptance remain open after this prerequisite.
+
+### Implementation Record — 2026-09-05 — L0-P1 immutable body handoff
+
+Implemented the L0-P1 production boundary in `src/ir/backend/linear-integration.ts`.
+After `prepareLinearIntrinsicFunctions` and `prepareLinearStringRepeatFunctions`,
+the linear producer now captures the exact built `IrModule`, owner census,
+runtime manifest/provider projection, counted-string receipt projection, effect
+facts and detached allocation facts in an authenticated `FrozenIrBodyBatch`.
+`planLinearMemoryFromFrozenFacts` consumes the captured allocation evidence and
+performs only backend layout/policy work. Each accepted linear owner is lowered
+through `consumeFrozenIrBodyBatch` with an authenticated backend/session join and
+physical-signature evidence; accepted lowering failures are terminal invariants
+and cannot fall through to direct emission. The same immutable batch is exercised
+with both the existing `LinearEmitter` and `WasmGcEmitter` in the common-input
+test; normal WasmGC production remains outside this slice.
+
+The batch factory in `src/ir/frozen-body-batch.ts` verifies every executable
+function before ownership publication, owns nested IR/maps/sets/provider data,
+preserves optional fields and explicitly branded recursive shapes, records
+ordered `effectsOf` facts, and computes a deterministic digest over the owned
+graph with undefined/null/numeric-edge values and recursive identity preserved.
+`src/ir/backend/frozen-body-consumer.ts` validates exact owner sets, backend
+legality, physical slots and session identity before lowering any body. The
+allocation registry snapshot and `verifyLinearPreparedAllocationFacts` retain
+live/aliased/retired provenance, explicit metadata presence, canonical site
+structure and exact body/fact joins; unknown, retired, cyclic, missing, extra or
+falsified evidence is rejected before layout.
+
+Validation was run in the implementation worktree at base
+`485c73e72adc49be115d99de2cd4c0394f7d0fd0`:
+
+- `pnpm run typecheck`: exit 0.
+- `tests/issue-3528-frozen-body-handoff.test.ts` plus
+  `tests/ir/alloc-registry.test.ts`: 2 files, 20 tests passed. This includes
+  one real linear production capture, same-object dual-consumer execution,
+  two-function loop/branch/mutable-slot/`math.imul` graph execution, ordered
+  imported-call execution in both emitters, immutable mutation controls,
+  malformed body rejection, recursive-shape/digest recapture, exact selected
+  `math.abs` provider/attachment and missing-manifest controls, complete
+  allocation-fact corruption controls, and a nonempty late-lowering failure
+  whose retry is rejected after the first accepted attempt.
+- Required IR/linear group 1: 8 files, 55 tests passed. Required linear and
+  allocation group 2: 6 files, 66 tests passed.
+- `node --import tsx scripts/check-linear-ir.ts`: exit 0, 13 files measured,
+  10 compiled, buckets `select:async-function=4`,
+  `select:body-shape-rejected=24`, `select:call-graph-closure=11`.
+- `node --import tsx scripts/check-ir-only.ts --json`: exit 0; single-host and
+  standalone lanes each reported 5 entries, 41 terminal units, 38 IR bodies,
+  zero unsupported/invariant/legacy bodies, and three non-executable units.
+- `node --import tsx scripts/check-ir-fallbacks.ts`: exit 0; no unintended,
+  module-level or post-claim increases; deferred
+  `string-builder-candidate` remained 2 versus baseline 2.
+- `pnpm run check:ir-dialect`, `pnpm run check:ir-kind-neutrality`,
+  `pnpm run check:ir-layering`, targeted Prettier, `pnpm run lint`, and
+  `git diff --check`: exit 0. The layering ratchet remained 86 import lines
+  across 15 files, equal to baseline.
+
+The frontmatter contains one scoped `loc-budget-allow` for
+`src/ir/backend/linear-integration.ts`, which the ratchet measured as
+`1936 → 2034 (+98)` for this plan's explicitly owned production capture and
+consumer seam, and one scoped `func-budget-allow` for its existing
+`compileLinearIrFunctions` entrypoint (`508` lines versus the `419` baseline).
+No oracle allowance or baseline-file update was made.
+
+The repository-wide `node scripts/check-issue-ids.mjs` helper could not run in
+this worktree because it resolves the space-containing path as
+`/Volumes/Archiv%20Mini/.../plan/issues` (ENOENT); no issue-id result is inferred
+from that failed helper. No full local Test262 run was attempted. The slice
+does not claim backend-neutral frontend preparation, normal WasmGC production
+routing, one source build per owner, whole-program ABI/session publication,
+async-plan cutover, or R8 completion; remaining loops, handlers, containers and
+WASI work stay explicitly outside this increment.
