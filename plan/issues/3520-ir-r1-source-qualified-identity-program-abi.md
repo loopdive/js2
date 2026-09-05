@@ -10,7 +10,7 @@ pr: 4733
 last_merged_pr: 4733
 sprint: current
 created: 2026-07-21
-updated: 2026-09-04
+updated: 2026-09-05
 priority: critical
 horizon: l
 complexity: L
@@ -5527,3 +5527,179 @@ transcript. Everything below is on `main` unless marked otherwise.
 - Plans live in issue files; implementers are Opus subagents (`senior-developer`, `isolation: worktree`), briefs list the full `quality` gate set, trailers `Model: Claude Opus 5 High`, and PR bodies go to the orchestrator's scratchpad because subagents cannot open PRs. The load gate blocks spawns at 1-min load ≥ 2 on this 4-core box.
 - A container restart on 2026-09-04 ~03:30Z killed two agents mid-validation; their worktrees survived and the W1-C implementation was salvaged by `git diff` from the dead worktree. Check `git -C .claude/worktrees/<agent> status` before re-running anything.
 - Claims: every landed slice's claim is completed on `origin/issue-assignments`; live claims at hand-over time are `5312` (opus-5312, running) and `5313` (PR #5572 in CI). `3520:w1h-…` is planned but **not** claimed.
+
+## Implementation Plan — 2026-09-05
+
+### W1-H execution lock: reject positively identified reference pairs before claim
+
+Planner: **Astra**. Source reviewed at `a53b1bd17338c01f4bffe2df6b3463d216990a6b`
+in the isolated `codex/ir-astra-plans-20260905` worktree. This section supersedes
+the September 4 W1-H implementation recipe, **not** the epic's acceptance
+criteria or its `in-progress` status. This is a source-grounded plan; the
+planner did not run compiler tests or repeat the historical corpus measurements.
+The implementer must produce fresh base/candidate evidence below.
+
+Lead-run preflight on this same base (September 5) independently reproduced
+the selected support-name collision test: one failed, one skipped, with a
+nonempty `irPostClaimErrors` assertion (`.tmp/ir-wave-20260905/equality-base.log`).
+The lead also reported typecheck and `check:ir-fallbacks` passing, and an
+IR-only report with five entries / 41 terminal units / 38 emitted / three
+non-executable / zero legacy bodies, Unsupported or Invariants **per lane**.
+These are attributed lead measurements, not runs performed by the planner;
+the implementer still needs its own focused base/candidate comparison.
+
+**Reserved slice:** `3520:w1h-equality-reference-operands`, owner
+`ttraenkler/luna-ir-equality-20260905`, branch
+`codex/3520-w1h-luna-20260905`. The lead verified the authoritative assignment
+record on September 5. Do not reclaim it under another owner. The older
+handover's "unclaimed" statement is historical.
+
+### Root cause and correction to the previous plan
+
+`selectorPrimitiveWrapperOrGenericBinary` (`src/ir/select.ts:7361`) still
+accepts generic equality after checking only each operand's syntax.
+`lowerBinary` (`src/ir/from-ast.ts:13027`, mismatch arm at `:13295`) still
+refuses closure/object carriers after claim. `checkerProvesBinarySourceCapabilityGap`
+(`:12625`) correctly distinguishes a source capability gap from a broken
+primitive producer; keep that distinction and its hard invariant backstop.
+
+The previous plan's second refusal condition is **not permitted**: two
+`undefined` results from `classifyDeclaredPrimitiveExpression` do not prove two
+references. `makeIrDeclaredPrimitiveExpressionClassifier`
+(`src/ir/module-bindings.ts:480-519`) also returns `undefined` for `any`,
+`unknown`, nonprimitive unions, and a failed checker query. There is real
+dynamic equality lowering at `from-ast.ts:13195` and `:13993`; a missing
+primitive classification must not suppress it or hide an invariant.
+
+No new checker hook is needed to fix the motivating callable pair:
+
+- `whyNotIrClaimable` (`select.ts:2003-2009`) records an expressible
+  `FunctionTypeNode` parameter through `recordCallableProjection` (`:7580`).
+- `knownCallableArity` (`:8329-8362`) consults that scoped evidence.
+- `obviousSelectorValueFamily` (`:9021-9061`) consequently returns
+  `"reference"` for **each** of `a` and `b` in the actual `hof.ts` fixture.
+  Scope snapshots, shadowing and mutation invalidation already belong to those
+  helpers; do not build another name table or alter their lifecycle.
+
+### Exact edits and boundary
+
+**Production ownership: `src/ir/select.ts`, only
+`selectorPrimitiveWrapperOrGenericBinary` and a small adjacent private helper
+if needed.** Leave `phase1MemberName` and class selection to the R3 lane.
+
+After the existing primitive-wrapper loose-equality special case and before
+the generic `isPhase1BinaryOp` tail:
+
+1. Match exactly `===`, `!==`, `==`, or `!=`.
+2. Ask `obviousSelectorValueFamily` for both operands in the current scope.
+3. If **both answers are positively `"reference"`**, return
+   `capabilityNo("operand-coercion-unsupported",
+   "expr-equality-reference-operands", expr)`.
+4. Otherwise retain the existing decision unchanged. In particular,
+   `undefined` evidence means **unproven**, not a reference and not a new
+   acceptance. This guard adds no admission path.
+
+The strict unshadowed-`undefined` arm (`select.ts:9562`) runs earlier.
+The new both-reference condition also excludes literal `null`; keep the
+existing strict-null lowering and module-extern guards unchanged. Do not use
+"either operand is a reference": reference/primitive and reference/nullish
+pairs have separate folds/coercion contracts this slice does not re-prove.
+
+The minimal deliverable is the callable-pair failure in
+`tests/issue-3520-support-callable-abi.test.ts:14-18,114-140`. Array and local
+class pairs qualify only through the existing positive family helper, and
+must be included in the fresh before/after matrix. A structural object
+parameter such as `a: { x: number }` may still have no positive family
+certificate; **do not add the old "undefined + undefined" heuristic to make
+that row pass**. Record its remaining outcome as a separate follow-up. A
+new exact reference classifier would be a separate scope with its own
+dynamic/unknown and carrier controls.
+
+**Wasm emission:** none is added. Unsupported owners retain the established
+direct fallback where policy allows it; they do not first allocate an IR body
+and then demote. Do not add `ref.eq`, a new IR node, a runtime import, boxing,
+or a representation conversion. `from-ast.ts`, the Program ABI resolver,
+`nodes.ts`, `lower.ts`, and all invariant/error classifiers are read-only.
+
+### Fresh verification required before widening the change
+
+Create `tests/issue-3520-equality-reference-operands.test.ts` using the
+`generateModule` / `generateMultiModule` and exact outcome patterns in
+`tests/issue-3529-selector-preclaim.test.ts` and the existing support-callable
+test. Run baseline cases before the production edit; use `target: "gc"` and
+`target: "standalone"`, never the ignored `standalone: true` spelling.
+
+| Case | Candidate contract |
+| --- | --- |
+| `a,b: () => number`, each of the four equality operators | Unsupported at **select**, exact code above, no post-claim build error |
+| The same strict comparison inside the original `try/catch` | Same; the callable scope evidence survives the nested body walk |
+| Existing multi-source support-name collision test | No support callable published, no post-claim equality error; retain every existing assertion |
+| Array and local-class reference pairs identified by the helper | Pre-claim refusal only where base actually reaches the unsupported reference lowerer; investigate any previously emitted row |
+| Structural-object params without positive family evidence | Record and preserve the base verdict; no invented reference proof |
+| Number/string/boolean equality, `x === undefined`, `x !== null` | Preserve base outcome, emitted bytes and executed value |
+| `any`/unknown operands, primitive unions, type assertions, omitted classifiers | Preserve base outcome; no new reference label merely because evidence is absent |
+| Inner primitive shadow of an outer callable, callable alias and mutation cases | Use existing scope/invalidation evidence; no text-only lookup |
+
+Enable `JS2WASM_IR_SHAPE_DIAG=1` **before module import** in a fresh test
+process to assert the arm `expr-equality-reference-operands:BinaryExpression`.
+Also assert a nonempty exact outcome population; an absent row is not a
+successful rejection. If base no longer demonstrates the motivating
+post-claim error, stop and report that evidence before changing selection.
+
+The production edit alone must be removable to make the new callable-pair
+assertions and original collision assertion fail again. Preserve and run the
+no-checker / same-primitive producer-invariant controls in
+`tests/issue-3529-*` and `tests/issue-4502.test.ts`; do not convert their hard
+failures into Unsupported to make this slice green.
+
+### Commands and evidence to hand back
+
+Run these from the implementer's isolated worktree, on both the captured base
+and candidate where a comparison is requested:
+
+```bash
+JS2WASM_IR_SHAPE_DIAG=1 pnpm exec vitest run tests/issue-3520-equality-reference-operands.test.ts tests/issue-3520-support-callable-abi.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+pnpm exec vitest run tests/issue-3529-selector-preclaim.test.ts tests/issue-3529-ir-producer-parity.test.ts tests/issue-3529-integration-preflight.test.ts tests/issue-4502.test.ts tests/issue-2949-direct-member-equality.test.ts tests/issue-4208-wrapper-loose-equality-ir.test.ts tests/issue-4208-strict-eq-type-disjoint.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+node --import tsx scripts/check-ir-fallbacks.ts
+node --import tsx scripts/check-ir-only.ts --policy=hybrid
+node --import tsx scripts/check-ir-only.ts --policy=ir-only
+pnpm run check:ir-dialect
+pnpm run check:ir-kind-neutrality
+pnpm run check:ir-layering
+pnpm run typecheck
+pnpm run lint
+node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs && node scripts/check-coercion-sites.mjs && pnpm run check:oracle-ratchet && pnpm run check:dead-exports
+```
+
+Run the five ratchets again against the lead-verified main SHA using
+`LOC_GATE_BASE` for the LOC/function checks. Any grant belongs in this issue's
+frontmatter with the actual measured growth and reason; do not copy the old
+"approximately +25" estimate or edit main-owned budget baselines.
+
+Capture byte/diagnostic baselines before editing with
+`node --import tsx scripts/prove-emit-identity.mjs write --baseline .tmp/w1h-emit-base.json`,
+then the same command with `check --baseline .tmp/w1h-emit-base.json` on the
+candidate. Use `node --import tsx` here because this sandbox denies the CLI's
+IPC socket. This tool
+enumerates **`.ts` only**: it is not evidence for the dogfood `.js` corpus.
+For any additional `.js` cohort, record an explicit enumerated manifest,
+target, exact base/candidate SHA, per-row result and successful-compile floor.
+No historical 34/66/102-row count or "24 known failures" is a current result.
+Run the broader R1/R3 suites one file per invocation and report a fresh
+failing-name diff; the planned-support injection and Date/ambient-module-init
+failures are distinct residuals, not exemptions inferred from their names.
+Complete repository-required equivalence/quality checks before publication.
+
+### Luna max dispatch brief
+
+Implement only the reserved W1-H slice above, with **Luna / max**, in
+`codex/3520-w1h-luna-20260905`. You are not alone in the repository: preserve
+other edits, recheck the live claim/PR snapshot through the lead, and do not
+touch another lane's functions. Own the one selector function, the new
+focused test and this issue's measured landing record. First reproduce on the
+actual branch base, then add the positive-pair refusal and prove the
+before/after and removal controls. Source/test evidence outranks this plan.
+Return exact commands, base/head SHAs, moved outcome rows and any residual
+failures. Keep the epic open and do not claim reference-equality IR support:
+this slice removes a post-claim refusal, it does not implement reference
+identity lowering.
