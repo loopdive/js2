@@ -520,3 +520,79 @@ design, not something this slice introduced, and out of scope here.
 Not claimed and not touched, per the lane protocol: the generator carrier
 (#2864), the promise/microtask carrier (#2867) and built-in method reflection
 (#2175).
+
+### Review round 1 (2026-09-05)
+
+Fix-round lane, worktree `/home/user/js2/.claude/worktrees/wf_05fc6ce9-91e-1`,
+branch `worktree-wf_05fc6ce9-91e-1` (fresh worktree of
+`claude/es6-test262-standalone-g10c7u`, then `git merge worktree-wf_a9776683-b00-1`).
+Base tree for every A/B: `.tmp/rev5316/base` (`origin/main` at `f9bf876899`).
+One confirmed finding, fixed; one refuted, left as the lane wrote it.
+
+#### F1 — the validators were wired on `--target wasi` too, and broke it (FIXED)
+
+**What went wrong.** `--target wasi` sets `ctx.wasi` and leaves `ctx.standalone`
+false, and `ensureProxyRuntime` runs on both. So the §10.5 validators were live
+under wasi, where **10 of 10 compliant Proxy probes that work on `origin/main`
+and in node threw a TypeError** (`.tmp/rev5316/p/final`, harness
+`.tmp/rev5316/p/batch.mts` with `TGT=wasi`):
+
+| probe | node | base wasi | lane wasi (before fix) | fixed wasi |
+| --- | ---: | ---: | --- | ---: |
+| c09 c13 c14 c27 f01 f02 f06 f07 q12 z06 | 3 2 3 99 1 1 1 1 1 1 | same | **TypeError ×10** | same as node |
+
+**Why — the validators are sound, their inputs are not on wasi.** Measured on
+the BASE tree with **Proxy-free** probes (`.tmp/rev5316/p/w5`), i.e. this is a
+pre-existing `origin/main` defect, not something r4 introduced. Three of the
+primitives the validators consume answer wrongly for an ordinary object literal
+under wasi, while standalone answers all three correctly:
+
+| probe | program | node | standalone | **wasi** |
+| --- | --- | ---: | ---: | --- |
+| `w5/e1` | `Object.isExtensible({a:1,b:2})` | 1 | 1 | **0 (says non-extensible)** |
+| `w5/e2` | `Object.getOwnPropertyNames({a:1,b:2}).length` | 2 | 2 | **0 (no own names)** |
+| `w5/e3`, `w5/e4` | `Object.getOwnPropertyDescriptor({a:1},"a")` | 1, 1 | 1, 1 | **traps** |
+
+Feed those to a correct §10.5 check and every ordinary target looks
+non-extensible with no own properties, so the trap answer "violates" an
+invariant that was never violated. This is the same family as the
+`IsExtensible` clause the lane already declined for standalone.
+
+**Fix.** `registerProxyInvariantValidators` now returns `null` at the top when
+`ctx.wasi`, before any registration or string-constant side effect. Every call
+site already handles `null` by keeping the pre-#5316 unvalidated dispatch, so
+wasi reverts to base behaviour with no new arm. Standalone is untouched — the
+gate is on the target discriminator, and `ctx.wasi` is false there.
+
+**Outcome, measured:**
+
+| pin | result |
+| --- | --- |
+| 10 wasi probes vs node and base | **10/10 equal** (were 0/10) |
+| wasi byte-identity vs base — 5 Proxy-free MOP probes + 1 Proxy program | **6/6 identical sha256** (e.g. `pxy.ts` 106,150 B `ed1042c80008` on both) |
+| standalone byte-identity vs the unfixed lane, same 6 programs | **6/6 identical sha256** — the fix cannot move standalone |
+| step-1 rows, `run-test262-paths.mts --isolate .tmp/step1-rows.txt --standalone` | **pass 19** — the lane's 19 kept rows, unchanged |
+| 464-row control (`built-ins/Proxy` + `built-ins/Reflect`), same command | see below |
+| `tests/issue-5316-r4-invariants.test.ts`, node 22 and node 25 | 45/45 pass on both (one vitest `onTaskUpdate` IPC timeout under concurrent load — infrastructure, no failed test) |
+
+**Regression pin added.** Four `wasi probe stays working — …` cases in
+`tests/issue-5316-r4-invariants.test.ts` compile the compliant get / ownKeys /
+gopd / set shapes at `target: "wasi"` and assert the node value. A/B by file
+copy: **4/4 fail with the gate reverted, 4/4 pass with it** — so a future
+wiring change that forgets the gate turns them red instead of shipping silently.
+
+**Ownership.** The three wrong answers above are the **wasi attribute model's**,
+not r4's; they are unfixed and out of this slice. Until they are, the wasi lane
+cannot carry any descriptor-model invariant. Probe file for whoever picks it up:
+`.tmp/rev5316/p/w5/{e1,e2,e3,e4}.ts`.
+
+**Re-learned the hard way:** the quickjs eval adapter is keyed on the compiler
+bundle hash, so the first step-1 re-run after the source edit reported six
+`-realm` rows as "quickjs provider is not built". Rebuild
+`scripts/build-quickjs-eval-provider.mjs` after **every** bundle rebuild — the
+lane's own note said so and it still cost a cycle.
+
+#### F2 — refuted
+
+No change. The decline note above (the `IsExtensible` clause, two rows) stands
+as the lane wrote it.

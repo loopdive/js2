@@ -313,6 +313,62 @@ const PROBES: { name: string; source: string }[] = [
   },
 ];
 
+/**
+ * (Review round 1, 2026-09-05) The WASI half of the SAME question, and the
+ * reason `registerProxyInvariantValidators` refuses to register under
+ * `ctx.wasi`. Each program below is COMPLIANT — node answers the stated value
+ * and so does `origin/main` on `--target wasi`. With the validators wired under
+ * wasi all ten threw a TypeError, because three primitives they consume answer
+ * wrongly for an ordinary object literal on that target (`Object.isExtensible`
+ * -> false, `Object.getOwnPropertyNames` -> length 0,
+ * `Object.getOwnPropertyDescriptor` traps). These pin the gate: a future wiring
+ * change that forgets it turns every row here red.
+ */
+const WASI_COMPLIANT_PROBES: { name: string; source: string; expect: number }[] = [
+  {
+    name: "get trap returning the non-configurable non-writable target value",
+    source: `
+      const t: any = {};
+      Object.defineProperty(t, "a", { value: 3, writable: false, configurable: false });
+      const p: any = new Proxy(t, { get(): any { return 3; } });
+      return p.a;
+    `,
+    expect: 3,
+  },
+  {
+    name: "ownKeys reporting exactly the target's own keys",
+    source: `
+      const t: any = { a: 1, b: 2 };
+      const p: any = new Proxy(t, { ownKeys(): any { return ["a", "b"]; } });
+      return Object.getOwnPropertyNames(p).length;
+    `,
+    expect: 2,
+  },
+  {
+    name: "gopd trap answering a fresh configurable descriptor",
+    source: `
+      const t: any = { a: 1 };
+      const p: any = new Proxy(t, {
+        getOwnPropertyDescriptor(): any { return { value: 99, configurable: true, enumerable: true, writable: true }; },
+      });
+      const d: any = Object.getOwnPropertyDescriptor(p, "a");
+      return d.value;
+    `,
+    expect: 99,
+  },
+  {
+    name: "set trap reporting success for a SameValue write",
+    source: `
+      const t: any = {};
+      Object.defineProperty(t, "a", { value: 0, writable: false, configurable: false });
+      const p: any = new Proxy(t, { set(): boolean { return true; } });
+      p.a = 0;
+      return 1;
+    `,
+    expect: 1,
+  },
+];
+
 async function runProbe(source: string, name: string): Promise<number> {
   const result = await compile(`export function test(): number {\n${source}\n}\n`, {
     allowJs: true,
@@ -334,6 +390,24 @@ describe("#5316 r4 §10.5 descriptor-model Proxy invariants", () => {
   for (const probe of PROBES) {
     it(`standalone probe — ${probe.name}`, { timeout: TIMEOUT_MS }, async () => {
       expect(await runProbe(probe.source, probe.name)).toBe(0);
+    });
+  }
+
+  for (const probe of WASI_COMPLIANT_PROBES) {
+    it(`wasi probe stays working — ${probe.name}`, { timeout: TIMEOUT_MS }, async () => {
+      const result = await compile(`export function test(): number {\n${probe.source}\n}\n`, {
+        allowJs: true,
+        fileName: "issue-5316-r4-invariants-wasi.ts",
+        skipSemanticDiagnostics: true,
+        target: "wasi" as const,
+      });
+      expect(
+        result.success,
+        `${probe.name}: compile failed:\n${result.errors?.map((e) => `L${e.line}: ${e.message}`).join("\n") ?? ""}`,
+      ).toBe(true);
+      if (!result.success) return;
+      const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+      expect((instance.exports as { test: () => number }).test()).toBe(probe.expect);
     });
   }
 

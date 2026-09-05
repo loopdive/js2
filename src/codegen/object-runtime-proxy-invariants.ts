@@ -80,6 +80,21 @@ export function registerProxyInvariantValidators(
   ctx: CodegenContext,
   registerNative: RegisterNative,
 ): ProxyInvariantValidators | null {
+  // (#5316 r4, review round 1) TARGET GATE — these validators are sound only
+  // where the attribute model they consume is. `--target wasi` sets `ctx.wasi`
+  // and leaves `ctx.standalone` false, and under it three of the primitives
+  // below answer WRONGLY for an ordinary object literal (measured on
+  // `origin/main`, i.e. pre-#5316, with Proxy-free probes —
+  // `.tmp/rev5316/p/w5`): `Object.isExtensible({a:1,b:2})` -> `false`,
+  // `Object.getOwnPropertyNames({a:1,b:2})` -> length 0, and
+  // `Object.getOwnPropertyDescriptor({a:1},'a')` traps. Feeding those answers
+  // to a sound §10.5 check turns COMPLIANT Proxy programs into TypeErrors: 10
+  // probe programs that are correct on base and on node all threw on the
+  // unguarded lane. The wasi attribute-model primitives are the pre-existing
+  // owner of that defect; until they are fixed, wasi keeps the pre-#5316
+  // (unvalidated) dispatch byte-for-byte. Standalone, where all three answer
+  // correctly, is unaffected.
+  if (ctx.wasi) return null;
   const gopdIdx = ctx.funcMap.get("__getOwnPropertyDescriptor");
   const externGetIdx = ctx.funcMap.get("__extern_get");
   const externHasIdx = ctx.funcMap.get("__extern_has");
