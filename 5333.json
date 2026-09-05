@@ -1,11 +1,10 @@
 {
   "id": "5333",
-  "assignee": "",
+  "assignee": "ttraenkler/senior-dev",
   "requested_by": "ttraenkler/senior-dev",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-09-05T14:59:05Z",
-  "updated_at": "2026-09-05T14:59:05Z",
-  "write_id": "85336-g8da5aga",
-  "pr_scan": "ok"
+  "status": "in-progress",
+  "branch": "issue-5333-nested-capture-abi-live-carrier",
+  "claimed_at": "2026-09-05T15:02:07Z",
+  "updated_at": "2026-09-05T15:02:07Z",
+  "write_id": "37163-ylkx4ipm"
 }
