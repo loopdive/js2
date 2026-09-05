@@ -4,7 +4,7 @@ title: "IR-only R8: linear consumes the shared Prepared IR program"
 status: blocked
 sprint: Backlog
 created: 2026-07-21
-updated: 2026-07-21
+updated: 2026-09-05
 priority: critical
 horizon: xl
 complexity: XL
@@ -295,3 +295,63 @@ general direct handlers persist until R9 makes IR-only sole policy and
 - **Gate denominator shrink:** removing a report can make counts appear green.
   Derive expected units from the Prepared census and fail on missing reports,
   compile catches, or unaccounted source/support units.
+
+## Source re-grounding — 2026-09-05
+
+Audited source: `5da655f286fcd569203cd2012b23dc21bf1c626d`. The later fetched
+upstream `4946cf70fe82def4bb4ec3e55092153b90b9506b` changes runtime prototype
+support but none of the IR or linear files cited here. This is source evidence,
+not a new corpus or conformance measurement. All acceptance criteria remain open.
+The subsequently verified `0a5a3e87df074982cc3022a95899fc62ad69b036` includes
+computed-method selection and the merged retirement plans; it also leaves the
+cited linear preparation and ratchet files unchanged.
+
+The July narrative about `check-linear-ir.ts` swallowing a compilation crash
+as an empty success is now stale. The current script has an authenticated
+complete source/owner census, explicit compile-error evidence, instrumentation
+failures, and a failing top-level exception outcome. Preserve those controls.
+Its corpus remains the fixed playground population and its acceptance predicate
+remains a compiled-count/rejection-threshold ratchet. It still does not prove
+zero direct emissions or the shared prepared-program product contract. The
+next gate change must extend the existing complete-accounting instrument rather
+than replace it with a bare count or reimplement its already-landed safeguards.
+
+Likewise, linear already has early structural identity/selection preparation:
+`prepareLinearIrOverlay` (`linear-integration.ts:514`) freezes and authenticates
+an exact context/source/oracle record before user slots. However,
+`PreparedLinearIrOverlay` (`:501`) retains `LinearContext`, `ts.SourceFile`,
+the oracle, and AST-keyed selection evidence. It is neither the neutral
+`PreparedIrProgram` handoff nor a complete semantic body snapshot.
+
+The remaining independent frontend rebuild is concrete:
+
+- `planLinearIrOverlay:384` builds its own propagated types, recursive evidence,
+  checker overlay and selection. Selection still depends on existing runtime
+  functions and linear-specific capability choices.
+- `compileLinearIrFunctions:954–1095` derives callable signatures from
+  declarations, projects them into legacy names, and retries
+  `lowerFunctionAstToIr` in a separate fixed point. Ordinary build failures can
+  still demote to the direct route; exact counted-string reservations have
+  stronger invariant behavior and must retain it.
+- `prepareLinearIntrinsicFunctions:666` prepares a target-specific runtime
+  manifest after this rebuild. Sharing the vocabulary or the from-AST helper
+  is not evidence that both backends consume the same prepared semantic input.
+
+Before dispatching L0, reconcile the shared frontend boundary with **#4617 —
+Frontend-neutral semantic IR snapshot for TypeScript 7 and Acorn**, the active
+R2 callable-boundary work, and R5 whole-program ownership. Preserve the existing
+unfinished D1a worktree recorded in #4617; do not duplicate it or overwrite it.
+The next implementation plan must name the immutable semantic artifact and
+its exact production producer/consumers, then prove preparation and semantic
+hash equality before permitting linear to bypass its independent builder.
+Wrapping `PreparedLinearIrOverlay` in a differently named type, serializing
+AST/checker state, or accepting two independently rebuilt hashes as one shared
+preparation does not advance the required boundary.
+
+The recorded `/private/tmp/js2-4617-d1a-function-value-baseline` directory is
+not visible in this filesystem. Its worktree/branch registration remains, so
+absence here is not proof that the unpublished bytes were deleted on every
+host. Preserve the registration and the recorded checkpoint; do not prune or
+recreate that path as a cleanup step. Any D1a continuation must first establish
+which recorded changes are available and compare them with current production
+source, rather than treating the historical dirty worktree as a ready artifact.
