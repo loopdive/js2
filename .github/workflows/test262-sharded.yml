@@ -1433,6 +1433,38 @@ jobs:
           node scripts/check-standalone-highwater.mjs \
             --report merged-reports/test262-standalone-report-merged.json
 
+      # PER-EDITION conformance ratchet. Every guard above this line scores the
+      # corpus as ONE number, so an edition the project has already finished can
+      # rot while attention is on the edition being worked: -40 in ES5 against
+      # +50 in ES2016 reads as +10 and passes the high-water floor, the #1897
+      # net gate and the catastrophic guard alike. This step scores each ES
+      # edition separately against a committed floor and fails if a RATCHETED
+      # edition loses ground, whatever the headline did.
+      #
+      # `--compare` makes it per-TEST rather than per-count: a change that
+      # breaks one ES5 test and fixes another leaves the count flat, and a
+      # count-only ratchet would call that even. It is not even -- it is a
+      # regression plus an improvement, and the regression still has to be
+      # deliberate.
+      #
+      # Partially-covered editions are skipped, not scored (see the script
+      # header) -- the #4412 hazard, where a scoped run's partial total was
+      # posted as if it were a full one.
+      - name: Per-edition conformance ratchet (no completed edition may regress)
+        if: env.STANDALONE_RAN == 'true'
+        run: |
+          COMPARE=""
+          if [ -s .test262-cache/test262-standalone-current.jsonl ]; then
+            COMPARE="--compare .test262-cache/test262-standalone-current.jsonl"
+          else
+            echo "::notice::no standalone baseline JSONL on disk — running the ratchet in count-only mode"
+          fi
+          npx tsx scripts/test262-edition-ratchet.ts \
+            --results merged-reports/test262-standalone-results-merged.jsonl \
+            --target standalone \
+            --eval-engine "${JS2WASM_EVAL_ENGINE:-quickjs}" \
+            $COMPARE
+
       # (#3953) MAKE THE SILENCE LOUD. The step above is the only place in CI
       # that holds BOTH the committed mark and a fresh measurement of reality,
       # and it already prints the gap — as an ordinary log line, in a job with
