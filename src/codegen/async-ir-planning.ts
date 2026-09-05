@@ -764,6 +764,13 @@ export function preparedIrAsyncAwaitSite(
   if (!owner) return null;
   const shape = preparedIrAsyncSourceShape(ctx, owner);
   if (shape?.kind !== "linear" || !shape.awaitSites.includes(expression)) return null;
+  // The generic B2 producer owns only a source owner with at least one
+  // genuinely pending suspension.  Fully statically-resolved awaits remain on
+  // the established C-1 pass-through route until their separate cutover: if
+  // this evidence escaped that admission proof, from-ast would retain an
+  // await node and async preparation would later try to attach a frame plan
+  // to an owner that the selector never promised.
+  if (!preparedIrAsyncSourceCanSuspend(ctx, owner)) return null;
   const resultType = preparedIrAsyncLinearAwaitResultType(ctx, expression);
   return resultType ? { resultType } : null;
 }

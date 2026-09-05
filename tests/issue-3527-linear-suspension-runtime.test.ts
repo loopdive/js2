@@ -51,6 +51,19 @@ export async function rejectSecond(seed: number): Promise<number> {
 }
 `;
 
+const STATIC_ONLY_SOURCE = `
+export async function literalOne(seed: number): Promise<number> {
+  const value = await 42;
+  return value + 1;
+}
+
+export async function literalTwo(seed: number): Promise<number> {
+  const first = await 42;
+  const second = await 43;
+  return first + second;
+}
+`;
+
 function expectSuccessful(result: CompileResult): void {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(result.irPostClaimErrors ?? []).toEqual([]);
@@ -320,6 +333,40 @@ describe("#3527 generic linear async runtime", () => {
     expect(irHarness.events).toEqual(expected);
     expect(nativeHarness.events).toEqual(expected);
     expect(irHarness.events).toEqual(nativeHarness.events);
+  });
+
+  it("keeps fully settled literal awaits on the established route", async () => {
+    const result = await compile(STATIC_ONLY_SOURCE, {
+      fileName: "issue-3527-linear-static-only.ts",
+      target: "gc",
+      experimentalIR: true,
+      trackIrOutcomes: true,
+      skipSemanticDiagnostics: true,
+    });
+    expectSuccessful(result);
+
+    // B2 requires at least one genuinely pending source await.  A literal or
+    // statically resolved chain must therefore not acquire synthetic B2 state
+    // helpers until the separately planned settled-await cutover.
+    expect(result.irCompiledFuncs ?? []).not.toEqual(
+      expect.arrayContaining(["literalOne__ir_async_state_0", "literalTwo__ir_async_state_0"]),
+    );
+    const outcomes = new Map((result.irOutcomes ?? []).map((outcome) => [outcome.displayName, outcome]));
+    expect(outcomes.get("literalOne")).toMatchObject({
+      kind: "emitted",
+      r2Withdrawal: { stage: "admission", reason: "async-declaration" },
+    });
+    expect(outcomes.get("literalTwo")).toMatchObject({
+      kind: "emitted",
+      r2Withdrawal: { stage: "admission", reason: "async-declaration" },
+    });
+
+    const imports = buildCompiledImports(result);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+    imports.setInstance?.(instance);
+    const exports = instance.exports as unknown as Record<string, (seed: number) => number>;
+    expect(exports.literalOne(0)).toBe(43);
+    expect(exports.literalTwo(0)).toBe(85);
   });
 
   it("propagates a rejection from either suspension without executing later states", async () => {
