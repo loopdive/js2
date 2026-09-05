@@ -40,6 +40,25 @@ check misfires (plausibly the same undefined-vs-missing-property distinction
 as the #5221/#5243 record-nulling family); (2) a calendar-dispatch path where
 the non-ISO branch is not taken compiled, so the ISO validator runs instead.
 
+## Implementation Plan (Fable, 2026-09-05)
+
+1. `PlainYearMonth.prototype.until()` missing args: node throws
+   `TypeError: Either month or monthCode are required`; the compiled build
+   throws RangeError first. Probe `Temporal.PlainYearMonth.from({year:2000,
+   month:1}).until()` compiled vs node; capture the compiled stack. Likely
+   root: the polyfill's argument-shape check reads `undefined` vs
+   missing-property differently through a bridged record (#5243 lineage —
+   `buildRecordFromExternref` may materialise absent fields as present
+   `undefined`, so `"month" in obj` answers true). Fix at the record bridge
+   (presence must survive), not in the polyfill.
+2. Non-ISO `yearOfWeek` returns `undefined` in node; compiled throws
+   `RangeError: Invalid ISO date`. Probe which branch runs: the polyfill
+   dispatches on calendar id; if the ISO validator runs for a non-ISO
+   calendar, an open-receiver call may be statically bound (#5352) — check
+   after #5352 lands before fixing anything here.
+3. Reductions in `tests/issue-5250-*.test.ts`, base-failing; both named
+   test262 rows pass with the provider linked.
+
 ## Acceptance criteria
 
 1. Base-failing reductions for both (compiled vs node on the pinned

@@ -21,6 +21,20 @@ const EXACT_SOURCE = `
   }
 `;
 
+const VOID_SOURCE = `
+  function delay(ms: number, value: number): Promise<number> {
+    return new Promise<number>((resolve) => {
+      setTimeout(() => resolve(value), ms);
+    });
+  }
+
+  export async function linearVoid(seed: number): Promise<void> {
+    const resumed = await delay(0, seed);
+    await Promise.resolve(resumed + 1);
+    return;
+  }
+`;
+
 function expectSuccess(result: CompileResult): void {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(result.irPostClaimErrors ?? []).toEqual([]);
@@ -150,7 +164,7 @@ describe("#4106 IR single-await async producer", () => {
     await expect(settled(fetchUser(7))).resolves.toBe(70);
   });
 
-  it("leaves a non-identity post-await tail on the direct route", async () => {
+  it("IR-emits a straight-line post-await tail through the generic producer", async () => {
     const result = await compile(
       EXACT_SOURCE.replace(
         "return value;",
@@ -165,14 +179,40 @@ describe("#4106 IR single-await async producer", () => {
     );
     expectSuccess(result);
 
-    expect(result.irCompiledFuncs ?? []).not.toContain("fetchUser");
+    expect(result.irFirstSkipped ?? []).toContain("fetchUser");
+    expect(result.irCompiledFuncs ?? []).toEqual(
+      expect.arrayContaining(["fetchUser", "fetchUser__ir_async_state_0", "fetchUser__ir_async_state_1"]),
+    );
     expect((result.irOutcomes ?? []).find((candidate) => candidate.displayName === "fetchUser")).toMatchObject({
-      kind: "unsupported",
-      stage: "select",
-      code: "async-function",
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
     });
+  });
+
+  it("IR-emits a linear final-void owner with the canonical void ABI", async () => {
+    const result = await compile(VOID_SOURCE, {
+      fileName: "issue-4106-linear-void.ts",
+      target: "gc",
+      trackIrOutcomes: true,
+    });
+    expectSuccess(result);
+
+    expect(result.irFirstSkipped ?? []).toContain("linearVoid");
+    expect(result.irCompiledFuncs ?? []).toEqual(
+      expect.arrayContaining(["linearVoid", "linearVoid__ir_async_state_0", "linearVoid__ir_async_state_1"]),
+    );
+    expect((result.irOutcomes ?? []).find((candidate) => candidate.displayName === "linearVoid")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    const linearVoid = instance.exports.linearVoid as (seed: number) => Promise<void>;
+    await expect(settled(linearVoid(7))).resolves.toBeUndefined();
   });
 
   it("keeps an await of a non-prepared async callee on the direct route", async () => {

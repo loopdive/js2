@@ -12,11 +12,25 @@ export interface PreparedAsyncPromiseAllPlan {
   readonly argumentType?: IrType;
 }
 
+/** Exact source await site owned by a prepared async plan. */
+export interface PreparedAsyncAwaitSite {
+  /** The value delivered by the fulfilled await edge. */
+  readonly resultType: IrType;
+  /** B3 source proof: retain the original non-thenable operand exactly once. */
+  readonly settledNonThenable?: true;
+  /** Structural owner carried through the source→IR handoff. */
+  readonly settledOwnerUnitId?: string;
+  /** Frozen source receipt key carried through the source→IR handoff. */
+  readonly settledOwnerProofKey?: string;
+}
+
 /** Prepared-async evidence consumed by AST-to-IR lowering. */
 export interface PreparedAsyncFromAstResolver {
   readonly preparedAsyncPromiseVectorLocal?: (declaration: ts.VariableDeclaration) => boolean;
   readonly preparedAsyncPromiseAllPlan?: (call: ts.CallExpression) => PreparedAsyncPromiseAllPlan | null;
   readonly preparedAsyncThenableResultType?: (call: ts.CallExpression) => IrType | undefined;
+  /** Return evidence only for an exact await node owned by a prepared unit. */
+  readonly preparedAsyncAwaitSite?: (awaitExpression: ts.AwaitExpression) => PreparedAsyncAwaitSite | null;
   readonly preparedAsyncDateNowTarget?: (call: ts.CallExpression) => IrFuncRef | null;
   readonly preparedAsyncNumberToStringTarget?: (call: ts.CallExpression) => IrFuncRef | null;
   readonly preparedAsyncConsoleTarget?: (call: ts.CallExpression) => IrFuncRef | null;
