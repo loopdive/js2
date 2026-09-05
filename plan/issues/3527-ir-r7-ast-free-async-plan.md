@@ -752,6 +752,28 @@ Other decisions that must move together:
   `lowerPreparedIrAsyncFunction` (`codegen/ir-async-frame.ts:365`) verifies the
   allocated `externref` result and drives the existing frame engine.
 
+### Integrated B3 baseline verification — 2026-09-05
+
+The original B2 author integrated exact main
+`e4ef2c3ef01cc04126203551240fe95b3513f92e` in signed merge
+`d658f8964b1fd106f28a243e273211db968afaac`, whose other parent is the
+published repair `76fb2f3`. The B3 planning worktree contains that merge and
+has identical source and test contents; its only additional change is this
+Astra plan. The author's post-merge gates, safe publication and final handoff
+remain separate dispatch prerequisites.
+
+Root reran the same three controls in separate GC/JS-host processes at exact
+`d658f896`, including the merged integration, lowering and R3-routing files
+in the seven-file before/after fingerprint check. All three controls passed
+(3/3): the one/two literal-await exports compiled and validated, returning
+raw `43`/`85` with direct `1` / IR `1`; the prepared provider export returned
+a real Promise fulfilled with `6`, direct `0` / IR `1`, and exactly the native
+observer event sequence. The two raw-value results preserve the repaired
+baseline and still contradict the required canonical Promise ABI; they are
+not B3 acceptance evidence. No conformance population is inferred here.
+Evidence is in root scratch `r7-settled-{one,two,provider}-postmerge.jsonl`
+and `r7-settled-runtime-postmerge-control.mts`.
+
 ### Scope and ordered implementation
 
 Own top-level ordinary async free functions on the existing JS-host WasmGC
