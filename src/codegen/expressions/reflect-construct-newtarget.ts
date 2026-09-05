@@ -543,30 +543,37 @@ function targetReadsNewTarget(ctx: CodegenContext, target: ts.Expression): boole
  * `Object.defineProperty(NT, "prototype", …)` fails that test and is dropped
  * without a word, leaving the instance on `%Object.prototype%`. A pristine
  * binding cannot be in that state, so the driver route is limited to one.
+ *
+ * ## Why the WRITE clauses stay keyed on the NAME (r2 step 3, measured)
+ * The plan asked for the whole predicate to resolve through `ctx.oracle`.
+ * Only the BINDING-COUNT clause can: the compiler's own model of a function's
+ * `prototype` slot is itself name-keyed, and a prototype write to a
+ * same-spelled binding in another scope corrupts the read of THIS one. With no
+ * `Reflect.construct` in the program at all, `.tmp/p/m5e_read_only_base.js`
+ * — an outer `function NT(){}` plus an inner `const NT = function(){}` whose
+ * prototype slot is redefined — reads the OUTER `NT.prototype` as null on
+ * BASE (base 5, node 6). Resolving the write clauses by symbol therefore
+ * admitted `.tmp/p/m5_nt_block_shadow_mutates.js` at 1 where node answers 3.
+ * So: the binding count is gone (that was the measured over-refusal — an
+ * unrelated parameter of the same name), and a prototype-slot write to ANY
+ * same-spelled binding still refuses, matching what the reader can actually
+ * distinguish.
  */
-function prototypeIsPristine(source: ts.SourceFile, name: string): boolean {
+function prototypeIsPristine(ctx: CodegenContext, newTarget: ts.Identifier): boolean {
+  // Resolve the NewTarget binding by declaration identity: zero declarations is
+  // unresolvable, and more than one means the name is declared twice in this
+  // scope chain, where no single declaration answers for it. Replaces the
+  // file-wide count of same-spelled bindings, which refused a site over a
+  // helper's unrelated parameter (`m2_shadow.js`: node 7, base refused,
+  // admitted here; `m1_control_noshadow.js` differs only in that parameter's
+  // name and was admitted on base).
+  const name = newTarget.text;
+  if (ctx.oracle.declarationsOf(newTarget).length !== 1) return false;
+
   let touched = false;
-  let bindings = 0;
   const visit = (node: ts.Node): void => {
     if (touched) return;
-    // The NewTarget's OWN declaration is expected; a SECOND binding of the same
-    // name is not. (`isRebound` cannot be reused here — it counts the single
-    // `const NT = …` this predicate is asked about as a rebinding.)
-    if (
-      (ts.isVariableDeclaration(node) ||
-        ts.isParameter(node) ||
-        ts.isBindingElement(node) ||
-        ts.isFunctionDeclaration(node) ||
-        ts.isClassDeclaration(node) ||
-        ts.isImportSpecifier(node) ||
-        ts.isImportClause(node)) &&
-      node.name !== undefined &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === name &&
-      ++bindings > 1
-    ) {
-      touched = true;
-    } else if (ts.isWithStatement(node)) {
+    if (ts.isWithStatement(node)) {
       touched = true;
     } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
       touched = true;
@@ -599,7 +606,7 @@ function prototypeIsPristine(source: ts.SourceFile, name: string): boolean {
     }
     if (!touched) forEachChild(node, visit);
   };
-  visit(source);
+  visit(newTarget.getSourceFile());
   return !touched;
 }
 
@@ -629,7 +636,7 @@ export function classifyRuntimeNewTargetSite(
     args.length <= MAX_NATIVE_CONSTRUCT_ARITY &&
     !args.some((a) => ts.isSpreadElement(a)) &&
     isUnreassignedOrdinaryFunction(ctx, target) &&
-    prototypeIsPristine(newTarget.getSourceFile(), newTarget.text);
+    prototypeIsPristine(ctx, newTarget);
   if (driverEligible) return "driver";
 
   const targetKind = resolveBindingKind(ctx, target);
