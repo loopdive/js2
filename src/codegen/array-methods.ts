@@ -6422,6 +6422,56 @@ function resolveDynamicCallbackClosure(
 }
 
 /**
+ * (#5319, generalising #4527 from `map` to the whole single-callback family)
+ * Pick the host bridge for a callback that did NOT resolve to a wasm closure.
+ *
+ * The default fallback bridge is numeric (`__call_1_f64`), so the loop element
+ * is pushed through `__unbox_number` — ToNumber. For a REFERENCE element
+ * (string / object / native-string ref) that is lossy: every value arrives at
+ * the callback as `NaN`. `["x","y"].filter(Boolean)` therefore evaluated
+ * `Boolean(NaN)` twice and returned `[]`. `__call_dyn_1` takes
+ * `(externref callee, externref arg) -> externref` and passes the element LIVE.
+ *
+ * A callback is "unresolved" far more often than the builtin case suggests:
+ * only a syntactically inline arrow / function expression, or a hoisted
+ * function DECLARATION, compiles to a closure. A bare ambient builtin
+ * (`Boolean`, `String`), a `var`-bound function expression, an object member
+ * (`o.keep`) and a cross-module import all land here.
+ *
+ * `consumesResultAsBoolean` — filter/find/findIndex/some/every feed the
+ * callback result to ToBoolean. On the dynamic bridge that result is an opaque
+ * externref, so ToBoolean needs `__is_truthy`. Register it HERE, before the
+ * callback expression and the loop instruction arrays are built: those arrays
+ * bake `call` funcIdx values and are attached to the body only later, so a
+ * late import registered from inside `buildToBooleanInstrs` would shift the
+ * defined-function index space out from under them.
+ */
+function referenceElementBridgeName(
+  ctx: CodegenContext,
+  elemType: ValType,
+  consumesResultAsBoolean: boolean,
+): string | undefined {
+  // Host-free targets keep their own recovery path (`resolveDynamicCallbackClosure`,
+  // #3015): `__call_dyn_1` is a JS-host import and would make the module
+  // non-instantiable standalone.
+  if (noJsHost(ctx)) return undefined;
+  // The import is armed by the `collectFunctionalArrayImports` pre-scan. When it
+  // is absent this call site is not one the pre-scan recognised, and the output
+  // stays byte-identical to before.
+  if (!ctx.funcMap.has("__call_dyn_1")) return undefined;
+  if (
+    elemType.kind !== "externref" &&
+    elemType.kind !== "ref_extern" &&
+    elemType.kind !== "ref" &&
+    elemType.kind !== "ref_null"
+  ) {
+    return undefined;
+  }
+  if (consumesResultAsBoolean) addUnionImports(ctx);
+  return "__call_dyn_1";
+}
+
+/**
  * Compile the callback argument and set up either a closure (call_ref) path
  * or a host bridge fallback. Returns null if setup fails (error pushed).
  *
@@ -6999,6 +7049,12 @@ function buildTruthyCheck(ctx: CodegenContext, setup: ArrayCallbackSetup): Instr
     }
     return buildToBooleanInstrs(ctx, setup.closureInfo.returnType);
   }
+  // (#5319) Reference-preserving `__call_dyn_1` bridge: the result is the
+  // callback's raw host value, so ToBoolean routes through `__is_truthy`. The
+  // f64 ladder below would be a stack type error here, not merely wrong.
+  if (setup.bridgeResultType?.kind === "externref") {
+    return buildToBooleanInstrs(ctx, { kind: "externref" });
+  }
   // #2085 — non-closure (legacy) path: f64 result. Use |x|>0 so NaN/±0 are
   // falsy (the old `f64.ne 0` wrongly treated NaN as truthy), matching
   // `ensureI32Condition`.
@@ -7037,6 +7093,10 @@ function buildFalsyCheck(ctx: CodegenContext, setup: ArrayCallbackSetup): Instr[
     // NaN / boxed 0/""/false are correctly falsy (the old per-kind copy treated
     // NaN-as-truthy and boxed-falsy-as-truthy, the inverse of the #2085 bug).
     return [...buildToBooleanInstrs(ctx, setup.closureInfo.returnType), { op: "i32.eqz" }];
+  }
+  // (#5319) Reference-preserving bridge — see buildTruthyCheck.
+  if (setup.bridgeResultType?.kind === "externref") {
+    return [...buildToBooleanInstrs(ctx, { kind: "externref" }), { op: "i32.eqz" }];
   }
   return ctx.fast
     ? [{ op: "i32.eqz" }]
@@ -7238,7 +7298,8 @@ function compileArrayFilter(
     return { kind: "ref_null", typeIdx: vecTypeIdx };
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "filter", "flt", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, true);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "filter", "flt", bridge, 1);
   if (!setup) return null;
 
   const resLen = allocLocal(fctx, `__arr_flt_rl_${fctx.locals.length}`, { kind: "i32" });
@@ -7388,24 +7449,12 @@ function compileArrayMap(
   // `kindOfTest(type)` can call `type.toLowerCase()`. Use the existing dynamic
   // externref bridge for this exact fallback shape; resolved closures stay on
   // call_ref and numeric-element maps keep their compact numeric bridge.
-  const referenceElementBridge =
-    !noJsHost(ctx) &&
-    ctx.funcMap.has("__call_dyn_1") &&
-    (elemType.kind === "externref" ||
-      elemType.kind === "ref_extern" ||
-      elemType.kind === "ref" ||
-      elemType.kind === "ref_null");
+  // (#5319 lifted the predicate into `referenceElementBridgeName` so the rest
+  // of the family shares it; map does not consume the result as a boolean.)
   const savedMapCallbackFirstParamOverride = ctx.arrayMapCallbackFirstParamOverride;
   ctx.arrayMapCallbackFirstParamOverride = elemType;
-  const setup = setupArrayCallback(
-    ctx,
-    fctx,
-    callExpr,
-    "map",
-    "map",
-    referenceElementBridge ? "__call_dyn_1" : undefined,
-    1,
-  );
+  const bridge = referenceElementBridgeName(ctx, elemType, false);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "map", "map", bridge, 1);
   ctx.arrayMapCallbackFirstParamOverride = savedMapCallbackFirstParamOverride;
   if (!setup) return null;
 
@@ -8027,7 +8076,8 @@ function compileArrayForEach(
     return null; // void method
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "forEach", "fe", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, false);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "forEach", "fe", bridge, 1);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fe", receiverIsExternref);
@@ -8081,7 +8131,8 @@ function compileArrayFind(
     return elemType;
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "find", "find", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, true);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "find", "find", bridge, 1);
   if (!setup) return null;
 
   const elemTmpLocal = allocLocal(fctx, `__arr_find_el_${fctx.locals.length}`, elemType);
@@ -8191,7 +8242,8 @@ function compileArrayFindIndex(
     return { kind: "i32" };
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "findIndex", "fi", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, true);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "findIndex", "fi", bridge, 1);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "fi", receiverIsExternref);
@@ -8494,7 +8546,8 @@ function compileArraySome(
     return { kind: "i32" };
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "some", "some", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, true);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "some", "some", bridge, 1);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "some", receiverIsExternref);
@@ -8560,7 +8613,8 @@ function compileArrayEvery(
     return { kind: "i32" };
   }
 
-  const setup = setupArrayCallback(ctx, fctx, callExpr, "every", "evr", undefined, 1);
+  const bridge = referenceElementBridgeName(ctx, elemType, true);
+  const setup = setupArrayCallback(ctx, fctx, callExpr, "every", "evr", bridge, 1);
   if (!setup) return null;
 
   const loop = setupArrayLoop(ctx, fctx, propAccess, vecTypeIdx, arrTypeIdx, elemType, "evr", receiverIsExternref);
