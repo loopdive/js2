@@ -13,6 +13,8 @@
 // perf-benchmark-chart.js — no build-time templating. Styling matches
 // website/dashboard/index.html (dense, sharp-cornered, minimal chrome).
 
+const ES_EDITIONS = [3, 5, ...Array.from({ length: 12 }, (_, index) => 2015 + index)];
+
 class NpmCompatChart extends HTMLElement {
   static get observedAttributes() {
     return ["src", "history-src"];
@@ -554,7 +556,7 @@ class NpmCompatChart extends HTMLElement {
       : "";
 
     return `
-      <div class="card">
+      <div class="card" data-es-edition="${ES_EDITIONS.includes(pkg.esSyntax?.edition) ? pkg.esSyntax.edition : "unknown"}">
         <div class="card-top">
           <a class="name" href="${npmPackageUrl}" target="_blank" rel="noopener"
             title="View ${this._esc(pkg.name)} ${this._esc(pkg.version)} on npm">${this._esc(pkg.name)}</a>
@@ -576,7 +578,7 @@ class NpmCompatChart extends HTMLElement {
             ? `<span class="badge" title="The published entry module only re-exports other packages, so these badges describe the barrel — see the tests row for the real implementation.">entry is a barrel</span>`
             : ""
         }</div>
-        <div class="rows">${correctness}${tests}${serverTests}${fizzTests}${nodeFizzTests}${edgeFizzTests}${perf}${bugs}</div>
+        <div class="rows">${this._row("Required ES syntax", `<span title="Minimum syntax edition across published JavaScript files, including alternative builds and tooling, excluding tests. Runtime APIs and dependencies may require a newer edition.">${ES_EDITIONS.includes(pkg.esSyntax?.edition) ? `ES${pkg.esSyntax.edition}` : "Unknown"}</span>`)}${correctness}${tests}${serverTests}${fizzTests}${nodeFizzTests}${edgeFizzTests}${perf}${bugs}</div>
         <div class="card-links">
           <a class="playground-link" href="${playgroundUrl}"
             title="Open ${this._esc(pkg.name)} test files in the playground">Open tests in playground&nbsp;↗</a>
@@ -628,7 +630,16 @@ class NpmCompatChart extends HTMLElement {
 
     this.shadowRoot.innerHTML = `
       ${this._styles()}
-      <div class="metrics">
+      <section class="edition-filter" aria-label="Filter packages by ECMAScript edition">
+        <div class="edition-head"><label for="es-edition">Required ECMAScript syntax</label><output for="es-edition" id="es-edition-value">All editions</output></div>
+        <div class="edition-ruler">
+          <input id="es-edition" type="range" min="0" max="${ES_EDITIONS.length}" step="1" value="${ES_EDITIONS.length}" aria-valuetext="All editions" />
+          <div class="edition-ticks" aria-hidden="true">${[...ES_EDITIONS.map((edition) => `ES${edition}`), "All"].map((label) => `<span>${label}</span>`).join("")}</div>
+        </div>
+        <div class="edition-caption"><span>Show packages requiring the selected edition or earlier.</span><label><input id="es-unknown" type="checkbox" checked /> Include unknown</label></div>
+        <p class="edition-note">Published JavaScript syntax, including alternative builds and tooling; excluding tests. Runtime APIs and dependencies may require a newer edition.</p>
+      </section>
+      <div class="metrics" aria-live="polite">
         ${metric(pkgs.length, "packages")}
         ${metric(`${compiling}/${pkgs.length}`, "compile")}
         ${metric(`${validating}/${pkgs.length}`, "validate")}
@@ -659,6 +670,46 @@ class NpmCompatChart extends HTMLElement {
       </div>
     `;
     this._bindPerfControls();
+    this._bindEditionControls(pkgs);
+  }
+
+  _bindEditionControls(packages) {
+    const slider = this.shadowRoot.querySelector("#es-edition");
+    const unknown = this.shadowRoot.querySelector("#es-unknown");
+    const update = () => {
+      const edition = ES_EDITIONS[Number(slider.value)];
+      const label = edition == null ? "All editions" : `Through ES${edition}`;
+      slider.setAttribute("aria-valuetext", label);
+      this.shadowRoot.querySelector("#es-edition-value").textContent = label;
+      const visible = packages.filter((pkg) => {
+        const required = pkg.esSyntax?.edition;
+        return ES_EDITIONS.includes(required) ? edition == null || required <= edition : unknown.checked;
+      });
+      this.shadowRoot.querySelectorAll(".card").forEach((card) => {
+        const required = Number(card.dataset.esEdition);
+        card.hidden = Number.isNaN(required) ? !unknown.checked : edition != null && required > edition;
+      });
+      this.shadowRoot.querySelectorAll(".package-group").forEach((group) => {
+        const count = [...group.querySelectorAll(".card")].filter((card) => !card.hidden).length;
+        group.querySelector(".group-count").textContent = `${count} ${count === 1 ? "package" : "packages"}`;
+        group.hidden = count === 0;
+      });
+      const values = this.shadowRoot.querySelectorAll(".metric .value");
+      values[0].textContent = visible.length;
+      values[1].textContent = `${visible.filter((pkg) => pkg.compile?.success).length}/${visible.length}`;
+      values[2].textContent = `${visible.filter((pkg) => pkg.validation?.validates).length}/${visible.length}`;
+      let empty = this.shadowRoot.querySelector(".edition-empty");
+      if (!empty) {
+        empty = document.createElement("p");
+        empty.className = "edition-empty msg";
+        empty.textContent = "No packages match this edition filter.";
+        this.shadowRoot.querySelector(".package-groups").append(empty);
+      }
+      empty.hidden = visible.length !== 0;
+    };
+    slider.addEventListener("input", update);
+    unknown.addEventListener("change", update);
+    update();
   }
 
   _styles() {
@@ -669,6 +720,20 @@ class NpmCompatChart extends HTMLElement {
           font-family: var(--font, Inter, ui-sans-serif, system-ui, sans-serif);
           color: var(--text, #fff);
         }
+        [hidden] { display: none !important; }
+        .edition-filter { padding: 26px 0 18px; border-bottom: 1px solid var(--border, rgba(255,255,255,.12)); }
+        .edition-head, .edition-caption { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+        .edition-head { font-family: var(--mono, monospace); font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+        .edition-head label, .edition-caption, .edition-note { color: var(--text-muted, rgba(255,255,255,.46)); }
+        .edition-ruler { margin: 22px 0 20px; }
+        #es-edition { display: block; width: 100%; margin: 0; accent-color: #fff; cursor: pointer; }
+        #es-edition:focus-visible { outline: 2px solid var(--accent, #6c8aff); outline-offset: 5px; }
+        .edition-ticks { display: flex; justify-content: space-between; margin: 8px 8px 0; font: 10px var(--mono, monospace); color: var(--text-muted, rgba(255,255,255,.46)); }
+        .edition-ticks span { position: relative; width: 0; display: flex; justify-content: center; }
+        .edition-ticks span::before { content: ""; position: absolute; top: -7px; height: 4px; border-left: 1px solid currentColor; }
+        .edition-caption, .edition-note { font-size: 11px; line-height: 1.6; }
+        .edition-note { margin: 6px 0 0; }
+        @media (max-width: 680px) { .edition-ticks span:nth-child(2n):not(:last-child) { visibility: hidden; } .edition-ticks { font-size: 9px; } }
         .mono { font-family: var(--mono, "JetBrains Mono", "SF Mono", monospace); }
         .muted { color: var(--text-muted, rgba(255,255,255,0.46)); }
         .good { color: var(--green, #4ade80); }

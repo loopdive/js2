@@ -573,7 +573,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 275892096
+      "weeklyDownloads": 275892096,
+      "esSyntax": {
+        "edition": 2021,
+        "scope": "published-javascript",
+        "files": 44,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "8a5975b3e038902bfd169a10b5202f5ec0cf3faf"
+      }
     },
     {
       "name": "typescript",
@@ -1954,7 +1961,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 250686863
+      "weeklyDownloads": 250686863,
+      "esSyntax": {
+        "edition": 2020,
+        "scope": "published-javascript",
+        "files": 9,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "5b4f59e15310ab17a216f5d6cf53ee476ede670f"
+      }
     },
     {
       "name": "acorn",
@@ -2399,7 +2413,14 @@
           "summary": "linked Acorn initialization is lowered, but the cross-module parser driver is not yet runnable"
         }
       ],
-      "weeklyDownloads": 240886853
+      "weeklyDownloads": 240886853,
+      "esSyntax": {
+        "edition": 2015,
+        "scope": "published-javascript",
+        "files": 3,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "4ce79c89be40afe7afe8f3adb902a1f1ce9ac08a"
+      }
     },
     {
       "name": "cookie",
@@ -2808,7 +2829,14 @@
           "summary": "a property assigned dynamically inside a loop/switch onto an object is silently dropped"
         }
       ],
-      "weeklyDownloads": 173435452
+      "weeklyDownloads": 173435452,
+      "esSyntax": {
+        "edition": 2020,
+        "scope": "published-javascript",
+        "files": 1,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "1fc7e9bddf38fa9567cd4d750820087cdb5d6e98"
+      }
     },
     {
       "name": "lodash",
@@ -2965,7 +2993,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 164859858
+      "weeklyDownloads": 164859858,
+      "esSyntax": {
+        "edition": 5,
+        "scope": "published-javascript",
+        "files": 1048,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "ff2b66c1f6326d59513de2407bf881439812771c"
+      }
     },
     {
       "name": "react",
@@ -4110,7 +4145,14 @@
         ]
       },
       "knownBugs": [],
-      "weeklyDownloads": 162687688
+      "weeklyDownloads": 162687688,
+      "esSyntax": {
+        "edition": 3,
+        "scope": "published-javascript",
+        "files": 24,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "3dadb8e12b2a7934c1d5317973e5dce1301f9a4d"
+      }
     },
     {
       "name": "eslint",
@@ -4214,7 +4256,14 @@
           "summary": "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier"
         }
       ],
-      "weeklyDownloads": 152308132
+      "weeklyDownloads": 152308132,
+      "esSyntax": {
+        "edition": 2023,
+        "scope": "published-javascript",
+        "files": 406,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "360a7de7f2706eb8a32caa17ca983f0089efe694"
+      }
     },
     {
       "name": "react-dom",
@@ -8945,7 +8994,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 139740993
+      "weeklyDownloads": 139740993,
+      "esSyntax": {
+        "edition": 3,
+        "scope": "published-javascript",
+        "files": 40,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "44a81b0bcca22da814c00847d09d01c8615529b7"
+      }
     },
     {
       "name": "prettier",
@@ -9029,7 +9085,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 117242232
+      "weeklyDownloads": 117242232,
+      "esSyntax": {
+        "edition": 2023,
+        "scope": "published-javascript",
+        "files": 36,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "edf48977cf991558f4fcbd8a3ba6015ba2a3a173"
+      }
     },
     {
       "name": "tailwindcss",
@@ -9392,7 +9455,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 117155768
+      "weeklyDownloads": 117155768,
+      "esSyntax": {
+        "edition": 2022,
+        "scope": "published-javascript",
+        "files": 13,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "c006861611c213c1877893ab5b23daa16be2bb55"
+      }
     },
     {
       "name": "axios",
@@ -10541,7 +10611,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 112353408
+      "weeklyDownloads": 112353408,
+      "esSyntax": {
+        "edition": 2019,
+        "scope": "published-javascript",
+        "files": 71,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "517e29291d19d6e8cf919ff264f4fe157261ba12"
+      }
     },
     {
       "name": "clsx",
@@ -10917,7 +10994,14 @@
           "summary": "for...in over an array of heterogeneously-shaped object literals derefs null"
         }
       ],
-      "weeklyDownloads": 104930549
+      "weeklyDownloads": 104930549,
+      "esSyntax": {
+        "edition": 2015,
+        "scope": "published-javascript",
+        "files": 5,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "eed397c9fd8bd882bfb18deab7102049a2f32999"
+      }
     },
     {
       "name": "jsdom",
@@ -11125,7 +11209,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 89317829
+      "weeklyDownloads": 89317829,
+      "esSyntax": {
+        "edition": 2022,
+        "scope": "published-javascript",
+        "files": 652,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "1b0751cbd0abce86762c48697583b5e91433f6e4"
+      }
     },
     {
       "name": "marked",
@@ -11310,7 +11401,14 @@
           "summary": "TS 'evolving array type' inference unimplemented — blocks compile entirely"
         }
       ],
-      "weeklyDownloads": 60496071
+      "weeklyDownloads": 60496071,
+      "esSyntax": {
+        "edition": 2023,
+        "scope": "published-javascript",
+        "files": 4,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "180cb158a2d2dc377821cfb088a10ca1b5630ef0"
+      }
     },
     {
       "name": "webpack",
@@ -11972,7 +12070,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 55617769
+      "weeklyDownloads": 55617769,
+      "esSyntax": {
+        "edition": 2023,
+        "scope": "published-javascript",
+        "files": 688,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "b58dc289561c3282db35c210a99379a836a4c28d"
+      }
     },
     {
       "name": "hono",
@@ -12866,7 +12971,14 @@
         ]
       },
       "knownBugs": [],
-      "weeklyDownloads": 53123258
+      "weeklyDownloads": 53123258,
+      "esSyntax": {
+        "edition": 2022,
+        "scope": "published-javascript",
+        "files": 372,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "90fcc63caa713199703bda08d8518f654e98b516"
+      }
     },
     {
       "name": "jest",
@@ -14298,7 +14410,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 46631732
+      "weeklyDownloads": 46631732,
+      "esSyntax": {
+        "edition": 2023,
+        "scope": "published-javascript",
+        "files": 3,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "e9bdb00f4bf1126d781b0d98e23130db096bbd9a"
+      }
     },
     {
       "name": "lodash-es",
@@ -14532,7 +14651,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 42294984
+      "weeklyDownloads": 42294984,
+      "esSyntax": {
+        "edition": 2015,
+        "scope": "published-javascript",
+        "files": 644,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "b962eeb80d9d983a900bf342961fb7418ca10b1d"
+      }
     },
     {
       "name": "redux",
@@ -15117,7 +15243,14 @@
         ]
       },
       "knownBugs": [],
-      "weeklyDownloads": 40344956
+      "weeklyDownloads": 40344956,
+      "esSyntax": {
+        "edition": 2018,
+        "scope": "published-javascript",
+        "files": 4,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "97fa26881ce5746500125585d5642c77b6e9447b"
+      }
     },
     {
       "name": "moment",
@@ -16226,7 +16359,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 34294671
+      "weeklyDownloads": 34294671,
+      "esSyntax": {
+        "edition": 2015,
+        "scope": "published-javascript",
+        "files": 530,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "f8c91c07b7a786e30c59926df530b4eac96974ae"
+      }
     },
     {
       "name": "three",
@@ -17556,7 +17696,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 12487515
+      "weeklyDownloads": 12487515,
+      "esSyntax": {
+        "edition": 2022,
+        "scope": "published-javascript",
+        "files": 1186,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "63e9e241a17b101e211965121a017b4b4d8054ae"
+      }
     },
     {
       "name": "styled-components",
@@ -17885,7 +18032,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 11029759
+      "weeklyDownloads": 11029759,
+      "esSyntax": {
+        "edition": 2015,
+        "scope": "published-javascript",
+        "files": 8,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "403eb7046b9f59a170d13967d9e7d21d82e677bd"
+      }
     },
     {
       "name": "stylelint",
@@ -19441,7 +19595,14 @@
         }
       },
       "knownBugs": [],
-      "weeklyDownloads": 10427988
+      "weeklyDownloads": 10427988,
+      "esSyntax": {
+        "edition": 2025,
+        "scope": "published-javascript",
+        "files": 358,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "a3a2e6e2e9feab2202463fcf15df74de00140b1c"
+      }
     },
     {
       "name": "lit",
@@ -21742,7 +21903,14 @@
         ]
       },
       "knownBugs": [],
-      "weeklyDownloads": 6829692
+      "weeklyDownloads": 6829692,
+      "esSyntax": {
+        "edition": 2015,
+        "scope": "published-javascript",
+        "files": 77,
+        "parser": "acorn@8.16.0",
+        "tarballShasum": "93579885e51a20a772c68482a34706fe1636e8f0"
+      }
     }
   ]
 }

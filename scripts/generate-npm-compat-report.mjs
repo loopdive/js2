@@ -22,6 +22,8 @@
 // Invoke: `pnpm run generate:npm-compat` (writes benchmarks/results/npm-compat.json
 // and copies it to website/public/benchmarks/results/).
 
+import { measurePackageSyntax } from "./lib/npm-compat-editions.mjs";
+
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -3009,6 +3011,7 @@ for (const entry of NPM_COMPAT_CATALOG) {
 }
 
 for (const pkg of packages) {
+  pkg.esSyntax = await measurePackageSyntax(pkg);
   pkg.weeklyDownloads = NPM_DOWNLOADS_SNAPSHOT.packages[pkg.name] ?? null;
   pkg.playground ??= {
     kind: "unavailable",
