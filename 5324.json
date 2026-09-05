@@ -1,10 +1,11 @@
 {
   "id": "5324",
   "assignee": "ttraenkler/senior-dev",
-  "requested_by": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5324-lifted-frame-fn-name-scope",
   "claimed_at": "2026-09-05T05:36:00Z",
-  "updated_at": "2026-09-05T05:36:00Z",
-  "write_id": "34532-v8w6zqsn"
+  "updated_at": "2026-09-05T08:38:39Z",
+  "write_id": "34292-isn956i0",
+  "released_at": "2026-09-05T08:38:39Z"
 }
