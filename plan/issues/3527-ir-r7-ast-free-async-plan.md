@@ -649,9 +649,10 @@ Root's independent settled await controls found a regression at the published
 B2 head before this repair. With `experimentalIR: true`,
 `nativeStrings: false`, and `trackIrOutcomes: true`, the one await literal
 owner and the two await literal owner both failed compilation with
-`IR async runtime attachment for test has no valid async plan owner` and fell
-back to one direct body with zero IR bodies. The historical C 1 controls
-returned 43 and 85. The provider only `Promise.resolve` control remained a
+`IR async runtime attachment for test has no valid async plan owner`. One
+direct body was emitted before the fatal IR error, and the result had zero IR
+bodies. The historical C 1 controls returned 43 and 85. The provider only
+`Promise.resolve` control remained a
 valid B2 owner and returned native Promise value 6 with matching independent
 native observer order.
 
