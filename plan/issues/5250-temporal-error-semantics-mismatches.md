@@ -183,3 +183,17 @@ answer `undefined`, `formatToParts` traps. That is the #5206 Intl family, not
 (`PlainDate`/`PlainDateTime` × `yearOfWeek`/`weekOfYear`, plus
 `ZonedDateTime`'s, which fails earlier still on `unknown time zone UTC`) stay
 `fail`, unchanged by this PR.
+
+### Collateral measurement (dev-5250, 2026-09-05)
+
+`_resolveHostField` is a shared read path, so the gate was measured against a
+base run of the same rows, not assumed:
+
+| lane | result |
+| --- | --- |
+| `node scripts/equivalence-gate.mjs` | 24 failing / 1718 passing — no new regressions |
+| 9 provider suites + `tests/issue-4628-temporal-global.test.ts` | 61 tests, all pass |
+| test262 `built-ins/Reflect/{get,has,ownKeys,getOwnPropertyDescriptor}` — 47 rows, base vs fix | per-row status **identical** (35 pass) |
+| test262 `built-ins/JSON/stringify` — 20 rows, base vs fix | per-row status **identical** (14 pass) |
+| `tests/in-operator-edge-cases`, `tests/hasownproperty-call`, `tests/es5-standalone-descriptor-bags` | pass |
+| `tests/es5-standalone-descriptors`, `tests/deno-primordials-reflection-phases` | one failure each — **fails identically on base**, pre-existing, not this change |
