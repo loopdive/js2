@@ -573,7 +573,7 @@ gate is on the target discriminator, and `ctx.wasi` is false there.
 | standalone byte-identity vs the unfixed lane, same 6 programs | **6/6 identical sha256** — the fix cannot move standalone |
 | step-1 rows, `run-test262-paths.mts --isolate .tmp/step1-rows.txt --standalone` | **pass 19** — the lane's 19 kept rows, unchanged |
 | 464-row control (`built-ins/Proxy` + `built-ins/Reflect`), same command | **pass 348, fail 91, compile_error 25** — vs base 312/115/37 and vs the lane 349/93/22. **Rows lost against base: ZERO** (set-diff of the non-pass lists, not just the totals). The single row below the lane, `Proxy/construct/null-handler-realm.js`, is a **compile timeout at 15.3 s** under load 7 on this box, is non-pass on base too, and **passes when re-run alone at `COMPILER_POOL_SIZE=1`** — the same timeout-under-load artifact the lane documented. |
-| `tests/issue-5316-r4-invariants.test.ts`, node 22 and node 25 | 45/45 pass on both (one vitest `onTaskUpdate` IPC timeout under concurrent load — infrastructure, no failed test) |
+| `tests/issue-5316-r4-invariants.test.ts`, node 22 and node 25 | 49/49 pass on both — the fix commit message quotes 45/45, a stale pre-pin count; the reviewer re-measured 49/49 on node 22 and node 25 (one vitest `onTaskUpdate` IPC timeout under concurrent load — infrastructure, no failed test) |
 
 **Regression pin added.** Four `wasi probe stays working — …` cases in
 `tests/issue-5316-r4-invariants.test.ts` compile the compliant get / ownKeys /
