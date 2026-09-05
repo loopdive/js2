@@ -1,10 +1,11 @@
 {
   "id": "5319",
   "assignee": "ttraenkler/claude",
-  "requested_by": "ttraenkler/claude",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5319-hof-reference-element-bridge",
   "claimed_at": "2026-09-05T01:15:11Z",
-  "updated_at": "2026-09-05T01:15:11Z",
-  "write_id": "25704-javf8cs5"
+  "updated_at": "2026-09-05T03:33:07Z",
+  "write_id": "78023-pj8h743b",
+  "released_at": "2026-09-05T03:33:07Z"
 }
