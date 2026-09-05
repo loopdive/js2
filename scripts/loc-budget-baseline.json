@@ -1,7 +1,7 @@
 {
-  "generated": "2026-09-04",
+  "generated": "2026-09-05",
   "threshold": 1500,
-  "totalCeiling": 828081,
+  "totalCeiling": 828093,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -107,7 +107,7 @@
     "src/ir/propagate.ts": 1666,
     "src/ir/runtime-manifest.ts": 3116,
     "src/ir/select-identity.ts": 1630,
-    "src/ir/select.ts": 11324,
+    "src/ir/select.ts": 11336,
     "src/ir/verify.ts": 2721,
     "src/package-linker.ts": 2116,
     "src/runtime.ts": 19052

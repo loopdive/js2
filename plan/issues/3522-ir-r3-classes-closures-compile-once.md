@@ -4,7 +4,7 @@ title: "IR-only R3: compile-once classes, members, and closures"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-09-04
+updated: 2026-09-05
 assignee: ttraenkler/codex
 branch: codex/3522-f2-owner-aware-direct-calls
 priority: critical
@@ -5202,3 +5202,243 @@ The annotated `classes.js` twin now compiles every executable unit once
 - #5312 (uninitialised declared field reads as a null ref, not `undefined`) is
   being implemented by opus-5312 at hand-over time; its PR will carry the
   decision between read-site mapping and comparison folding.
+
+## Implementation Plan — 2026-09-05
+
+### W1-D: literal computed instance-method names, with exact body ownership
+
+Planner: **Astra**. Source review base:
+`a53b1bd17338c01f4bffe2df6b3463d216990a6b`. This is the next unimplemented
+class-member slice after the landed private-method and `super`-accessor work.
+It does not reopen those slices or mark R3 complete. No compiler tests were
+run by the planner; the current-source facts below are distinct from the
+historical September 3/4 measurements, which must be reproduced by the dev.
+
+**Dispatch identity:** `3522:w1d-computed-literal-method`, intended owner
+`ttraenkler/luna-ir-computed-method-20260905`, branch
+`codex/3522-w1d-luna-20260905`. The lead verified this reservation remotely
+after checking claims, remote branches and open PRs, and provisioned its
+isolated worktree. Recheck the record before editing. The old
+`3522:w1c-super-accessor` claim is not this slice.
+
+### Root cause on the reviewed source
+
+For `class Tagged { ["tagged"](): number { return 42; } }`:
+
+1. `identity.ts::classMemberLegacyName` (`:637`) obtains `<computed>` from
+   `memberBaseName` (`:631`) instead of the literal runtime key.
+2. `select.ts::phase1MemberName` (`:10696`) returns `null`; the identity
+   selector (`select-identity.ts:1285`) therefore refuses the method as
+   `class-method` before looking for its descriptor.
+3. `codegen/index.ts::buildIrClassShapes` (`:1526`, instance-method loop
+   `:1762-1815`) still skips every name except Identifier/PrivateIdentifier.
+   Opening the selector alone would merely move the refusal to
+   `class-member-unsupported` for the missing descriptor.
+4. `integration-identity.ts::classMemberLegacyName` (`:132-144`) must agree
+   with selection and inventory when it builds the exact selected owner map.
+
+The backend already knows the key: `class-bodies.ts::resolveClassMemberName`
+(`:757`) calls `resolveComputedKeyExpression` (`literals.ts:2792`), which
+resolves a string literal to its string value. This slice must use only that
+literal fact. Importing the backend's general constant evaluator into IR
+would also import mutable binding, enum and symbol assumptions this slice
+does not establish.
+
+### Bounded acceptance contract
+
+Add one syntax-only helper in **new `src/ir/class-method-names.ts`**, importing
+only `ts-api`. Suggested API:
+`literalComputedInstanceMethodKey(member: ts.MethodDeclaration): string | undefined`.
+It answers an exact decoded key or **unproven**, never a guessed name.
+
+For this first slice require all of the following:
+
+- The method name is a `ComputedPropertyName` whose expression is directly a
+  `StringLiteral`; `"tagged"` and `'tagged'` agree. No identifier lookup,
+  parentheses, assertion, template, arithmetic, comma, assignment, symbol,
+  numeric key, or runtime evaluation is added.
+- The containing declaration is a named, non-ambient top-level
+  `ClassDeclaration`, with no heritage or decorators. It contains only
+  body-bearing instance methods, an optional ordinary zero-parameter
+  constructor, and semicolons. Fields, accessors, statics, overload signatures,
+  private members and nested/class-expression ownership remain outside the
+  **new** family; existing admission for those forms stays unchanged.
+- Each method in that family has an Identifier or the same raw-string-literal
+  computed name, a body, no optional/async/generator/abstract form, no
+  decorators, and a fixed parameter list with explicit number/string/boolean
+  types. Return annotations are number/string/boolean/void. Parameter
+  defaults, rest, destructuring and callable/class/dynamic positions stay out.
+  Existing body selection still decides whether the body can lower.
+- The decoded keys are unique among the class's methods. Restrict the new
+  computed keys to ordinary ASCII identifier spellings for this slice, and
+  exclude `constructor`, `new`, and `init` (the latter two overlap constructor
+  support labels). The helper must reject an unresolved sibling or duplicate
+  rather than assuming it cannot collide. This restriction is deliberate
+  scope, not a claim that other legal JavaScript keys are unsupported forever.
+
+Keep name resolution and existing type/body/ABI proofs separate: the helper
+only certifies this narrow declaration family and its key. It does not mint
+an identity, reserve a slot, evaluate a key, or authorize emission by itself.
+The return type `undefined` is a refusal to extend the existing claim set.
+
+### Exact changes, in order
+
+1. **`src/ir/identity.ts`, `classMemberLegacyName` (`:637`).** For a method
+   accepted by the new helper, use its decoded key before the existing
+   `memberBaseName` fallback. Leave `memberBaseName` itself unchanged: it also
+   names object-literal members and field-initializer support. Keep
+   `InventoryBuilder.processClass`'s definition-expression scan (`:1191`) and
+   unit ordinal/lexical-owner construction (`:1257-1322`) unchanged. Thus the
+   exact declaration keeps its UnitId while its compatibility label becomes
+   `Tagged_tagged`; two different admitted keys get different labels.
+2. **`src/ir/select.ts`.** Add a method-specific wrapper, e.g.
+   `phase1MethodName(member)`, delegating to the new helper for computed names
+   and to `phase1MemberName` otherwise. Update only the method naming in
+   `planIrCompilation`'s static/instance collision collection (`:891-901`),
+   method branch (`:924`), and descriptor lookup (`:987`, branch by member
+   kind). The existing `phase1MemberName`, `phase1PropertyName`, accessor
+   paths and `classElementProjectionName` remain unchanged. In the
+   **no-sidecar** arm of `classMethodProjection` (`:7815-7852`), use the same
+   method-specific name for matching a method and counting an instance/static
+   collision. Its exact-shape arm (`:7776`) already reads descriptors by
+   semantic key and needs no new lookup. Leave the W1-H binary-expression
+   function at `:7361` alone.
+3. **`src/ir/select-identity.ts`, `planIrCompilationByIdentity` (`:909`) class loop.**
+   Use the method-specific name at the method-name refusal (`:1285`) and the
+   descriptor-name computation (`:1314`), preserving accessor behavior.
+   For a newly admitted computed method, require exactly one descriptor with
+   matching name/kind **and** exact `placement.classId`, `placement.unitId`,
+   unit-bound `target.binding.unitId`. Missing/ambiguous evidence refuses
+   before claim using the existing class-member capability path. Do not
+   weaken any `selectorIdentityInvariant`, replace exact ids with text, or
+   rewrite nested-class atom handling.
+4. **`src/codegen/index.ts`, `buildIrClassShapes` instance-method loop
+   (`:1762-1815`).** Keep the old Identifier/PrivateIdentifier arms, then add
+   only the new helper's successful computed-method arm. Preserve all
+   parameter/return projection checks, `callableTarget(member, ...)`,
+   `placementFor(member)` and descriptor shape. Do not admit every
+   StringLiteral/NumericLiteral property simply by calling the broader
+   `phase1MemberName`: those existing descriptor gaps are not this slice.
+   `planIrOverlay`, the TypeScript binder work and Reflect handlers are out
+   of the write scope.
+5. **`src/ir/integration-identity.ts`, `classMemberLegacyName` (`:132`).**
+   Use the same method-specific name for methods, preserving the accessor
+   branch and duplicate-owner invariants. Prove the producer declaration,
+   inventory terminal, descriptor target and final Program ABI callable all
+   point to the same exact unit.
+
+**Wasm pattern:** no new instruction or runtime helper. The existing
+`class.call`/method lowering continues to obtain its callee from the class
+descriptor, pass the existing receiver plus arguments, and emit the direct
+Wasm `call` to the exact resolved callable. The method body uses the existing
+IR operations for its scalar body. No `ref.cast`, ref-cell, `VOID_RESULT`,
+boxing or coercion rule changes are authorized here.
+
+### Direct-body routing and read-only checks
+
+`prepared-class-body-cutover.ts::hasResidualClassBodySyntax` (`:56`) rejects
+every computed member, but that is a **whole-walker cutover**, not evidence
+that a selected method must emit directly. The fallback
+`class-bodies.ts::compileClassBodies` calls `skipExactPreparedClassBody`
+(`:2996`) before resolving or emitting a method body; that helper (`:2188`)
+checks the exact declaration UnitId and allocator-owned callable. Use it.
+Do not widen the whole-class cutover or its kill switch.
+
+Read, do not edit, `class-bodies.ts`,
+`program-abi-class-callable-planning.ts::structuralClassMemberName` (`:178`),
+`class-callable-abi.ts::finalizeForwardClassCallableAbis` (`:106`, deliberately
+still identifier-only), and `integration.ts`'s compatibility-only method
+walk (`:3460`). The primitive-signature/top-level/identity-route limits avoid
+requiring their wider ABI surfaces. If a positive case needs a new callable
+provider or body-router change, report it and re-scope before broadening.
+
+### Tests and first-run decision
+
+New **`tests/issue-3522-computed-literal-method.test.ts`**, following
+`tests/issue-3522-private-method-admission.test.ts`'s per-target outcomes,
+runtime setup, exact body-poison controls and cleanup in `finally`.
+
+```ts
+class Tagged {
+  constructor() {}
+  ["tagged"](n: number): number { return n + 2; }
+  ["other"](n: number): number { return n + 7; }
+}
+export function run(): number {
+  const value = new Tagged();
+  return value.tagged(3) * 10 + value.other(4);
+}
+```
+
+Expected executed result is **61**. First run this source on the real branch
+base through `compile` and record the exact method and caller outcomes on
+`gc` and `standalone`. The new methods should reproduce the name/descriptor
+refusal; the planner does not claim a freshly measured failing-test count.
+If base already emits these methods or another earlier arm prevents reaching
+the intended boundary, resolve that finding before the production edit.
+
+The candidate must demonstrate all of the following:
+
+- One exact terminal per method, stable UnitIds versus base, decoded distinct
+  labels, exact descriptor/callable agreement, `irBodyEmitted: true` and
+  `legacyBodyEmitted: false`, with no post-claim errors or audit violations.
+- The positive source runs to 61 on both targets with each named direct
+  method body poisoned. A forced-direct control must trip the poison; a
+  no-poison direct baseline must return the same value. Do not equate a
+  successfully entered declaration walker with direct body emission.
+- Literal aliases (`const key = "tagged"; [key]()`), an effectful key,
+  numeric/template keys, duplicate decoded keys, reserved support names,
+  static/accessor/private/nested/derived/field-bearing classes and wider
+  signatures retain their previous admission. Existing ordinary methods in
+  a mixed class must not lose their prior ownership just because the new
+  computed candidate is refused.
+- The previously admitted private-method and `super`-accessor cases stay
+  unchanged. Object literal computed names and field/accessor key evaluation
+  also stay unchanged because their helpers were not widened.
+- Remove each load-bearing production seam in turn using worktree-local
+  file copies: the positive ownership/identity tests must fail. A branch
+  that changes only display names is not accepted as method admission.
+
+`tests/issue-3529-selector-preclaim.test.ts:114` currently lists a literal
+computed method as a refusal. Move that **exact** case to a positive runtime
+and ownership test; preserve a refusal control with a truly dynamic key.
+Do not delete the negative coverage or silently relax its assertions.
+
+### Validation, write ownership and dispatch
+
+```bash
+pnpm exec vitest run tests/issue-3522-computed-literal-method.test.ts tests/issue-3522-private-method-admission.test.ts tests/issue-3522-private-method-call-sites.test.ts tests/issue-3522-super-accessor.test.ts tests/issue-3529-selector-preclaim.test.ts tests/issue-3529-class-integration.test.ts --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+node --import tsx scripts/check-ir-fallbacks.ts
+node --import tsx scripts/check-ir-only.ts --policy=hybrid
+node --import tsx scripts/check-ir-only.ts --policy=ir-only
+pnpm run check:ir-dialect
+pnpm run check:ir-kind-neutrality
+pnpm run check:ir-layering
+pnpm run typecheck
+pnpm run lint
+node scripts/check-loc-budget.mjs && node scripts/check-func-budget.mjs && node scripts/check-coercion-sites.mjs && pnpm run check:oracle-ratchet && pnpm run check:dead-exports
+```
+
+Run all affected R1 identity/R3/class-projection suites one file per invocation
+on base and candidate; report the fresh failing-name diff, not September's
+"23 pre-existing" count. Capture and compare emitted bytes with
+`node --import tsx scripts/prove-emit-identity.mjs write --baseline .tmp/w1d-emit-base.json`
+before edits and its `check` mode after. State its enumerated `.ts` manifest
+and successful-compile floor; it does not enumerate dogfood `.js`. No corpus
+coverage gain is predicted from the synthetic `r05` shape. Run required
+equivalence/quality checks, including the five ratchets against a freshly
+verified main SHA. Put only measured growth grants in this issue; never
+inflate main-owned baselines.
+
+**Luna / max brief:** own the new helper, the narrowly named functions in
+`identity.ts`, `select.ts`, `select-identity.ts`, `integration-identity.ts`,
+and `codegen/index.ts`, the new test, the one stale refusal case, and this
+issue's landing record. You are not alone; preserve peers' changes and use
+your assigned isolated branch. W1-H owns a different function in `select.ts`;
+coordinate imports and serialize main integration if both edit that file.
+No other shared function is assigned concurrently in this wave. Do not edit
+module-binding storage, R2 free-function ownership, class cutover switches,
+Reflect methods, or the binder. First measure the motivating row, then ship
+only this literal family with exact body evidence. Source and test results
+outrank this plan. Keep the epic `in-progress` and return base/head SHAs,
+commands, outcome changes, poison/removal controls, and remaining failures.
