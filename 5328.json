@@ -1,10 +1,11 @@
 {
   "id": "5328",
   "assignee": "ttraenkler/claude",
-  "requested_by": "ttraenkler/claude",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5328-dynamic-dispatch-extern-result",
   "claimed_at": "2026-09-05T13:01:53Z",
-  "updated_at": "2026-09-05T13:01:53Z",
-  "write_id": "87786-k1wqk5p7"
+  "updated_at": "2026-09-05T15:26:15Z",
+  "write_id": "59794-bwo60jxq",
+  "released_at": "2026-09-05T15:26:15Z"
 }
