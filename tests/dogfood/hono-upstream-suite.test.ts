@@ -51,8 +51,19 @@ describe("hono v4.12.16 upstream suite", () => {
     expect(report.extraction.nativePassed).toBe(324);
     expect(report.extraction.nativeFailed).toBe(0);
     expect(report.extraction.unavailableInfra).toBe(2031);
-    expect(report.compile).toMatchObject({ modules: 20, succeeded: 20, validated: 18 });
-    expect(report.results).toMatchObject({ scored: 324, passed: 90, runtimeFailed: 6 });
+    expect(report.compile).toMatchObject({ modules: 20, succeeded: 20 });
+    expect(report.compile.validated).toBeGreaterThanOrEqual(19);
+    expect(report.results.scored).toBe(324);
+    // Structure is pinned exactly; the Wasm pass count is a FLOOR. This test is
+    // opt-in and never runs in CI, so an exact pin rots silently — it still
+    // read `passed: 90, runtimeFailed: 6, validated: 18` while the suite
+    // measured 244/324 on main (#5326). Measured 2026-09-05: 244/324.
+    expect(report.results.passed).toBeGreaterThanOrEqual(244);
     expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
+    // Completeness is part of the score (#5326): every selected file must have
+    // produced a result, or the headline covers only a slice of the suite.
+    expect(report.summary.selectedFilesRun).toBe(20);
+    expect(report.summary.filesWithoutResult).toBe(0);
+    expect(report.summary.filesWithoutResultDetail).toEqual([]);
   });
 });

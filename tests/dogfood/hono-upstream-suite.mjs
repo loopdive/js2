@@ -11,7 +11,10 @@ import {
   UPSTREAM_TEST_SHIM,
   cliUpstreamHarness,
   compileAndRunUpstreamModule,
+  createHarnessLogger,
+  runUpstreamFile,
   summarizeUpstreamRuns,
+  unmeasuredFilesLine,
   writeUpstreamReport,
 } from "./upstream-suite-runner.mjs";
 
@@ -52,7 +55,10 @@ function transformHonoTest(source, filePath, sourceRoot, packageRoot, generatedP
 }
 
 export async function runHarness({ quiet = false } = {}) {
-  const log = quiet ? () => {} : (...values) => console.log(...values);
+  // Bound at import time, not per call: hono's own `showRoutes()` tests stub
+  // `console.log` and the shim cannot always restore it, so a logger that
+  // re-reads the global would print into the suite it is measuring.
+  const log = createHarnessLogger({ quiet });
   const packageSetup = setupNpmCompatCatalogPackage("hono");
   const suite = setupHonoUpstreamSuite();
   const runs = [];
@@ -60,28 +66,41 @@ export async function runHarness({ quiet = false } = {}) {
   log(`[dogfood] hono@${packageSetup.version} upstream ${suite.pin.tag} (${suite.pin.commit.slice(0, 12)})`);
   for (const filePath of suite.selectedPaths) {
     const file = suite.relativePath(filePath);
-    const generatedPath = join(GENERATED_ROOT, `${file.replace(/\.(?:ts|tsx)$/, "")}.ts`);
-    const transformed = transformHonoTest(
-      readFileSync(filePath, "utf-8"),
-      filePath,
-      suite.root,
-      packageSetup.root,
-      generatedPath,
+    const run = await runUpstreamFile(
+      file,
+      async () => {
+        const generatedPath = join(GENERATED_ROOT, `${file.replace(/\.(?:ts|tsx)$/, "")}.ts`);
+        const transformed = transformHonoTest(
+          readFileSync(filePath, "utf-8"),
+          filePath,
+          suite.root,
+          packageSetup.root,
+          generatedPath,
+        );
+        const source = `${UPSTREAM_TEST_SHIM}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
+        return compileAndRunUpstreamModule({
+          generatedPath,
+          source,
+          timeoutMs: 240_000,
+          // Hono's buffer/crypto originals intentionally import the Node crypto
+          // builtin. Keep that dependency at the host boundary for those files;
+          // the other selected web-facing units remain on the hermetic web lane.
+          workerEnv: /(?:^|\/)utils\/(?:buffer|crypto)\.test\.ts$/.test(file)
+            ? { DOGFOOD_PLATFORM: "node" }
+            : undefined,
+        });
+      },
+      // Generous relative to the 240 s compile deadline the worker already
+      // enforces; this only has to bound the in-process native lane, which has
+      // no deadline of its own.
+      { timeoutMs: 600_000 },
     );
-    const source = `${UPSTREAM_TEST_SHIM}\n${transformed}\n${UPSTREAM_TEST_EXPORTS}`;
-    const result = await compileAndRunUpstreamModule({
-      generatedPath,
-      source,
-      timeoutMs: 240_000,
-      // Hono's buffer/crypto originals intentionally import the Node crypto
-      // builtin. Keep that dependency at the host boundary for those files;
-      // the other selected web-facing units remain on the hermetic web lane.
-      workerEnv: /(?:^|\/)utils\/(?:buffer|crypto)\.test\.ts$/.test(file) ? { DOGFOOD_PLATFORM: "node" } : undefined,
-    });
-    runs.push({ file, result });
+    runs.push(run);
+    const { result } = run;
     log(
       `[dogfood] ${file}: ${result.native.statuses.filter(Boolean).length}/${result.native.count} native; ` +
-        `${result.wasm?.statuses.filter(Boolean).length ?? 0}/${result.native.count} Wasm`,
+        `${result.wasm?.statuses.filter(Boolean).length ?? 0}/${result.native.count} Wasm` +
+        (result.harnessError ? ` — NO RESULT (${result.harnessError})` : ""),
     );
   }
 
@@ -94,6 +113,7 @@ export async function runHarness({ quiet = false } = {}) {
   });
   writeUpstreamReport(REPORT_PATH, report);
   log(`[dogfood] ${report.summary.headline}; ${report.extraction.filesDeferred} upstream files explicitly deferred`);
+  log(unmeasuredFilesLine(report));
   log(`[dogfood] report → ${REPORT_PATH}`);
   return report;
 }
