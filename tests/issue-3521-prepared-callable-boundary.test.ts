@@ -258,6 +258,34 @@ describe("#3521 R2-B1 prepared callable boundary contract", () => {
     expect(candidate.contract).toBeUndefined();
   });
 
+  it.each([false, true] as const)("rejects an in-place nested callable i64.bigint=%s mutation", (bigint) => {
+    const f = fixture();
+    const mutableCallable = f.callableType as unknown as {
+      signature: { params: IrType[]; returnType: IrType | null };
+    };
+    mutableCallable.signature.params[0] = { kind: "val", val: { kind: "i64" } };
+    const candidate = f.registry.issuePreparedCallableBoundary(f.unitId, {
+      params: [f.callableType, f.numberType],
+      returnType: f.numberType,
+    });
+    if (!candidate) throw new Error("callable-boundary fixture did not issue the bigint candidate");
+
+    const mutableParam = mutableCallable.signature.params[0] as unknown as {
+      val: { kind: "i64"; bigint?: boolean };
+    };
+    mutableParam.val.bigint = bigint;
+    const invocation = invokeRef(createIrBindingId({ ownerId: f.unitId, domain: "support", role: "invoke" }));
+    expect(
+      candidate.certify({
+        fn: f.fn,
+        projectedSignature: projected(),
+        support: support(f, [invocation]),
+        scopeLookup: scope(f),
+      }),
+    ).toBeUndefined();
+    expect(candidate.contract).toBeUndefined();
+  });
+
   it("rejects an in-place nested callable f64.undefSentinel mutation after certification", () => {
     const f = fixture();
     const invocation = invokeRef(createIrBindingId({ ownerId: f.unitId, domain: "support", role: "invoke" }));

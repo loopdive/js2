@@ -4557,7 +4557,7 @@ own exact late-seal transaction. The contract suite covers real invocation
 support, missing support, changed semantic and physical signatures, foreign or
 replaced allocators, forged or changed receipts, nested mutation after
 issuance, nested mutation after certification, brand mutation after issuance
-and certification, and the multi-result guard: **11/11 tests passed**.
+and certification, and the multi-result guard: **13/13 tests passed**.
 
 **Required gates:** both `check-ir-only` policies are ready in GC-host and
 standalone: each has 5/5 entries, 41 terminal units, 38 IR-emitted units,

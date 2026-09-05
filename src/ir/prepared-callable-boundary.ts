@@ -180,6 +180,8 @@ function snapshotSemanticSignature(
  */
 function semanticValTypeBrandKey(signature: PreparedCallableBoundarySemanticSignature): string {
   const brands: string[] = [];
+  const optionalFlagKey = (value: unknown): string =>
+    value === undefined ? "absent" : value === true ? "true" : value === false ? "false" : `other:${String(value)}`;
   const active = new Set<object>();
   const visit = (value: unknown): void => {
     if (value === null || typeof value !== "object") return;
@@ -191,9 +193,9 @@ function semanticValTypeBrandKey(signature: PreparedCallableBoundarySemanticSign
         if (candidate.kind === "val" && candidate.val !== null && typeof candidate.val === "object") {
           const val = candidate.val as ValType;
           if (val.kind === "i32")
-            brands.push(`i32:${val.boolean === true ? "boolean" : ""}:${val.symbol === true ? "symbol" : ""}`);
-          if (val.kind === "i64") brands.push(`i64:${val.bigint === true ? "bigint" : ""}`);
-          if (val.kind === "f64") brands.push(`f64:${val.undefSentinel === true ? "undefSentinel" : ""}`);
+            brands.push(`i32:boolean=${optionalFlagKey(val.boolean)}:symbol=${optionalFlagKey(val.symbol)}`);
+          if (val.kind === "i64") brands.push(`i64:bigint=${optionalFlagKey(val.bigint)}`);
+          if (val.kind === "f64") brands.push(`f64:undefSentinel=${optionalFlagKey(val.undefSentinel)}`);
         }
       }
       if (Array.isArray(value)) {
