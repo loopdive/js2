@@ -41,6 +41,14 @@ loc-budget-allow:
   # §10.1.14 step-3 Type(proto)-is-Object guard on the carrier write. Both live
   # in reflect-construct-newtarget.ts; call-namespace-static.ts grows by the
   # dispatch and the restored refusal.
+  # 2026-09-05 review round 2 (Opus, +207 LOC): the six admitted-shape
+  # narrowings from the round-1 verdict, and the measurement each one rests on
+  # written down beside it. Most of the growth is that evidence — the
+  # nine-constructor wrapper table, the base-attribution for the name-keyed
+  # `prototype` reader, the descriptor-write measurement the round-1 comment
+  # asserted without one, and the four narrowings of the in-file function
+  # target, each recorded with the wrong answer that forced it. A refusal whose
+  # measurement is not next to it is the defect this round was called to fix.
 func-budget-allow:
   # 2026-09-04 r4 implementation (Opus): four helpers for the runtime
   # NewTarget.prototype read, its carrier application, the single-assignment
@@ -905,3 +913,284 @@ keeps its `refusals kept` block green on standalone and wasi; (c) programs
 without `Reflect.construct` byte-identical to origin/main on standalone, wasi
 and host; (d) all gates green bare and with `LOC_GATE_BASE=origin/main`;
 growth grants in this file's frontmatter with a dated rationale.
+
+## 2026-09-05 r2 implementation (Opus)
+
+**What this round is.** r2 implements the six lane-only over-refusals from the
+round-1 verdict. It is a **soundness round, not a row-count round**: the owned
+test262 rows are unchanged (12 pass / 12 non-pass, base and branch, set-diff
+empty in both directions). What changed is the set of PROGRAMS the compiler
+accepts — five shapes that node answers and round 1 refused now compile and
+answer node, and four shapes the plan wanted admitted are shown by measurement
+to answer WRONGLY and keep the refusal.
+
+Worktree `/home/user/js2/.claude/worktrees/wf_eb120fff-87d-1`, branch
+`worktree-wf_eb120fff-87d-1`, spawn base `origin/main` **c9a8b48616** plus the
+plan commit 6f445141d3. `origin/main` advanced to 2257b950ee during the
+session; the A/B base tree is c9a8b48616 (`git archive`, `.tmp/base`, verified
+byte-equal to `c9a8b48616:src/codegen/expressions/reflect-construct-newtarget.ts`).
+Oracle node 22 in this container; harness `.tmp/cmp.mts` (base / branch / node),
+probes `.tmp/p/*.js`. Every number below is a run executed in this session.
+
+### Steps — outcome per plan step
+
+| Step | Plan asked | Outcome |
+| --- | --- | --- |
+| 1 | `targetReadsNewTarget` stops at nested ordinary functions | **Done as asked.** `readsNewTarget` stops at every scope that owns a `new.target` (function declaration/expression, method, accessor, class constructor); arrows, field initialisers and static blocks still inherit. |
+| 2 | drop Boolean, String, Symbol from `UNSETTABLE_PROTOTYPE_CONSTRUCTORS` | **Only Symbol dropped.** The plan's premise does not survive re-measurement — see the table below. |
+| 3 | `prototypeIsPristine` resolves the binding by symbol | **Partly.** The binding COUNT is gone (that was the over-refusal). The WRITE clauses must stay name-keyed; the reader they protect is itself name-keyed. |
+| 4 | mutation of `NT.prototype` is not replacement | **Done as asked**, plus the measurement the plan requested for the descriptor-write shape. |
+| 5 | in-file function targets use the `unknown` carrier route | **Narrowed four times.** Only a target that does NOT resolve to one unreassigned function declaration is admitted. |
+| 6 | doc-comment correction | **Done**, with both carriers measured. |
+
+### Step 1 — a nested function's `new.target` is its own
+
+| probe | node | base | branch |
+| --- | --- | --- | --- |
+| `b5_nt_nested_newtarget.js` (nested function declaration) | 7 | `(#3371)` CE | **7** |
+| `b5b_nt_nested_fnexpr.js` (nested function expression) | 7 | `(#3371)` CE | **7** |
+| `c2_direct_newtarget.js` (the target itself reads it) | 3 | `(#3371)` CE | `(#3371)` CE |
+| `c6_arrow_newtarget.js` (an arrow in the target reads it) | 3 | `(#3371)` CE | `(#3371)` CE |
+
+### Step 2 — the wrapper constructors, re-measured
+
+Run with `UNSETTABLE_PROTOTYPE_CONSTRUCTORS` emptied, `--target standalone`:
+
+| target | node | admitted | verdict |
+| --- | --- | --- | --- |
+| Array | 1 | 0 | prototype not recorded — keep refusing |
+| Map | 1 | 0 | prototype not recorded — keep refusing |
+| RegExp | 1 | 0 | prototype not recorded — keep refusing |
+| Set | 1 | 0 | prototype not recorded — keep refusing |
+| Function | 1 | LEAK | pulls a `js2wasm:runtime-eval` import — keep refusing |
+| Boolean | 5 | 7 | dispatch stays nominal — keep refusing |
+| Number | 5 | 7 | dispatch stays nominal — keep refusing |
+| String | 5 | 3 | dispatch stays nominal — keep refusing |
+| Symbol | 1 | 1 | never constructs; TypeError = node — **DROPPED** |
+
+**The correction.** The plan's evidence for Boolean/String was a probe that only
+compares `Object.getPrototypeOf(o)`. That probe passes. A probe that ALSO reads
+a method through the patched chain does not: `o.valueOf()` answers the
+primitive where node answers the wrapper object, and `String`'s `o.length` is
+wrong too. Admitting them would convert a compile error into a wrong answer.
+The nominal dispatch is pre-existing — with no `Reflect.construct` in the
+program at all, `Object.setPrototypeOf(new Boolean(true), P)` reads back 2 on
+BASE where node reads 1 (`.tmp/p/g_wrapper_setproto_base.js`; the String twin
+is 6 vs node 5) — but a defect being older is not a licence to compile new
+programs onto it.
+
+`Number` was on the plan's keep-list for the wrong reason (it was said to
+discard the prototype; it records it). It keeps the refusal for the same reason
+Boolean and String do.
+
+### Step 3 — resolve the binding, keep the write clauses name-keyed
+
+| probe | node | base | branch |
+| --- | --- | --- | --- |
+| `m2_shadow.js` (a helper's parameter is also called `NT`) | 7 | `(#3371)` CE | **7** |
+| `m5b_shadow_nodefprop.js` (an inner `const NT`, untouched) | 3 | `(#3371)` CE | **3** |
+| `m1_control_noshadow.js` | 7 | 7 | 7 |
+| `m3_control_nomut.js` | 7 | 7 | 7 |
+| `m4_nt_reassigned.js` (a real reassignment) | 0 | 0 | 0 |
+| `m5_nt_block_shadow_mutates.js` (a slot write to the inner `NT`) | 3 | `(#3371)` CE | `(#3371)` CE |
+
+**Why the write clauses stay name-keyed.** The compiler's model of a function's
+`prototype` slot is itself name-keyed. `.tmp/p/m5e_read_only_base.js` contains
+no `Reflect.construct` at all — an outer `function NT(){}` and an inner
+`const NT = function(){}` whose prototype slot is redefined — and the OUTER
+`NT.prototype` reads null on **base** (base 5, node 6). With the write clauses
+symbol-resolved, `m5_nt_block_shadow_mutates.js` compiled and answered 1 where
+node answers 3. So symbol resolution is used for what it can decide (is this
+identifier's binding declared once here?) and the spelling for what the reader
+can actually distinguish.
+
+### Step 4 — mutation vs replacement, and the descriptor-write measurement
+
+| probe | node | base | branch |
+| --- | --- | --- | --- |
+| `b2_driver_protomut.js` (`NT.prototype.tag = 9`) | 7 | `(#3371)` CE | **7** |
+| `b7_object_assign_proto.js` (`Object.assign(NT.prototype, …)`) | 7 | `(#3371)` CE | **7** |
+| `c3_defineprop_on_proto.js` (`Object.defineProperty(NT.prototype, …)`) | 7 | `(#3371)` CE | **7** |
+| `d1_defineprop_slot.js` (`Object.defineProperty(NT, "prototype", …)`) | 7 | `(#3371)` CE | `(#3371)` CE |
+| `d3_setprotoof_nt.js` (`Object.setPrototypeOf(NT, …)`) | 3 | `(#3371)` CE | `(#3371)` CE |
+
+**The plan's open question, answered.** With every refusing clause disabled,
+`d1_defineprop_slot.js` compiles and answers **1** where node answers **7** —
+the instance lands on `%Object.prototype%`, neither `getPrototypeOf(o) === P`
+nor `o.tag === 9` holds. The descriptor-written object-literal carrier IS
+dropped by `__native_construct_N`'s `ref.test $Object`; the code comment citing
+that shape as the rationale is correct as written, and now carries the
+measurement. The shape is refused twice over: TypeScript synthesises an expando
+declaration for that `defineProperty`, so the in-file declaration count is 2.
+
+`d3` is a deliberate conservative keep, not a defect: admitted, it measured 3 =
+node, but `Object.setPrototypeOf(NT, …)` can change what `NT.prototype`
+resolves to for a NewTarget with no own `prototype`, and the gate does not
+require the NewTarget to be a function declaration.
+
+### Step 5 — the in-file function target, narrowed four times
+
+The plan's blanket version (route every declined function target to the carrier)
+produces six wrong answers. Each narrowing below is one of them:
+
+| probe | node | base | blanket | branch |
+| --- | --- | --- | --- | --- |
+| `j6_reassigned_target.js` (target is a reassigned `let`) | 3 | `(#3371)` CE | 3 | **3** |
+| `j10_const_alias_target.js` (`const T = F`) | 3 | `(#3371)` CE | 3 | **3** |
+| `j12_generator_target.js` | 1 | `(#3371)` CE | 1 | **1** |
+| `d1_defineprop_slot.js` | 7 | `(#3371)` CE | 1 | `(#3371)` CE |
+| `m5_nt_block_shadow_mutates.js` | 3 | `(#3371)` CE | 1 | `(#3371)` CE |
+| `d3_setprotoof_nt.js` | 3 | `(#3371)` CE | 1 | `(#3371)` CE |
+| `j7_spread_args.js` (static target, spread) | 7 | `(#3371)` CE | 0 | `(#3371)` CE |
+| `j8_many_args.js` (static target, 10 args) | 3 | `(#3371)` CE | 1 | `(#3371)` CE |
+| `j9_reassigned_target_spread.js` (dynamic target, spread) | 7 | `(#3371)` CE | TRAP | `(#3371)` CE |
+| `j11_async_target.js` (`async function` target) | 1 | `(#3371)` CE | 0 | `(#3371)` CE |
+
+The mechanism the round-1 refusal named — "the post-construction patch is a
+no-op on a closed instance struct" — is real, but it applies only when the
+ordinary `new` lowering can pick the closed-struct path, which needs the target
+to resolve statically. A target it cannot resolve takes the generic
+`__object_setPrototypeOf` route, exactly as an `unknown` target does on base
+(`k1_target_param.js`: node 3, base 3). So the branch admits only a function
+target that does NOT resolve to one unreassigned function declaration, and
+still requires: standalone, `prototypeIsPristine`, the driver's argument-shape
+limits, and that the target is not an `async function`.
+
+### Step 6 — the §10.1.14 guard repaired DataView only
+
+| probe | node | base | branch |
+| --- | --- | --- | --- |
+| `f1_dv_bind_noproto.js` (DataView, bound NewTarget with no own prototype) | 3 | 3 | 3 |
+| `f2_ta_bind_noproto.js` (Uint8Array, same) | 3 | 1 | 1 |
+
+Comment corrected; no code change. `Object.getPrototypeOf` on a
+dynamically-typed typed-array view answers null on base with no
+`Reflect.construct` in the program, so no guard in this arm can repair what
+that reader reports.
+
+### One regression, found by the row run and repaired
+
+Step 3's first cut required the NewTarget identifier to have exactly one
+declaration. A lib global has many (`Array` is an interface plus a var plus
+`ArrayConstructor`), so
+`built-ins/Reflect/construct/return-with-newtarget-argument.js` — one of the
+eleven rows r4 gained — went **pass → compile_error**. The count is now over
+declarations in THIS source file only: a lib global has zero, a genuine second
+in-file binding still refuses, and TypeScript's synthesised expando declaration
+for `Object.defineProperty(NT, "prototype", …)` is in-file, so `d1` stays
+refused by that clause too.
+
+### Rows — 24 owned (23 + the positive control)
+
+`.tmp/rows-owned.txt`, `npx tsx scripts/run-test262-paths.mts --isolate …
+--standalone`, `COMPILER_POOL_SIZE=2`, 2026-09-05; base tree `.tmp/base`
+(`git archive` of c9a8b48616), branch tree this worktree.
+
+| | base c9a8b48616 | branch |
+| --- | --- | --- |
+| pass | 12 | **12** |
+| fail | 9 | 9 |
+| compile_error | 3 | 3 |
+
+**Rows lost: 0. Rows gained: 0. Non-pass set-difference: empty in both
+directions.** All eleven rows r4 gained plus the positive control
+`return-without-newtarget-argument.js` still pass.
+
+### Probe sweep — 44 probes, standalone and wasi
+
+`.tmp/sweep2-standalone.txt` and `.tmp/sweep-wasi.txt`:
+
+- **standalone:** every probe that compiled on base answers identically on the
+  branch (zero base-drift); every newly-admitted probe equals node; every
+  remaining refusal carries the verbatim `(#3371)` error.
+- **wasi:** only the two `Symbol` probes differ from base, both to node's
+  answer. The step-5 branch is gated on `ctx.standalone`, so a wasi build sees
+  base's refusal for every other shape.
+
+### Byte identity — programs without the distinct-NewTarget arm
+
+`.tmp/bytes.mts`, sha256 of the emitted binary, base vs branch, three targets:
+
+| program | standalone | wasi | host |
+| --- | --- | --- | --- |
+| `z_plain.js` (classes, `new`, `super`, a nested `new.target`) | SAME | SAME | SAME |
+| `z_views.js` (DataView, typed array, bind, setPrototypeOf) | SAME | SAME | SAME |
+| `z_reflect_other.js` (2-arg construct, `NT === F`, static `NT.prototype = …`) | SAME | SAME | SAME |
+
+`BYTE-IDENTICAL: all` — main's own `Reflect.construct` paths are untouched.
+
+### Control corpus — 218 rows, 0 lost
+
+`built-ins/Reflect/construct/**` + `language/expressions/new.target/**` +
+`language/expressions/super/**` + `built-ins/Function/prototype/bind/**`
+(`.tmp/rows-controls.txt`, 218 rows), same isolated standalone runner,
+`COMPILER_POOL_SIZE=2`, both trees run concurrently under identical box load,
+2026-09-05:
+
+| | base c9a8b48616 | branch |
+| --- | --- | --- |
+| pass | 166 | **166** |
+| fail | 49 | 49 |
+| compile_error | 3 | 3 |
+
+Zero rows changed status in either direction; the non-pass set-difference is
+empty both ways. **No `compile_timeout` in any of the four runs**, so the
+re-run-alone step the lane protocol requires did not apply.
+
+### Pins
+
+`tests/issue-3371-r4-reflect-construct-newtarget.test.ts` — **42 tests, all
+green** at `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, `--pool=forks
+--poolOptions.forks.singleFork=true --no-file-parallelism`, on **node 22 AND
+node 25.9.0**. Nine are new this round: five parity pins (one per admitted
+step) and four refusal pins (the Boolean wrapper, the `async function` target,
+the spread-on-dynamic-target trap, the same-named prototype-slot write). The
+refusal block runs on standalone AND wasi.
+
+Two pins were first written with TypeScript spellings that do not compile to
+the shape they name, and the first pin run caught both. Both are separate
+PRE-EXISTING defects, measured on base:
+
+- `(NT.prototype as any).tag = 9` loses the mutation (3); the plain
+  `NT.prototype.tag = 9` answers 0.
+- `let T: any = F; T = G;` traps — the `any` annotation, not the NewTarget. On
+  BASE, `Reflect.construct(T, [1])` (two arguments, main's own path) on the
+  same binding traps identically, and `new T(1)` answers 1 where node answers
+  0. The untyped `let T = F` answers node.
+
+### Gates
+
+`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+`--noEmit`, `lint` — all exit 0, run bare and with `LOC_GATE_BASE` set to BOTH
+the spawn base c9a8b48616 and the advanced 2257b950ee. Growth grants are in
+this file's frontmatter. No `scripts/*-baseline.json` was touched.
+
+### Residuals — with mechanisms
+
+Everything r4/round-1 listed stays open; this round adds three, each measured
+on base rather than inferred:
+
+1. **The wrapper carriers dispatch nominally.** `Boolean`/`Number`/`String`
+   record a patched prototype but keep resolving methods on the intrinsic; on
+   BASE, `Object.setPrototypeOf(new Boolean(true), P)` then `o.valueOf()`
+   already answers the primitive where node answers the object. Until that
+   carrier learns prototype-chain dispatch, those three NewTargets refuse.
+2. **The compiler's function-`prototype` model is name-keyed.** A prototype-slot
+   write to a same-spelled binding in another scope makes the OUTER
+   `NT.prototype` read null on base. That is why `prototypeIsPristine`'s write
+   clauses cannot be symbol-resolved, and why `m5_nt_block_shadow_mutates.js`
+   refuses.
+3. **A dynamic target annotated `any` traps.** `let T: any = F; T = G;` reaches
+   the carrier route and traps; on base the same binding traps through the
+   plain two-argument `Reflect.construct(T, [1])`, so the defect is the
+   `any`-callee construct lowering. Recorded in `classifyRuntimeNewTargetSite`
+   rather than refused — a declared-type test would put a wasm-lowering
+   question inside a source-shape gate.
+
+Unchanged and still owned by other lanes: the `new.target` VALUE carrier
+(#2023, 2 rows), reified class prototypes in standalone, the ArrayBuffer/Date/
+Error carriers (#5150/#3240/#5156), the DataView post-read detach re-check and
+the ArrayBuffer read-before-allocation point, the bound-function NewTarget
+forwarding (#4196) and the realm shim, and the Proxy rows (#5316).
