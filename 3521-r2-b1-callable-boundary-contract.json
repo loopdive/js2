@@ -2,10 +2,11 @@
   "id": "3521",
   "slice": "r2-b1-callable-boundary-contract",
   "assignee": "ttraenkler/luna-ir-r2-b1-20260905",
-  "requested_by": "ttraenkler/luna-ir-r2-b1-20260905",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "codex/3521-r2-b1-brands-luna-20260905",
   "claimed_at": "2026-09-05T12:22:02Z",
-  "updated_at": "2026-09-05T12:22:02Z",
-  "write_id": "57495-ubwx38b7"
+  "updated_at": "2026-09-05T16:58:58Z",
+  "write_id": "30476-hs96cgnj",
+  "released_at": "2026-09-05T16:58:58Z"
 }
