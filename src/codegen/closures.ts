@@ -4598,7 +4598,17 @@ export function compileArrowAsCallback(
         // pushes the SAME cell.
         if (needsThis || options?.deferredInvocation === true) {
           fctx.localMap.set(cap.name, refCellLocal);
-          (fctx.boxedCaptures ??= new Map()).set(cap.name, { refCellTypeIdx, valType: cap.type });
+          // (#5320) The rebind is FUNCTION-wide while the `local.tee` above runs
+          // only where the callback is created. Record the wrapped slot so a
+          // path that skipped that site mints the cell lazily instead of
+          // no-op'ing its writes (closures/conditional-capture-box.ts); the
+          // cell→raw writebacks keep the slot authoritative on exactly those
+          // paths.
+          (fctx.boxedCaptures ??= new Map()).set(cap.name, {
+            refCellTypeIdx,
+            valType: cap.type,
+            rawLocalIdx: cap.localIdx,
+          });
         }
       } else {
         // Immutable capture or already-boxed: push directly

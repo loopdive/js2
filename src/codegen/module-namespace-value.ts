@@ -7,6 +7,7 @@ import { emitCachedFuncClosureAccess, ensureFuncClosureSingleton } from "./closu
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
+import { isNodeBuiltin, normalizeNodeBuiltin } from "../import-resolver.js";
 import { ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
@@ -35,7 +36,82 @@ interface NamespaceGlobalExport {
   readonly globalName: string;
 }
 
-type NamespaceExport = NamespaceFunctionExport | NamespaceGlobalExport;
+/**
+ * A binding the exporting module re-exports straight from a Node builtin
+ * (`export { equal } from "node:assert"`). There is no compiled declaration to
+ * point at — the value lives on the host module object — so the slot is filled
+ * with the same `__extern_get(__node_<mod>(), member)` carrier that
+ * `registerNodeBuiltinImports` gives a direct named import. Without this arm one
+ * such re-export declined the WHOLE namespace object and `ns` read back null.
+ */
+interface NamespaceHostMemberExport {
+  readonly kind: "host-member";
+  readonly key: string;
+  readonly moduleName: string;
+  readonly propertyName: string;
+}
+
+type NamespaceExport = NamespaceFunctionExport | NamespaceGlobalExport | NamespaceHostMemberExport;
+
+/** `{ moduleName, propertyName }` when `specifier` names a Node builtin. */
+function hostMemberOf(
+  specifier: ts.Expression | undefined,
+  binding: ts.ImportSpecifier | ts.ExportSpecifier,
+): { moduleName: string; propertyName: string } | undefined {
+  if (specifier === undefined || !ts.isStringLiteral(specifier) || !isNodeBuiltin(specifier.text)) return undefined;
+  return {
+    moduleName: normalizeNodeBuiltin(specifier.text),
+    propertyName: (binding.propertyName ?? binding.name).text,
+  };
+}
+
+/** The `import { x } from "…"` specifier a bare `export { x }` republishes. */
+function localImportSpecifier(sourceFile: ts.SourceFile, localName: string): ts.ImportSpecifier | undefined {
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (bindings === undefined || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      if (element.name.text === localName) return element;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Follow an export's alias chain to the Node-builtin binding it names, if any.
+ *
+ * Read off the syntax rather than the checker deliberately: with no
+ * `@types/node` in the program the alias resolves to the `unknown` symbol, so
+ * there is nothing to ask the checker about. Both spellings are covered —
+ * `export { x } from "node:assert"`, and the two-step `import { x } from
+ * "node:assert"; export { x }` (whose local target is resolved by name within
+ * the same file, since an export specifier can only rebind a local binding).
+ */
+function nodeBuiltinReexport(symbol: ts.Symbol): { moduleName: string; propertyName: string } | undefined {
+  for (const declaration of symbol.declarations ?? []) {
+    if (ts.isImportSpecifier(declaration)) {
+      const found = hostMemberOf(declaration.parent.parent.parent.moduleSpecifier, declaration);
+      if (found !== undefined) return found;
+      continue;
+    }
+    if (!ts.isExportSpecifier(declaration)) continue;
+    const reexported = declaration.parent.parent.moduleSpecifier;
+    if (reexported !== undefined) {
+      const found = hostMemberOf(reexported, declaration);
+      if (found !== undefined) return found;
+      continue;
+    }
+    const local = localImportSpecifier(
+      declaration.getSourceFile(),
+      (declaration.propertyName ?? declaration.name).text,
+    );
+    if (local === undefined) continue;
+    const found = hostMemberOf(local.parent.parent.parent.moduleSpecifier, local);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
 
 /** `export const x = …` at the top level of the exporting module. */
 function immutableTopLevelConstName(ctx: CodegenContext, node: ts.Declaration): string | undefined {
@@ -91,6 +167,19 @@ function namespaceFunctionExports(
       target.valueDeclaration ?? target.declarations?.find((node) => !node.getSourceFile().isDeclarationFile);
     // Type-only exports do not exist on the runtime namespace object.
     if (declarationNode === undefined && (target.flags & ts.SymbolFlags.Value) === 0) continue;
+    // Checked before the declaration arms: a Node builtin's binding is served by
+    // the host module object whether or not `@types/node` happens to give the
+    // alias a (body-less, declaration-file) node to point at.
+    const hostMember = ctx.wasi ? undefined : nodeBuiltinReexport(exportedSymbol);
+    if (hostMember !== undefined) {
+      exports.push({
+        kind: "host-member",
+        key: exportedSymbol.getName(),
+        moduleName: hostMember.moduleName,
+        propertyName: hostMember.propertyName,
+      });
+      continue;
+    }
     if (declarationNode !== undefined) {
       // `export const` is immutable after module init, so a snapshot of the
       // exporting module's global is a correct namespace property. Without this
@@ -192,6 +281,16 @@ export function tryEmitCompiledModuleNamespaceObject(
     [],
   );
   for (const entry of exports) addStringConstantGlobal(ctx, entry.key);
+  // Reserve the host-member carrier imports in the SAME batch as the object
+  // helpers: every `ensureLateImport` shifts the defined-function index space,
+  // and only one `flushLateImportShifts` runs before the getter body is built.
+  for (const entry of exports) {
+    if (entry.kind !== "host-member") continue;
+    ensureLateImport(ctx, "__extern_get", [{ kind: "externref" }, { kind: "externref" }], [{ kind: "externref" }]);
+    ensureLateImport(ctx, `__node_${entry.moduleName}`, [], [{ kind: "externref" }]);
+    ctx.mod.nodeBuiltinModules.add(entry.moduleName);
+    addStringConstantGlobal(ctx, entry.propertyName);
+  }
   flushLateImportShifts(ctx, fctx);
   const finalNewObjectIdx = ctx.funcMap.get("__new_plain_object") ?? newObjectIdx;
   const finalSetIdx = ctx.funcMap.get("__extern_set") ?? setIdx;
@@ -249,6 +348,19 @@ export function tryEmitCompiledModuleNamespaceObject(
       getterFctx.body.push(instr);
       globalReads.push({ instr, name: entry.globalName });
       valueType = global.type;
+    } else if (entry.kind === "host-member") {
+      // `__extern_get(__node_<mod>(), "<member>")` — the host module object's
+      // own property, so the slot holds the real callable rather than a copy.
+      const moduleIdx = ctx.funcMap.get(`__node_${entry.moduleName}`);
+      const externGetIdx = ctx.funcMap.get("__extern_get");
+      if (moduleIdx === undefined || externGetIdx === undefined) {
+        popBody(getterFctx, savedBody);
+        return undefined;
+      }
+      getterFctx.body.push({ op: "call", funcIdx: moduleIdx });
+      getterFctx.body.push(...stringConstantExternrefInstrs(ctx, entry.propertyName));
+      getterFctx.body.push({ op: "call", funcIdx: externGetIdx });
+      valueType = { kind: "externref" };
     } else {
       valueType = emitCachedFuncClosureAccess(ctx, getterFctx, entry.functionName, entry.funcIdx, entry.constructible);
     }
