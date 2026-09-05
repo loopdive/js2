@@ -84,7 +84,7 @@ describe("#3525 M2 prepared multi-source module-init", () => {
     expect(
       result.irBodyRouteAudit?.legacyEntries.filter((entry) => entry.entryPoint === "compileModuleInitBody"),
     ).toEqual([]);
-    expect(moduleInitOutcomes(result)).toEqual([
+    expect(moduleInitOutcomes(result).filter((outcome) => outcome.kind === "emitted")).toEqual([
       expect.objectContaining({
         unitId: audit?.contributorUnitId,
         sourceId: audit?.contributorSourceId,
@@ -184,8 +184,11 @@ describe("#3525 M2 prepared multi-source module-init", () => {
     const result = await compileMulti(DEFERRED_ENTRY_TDZ, "./entry.ts", options);
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     const outcomes = moduleInitOutcomes(result);
-    expect(outcomes).toHaveLength(1);
-    expect(outcomes[0]).toMatchObject({ legacyBodyEmitted: false, irBodyEmitted: true });
+    expect(outcomes.filter((outcome) => outcome.kind === "emitted")).toHaveLength(1);
+    expect(outcomes.find((outcome) => outcome.kind === "emitted")).toMatchObject({
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
     const exports = await instantiateDeferred(result);
     expect(typeof exports.__module_init).toBe("function");
     expect(() => (exports.read as () => number)()).toThrow();

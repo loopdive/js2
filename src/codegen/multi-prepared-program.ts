@@ -50,6 +50,14 @@ import type { ModuleInitMode } from "./declarations.js";
 import type { ProgramAbiSession, PublishedProgramAbi } from "./program-abi-session.js";
 import type { IrExactFunctionClaim } from "./ir-overlay-safety.js";
 import {
+  assertMultiPreparedModuleInitCensusCurrent,
+  buildMultiPreparedModuleInitCensus,
+  isMultiPreparedModuleInitCensusObservedFor,
+  projectMultiPreparedModuleInitCensus,
+  type MultiPreparedModuleInitCensus,
+  type MultiPreparedModuleInitCensusProjection,
+} from "./multi-prepared-module-init-census.js";
+import {
   MultiPreparedCallablePublication,
   type MultiPreparedProgramCallableComponent,
 } from "./multi-prepared-callable-publication.js";
@@ -114,6 +122,7 @@ export interface MultiPreparedProgramBodyPlan<Plan = unknown> {
   readonly expectedOverlaySourceIds: readonly IrSourceId[];
   readonly terminalUnitIds: readonly IrUnitId[];
   readonly sources: readonly MultiPreparedProgramSourceCensus[];
+  readonly moduleInitCensus: MultiPreparedModuleInitCensusProjection;
   readonly reservations: readonly MultiPreparedProgramReservation[];
   readonly unreservedTerminalUnitIds: readonly IrUnitId[];
   /** Keeps the public shape honest without exposing route plans. */
@@ -126,6 +135,7 @@ export interface MultiPreparedProgramAudit {
   readonly bodySourceIds: readonly IrSourceId[];
   readonly overlaySourceIds: readonly IrSourceId[];
   readonly abiSessionBound: true;
+  readonly moduleInitCensus: MultiPreparedModuleInitCensusProjection;
   readonly moduleInit?: MultiPreparedProgramModuleInitAudit;
 }
 
@@ -242,6 +252,8 @@ export type MultiPreparedProgramInvariantCode =
   | "completion-order"
   | "publication-inventory-mismatch"
   | "module-init-plan-mismatch"
+  | "module-init-census-mismatch"
+  | "module-init-parity-mismatch"
   | "module-init-reservation-mismatch"
   | "module-init-body-skip-mismatch"
   | "module-init-startup-mismatch"
@@ -424,6 +436,8 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   #callableSkippedUnitIds: ReadonlySet<IrUnitId> = new Set();
   #callableSkippedUnitIdsBySourceFile: ReadonlyMap<SourceFile, ReadonlySet<IrUnitId>> = new Map();
   #moduleInitPreparation: MultiPreparedModuleInitPreparation | undefined;
+  #moduleInitCensus: MultiPreparedModuleInitCensus;
+  #moduleInitCensusProjection: MultiPreparedModuleInitCensusProjection | undefined;
   readonly #moduleInitSkippedSourceFiles = new Set<SourceFile>();
   #moduleInitFinalized = false;
   #moduleInitTelemetryRecorded = false;
@@ -456,6 +470,12 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     this.#terminalMap = input.identityContext.terminalByUnitId;
     this.#unitMap = input.identityContext.unitByUnitId;
     this.#validateConstruction();
+    this.#moduleInitCensus = buildMultiPreparedModuleInitCensus({
+      multiAst: this.#multiAst,
+      identityContext: this.#identityContext,
+      target: this.#ctx.wasi ? "wasi" : this.#ctx.standalone ? "standalone" : "host",
+      deferTopLevelInit: this.#ctx.deferTopLevelInit,
+    });
   }
 
   get state(): MultiPreparedProgramState {
@@ -468,6 +488,68 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
 
   get audit(): MultiPreparedProgramAudit | undefined {
     return this.#audit;
+  }
+
+  /** The exact semantic initializer census retained for this program. */
+  get moduleInitCensus(): MultiPreparedModuleInitCensus {
+    return this.#moduleInitCensus;
+  }
+
+  /** Attach the one post-collection legacy queue observation to the census. */
+  reconcileModuleInitCensus(census: MultiPreparedModuleInitCensus): void {
+    this.#requireState("collecting");
+    if (this.#moduleInitCensus.parityObserved) {
+      if (census === this.#moduleInitCensus) return;
+      this.#fail("module-init-parity-mismatch", "module-init queue parity was reconciled more than once");
+    }
+    if (
+      census.identityContext !== this.#identityContext ||
+      census.inventory !== this.#inventory ||
+      !sameIdentityArray(census.sourceFiles, this.#sourceFiles) ||
+      !census.parityObserved ||
+      !sameIdentityArray(
+        census.semanticSourceIds,
+        this.#sourceFiles.map((sourceFile) => this.#sourceId(sourceFile)),
+      )
+    ) {
+      this.#fail("module-init-census-mismatch", "module-init census belongs to another owner or source order");
+    }
+    const retainedSourcePlans = this.#moduleInitCensus.sourcePlans;
+    const retainedCanonicalSources = this.#moduleInitCensus.canonicalSources;
+    if (
+      census.sourcePlans.length !== retainedSourcePlans.length ||
+      census.sourcePlans.some(
+        (sourcePlan, index) =>
+          sourcePlan.sourceFile !== retainedSourcePlans[index]?.sourceFile ||
+          sourcePlan.sourceId !== retainedSourcePlans[index]?.sourceId ||
+          sourcePlan.plan !== retainedSourcePlans[index]?.plan,
+      ) ||
+      census.canonicalSources.length !== retainedCanonicalSources.length ||
+      census.canonicalSources.some(
+        (sourcePlan, index) =>
+          sourcePlan.sourceFile !== retainedCanonicalSources[index]?.sourceFile ||
+          sourcePlan.sourceId !== retainedCanonicalSources[index]?.sourceId ||
+          sourcePlan.plan !== retainedCanonicalSources[index]?.plan,
+      )
+    ) {
+      this.#fail(
+        "module-init-census-mismatch",
+        "module-init census was rebuilt instead of derived from the owner’s retained semantic plans",
+      );
+    }
+    if (!isMultiPreparedModuleInitCensusObservedFor(census, this.#ctx, this.#programAbiSession)) {
+      this.#fail(
+        "module-init-census-mismatch",
+        "module-init queue evidence belongs to another codegen context or ABI session",
+      );
+    }
+    try {
+      assertMultiPreparedModuleInitCensusCurrent(census);
+    } catch (error) {
+      this.#state = "failed";
+      throw error;
+    }
+    this.#moduleInitCensus = census;
   }
 
   /** Run the existing route planners through this one source-owned ledger. */
@@ -701,14 +783,24 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     if (this.#callablePublication !== undefined || this.#callableComponents.length > 0) {
       this.#fail("module-init-plan-mismatch", "Prepared module-init cannot compose with callable components");
     }
+    assertMultiPreparedModuleInitCensusCurrent(this.#moduleInitCensus);
+    if (!this.#moduleInitCensus.parityObserved) {
+      this.#fail("module-init-parity-mismatch", "Prepared module-init was registered before queue reconciliation");
+    }
     const sourcePlans = preparation.sourcePlans;
     const executable = sourcePlans.filter((plan) => plan.executable);
     const contributor = sourcePlans.find((plan) => plan.sourceFile === preparation.sourceFile);
+    const censusPlans = this.#moduleInitCensus.sourcePlans;
     if (
       sourcePlans.length !== this.#sourceFiles.length ||
       sourcePlans.some(
         (plan, index) =>
-          plan.sourceFile !== this.#sourceFiles[index] || plan.sourceId !== this.#sourceId(plan.sourceFile),
+          plan.sourceFile !== this.#sourceFiles[index] ||
+          plan.sourceId !== this.#sourceId(plan.sourceFile) ||
+          plan.plan !== censusPlans[index]?.plan ||
+          plan.parity !== censusPlans[index]?.parity ||
+          plan.planning?.plan !== censusPlans[index]?.plan ||
+          plan.planning?.parity !== censusPlans[index]?.parity,
       ) ||
       executable.length !== 1 ||
       !contributor ||
@@ -872,6 +964,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       }
       reservations.sort((a, b) => this.#terminalIndex(a.unitId) - this.#terminalIndex(b.unitId));
       const terminalUnitIds = this.#terminalUnits.map((unit) => unit.id);
+      this.#moduleInitCensusProjection = projectMultiPreparedModuleInitCensus(this.#moduleInitCensus);
       const bodyPlan: MultiPreparedProgramBodyPlan = Object.freeze({
         schema: "multi-prepared-program-body-plan-v2",
         entrySourceId: this.#entrySourceId(),
@@ -898,6 +991,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
             });
           }),
         ),
+        moduleInitCensus: this.#moduleInitCensusProjection,
         reservations: Object.freeze(reservations.map((reservation) => Object.freeze(reservation))),
         unreservedTerminalUnitIds: Object.freeze(terminalUnitIds.filter((unitId) => !reservedUnits.has(unitId))),
       });
@@ -1029,8 +1123,8 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     sourceFile: SourceFile,
     consumer: (state: RouteState<Plan> | undefined) => MultiPreparedProgramOverlayResult | undefined,
   ): void {
-    const state = this.#stateForOverlaySource(sourceFile);
     try {
+      const state = this.#stateForOverlaySource(sourceFile);
       if (state?.route?.routeKind === "string") state.route.sealAfterDirectCurrentness();
       if (state?.route) {
         const snapshot = this.#routeSnapshots.find((candidate) => candidate.state === state);
@@ -1245,6 +1339,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
         bodySourceIds: Object.freeze([...this.#bodySourceIds]),
         overlaySourceIds: Object.freeze([...this.#overlaySourceIds]),
         abiSessionBound: true,
+        moduleInitCensus: this.#moduleInitCensusProjection!,
         ...(moduleInitAudit ? { moduleInit: moduleInitAudit } : {}),
       });
       this.#publication = publication;
@@ -1719,6 +1814,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
 
   #stateForBodySource(sourceFile: SourceFile): RouteState<Plan> | undefined {
     this.#requireState("body-boundary-sealed");
+    assertMultiPreparedModuleInitCensusCurrent(this.#moduleInitCensus);
     const expected = this.#sourceFiles[this.#bodyCursor];
     if (expected !== sourceFile) this.#fail("body-phase-order", `body source visit is out of semantic order`);
     this.#bodyCursor++;
@@ -1728,6 +1824,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
 
   #stateForOverlaySource(sourceFile: SourceFile): RouteState<Plan> | undefined {
     this.#requireState("body-boundary-sealed");
+    assertMultiPreparedModuleInitCensusCurrent(this.#moduleInitCensus);
     if (!this.#overlayEnabled) this.#fail("overlay-phase-order", "overlay state requested while overlay is disabled");
     if (this.#bodyCursor !== this.#sourceFiles.length)
       this.#fail("overlay-phase-order", "overlay began before all body visits");
@@ -1815,6 +1912,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
         plan!.unreservedTerminalUnitIds,
         terminals.filter((unitId) => !reserved.has(unitId)),
       ) ||
+      plan!.moduleInitCensus !== this.#moduleInitCensusProjection ||
       plan!.sources.length !== canonical.length ||
       plan!.sources.some((source, index) => {
         const inventory = this.#sources[index]!;
@@ -1927,6 +2025,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
 
   #assertStable(): void {
     this.#validateConstruction();
+    assertMultiPreparedModuleInitCensusCurrent(this.#moduleInitCensus);
     if (this.#ctx.irProgramPreparedModuleInitUnitId !== this.#moduleInitPreparation?.unitId) {
       this.#fail("module-init-reservation-mismatch", "module-init owner marker changed after exact registration");
     }
