@@ -2436,3 +2436,66 @@ Keep additional helpers outside the large orchestration/owner methods.
   silently omitting a source, or enabling mixed emission. Any need to modify
   the shared R2 preparation transaction is a dependent follow-up requiring
   coordination with its owner.
+
+## M2-P1 implementation record — 2026-09-05
+
+Implementation was based on `4946cf70fe82def4bb4ec3e55092153b90b9506b`.
+The branch first merged current `origin/main` at
+`33a532e9344667c01d497d2228a3662cea73901a` in signed merge commit
+`96a4cca5b99eb8`; the implementation checkpoint is
+`cd4f40fc5e80a55e98c6c855e33cf6d16bd987aa`. The final review corrections are
+in the follow-up signed commit on this branch. Before publication, the branch
+also merged the subsequently advanced `origin/main` at `6d601f91a51993eaa7586299a3f3bde07b49f367`
+in signed merge commit `c9b573ea84840f`.
+
+`MultiPreparedProgramOwner` now builds one immutable census for every AST
+source before early routing. The fixture has four sources, four retained
+source plans, two semantic evaluation entries and one executable source/unit;
+empty, type-only, re-export and entry sources remain represented. Canonical
+inventory order and semantic AST order are both recorded. The post-declaration
+queue observation is attached once to those retained plans, and M2/body-plan
+consumers use the same source and unit identities. The body-plan projection
+retains the complete census when M2 is disabled or declined.
+
+Review probes added explicit currentness controls for all observed ownership
+boundaries. An unchanged source is accepted; mutating the same numeric literal
+node (`40` to `41`) or replacing its initializer is rejected. A separately
+rebuilt census with the same inventory but changed target (`wasi`) or defer
+policy is rejected. The owner's original census is accepted with its own
+context/session and rejected when observed through distinct context and ABI
+session objects, even when inventory and AST objects are shared. The ordinary
+owner-derived queue reconciliation remains accepted. These failures happen
+before routing and reservation.
+
+Validation at the merged candidate:
+
+- The six required focused files pass: 93 tests passed in one Vitest fork with
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`.
+- `pnpm run typecheck` passes with TypeScript 7. TypeScript 5 retains the exact
+  base residual in `src/linked-provider-runtime.ts:41,44`: `WebAssembly.Tag`
+  is absent from the installed TypeScript 5 declarations; the archived base
+  produces the same two errors.
+- The enabled/disabled A/B compile uses two successful compilations in each
+  lane and returns runtime value `42` in both. Enabled mode records two module
+  init outcomes (one non-executable entry and one emitted dependency), two
+  direct legacy rows, direct module-init `0` and IR module-init `1`. Disabled
+  mode records two outcomes, three direct legacy rows, and no IR module-init;
+  successful denominator is `2/2` in both lanes.
+- `check-ir-only` passes in both `hybrid` and `ir-only` policy: each single-host
+  and standalone lane has 5/5 entries, 41 terminal units, 38 emitted IR
+  bodies, 3 non-executable rows, 0 unsupported, 0 invariants and 0 legacy
+  bodies. Unit kinds are 26 functions, 5 module-init units and 10 class-member
+  units.
+- IR layering, dialect, kind-neutrality, optimization-retirement, function
+  budget and adoption checks pass. The LOC budget uses this issue's existing
+  allowance for `src/codegen/multi-prepared-program.ts`; no baseline file was
+  changed.
+- The same-config multi-source and equivalence suites pass for
+  `tests/equivalence/multi-file-compilation.test.ts` and `tests/multi-file.test.ts`.
+  The two unrelated #2138 failures (global-script callable preflight and the
+  partial IR-first string result) reproduce unchanged from the exact base
+  archive; all other tests in those four-file runs pass.
+
+This is a structural M2-P1 prerequisite only. It reports no population gain,
+does not change provider/ABI/runtime contracts, and leaves R5 and mixed
+callable/initializer emission open.

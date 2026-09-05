@@ -20,6 +20,7 @@ import { addUnionImportsViaRegistry } from "./shared.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { ensureReflectIsConstructor } from "./reflect-construct-native.js";
 import { ensureExternStrictEqHelper } from "./any-helpers.js";
+import { registerProxyInvariantValidators } from "./object-runtime-proxy-invariants.js"; // (#5316) §10.5 descriptor-model half
 
 /** (#1100/#1355) Reserved trap-invoke driver names — filled by `fillProxyDispatch`. */
 const PROXY_CALL_GET = "__proxy_call_get";
@@ -302,6 +303,23 @@ export function ensureProxyRuntime(
       trapArm.push({ op: "local.get", index: 2 });
       trapArm.push({ op: "call", funcIdx: callGetIdx });
     }
+    // (#5316) §10.5.5 / .7 / .8 / .9 / .10 descriptor-model invariants, applied
+    // to the trap's answer before it leaves the dispatch. `res` is local 5 on
+    // these 3-param helpers (3 params + p + trap). [[Set]] additionally passes
+    // its value (param 2) so step 9 can SameValue it against the target's.
+    if (descriptorInvariants !== null) {
+      const RES = 5;
+      const validator = isSet
+        ? descriptorInvariants.set
+        : trapFieldIdx === TRAP_HAS
+          ? descriptorInvariants.has
+          : trapFieldIdx === TRAP_DELETE
+            ? descriptorInvariants.deleteProperty
+            : trapFieldIdx === TRAP_GOPD
+              ? descriptorInvariants.gopd
+              : descriptorInvariants.get;
+      trapArm.push(...validateTrapResult(validator, 3, RES, 1, isSet ? [2] : []));
+    }
 
     const body: Instr[] = [
       // p = ref.cast $Proxy(any.convert_extern(proxyExtern))
@@ -440,6 +458,34 @@ export function ensureProxyRuntime(
     invIsTruthyIdx !== undefined &&
     invIsExtIdx !== undefined &&
     invGetProtoIdx !== undefined;
+
+  // (#5316 r4) The DESCRIPTOR-model half of §10.5, which #5140 deferred to
+  // "#1355 slice G". One validator native per trap, registered HERE so the
+  // dispatch builders below can bake a stable `call <validatorIdx>` right after
+  // the trap driver call. `null` when a required standalone primitive is
+  // missing — the dispatches then keep the pre-#5316 unvalidated behaviour
+  // rather than emitting a half-check.
+  const descriptorInvariants = registerProxyInvariantValidators(ctx, registerNative);
+  /** `(…trap args, result) -> result` validator call, spliced after a driver
+   *  call. `extras` names the locals (besides target+key) the validator takes
+   *  between the key and the result — only `[[Set]]`'s value and
+   *  `[[DefineOwnProperty]]`'s Desc. FRESH array per use. */
+  const validateTrapResult = (
+    validatorIdx: number,
+    pLocal: number,
+    resLocal: number,
+    keyLocal: number | undefined,
+    extras: number[],
+  ): Instr[] => [
+    { op: "local.set", index: resLocal },
+    { op: "local.get", index: pLocal },
+    { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+    { op: "extern.convert_any" },
+    ...(keyLocal === undefined ? [] : ([{ op: "local.get", index: keyLocal }] satisfies Instr[])),
+    ...extras.map((index): Instr => ({ op: "local.get", index })),
+    { op: "local.get", index: resLocal },
+    { op: "call", funcIdx: validatorIdx },
+  ];
 
   const buildProtoDispatch = (trapFieldIdx: number, forwardName: string, isSet: boolean): Instr[] => {
     const forwardIdx = ctx.funcMap.get(forwardName)!;
@@ -860,8 +906,17 @@ export function ensureProxyRuntime(
           },
         ],
       },
-      // result is a validated Object → return it.
-      { op: "local.get", index: 3 },
+      // result is a validated Object → reconcile its key set against the
+      // target (#5316, §10.5.11 steps 16-23) and return it.
+      ...(descriptorInvariants === null
+        ? ([{ op: "local.get", index: 3 }] satisfies Instr[])
+        : ([
+            { op: "local.get", index: 2 },
+            { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+            { op: "extern.convert_any" },
+            { op: "local.get", index: 3 },
+            { op: "call", funcIdx: descriptorInvariants.ownKeys },
+          ] satisfies Instr[])),
     ];
     const forwardArm: Instr[] = [
       // __object_keys / __getOwnPropertyNames (target) -> externref ($ObjVec)
@@ -944,6 +999,13 @@ export function ensureProxyRuntime(
       { op: "local.get", index: 2 },
       { op: "call", funcIdx: callDefineIdx },
     ];
+    // (#5316) §10.5.6 steps 10-16. `res` is local 5 (3 params + p + trap). The
+    // validator also needs `Desc` (param 2) — settingConfigFalse and every
+    // §6.2.6.6 compatibility rule is a question about Desc vs the target's own
+    // descriptor, not about the key alone.
+    if (descriptorInvariants !== null) {
+      trapArm.push(...validateTrapResult(descriptorInvariants.define, 3, 5, 1, [2]));
+    }
     const forwardArm: Instr[] = [
       // __obj_define_from_desc(target, key, desc) -> externref
       { op: "local.get", index: 3 },

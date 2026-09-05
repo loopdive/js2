@@ -18,6 +18,60 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## Handover (2026-09-05, session claude/es6-test262-standalone-g10c7u, wave 4)
+
+ES2015 standalone stood at **10,131 / 11,704 (86.6 %)** after #5576 landed
+(2026-09-04). Wave 4 ran four Opus-medium lanes from Fable-written r4 plans,
+each followed by an adversarial review (one reviewer, two skeptics per finding)
+and a reviewed fix round; this PR integrates all four:
+
+| lane | shipped | owned rows (base → lane) | control | review outcome |
+| --- | --- | --- | --- | --- |
+| #5317 TypedArray | `join` separator arming, `fill`/`copyWithin` end argument | +11 | 259 rows, 0 lost | one inert-fix finding, fixed and re-reviewed |
+| #5316 Proxy | §10.5 descriptor-model invariants (step 1) | +19 (0 → 19) | 464 rows, 348 vs 312, 0 lost | wasi false positives → wasi gate, re-reviewed clean |
+| #5318 class | computed accessor names, §15.7.14 sidecar order, compiled-body receiver gate | +24 | 783 rows, 246 non-pass vs 271, 0 lost | order + trap fixed; one over-decline left for round 2 (recorded in the issue) |
+| #3371 Reflect.construct | runtime `Get(NT,"prototype")`, bound-function `[[Construct]]`, ordinary-construct driver, refusal gate | +11 (+9 collateral in `Function/prototype/bind`) | 218 rows, 166 vs 156, 0 lost | five refusal→wrong-answer findings, all closed by restoring base's refusal |
+
+Expected ES2015 delta on the merge-group report: roughly +65 owned rows plus
+collateral; take the real figure from the promoted baseline, not from this
+table. Every lane's numbers were measured with
+`scripts/run-test262-paths.mts --isolate --standalone` against a
+`git archive` base tree, never inferred.
+
+**Next, in order.** (1) #5316 item 1 — the standalone attribute model through a
+proxy dispatch — unblocks the most rows per fix (gopd rows, the declined
+`IsExtensible` clause, and step 2's `Reflect.set` receiver). (2) #5318 round 2
+(nested-class static accessors, plan in the issue) and its dstr slice (16 rows).
+(3) #3371 r1 residuals — the 12 rows each need a named mechanism the issue
+lists; `new.target` as a runtime value (2 rows) is the largest. (4) #5317's
+163 residual rows by family, 14 of them gated on builtin-method reflection
+(#2175, other team). The three sibling issues #2864 / #2867 / #2175 stay with
+the other team.
+
+**Lessons this wave added** (the 2026-09-04 list below still holds):
+
+- **A container restart kills every running Workflow agent and leaves its
+  journal without a result.** Worktrees, commits and the pushed branch survive;
+  relaunch with `Workflow({scriptPath, resumeFromRunId})` — an empty journal
+  simply re-runs the agent. Two agents were lost this way on 2026-09-05.
+- **The quickjs eval adapter is keyed on the compiler-bundle hash.** Rebuild
+  `scripts/build-quickjs-eval-provider.mjs` AFTER the last `src/` edit, or
+  every runtime-eval row fails with "provider is not built" and reads as a
+  regression. Two lanes lost a measurement cycle to this independently.
+- **Under load ≥ 6 on this 4-core box, rows time out at compile** (the pool's
+  15 s budget), and a control corpus reports phantom losses. Re-run any
+  compile_timeout alone at `COMPILER_POOL_SIZE=1` before it counts; the
+  120 s per-row budget in `run-test262-paths.mts` does not cover the pool's
+  own budget.
+- **"Refusal → wrong answer" is the review class that matters for a runtime
+  arm.** #3371's r4 lane bought 11 rows with seven silent wrong answers on
+  programs base had refused; the fix round restored the refusal for each. A
+  reviewer prompt must ask for programs base REFUSED, not only programs base
+  ran correctly.
+- **Merge-queue shepherding in parallel is cheap and worth it:** four stuck
+  PRs (#5578 needing a manual enqueue, #5585 with no CI run, #5594's plain-node
+  import fix for the npm-compat refresh, #5593) all landed while the lanes ran.
+
 ## Handover (2026-09-04, session claude/es6-test262-standalone-g10c7u)
 
 ### Where the goal stands

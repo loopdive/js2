@@ -6552,6 +6552,12 @@ export function ensureTaDynFillHelper(ctx: CodegenContext): number | undefined {
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   const { vecTypeIdx: byteVecIdx, arrTypeIdx: byteArrIdx } = i32ByteVec(ctx);
   const nullishToNullIdx = ctx.funcMap.get("__nullish_to_null");
+  // (#5317 r4 step 2) `undefined` and `null` are DIFFERENT `end` arguments:
+  // only `undefined` means "absent ⇒ len"; `null` is ToIntegerOrInfinity'd to 0
+  // (`fill/coerced-indexes.js`: `fill(1, 0, null)` fills NOTHING). The
+  // `__nullish_to_null` + `ref.is_null` test below collapses the two, so prefer
+  // the real §7.1 "is undefined" predicate when the runtime has one.
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
 
   const params: ValType[] = [
     { kind: "externref" }, // recv (guaranteed $__ta_dyn_view by the caller's ref.test)
@@ -6698,10 +6704,15 @@ export function ensureTaDynFillHelper(ctx: CodegenContext): number | undefined {
   fctx.body.push({ op: "i32.const", value: 3 });
   fctx.body.push({ op: "i32.ge_s" });
   fctx.body.push({ op: "local.get", index: 3 });
-  if (nullishToNullIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: nullishToNullIdx });
+  if (isUndefinedIdx !== undefined) {
+    // (#5317 r4) `undefined` ⇒ absent; a genuine `null` is NOT absent.
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+  } else {
+    if (nullishToNullIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: nullishToNullIdx });
+    }
+    fctx.body.push({ op: "ref.is_null" });
   }
-  fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "i32.eqz" });
   fctx.body.push({ op: "i32.and" });
   {
@@ -7475,6 +7486,8 @@ export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undef
   const arrLocal = allocLocal(fctx, "arr", { kind: "ref", typeIdx: byteArrIdx });
   const boLocal = allocLocal(fctx, "bo", { kind: "i32" });
   const nullishToNullIdx = ctx.funcMap.get("__nullish_to_null");
+  // (#5317 r4 step 2) see `ensureTaDynFillHelper` — only `undefined` is absent.
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
 
   pushTaDynMethodPreamble(ctx, fctx, dynIdx, dvLocal, kindLocal, esLocal, lenLocal);
   fctx.body.push({ op: "local.get", index: lenLocal });
@@ -7521,13 +7534,19 @@ export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undef
       ],
     });
   }
-  // final = (argc >= 3 && end not undefined/null) ? relative(end) : len.
+  // final = (argc >= 3 && end is not undefined) ? relative(end) : len.
+  // (#5317 r4 step 2) `null` is NOT `undefined` here either — §23.2.3.6 step 8
+  // ToIntegerOrInfinity's it to 0, so `copyWithin(0, 0, null)` copies nothing.
   fctx.body.push({ op: "local.get", index: 4 });
   fctx.body.push({ op: "i32.const", value: 3 });
   fctx.body.push({ op: "i32.ge_s" });
   fctx.body.push({ op: "local.get", index: 3 });
-  if (nullishToNullIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nullishToNullIdx });
-  fctx.body.push({ op: "ref.is_null" });
+  if (isUndefinedIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+  } else {
+    if (nullishToNullIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nullishToNullIdx });
+    fctx.body.push({ op: "ref.is_null" });
+  }
   fctx.body.push({ op: "i32.eqz" });
   fctx.body.push({ op: "i32.and" });
   {

@@ -1,0 +1,229 @@
+// Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+
+import { describe, expect, it } from "vitest";
+
+import { compile } from "../src/index.js";
+
+describe("#1058 reserved sibling capture ABI", () => {
+  it("keeps a Phase-0 capture layout after an earlier sibling promotes part of it", async () => {
+    const result = await compile(
+      `
+        export function repro(keep: number, a: number, b: number, c: number): number {
+          function early(): number {
+            [1].map(target);
+            return keep;
+          }
+
+          function target(value: number): number {
+            return value + keep + a + b + c;
+          }
+
+          return [5].map(target)[0];
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-reserved-sibling-capture-abi.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.repro as (keep: number, a: number, b: number, c: number) => number)(1, 2, 3, 4)).toBe(15);
+  });
+
+  it("keeps one live cell and TDZ flag across direct and first-class calls", async () => {
+    const result = await compile(
+      `
+        export function reproMutable(keep: number): number {
+          let a = 3;
+
+          function early(): number {
+            [1].map(target);
+            return keep;
+          }
+
+          function target(value: number): number {
+            a += value;
+            return keep + a;
+          }
+
+          const before = early();
+          const direct = target(2);
+          const firstClass = [3].map(target)[0];
+          return before * 1000 + direct * 100 + firstClass * 10 + a;
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-reserved-sibling-capture-abi-mutable.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.reproMutable as (keep: number) => number)(1)).toBe(1809);
+  });
+
+  it("accepts a branded boolean in a physically shared i32 ref cell", async () => {
+    const result = await compile(
+      `
+        export function reproBooleanCell(keep: number): number {
+          let seedValue = 1;
+          let flag = true;
+
+          function seed(): number {
+            return seedValue;
+          }
+
+          function early(): number {
+            [true].map(target);
+            return keep + seed();
+          }
+
+          function target(_value: boolean): number {
+            flag = !flag;
+            return flag ? keep : 0;
+          }
+
+          early();
+          return target(true) ? 1 : 0;
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-reserved-sibling-capture-abi-boolean.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.reproBooleanCell as (keep: number) => number)(1)).toBe(1);
+  });
+
+  it("stabilizes local interface carriers before reserving sibling signatures", async () => {
+    const result = await compile(
+      `
+        export function reproLocalInterface(seed: number): number {
+          interface FlowNode {
+            id: number;
+          }
+          interface FlowGraphNode {
+            id: number;
+            edges: FlowGraphEdge[];
+          }
+          interface FlowGraphEdge {
+            source: FlowGraphNode;
+            target: FlowGraphNode;
+          }
+
+          const offset = 1;
+
+          function buildGraphNode(flowNode: FlowNode): FlowGraphNode {
+            const graphNode: FlowGraphNode = { id: flowNode.id, edges: [] };
+            if (flowNode.id < 2) {
+              buildGraphEdge(graphNode, flowNode, flowNode.id);
+            }
+            return graphNode;
+          }
+
+          function buildGraphEdge(source: FlowGraphNode, antecedent: FlowNode, seen: number): void {
+            const target = buildGraphNode({ id: antecedent.id + seen + offset });
+            const edge: FlowGraphEdge = { source, target };
+            source.edges.push(edge);
+          }
+
+          const root = buildGraphNode({ id: seed });
+          return root.edges.length * 100 + root.edges[0].target.id;
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-reserved-local-interface-signature.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.reproLocalInterface as (seed: number) => number)(1)).toBe(103);
+  });
+
+  it("stabilizes an optional local-interface parameter before its return type registers the struct", async () => {
+    const result = await compile(
+      `
+        export function reproOptionalLocalInterface(value: number): number {
+          interface WorkArea {
+            value: number;
+          }
+
+          function sibling(): number {
+            return value;
+          }
+
+          function onEnter(node: number, state: WorkArea | undefined): WorkArea {
+            return state ?? { value: node + sibling() };
+          }
+
+          return onEnter(2, undefined).value;
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-reserved-optional-local-interface-signature.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.reproOptionalLocalInterface as (value: number) => number)(3)).toBe(5);
+  });
+
+  it("threads a capturing sibling used only by a nested declaration parameter default", async () => {
+    const result = await compile(
+      `
+        export function reproDefaultSibling(seed: number): number {
+          let calls = 0;
+
+          function target(delta: number): number {
+            calls += 1;
+            return seed + delta + calls;
+          }
+
+          function invoke(delta: number, fn: (value: number) => number = target): number {
+            return fn(delta) + calls * 100;
+          }
+
+          return invoke(2);
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-reserved-default-sibling-capture.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.reproDefaultSibling as (seed: number) => number)(3)).toBe(106);
+  });
+
+  it("keeps body declarations out of a nested parameter environment", async () => {
+    const result = await compile(
+      `
+        export function reproBodyShadow(seed: number): number {
+          function helper(value: number = seed): number {
+            let seed = 99;
+            return value + seed * 0;
+          }
+
+          function sibling(): number {
+            return 1;
+          }
+
+          return helper() + sibling() - 1;
+        }
+      `,
+      { target: "standalone", fileName: "issue-1058-nested-default-body-shadow.ts" },
+    );
+
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+
+    const { instance } = await WebAssembly.instantiate(result.binary, {});
+    expect((instance.exports.reproBodyShadow as (seed: number) => number)(5)).toBe(5);
+  });
+});

@@ -1,10 +1,9 @@
 ---
 id: 3371
 title: "standalone: Reflect.construct arbitrary distinct NewTarget still refuses 33 ES2015 rows"
-status: blocked
-blocked_on: [2046]
+status: in-progress
 created: 2026-07-17
-updated: 2026-09-01
+updated: 2026-09-04
 reopened: 2026-09-01
 sprint: current
 priority: high
@@ -17,7 +16,41 @@ language_feature: reflect, constructors, prototype chain
 es_edition: ES2015
 goal: standalone-mode
 umbrella: 1781
-related: [1472, 1781, 1905, 2026, 2046, 2618, 3240, 4196, 4661, 5138, 5140, 5143, 5150, 5153, 5154, 5156]
+related: [1472, 1781, 1905, 2026, 2046, 2618, 3240, 4196, 4661, 5138, 5140, 5143, 5150, 5153, 5154, 5156, 5316, 4444]
+loc-budget-allow:
+  # 2026-09-04 r1 plan: a runtime NewTarget operand through every construct
+  # thunk; new module new-target.ts carries the helpers, the listed files grow
+  # by the operand plumbing.
+  - src/codegen/new-target.ts
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/native-construct.ts
+  - src/codegen/class-constructor-wrapper.ts
+  - src/codegen/standalone-subclass-ctors.ts
+  - src/codegen/dataview-native.ts
+  - src/codegen/ta-dyn-mop.ts
+  - src/codegen/expressions/call-namespace-static.ts
+  - src/codegen/context/types.ts
+  - src/codegen/index.ts
+  # 2026-09-04 r4 implementation (Opus): the runtime GetPrototypeFromConstructor
+  # arm and its ordinary-[[Construct]] route live in a new module; the bound
+  # function [[Construct]] arm grows the Reflect classifier.
+  - src/codegen/expressions/reflect-construct-newtarget.ts
+  - src/codegen/reflect-construct-native.ts
+  # 2026-09-05 review round 1 (Opus): the site gate that keeps base's refusal
+  # for every NewTarget/target shape measured to answer wrongly, plus the
+  # §10.1.14 step-3 Type(proto)-is-Object guard on the carrier write. Both live
+  # in reflect-construct-newtarget.ts; call-namespace-static.ts grows by the
+  # dispatch and the restored refusal.
+func-budget-allow:
+  # 2026-09-04 r4 implementation (Opus): four helpers for the runtime
+  # NewTarget.prototype read, its carrier application, the single-assignment
+  # proof for an ordinary function target, and the ordinary-construct route.
+  - src/codegen/expressions/reflect-construct-newtarget.ts
+  # +63 lines in the Reflect.construct arm: the once-evaluated NewTarget local,
+  # the static/runtime prototype branch, and the ordinary-[[Construct]] route.
+  # The heavy lifting moved OUT into reflect-construct-newtarget.ts; what stays
+  # is the dispatch that has to sit inside this arm's control flow.
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
 origin: "2026-09-01 immutable f841 standalone census; reopened because the prior done closure still refuses arbitrary distinct NewTarget."
 ---
 
@@ -273,3 +306,484 @@ precise result for all 33 paths after each slice, retain the no-distinct-
 NewTarget positive control, and leave each carrier group as a separate
 coordination decision. This document is the corrected reopen record; it does
 not certify the historical closure or authorize a broad source rewrite.
+
+
+## Implementation Plan — r1 (2026-09-04, Fable lane; Opus-medium implements)
+
+**Gate re-audit (supersedes "slice 1" above).** #2046 has NOT landed: its
+Codex checkpoint PR #5397 is `dirty` and self-described as non-mergeable, and
+the receiver design it stalled on is now owned by the proxy r4 lane (#5316,
+same wave, `object-runtime-ordinary-set.ts`). The shared-file hazard in
+`expressions/call-namespace-static.ts` is therefore between THIS lane and
+#5316, not #2046: #5316 edits the `Reflect.set` 4-arg arm (~L1106) and adds a
+`$Proxy` runtime arm before the "cannot preserve" refusal (~L1940); this lane
+edits the ordinary/class/native/bound arms of the SAME construct site. Keep
+the edits in separate, clearly delimited arms; the integrator merges both
+lanes into one tree and re-runs both row lists. The Codex checkpoint PR #5400
+(2026-09-01, `dirty`, "intentionally inert architectural substrate … the
+namespace-static dispatcher remains unwired") is a DESIGN REFERENCE only —
+its diff is saved at `/home/user/js2/.tmp/wave4/pr5400-3371-new-target.diff`
+(new `new-target.ts`, 517 lines; `new-super.ts`, `class-constructor-wrapper.ts`,
+`context/types.ts` changes). Read it for the carrier shape; do not apply it
+blindly — main has moved (#5561, #5576 touched `new-super.ts` and
+`native-construct.ts`).
+
+**Rows this lane owns (23 of the 33 in "Exact ES2015 refusal cluster"):** the
+view rows 1-9, the ordinary/class rows 10-13, the native rows 14-19 and the
+bound rows 30-33. The proxy rows 20-29 belong to #5316 (they are a
+[[Construct]] dispatch inside the proxy runtime). Non-Proxy paths from the
+2026-09-04 census (all `compile_error` with this refusal):
+
+- `test/language/expressions/new.target/value-via-reflect-construct.js`
+- `test/language/expressions/super/call-construct-invocation.js`
+- `test/built-ins/DataView/byteOffset-validated-against-initial-buffer-length.js`
+- `test/built-ins/DataView/custom-proto-access-detaches-buffer.js`
+- `test/built-ins/DataView/custom-proto-access-throws.js`
+- `test/built-ins/TypedArrayConstructors/ctors/length-arg/custom-proto-access-throws.js`
+- `test/built-ins/TypedArrayConstructors/ctors/object-arg/custom-proto-access-throws.js`
+- `test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/custom-proto-access-throws.js`
+- `test/built-ins/TypedArrayConstructors/ctors/no-args/custom-proto-access-throws.js`
+- `test/built-ins/TypedArrayConstructors/ctors/typedarray-arg/throw-type-error-before-custom-proto-access.js`
+- `test/built-ins/ArrayBuffer/data-allocation-after-object-creation.js`
+- `test/built-ins/TypedArrayConstructors/ctors/buffer-arg/custom-proto-access-throws.js`
+- `test/built-ins/ArrayBuffer/prototype-from-newtarget.js`
+- `test/built-ins/Date/subclassing.js`
+- `test/built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget-bound.js`
+- `test/built-ins/Function/prototype/bind/get-fn-realm-recursive.js`
+- `test/built-ins/Error/prototype/stack/getter-foreign-new-target.js`
+- `test/built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget.js`
+- `test/built-ins/Function/prototype/bind/get-fn-realm.js`
+- `test/built-ins/Reflect/construct/return-with-newtarget-argument.js`
+- `test/built-ins/Object/subclass-object-arg.js`
+- `test/built-ins/Promise/get-prototype-abrupt.js`
+- `test/built-ins/Promise/get-prototype-abrupt-executor-not-callable.js`
+
+**Step 0 — inventory.** Isolate-run the 23 rows on a `git archive origin/main`
+base tree and on the lane tree; run the positive control
+`test/built-ins/Reflect/construct/return-without-newtarget-argument.js`; run
+the control corpora `test/built-ins/Reflect/construct/**`,
+`test/language/expressions/new.target/**`, `test/language/expressions/super/**`
+and `test/built-ins/Function/prototype/bind/**` (ES2015 rows) and keep the
+passing list. Then read `call-namespace-static.ts` L1880-1990 (the
+`Reflect.construct` arm: `distinctNewTarget`, `assignedNewTargetPrototype`,
+`isDefinitelyPrimitivePrototype`), `expressions/new-super.ts`,
+`native-construct.ts`, `standalone-subclass-ctors.ts`,
+`ir-plain-implicit-constructors.ts` and `class-constructor-wrapper.ts` — the
+current `new.target` plumbing is a compile-time selection of the prototype
+(the "statically-resolved NewTarget.prototype assignment" the refusal names);
+the missing piece is a RUNTIME NewTarget value threaded into construction.
+
+**Step 1 — ordinary/class runtime NewTarget (rows 10-13).** Give every
+compiled constructor entry (class constructor wrappers and ordinary
+function-constructor thunks — the `__fnctor_*_new` family) a NewTarget
+operand: `new F(...)` passes F itself, `super(...)` forwards the derived
+constructor's own NewTarget, `Reflect.construct(F, args, NT)` passes NT.
+Inside the body `new.target` reads that operand (today it reads a constant
+per site). `OrdinaryCreateFromConstructor`: the instance prototype is
+`Get(NT, "prototype")` when NT is distinct — a real property read on the
+runtime value, falling back to the intrinsic default when it is not an
+Object — evaluated AFTER the arguments and BEFORE the body, exactly once.
+Preserve the returned-object override, `super` semantics and the
+`derived-class-return-override` behaviour byte-for-byte where NT === F (the
+common case must not slow down or change: gate the dynamic prototype read on
+"NT is not the static constructor" so existing modules are byte-identical).
+
+**Step 2 — bound carrier (rows 30-33).** `new BF(...)` / `Reflect.construct(BF,
+args, NT)` where BF is a bound function (`$__bound_fn`): construct the
+BOUND TARGET with `newTarget === BF ? target : NT` (§10.4.1.2 step 5),
+prepending bound args; `get-fn-realm` rows resolve the default prototype
+through the innermost target. Reuse the existing bound-function construct
+path (grep `bound` in `native-construct.ts` / `new-non-constructable-value.ts`)
+— add the NewTarget operand, do not add a second bound-function model.
+
+**Step 3 — native constructors (rows 14-19).** `ArrayBuffer`, `Date`,
+`Error` (stack getter foreign new-target), `Promise` (two
+`get-prototype-abrupt*` rows), `Object` (subclass-object-arg): each native's
+construct path takes the NewTarget operand and does
+`GetPrototypeFromConstructor(NT, "%X.prototype%")` — a real `Get(NT,
+"prototype")` whose abrupt completion propagates (`get-prototype-abrupt.js`
+throws from the getter) — at the spec step (AFTER argument validation where
+the spec says so; `data-allocation-after-object-creation.js` pins that the
+buffer allocation happens after the object is created from NT). The
+`Promise` rows must not touch the promise/microtask carrier itself (#2867,
+other team) — only the constructor's prototype-selection step.
+
+**Step 4 — view getters and abrupt order (rows 1-9).** `DataView` and dynamic
+typed-array constructors: same `GetPrototypeFromConstructor` with the
+per-constructor ordering the row names pin: `custom-proto-access-throws`
+(the getter throws → propagate, before/after the buffer/length validation as
+each test states), `custom-proto-access-detaches-buffer` (the getter detaches
+the buffer → the constructor must re-check and throw TypeError),
+`byteOffset-validated-against-initial-buffer-length`,
+`throw-type-error-before-custom-proto-access`. Anchor:
+`dataview-native.ts` (the `descTypeIdx` carrier that feeds
+`emitTaDynCtorConstructFromLocals`; note the 2026-09-03 brand lesson in
+#5194: there are TWO `$__ta_ctor` mint sites) and `ta-dyn-mop.ts`.
+
+**Order-preservation constraints.** Every module whose constructors are only
+ever constructed with `new F()` / `super()` (NT === F statically) must be
+byte-identical to base on standalone, host and wasi; run the #5194/#5195
+pins (`tests/issue-5194*.test.ts`, `tests/issue-5195*.test.ts`,
+`tests/issue-5309*.test.ts`, `tests/issue-5312*.test.ts`) unchanged.
+
+## Acceptance criteria — r1
+
+- 23 owned rows `pass` (isolated, standalone) or given up with the mechanism;
+  the positive control keeps passing; zero rows lost in the four control
+  corpora above.
+- `tests/issue-3371-r1-*.test.ts`: kept rows pinned; a node-parity matrix for
+  `new.target` under `new`, `super`, `Reflect.construct` with/without NT, a
+  bound function, and a getter-throwing `NT.prototype`.
+- Gates, typecheck, lint green; `new-super.ts` / `native-construct.ts` growth
+  granted in this file's frontmatter with a dated rationale.
+
+## Lane protocol (applies to every step above)
+
+- **Worktree only.** Work in the worktree the workflow gave you; branch from the
+  merge-base you were spawned on and `git pull --no-rebase --no-edit origin main`
+  before the first source edit. `git merge` is hook-blocked in the repo root;
+  `git pull --no-rebase` is not. Link `node_modules` and `test262` DIRECTLY to
+  `/home/user/js2/node_modules` and `$(readlink -f /home/user/js2/test262)` (no
+  symlink chains through sibling worktrees). Copy
+  `/home/user/js2/.test262-cache/quickjs*` into the worktree's `.test262-cache/`
+  and run `node scripts/build-quickjs-eval-provider.mjs` there, or every
+  eval-dependent row fails fast with "quickjs provider is not built" and hides
+  both wins and regressions.
+- **Measure, do not predict.** Every row you claim flips is run with
+  `npx tsx scripts/run-test262-paths.mts --isolate <list> --standalone` on BOTH
+  a `git archive origin/main` base tree and the lane tree; the enclosing control
+  corpus named in the plan is re-run the same way and every base-pass row must
+  still pass. A `compile_timeout` under load is re-run alone before it counts.
+  Name the artifact and the time for every number you write down.
+- **The failure family to hunt for is "a working program now throws."** Every
+  confirmed regression across the last four waves was a "provable" predicate
+  resolving by NAME or by declaration shape without a single-assignment /
+  shadowing proof. Decline to base unless the proof holds under reassignment,
+  destructuring, loop heads, parameters, `eval`/`with` and shadowing — and
+  never let a new arm change the answer of a program that worked on base.
+- **Node is the oracle, but the engine differs.** CI runs node 25; this
+  container runs node 22 (a node 25 lives at
+  `/home/user/js2/.tmp/wrap/node25/cache/_npx/8758e404b5eed2f3/node_modules/node/bin`).
+  A pin that asserts node's answer must probe the running engine, not assert a
+  fixed value, when the two disagree (sloppy-function own `caller`/`arguments`
+  is the known case).
+- **Do not touch the other team's territory:** the generator carrier (#2864,
+  every `__gen_*`/`__create_generator` row), the promise/microtask carrier
+  (#2867), and built-in method reflection (#2175 — `length.js`/`name.js`/
+  `prop-desc.js`/`not-a-constructor.js` rows and the
+  "`Object.prototype.toString` / `Function.prototype.call` is not yet
+  implemented in --target standalone" rows). Leave those rows out of your
+  claims and your acceptance list; record them as gated.
+- **Gates before every commit, chained:** `node scripts/check-loc-budget.mjs &&
+  node scripts/check-func-budget.mjs && node scripts/check-coercion-sites.mjs
+  && npm run -s check:oracle-ratchet && npm run -s check:dead-exports`, then
+  again with `LOC_GATE_BASE=$(git rev-parse origin/main)`; plus
+  `pnpm run -s check:speculative-rollback` (a raw `fctx.body.length = n`
+  rollback outside `context/speculative.ts` fails CI — use
+  `withSpeculativeCompile`/`probeCompiledType`), `check:stack-balance`,
+  `check:codegen-fallbacks`, `check:any-box-sites`, TS7 typecheck
+  (`node node_modules/typescript7/lib/tsc.js --noEmit -p tsconfig.ts7.json`)
+  and `pnpm run -s lint`. Growth grants go in THIS issue's frontmatter
+  (`loc-budget-allow` / `func-budget-allow`) with a dated rationale; never edit
+  `scripts/*-baseline.json`. New codegen type queries go through `ctx.oracle`.
+- **Tests:** `tests/issue-<id>-r4-*.test.ts` pin every kept row through
+  `runTest262File(file, "issue-<id>", 60_000, "standalone")` plus node-parity
+  probes compiled with `compile(source, { target: "standalone", allowJs: true,
+  skipSemanticDiagnostics: true })`, asserting `result.imports` is `[]`. Run
+  them at the CI fork heap, single fork:
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 npx vitest run tests/issue-<id>*.test.ts
+  --pool=forks --poolOptions.forks.singleFork=true --no-file-parallelism
+  --dangerouslyIgnoreUnhandledErrors`.
+- **Commits:** author stays the repo's configured identity; subject ends with
+  ` ✓`; `SKIP_SLOW_PRECOMMIT=1`; never `--no-verify`; trailers
+  `Model: Claude Opus 5 Medium`, `Co-Authored-By: Claude Opus 5
+  <noreply@anthropic.com>`. Commit each step separately with the measurement
+  in the body. Do NOT push, open a PR, or enqueue — the integrator merges the
+  lane branch, validates the combined tree and opens the PR.
+- **Report** (your final message): the per-step row table (base → lane, kept /
+  given up), the control-corpus result, gate status, the worktree path and head
+  sha, and every residual with its mechanism.
+
+
+## 2026-09-04 r4 implementation (Opus)
+
+**What landed:** the refusal is gone. `Reflect.construct(target, args, NT)` with
+an arbitrary distinct NewTarget now performs the real
+`? Get(NewTarget, "prototype")` instead of scanning the source for a prior
+`NT.prototype = …` assignment, and a bound function is finally recognised as a
+constructor. 11 of the 23 rows this lane owns flip from `compile_error` to
+`pass`; the other 12 stay failing, each for a named mechanism (below).
+
+Worktree `/home/user/js2/.claude/worktrees/wf_a9776683-b00-4`, branch
+`worktree-wf_a9776683-b00-4`, base `origin/main` 46c12b01d6.
+
+### Mechanism
+
+Three changes, each confined to a branch that used to `reportError`, so no
+program that compiled before reaches any of them:
+
+1. **`src/codegen/expressions/reflect-construct-newtarget.ts` (new).** NewTarget
+   is evaluated ONCE, before the argument list, into an externref local;
+   `Get(NT, "prototype")` runs AFTER the ordinary construction, via
+   `__extern_get`. The fetched prototype is written to the DataView window or
+   dynamic typed-array view struct, and to anything else through
+   `__object_setPrototypeOf` — the "not implemented for this target carrier"
+   compile error is retired.
+2. **`src/codegen/reflect-construct-native.ts`.** §10.4.1 — a `$__bound_fn` has
+   [[Construct]] iff its bound target does. The classifier arm recurses on the
+   target, which is what a bound-of-bound chain needs.
+3. **The ordinary-[[Construct]] route.** An ordinary user function's `new`
+   lowering builds a CLOSED struct with no `$proto` field, so patching the
+   prototype afterwards is a silent no-op — measured: `Object.getPrototypeOf`
+   read back `null`. Such a target instead goes through
+   `__native_construct_<N>(callee, proto, …)`, which creates the instance FROM
+   the prototype, so the constructor body's own `Object.getPrototypeOf(this)`
+   is right too. Gated on a single-assignment proof
+   (`isUnreassignedOrdinaryFunction`): one function declaration, no assignment,
+   `++`/`--`, second binding, parameter/catch shadow, `with`, or direct `eval`
+   anywhere in the file.
+
+**Why the read is AFTER construction, not before.** Two rows pin each side:
+`DataView/byteOffset-validated-against-initial-buffer-length.js` wants the
+RangeError to win over the getter, and
+`TypedArrayConstructors/…/throw-type-error-before-custom-proto-access.js` wants
+`ToIndex(Symbol())` to throw first — so the read must NOT move earlier. The
+`custom-proto-access-throws` rows pass on either side. The one row that
+genuinely needs the read BEFORE allocation stays failing (below).
+
+### Rows — base vs lane
+
+Base `.tmp/base-rows.txt` and lane `.tmp/lane-rows-s3.txt`, both
+`npx tsx scripts/run-test262-paths.mts --isolate … --standalone`,
+`COMPILER_POOL_SIZE=2`, 2026-09-05.
+
+| | base 46c12b01d6 | lane |
+| --- | --- | --- |
+| 23 owned rows | 0 pass / 23 compile_error | **11 pass** / 12 fail |
+| positive control `return-without-newtarget-argument.js` | pass | pass |
+
+Kept (11):
+
+1. `built-ins/DataView/byteOffset-validated-against-initial-buffer-length.js`
+2. `built-ins/DataView/custom-proto-access-throws.js`
+3. `built-ins/TypedArrayConstructors/ctors/length-arg/custom-proto-access-throws.js`
+4. `built-ins/TypedArrayConstructors/ctors/object-arg/custom-proto-access-throws.js`
+5. `built-ins/TypedArrayConstructors/ctors/typedarray-arg/custom-proto-access-throws.js`
+6. `built-ins/TypedArrayConstructors/ctors/no-args/custom-proto-access-throws.js`
+7. `built-ins/TypedArrayConstructors/ctors/buffer-arg/custom-proto-access-throws.js`
+8. `built-ins/TypedArrayConstructors/ctors/typedarray-arg/throw-type-error-before-custom-proto-access.js`
+9. `built-ins/Promise/get-prototype-abrupt.js`
+10. `built-ins/Promise/get-prototype-abrupt-executor-not-callable.js`
+11. `built-ins/Reflect/construct/return-with-newtarget-argument.js`
+
+### Control corpus — 0 rows lost, 10 gained
+
+`built-ins/Reflect/construct/**` + `language/expressions/new.target/**` +
+`language/expressions/super/**` + `built-ins/Function/prototype/bind/**`, 218
+rows, same isolated standalone runner, base tree archived from `origin/main` at
+46c12b01d6 (`.tmp/base-controls.txt`) vs lane (`.tmp/lane-controls.txt`),
+2026-09-05:
+
+| | base | lane |
+| --- | --- | --- |
+| pass | 156 | **166** |
+| fail | 54 | 51 |
+| compile_error | 8 | 1 |
+
+**Lost: 0.** Gained 10, of which **9 are collateral wins outside the 23-row
+list**, all from the bound-function [[Construct]] arm:
+`Function/prototype/bind/{15.3.4.5-2-1, 15.3.4.5-6-4, 15.3.4.5-6-6,
+15.3.4.5-6-8, 15.3.4.5-6-10, 15.3.4.5-6-11, 15.3.4.5-9-2, S15.3.4.5_A3}.js` and
+`Reflect/construct/not-a-constructor.js` — each of them asks whether a bound
+function is a constructor and got the wrong answer before.
+
+### Residuals — 12 rows, each with its mechanism
+
+| Row | Mechanism it still needs |
+| --- | --- |
+| `language/expressions/new.target/value-via-reflect-construct.js` | `new.target` is an i32 CLASS-ID module global keyed by class NAME (`src/codegen/new-target.ts`, #2023). Reading it as an arbitrary function VALUE needs an externref carrier, and every `new`/`super`/`Reflect.construct` site rewritten to write it. Out of scope for this lane. |
+| `language/expressions/super/call-construct-invocation.js` | Same carrier, plus `super()` forwarding the derived constructor's own runtime NewTarget. |
+| `built-ins/DataView/custom-proto-access-detaches-buffer.js` | The getter detaches the buffer and returns normally; the DataView constructor must RE-CHECK detachment after the prototype read and throw TypeError. Needs a post-read detach guard on the `dvWindow` carrier. |
+| `built-ins/ArrayBuffer/data-allocation-after-object-creation.js` | Requires the read strictly BEFORE the data-block allocation (7 PiB → the getter's DummyError must beat the RangeError). Moving the read earlier globally breaks rows 1 and 8 above, so it needs a per-constructor read point inside `ArrayBuffer`'s own construct path. |
+| `built-ins/ArrayBuffer/prototype-from-newtarget.js` | The native ArrayBuffer carrier has no settable prototype link: `__object_setPrototypeOf` declines and `Object.getPrototypeOf` reads back null. Needs an ArrayBuffer carrier proto field (coordinate #5150 / draft PR #5224). |
+| `built-ins/Date/subclassing.js` | Same — the Date carrier (#3240). |
+| `built-ins/Error/prototype/stack/getter-foreign-new-target.js` | Same — the native Error carrier (#5156). |
+| `built-ins/Object/subclass-object-arg.js` | Not a NewTarget defect: `class O extends Object {}` passes the argument through to the instance (`o1.a` reads 2 where the spec says undefined). Belongs with the class-heritage work (#5195/#2026). |
+| `built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget.js` | §10.4.1.2 step 5 — bound [[Construct]] must forward `newTarget === BF ? target : NT`, and the row reads `new.target` inside the target, so it also needs the value carrier. Compose with #4196's `construct-bound.ts`. |
+| `built-ins/Function/prototype/bind/instance-construct-newtarget-boundtarget-bound.js` | Same, one bound level deeper. |
+| `built-ins/Function/prototype/bind/get-fn-realm.js` | Cross-realm: `realm1.Date` reads as null/undefined before NewTarget is reached (`TypeError: Cannot access property on null or undefined`). A realm-shim gap, not this arm. |
+| `built-ins/Function/prototype/bind/get-fn-realm-recursive.js` | Same realm-shim gap. |
+
+Rows 20-29 (Proxy target / Proxy NewTarget) were never in this lane's scope —
+they belong to #5316. The generator carrier (#2864), the promise/microtask
+carrier (#2867) and built-in method reflection (#2175) were not touched.
+
+### Gates
+
+All bare and with `LOC_GATE_BASE=$(git rev-parse origin/main)`:
+`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+`--noEmit`, `lint` — all green. Growth grants are in this file's frontmatter.
+The single-assignment predicate queries `ctx.oracle.declarationsOf`, not the raw
+checker (the first cut used `ctx.checker.getSymbolAtLocation` and the
+oracle-ratchet gate caught it).
+
+Pin file: `tests/issue-3371-r4-reflect-construct-newtarget.test.ts` — 15 tests,
+all passing at the CI fork heap in a single fork. It lists the
+"getter must run" rows and the "validation must win" rows as SEPARATE groups on
+purpose: a patch that moves the prototype read earlier turns the first group
+green and the second red.
+
+### Review round 1 (2026-09-05)
+
+**Verdict: r4 kept its 11 rows but answered SIX shapes wrongly where base
+refused. All six now keep base's refusal, verbatim.** The r4 arm treated
+"the compile error is gone" as the goal; the actual requirement is that a
+program either answers what node answers or does not compile. Every clause of
+the new gate (`classifyRuntimeNewTargetSite` in
+`src/codegen/expressions/reflect-construct-newtarget.ts`) is a measured wrong
+answer, not a precaution.
+
+Worktree `/home/user/js2/.claude/worktrees/wf_fa32f3a5-7d2-1`, branch
+`claude/es6-test262-standalone-g10c7u` + the lane merge. Oracle: node 22 in
+this container (the five refusal pins re-run identically on node 25). Probe
+sources under `/home/user/js2/.tmp/rev3371/p/` and this worktree's `.tmp/q/`.
+
+| # | Shape | node | r4 lane | now | Fix |
+| --- | --- | --- | --- | --- | --- |
+| F1 | class NewTarget (`p/m1.js` driver, `p/h1.js` DataView) | `C.prototype` | `Object.prototype` / `DataView.prototype` | **refusal** | A class's prototype object is not reified in standalone: `C.prototype` compiles to `null` **on base too** (`.tmp/q/n_clsfacts.js` — base and lane both answer "null"), and `__reflect_is_constructor` has no class arm. Nothing to take the prototype from, so the site refuses. Aliases (`const NT = C`) refuse through `oracle.variableInitializerOf`. |
+| F2 | bound NewTarget, no own `prototype` (`p/h3b.js` DataView, `p/m6.js` Uint8Array) | intrinsic default | `undefined` / `null` | **h3b = node**; m6 residual | §10.1.14 step 3 — the whole carrier write is now gated on `Type(proto) is Object` (the `construct-return-value.ts` idiom: separate null test, `typeof`-object OR `typeof`-function). Skipping the write leaves the intrinsic default, which is the spec answer. |
+| F3 | target reads `new.target` (`p/b_newtarget.js`) | `C` | `undefined` (guard throws) | **refusal** | The statically-resolved target declaration is scanned for a `new.target` meta-property; a hit refuses the site. `new.target` is an i32 class-id global (#2023) — narrowing the site, not inventing the value. |
+| F4 | class NewTarget behind a call (`p/g3b.js`) | constructs | `TypeError: newTarget is not a constructor` | **refusal** | Subsumed by the identifier-only rule below plus F1. |
+| F5 | evaluation order (`p/g3.js`) | 238 | 39 | **refusal** | NewTarget must be a bare IDENTIFIER. The reorder r4 was asked for is not available: the fallback route hands target+arguments to `compileNewExpression`, which evaluates AND constructs in one step, and §26.1.2 puts the IsConstructor(NewTarget) check *before* construction — there is no seam between the argument list and the allocation. An identifier's evaluation has no side effect, so reading it early is unobservable; every other spelling refuses instead of being reordered. |
+| F6 (new, found this round) | a NewTarget `prototype` installed by a descriptor write (`.tmp/q/n_getter_ok.js`, `n_defprop.js`) | the installed object | `Object.prototype` | **refusal** | `__native_construct_N` stores the supplied prototype only when it passes `ref.test $Object`; an object-literal carrier fails that test and is dropped in silence. The driver route now requires the NewTarget binding's `prototype` to be provably untouched (no assignment, no `defineProperty`/`defineProperties`/`setPrototypeOf`/`assign`, no second binding, no `with`/`eval`). |
+| F7 (new, found this round) | an `Array` target (`.tmp/q/n_arraytarget.js`) | `NT.prototype` | `Array.prototype` | **refusal** | The instance carrier has no `$proto` field, so the post-construction [[SetPrototypeOf]] is a no-op — while `Object.getPrototypeOf` on an Array answers correctly, so the wrong value is genuinely observable. A named blacklist (`Array`, `Map`, `Set`, `RegExp`, `Function`, the wrapper constructors, `Proxy`, the weak collections) refuses. A user-class or in-file-function target that the driver route does not take refuses for the same reason. |
+
+**Rows — 24 owned (`.tmp/final-rows.txt`, `--isolate … --standalone`,
+`COMPILER_POOL_SIZE=2`, 2026-09-05):** `{ pass: 12, fail: 9, compile_error: 3 }`
+against the lane's `{ pass: 12, fail: 12 }`. **All 11 kept rows plus the
+positive control still pass.** Three rows moved `fail → compile_error`; none
+was passing, and each is a refusal restored on purpose:
+
+- `language/expressions/new.target/value-via-reflect-construct.js` — F3, the
+  target reads `new.target`.
+- `language/expressions/super/call-construct-invocation.js` — F3, same.
+- `built-ins/Object/subclass-object-arg.js` — F7, `class O extends Object` is a
+  class target whose instance has no settable prototype.
+
+**Control corpus — 218 rows, 0 lost (`.tmp/final-controls.txt` +
+`.tmp/retry4-out.txt`, 2026-09-05):**
+
+| | base 46c12b01d6 | r4 lane | this round |
+| --- | --- | --- | --- |
+| pass | 156 | 166 | **166** |
+| fail | 54 | 51 | 49 |
+| compile_error | 8 | 1 | 3 |
+
+The raw run reported `pass: 162 / compile_error: 7`; four
+`Function/prototype/bind/15.3.4.5-*` rows hit the 15 s per-row compile budget
+under a loaded box and **pass when re-run alone at `COMPILER_POOL_SIZE=1`**
+(`.tmp/retry4-out.txt`), which the lane protocol requires before a
+`compile_timeout` counts. The two extra `compile_error`s versus the lane are
+the F3 refusals (`new.target/value-via-reflect-construct.js`,
+`super/call-construct-invocation.js`) — both were **`compile_error` on base as
+well**, so nothing regressed against base either.
+
+Byte identity: every non-#3371 probe compiles to the SAME bytes as the r4 lane
+(`.tmp/bytes.mts` over `p/z_plain.js`, `p/z_bindonly.js`, `p/k_shared.js`,
+`.tmp/q/n_ta_plain.js`, `.tmp/q/n_oc.js` — this round adds zero drift; the two
+that differ from base differ on the lane too, from r4's bound-function
+classifier arm).
+
+**Residuals this round did NOT close, each attributable to a defect OUTSIDE
+this arm — measured on base, not assumed:**
+
+- `Object.getPrototypeOf` on a *dynamically typed* typed-array view answers
+  `null` on **base** (`.tmp/q/n_ta_dyn_proto.js`: node 1, base 2, lane 2), and
+  on a Promise or a class instance likewise (`.tmp/q/n_base_reads.js`: node 15,
+  base 10 — only the Array and plain-object arms are right). So `p/m6.js` and a
+  Promise/class-instance target read a wrong prototype with or without this
+  work; the #3371 arm is not the thing answering wrongly, which is why those
+  targets are NOT blacklisted (blacklisting them would drop the two passing
+  `Promise/get-prototype-abrupt*` rows for no correctness gain).
+- Under `--target wasi`, `Object.getPrototypeOf` on a dynamic DataView or
+  typed-array view **traps on base** (`.tmp/q/n_dv_getproto.js`,
+  `n_ta_dyn_proto.js`, both `RUN_THROW` on base). `p/h3b.js` and `p/m6.js`
+  therefore still throw on wasi; the trap is that pre-existing reader, not the
+  NewTarget path. Everything the gate refuses refuses identically on wasi
+  (pinned).
+- **Still unbounded by construction:** a target expression whose value is not
+  statically resolvable (a parameter — the shape the kept typed-array rows use,
+  `testWithTypedArrayConstructors(TA => …)`). The runtime `ref.test` carrier
+  arms decide there; if such a target turns out to be an `Array` at runtime the
+  prototype write is a silent no-op. Closing it would cost rows 3-8, so it is
+  recorded rather than refused.
+
+**Pins.** `tests/issue-3371-r4-reflect-construct-newtarget.test.ts` is now 29
+tests, all green at `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, single fork, on node
+22 AND node 25. Two r4 parity probes were REPLACED, not deleted: both used an
+ordinary-function target with a descriptor-written NewTarget `prototype`, the
+shape F6 shows is unsound. The getter-propagation property they pinned is now
+pinned on the shape the kept `custom-proto-access-throws` rows use (a DataView
+target, a bound NewTarget with a throwing getter); the descriptor-write shape
+itself moved into the new
+`#3371 review r1 — refusals kept` block, which runs every refused shape on
+BOTH `standalone` and `wasi` and asserts a compile error carrying `(#3371)`.
+The r3 pins (`tests/issue-5195*`, `issue-5309*`, `issue-5312*`) are 225/225
+green; `issue-5313`'s compile-work budget fails identically on base
+(pre-existing, untouched).
+
+**Gates.** `check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+`--noEmit`, `lint` — all exit 0, bare and with
+`LOC_GATE_BASE=$(git rev-parse origin/main)`.
+
+## Handoff (2026-09-05, session claude/es6-test262-standalone-g10c7u)
+
+**Shipped in this PR (r1 slice):** the runtime `Get(NT, "prototype")` read for
+`Reflect.construct(F, args, NT)`, the bound-function `[[Construct]]` arm in the
+standalone IsConstructor classifier, the ordinary-`[[Construct]]` driver route,
+and — from review round 1 — the refusal gate `classifyRuntimeNewTargetSite`
+plus the §10.1.14 `Type(proto) is Object` check on the carrier write. Net on the
+owned list: 11 of 23 rows flip compile_error → pass, the positive control
+holds; 218-row control (Reflect/construct, new.target, super,
+Function/prototype/bind) 166 pass vs 156 on main, zero lost, nine collateral
+wins in `Function/prototype/bind`. Pins: `tests/issue-3371-r4-reflect-construct-newtarget.test.ts`
+(29, node 22 and 25). The fix-round review (a second single-reviewer pass,
+attacking over-refusal against base's own 2-arg / `NT === F` / static-assignment
+shapes) was still running at wind-down; its verdict, if it found anything, is
+in this PR's thread or the next session's handover.
+
+**What the review round established, and what it means for the next slice.**
+The arm can *fetch* `NT.prototype` but usually cannot *install* it: only the
+DataView window struct and the ordinary-function driver accept a prototype; a
+class instance, an Array, an ordinary function's closed struct and a
+descriptor-written prototype all swallow the write silently. `C.prototype` on a
+class compiles to `null` in standalone on main (no reified prototype object),
+and `__reflect_is_constructor` has no class arm. So every shape the gate now
+refuses is a shape that needs its own carrier or a reified class prototype —
+not a smaller patch to this arm.
+
+**Residuals — 12 owned rows, in the order to take them:**
+
+1. `new.target` as a runtime VALUE (2 rows: `new.target/value-via-reflect-construct.js`,
+   `super/call-construct-invocation.js`) — today an i32 class-id module global
+   keyed by class name (`src/codegen/new-target.ts`, #2023). Needs an externref
+   carrier and every `new` / `super()` / `Reflect.construct` site writing it;
+   `super()` must forward the derived constructor's own runtime NewTarget. This
+   also unblocks #5316 step 3 (Proxy `[[Construct]]` NewTarget forwarding).
+2. Reified class prototypes in standalone (unblocks class NewTargets — the
+   most common shape users write — and `built-ins/Object/subclass-object-arg.js`).
+3. Post-read re-validation on DataView (`custom-proto-access-detaches-buffer.js`)
+   and read-before-allocation on ArrayBuffer (the 7 PiB row): both need the
+   prototype read moved inside the builtin's own construct path.
+4. The remaining carrier rows listed under "Residuals — 12 rows" above.
+
+Pre-existing and NOT this arm's: `Object.getPrototypeOf` on a dynamically typed
+TypedArray view answers `null` on main; Promise and class-instance
+`getPrototypeOf` are wrong on main; on wasi `getPrototypeOf` on a dynamic
+DataView/TA view traps on main (probe files under `.tmp/q/` in the fix-round
+worktree while it exists; the shapes are one-liners and are described in the
+review-round subsection).

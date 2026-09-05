@@ -363,3 +363,14 @@ primitive-proto TypeError guards, and the apply-still-refused pin.
 ## Residual (as of #2199, PO reconcile 2026-06-28)
 
 NOT done — multi-PR. PR-A/PR-B/PR-C landed (getPrototypeOf/setPrototypeOf routed to natives, receiver arg, ToPropertyKey, deleteProperty freeze/configurable). Remaining per the file "## Remaining (out of this PR)": accessor-invocation receiver handling, coordinated with #1888 Slice 5 accessor work. Stays in-progress.
+
+
+## 2026-09-04 — receiver slice dispatched under #5316
+
+The `Reflect.set(target, key, value, receiver)` refusal (15 ES2015 rows, list
+in #5316) is implemented by the proxy r4 lane as the receiver-threaded
+[[Set]] in `object-runtime-ordinary-set.ts`, because the piece the Codex
+checkpoint PR #5397 could not prove around — a receiver whose prototype chain
+reaches a Proxy — is one arm of that walk inside the proxy runtime. PR #5397
+stays a design reference (`dirty`, non-mergeable by its own description).
+This issue keeps the rest of its residual.
