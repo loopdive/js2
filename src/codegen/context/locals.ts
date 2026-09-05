@@ -54,7 +54,9 @@ export interface LocalsSnapshot {
   /** Exact `boxedCaptures` metadata at snapshot time. A speculative promotion
    * can replace an existing entry's cell type, so preserving names alone is
    * insufficient even when the corresponding localMap entry is restored. */
-  readonly boxedEntries: ReadonlyArray<readonly [string, { refCellTypeIdx: number; valType: ValType }]> | null;
+  readonly boxedEntries: ReadonlyArray<
+    readonly [string, { refCellTypeIdx: number; valType: ValType; rawLocalIdx?: number }]
+  > | null;
   /**
    * (#3032) Exact `boxedTdzFlags` / `tdzFlagLocals` entries at snapshot time
    * (`null` when the map was absent). The call-site TDZ-flag prepend

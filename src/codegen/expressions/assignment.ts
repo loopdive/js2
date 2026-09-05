@@ -27,6 +27,7 @@ import {
   emitToUint8Clamp,
 } from "../binary-ops.js";
 import { popBody, pushBody } from "../context/bodies.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js";
 import { reportError } from "../context/errors.js";
 import { fnShadowSlot, isShadowedTopLevelFn, withShadowReadSuppressed } from "../fn-global-shadow.js"; // (#4630)
 import { reportSilentFallback } from "../fallback-telemetry.js";
@@ -516,6 +517,10 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
         }
         const tmpVal = allocLocal(fctx, `__box_tmp_${fctx.locals.length}`, boxed.valType);
         fctx.body.push({ op: "local.set", index: tmpVal });
+        // A cell minted inside a conditional arm is null on every path that
+        // skipped it, and the guard below would then DROP this write. Mint it
+        // from the pre-box slot first.
+        emitConditionalCaptureBoxRepair(fctx, name, localIdx);
         fctx.body.push({ op: "local.get", index: localIdx });
         fctx.body.push({ op: "ref.is_null" });
         fctx.body.push({
@@ -585,6 +590,7 @@ export function compileAssignment(ctx: CodegenContext, fctx: FunctionContext, ex
           }
           const tmpVal = allocLocal(fctx, `__box_tmp_${fctx.locals.length}`, boxedPostRhs.valType);
           fctx.body.push({ op: "local.set", index: tmpVal });
+          emitConditionalCaptureBoxRepair(fctx, name, localIdxPostRhs);
           fctx.body.push({ op: "local.get", index: localIdxPostRhs });
           fctx.body.push({ op: "ref.is_null" });
           fctx.body.push({
@@ -967,6 +973,7 @@ export function emitIdentifierWriteFromLocal(
       pushRhsCoerced(boxed.valType);
       const tmpVal = allocLocal(fctx, `__with_box_${fctx.locals.length}`, boxed.valType);
       fctx.body.push({ op: "local.set", index: tmpVal });
+      emitConditionalCaptureBoxRepair(fctx, name, localIdx);
       fctx.body.push({ op: "local.get", index: localIdx });
       fctx.body.push({ op: "ref.is_null" });
       fctx.body.push({
