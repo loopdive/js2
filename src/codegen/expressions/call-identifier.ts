@@ -2320,8 +2320,10 @@ export function compileIdentifierCall(
               boxNumberIdx: number | null;
               boxBooleanIdx: number | null;
               unboxNumberIdx: number | null;
+              unboxBooleanIdx: number | null;
             },
             allowProvenNumberUnbox: boolean,
+            allowProvenBooleanUnbox: boolean,
             allowGeneralRefExport: boolean,
           ): Instr[] | null => {
             if (scalarAbiTypesMatch(from, to)) return [];
@@ -2404,14 +2406,41 @@ export function compileIdentifierCall(
             if (allowProvenNumberUnbox && isHostExtern(from) && to.kind === "f64" && to.undefSentinel !== true) {
               return helpers.unboxNumberIdx === null ? null : [{ op: "call", funcIdx: helpers.unboxNumberIdx }];
             }
+            // Contextual callable fields widen optional parameters to
+            // externref, while a lifted nested implementation deliberately
+            // keeps optional booleans on its branded i32 ABI and observes
+            // omission through `__argc`. Admit that concrete funcref only when
+            // the call-site expression proves a Boolean. An omitted argument
+            // is also safe: the selected arm supplies i32 zero below and the
+            // candidate's argc distinguishes omission from explicit false.
+            // Do not admit unbranded i32 — an `any` value cannot prove either
+            // Boolean identity or a lossless numeric conversion.
+            if (allowProvenBooleanUnbox && isHostExtern(from) && to.kind === "i32" && to.boolean === true) {
+              return helpers.unboxBooleanIdx === null ? null : [{ op: "call", funcIdx: helpers.unboxBooleanIdx }];
+            }
             return null;
           };
           const argumentHasNumberBridgeProof = (index: number): boolean =>
             index >= expr.arguments.length || ctx.oracle.staticJsTypeOf(expr.arguments[index]!) === "number";
+          const argumentIsForwardedTrackedOptionalBoolean = (index: number): boolean => {
+            const argument = expr.arguments[index];
+            if (!argument || !ts.isIdentifier(argument)) return false;
+            const declaration = ctx.oracle.valueDeclarationOf(argument);
+            return (
+              declaration !== undefined &&
+              ts.isParameter(declaration) &&
+              fctx.omissionTrackedScalarParams?.has(declaration) === true
+            );
+          };
+          const argumentHasBooleanBridgeProof = (index: number): boolean =>
+            index >= expr.arguments.length ||
+            ctx.oracle.staticJsTypeOf(expr.arguments[index]!) === "boolean" ||
+            argumentIsForwardedTrackedOptionalBoolean(index);
           const theoreticalHelpers = {
             boxNumberIdx: 0,
             boxBooleanIdx: 0,
             unboxNumberIdx: 0,
+            unboxBooleanIdx: 0,
           };
           let needsScalarBridge = false;
           for (const [, info] of ctx.closureInfoByTypeIdx) {
@@ -2427,7 +2456,16 @@ export function compileIdentifierCall(
               const to = info.paramTypes[pi]!;
               if (scalarAbiTypesMatch(from, to)) continue;
               differs = true;
-              if (scalarBridgePlan(from, to, theoreticalHelpers, argumentHasNumberBridgeProof(pi), true) === null) {
+              if (
+                scalarBridgePlan(
+                  from,
+                  to,
+                  theoreticalHelpers,
+                  argumentHasNumberBridgeProof(pi),
+                  argumentHasBooleanBridgeProof(pi),
+                  true,
+                ) === null
+              ) {
                 compatible = false;
                 break;
               }
@@ -2437,7 +2475,7 @@ export function compileIdentifierCall(
               expectedReturn !== null &&
               info.returnType !== null &&
               !scalarAbiTypesMatch(info.returnType, expectedReturn) &&
-              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false, false) !== null;
+              scalarBridgePlan(info.returnType, expectedReturn, theoreticalHelpers, false, false, false) !== null;
             if (differs || returnDiffers) {
               needsScalarBridge = true;
               break;
@@ -2451,6 +2489,7 @@ export function compileIdentifierCall(
             from: ValType,
             to: ValType,
             allowProvenNumberUnbox: boolean,
+            allowProvenBooleanUnbox: boolean,
             allowGeneralRefExport: boolean,
           ): Instr[] | null =>
             scalarBridgePlan(
@@ -2460,8 +2499,10 @@ export function compileIdentifierCall(
                 boxNumberIdx: ctx.funcMap.get("__box_number") ?? null,
                 boxBooleanIdx: ctx.funcMap.get("__box_boolean") ?? null,
                 unboxNumberIdx: ctx.funcMap.get("__unbox_number") ?? null,
+                unboxBooleanIdx: ctx.funcMap.get("__unbox_boolean") ?? null,
               },
               allowProvenNumberUnbox,
+              allowProvenBooleanUnbox,
               allowGeneralRefExport,
             );
 
@@ -2535,6 +2576,7 @@ export function compileIdentifierCall(
                     sigParamWasmTypes[pi]!,
                     candidateParamTypes[pi]!,
                     argumentHasNumberBridgeProof(pi),
+                    argumentHasBooleanBridgeProof(pi),
                     true,
                   ) ??
                   referencePredicateArgumentBridge(
@@ -2577,6 +2619,7 @@ export function compileIdentifierCall(
               dispatchBridgePlan(
                 info.returnType,
                 expectedReturn,
+                false,
                 false,
                 canExportCandidateReferenceResult(info.funcTypeIdx),
               ) === null &&
@@ -3193,10 +3236,25 @@ export function compileIdentifierCall(
                   fcCallBody.push(...defaultValueInstrs(toType));
                   continue;
                 }
+                if (
+                  ai >= expr.arguments.length &&
+                  toType.kind === "i32" &&
+                  toType.boolean === true &&
+                  isHostExtern(fromType)
+                ) {
+                  fcCallBody.push(...defaultValueInstrs(toType));
+                  continue;
+                }
                 fcCallBody.push({ op: "local.get", index: argLocals[ai]! });
                 if (!scalarAbiTypesMatch(fromType, toType)) {
                   const bridge =
-                    dispatchBridgePlan(fromType, toType, argumentHasNumberBridgeProof(ai), true) ??
+                    dispatchBridgePlan(
+                      fromType,
+                      toType,
+                      argumentHasNumberBridgeProof(ai),
+                      argumentHasBooleanBridgeProof(ai),
+                      true,
+                    ) ??
                     referencePredicateArgumentBridge(fc, ai, fromType, toType) ??
                     genericReferenceCallbackArgumentBridge(fc, ai, fromType, toType) ??
                     vecArgumentBridge(fromType, toType);
@@ -3268,6 +3326,7 @@ export function compileIdentifierCall(
                   const bridge = dispatchBridgePlan(
                     fc.returnType!,
                     expectedReturn!,
+                    false,
                     false,
                     canExportCandidateReferenceResult(fc.funcTypeIdx),
                   );

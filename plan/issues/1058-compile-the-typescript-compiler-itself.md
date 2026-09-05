@@ -1528,6 +1528,12 @@ callable-handle refresh, while nested declarations retain main's promoted and
 forwarded pre-registration ABI together with this branch's canonical reserved
 capture plan. The seven conflict-focused suites pass **34/34**.
 
+Main advanced again during the resumed probe. Merge commit
+`22c990ab481a0d` brings the branch through
+`33a532e9344667`; that delta contains benchmark/edition artifacts and no
+binder-path conflict. Its new edition import test passes and both compiler
+typechecks remain green.
+
 The sync exposed a TypeScript 5-only source typecheck regression inherited
 from main: TS5's DOM declarations do not yet contain `WebAssembly.Tag`, while
 TS7's do. Commit `45b7d783353d04` describes the feature-detected tag locally by
@@ -1557,6 +1563,33 @@ then compare both exact binder oracle results. If construction succeeds but
 each result is exactly 65,536 too high, inspect
 `externalModuleIndicator`/`isExternalModule` before changing constructor
 lowering.
+
+The lower-load 30-minute rerun then completed in **680,967 ms** wall /
+**766,863 ms CPU** (1.13 average cores), peaking at **3,784.5 MiB RSS**. It
+compiled and validated a **75,812,899-byte** module with **4,864 functions**,
+the same **32 source files / 36 Program files / 312 module-init statements**,
+**21 non-fatal warnings**, and no hard compile errors. This is authoritative
+evidence that main's read-only capture repair removed the old
+`binder.ts:3133:9` constructor failure. Both binder inputs now enter the parser
+and stop at the same earlier runtime operation: the destructured
+`factoryCreateIdentifier(...)` call at `parser.ts:2657:31`.
+
+That new frontier was reduced to the already-committed sub-second
+`issue-1058-node-array-factory` regression and bisected to main commit
+`c0213bad543aba2c74c8249bb314f49897f3a21a` (#5290's omitted-parameter ABI
+repair). The public contextual signature widens an optional Boolean to
+externref, while the lifted nested implementation intentionally retains its
+branded i32 ABI and carries omission through `__argc`; the dynamic identifier
+dispatcher consequently omitted the live funcref from its candidate set. The
+candidate bridge now admits only a call-site-proven Boolean (including an
+omitted or forwarded nested optional Boolean), uses the existing branded
+`__unbox_boolean` helper for supplied values, and supplies i32 zero for an
+omitted slot while preserving the real argument count. Unproven externref and
+unbranded i32 candidates remain excluded. The affected #1058 factory,
+contextual, forwarding, generic callback, and #5290 suites pass **116/116**;
+both TS5 and TS7 typechecks pass. The next authoritative run must establish
+whether both binder fingerprints now match or expose the next bounded runtime
+frontier.
 
 The module plan remains capability-based: parser, binder, checker, and
 printer/emitter are separate public roots. A runtime module that is neither
