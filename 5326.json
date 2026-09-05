@@ -1,10 +1,11 @@
 {
   "id": "5326",
   "assignee": "ttraenkler/claude",
-  "requested_by": "ttraenkler/claude",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5326-dogfood-suite-silent-truncation",
   "claimed_at": "2026-09-05T07:09:41Z",
-  "updated_at": "2026-09-05T07:09:41Z",
-  "write_id": "91164-00f70d8i"
+  "updated_at": "2026-09-05T08:10:24Z",
+  "write_id": "70696-88t7ff1l",
+  "released_at": "2026-09-05T08:10:24Z"
 }
