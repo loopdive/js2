@@ -345,12 +345,12 @@ describe("#3527 generic linear async runtime", () => {
     });
     expectSuccessful(result);
 
-    // B2 requires at least one genuinely pending source await.  A literal or
-    // statically resolved chain must therefore not acquire synthetic B2 state
-    // helpers until the separately planned settled-await cutover.
-    expect(result.irCompiledFuncs ?? []).not.toEqual(
-      expect.arrayContaining(["literalOne__ir_async_state_0", "literalTwo__ir_async_state_0"]),
-    );
+    // B2 requires the existing source analysis to report a potentially
+    // suspending await. A fully statically resolved chain must therefore not
+    // acquire synthetic B2 state helpers until the separately planned
+    // settled-await cutover.
+    expect(result.irCompiledFuncs ?? []).not.toContain("literalOne__ir_async_state_0");
+    expect(result.irCompiledFuncs ?? []).not.toContain("literalTwo__ir_async_state_0");
     const outcomes = new Map((result.irOutcomes ?? []).map((outcome) => [outcome.displayName, outcome]));
     expect(outcomes.get("literalOne")).toMatchObject({
       kind: "emitted",
