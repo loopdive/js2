@@ -84,27 +84,6 @@ function countCallsTo(ctx: CodegenContext, body: readonly Instr[], target: WasmF
   return count;
 }
 
-/** Collect statically emitted direct call handles in structural order. */
-function directCallTargets(body: readonly Instr[]): readonly FuncHandle[] {
-  const targets: FuncHandle[] = [];
-  const visit = (instructions: readonly Instr[]): void => {
-    for (const instruction of instructions) {
-      if (instruction.op === "call" || instruction.op === "return_call") targets.push(instruction.funcIdx);
-      if (instruction.op === "block" || instruction.op === "loop") visit(instruction.body);
-      else if (instruction.op === "if") {
-        visit(instruction.then);
-        if (instruction.else !== undefined) visit(instruction.else);
-      } else if (instruction.op === "try") {
-        visit(instruction.body);
-        for (const clause of instruction.catches) visit(clause.body);
-        if (instruction.catchAll !== undefined) visit(instruction.catchAll);
-      } else if (instruction.op === "try_table") visit(instruction.body);
-    }
-  };
-  visit(body);
-  return targets;
-}
-
 /**
  * Return calls only when the adapter is exactly a straight-line call list.
  * A recursive call census is useful for legacy diagnostics, but it cannot

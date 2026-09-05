@@ -130,3 +130,44 @@ guarded branch on an arm that today is one unconditional `ref.cast`.
   `invokeNativeFunctionCallback` — after
   [#5329](https://js2wasm.loopdive.com/dashboard/issue.html?slug=5329-tuple-rest-carrier)
   made its module valid. Worth re-checking once this lands.
+
+## Implementation Plan
+
+The design above ("runtime disambiguation, no metadata needed") is the plan;
+this section orders it and fixes the evidence bar.
+
+1. **Reproduce both halves before editing.** (a) `spy(...args)` reached
+   through a fixed-arity callable param → `illegal cast` on arg0; (b) the
+   control that must keep working: `g(xs)` where `xs` is a genuine array
+   parameter sharing the same funcref/struct type. The whole difficulty is
+   that (a) and (b) are indistinguishable by signature — any fix that keys on
+   a flag will break one of them. Capture `.tmp/*.orig.ts` for every file you
+   touch (`src/codegen/closures/funcref-as-closure.ts`,
+   `src/codegen/expressions/call-identifier.ts` ladder, and the
+   `getOrCreate(Constructible)FuncRefWrapperTypes` sites).
+2. **Confirm the dead registry.** `ctx.__restFuncTypeIdxs` has no writer in
+   the tree. Either give it a writer at the one place rest-ness is known
+   (the wrapper mint in `ensureFuncValueWrappersRegistered`) — accepting that
+   it can only mark *the wrapper*, not disambiguate a shared signature — or
+   delete it so the next reader is not misled. The design says the bridge
+   must not depend on it; make the code agree.
+3. **Implement the runtime-disambiguating bridge** as designed: when the
+   ladder marshals into a callee whose trailing formal is a vec, and the
+   arity of the *call site* exceeds the wrapper's declared fixed arity, pack
+   the surplus positionally into the rest vec; when it does not, pass through.
+   The decision is made from call-site arity vs callee arity at runtime, not
+   from a stored flag.
+4. **Regression test** (`tests/`), untyped `.js` two-file fixtures:
+   `spy(...args)` via callback param with 1, 2, 3 args (values pinned, not
+   just "no trap"); `g(xs)` with an array as the anti-vacuity control; a
+   `jest.fn()`-shaped spy recording its calls. Fails on parent, passes with
+   fix.
+5. **A/B** at one HEAD, 17 suites, per test file. jest `prompt` 0/4 and
+   `Replaceable` are the expected movers (+6). Anchors in #5338.
+6. Gates including `pnpm run check:dogfood-validation`; one PR.
+
+## Dispatch
+
+Model: **fable** (`reasoning_effort: max`, `feasibility: hard`). The
+signature-sharing ambiguity is genuine; this needs the strongest reasoning
+available, not more hands.

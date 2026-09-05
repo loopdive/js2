@@ -2818,7 +2818,6 @@ needs another source body to run first, or correct startup needs a late
 unplanned provider. Do not replace that missing proof with more names, counts
 or a new storage allowlist. Return measured runtime/receipt evidence and list
 P2B plus the full R5 acceptance as unfinished.
-
 ## M2-P2A implementation record — 2026-09-05
 
 P2A is implemented on `codex/3525-m2-p2a-luna-20260905` with signed
