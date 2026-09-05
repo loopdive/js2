@@ -4577,3 +4577,48 @@ controls pass (13/13, 6/6, and 9/9). The archived `origin/main` snapshot
 reproduces the wrapper-position failure, the imported-HOF failure, the
 receipt-census failure, and the 16 counted-string failures (19 baseline reds).
 Full merge-group Test262 validation remains a CI requirement.
+
+
+## Implementation Plan — 2026-09-05 — R2-B1 missing brand guard follow-up
+
+The merged callable-boundary PR #5600 is recorded at
+`45cc12dcbd9e02603e6648c19b43d6d4b8cb7939`, with refreshed source parent
+`ac4b1445562ebc9d26bed516dfb337b9ee4d204b`. Current main
+`e4ef2c3ef01cc04126203551240fe95b3513f92e` does not contain the final reviewed
+source head `2d8741c3332c0928b905bf4948c904e0ee112004` as an ancestor.
+A direct content comparison found seven integration, lowering, sealing and
+routing files unchanged from that reviewed head, but two specific omissions:
+`prepared-callable-boundary.ts` lacks the nested semantic ValType brand key,
+and its contract test lacks five corresponding mutation controls. This is a
+narrow incomplete landing, not evidence that all R2 work was lost or complete.
+
+Astra plans; the original Luna Max author implements the forward repair in
+`codex/3521-r2-b1-brands-luna-20260905`, based on the exact main above. Keep
+claim `3521:r2-b1-callable-boundary-contract` held until the repaired content
+is verified on main. Do not amend, reopen or push the merged PR's branch.
+
+1. Restore the already reviewed `semanticValTypeBrandKey` and its contribution
+   to `semanticSignatureKey` from final source head `2d8741c...` in
+   `src/ir/prepared-callable-boundary.ts`. Preserve boolean, symbol, bigint and
+   undefined-sentinel brands, including absent versus present false. Keep
+   recursive structural type equality and the separate physical ABI evidence
+   unchanged; no broad IR equality or transaction changes are needed.
+2. Restore the five omitted controls in
+   `tests/issue-3521-prepared-callable-boundary.test.ts`: boolean/symbol after
+   candidate issuance, bigint false/true after issuance, and undefined-sentinel
+   mutation after certification. Demonstrate these controls fail on the exact
+   current-main source before the repair and pass with it; retain all eight
+   previously landed controls. Report the actual denominator.
+3. Run the full focused callable-boundary suite, relevant R2 withdrawal and
+   transaction controls, typecheck and applicable normal gates. Attribute any
+   residual to an exact baseline comparison. Record final source refs and
+   validation results here; previous 13/13 reports do not prove the landed
+   main contained those tests.
+4. Open a ready fork PR containing only the two restored source/test changes
+   plus this issue record, after ordinary current-main integration. No force
+   push, queued-head update, direct main push or GitHub polling. Verify actual
+   final head/file set and later landed bytes before completing the claim.
+
+Exclusive ownership is these two files and this issue record. Preserve active
+R5 initializer transactions, R8 body-handoff work and all other agents' changes.
+R2 and the full IR retirement epic remain open after this narrow repair.
