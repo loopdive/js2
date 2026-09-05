@@ -13,6 +13,7 @@ import {
   STANDALONE_TIMER_CALLBACK_MARKER_EXPORT,
   STANDALONE_TIMER_CALLBACK_MARKER_PHYSICAL_BASE,
 } from "../timer-capability-contract.js";
+import { sameExportedFunction } from "./exported-function-identity.js";
 import { installNativeFunctionSourceFacade, normalizeModuleCallbackException } from "./native-function-source.js";
 
 export interface StandaloneTimerCallbackState {
@@ -126,16 +127,15 @@ function readAuthority(
   ) {
     return undefined;
   }
-
   if (!hasOwn(exports, STANDALONE_TIMER_CALLBACK_BINDINGS_EXPORT)) return undefined;
   const bindings = terminalAlias(exports, STANDALONE_TIMER_CALLBACK_BINDINGS_PHYSICAL_BASE);
   if (!isExactFuncrefTable(bindings, 1)) return undefined;
-
   if (!hasOwn(exports, STANDALONE_TIMER_CALLBACK_DISPATCH_EXPORT)) return undefined;
   const dispatch = terminalAlias(exports, STANDALONE_TIMER_CALLBACK_DISPATCH_PHYSICAL_BASE);
   if (typeof dispatch !== "function") return undefined;
   try {
-    if (bindings.get(0) !== dispatch) return undefined;
+    // (#5337) not `===`: JSC splits export/table identities.
+    if (!sameExportedFunction(dispatch, bindings.get(0))) return undefined;
   } catch {
     return undefined;
   }
