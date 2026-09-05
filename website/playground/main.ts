@@ -19,6 +19,7 @@ import { instantiatePlaygroundModule } from "./runtime-wiring.js";
 import { WasmTreemap, parseWasm, parseWasmSpans, SECTION_COLORS } from "./wasm-treemap.js";
 import type { WasmData, WasmSection, WasmFunctionBody, ByteSpan } from "./wasm-treemap.js";
 import { LayoutManager, clearSavedLayout, getDefaultLayout, getMobileDefaultLayout } from "./layout.js";
+import { AstExplorer } from "./ast-explorer.js";
 import DEFAULT_SOURCE from "./examples/dom/calendar.ts?raw";
 import BENCH_HELPERS_SOURCE from "./examples/benchmarks/helpers.ts?raw";
 
@@ -923,6 +924,7 @@ function bindInputModelPersistence(model: monaco.editor.ITextModel): void {
     for (const f of files) {
       if (f.folder === "output") f.model.setValue("");
     }
+    scheduleAstRefreshFromEditor();
   });
 }
 
@@ -2965,6 +2967,69 @@ function queueSidebarRefresh(): void {
   void t262Render();
 }
 
+// ─── AST explorer (acorn, compiled to Wasm by this compiler) ────────────────
+const astExplorer = new AstExplorer();
+let astLoadStarted = false;
+let astDecorations: monaco.editor.IEditorDecorationsCollection | null = null;
+
+function astHighlight(range: { start: number; end: number } | null): void {
+  const editor = editorForTab("ts-source");
+  if (!editor) return;
+  astDecorations?.clear();
+  // Ranges only refer to the editor's text when that is what got parsed.
+  if (!range || !astExplorer.showsEditorSource) return;
+  const model = inputFile.model;
+  const start = model.getPositionAt(range.start);
+  const end = model.getPositionAt(range.end);
+  astDecorations = editor.createDecorationsCollection([
+    {
+      range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column),
+      options: { className: "ast-source-highlight", isWholeLine: false },
+    },
+  ]);
+}
+
+astExplorer.onNodeHover = (range) => astHighlight(range);
+astExplorer.onNodeSelect = (range) => {
+  if (!astExplorer.showsEditorSource) return;
+  const panelId = layout.findPanelForTab("ts-source");
+  if (panelId) layout.switchTab(panelId, "ts-source");
+  requestAnimationFrame(() => {
+    const editor = editorForTab("ts-source");
+    if (!editor) return;
+    const start = inputFile.model.getPositionAt(range.start);
+    const end = inputFile.model.getPositionAt(range.end);
+    const sel = new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column);
+    editor.setSelection(sel);
+    editor.revealRangeInCenterIfOutsideViewport(sel);
+  });
+};
+
+/** Feed the explorer after a compile. Cheap when nothing changed. */
+function updateAstPanel(editorSource: string, compiledJs: string): void {
+  astExplorer.setSources(editorSource, compiledJs);
+}
+
+/**
+ * Keep the tree live while typing — parsing costs milliseconds and needs no
+ * compile.
+ *
+ * Only when the panel is already showing the EDITOR's text, though: a
+ * TypeScript source is on screen as its compiled JS (acorn cannot parse the
+ * annotations), and the compiled output is cleared the moment the source
+ * changes. Re-parsing there would replace a correct tree with a parse error on
+ * every keystroke, so that case waits for the next compile.
+ */
+let astRefreshTimer: number | null = null;
+function scheduleAstRefreshFromEditor(): void {
+  if (!astExplorer.showsEditorSource) return;
+  if (astRefreshTimer !== null) window.clearTimeout(astRefreshTimer);
+  astRefreshTimer = window.setTimeout(() => {
+    astRefreshTimer = null;
+    astExplorer.setSources(inputFile.model.getValue(), "");
+  }, 250);
+}
+
 // Treemap
 const treemap = new WasmTreemap(treemapPanel);
 
@@ -3021,6 +3086,7 @@ const tabDefs: Record<string, TabContentDef> = {
   preview: { kind: "dom", element: previewPanel },
   console: { kind: "dom", element: consolePre },
   treemap: { kind: "dom", element: treemapPanel },
+  ast: { kind: "dom", element: astExplorer.element },
   test262: { kind: "dom", element: test262Panel },
 };
 
@@ -3036,6 +3102,7 @@ layout.registerTab({ id: "errors", title: "Errors", kind: "dom" });
 layout.registerTab({ id: "preview", title: "Preview", kind: "dom" });
 layout.registerTab({ id: "console", title: "Console", kind: "dom" });
 layout.registerTab({ id: "treemap", title: "Treemap", kind: "dom" });
+layout.registerTab({ id: "ast", title: "AST", kind: "dom" });
 layout.registerTab({ id: "test262", title: "Test262", kind: "dom" });
 
 // Mount callback: place content into panel
@@ -3072,6 +3139,14 @@ layout.onMount = (panelId: string, tabId: string, contentEl: HTMLElement) => {
     if (tabId === "test262" && !t262Loaded) {
       t262Loaded = true;
       t262Render();
+    }
+    // Lazy-load the compiled acorn parser on first mount — it is a 370 KB
+    // download, so no session that never opens the tab pays for it.
+    if (tabId === "ast" && !astLoadStarted) {
+      astLoadStarted = true;
+      astExplorer.load().catch((error) => {
+        astExplorer.clear(`Could not load the compiled parser: ${error instanceof Error ? error.message : error}`);
+      });
     }
   }
 };
@@ -4186,7 +4261,9 @@ async function compileOnly() {
     wasmFile.binaryData = new Uint8Array(bin);
     annotateHexEditor(bin, wasmData, lineLabels);
   }
-  fileMap.get("output/example.js")!.model.setValue(generateModularOutput(result));
+  const modularOutput = generateModularOutput(result);
+  fileMap.get("output/example.js")!.model.setValue(modularOutput);
+  updateAstPanel(source, modularOutput);
 
   // Mark output files as compiled
   for (const f of files) {
