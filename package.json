@@ -95,6 +95,8 @@
     "build:test262-cli": "node scripts/build-test262-cli.mjs",
     "build:runtime-provider": "node scripts/build-runtime-provider.mjs",
     "build:playground": "vite build --config website/playground/vite.config.ts",
+    "build:acorn-wasm": "node --max-old-space-size=6144 --import tsx scripts/build-acorn-wasm.mjs",
+    "check:acorn-wasm": "node --max-old-space-size=6144 --import tsx scripts/build-acorn-wasm.mjs --check",
     "dev": "pnpm run build:compiler-bundle && (pnpm run dashboard:watch &) && vite serve --config website/playground/vite.config.ts",
     "test": "node node_modules/vitest/dist/cli.js run",
     "test:guard": "node scripts/run-guard-suite.mjs",
