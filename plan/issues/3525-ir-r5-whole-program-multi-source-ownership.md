@@ -2817,3 +2817,55 @@ needs another source body to run first, or correct startup needs a late
 unplanned provider. Do not replace that missing proof with more names, counts
 or a new storage allowlist. Return measured runtime/receipt evidence and list
 P2B plus the full R5 acceptance as unfinished.
+
+## M2-P2A implementation record — 2026-09-05
+
+P2A is implemented on `codex/3525-m2-p2a-luna-20260905` with signed
+implementation commit `2d8e449da3b2787b9b4080c9b99b8aeb4f556d73` and current-main
+merge `dc9ef587fa376da90467d5a473de45516e2b3a6f` (current `origin/main`
+`39e4a13b94273dc9074e5b45e9a4cec661605ef0`). The Luna Max implementation
+adds one source-qualified batch coordinator that preclaims storage and TDZ
+declaration evidence, materializes existing declaration preparation, builds
+the complete initializer vector once, captures the final allocator/resource
+census, reserves exact ordered units and one flat graph adapter, then commits
+all detached component scopes and bodies together. Registration, currentness,
+resource, body, terminal and adapter failures abort all pending receipts before
+publication. Existing singleton M2, disabled cutover, ordinary deferred
+initialization, and mixed callable/init admission remain outside this slice.
+
+The positive two-contributor production control has two executable source
+plans, two IR body emissions, zero direct module-init roots, two resource
+artifact IDs matching the contributor UnitIds, and one ordered adapter. Its
+compiled production result returns `111` on both exported calls. An owned clone
+of the generated Wasm module adds a separate i32 trace global only in the test
+copy: normal startup records `12`, an explicit second adapter invocation
+records `1212`, reversed blocks record `21`, and duplicated blocks record
+`1122`. The deferred clone starts at `0` and records `12` then `1212` across two
+explicit calls. This observes order and per-invocation execution without
+instrumenting production code.
+
+The negative controls retain both source storage gaps for string-valued
+contributors, reject the non-scalar `[seed, 2][0]` late-resource candidate
+before P2A reservation, and reject both dropped-terminal and pending-body
+mutations with an empty binary and no published initializer prefix. The
+preexisting cross-source storage measurement remains explicit: distinct
+private names return the expected `1122`, while same private `value` spelling
+returns `2222` in both pre-P1 and P1 lanes; P2A refuses that unproved alias and
+does not claim the storage defect as a gain.
+
+Validation on the merged candidate:
+
+- `pnpm run typecheck` — pass.
+- The required single-fork suite over the eight P2A/M2/R2 files — 8 files,
+  119 tests passed.
+- `pnpm run check:ir-fallbacks`, `check:ir-layering`, `check:ir-dialect`,
+  `check:ir-kind-neutrality`, `check:ir-optimization-retirement`,
+  `check:ir-adoption`, `check:issues`, and `check:issue-spec-coverage` — pass.
+- `node --import tsx scripts/check-ir-only.ts --json --policy=hybrid` and
+  `--policy=ir-only` — both ready: 5 entries, 41 terminal units, 38 emitted,
+  3 non-executable, and 0 legacy body emissions per lane.
+
+P2B still owns mixed callable/init graphs, imported-global and re-export
+storage proofs, and noncommuting initializer-to-callable effects. Full R5
+acceptance and merge-group CI remain open; no full local Test262 run is claimed
+by this landing.
