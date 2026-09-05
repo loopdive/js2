@@ -165,7 +165,24 @@ export function tryEmitExactStructFieldGet(
     return fieldType.kind === "ref" ? { kind: "ref_null", typeIdx: fieldType.typeIdx } : fieldType;
   }
   if (objResult?.kind === "externref") {
-    if ((!ctx.standalone && !ctx.wasi) || isStructuralObjectContract(ctx, objType, typeName)) {
+    // A callable field is represented by a Wasm closure carrier, even when a
+    // generic/structural receiver has been erased to externref. Reading it via
+    // the host MOP loses the carrier during module evaluation because the host
+    // cannot inspect WasmGC fields until instantiation has returned and the
+    // generated accessors have been wired. TypeScript's
+    // `_computedOptions.target.computeValue` alias is the production witness:
+    // the callback exists and is directly callable, but a bare `__extern_get`
+    // initialized the exported alias to null.
+    //
+    // Keep callables on the exact/alternate-struct path below. Its terminal is
+    // the finalize-filled member dispatcher, whose own terminal remains
+    // `__extern_get` for genuine host objects. This is the callable counterpart
+    // of the exclusions in the open-object dynamic-read paths.
+    const needsWasmCallableCarrier = !ctx.standalone && !ctx.wasi && ctx.oracle.signatureOf(expr) !== undefined;
+    if (
+      !needsWasmCallableCarrier &&
+      ((!ctx.standalone && !ctx.wasi) || isStructuralObjectContract(ctx, objType, typeName))
+    ) {
       const structuralResult = emitStructuralExternrefFieldGet(ctx, fctx, expr, propName);
       if (structuralResult !== undefined) return structuralResult;
     }

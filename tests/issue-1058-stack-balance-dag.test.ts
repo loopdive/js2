@@ -105,6 +105,9 @@ it("#1058 distinguishes empty-block operand underflow from missing type-indexed 
       message: expect.stringMatching(/operand stack underflow by 1 in an empty-typed block/),
     }),
   );
+  expect(underflow!.message).toMatch(
+    /site function body\[0\]\.block\.body, physical body #\d+; first negative net prefix at instruction 0 \(initial stack depth 0\); window: \[0\] drop/,
+  );
   expect(underflow!.message).not.toMatch(/type-indexed|multi-value/);
 
   const missingResults = diagnostics.find((error) => error.message.includes('function "missing_results"'));
@@ -122,6 +125,52 @@ it("#1058 distinguishes empty-block operand underflow from missing type-indexed 
   expect(missingMultiValueBody).toEqual([]);
   expect(diagnostics).toHaveLength(2);
   expect(mod.codegenErrors).toEqual(diagnostics);
+});
+
+it("#1058 accounts for tag parameters when localizing try-catch underflow", () => {
+  const catchBody: Instr[] = [
+    { op: "drop" },
+    { op: "drop" },
+    { op: "nop" },
+    { op: "nop" },
+    { op: "nop" },
+    { op: "nop" },
+  ];
+  const mod = {
+    types: [
+      { kind: "func", params: [], results: [] },
+      { kind: "func", params: [{ kind: "i32" }], results: [] },
+    ],
+    imports: [],
+    functions: [
+      {
+        name: "catch_underflow",
+        typeIdx: 0,
+        locals: [],
+        body: [
+          {
+            op: "try",
+            blockType: { kind: "empty" },
+            body: [],
+            catches: [{ tagIdx: 0, body: catchBody }],
+          },
+        ],
+      },
+    ],
+    globals: [],
+    tags: [{ typeIdx: 1 }],
+    funcOrdinalToPosition: [],
+  } as unknown as WasmModule;
+
+  const diagnostics: CodegenError[] = [];
+  expect(stackBalance(mod, diagnostics)).toBe(0);
+
+  expect(diagnostics).toHaveLength(1);
+  expect(diagnostics[0]!.message).toMatch(
+    /site function body\[0\]\.try\.catch\[0\], physical body #\d+; first negative net prefix at instruction 1 \(initial stack depth 1\); window: \[0\] drop \(delta -1, running 0\); \[1\] drop \(delta -1, running -1\); \[2\] nop \(delta 0, running -1\); \[3\] nop \(delta 0, running -1\)/,
+  );
+  expect(diagnostics[0]!.message).not.toContain("[4] nop");
+  expect(catchBody).toHaveLength(6);
 });
 
 it("#1058 keeps invalid stable call handles fail-loud on a signature-cache miss", () => {

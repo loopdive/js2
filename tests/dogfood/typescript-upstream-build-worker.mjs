@@ -1,9 +1,8 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { writeFileSync } from "node:fs";
 
 import { register } from "tsx/esm/api";
 
-import { typescriptInvocationMatches } from "./typescript-upstream-build-probe.mjs";
+import { typescriptBuildProbeErrorSummary, typescriptInvocationMatches } from "./typescript-upstream-build-probe.mjs";
 
 function decodeVlq(segment) {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -88,10 +87,6 @@ const started = performance.now();
 
 try {
   const result = await compileProject(workerData.entry, options);
-  if (process.env.JS2WASM_TYPESCRIPT_PROBE_DIAGNOSTIC === "1") {
-    writeFileSync("/private/tmp/ts2wasm-typescript-parser-latest.wasm", result.binary);
-    if (result.sourceMap) writeFileSync("/private/tmp/ts2wasm-typescript-parser-latest.wasm.map", result.sourceMap);
-  }
   let invocation = null;
   let invocations = null;
   if (result.success && workerData.invokeExport) {
@@ -153,20 +148,28 @@ try {
   const invocationMatches =
     !workerData.invokeExport ||
     (invocations?.length === workerData.requiredInvocations && invocations.every((record) => record.matches === true));
-  parentPort.postMessage({
+  const validates = result.success && WebAssembly.validate(result.binary);
+  const accepted = result.success && validates && invocationMatches;
+  const diagnosticArtifactCandidate =
+    workerData.diagnosticArtifactEnabled && accepted ? { binary: result.binary, sourceMap: result.sourceMap } : null;
+  const message = {
     type: "result",
     elapsedMs: Math.round(performance.now() - started),
-    success: result.success && invocationMatches,
+    success: accepted,
     compileSuccess: result.success,
     binaryBytes: result.binary.byteLength,
-    validates: result.success && WebAssembly.validate(result.binary),
+    validates,
     errorCount: result.errors.length,
     invocation,
     invocations,
-    errors: result.errors
-      .slice(0, 20)
-      .map(({ message, file, line, column, code, severity }) => ({ message, file, line, column, code, severity })),
-  });
+    diagnosticArtifactCandidate,
+    errors: typescriptBuildProbeErrorSummary(result.errors),
+  };
+  const transferList =
+    diagnosticArtifactCandidate?.binary.buffer instanceof ArrayBuffer
+      ? [diagnosticArtifactCandidate.binary.buffer]
+      : [];
+  parentPort.postMessage(message, transferList);
 } catch (error) {
   parentPort.postMessage({
     type: "error",
