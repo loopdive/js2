@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-05",
   "threshold": 1500,
-  "totalCeiling": 828571,
+  "totalCeiling": 828819,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -17,8 +17,8 @@
     "src/codegen/class-bodies.ts": 4321,
     "src/codegen/closed-method-dispatch.ts": 2147,
     "src/codegen/closure-exports.ts": 2385,
-    "src/codegen/closures.ts": 4698,
-    "src/codegen/context/types.ts": 4620,
+    "src/codegen/closures.ts": 4701,
+    "src/codegen/context/types.ts": 4627,
     "src/codegen/dataview-native.ts": 8675,
     "src/codegen/declarations.ts": 6686,
     "src/codegen/declarations/import-collector.ts": 2268,
@@ -30,7 +30,7 @@
     "src/codegen/expressions/assignment.ts": 6408,
     "src/codegen/expressions/builtins.ts": 3966,
     "src/codegen/expressions/call-builtin-static.ts": 4427,
-    "src/codegen/expressions/call-identifier.ts": 4036,
+    "src/codegen/expressions/call-identifier.ts": 4050,
     "src/codegen/expressions/call-namespace-static.ts": 3736,
     "src/codegen/expressions/call-receiver-method.ts": 4709,
     "src/codegen/expressions/call-tail-dispatch.ts": 2258,
@@ -77,7 +77,7 @@
     "src/codegen/statements/destructuring.ts": 1505,
     "src/codegen/statements/for-of-destructuring.ts": 2954,
     "src/codegen/statements/loops.ts": 4461,
-    "src/codegen/statements/nested-declarations.ts": 4132,
+    "src/codegen/statements/nested-declarations.ts": 4137,
     "src/codegen/statements/variables.ts": 2635,
     "src/codegen/string-ops.ts": 4137,
     "src/codegen/ta-dyn-mop.ts": 1786,
@@ -110,6 +110,6 @@
     "src/ir/select.ts": 11336,
     "src/ir/verify.ts": 2721,
     "src/package-linker.ts": 2116,
-    "src/runtime.ts": 19052
+    "src/runtime.ts": 19057
   }
 }

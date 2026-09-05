@@ -4,7 +4,7 @@ title: "IR-only R5: whole-program single- and multi-source Prepared ownership"
 status: in-progress
 sprint: current
 created: 2026-07-21
-updated: 2026-08-30
+updated: 2026-09-05
 assignee: ttraenkler/codex
 branch: codex/3525-m1a3-same-spelling-callables
 priority: critical
@@ -2306,3 +2306,133 @@ providers. General AST→Wasm handler deletion remains #3090/R10 after R9.
 - **False zero:** deleting collision suppressors can lower the counted
   denominator. Reconcile source census, outcomes, and emitter counts by
   `IrUnitId` before and after every deletion.
+
+## Implementation Plan — 2026-09-05 — M2-P1 ordered initializer census before routing
+
+**Planning base:** `5da655f286fcd569203cd2012b23dc21bf1c626d`. Astra planning,
+Luna `max` implementation; proposed slice claim
+`3525:m2-p1-ordered-init-census`, reserved by the lead before dispatch. This is
+an independent production prerequisite. R5 remains in progress and none of
+its full acceptance checkboxes becomes complete from this phase alone.
+
+### Current blocker and bounded result
+
+M0 already coordinates all sources, M1A already stages exact cross-source
+callable components, and M2 already owns one executable initializer. The
+remaining problem is composition, not absence of these foundations.
+`planMultiPreparedModuleInit` (`src/codegen/multi-prepared-module-init.ts:163`)
+builds source initialization plans only after its optional M2 admission gate;
+`planMultiPreparedProgramEarlyRoutes:1270` separately rescans executable syntax
+to disable callable cutover. `MultiPreparedProgramOwner:694` sees detailed
+initialization evidence only after M2 has emitted its selected body. Most
+graphs therefore reach routing without one retained ordered semantic plan of
+all their initializers, although `IrModuleInitPlan` already provides the
+single-source immutable vocabulary (`src/ir/module-init-plan.ts:91`).
+
+Build and retain that whole-program plan once, before any early route can
+prepare or emit a body. Make both M2 and the owner consume it by exact source
+and unit identity. This moves semantic state to the whole-program preparation
+boundary and removes duplicate route-dependent discovery; it does not admit
+new initialization syntax or require an allocator change.
+
+Mixed callable/initializer emission is the next dependent phase and remains
+unimplemented here. It needs R2's prepared callable-boundary/support contract,
+detached initializer preparation, and one publication transaction. The current
+M2+callable refusals (`multi-prepared-program.ts:580`, `:701`), M2's singleton
+restriction, and `ProgramAbiModuleInitCallableRegistry`'s singleton prepared
+reservation (`program-abi-module-init-planning.ts:265`) must remain until that
+transaction is designed and verified. The per-source overlay and its unresolved
+module-binding route also remain; this census is not a `PreparedIrProgram` or
+a proof of successful IR emission.
+
+### Changes and independent write scope
+
+1. Add `src/codegen/multi-prepared-module-init-census.ts`. Produce a defensively
+   immutable collection from the exact existing identity inventory and
+   `multiAst.sourceFiles`, using `buildIrModuleInitPlan` for every source,
+   including empty, type-only, unsupported and multiple-contributor sources.
+   Retain each full semantic plan: bindings/TDZ, live seeds, evaluations,
+   exports, invocation policy and explicit gaps. Keep canonical source order
+   separate from the existing semantic source order; never sort evaluation
+   order by a name, path or binding ID. Preserve within-source evaluation
+   ordinals and the input graph's dependency/SCC order. No new module loader or
+   independent topological sort belongs here.
+2. Bind the collection to the same session/inventory as
+   `MultiPreparedProgramOwner` (`multi-prepared-program.ts:442`). Initialize
+   its pure semantic census before `planExistingRoutes`, with required
+   currentness checks for duplicate/missing/foreign sources, the reverse
+   `SourceId` join, `UnitId` ownership, source order and changed source syntax.
+   Owner construction is early enough for semantic planning; legacy queue
+   parity is a separate observation after declaration collection. Do not mint
+   an empty census when a required source or checker observation is unavailable.
+3. Move M2's legacy-queue reconciliation (`multi-prepared-module-init.ts:175–200`)
+   to one explicit boundary before route planning, after all sources have run
+   declaration collection. Attach its per-source observation to the retained
+   semantic plan, without rebuilding that plan. Preserve exact node provenance
+   when partitioning static entries/module statements. A name-only live-seed
+   join that cannot distinguish sources is unavailable evidence, not an empty
+   success. Semantic plan gaps or unavailable parity remain visible and keep
+   the existing route ineligible; they are not a reason to fail previously
+   supported direct compilation. Contradictory or stale identity evidence is
+   an invariant.
+4. In `planMultiPreparedProgramEarlyRoutes:1242`, require the finalized census
+   before `owner.planExistingRoutes`; use its executable population for the
+   existing callable/init policy decision. In `planMultiPreparedModuleInit`,
+   consume that same collection and reconciled observations instead of the
+   local `sourceFiles.map(buildIrModuleInitPlan)` and a second source census.
+   The unchanged M2 shape/target/selection gates select a contributor from the
+   complete population; rejected sources are never removed from it. Validate
+   M2's exact selected unit against the census before reserving its slot.
+5. In `sealBodyBoundary:789` and `registerPreparedModuleInit:694`, require the
+   same retained authority. Expose a versioned data projection of the complete
+   ordered census in the body-plan audit, including graphs where M2 is off or
+   declined. Keep semantic planning, parity and successful ownership as
+   distinct facts. Snapshot the full plan rather than only contributor counts;
+   any schema change must update its existing validators and tests together.
+   Recheck currentness before source-body routing and final audit publication.
+
+Own the new census module, `multi-prepared-module-init.ts`,
+`multi-prepared-callable-orchestration.ts` **only its early-route orchestration**,
+and `multi-prepared-program.ts` **only census lifecycle/body-plan consumers**.
+Use the existing shared `module-init-plan.ts` producer unchanged where possible.
+No R2 integration/lowering/source-callable-registry edits, no R1 computed-method
+or identity changes, no R4 W2-B storage admission, no registry reservation or
+startup behavior change, and no callable-component eligibility widening.
+Keep additional helpers outside the large orchestration/owner methods.
+
+### Validation and stop conditions
+
+- Freeze a complete census with M2 enabled and disabled. Cover no executable
+  sources, one and multiple contributors, type-only sources, dependency and
+  entry contributors, re-export chains, same-spelled bindings in different
+  sources, import cycles, and differing canonical versus semantic order.
+  Source membership comes from the inventory, not the selector. Demonstrate
+  that M2's existing admitted fixtures consume this authority and retain their
+  exact direct `0` / IR `1` receipts; other graphs preserve their measured
+  routing and runtime values. No population gain is asserted in advance.
+- Mutation tests must reject omitted/duplicated/reordered sources, foreign
+  inventory or unit, changed AST initializer after planning, changed queue
+  observation after reconciliation, and a forged M2 contributor. Exercise
+  unavailable parity with a real nonempty population. Assert no source-body
+  emission or ABI reservation happened before a failed pre-route check.
+- Run `pnpm typecheck` and
+  `VITEST_MAX_FORKS=1 node node_modules/vitest/dist/cli.js run` with the new
+  `tests/issue-3525-ordered-module-init-census.test.ts`,
+  `tests/issue-3525-multi-prepared-program-census.test.ts`,
+  `tests/issue-3525-multi-prepared-module-init.test.ts`,
+  `tests/issue-3525-multi-prepared-callable-bindings.test.ts`,
+  `tests/issue-3525-prepared-program-abi-aggregate.test.ts`, and
+  `tests/issue-3521-r2-withdrawal-multi-source.test.ts`. Run both
+  `node --import tsx scripts/check-ir-only.ts --json --policy=hybrid` and
+  `node --import tsx scripts/check-ir-only.ts --json --policy=ir-only`,
+  `node --import tsx scripts/check-ir-fallbacks.ts`, normal
+  layering/format/size gates, and same-config multi-source equivalence checks.
+  Record SHAs/options, actual source/unit denominators and runtime/event order;
+  the small IR-only corpus cannot demonstrate R5 completion.
+- If moving parity exposes declaration queues that are not complete at the
+  proposed boundary, retain the early semantic plan and move the parity
+  observation to the last point before any route emits; report the exact
+  producer and consumer. Do not fix that ordering by planning after a body,
+  silently omitting a source, or enabling mixed emission. Any need to modify
+  the shared R2 preparation transaction is a dependent follow-up requiring
+  coordination with its owner.

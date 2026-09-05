@@ -338,6 +338,57 @@ Two consequences worth knowing:
 
 To validate the baseline on demand, run `pnpm run test:262:validate-baseline` — the validator calls the fetch helper itself, then spot-checks 50 random `pass` entries against current HEAD (uses a deterministic seed; pass `PR_NUMBER=N` to reproduce a specific CI run, or `SAMPLE_SIZE=10 SEED=12345` for a quicker check). Set `SAMPLE_SIZE=50` to match CI exactly. The validator fails fast on the first 5 most-affected entries with a pointer to the fetch helper for forcing a refresh.
 
+### Per-edition conformance ratchet — a completed ES edition may never regress
+
+Every other test262 guard scores the corpus as **one number**: the #2097
+high-water floor, the #1897 net gate and the #1668 catastrophic guard all read
+the aggregate. So **−40 in ES5 against +50 in ES2016 reads as +10 and passes all
+three** — an edition the project has already finished rots silently while
+attention is on the edition being worked, and nothing reports it.
+
+`scripts/test262-edition-ratchet.ts` closes that. It scores each ES edition
+separately against a committed floor in
+`scripts/test262-edition-ratchet-baseline.json` and fails if a **ratcheted**
+edition loses ground, whatever the headline did. It runs inside the required
+`merge shard reports` check (`test262-sharded.yml`), so a breach blocks the
+merge queue.
+
+```bash
+pnpm run check:edition-ratchet -- --results <run.jsonl> [--compare <baseline.jsonl>]
+pnpm run check:edition-ratchet:update -- --results <full-run.jsonl>   # bank an improvement
+```
+
+Five properties worth knowing before you touch it:
+
+- **`--compare` makes it per-TEST, not per-count.** A change that breaks one ES5
+  test and fixes another leaves the count flat, and a count-only ratchet calls
+  that even. It is not even — it is a regression plus an improvement, and the
+  regression still has to be deliberate.
+- **Every edition is ratcheted by default.** A ratchet that guards only the
+  editions someone remembered to list is not a ratchet. Opt an edition out by
+  setting `ratcheted: false` **with a `reason`**, in a reviewed diff.
+- **Partial runs are skipped, never scored, and never banked.** A path-filtered
+  or sharded run sees only some of an edition's tests, so its pass count is not a
+  measurement — and `--update` refuses outright rather than writing a lower bar.
+  This is the #4412 hazard, where a scoped run posted a partial total as if it
+  were a full one.
+- **`--update` refuses to lower any number.** You cannot make this gate green by
+  re-baselining; lowering a floor is a hand edit to the JSON, in the same PR,
+  with a reason. That refusal is the whole point — cf. #3953, where a floor that
+  sat 475 tests too low reported "passed" for 37 consecutive merges, because a
+  floor that is too low never fires.
+- **An edition present in the run but absent from the baseline reports
+  `UNGATED`** with a CI warning, rather than sitting silently unprotected.
+
+The baseline records the `eval_engine` it was measured under, because a
+refusal-only runtime-eval provider fails every eval-dependent test by
+construction (~667 in ES5 alone) and its counts are not comparable to a QuickJS
+run. A mismatch warns rather than refuses: a floor from the weaker engine is a
+lower bound, so it can never cause a false failure.
+
+`tests/test262-edition-ratchet.test.ts` asserts the gate FAILS when it should,
+not just that it passes — including the count-neutral swap case.
+
 ## IR Fallback Budget (#1376) — being phased out (#2855)
 
 The IR retirement gate `pnpm run check:ir-fallbacks` walks every `.ts` file
