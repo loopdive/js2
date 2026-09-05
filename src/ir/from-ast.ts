@@ -136,7 +136,7 @@ export type {
 } from "./ast-lowering-plans.js";
 import { irDateSnapshotGetterSymbol } from "./date-runtime.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
-import { classifyLiteral, joinEncoding, type Encoding } from "./analysis/encoding.js";
+import { classifyLiteral, inferEncoding, joinEncoding, type Encoding } from "./analysis/encoding.js";
 import { proveTypedStringAppend, proveTypedStringMethod, type TypedValueEvidence } from "./analysis/string-evidence.js";
 import {
   EmptyArrayElementInference,
@@ -2525,36 +2525,9 @@ function inferStringEncoding(expr: ts.Expression, cx: LowerCtx): Encoding | unde
   if (ts.isStringLiteral(expr) || expr.kind === ts.SyntaxKind.NoSubstitutionTemplateLiteral) {
     return classifyLiteral((expr as ts.StringLiteral | ts.NoSubstitutionTemplateLiteral).text);
   }
-  if (ts.isTemplateExpression(expr)) {
-    let encoding = classifyLiteral(expr.head.text);
-    for (const span of expr.templateSpans) {
-      const substitution =
-        inferStringEncoding(span.expression, cx) ??
-        (checkerOperandFamily(span.expression, cx) === "number" ||
-        checkerOperandFamily(span.expression, cx) === "boolean"
-          ? "ascii"
-          : undefined);
-      if (substitution === undefined) return undefined;
-      encoding = joinEncoding(encoding, substitution);
-      encoding = joinEncoding(encoding, classifyLiteral(span.literal.text));
-    }
-    return encoding;
-  }
   if (ts.isIdentifier(expr)) {
     const binding = cx.scope.get(expr.text);
     return binding && "stringEncoding" in binding ? binding.stringEncoding : undefined;
-  }
-  if (
-    ts.isCallExpression(expr) &&
-    expr.arguments.length === 0 &&
-    ts.isPropertyAccessExpression(expr.expression) &&
-    expr.expression.name.text === "toString" &&
-    checkerOperandFamily(expr.expression.expression, cx) === "number"
-  ) {
-    // Number::toString emits only the ASCII grammar, in both host and native
-    // lanes; preserve that proof when the result immediately feeds a string
-    // operation such as `.length`.
-    return "ascii";
   }
   if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.PlusToken) {
     const left = inferStringEncoding(expr.left, cx);
@@ -2569,7 +2542,7 @@ function inferStringEncoding(expr: ts.Expression, cx: LowerCtx): Encoding | unde
     const receiver = inferStringEncoding(expr.expression.expression, cx);
     return receiver === "ascii" ? "ascii" : receiver ? "wtf16" : undefined;
   }
-  return undefined;
+  return inferEncoding(expr, (e) => [inferStringEncoding(e, cx), checkerOperandFamily(e, cx)]);
 }
 
 type StringEncodingScopeBinding = Exclude<ScopeBinding, { kind: "nestedFunc" }>;
