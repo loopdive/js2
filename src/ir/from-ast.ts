@@ -136,7 +136,7 @@ export type {
 } from "./ast-lowering-plans.js";
 import { irDateSnapshotGetterSymbol } from "./date-runtime.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
-import { classifyLiteral, joinEncoding, type Encoding } from "./analysis/encoding.js";
+import { classifyLiteral, inferEncoding, joinEncoding, type Encoding } from "./analysis/encoding.js";
 import { proveTypedStringAppend, proveTypedStringMethod, type TypedValueEvidence } from "./analysis/string-evidence.js";
 import {
   EmptyArrayElementInference,
@@ -2542,7 +2542,7 @@ function inferStringEncoding(expr: ts.Expression, cx: LowerCtx): Encoding | unde
     const receiver = inferStringEncoding(expr.expression.expression, cx);
     return receiver === "ascii" ? "ascii" : receiver ? "wtf16" : undefined;
   }
-  return undefined;
+  return inferEncoding(expr, (e) => [inferStringEncoding(e, cx), checkerOperandFamily(e, cx)]);
 }
 
 type StringEncodingScopeBinding = Exclude<ScopeBinding, { kind: "nestedFunc" }>;

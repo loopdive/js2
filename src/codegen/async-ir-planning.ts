@@ -1,14 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { PreparedAsyncAwaitSite } from "../ir/async-from-ast.js";
 import { isSingleAwaitReturnAsyncCandidate } from "../ir/async-prepare.js";
-import {
-  forgetPreparedIrAsyncSettledOwner,
-  preparedIrAsyncLinearSource,
-  preparedIrAsyncSettledOwner,
-  preparedIrAsyncSettledOwnerWasIssued,
-  type PreparedIrAsyncLinearSource,
-} from "./async-linear-planning.js";
-import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
   IR_ASYNC_CONSOLE_LOG_STRING_FN,
@@ -16,18 +9,32 @@ import {
   IR_ASYNC_PROMISE_ALL_NATIVE_FN,
   IR_ASYNC_STRING_CONCAT_5_FN,
 } from "../ir/async-semantic-runtime.js";
+import {
+  awaitIsStaticallyResolved,
+  staticPromiseResolveSettledExpr,
+} from "../ir/async-static.js";
+import {
+  irImportFuncRef,
+  irIntrinsicFuncRef,
+  irRuntimeFuncRef,
+} from "../ir/callable-bindings.js";
 import type { IrFromAstResolver } from "../ir/from-ast.js";
-import type { PreparedAsyncAwaitSite } from "../ir/async-from-ast.js";
-import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
+import type { IrUnitId } from "../ir/identity.js";
 import { irVal, irVec } from "../ir/nodes.js";
+import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrPromiseDelayResolver } from "../ir/promise-delay.js";
+import type { IrSelectionOptions } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
-import type { IrUnitId } from "../ir/identity.js";
-import type { IrSelectionOptions } from "../ir/select.js";
-import { IrInvariantError } from "../ir/outcomes.js";
 import { asyncEngineWouldActivate } from "./async-activation.js";
 import { analyzeAsyncBody, splitBodyAtAwait } from "./async-cps.js";
+import {
+  type PreparedIrAsyncLinearSource,
+  forgetPreparedIrAsyncSettledOwner,
+  preparedIrAsyncLinearSource,
+  preparedIrAsyncSettledOwner,
+  preparedIrAsyncSettledOwnerWasIssued,
+} from "./async-linear-planning.js";
 import type { CodegenContext } from "./context/types.js";
 import type { IrOverlayIdentityPlan } from "./ir-overlay-identity.js";
 
@@ -55,22 +62,43 @@ export type PreparedIrAsyncSourceShape =
   | {
       readonly kind: "final-main";
       readonly awaitedCalls: readonly [ts.CallExpression, ts.CallExpression];
-      readonly dateNowCalls: readonly [ts.CallExpression, ts.CallExpression, ts.CallExpression, ts.CallExpression];
+      readonly dateNowCalls: readonly [
+        ts.CallExpression,
+        ts.CallExpression,
+        ts.CallExpression,
+        ts.CallExpression,
+      ];
       readonly concatExpressions: readonly [ts.Expression, ts.Expression];
     }
   | PreparedIrAsyncLinearSource;
 
 function hasAsyncModifier(fn: ts.FunctionDeclaration): boolean {
-  return fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true;
+  return (
+    fn.modifiers?.some(
+      (modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword,
+    ) === true
+  );
 }
 
-function variableDeclarationOf(statement: ts.Statement, name: string): ts.VariableDeclaration | null {
-  if (!ts.isVariableStatement(statement) || statement.declarationList.declarations.length !== 1) return null;
+function variableDeclarationOf(
+  statement: ts.Statement,
+  name: string,
+): ts.VariableDeclaration | null {
+  if (
+    !ts.isVariableStatement(statement) ||
+    statement.declarationList.declarations.length !== 1
+  )
+    return null;
   const declaration = statement.declarationList.declarations[0]!;
-  return ts.isIdentifier(declaration.name) && declaration.name.text === name ? declaration : null;
+  return ts.isIdentifier(declaration.name) && declaration.name.text === name
+    ? declaration
+    : null;
 }
 
-function exactDirectCall(expression: ts.Expression | undefined, name: string): ts.CallExpression | null {
+function exactDirectCall(
+  expression: ts.Expression | undefined,
+  name: string,
+): ts.CallExpression | null {
   return expression &&
     ts.isCallExpression(expression) &&
     !expression.questionDotToken &&
@@ -87,7 +115,8 @@ function exactAwaitedVariable(
   calleeName: string,
 ): ts.CallExpression | null {
   const declaration = variableDeclarationOf(statement, variableName);
-  return declaration?.initializer && ts.isAwaitExpression(declaration.initializer)
+  return declaration?.initializer &&
+    ts.isAwaitExpression(declaration.initializer)
     ? exactDirectCall(declaration.initializer.expression, calleeName)
     : null;
 }
@@ -97,7 +126,10 @@ function exactDateNowVariable(
   statement: ts.Statement,
   variableName: string,
 ): ts.CallExpression | null {
-  const initializer = variableDeclarationOf(statement, variableName)?.initializer;
+  const initializer = variableDeclarationOf(
+    statement,
+    variableName,
+  )?.initializer;
   if (
     !initializer ||
     !ts.isCallExpression(initializer) ||
@@ -116,8 +148,15 @@ function exactDateNowVariable(
   return initializer;
 }
 
-function exactConsoleLogArgument(ctx: CodegenContext, statement: ts.Statement): ts.Expression | null {
-  if (!ts.isExpressionStatement(statement) || !ts.isCallExpression(statement.expression)) return null;
+function exactConsoleLogArgument(
+  ctx: CodegenContext,
+  statement: ts.Statement,
+): ts.Expression | null {
+  if (
+    !ts.isExpressionStatement(statement) ||
+    !ts.isCallExpression(statement.expression)
+  )
+    return null;
   const call = statement.expression;
   if (
     call.arguments.length !== 1 ||
@@ -135,7 +174,10 @@ function exactConsoleLogArgument(ctx: CodegenContext, statement: ts.Statement): 
   return call.arguments[0]!;
 }
 
-function exactNumberToStringCall(expression: ts.Expression, name: string): boolean {
+function exactNumberToStringCall(
+  expression: ts.Expression,
+  name: string,
+): boolean {
   return (
     ts.isCallExpression(expression) &&
     expression.arguments.length === 0 &&
@@ -148,7 +190,11 @@ function exactNumberToStringCall(expression: ts.Expression, name: string): boole
   );
 }
 
-function exactDurationToStringCall(expression: ts.Expression, end: string, start: string): boolean {
+function exactDurationToStringCall(
+  expression: ts.Expression,
+  end: string,
+  start: string,
+): boolean {
   if (
     !ts.isCallExpression(expression) ||
     expression.arguments.length !== 0 ||
@@ -160,7 +206,11 @@ function exactDurationToStringCall(expression: ts.Expression, end: string, start
     return false;
   }
   const receiver = expression.expression.expression;
-  if (!ts.isParenthesizedExpression(receiver) || !ts.isBinaryExpression(receiver.expression)) return false;
+  if (
+    !ts.isParenthesizedExpression(receiver) ||
+    !ts.isBinaryExpression(receiver.expression)
+  )
+    return false;
   const subtraction = receiver.expression;
   return (
     subtraction.operatorToken.kind === ts.SyntaxKind.MinusToken &&
@@ -180,7 +230,10 @@ function exactTimingLogExpression(
 ): boolean {
   const terms: ts.Expression[] = [];
   let current = expression;
-  while (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+  while (
+    ts.isBinaryExpression(current) &&
+    current.operatorToken.kind === ts.SyntaxKind.PlusToken
+  ) {
     terms.unshift(current.right);
     current = current.left;
   }
@@ -198,7 +251,10 @@ function exactTimingLogExpression(
   );
 }
 
-function exactPromiseReturn(fn: ts.FunctionDeclaration, argumentKind: ts.SyntaxKind): boolean {
+function exactPromiseReturn(
+  fn: ts.FunctionDeclaration,
+  argumentKind: ts.SyntaxKind,
+): boolean {
   const type = fn.type;
   return (
     !!type &&
@@ -210,7 +266,10 @@ function exactPromiseReturn(fn: ts.FunctionDeclaration, argumentKind: ts.SyntaxK
   );
 }
 
-function exactSequentialShape(ctx: CodegenContext, fn: ts.FunctionDeclaration): ts.CallExpression | null {
+function exactSequentialShape(
+  ctx: CodegenContext,
+  fn: ts.FunctionDeclaration,
+): ts.CallExpression | null {
   if (
     fn.name?.text !== "fetchAllSequential" ||
     !hasAsyncModifier(fn) ||
@@ -231,7 +290,11 @@ function exactSequentialShape(ctx: CodegenContext, fn: ts.FunctionDeclaration): 
     return null;
   }
   const total = variableDeclarationOf(fn.body.statements[0]!, "total");
-  if (!total?.initializer || !ts.isNumericLiteral(total.initializer) || Number(total.initializer.text) !== 0)
+  if (
+    !total?.initializer ||
+    !ts.isNumericLiteral(total.initializer) ||
+    Number(total.initializer.text) !== 0
+  )
     return null;
   const loop = fn.body.statements[1];
   if (
@@ -269,7 +332,13 @@ function exactSequentialShape(ctx: CodegenContext, fn: ts.FunctionDeclaration): 
     ts.isIdentifier(loop.incrementor.operand) &&
     loop.incrementor.operand.text === "i";
   const bodyStatement = loop.statement.statements[0]!;
-  if (!exactInit || !exactCondition || !exactIncrement || !ts.isExpressionStatement(bodyStatement)) return null;
+  if (
+    !exactInit ||
+    !exactCondition ||
+    !exactIncrement ||
+    !ts.isExpressionStatement(bodyStatement)
+  )
+    return null;
   const assignment = bodyStatement.expression;
   if (
     !ts.isBinaryExpression(assignment) ||
@@ -285,7 +354,10 @@ function exactSequentialShape(ctx: CodegenContext, fn: ts.FunctionDeclaration): 
   ) {
     return null;
   }
-  const awaited = exactDirectCall(assignment.right.right.expression.expression, "fetchUser");
+  const awaited = exactDirectCall(
+    assignment.right.right.expression.expression,
+    "fetchUser",
+  );
   if (
     !awaited ||
     awaited.arguments.length !== 1 ||
@@ -309,7 +381,9 @@ function exactSequentialShape(ctx: CodegenContext, fn: ts.FunctionDeclaration): 
     return null;
   }
   const callee = ctx.oracle.valueDeclarationOf(awaited.expression);
-  return callee && ts.isFunctionDeclaration(callee) && preparedIrAsyncSourceShape(ctx, callee)?.kind === "identity"
+  return callee &&
+    ts.isFunctionDeclaration(callee) &&
+    preparedIrAsyncSourceShape(ctx, callee)?.kind === "identity"
     ? awaited
     : null;
 }
@@ -331,11 +405,19 @@ function exactFinalMainShape(
   const intro = exactConsoleLogArgument(ctx, statements[0]!);
   const ids = variableDeclarationOf(statements[1]!, "ids")?.initializer;
   const t0 = exactDateNowVariable(ctx, statements[2]!, "t0");
-  const sequential = exactAwaitedVariable(statements[3]!, "seq", "fetchAllSequential");
+  const sequential = exactAwaitedVariable(
+    statements[3]!,
+    "seq",
+    "fetchAllSequential",
+  );
   const t1 = exactDateNowVariable(ctx, statements[4]!, "t1");
   const sequentialLog = exactConsoleLogArgument(ctx, statements[5]!);
   const t2 = exactDateNowVariable(ctx, statements[6]!, "t2");
-  const parallel = exactAwaitedVariable(statements[7]!, "par", "fetchAllParallel");
+  const parallel = exactAwaitedVariable(
+    statements[7]!,
+    "par",
+    "fetchAllParallel",
+  );
   const t3 = exactDateNowVariable(ctx, statements[8]!, "t3");
   const parallelLog = exactConsoleLogArgument(ctx, statements[9]!);
   const done = exactConsoleLogArgument(ctx, statements[10]!);
@@ -346,7 +428,10 @@ function exactFinalMainShape(
     !ids ||
     !ts.isArrayLiteralExpression(ids) ||
     ids.elements.length !== 5 ||
-    !ids.elements.every((element, index) => ts.isNumericLiteral(element) && Number(element.text) === index + 1) ||
+    !ids.elements.every(
+      (element, index) =>
+        ts.isNumericLiteral(element) && Number(element.text) === index + 1,
+    ) ||
     !t0 ||
     !sequential ||
     sequential.arguments.length !== 1 ||
@@ -354,7 +439,13 @@ function exactFinalMainShape(
     sequential.arguments[0]!.text !== "ids" ||
     !t1 ||
     !sequentialLog ||
-    !exactTimingLogExpression(sequentialLog, "sequential sum = ", "seq", "t1", "t0") ||
+    !exactTimingLogExpression(
+      sequentialLog,
+      "sequential sum = ",
+      "seq",
+      "t1",
+      "t0",
+    ) ||
     !t2 ||
     !parallel ||
     parallel.arguments.length !== 1 ||
@@ -362,7 +453,13 @@ function exactFinalMainShape(
     parallel.arguments[0]!.text !== "ids" ||
     !t3 ||
     !parallelLog ||
-    !exactTimingLogExpression(parallelLog, "parallel  sum = ", "par", "t3", "t2") ||
+    !exactTimingLogExpression(
+      parallelLog,
+      "parallel  sum = ",
+      "par",
+      "t3",
+      "t2",
+    ) ||
     !done ||
     !ts.isStringLiteralLike(done) ||
     done.text !== "done"
@@ -377,7 +474,8 @@ function exactFinalMainShape(
     exactSequentialShape(ctx, seqDecl) === null ||
     !parDecl ||
     !ts.isFunctionDeclaration(parDecl) ||
-    preparedIrAsyncSourceShape(ctx, parDecl)?.kind !== "promise-all-continuation"
+    preparedIrAsyncSourceShape(ctx, parDecl)?.kind !==
+      "promise-all-continuation"
   ) {
     return null;
   }
@@ -400,7 +498,8 @@ function collectBindingDeclarations(
     return;
   }
   for (const element of name.elements) {
-    if (!ts.isOmittedExpression(element)) collectBindingDeclarations(ctx, element.name, declarations);
+    if (!ts.isOmittedExpression(element))
+      collectBindingDeclarations(ctx, element.name, declarations);
   }
 }
 
@@ -432,10 +531,18 @@ function bodyHasNestedExecutable(body: ts.Block): boolean {
 
 function declarationsAreAmbient(ctx: CodegenContext, node: ts.Node): boolean {
   const declarations = ctx.oracle.declarationsOf(node);
-  return declarations.length > 0 && declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile);
+  return (
+    declarations.length > 0 &&
+    declarations.every(
+      (declaration) => declaration.getSourceFile().isDeclarationFile,
+    )
+  );
 }
 
-function isExactPromiseVectorDeclaration(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+function isExactPromiseVectorDeclaration(
+  ctx: CodegenContext,
+  declaration: ts.VariableDeclaration,
+): boolean {
   const type = declaration.type;
   return (
     !!type &&
@@ -460,10 +567,12 @@ function continuationHasNoPreAwaitCapture(
   suffix: readonly ts.Statement[],
 ): boolean {
   const preAwaitDeclarations = new Set<ts.Declaration>();
-  for (const parameter of fn.parameters) collectBindingDeclarations(ctx, parameter.name, preAwaitDeclarations);
+  for (const parameter of fn.parameters)
+    collectBindingDeclarations(ctx, parameter.name, preAwaitDeclarations);
   const collectPrefix = (node: ts.Node): void => {
     if (isNestedExecutable(node)) return;
-    if (ts.isVariableDeclaration(node)) collectBindingDeclarations(ctx, node.name, preAwaitDeclarations);
+    if (ts.isVariableDeclaration(node))
+      collectBindingDeclarations(ctx, node.name, preAwaitDeclarations);
     ts.forEachChild(node, collectPrefix);
   };
   for (const statement of prefix) collectPrefix(statement);
@@ -471,7 +580,10 @@ function continuationHasNoPreAwaitCapture(
   let captured = false;
   const inspectSuffix = (node: ts.Node): void => {
     if (captured || isNestedExecutable(node)) return;
-    if (node.kind === ts.SyntaxKind.ThisKeyword || (ts.isIdentifier(node) && node.text === "arguments")) {
+    if (
+      node.kind === ts.SyntaxKind.ThisKeyword ||
+      (ts.isIdentifier(node) && node.text === "arguments")
+    ) {
       captured = true;
       return;
     }
@@ -488,7 +600,10 @@ function continuationHasNoPreAwaitCapture(
   return !captured;
 }
 
-function isAmbientPromiseAll(ctx: CodegenContext, call: ts.CallExpression): boolean {
+function isAmbientPromiseAll(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+): boolean {
   const target = call.expression;
   if (
     !ts.isPropertyAccessExpression(target) ||
@@ -498,7 +613,12 @@ function isAmbientPromiseAll(ctx: CodegenContext, call: ts.CallExpression): bool
   ) {
     return false;
   }
-  if (call.questionDotToken || call.typeArguments?.length || call.arguments.length !== 1) return false;
+  if (
+    call.questionDotToken ||
+    call.typeArguments?.length ||
+    call.arguments.length !== 1
+  )
+    return false;
   const pendingDeclaration = ts.isIdentifier(call.arguments[0]!)
     ? ctx.oracle.variableDeclarationOf(call.arguments[0]!)
     : undefined;
@@ -519,10 +639,22 @@ export function preparedIrAsyncSourceShape(
   ctx: CodegenContext,
   fn: ts.FunctionLikeDeclaration,
 ): PreparedIrAsyncSourceShape | null {
-  if (!ts.isFunctionDeclaration(fn) || fn.asteriskToken || !fn.body || bodyHasNestedExecutable(fn.body)) return null;
-  if (!fn.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) return null;
+  if (
+    !ts.isFunctionDeclaration(fn) ||
+    fn.asteriskToken ||
+    !fn.body ||
+    bodyHasNestedExecutable(fn.body)
+  )
+    return null;
+  if (
+    !fn.modifiers?.some(
+      (modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword,
+    )
+  )
+    return null;
   const sequential = exactSequentialShape(ctx, fn);
-  if (sequential) return { kind: "sequential-counted-loop", awaitedCalls: [sequential] };
+  if (sequential)
+    return { kind: "sequential-counted-loop", awaitedCalls: [sequential] };
   const finalMain = exactFinalMainShape(ctx, fn);
   if (finalMain) return finalMain;
   const plan = analyzeAsyncBody(ctx, fn);
@@ -538,7 +670,10 @@ export function preparedIrAsyncSourceShape(
       isAmbientPromiseAll(ctx, split.awaitedExpr) &&
       continuationHasNoPreAwaitCapture(ctx, fn, split.prefix, split.suffix)
     ) {
-      return { kind: "promise-all-continuation", awaitedCall: split.awaitedExpr };
+      return {
+        kind: "promise-all-continuation",
+        awaitedCall: split.awaitedExpr,
+      };
     }
   }
   const linear = preparedIrAsyncLinearSource(ctx, fn);
@@ -546,26 +681,42 @@ export function preparedIrAsyncSourceShape(
     // Keep the historical identity shape for the exact one-await producer;
     // the generic IR producer is still selected after that producer proves
     // it cannot handle the lowered block (for example, a live mutable slot).
-    if (isSingleAwaitReturnAsyncCandidate(fn) && linear.awaitedExpressions.length === 1) {
+    if (
+      isSingleAwaitReturnAsyncCandidate(fn) &&
+      linear.awaitedExpressions.length === 1
+    ) {
       const awaited = linear.awaitedExpressions[0];
-      if (ts.isCallExpression(awaited)) return { kind: "identity", awaitedCall: awaited };
+      if (ts.isCallExpression(awaited))
+        return { kind: "identity", awaitedCall: awaited };
     }
     return linear;
   }
   return null;
 }
 
-export function preparedIrAsyncSourceCanSuspend(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
+export function preparedIrAsyncSourceCanSuspend(
+  ctx: CodegenContext,
+  fn: ts.FunctionDeclaration,
+): boolean {
   const shape = preparedIrAsyncSourceShape(ctx, fn);
-  const linearPlan = shape?.kind === "linear" ? analyzeAsyncBody(ctx, fn) : undefined;
-  const settledOwner = shape?.kind === "linear" ? preparedIrAsyncSettledOwner(ctx, fn) : null;
-  if (shape?.kind === "linear" && !settledOwner && preparedIrAsyncSettledOwnerWasIssued(ctx, fn)) {
+  const linearPlan =
+    shape?.kind === "linear" ? analyzeAsyncBody(ctx, fn) : undefined;
+  const settledOwner =
+    shape?.kind === "linear" ? preparedIrAsyncSettledOwner(ctx, fn) : null;
+  if (
+    shape?.kind === "linear" &&
+    !settledOwner &&
+    preparedIrAsyncSettledOwnerWasIssued(ctx, fn)
+  ) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "resolve",
       `settled async owner ${fn.name?.text ?? "<anonymous>"} lost its source proof after ABI issuance`,
     );
   }
+  const linearCalleesPrepared =
+    shape?.kind !== "linear" ||
+    linearAwaitCalleesArePrepared(ctx, shape.awaitedExpressions);
   const linearHasSupportedAwaitTypes =
     shape?.kind !== "linear" ||
     shape.awaitSites.every(
@@ -576,10 +727,9 @@ export function preparedIrAsyncSourceCanSuspend(ctx: CodegenContext, fn: ts.Func
   const linearHasRealSuspension =
     shape?.kind !== "linear" ||
     linearPlan!.awaitPoints.some(
-      (awaitExpression) => linearPlan!.awaitedStaticallyResolved.get(awaitExpression) !== true,
+      (awaitExpression) =>
+        linearPlan!.awaitedStaticallyResolved.get(awaitExpression) !== true,
     );
-  const linearCalleesPrepared =
-    shape?.kind !== "linear" || linearAwaitCalleesArePrepared(ctx, shape.awaitedExpressions);
   return (
     shape !== null &&
     linearHasSupportedAwaitTypes &&
@@ -593,31 +743,53 @@ export function preparedIrAsyncSourceCanSuspend(ctx: CodegenContext, fn: ts.Func
   );
 }
 
-const promiseDelayResolverByContext = new WeakMap<CodegenContext, IrPromiseDelayResolver>();
+const promiseDelayResolverByContext = new WeakMap<
+  CodegenContext,
+  IrPromiseDelayResolver
+>();
 
 /** Publish checker-derived delay ownership before declaration ABI collection. */
-export function registerIrAsyncPromiseDelayResolver(ctx: CodegenContext, resolver: IrPromiseDelayResolver): void {
+export function registerIrAsyncPromiseDelayResolver(
+  ctx: CodegenContext,
+  resolver: IrPromiseDelayResolver,
+): void {
   promiseDelayResolverByContext.set(ctx, resolver);
 }
 
-function promiseDelayResolver(ctx: CodegenContext): IrPromiseDelayResolver | undefined {
+function promiseDelayResolver(
+  ctx: CodegenContext,
+): IrPromiseDelayResolver | undefined {
   return promiseDelayResolverByContext.get(ctx);
 }
 
-function sourceFunctionForCall(ctx: CodegenContext, call: ts.CallExpression): ts.FunctionDeclaration | null {
+function sourceFunctionForCall(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+): ts.FunctionDeclaration | null {
   if (!ts.isIdentifier(call.expression)) return null;
   const declaration = ctx.oracle.valueDeclarationOf(call.expression);
-  return declaration && ts.isFunctionDeclaration(declaration) && declaration.getSourceFile() === call.getSourceFile()
+  return declaration &&
+    ts.isFunctionDeclaration(declaration) &&
+    declaration.getSourceFile() === call.getSourceFile()
     ? declaration
     : null;
 }
 
 /** A linear owner may call only async declarations that the same producer can prepare. */
-function linearAwaitCalleesArePrepared(ctx: CodegenContext, expressions: readonly ts.Expression[]): boolean {
+function linearAwaitCalleesArePrepared(
+  ctx: CodegenContext,
+  expressions: readonly ts.Expression[],
+): boolean {
   for (const expression of expressions) {
     if (!ts.isCallExpression(expression)) continue;
     const callee = sourceFunctionForCall(ctx, expression);
-    if (!callee || !callee.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) continue;
+    if (
+      !callee ||
+      !callee.modifiers?.some(
+        (modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword,
+      )
+    )
+      continue;
     if (!preparedIrAsyncSourceCanSuspend(ctx, callee)) return false;
   }
   return true;
@@ -672,13 +844,17 @@ function standaloneLinearAwaitOperand(
   // await edge; it has no unknown producer to close over.  Native-first
   // lanes cannot box an f64 operand at this boundary, however, so apply the
   // same operand admission check as the generic source preflight.
-  if (awaitIsStaticallyResolved(candidate) || staticPromiseResolveSettledExpr(candidate) !== null) {
+  if (
+    awaitIsStaticallyResolved(candidate) ||
+    staticPromiseResolveSettledExpr(candidate) !== null
+  ) {
     return preparedIrAsyncLinearAwaitOperandCanLower(ctx, expression);
   }
   if (ts.isNewExpression(candidate)) {
     return promiseDelayResolver(ctx)?.resolve(candidate) !== undefined;
   }
-  if (!ts.isCallExpression(candidate) || !ts.isIdentifier(candidate.expression)) return false;
+  if (!ts.isCallExpression(candidate) || !ts.isIdentifier(candidate.expression))
+    return false;
   const callee = sourceFunctionForCall(ctx, candidate);
   if (!callee) return false;
   return (
@@ -703,10 +879,13 @@ function isExactStandaloneNativeAsyncFamilyOwner(
   try {
     const shape = preparedIrAsyncSourceShape(ctx, fn);
     if (!shape) return false;
-    if (shape.kind === "identity") return exactStandaloneFetchUser(ctx, fn, shape);
+    if (shape.kind === "identity")
+      return exactStandaloneFetchUser(ctx, fn, shape);
     if (shape.kind === "sequential-counted-loop") {
       const callee = sourceFunctionForCall(ctx, shape.awaitedCalls[0]);
-      return !!callee && isExactStandaloneNativeAsyncFamilyOwner(ctx, callee, active);
+      return (
+        !!callee && isExactStandaloneNativeAsyncFamilyOwner(ctx, callee, active)
+      );
     }
     if (shape.kind === "final-main") {
       const sequential = sourceFunctionForCall(ctx, shape.awaitedCalls[0]);
@@ -719,13 +898,19 @@ function isExactStandaloneNativeAsyncFamilyOwner(
       );
     }
     if (shape.kind === "linear") {
-      return shape.awaitedExpressions.every((expression) => standaloneLinearAwaitOperand(ctx, expression, active));
+      return shape.awaitedExpressions.every((expression) =>
+        standaloneLinearAwaitOperand(ctx, expression, active),
+      );
     }
     if (fn.name?.text !== "fetchAllParallel") return false;
     const callees = new Set<ts.FunctionDeclaration>();
     const visit = (node: ts.Node): void => {
       if (node !== fn && isNestedExecutable(node)) return;
-      if (ts.isCallExpression(node) && node.end <= shape.awaitedCall.pos && isPreparedAsyncThenableCall(ctx, node)) {
+      if (
+        ts.isCallExpression(node) &&
+        node.end <= shape.awaitedCall.pos &&
+        isPreparedAsyncThenableCall(ctx, node)
+      ) {
         const callee = sourceFunctionForCall(ctx, node);
         if (callee) callees.add(callee);
       }
@@ -733,25 +918,37 @@ function isExactStandaloneNativeAsyncFamilyOwner(
     };
     visit(fn.body!);
     return (
-      callees.size === 1 && [...callees].every((callee) => isExactStandaloneNativeAsyncFamilyOwner(ctx, callee, active))
+      callees.size === 1 &&
+      [...callees].every((callee) =>
+        isExactStandaloneNativeAsyncFamilyOwner(ctx, callee, active),
+      )
     );
   } finally {
     active.delete(fn);
   }
 }
 
-function preparedIrAsyncSourceCanSuspendOnTarget(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
+function preparedIrAsyncSourceCanSuspendOnTarget(
+  ctx: CodegenContext,
+  fn: ts.FunctionDeclaration,
+): boolean {
   return (
-    preparedIrAsyncSourceCanSuspend(ctx, fn) && (!ctx.standalone || isExactStandaloneNativeAsyncFamilyOwner(ctx, fn))
+    preparedIrAsyncSourceCanSuspend(ctx, fn) &&
+    (!ctx.standalone || isExactStandaloneNativeAsyncFamilyOwner(ctx, fn))
   );
 }
 
 /** Exact awaited Promise.all node owned by the certified continuation shape. */
-export function isPreparedIrPromiseAllCall(ctx: CodegenContext, call: ts.CallExpression): boolean {
+export function isPreparedIrPromiseAllCall(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+): boolean {
   const owner = enclosingFunctionDeclaration(call);
   if (!owner) return false;
   const shape = preparedIrAsyncSourceShape(ctx, owner);
-  return shape?.kind === "promise-all-continuation" && shape.awaitedCall === call;
+  return (
+    shape?.kind === "promise-all-continuation" && shape.awaitedCall === call
+  );
 }
 
 function preparedIrAsyncLinearAwaitResultType(
@@ -778,9 +975,12 @@ function preparedIrAsyncLinearAwaitOperandCanLower(
   expression: ts.AwaitExpression | ts.Expression,
 ): boolean {
   if (!ctx.nativeStrings) return true;
-  const operand = ts.isAwaitExpression(expression) ? expression.expression : expression;
+  const operand = ts.isAwaitExpression(expression)
+    ? expression.expression
+    : expression;
   const settled = staticPromiseResolveSettledExpr(operand);
-  const candidate = settled !== null && settled !== "undefined" ? settled : operand;
+  const candidate =
+    settled !== null && settled !== "undefined" ? settled : operand;
   return ctx.oracle.typeFactOf(candidate).kind !== "number";
 }
 
@@ -792,7 +992,8 @@ export function preparedIrAsyncAwaitSite(
   const owner = enclosingFunctionDeclaration(expression);
   if (!owner) return null;
   const shape = preparedIrAsyncSourceShape(ctx, owner);
-  if (shape?.kind !== "linear" || !shape.awaitSites.includes(expression)) return null;
+  if (shape?.kind !== "linear" || !shape.awaitSites.includes(expression))
+    return null;
   const settledOwner = preparedIrAsyncSettledOwner(ctx, owner);
   if (!settledOwner && preparedIrAsyncSettledOwnerWasIssued(ctx, owner)) {
     throw new IrInvariantError(
@@ -837,37 +1038,59 @@ export function preparedIrAsyncAwaitSite(
 }
 
 /** Exact direct async call whose Promise result is owned by a prepared state. */
-export function isPreparedIrThenableCall(ctx: CodegenContext, call: ts.CallExpression): boolean {
+export function isPreparedIrThenableCall(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+): boolean {
   const owner = enclosingFunctionDeclaration(call);
   if (!owner) return false;
   const shape = preparedIrAsyncSourceShape(ctx, owner);
   if (shape?.kind === "linear") return shape.awaitedExpressions.includes(call);
-  if (shape?.kind === "sequential-counted-loop" || shape?.kind === "final-main") {
+  if (
+    shape?.kind === "sequential-counted-loop" ||
+    shape?.kind === "final-main"
+  ) {
     return shape.awaitedCalls.includes(call);
   }
   return isPreparedAsyncThenableCall(ctx, call);
 }
 
 /** Exact ambient Date.now call owned by the final prepared main. */
-export function isPreparedIrDateNowCall(ctx: CodegenContext, call: ts.CallExpression): boolean {
+export function isPreparedIrDateNowCall(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+): boolean {
   const owner = enclosingFunctionDeclaration(call);
   const shape = owner ? preparedIrAsyncSourceShape(ctx, owner) : null;
   return shape?.kind === "final-main" && shape.dateNowCalls.includes(call);
 }
 
 /** Exact five-part string concat owned by the final prepared main. */
-export function isPreparedIrAsyncConcat(ctx: CodegenContext, expression: ts.Expression): boolean {
+export function isPreparedIrAsyncConcat(
+  ctx: CodegenContext,
+  expression: ts.Expression,
+): boolean {
   const owner = enclosingFunctionDeclaration(expression);
   const shape = owner ? preparedIrAsyncSourceShape(ctx, owner) : null;
-  return shape?.kind === "final-main" && shape.concatExpressions.includes(expression);
+  return (
+    shape?.kind === "final-main" && shape.concatExpressions.includes(expression)
+  );
 }
 
-function isInsidePreparedFinalMain(ctx: CodegenContext, node: ts.Node): boolean {
+function isInsidePreparedFinalMain(
+  ctx: CodegenContext,
+  node: ts.Node,
+): boolean {
   const owner = enclosingFunctionDeclaration(node);
-  return owner ? preparedIrAsyncSourceShape(ctx, owner)?.kind === "final-main" : false;
+  return owner
+    ? preparedIrAsyncSourceShape(ctx, owner)?.kind === "final-main"
+    : false;
 }
 
-function preparedAsyncParamAbiIsStable(ctx: CodegenContext, param: ValType): boolean {
+function preparedAsyncParamAbiIsStable(
+  ctx: CodegenContext,
+  param: ValType,
+): boolean {
   if (param.kind === "f64") return true;
   const numericVecTypeIdx = ctx.vecTypeMap.get("f64");
   return (
@@ -877,8 +1100,14 @@ function preparedAsyncParamAbiIsStable(ctx: CodegenContext, param: ValType): boo
   );
 }
 
-function enclosingFunctionDeclaration(node: ts.Node): ts.FunctionDeclaration | null {
-  for (let current: ts.Node | undefined = node.parent; current; current = current.parent) {
+function enclosingFunctionDeclaration(
+  node: ts.Node,
+): ts.FunctionDeclaration | null {
+  for (
+    let current: ts.Node | undefined = node.parent;
+    current;
+    current = current.parent
+  ) {
     if (ts.isFunctionDeclaration(current)) return current;
     if (isNestedExecutable(current)) return null;
   }
@@ -886,21 +1115,34 @@ function enclosingFunctionDeclaration(node: ts.Node): ts.FunctionDeclaration | n
 }
 
 /** Exact pending-vector annotation owned by the certified Promise.all prefix. */
-export function isPreparedIrPromiseVectorLocal(ctx: CodegenContext, declaration: ts.VariableDeclaration): boolean {
+export function isPreparedIrPromiseVectorLocal(
+  ctx: CodegenContext,
+  declaration: ts.VariableDeclaration,
+): boolean {
   if (!isExactPromiseVectorDeclaration(ctx, declaration)) return false;
   const owner = enclosingFunctionDeclaration(declaration);
   if (!owner) return false;
   const shape = preparedIrAsyncSourceShape(ctx, owner);
-  return shape?.kind === "promise-all-continuation" && declaration.end <= shape.awaitedCall.pos;
+  return (
+    shape?.kind === "promise-all-continuation" &&
+    declaration.end <= shape.awaitedCall.pos
+  );
 }
 
 /** Exact Promise-producing call stored in the certified pending vector. */
-function isPreparedAsyncThenableCall(ctx: CodegenContext, call: ts.CallExpression): boolean {
+function isPreparedAsyncThenableCall(
+  ctx: CodegenContext,
+  call: ts.CallExpression,
+): boolean {
   if (!ts.isIdentifier(call.expression)) return false;
   const owner = enclosingFunctionDeclaration(call);
   if (!owner) return false;
   const ownerShape = preparedIrAsyncSourceShape(ctx, owner);
-  if (ownerShape?.kind !== "promise-all-continuation" || call.end > ownerShape.awaitedCall.pos) return false;
+  if (
+    ownerShape?.kind !== "promise-all-continuation" ||
+    call.end > ownerShape.awaitedCall.pos
+  )
+    return false;
 
   const pushCall = call.parent;
   if (
@@ -913,8 +1155,14 @@ function isPreparedAsyncThenableCall(ctx: CodegenContext, call: ts.CallExpressio
   ) {
     return false;
   }
-  const pendingDeclaration = ctx.oracle.variableDeclarationOf(pushCall.expression.expression);
-  if (!pendingDeclaration || !isPreparedIrPromiseVectorLocal(ctx, pendingDeclaration)) return false;
+  const pendingDeclaration = ctx.oracle.variableDeclarationOf(
+    pushCall.expression.expression,
+  );
+  if (
+    !pendingDeclaration ||
+    !isPreparedIrPromiseVectorLocal(ctx, pendingDeclaration)
+  )
+    return false;
 
   const callee = ctx.oracle.valueDeclarationOf(call.expression);
   return (
@@ -942,7 +1190,8 @@ export function prepareAsyncCallableAbi(
 ): [ValType[], ValType[]] {
   const shape = preparedIrAsyncSourceShape(ctx, fn);
   const supportedFulfillment =
-    (fulfillmentResults.length === 1 && fulfillmentResults[0]?.kind === "f64") ||
+    (fulfillmentResults.length === 1 &&
+      fulfillmentResults[0]?.kind === "f64") ||
     (shape?.kind === "final-main" && fulfillmentResults.length === 0) ||
     (shape?.kind === "linear" && fulfillmentResults.length === 0);
   const usesPromiseAbi =
@@ -955,7 +1204,10 @@ export function prepareAsyncCallableAbi(
     preparedIrAsyncSourceCanSuspendOnTarget(ctx, fn) &&
     params.every((param) => preparedAsyncParamAbiIsStable(ctx, param)) &&
     supportedFulfillment;
-  return [params, usesPromiseAbi ? [{ kind: "externref" }] : fulfillmentResults];
+  return [
+    params,
+    usesPromiseAbi ? [{ kind: "externref" }] : fulfillmentResults,
+  ];
 }
 
 /** Keep selector admission and the production async engine on one proof. */
@@ -963,13 +1215,16 @@ export function prepareIrAsyncSelectionOptions(
   ctx: CodegenContext,
   resolvePromiseDelay?: IrPromiseDelayResolver,
 ): AsyncSelectionOptions {
-  if (resolvePromiseDelay) registerIrAsyncPromiseDelayResolver(ctx, resolvePromiseDelay);
+  if (resolvePromiseDelay)
+    registerIrAsyncPromiseDelayResolver(ctx, resolvePromiseDelay);
   return {
     supportsAsyncIr: ctx.supportsAsyncIr,
     asyncEngineClaims: (fn) => asyncEngineWouldActivate(ctx, fn),
     asyncHasRealSuspension: (fn) => {
       const plan = analyzeAsyncBody(ctx, fn);
-      return plan.awaitPoints.some((awaited) => plan.awaitedStaticallyResolved.get(awaited) !== true);
+      return plan.awaitPoints.some(
+        (awaited) => plan.awaitedStaticallyResolved.get(awaited) !== true,
+      );
     },
     // The exact prepared plans project either through host adapters or the
     // standalone native `$Promise` runtime. WASI remains outside this slice.
@@ -978,9 +1233,11 @@ export function prepareIrAsyncSelectionOptions(
       (!ctx.standalone || ctx.nativeStrings) &&
       ts.isFunctionDeclaration(fn) &&
       preparedIrAsyncSourceCanSuspendOnTarget(ctx, fn),
-    preparedAsyncPromiseVectorLocal: (declaration) => isPreparedIrPromiseVectorLocal(ctx, declaration),
+    preparedAsyncPromiseVectorLocal: (declaration) =>
+      isPreparedIrPromiseVectorLocal(ctx, declaration),
     preparedAsyncThenableCall: (call) => isPreparedIrThenableCall(ctx, call),
-    preparedAsyncPromiseAllCall: (call) => isPreparedIrPromiseAllCall(ctx, call),
+    preparedAsyncPromiseAllCall: (call) =>
+      isPreparedIrPromiseAllCall(ctx, call),
     preparedAsyncDateNowCall: (call) => isPreparedIrDateNowCall(ctx, call),
   };
 }
@@ -1000,9 +1257,15 @@ export function preparedIrAsyncFromAstResolver(
   | "preparedAsyncConcatFiveTarget"
 > {
   return {
-    preparedAsyncPromiseVectorLocal: (declaration) => isPreparedIrPromiseVectorLocal(ctx, declaration),
+    preparedAsyncPromiseVectorLocal: (declaration) =>
+      isPreparedIrPromiseVectorLocal(ctx, declaration),
     preparedAsyncPromiseAllPlan: (call) => {
-      if (ctx.standalone && !ctx.wasi && ctx.nativeStrings && isPreparedIrPromiseAllCall(ctx, call)) {
+      if (
+        ctx.standalone &&
+        !ctx.wasi &&
+        ctx.nativeStrings &&
+        isPreparedIrPromiseAllCall(ctx, call)
+      ) {
         return {
           target: irRuntimeFuncRef(IR_ASYNC_PROMISE_ALL_NATIVE_FN),
           argumentType: irVec(irVal({ kind: "externref" }), true),
@@ -1018,19 +1281,31 @@ export function preparedIrAsyncFromAstResolver(
       ) {
         return null;
       }
-      return { target: irImportFuncRef("env", "Promise_all"), resultType: irVec(irVal({ kind: "f64" }), true) };
+      return {
+        target: irImportFuncRef("env", "Promise_all"),
+        resultType: irVec(irVal({ kind: "f64" }), true),
+      };
     },
-    preparedAsyncAwaitSite: (awaitExpression) => preparedIrAsyncAwaitSite(ctx, awaitExpression),
+    preparedAsyncAwaitSite: (awaitExpression) =>
+      preparedIrAsyncAwaitSite(ctx, awaitExpression),
     preparedAsyncThenableResultType: (call) =>
       isPreparedIrThenableCall(ctx, call) ? irVal({ kind: "f64" }) : undefined,
     preparedAsyncDateNowTarget: (call) =>
-      isPreparedIrDateNowCall(ctx, call) ? irIntrinsicFuncRef(IR_ASYNC_CLOCK_SNAPSHOT_FN) : null,
+      isPreparedIrDateNowCall(ctx, call)
+        ? irIntrinsicFuncRef(IR_ASYNC_CLOCK_SNAPSHOT_FN)
+        : null,
     preparedAsyncNumberToStringTarget: (call) =>
-      isInsidePreparedFinalMain(ctx, call) ? irIntrinsicFuncRef(IR_ASYNC_NUMBER_TO_STRING_FN) : null,
+      isInsidePreparedFinalMain(ctx, call)
+        ? irIntrinsicFuncRef(IR_ASYNC_NUMBER_TO_STRING_FN)
+        : null,
     preparedAsyncConsoleTarget: (call) =>
-      isInsidePreparedFinalMain(ctx, call) ? irIntrinsicFuncRef(IR_ASYNC_CONSOLE_LOG_STRING_FN) : null,
+      isInsidePreparedFinalMain(ctx, call)
+        ? irIntrinsicFuncRef(IR_ASYNC_CONSOLE_LOG_STRING_FN)
+        : null,
     preparedAsyncConcatFiveTarget: (expression) =>
-      isPreparedIrAsyncConcat(ctx, expression) ? irIntrinsicFuncRef(IR_ASYNC_STRING_CONCAT_5_FN) : null,
+      isPreparedIrAsyncConcat(ctx, expression)
+        ? irIntrinsicFuncRef(IR_ASYNC_STRING_CONCAT_5_FN)
+        : null,
   };
 }
 
@@ -1043,7 +1318,10 @@ export function collectPreparedIrAsyncOwners(
   const owners = new Set<IrUnitId>();
   if (ctx.wasi || (ctx.standalone && !ctx.nativeStrings)) return owners;
   for (const claim of identityPlan.functionClaims) {
-    if (selectedFunctions.has(claim.legacyName) && preparedIrAsyncSourceCanSuspendOnTarget(ctx, claim.declaration)) {
+    if (
+      selectedFunctions.has(claim.legacyName) &&
+      preparedIrAsyncSourceCanSuspendOnTarget(ctx, claim.declaration)
+    ) {
       owners.add(claim.unitId);
     }
   }
