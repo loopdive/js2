@@ -18,6 +18,7 @@ import { compileProject } from "../../src/index.ts";
 import { wrapExports } from "../../src/runtime.ts";
 import { setupNpmCompatCatalogPackage } from "./npm-compat-catalog.mjs";
 import { setupUuidUpstreamSuite } from "./setup-uuid-upstream-suite.mjs";
+import { createHarnessLogger, withHostConsole } from "./upstream-suite-runner.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPORT_PATH = join(HERE, "report", "uuid-upstream-suite.json");
@@ -338,19 +339,23 @@ async function runNativeFile(source, filePath, packageRoot, generatedDirectory, 
   const transformed = transformSource({ source, filePath, packageRoot, generatedDirectory, native: true });
   const dependencies = await loadNativeDependencies(transformed, packageRoot, helperValues);
   const js = transpileNative(nativeFactorySource(transformed.source, dependencies));
-  const factory = new Function("__imports", js); // eslint-disable-line no-new-func
-  const module = factory(dependencies);
-  const results = [];
-  for (const test of module.tests) {
-    let error = null;
-    try {
-      await test.body(makeMockContext());
-    } catch (thrown) {
-      error = recordNativeError(thrown);
+  // Upstream bodies run in this process, so a test that stubs a global keeps
+  // it stubbed for the harness afterwards. See `withHostConsole`.
+  return withHostConsole(async () => {
+    const factory = new Function("__imports", js); // eslint-disable-line no-new-func
+    const module = factory(dependencies);
+    const results = [];
+    for (const test of module.tests) {
+      let error = null;
+      try {
+        await test.body(makeMockContext());
+      } catch (thrown) {
+        error = recordNativeError(thrown);
+      }
+      results.push({ name: test.name, passed: error === null, error });
     }
-    results.push({ name: test.name, passed: error === null, error });
-  }
-  return results;
+    return results;
+  });
 }
 
 async function runWasmFile({ source, filePath, packageRoot, generatedDirectory, nativeResults }) {
@@ -467,12 +472,24 @@ async function runWasmFile({ source, filePath, packageRoot, generatedDirectory, 
 function finalize(report, log) {
   mkdirSync(dirname(REPORT_PATH), { recursive: true });
   writeFileSync(REPORT_PATH, `${JSON.stringify(report, null, 2)}\n`);
+  // The headline used to exist only inside the JSON. A suite that prints
+  // per-file lines but no total invites readers to add the lines up by hand,
+  // which is how a partial run gets reported as a score (see #5326).
+  log(`[dogfood] ${report.summary.headline}`);
+  const missing = report.summary.filesWithoutResult ?? 0;
+  log(
+    missing === 0
+      ? `[dogfood] ${report.summary.selectedFilesRun} of ${report.summary.selectedFilesRun} selected files produced a result`
+      : `[dogfood] ${missing} of ${report.summary.selectedFilesRun} selected files produced NO result: ${report.summary.filesWithoutResultDetail
+          .map((entry) => `${entry.file} (${entry.reason})`)
+          .join("; ")}`,
+  );
   log(`[dogfood] full report → ${REPORT_PATH}`);
   return report;
 }
 
 export async function runHarness({ quiet = false } = {}) {
-  const log = quiet ? () => {} : (...values) => console.log(...values);
+  const log = createHarnessLogger({ quiet });
   const { root: packageRoot, version, pin } = setupNpmCompatCatalogPackage("uuid");
   const { pin: suitePin, testPaths, helperPaths } = setupUuidUpstreamSuite();
   mkdirSync(GENERATED_ROOT, { recursive: true });
@@ -499,10 +516,23 @@ export async function runHarness({ quiet = false } = {}) {
   writeFileSync(join(GENERATED_ROOT, "test_constants.ts"), `${helperSource(helperRaw, packageRoot, GENERATED_ROOT)}\n`);
 
   log(`[dogfood] uuid@${version} upstream @ ${suitePin.tag} (${suitePin.commit.slice(0, 12)})`);
+  const filesWithoutResult = [];
   for (let index = 0; index < testPaths.length; index++) {
     const filePath = testPaths[index];
     const source = readFileSync(filePath, "utf-8");
-    const fileResults = await runNativeFile(source, filePath, packageRoot, GENERATED_ROOT, helperValues);
+    let fileResults;
+    try {
+      fileResults = await runNativeFile(source, filePath, packageRoot, GENERATED_ROOT, helperValues);
+    } catch (error) {
+      // A file the native oracle cannot even load is unmeasured, not a zero.
+      // Record it and keep going rather than aborting the remaining files.
+      filesWithoutResult.push({ file: basename(filePath), reason: `native lane failed: ${recordNativeError(error)}` });
+      log(`[dogfood] ${basename(filePath)}: NO RESULT (${recordNativeError(error)})`);
+      continue;
+    }
+    if (fileResults.length === 0) {
+      filesWithoutResult.push({ file: basename(filePath), reason: "no upstream tests registered" });
+    }
     report.extraction.upstreamTestsSeen += fileResults.length;
     report.extraction.admitted += fileResults.filter((test) => test.passed).length;
     report.extraction.rejected += fileResults.filter((test) => !test.passed).length;
@@ -548,6 +578,9 @@ export async function runHarness({ quiet = false } = {}) {
   report.summary = {
     headline: `${report.results.passed}/${report.results.scored} admitted upstream tests passed in Wasm (${report.results.harnessIncompatible} native-incompatible; ${report.extraction.upstreamTestsSeen} total)`,
     exactDenominator: report.results.scored,
+    selectedFilesRun: testPaths.length,
+    filesWithoutResult: filesWithoutResult.length,
+    filesWithoutResultDetail: filesWithoutResult,
     upstreamTestsSeen: report.extraction.upstreamTestsSeen,
     nativePassed: report.results.nativePassed,
     nativeFailed: report.results.nativeFailed,
@@ -563,9 +596,12 @@ export async function runHarness({ quiet = false } = {}) {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const jsonOnly = process.argv.includes("--json");
+  // Exit 0 only once the harness reached its summary — see cliUpstreamHarness.
+  process.exitCode = 3;
   runHarness({ quiet: jsonOnly })
     .then((report) => {
       if (jsonOnly) process.stdout.write(`${JSON.stringify(report)}\n`);
+      process.exitCode = 0;
     })
     .catch((error) => {
       if (jsonOnly) process.stdout.write(`${JSON.stringify({ fatal: recordNativeError(error) })}\n`);

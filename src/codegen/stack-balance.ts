@@ -60,6 +60,58 @@ const UNREACHABLE = -999;
 // don't thread `mod`); `stackBalance` resets it per run and drains it at the end.
 let inventedValueSites: { func: string; detail: string }[] = [];
 let currentDiagFunc = "<unknown>";
+let diagnosticBodyIds = new WeakMap<Instr[], number>();
+let nextDiagnosticBodyId = 0;
+
+type DiagnosticPathArm =
+  | "if.then"
+  | "if.else"
+  | "block.body"
+  | "loop.body"
+  | "try_table.body"
+  | "try.body"
+  | "try.catch"
+  | "try.catchAll";
+
+interface DiagnosticPath {
+  readonly instructionIndices: number[];
+  readonly arms: DiagnosticPathArm[];
+  readonly armIndices: number[];
+}
+
+function pushDiagnosticPath(
+  path: DiagnosticPath,
+  instructionIndex: number,
+  arm: DiagnosticPathArm,
+  armIndex = -1,
+): void {
+  path.instructionIndices.push(instructionIndex);
+  path.arms.push(arm);
+  path.armIndices.push(armIndex);
+}
+
+function popDiagnosticPath(path: DiagnosticPath): void {
+  path.instructionIndices.pop();
+  path.arms.pop();
+  path.armIndices.pop();
+}
+
+function renderDiagnosticPath(path: DiagnosticPath): string {
+  let rendered = "function body";
+  for (let depth = 0; depth < path.arms.length; depth++) {
+    const armIndex = path.armIndices[depth]!;
+    rendered += `[${path.instructionIndices[depth]}].${path.arms[depth]}${armIndex >= 0 ? `[${armIndex}]` : ""}`;
+  }
+  return rendered;
+}
+
+function diagnosticBodyId(body: Instr[]): number {
+  const existing = diagnosticBodyIds.get(body);
+  if (existing !== undefined) return existing;
+  const id = nextDiagnosticBodyId++;
+  diagnosticBodyIds.set(body, id);
+  return id;
+}
 
 // #1918 — Stack-balance fixup telemetry.
 //
@@ -648,6 +700,78 @@ function sequenceDelta(body: Instr[], types: TypeDef[], sigs: FuncSigInfo): numb
 }
 
 /**
+ * Describe the first point where a structured body's net stack depth becomes
+ * negative. Net deltas do not model each instruction's pop/push halves, so the
+ * preceding instructions stay visible rather than claiming the first negative
+ * prefix is necessarily the defective consumer. The sample window is bounded
+ * to two instructions on either side; this is called only after fixBranch has
+ * already found an unrecoverable underflow.
+ */
+function describeUnderflow(body: Instr[], types: TypeDef[], sigs: FuncSigInfo, initialStackDepth: number): string {
+  let running = initialStackDepth;
+  const precedingIndices = [0, 0];
+  const precedingInstructions: Array<Instr | undefined> = [undefined, undefined];
+  const precedingDeltas = [0, 0];
+  const precedingRunning = [0, 0];
+  let precedingCount = 0;
+  let nextPrecedingSlot = 0;
+  for (let index = 0; index < body.length; index++) {
+    const instr = body[index]!;
+    const delta = instrDelta(instr, types, sigs);
+    if (delta === UNREACHABLE) break;
+    running += delta;
+    if (running < 0) {
+      const window: string[] = [];
+      const oldestPrecedingSlot = (nextPrecedingSlot - precedingCount + 2) % 2;
+      for (let precedingOffset = 0; precedingOffset < precedingCount; precedingOffset++) {
+        const slot = (oldestPrecedingSlot + precedingOffset) % 2;
+        window.push(
+          describeUnderflowSample(
+            precedingIndices[slot]!,
+            precedingInstructions[slot]!,
+            precedingDeltas[slot]!,
+            precedingRunning[slot]!,
+          ),
+        );
+      }
+      window.push(describeUnderflowSample(index, instr, delta, running));
+      for (let nextIndex = index + 1; nextIndex < Math.min(body.length, index + 3); nextIndex++) {
+        const nextInstr = body[nextIndex]!;
+        const nextDelta = instrDelta(nextInstr, types, sigs);
+        if (nextDelta === UNREACHABLE) break;
+        running += nextDelta;
+        window.push(describeUnderflowSample(nextIndex, nextInstr, nextDelta, running));
+      }
+      return (
+        `first negative net prefix at instruction ${index} (initial stack depth ${initialStackDepth}); window: ` +
+        window.join("; ")
+      );
+    }
+    precedingIndices[nextPrecedingSlot] = index;
+    precedingInstructions[nextPrecedingSlot] = instr;
+    precedingDeltas[nextPrecedingSlot] = delta;
+    precedingRunning[nextPrecedingSlot] = running;
+    nextPrecedingSlot = (nextPrecedingSlot + 1) % 2;
+    precedingCount = Math.min(2, precedingCount + 1);
+  }
+
+  return `no negative net prefix found from initial stack depth ${initialStackDepth}`;
+}
+
+function describeUnderflowSample(index: number, instr: Instr, delta: number, running: number): string {
+  const shallow: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(instr)) {
+    if (key === "op" || key === "sourcePos" || Array.isArray(value)) continue;
+    shallow[key] = typeof value === "bigint" ? `${value}n` : value;
+  }
+  const operands = Object.keys(shallow).length > 0 ? ` ${JSON.stringify(shallow)}` : "";
+  const source = instr.sourcePos
+    ? ` @ ${instr.sourcePos.file}:${instr.sourcePos.line + 1}:${instr.sourcePos.column + 1}`
+    : "";
+  return `[${index}] ${instr.op}${operands} (delta ${delta}, running ${running})${source}`;
+}
+
+/**
  * Get the expected stack delta for a block type.
  */
 function blockTypeExpected(bt: BlockType, types: TypeDef[]): number {
@@ -1010,6 +1134,8 @@ function fixBranch(
   blockType: BlockType,
   boxNumberIdx: number | null,
   unboxNumberIdx: number | null,
+  path: DiagnosticPath,
+  initialStackDepth = 0,
 ): number {
   const actual = sequenceDelta(body, types, sigs);
   if (actual === UNREACHABLE) return 0; // unreachable branch -- validator accepts anything
@@ -1036,7 +1162,9 @@ function fixBranch(
         func: currentDiagFunc,
         detail:
           `operand stack underflow by ${expected - actual} in an empty-typed block ` +
-          `(body delta ${actual}, expected ${expected}); this is not a missing block result`,
+          `(body delta ${actual}, expected ${expected}); this is not a missing block result; ` +
+          `site ${renderDiagnosticPath(path)}, physical body #${diagnosticBodyId(body)}; ` +
+          describeUnderflow(body, types, sigs, initialStackDepth),
       });
       return 0;
     }
@@ -1136,40 +1264,65 @@ function fixBody(
   tags: Array<{ typeIdx: number }>,
   boxNumberIdx: number | null,
   unboxNumberIdx: number | null,
-  visited = new WeakSet<Instr[]>(),
+  visited: WeakSet<Instr[]>,
+  path: DiagnosticPath,
 ): number {
   if (visited.has(body)) return 0;
   visited.add(body);
   let fixups = 0;
 
-  for (const instr of body) {
+  for (let instrIndex = 0; instrIndex < body.length; instrIndex++) {
+    const instr = body[instrIndex]!;
     if (instr.op === "if") {
       const ifInstr = instr as { op: "if"; blockType: BlockType; then: Instr[]; else?: Instr[] };
       const expected = blockTypeExpected(ifInstr.blockType, types);
 
       // Recurse into branches first
-      fixups += fixBody(ifInstr.then, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
+      pushDiagnosticPath(path, instrIndex, "if.then");
+      fixups += fixBody(ifInstr.then, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited, path);
+      popDiagnosticPath(path);
       if (ifInstr.else) {
-        fixups += fixBody(ifInstr.else, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
+        pushDiagnosticPath(path, instrIndex, "if.else");
+        fixups += fixBody(ifInstr.else, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited, path);
+        popDiagnosticPath(path);
       }
 
       // Fix then branch
-      fixups += fixBranch(ifInstr.then, expected, types, sigs, ifInstr.blockType, boxNumberIdx, unboxNumberIdx);
+      pushDiagnosticPath(path, instrIndex, "if.then");
+      fixups += fixBranch(ifInstr.then, expected, types, sigs, ifInstr.blockType, boxNumberIdx, unboxNumberIdx, path);
+      popDiagnosticPath(path);
 
       // Fix else branch (or create one if needed for valued blocks)
       if (ifInstr.else) {
-        fixups += fixBranch(ifInstr.else, expected, types, sigs, ifInstr.blockType, boxNumberIdx, unboxNumberIdx);
+        pushDiagnosticPath(path, instrIndex, "if.else");
+        fixups += fixBranch(ifInstr.else, expected, types, sigs, ifInstr.blockType, boxNumberIdx, unboxNumberIdx, path);
+        popDiagnosticPath(path);
       } else if (expected > 0) {
         // Valued block with no else -- need to add an else branch with default values
         ifInstr.else = [];
-        fixups += fixBranch(ifInstr.else, expected, types, sigs, ifInstr.blockType, boxNumberIdx, unboxNumberIdx);
+        pushDiagnosticPath(path, instrIndex, "if.else");
+        fixups += fixBranch(ifInstr.else, expected, types, sigs, ifInstr.blockType, boxNumberIdx, unboxNumberIdx, path);
+        popDiagnosticPath(path);
       }
     } else if (instr.op === "block" || instr.op === "loop" || instr.op === "try_table") {
       const blockInstr = instr as { op: string; blockType: BlockType; body: Instr[] };
-      fixups += fixBody(blockInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
+      const bodyArm: DiagnosticPathArm =
+        instr.op === "block" ? "block.body" : instr.op === "loop" ? "loop.body" : "try_table.body";
+      pushDiagnosticPath(path, instrIndex, bodyArm);
+      fixups += fixBody(blockInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited, path);
 
       const expected = blockTypeExpected(blockInstr.blockType, types);
-      fixups += fixBranch(blockInstr.body, expected, types, sigs, blockInstr.blockType, boxNumberIdx, unboxNumberIdx);
+      fixups += fixBranch(
+        blockInstr.body,
+        expected,
+        types,
+        sigs,
+        blockInstr.blockType,
+        boxNumberIdx,
+        unboxNumberIdx,
+        path,
+      );
+      popDiagnosticPath(path);
     } else if (instr.op === "try") {
       const tryInstr = instr as {
         op: "try";
@@ -1181,27 +1334,60 @@ function fixBody(
       const expected = blockTypeExpected(tryInstr.blockType, types);
 
       // Recurse into all branches
-      fixups += fixBody(tryInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
-      for (const c of tryInstr.catches || []) {
-        fixups += fixBody(c.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
+      pushDiagnosticPath(path, instrIndex, "try.body");
+      fixups += fixBody(tryInstr.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited, path);
+      popDiagnosticPath(path);
+      for (let catchIndex = 0; catchIndex < (tryInstr.catches || []).length; catchIndex++) {
+        const c = tryInstr.catches[catchIndex]!;
+        pushDiagnosticPath(path, instrIndex, "try.catch", catchIndex);
+        fixups += fixBody(c.body, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited, path);
+        popDiagnosticPath(path);
       }
       if (tryInstr.catchAll) {
-        fixups += fixBody(tryInstr.catchAll, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited);
+        pushDiagnosticPath(path, instrIndex, "try.catchAll");
+        fixups += fixBody(tryInstr.catchAll, types, sigs, tags, boxNumberIdx, unboxNumberIdx, visited, path);
+        popDiagnosticPath(path);
       }
 
       // Fix the do body
-      fixups += fixBranch(tryInstr.body, expected, types, sigs, tryInstr.blockType, boxNumberIdx, unboxNumberIdx);
+      pushDiagnosticPath(path, instrIndex, "try.body");
+      fixups += fixBranch(tryInstr.body, expected, types, sigs, tryInstr.blockType, boxNumberIdx, unboxNumberIdx, path);
+      popDiagnosticPath(path);
 
       // Fix catch bodies. Each catch clause pushes the tag's parameter values
       // onto the stack before the body executes.
-      for (const c of tryInstr.catches || []) {
+      for (let catchIndex = 0; catchIndex < (tryInstr.catches || []).length; catchIndex++) {
+        const c = tryInstr.catches[catchIndex]!;
         const tagArity = getTagArity(c.tagIdx, tags, types);
-        fixups += fixBranch(c.body, expected - tagArity, types, sigs, tryInstr.blockType, boxNumberIdx, unboxNumberIdx);
+        pushDiagnosticPath(path, instrIndex, "try.catch", catchIndex);
+        fixups += fixBranch(
+          c.body,
+          expected - tagArity,
+          types,
+          sigs,
+          tryInstr.blockType,
+          boxNumberIdx,
+          unboxNumberIdx,
+          path,
+          tagArity,
+        );
+        popDiagnosticPath(path);
       }
 
       // Fix catch_all body (no values pushed by catch_all)
       if (tryInstr.catchAll) {
-        fixups += fixBranch(tryInstr.catchAll, expected, types, sigs, tryInstr.blockType, boxNumberIdx, unboxNumberIdx);
+        pushDiagnosticPath(path, instrIndex, "try.catchAll");
+        fixups += fixBranch(
+          tryInstr.catchAll,
+          expected,
+          types,
+          sigs,
+          tryInstr.blockType,
+          boxNumberIdx,
+          unboxNumberIdx,
+          path,
+        );
+        popDiagnosticPath(path);
       }
     }
   }
@@ -2794,9 +2980,12 @@ export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[]): num
   profileCount("stack-balance-struct-new-functions", structNewFunctions);
   profileCount("stack-balance-structured-functions", structuredFunctions);
   let totalFixups = 0;
+  const diagnosticPath: DiagnosticPath = { instructionIndices: [], arms: [], armIndices: [] };
 
   // #2090 — reset the invented-value collector for this run.
   inventedValueSites = [];
+  diagnosticBodyIds = new WeakMap<Instr[], number>();
+  nextDiagnosticBodyId = 0;
   // #1918 — reset the fixup-telemetry collector for this run.
   fixupEvents = [];
 
@@ -2923,7 +3112,16 @@ export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[]): num
 
     // Fix nested structured blocks
     if (features.structured) {
-      totalFixups += fixBody(func.body, mod.types, sigs, tags, boxNumberIdx, unboxNumberIdx);
+      totalFixups += fixBody(
+        func.body,
+        mod.types,
+        sigs,
+        tags,
+        boxNumberIdx,
+        unboxNumberIdx,
+        new WeakSet<Instr[]>(),
+        diagnosticPath,
+      );
     }
 
     // Fix function-level body: the body must produce exactly as many values
@@ -2945,6 +3143,7 @@ export function stackBalance(mod: WasmModule, diagnostics?: CodegenError[]): num
         funcBlockType,
         boxNumberIdx,
         unboxNumberIdx,
+        diagnosticPath,
       );
     }
     // Only struct.new repair allocates locals or emits local.get/local.set.

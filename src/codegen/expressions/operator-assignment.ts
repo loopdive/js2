@@ -25,6 +25,7 @@ import {
 } from "../binary-ops.js";
 import { compileWithCompoundAssignment } from "../with-rmw.js";
 import { pushBody } from "../context/bodies.js";
+import { emitConditionalCaptureBoxRepair } from "../closures/conditional-capture-box.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "../context/locals.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
@@ -166,6 +167,11 @@ export function compileLogicalAssignment(
   if (localIdx !== undefined) {
     const boxedLocal = fctx.boxedCaptures?.get(name);
     if (boxedLocal) {
+      // Read-modify-write through a cell whose `struct.new` sits in a
+      // conditional arm: on a path that skipped the arm the read yields the
+      // value type's default and the write is dropped. Mint it from the
+      // pre-box slot before either half runs.
+      emitConditionalCaptureBoxRepair(fctx, name, localIdx);
       storage = { kind: "boxedLocal", index: localIdx, box: boxedLocal, type: boxedLocal.valType };
     } else {
       const localType =
@@ -2138,6 +2144,7 @@ export function compileCompoundAssignment(
   if (boxed) {
     // Read current value from ref cell (null-guarded: if ref cell is null,
     // use default value for the compound op instead of trapping #702)
+    emitConditionalCaptureBoxRepair(fctx, name, localIdx);
     fctx.body.push({ op: "local.get", index: localIdx });
     emitNullGuardedStructGet(
       ctx,

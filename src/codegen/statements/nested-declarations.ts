@@ -9,6 +9,7 @@ import { normalizeSloppyExplicitThisParameter } from "../helpers/sloppy-this-glo
 import { initializeFunctionPoisonPillContext } from "../function-poison-pill.js";
 import type { Instr, ValType, WasmFunction } from "../../ir/types.js";
 import {
+  collectParamDefaultReferences,
   collectReferencedIdentifiers,
   collectWrittenIdentifiers,
   emitCachedFuncClosureAccess,
@@ -28,7 +29,7 @@ import {
   skipUnobservedHoistedCapture,
 } from "../function-declaration-observation.js";
 import { getOrRegisterArgumentsVecType, reserveArgumentsLengthBrand } from "../arguments-length-brand.js";
-import { recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
+import { recordLiftedCaptureBox, recordLiftedCaptureSlots } from "../closures/capture-source-slot.js";
 import { collectOwnerBindingsWrittenAfterDeclaration } from "../closures/declaration-write-analysis.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { recordNestedFunctionBody } from "../context/body-route-audit.js";
@@ -58,6 +59,7 @@ import {
   extractConstantDefault,
   hoistLetConstWithTdz,
   hoistVarDeclarations,
+  ensureStructForType,
   resolveInstallableClassMemberName,
   resolveWasmType,
 } from "../index.js";
@@ -73,6 +75,7 @@ import {
   getArrTypeIdxFromVec,
   getOrRegisterRefCellType,
   getOrRegisterVecType,
+  refCellValueType,
 } from "../registry/types.js";
 import { getVecInfo } from "../type-coercion.js";
 import { widenMixedUndefinedReturn } from "../mixed-return-widening.js";
@@ -637,6 +640,241 @@ interface CompileNestedFunctionOptions {
   preRegisterOnly?: boolean;
 }
 
+interface NestedFunctionCapturePlanEntry {
+  name: string;
+  type: ValType;
+  localIdx: number;
+  mutable: boolean;
+  /** Whether the declaring frame carries a TDZ flag for this binding. */
+  hasTdzFlag: boolean;
+  /** Declaring-frame i32 flag or boxed-flag slot. */
+  tdzFlagIdx?: number;
+  /** The declaring-frame value slot is already the canonical ref cell. */
+  alreadyBoxed: boolean;
+  /** Inner value type of that ref cell. */
+  boxedValType?: ValType;
+  /** Keep the phase-0 value ABI when the declaring slot was boxed later. */
+  forwardUnboxed?: boolean;
+}
+
+/**
+ * A Phase-0 capture signature is already externally observable: an earlier
+ * sibling can compile a direct call against the reserved function type or mint
+ * and cache its closure struct/trampoline before this declaration's real body
+ * is visited. Key the complete ordered plan by the exact reserved function
+ * object so bare-name shadowing cannot alias two declarations' capture ABIs.
+ */
+const reservedNestedFunctionCapturePlans = new WeakMap<WasmFunction, readonly NestedFunctionCapturePlanEntry[]>();
+
+function cloneNestedFunctionCapturePlan(
+  captures: readonly NestedFunctionCapturePlanEntry[],
+): NestedFunctionCapturePlanEntry[] {
+  return captures.map((capture) => ({
+    ...capture,
+    type: { ...capture.type },
+    ...(capture.boxedValType ? { boxedValType: { ...capture.boxedValType } } : {}),
+  }));
+}
+
+function nestedCaptureValueParamType(ctx: CodegenContext, capture: NestedFunctionCapturePlanEntry): ValType {
+  if (!capture.mutable) return capture.type;
+  if (capture.alreadyBoxed) return capture.type;
+  return { kind: "ref", typeIdx: getOrRegisterRefCellType(ctx, capture.type) };
+}
+
+function nestedCaptureMetadataValueType(capture: NestedFunctionCapturePlanEntry): ValType {
+  return capture.mutable && capture.alreadyBoxed ? (capture.boxedValType ?? { kind: "f64" }) : capture.type;
+}
+
+/** Compare the complete compiler-side carrier, including boxing brands that
+ * do not change the raw Wasm value kind but do change later box/coercion
+ * decisions. */
+function nestedValTypesExactlyMatch(a: ValType, b: ValType): boolean {
+  if (!valTypesMatch(a, b)) return false;
+  if (a.kind === "i32" && b.kind === "i32") {
+    return a.boolean === b.boolean && a.symbol === b.symbol;
+  }
+  if (a.kind === "i64" && b.kind === "i64") return a.bigint === b.bigint;
+  if (a.kind === "f64" && b.kind === "f64") return a.undefSentinel === b.undefSentinel;
+  return true;
+}
+
+function nestedCaptureRepresentationIsCoherent(ctx: CodegenContext, capture: NestedFunctionCapturePlanEntry): boolean {
+  if (!capture.alreadyBoxed) return true;
+  if (capture.type.kind !== "ref" && capture.type.kind !== "ref_null") return false;
+  if (capture.boxedValType === undefined) return false;
+  const actualInnerType = refCellValueType(ctx, capture.type.typeIdx);
+  // Ref-cell layouts are cached by their physical Wasm carrier. Semantic i32
+  // brands (boolean/symbol) remain on capture metadata, not on the shared
+  // struct field, so layout coherence must use physical equality here.
+  return actualInnerType !== undefined && valTypesMatch(actualInnerType, capture.boxedValType);
+}
+
+function promotedCaptureSourceMatchesReservedPlan(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  capture: NestedFunctionCapturePlanEntry,
+): boolean {
+  if (fctx.promotedCaptureNames?.has(capture.name) !== true || ctx.capturedGlobalsOwner?.get(capture.name) !== fctx) {
+    return false;
+  }
+
+  // A promoted value whose stale declaring-frame box registration survives is
+  // not safely sourceable by every closure emitter: some of them select the
+  // local-box arm before consulting the global and require a live localMap
+  // entry. Fail closed until those consumers share one source resolver.
+  if (fctx.boxedCaptures?.has(capture.name)) return false;
+
+  if (capture.mutable) {
+    // A mutable capture must retain the exact shared cell. A plain value global
+    // would only box a copy at the use site and break write-through semantics.
+    const boxGlobal = ctx.capturedBoxGlobals?.get(capture.name);
+    const expectedCellType = nestedCaptureValueParamType(ctx, capture);
+    if (
+      boxGlobal === undefined ||
+      (expectedCellType.kind !== "ref" && expectedCellType.kind !== "ref_null") ||
+      boxGlobal.refCellTypeIdx !== expectedCellType.typeIdx
+    ) {
+      return false;
+    }
+    const globalDef = ctx.mod.globals[localGlobalIdx(ctx, boxGlobal.globalIdx)];
+    if (
+      globalDef === undefined ||
+      (globalDef.type.kind !== "ref" && globalDef.type.kind !== "ref_null") ||
+      globalDef.type.typeIdx !== expectedCellType.typeIdx
+    ) {
+      return false;
+    }
+    const expectedInnerType = nestedCaptureMetadataValueType(capture);
+    if (boxGlobal.valType !== undefined) {
+      return nestedValTypesExactlyMatch(boxGlobal.valType, expectedInnerType);
+    }
+    const physicalInnerType = refCellValueType(ctx, boxGlobal.refCellTypeIdx);
+    return physicalInnerType !== undefined && valTypesMatch(physicalInnerType, expectedInnerType);
+  }
+
+  const globalIdx = ctx.capturedGlobals.get(capture.name);
+  if (globalIdx === undefined) return false;
+  const globalDef = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)];
+  if (globalDef === undefined) return false;
+  const expectedType = nestedCaptureValueParamType(ctx, capture);
+  if (nestedValTypesExactlyMatch(globalDef.type, expectedType)) return true;
+  return (
+    expectedType.kind === "ref" &&
+    globalDef.type.kind === "ref_null" &&
+    expectedType.typeIdx === globalDef.type.typeIdx &&
+    ctx.capturedGlobalsWidened.has(capture.name)
+  );
+}
+
+function assertReservedNestedFunctionType(
+  ctx: CodegenContext,
+  stmt: ts.FunctionDeclaration,
+  reservedEntry: WasmFunction,
+  params: readonly ValType[],
+  results: readonly ValType[],
+): void {
+  const reservedType = ctx.mod.types[reservedEntry.typeIdx];
+  const arraysMatch = (left: readonly ValType[], right: readonly ValType[]): boolean =>
+    left.length === right.length && left.every((type, index) => nestedValTypesExactlyMatch(type, right[index]!));
+  if (
+    reservedType?.kind !== "func" ||
+    !arraysMatch(reservedType.params, params) ||
+    !arraysMatch(reservedType.results, results)
+  ) {
+    const signature = (signatureParams: readonly ValType[], signatureResults: readonly ValType[]): string =>
+      `${JSON.stringify(signatureParams)} -> ${JSON.stringify(signatureResults)}`;
+    throw new Error(
+      `nested function ${stmt.name?.text ?? "<anonymous>"} changed its full physical ABI after reservation: ` +
+        `reserved ${
+          reservedType?.kind === "func" ? signature(reservedType.params, reservedType.results) : "<missing func type>"
+        }; observed ${signature(params, results)}`,
+    );
+  }
+}
+
+/**
+ * Reuse the capture ABI Phase 0 published, even when compiling an earlier
+ * sibling promoted some of this declaration's captures out of `fctx.localMap`.
+ * Shrinking or rewriting the reserved signature would leave any already-minted
+ * closure artifact on the old layout. A genuinely new capture, an unaccounted
+ * disappearance, or a changed physical representation cannot be repaired after
+ * publication, so refuse it instead of emitting a silently inconsistent module.
+ */
+function canonicalReservedCapturePlan(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  stmt: ts.FunctionDeclaration,
+  reservedEntry: WasmFunction | undefined,
+  observed: readonly NestedFunctionCapturePlanEntry[],
+): NestedFunctionCapturePlanEntry[] {
+  if (!reservedEntry) return observed.slice();
+  const canonical = reservedNestedFunctionCapturePlans.get(reservedEntry);
+  if (!canonical) return observed.slice();
+
+  const canonicalByName = new Map<string, NestedFunctionCapturePlanEntry>();
+  for (const capture of canonical) {
+    if (canonicalByName.has(capture.name)) {
+      throw new Error(`nested function ${stmt.name?.text ?? "<anonymous>"} reserved duplicate capture ${capture.name}`);
+    }
+    canonicalByName.set(capture.name, capture);
+  }
+  const observedByName = new Map<string, NestedFunctionCapturePlanEntry>();
+  for (const capture of observed) {
+    if (observedByName.has(capture.name)) {
+      throw new Error(`nested function ${stmt.name?.text ?? "<anonymous>"} observed duplicate capture ${capture.name}`);
+    }
+    observedByName.set(capture.name, capture);
+    const planned = canonicalByName.get(capture.name);
+    if (!planned) {
+      throw new Error(
+        `nested function ${stmt.name?.text ?? "<anonymous>"} acquired capture ${capture.name} after its ABI was reserved`,
+      );
+    }
+    const plannedParam = nestedCaptureValueParamType(ctx, planned);
+    const observedParam = nestedCaptureValueParamType(ctx, capture);
+    const plannedMetadata = nestedCaptureMetadataValueType(planned);
+    const observedMetadata = nestedCaptureMetadataValueType(capture);
+    if (
+      planned.mutable !== capture.mutable ||
+      planned.hasTdzFlag !== capture.hasTdzFlag ||
+      planned.hasTdzFlag !== (planned.tdzFlagIdx !== undefined) ||
+      capture.hasTdzFlag !== (capture.tdzFlagIdx !== undefined) ||
+      !nestedCaptureRepresentationIsCoherent(ctx, planned) ||
+      !nestedCaptureRepresentationIsCoherent(ctx, capture) ||
+      !nestedValTypesExactlyMatch(plannedParam, observedParam) ||
+      !nestedValTypesExactlyMatch(plannedMetadata, observedMetadata)
+    ) {
+      throw new Error(
+        `nested function ${stmt.name?.text ?? "<anonymous>"} changed capture ${capture.name}'s physical ABI after reservation`,
+      );
+    }
+  }
+
+  for (const capture of canonical) {
+    if (observedByName.has(capture.name)) continue;
+    if (!promotedCaptureSourceMatchesReservedPlan(ctx, fctx, capture)) {
+      throw new Error(
+        `nested function ${stmt.name?.text ?? "<anonymous>"} lost capture ${capture.name} after its ABI was reserved`,
+      );
+    }
+  }
+
+  // Preserve the published name/order and representation, but refresh the two
+  // declaring-frame locators when the binding is still physically observed.
+  // Promotion-only captures keep their Phase-0 locators; use sites must source
+  // those from the representation-checked global proven above.
+  return canonical.map((planned) => {
+    const live = observedByName.get(planned.name);
+    const merged = cloneNestedFunctionCapturePlan([planned])[0]!;
+    if (live !== undefined) {
+      merged.localIdx = live.localIdx;
+      merged.tdzFlagIdx = live.tdzFlagIdx;
+    }
+    return merged;
+  });
+}
+
 /**
  * (#3038) Cache of, per enclosing function/source body, the set of outer-scope
  * variable names that are ASSIGNED inside SOME nested function/arrow/method
@@ -646,7 +884,10 @@ interface CompileNestedFunctionOptions {
 const nestedFnMutatedNamesCache = new WeakMap<ts.Node, Set<string>>();
 
 interface SiblingFunctionSyntaxFacts {
-  ownLocals: ReadonlySet<string>;
+  /** Names shadowing references evaluated in the function body. */
+  bodyOwnLocals: ReadonlySet<string>;
+  /** Names shadowing the combined body + parameter-default capture scan. */
+  captureOwnLocals: ReadonlySet<string>;
   referencedNames: ReadonlySet<string>;
 }
 
@@ -713,13 +954,24 @@ const siblingFunctionSyntaxFactsCache = new WeakMap<ts.FunctionDeclaration, Sibl
 function siblingFunctionSyntaxFacts(decl: ts.FunctionDeclaration): SiblingFunctionSyntaxFacts {
   const cached = siblingFunctionSyntaxFactsCache.get(decl);
   if (cached) return cached;
-  const ownLocals = new Set<string>();
-  addNestedDeclarationOwnLocals(decl, ownLocals);
+  const bodyOwnLocals = new Set<string>();
+  addNestedDeclarationOwnLocals(decl, bodyOwnLocals);
   const referencedNames = new Set<string>();
   for (const bodyStmt of decl.body!.statements) {
-    collectReferencedIdentifiers(bodyStmt, referencedNames, ownLocals);
+    collectReferencedIdentifiers(bodyStmt, referencedNames, bodyOwnLocals);
   }
-  const facts = { ownLocals, referencedNames } satisfies SiblingFunctionSyntaxFacts;
+  const parameterDefaultReferences = new Set<string>();
+  collectParamDefaultReferences(decl.parameters, parameterDefaultReferences, nestedDeclarationParameterNames(decl));
+  for (const name of parameterDefaultReferences) referencedNames.add(name);
+
+  // A non-simple parameter list executes in its own environment. Body
+  // var/function/class/lexical declarations therefore cannot shadow a free
+  // name used by a default initializer. Remove exactly those default
+  // references from the body shadow set while retaining parameter bindings.
+  const captureOwnLocals = new Set(bodyOwnLocals);
+  for (const name of parameterDefaultReferences) captureOwnLocals.delete(name);
+
+  const facts = { bodyOwnLocals, captureOwnLocals, referencedNames } satisfies SiblingFunctionSyntaxFacts;
   siblingFunctionSyntaxFactsCache.set(decl, facts);
   return facts;
 }
@@ -837,7 +1089,7 @@ export function transitiveSiblingCaptures(
     const directCapturesByDecl = new Map<ts.FunctionDeclaration, Set<string>>();
     const propagationEdges = new Map<ts.FunctionDeclaration, Set<ts.FunctionDeclaration>>();
     for (const decl of decls.values()) {
-      const { ownLocals, referencedNames } = siblingFunctionSyntaxFacts(decl);
+      const { captureOwnLocals: ownLocals, referencedNames } = siblingFunctionSyntaxFacts(decl);
       const captures = new Set<string>();
       const edges = new Set<ts.FunctionDeclaration>();
       for (const referencedName of referencedNames) {
@@ -1109,6 +1361,7 @@ function compileNestedFunctionDeclarationInScope(
   for (let pi = 0; pi < stmt.parameters.length; pi++) {
     const p = stmt.parameters[pi]!;
     const paramType = foreignEvalDeclaration ? undefined : ctx.checker.getTypeAtLocation(p);
+    if (paramType !== undefined) ensureStructForType(ctx, paramType);
     let wasmType: ValType =
       foreignEvalDeclaration || restBindingOverridesToExternref(p)
         ? { kind: "externref" }
@@ -1207,6 +1460,7 @@ function compileNestedFunctionDeclarationInScope(
       retType = unwrapPromiseType(retType, ctx.checker);
     }
     if (!isVoidType(retType)) {
+      ensureStructForType(ctx, retType);
       const inferredReturn = widenMixedUndefinedReturn(retType, resolveWasmType(ctx, retType));
       returnType = functionReturnsPreInitVarValue(ctx, stmt) ? { kind: "externref" } : inferredReturn;
     }
@@ -1218,17 +1472,25 @@ function compileNestedFunctionDeclarationInScope(
   // collection so nested `var` declarations and parameter bindings inside the
   // function body shadow outer references — otherwise a function with its own
   // `var i;` would be treated as capturing the outer `i` (#995).
-  const ownLocals = new Set<string>();
-  addNestedDeclarationOwnLocals(stmt, ownLocals);
-
-  const referencedNames = new Set<string>();
-  for (const s of stmt.body.statements) {
-    collectReferencedIdentifiers(s, referencedNames, ownLocals);
-  }
+  const syntaxFacts = siblingFunctionSyntaxFacts(stmt);
+  const ownLocals = new Set(syntaxFacts.bodyOwnLocals);
+  const captureOwnLocals = syntaxFacts.captureOwnLocals;
+  const referencedNames = new Set(syntaxFacts.referencedNames);
+  // A parameter initializer executes in the lifted declaration's frame just
+  // like its body.  Include its free references before Phase-0 / real capture
+  // planning so a defaulted capturing sibling (for example `fn = bind`) is
+  // carried into that frame instead of materializing the sibling with stale
+  // declaring-frame local indexes.  The shared helper also covers defaults
+  // and computed keys nested inside binding patterns without treating type
+  // annotations or the parameter's own bindings as captures. Body declarations
+  // are deliberately absent from this shadow set: the parameter environment
+  // cannot see them, so `function f(x = outer) { let outer }` captures the
+  // enclosing `outer`. The shared syntax facts apply that split identically
+  // to sibling propagation, Phase 0, and this real compile.
   const { directlyReferencedNames, transitivelyRequiredNames } = collectNestedCaptureReferences(
     referencedNames,
-    ownLocals,
-    transitiveVisibleDeclarationCaptures(ctx, fctx, stmt, referencedNames, ownLocals),
+    captureOwnLocals,
+    transitiveVisibleDeclarationCaptures(ctx, fctx, stmt, referencedNames, captureOwnLocals),
     transitiveSiblingCaptures(ctx, fctx, stmt),
   );
   const reachesDirectEval = functionMayReachDirectEval(stmt, ctx.oracle);
@@ -1307,46 +1569,7 @@ function compileNestedFunctionDeclarationInScope(
     return undefined;
   };
 
-  const captures: {
-    name: string;
-    type: ValType;
-    localIdx: number;
-    mutable: boolean;
-    /**
-     * #1205: Whether this capture has a TDZ flag in the outer fctx. When
-     * true, we (a) force-box the value so post-init mutations propagate
-     * through a ref cell, and (b) propagate the boxed flag itself as an
-     * extra leading param so identifier reads inside the lifted body
-     * route through `boxedTdzFlags` (struct.get on the i32 ref cell)
-     * rather than reading a stale capture-time snapshot.
-     */
-    hasTdzFlag: boolean;
-    /** Outer-fctx flag local index (i32 flag OR boxed ref-cell ref). */
-    tdzFlagIdx?: number;
-    /**
-     * #2623 Slice A: the captured local is ALREADY a ref cell in the outer
-     * scope (registered in `fctx.boxedCaptures`) — e.g. an outer fn that is
-     * itself materialized as a closure VALUE threads a mutable capture as a
-     * boxed `$cell` param, and a nested fn re-captures the SAME name. The
-     * outer slot IS the canonical cell; re-boxing it here produced a
-     * `$cell-of-cell` whose deref depth desynced the construction-site cast
-     * (illegal cast in Constructor()) AND the lifted body's struct.get/set
-     * (read garbage → callCount never increments). Mirrors the arrow path's
-     * `alreadyBoxed` handling (closures.ts:1681/1728-1748/2457-2476). When
-     * set, thread the existing cell through instead of wrapping again.
-     */
-    alreadyBoxed: boolean;
-    /** Inner value type of the outer cell (when alreadyBoxed) — the depth the
-     * lifted body's struct.get/set should produce/consume. */
-    boxedValType?: ValType;
-    /**
-     * (#5303) The declaring slot became a ref cell only AFTER this function's
-     * phase-0 pre-registration, and the capture is READ-ONLY. Keep the
-     * pre-registered VALUE type in the lifted signature and let the forwarding
-     * call site unwrap the cell — see `preRegisteredValueForwarding` below.
-     */
-    forwardUnboxed?: boolean;
-  }[] = [];
+  let captures: NestedFunctionCapturePlanEntry[] = [];
   // A phase-0 pre-registration is the ABI earlier call sites already emit;
   // keep it across an intermediate promotion (see collectPromotedPreRegisteredSlots).
   const preRegisteredCaptures = opts.reuseReservedEntry ? ctx.nestedFuncCaptures.get(funcName) : undefined;
@@ -1358,7 +1581,7 @@ function compileNestedFunctionDeclarationInScope(
     transitivelyRequiredNames,
   );
   for (const name of referencedNames) {
-    if (ownLocals.has(name) && !transitivelyRequiredNames.has(name)) continue;
+    if (captureOwnLocals.has(name) && !transitivelyRequiredNames.has(name)) continue;
     if (skipUnobservedHoistedCapture(fctx, stmt, name, directlyReferencedNames, transitivelyRequiredNames)) continue;
     // (#1702) A nested `FunctionDeclaration` establishes its OWN `this`
     // binding per ECMA-262 §10.2.1.1 (OrdinaryCallBindThis) — `this` is
@@ -1501,6 +1724,7 @@ function compileNestedFunctionDeclarationInScope(
       alreadyBoxed: false,
     });
   }
+  captures = canonicalReservedCapturePlan(ctx, fctx, stmt, opts.reuseReservedEntry, captures);
   // (#2172 / SF-1 of #2157) Wasm-native lowering for a NESTED `function*` in
   // standalone/WASI. Previously a nested generator always took the JS-host
   // buffer path (`__create_generator` etc.), which in standalone leaks env
@@ -1587,6 +1811,9 @@ function compileNestedFunctionDeclarationInScope(
 
   if (captures.length === 0) {
     // No captures — compile as a regular module-level function
+    if (opts.reuseReservedEntry) {
+      assertReservedNestedFunctionType(ctx, stmt, opts.reuseReservedEntry, paramTypes, results);
+    }
     const funcTypeIdx = addFuncType(ctx, paramTypes, results, `${funcName}_type`);
     const liftedFctx: FunctionContext = {
       name: funcName,
@@ -1803,7 +2030,6 @@ function compileNestedFunctionDeclarationInScope(
     ctx.currentFunc = savedFunc;
 
     if (opts.reuseReservedEntry) {
-      opts.reuseReservedEntry.typeIdx = funcTypeIdx;
       opts.reuseReservedEntry.locals = liftedFctx.locals;
       opts.reuseReservedEntry.body = liftedFctx.body;
     } else {
@@ -1918,6 +2144,9 @@ function compileNestedFunctionDeclarationInScope(
     }
     const liftedResults: ValType[] = capturingNativeGen && returnType ? [returnType] : results;
 
+    if (opts.reuseReservedEntry) {
+      assertReservedNestedFunctionType(ctx, stmt, opts.reuseReservedEntry, allParamTypes, liftedResults);
+    }
     const funcTypeIdx = addFuncType(ctx, allParamTypes, liftedResults, `${funcName}_type`);
     const liftedFctx: FunctionContext = {
       name: funcName,
@@ -2081,8 +2310,11 @@ function compileNestedFunctionDeclarationInScope(
         body: [],
         exported: false,
       } satisfies WasmFunction);
-    reservedEntry.typeIdx = funcTypeIdx;
+    if (opts.preRegisterOnly) {
+      reservedNestedFunctionCapturePlans.set(reservedEntry, cloneNestedFunctionCapturePlan(captures));
+    }
     if (!opts.reuseReservedEntry) {
+      reservedEntry.typeIdx = funcTypeIdx;
       const reservedFuncIdx = mintDefinedFunc(ctx);
       pushProgramAbiNestedFunctionDeclaration(ctx, stmt, reservedFuncIdx, reservedEntry);
       ctx.funcMap.set(funcName, reservedFuncIdx);
@@ -2107,7 +2339,7 @@ function compileNestedFunctionDeclarationInScope(
         // boxedCaptures entry exists` in the declaring fctx, so the call
         // site's already-boxed branch passes the existing cell and its
         // derived cell type now matches the lifted param exactly.
-        valType: c.mutable && c.alreadyBoxed ? (c.boxedValType ?? { kind: "f64" as const }) : c.type,
+        valType: nestedCaptureMetadataValueType(c),
         hasTdzFlag: c.hasTdzFlag,
         outerTdzFlagIdx: c.tdzFlagIdx,
       })),
@@ -2599,6 +2831,7 @@ function emitEagerCaptureBoxes(ctx: CodegenContext, fctx: FunctionContext, funcN
     fctx.localMap.set(cap.name, boxedLocalIdx);
     if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
     fctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: cap.valType });
+    recordLiftedCaptureBox(fctx, cap.name, cap.outerLocalIdx, boxedLocalIdx);
   }
 }
 
@@ -2697,6 +2930,10 @@ function emitEagerNestedCallCaptureBoxes(
     liftedFctx.localMap.set(cap.name, boxedLocalIdx);
     if (!liftedFctx.boxedCaptures) liftedFctx.boxedCaptures = new Map();
     liftedFctx.boxedCaptures.set(cap.name, { refCellTypeIdx, valType: calleeValType });
+    // (#5323) Publish the cell, or the forwarding call site reads the still-raw
+    // frozen capture slot and mints a SECOND one — the identity split this
+    // pass's own "no second `struct.new`" contract assumes cannot happen.
+    recordLiftedCaptureBox(liftedFctx, cap.name, paramIdx, boxedLocalIdx);
   }
 }
 
@@ -2819,10 +3056,7 @@ function preRegisterCapturingSibling(
   stmt: ts.FunctionDeclaration,
   siblingFuncNames: ReadonlySet<string>,
 ): boolean {
-  const ownLocals = new Set<string>();
-  addFunctionOwnLocals(stmt, ownLocals);
-  const referenced = new Set<string>();
-  for (const bodyStmt of stmt.body!.statements) collectReferencedIdentifiers(bodyStmt, referenced, ownLocals);
+  const { captureOwnLocals: ownLocals, referencedNames: referenced } = siblingFunctionSyntaxFacts(stmt);
 
   let capturesOuter = transitiveVisibleDeclarationCaptures(ctx, fctx, stmt, referenced, ownLocals).size > 0;
   for (const name of referenced) {
@@ -3010,7 +3244,9 @@ export function hoistFunctionDeclarations(
       const foreignEvalDeclaration = isForeignEvalNode(stmt);
       const paramTypes: ValType[] = stmt.parameters.map((p) => {
         if (foreignEvalDeclaration) return { kind: "externref" };
-        let wt = resolveWasmType(ctx, ctx.checker.getTypeAtLocation(p));
+        const paramType = ctx.checker.getTypeAtLocation(p);
+        ensureStructForType(ctx, paramType);
+        let wt = resolveWasmType(ctx, paramType);
         wt = preserveOmittedNestedParameter(ctx, stmt, p, wt);
         if (p.initializer && wt.kind === "ref") {
           wt = { kind: "ref_null", typeIdx: (wt as { typeIdx: number }).typeIdx };
@@ -3045,7 +3281,10 @@ export function hoistFunctionDeclarations(
       } else if (sig) {
         let rt = ctx.checker.getReturnTypeOfSignature(sig);
         if (isAsync) rt = unwrapPromiseType(rt, ctx.checker);
-        if (!isVoidType(rt)) resultType = widenMixedUndefinedReturn(rt, resolveWasmType(ctx, rt));
+        if (!isVoidType(rt)) {
+          ensureStructForType(ctx, rt);
+          resultType = widenMixedUndefinedReturn(rt, resolveWasmType(ctx, rt));
+        }
       }
       const funcTypeIdx = addFuncType(ctx, paramTypes, resultType ? [resultType] : [], `${funcName}_type`);
       const reservedFuncIdx = mintDefinedFunc(ctx);

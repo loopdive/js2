@@ -28,7 +28,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, extname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { ts } from "../../src/ts-api.js";
+import { ts } from "../../src/ts-api.ts";
 
 /** The edition every script is allowed to assume; nothing below this is evidence. */
 export const BASELINE_EDITION = 5;

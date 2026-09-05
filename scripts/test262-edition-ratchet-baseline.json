@@ -1,0 +1,148 @@
+{
+  "generated_at": "2026-09-04T20:12:26.421Z",
+  "commit": "7c4a350a64fb7a66f23834413dc738770ec375a6",
+  "target": "standalone",
+  "eval_engine": "quickjs",
+  "test262_ref": "see .gitmodules / git submodule status test262",
+  "note": "Per-edition conformance floor, seeded from website/public/benchmarks/results/test262-standalone-editions.json. `ratcheted: true` means that edition may never lose passes. Lowering a number here is a deliberate, reviewable act \u2014 never do it to make CI green. Bank improvements with: npx tsx scripts/test262-edition-ratchet.ts --results <full-run.jsonl> --update",
+  "editions": {
+    "5": {
+      "ratcheted": true,
+      "pass": 9028,
+      "fail": 1,
+      "compile_error": 0,
+      "other": 0,
+      "total": 9029
+    },
+    "2015": {
+      "ratcheted": true,
+      "pass": 10131,
+      "fail": 1196,
+      "compile_error": 377,
+      "other": 0,
+      "total": 11704
+    },
+    "2016": {
+      "ratcheted": true,
+      "pass": 99,
+      "fail": 16,
+      "compile_error": 9,
+      "other": 0,
+      "total": 124
+    },
+    "2017": {
+      "ratcheted": true,
+      "pass": 370,
+      "fail": 79,
+      "compile_error": 241,
+      "other": 0,
+      "total": 690
+    },
+    "2018": {
+      "ratcheted": true,
+      "pass": 3352,
+      "fail": 490,
+      "compile_error": 981,
+      "other": 0,
+      "total": 4823
+    },
+    "2019": {
+      "ratcheted": true,
+      "pass": 80,
+      "fail": 39,
+      "compile_error": 17,
+      "other": 0,
+      "total": 136
+    },
+    "2020": {
+      "ratcheted": true,
+      "pass": 935,
+      "fail": 572,
+      "compile_error": 510,
+      "other": 18,
+      "total": 2035
+    },
+    "2021": {
+      "ratcheted": true,
+      "pass": 305,
+      "fail": 102,
+      "compile_error": 65,
+      "other": 0,
+      "total": 472
+    },
+    "2022": {
+      "ratcheted": true,
+      "pass": 4104,
+      "fail": 1184,
+      "compile_error": 504,
+      "other": 0,
+      "total": 5792
+    },
+    "2023": {
+      "ratcheted": true,
+      "pass": 172,
+      "fail": 160,
+      "compile_error": 2,
+      "other": 0,
+      "total": 334
+    },
+    "2024": {
+      "ratcheted": true,
+      "pass": 366,
+      "fail": 81,
+      "compile_error": 109,
+      "other": 0,
+      "total": 556
+    },
+    "2025": {
+      "ratcheted": true,
+      "pass": 556,
+      "fail": 333,
+      "compile_error": 112,
+      "other": 0,
+      "total": 1001
+    },
+    "2026": {
+      "ratcheted": true,
+      "pass": 266,
+      "fail": 4082,
+      "compile_error": 573,
+      "other": 0,
+      "total": 4921
+    },
+    "2027": {
+      "ratcheted": false,
+      "pass": 358,
+      "fail": 371,
+      "compile_error": 168,
+      "other": 0,
+      "total": 897,
+      "reason": "ES2027 is the DRAFT edition (see CURRENT_DRAFT_EDITION in scripts/generate-editions.ts). Its test set moves under us; ratchet it once the edition is ratified."
+    },
+    "-1": {
+      "ratcheted": false,
+      "pass": 235,
+      "fail": 16,
+      "compile_error": 156,
+      "other": 96,
+      "total": 503,
+      "reason": "TC39 proposals are not a shipped edition \u2014 the set churns as proposals advance, are withdrawn, or change semantics, so a drop here is not necessarily a defect."
+    },
+    "-2": {
+      "ratcheted": true,
+      "pass": 273,
+      "fail": 0,
+      "compile_error": 0,
+      "other": 0,
+      "total": 273
+    },
+    "-3": {
+      "ratcheted": true,
+      "pass": 4409,
+      "fail": 954,
+      "compile_error": 82,
+      "other": 0,
+      "total": 5445
+    }
+  }
+}

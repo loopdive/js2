@@ -9,6 +9,7 @@ import {
   isNestedOrdinaryClassFieldCallInventoryCandidate,
 } from "./class-accessor-safety.js";
 import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "./module-init.js";
+import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 
 declare const irSourceIdBrand: unique symbol;
@@ -639,7 +640,9 @@ function classMemberLegacyName(className: string, member: ts.ClassElement): stri
   if (!ts.isMethodDeclaration(member) && !ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) {
     return null;
   }
-  const base = memberBaseName(member.name);
+  const base = ts.isMethodDeclaration(member)
+    ? (literalComputedInstanceMethodKey(member) ?? memberBaseName(member.name))
+    : memberBaseName(member.name);
   if (ts.isGetAccessorDeclaration(member)) return `${className}_get_${base}`;
   if (ts.isSetAccessorDeclaration(member)) return `${className}_set_${base}`;
   return `${className}_${base}`;
