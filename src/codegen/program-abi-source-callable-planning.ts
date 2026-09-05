@@ -20,6 +20,7 @@ import { localGlobalIdx } from "./registry/imports.js";
 import {
   issuePreparedCallableBoundary,
   type PreparedCallableBoundaryCandidate,
+  type PreparedCallableBoundaryIssueInput,
   type PreparedCallableBoundarySemanticSignature,
 } from "../ir/prepared-callable-boundary.js";
 
@@ -412,7 +413,24 @@ export class ProgramAbiSourceCallableRegistry {
     unitId: IrUnitId,
     semanticSignature: PreparedCallableBoundarySemanticSignature,
   ): PreparedCallableBoundaryCandidate | undefined {
-    return issuePreparedCallableBoundary({ registry: this, unitId, semanticSignature });
+    const { session, identityContext } = this;
+    if (!session || !identityContext) return undefined;
+    const issue: PreparedCallableBoundaryIssueInput = {
+      unitId,
+      semanticSignature,
+      inventory: session.inventory,
+      module: this.ctx.mod,
+      hasUnit: (id) => identityContext.unitByUnitId.has(id),
+      assertModule: () => session.assertModule(this.ctx.mod),
+      inventoryIsCurrent: () => session.inventory === identityContext.inventory,
+      planUnit: () => this.planUnits([unitId]),
+      handleForUnit: (id) => this.handleForUnit(id),
+      functionForUnit: (id) => this.functionForUnit(id),
+      definedFunctionAt: (handle) => definedFuncAt(this.ctx, handle),
+      hasPlan: (id) => session.hasPlan(id),
+      hasLocator: (id, allocatorObject) => session.hasLocator(id, allocatorObject),
+    };
+    return issuePreparedCallableBoundary(issue);
   }
 
   private unitForFunction(func: WasmFunction): IrUnitId | undefined {

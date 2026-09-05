@@ -1563,6 +1563,10 @@ export function selectR2PreparedOwnerComponents(input: {
   // registry/observation provides no positive evidence and therefore leaves
   // the existing outside-caller withdrawal in place.
   for (const unitId of freeFunctionCandidates) {
+    // Compiler-owned timer shims have their own exact late-seal transaction.
+    // Keep them on that route; their deferred component does not exist yet at
+    // this generic callable-boundary certification point.
+    if (input.timerShimUnitIds?.has(unitId)) continue;
     const override = input.overridesByUnitId.get(unitId);
     if (!override || !hasPositiveCallableBoundary(override)) continue;
     const candidate = input.ctx.programAbiSourceCallables?.issuePreparedCallableBoundary(unitId, override);

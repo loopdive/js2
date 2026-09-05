@@ -569,7 +569,7 @@ function certifyPreparedCallableBoundaries(
         `prepared callable boundary ${candidate.unitId} has no authenticated open component scope`,
       );
     }
-    candidate.assertCurrent();
+    candidate.assertCurrent(entry.fn);
     assertPreparedComponentCallableBoundaryLookup({
       lookup: openScope.lookup,
       componentId,
@@ -5323,7 +5323,7 @@ export function compileIrPathFunctions(
           `prepared callable boundary ${unitId} lost its final artifact before publication`,
         );
       }
-      boundary.assertCurrent();
+      boundary.assertCurrent(entry.fn);
       boundary.assertSupportCurrent(entry.fn, preparedClosure.closureSupport);
     }
     const preparedComponentId = preparedComponentIdByTerminalUnitId.get(terminalOwnerUnitId);

@@ -67,6 +67,10 @@ function fixture(): Fixture {
     kind: "callable",
     signature: { params: [numberType], returnType: numberType },
   } as const;
+  const candidateCallableType = {
+    kind: "callable",
+    signature: { params: [numberType], returnType: numberType },
+  } as const;
   const call: IrInstr = {
     kind: "closure.call",
     result: 2,
@@ -95,7 +99,7 @@ function fixture(): Fixture {
     valueCount: 3,
   };
   const candidate = registry.issuePreparedCallableBoundary(unitId, {
-    params: [callableType, numberType],
+    params: [candidateCallableType, numberType],
     returnType: numberType,
   });
   if (!candidate) throw new Error("callable-boundary fixture did not issue a candidate");
@@ -209,6 +213,56 @@ describe("#3521 R2-B1 prepared callable boundary contract", () => {
       }),
     ).toBeUndefined();
     expect(f.candidate.contract).toBeUndefined();
+  });
+
+  it("rejects an in-place nested callable mutation after issuance", () => {
+    const f = fixture();
+    const invocation = invokeRef(createIrBindingId({ ownerId: f.unitId, domain: "support", role: "invoke" }));
+    const mutableCallable = f.callableType as unknown as {
+      signature: { params: IrType[]; returnType: IrType | null };
+    };
+    mutableCallable.signature.params[0] = { kind: "val", val: { kind: "i32" } };
+
+    expect(certify(f, [invocation])).toBeUndefined();
+    expect(f.candidate.allocated).toBe(f.allocated);
+    expect(
+      (f.candidate.semanticSignature.params[0] as Extract<IrType, { kind: "callable" }>).signature.params[0],
+    ).toEqual(f.numberType);
+  });
+
+  it("does not collapse a multi-result function into the void signature", () => {
+    const f = fixture();
+    const voidCandidate = f.registry.issuePreparedCallableBoundary(f.unitId, {
+      params: [f.callableType, f.numberType],
+      returnType: null,
+    });
+    if (!voidCandidate) throw new Error("callable-boundary fixture did not issue the void candidate");
+    const invocation = invokeRef(createIrBindingId({ ownerId: f.unitId, domain: "support", role: "invoke" }));
+    expect(
+      voidCandidate.certify({
+        fn: { ...f.fn, resultTypes: [f.numberType, f.numberType] },
+        projectedSignature: projected(),
+        support: support(f, [invocation]),
+        scopeLookup: scope(f),
+      }),
+    ).toBeUndefined();
+    expect(voidCandidate.contract).toBeUndefined();
+  });
+
+  it("rechecks an in-place nested callable mutation after certification", () => {
+    const f = fixture();
+    const invocation = invokeRef(createIrBindingId({ ownerId: f.unitId, domain: "support", role: "invoke" }));
+    const contract = certify(f, [invocation]);
+    expect(contract).toBeDefined();
+
+    const mutableCallable = f.callableType as unknown as {
+      signature: { params: IrType[]; returnType: IrType | null };
+    };
+    mutableCallable.signature.returnType = { kind: "val", val: { kind: "i32" } };
+
+    expect(() => f.candidate.assertCurrent(f.fn)).toThrow(/semantic signature changed/);
+    expect(() => contract!.assertSupportCurrent(f.fn, support(f, [invocation]))).toThrow(/semantic signature changed/);
+    expect(f.candidate.allocated).toBe(f.allocated);
   });
 
   it("fails closed for a foreign scoped allocator and a changed allocator object", () => {

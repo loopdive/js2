@@ -1,21 +1,35 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { definedFuncAt } from "../codegen/func-space.js";
-import type { ProgramAbiSourceCallableRegistry } from "../codegen/program-abi-source-callable-planning.js";
-import type { ProgramAbiSession } from "../codegen/program-abi-session.js";
-import type { CodegenContext } from "../codegen/context/types.js";
 import { irCallableBindingKey, irUnitCallableBindingId } from "./callable-bindings.js";
 import type { IrBindingId, IrUnitId, IrUnitInventory } from "./identity.js";
 import type { IrLoweredSignature } from "./lower.js";
 import { IrInvariantError } from "./outcomes.js";
 import type { PreparedComponentClosureSupportEvidence } from "./prepared-instruction-support.js";
-import { forEachInstrDeep, type IrFunction, type IrType, type IrValueId } from "./nodes.js";
-import type { FuncHandle, FuncTypeDef, ValType, WasmFunction } from "./types.js";
+import { forEachInstrDeep, irTypeEquals, type IrFunction, type IrType, type IrValueId } from "./nodes.js";
+import { irTypeKey } from "./type-key.js";
+import type { FuncHandle, FuncTypeDef, ValType, WasmFunction, WasmModule } from "./types.js";
 
 /** The semantic source signature that a boundary candidate is expected to own. */
 export interface PreparedCallableBoundarySemanticSignature {
   readonly params: readonly IrType[];
   readonly returnType: IrType | null;
+}
+
+/** Codegen-owned observations needed to issue one IR-only boundary receipt. */
+export interface PreparedCallableBoundaryIssueInput {
+  readonly unitId: IrUnitId;
+  readonly semanticSignature: PreparedCallableBoundarySemanticSignature;
+  readonly inventory: IrUnitInventory;
+  readonly module: WasmModule;
+  readonly hasUnit: (id: IrUnitId) => boolean;
+  readonly assertModule: () => void;
+  readonly inventoryIsCurrent: () => boolean;
+  readonly planUnit: () => void;
+  readonly handleForUnit: (id: IrUnitId) => FuncHandle | undefined;
+  readonly functionForUnit: (id: IrUnitId) => WasmFunction | undefined;
+  readonly definedFunctionAt: (handle: FuncHandle) => WasmFunction | undefined;
+  readonly hasPlan: (id: IrBindingId) => boolean;
+  readonly hasLocator: (id: IrBindingId, allocatorObject: object) => boolean;
 }
 
 /** The scoped lookup needed to reconcile one prepared source callable. */
@@ -38,7 +52,7 @@ export interface PreparedCallableBoundaryContract {
   readonly projectedSignature: FuncTypeDef;
   readonly supportBindingIds: readonly IrBindingId[];
   /** Re-check allocator/session identity immediately before body publication. */
-  readonly assertCurrent: () => void;
+  readonly assertCurrent: (fn?: IrFunction) => void;
   /** Re-check the exact final support evidence before body publication. */
   readonly assertSupportCurrent: (fn: IrFunction, support: PreparedComponentClosureSupportEvidence) => void;
 }
@@ -56,16 +70,21 @@ export interface PreparedCallableBoundaryCandidate {
     readonly support: PreparedComponentClosureSupportEvidence;
     readonly scopeLookup?: PreparedCallableBoundaryScopeLookup;
   }) => PreparedCallableBoundaryContract | undefined;
-  readonly assertCurrent: () => void;
+  readonly assertCurrent: (fn?: IrFunction) => void;
   readonly assertSupportCurrent: (fn: IrFunction, support: PreparedComponentClosureSupportEvidence) => void;
   readonly contract: PreparedCallableBoundaryContract | undefined;
 }
 
 interface CandidateState {
-  readonly registry: ProgramAbiSourceCallableRegistry;
-  readonly session: ProgramAbiSession;
   readonly inventory: IrUnitInventory;
-  readonly ctx: CodegenContext;
+  readonly module: WasmModule;
+  readonly assertModule: () => void;
+  readonly inventoryIsCurrent: () => boolean;
+  readonly handleForUnit: (id: IrUnitId) => FuncHandle | undefined;
+  readonly functionForUnit: (id: IrUnitId) => WasmFunction | undefined;
+  readonly definedFunctionAt: (handle: FuncHandle) => WasmFunction | undefined;
+  readonly hasPlan: (id: IrBindingId) => boolean;
+  readonly hasLocator: (id: IrBindingId, allocatorObject: object) => boolean;
   readonly unitId: IrUnitId;
   readonly bindingId: IrBindingId;
   readonly structuralReferenceKey: string;
@@ -73,6 +92,7 @@ interface CandidateState {
   readonly allocated: WasmFunction;
   readonly allocatedSignature: FuncTypeDef;
   readonly semanticSignature: PreparedCallableBoundarySemanticSignature;
+  readonly semanticSignatureKey: string;
   contract?: PreparedCallableBoundaryContract;
 }
 
@@ -116,49 +136,73 @@ function sameFuncType(left: FuncTypeDef, right: FuncTypeDef): boolean {
   );
 }
 
-function semanticTypeKey(type: IrType | null): string {
-  if (type === null) return "null";
-  switch (type.kind) {
-    case "val":
-      return JSON.stringify({ kind: type.kind, val: type.val, signed: type.signed });
-    case "string":
-      return JSON.stringify({ kind: type.kind });
-    case "vec":
-      return JSON.stringify({ kind: type.kind, nullable: type.nullable, element: semanticTypeKey(type.elementType) });
-    case "object":
-      return JSON.stringify({
-        kind: type.kind,
-        fields: type.shape.fields.map((field) => ({ name: field.name, type: semanticTypeKey(field.type) })),
-      });
-    case "closure":
-    case "callable":
-      return JSON.stringify({
-        kind: type.kind,
-        params: type.signature.params.map((param) => semanticTypeKey(param)),
-        returnType: semanticTypeKey(type.signature.returnType),
-        defaultParamStart: type.signature.defaultParamStart,
-      });
-    case "class":
-      return JSON.stringify({ kind: type.kind, classId: type.shape.classId });
-    case "extern":
-      return JSON.stringify({ kind: type.kind, className: type.className });
-    case "dynamic":
-      return JSON.stringify({ kind: type.kind });
-    case "boxed":
-      return JSON.stringify({ kind: type.kind, inner: semanticTypeKey(type.inner) });
-    case "union":
-      return JSON.stringify({ kind: type.kind, members: type.members.map((member) => semanticTypeKey(member)) });
-    case "fnctor":
-      return JSON.stringify({ kind: type.kind, constructorName: type.shape.constructorName });
+function cloneSemanticValue(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+  if (value === null || typeof value !== "object") return value;
+  const existing = seen.get(value);
+  if (existing !== undefined) return existing;
+  if (Array.isArray(value)) {
+    const copy: unknown[] = [];
+    seen.set(value, copy);
+    for (const item of value) copy.push(cloneSemanticValue(item, seen));
+    return copy;
+  }
+  const copy: Record<string, unknown> = {};
+  seen.set(value, copy);
+  for (const [key, item] of Object.entries(value)) copy[key] = cloneSemanticValue(item, seen);
+  return copy;
+}
+
+function freezeSemanticValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value !== "object" || seen.has(value)) return value;
+  seen.add(value);
+  for (const item of Object.values(value)) freezeSemanticValue(item, seen);
+  return Object.freeze(value);
+}
+
+function snapshotSemanticSignature(
+  signature: PreparedCallableBoundarySemanticSignature,
+): PreparedCallableBoundarySemanticSignature {
+  return freezeSemanticValue(
+    cloneSemanticValue({ params: signature.params, returnType: signature.returnType }),
+  ) as PreparedCallableBoundarySemanticSignature;
+}
+
+/** Use the repository's canonical recursive serializer as an immutable receipt key. */
+function semanticSignatureKey(signature: PreparedCallableBoundarySemanticSignature): string | undefined {
+  try {
+    return JSON.stringify({
+      params: signature.params.map((type) => irTypeKey(type)),
+      returnType: signature.returnType === null ? null : irTypeKey(signature.returnType),
+    });
+  } catch {
+    // Recursive anonymous layouts have no canonical key.  They cannot cross
+    // this source ABI boundary until a producer supplies a stable identity.
+    return undefined;
   }
 }
 
-function sameSemanticSignature(left: PreparedCallableBoundarySemanticSignature, fn: IrFunction): boolean {
+function sameSemanticSignature(
+  left: PreparedCallableBoundarySemanticSignature,
+  leftKey: string,
+  fn: IrFunction,
+): boolean {
+  // The boundary contract carries at most one semantic result.  Treat a
+  // multi-result IR function as unsupported explicitly; otherwise its
+  // collapsed `null` sentinel could masquerade as a genuine void signature.
+  if (fn.resultTypes.length > 1) return false;
+  const currentReturnType =
+    fn.resultTypes.length === 0 ? null : fn.resultTypes.length === 1 ? fn.resultTypes[0]! : null;
+  const current: PreparedCallableBoundarySemanticSignature = {
+    params: fn.params.map((param) => param.type),
+    returnType: currentReturnType,
+  };
   return (
-    left.params.length === fn.params.length &&
-    left.params.every((type, index) => semanticTypeKey(type) === semanticTypeKey(fn.params[index]?.type ?? null)) &&
-    semanticTypeKey(left.returnType) ===
-      semanticTypeKey(fn.resultTypes.length === 0 ? null : fn.resultTypes.length === 1 ? fn.resultTypes[0]! : null)
+    semanticSignatureKey(current) === leftKey &&
+    left.params.length === current.params.length &&
+    left.params.every((type, index) => irTypeEquals(type, current.params[index]!)) &&
+    (left.returnType === null || current.returnType === null
+      ? left.returnType === current.returnType
+      : irTypeEquals(left.returnType, current.returnType))
   );
 }
 
@@ -274,25 +318,31 @@ function assertScopedLookup(state: CandidateState, lookup: PreparedCallableBound
 }
 
 function assertAllocatorCurrent(state: CandidateState): void {
-  state.session.assertModule(state.ctx.mod);
-  if (state.session.inventory !== state.inventory || state.registry.identityContext?.inventory !== state.inventory) {
+  state.assertModule();
+  if (!state.inventoryIsCurrent()) {
     invariant(`prepared callable boundary ${state.unitId} was issued against a foreign ABI inventory`);
   }
-  const handle = state.registry.handleForUnit(state.unitId);
-  const current = state.registry.functionForUnit(state.unitId);
+  const handle = state.handleForUnit(state.unitId);
+  const current = state.functionForUnit(state.unitId);
   if (
     handle !== state.handle ||
     current !== state.allocated ||
-    definedFuncAt(state.ctx, state.handle) !== state.allocated
+    state.definedFunctionAt(state.handle) !== state.allocated
   ) {
     invariant(`prepared callable boundary ${state.unitId} no longer owns its exact allocator object`);
   }
-  const type = state.ctx.mod.types[state.allocated.typeIdx];
+  const type = state.module.types[state.allocated.typeIdx];
   if (!type || type.kind !== "func" || !sameFuncType(type, state.allocatedSignature)) {
     invariant(`prepared callable boundary ${state.unitId} allocator signature changed after issuance`);
   }
-  if (!state.session.hasPlan(state.bindingId) || !state.session.hasLocator(state.bindingId, state.allocated)) {
+  if (!state.hasPlan(state.bindingId) || !state.hasLocator(state.bindingId, state.allocated)) {
     invariant(`prepared callable boundary ${state.unitId} lost its exact Program ABI locator`);
+  }
+}
+
+function assertSemanticCurrent(state: CandidateState, fn: IrFunction): void {
+  if (fn.unitId !== state.unitId || !sameSemanticSignature(state.semanticSignature, state.semanticSignatureKey, fn)) {
+    invariant(`prepared callable boundary ${state.unitId} semantic signature changed after issuance`);
   }
 }
 
@@ -310,9 +360,13 @@ function makeContract(
     semanticSignature: state.semanticSignature,
     projectedSignature,
     supportBindingIds: Object.freeze([...supportIds]),
-    assertCurrent: () => assertAllocatorCurrent(state),
+    assertCurrent: (fn?: IrFunction) => {
+      assertAllocatorCurrent(state);
+      if (fn) assertSemanticCurrent(state, fn);
+    },
     assertSupportCurrent: (fn: IrFunction, support: PreparedComponentClosureSupportEvidence) => {
       assertAllocatorCurrent(state);
+      assertSemanticCurrent(state, fn);
       const current = supportBindingIds(fn, support);
       if (
         !current.complete ||
@@ -327,57 +381,58 @@ function makeContract(
 }
 
 /** Issue one authenticated source callable boundary candidate. */
-export function issuePreparedCallableBoundary(input: {
-  readonly registry: ProgramAbiSourceCallableRegistry;
-  readonly unitId: IrUnitId;
-  readonly semanticSignature: PreparedCallableBoundarySemanticSignature;
-}): PreparedCallableBoundaryCandidate | undefined {
-  const { registry, unitId, semanticSignature } = input;
-  const session = registry.session;
-  const identityContext = registry.identityContext;
-  if (!session || !identityContext) return undefined;
-  session.assertModule(registry.ctx.mod);
-  if (identityContext.inventory !== session.inventory) {
+export function issuePreparedCallableBoundary(
+  input: PreparedCallableBoundaryIssueInput,
+): PreparedCallableBoundaryCandidate | undefined {
+  const { unitId, semanticSignature } = input;
+  input.assertModule();
+  if (!input.inventoryIsCurrent()) {
     invariant(`prepared callable boundary ${unitId} has a foreign source/inventory context`);
   }
-  if (!identityContext.unitByUnitId.has(unitId)) {
+  if (!input.hasUnit(unitId)) {
     invariant(`prepared callable boundary ${unitId} is outside the source inventory`);
   }
-  registry.planUnits([unitId]);
-  const handle = registry.handleForUnit(unitId);
-  const allocated = registry.functionForUnit(unitId);
-  if (handle === undefined || !allocated || definedFuncAt(registry.ctx, handle) !== allocated) {
+  const immutableSemanticSignature = snapshotSemanticSignature(semanticSignature);
+  const immutableSemanticSignatureKey = semanticSignatureKey(immutableSemanticSignature);
+  if (immutableSemanticSignatureKey === undefined) return undefined;
+  input.planUnit();
+  const handle = input.handleForUnit(unitId);
+  const allocated = input.functionForUnit(unitId);
+  if (handle === undefined || !allocated || input.definedFunctionAt(handle) !== allocated) {
     invariant(`prepared callable boundary ${unitId} has no exact live allocator observation`);
   }
-  const signature = registry.ctx.mod.types[allocated.typeIdx];
+  const signature = input.module.types[allocated.typeIdx];
   if (!signature || signature.kind !== "func") {
     invariant(`prepared callable boundary ${unitId} has no function allocator signature`);
   }
   const bindingId = irUnitCallableBindingId(unitId);
-  if (!session.hasPlan(bindingId) || !session.hasLocator(bindingId, allocated)) {
+  if (!input.hasPlan(bindingId) || !input.hasLocator(bindingId, allocated)) {
     invariant(`prepared callable boundary ${unitId} was not attached to its source ABI binding`);
   }
   const state: CandidateState = {
-    registry,
-    session,
-    inventory: identityContext.inventory,
-    ctx: registry.ctx,
+    inventory: input.inventory,
+    module: input.module,
+    assertModule: input.assertModule,
+    inventoryIsCurrent: input.inventoryIsCurrent,
+    handleForUnit: input.handleForUnit,
+    functionForUnit: input.functionForUnit,
+    definedFunctionAt: input.definedFunctionAt,
+    hasPlan: input.hasPlan,
+    hasLocator: input.hasLocator,
     unitId,
     bindingId,
     structuralReferenceKey: irCallableBindingKey({ kind: "unit", unitId }),
     handle,
     allocated,
     allocatedSignature: freezeFuncType(signature),
-    semanticSignature: Object.freeze({
-      params: Object.freeze([...semanticSignature.params]),
-      returnType: semanticSignature.returnType,
-    }),
+    semanticSignature: immutableSemanticSignature,
+    semanticSignatureKey: immutableSemanticSignatureKey,
   };
   const certify: PreparedCallableBoundaryCandidate["certify"] = ({ fn, projectedSignature, support, scopeLookup }) => {
     assertAllocatorCurrent(state);
     if (fn.unitId !== unitId) invariant(`prepared callable boundary ${unitId} received a foreign IR function`);
     if (scopeLookup) assertScopedLookup(state, scopeLookup);
-    if (!sameSemanticSignature(state.semanticSignature, fn)) return undefined;
+    if (!sameSemanticSignature(state.semanticSignature, state.semanticSignatureKey, fn)) return undefined;
     const projected = flattenProjectedSignature(projectedSignature);
     if (!sameFuncType(projected, state.allocatedSignature)) return undefined;
     const evidence = supportBindingIds(fn, support);
@@ -397,9 +452,10 @@ export function issuePreparedCallableBoundary(input: {
     allocatedSignature: state.allocatedSignature,
     semanticSignature: state.semanticSignature,
     certify,
-    assertCurrent: () => {
+    assertCurrent: (fn?: IrFunction) => {
       assertAllocatorCurrent(state);
-      if (state.contract) state.contract.assertCurrent();
+      if (fn) assertSemanticCurrent(state, fn);
+      if (state.contract) state.contract.assertCurrent(fn);
     },
     assertSupportCurrent: (fn: IrFunction, support: PreparedComponentClosureSupportEvidence) => {
       if (!state.contract) invariant(`prepared callable boundary ${unitId} was used before certification`);
