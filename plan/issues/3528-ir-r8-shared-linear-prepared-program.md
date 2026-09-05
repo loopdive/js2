@@ -712,6 +712,15 @@ Validation was run in the implementation worktree at base
   `git diff --check`: exit 0. The layering ratchet remained 86 import lines
   across 15 files, equal to baseline.
 
+After the ordinary signed merge `843a6e960836c92fc544c0fd66ad028dc45908ab`
+of upstream `origin/main` `b67ab1fc0eb2bafe959c3100df6e68d03325ce4f`, the
+focused handoff suite remained 2 files/20 tests green; typecheck, scoped LOC
+and function budgets, dialect/kind/layering gates, targeted Prettier and lint
+also remained green. Direct post-merge ratchets remained green with the same
+13-file/10-compiled linear census, 5-entry/41-terminal/38-IR-body counts per
+`check-ir-only` lane, and zero unsupported/invariant/legacy bodies; fallback
+counts stayed unchanged with deferred `string-builder-candidate` at 2.
+
 The frontmatter contains one scoped `loc-budget-allow` for
 `src/ir/backend/linear-integration.ts`, which the ratchet measured as
 `1936 → 2034 (+98)` for this plan's explicitly owned production capture and
