@@ -1,5 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { basename, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 
@@ -8,6 +9,7 @@ import { setupTypescriptUpstreamSuite } from "./setup-typescript-upstream-suite.
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1_000;
 const DEFAULT_HEARTBEAT_MS = 30_000;
 const DEFAULT_HEAP_MB = 4_096;
+const TYPESCRIPT_PROBE_ARTIFACT_FS = { existsSync, renameSync, rmSync, writeFileSync };
 
 function optionValue(name) {
   const index = process.argv.indexOf(name);
@@ -38,10 +40,10 @@ function mib(bytes) {
 }
 
 function entryFor(root, mode, override) {
+  if (mode !== "source" && mode !== "bundle") throw new Error("--mode expects source or bundle");
   if (override) return resolve(root, override);
   if (mode === "source") return resolve(root, "src/typescript/typescript.ts");
-  if (mode === "bundle") return resolve(root, "lib/typescript.js");
-  throw new Error("--mode expects source or bundle");
+  return resolve(root, "lib/typescript.js");
 }
 
 /**
@@ -98,6 +100,185 @@ export function typescriptBuildProbeExitCode(finalMessage, invocationRequirement
   if (timedOut) return 124;
   if (workerExitCode !== 0) return 1;
   return typescriptBuildProbeSucceeded(finalMessage, invocationRequirement) ? 0 : 1;
+}
+
+/**
+ * Keep the bounded JSON report useful when warnings precede the diagnostic
+ * that actually prevented emission. Preserve relative order within both
+ * groups, but never let the warning cap hide a non-warning tail failure.
+ */
+export function typescriptBuildProbeErrorSummary(errors, limit = 20) {
+  const nonWarnings = [];
+  const warnings = [];
+  for (const error of errors) {
+    const bucket = error.severity === "warning" ? warnings : nonWarnings;
+    if (bucket.length < limit) bucket.push(error);
+  }
+  return [...nonWarnings, ...warnings].slice(0, limit).map(({ message, file, line, column, code, severity }) => ({
+    message,
+    file,
+    line,
+    column,
+    code,
+    severity,
+  }));
+}
+
+/**
+ * Remove the transferred diagnostic payload before retaining or rendering the
+ * worker result. The candidate can be tens of MiB; it belongs only to the
+ * parent-side publisher and must never be cloned into the JSON summary.
+ */
+export function takeTypescriptBuildProbeArtifactCandidate(message) {
+  if (message?.type !== "result" || !("diagnosticArtifactCandidate" in message)) return null;
+  const candidate = message.diagnosticArtifactCandidate;
+  delete message.diagnosticArtifactCandidate;
+  return candidate;
+}
+
+/**
+ * Give each bounded TypeScript workload its own last-known-good diagnostic
+ * artifact. Removing the conventional `-workload` suffix preserves the
+ * parser probe's established /private/tmp filename while keeping binder and
+ * later compiler slices separate. Generic source and bundle entries retain a
+ * mode suffix so those two probes cannot overwrite each other.
+ */
+export function typescriptBuildProbeArtifactPath(entry, artifactDirectory = "/private/tmp", mode = null) {
+  const entryName = basename(entry, extname(entry));
+  const hasWorkloadSuffix = entryName.endsWith("-workload");
+  const workloadName = entryName
+    .replace(/-workload$/, "")
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const modeName = String(mode ?? "")
+    .replace(/[^A-Za-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const artifactName = `${workloadName || "typescript"}${!hasWorkloadSuffix && modeName ? `-${modeName}` : ""}`;
+  return join(artifactDirectory, `ts2wasm-${artifactName}-latest.wasm`);
+}
+
+/**
+ * Publish only an already accepted probe result. Both outputs are staged next
+ * to their destinations; the source map is installed first and the atomic
+ * Wasm rename is the commit marker. A rejected probe does not touch an older
+ * accepted artifact, and a synchronous staging failure leaves it intact.
+ */
+export function publishTypescriptBuildProbeArtifact(
+  { artifactPath, binary, sourceMap, accepted },
+  fileSystem = TYPESCRIPT_PROBE_ARTIFACT_FS,
+) {
+  const mapPath = `${artifactPath}.map`;
+  if (!accepted) {
+    return { artifactPath, mapPath, published: false, sourceMapPublished: false };
+  }
+
+  const token = `${process.pid}-${randomUUID()}`;
+  const pendingBinaryPath = `${artifactPath}.${token}.tmp`;
+  const pendingMapPath = `${mapPath}.${token}.tmp`;
+  const previousMapPath = `${mapPath}.${token}.previous`;
+  const hasSourceMap = typeof sourceMap === "string";
+  let previousMapMoved = false;
+  let nextMapInstalled = false;
+  let binaryCommitted = false;
+  const cleanupErrors = [];
+  let publication;
+
+  const removeTemporary = (path) => {
+    try {
+      fileSystem.rmSync(path, { force: true });
+    } catch (error) {
+      cleanupErrors.push({ path, message: error instanceof Error ? error.message : String(error) });
+    }
+  };
+
+  try {
+    fileSystem.writeFileSync(pendingBinaryPath, binary);
+    if (hasSourceMap) fileSystem.writeFileSync(pendingMapPath, sourceMap);
+
+    if (fileSystem.existsSync(mapPath)) {
+      fileSystem.renameSync(mapPath, previousMapPath);
+      previousMapMoved = true;
+    }
+    if (hasSourceMap) {
+      fileSystem.renameSync(pendingMapPath, mapPath);
+      nextMapInstalled = true;
+    }
+
+    fileSystem.renameSync(pendingBinaryPath, artifactPath);
+    binaryCommitted = true;
+    publication = { artifactPath, mapPath, published: true, sourceMapPublished: hasSourceMap };
+  } catch (error) {
+    const rollbackErrors = [];
+    let previousMapRestored = false;
+    if (!binaryCommitted) {
+      if (nextMapInstalled) {
+        try {
+          fileSystem.renameSync(mapPath, pendingMapPath);
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+          try {
+            fileSystem.rmSync(mapPath, { force: true });
+          } catch (removalError) {
+            rollbackErrors.push(removalError);
+          }
+        }
+      }
+      if (previousMapMoved) {
+        if (fileSystem.existsSync(previousMapPath)) {
+          try {
+            fileSystem.renameSync(previousMapPath, mapPath);
+            previousMapRestored = true;
+          } catch (rollbackError) {
+            rollbackErrors.push(rollbackError);
+          }
+        } else {
+          rollbackErrors.push(new Error(`Previous diagnostic source map disappeared from ${previousMapPath}`));
+        }
+      }
+    }
+    if (rollbackErrors.length > 0) {
+      const recoveryDetail = previousMapMoved
+        ? previousMapRestored
+          ? "the previous map was restored despite the rollback error"
+          : `the previous map remains recoverable at ${previousMapPath}`
+        : "no previous map existed to restore";
+      throw new AggregateError(
+        [error, ...rollbackErrors],
+        `TypeScript diagnostic artifact publication failed and map rollback reported errors; ${recoveryDetail}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    removeTemporary(pendingBinaryPath);
+    removeTemporary(pendingMapPath);
+    if (binaryCommitted) removeTemporary(previousMapPath);
+  }
+
+  if (cleanupErrors.length > 0) publication.cleanupErrors = cleanupErrors;
+  return publication;
+}
+
+/**
+ * The parent owns final publication because worker success is provisional
+ * until the worker exits cleanly. A timeout or post-result nonzero exit must
+ * preserve the previous accepted artifact.
+ */
+export function publishTypescriptBuildProbeArtifactAfterExit({
+  artifactPath,
+  binary,
+  sourceMap,
+  finalMessage,
+  invocationRequirement,
+  timedOut,
+  workerExitCode,
+}) {
+  return publishTypescriptBuildProbeArtifact({
+    artifactPath,
+    binary,
+    sourceMap,
+    accepted: typescriptBuildProbeExitCode(finalMessage, invocationRequirement, timedOut, workerExitCode) === 0,
+  });
 }
 
 function invocationCasesFor(root, invokeExport, invokeString, expectedNumberRaw, expectedNumber) {
@@ -170,6 +351,8 @@ async function runMain() {
     throw new Error("--expected-number expects a finite number");
   }
   const invocationPlan = invocationCasesFor(root, invokeExport, invokeString, expectedNumberRaw, expectedNumber);
+  const diagnosticArtifactPath = typescriptBuildProbeArtifactPath(entry, "/private/tmp", mode);
+  const diagnosticArtifactEnabled = process.env.JS2WASM_TYPESCRIPT_PROBE_DIAGNOSTIC === "1";
   const jsonOnly = process.argv.includes("--json");
   if (!existsSync(entry)) throw new Error(`TypeScript ${mode} entry does not exist: ${entry}`);
 
@@ -180,6 +363,7 @@ async function runMain() {
   let lastProfileLine = null;
   let lastProfileAt = null;
   let finalMessage = null;
+  let diagnosticArtifactCandidate = null;
   let workerExitCode = null;
   let timedOut = false;
   const profileCounts = {};
@@ -192,6 +376,8 @@ async function runMain() {
       invokeExport,
       invocationCases: invocationPlan.cases,
       requiredInvocations: invocationPlan.required,
+      diagnosticArtifactPath,
+      diagnosticArtifactEnabled,
     },
     stderr: true,
     env: { ...process.env, JS2WASM_COMPILE_PROFILE: "stream" },
@@ -223,6 +409,8 @@ async function runMain() {
       }
       return;
     }
+    const candidate = takeTypescriptBuildProbeArtifactCandidate(message);
+    if (candidate) diagnosticArtifactCandidate = candidate;
     finalMessage = message;
   });
 
@@ -265,6 +453,37 @@ async function runMain() {
   const elapsedMs = Math.round(performance.now() - started);
   const cpu = process.cpuUsage(initialCpu);
   const cpuMs = Math.round((cpu.user + cpu.system) / 1_000);
+  const buildExitCode = typescriptBuildProbeExitCode(
+    finalMessage,
+    invocationPlan.requirement,
+    timedOut,
+    workerExitCode,
+  );
+  let diagnosticArtifact = null;
+  let artifactPublicationFailed = false;
+  if (diagnosticArtifactEnabled) {
+    try {
+      diagnosticArtifact = publishTypescriptBuildProbeArtifactAfterExit({
+        artifactPath: diagnosticArtifactPath,
+        binary: diagnosticArtifactCandidate?.binary,
+        sourceMap: diagnosticArtifactCandidate?.sourceMap,
+        finalMessage,
+        invocationRequirement: invocationPlan.requirement,
+        timedOut,
+        workerExitCode,
+      });
+    } catch (error) {
+      artifactPublicationFailed = buildExitCode === 0;
+      diagnosticArtifact = {
+        artifactPath: diagnosticArtifactPath,
+        mapPath: `${diagnosticArtifactPath}.map`,
+        published: false,
+        sourceMapPublished: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    if (finalMessage?.type === "result") finalMessage.diagnosticArtifact = diagnosticArtifact;
+  }
   const summary = {
     mode,
     root,
@@ -285,6 +504,9 @@ async function runMain() {
       inputBytes: Buffer.byteLength(input, "utf8"),
       expected,
     })),
+    diagnosticArtifactPath,
+    diagnosticArtifactEnabled,
+    diagnosticArtifact,
     timedOut,
     workerExitCode,
     cpuMs,
@@ -298,7 +520,7 @@ async function runMain() {
   const rendered = JSON.stringify(summary);
   if (jsonOnly) process.stdout.write(`${rendered}\n`);
   else process.stdout.write(`[typescript-upstream-probe] ${rendered}\n`);
-  process.exitCode = typescriptBuildProbeExitCode(finalMessage, invocationPlan.requirement, timedOut, workerExitCode);
+  process.exitCode = artifactPublicationFailed ? 1 : buildExitCode;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) await runMain();
