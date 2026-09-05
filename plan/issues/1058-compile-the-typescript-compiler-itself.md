@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-09-01
+updated: 2026-09-05
 priority: high
 feasibility: hard
 model: fable
@@ -60,11 +60,25 @@ loc-budget-allow:
   - src/codegen/generic-callback-result.ts
   - src/codegen/generic-struct-factory.ts
   - src/codegen/module-scale-profile.ts
+  # 2026-09-01: the binder runtime reaches TypeScript's bounded
+  # `Debug[AssertionKeys]` self-replacement protocol. The namespace-value
+  # subsystem now materializes that checker-proven callable projection.
+  - src/codegen/module-namespace-value.ts
   - src/codegen/native-construct.ts
+  # 2026-09-01: the binder runtime's exported computed-option callback is a
+  # cross-source callable snapshot. Keep its module-init read on the Wasm
+  # carrier path and invoke it through a finalize-filled, ABI-complete driver.
+  - src/codegen/property-access-exact-shapes.ts
+  - src/codegen/host-fnctor-method-driver.ts
+  - src/codegen/object-runtime.ts
   # 2026-08-31: projected NodeArray vecs retain their host-backed sidecar/MOP
   # identity so parser metadata survives element-type widening.
   - src/runtime.ts
 func-budget-allow:
+  # 2026-09-01: the standalone apply bridge rejects a local closure whose live
+  # declared arity exceeds its fixed eight-position ABI while preserving the
+  # existing full-vector linked/native fallback.
+  - src/codegen/object-runtime.ts::fillApplyClosure
   # 2026-08-31: parser carrier preservation adds the narrow vec-projection
   # sidecar copy and its runtime import dispatch arm.
   - src/codegen/type-coercion.ts::coerceType
@@ -141,6 +155,10 @@ oracle-ratchet-allow:
   - src/codegen/expressions/calls-closures.ts
   - src/codegen/expressions/misc.ts
   - src/codegen/statements/nested-declarations.ts
+  # 2026-09-01: admit a runtime-namespace function projection only when the
+  # computed write key's checker constraint is a finite string-literal set and
+  # every member has one exact executable Program ABI declaration.
+  - src/codegen/module-namespace-value.ts
   # 2026-08-30: distinguishing a compiled Scanner implementation from an
   # ambient object requires checker-backed declaration and initializer
   # provenance. This is deliberately local to callback classification.
@@ -1265,9 +1283,10 @@ The publication tree passes all **69/69** focused #1058 test files and
 
 The next self-host slice is a separate binder entry over an already parsed
 `SourceFile`. Root `createSourceFile` and `bindSourceFile` directly rather than
-the broad `_namespaces/ts.js` barrel, and keep checker, emitter, services, and
-server code outside the entry graph. The first bounded native/Wasm binder smoke
-oracle is:
+the broad `_namespaces/ts.js` barrel. The intended capability boundary excludes
+checker semantics, emitter, services, and server code; the current graph still
+retains a specialized checker shell solely for `getNodeId`/`getSymbolId`. The
+first bounded native/Wasm binder smoke oracle is:
 
 ```text
 symbolCount * 65,536 + locals.size * 256 + bindDiagnostics.length
@@ -1275,13 +1294,13 @@ symbolCount * 65,536 + locals.size * 256 + bindDiagnostics.length
 
 This packed count is intentionally only a first smoke oracle: different binder
 states can collide on the same number, so it is not a semantic fingerprint.
-Only the controls whose exact source text was recorded are currently
-reproducible:
+The tracked binder workload now pins two committed controls whose exact fixture
+bytes are authoritative:
 
-| exact source | native binder smoke oracle |
+| committed fixture | native binder smoke oracle |
 | --- | ---: |
-| `const x = 1;` | 65,792 |
-| `let x; let x;` | 131,330 |
+| `tests/dogfood/fixtures/typescript-binder/const-local.ts` | 65,792 |
+| `tests/dogfood/fixtures/typescript-binder/duplicate-let.ts` | 131,330 |
 
 A third value, **459,008**, was previously measured for an exported-class case
 with a nested declaration, but the exact source text was not recorded. It is
@@ -1293,12 +1312,251 @@ name-and-flags sequence (or its stable hash) for locals and exports so distinct
 binder states cannot pass solely by colliding on the packed count.
 
 `binder.ts` is the smallest next capability slice at approximately 199 KB /
-4,008 lines. The resolver currently selects 32 parser+binder source files
-totaling **6,973,595 input source bytes**; this is a source-selection
-measurement, and **no binder Wasm build is claimed yet**. Its current
-reachability hazard is `getNodeId`, which can pull `checker.ts` into the graph
-through a broad barrel even though binding itself does not need the checker
-implementation.
+4,008 lines. The tracked workload resolves cleanly to **32 source files / 36
+program files**, **6,974,097 selected input source bytes**, and **312
+module-initialization statements**. Native TypeScript 5.9.3 recomputes the two
+table values exactly from the committed fixtures.
+
+The first full 900-second-budget compile attempt did not time out: it completed
+body generation for **4,827 functions** and all late codegen passes in 625,740
+ms / 626,423 ms wall, used 692,469 ms CPU (1.11 average cores), and peaked at
+**3,970.7 MiB RSS**, 125.3 MiB below the strict 4 GiB process target. It emitted
+no binary (`compileSuccess: false`), so no validation or binder invocation is
+claimed. The result contained 25 diagnostics; its original bounded report put
+20 IR warnings first and hid the decisive tail diagnostics. The probe now
+prioritizes non-warning failures, with a focused fail-closed regression.
+
+After that reporting fix, a fresh diagnostic-prioritized rerun again completed
+all codegen phases without timing out: **4,827 functions**, 615,304 ms worker /
+616,254 ms wall, 656,412 ms CPU (1.07 average cores), and **3,778.9 MiB peak
+RSS**, 317.1 MiB below 4 GiB. It still emitted no binary, so validation and
+invocation did not run. The 25 diagnostics were **four instances of the same
+hard error and 21 warnings**. Each hard error is the #2090 fail-closed
+stack-balance diagnostic in `createBinder`: operand-stack underflow by 3 in an
+empty-typed block (body delta -3, expected 0). The active binder blocker is
+localizing and repairing the missing value producer; the repeated signature is
+not yet evidence of four independent defects.
+
+An instrumented localization rerun completed in 634,968 ms worker / 635,901 ms
+wall, used 676,862 ms CPU (1.06 average cores), and peaked at **3,703.4 MiB
+RSS**, 392.6 MiB below 4 GiB. It confirmed four distinct physical bodies, at
+`function body[190].if.then`, `function body[231].if.then[5].if.then`,
+`function body[293].if.then[14].if.then`, and
+`function body[293].if.then[60].if.then[5].if.then`. Every body constructs the
+same memoized nested-function closure and has the same first negative net
+prefix: 37 live operands immediately before a 40-field `struct.new`, followed
+by the memo-local `local.set`. The deficit is therefore exactly three closure
+constructor operands, not a stack-diagnostic accounting artifact.
+
+A producer-provenance rerun completed in 630,303 ms worker / 631,263 ms wall,
+used 703,130 ms CPU, and peaked at **3,897.4 MiB RSS**, 198.6 MiB below 4 GiB.
+It identified all four sites as memoized reads of `bind`: the current plan has
+33 value captures, no TDZ-flag fields, and one constructibility field (37
+fields with the three-field closure header), while the cached type was already
+40 fields wide at each emission site (36 captures plus the same header and
+constructibility field). This rules out late type growth, DCE, and net-delta
+accounting. A ten-line reproducer confirmed the general failure mode: Phase 0
+publishes a wider capture ABI; compiling an earlier sibling promotes three
+owner locals; the real reserved-entry compile recomputes a narrower plan while
+the already-minted closure type and trampoline retain the provisional ABI. The
+repair must therefore make the reserved Phase-0 capture plan canonical for the
+function body, metadata, trampoline, and every constructor rather than padding
+only the failing `struct.new`.
+
+The capability graph is also not honestly checker-free yet. `binder.ts` and
+`nodeFactory.ts` obtain `getNodeId` through the broad namespace, while private
+name binding reaches `getSymbolId` through `utilities.ts`; both allocators and
+their counters live in `checker.ts`. Consumer-driven specialization already
+blanks more than 99% of that file's semantic content (only 13,444 non-whitespace
+characters, 20/4,547 function-like nodes, and 2,114/261,341 AST nodes remain),
+so its 3,094,493 blank-preserved raw bytes are not the present codegen bottleneck.
+Move both ID allocators to a small shared identity module and direct-import it
+to make the parser/binder/checker module boundary truthful, not as a claimed
+performance fix. A local extraction would forfeit the unmodified-upstream-source
+claim, so treat it as an explicit module-hygiene follow-up (or upstream it), not
+as the current stack-balance or performance repair.
+
+### Binder compile, validation, and runtime-namespace frontier (2026-09-01)
+
+This supersedes the earlier stack-balance frontier above. On snapshot
+`0280bc394964f1`, the canonical TypeScript 5.9.3 binder workload selected **32
+input/source files**, **36 Program files**, and **312 module-initialization
+statements**. It completed body generation for **4,828 functions**, compiled
+successfully, and emitted a **76,915,977-byte** module that
+`WebAssembly.validate` accepted. The worker used 718,317 ms CPU (1.12 average
+cores) and peaked at **3,850.2 MiB RSS**, 245.8 MiB below the strict 4 GiB
+process target. The result had **21 non-fatal warnings and no hard compile
+errors**.
+
+Both committed binder controls instantiated and reached execution, but first
+stopped at the same runtime boundary: `visitorPublic.ts:374:5` called the
+overloaded `Debug.assertEachNode` through a null namespace receiver. TypeScript
+nominates the first bodyless overload as that property's `valueDeclaration`,
+so the static namespace-call path had declined to the extern-method bridge.
+Commit `b0f313de1f8af204ace11750c3bda9012180b26c` selects the unique body-bearing
+declaration and retains the exact Program ABI identity check. Its circular
+export-star regression executes the call and emits no
+`__extern_method_call_*` import.
+
+A fresh post-fix run again compiled and validated successfully. It completed in
+656,354 ms worker / 657,223 ms wall, used 718,349 ms CPU (1.09 average cores),
+peaked at **3,494.3 MiB RSS**, and emitted a **76,914,855-byte** module with
+**4,828 functions**, **21 non-fatal warnings**, and no hard compile errors. Both
+fixtures then entered `Debug.assertEachNode` and reached the next shared
+boundary inside `shouldAssertFunction`: the computed self-read `Debug[name]` at
+`debug.ts:189:56` still treated the mixed runtime namespace as its legacy null
+placeholder. The probe correctly rejected both invocations and did not publish
+`/private/tmp/ts2wasm-typescript-binder-latest.wasm{,.map}`.
+
+The focused repair materializes one symbol-keyed namespace function projection
+only when the checker proves that every possible computed-write key is a finite
+string-literal set of unique executable exports. It selects overload
+implementations by their body-bearing declarations, re-resolves exact Program
+ABI handles after late-import shifts, and never serves the partial projection
+for a bare/escaping namespace value or a non-admitted member. The exact
+`Debug[AssertionKeys]` circular-barrel regression now compiles, validates, and
+executes.
+
+The first full rerun after that lowering change remained byte-identical to the
+previous module and stopped at the same `Debug[name]` boundary. The projection
+had not been admitted because consumer-driven specialization retained the
+exported runtime variable `Debug.loggingHost` but blanked its annotation owner,
+`LoggingHost`. The checker consequently treated the member as `any`, collapsed
+`MatchingKeys<typeof Debug, AnyFunction>` to `any`, and could no longer prove a
+finite key set. Commit `2fb2e6281be880a15d07ee8d669e0933933732ee`
+adds a checker-only type closure rooted narrowly at retained exported namespace
+variable annotations. It keeps the transitive `HostAlias` / `LoggingHost` /
+`LogRecord` chain without turning type-only declarations or exported function
+signatures into runtime roots. All four real `Debug` index sites then resolve to
+the same 51-member string-literal union, while the selected graph remains
+exactly **32 source files / 36 Program files**.
+
+The authoritative namespace post-fix run completed in 679,516 ms worker /
+680,545 ms wall, used 725,668 ms CPU (1.07 average cores), and peaked at
+**3,859.4 MiB RSS**, 236.6 MiB below the strict 4 GiB process target. It
+compiled and validated a **77,236,087-byte** module with **4,862 functions**,
+**21 non-fatal warnings**, and no hard compile errors. Relative to the
+pre-admission module, the additional 321,232 bytes and 34 functions prove that
+the bounded namespace projection reached the binary. Both committed fixtures
+passed the former `Debug[name]` frontier and then stopped while invoking the
+imported property-derived callback `getEmitScriptTarget(options)` at
+`binder.ts:586:9` (Wasm offset 14,612,147, source-map anchor 14,612,053).
+
+The callback itself was present, but its exported const snapshot had been
+initialized to null. `_computedOptions.target.computeValue` is a Wasm closure
+field on a generic object whose receiver is represented as externref. During
+module initialization, the JS-host property bridge cannot inspect WasmGC fields
+because instance wiring has not completed. Callable exact-shape reads now stay
+on the Wasm carrier/member-dispatch path in the host lane. Cross-source const
+aliases then invoke the stored snapshot through a finalize-filled driver rather
+than a body-time signature ladder: this sees closures registered by later
+source units, pads under-applied calls to the implementation arity while
+preserving the true argument count, and falls back directly for genuine host
+callables. Both host and standalone bridges now trap when the live closure
+exceeds their eight-formal ABI cap, so contextual types, property replacement,
+aliasing, or spreads cannot turn an unsupported closure into a silent undefined
+result. Standalone keeps its existing structural property reads.
+
+The focused multi-module regression now verifies the original computed-option
+callback, snapshot identity after the source property is replaced, a preceding
+truthy alias, positional argument order, under-application, the >8-formal
+boundary, direct/escaped/hoisted/factory/spread replacements before snapshot,
+and a host-free build with zero function imports (**8/8 passing**). A
+narrow real-upstream TypeScript probe selected **17
+source files / 21 Program files**, emitted and validated **2,465,088 bytes** in
+7.6 seconds with an 819.4 MiB peak, and invoked the previously null alias with
+the expected result **99**.
+
+The next authoritative binder run completed in 638,618 ms worker / 639,467 ms
+wall, used 720,370 ms CPU (1.13 average cores), and peaked at **4,089.9 MiB
+RSS**. It compiled and validated a **77,013,373-byte** module with **4,863
+functions**, the same **32 source files / 36 Program files / 312 module-init
+statements**, **21 non-fatal warnings**, and no hard compile errors. Both binder
+oracles passed `getEmitScriptTarget` and reached `bindSourceFileAsExternalModule`
+before trapping with a null dereference at `binder.ts:3133:9` (Wasm offset
+14,778,839; source-map anchor 14,778,791). Focused probes prove the allocator,
+its `getSymbolConstructor()` result, the exact small-graph late-assigned
+constructor, and the individual filename, symbol, declaration-array, and
+export-table operations; the remaining investigation is whether the complete
+closure registry changes that dynamic constructor ABI or whether another
+operation inside the call is the first null. Until both exact binder oracles
+match, the binder slice is not accepted and the failed invocation does not
+publish the latest artifact.
+
+### 2026-09-01 stop handoff — draft PR #5390
+
+Work is published from `codex/1058-typescript-binder` in draft PR **#5390**.
+The parser milestone remains accepted; this checkpoint fixes the next binder
+runtime boundary but does **not** claim binder or full TypeScript completion.
+
+Validated at handoff:
+
+- `tests/issue-1058-barrel-computed-option-capture.test.ts`: **8/8 passing**
+  across host and standalone, including snapshot identity, under-application,
+  runtime arity overflow, and direct/escaped/hoisted/factory/spread mutation
+  controls.
+- `tests/standalone-shared-globalthis-import.test.ts`: **2/2 passing**, proving
+  the arity guard preserves linked-realm callable delegation.
+- `pnpm run typecheck:ts5` and `pnpm run typecheck`: passing.
+- `pnpm run check:ir-fallbacks`, issue-ID validation, formatting, and diff
+  checks: passing.
+- A narrow real TypeScript callback graph compiles, validates, and returns 99;
+  the latest full binder module compiles and validates before the runtime trap
+  described above.
+
+Non-authoritative broader checks still expose existing branch/environment
+noise: the #1712 dynamic suite has its prior Acorn `parse is not a function`
+failure, #4384 retains its prior native-array 0-versus-42 failure, and direct
+#3592 execution requires Node's experimental Wasm exception-reference support.
+None is on the focused #1058 path.
+
+Resume at `binder.ts:3133:9` inside `bindAnonymousDeclaration`, using both
+committed binder oracles. First distinguish the complete-graph dynamic
+constructor ABI from the filename/symbol/declaration/export-table operations
+already proven independently. Do not rerun the ten-minute authoritative binder
+until a focused discriminator changes that boundary. After binder parity, move
+to the checker TS2322 oracle, then printer/emitter, and only then self-hosting.
+
+### 2026-09-05 current-main sync and resumed frontier
+
+Branch `codex/1058-typescript-binder` is synchronized with loopdive/js2 main at
+`0a5a3e87df074982cc3022a95899fc62ad69b036` by merge commit
+`0c9f00a0f3fb4f`. The two content conflicts were resolved by composition, not
+side selection: module namespace objects retain main's immutable-global and
+Node-builtin re-export entries together with this branch's declaration-aware
+callable-handle refresh, while nested declarations retain main's promoted and
+forwarded pre-registration ABI together with this branch's canonical reserved
+capture plan. The seven conflict-focused suites pass **34/34**.
+
+The sync exposed a TypeScript 5-only source typecheck regression inherited
+from main: TS5's DOM declarations do not yet contain `WebAssembly.Tag`, while
+TS7's do. Commit `45b7d783353d04` describes the feature-detected tag locally by
+the only contract this runtime uses (constructible object identity). Both
+`pnpm run typecheck:ts5` and `pnpm run typecheck:ts7` pass, and the linked
+provider exception-identity suite passes **4/4**. `AGENTS.md` now uses
+repository-relative memory links in commit `d3ff3a70028dd1`, so the documented
+context resolves from every worktree rather than one retired checkout.
+
+Current main also contains the focused discriminator for the prior
+`binder.ts:3133:9` null-constructor hypothesis: a read-only GC-reference capture
+whose declaring slot was boxed later is forwarded as its value instead of the
+ref cell. The capture/constructor regression set passes **12/12**, including
+both TypeScript late-constructor factories. This makes the mainline capture fix
+a credible mover for the old runtime boundary, but it is not yet authoritative
+proof for the full graph.
+
+The first authoritative post-sync binder run used the same **32 source files /
+36 Program files / 312 module-init statements** and remained actively in
+codegen until the probe's 900,000 ms limit. It timed out after **900,044 ms**
+wall / **647,781 ms CPU** (0.72 average cores), peaked at **1,882.5 MiB RSS**,
+and last reported `src/compiler/parser.ts`; it produced no compile diagnostic,
+no module, and therefore no binder invocation result. This is a measured
+compile-time frontier, not evidence that the old runtime null survived. Resume
+with a longer completion budget against this already-prepared pinned checkout,
+then compare both exact binder oracle results. If construction succeeds but
+each result is exactly 65,536 too high, inspect
+`externalModuleIndicator`/`isExternalModule` before changing constructor
+lowering.
 
 The module plan remains capability-based: parser, binder, checker, and
 printer/emitter are separate public roots. A runtime module that is neither
@@ -1322,6 +1580,8 @@ emit and self-hosting.
 - [x] Tier 3 scanner+parser graph compiles, validates, and executes all three pinned real-source workloads
 - [x] Consumer-driven source resolution narrows the parser graph with default
       resolution unchanged and focused static/dynamic-demand tests
+- [ ] Binder slice compiles, validates, preserves the three accepted parser
+      fingerprints, and matches both committed native/Wasm binder oracles
 - [ ] ≥ 5 follow-up issues filed for concrete gap patterns
 - [x] Results document the real-package compile rate, not hand-written toy subset (supersedes #452's scope)
 - [x] **Stretch 1 (Tier 3):** compiled scanner+parser produces native-equivalent AST fingerprints for all three pinned real `.ts` files

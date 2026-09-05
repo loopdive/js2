@@ -136,6 +136,81 @@ describe("#1058 consumer-driven pure barrels", () => {
     expect(provider).not.toContain("interface Unrelated");
   });
 
+  it("preserves exported namespace annotation types needed by bounded computed keys", async () => {
+    const root = fixture({
+      "entry.ts": `
+        import { run } from "./barrel.js";
+        export function test(): number { return run(); }
+      `,
+      "barrel.ts": `
+        export * from "./core.js";
+        export * from "./debug.js";
+        export * from "./visitor.js";
+      `,
+      "core.ts": `export function noop(): void {}`,
+      "debug.ts": `
+        import { noop } from "./barrel.js";
+
+        interface LogRecord { readonly message: string; }
+        interface LoggingHost { log(record: LogRecord): void; }
+        type HostAlias = LoggingHost;
+        interface DeadHost { readonly dead: number; }
+        interface SignatureOnly { readonly value: number; }
+
+        export namespace Debug {
+          export let loggingHost: HostAlias | undefined;
+          type AnyFunction = (...args: any[]) => unknown;
+          type MatchingKeys<TRecord, TMatch, K extends keyof TRecord = keyof TRecord> =
+            K extends (TRecord[K] extends TMatch ? K : never) ? K : never;
+          type AssertionKey = MatchingKeys<typeof Debug, AnyFunction>;
+          const assertionCache: { [key: string]: { assertion: unknown } | undefined } = {};
+
+          function shouldAssertFunction(name: AssertionKey): boolean {
+            assertionCache[name] = { assertion: Debug[name] };
+            (Debug as any)[name] = noop;
+            return false;
+          }
+
+          export function assertEachNode(nodes: readonly number[]): void;
+          export function assertEachNode(nodes: number[]): void;
+          export function assertEachNode(nodes: readonly number[] | undefined): void;
+          export function assertEachNode(nodes: readonly number[] | undefined): void {
+            if (shouldAssertFunction("assertEachNode") && nodes?.length !== 1) {
+              throw new Error("unexpected nodes");
+            }
+          }
+
+          export function signatureOnly(_value: SignatureOnly): void {}
+        }
+      `,
+      "visitor.ts": `
+        import { Debug } from "./barrel.js";
+        export function run(): number {
+          const nodes = [42];
+          Debug.assertEachNode(nodes);
+          return nodes[0];
+        }
+      `,
+    });
+
+    const contents = graph(root, true);
+    const debug = graphContent(contents, "debug.ts");
+    expect(debug).toContain("interface LogRecord");
+    expect(debug).toContain("interface LoggingHost");
+    expect(debug).toContain("type HostAlias");
+    expect(debug).not.toContain("interface DeadHost");
+    expect(debug).not.toContain("interface SignatureOnly");
+
+    const result = await compileProject(join(root, "entry.ts"), {
+      skipSemanticDiagnostics: true,
+      resolve: { consumerDrivenBarrels: true },
+    });
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(WebAssembly.validate(result.binary)).toBe(true);
+    const { instance } = await WebAssembly.instantiate(result.binary, result.importObject!);
+    expect((instance.exports.test as () => number)()).toBe(42);
+  });
+
   it("specializes a static namespace member and drops its now-unused import", () => {
     const root = fixture({
       "entry.ts": `import { Debug } from "./provider.js"; export const test = Debug.assert;`,

@@ -59,6 +59,13 @@ function funcTypeKey(params: ValType[], results: ValType[]): string {
     else if (v.kind === "i64") {
       if ((v as { bigint?: true }).bigint) s += ":big";
     }
+    // An f64 undefined sentinel has the same Wasm carrier as an ordinary
+    // number, but callers must preserve the brand so boxing can recover
+    // `undefined`. Keep it out of the plain-number cache entry just like the
+    // i32/i64 semantic carriers above.
+    else if (v.kind === "f64") {
+      if ((v as { undefSentinel?: true }).undefSentinel) s += ":undef";
+    }
     return s;
   };
   return params.map(part).join(",") + "|" + results.map(part).join(",");

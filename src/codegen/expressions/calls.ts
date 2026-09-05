@@ -3487,6 +3487,24 @@ function isRuntimeNamespaceReceiver(ctx: CodegenContext, identifier: ts.Identifi
   );
 }
 
+/** Resolve the single executable declaration behind an overloaded namespace member. */
+function runtimeNamespaceMemberImplementation(
+  ctx: CodegenContext,
+  name: ts.Identifier,
+): ts.FunctionDeclaration | undefined {
+  const declarations = [ctx.oracle.valueDeclarationOf(name), ...ctx.oracle.declarationsOf(name)];
+  const seen = new Set<ts.Declaration>();
+  const implementations: ts.FunctionDeclaration[] = [];
+  for (const declaration of declarations) {
+    if (declaration === undefined || seen.has(declaration)) continue;
+    seen.add(declaration);
+    if (ts.isFunctionDeclaration(declaration) && declaration.name !== undefined && declaration.body !== undefined) {
+      implementations.push(declaration);
+    }
+  }
+  return implementations.length === 1 ? implementations[0] : undefined;
+}
+
 /**
  * (#4614/#1058) Statically resolve a runtime namespace member call to the
  * equivalent named call. This covers both `import * as ns` and TypeScript's
@@ -3503,19 +3521,13 @@ function tryRuntimeNamespaceMemberCall(
   const access = expr.expression;
   if (!ts.isIdentifier(access.expression) || ts.isPrivateIdentifier(access.name)) return undefined;
   if (!isRuntimeNamespaceReceiver(ctx, access.expression)) return undefined;
-  // The export symbol of `export function f` carries the FunctionDeclaration
-  // directly; deeper re-export chains resolve to the intermediate specifier
-  // and decline here (fail-closed to the legacy lane).
-  const memberDecl = ctx.oracle.valueDeclarationOf(access.name);
-  if (
-    memberDecl === undefined ||
-    !ts.isFunctionDeclaration(memberDecl) ||
-    memberDecl.name === undefined ||
-    memberDecl.body === undefined
-  ) {
-    return undefined;
-  }
+  // TypeScript nominates the first signature as valueDeclaration for an
+  // overloaded exported function. Resolve the one body-bearing declaration;
+  // ambiguous or non-executable export shapes still fail closed.
+  const memberDecl = runtimeNamespaceMemberImplementation(ctx, access.name);
+  if (memberDecl === undefined) return undefined;
   const targetName = memberDecl.name;
+  if (targetName === undefined) return undefined;
   // A bare name is graph-global legacy state and may belong to an unrelated
   // declaration. Require the exact Program ABI source unit and allocator
   // handle, then project that handle only for the duration of the established
