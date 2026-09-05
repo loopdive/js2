@@ -186,13 +186,23 @@ type (ref null 46), found struct.get of type i32 @+310643
 `#721:"__closure_47"` — same defect, different function numbering because main has
 advanced since #5390.)
 
-## Cost
+## Cost — measured, not estimated
 
-**19.9 s wall** locally at concurrency 4, bounded by moment's ~15 s compile; 51 s if
-run serially. Against a `quality` job that took **9 m 44 s** on PR #5620, that is ~3 %.
-The measured per-package compile times on GitHub's `ubuntu-latest` (from
-`npm-compat.json`) sum to ~59 s, so expect roughly 30–60 s there at the default
-concurrency of `min(4, cores − 1)`.
+**In CI: 25.7 s.** From this PR's own `quality` job
+([run 33982804762](https://github.com/loopdive/js2/actions/runs/33982804762), step
+`Dogfood emitted-binary validation floor (#5336)`, 18:06:23Z → 18:06:49Z):
+
+```
+[dogfood-validation] 6 packages, concurrency 3 — asserting compile.success ⇒ …
+[dogfood-validation] 25683ms wall
+[dogfood-validation] ok — 6/6 gated packages compiled, 6/6 validated.
+```
+
+That job ran **10 m 02 s** end to end, so the gate is **~4 %** of a required check
+that was already ~10 min (9 m 44 s on PR #5620, before this step existed). The
+runner picked `concurrency 3` (`min(4, cores − 1)` on a 4-vCPU `ubuntu-latest`).
+
+Locally: **19.1 s** at concurrency 4 on an 8-core box; **51 s** if run serially.
 
 ## Required-check proposal
 
@@ -202,7 +212,7 @@ was the deliberate choice over a new top-level job: a new job would need
 `docs/ci-policy.md` §7 and the branch ruleset amended, which is a project-lead
 decision, not a workflow edit.
 
-Recommendation: **keep it required, as a `quality` step.** ~20 s against a ~10 min job
+Recommendation: **keep it required, as a `quality` step.** 25.7 s against a 10 min job
 is cheap for the class of bug it catches (`main` shipping unloadable Wasm, undetected,
 for days). If it later proves to be on the critical path, promoting it to its own
 parallel required context is the follow-up — and that goes through §8.

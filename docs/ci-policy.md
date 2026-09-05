@@ -882,9 +882,10 @@ compiler, not a target — a module that codegens but will not load is always a
 bug — which is why it needs no baseline and no golden number.
 
 Why it exists: #5390 broke it for moment and survived **five merges with all
-six required checks green**, because no check read `compile.validated`. Cost:
-**~20 s wall** at concurrency 4 (bounded by moment's ~15 s compile) against a
-~10 min `quality` job. If it ever needs to become its own required context —
+six required checks green**, because no check read `compile.validated`.
+Measured cost: **25.7 s** in `quality` on a 4-vCPU `ubuntu-latest`
+(concurrency 3, bounded by moment's ~13 s compile), against a job that runs
+~10 min — about 4 %. If it ever needs to become its own required context —
 e.g. to move it off `quality`'s critical path — that is a ruleset change and
 goes through §8, not through a workflow edit.
 
