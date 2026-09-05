@@ -218,6 +218,13 @@ revert vs this branch), one suite at a time, compared per test file
 | jest | 299/356 | 299/356 | 34 identical |
 | hono | (no headline) | (no headline) | 4 identical |
 
+The A/B was taken at `46c12b01d6`, before #5320 landed. After merging current
+main (which carries #5320's `conditional-capture-box.ts`) the two compose with no
+interaction: moment stays **10/10**, and the two packages #5320 moved keep its
+numbers — **axios 200/231**, **marked 9/30**. `tests/issue-5320-…test.ts` (23),
+`issue-5303-…` (2), `issue-2692-…`, `issue-2623-…` and this issue's 6 cases all
+pass together (5 files, 45 tests).
+
 All 17 suites exited 0 in both arms and printed an `admitted` headline except
 `uuid` and `hono`, which never do — both were scored per test file instead, and
 every line is identical. `lodash` prints its own per-file format; its headline
