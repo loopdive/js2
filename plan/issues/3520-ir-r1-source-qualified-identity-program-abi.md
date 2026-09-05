@@ -5703,3 +5703,51 @@ Return exact commands, base/head SHAs, moved outcome rows and any residual
 failures. Keep the epic open and do not claim reference-equality IR support:
 this slice removes a post-claim refusal, it does not implement reference
 identity lowering.
+
+## W1-H measured landing record — 2026-09-05
+
+Implementer measurements were taken on base `a53b1bd17338c01f4bffe2df6b3463d216990a6b`;
+the candidate is that same base plus the scoped `src/ir/select.ts` guard and
+`tests/issue-3520-equality-reference-operands.test.ts`. The production edit is
+12 lines and matches the execution lock above: only exact equality operators
+whose two operands are positively classified as `reference` receive the
+selector-stage `operand-coercion-unsupported` refusal.
+
+Fresh before/after probes moved the callable-pair `===`, `!==`, `==`, and `!=`
+rows on both `gc` and `standalone` from `stage: build` with a nonempty
+`irPostClaimErrors` equality row to `stage: select` with no post-claim error.
+The nested `try/catch` shape, array pairs, local-class pairs, and callable alias
+also refuse before claim. The local-class constructor remains an independent
+emitted row. Structural-object parameters preserve the base build-stage
+fallback and post-claim row; no absent-classifier heuristic was added. `any`
+equality preserves its emitted dual-body/R2-withdrawal row, while `unknown` and
+primitive-union parameters preserve `param-type-not-resolvable`. Typed number,
+string, boolean, `x === undefined`, and `x !== null` controls preserve emitted
+IR, runtime answers, and tracked/untracked binary identity.
+
+The dedicated suite reports 18/18 passing. Removing only the 12-line production
+guard makes the callable `===` test fail at `stage: build` and makes the
+existing support-name collision assertion fail with its prior equality entry in
+`irPostClaimErrors`; restoring the guard makes both controls pass. The existing
+support-callable suite remains 1/2: its collision test passes, while the
+planned-support resolver probe still fails at the known allocator-slot check.
+
+The `.ts` emit-identity tool captured 60 `(file,target)` rows (15 files ×
+`gc`/`standalone`/`wasi`/`linear`) before the edit and reports `IDENTICAL` for
+all 60 on the candidate. `JS2WASM_IR_SHAPE_DIAG=1` was enabled for the fresh
+processes. The existing selector telemetry only attaches its `detail` field to
+`body-shape-rejected` rows, so the typed selector outcome remains the generic
+`... operand-coercion-unsupported` text even though the source arm is the exact
+`expr-equality-reference-operands:BinaryExpression` call above.
+
+Required checks: `check:ir-fallbacks`, `check-ir-only --policy=hybrid`,
+`check-ir-only --policy=ir-only`, IR dialect, kind-neutrality, layering,
+typecheck, lint, LOC/function/coercion/oracle ratchets, and dead-export audit
+all pass. The dead-export script needed an equivalent invocation from a
+space-free temporary mirror because its `import.meta.url` path handling leaves
+`%20` in this worktree's absolute path. Bounded parity suites pass for selector
+preclaim (67), producer parity (3), issue-4502 (29), direct-member equality
+(4), wrapper loose equality (4), and strict-disjoint equality (16). Integration
+preflight remains 10/13: two module-init expectation rows now observe the
+existing `module-init-legacy-coupling` fallback, and the Date provider collision
+row now emits; these are unrelated drift from the scoped equality change.

@@ -1968,7 +1968,7 @@ export function ensureAsyncResumeFunction(
   // until final assembly). Import indices are append-stable, so capturing the
   // number here is safe. No-op (pure funcMap lookup) when already registered.
   let hostGetCaughtIdx: number | undefined;
-  if (info.host && routedDispatch) {
+  if (info.host) {
     hostGetCaughtIdx = ensureLateImport(ctx, "__get_caught_exception", [], [{ kind: "externref" }]);
     flushLateImportShifts(ctx, resumeFctx);
   }
@@ -2658,13 +2658,39 @@ export function ensureAsyncResumeFunction(
         body: [{ op: "loop", blockType: { kind: "empty" }, body: chain }],
       },
     ];
+    // (#3587 / #5322) HOST-lane `catch_all` parity for the NON-routed
+    // dispatcher too. An async body with no try/catch of its own still has to
+    // reject its result promise when a FOREIGN JS exception is raised while it
+    // resumes — the canonical shape is a compiled function the HOST invoked
+    // (`o.m(x)` on an `any` receiver goes out through `__extern_method_call`,
+    // and the host calls back in) that throws. Without this arm that exception
+    // is not `$exn`-tagged, escapes the state machine, and the result promise
+    // STRANDS PENDING: the awaiting test never settles and the throw surfaces
+    // as an unhandled rejection that kills the process. #3587 added the arm
+    // only to the routed dispatcher, so exactly the try/catch-free bodies —
+    // the common case — kept escaping. Measured witness: hono
+    // `utils/body.test.ts`, whose 37 results were all lost to one such throw.
+    const plainCatchAll: Instr[] | undefined =
+      info.host && hostGetCaughtIdx !== undefined
+        ? [
+            { op: "call", funcIdx: hostGetCaughtIdx },
+            { op: "local.set", index: reasonLocal },
+            ...(structuredClone(rejectTail) as Instr[]),
+          ]
+        : undefined;
     resumeFctx.body.push(
-      buildTargetTaggedTry(ctx, { kind: "empty" }, dispatch, [
-        {
-          tagIdx: exnTag,
-          body: [{ op: "local.set", index: reasonLocal }, ...rejectTail],
-        },
-      ]),
+      buildTargetTaggedTry(
+        ctx,
+        { kind: "empty" },
+        dispatch,
+        [
+          {
+            tagIdx: exnTag,
+            body: [{ op: "local.set", index: reasonLocal }, ...rejectTail],
+          },
+        ],
+        plainCatchAll,
+      ),
     );
   }
 
