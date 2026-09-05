@@ -106,6 +106,7 @@ import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolvePromiseSubclassName } from "./promise-subclass.js";
 import {
   applyRuntimeNewTargetPrototype,
+  classifyRuntimeNewTargetSite,
   emitRuntimeNewTargetPrototype,
   prepareRuntimeNewTargetProto,
   tryEmitOrdinaryConstructWithNewTarget,
@@ -1903,7 +1904,24 @@ export function compileNamespaceStaticCall(
         const staticNewTargetProto = distinctNewTarget
           ? assignedNewTargetPrototype(ctx, newTargetArg!, expr.getStart())
           : undefined;
-        const runtimeNewTargetProto = distinctNewTarget && staticNewTargetProto === undefined;
+        // (#3371 review r1) …but only for the shapes whose read AND write are
+        // sound. `classifyRuntimeNewTargetSite` answers `undefined` for every
+        // shape measured to answer wrongly (a class NewTarget, a target that
+        // reads `new.target`, a non-identifier NewTarget expression, a target
+        // whose carrier has no settable prototype); those keep base's refusal
+        // below rather than silently returning the wrong prototype.
+        const newTargetRoute =
+          distinctNewTarget && staticNewTargetProto === undefined
+            ? classifyRuntimeNewTargetSite(
+                ctx,
+                unwrapReflectConstructExpr(targetArg),
+                unwrappedList.elements as readonly ts.Expression[],
+                newTargetArg!,
+              )
+            : undefined;
+        const runtimeNewTargetProto = newTargetRoute !== undefined;
+        const refuseDistinctNewTarget =
+          distinctNewTarget && staticNewTargetProto === undefined && !runtimeNewTargetProto;
         let ntValueLocal: number | undefined;
         if (runtimeNewTargetProto) {
           prepareRuntimeNewTargetProto(ctx, fctx);
@@ -1957,7 +1975,7 @@ export function compileNamespaceStaticCall(
         // and therefore also gives the body's own `Object.getPrototypeOf(this)`
         // the right answer.
         if (
-          runtimeNewTargetProto &&
+          newTargetRoute === "driver" &&
           tryEmitOrdinaryConstructWithNewTarget(
             ctx,
             fctx,
@@ -1981,6 +1999,18 @@ export function compileNamespaceStaticCall(
         if (resultType.kind !== "externref") coerceType(ctx, fctx, resultType, externRef);
 
         if (!distinctNewTarget) return { kind: "externref" };
+
+        if (refuseDistinctNewTarget) {
+          // Verbatim the pre-r4 refusal, emitted at the pre-r4 point (after the
+          // ordinary construction, with its value on the stack).
+          reportError(
+            ctx,
+            expr,
+            "Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget " +
+              "without a statically-resolved NewTarget.prototype assignment (#3371).",
+          );
+          return { kind: "externref" };
+        }
 
         const assignedProto = staticNewTargetProto;
         if (assignedProto !== undefined && isDefinitelyPrimitivePrototype(ctx, assignedProto)) {
@@ -2024,7 +2054,14 @@ export function compileNamespaceStaticCall(
           const carriers: { typeIdx: number; fieldIdx: number }[] = [];
           if (ctx.dvWindowTypeIdx >= 0) carriers.push({ typeIdx: ctx.dvWindowTypeIdx, fieldIdx: 3 });
           if (ctx.taDynViewTypeIdx >= 0) carriers.push({ typeIdx: ctx.taDynViewTypeIdx, fieldIdx: 5 });
-          applyRuntimeNewTargetPrototype(ctx, fctx, resultAny, resultLocal, protoLocal, carriers);
+          if (!applyRuntimeNewTargetPrototype(ctx, fctx, resultAny, resultLocal, protoLocal, carriers)) {
+            reportError(
+              ctx,
+              expr,
+              "Codegen error: standalone Reflect.construct cannot preserve an arbitrary distinct NewTarget " +
+                "without a statically-resolved NewTarget.prototype assignment (#3371).",
+            );
+          }
           fctx.body.push({ op: "local.get", index: resultLocal });
           return { kind: "externref" };
         }

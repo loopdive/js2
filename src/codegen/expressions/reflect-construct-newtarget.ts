@@ -40,6 +40,49 @@
  * typed-array view struct, or — for anything else — the ordinary
  * `__object_setPrototypeOf` path. Before this the "no carrier arm matched" case
  * was itself a compile error.
+ *
+ * ## What this path REFUSES, and why (2026-09-05 review round 1)
+ * The read and the write are only sound for some target/NewTarget shapes, and
+ * every shape outside that set is handed back to the pre-existing #3371
+ * refusal rather than answered wrongly. `classifyRuntimeNewTargetSite` is the
+ * one gate; each clause below is a MEASURED wrong answer on the r4 tree
+ * (`--target standalone`, node 22 as the oracle):
+ *
+ *   - **NewTarget denotes a class.** A class value's prototype object is not
+ *     reified in standalone at all: `C.prototype` compiles to `null` even with
+ *     a literal key (measured on BASE too, so it is not this arm's doing), and
+ *     `__reflect_is_constructor` has no class arm, so a class reaching the
+ *     runtime classifier throws "newTarget is not a constructor". Refused.
+ *   - **The target reads `new.target`.** `new.target` is an i32 class-id module
+ *     global keyed by class NAME (#2023); the constructed frame cannot carry a
+ *     NewTarget VALUE, so the body reads `undefined` and a standard
+ *     `if (new.target === undefined) throw` guard fires where node constructs.
+ *     Refused.
+ *   - **A NewTarget expression that is not a bare identifier.** The fallback
+ *     route hands target+arguments to `compileNewExpression`, which evaluates
+ *     AND constructs in one step, and §26.1.2 requires the IsConstructor check
+ *     on NewTarget to precede construction — so there is no seam to evaluate
+ *     the NewTarget expression between the argument list and the allocation.
+ *     Restricting NewTarget to an identifier makes its evaluation
+ *     side-effect-free, which is what makes reading it before the arguments
+ *     unobservable. Anything else is refused rather than reordered.
+ *   - **A target whose instance has no settable prototype.** The nominal
+ *     carriers have no `$proto` field, so `__object_setPrototypeOf` is a silent
+ *     no-op on them: `Reflect.construct(Array, [3], NT)` answered
+ *     `Array.prototype` where node answers `NT.prototype`. A user class, an
+ *     in-file function the driver route declined, and the named builtin list
+ *     below all refuse for this reason. Deliberately NOT refused are the
+ *     carriers whose `Object.getPrototypeOf` is independently broken on base
+ *     (Promise, class instances, typed-array views — see the list's comment):
+ *     those programs read a wrong prototype with or without this arm, and
+ *     refusing them would drop passing rows for no correctness gain.
+ *   - **The driver route with a NewTarget whose `prototype` is not a plain
+ *     `$Object`.** `__native_construct_N` stores the supplied prototype only
+ *     when it passes `ref.test $Object`; a prototype that is an object-literal
+ *     carrier (e.g. installed by `Object.defineProperty(NT, "prototype", …)`)
+ *     is silently dropped and the instance gets `%Object.prototype%`. The
+ *     route is therefore limited to a NewTarget binding whose `prototype` is
+ *     provably untouched.
  */
 import { ts, forEachChild } from "../../ts-api.js";
 import type { Instr, ValType } from "../../ir/types.js";
@@ -68,6 +111,12 @@ export function prepareRuntimeNewTargetProto(ctx: CodegenContext, fctx: Function
   // left `Object.getPrototypeOf(result)` at null while every row still
   // "compiled".
   ensureLateImport(ctx, "__object_setPrototypeOf", [EXTERNREF, EXTERNREF], [EXTERNREF]);
+  // §10.1.14 step 3 — "if Type(proto) is not Object, use the intrinsic
+  // default" needs a runtime Type(V) probe. Same pair (and same separate null
+  // test) `construct-return-value.ts` uses: `__typeof_object(null)` answers 1
+  // by design, and a returned FUNCTION is an Object.
+  ensureLateImport(ctx, "__typeof_object", [EXTERNREF], [{ kind: "i32" }]);
+  ensureLateImport(ctx, "__typeof_function", [EXTERNREF], [{ kind: "i32" }]);
   flushLateImportShifts(ctx, fctx);
 }
 
@@ -93,6 +142,15 @@ export function emitRuntimeNewTargetPrototype(ctx: CodegenContext, fctx: Functio
  * `ref.test` type index that selects it. Anything else — an ordinary `$Object`,
  * a class instance, a wrapper — goes through `__object_setPrototypeOf`, which
  * is the same [[SetPrototypeOf]] the object model uses everywhere else.
+ *
+ * §10.1.14 step 3 gates the WHOLE write on `Type(proto) is Object`: a NewTarget
+ * whose `prototype` is absent (`function(){}.bind(null)` has none) reads back
+ * as null/undefined, and the spec answer is then the intrinsic default — which
+ * is exactly the prototype the ordinary construction already installed, so
+ * skipping the write IS the fix. Without this guard the raw non-object landed
+ * in the carrier field and `Object.getPrototypeOf` answered `undefined`
+ * (DataView) or `null` (typed array) where node answers the intrinsic
+ * prototype; on `--target wasi` the DataView case trapped.
  */
 export function applyRuntimeNewTargetPrototype(
   ctx: CodegenContext,
@@ -101,10 +159,12 @@ export function applyRuntimeNewTargetPrototype(
   resultExtern: number,
   protoLocal: number,
   carriers: readonly { typeIdx: number; fieldIdx: number }[],
-): void {
+): boolean {
   const handled = allocLocal(fctx, `__reflect_construct_nt_done_${fctx.locals.length}`, { kind: "i32" });
-  fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push({ op: "local.set", index: handled });
+  const apply: Instr[] = [
+    { op: "i32.const", value: 0 },
+    { op: "local.set", index: handled },
+  ];
   for (let i = 0; i < carriers.length; i++) {
     const carrier = carriers[i]!;
     const then: Instr[] = [
@@ -115,21 +175,58 @@ export function applyRuntimeNewTargetPrototype(
       { op: "i32.const", value: 1 },
       { op: "local.set", index: handled },
     ];
-    fctx.body.push({ op: "local.get", index: resultAny });
-    fctx.body.push({ op: "ref.test", typeIdx: carrier.typeIdx });
-    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then });
+    apply.push({ op: "local.get", index: resultAny });
+    apply.push({ op: "ref.test", typeIdx: carrier.typeIdx });
+    apply.push({ op: "if", blockType: { kind: "empty" }, then });
   }
   const setProtoIdx = ctx.funcMap.get("__object_setPrototypeOf");
-  if (setProtoIdx === undefined) return;
-  const generic: Instr[] = [
-    { op: "local.get", index: resultExtern },
+  if (setProtoIdx !== undefined) {
+    const generic: Instr[] = [
+      { op: "local.get", index: resultExtern },
+      { op: "local.get", index: protoLocal },
+      { op: "call", funcIdx: setProtoIdx },
+      { op: "drop" },
+    ];
+    apply.push({ op: "local.get", index: handled });
+    apply.push({ op: "i32.eqz" });
+    apply.push({ op: "if", blockType: { kind: "empty" }, then: generic });
+  }
+  const guard = protoIsObjectInstrs(ctx, protoLocal);
+  // No Type(V) predicates ⇒ the §10.1.14 step-3 gate cannot be emitted, and an
+  // ungated write is the defect this guard exists to remove. Decline; the
+  // caller restores the refusal.
+  if (guard === undefined) return false;
+  fctx.body.push(...guard);
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: apply });
+  return true;
+}
+
+/**
+ * `Type(protoLocal) is Object` as an i32, or undefined when the module has no
+ * `typeof` predicates (a caller that cannot classify must not write).
+ */
+function protoIsObjectInstrs(ctx: CodegenContext, protoLocal: number): Instr[] | undefined {
+  const typeofObjectIdx = ctx.funcMap.get("__typeof_object");
+  const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+  if (typeofObjectIdx === undefined || typeofFunctionIdx === undefined) return undefined;
+  return [
     { op: "local.get", index: protoLocal },
-    { op: "call", funcIdx: setProtoIdx },
-    { op: "drop" },
+    { op: "ref.is_null" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      // `null` is not an Object; `__typeof_object(null)` answers 1 (JS
+      // `typeof null === "object"`), so the null test has to come first.
+      then: [{ op: "i32.const", value: 0 }],
+      else: [
+        { op: "local.get", index: protoLocal },
+        { op: "call", funcIdx: typeofObjectIdx },
+        { op: "local.get", index: protoLocal },
+        { op: "call", funcIdx: typeofFunctionIdx },
+        { op: "i32.or" },
+      ],
+    },
   ];
-  fctx.body.push({ op: "local.get", index: handled });
-  fctx.body.push({ op: "i32.eqz" });
-  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: generic });
 }
 
 /**
@@ -283,4 +380,208 @@ export function tryEmitOrdinaryConstructWithNewTarget(
   for (let i = 0; i < argLocals.length; i++) fctx.body.push({ op: "local.get", index: argLocals[i]! });
   fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(`__native_construct_${args.length}`) ?? driverIdx });
   return true;
+}
+
+/**
+ * Builtin constructors whose instance carrier has NO settable prototype link,
+ * while `Object.getPrototypeOf` on it answers correctly — so a prototype the
+ * runtime path fetches is silently discarded and the caller reads the intrinsic
+ * default instead of the NewTarget one. `Reflect.construct(Array, [3], NT)`
+ * answered `Array.prototype` where node answers `NT.prototype` (measured
+ * 2026-09-05, `--target standalone`); these targets keep the refusal.
+ *
+ * The carriers whose *reader* is independently broken are deliberately NOT
+ * here: on base, `Object.getPrototypeOf` already answers `null` for a
+ * dynamically-typed Promise, class instance and typed-array view, so the
+ * prototype those programs observe is wrong with or without this arm — a
+ * pre-existing carrier gap, not a refusal turned into a wrong answer. They are
+ * listed as residuals in the issue file.
+ */
+const UNSETTABLE_PROTOTYPE_CONSTRUCTORS: ReadonlySet<string> = new Set([
+  "Array",
+  "Boolean",
+  "Function",
+  "Map",
+  "Number",
+  "Proxy",
+  "RegExp",
+  "Set",
+  "String",
+  "Symbol",
+  "WeakMap",
+  "WeakRef",
+  "WeakSet",
+]);
+
+/** What a value expression provably denotes, for the gate below. */
+type BindingKind =
+  | { kind: "class" }
+  /** An ordinary function declared in THIS file. */
+  | { kind: "function" }
+  /** Declared entirely outside this file — a lib/global constructor. */
+  | { kind: "foreign"; name: string }
+  | { kind: "unknown" };
+
+function resolveBindingKind(ctx: CodegenContext, expr: ts.Expression, depth = 4): BindingKind {
+  if (ts.isClassExpression(expr)) return { kind: "class" };
+  if (ts.isFunctionExpression(expr)) return { kind: "function" };
+  if (!ts.isIdentifier(expr) || depth <= 0) return { kind: "unknown" };
+  const declarations = ctx.oracle.declarationsOf(expr);
+  if (declarations.length === 0) return { kind: "unknown" };
+  if (declarations.some((d) => ts.isClassDeclaration(d) || ts.isClassExpression(d))) return { kind: "class" };
+  const source = expr.getSourceFile();
+  if (declarations.every((d) => d.getSourceFile() !== source)) return { kind: "foreign", name: expr.text };
+  if (declarations.length !== 1) return { kind: "unknown" };
+  const declaration = declarations[0]!;
+  if (ts.isFunctionDeclaration(declaration)) return { kind: "function" };
+  if (ts.isVariableDeclaration(declaration)) {
+    const initializer = ctx.oracle.variableInitializerOf(expr);
+    // A `const T = C` alias must answer for what it aliases, or the class /
+    // unsupported-carrier refusals below are one indirection away from useless.
+    if (initializer !== undefined) return resolveBindingKind(ctx, initializer, depth - 1);
+  }
+  return { kind: "unknown" };
+}
+
+/** Does `node`'s subtree read the `new.target` meta-property? */
+function readsNewTarget(node: ts.Node): boolean {
+  if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.NewKeyword) return true;
+  let found = false;
+  forEachChild(node, (child) => {
+    if (!found && readsNewTarget(child)) found = true;
+  });
+  return found;
+}
+
+/**
+ * Does the statically-resolved target function read `new.target`?
+ *
+ * `new.target` is lowered as an i32 class-id module global keyed by class NAME
+ * (`src/codegen/new-target.ts`, #2023) — there is no NewTarget VALUE in the
+ * constructed frame — so a body that reads it sees `undefined` under
+ * `Reflect.construct(F, [], NT)` and the standard
+ * `if (new.target === undefined) throw` guard fires where node constructs.
+ * Refuse the site instead. Answers `false` when the target resolves to nothing
+ * readable; those targets are native constructors with no source body.
+ */
+function targetReadsNewTarget(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (ts.isFunctionExpression(target)) return readsNewTarget(target);
+  if (!ts.isIdentifier(target)) return false;
+  const source = target.getSourceFile();
+  for (const declaration of ctx.oracle.declarationsOf(target)) {
+    if (declaration.getSourceFile() !== source) continue;
+    if (readsNewTarget(declaration)) return true;
+  }
+  return false;
+}
+
+/**
+ * Is `name`'s `prototype` property provably the one its declaration installed?
+ *
+ * The ordinary-construct driver stores the supplied prototype only when it
+ * passes `ref.test $Object`; an object-literal carrier installed by
+ * `Object.defineProperty(NT, "prototype", …)` fails that test and is dropped
+ * without a word, leaving the instance on `%Object.prototype%`. A pristine
+ * binding cannot be in that state, so the driver route is limited to one.
+ */
+function prototypeIsPristine(source: ts.SourceFile, name: string): boolean {
+  let touched = false;
+  let bindings = 0;
+  const visit = (node: ts.Node): void => {
+    if (touched) return;
+    // The NewTarget's OWN declaration is expected; a SECOND binding of the same
+    // name is not. (`isRebound` cannot be reused here — it counts the single
+    // `const NT = …` this predicate is asked about as a rebinding.)
+    if (
+      (ts.isVariableDeclaration(node) ||
+        ts.isParameter(node) ||
+        ts.isBindingElement(node) ||
+        ts.isFunctionDeclaration(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isImportSpecifier(node) ||
+        ts.isImportClause(node)) &&
+      node.name !== undefined &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name &&
+      ++bindings > 1
+    ) {
+      touched = true;
+    } else if (ts.isWithStatement(node)) {
+      touched = true;
+    } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
+      touched = true;
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      ts.isIdentifier(node.operand) &&
+      node.operand.text === name
+    ) {
+      touched = true;
+    } else if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      // Covers `NT = …`, `[NT] = …` and `NT.prototype = …` in one predicate.
+      mentions(node.left, name)
+    ) {
+      touched = true;
+    } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const method = node.expression.name.text;
+      if (
+        (method === "defineProperty" ||
+          method === "defineProperties" ||
+          method === "setPrototypeOf" ||
+          method === "assign") &&
+        node.arguments.length > 0 &&
+        mentions(node.arguments[0]!, name)
+      ) {
+        touched = true;
+      }
+    }
+    if (!touched) forEachChild(node, visit);
+  };
+  visit(source);
+  return !touched;
+}
+
+/**
+ * Which runtime-NewTarget route this `Reflect.construct` site may take, or
+ * `undefined` when it must keep the pre-existing #3371 refusal.
+ *
+ * Every `undefined` clause corresponds to a measured wrong answer on the r4
+ * tree; see this module's header for the measurements. A refusal is the same
+ * compile error BASE emitted for all of these shapes.
+ */
+export function classifyRuntimeNewTargetSite(
+  ctx: CodegenContext,
+  target: ts.Expression,
+  args: readonly ts.Expression[],
+  newTarget: ts.Expression,
+): "driver" | "carrier" | undefined {
+  // Only a bare identifier: its evaluation is side-effect-free, which is the
+  // whole reason reading it before the argument list is unobservable.
+  if (!ts.isIdentifier(newTarget)) return undefined;
+  const ntKind = resolveBindingKind(ctx, newTarget);
+  if (ntKind.kind === "class") return undefined;
+  if (targetReadsNewTarget(ctx, target)) return undefined;
+
+  const driverEligible =
+    ctx.standalone &&
+    args.length <= MAX_NATIVE_CONSTRUCT_ARITY &&
+    !args.some((a) => ts.isSpreadElement(a)) &&
+    isUnreassignedOrdinaryFunction(ctx, target) &&
+    prototypeIsPristine(newTarget.getSourceFile(), newTarget.text);
+  if (driverEligible) return "driver";
+
+  const targetKind = resolveBindingKind(ctx, target);
+  // A user function or class instance is a CLOSED struct: the post-construction
+  // prototype patch is a silent no-op on it, so if the driver route did not
+  // take the site, nothing can.
+  if (targetKind.kind === "class" || targetKind.kind === "function") return undefined;
+  if (targetKind.kind === "foreign") {
+    return UNSETTABLE_PROTOTYPE_CONSTRUCTORS.has(targetKind.name) ? undefined : "carrier";
+  }
+  // Unresolvable target (a parameter — `testWithTypedArrayConstructors(TA => …)`
+  // is the shape the kept typed-array rows use). The runtime `ref.test` carrier
+  // arms decide; see the issue file's residual list for what stays unbounded.
+  return "carrier";
 }
