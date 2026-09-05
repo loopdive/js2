@@ -4045,6 +4045,31 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     if (cx.funcKind !== "async") {
       demoteToLegacy("body-shape-rejected", `ir/from-ast: await outside an async function (${cx.funcName})`);
     }
+    // B2: an exact prepared owner must retain every source await before the
+    // historical C-1 static-elision arm.  The operand is evaluated once and
+    // crosses the existing Promise carrier boundary; the frame engine owns
+    // PromiseResolve/adoption and the subsequent reaction.
+    const preparedAwait = cx.resolver?.preparedAsyncAwaitSite?.(expr);
+    if (preparedAwait) {
+      // Keep the explicit await edge while reusing the existing static
+      // Promise.resolve substitution.  The substituted expression is still
+      // evaluated once; the frame's PromiseResolve then supplies the native
+      // carrier and microtask boundary for the retained await.
+      const settled = staticPromiseResolveSettledExpr(expr.expression);
+      const operandExpression = settled !== null && settled !== "undefined" ? settled : expr.expression;
+      const operand = lowerExpr(operandExpression, cx, hint);
+      const operandType = cx.builder.valueType(operand);
+      const operandVal = operandType !== undefined ? asVal(operandType) : undefined;
+      const externShaped =
+        (operandVal !== undefined && operandVal !== null && operandVal.kind === "externref") ||
+        operandType?.kind === "extern";
+      const carrier = externShaped
+        ? operand
+        : operandType?.kind === "dynamic"
+          ? coerceIrValueToExternref(cx.builder, operand)
+          : coerceToExpectedExtern(operand, { kind: "externref" }, cx, "prepared await operand");
+      return cx.builder.emitAwait(carrier, preparedAwait.resultType);
+    }
     const settled = staticPromiseResolveSettledExpr(expr.expression);
     if (settled === "undefined") {
       demoteToLegacy(

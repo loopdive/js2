@@ -1258,7 +1258,12 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
         containsNestedExecutableSyntax(claim.declaration) ||
         functionValueTargets.has(unitId) ||
         containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
-        !r3SuspendingAsyncSignatureMatchesAllocatedSlot(input.ctx, unitId, override, sourceShape?.kind === "final-main")
+        !r3SuspendingAsyncSignatureMatchesAllocatedSlot(
+          input.ctx,
+          unitId,
+          override,
+          sourceShape?.kind === "final-main" || sourceShape?.kind === "linear",
+        )
       ) {
         continue;
       }
@@ -1288,7 +1293,7 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
         ) {
           continue;
         }
-      } else if (unitCalls.length === 0) {
+      } else if (unitCalls.length === 0 && sourceShape.kind !== "linear") {
         continue;
       }
       additions.push(legacyName);
