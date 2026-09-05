@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-02
+updated: 2026-09-05
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -4368,3 +4368,149 @@ plan's 10 + 4, and the flip counts follow from that.
   flagged so it gets an owner.
 - `tests/issue-3214-imported-hof.test.ts` was repaired by R2-T1 and is no
   longer red on this base.
+
+## Implementation Plan — 2026-09-05 — R2-B1 prepared callable-boundary contracts
+
+**Planning base:** `5da655f286fcd569203cd2012b23dc21bf1c626d`; implementation
+must rebase the evidence against its assigned current-main worktree. Astra
+plans, Luna `max` implements, per the user. Proposed slice claim:
+`3521:r2-b1-callable-boundary-contract` (the lead reserves it before dispatch).
+The issue and every remaining acceptance checkbox stay open.
+
+### Blocker and intended state movement
+
+`r2CertifiedAgainstOutsideCallers` in
+`src/codegen/ir-prepared-free-functions.ts:1028` uses a declaration-kind list
+that excludes reference contracts already admitted by `r2StableSignatureType`
+and mapped by `r2StableValType` (`:384`, `:685`). The fixed point (`:1545–1660`)
+therefore withdraws an otherwise supported callee when its caller stays direct.
+An allocated `externref` alone is insufficient evidence: callable invocation
+also depends on the exact signature and wrapper support.
+
+The missing structural proof has existing producers. The source-callable
+registry resolves exact allocator objects (`program-abi-source-callable-planning.ts:392`),
+and `prepareDependencyCompleteClosureSupport` (`prepared-closure-support.ts:244`)
+already records an explicit empty carrier proof for `callable` and nonempty
+invocation support for `closure.call` (`:427`, `:457`). Production sealing plans
+the allocated callable (`prepared-component-sealing.ts:536–560`), but the final
+lowered signature is currently checked only after body lowering
+(`integration.ts:5239`; `fillSealedPreparedCallable:2239`).
+
+Move that boundary proof into preparation and carry an authenticated immutable
+contract through sealing and emission. This removes a shared caller-direction
+barrier; it is not another function-name, fixture, annotation, or lane allowlist.
+It does **not** complete R2: `prepareIrBodies:1933` still combines preparation
+with emission, deferred free functions still enter the late overlay, and
+`src/ir/program.ts:201` correctly remains `pending-production-wiring`.
+
+**Fresh baseline evidence (Luna probe, same planning SHA):** the module-init
+`apply(f, v)` fixture and its observable `main() === 42` variant each report
+`(prepare, direct, IR) = (1, 1, 1)` with
+`fixed-point / outside-caller-uncertified` in both GC-host and standalone.
+The scalar outside-caller control and a callable export without an outside
+caller each report `(1, 0, 1)` in both lanes; the latter uses the real callable
+wrapper and `call_ref` support. A callable-identity variant reaches this R2
+barrier in GC-host but is rejected earlier by standalone call-graph closure.
+The object-return control is `return-signature-unstable`; the allocated-slot
+control reports `abi-signature-parity`. Imported callers remain the separate
+multi-source late-preparation route. These are baseline rows, not candidate
+gains or a population estimate. Probe records:
+`.tmp/issue-3521-outside-caller-results.jsonl` and
+`.tmp/issue-3521-callable-abi-results.jsonl` in the lead's Luna equality worktree.
+
+### Implementation sequence and exclusive write scope
+
+1. **Share signature projection with the emitter.** In `src/ir/lower.ts`,
+   extract the parameter/result conversion from `lowerIrFunctionBody:3945–3968`
+   into a reusable preparation helper; `lowerIrFunctionToWasm:546` must consume
+   the same projection. Preserve slot flattening, reference nullability,
+   `resolveParamPhysicalType`, counted-string physical-parameter evidence, and
+   backend-specific conversion. A preparation call emits no instructions and
+   interns/allocates no type. Use preplanned lookups; never duplicate the
+   `IrType`→carrier mapping in the R2 predicate.
+2. **Authenticate the allocated boundary.** Add a small R2-owned contract
+   module, with issuance through `ProgramAbiSourceCallableRegistry`. Bind the
+   contract to the session/inventory, exact `UnitId`, allocator object and
+   handle, and a defensive snapshot of the allocated physical parameter/result
+   types. Record the final IR semantic signature and its exact carrier/support
+   bindings when preparation completes. A plain object, same name, same type
+   index in a different module, or stale allocator is not authority. An empty
+   support set is valid only when its producer explicitly certified it.
+3. **Prepare support before certifying.** In `integration.ts:750`
+   (`prepareClosureTransaction`) and `prepared-component-sealing.ts:504`, use
+   final post-pass IR, the existing closure/ref-cell/runtime/type preparation,
+   and the scoped ABI lookup to reconcile the shared signature projection with
+   the allocated boundary **before the scope seals and before any body emits**.
+   Where scoped resolution is required, retain the existing open-scope form
+   until this check finishes; then seal every admitted scope. Preserve distinct
+   lookups for distinct components. Do not use the first component's scope as
+   authority for another component. No provider/helper discovery may be hidden
+   inside signature comparison. If a needed layout is currently lazy, move its
+   existing producer before this boundary and record it in the dependency
+   evidence; do not add another blanket reference rejection.
+4. **Route by the contract.** In `selectR2PreparedOwnerComponents`, replace the
+   declaration-kind-only outside-caller exemption with exact pending boundary
+   candidates; thread those candidates through `planIrFirstBodyRouting`
+   (`src/codegen/index.ts:4613`) and `prepareIrBodies`. A candidate is never a
+   `Prepared` outcome. Only successful final certification plus dependency
+   sealing authorizes the direct-body skip. Reconcile withdrawals before
+   publishing skips, and retain their typed reason. Leave the independent
+   admission, forward-call, construction, storage, direct-caller-activation,
+   nested executable and Annex B support exclusions intact. Keep the fast
+   admission proofs unchanged; this slice replaces the boundary proof shared
+   by their already-admitted owners.
+5. **Consume, do not re-decide.** Verify contract currentness immediately before
+   filling the exact prepared callable and at the existing final ABI
+   reconciliation. Emission uses the prepared signature and preplanned
+   support. A pre-seal unsupported contract stays direct-owned; forged, stale,
+   contradictory or post-seal changed evidence is an invariant and cannot
+   retry direct, patch a foreign slot, or ship an `unreachable` substitute.
+   Preserve the ordinary late route outside this slice; no global provider
+   latch or unrelated late-provider prohibition may be introduced.
+
+Owned production files are the new contract module, the source-callable
+registry, `ir-prepared-free-functions.ts`, and the named signature/preparation
+seams in `lower.ts`, `integration.ts`, `prepared-component-sealing.ts` and
+`index.ts`. A small typed options/plumbing addition is permitted in
+`integration-options.ts`; put reusable contract state in the new module rather
+than expanding the broad context. Do not edit R1 name/identity selection,
+computed method handling, binder/Reflect/runtime-prototype functions, R4 W2-B,
+or `multi-prepared-*`. The R5 ordered-initializer-census prerequisite is
+independent. Coordinate any other scope change with the lead before editing.
+
+### Validation and landing bar
+
+- Record baseline/candidate SHAs, target/options, the complete per-unit
+  attempted denominator, withdrawal stages, body counts and runtime values.
+  The incoming probe is evidence to refine this plan, not a forecasted gain.
+  Include a module-init caller of
+  `apply(f: (v: number) => number, v: number): number`, scalar and supported
+  reference controls, a direct caller withdrawn for its own storage dependency,
+  several callable signatures and spelling changes. Test host and standalone;
+  distinguish select-stage rejection from this R2 boundary. Do not broaden an
+  unrelated selector simply to make a matrix cell pass.
+- A newly certified owner must have one preparation attempt, direct body `0`,
+  IR body `1`, complete prepared dependency evidence, and the same runtime
+  result as `JS2WASM_IR_FIRST=0`. Poison its direct body to prove the skip.
+  Existing prepared scalar/string/vector controls must retain ownership.
+- Add contract tests for a missing/forged receipt, changed allocator object,
+  changed parameter/result type including nullability, foreign inventory,
+  missing callable invocation support and changed support after sealing.
+  Assert zero body publication before failed certification. Exercise a real
+  mismatched allocated signature; valid-input tests alone cannot prove this
+  guard. Revert the new contract routing once to prove the gain disappears.
+- Run `pnpm typecheck`, then
+  `VITEST_MAX_FORKS=1 node node_modules/vitest/dist/cli.js run` with the new
+  contract suite and `tests/issue-3521-prepared-free-function-routing.test.ts`,
+  `tests/issue-3521-scoped-prepared-abi-seal.test.ts`,
+  `tests/issue-3521-prepared-component-dependencies.test.ts`,
+  `tests/issue-3521-r2-withdrawal-shapes.test.ts`, and `tests/issue-4514.test.ts`.
+  Include existing closure/backend signature and counted-string parameter
+  tests selected from the changed conversion seams.
+- Run `node --import tsx scripts/check-ir-only.ts --json --policy=hybrid` and
+  `node --import tsx scripts/check-ir-only.ts --json --policy=ir-only`,
+  `node --import tsx scripts/check-ir-fallbacks.ts`, equivalence, and
+  normal layering/dialect/size/oracle/format gates. Attribute pre-existing reds
+  to a same-config baseline. No baseline weakening. Full merge-group Test262
+  validation remains required for these shared preparation/lowering changes;
+  a green small IR corpus is not migration completion.
