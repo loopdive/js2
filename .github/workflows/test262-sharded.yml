@@ -931,7 +931,7 @@ jobs:
       - name: Build compiler bundles
         run: |
           pnpm run build:compiler-bundle
-          ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
+          ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
       - name: Download selected runtime-eval provider (#2928/#4242)
@@ -1141,7 +1141,7 @@ jobs:
       - name: Build compiler bundles
         run: |
           pnpm run build:compiler-bundle
-          ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
+          ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
       - name: Download selected runtime-eval provider (#2928/#4242)
