@@ -1,4 +1,5 @@
 import type { Instr, ValType } from "../../ir/types.js";
+import { getLocalType } from "../context/locals.js";
 import type { FunctionContext } from "../context/types.js";
 
 /**
@@ -125,6 +126,44 @@ export function captureSourceSlot(fctx: FunctionContext, cap: { name: string; ou
   if (!existsHere && inFrameIdx !== undefined) return inFrameIdx;
 
   return cap.outerLocalIdx;
+}
+
+/**
+ * Record `boxLocalIdx` as this frame's canonical ref cell for the lifted capture
+ * `name` — but ONLY when the cell was minted from the frozen capture slot
+ * itself.
+ *
+ * That provenance test is the whole point. `localMap`/`boxedCaptures` are
+ * name-keyed, so a `__boxed_<name>` cell in a lifted frame can equally well
+ * belong to a same-named body binding that SHADOWS the hidden leading capture
+ * param (React's `forceStoreRerender`: a local `root` beside a captured module
+ * `root`). Forwarding that cell to a sibling would hand it the wrong binding —
+ * which is exactly why the forwarding sites read the frozen slot in the first
+ * place. Minted-from-the-frozen-slot is the one case where the cell provably IS
+ * the capture's storage, so it is the one case recorded here.
+ */
+export function recordLiftedCaptureBox(
+  fctx: FunctionContext,
+  name: string,
+  sourceSlot: number,
+  boxLocalIdx: number,
+): void {
+  if (fctx.liftedCaptureSlots?.get(name) !== sourceSlot) return;
+  (fctx.liftedCaptureBoxes ??= new Map()).set(name, boxLocalIdx);
+}
+
+/**
+ * The frame's canonical cell for lifted capture `name`, when one was recorded
+ * and still carries the expected cell type. Type-checked because the recorded
+ * slot must satisfy the callee's ABI on its own; anything else falls back to the
+ * frozen raw slot and the caller's existing behaviour.
+ */
+export function liftedCaptureBoxSlot(fctx: FunctionContext, name: string, refCellTypeIdx: number): number | undefined {
+  const slot = fctx.liftedCaptureBoxes?.get(name);
+  if (slot === undefined) return undefined;
+  const type = getLocalType(fctx, slot);
+  if (type === undefined || (type.kind !== "ref" && type.kind !== "ref_null")) return undefined;
+  return type.typeIdx === refCellTypeIdx ? slot : undefined;
 }
 
 /** Freeze the leading capture-param slots before body locals can shadow their names. */

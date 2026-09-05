@@ -2613,6 +2613,33 @@ export function compileFunctionBind(
 }
 
 /**
+ * (#4616 / #5322) Is `fn` a function stored as a MEMBER of an object or class —
+ * something the host can reach and invoke as `receiver.m(...)`? The host
+ * marshals a callback argument through `createNativeFunctionCallbackBridge`, so
+ * such a function's callable parameters routinely arrive as plain JS functions,
+ * not wasm closure structs. These four spellings are ONE construct to a caller:
+ *
+ *   { forEach(cb) {…} }                // #4616 matched only this one
+ *   { forEach: function (cb) {…} }     // PropertyAssignment initializer
+ *   { forEach: (cb) => {…} }           //   "
+ *   class C { forEach = (cb) => {…} }  // PropertyDeclaration initializer
+ *
+ * The other three trapped on `struct.get` of the nulled wrapper cast — an
+ * UNCATCHABLE wasm trap that kills the module, not a catchable TypeError.
+ * Witness: hono `utils/body.test.ts` stubs `formData` with
+ * `({ forEach: (cb) => … }) as FormData` for package code whose receiver is
+ * `any` (0/37, whole-file abort). Free functions keep the #1941 gate.
+ */
+function isHostReachableMemberFunction(fn: ts.Node): boolean {
+  if (ts.isMethodDeclaration(fn)) return true;
+  if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return false;
+  const holder = fn.parent;
+  if (holder === undefined) return false;
+  if (ts.isPropertyAssignment(holder)) return holder.initializer === fn;
+  return ts.isPropertyDeclaration(holder) && holder.initializer === fn;
+}
+
+/**
  * (#1712 / #1941) Static gate for the host-callable dispatch fallback.
  *
  * The callable-param dispatch below emits an extra `__call_function` arm so a
@@ -2656,7 +2683,7 @@ export function calleeMayBeHostCallable(ctx: CodegenContext, expr: ts.Expression
   // wrapper cast and trapped call_ref un-catchably. Method params get the
   // #1712 host arm; plain function params keep the #1941 gate so pure
   // local-closure programs stay host-import-free.
-  if (decl && ts.isParameter(decl) && decl.parent !== undefined && ts.isMethodDeclaration(decl.parent)) {
+  if (decl && ts.isParameter(decl) && decl.parent !== undefined && isHostReachableMemberFunction(decl.parent)) {
     return !ctx.standalone && !ctx.wasi;
   }
 

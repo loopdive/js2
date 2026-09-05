@@ -7380,6 +7380,18 @@ function selectorPrimitiveWrapperOrGenericBinary(
       }
     }
   }
+  const isEquality =
+    binOp === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+    binOp === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+    binOp === ts.SyntaxKind.EqualsEqualsToken ||
+    binOp === ts.SyntaxKind.ExclamationEqualsToken;
+  if (
+    isEquality &&
+    obviousSelectorValueFamily(expr.left, scope) === "reference" &&
+    obviousSelectorValueFamily(expr.right, scope) === "reference"
+  ) {
+    return capabilityNo("operand-coercion-unsupported", "expr-equality-reference-operands", expr);
+  }
   if (!isPhase1BinaryOp(binOp)) return shapeNo(`expr-binary-op-${ts.tokenToString(binOp) ?? binOp}`, expr);
   return isPhase1Expr(expr.left, scope, localClasses) && isPhase1Expr(expr.right, scope, localClasses);
 }

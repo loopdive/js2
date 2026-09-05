@@ -56,6 +56,7 @@ import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime/date-host-method.js";
+import { wasmCarrierBuiltinPrototype } from "./runtime/wasm-carrier-prototype.js"; // (#5325)
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
@@ -13918,6 +13919,10 @@ assert._isSameValue = isSameValue;
             // identity, and this second hop must reach Object.prototype rather
             // than misclassifying the struct as a null-prototype dictionary.
             const exports = callbackState?.getExports();
+            // (#5325) A built-in carrier is not an ordinary object — see
+            // runtime/wasm-carrier-prototype.ts for why and for what it declines.
+            const carrierProto = wasmCarrierBuiltinPrototype(obj, exports);
+            if (carrierProto !== undefined) return carrierProto;
             const isDataStruct = exports?.__is_data_struct as ((value: any) => number) | undefined;
             if (typeof isDataStruct === "function") {
               try {
