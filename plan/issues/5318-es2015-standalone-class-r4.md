@@ -1,7 +1,7 @@
 ---
 id: 5318
 title: "ES2015 standalone class — r4: computed accessor names, definition semantics, restricted ids, subclass residue"
-status: ready
+status: in-progress
 sprint: current
 created: 2026-09-04
 updated: 2026-09-04

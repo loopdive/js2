@@ -36,15 +36,27 @@
  *
  *  - Static FIELDS keep the `staticProps` global lowering. Mirroring a mutable
  *    slot here would create two sources of truth for it.
- *  - Static ACCESSORS are not installed either. Their compiled halves take the
- *    class STRUCT as the `this` parameter (the collection pass gives every
- *    accessor that receiver, static or not), while an accessor property stored
- *    on this object is invoked by `__call_accessor_get` with the RECEIVER — an
- *    `$Object`. That is an illegal cast at runtime, i.e. a trap, which is worse
- *    than the missing property it would fix. Installing them needs a per-half
- *    trampoline supplying the dummy struct receiver the typed read path already
- *    uses (`property-access.ts::emitGetterCallWithDummy`); until that exists,
- *    the `cpn-class-*-accessors-*` rows stay on the issue's residual list.
+ *  - Static ACCESSORS are installed ONLY when the half's body never mentions
+ *    `this` or `super` in its own receiver scope (#5318 Step 1c). Their
+ *    compiled halves take the class STRUCT as the `this` parameter — the
+ *    collection pass gives every accessor that receiver, static or not — while
+ *    an accessor property stored on this object is invoked by
+ *    `__call_accessor_get` with the RECEIVER, an `$Object`. For a half that
+ *    READS the receiver that mismatch is an illegal cast at runtime, i.e. a
+ *    trap, which is worse than the missing property it would fix; for a half
+ *    that never reads it, the cached method trampoline already puts a null in
+ *    the slot (`methodBodyReadsThis` in `closures/method-trampolines.ts`) and
+ *    nothing observes the difference. So the receiver-free halves — which is
+ *    every `static get [k]() { return <literal>; }` in the
+ *    `cpn-class-*-accessors-*` family — are installed, and a receiver-reading
+ *    one keeps the old missing-property answer rather than gaining a trap. The
+ *    predicate is SYNTACTIC (`genBodyReferencesThis` over the accessor body),
+ *    not a read of the compiled body, because the sidecar is emitted at
+ *    ClassDefinitionEvaluation — possibly before that body exists, where an
+ *    empty instruction list would read as "receiver-free" and be wrong.
+ *    Lifting the restriction needs a per-half trampoline supplying the dummy
+ *    struct receiver the typed read path already uses
+ *    (`property-access.ts::emitGetterCallWithDummy`).
  */
 
 import type { Instr } from "../ir/types.js";
@@ -53,8 +65,10 @@ import { ts } from "../ts-api.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
-import { emitClassMemberKeyOperand } from "./class-proto-accessors.js";
+import { classAccessorInstallFlags, emitClassMemberKeyOperand } from "./class-proto-accessors.js";
 import { emitFuncRefAsClosure } from "./closures/funcref-as-closure.js";
+import { emitCachedMethodClosureAccess } from "./closures/method-trampolines.js";
+import { genBodyReferencesThis } from "./closures.js";
 import { hasStaticModifier } from "./ast-modifiers.js";
 
 /**
@@ -114,6 +128,75 @@ function collectStaticMethods(
   return out;
 }
 
+/** (#5318 Step 1c) One installable static accessor and the halves that resolved. */
+interface StaticSidecarAccessor {
+  memberName: string;
+  getterFuncIdx?: number;
+  setterFuncIdx?: number;
+}
+
+/**
+ * True when this accessor half can be invoked with the sidecar `$Object` as the
+ * receiver: its body never mentions `this` or `super` in its OWN receiver scope,
+ * so the class-struct parameter the half declares is never read and the null the
+ * trampoline puts there is unobservable. Syntactic on purpose — see the module
+ * header.
+ */
+function staticAccessorHalfIsReceiverFree(member: ts.ClassElement): boolean {
+  if (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) return false;
+  if (member.body === undefined) return false;
+  if (member.parameters.some((param) => genBodyReferencesThis(param))) return false;
+  return !genBodyReferencesThis(member.body);
+}
+
+/**
+ * The class's static ACCESSORS, in `decl.members` order. A half whose function
+ * does not resolve, or whose body reads the receiver, is left out — the member
+ * then keeps base's missing-property answer instead of gaining a trap.
+ */
+function collectStaticAccessors(
+  ctx: CodegenContext,
+  className: string,
+  resolveMemberName: (member: ts.ClassElement) => string | undefined,
+): StaticSidecarAccessor[] {
+  const decl = ctx.classDeclarationMap.get(className);
+  if (!decl) return [];
+  const out: StaticSidecarAccessor[] = [];
+  const seen = new Set<string>();
+  for (const member of decl.members) {
+    if (!hasStaticModifier(member) || !staticAccessorHalfIsReceiverFree(member)) continue;
+    const memberName = resolveMemberName(member);
+    if (memberName === undefined || memberName.startsWith(PRIVATE_NAME_PREFIX)) continue;
+    if (seen.has(memberName)) continue;
+    const isGetter = ts.isGetAccessorDeclaration(member);
+    const half = ctx.funcMap.get(classMemberFuncKey(ctx, `${className}_${isGetter ? "get" : "set"}_${memberName}`));
+    if (half === undefined) continue;
+    seen.add(memberName);
+    out.push({ memberName, ...(isGetter ? { getterFuncIdx: half } : { setterFuncIdx: half }) });
+  }
+  return out;
+}
+
+/**
+ * Push one accessor half onto the stack: the cached method closure when the
+ * half exists, `ref.null.extern` when it does not. Returns `false` when the
+ * closure could not be built, in which case the caller abandons the sidecar
+ * rather than publish a half-written accessor.
+ */
+function emitStaticAccessorHalf(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  halfName: string,
+  funcIdx: number | undefined,
+  structTypeIdx: number,
+): boolean {
+  if (funcIdx === undefined) {
+    fctx.body.push({ op: "ref.null.extern" });
+    return true;
+  }
+  return emitCachedMethodClosureAccess(ctx, fctx, halfName, funcIdx, structTypeIdx);
+}
+
 /**
  * Emit the lazy-initialized static sidecar `$Object` for `className`, leaving
  * its externref on the stack. Returns `false` without emitting anything when
@@ -140,7 +223,12 @@ export function emitClassStaticSidecar(
   if (newObjectIdx === undefined || defineValueIdx === undefined) return false;
 
   const methods = collectStaticMethods(ctx, className, resolveMemberName);
-  if (methods.length === 0) return false;
+  const accessors = collectStaticAccessors(ctx, className, resolveMemberName);
+  if (methods.length === 0 && accessors.length === 0) return false;
+  const defineAccessorIdx = accessors.length > 0 ? ctx.funcMap.get("__defineProperty_accessor") : undefined;
+  if (accessors.length > 0 && defineAccessorIdx === undefined) return false;
+  const structTypeIdx = accessors.length > 0 ? ctx.structMap.get(className) : undefined;
+  if (accessors.length > 0 && structTypeIdx === undefined) return false;
 
   const objLocal = allocLocal(fctx, `__class_static_obj_${fctx.locals.length}`, { kind: "externref" });
   const initBody: Instr[] = [
@@ -172,6 +260,48 @@ export function emitClassStaticSidecar(
       fctx.body.push({ op: "f64.const", value: METHOD_FLAGS });
       fctx.body.push({ op: "call", funcIdx: defineValueIdx });
       fctx.body.push({ op: "drop" });
+    }
+    // (#5318 Step 1c) …then the static accessor halves. Same key operand and
+    // the same §15.7.14 attributes the prototype installs use; each half marks
+    // ITSELF specified so a `get [k]`/`set [k]` pair under one evaluated key
+    // merges instead of the second erasing the first.
+    if (ok) {
+      for (const accessor of accessors) {
+        fctx.body.push({ op: "local.get", index: objLocal });
+        if (!emitClassMemberKeyOperand(ctx, fctx, className, accessor.memberName)) {
+          ok = false;
+          break;
+        }
+        if (
+          !emitStaticAccessorHalf(
+            ctx,
+            fctx,
+            `${className}_get_${accessor.memberName}`,
+            accessor.getterFuncIdx,
+            structTypeIdx!,
+          ) ||
+          !emitStaticAccessorHalf(
+            ctx,
+            fctx,
+            `${className}_set_${accessor.memberName}`,
+            accessor.setterFuncIdx,
+            structTypeIdx!,
+          )
+        ) {
+          ok = false;
+          break;
+        }
+        fctx.body.push({
+          op: "f64.const",
+          value: classAccessorInstallFlags({
+            name: accessor.memberName,
+            ...(accessor.getterFuncIdx !== undefined ? { getterFuncIdx: accessor.getterFuncIdx } : {}),
+            ...(accessor.setterFuncIdx !== undefined ? { setterFuncIdx: accessor.setterFuncIdx } : {}),
+          }),
+        });
+        fctx.body.push({ op: "call", funcIdx: defineAccessorIdx! });
+        fctx.body.push({ op: "drop" });
+      }
     }
     if (ok) {
       fctx.body.push({ op: "local.get", index: objLocal });
