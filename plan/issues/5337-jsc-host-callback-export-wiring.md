@@ -1,10 +1,20 @@
 ---
 id: 5337
 title: "Compiled modules break on JavaScriptCore: host-callback dispatch finds no exports"
-status: in-progress
+status: done
+completed: 2026-09-05
 sprint: current
 created: 2026-09-05
 updated: 2026-09-05
+loc-budget-allow:
+  # 2026-09-05: +9 lines in runtime.ts — one import block and three one-line
+  # call-site swaps to the new src/runtime/exported-function-identity.ts;
+  # the mechanism itself lives in that module.
+  - src/runtime.ts
+func-budget-allow:
+  # 2026-09-05: +1 line — buildImports re-mints the association token via
+  # installFreshDataStructAssociationToken (one call).
+  - src/runtime.ts::buildImports
 priority: high
 horizon: m
 feasibility: medium
@@ -60,36 +70,64 @@ JSC. The AST panel is the first consumer to surface it; it is not a panel bug.
 - **Not a stale deployment.** Pages deploys #7880/#7881 (2026-09-05 17:55 and
   18:50 UTC) succeeded on revisions containing the fix.
 
-## Reproduced under V8 — the symptom class is "export set never published"
+## Root cause — reproduced on real JavaScriptCore
 
-An instance whose exports are never published (`setInstance` not called) does
-**not** fail loudly. It parses anyway, wrongly:
+WebKitGTK ships the same engine as iOS Safari as a shell (`jsc`,
+`apt-get install libjavascriptcoregtk-bin`). Running the panel's exact load
+sequence there (`node scripts/jsc-acorn-smoke.mjs`) reproduced both console
+lines and the null `.replace`, and tracing the host imports found the chain:
 
 ```
-Since Acorn 8.0.0, options.ecmaVersion is required.
-Defaulting to 2020, but this will stop working in the future.
-unwired instance: THREW — Cannot read properties of null (reading 'replace')
-second wired instance: parse OK — 18 nodes
+__new_plain_object()                      acorn getOptions: options = {}
+__for_in_keys(defaultOptions)  -> []      the compiled object literal enumerates as EMPTY
+__extern_get(options, "ecmaVersion") -> undefined   → acorn's warning → keywords null → .replace
 ```
 
-That is both iOS symptoms, verbatim, on Node/V8 — no WebKit needed. So the
-mechanism is established: **the module could not see its own export set at call
-time.** Property reads on a host object and closure dispatch both route through
-exports-backed marshalling, which is why the options object reads as empty AND
-`__call_fn_0` is unavailable.
+`__for_in_keys` enumerates a WasmGC struct through the exported
+`__struct_field_names` helper, and that helper — with every `__call_fn_*`
+closure dispatcher — had been **masked to `undefined` by the runtime's own
+host-bridge authentication**, not lost by the engine. `_hostBridgeExportView`
+accepts a helper only if the frozen export (`instance.exports.$d1`) is `===`
+the entry the compiler placed in its binding table (`bindings.get(1)`). The JS
+API requires both reads to yield the one cached Exported Function object, and
+V8 honours it. JavaScriptCore does not — two deviations, both confirmed with
+minimal probe modules:
 
-What is *not* yet established is why publishing fails on JSC specifically.
-`setInstance` throws on a non-instance rather than no-opping
-(`src/runtime/instance-lifecycle-adapter.ts:67`), and the panel would have
-surfaced that, so the plausible remainder is `prepareExports` establishing only
-a partial set under JSC, or a second instantiation attempt (Safari's failed
-native-`js-string` attempt precedes the polyfill fallback) leaving the runtime's
-per-closure caches bound to the first, dead instance.
+| Probe (`.tmp/jsc-probe*.js`) | V8 / Node 22 | JSC (WebKitGTK 2.52.6) |
+| ---------------------------- | ------------ | ---------------------- |
+| `instance.exports.f === table.get(0)` for the same function | `true` | `false` (each wrapper stable on its own, never equal to the other) |
+| imported `WebAssembly.Global` re-exported: `exports.x === g` | `true` | `false` |
 
-No WebKit engine is reachable from the dev container: Playwright's webkit
-download fails and `js2wasm.loopdive.com` is proxy-blocked (403). Fixing the
-wiring blind would touch a path every compiled-module consumer depends on, so
-the next step is one iOS screenshot with the diagnostics below, not a patch.
+So on JSC the closure bridge lost all 18 helpers (`__call_fn_0 is not
+available`), and the data-struct bridge failed twice over (helper identity and
+the association-token Global identity). `setInstance` was called and succeeded;
+"the export set was never published" — the earlier V8-only hypothesis — was
+wrong: the exports were published and then every authenticated one masked.
+
+## Fix
+
+`src/runtime/exported-function-identity.ts`:
+
+- `sameExportedFunction(helper, binding)` — strict `===` first. Only where a
+  one-time probe module shows the engine splits identities does it fall back
+  to: both sides are genuine Wasm functions (only those can enter a funcref
+  table) with the same function index (an Exported Function's `name`). JS
+  impostors and a different function of the same instance still fail closed;
+  the one case the fallback cannot split — the same index in another instance
+  of the same module — runs the same code.
+- `sameAssociationToken(token, expected)` — identity first; on a
+  non-canonicalizing engine, compare the Globals' values. To make that exact,
+  `buildImports` re-mints the token Global with a **fresh frozen object per
+  call** (`installFreshDataStructAssociationToken`), so two builds' tokens
+  never compare equal by value either.
+- The four identity sites in `src/runtime.ts` and the one in
+  `standalone-timer-callback-bridge.ts` route through these. V8 behaviour is
+  unchanged (the probes report canonical there, so only the strict path runs).
+
+Verified: `scripts/jsc-acorn-smoke.mjs` → `PASS` on real JSC (canary `0`
+round-trips, a class + arrow sample parses); `tests/issue-5337-…` pins the
+mechanism on V8; the #3520 bridge-ABI suites (donor rejection, forged tables,
+same-funcref substitution) still pass.
 
 ## Acceptance criteria
 
@@ -104,20 +142,19 @@ the next step is one iOS screenshot with the diagnostics below, not a patch.
 
 ## Plan
 
-1. **Done — canary + diagnostics.** The panel now proves the boundary at load
-   with a one-token parse (`parse("0")` must round-trip `0`). When it fails, the
-   status says the boundary is not live and the error is a symptom, not the
-   user's source; any non-syntax parse error also reports which instantiation
-   branch ran, whether `setInstance` was wired, and the export count.
-   `tests/playground-acorn-artifact.test.ts` pins the unwired reproduction.
-2. **Next — one iOS screenshot** of the AST tab with the new build. Its status
-   line distinguishes: boundary not live (wiring) vs. live-but-throwing
-   (something else), plus branch/export facts.
-3. Root-cause from that report; fix in `src/runtime.ts`; regression test.
+1. **Done — canary + diagnostics** in the panel (`parse("0")` at load; status
+   names the instantiation branch and export facts on a non-syntax error).
+2. **Done — root cause on real JSC**, see above.
+3. **Done — fix + tests**: `src/runtime/exported-function-identity.ts`,
+   `tests/issue-5337-exported-function-identity.test.ts`,
+   `scripts/jsc-acorn-smoke.mjs` (skips when no `jsc`; CI has none, so it is
+   a developer check, not a gate).
 
 ## Open question
 
-Whether other compiled-module consumers are affected on JSC — the playground's
-own compile-and-run path passes DOM callbacks across the same boundary, so the
-`calendar.ts` preview may fail on iOS for the same reason. Worth checking once
-the mechanism is known.
+Every compiled-module consumer on JSC was affected — the masking is in
+`_hostBridgeExportView`, which every `buildImports`/`wrapExports` path goes
+through — so the playground's compile-and-run preview (`calendar.ts` DOM
+callbacks) was almost certainly failing on iOS for the same reason. Not
+re-verified in Safari itself: this container has no WebKit browser, only the
+engine. One iOS load of the deployed playground after this lands closes it.
