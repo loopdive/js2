@@ -12,6 +12,10 @@ import {
   MultiPreparedProgramOwner,
   type MultiPreparedProgramInvariantCode,
 } from "../src/codegen/multi-prepared-program.js";
+import {
+  buildMultiPreparedModuleInitCensus,
+  reconcileMultiPreparedModuleInitCensus,
+} from "../src/codegen/multi-prepared-module-init-census.js";
 import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { compileMulti } from "../src/index.js";
 import {
@@ -692,6 +696,60 @@ describe("#3525 whole-program Prepared ownership census", () => {
     const other = ownerFixture();
     const publication = other.session.publish(other.module);
     expectInvariant(() => owner.complete(publication), "publication-inventory-mismatch");
+  });
+
+  it("accepts only queue evidence derived from the owner's retained semantic census", () => {
+    const fixture = ownerFixture({
+      "./dep.ts": `export let value: number = 40; value = value + 2;`,
+      "./entry.ts": `export interface Entry { readonly tag: "entry"; }`,
+    });
+    const ordinaryOwner = ownerFor(fixture);
+    const ordinaryObserved = reconcileMultiPreparedModuleInitCensus(ordinaryOwner.moduleInitCensus, {
+      ctx: fixture.ctx,
+    });
+    expect(() => ordinaryOwner.reconcileModuleInitCensus(ordinaryObserved)).not.toThrow();
+
+    const independentlyBuilt = (target: "standalone" | "wasi", deferTopLevelInit: boolean) =>
+      reconcileMultiPreparedModuleInitCensus(
+        buildMultiPreparedModuleInitCensus({
+          multiAst: fixture.ast,
+          identityContext: fixture.identity,
+          target,
+          deferTopLevelInit,
+        }),
+        { ctx: fixture.ctx },
+      );
+    const sameTargetOwner = ownerFor(fixture);
+    expectInvariant(
+      () => sameTargetOwner.reconcileModuleInitCensus(independentlyBuilt("standalone", false)),
+      "module-init-census-mismatch",
+    );
+    const wasiOwner = ownerFor(fixture);
+    expectInvariant(
+      () => wasiOwner.reconcileModuleInitCensus(independentlyBuilt("wasi", false)),
+      "module-init-census-mismatch",
+    );
+    const deferredOwner = ownerFor(fixture);
+    expectInvariant(
+      () => deferredOwner.reconcileModuleInitCensus(independentlyBuilt("standalone", true)),
+      "module-init-census-mismatch",
+    );
+
+    const foreignOwner = ownerFor(fixture);
+    const foreignModule = createEmptyModule();
+    const foreignSession = new ProgramAbiSession(fixture.inventory, foreignModule);
+    const foreignCtx = createCodegenContext(
+      foreignModule,
+      fixture.ast.checker,
+      OPTIONS,
+      foreignSession,
+      fixture.identity,
+    );
+    const foreignObserved = reconcileMultiPreparedModuleInitCensus(foreignOwner.moduleInitCensus, {
+      ctx: foreignCtx,
+    });
+    expect(foreignObserved.sourcePlans[0]?.plan).toBe(foreignOwner.moduleInitCensus.sourcePlans[0]?.plan);
+    expectInvariant(() => foreignOwner.reconcileModuleInitCensus(foreignObserved), "module-init-census-mismatch");
   });
 
   it("records all five existing early routes and removes only their own reservation", () => {

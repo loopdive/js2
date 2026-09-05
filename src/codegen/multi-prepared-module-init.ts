@@ -2,11 +2,7 @@
 
 import type { MultiTypedAST } from "../checker/index.js";
 import type { IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
-import {
-  buildIrModuleInitPlan,
-  reconcileIrModuleInitPlan,
-  type IrModuleInitPlanningEvidence,
-} from "../ir/module-init-plan.js";
+import type { IrModuleInitParityReport, IrModuleInitPlanningEvidence } from "../ir/module-init-plan.js";
 import { collectModuleInitPopulation } from "../ir/module-init.js";
 import type { IrSourceId, IrUnitId } from "../ir/identity.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
@@ -21,15 +17,16 @@ import { moduleInitChunksRequired } from "./module-init-chunks.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
 import type { IrOverlayPlan } from "./index.js";
 import { prepareIrBodies, type PreparedIrModuleInitBody } from "./ir-prepared-free-functions.js";
+import type {
+  MultiPreparedModuleInitCensus,
+  MultiPreparedModuleInitSourceCensus,
+} from "./multi-prepared-module-init-census.js";
 
-export interface MultiPreparedModuleInitSourcePlan {
-  readonly sourceFile: ts.SourceFile;
-  readonly sourceId: IrSourceId;
-  readonly unitId: IrUnitId | null;
-  readonly executable: boolean;
-  readonly evaluationCount: number;
+export type MultiPreparedModuleInitSourcePlan = MultiPreparedModuleInitSourceCensus & {
   readonly planning: IrModuleInitPlanningEvidence;
-}
+  readonly parity: IrModuleInitParityReport;
+  readonly parityAvailable: true;
+};
 
 export interface MultiPreparedModuleInitLexicalEvidence {
   readonly unitId: IrUnitId;
@@ -49,6 +46,8 @@ export interface MultiPreparedModuleInitPlanningInput {
   readonly multiAst: MultiTypedAST;
   readonly options?: CodegenOptions;
   readonly identityContext: IrPlanningIdentityContext;
+  /** The owner-retained semantic census, observed before route planning. */
+  readonly census: MultiPreparedModuleInitCensus;
   readonly planSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
   readonly planResolvedSource: (sourceFile: ts.SourceFile) => IrOverlayPlan;
   readonly safeSelection: (plan: IrOverlayPlan, sourceFile: ts.SourceFile) => IrSelection;
@@ -74,23 +73,6 @@ export interface MultiPreparedModuleInitPreparation {
   readonly preparedBody: PreparedIrModuleInitBody;
   readonly report: IrIntegrationReport;
   readonly selection: Pick<IrSelection, "funcs" | "classMembers" | "classMemberUnitIds" | "moduleInit">;
-}
-
-function sourceEntries<
-  T extends { readonly initializer?: ts.Expression; readonly staticBlock?: ts.ClassStaticBlockDeclaration },
->(entries: readonly T[], sourceFile: ts.SourceFile): readonly T[] {
-  return entries.filter((entry) => (entry.staticBlock ?? entry.initializer)?.getSourceFile() === sourceFile);
-}
-
-function sourceLiveFunctionNames(ctx: CodegenContext, sourceFile: ts.SourceFile): readonly string[] {
-  const names = new Set(
-    sourceFile.statements
-      .filter(
-        (statement): statement is ts.FunctionDeclaration => ts.isFunctionDeclaration(statement) && !!statement.name,
-      )
-      .map((statement) => statement.name!.text),
-  );
-  return [...(ctx.liveFuncBindingGlobals ?? [])].filter((name) => names.has(name));
 }
 
 /** Return false for syntax that is outside the deliberately tiny M2 owner. */
@@ -145,6 +127,15 @@ function rejectBeforeReservation(input: MultiPreparedModuleInitPlanningInput): b
   ) {
     return true;
   }
+  if (
+    !input.census.parityObserved ||
+    input.census.sourcePlans.some(
+      (sourcePlan) =>
+        !sourcePlan.parityAvailable || sourcePlan.planning === undefined || sourcePlan.parity === undefined,
+    )
+  ) {
+    return true;
+  }
   // Prepared M2 installs one monolithic IR body. Do not reserve that exact
   // slot when its source-owned population needs the direct complete-entry
   // chunk dispatcher; this is an admission fallback before any ABI mutation.
@@ -165,39 +156,22 @@ export function planMultiPreparedModuleInit(
 ): MultiPreparedModuleInitPreparation | undefined {
   if (rejectBeforeReservation(input)) return undefined;
 
-  const sourcePlans = input.multiAst.sourceFiles.map((sourceFile): MultiPreparedModuleInitSourcePlan => {
-    const sourceId = input.identityContext.sourceIdBySourceFile.get(sourceFile);
-    if (!sourceId) {
+  // The semantic plans and their queue observations were retained by the
+  // owner before route planning.  Reuse those exact source records; a second
+  // build here would make the route-dependent map the accidental authority.
+  const sourcePlans = input.census.sourcePlans.map((sourcePlan): MultiPreparedModuleInitSourcePlan => {
+    if (!sourcePlan.planning || !sourcePlan.parity || !sourcePlan.parityAvailable) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "resolve",
-        `source ${sourceFile.fileName} has no exact source ID`,
+        `source ${sourcePlan.sourceId} has no finalized module-init parity evidence`,
       );
     }
-    const plan = buildIrModuleInitPlan({
-      sourceFile,
-      checker: input.multiAst.checker,
-      identityContext: input.identityContext,
-      target: input.ctx.wasi ? "wasi" : input.ctx.standalone ? "standalone" : "host",
-      deferTopLevelInit: input.ctx.deferTopLevelInit,
-    });
-    const planning = Object.freeze({
-      plan,
-      parity: reconcileIrModuleInitPlan(plan, sourceFile, {
-        liveFunctionNames: sourceLiveFunctionNames(input.ctx, sourceFile),
-        staticEntries: sourceEntries(input.ctx.staticInitExprs, sourceFile),
-        moduleStatements: input.ctx.moduleInitStatements.filter(
-          (statement) => statement.getSourceFile() === sourceFile,
-        ),
-      }),
-    });
     return Object.freeze({
-      sourceFile,
-      sourceId,
-      unitId: plan.executable ? plan.unitId : null,
-      executable: plan.executable,
-      evaluationCount: plan.evaluations.length,
-      planning,
+      ...sourcePlan,
+      planning: sourcePlan.planning,
+      parity: sourcePlan.parity,
+      parityAvailable: true as const,
     });
   });
 
