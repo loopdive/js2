@@ -1,8 +1,8 @@
 {
-  "generatedAt": "2026-09-05T11:18:58.825Z",
+  "generatedAt": "2026-09-05T12:50:12.442Z",
   "measuredRange": {
     "oldest": "2026-09-05T09:52:22.338Z",
-    "newest": "2026-09-05T11:18:06.653Z"
+    "newest": "2026-09-05T12:49:18.519Z"
   },
   "correctness": {
     "definition": {
@@ -12,24 +12,22 @@
     },
     "oracle": "native Node executing the same pinned package, computed at run time; never read from a committed pin",
     "counts": {
-      "verified": 10,
-      "divergent": 14,
+      "verified": 7,
+      "divergent": 17,
       "unverified": 0
     },
     "verified": [
       "acorn",
-      "clsx",
       "cookie",
       "jsdom",
       "styled-components",
-      "stylelint",
       "tailwindcss",
       "typescript",
-      "uuid",
       "webpack"
     ],
     "divergent": [
       "axios",
+      "clsx",
       "eslint",
       "hono",
       "jest",
@@ -42,7 +40,9 @@
       "react",
       "react-dom",
       "redux",
-      "three"
+      "stylelint",
+      "three",
+      "uuid"
     ],
     "unverified": []
   },
@@ -162,26 +162,39 @@
       "entryFile": "dist/index.js",
       "shape": "esm-project",
       "compile": {
-        "success": true,
-        "durationMs": 8244,
+        "success": false,
+        "durationMs": 6291,
         "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 0,
-        "binaryBytes": 145390,
-        "categories": {}
+        "errorCount": 1,
+        "binaryBytes": 0,
+        "categories": {
+          "compiler-diagnostic": {
+            "count": 1,
+            "sample": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:max.js lost its exact module-init terminal"
+          }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:max.js lost its exact module-init terminal",
+            "line": 1,
+            "column": 1,
+            "severity": "error"
+          }
+        ]
       },
       "validation": {
-        "validates": true,
-        "firstError": null
+        "validates": false,
+        "firstError": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:max.js lost its exact module-init terminal"
       },
       "capabilities": {
         "nodeFs": false
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 75,
+        "passed": 1,
         "total": 75,
-        "passRatePct": 100,
+        "passRatePct": 1.3,
         "admitted": null,
         "executed": 75,
         "upstreamTestsSeen": 75,
@@ -205,29 +218,30 @@
         "files": [
           {
             "path": "src/test/parse.test.ts",
-            "status": "pass",
-            "passed": 5,
+            "status": "compile_error",
+            "passed": 0,
             "total": 5,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:tests%2Fdogfood%2F.npm-compat%2Fuuid%2Fpackage%2Fdist%2Fregex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "String -> bytes parsing",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "String -> bytes -> string symmetry for assorted uuids",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "Case neutrality",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "Null UUID case",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "UUID validation",
-                "status": "passed"
+                "status": "compile-failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/parse.test.ts"
@@ -247,508 +261,409 @@
           },
           {
             "path": "src/test/stringify.test.ts",
-            "status": "pass",
-            "passed": 4,
+            "status": "compile_error",
+            "passed": 0,
             "total": 4,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:tests%2Fdogfood%2F.npm-compat%2Fuuid%2Fpackage%2Fdist%2Fregex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "Stringify Array (unsafe)",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "Stringify w/ offset (unsafe)",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "Stringify Array (safe)",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "Throws on not enough values (safe)",
-                "status": "passed"
+                "status": "compile-failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/stringify.test.ts"
           },
           {
             "path": "src/test/v1.test.ts",
-            "status": "pass",
-            "passed": 10,
+            "status": "compile_error",
+            "passed": 0,
             "total": 10,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:tests%2Fdogfood%2F.npm-compat%2Fuuid%2Fpackage%2Fdist%2Fregex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "v1 sort order (default)",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v1 sort order (time option)",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v1(options)",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v1(options) equality",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "fills one UUID into a buffer as expected",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "fills two UUIDs into a buffer as expected",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v1() state transitions",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "throws when option.random is too short",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "throws when options.rng() is too short",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "throws RangeError for out-of-range indexes",
-                "status": "passed"
+                "status": "compile-failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/v1.test.ts"
           },
           {
             "path": "src/test/v35.test.ts",
-            "status": "pass",
-            "passed": 21,
+            "status": "compile_error",
+            "passed": 0,
             "total": 21,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:tests%2Fdogfood%2F.npm-compat%2Fuuid%2Fpackage%2Fdist%2Fmd5.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "sha1(node) HASH_SAMPLES[0]",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "sha1(node) HASH_SAMPLES[1]",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "sha1(node) HASH_SAMPLES[2]",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "md5(node) HASH_SAMPLES[0]",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "md5(node) HASH_SAMPLES[1]",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "md5(node) HASH_SAMPLES[2]",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v3",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v3 namespace.toUpperCase",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v3 namespace string validation",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v3 namespace buffer validation",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v3 fill buffer",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v3 undefined/null",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v3 throws RangeError for out-of-range indexes",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v5",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v5 namespace.toUpperCase",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v5 namespace string validation",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v5 namespace buffer validation",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v5 fill buffer",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v5 undefined/null",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v5 throws RangeError for out-of-range indexes",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v3/v5 constants",
-                "status": "passed"
+                "status": "compile-failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/v35.test.ts"
           },
           {
             "path": "src/test/v4.test.ts",
-            "status": "pass",
-            "passed": 10,
+            "status": "compile_error",
+            "passed": 0,
             "total": 10,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:tests%2Fdogfood%2F.npm-compat%2Fuuid%2Fpackage%2Fdist%2Fregex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "subsequent UUIDs are different",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "should use native randomUUID() if no option is passed",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "should not use native randomUUID() if an option is passed",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "explicit options.random produces expected result",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "explicit options.rng produces expected result",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "fills one UUID into a buffer as expected",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "fills two UUIDs into a buffer as expected",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "throws when option.random is too short",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "throws when options.rng() is too short",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "throws RangeError for out-of-range indexes",
-                "status": "passed"
+                "status": "compile-failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/v4.test.ts"
           },
           {
             "path": "src/test/v6.test.ts",
-            "status": "pass",
-            "passed": 8,
+            "status": "compile_error",
+            "passed": 0,
             "total": 8,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:tests%2Fdogfood%2F.npm-compat%2Fuuid%2Fpackage%2Fdist%2Fregex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "default behavior",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "default behavior (binary type)",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "all options",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "sort by creation time",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "creating at array offset",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "throws RangeError for out-of-range indexes",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v1 -> v6 conversion",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v6 -> v1 conversion",
-                "status": "passed"
+                "status": "compile-failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/v6.test.ts"
           },
           {
             "path": "src/test/v7.test.ts",
-            "status": "pass",
-            "passed": 14,
+            "status": "compile_error",
+            "passed": 0,
             "total": 14,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:tests%2Fdogfood%2F.npm-compat%2Fuuid%2Fpackage%2Fdist%2Fregex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "subsequent UUIDs are different",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "explicit options.random and options.msecs produces expected result",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "explicit options.rng produces expected result",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "explicit options.msecs produces expected result",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "fills one UUID into a buffer as expected",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "fills two UUIDs into a buffer as expected",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "lexicographical sorting is preserved",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "can supply seq",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "internal seq is reset upon timestamp change",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "v7() state transitions",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "flipping bits changes the result",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "throws when option.random is too short",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "throws when options.rng() is too short",
-                "status": "passed"
+                "status": "compile-failed"
               },
               {
                 "name": "throws RangeError for out-of-range indexes",
-                "status": "passed"
+                "status": "compile-failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/v7.test.ts"
           },
           {
             "path": "src/test/validate.test.ts",
-            "status": "pass",
-            "passed": 1,
+            "status": "compile_error",
+            "passed": 0,
             "total": 1,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000003:source:tests%2Fdogfood%2F.npm-compat%2Fuuid%2Fpackage%2Fdist%2Fregex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "TESTS cases",
-                "status": "passed"
+                "status": "compile-failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/validate.test.ts"
           },
           {
             "path": "src/test/version.test.ts",
-            "status": "pass",
-            "passed": 1,
+            "status": "compile_error",
+            "passed": 0,
             "total": 1,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000003:source:tests%2Fdogfood%2F.npm-compat%2Fuuid%2Fpackage%2Fdist%2Fregex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "TESTS cases",
-                "status": "passed"
+                "status": "compile-failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/uuidjs/uuid/70177807e9229dfacde2038dc1e722f1828f358a/src/test/version.test.ts"
           }
         ],
         "summary": {
-          "pass": 75,
+          "pass": 1,
           "fail": 0,
-          "compile_error": 0,
+          "compile_error": 74,
           "skip": 0,
           "total": 75
         }
       },
       "correctness": {
-        "status": "verified",
-        "passed": 75,
-        "total": 75
+        "status": "divergent",
+        "passed": 1,
+        "total": 75,
+        "reason": "74 of 75 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "validate(uuid) + version(uuid)",
         "lanes": {
           "jsHost": {
-            "status": "measured",
+            "status": "compile-error",
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
-            "sampleOp": "validate(uuid) + version(uuid)",
-            "wasmUs": 1.8406641101527805,
-            "nodeUs": 0.1978596968259632,
-            "wasmStdUs": 0.014076165993232538,
-            "nodeStdUs": 0.002341235909030498,
-            "ratio": 0.10751122174658659,
-            "ratioStd": 0.0007408731397024227,
-            "ratioSamples": [
-              0.10923762787929832,
-              0.10762902495224694,
-              0.10689914173016861,
-              0.10758125300616418,
-              0.10751122174658659,
-              0.1066673013664478,
-              0.10764031885170017,
-              0.10659615183903505,
-              0.10734774775534141
-            ],
-            "measurementOrder": "alternating-paired",
-            "ratioEstimator": "median-of-paired-ratios",
-            "iters": 149683,
-            "warmupRounds": 2,
-            "measuredRounds": 9,
-            "wasmSamplesUs": [
-              1.8791751701929926,
-              1.8406641101527805,
-              1.849526352357981,
-              1.8382113466459193,
-              1.8399186547570592,
-              1.8622419179198653,
-              1.8381559896581263,
-              1.8618146482900377,
-              1.8367435179679743
-            ],
-            "nodeSamplesUs": [
-              0.2052766379615592,
-              0.19810888344033903,
-              0.19771277967439757,
-              0.19775707996231642,
-              0.1978119024872675,
-              0.19864031987599,
-              0.1978596968259632,
-              0.1984622769452645,
-              0.1971702798580845
-            ],
-            "compileDurationMs": 4740.4291319999975,
-            "moduleCompileDurationMs": 0.5809990000016114,
-            "instantiateDurationMs": 3.730705999998463,
-            "binaryBytes": 86378,
-            "moduleImportCount": 198,
-            "functionImportCount": 60,
-            "expectedChecksum": 2,
-            "actualChecksum": 2,
-            "testCompiledToWasm": false,
-            "target": "js-host",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:max.js lost its exact module-init terminal",
             "optimizationRequested": true,
-            "optimizationVerified": true,
+            "optimizationVerified": false,
             "optimizationLevel": 4
           },
           "standalone": {
-            "status": "host-import-error",
+            "status": "compile-error",
             "placement": "standalone",
             "inputMode": "compile-time-static",
-            "diagnostic": "standalone binary retained 6 host import(s)",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:max.js lost its exact module-init terminal",
             "optimizationRequested": true,
-            "optimizationVerified": true,
-            "compileDurationMs": 8160.218170000004,
-            "moduleCompileDurationMs": 1.0794019999957527,
-            "binaryBytes": 169731,
-            "moduleImportCount": 6,
-            "functionImportCount": 6,
+            "optimizationVerified": false,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
-            "status": "host-import-error",
+            "status": "compile-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "standalone binary retained 6 host import(s)",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:max.js lost its exact module-init terminal",
             "optimizationRequested": true,
-            "optimizationVerified": true,
-            "compileDurationMs": 7508.901933000001,
-            "moduleCompileDurationMs": 4.317745000000286,
-            "binaryBytes": 168922,
-            "moduleImportCount": 6,
-            "functionImportCount": 6,
+            "optimizationVerified": false,
             "optimizationLevel": 4
           }
-        },
-        "wasmUs": 1.8406641101527805,
-        "nodeUs": 0.1978596968259632,
-        "wasmStdUs": 0.014076165993232538,
-        "nodeStdUs": 0.002341235909030498,
-        "ratio": 0.10751122174658659,
-        "ratioStd": 0.0007408731397024227,
-        "ratioSamples": [
-          0.10923762787929832,
-          0.10762902495224694,
-          0.10689914173016861,
-          0.10758125300616418,
-          0.10751122174658659,
-          0.1066673013664478,
-          0.10764031885170017,
-          0.10659615183903505,
-          0.10734774775534141
-        ],
-        "measurementOrder": "alternating-paired",
-        "ratioEstimator": "median-of-paired-ratios",
-        "iters": 149683,
-        "warmupRounds": 2,
-        "measuredRounds": 9,
-        "wasmSamplesUs": [
-          1.8791751701929926,
-          1.8406641101527805,
-          1.849526352357981,
-          1.8382113466459193,
-          1.8399186547570592,
-          1.8622419179198653,
-          1.8381559896581263,
-          1.8618146482900377,
-          1.8367435179679743
-        ],
-        "nodeSamplesUs": [
-          0.2052766379615592,
-          0.19810888344033903,
-          0.19771277967439757,
-          0.19775707996231642,
-          0.1978119024872675,
-          0.19864031987599,
-          0.1978596968259632,
-          0.1984622769452645,
-          0.1971702798580845
-        ]
+        }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:08:15.700Z",
+      "measuredAt": "2026-09-05T12:38:41.547Z",
       "esEdition": {
         "required": 2021,
         "requiredLabel": "ES2021",
@@ -836,7 +751,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 600202,
+        "durationMs": 600218,
         "timedOut": true,
         "timeoutMs": 600000,
         "errorCount": 0,
@@ -2280,7 +2195,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:18:06.653Z",
+      "measuredAt": "2026-09-05T12:49:18.519Z",
       "esEdition": {
         "required": 2020,
         "requiredLabel": "ES2020",
@@ -2533,7 +2448,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 14794,
+        "durationMs": 18678,
         "errorCount": 0,
         "binaryBytes": 713045,
         "categories": {}
@@ -2741,22 +2656,22 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 3170673.800999997,
-            "nodeUs": 7753.780999977607,
-            "wasmStdUs": 14349.588782571343,
-            "nodeStdUs": 404.34865841094916,
-            "ratio": 0.0024379286617557407,
-            "ratioStd": 0.00013502304790463527,
+            "wasmUs": 4877576.3729999885,
+            "nodeUs": 10273.84599999641,
+            "wasmStdUs": 38502.03669259144,
+            "nodeStdUs": 742.1646486871384,
+            "ratio": 0.0021124472276518686,
+            "ratioStd": 0.00014686049829491167,
             "ratioSamples": [
-              0.002530759830393905,
-              0.0024356726582951877,
-              0.0024791272669601612,
-              0.0024047435611833827,
-              0.0024379286617557407,
-              0.0023670138332670247,
-              0.002673931325677899,
-              0.0024058520451558517,
-              0.0027982555261110878
+              0.002154093633653287,
+              0.0022117220887841694,
+              0.0025269059615523107,
+              0.0021124472276518686,
+              0.002103330491999471,
+              0.0019621761440738726,
+              0.0021200467059069947,
+              0.0020989483181023047,
+              0.00207333936088727
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
@@ -2764,32 +2679,32 @@
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              3161209.8880000124,
-              3163043.266000022,
-              3151468.706000014,
-              3182704.8519999953,
-              3180479.035999975,
-              3187085.303,
-              3170673.800999997,
-              3190215.71400002,
-              3149591.20699999
+              4914902.414000011,
+              4915934.987999993,
+              4903787.948000012,
+              4837224.7440000065,
+              4862997.53600001,
+              4877576.3729999885,
+              4857168.463000009,
+              4833859.849,
+              4955216.783999989
             ],
             "nodeSamplesUs": [
-              8000.2629999944475,
-              7704.138000000967,
-              7812.892000016291,
-              7653.588999994099,
-              7753.780999977607,
-              7543.875000003027,
-              8478.164000000106,
-              7675.187000015285,
-              8813.360999978613
+              10587.160000024596,
+              10872.681999986526,
+              12391.410999989603,
+              10218.381999991834,
+              10228.490999987116,
+              9570.663999998942,
+              10297.42400001851,
+              10146.022000000812,
+              10273.84599999641
             ],
-            "compileDurationMs": 22189.428406,
-            "wasmCompileMs": 1.866321000001335,
-            "instantiateMs": 10.304912999999942,
-            "wireMs": 0.18356800000037765,
-            "wrapMs": 0.29715199999918696,
+            "compileDurationMs": 23762.523926,
+            "wasmCompileMs": 1.8805430000065826,
+            "instantiateMs": 12.895212000003085,
+            "wireMs": 0.23769300000276417,
+            "wrapMs": 0.38816299999598414,
             "binaryBytes": 379830,
             "moduleImportCount": 1211,
             "functionImportCount": 93,
@@ -2807,54 +2722,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parse(own 226KB dist bundle).body.length",
-            "wasmUs": 0.026222223014984693,
-            "nodeUs": 7706.396555555532,
-            "wasmStdUs": 0.2364853603294996,
-            "nodeStdUs": 96.4400085981002,
-            "ratio": 294041.4720426578,
-            "ratioStd": 271345.18951619015,
+            "wasmUs": 0.030814814467534972,
+            "nodeUs": 10184.685925925065,
+            "wasmStdUs": 0.03942028410633558,
+            "nodeStdUs": 82.74129394395482,
+            "ratio": 330512.6479555854,
+            "ratioStd": 534991.779097598,
             "ratioSamples": [
-              294041.4720426578,
-              90015.31023553031,
-              574818.2341670842,
-              75776.60852547888,
-              654257.6261083421,
-              9836.368116246436,
-              552649.9733614138,
-              78030.92704401442,
-              729207.2627874021
+              330512.6479555854,
+              121559.46963808233,
+              1138470.6643140465,
+              107167.60092103512,
+              1385113.7523318722,
+              109593.4422998544,
+              1236853.2011551457,
+              112533.06862961756,
+              1097851.436477235
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 18,
+            "iters": 27,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.026222223014984693,
-              0.08394444335459007,
-              0.013111110699052611,
-              0.10283333378740483,
-              0.011722222552634776,
-              0.788277776640219,
-              0.013944443910279207,
-              0.09722222198939158,
-              0.010722221405659286
+              0.030814814467534972,
+              0.08496296316109321,
+              0.008925927061311626,
+              0.09648148099788362,
+              0.007407405603401087,
+              0.09240740823938891,
+              0.00818518499188401,
+              0.08977777798901554,
+              0.009296295940186139
             ],
             "nodeSamplesUs": [
-              7710.42105555696,
-              7556.285111112326,
-              7536.505499998587,
-              7792.361277778076,
-              7669.353500000499,
-              7753.790388889481,
-              7706.396555555532,
-              7586.340111111188,
-              7818.721722221299
+              10184.685925925065,
+              10328.052740742418,
+              10161.906111110173,
+              10339.688851851624,
+              10260.099370371016,
+              10127.24596296256,
+              10123.872259258793,
+              10102.968851852454,
+              10205.951851850841
             ],
-            "compileDurationMs": 79179.261302,
-            "moduleCompileDurationMs": 0.4829219999955967,
-            "instantiateDurationMs": 0.024236999975983053,
-            "firstBatchDurationMs": 0.09080000000540167,
+            "compileDurationMs": 99735.67056799997,
+            "moduleCompileDurationMs": 0.2598139999900013,
+            "instantiateDurationMs": 0.023984999977983534,
+            "firstBatchDurationMs": 0.08608999999705702,
             "binaryBytes": 74,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2872,7 +2787,7 @@
             "staticEvaluation": {
               "operationEvaluatedInWasm": true,
               "operationResultType": "number",
-              "stageDurationMs": 275.80026600000565,
+              "stageDurationMs": 359.41849299997557,
               "stageBinaryBytes": 2211400,
               "stageModuleImportCount": 0
             }
@@ -2882,55 +2797,55 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parse(runtime-suffixed own 226KB dist bundle).body.length",
-            "wasmUs": 65853.05525000149,
-            "nodeUs": 8612.242500006687,
-            "wasmStdUs": 1623.3399665952124,
-            "nodeStdUs": 314.83902276460185,
-            "ratio": 0.13133883042003344,
-            "ratioStd": 0.00556643732286008,
+            "wasmUs": 104691.12066666519,
+            "nodeUs": 10840.640666681187,
+            "wasmStdUs": 1442.842851411402,
+            "nodeStdUs": 392.4499141946242,
+            "ratio": 0.10466956570511177,
+            "ratioStd": 0.0038985394254401453,
             "ratioSamples": [
-              0.13387943481431255,
-              0.1263437169787748,
-              0.1306939020115087,
-              0.13133883042003344,
-              0.1339625013162995,
-              0.1264032774866928,
-              0.1313396829871241,
-              0.11934233303772789,
-              0.14027518005489348
+              0.10968359692503798,
+              0.10293825873711816,
+              0.10398044118516828,
+              0.10319175333114215,
+              0.10911275688995027,
+              0.10478647213919295,
+              0.10466956570511177,
+              0.10075489743397455,
+              0.11384574944246315
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 4,
+            "iters": 3,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              66686.75074999919,
-              65776.1279999977,
-              65853.05525000149,
-              69605.74774999986,
-              65086.75124999718,
-              68133.06324998848,
-              65058.4827499988,
-              67992.69625000306,
-              64468.589500000235
+              106978.76433333538,
+              104691.12066666519,
+              104294.11733334807,
+              104850.41666665347,
+              105275.4263333433,
+              103091.93333333435,
+              103570.13133333142,
+              106666.67600001286,
+              102393.26799998526
             ],
             "nodeSamplesUs": [
-              8927.984500012826,
-              8310.400499991374,
-              8606.592750002164,
-              9141.937499996857,
-              8719.184000001405,
-              8612.242500006687,
-              8544.760500008124,
-              8114.407000000938,
-              9043.342999997549
+              11733.815666676188,
+              10776.72166666404,
+              10844.548333339239,
+              10819.69833333278,
+              11486.891999995956,
+              10802.640000008978,
+              10840.640666681187,
+              10747.19000000429,
+              11657.038333321301
             ],
-            "compileDurationMs": 81157.95806999996,
-            "moduleCompileDurationMs": 11.447240999958012,
-            "instantiateDurationMs": 6.593806000018958,
-            "moduleInitDurationMs": 22.897857999952976,
-            "firstBatchDurationMs": 254.60682699998142,
+            "compileDurationMs": 96004.03849100001,
+            "moduleCompileDurationMs": 12.050569000013638,
+            "instantiateDurationMs": 7.050411000032909,
+            "moduleInitDurationMs": 28.688968999951612,
+            "firstBatchDurationMs": 325.39654500002507,
             "binaryBytes": 2213622,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -2981,22 +2896,22 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 3170673.800999997,
-        "nodeUs": 7753.780999977607,
-        "wasmStdUs": 14349.588782571343,
-        "nodeStdUs": 404.34865841094916,
-        "ratio": 0.0024379286617557407,
-        "ratioStd": 0.00013502304790463527,
+        "wasmUs": 4877576.3729999885,
+        "nodeUs": 10273.84599999641,
+        "wasmStdUs": 38502.03669259144,
+        "nodeStdUs": 742.1646486871384,
+        "ratio": 0.0021124472276518686,
+        "ratioStd": 0.00014686049829491167,
         "ratioSamples": [
-          0.002530759830393905,
-          0.0024356726582951877,
-          0.0024791272669601612,
-          0.0024047435611833827,
-          0.0024379286617557407,
-          0.0023670138332670247,
-          0.002673931325677899,
-          0.0024058520451558517,
-          0.0027982555261110878
+          0.002154093633653287,
+          0.0022117220887841694,
+          0.0025269059615523107,
+          0.0021124472276518686,
+          0.002103330491999471,
+          0.0019621761440738726,
+          0.0021200467059069947,
+          0.0020989483181023047,
+          0.00207333936088727
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
@@ -3004,26 +2919,26 @@
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          3161209.8880000124,
-          3163043.266000022,
-          3151468.706000014,
-          3182704.8519999953,
-          3180479.035999975,
-          3187085.303,
-          3170673.800999997,
-          3190215.71400002,
-          3149591.20699999
+          4914902.414000011,
+          4915934.987999993,
+          4903787.948000012,
+          4837224.7440000065,
+          4862997.53600001,
+          4877576.3729999885,
+          4857168.463000009,
+          4833859.849,
+          4955216.783999989
         ],
         "nodeSamplesUs": [
-          8000.2629999944475,
-          7704.138000000967,
-          7812.892000016291,
-          7653.588999994099,
-          7753.780999977607,
-          7543.875000003027,
-          8478.164000000106,
-          7675.187000015285,
-          8813.360999978613
+          10587.160000024596,
+          10872.681999986526,
+          12391.410999989603,
+          10218.381999991834,
+          10228.490999987116,
+          9570.663999998942,
+          10297.42400001851,
+          10146.022000000812,
+          10273.84599999641
         ]
       },
       "knownBugs": [
@@ -3036,7 +2951,7 @@
           "summary": "linked Acorn initialization is lowered, but the cross-module parser driver is not yet runnable"
         }
       ],
-      "measuredAt": "2026-09-05T11:12:55.813Z",
+      "measuredAt": "2026-09-05T12:45:41.927Z",
       "esEdition": {
         "required": 2022,
         "requiredLabel": "ES2022",
@@ -3119,7 +3034,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 1233,
+        "durationMs": 824,
         "errorCount": 9,
         "binaryBytes": 22075,
         "categories": {
@@ -3335,49 +3250,49 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 220.95977481840205,
-            "nodeUs": 0.6216652542380394,
-            "wasmStdUs": 65.77742464218595,
-            "nodeStdUs": 0.028665706875231227,
-            "ratio": 0.0027876404968789474,
-            "ratioStd": 0.0011567201056066384,
+            "wasmUs": 661.2479907249208,
+            "nodeUs": 0.4006678057112955,
+            "wasmStdUs": 233.3590900445459,
+            "nodeStdUs": 0.007301878820037751,
+            "ratio": 0.0006001242793165528,
+            "ratioStd": 0.00028286925952212394,
             "ratioSamples": [
-              0.0055744151674509525,
-              0.004494936103274321,
-              0.003577451272476021,
-              0.0031138610599175027,
-              0.0027876404968789474,
-              0.002458424722077358,
-              0.002282766444077423,
-              0.0020746104841106467,
-              0.001863580608442104
+              0.0012961298557477114,
+              0.001004677552245747,
+              0.0008146382548582277,
+              0.0006991022370240108,
+              0.0006001242793165528,
+              0.0005165157287414817,
+              0.00045109928988333717,
+              0.0004325349607037726,
+              0.00041322893216497414
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 4956,
+            "iters": 8194,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              124.84365920096843,
-              150.48680468119426,
-              172.1391470944316,
-              197.51721428571454,
-              220.95977481840205,
-              253.07689709443133,
-              272.55816908797516,
-              299.65396347861304,
-              330.6805165456022
+              314.26983280449156,
+              394.35577080790824,
+              491.83524505735875,
+              564.7324391017821,
+              661.2479907249208,
+              759.93863668538,
+              893.4851679277514,
+              962.8881596289975,
+              987.5939466682937
             ],
             "nodeSamplesUs": [
-              0.695930387409956,
-              0.6764285714278911,
-              0.6158194108159113,
-              0.6150411622276676,
-              0.6159564164650306,
-              0.6221705004035775,
-              0.6221866424532101,
-              0.6216652542380394,
-              0.6162497982240026
+              0.407334513058743,
+              0.396200390529274,
+              0.4006678057112955,
+              0.39480571149608185,
+              0.3968309738833117,
+              0.39252025872635715,
+              0.4030505247735029,
+              0.4164827922872564,
+              0.4081023919943314
             ],
             "binaryBytes": 16805,
             "moduleImportCount": 151,
@@ -3395,54 +3310,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "parseCookie(8-pair header); verify a/h",
-            "wasmUs": 0.0009483431686130459,
-            "nodeUs": 0.6117154062797127,
-            "wasmStdUs": 0.00001258475371259539,
-            "nodeStdUs": 0.00196133826345316,
-            "ratio": 643.8236080094036,
-            "ratioStd": 7.021171130714101,
+            "wasmUs": 0.0005013544778250513,
+            "nodeUs": 0.39427896239677,
+            "wasmStdUs": 0.000004799260935206076,
+            "nodeStdUs": 0.0008491282131216662,
+            "ratio": 787.528411337355,
+            "ratioStd": 6.944269812518994,
             "ratioSamples": [
-              635.0778964138663,
-              643.8236080094036,
-              652.6955695142874,
-              634.1572793057746,
-              649.760088094996,
-              648.0736636346863,
-              640.2517462928041,
-              636.8222049232519,
-              652.7711470883327
+              787.528411337355,
+              784.8075207819329,
+              792.1176453378332,
+              783.081128059825,
+              803.8481871656871,
+              785.7679244990957,
+              783.8588121649414,
+              799.6292751443076,
+              793.1742459293445
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 439574,
+            "iters": 682920,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0009704964351862563,
-              0.0009483431686130459,
-              0.0009356467852853354,
-              0.0009645929923117702,
-              0.0009379945128582195,
-              0.000943897955749258,
-              0.00095782507609502,
-              0.0009642745021286853,
-              0.0009377442705927916
+              0.0005024819891196245,
+              0.0005013544778250513,
+              0.0004973217946396051,
+              0.0005045847244200583,
+              0.0004890909623469023,
+              0.0005019401979744788,
+              0.0005029974228494161,
+              0.0004941632987757413,
+              0.0004959072805056926
             ],
             "nodeSamplesUs": [
-              0.6163408345352438,
-              0.6105657204475214,
-              0.6106925113860242,
-              0.6117036676418481,
-              0.6094713973073795,
-              0.6117154062797127,
-              0.6132491776128746,
-              0.6140714145968603,
-              0.6121324031903683
+              0.39571884261701196,
+              0.3934667647747991,
+              0.39393736894510945,
+              0.3951307752006152,
+              0.39315488344167876,
+              0.3944085075850714,
+              0.39427896239677,
+              0.3951474404029659,
+              0.39334088326597466
             ],
-            "compileDurationMs": 600.1931630000036,
-            "moduleCompileDurationMs": 0.6635170000008657,
-            "instantiateDurationMs": 0.026058000003104098,
-            "firstBatchDurationMs": 0.06160500000260072,
+            "compileDurationMs": 418.1617969999934,
+            "moduleCompileDurationMs": 5.09307699999772,
+            "instantiateDurationMs": 0.03358200000366196,
+            "firstBatchDurationMs": 0.04229700000723824,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -3463,55 +3378,55 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "parseCookie(8-pair runtime-generated header); verify a/h",
-            "wasmUs": 4.0694419382869285,
-            "nodeUs": 0.8439746159108462,
-            "wasmStdUs": 0.015563252880145997,
-            "nodeStdUs": 0.007138008034120139,
-            "ratio": 0.2069207310365269,
-            "ratioStd": 0.002253682886332826,
+            "wasmUs": 2.7120387917578075,
+            "nodeUs": 0.5372341666295758,
+            "wasmStdUs": 0.01843319811258111,
+            "nodeStdUs": 0.014574851714771566,
+            "ratio": 0.19749823900914945,
+            "ratioStd": 0.005601144063982476,
             "ratioSamples": [
-              0.20612511775136094,
-              0.2034035420010482,
-              0.20690136201213602,
-              0.2090073535049022,
-              0.20971638529951295,
-              0.2069207310365269,
-              0.2117140032624188,
-              0.20740061332724147,
-              0.20631914537727808
+              0.20015119205838242,
+              0.19406651670971056,
+              0.20228737269347372,
+              0.19749823900914945,
+              0.2046991320432914,
+              0.1974448375782584,
+              0.197351153349786,
+              0.19343060160027412,
+              0.21252534885313273
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 54089,
+            "iters": 89684,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              4.070444064412389,
-              4.111382480725944,
-              4.064900386400289,
-              4.0694419382869285,
-              4.06862177152473,
-              4.078733975484857,
-              4.053475660485314,
-              4.07192229473651,
-              4.058974264638009
+              2.6725304848132674,
+              2.7130375986799575,
+              2.685931715802307,
+              2.6884394429329013,
+              2.689169941126578,
+              2.723276582222043,
+              2.722224610855857,
+              2.724772478926034,
+              2.7120387917578075
             ],
             "nodeSamplesUs": [
-              0.839020762077332,
-              0.8362697591007133,
-              0.8410334263898779,
-              0.8505432897632105,
-              0.8532566510750671,
-              0.8439746159108462,
-              0.858177559208123,
-              0.8445191813492207,
-              0.8374441013884798
+              0.5349101623477421,
+              0.526509756478297,
+              0.5433300700237226,
+              0.5309620556619867,
+              0.5504707528655196,
+              0.5376969024575059,
+              0.5372341666295758,
+              0.527054379822533,
+              0.5763769903215566
             ],
-            "compileDurationMs": 3884.2719690000013,
-            "moduleCompileDurationMs": 0.8474799999967217,
-            "instantiateDurationMs": 0.21350900000834372,
-            "moduleInitDurationMs": 0.15967700000328477,
-            "firstBatchDurationMs": 1.8694560000003548,
+            "compileDurationMs": 2837.9198289999913,
+            "moduleCompileDurationMs": 0.6384169999946607,
+            "instantiateDurationMs": 0.21558800000639167,
+            "moduleInitDurationMs": 0.09154700000362936,
+            "firstBatchDurationMs": 1.5144910000090022,
             "binaryBytes": 71913,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -3530,49 +3445,49 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 220.95977481840205,
-        "nodeUs": 0.6216652542380394,
-        "wasmStdUs": 65.77742464218595,
-        "nodeStdUs": 0.028665706875231227,
-        "ratio": 0.0027876404968789474,
-        "ratioStd": 0.0011567201056066384,
+        "wasmUs": 661.2479907249208,
+        "nodeUs": 0.4006678057112955,
+        "wasmStdUs": 233.3590900445459,
+        "nodeStdUs": 0.007301878820037751,
+        "ratio": 0.0006001242793165528,
+        "ratioStd": 0.00028286925952212394,
         "ratioSamples": [
-          0.0055744151674509525,
-          0.004494936103274321,
-          0.003577451272476021,
-          0.0031138610599175027,
-          0.0027876404968789474,
-          0.002458424722077358,
-          0.002282766444077423,
-          0.0020746104841106467,
-          0.001863580608442104
+          0.0012961298557477114,
+          0.001004677552245747,
+          0.0008146382548582277,
+          0.0006991022370240108,
+          0.0006001242793165528,
+          0.0005165157287414817,
+          0.00045109928988333717,
+          0.0004325349607037726,
+          0.00041322893216497414
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 4956,
+        "iters": 8194,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          124.84365920096843,
-          150.48680468119426,
-          172.1391470944316,
-          197.51721428571454,
-          220.95977481840205,
-          253.07689709443133,
-          272.55816908797516,
-          299.65396347861304,
-          330.6805165456022
+          314.26983280449156,
+          394.35577080790824,
+          491.83524505735875,
+          564.7324391017821,
+          661.2479907249208,
+          759.93863668538,
+          893.4851679277514,
+          962.8881596289975,
+          987.5939466682937
         ],
         "nodeSamplesUs": [
-          0.695930387409956,
-          0.6764285714278911,
-          0.6158194108159113,
-          0.6150411622276676,
-          0.6159564164650306,
-          0.6221705004035775,
-          0.6221866424532101,
-          0.6216652542380394,
-          0.6162497982240026
+          0.407334513058743,
+          0.396200390529274,
+          0.4006678057112955,
+          0.39480571149608185,
+          0.3968309738833117,
+          0.39252025872635715,
+          0.4030505247735029,
+          0.4164827922872564,
+          0.4081023919943314
         ]
       },
       "knownBugs": [
@@ -3581,7 +3496,7 @@
           "summary": "a property assigned dynamically inside a loop/switch onto an object is silently dropped"
         }
       ],
-      "measuredAt": "2026-09-05T11:08:31.271Z",
+      "measuredAt": "2026-09-05T12:40:03.246Z",
       "esEdition": {
         "required": 2020,
         "requiredLabel": "ES2020",
@@ -3652,7 +3567,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 78794,
+        "durationMs": 65645,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 8,
@@ -3731,9 +3646,9 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 53,
+        "passed": 0,
         "total": 62,
-        "passRatePct": 85.5,
+        "passRatePct": 0,
         "admitted": 62,
         "executed": 62,
         "upstreamTestsSeen": 1753,
@@ -3757,114 +3672,114 @@
         "files": [
           {
             "path": "test/test.js",
-            "status": "fail",
-            "passed": 53,
+            "status": "compile_error",
+            "passed": 0,
             "total": 62,
-            "error": "assertion 1: expected truthy value; got boolean:false",
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000006:source:tests%2Fdogfood%2F.npm-compat%2Flodash%2Fpackage%2FisObjectLike.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "should add two numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should not coerce arguments to numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should capitalize the first character of a string",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should divide two numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should coerce arguments to numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should perform a `SameValueZero` comparison of two values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` if `value` > `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` if `value` is <= `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` if `value` >= `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` if `value` is less than `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should lowercase as space-separated words",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should lowercase only the first character",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` if `value` is less than `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` if `value` >= `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` if `value` is <= `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` if `value` > `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should multiply two numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should coerce arguments to numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should replace the matched pattern",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should uppercase only the first character of each word",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should subtract two numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should coerce arguments to numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert whole string to lower case",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert whole string to upper case",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should uppercase as space-separated words",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should uppercase only the first character",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should create a function that returns `value`",
@@ -3872,15 +3787,15 @@
               },
               {
                 "name": "should work with falsey values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return a wrapped value when chaining",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return the first argument given",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for arrays",
@@ -3892,11 +3807,11 @@
               },
               {
                 "name": "should work with an array from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for booleans",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` for non-booleans",
@@ -3904,59 +3819,59 @@
               },
               {
                 "name": "should work with a boolean from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for `null` values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` for non `null` values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should work with nulls from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` for non-numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should work with numbers from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for strings",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` for non-strings",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should work with strings from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for `undefined` values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` for non `undefined` values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should work with `undefined` from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert objects to arrays",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert iterables to arrays",
@@ -3964,27 +3879,27 @@
               },
               {
                 "name": "should convert maps to arrays",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert strings to arrays",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should work in a lazy sequence",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return a valid length",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `value` if a valid length",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert `-0` to `0`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should treat nullish values as empty strings",
@@ -3992,7 +3907,7 @@
               },
               {
                 "name": "should preserve the sign of `0`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should preserve the sign of `0` in an array",
@@ -4008,25 +3923,25 @@
               },
               {
                 "name": "should return the `toString` result of the wrapped value",
-                "status": "passed"
+                "status": "failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lodash/lodash/cb0b9b9212521c08e3eafe7c8cb0af1b42b6649e/test/test.js"
           }
         ],
         "summary": {
-          "pass": 53,
-          "fail": 9,
-          "compile_error": 0,
+          "pass": 0,
+          "fail": 0,
+          "compile_error": 62,
           "skip": 0,
           "total": 62
         }
       },
       "correctness": {
         "status": "divergent",
-        "passed": 53,
+        "passed": 0,
         "total": 62,
-        "reason": "9 of 62 operations diverged from native node"
+        "reason": "62 of 62 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "words(text).length + kebabCase(text).length",
@@ -4061,7 +3976,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:09:12.557Z",
+      "measuredAt": "2026-09-05T12:39:47.657Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -4197,7 +4112,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 5925,
+        "durationMs": 6536,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -5236,53 +5151,53 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "react package import + text.length",
-            "wasmUs": 0.1348263896115552,
-            "nodeUs": 0.005180482731756762,
-            "wasmStdUs": 0.0014142680859454135,
-            "nodeStdUs": 0.00017951110128151983,
-            "ratio": 0.0383445491436739,
-            "ratioStd": 0.0015637285207388387,
+            "wasmUs": 0.15901527135995672,
+            "nodeUs": 0.007469577036392776,
+            "wasmStdUs": 0.000671129050199256,
+            "nodeStdUs": 0.000014678670397725035,
+            "ratio": 0.047028340943328785,
+            "ratioStd": 0.00024080989196601185,
             "ratioSamples": [
-              0.04006126714962484,
-              0.03886714033640646,
-              0.03585019927756109,
-              0.03789893600906089,
-              0.04119778914609306,
-              0.03826682713760366,
-              0.0383445491436739,
-              0.03789239067978502,
-              0.04075812673487908
+              0.04717758145889382,
+              0.047035869566510395,
+              0.047028340943328785,
+              0.04682116450926313,
+              0.04635905027418962,
+              0.047203006717608895,
+              0.04688532228680612,
+              0.04702640867423967,
+              0.04708138538057709
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 1499052,
+            "iters": 1027086,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.13628963171390715,
-              0.13525326673123192,
-              0.13707197682267733,
-              0.1348263896115552,
-              0.13234638758363154,
-              0.1340647942833142,
-              0.1344891157878555,
-              0.13671564762263644,
-              0.13408759802862674
+              0.1591181721881069,
+              0.15879415355676074,
+              0.15887267765311264,
+              0.15934461573809974,
+              0.16097421442799742,
+              0.1586825796476631,
+              0.15909035270656613,
+              0.15901527135995672,
+              0.1586524477989186
             ],
             "nodeSamplesUs": [
-              0.005459935345814816,
-              0.005256907699000206,
-              0.004914057684462217,
-              0.0051097767122210425,
-              0.005452378569917561,
-              0.00513023430807798,
-              0.005156924509616674,
-              0.005180482731756762,
-              0.005465159314026291
+              0.007506810529994706,
+              0.0074690210946202215,
+              0.0074715184512501535,
+              0.007460700467138886,
+              0.007462611699515713,
+              0.00749029487307615,
+              0.007459002459369012,
+              0.007477917136418443,
+              0.007469577036392776
             ],
-            "compileDurationMs": 846.694720999978,
-            "moduleCompileDurationMs": 16.43097200000193,
-            "instantiateDurationMs": 1.1544950000243261,
+            "compileDurationMs": 909.3977829999931,
+            "moduleCompileDurationMs": 0.7922700000053737,
+            "instantiateDurationMs": 1.2313459999859333,
             "binaryBytes": 2154,
             "moduleImportCount": 21,
             "functionImportCount": 12,
@@ -5302,8 +5217,8 @@
             "optimizationRequested": true,
             "optimizationVerified": true,
             "phase": "module-init",
-            "compileDurationMs": 4537.6739649999945,
-            "moduleCompileDurationMs": 1.2243450000241864,
+            "compileDurationMs": 4942.7960109999985,
+            "moduleCompileDurationMs": 1.0970030000025872,
             "binaryBytes": 151047,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -5317,61 +5232,61 @@
             "optimizationRequested": true,
             "optimizationVerified": true,
             "phase": "module-init",
-            "compileDurationMs": 4352.0715060000075,
-            "moduleCompileDurationMs": 2.9168359999894165,
+            "compileDurationMs": 4715.659138000017,
+            "moduleCompileDurationMs": 1.1158880000002682,
             "binaryBytes": 151233,
             "moduleImportCount": 0,
             "functionImportCount": 0,
             "optimizationLevel": 4
           }
         },
-        "wasmUs": 0.1348263896115552,
-        "nodeUs": 0.005180482731756762,
-        "wasmStdUs": 0.0014142680859454135,
-        "nodeStdUs": 0.00017951110128151983,
-        "ratio": 0.0383445491436739,
-        "ratioStd": 0.0015637285207388387,
+        "wasmUs": 0.15901527135995672,
+        "nodeUs": 0.007469577036392776,
+        "wasmStdUs": 0.000671129050199256,
+        "nodeStdUs": 0.000014678670397725035,
+        "ratio": 0.047028340943328785,
+        "ratioStd": 0.00024080989196601185,
         "ratioSamples": [
-          0.04006126714962484,
-          0.03886714033640646,
-          0.03585019927756109,
-          0.03789893600906089,
-          0.04119778914609306,
-          0.03826682713760366,
-          0.0383445491436739,
-          0.03789239067978502,
-          0.04075812673487908
+          0.04717758145889382,
+          0.047035869566510395,
+          0.047028340943328785,
+          0.04682116450926313,
+          0.04635905027418962,
+          0.047203006717608895,
+          0.04688532228680612,
+          0.04702640867423967,
+          0.04708138538057709
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 1499052,
+        "iters": 1027086,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          0.13628963171390715,
-          0.13525326673123192,
-          0.13707197682267733,
-          0.1348263896115552,
-          0.13234638758363154,
-          0.1340647942833142,
-          0.1344891157878555,
-          0.13671564762263644,
-          0.13408759802862674
+          0.1591181721881069,
+          0.15879415355676074,
+          0.15887267765311264,
+          0.15934461573809974,
+          0.16097421442799742,
+          0.1586825796476631,
+          0.15909035270656613,
+          0.15901527135995672,
+          0.1586524477989186
         ],
         "nodeSamplesUs": [
-          0.005459935345814816,
-          0.005256907699000206,
-          0.004914057684462217,
-          0.0051097767122210425,
-          0.005452378569917561,
-          0.00513023430807798,
-          0.005156924509616674,
-          0.005180482731756762,
-          0.005465159314026291
+          0.007506810529994706,
+          0.0074690210946202215,
+          0.0074715184512501535,
+          0.007460700467138886,
+          0.007462611699515713,
+          0.00749029487307615,
+          0.007459002459369012,
+          0.007477917136418443,
+          0.007469577036392776
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:10:14.770Z",
+      "measuredAt": "2026-09-05T12:41:31.148Z",
       "esEdition": {
         "required": 2021,
         "requiredLabel": "ES2021",
@@ -5513,21 +5428,57 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180137,
-        "timedOut": true,
+        "durationMs": 11453,
+        "timedOut": false,
         "timeoutMs": 180000,
-        "errorCount": 0,
+        "errorCount": 5,
         "binaryBytes": 0,
         "categories": {
-          "compile-budget": {
-            "count": 1,
-            "sample": "compileProject exceeded the 180000ms ESLint harness budget"
+          "compiler-diagnostic": {
+            "count": 5,
+            "sample": "Module '\"./eslint/eslint\"' has no exported member 'ESLint'. Did you mean to use 'import ESLint from \"./eslint/eslint\"' instead?"
           }
-        }
+        },
+        "errors": [
+          {
+            "message": "Module '\"./eslint/eslint\"' has no exported member 'ESLint'. Did you mean to use 'import ESLint from \"./eslint/eslint\"' instead?",
+            "line": 12,
+            "column": 10,
+            "severity": "error",
+            "file": "api.js"
+          },
+          {
+            "message": "Module '\"./linter\"' has no exported member 'Linter'. Did you mean to use 'import Linter from \"./linter\"' instead?",
+            "line": 13,
+            "column": 10,
+            "severity": "error",
+            "file": "api.js"
+          },
+          {
+            "message": "Module '\"./rule-tester\"' has no exported member 'RuleTester'. Did you mean to use 'import RuleTester from \"./rule-tester\"' instead?",
+            "line": 14,
+            "column": 10,
+            "severity": "error",
+            "file": "api.js"
+          },
+          {
+            "message": "Module '\"./languages/js/source-code\"' has no exported member 'SourceCode'. Did you mean to use 'import SourceCode from \"./languages/js/source-code\"' instead?",
+            "line": 15,
+            "column": 10,
+            "severity": "error",
+            "file": "api.js"
+          },
+          {
+            "message": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000072:source:file-entry-cache%408.0.0%2Fnode_modules%2Ffile-entry-cache%2Fcache.js lost its exact module-init terminal",
+            "line": 6,
+            "column": 1,
+            "severity": "error"
+          }
+        ]
       },
       "validation": {
         "validates": false,
-        "firstError": "compileProject exceeded the 180000ms budget (#3672)"
+        "firstError": "Module '\"./eslint/eslint\"' has no exported member 'ESLint'. Did you mean to use 'import ESLint from \"./eslint/eslint\"' instead?"
       },
       "capabilities": null,
       "tests": {
@@ -5608,7 +5559,7 @@
             "status": "compile-error",
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Module '\"./eslint/eslint\"' has no exported member 'ESLint'. Did you mean to use 'import ESLint from \"./eslint/eslint\"' instead?",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -5617,7 +5568,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "compile-time-static",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Module '\"./eslint/eslint\"' has no exported member 'ESLint'. Did you mean to use 'import ESLint from \"./eslint/eslint\"' instead?",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -5626,7 +5577,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Module '\"./eslint/eslint\"' has no exported member 'ESLint'. Did you mean to use 'import ESLint from \"./eslint/eslint\"' instead?",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -5639,7 +5590,7 @@
           "summary": "the real multi-file Linter graph is still beyond the bounded mainline compile/runtime integration frontier"
         }
       ],
-      "measuredAt": "2026-09-05T11:10:43.137Z",
+      "measuredAt": "2026-09-05T12:38:59.401Z",
       "esEdition": {
         "required": 2022,
         "requiredLabel": "ES2022",
@@ -12365,7 +12316,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 41084,
+        "durationMs": 35158,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 5,
@@ -12423,9 +12374,9 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 61,
+        "passed": 2,
         "total": 151,
-        "passRatePct": 40.4,
+        "passRatePct": 1.3,
         "admitted": 151,
         "executed": 151,
         "upstreamTestsSeen": 48,
@@ -12453,9 +12404,9 @@
       },
       "correctness": {
         "status": "divergent",
-        "passed": 61,
+        "passed": 2,
         "total": 151,
-        "reason": "90 of 151 operations diverged from native node"
+        "reason": "149 of 151 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "prettier.version.length + source.length",
@@ -12490,7 +12441,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:13:02.177Z",
+      "measuredAt": "2026-09-05T12:40:07.888Z",
       "esEdition": {
         "required": 2022,
         "requiredLabel": "ES2022",
@@ -12735,7 +12686,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120060,
+        "durationMs": 120155,
         "timedOut": true,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -13097,7 +13048,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:09:53.299Z",
+      "measuredAt": "2026-09-05T12:40:51.169Z",
       "esEdition": {
         "required": 2022,
         "requiredLabel": "ES2022",
@@ -13342,7 +13293,7 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 57979,
+        "durationMs": 7259,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 1,
@@ -13350,31 +13301,30 @@
         "categories": {
           "compiler-diagnostic": {
             "count": 1,
-            "sample": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+            "sample": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000057:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal"
           }
         },
         "errors": [
           {
-            "message": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)",
-            "line": 219,
-            "column": 32,
-            "severity": "error",
-            "file": "lib/adapters/fetch.js"
+            "message": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000057:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal",
+            "line": 1,
+            "column": 1,
+            "severity": "error"
           }
         ]
       },
       "validation": {
         "validates": false,
-        "firstError": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)"
+        "firstError": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000057:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal"
       },
       "capabilities": {
         "nodeFs": false
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 200,
+        "passed": 116,
         "total": 231,
-        "passRatePct": 86.6,
+        "passRatePct": 50.2,
         "admitted": 231,
         "executed": 231,
         "upstreamTestsSeen": 645,
@@ -13654,237 +13604,238 @@
           },
           {
             "path": "tests/unit/core/mergeConfig.test.js",
-            "status": "pass",
-            "passed": 57,
+            "status": "compile_error",
+            "passed": 0,
             "total": 57,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000076:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "accepts undefined for second argument",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "accepts an object for second argument",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "does not leave references",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "allows setting request options",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "does not inherit request options",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets new config for auth without default",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "merges auth with defaults",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default auth with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default auth with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default auth with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets new config for headers without default",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "merges headers with defaults",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default headers with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default headers with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default headers with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets new config for params without default",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "merges params with defaults",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default params with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default params with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default params with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets new config for proxy without default",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "merges proxy with defaults",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default proxy with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default proxy with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "overwrites default proxy with %p",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "allows setting other options",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "allows setting custom options",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "allows setting custom default options",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "allows merging custom objects in config",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "allows merging with AxiosHeaders instances",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "skips if config2 does not define the key",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config2 when it is a plain object",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config2 when it is an array",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets config2 value directly for non-mergeable values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "skips when both config1 and config2 values are undefined",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "merges when both values are plain objects",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config2 when it is a plain object",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config2 when it is an array",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets config2 value directly for non-mergeable values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config1 when it is a plain object",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config1 when it is an array",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets config1 value directly for non-mergeable values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "skips when both config1 and config2 values are undefined",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config2 when both values are plain objects",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config2 when it is an array",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets config2 value directly for non-mergeable values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config1 when it is a plain object",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config1 when it is an array",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets config1 value directly for non-mergeable values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "merges when config2 defines the key",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "merges when both values are plain objects",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config2 when it is a plain object",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config2 when it is an array",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets config2 value directly for non-mergeable values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config1 when it is a plain object",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "clones config1 when it is an array",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "sets config1 value directly for non-mergeable values",
-                "status": "passed"
+                "status": "failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/axios/axios/1337d6b537afb2d3f501074c8ac4ef4308221197/tests/unit/core/mergeConfig.test.js"
@@ -13949,14 +13900,14 @@
           },
           {
             "path": "tests/unit/core/transformData.test.js",
-            "status": "fail",
-            "passed": 2,
+            "status": "compile_error",
+            "passed": 0,
             "total": 4,
-            "error": "assertion 1 toBe: string:undefinedfoo != string:foo",
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000067:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "supports a single transformer",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "supports an array of transformers",
@@ -13968,7 +13919,7 @@
               },
               {
                 "name": "passes status code through to transformers",
-                "status": "passed"
+                "status": "failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/axios/axios/1337d6b537afb2d3f501074c8ac4ef4308221197/tests/unit/core/transformData.test.js"
@@ -14004,42 +13955,42 @@
           },
           {
             "path": "tests/unit/fromDataURI.test.js",
-            "status": "fail",
-            "passed": 8,
+            "status": "compile_error",
+            "passed": 0,
             "total": 12,
-            "error": "Expected values to be strictly equal:\n+ actual - expected\n\n+ ''\n- 'text/plain;charset=utf-8'\n",
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000075:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "should return buffer from data uri",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should parse data URI with no mediatype and base64",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should parse data URI with mediatype and no base64",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should parse full form data URI with text/plain and base64",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should parse minimal valid data URI",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should parse data URI with spaces in data",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should parse canonical RFC example with charset parameter",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should decode URL-encoded body",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should preserve full content type with parameters in Blob",
@@ -14075,18 +14026,18 @@
           },
           {
             "path": "tests/unit/helpers/buildURL.test.js",
-            "status": "fail",
-            "passed": 14,
+            "status": "compile_error",
+            "passed": 0,
             "total": 20,
-            "error": "Function.prototype.bind called on incompatible undefined",
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000073:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "should support null params",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should support params",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should support sending raw params to custom serializer func",
@@ -14110,23 +14061,23 @@
               },
               {
                 "name": "should support existing params",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should support \"length\" parameter",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should correct discard url hash mark",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should support URLSearchParams",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should support custom serialize function",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should be exported as a named export",
@@ -14134,31 +14085,31 @@
               },
               {
                 "name": "should leave plain ASCII unchanged",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should preserve `:` rather than percent-encoding it",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should preserve `$` rather than percent-encoding it",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should preserve `,` rather than percent-encoding it",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should encode space as `+` (form-style) rather than `%20`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should still percent-encode characters outside the preserved set",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should apply all substitutions together",
-                "status": "passed"
+                "status": "failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/axios/axios/1337d6b537afb2d3f501074c8ac4ef4308221197/tests/unit/helpers/buildURL.test.js"
@@ -14311,17 +14262,18 @@
           },
           {
             "path": "tests/unit/helpers/progressEventReducer.test.js",
-            "status": "pass",
-            "passed": 2,
+            "status": "compile_error",
+            "passed": 0,
             "total": 2,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000001:source:tests%2Fdogfood%2F.npm-compat%2Faxios%2Fpackage%2Flib%2Fhelpers%2Fthrottle.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "should clamp loaded/progress and avoid negative bytes for out-of-order events",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should ignore malformed events that lack a numeric loaded value",
-                "status": "passed"
+                "status": "failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/axios/axios/1337d6b537afb2d3f501074c8ac4ef4308221197/tests/unit/helpers/progressEventReducer.test.js"
@@ -14385,10 +14337,10 @@
           },
           {
             "path": "tests/unit/platform.test.js",
-            "status": "fail",
+            "status": "compile_error",
             "passed": 0,
             "total": 2,
-            "error": "randomFillSync is not a function",
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000067:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "should generate a string of the specified length using the default alphabet",
@@ -14428,10 +14380,10 @@
           },
           {
             "path": "tests/unit/transformResponse.test.js",
-            "status": "fail",
-            "passed": 1,
+            "status": "compile_error",
+            "passed": 0,
             "total": 6,
-            "error": "Expected values to be strictly equal:\n+ actual - expected\n\n+ undefined\n- 'hello, world'\n",
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000067:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "parses json",
@@ -14447,7 +14399,7 @@
               },
               {
                 "name": "attaches response to AxiosError so error.status and error.response are available",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "does not parse the empty string",
@@ -14710,18 +14662,18 @@
           }
         ],
         "summary": {
-          "pass": 200,
-          "fail": 31,
-          "compile_error": 0,
+          "pass": 116,
+          "fail": 12,
+          "compile_error": 103,
           "skip": 16,
           "total": 247
         }
       },
       "correctness": {
         "status": "divergent",
-        "passed": 200,
+        "passed": 116,
         "total": 231,
-        "reason": "31 of 231 operations diverged from native node"
+        "reason": "115 of 231 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "isAxiosError(config)",
@@ -14730,7 +14682,7 @@
             "status": "compile-error",
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000057:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -14739,7 +14691,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "compile-time-static",
-            "diagnostic": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000057:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -14748,7 +14700,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "async shape not supported: this suspension point (await / for-await) sits inside a `try` whose overall body shape the async engine cannot drive yet, and the synchronous fallback would SILENTLY drop awaited rejections (execution would continue past a rejected await; catch/finally would not run). Restructure toward canonical awaits — top-level `await p` / `const x = await p` / `return await p` statements, try/catch(/finally) without awaits in loops/conditions inside the try — or hoist the await out of the try (#3587)",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000057:source:node_modules%2F.pnpm%2Fmime-db%401.52.0%2Fnode_modules%2Fmime-db%2Findex.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -14756,7 +14708,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:14:48.787Z",
+      "measuredAt": "2026-09-05T12:42:42.511Z",
       "esEdition": {
         "required": 2020,
         "requiredLabel": "ES2020",
@@ -15016,7 +14968,7 @@
       "shape": "esm-driver-epilogue",
       "compile": {
         "success": true,
-        "durationMs": 762,
+        "durationMs": 797,
         "errorCount": 0,
         "binaryBytes": 8699,
         "categories": {}
@@ -15028,9 +14980,9 @@
       "capabilities": null,
       "tests": {
         "kind": "upstream-suite",
-        "passed": 32,
+        "passed": 0,
         "total": 32,
-        "passRatePct": 100,
+        "passRatePct": 0,
         "admitted": 32,
         "executed": 32,
         "upstreamTestsSeen": 32,
@@ -15188,9 +15140,10 @@
         }
       },
       "correctness": {
-        "status": "verified",
-        "passed": 32,
-        "total": 32
+        "status": "divergent",
+        "passed": 0,
+        "total": 32,
+        "reason": "32 of 32 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "op_two_strings.length (host-owned arguments)",
@@ -15200,49 +15153,49 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "op_two_strings.length (host-owned arguments)",
-            "wasmUs": 12.03132585154563,
-            "nodeUs": 0.0414026383146202,
-            "wasmStdUs": 0.9571661470159096,
-            "nodeStdUs": 0.00024066863695327762,
-            "ratio": 0.0034823872523880375,
-            "ratioStd": 0.00026983277780184004,
+            "wasmUs": 11.704234469791,
+            "nodeUs": 0.03513878738425084,
+            "wasmStdUs": 1.2492373979595552,
+            "nodeStdUs": 0.00008602519688908292,
+            "ratio": 0.0029883489346810743,
+            "ratioStd": 0.0002963486972913377,
             "ratioSamples": [
-              0.0038560210631231537,
-              0.0032115390359573853,
-              0.0035380890528927613,
-              0.00378114702872656,
-              0.003117068020872502,
-              0.0034823872523880375,
-              0.003223739823214405,
-              0.0037243870579811377,
-              0.003170512965090724
+              0.0026719578660369765,
+              0.002966970515606178,
+              0.003375441856651283,
+              0.0024277045384767703,
+              0.00292375197797903,
+              0.003371591498591218,
+              0.0030241825984757666,
+              0.0029883489346810743,
+              0.0032619597172916332
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 25395,
+            "iters": 28187,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              10.721597361685392,
-              12.940600590667515,
-              11.71513274266593,
-              10.949756251230479,
-              13.414055089584677,
-              12.03132585154563,
-              12.818212837172661,
-              11.045137034849411,
-              13.002927426658868
+              13.192311065384775,
+              11.83108961578031,
+              10.400754354844324,
+              14.474079043530637,
+              12.065068790577103,
+              10.435613013091187,
+              11.601166495192892,
+              11.704234469791,
+              10.786997942313743
             ],
             "nodeSamplesUs": [
-              0.041342705256984504,
-              0.04155924394566192,
-              0.04144918291001187,
-              0.0414026383146202,
-              0.04181252214996642,
-              0.04189773577474915,
-              0.04132258318563161,
-              0.0411363654262213,
-              0.041225949990355705
+              0.035249299322361496,
+              0.03510249405751461,
+              0.035107141590089645,
+              0.03513878738425084,
+              0.035275268740902865,
+              0.03518462411752613,
+              0.03508404583678244,
+              0.03497633660905745,
+              0.03518675275833517
             ],
             "binaryBytes": 2221,
             "moduleImportCount": 23,
@@ -15260,54 +15213,54 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "op_two_strings.length (driver compiled to Wasm)",
-            "wasmUs": 0.000948932926497403,
-            "nodeUs": 0.01628759933659955,
-            "wasmStdUs": 0.0000030470240064888734,
-            "nodeStdUs": 0.0002440238693638839,
-            "ratio": 17.185618659414185,
-            "ratioStd": 0.26716305204644597,
+            "wasmUs": 0.0009494042325002399,
+            "nodeUs": 0.016583471792087596,
+            "wasmStdUs": 0.000005201348863527016,
+            "nodeStdUs": 0.000049423407673202926,
+            "ratio": 17.461087707789883,
+            "ratioStd": 0.09362943319763499,
             "ratioSamples": [
-              17.14544953295821,
-              17.0027654709794,
-              17.212396517030776,
-              17.14440436118495,
-              17.972773718116947,
-              17.08394465199874,
-              17.199606655318316,
-              17.202902145072102,
-              17.185618659414185
+              17.408701360734035,
+              17.641665123941333,
+              17.69975023273639,
+              17.45883277626845,
+              17.42784296492371,
+              17.51131429921799,
+              17.461087707789883,
+              17.490386482071365,
+              17.45247386914096
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 4583658,
+            "iters": 3862161,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              0.0009496214595405701,
-              0.0009577173951458051,
-              0.0009514726011409574,
-              0.0009481414189288691,
-              0.000948932926497403,
-              0.0009496234230385114,
-              0.0009476651617551986,
-              0.000947405107448495,
-              0.0009477458833102464
+              0.0009552563966127447,
+              0.0009384701984196385,
+              0.0009386908003057412,
+              0.0009494042325002399,
+              0.0009456635805704667,
+              0.0009504287884430005,
+              0.0009497387602428252,
+              0.0009496092990426621,
+              0.0009468489273232401
             ],
             "nodeSamplesUs": [
-              0.01628168680996696,
-              0.016283844257141432,
-              0.016377123685928828,
-              0.01625531987770419,
-              0.017054956761608325,
-              0.016223313999431513,
-              0.016299468023138024,
-              0.016298117355177978,
-              0.01628759933659955
+              0.01662977333156218,
+              0.01655617696931804,
+              0.01661459271117905,
+              0.016575489732303182,
+              0.016480876379829573,
+              0.016643257233450344,
+              0.016583471792087596,
+              0.01660903364722504,
+              0.016524856162132995
             ],
-            "compileDurationMs": 874.0275899999979,
-            "moduleCompileDurationMs": 0.6573800000041956,
-            "instantiateDurationMs": 0.04614600000058999,
-            "firstBatchDurationMs": 0.05949200000031851,
+            "compileDurationMs": 618.2237480000003,
+            "moduleCompileDurationMs": 0.29419899999993504,
+            "instantiateDurationMs": 0.030847000001813285,
+            "firstBatchDurationMs": 0.0711219999975583,
             "binaryBytes": 103,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -15324,117 +15277,59 @@
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
-            "status": "measured",
+            "status": "compile-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "sampleOp": "op_two_strings.length (runtime-generated arguments; driver compiled to Wasm)",
-            "wasmUs": 0.37044605301293804,
-            "nodeUs": 0.057087717838271795,
-            "wasmStdUs": 0.0009498102480519646,
-            "nodeStdUs": 0.0003629342232473449,
-            "ratio": 0.15410149147837246,
-            "ratioStd": 0.0009039094730375053,
-            "ratioSamples": [
-              0.1546601604471726,
-              0.1535436805909775,
-              0.15404593732517963,
-              0.15269759601347851,
-              0.15492968946031413,
-              0.15410149147837246,
-              0.15347581278933586,
-              0.15427245977490006,
-              0.15603258016873497
-            ],
-            "measurementOrder": "alternating-paired",
-            "ratioEstimator": "median-of-paired-ratios",
-            "iters": 696962,
-            "warmupRounds": 2,
-            "measuredRounds": 9,
-            "wasmSamplesUs": [
-              0.36942777655023357,
-              0.37104778739731104,
-              0.37044605301293804,
-              0.36999571425701583,
-              0.36917942011185445,
-              0.37045532324574443,
-              0.36976854979181295,
-              0.37255568452798504,
-              0.3706265147884626
-            ],
-            "nodeSamplesUs": [
-              0.05713575919490135,
-              0.05697204295212165,
-              0.05706570946479122,
-              0.05649745610233624,
-              0.057196852913068454,
-              0.057087717838271795,
-              0.0567505287232325,
-              0.05747508185525393,
-              0.05782981138138963
-            ],
-            "compileDurationMs": 2630.3660270000037,
-            "moduleCompileDurationMs": 0.7456479999964358,
-            "instantiateDurationMs": 0.18999600000097416,
-            "moduleInitDurationMs": 0.05705600000510458,
-            "firstBatchDurationMs": 0.9295829999973648,
-            "binaryBytes": 58896,
-            "moduleImportCount": 0,
-            "functionImportCount": 0,
-            "expectedChecksum": 14,
-            "actualChecksum": 14,
-            "testCompiledToWasm": true,
-            "benchmarkUsesIr": false,
-            "irCompiledFunctions": [],
-            "target": "standalone",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:clsx.mjs lost its exact module-init terminal",
             "optimizationRequested": true,
-            "optimizationVerified": true,
-            "optimizationLevel": 4,
-            "runtimeArgumentSuppliedAfterCompile": true
+            "optimizationVerified": false,
+            "compileDurationMs": 9.527728000000934,
+            "optimizationLevel": 4
           }
         },
-        "wasmUs": 12.03132585154563,
-        "nodeUs": 0.0414026383146202,
-        "wasmStdUs": 0.9571661470159096,
-        "nodeStdUs": 0.00024066863695327762,
-        "ratio": 0.0034823872523880375,
-        "ratioStd": 0.00026983277780184004,
+        "wasmUs": 11.704234469791,
+        "nodeUs": 0.03513878738425084,
+        "wasmStdUs": 1.2492373979595552,
+        "nodeStdUs": 0.00008602519688908292,
+        "ratio": 0.0029883489346810743,
+        "ratioStd": 0.0002963486972913377,
         "ratioSamples": [
-          0.0038560210631231537,
-          0.0032115390359573853,
-          0.0035380890528927613,
-          0.00378114702872656,
-          0.003117068020872502,
-          0.0034823872523880375,
-          0.003223739823214405,
-          0.0037243870579811377,
-          0.003170512965090724
+          0.0026719578660369765,
+          0.002966970515606178,
+          0.003375441856651283,
+          0.0024277045384767703,
+          0.00292375197797903,
+          0.003371591498591218,
+          0.0030241825984757666,
+          0.0029883489346810743,
+          0.0032619597172916332
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 25395,
+        "iters": 28187,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          10.721597361685392,
-          12.940600590667515,
-          11.71513274266593,
-          10.949756251230479,
-          13.414055089584677,
-          12.03132585154563,
-          12.818212837172661,
-          11.045137034849411,
-          13.002927426658868
+          13.192311065384775,
+          11.83108961578031,
+          10.400754354844324,
+          14.474079043530637,
+          12.065068790577103,
+          10.435613013091187,
+          11.601166495192892,
+          11.704234469791,
+          10.786997942313743
         ],
         "nodeSamplesUs": [
-          0.041342705256984504,
-          0.04155924394566192,
-          0.04144918291001187,
-          0.0414026383146202,
-          0.04181252214996642,
-          0.04189773577474915,
-          0.04132258318563161,
-          0.0411363654262213,
-          0.041225949990355705
+          0.035249299322361496,
+          0.03510249405751461,
+          0.035107141590089645,
+          0.03513878738425084,
+          0.035275268740902865,
+          0.03518462411752613,
+          0.03508404583678244,
+          0.03497633660905745,
+          0.03518675275833517
         ]
       },
       "knownBugs": [
@@ -15443,7 +15338,7 @@
           "summary": "for...in over an array of heterogeneously-shaped object literals derefs null"
         }
       ],
-      "measuredAt": "2026-09-05T11:08:01.292Z",
+      "measuredAt": "2026-09-05T12:38:51.827Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -15476,21 +15371,29 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 180129,
-        "timedOut": true,
+        "durationMs": 16264,
+        "timedOut": false,
         "timeoutMs": 180000,
-        "errorCount": 0,
+        "errorCount": 1,
         "binaryBytes": 0,
         "categories": {
-          "compile-budget": {
+          "compiler-diagnostic": {
             "count": 1,
-            "sample": "compileProject exceeded the 180000ms budget"
+            "sample": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000748:source:node_modules%2F.pnpm%2F%40exodus%2Bbytes%401.15.1%2Fnode_modules%2F%40exodus%2Fbytes%2Ffallback%2Fmulti-byte.encodings.cjs lost its exact module-init terminal"
           }
-        }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000748:source:node_modules%2F.pnpm%2F%40exodus%2Bbytes%401.15.1%2Fnode_modules%2F%40exodus%2Fbytes%2Ffallback%2Fmulti-byte.encodings.cjs lost its exact module-init terminal",
+            "line": 1,
+            "column": 20,
+            "severity": "error"
+          }
+        ]
       },
       "validation": {
         "validates": false,
-        "firstError": "compileProject exceeded the 180000ms budget"
+        "firstError": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000748:source:node_modules%2F.pnpm%2F%40exodus%2Bbytes%401.15.1%2Fnode_modules%2F%40exodus%2Fbytes%2Ffallback%2Fmulti-byte.encodings.cjs lost its exact module-init terminal"
       },
       "capabilities": {
         "nodeFs": false
@@ -15655,7 +15558,7 @@
             "status": "compile-error",
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000748:source:node_modules%2F.pnpm%2F%40exodus%2Bbytes%401.15.1%2Fnode_modules%2F%40exodus%2Fbytes%2Ffallback%2Fmulti-byte.encodings.cjs lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -15664,7 +15567,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "compile-time-static",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000748:source:node_modules%2F.pnpm%2F%40exodus%2Bbytes%401.15.1%2Fnode_modules%2F%40exodus%2Fbytes%2Ffallback%2Fmulti-byte.encodings.cjs lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -15673,7 +15576,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000748:source:node_modules%2F.pnpm%2F%40exodus%2Bbytes%401.15.1%2Fnode_modules%2F%40exodus%2Fbytes%2Ffallback%2Fmulti-byte.encodings.cjs lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -15681,7 +15584,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:10:48.254Z",
+      "measuredAt": "2026-09-05T12:38:57.859Z",
       "esEdition": {
         "required": 2022,
         "requiredLabel": "ES2022",
@@ -15961,7 +15864,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": true,
-        "durationMs": 7977,
+        "durationMs": 4529,
         "errorCount": 0,
         "binaryBytes": 586357,
         "categories": {}
@@ -16086,7 +15989,7 @@
             "optimizationRequested": true,
             "optimizationVerified": true,
             "phase": "checksum",
-            "compileDurationMs": 21270.453324000002,
+            "compileDurationMs": 11904.705008,
             "binaryBytes": 386046,
             "moduleImportCount": 1167,
             "functionImportCount": 104,
@@ -16099,7 +16002,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7873.032252999998,
+            "compileDurationMs": 4327.535903999997,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -16109,7 +16012,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 5670.899941000003,
+            "compileDurationMs": 3345.6240190000026,
             "optimizationLevel": 4
           }
         }
@@ -16120,7 +16023,7 @@
           "summary": "TS 'evolving array type' inference unimplemented — blocks compile entirely"
         }
       ],
-      "measuredAt": "2026-09-05T11:08:34.841Z",
+      "measuredAt": "2026-09-05T12:38:59.528Z",
       "esEdition": {
         "required": 2022,
         "requiredLabel": "ES2022",
@@ -16323,21 +16226,29 @@
       "shape": "cjs-project",
       "compile": {
         "success": false,
-        "durationMs": 120124,
-        "timedOut": true,
+        "durationMs": 29064,
+        "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 0,
+        "errorCount": 1,
         "binaryBytes": 0,
         "categories": {
-          "compile-budget": {
+          "compiler-diagnostic": {
             "count": 1,
-            "sample": "compileProject exceeded the 120000ms budget"
+            "sample": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000508:source:node_modules%2F.pnpm%2Fgraceful-fs%404.2.11%2Fnode_modules%2Fgraceful-fs%2Flegacy-streams.js lost its exact module-init terminal"
           }
-        }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000508:source:node_modules%2F.pnpm%2Fgraceful-fs%404.2.11%2Fnode_modules%2Fgraceful-fs%2Flegacy-streams.js lost its exact module-init terminal",
+            "line": 6,
+            "column": 1,
+            "severity": "error"
+          }
+        ]
       },
       "validation": {
         "validates": false,
-        "firstError": "compileProject exceeded the 120000ms budget"
+        "firstError": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000508:source:node_modules%2F.pnpm%2Fgraceful-fs%404.2.11%2Fnode_modules%2Fgraceful-fs%2Flegacy-streams.js lost its exact module-init terminal"
       },
       "capabilities": {
         "nodeFs": false
@@ -16955,7 +16866,7 @@
             "status": "compile-error",
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000508:source:node_modules%2F.pnpm%2Fgraceful-fs%404.2.11%2Fnode_modules%2Fgraceful-fs%2Flegacy-streams.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -16964,7 +16875,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "compile-time-static",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000508:source:node_modules%2F.pnpm%2Fgraceful-fs%404.2.11%2Fnode_modules%2Fgraceful-fs%2Flegacy-streams.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -16973,7 +16884,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000508:source:node_modules%2F.pnpm%2Fgraceful-fs%404.2.11%2Fnode_modules%2Fgraceful-fs%2Flegacy-streams.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -16981,7 +16892,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:10:01.205Z",
+      "measuredAt": "2026-09-05T12:39:24.565Z",
       "esEdition": {
         "required": 2020,
         "requiredLabel": "ES2020",
@@ -17257,7 +17168,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 8688,
+        "durationMs": 12322,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -19311,53 +19222,53 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "register route + path.length",
-            "wasmUs": 166.6227147737162,
-            "nodeUs": 0.8838155422595121,
-            "wasmStdUs": 18.173177892856216,
-            "nodeStdUs": 10.43423753184869,
-            "ratio": 0.005579130843039806,
-            "ratioStd": 0.06648702255420474,
+            "wasmUs": 255.12512846578295,
+            "nodeUs": 1.469349353049164,
+            "wasmStdUs": 15.308664735045882,
+            "nodeStdUs": 2.3663087041528987,
+            "ratio": 0.005843089718733404,
+            "ratioStd": 0.008427342176774768,
             "ratioSamples": [
-              0.00689183044602313,
-              0.005876813012244589,
-              0.004717164801520761,
-              0.005579130843039806,
-              0.0028531043015956386,
-              0.0024578482519406783,
-              0.004482879880581511,
-              0.17428682940172655,
-              0.15406550584553577
+              0.022748175088116395,
+              0.02867642564197273,
+              0.006133113305238158,
+              0.0052461074752247145,
+              0.005759328224096244,
+              0.005843089718733404,
+              0.006081976423107072,
+              0.005445037956557164,
+              0.005617189837797407
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 1171,
+            "iters": 1082,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              130.48097779675598,
-              148.9653492741184,
-              187.36159948759473,
-              161.77939026473652,
-              172.91726131510822,
-              189.8892835183443,
-              166.6227147737162,
-              147.01212724167428,
-              169.217406490185
+              293.44211645099864,
+              264.26051940852665,
+              250.41332717190556,
+              278.4069306839289,
+              255.12512846578295,
+              242.67935212567608,
+              253.46275970425637,
+              257.4661802218056,
+              246.97771349351797
             ],
             "nodeSamplesUs": [
-              0.8992527754065508,
-              0.8754415029876991,
-              0.8838155422595121,
-              0.9025883859941652,
-              0.4933509820782724,
-              0.4667190435578304,
-              0.746949615706964,
-              25.622277540554602,
-              26.07056532878
+              6.6752726432547576,
+              7.578047134927706,
+              1.5358133086869699,
+              1.4605526802153284,
+              1.469349353049164,
+              1.4179972273544212,
+              1.5415545286569405,
+              1.4019131238375189,
+              1.3873207023982286
             ],
-            "compileDurationMs": 10570.391287000006,
-            "moduleCompileDurationMs": 3.2196850000182167,
-            "instantiateDurationMs": 17.43825300000026,
+            "compileDurationMs": 14039.657028999995,
+            "moduleCompileDurationMs": 1.4268920000176877,
+            "instantiateDurationMs": 16.112610000011045,
             "binaryBytes": 257066,
             "moduleImportCount": 590,
             "functionImportCount": 119,
@@ -19376,7 +19287,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 3784.686852999992,
+            "compileDurationMs": 5261.461616999994,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -19386,57 +19297,57 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 2837.5770959999936,
+            "compileDurationMs": 3825.3782089999877,
             "optimizationLevel": 4
           }
         },
-        "wasmUs": 166.6227147737162,
-        "nodeUs": 0.8838155422595121,
-        "wasmStdUs": 18.173177892856216,
-        "nodeStdUs": 10.43423753184869,
-        "ratio": 0.005579130843039806,
-        "ratioStd": 0.06648702255420474,
+        "wasmUs": 255.12512846578295,
+        "nodeUs": 1.469349353049164,
+        "wasmStdUs": 15.308664735045882,
+        "nodeStdUs": 2.3663087041528987,
+        "ratio": 0.005843089718733404,
+        "ratioStd": 0.008427342176774768,
         "ratioSamples": [
-          0.00689183044602313,
-          0.005876813012244589,
-          0.004717164801520761,
-          0.005579130843039806,
-          0.0028531043015956386,
-          0.0024578482519406783,
-          0.004482879880581511,
-          0.17428682940172655,
-          0.15406550584553577
+          0.022748175088116395,
+          0.02867642564197273,
+          0.006133113305238158,
+          0.0052461074752247145,
+          0.005759328224096244,
+          0.005843089718733404,
+          0.006081976423107072,
+          0.005445037956557164,
+          0.005617189837797407
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 1171,
+        "iters": 1082,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          130.48097779675598,
-          148.9653492741184,
-          187.36159948759473,
-          161.77939026473652,
-          172.91726131510822,
-          189.8892835183443,
-          166.6227147737162,
-          147.01212724167428,
-          169.217406490185
+          293.44211645099864,
+          264.26051940852665,
+          250.41332717190556,
+          278.4069306839289,
+          255.12512846578295,
+          242.67935212567608,
+          253.46275970425637,
+          257.4661802218056,
+          246.97771349351797
         ],
         "nodeSamplesUs": [
-          0.8992527754065508,
-          0.8754415029876991,
-          0.8838155422595121,
-          0.9025883859941652,
-          0.4933509820782724,
-          0.4667190435578304,
-          0.746949615706964,
-          25.622277540554602,
-          26.07056532878
+          6.6752726432547576,
+          7.578047134927706,
+          1.5358133086869699,
+          1.4605526802153284,
+          1.469349353049164,
+          1.4179972273544212,
+          1.5415545286569405,
+          1.4019131238375189,
+          1.3873207023982286
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:10:28.766Z",
+      "measuredAt": "2026-09-05T12:42:44.152Z",
       "esEdition": {
         "required": 2022,
         "requiredLabel": "ES2022",
@@ -19669,7 +19580,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 6605,
+        "durationMs": 3866,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -19685,9 +19596,9 @@
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 299,
+        "passed": 293,
         "total": 356,
-        "passRatePct": 84,
+        "passRatePct": 82.3,
         "admitted": 358,
         "executed": 356,
         "upstreamTestsSeen": 3288,
@@ -20216,10 +20127,10 @@
           },
           {
             "path": "packages/jest-config/src/__tests__/stringToBytes.test.ts",
-            "status": "fail",
-            "passed": 6,
+            "status": "compile_error",
+            "passed": 0,
             "total": 28,
-            "error": "assertion 1 toBe: number:NaN != number:0",
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:tests%2Fdogfood%2F.npm-upstream-suites%2Fjest%2Fpackages%2Fjest-config%2Fsrc%2FstringToBytes.ts lost its exact module-init terminal",
             "tests": [
               {
                 "name": "0 should be 0",
@@ -20239,11 +20150,11 @@
               },
               {
                 "name": "should throw when no reference supplied",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should throw on a bad input",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "0 should be 0",
@@ -20259,11 +20170,11 @@
               },
               {
                 "name": "should throw when no reference supplied",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should throw on a bad input",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "0%",
@@ -20319,7 +20230,7 @@
               },
               {
                 "name": "unknown unit",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "nesting",
@@ -20327,7 +20238,7 @@
               },
               {
                 "name": "null",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "undefined",
@@ -22494,18 +22405,18 @@
           }
         ],
         "summary": {
-          "pass": 299,
-          "fail": 57,
-          "compile_error": 0,
+          "pass": 293,
+          "fail": 35,
+          "compile_error": 28,
           "skip": 207,
           "total": 563
         }
       },
       "correctness": {
         "status": "divergent",
-        "passed": 299,
+        "passed": 293,
         "total": 356,
-        "reason": "57 of 356 operations diverged from native node"
+        "reason": "63 of 356 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "typeof jest.run + source.length",
@@ -22540,7 +22451,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:11:11.275Z",
+      "measuredAt": "2026-09-05T12:40:35.014Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -22596,30 +22507,38 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120148,
-        "timedOut": true,
+        "durationMs": 7845,
+        "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 0,
+        "errorCount": 1,
         "binaryBytes": 0,
         "categories": {
-          "compile-budget": {
+          "compiler-diagnostic": {
             "count": 1,
-            "sample": "compileProject exceeded the 120000ms budget"
+            "sample": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000070:source:isObjectLike.js lost its exact module-init terminal"
           }
-        }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000070:source:isObjectLike.js lost its exact module-init terminal",
+            "line": 10,
+            "column": 1,
+            "severity": "error"
+          }
+        ]
       },
       "validation": {
         "validates": false,
-        "firstError": "compileProject exceeded the 120000ms budget"
+        "firstError": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000070:source:isObjectLike.js lost its exact module-init terminal"
       },
       "capabilities": {
         "nodeFs": false
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 53,
+        "passed": 0,
         "total": 62,
-        "passRatePct": 85.5,
+        "passRatePct": 0,
         "admitted": 62,
         "executed": 62,
         "upstreamTestsSeen": 1753,
@@ -22643,114 +22562,114 @@
         "files": [
           {
             "path": "test/test.js",
-            "status": "fail",
-            "passed": 53,
+            "status": "compile_error",
+            "passed": 0,
             "total": 62,
-            "error": "assertion 1: expected truthy value; got boolean:false",
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000006:source:tests%2Fdogfood%2F.npm-compat%2Flodash-es%2Fpackage%2FisObjectLike.js lost its exact module-init terminal",
             "tests": [
               {
                 "name": "should add two numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should not coerce arguments to numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should capitalize the first character of a string",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should divide two numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should coerce arguments to numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should perform a `SameValueZero` comparison of two values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` if `value` > `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` if `value` is <= `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` if `value` >= `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` if `value` is less than `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should lowercase as space-separated words",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should lowercase only the first character",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` if `value` is less than `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` if `value` >= `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` if `value` is <= `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` if `value` > `other`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should multiply two numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should coerce arguments to numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should replace the matched pattern",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should uppercase only the first character of each word",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should subtract two numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should coerce arguments to numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert whole string to lower case",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert whole string to upper case",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should uppercase as space-separated words",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should uppercase only the first character",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should create a function that returns `value`",
@@ -22758,15 +22677,15 @@
               },
               {
                 "name": "should work with falsey values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return a wrapped value when chaining",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return the first argument given",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for arrays",
@@ -22778,11 +22697,11 @@
               },
               {
                 "name": "should work with an array from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for booleans",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` for non-booleans",
@@ -22790,59 +22709,59 @@
               },
               {
                 "name": "should work with a boolean from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for `null` values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` for non `null` values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should work with nulls from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` for non-numbers",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should work with numbers from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for strings",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` for non-strings",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should work with strings from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `true` for `undefined` values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `false` for non `undefined` values",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should work with `undefined` from another realm",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert objects to arrays",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert iterables to arrays",
@@ -22850,27 +22769,27 @@
               },
               {
                 "name": "should convert maps to arrays",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert strings to arrays",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should work in a lazy sequence",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return a valid length",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should return `value` if a valid length",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should convert `-0` to `0`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should treat nullish values as empty strings",
@@ -22878,7 +22797,7 @@
               },
               {
                 "name": "should preserve the sign of `0`",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "should preserve the sign of `0` in an array",
@@ -22894,25 +22813,25 @@
               },
               {
                 "name": "should return the `toString` result of the wrapped value",
-                "status": "passed"
+                "status": "failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/lodash/lodash/cb0b9b9212521c08e3eafe7c8cb0af1b42b6649e/test/test.js"
           }
         ],
         "summary": {
-          "pass": 53,
-          "fail": 9,
-          "compile_error": 0,
+          "pass": 0,
+          "fail": 0,
+          "compile_error": 62,
           "skip": 0,
           "total": 62
         }
       },
       "correctness": {
         "status": "divergent",
-        "passed": 53,
+        "passed": 0,
         "total": 62,
-        "reason": "9 of 62 operations diverged from native node"
+        "reason": "62 of 62 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "words(text).length + kebabCase(text).length",
@@ -22921,7 +22840,7 @@
             "status": "compile-error",
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000070:source:isObjectLike.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -22930,7 +22849,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "compile-time-static",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000070:source:isObjectLike.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -22939,7 +22858,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000070:source:isObjectLike.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -22947,7 +22866,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:09:53.471Z",
+      "measuredAt": "2026-09-05T12:38:46.202Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -23079,7 +22998,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 7715,
+        "durationMs": 7355,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -23562,53 +23481,53 @@
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
             "sampleOp": "dispatch(action) + getState().count",
-            "wasmUs": 147.07089380530473,
-            "nodeUs": 0.23719748486256123,
-            "wasmStdUs": 17.352637665987935,
-            "nodeStdUs": 0.07547395299380155,
-            "ratio": 0.001767148075907133,
-            "ratioStd": 0.0006061946379739174,
+            "wasmUs": 133.245130769231,
+            "nodeUs": 0.22413212669949042,
+            "wasmStdUs": 13.61490858188651,
+            "nodeStdUs": 0.005424846457628799,
+            "ratio": 0.0016807045786214325,
+            "ratioStd": 0.0001673728185722942,
             "ratioSamples": [
-              0.0015583331907381515,
-              0.0014902718460211002,
-              0.0028107980800254786,
-              0.003098183815293764,
-              0.0012624521659922333,
-              0.001767148075907133,
-              0.0018719875282043742,
-              0.001323319200799472,
-              0.0018940653014537605
+              0.0014955011428115991,
+              0.0019238761222431767,
+              0.0015640225659127548,
+              0.0018549861490944608,
+              0.0014917626773965896,
+              0.0016807045786214325,
+              0.0018801039409832294,
+              0.0015855705726256627,
+              0.0018692278770413057
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 2147,
+            "iters": 2210,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              152.21230367955232,
-              153.04222729389699,
-              147.07089380530473,
-              135.044786679091,
-              180.96319888216192,
-              132.3990880298106,
-              127.12018258034108,
-              171.53624406148373,
-              134.63104983698068
+              149.77046425339879,
+              122.15064796380096,
+              148.23795791855107,
+              119.56303981900567,
+              157.3482484162911,
+              133.245130769231,
+              124.09273484163144,
+              139.71874886877836,
+              119.90626153845747
             ],
             "nodeSamplesUs": [
-              0.23719748486256123,
-              0.22807452258845667,
-              0.4133865859355816,
-              0.41839357242895864,
-              0.2284573823936686,
-              0.23396879366373893,
-              0.23796739637346145,
-              0.22699720539958582,
-              0.25499999999451706
+              0.22398190045038163,
+              0.23500271493408878,
+              0.23184751130943923,
+              0.221787782807885,
+              0.2347262443411501,
+              0.22394570136285805,
+              0.23330723982313817,
+              0.22153393665041007,
+              0.22413212669949042
             ],
-            "compileDurationMs": 3151.744642000005,
-            "moduleCompileDurationMs": 2.007859000004828,
-            "instantiateDurationMs": 13.250287999995635,
+            "compileDurationMs": 3011.4346119999973,
+            "moduleCompileDurationMs": 0.664055000001099,
+            "instantiateDurationMs": 13.726806999999098,
             "binaryBytes": 46071,
             "moduleImportCount": 177,
             "functionImportCount": 63,
@@ -23625,53 +23544,53 @@
             "placement": "standalone",
             "inputMode": "compile-time-static",
             "sampleOp": "dispatch(action) + getState().count",
-            "wasmUs": 3.4848947274540105,
-            "nodeUs": 0.2278967965184244,
-            "wasmStdUs": 0.02000864690227928,
-            "nodeStdUs": 0.009089102735334559,
-            "ratio": 0.06546844696555723,
-            "ratioStd": 0.0025102889328375336,
+            "wasmUs": 3.3563118710559134,
+            "nodeUs": 0.20897552447515094,
+            "wasmStdUs": 0.026676050592916455,
+            "nodeStdUs": 0.03281877928449018,
+            "ratio": 0.06183840811056816,
+            "ratioStd": 0.010023682992623172,
             "ratioSamples": [
-              0.06603809114697075,
-              0.06053781428730553,
-              0.06575389502488047,
-              0.06069966374211165,
-              0.065575418742948,
-              0.060531783009461375,
-              0.06641612237723847,
-              0.06169869270998736,
-              0.06546844696555723
+              0.07326210568476743,
+              0.0920152942091605,
+              0.07450744306978348,
+              0.06110898197702598,
+              0.06112775561173217,
+              0.062319633466557244,
+              0.060639865115656354,
+              0.0616969719717963,
+              0.06183840811056816
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 28032,
+            "iters": 11726,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              3.484793914098498,
-              3.4927954837332607,
-              3.4978666880707023,
-              3.4914133847031565,
-              3.4753387913810685,
-              3.477626890696216,
-              3.480037564212244,
-              3.4848947274540105,
-              3.545277468607127
+              3.367099437148705,
+              3.3499518164751274,
+              3.3393051338908504,
+              3.3563118710559134,
+              3.402245011086949,
+              3.3532855193587436,
+              3.419712178066227,
+              3.3987317073164225,
+              3.3538469213721678
             ],
             "nodeSamplesUs": [
-              0.23012913812764554,
-              0.2114462043377836,
-              0.22999835901842727,
-              0.2119276184361895,
-              0.2278967965184244,
-              0.2105069563354912,
-              0.23113060074210726,
-              0.21501344891584015,
-              0.2321038099316907
+              0.24668079481550936,
+              0.3082468019794705,
+              0.24880308715600824,
+              0.20510080163763417,
+              0.20797160156895803,
+              0.20897552447515094,
+              0.20737088521230343,
+              0.2096914548859567,
+              0.20739655466418472
             ],
-            "compileDurationMs": 11287.866465,
-            "moduleCompileDurationMs": 2.089523000002373,
-            "instantiateDurationMs": 4.279477000003681,
+            "compileDurationMs": 11178.572887000002,
+            "moduleCompileDurationMs": 2.095757000002777,
+            "instantiateDurationMs": 4.055179999995744,
             "binaryBytes": 313089,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -23693,53 +23612,53 @@
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
             "sampleOp": "dispatch(action) + getState().count",
-            "wasmUs": 3.5034518371013696,
-            "nodeUs": 0.23702604349665488,
-            "wasmStdUs": 0.029136834884451478,
-            "nodeStdUs": 0.01075686012058674,
-            "ratio": 0.06740848033953845,
-            "ratioStd": 0.0030946146996451685,
+            "wasmUs": 3.4786865162208076,
+            "nodeUs": 0.2318824932897162,
+            "wasmStdUs": 0.014554133278543697,
+            "nodeStdUs": 0.007209545244044032,
+            "ratio": 0.06622284204861495,
+            "ratioStd": 0.0021551627877788677,
             "ratioSamples": [
-              0.062256474800084984,
-              0.06978546735797124,
-              0.06399768874463795,
-              0.06955483308294243,
-              0.06980537086002579,
-              0.06351132790208111,
-              0.06740848033953845,
-              0.06339498768547618,
-              0.06990737350797542
+              0.06762009018394213,
+              0.06263924680303787,
+              0.0631859052219708,
+              0.06622284204861495,
+              0.06230776342499649,
+              0.06689847754088059,
+              0.067357611396363,
+              0.06301236136836366,
+              0.06710195450499647
             ],
             "measurementOrder": "alternating-paired",
             "ratioEstimator": "median-of-paired-ratios",
-            "iters": 25611,
+            "iters": 30177,
             "warmupRounds": 2,
             "measuredRounds": 9,
             "wasmSamplesUs": [
-              3.579569091406302,
-              3.5034518371013696,
-              3.4734858849713444,
-              3.518313498106287,
-              3.504940338135439,
-              3.489496934910887,
-              3.516264456678862,
-              3.4831772285345095,
-              3.4948910233884236
+              3.4563508963781473,
+              3.4887280710475967,
+              3.4712073433407222,
+              3.5084369884347235,
+              3.4875358716907265,
+              3.4661849090364805,
+              3.4795640056995647,
+              3.4786865162208076,
+              3.467182224873601
             ],
             "nodeSamplesUs": [
-              0.22285135293429953,
-              0.24449002381826201,
-              0.22229506852528938,
-              0.24471570809424606,
-              0.2446636601458085,
-              0.22162258404643234,
-              0.23702604349665488,
-              0.22081597750927628,
-              0.244318652141685
+              0.23371875932043956,
+              0.21853129867103666,
+              0.21933137820213594,
+              0.23233866852263102,
+              0.21730056002949472,
+              0.2318824932897162,
+              0.23437512012468348,
+              0.2192002518473596,
+              0.23265470391400078
             ],
-            "compileDurationMs": 10590.346586,
-            "moduleCompileDurationMs": 2.195130000007339,
-            "instantiateDurationMs": 4.1897639999951934,
+            "compileDurationMs": 10291.426483000003,
+            "moduleCompileDurationMs": 2.172789999996894,
+            "instantiateDurationMs": 4.025693999996292,
             "binaryBytes": 313043,
             "moduleImportCount": 0,
             "functionImportCount": 0,
@@ -23758,53 +23677,53 @@
             "runtimeArgumentSuppliedAfterCompile": true
           }
         },
-        "wasmUs": 147.07089380530473,
-        "nodeUs": 0.23719748486256123,
-        "wasmStdUs": 17.352637665987935,
-        "nodeStdUs": 0.07547395299380155,
-        "ratio": 0.001767148075907133,
-        "ratioStd": 0.0006061946379739174,
+        "wasmUs": 133.245130769231,
+        "nodeUs": 0.22413212669949042,
+        "wasmStdUs": 13.61490858188651,
+        "nodeStdUs": 0.005424846457628799,
+        "ratio": 0.0016807045786214325,
+        "ratioStd": 0.0001673728185722942,
         "ratioSamples": [
-          0.0015583331907381515,
-          0.0014902718460211002,
-          0.0028107980800254786,
-          0.003098183815293764,
-          0.0012624521659922333,
-          0.001767148075907133,
-          0.0018719875282043742,
-          0.001323319200799472,
-          0.0018940653014537605
+          0.0014955011428115991,
+          0.0019238761222431767,
+          0.0015640225659127548,
+          0.0018549861490944608,
+          0.0014917626773965896,
+          0.0016807045786214325,
+          0.0018801039409832294,
+          0.0015855705726256627,
+          0.0018692278770413057
         ],
         "measurementOrder": "alternating-paired",
         "ratioEstimator": "median-of-paired-ratios",
-        "iters": 2147,
+        "iters": 2210,
         "warmupRounds": 2,
         "measuredRounds": 9,
         "wasmSamplesUs": [
-          152.21230367955232,
-          153.04222729389699,
-          147.07089380530473,
-          135.044786679091,
-          180.96319888216192,
-          132.3990880298106,
-          127.12018258034108,
-          171.53624406148373,
-          134.63104983698068
+          149.77046425339879,
+          122.15064796380096,
+          148.23795791855107,
+          119.56303981900567,
+          157.3482484162911,
+          133.245130769231,
+          124.09273484163144,
+          139.71874886877836,
+          119.90626153845747
         ],
         "nodeSamplesUs": [
-          0.23719748486256123,
-          0.22807452258845667,
-          0.4133865859355816,
-          0.41839357242895864,
-          0.2284573823936686,
-          0.23396879366373893,
-          0.23796739637346145,
-          0.22699720539958582,
-          0.25499999999451706
+          0.22398190045038163,
+          0.23500271493408878,
+          0.23184751130943923,
+          0.221787782807885,
+          0.2347262443411501,
+          0.22394570136285805,
+          0.23330723982313817,
+          0.22153393665041007,
+          0.22413212669949042
         ]
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:09:29.584Z",
+      "measuredAt": "2026-09-05T12:40:33.890Z",
       "esEdition": {
         "required": 2018,
         "requiredLabel": "ES2018",
@@ -23941,7 +23860,7 @@
       "shape": "cjs-project",
       "compile": {
         "success": true,
-        "durationMs": 17424,
+        "durationMs": 17685,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -25049,7 +24968,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:09:46.918Z",
+      "measuredAt": "2026-09-05T12:40:55.232Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -25113,7 +25032,7 @@
       "shape": "esm-direct",
       "compile": {
         "success": false,
-        "durationMs": 180129,
+        "durationMs": 180170,
         "timedOut": true,
         "timeoutMs": 180000,
         "errorCount": 0,
@@ -26443,7 +26362,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:11:07.813Z",
+      "measuredAt": "2026-09-05T12:41:58.935Z",
       "esEdition": {
         "required": "ESNext",
         "requiredLabel": "ESNext",
@@ -26688,7 +26607,7 @@
       "shape": "esm-project",
       "compile": {
         "success": true,
-        "durationMs": 14402,
+        "durationMs": 15739,
         "timedOut": false,
         "timeoutMs": 120000,
         "errorCount": 0,
@@ -27010,8 +26929,8 @@
             "optimizationRequested": true,
             "optimizationVerified": true,
             "phase": "module-init",
-            "compileDurationMs": 17137.178537,
-            "moduleCompileDurationMs": 1.7572480000017094,
+            "compileDurationMs": 17483.431829,
+            "moduleCompileDurationMs": 1.8851379999978235,
             "binaryBytes": 317014,
             "moduleImportCount": 1205,
             "functionImportCount": 135,
@@ -27024,7 +26943,7 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 7814.693294999997,
+            "compileDurationMs": 7966.028122999996,
             "optimizationLevel": 4
           },
           "standaloneDynamic": {
@@ -27034,13 +26953,13 @@
             "diagnostic": "Codegen error: String.prototype.replace(...) with a RegExp or symbol-protocol search value is not supported in --target standalone (#1474). Use a supported backend-created static RegExp or native string-only overload, or recompile without --target standalone.",
             "optimizationRequested": true,
             "optimizationVerified": false,
-            "compileDurationMs": 6131.301007999995,
+            "compileDurationMs": 6168.876883000004,
             "optimizationLevel": 4
           }
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:08:42.235Z",
+      "measuredAt": "2026-09-05T12:39:40.378Z",
       "esEdition": {
         "required": 2015,
         "requiredLabel": "ES2015",
@@ -27272,30 +27191,38 @@
       "shape": "esm-project",
       "compile": {
         "success": false,
-        "durationMs": 120066,
-        "timedOut": true,
+        "durationMs": 7568,
+        "timedOut": false,
         "timeoutMs": 120000,
-        "errorCount": 0,
+        "errorCount": 1,
         "binaryBytes": 0,
         "categories": {
-          "compile-budget": {
+          "compiler-diagnostic": {
             "count": 1,
-            "sample": "compileProject exceeded the 120000ms budget"
+            "sample": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000365:source:node_modules%2F.pnpm%2Fpostcss-value-parser%404.2.0%2Fnode_modules%2Fpostcss-value-parser%2Flib%2Fstringify.js lost its exact module-init terminal"
           }
-        }
+        },
+        "errors": [
+          {
+            "message": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000365:source:node_modules%2F.pnpm%2Fpostcss-value-parser%404.2.0%2Fnode_modules%2Fpostcss-value-parser%2Flib%2Fstringify.js lost its exact module-init terminal",
+            "line": 1,
+            "column": 1,
+            "severity": "error"
+          }
+        ]
       },
       "validation": {
         "validates": false,
-        "firstError": "compileProject exceeded the 120000ms budget"
+        "firstError": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000365:source:node_modules%2F.pnpm%2Fpostcss-value-parser%404.2.0%2Fnode_modules%2Fpostcss-value-parser%2Flib%2Fstringify.js lost its exact module-init terminal"
       },
       "capabilities": {
         "nodeFs": true
       },
       "tests": {
         "kind": "upstream-suite",
-        "passed": 108,
+        "passed": 106,
         "total": 108,
-        "passRatePct": 100,
+        "passRatePct": 98.1,
         "admitted": 108,
         "executed": 108,
         "upstreamTestsSeen": 1574,
@@ -29259,34 +29186,36 @@
           },
           {
             "path": "lib/utils/__tests__/vendor.test.mjs",
-            "status": "pass",
-            "passed": 2,
+            "status": "compile_error",
+            "passed": 0,
             "total": 2,
+            "error": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000000:source:tests%2Fdogfood%2F.npm-upstream-suites%2Fstylelint%2Flib%2Futils%2Fvendor.mjs lost its exact module-init terminal",
             "tests": [
               {
                 "name": "returns prefix",
-                "status": "passed"
+                "status": "failed"
               },
               {
                 "name": "returns unprefixed version",
-                "status": "passed"
+                "status": "failed"
               }
             ],
             "sourceUrl": "https://raw.githubusercontent.com/stylelint/stylelint/cd66b035087270dd62d33542154463266cc5e81a/lib/utils/__tests__/vendor.test.mjs"
           }
         ],
         "summary": {
-          "pass": 108,
+          "pass": 106,
           "fail": 0,
-          "compile_error": 0,
+          "compile_error": 2,
           "skip": 251,
           "total": 359
         }
       },
       "correctness": {
-        "status": "verified",
-        "passed": 108,
-        "total": 108
+        "status": "divergent",
+        "passed": 106,
+        "total": 108,
+        "reason": "2 of 108 operations diverged from native node"
       },
       "perf": {
         "sampleOp": "typeof stylelint.lint + source.length",
@@ -29295,7 +29224,7 @@
             "status": "compile-error",
             "placement": "js-host",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000365:source:node_modules%2F.pnpm%2Fpostcss-value-parser%404.2.0%2Fnode_modules%2Fpostcss-value-parser%2Flib%2Fstringify.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -29304,7 +29233,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "compile-time-static",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000365:source:node_modules%2F.pnpm%2Fpostcss-value-parser%404.2.0%2Fnode_modules%2Fpostcss-value-parser%2Flib%2Fstringify.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -29313,7 +29242,7 @@
             "status": "compile-error",
             "placement": "standalone",
             "inputMode": "runtime-dynamic",
-            "diagnostic": "package entry did not produce a runnable Wasm module",
+            "diagnostic": "Codegen error: multi-prepared-module-init-census:terminal-join: executable source ir-source:v1:0000000000000365:source:node_modules%2F.pnpm%2Fpostcss-value-parser%404.2.0%2Fnode_modules%2Fpostcss-value-parser%2Flib%2Fstringify.js lost its exact module-init terminal",
             "optimizationRequested": true,
             "optimizationVerified": false,
             "optimizationLevel": 4
@@ -29321,7 +29250,7 @@
         }
       },
       "knownBugs": [],
-      "measuredAt": "2026-09-05T11:12:55.481Z",
+      "measuredAt": "2026-09-05T12:41:07.529Z",
       "esEdition": {
         "required": 2025,
         "requiredLabel": "ES2025",

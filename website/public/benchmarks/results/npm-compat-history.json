@@ -13198,6 +13198,63 @@
           }
         }
       }
+    },
+    {
+      "generatedAt": "2026-09-05T12:50:12.442Z",
+      "sourceRevision": "86a86e412d5c075ecc258eac09ec4bb5da6a043b",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.0021124472276518686
+          },
+          "standalone": {
+            "static": 330512.6479555854,
+            "dynamic": 0.10466956570511177
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0006001242793165528
+          },
+          "standalone": {
+            "static": 787.528411337355,
+            "dynamic": 0.19749823900914945
+          }
+        },
+        "react": {
+          "jsHost": {
+            "dynamic": 0.047028340943328785
+          },
+          "standalone": {}
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.0029883489346810743
+          },
+          "standalone": {
+            "static": 17.461087707789883
+          }
+        },
+        "hono": {
+          "jsHost": {
+            "dynamic": 0.005843089718733404
+          },
+          "standalone": {}
+        },
+        "redux": {
+          "jsHost": {
+            "dynamic": 0.0016807045786214325
+          },
+          "standalone": {
+            "static": 0.06183840811056816,
+            "dynamic": 0.06622284204861495
+          }
+        }
+      }
     }
   ]
 }
