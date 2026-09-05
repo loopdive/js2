@@ -212,7 +212,7 @@ export function ensureReflectIsConstructor(ctx: CodegenContext): number {
 export function fillReflectIsConstructor(ctx: CodegenContext): void {
   const funcIdx = ctx.funcMap.get(HELPER);
   const fn = funcIdx === undefined ? undefined : definedFuncAt(ctx, funcIdx);
-  if (!fn) return;
+  if (!fn || funcIdx === undefined) return;
   const body: Instr[] = [{ op: "local.get", index: 0 }, { op: "any.convert_extern" }, { op: "local.set", index: 1 }];
   const candidates = [...ctx.constructibleClosureTypeIdxs].sort((a, b) => a - b);
   if (ctx.taCtorTypeIdx >= 0) candidates.push(ctx.taCtorTypeIdx);
@@ -224,6 +224,29 @@ export function fillReflectIsConstructor(ctx: CodegenContext): void {
         op: "if",
         blockType: { kind: "empty" },
         then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+      },
+    );
+  }
+  // (#3371 r4) §10.4.1 — a bound function exotic object has a [[Construct]]
+  // slot IFF its [[BoundTargetFunction]] does. `$__bound_fn` is a nominal
+  // carrier no `constructibleClosureTypeIdxs` test can see, so without this arm
+  // `Reflect.construct(DataView, […], function(){}.bind(null))` threw
+  // "newTarget is not a constructor" where node constructs. Recursing on field
+  // 0 (the target) is what makes a bound-of-bound chain answer correctly.
+  if (ctx.boundFnTypeIdx >= 0) {
+    body.push(
+      { op: "local.get", index: 1 },
+      { op: "ref.test", typeIdx: ctx.boundFnTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 1 },
+          { op: "ref.cast", typeIdx: ctx.boundFnTypeIdx },
+          { op: "struct.get", typeIdx: ctx.boundFnTypeIdx, fieldIdx: 0 },
+          { op: "call", funcIdx },
+          { op: "return" },
+        ],
       },
     );
   }

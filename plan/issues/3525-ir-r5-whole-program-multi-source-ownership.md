@@ -2499,7 +2499,6 @@ Validation at the merged candidate:
 This is a structural M2-P1 prerequisite only. It reports no population gain,
 does not change provider/ABI/runtime contracts, and leaves R5 and mixed
 callable/initializer emission open.
-
 ## Implementation Plan — 2026-09-05 — M2-P2 atomic initializer ownership and mixed-graph prerequisites
 
 **Source base:** PR5598 at `2c18cd7a6fb4d38a477f63a9b625e2907d265c29`.

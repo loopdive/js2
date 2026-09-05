@@ -44,18 +44,28 @@ The helper file itself is not shipped: its `from "js2wasm"` specifier cannot
 resolve from a statically-served file, and the playground already has the
 runtime loaded.
 
-## Editor source vs. compiled JS
+## TypeScript in, JavaScript AST out
 
-acorn parses JavaScript; the editor holds TypeScript. The panel tries the editor
-text first and falls back to the compiled JS output when annotations trip the
-parser. The header says which one is on screen — that distinction matters,
-because only the editor case can map a node's range back to what you typed
-(hover highlights it, click selects it).
+acorn parses JavaScript; the editor holds TypeScript. The panel erases the
+TS-only syntax by **blanking it with spaces** (`website/playground/ts-erase-types.ts`),
+so every surviving character keeps its original offset. `const x: number = 1`
+becomes `const x         = 1` — `x` and `1` are still exactly where the editor
+has them, which is what lets hovering a node highlight the right range and
+clicking it select the right text.
 
-While you type, the tree refreshes live **only** when it is already showing
-editor text. On a TypeScript source it waits for the next compile: the compiled
-output is cleared on every edit, so re-parsing there would replace a correct
-tree with a parse error on each keystroke.
+The eraser is deliberately partial. Constructs that need code **generation**
+rather than deletion — `enum`, `namespace`, constructor parameter properties,
+decorators — cannot be blanked, so it bails and the panel falls back to
+`ts.transpileModule`. That is correct JavaScript with shifted offsets, so the
+header says "transpiled (offsets shifted)" and hover mapping is off for it.
+
+The tree refreshes as you type: erasing and parsing costs a few milliseconds and
+needs no compile, so the panel follows the editor rather than the last build.
+
+An earlier cut parsed the playground's generated `example.js` tab instead. That
+tab is a *usage example* — a `createImports()` helper plus an inline adapter
+manifest — so the panel was rendering the AST of a JSON blob rather than of the
+user's program. If you touch this path, keep the input the user's own code.
 
 ## Known cosmetic differences
 

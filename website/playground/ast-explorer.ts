@@ -43,8 +43,12 @@ interface AcornMeta {
 
 type AstNode = Record<string, unknown>;
 
-/** Where a rendered subtree came from, so the header can say so honestly. */
-export type AstSourceKind = "editor" | "compiled-js";
+/**
+ * Whether the parsed text still lines up with the editor. True for the normal
+ * path (TS-only syntax blanked in place, offsets preserved); false when the
+ * host had to transpile, which moves code.
+ */
+export type AstSourceKind = "editor" | "transpiled";
 
 // Fields every node carries; shown as the range badge rather than as children.
 const RANGE_KEYS = new Set(["start", "end", "loc", "range", "sourceFile"]);
@@ -111,7 +115,12 @@ export class AstExplorer {
    */
   showsEditorSource = true;
 
-  private pendingSources: { editorCode: string; compiledJs: string } | null = null;
+  /** Host-boundary facts captured at load; surfaced only on a parse failure. */
+  private boundary: { nativeBuiltins: boolean; setInstance: boolean; exportCount: number } | null = null;
+  /** Did a known-good one-token parse round-trip at load? See the canary in `load`. */
+  private boundaryLive = true;
+
+  private pendingSource: { code: string; mapsToEditor: boolean } | null = null;
   private lastRendered: { code: string; kind: AstSourceKind; options: AcornOptions } | null = null;
 
   constructor() {
@@ -147,7 +156,7 @@ export class AstExplorer {
     this.sourceTypeSelect = this.element.querySelector(".ast-source-type")!;
 
     const reparse = () => {
-      if (this.pendingSources) return; // nothing parsed yet; load() will replay
+      if (this.pendingSource) return; // nothing parsed yet; load() will replay
       const last = this.lastRendered;
       if (!last) return;
       // Re-render THIS source under the new options, without re-running the
@@ -192,7 +201,7 @@ export class AstExplorer {
       ]);
 
       const imports = buildCompiledAdapterImports(manifest);
-      const { instance } = await instantiateWasm(
+      const { instance, nativeBuiltins } = await instantiateWasm(
         bytes,
         imports.env,
         imports.string_constants,
@@ -200,7 +209,22 @@ export class AstExplorer {
       );
       // Exports-backed capabilities (closure wrapping, struct reads) need the
       // instance handed back before anything is called.
+      const wired = typeof imports.setInstance === "function";
       imports.setInstance?.(instance);
+
+      // (#5337) Keep what the host boundary was actually given. On
+      // JavaScriptCore a parse fails with `__call_fn_0 is not available` and
+      // acorn's own "ecmaVersion is required" warning — i.e. the module could
+      // read neither the options object nor its own exports — while the same
+      // build is fine under V8. These three facts separate the candidate
+      // mechanisms (which instantiation branch ran, whether the export set was
+      // published, how large it is), and they are the ones no stack trace
+      // carries. Reported only when a parse throws.
+      this.boundary = {
+        nativeBuiltins,
+        setInstance: wired,
+        exportCount: Object.keys(instance.exports).length,
+      };
 
       const exports = wrapExports(instance, {
         signatures: manifest.exportSignatures,
@@ -211,6 +235,25 @@ export class AstExplorer {
       }
       this.parse = exports.parse as (src: string, opts: AcornOptions) => AstNode;
       this.meta = meta;
+
+      // (#5337) Canary: prove the host boundary is live before the panel trusts
+      // it. An instance whose export set was never published parses ANYWAY, but
+      // wrongly — it cannot read the options object, so acorn falls back to its
+      // defaults and then dies deep inside on a null keyword table. Reproduced
+      // under V8 by skipping `setInstance`: acorn warns "ecmaVersion is
+      // required" and throws "Cannot read properties of null (reading
+      // 'replace')" — the exact pair reported from iOS Safari. Checking a
+      // one-token parse here turns that into a statement about the boundary
+      // instead of a confusing error about the user's source.
+      try {
+        const canary = this.parse("0", { ecmaVersion: 2022, sourceType: "module" }) as {
+          body?: { expression?: { value?: unknown } }[];
+        };
+        this.boundaryLive = canary.body?.[0]?.expression?.value === 0;
+      } catch {
+        this.boundaryLive = false;
+      }
+
       this.setStatus("", "info");
     })();
 
@@ -220,43 +263,28 @@ export class AstExplorer {
       this.loading = null;
     }
 
-    if (this.pendingSources) {
-      const { editorCode, compiledJs } = this.pendingSources;
-      this.pendingSources = null;
-      this.setSources(editorCode, compiledJs);
+    if (this.pendingSource) {
+      const { code, mapsToEditor } = this.pendingSource;
+      this.pendingSource = null;
+      this.setSource(code, mapsToEditor);
     }
   }
 
   /**
-   * Parse and render the current program.
+   * Parse and render `code`, which the host has already reduced to JavaScript.
    *
-   * acorn parses JavaScript and the editor holds TypeScript, so the editor text
-   * is tried first — most playground examples are annotation-free enough to
-   * parse, and only that case can map a node back to what the user typed. When
-   * the annotations trip it, fall back to the compiled JS output rather than
-   * showing a parse error for source that compiled fine. The header says which
-   * one is on screen.
-   *
-   * Both sources are taken together (rather than as two host calls) so a call
-   * that arrives before the parser has loaded can replay the same decision
-   * afterwards instead of replaying only the branch it happened to try first.
+   * `mapsToEditor` says whether its offsets still refer to the editor's own
+   * text — they do whenever the types were blanked in place, and do not when
+   * the host fell back to a transpile. The header states which, since only the
+   * first case can highlight a node back in the source.
    */
-  setSources(editorCode: string, compiledJs: string): void {
+  setSource(code: string, mapsToEditor: boolean): void {
     if (!this.parse) {
-      this.pendingSources = { editorCode, compiledJs };
+      this.pendingSource = { code, mapsToEditor };
       return;
     }
-    if (this.renderSource(editorCode, "editor")) {
-      this.showsEditorSource = true;
-      return;
-    }
-    if (compiledJs.trim() && this.renderSource(compiledJs, "compiled-js")) {
-      this.showsEditorSource = false;
-      return;
-    }
-    // Neither parsed: renderSource already put the editor error on screen, and
-    // that is the one the reader can act on.
-    this.showsEditorSource = true;
+    this.showsEditorSource = mapsToEditor;
+    this.renderSource(code, mapsToEditor ? "editor" : "transpiled");
   }
 
   /** Parse + render one candidate. Returns false (and shows why) on a parse error. */
@@ -281,7 +309,23 @@ export class AstExplorer {
       this.lastRendered = null;
       this.treeEl.replaceChildren();
       const message = error instanceof Error ? error.message : String(error);
-      this.setStatus(`Parse error: ${message}`, "error");
+      // A genuine SyntaxError from acorn is about the SOURCE and needs no
+      // machine details; anything else came out of the host boundary, and there
+      // the boundary facts are the whole diagnosis (#5337).
+      const isSyntax = error instanceof Error && error.name === "SyntaxError";
+      const b = this.boundary;
+      const detail =
+        isSyntax || !b
+          ? ""
+          : ` — [${b.nativeBuiltins ? "native js-string" : "js-string polyfill"}, ` +
+            `setInstance ${b.setInstance ? "ok" : "MISSING"}, ${b.exportCount} exports]`;
+      this.setStatus(
+        this.boundaryLive
+          ? `Parse error: ${message}${detail}`
+          : `The compiled parser loaded but its host boundary is not live, so it cannot read ` +
+              `parse options — the error below is a symptom, not your source. ${message}${detail}`,
+        "error",
+      );
       this.renderHeader(null);
       return false;
     }
@@ -318,7 +362,7 @@ export class AstExplorer {
     const parts = [`acorn ${this.meta.acornVersion} → wasm (${kb} KB)`];
     if (stats) {
       parts.push(`${stats.nodeCount} nodes in ${stats.parseMs.toFixed(1)} ms`);
-      parts.push(stats.kind === "editor" ? "from the editor" : "from the compiled JS output");
+      parts.push(stats.kind === "editor" ? "types erased in place" : "transpiled (offsets shifted)");
     }
     this.headerEl.textContent = parts.join(" · ");
     this.headerEl.title =

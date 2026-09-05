@@ -348,7 +348,8 @@ export function planModuleClosurePreLift(
   if (refusals.length > 0) return { sites, refusals };
 
   // Full-subtree population scan over exactly the nodes the initializer
-  // compiles — the same input set `moduleInitPopulationIsPass2Stable` reads.
+  // compiles — the same input set the pass-2 gate's syntactic scan reads
+  // (`declarations/module-init-pass2-stable.ts`).
   //
   // A closure the pre-lift does not publish still has its COMPILE moved from
   // pass 1 to pass 2, and two measured mechanisms observe that move — a nested
