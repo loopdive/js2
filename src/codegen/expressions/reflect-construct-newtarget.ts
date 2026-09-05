@@ -618,7 +618,17 @@ function prototypeIsPristine(ctx: CodegenContext, newTarget: ts.Identifier): boo
   // admitted here; `m1_control_noshadow.js` differs only in that parameter's
   // name and was admitted on base).
   const name = newTarget.text;
-  if (ctx.oracle.declarationsOf(newTarget).length !== 1) return false;
+  const source = newTarget.getSourceFile();
+  // Count declarations IN THIS FILE only. A lib global is declared many times
+  // across the .d.ts files (`Array` is an interface plus a var plus
+  // `ArrayConstructor`), and requiring exactly one declaration outright turned
+  // `built-ins/Reflect/construct/return-with-newtarget-argument.js` — a
+  // function target with `Array` as the NewTarget — from pass into a compile
+  // error. Two IN-FILE declarations still refuse: that is the second-binding
+  // case the file-wide count used to catch, and it is also how the expando
+  // declaration TypeScript synthesises for
+  // `Object.defineProperty(NT, "prototype", …)` is caught.
+  if (ctx.oracle.declarationsOf(newTarget).filter((d) => d.getSourceFile() === source).length > 1) return false;
 
   let touched = false;
   const visit = (node: ts.Node): void => {
@@ -661,7 +671,7 @@ function prototypeIsPristine(ctx: CodegenContext, newTarget: ts.Identifier): boo
     }
     if (!touched) forEachChild(node, visit);
   };
-  visit(newTarget.getSourceFile());
+  visit(source);
   return !touched;
 }
 
