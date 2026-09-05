@@ -16,6 +16,12 @@ export interface PreparedAsyncPromiseAllPlan {
 export interface PreparedAsyncAwaitSite {
   /** The value delivered by the fulfilled await edge. */
   readonly resultType: IrType;
+  /** B3 source proof: retain the original non-thenable operand exactly once. */
+  readonly settledNonThenable?: true;
+  /** Structural owner carried through the source→IR handoff. */
+  readonly settledOwnerUnitId?: string;
+  /** Frozen source receipt key carried through the source→IR handoff. */
+  readonly settledOwnerProofKey?: string;
 }
 
 /** Prepared-async evidence consumed by AST-to-IR lowering. */
