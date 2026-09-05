@@ -136,7 +136,7 @@ export type {
 } from "./ast-lowering-plans.js";
 import { irDateSnapshotGetterSymbol } from "./date-runtime.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
-import { classifyLiteral, joinEncoding, type Encoding } from "./analysis/encoding.js";
+import { classifyLiteral, inferEncoding, joinEncoding, type Encoding } from "./analysis/encoding.js";
 import { proveTypedStringAppend, proveTypedStringMethod, type TypedValueEvidence } from "./analysis/string-evidence.js";
 import {
   EmptyArrayElementInference,
@@ -2542,7 +2542,7 @@ function inferStringEncoding(expr: ts.Expression, cx: LowerCtx): Encoding | unde
     const receiver = inferStringEncoding(expr.expression.expression, cx);
     return receiver === "ascii" ? "ascii" : receiver ? "wtf16" : undefined;
   }
-  return undefined;
+  return inferEncoding(expr, (e) => [inferStringEncoding(e, cx), checkerOperandFamily(e, cx)]);
 }
 
 type StringEncodingScopeBinding = Exclude<ScopeBinding, { kind: "nestedFunc" }>;
@@ -4044,6 +4044,31 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   if (ts.isAwaitExpression(expr)) {
     if (cx.funcKind !== "async") {
       demoteToLegacy("body-shape-rejected", `ir/from-ast: await outside an async function (${cx.funcName})`);
+    }
+    // B2: an exact prepared owner must retain every source await before the
+    // historical C-1 static-elision arm.  The operand is evaluated once and
+    // crosses the existing Promise carrier boundary; the frame engine owns
+    // PromiseResolve/adoption and the subsequent reaction.
+    const preparedAwait = cx.resolver?.preparedAsyncAwaitSite?.(expr);
+    if (preparedAwait) {
+      // Keep the explicit await edge while reusing the existing static
+      // Promise.resolve substitution.  The substituted expression is still
+      // evaluated once; the frame's PromiseResolve then supplies the native
+      // carrier and microtask boundary for the retained await.
+      const settled = staticPromiseResolveSettledExpr(expr.expression);
+      const operandExpression = settled !== null && settled !== "undefined" ? settled : expr.expression;
+      const operand = lowerExpr(operandExpression, cx, hint);
+      const operandType = cx.builder.valueType(operand);
+      const operandVal = operandType !== undefined ? asVal(operandType) : undefined;
+      const externShaped =
+        (operandVal !== undefined && operandVal !== null && operandVal.kind === "externref") ||
+        operandType?.kind === "extern";
+      const carrier = externShaped
+        ? operand
+        : operandType?.kind === "dynamic"
+          ? coerceIrValueToExternref(cx.builder, operand)
+          : coerceToExpectedExtern(operand, { kind: "externref" }, cx, "prepared await operand");
+      return cx.builder.emitAwait(carrier, preparedAwait.resultType);
     }
     const settled = staticPromiseResolveSettledExpr(expr.expression);
     if (settled === "undefined") {

@@ -42,6 +42,13 @@ files:
   - src/codegen/declarations/import-collector.ts
   - src/codegen/expressions.ts
   - tests/issue-3527-ir-async-plan.test.ts
+loc-budget-allow:
+  - src/ir/from-ast.ts
+  - src/codegen/ir-prepared-free-functions.ts
+func-budget-allow:
+  - src/ir/from-ast.ts::lowerExpr
+oracle-ratchet-allow:
+  - src/codegen/async-linear-planning.ts
 ---
 # #3527 — IR-only R7: AST-free async suspension plans and canonical Promise ABI
 
@@ -594,3 +601,83 @@ reason to bypass preparation or silently widen a backend.
   merge-group Test262. Report remaining fixture producers, C-1 await elision,
   unsupported containers/handlers and target gaps explicitly. A green
   playground family or the small IR-only corpus cannot close this issue.
+
+### B2 implementation checkpoint — 2026-09-05
+
+The B2 implementation is published in signed merge head
+`873e5fa140f65040bab224a1d147582a55a615c9`, whose parents are the signed B2
+implementation `a8bc547795f47ec0847466b0bb0ebb5a75cb01f8` and current upstream
+`470ceba797a2822ead2a4060fc65fb78c0b52887`. The branch is
+`codex/3527-b2-luna-20260905`; PR #5602 is open against `loopdive/js2:main`
+from `ttraenkler:codex/3527-b2-luna-20260905`.
+
+The structural source record and AST free producer now admit arbitrary positive
+await counts in supported top level straight line async declarations. The
+runtime fixture measures five source awaits and five emitted frame state edges:
+pending `delay`, settled `Promise.resolve`, an unused settled
+`Promise.resolve`, settled non thenable `await 42`, and a second pending
+`delay`. The IR and native controls both produce the event sequence
+`schedule:0:1`, `fire:0`, `observer:1`, `observer:2`, `schedule:0:1`,
+`fire:0`; the independent Promise observer distinguishes retained settled
+awaits from static erasure. Controlled first and second rejection cases stop
+later state effects, and final void owners resolve `undefined` through the
+canonical ABI. The direct engine value comparison remains supplemental.
+
+The pure preparation suite verifies three states/two suspensions, computed
+SSA liveness `[[0], [0, 4]]` with SSA spills `{0, 4}`, mutable slot reaching
+definitions with slot spill `{3}`, and verifier refusal of missing liveness,
+missing spills, duplicate states, and missing runtime intent. The direct body
+poison control observes direct `0` / IR `1` for newly prepared owners.
+
+Post merge validation: the two B2 suites passed 10/10 tests and the adjacent
+async plan suite passed 12/12. Typecheck, format, fallback, IR only hybrid and
+IR only, dialect, neutrality, layering, stack, host import, LOC/function,
+oracle/coercion, numeric local parity (18/18), issue integrity, and normal
+pre push checks passed. The focused #4106 suite passed 7/8 with its existing
+host free invalid `WebAssembly.validate` baseline red; the #4104 suite passed
+16/17 with its existing `functionPrototypeCall` policy expectation red.
+
+This checkpoint does not close R7. Loops/back edges, handlers, nested
+executable containers, async generators, `for await`, WASI, and fully settled
+owners on the historical C 1 route remain separate work. Existing standalone
+and WASI invalid opcode validation reds remain unchanged, and no baseline was
+weakened.
+
+### B2 settled owner admission repair checkpoint — 2026-09-05
+
+Root's independent settled await controls found a regression at the published
+B2 head before this repair. With `experimentalIR: true`,
+`nativeStrings: false`, and `trackIrOutcomes: true`, the one await literal
+owner and the two await literal owner both failed compilation with
+`IR async runtime attachment for test has no valid async plan owner`. One
+direct body was emitted before the fatal IR error, and the result had zero IR
+bodies. The historical C 1 controls returned 43 and 85. The provider only
+`Promise.resolve` control remained a
+valid B2 owner and returned native Promise value 6 with matching independent
+native observer order.
+
+The narrow fix makes prepared await retention require the existing
+potentially suspending owner analysis in addition to the linear source shape.
+Fully static owners therefore remain on their established C 1 route until a
+separate cutover, while provider only and pending mixed chains retain the B2
+producer and canonical await ordering. The regression suite independently
+asserts that both static owners' synthetic helpers are absent, then validates
+their direct results 43 and 85; the existing mixed, pending, rejection, and
+provider controls remain active.
+
+Repair commits `96defcfe84d9753e5352e20b60a0c86236f5dda0` and
+`18352307cb7cb6bede526bf496e10ba3846624d7` are signed with the required
+Thomas Tränkler author, Codex coauthor, and Luna Max model trailer. PR #5602
+is open and unqueued at exact head
+`18352307cb7cb6bede526bf496e10ba3846624d7`.
+
+The focused runtime regression suite passed 7/7 and the pure preparation suite
+passed 4/4. Typecheck, formatting, fallback, IR policy, dialect, layering,
+neutrality, stack, oracle/coercion, numeric local parity (18/18), issue
+integrity, and the normal pre push hooks passed. Root independently reran the
+three source controls 3/3: static one and two await owners compile and return
+43/85 with the baseline route, and the provider only owner remains direct 0 /
+IR 1 with native observer parity. The exact upstream merge head still needs to
+be integrated before the final R7 publication review; this repair does not
+close R7 or broaden its remaining loop, handler, container, generator,
+`for await`, WASI, or settled owner limits.
