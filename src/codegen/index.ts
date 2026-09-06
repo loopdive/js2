@@ -597,6 +597,7 @@ import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; /
 import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
 import { emitObjectCreateClassInstanceExport } from "./object-create-class-instance.js"; // (#5239)
 import { emitClassValueConstructExports } from "./class-value-construct.js"; // (#5242)
+import { emitClassObjectOfExport } from "./class-object-of.js"; // (#5354)
 import {
   emitClosureCallExport,
   publishStandaloneTimerCallbackDispatch,
@@ -6063,6 +6064,11 @@ export function generateModule(
     // (#5242) `new <class value>(…)` — the CONSTRUCT twin of the same family.
     emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS);
 
+    // (#5354) "which class is this struct an instance of" — the identity the
+    // host needs to give a foreign instance the same `[[Prototype]]` object
+    // that `C.prototype` answers across the linked-provider seam.
+    emitClassObjectOfExport(ctx);
+
     // (#2038 / #3100, reserve-then-fill #1719) Rebuild the native `__iterator`
     // body with the LATE ladder arms now that every carrier type is known: the
     // (#3100) vec-FAMILY normalization arms ($ObjVec + `__vec_<elemKind>` —
@@ -11245,6 +11251,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     profilePhase("emit-class-value-construct", () =>
       emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS),
     );
+
+    // (#5354) See the single-source path — same placement, same gate.
+    profilePhase("emit-class-object-of", () => emitClassObjectOfExport(ctx));
 
     // Multi-source parity with generateModule: rebuild the reserved native
     // iterator ladders only after every graph carrier and receiver dispatcher
