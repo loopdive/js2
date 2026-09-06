@@ -53,6 +53,7 @@ import {
   instantiateRuntimeEvalNamespace,
   selectCachedRuntimeEvalProvider,
 } from "./runtime-eval-provider.mjs";
+import { resetTemporalRealmGlobals } from "./test262-temporal.mjs";
 
 export { RUNTIME_EVAL_IMPORT_MODULE };
 
@@ -151,6 +152,23 @@ export function test262ImportNamespaceNames(binary, importObj, options = {}) {
     .sort();
 }
 
+let announcedMissingLinkedProjectReset = false;
+
+/**
+ * (#5364) A runtime bundle built before the reset existed keeps today's
+ * cross-row contamination rather than failing. Say so ONCE per process — a
+ * silent degrade here is what makes a whole shard's Temporal `instanceof`
+ * verdicts order-dependent.
+ */
+function announceMissingLinkedProjectReset() {
+  if (announcedMissingLinkedProjectReset) return;
+  announcedMissingLinkedProjectReset = true;
+  console.error(
+    "[test262] linked runtime has no resetLinkedProjectRegistry — cross-row decoder contamination is NOT suppressed " +
+      "(rebuild scripts/runtime-bundle.mjs from scripts/runtime-bundle-entry.ts)",
+  );
+}
+
 /**
  * Instantiate a compiled test262 module with the namespaces it needs.
  *
@@ -173,25 +191,6 @@ export function test262ImportNamespaceNames(binary, importObj, options = {}) {
  *          linkedRuntime?: { instantiateLinkedProviders: Function, wireCompiledInstance: Function } }} [options]
  * @returns {Promise<WebAssembly.Instance>}
  */
-import { resetTemporalRealmGlobals } from "./test262-temporal.mjs";
-
-let announcedMissingLinkedProjectReset = false;
-
-/**
- * (#5364) A runtime bundle built before the reset existed keeps today's
- * cross-row contamination rather than failing. Say so ONCE per process — a
- * silent degrade here is what makes a whole shard's Temporal `instanceof`
- * verdicts order-dependent.
- */
-function announceMissingLinkedProjectReset() {
-  if (announcedMissingLinkedProjectReset) return;
-  announcedMissingLinkedProjectReset = true;
-  console.error(
-    "[test262] linked runtime has no resetLinkedProjectRegistry — cross-row decoder contamination is NOT suppressed " +
-      "(rebuild scripts/runtime-bundle.mjs from scripts/runtime-bundle-entry.ts)",
-  );
-}
-
 export async function instantiateTest262Module(binary, importObj, options = {}) {
   // (#5248) A test compiled against a LINKED provider — today only the
   // compile-once `Temporal` polyfill (#4628) — needs its provider modules

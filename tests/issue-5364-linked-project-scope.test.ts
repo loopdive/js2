@@ -124,6 +124,42 @@ describe("#5364 — the cross-module decoder registry is scoped to one live proj
     }
   });
 
+  it("the shared instantiate seam retires the realm globals even when the caller brings its own runtime copy", async () => {
+    // WHY THIS EXISTS. The two resets reach the seam by DIFFERENT routes, and
+    // only one of them is the caller's to supply. `resetLinkedProjectRegistry`
+    // is destructured from `options.linkedRuntime` — scripts/test262-worker.mjs
+    // passes its own bundled runtime copy there, so a bundle built before #5364
+    // silently degrades (that is what `announceMissingLinkedProjectReset` is
+    // for). `resetTemporalRealmGlobals` is a STATIC import in the seam itself,
+    // so the worker lane gets it with no worker-side change and no dependency
+    // on the bundle being current. This test pins that asymmetry: supply a
+    // linkedRuntime with NO reset at all, and the realm store must still go.
+    const { instantiateTest262Module } = await import("../scripts/test262-import-object.mjs");
+    const slots = Symbol("@@Temporal__GetSlots");
+    const g = globalThis as unknown as Record<symbol, unknown>;
+    g[slots] = { store: "row 1" };
+    try {
+      // An empty module: magic + version. Nothing to import, nothing to wire —
+      // the seam's linked branch is what is under test, not the instance.
+      const empty = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+      await instantiateTest262Module(
+        empty,
+        {},
+        {
+          linkedModules: [{}],
+          linkedRuntime: {
+            instantiateLinkedProviders: () => {},
+            wireCompiledInstance: () => {},
+            // deliberately no resetLinkedProjectRegistry — a stale bundle
+          },
+        },
+      );
+      expect(g[slots]).toBeUndefined();
+    } finally {
+      delete g[slots];
+    }
+  });
+
   it("two linked projects back to back: the second still decodes a consumer literal (#5225 route)", async () => {
     const { resetLinkedProjectRegistry } = await import("../src/runtime.js");
 

@@ -1,7 +1,8 @@
 ---
 id: 5364
 title: "Cross-module decoder registry is process-global — a second linked project against the same provider binary resolves its instances through the FIRST project's exports (every batched `instanceof` count for Temporal is inflated)"
-status: in-progress
+status: done
+completed: 2026-09-06
 assignee: ttraenkler/dev-5364
 sprint: current
 priority: high
@@ -17,6 +18,17 @@ created: 2026-09-06
 # #5354 / #5208 / #5363); those grants are restated below so CI's merge-preview
 # base cannot strand them by dropping the granting issue file from the
 # change-set.
+# 2026-09-06 (#5364). host-import-policy `maximumRuntimeTsLines` 19313 -> 19337.
+# Attributed by measurement, not by assumption: origin/main's src/runtime.ts is
+# 19149 lines and this branch's is 19337 (+188), of which the INHERITED #5354 /
+# #5251 stack is 164 — already inside the old 19313 ceiling. The 24 lines that
+# actually need this grant are #5364's OWN: commit 1f3a520a64 is +24/-0 on
+# src/runtime.ts (`resetLinkedProjectRegistry` and the comment explaining why the
+# reset runs before instantiate rather than after teardown). 19313 + 24 = 19337,
+# so the bump is exactly this PR's own diff and nothing else rides in on it.
+# (The `~30 LOC` in the note above was an estimate written before the salvage;
+# the measured figure is 24.) No host import is added or changed — the gate's
+# per-family import counts are unchanged; only the line-count ceiling moves.
 loc-budget-allow:
   - src/runtime.ts
   # Inherited from #5354 (PR #5670) and, through it, #5251 (PR #5648).
@@ -176,15 +188,33 @@ into, rather than two hand-placed driver calls that can drift). Measured on the
 123-row list with a fresh `JS2WASM_TEMPORAL_CACHE`, provider linked, one
 compiler revision:
 
-| lane                                    | `: instanceof` | pass |
-| --------------------------------------- | -------------- | ---- |
-| batch, registry reset ON                 | 23             | 13   |
-| batch, registry reset OFF (base)         | (see PR)       |      |
-| one row per process (solo)               | (see PR)       |      |
+| lane                                     | `: instanceof` | pass | artifact                  |
+| ---------------------------------------- | -------------- | ---- | ------------------------- |
+| batch, no reset (base)                    | 23             | 13   | `.tmp/batch-no-reset.tsv`  |
+| batch, registry reset ONLY                | 23             | 13   | `.tmp/batch-with-reset.tsv`|
+| batch, BOTH resets                        | **0**          | 27   | `.tmp/batch-fixed.tsv`     |
+| one row per process (solo), both resets   | **0**          | 27   | `.tmp/solo-fixed.tsv`      |
 
+All four lanes are 123 rows on one compiler revision, provider linked
+(`JS2WASM_TEST262_TEMPORAL=1`), each with a `JS2WASM_TEMPORAL_CACHE` created
+fresh for that revision. The solo lane is one node process per row
+(`.tmp/solo-loop.sh`), which is the reference verdict a fork cannot contaminate.
+
+**Acceptance met, and in the strong form.** Batch-with-both-resets and solo do
+not merely agree on the two counts — all 123 rows are byte-identical, status AND
+failure-reason string (`diff` of the two sorted TSVs is empty). The batched run
+is now indistinguishable from 123 fresh processes.
+
+**The registry reset moved the batch count by zero; the realm-global reset moved
+all of it.** Rows 1 and 2 of the table are the same 23 and the same 13 — adding
+`resetLinkedProjectRegistry` changed nothing observable on this list.
 `month-boundary-gregory.js` still failed on `endYesterdayNextDay: instanceof`
-in the batch with the reset ON, while failing solo on `Unsupported era name:
-gregory`. So the registry reset moved the batch count by **zero**.
+in the batch with the registry reset ON, while failing solo on `Unsupported era
+name: gregory`. Adding `resetTemporalRealmGlobals` took `: instanceof` to 0 and
++14 rows to pass. The registry reset is kept anyway: it is correct on its own
+terms (the registry genuinely has no unregister path, and the unit tests pin the
+resolution order it fixes), it is what makes the two-live-projects bound below
+statable, and it costs one call on a path that runs once per linked row.
 
 **Why: the stale exports do not come through `decoderFor` at all.** Instrumented
 `_owningClassObject` with a per-project generation counter and an identity map
@@ -230,6 +260,36 @@ same seam. It is a **harness** repair, not a compiler one: the polyfill is
 entitled to assume one instance per realm, and it is the many-rows-per-fork
 model (#5353) that violates it.
 
+## The sharded worker lane (#5353) is covered, with no worker-side change
+
+`scripts/test262-worker.mjs` instantiates every row through
+`instantiateTest262Module` (~L2002), so both resets reach the CI lane that
+actually motivated this issue. They arrive by different routes, and the
+difference matters:
+
+- **`resetTemporalRealmGlobals` — unconditional, no worker-side dependency.** It
+  is a STATIC import inside the seam itself, so it runs in the worker whatever
+  the caller passes. This is the reset that carries the entire measured effect,
+  and it cannot silently degrade.
+- **`resetLinkedProjectRegistry` — supplied by the caller.** It is destructured
+  from `options.linkedRuntime`, which the worker sets to its own bundled runtime
+  copy (`scripts/runtime-bundle.mjs`, built from `runtime-bundle-entry.ts`, whose
+  `export *` carries the symbol). A bundle built before this change has no such
+  export; that degrades rather than throws, and
+  `announceMissingLinkedProjectReset` says so once per process.
+
+`tests/issue-5364-linked-project-scope.test.ts` pins the asymmetry directly: it
+calls the seam with a `linkedRuntime` that deliberately omits
+`resetLinkedProjectRegistry` and asserts the realm store is dropped anyway.
+
+The worker's OTHER `instantiateTest262Module` call (~L1640,
+`buildInvalidBinaryError`) passes no `linkedModules` and so takes neither reset
+— correct: it is the diagnose-why-this-binary-is-invalid path, not a row.
+
+Suites run: `tests/issue-5353-sharded-temporal-lane.test.ts` (14) and
+`tests/issue-5248-test262-temporal-wiring.test.ts` (4) both pass unchanged;
+`tests/issue-5364-linked-project-scope.test.ts` is 6 passing.
+
 ## (B) — not attempted, and the plan's premise for it needs revisiting
 
 Deliverable B (a `rootImports`-keyed project scope for the #5225 registry) was
@@ -251,12 +311,21 @@ than by the Temporal conformance number.
 
 ## Acceptance criteria
 
-1. (A) landed: `resetLinkedProjectRegistry` exported from both bundles and
-   called per row in the worker and the in-process runner; batch == solo on the
-   123-row `: instanceof` count, numbers stated.
-2. (B) landed or split into its own follow-up with the Step-1 log line quoted.
-3. No new host import; single-module lane unchanged (equivalence gate at
-   baseline).
+1. **(A) landed — met, though not by the mechanism the plan predicted.**
+   `resetLinkedProjectRegistry` is exported from both bundles and called per
+   linked row from the one seam both drivers pass through. Batch == solo on the
+   123-row list: `: instanceof` 0 vs 0, pass 27 vs 27, and in fact all 123 rows
+   are byte-identical. The criterion is met by `resetTemporalRealmGlobals`,
+   which the measurement forced into scope; the registry reset on its own moved
+   the count by 0 (table above).
+2. **(B) NOT attempted — and it should be re-scoped, not merely deferred.** See
+   the section below: the observable B was meant to move is dominated by the
+   realm-global channel, so B's own justification has to be rebuilt on the
+   simultaneous-two-projects case with its own repro.
+3. **No new host import; single-module lane unchanged.** Nothing here touches
+   the import object or codegen — both resets are harness-side, on a path that
+   runs only when `linkedModules` is non-empty. Equivalence gate at baseline
+   (24 failing / 1718 passing).
 
 ## Notes
 
