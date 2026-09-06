@@ -1063,6 +1063,98 @@ function emitSuperExternMethodCall(
  * pushing a value (the divergence flagged in #1849's 2026-06-04 review); the two
  * forms are now unified on the value-leaving branch.
  */
+/**
+ * (#5350 step 5) `super.m(args)` / `super['m'](args)` inside an OBJECT-LITERAL
+ * method, standalone.
+ *
+ * `compileSuperMethodCallCore` bails to `evalArgsAndDefault` for an object
+ * literal — the arguments run, and a typed default (`null` / 0) is left where
+ * the call's value belongs, so `super.getThis()` answered `null`. The read half
+ * already works (#4688 + step 1): resolve the method through
+ * `__getPrototypeOf(home)` → `__reflect_get_receiver`, then Invoke it through
+ * the host-import-free `__apply_closure(fn, thisValue, argsCarrier)` bridge with
+ * `this` = the call-time receiver, which is what the `-obj-ref-this` rows
+ * observe.
+ *
+ * Order follows §13.3.6: the method is fetched first, then the arguments are
+ * evaluated (they run on BOTH sides of the callable test, so a miss keeps their
+ * side effects). A null/absent method keeps today's typed default rather than
+ * §13.3.6's TypeError — declining to throw where the compiler cannot see the
+ * whole prototype surface, exactly as `array-tolocalestring.ts` argues for the
+ * same shape.
+ */
+function compileStandaloneObjectLiteralSuperMethodCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.CallExpression,
+  key: SuperReadKey,
+): ValType | null | undefined {
+  if (!ctx.standalone) return undefined;
+  if (expr.arguments.some((arg) => ts.isSpreadElement(arg))) return undefined;
+  const externref: ValType = { kind: "externref" };
+  ensureObjectRuntime(ctx);
+  ensureLateImport(ctx, "__apply_closure", [externref, externref, externref], [externref]);
+  if (expr.arguments.length > 0) {
+    ensureLateImport(ctx, "__objvec_new", [], [externref]);
+    ensureLateImport(ctx, "__objvec_push", [externref, externref], []);
+  }
+  flushLateImportShifts(ctx, fctx);
+  const applyIdx = ctx.funcMap.get("__apply_closure");
+  if (applyIdx === undefined) return undefined;
+  const objVecNewIdx = ctx.funcMap.get("__objvec_new");
+  const objVecPushIdx = ctx.funcMap.get("__objvec_push");
+  if (expr.arguments.length > 0 && (objVecNewIdx === undefined || objVecPushIdx === undefined)) return undefined;
+  const currentThisIdx = ensureCurrentThisGlobal(ctx);
+
+  const methodValueType = compileStandaloneObjectLiteralSuperPropertyRead(ctx, fctx, key, "externref");
+  if (methodValueType === undefined) return undefined;
+  const methodLocal = allocLocal(fctx, `__super_call_m_${fctx.locals.length}`, externref);
+  fctx.body.push({ op: "local.set", index: methodLocal });
+
+  const argsLocal = allocLocal(fctx, `__super_call_args_${fctx.locals.length}`, externref);
+  if (expr.arguments.length === 0) {
+    // `__apply_closure` reads a null carrier as the empty argument list
+    // (guardNullableApplyArguments), so no `$ObjVec` is allocated.
+    fctx.body.push({ op: "ref.null.extern" });
+  } else {
+    fctx.body.push({ op: "call", funcIdx: objVecNewIdx! });
+    fctx.body.push({ op: "local.set", index: argsLocal });
+    for (const arg of expr.arguments) {
+      fctx.body.push({ op: "local.get", index: argsLocal });
+      const argType = compileExpression(ctx, fctx, arg, externref);
+      if (argType === null) fctx.body.push({ op: "ref.null.extern" });
+      else if (argType.kind !== "externref" && argType.kind !== "ref_extern") {
+        coerceType(ctx, fctx, argType, externref);
+      }
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__objvec_push") ?? objVecPushIdx! });
+    }
+    fctx.body.push({ op: "local.get", index: argsLocal });
+  }
+  fctx.body.push({ op: "local.set", index: argsLocal });
+
+  fctx.body.push({ op: "local.get", index: methodLocal });
+  fctx.body.push({ op: "ref.is_null" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "val", type: externref },
+    then: [{ op: "ref.null.extern" }],
+    else: [
+      { op: "local.get", index: methodLocal },
+      { op: "global.get", index: currentThisIdx },
+      { op: "local.get", index: argsLocal },
+      { op: "call", funcIdx: applyIdx },
+    ],
+  });
+
+  const sig = ctx.checker.getResolvedSignature(expr);
+  const returnType = sig ? resolveWasmType(ctx, ctx.checker.getReturnTypeOfSignature(sig)) : externref;
+  if (returnType.kind !== "externref" && returnType.kind !== "ref_extern") {
+    coerceType(ctx, fctx, externref, returnType);
+  }
+  flushLateImportShifts(ctx, fctx);
+  return returnType;
+}
+
 function compileSuperMethodCallCore(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1092,7 +1184,16 @@ function compileSuperMethodCallCore(
 
   // Determine which class we're in.
   const currentClassName = resolveEnclosingClassName(fctx);
-  if (!currentClassName) return evalArgsAndDefault(); // super in object literal
+  if (!currentClassName) {
+    // (#5350 step 5) Standalone object literal: resolve and INVOKE the method
+    // rather than leaving a default where its value belongs.
+    const objectLiteralCall = compileStandaloneObjectLiteralSuperMethodCall(ctx, fctx, expr, {
+      kind: "name",
+      name: methodName,
+    });
+    if (objectLiteralCall !== undefined) return objectLiteralCall;
+    return evalArgsAndDefault(); // super in object literal
+  }
   const parentClassName = ctx.classParentMap.get(currentClassName);
   if (!parentClassName) return evalArgsAndDefault(); // class without extends
 
@@ -1242,7 +1343,7 @@ function compileStandaloneSuperPropertyRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
   key: SuperReadKey,
-  accessType: ts.Type,
+  accessType: ts.Type | "externref",
   emitHomeObject: () => boolean,
   emitReceiver: () => void,
 ): ValType | undefined {
@@ -1284,7 +1385,9 @@ function compileStandaloneSuperPropertyRead(
   emitReceiver();
   fctx.body.push({ op: "call", funcIdx: reflectGetReceiverIdx });
 
-  const resultType = resolveWasmType(ctx, accessType);
+  // (#5350 step 5) `"externref"` keeps the raw value — the method-call arm
+  // invokes it and coerces the CALL's result, not the property's.
+  const resultType: ValType = accessType === "externref" ? { kind: "externref" } : resolveWasmType(ctx, accessType);
   if (resultType.kind !== "externref" && resultType.kind !== "ref_extern") {
     coerceType(ctx, fctx, { kind: "externref" }, resultType);
   }
@@ -1431,7 +1534,7 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
   key: SuperReadKey,
-  accessType: ts.Type,
+  accessType: ts.Type | "externref",
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
   const currentThisIdx = ensureCurrentThisGlobal(ctx);
