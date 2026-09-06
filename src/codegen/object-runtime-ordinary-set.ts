@@ -55,6 +55,10 @@ import type { CodegenContext } from "./context/types.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 
+/** `__create_descriptor`'s attribute bits: writable (0x01) | enumerable (0x02)
+ *  | configurable (0x04) — the §7.3.5 CreateDataProperty descriptor. */
+const DESC_FLAGS_ALL = 0x07;
+
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
 
@@ -103,7 +107,27 @@ export function registerOrdinarySetWithReceiver(
   ) {
     return undefined;
   }
-  for (const key of ["writable", "get", "set"]) addStringConstantGlobal(ctx, key);
+  for (const key of ["writable", "get", "set", "value"]) addStringConstantGlobal(ctx, key);
+
+  // (#5316 review r1 F1) A `$Proxy` RECEIVER takes its writes through
+  // `[[DefineOwnProperty]]`, not through `[[Set]]`. All four primitives are
+  // optional: without them the arm is simply not emitted and the receiver keeps
+  // the `__extern_set` write, which is what the lane shipped.
+  const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
+  const createDescIdx = ctx.funcMap.get("__create_descriptor");
+  const newPlainObjectIdx = ctx.funcMap.get("__new_plain_object");
+  const defineFromDescIdx = ctx.funcMap.get("__obj_define_from_desc");
+  const proxyReceiverDefineRoute =
+    proxyTypeIdx !== undefined &&
+    proxyTypeIdx >= 0 &&
+    createDescIdx !== undefined &&
+    newPlainObjectIdx !== undefined &&
+    defineFromDescIdx !== undefined;
+  /** `1` when the value in `l` is a standalone `$Proxy` carrier. */
+  const isProxy = (l: number): Instr[] =>
+    proxyReceiverDefineRoute
+      ? [{ op: "local.get", index: l }, { op: "any.convert_extern" }, { op: "ref.test", typeIdx: proxyTypeIdx }]
+      : [{ op: "i32.const", value: 0 }];
 
   // params 0=target 1=key 2=value 3=receiver
   const O = 4;
@@ -183,9 +207,34 @@ export function registerOrdinarySetWithReceiver(
     {
       op: "if",
       blockType: { kind: "empty" },
-      // Step 3.e: absent ⇒ CreateDataProperty(Receiver, P, V) — an ordinary
-      // dynamic write, which is W/E/C all true.
+      // Step 3.e: absent ⇒ CreateDataProperty(Receiver, P, V).
       then: [
+        // (#5316 review r1 F1) On a `$Proxy` receiver CreateDataProperty is
+        // §7.3.5 → `Receiver.[[DefineOwnProperty]](P, {[[Value]]: V,
+        // [[Writable]]: true, [[Enumerable]]: true, [[Configurable]]: true})`,
+        // so it is the receiver's `defineProperty` trap that runs (with the
+        // §10.5.6 invariant checks), NOT its `set` trap — and `Reflect.set`
+        // answers THAT trap's boolean. Routing this through `__extern_set`
+        // drove the wrong trap and discarded its refusal.
+        ...(proxyReceiverDefineRoute
+          ? ([
+              ...isProxy(3),
+              {
+                op: "if",
+                blockType: { kind: "empty" },
+                then: [
+                  { op: "local.get", index: 3 },
+                  { op: "local.get", index: 1 },
+                  { op: "local.get", index: 2 },
+                  { op: "i32.const", value: DESC_FLAGS_ALL },
+                  { op: "call", funcIdx: createDescIdx! },
+                  { op: "call", funcIdx: defineFromDescIdx! },
+                  { op: "call", funcIdx: isTruthyIdx },
+                  { op: "return" },
+                ],
+              },
+            ] satisfies Instr[])
+          : []),
         { op: "local.get", index: 3 },
         { op: "local.get", index: 1 },
         { op: "local.get", index: 2 },
@@ -202,8 +251,35 @@ export function registerOrdinarySetWithReceiver(
     { op: "call", funcIdx: isTruthyIdx },
     { op: "i32.eqz" },
     ...refuseIf(),
-    // Step 3.d.iv: write `{[[Value]]: V}`. `__extern_set` preserves the
-    // property's existing attributes; rebuilding a descriptor would not.
+    // Step 3.d.iv: `Receiver.[[DefineOwnProperty]](P, {[[Value]]: V})` — the
+    // descriptor carries the VALUE FIELD ALONE, so the property keeps its
+    // existing enumerable/configurable attributes. On an ordinary receiver
+    // `__extern_set` IS that write and preserves them; on a `$Proxy` receiver
+    // only the real define route reaches the `defineProperty` trap (F1).
+    ...(proxyReceiverDefineRoute
+      ? ([
+          ...isProxy(3),
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            then: [
+              // tmp = {}; tmp.value = V   (a value-only descriptor)
+              { op: "call", funcIdx: newPlainObjectIdx! },
+              { op: "local.set", index: TMP },
+              { op: "local.get", index: TMP },
+              ...keyOf("value"),
+              { op: "local.get", index: 2 },
+              { op: "call", funcIdx: externSetIdx },
+              { op: "local.get", index: 3 },
+              { op: "local.get", index: 1 },
+              { op: "local.get", index: TMP },
+              { op: "call", funcIdx: defineFromDescIdx! },
+              { op: "call", funcIdx: isTruthyIdx },
+              { op: "return" },
+            ],
+          },
+        ] satisfies Instr[])
+      : []),
     { op: "local.get", index: 3 },
     { op: "local.get", index: 1 },
     { op: "local.get", index: 2 },
