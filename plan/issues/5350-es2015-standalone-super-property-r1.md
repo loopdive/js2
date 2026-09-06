@@ -820,3 +820,125 @@ are blocked by the pre-existing block-scoped-class capture defect the r1 record
 isolated. This round moved 8 probe answers onto node and lost nothing. The
 1,089-row class/super sweep remains deferred to the integrated-tree run before
 the PR.
+
+### Review round 4 (2026-09-06)
+
+One finding from the round-3 review, confirmed against node 22 before any edit
+and fixed. Comparisons are against the **round-3 tree** (`wf_8d67119a-97b-1` @
+`5571887f12`) for ANSWERS, and against **this same tree with the fix reverted**
+(the `.tmp/new-super.base.ts` file-copy A/B) for BYTES — this round's branch
+merges the integration head `b7199194da`, which carries landed work round 3 did
+not, so cross-tree byte comparison would report ~3.9 kB of unrelated growth on
+every probe and prove nothing.
+
+#### S1 — the runtime flag was trusted where nothing could set it
+
+r3 allocates an i32 local `__js2_super_done` in a derived constructor when some
+`super.<x>` read sits in a loop that also contains a `super(...)`, and stores 1
+into it at every `super(...)` lowering. `containsSuperCall` deliberately
+descends into nested FUNCTIONS (only classes are skipped), so a loop whose only
+`super()` sits inside an arrow also classified `"runtime"` — but the store is
+emitted by `emitSuperInitializedFlagStore(fctx)` at the lowering site, and
+inside the arrow `fctx` is the ARROW's `FunctionContext`, a separate wasm
+function whose `superInitializedFlagLocal` is `undefined`. The store is a no-op,
+the constructor's flag stays 0, and the guard fires on every iteration —
+a ReferenceError node never raises.
+
+**Shipped: option (b), classification made consistent with where the store can
+be emitted.** Not option (a) (a captured ref cell): the flag has no TypeScript
+binding to capture, so threading it through closure capture would mean
+synthesising one and wiring it into the capture machinery — far beyond a few
+dozen lines, and touching a mechanism (mutable closure captures) that every
+class in the corpus depends on. Instead `containsSuperCall` gained a
+`skipNestedFunctions` parameter, and the enclosing-loop scan now asks two
+questions: is there a carrier this compiler can INSTRUMENT (a `super(...)`
+lexically in the constructor's own body) — then `"runtime"`, the flag is
+trustworthy; else is there a carrier at all — then `"never"`, leave the read
+UNGUARDED. The "completes textually before the read" scan is unchanged and still
+descends into nested functions, because `const f = () => super(); f();` written
+before the read really does initialise `this`.
+
+The recorded cost of option (b): a read that really is reached before a nested
+function's `super()` runs stays unguarded and answers `undefined` instead of
+throwing. That is wrong against node — and it is exactly round-2 and base
+behaviour, wrong in the direction that invents nothing.
+
+Measured standalone — node 22 / round-2 / round-3 / this:
+
+| probe | shape | node | r2 | r3 | this |
+| --- | --- | --- | --- | --- | --- |
+| **s1c2** | `while(true)`, read on iter 2, loop's only `super()` in an ARROW | 6 | 6 | **9** | **6** |
+| **s1c** | same, `while (i < 2)` with `i++` | 7 | NaN | **9** | **NaN** |
+| s1c3 | same, `(() => { super(); })()` | 6 | 6 | 6 | 6 |
+| s1c4 | same, but the read is `this.a` (not `super.`) | 6 | 6 | 6 | 6 |
+| s1c0 | same, `super()` DIRECTLY in the loop | 7 | NaN | NaN | NaN |
+| xa13 / xa12 / xa3 | read before a direct `super()` in the same loop | 9 | 6 | 9 | 9 |
+| xa11 | only a NESTED class's `super()` in the loop | 9 | 6 | 9 | 9 |
+| xa1 | `super()` in a nested LOOP, read on iteration 2 | 6 | 6 | 6 | 6 |
+| n4, n5 | read on iteration 2, direct `super()` | 5 | 5 | 5 | 5 |
+| xa8 | the read itself is inside an arrow, before `super()` | 9 | 6 | 6 | **6 — residual** |
+
+s1c is the same regression as s1c2 wearing a different mask: r3's spurious throw
+turned into 9, and removing it exposes the pre-existing `super.zz` → NaN defect
+that s1c0 shows on **every** tree including base. Both rows now match round 2
+exactly. xa8 is the round-3 residual, unchanged and not touched by this round:
+the read compiles inside the arrow's own function, which carries neither the
+flag nor the straight-line throw.
+
+#### Controls
+
+- **Probes**: all **277** across the four sets (73 `rev5350/p`, 101
+  `rev5350b/p`, 39 `rev5350c/p`, 64 `rev5350d/p`), standalone. Two comparisons,
+  because they answer different questions:
+  - **vs the round-3 tree**, answers only: **exactly 2 rows move** — s1c2
+    (9 → 6, onto node) and s1c (9 → NaN, back onto round 2). Every other row
+    is answer-identical.
+  - **same-tree A/B** (this branch with `new-super.ts` reverted to its merged
+    state), bytes included: **exactly 3 of 277 modules differ** — s1c, s1c2 and
+    s1c3. The first two are the answer moves; s1c3 keeps answer 6 and loses 533
+    bytes, the guard and flag local it no longer allocates. **274 modules are
+    byte-identical.** Cross-tree byte comparison is not used and is not
+    meaningful here: this branch merges `b7199194da`, which adds ~3.9 kB of
+    unrelated landed runtime to every standalone module.
+- **Host + wasi**: same-tree A/B over k1/k2/c4/c04/h1b/b5/d02b/d10/d01b/xa13/
+  xb6/s1c/s1c2/s1c3 — **byte-identical on both targets**, every row. The change
+  is inside `if (!ctx.standalone) return` territory by construction, and this
+  measures it rather than asserting it.
+- **53-row super control** (`run-test262-paths.mts --isolate ctrl53.txt
+  --standalone`): `{ compile_error: 2, fail: 25, pass: 26 }` — **27 non-pass, a
+  strict subset of round 3's 29, nothing lost.** The two that now pass —
+  `language/expressions/super/prop-{dot,expr}-obj-ref-strict.js` — are **not**
+  this round's doing: they pass on the pre-fix tree as well (isolate re-run with
+  `new-super.ts` reverted), so they are landed work carried in by the
+  integration-head merge. Attribution matters here; the control's job is that
+  nothing regressed, and nothing did.
+- **Pins**: `tests/issue-5350-super-property-r1.test.ts` grows 27 → **30** cases
+  — the arrow-`super()` loop (s1c2), the immediately-invoked-arrow form (s1c3),
+  and the read-inside-an-arrow residual (xa8) pinned at the answer that ships.
+  All three sources omit `A.prototype.zz` per the file's convention, so node 22
+  answers 5 / 5 / 9 (measured, not inferred) where the probes answer 6 / 6 / 9;
+  the third is the documented disagreement. **30/30 green on node 22 and on
+  node 25.**
+- **Neighbours**, ≤3-file batches, all green: issue-2709 + issue-1824-super-as-value
+  + issue-3522-super-accessor (38); issue-3024 + issue-5212-es2015-class-collection-super
+  + issue-5309 (54); issue-5312 + issue-5195-es2015-class-r2 +
+  issue-5195-r3-heritage-check (151); issue-5195-r3-restricted-properties +
+  issue-5195-r3-review + issue-5270 (63); issue-4527 +
+  issue-1058-generic-callback-result + closed-imports (109); safe-mode +
+  issue-4376-eval-alias-regression (28). Closure/capture suites were **not**
+  run: option (b) does not touch closure capture, which is the reason that
+  batch was conditional.
+- **Gates**: the chained source ratchets bare **and** with
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`, plus `check:speculative-rollback`,
+  `check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, the
+  TS7 typecheck and lint — all exit 0. **No new growth grants**: the change is
+  confined to `src/codegen/expressions/new-super.ts`, already granted in this
+  file's frontmatter since r1.
+
+#### Status after this round: still `in-progress`
+
+Unchanged, for the reason rounds 1-3 give: the plan's "13 rows (steps 1-5) pass"
+criterion still does not hold, blocked by the pre-existing block-scoped-class
+capture defect. This round removed a regression the previous one introduced and
+banked one byte-size improvement; the corpus position is otherwise where round 3
+left it.

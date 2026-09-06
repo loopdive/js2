@@ -457,6 +457,95 @@ export function test(): number {
     ).toBe(9);
   });
 
+  // ── (r4 review, S1) The runtime flag is only trusted where it can be SET ──
+  //
+  // `__js2_super_done` is a wasm LOCAL of the derived constructor. A `super()`
+  // written inside a nested function is lowered in THAT function's own
+  // `FunctionContext`, so the store is a no-op there and the constructor's flag
+  // stays 0 for ever. r3 still classified such a read "runtime", which made the
+  // guard fire on every iteration — a ReferenceError node never raises. Such a
+  // read is now left UNGUARDED (the ordinary read, which is base and round-2
+  // behaviour) rather than guarded by a flag nothing sets.
+
+  it("does not invent a ReferenceError when the loop's only super() is in an arrow", async () => {
+    // Probe s1c2. The read is reached on iteration 2, with `this` long
+    // initialised by the arrow's `super()`, so nothing throws: node 22 answers
+    // 5 for this source (`super.zz` is absent, so `v` is `undefined`; the probe,
+    // which sets `A.prototype.zz = 7`, answers 6 the same way). r3 answered 9 —
+    // a ReferenceError from a flag the arrow's store could never set.
+    expect(
+      await runStandalone(`
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor() {
+    let i = 0; let v: any;
+    while (true) {
+      if (i === 1) { v = (super.zz as any); break; }
+      const f = () => { super(); };
+      f();
+      i = 1;
+    }
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number {
+  try { return new B().b; } catch (e) { return e instanceof ReferenceError ? 9 : 10; }
+}
+`),
+    ).toBe(5);
+  });
+
+  it("does the same when the loop's super() sits in an immediately-invoked arrow", async () => {
+    // Probe s1c3 — the same shape written `(() => { super(); })()`. Node 22
+    // answers 5 for this source (6 for the probe, which sets `A.prototype.zz`).
+    // This shape already answered correctly on r3; it is here so the two forms
+    // stay pinned together.
+    expect(
+      await runStandalone(`
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor() {
+    let i = 0; let v: any;
+    while (true) { if (i === 1) { v = (super.zz as any); break; } (() => { super(); })(); i = 1; }
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number {
+  try { return new B().b; } catch (e) { return e instanceof ReferenceError ? 9 : 10; }
+}
+`),
+    ).toBe(5);
+  });
+
+  it("leaves a super READ inside an arrow before super() unguarded (documented residual)", async () => {
+    // Probe xa8. Node 22 answers 9 for exactly this source: the arrow really
+    // does run before `super()`, so the read throws a ReferenceError and the
+    // catch turns it into 9. This compiler answers 5 and has since r1 — the read
+    // is lowered in the ARROW's function, which neither carries the derived
+    // constructor's flag nor the straight-line throw, and an arrow's textual
+    // position says nothing about when it runs. Pinned at the SHIPPED answer so
+    // a future fix has to change this line deliberately.
+    expect(
+      await runStandalone(`
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor() {
+    let v: any;
+    for (let i = 0; i < 1; i++) { const f = () => (super.zz as any); v = f(); }
+    super();
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number {
+  try { return new B().b; } catch (e) { return e instanceof ReferenceError ? 9 : 10; }
+}
+`),
+    ).toBe(5);
+  });
+
   // ── (r3 review, S2) A POSITIVE callable test, not just "absent or primitive" ──
 
   it("throws TypeError when an object literal's super member is a plain object", async () => {

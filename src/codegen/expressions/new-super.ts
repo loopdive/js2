@@ -1551,15 +1551,32 @@ type SuperUninitializedReadKind = "always" | "runtime" | "never";
  * (probe xa11 — node throws, this answered 6). It is set for BOTH the
  * "completes textually before the read" scan and the enclosing-loop scan, for
  * the same reason in both: that `super()` belongs to another constructor.
- * Nested FUNCTIONS are still descended into, because
- * `const f = () => super(); f();` really does initialise this constructor's
- * `this`, so its `super()` must keep counting as one that may already have run.
+ * `skipNestedFunctions` excludes a `super()` written inside a nested FUNCTION
+ * (arrow, function expression/declaration). Such a call still initialises THIS
+ * constructor's `this` — `const f = () => super(); f();` really does — so the
+ * "completes textually before the read" scan leaves it OFF and keeps counting
+ * it. The enclosing-loop scan turns it ON (#5350 r4), because that scan decides
+ * whether a runtime flag can be TRUSTED, and the flag is a wasm LOCAL of the
+ * constructor: a nested function compiles to a separate wasm function whose
+ * `FunctionContext` has no such local, so `emitSuperInitializedFlagStore` there
+ * is a no-op and the flag would stay 0 for ever (probe s1c2).
  */
-function containsSuperCall(root: ts.Node, endsBefore: number | undefined, skipNestedClasses: boolean): boolean {
+function containsSuperCall(
+  root: ts.Node,
+  endsBefore: number | undefined,
+  skipNestedClasses: boolean,
+  skipNestedFunctions = false,
+): boolean {
   let found = false;
   const visit = (node: ts.Node): void => {
     if (found) return;
     if (skipNestedClasses && (ts.isClassDeclaration(node) || ts.isClassExpression(node))) return;
+    if (
+      skipNestedFunctions &&
+      (ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node))
+    ) {
+      return;
+    }
     if (
       ts.isCallExpression(node) &&
       node.expression.kind === ts.SyntaxKind.SuperKeyword &&
@@ -1644,9 +1661,27 @@ function classifySuperUninitializedRead(fctx: FunctionContext, expr: ts.Node): S
   if (containsSuperCall(current.body, expr.pos, /* skipNestedClasses */ true)) return "never";
   // (b) … and where an enclosing loop could bring a later one back over it,
   // only a runtime flag can say whether it already did.
+  // (#5350 r4 review) The carrier must be one this compiler can INSTRUMENT.
+  // The flag is a wasm local of the constructor, so only a `super(...)`
+  // lexically in the constructor's own body can store into it; a `super()`
+  // inside a nested function is lowered in that function's own
+  // `FunctionContext`, where the store is a no-op. Classifying such a read
+  // "runtime" therefore allocated a flag nothing ever set and threw on every
+  // iteration (probe s1c2 — node 6, r3 9). A loop whose only carrier sits in a
+  // nested function is left UNGUARDED instead ("never" — the ordinary read,
+  // which is round-2 and base behaviour): still wrong for a read that really is
+  // reached before the arrow's `super()` runs, but wrong in the direction that
+  // answers `undefined` rather than inventing a throw.
+  let guardableCarrier = false;
+  let anyCarrier = false;
   for (const loop of enclosingLoops) {
-    if (containsSuperCall(loop, undefined, /* skipNestedClasses */ true)) return "runtime";
+    if (containsSuperCall(loop, undefined, /* skipNestedClasses */ true, /* skipNestedFunctions */ true)) {
+      guardableCarrier = true;
+    }
+    if (containsSuperCall(loop, undefined, /* skipNestedClasses */ true)) anyCarrier = true;
   }
+  if (guardableCarrier) return "runtime";
+  if (anyCarrier) return "never";
   return "always";
 }
 
