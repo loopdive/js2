@@ -795,3 +795,354 @@ own properties through a proxy chain (2 rows), `defineProperty/null-handler`
 (revoked proxy on the `__obj_define_from_desc` path), the four `Reflect.set`
 rows reached through `with`/realm/array-length machinery, and the stale entries
 in this issue's 50-row list that already pass (strike them).
+
+## 2026-09-05/06 r5 implementation (Opus-high)
+
+**All six plan steps delivered**, in seven commits (step 5 needed a second one,
+found by measuring rather than by reading). One sub-step is DECLINED and named
+under "Not built" below.
+
+Worktree `/home/user/js2/.claude/worktrees/wf_2c593ff3-433-1`, branch
+`worktree-wf_2c593ff3-433-1` — a fresh worktree at `origin/main` `2257b950ee`,
+then `git merge claude/es6-test262-standalone-g10c7u` for the wave-5 plans. Base
+tree for every A/B: `.tmp/base` (`git archive origin/main`, same `2257b950ee`),
+with the same `node_modules`/`test262` links and its own compiler bundle,
+runtime bundle and quickjs eval adapter. Node 22 is the oracle; every value the
+pin file asserts was cross-checked on node 25 (v25.9.0).
+
+Probe sources are `.tmp/w5/attr/**` (copied from the investigation, read-only)
+plus `.tmp/p/**` (new, for step 6 and the strict-mode question). The A/B harness
+`.tmp/ab.mts` compiles the SAME file through both trees and runs node on it, so
+every three-column row below is one command.
+
+### Step 1 — `__integrity_bag` learns the #4194 instance carrier
+
+`object-integrity-carrier.ts`, a fourth arm before the `ref.null.extern`
+terminal, routing `__is_instance_expando_carrier` to `__closure_bag_ensure`.
+ENSURE, like the three arms above it, and the arm's comment says why that is not
+in conflict with `carrier-bag-visibility.ts:58-62`: a `gopd`/enumeration query
+must not conjure a bag, but here the bag is the ONLY place `[[Extensible]]` can
+live, so refusing to mint it is refusing to answer.
+
+| probe | what it asks | node | base | lane |
+| --- | --- | ---: | ---: | ---: |
+| `x/x1` | pristine `class C{}` instance: extensible/frozen/sealed | 1 | **6** | 1 |
+| `x/x2` | frozen class instance | 6 | 6 | 6 |
+| `x/x3` `x/x4` | pristine / frozen array | 1, 6 | 1, 6 | 1, 6 |
+| `x/x5` `x/x6` | pristine function / Date | 1, 1 | 1, 1 | 1, 1 |
+| `w/w3` | frozen object literal | 3 | 3 | 3 |
+| `w/w4` | `preventExtensions` on a literal, then a write, then query | 0 | **1** | 0 |
+| `w/w5` | `seal` on a literal: sealed / frozen / still-writable | 5 | **7** | 5 |
+| `v/v1` | `gopd` through a Proxy whose trap answers `undefined` | 1 | **9** (threw) | 1 |
+
+`v1` is the one that reframes r4. The r4 note read the `has`/`delete`
+extensibility false positives as "the dispatch-internal `__object_isExtensible`
+call is special". It is not: an object literal lowers to an `__anon_*` closed
+struct, which had no `__integrity_bag` arm, so the helper fell through to its
+NON-object terminal (`extensible = false`). The source-level call looked right
+only because `provenJsObject` picks the `_obj` variant, whose terminal is the
+opposite constant. One defect, one fix, and it is what unblocks step 4.
+
+The same four probes move the same way under `--target wasi` (measured
+separately): step 1 is target-neutral, and it does NOT re-open the wasi gate on
+the §10.5 validators, which stays.
+
+### Step 2 — the `gopd` literal-key fold asks the dynamic native on a guard miss
+
+`call-builtin-static.ts`, the `else` of the guarded `ref.test structTypeIdx`.
+The guard FAILING is the interesting case — the commonest receiver that fails it
+is a `$Proxy` in front of the shape — so under `ctx.standalone` the arm now calls
+`__getOwnPropertyDescriptor`, whose `$Proxy` front guard runs the trap and
+recurses for a proxy-of-proxy. The then-arm is untouched and its late imports
+still resolve first.
+
+| probe | node | base | lane |
+| --- | ---: | ---: | ---: |
+| `x/z4` gopd through a Proxy whose trap answers `{value:99,…}` | 99 | **-1** (`undefined`) | 99 |
+| `w/w1` gopd on a plain literal (the then-arm) | 7 | 7 | 7 |
+| `r/r1` `r/r2` `r/r3` `r/r5` accessor / non-writable / dynamic-write / plain | 7, 2, 15, 7 | same | same |
+
+The SECOND fold arm ("property not found in struct → undefined", no runtime
+guard) is left alone and recorded as a residual: it has no failed guard to
+reinterpret.
+
+### Step 3 — `in` stops folding a positive answer over a Proxy receiver
+
+`binary-ops-in.ts`. `isDirectProxyBinding`, not `tracesToProxyValue` — the wider
+trace accepts aliases the documented widening defect nulls, and routing one of
+those would turn a correct answer into a wrong one.
+
+| probe | node | base | lane |
+| --- | ---: | ---: | ---: |
+| `j/j1` trap-call count × 10 + `("attr" in p)` | 10 | **1** (trap never called) | 10 |
+| `w/w2` `in` over a literal and an array index, Proxy-free | 5 | 5 | 5 |
+
+### Step 4 — the two §10.5 extensibility clauses r4 declined, restored
+
+`object-runtime-proxy-invariants.ts`: §10.5.7 step 9.b.ii and §10.5.10 step 13,
+each spliced from the `notExtensible`/`throwIf` FACTORIES (the finalize funcIdx
+walk has no dedup set). The decline note is deleted and replaced by the
+explanation above.
+
+Measured on a 22-row list (`.tmp/step14-rows.txt`) on the lane tree: 15 pass,
+including both rows the decline was protecting
+(`has/return-false-target-prop-exists-using-with.js`,
+`deleteProperty/call-parameters.js`) and both rows it was costing
+(`has/return-false-target-not-extensible.js`,
+`deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js`).
+
+### Step 5 — a false `[[PreventExtensions]]` / `[[SetPrototypeOf]]` status
+
+Two commits. First, §20.1.2.19 step 3 / §20.1.2.21 step 4 at the CALL SITE:
+
+- `Object.preventExtensions(p)` returned the trap's booleanish externref as if
+  it were the object. The check is gated on a runtime `ref.test $Proxy`, NOT on
+  truthiness alone — the native helper hands back its ARGUMENT for an ordinary
+  receiver, and `Object.preventExtensions(0)` is a legal no-op whose falsy
+  return must not become a throw. `seal`/`freeze` are untouched: their helpers
+  carry no proxy front guard, so there is no status to honour and their bytes do
+  not move.
+- `Object.setPrototypeOf(p, v)` already implemented step 4 but asked
+  `__object_setPrototypeOf_status`, which has no proxy front guard and answers
+  the ORDINARY status (1). The proxy arm reads the result of
+  `__object_setPrototypeOf` instead, which DOES carry the guard — so the status
+  and the write are the SAME trap call. That is why the check is at the call
+  site and not in the status helper: a proxy guard there would run the trap once
+  for the status and again for the write, which is observable.
+
+Then a second commit, which the FIRST measurement of step 5 forced:
+
+- §10.5.2 step 7.a and §10.5.4 step 6.a say `return ? target.[[…]]()`. Both
+  dispatch arms instead DROPPED the forwarded result and pushed the proxy as a
+  truthy success token, reasoning that the ordinary operation always succeeds.
+  It does not when the target is ITSELF a Proxy: the front guard sends that case
+  to the inner proxy's dispatch, whose trap can answer false, and the token
+  overwrote it. Returning the forwarded value is a superset of the old
+  behaviour — an ordinary target answers the target object, truthy exactly like
+  the token.
+
+| probe | node | base | lane |
+| --- | ---: | ---: | ---: |
+| `x/y1` `preventExtensions` trap returns false | 9 (threw) | **1** | 9 |
+| `x/y2` `setPrototypeOf` trap returns false | 9 (threw) | **1** | 9 |
+| `j/j5` `j/j6` `preventExtensions` then `isExtensible`, direct and via a callee | 0, 0 | 0, 0 | 0, 0 |
+
+`built-ins/{Proxy,Object}/{preventExtensions,setPrototypeOf}`, 81 rows,
+`--isolate --standalone`, base tree vs lane:
+
+| | base | lane |
+| --- | ---: | ---: |
+| pass | 70 | **73** |
+| fail | 10 | 7 |
+| compile_error | 1 | 1 |
+
+**Rows lost: ZERO** (set-diff of the non-pass path lists, not the totals).
+Gained: `Proxy/preventExtensions/trap-is-missing-target-is-proxy.js`,
+`Proxy/setPrototypeOf/trap-is-missing-target-is-proxy.js`, and
+`Object/preventExtensions/throws-when-false.js`.
+
+### Step 6 — `Reflect.set` with an explicit receiver (§10.1.9.2)
+
+New `src/codegen/object-runtime-ordinary-set.ts` registers
+`__reflect_set_receiver(target, key, value, receiver) -> i32`; the refusal at
+`call-namespace-static.ts` is replaced by a call to it, keeping the
+`boundaryReflectInterop` arm ahead, the §26.1.13 Object-target guard, and
+`emitReflectArgumentLocals` + `coerceReflectPropertyKey` so a throwing
+`toString` still escapes. The 3-argument path and the host 4-argument import are
+untouched.
+
+Three decisions worth recording:
+
+- **The prototype hop is an ITERATION, not a self-call.** A native cannot bake
+  its own funcIdx at registration time, and §10.1.9.2 recurses only in tail
+  position, so a `loop` is exactly equivalent and needs no reserve-then-fill.
+- **`IsAccessorDescriptor` is read as PRESENCE of `get`/`set`** (`__extern_has`),
+  not as truthiness of `set`. `{get: undefined, set: undefined}` IS an accessor
+  descriptor and must refuse; reading `set` and finding `undefined` would
+  misclassify it as data and write through.
+- **The write is `__extern_set`, not a rebuilt descriptor.** For an absent
+  receiver property that is exactly CreateDataProperty (an ordinary dynamic
+  write is W/E/C all true — probe `r/r3`), and for a present writable data
+  property it preserves the enumerable/configurable attributes a rebuilt
+  descriptor would flatten.
+
+Registered LAST in `ensureObjectRuntime` (it reads helpers that are only in
+`funcMap` by then; appending at the end shifts no funcIdx), and listed in
+`OBJECT_RUNTIME_HELPER_NAMES` so `ensureLateImport` binds the DEFINED native and
+adds no `env::` import. On wasi that lookup answers `undefined` and the
+pre-#5316 refusal still stands, unchanged.
+
+Every base cell below is the compile error, so `base` is CE throughout:
+
+| probe | what it asks | node | lane |
+| --- | --- | ---: | ---: |
+| `p/rs1` | the data write lands on the RECEIVER, not the target | 7 | 7 |
+| `p/rs2` | the accessor setter's `this` IS the receiver | 3 | 3 |
+| `p/rs3` | a non-writable OWN data property refuses | 2 | 2 |
+| `p/rs6` | a non-writable INHERITED data property refuses | 2 | 2 |
+| `p/rs4` | a primitive receiver refuses | 0 | 0 |
+| `p/rs5` | `receiver === target` is the 3-argument shape | 3 | 3 |
+| `p/rs7` `p/rs10` `p/rs11` | the whole `set-value-on-data-descriptor` program, three spellings | 31 | 31 |
+
+The 15 listed rows, `--isolate --standalone`: base **15 compile_error**, lane
+**7 pass, 8 fail**. Rows lost: ZERO; 7 gained (six `built-ins/Reflect/set/*`
+plus `TypedArrayConstructors/internals/Set/key-is-out-of-bounds-receiver-is-not-typed-array.js`).
+
+### Controls
+
+Both required corpora, `--isolate --standalone`, base tree vs lane. A run that
+timed out under load was re-run split in halves at `COMPILER_POOL_SIZE=1` and
+the halves concatenated; the box carried a 1-minute load average of 17-25 from
+other lanes for most of this measurement, so a monolithic 464-row run did not
+fit inside a two-hour cap.
+
+**`built-ins/Proxy` + `built-ins/Reflect` — 464 rows**
+
+| | base | lane |
+| --- | ---: | ---: |
+| pass | 350 | **365** |
+| fail | 100 | 92 |
+| compile_error | 14 | 7 |
+
+**Rows lost (pass on base → non-pass on lane): ZERO**, by set-diff of the
+non-pass path lists. 15 gained:
+
+- `Proxy/deleteProperty/targetdesc-is-configurable-target-is-not-extensible.js`
+- `Proxy/getOwnPropertyDescriptor/result-is-undefined-target-is-not-extensible.js`
+- `Proxy/getOwnPropertyDescriptor/result-type-is-not-object-nor-undefined.js`
+- `Proxy/getOwnPropertyDescriptor/resultdesc-is-not-configurable-targetdesc-is-configurable.js`
+- `Proxy/has/return-false-target-not-extensible.js`
+- `Proxy/has/return-false-target-not-extensible-using-with.js`
+- `Proxy/has/return-false-target-prop-exists.js`
+- `Proxy/preventExtensions/trap-is-missing-target-is-proxy.js`
+- `Proxy/setPrototypeOf/trap-is-missing-target-is-proxy.js`
+- `Reflect/set/{creates-a-data-descriptor, different-property-descriptors,
+  receiver-is-not-object, return-false-if-target-is-not-writable,
+  set-value-on-accessor-descriptor-with-receiver, symbol-property}.js`
+
+One row changed bucket without changing side:
+`Reflect/set/set-value-on-data-descriptor.js`, compile_error → fail (see
+residuals).
+
+**`built-ins/Object/{freeze,seal,preventExtensions,isExtensible,isFrozen,isSealed}`
+— 317 rows**
+
+| | base | lane |
+| --- | ---: | ---: |
+| pass | 308 | **309** |
+| fail | 7 | 6 |
+| compile_error | 2 | 2 |
+
+**Rows lost: ZERO**, same set-diff. One gained
+(`Object/preventExtensions/throws-when-false.js`). This corpus is the one that
+would have caught a bad step 1 — it is 317 rows of exactly the integrity
+predicates and mutators the new `__integrity_bag` arm re-answers, and nothing in
+it moved except the row §20.1.2.19 step 3 is about.
+
+**The 12 target rows of `.tmp/w5/attr/rows.txt`: 8 flip, 4 remain** (all four
+are named residuals below). **The 9 held rows of `rows-reg.txt` all still
+pass** — `deleteProperty/return-true-without-same-target-prop.js` is a STALE
+entry: no such file exists in this test262 checkout (the row is now
+`targetdesc-is-undefined-return-true.js`).
+
+### Order preservation
+
+`sha256` of the emitted module, base vs lane, per target:
+
+| program | standalone | wasi | host |
+| --- | --- | --- | --- |
+| `o/plain.ts` — touches no MOP helper | SAME 50,256 B | SAME 50,283 B | SAME 1,270 B |
+| `w/w2.ts` — Proxy-free, only MOP use is `in` | SAME 50,541 B | SAME 50,568 B | SAME 1,985 B |
+| `o/mop.ts` — defineProperty/gopd/names/in/delete | DIFF 134,803 → 136,317 | DIFF (same 101,678 B) | SAME 3,103 B |
+| `p/pxy.ts` — a Proxy program | DIFF 138,530 → 139,915 | DIFF (same 107,135 B) | SAME 7,005 B |
+| `x/x1.ts` — a class instance + integrity queries | DIFF 133,670 → 135,215 | DIFF (same 102,328 B) | SAME 1,091 B |
+
+So: **host is byte-identical for every program**, and both programs the
+acceptance criteria name as all-target-identical are identical on all three. The
+standalone/wasi growth is the new arms in an already-reachable runtime, as in
+r4. The wasi modules differ in CONTENT at the SAME length — the forward-arm
+change removes two instructions where step 1 adds some.
+
+wasi behaviour was re-measured on the same eight probes: nothing regressed, and
+`j/j1` improved to node's answer (the `in` route is `standalone || wasi`).
+`p/pxy.ts` throws under wasi on BOTH trees — the pre-existing wasi
+attribute-model defect the r4 review documented, untouched here.
+
+### Pins
+
+`tests/issue-5316-r5-attribute-model.test.ts` — 49 cases: the integrity matrix
+({pristine, frozen/sealed} × {literal, class instance, array, function, Date}),
+the Proxy-facing gopd/`in`/has/delete probes with BOTH the compliant and the
+violating trap answer, the two status throws, eight `Reflect.set` receiver
+shapes, four wasi probes, and 15 Test262 rows (6 flipped, 9 held). Every
+standalone probe asserts `result.imports` is `[]`. **49/49 on node 22 and on
+node 25**; `tests/issue-5316-r4-invariants.test.ts` also **49/49 on both**, so
+the r4 wasi gate and its §10.5 pins are intact.
+
+Two pins are worth a reader's attention:
+
+- the refused-write probe expects a **TypeError (10)**, not a silent no-op (0).
+  A module is STRICT code. Measuring the same source as a sloppy script answers
+  0 and would have pinned the wrong thing — caught only because the first run of
+  the pin file failed against a probe value taken from a sloppy harness.
+- the "preventExtensions on a compliant Proxy" pin deliberately does NOT assert
+  `result === proxy`. §20.1.2.19 step 4 returns O and the emitted arm does push
+  O, but the standalone `===`/`typeof` folds over THAT CALL'S RESULT misclassify
+  it on this tree and on `origin/main` alike (probe `.tmp/p/pe2.ts`: `typeof r`
+  is none of object/boolean/undefined on either), so an identity pin there would
+  measure that pre-existing fold. It is a residual instead.
+
+### Gates
+
+Green bare AND with `LOC_GATE_BASE=$(git rev-parse origin/main)`:
+`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+`tsc --noEmit -p tsconfig.ts7.json`, `pnpm lint`. Growth grants (LOC, function
+and the three `__is_truthy` coercion sites) are in this file's frontmatter with
+dated rationales; no `scripts/*-baseline.json` was touched.
+
+### Not built — declined with the mechanism
+
+**The `ref.test $__ta_dyn_view` arm for §10.4.5.5** (the second half of plan
+step 6). Without it the six `TypedArrayConstructors/internals/Set/*` rows move
+`compile_error` → `fail` (one of them to `pass`), which is a bucket change, not
+a lost row. Building it means teaching `ta-dyn-mop.ts` — a finalize-time module
+that prepends `ref.test`-guarded arms to five MOP helpers by mode
+(`get`/`has`/`set`/`reflect_set`/`delete`) — about a SIXTH mode with a fourth
+parameter, and then re-measuring the TypedArray corpus, which is a third control
+this pass did not have the wall-clock for (the two required controls alone cost
+~5 hours on a box at load 17-25). Declined rather than half-built: a wrong
+integer-index arm turns working TypedArray writes into refusals, and that is the
+failure family this lane exists to avoid.
+
+### Residuals, each with its mechanism
+
+| rows | mechanism |
+| ---: | --- |
+| 6 | `TypedArrayConstructors/internals/Set/*` — the §10.4.5.5 arm above. They now reach `__reflect_set_receiver`, which treats the typed array as an ordinary object, so a canonical numeric index is written as a named property. |
+| 2 | `language/statements/with/set-mutable-binding-idref*-with-proxy-env.js` — now `compile_error` → `fail` with `RangeError: Maximum call stack size exceeded` in `__extern_set ← __create_descriptor ← __getOwnPropertyDescriptor ← __call_fn_method_2`. A `with (proxy)` environment re-enters the same proxy from inside its own trap; the walk in `__reflect_set_receiver` has no re-entrancy guard. The plan said not to build a `with` arm, and this is why one would be needed. |
+| 1 | `Reflect/set/set-value-on-data-descriptor.js` — the only row whose failure is NOT reproducible outside the harness. The same program compiled directly answers node's value exactly in three different spellings (`.tmp/p/{rs7,rs10,rs11}.ts` = 31 = node), including the duplicate-`var` and helper-function shapes; the row's own `assert.sameValue(result, true)` still reports `false`. Not diagnosed further. |
+| 1 | `Proxy/getPrototypeOf/instanceof-target-not-extensible-not-same-proto-throws.js` — the `instanceof` fold (`identifiers.ts:2913` `compileHostInstanceOf`), which the plan explicitly scopes out. |
+| 2 | `Proxy/deleteProperty/trap-is-null-target-is-proxy.js`, `Proxy/defineProperty/trap-is-undefined-target-is-proxy.js` — string/array exotic own properties reached through a proxy chain. |
+| 1 | `Proxy/defineProperty/null-handler.js` — a revoked proxy is not caught on the `__obj_define_from_desc` path. |
+| — | A `$Proxy` reached as a PROTOTYPE of the target inside `__reflect_set_receiver` is consulted through its `getOwnPropertyDescriptor` trap, not its §10.5.9 `set` trap. It can UNDER-report such a prototype's refusal; it can never invent one. A proxy as the direct target or as the receiver is unaffected — the front guard puts its own trap in the walk. |
+| — | The SECOND `gopd` fold arm ("property not found in struct → undefined", no runtime guard) is unchanged, as the plan directed. |
+| — | `Object.preventExtensions(p)` now returns O per §20.1.2.19 step 4, but the standalone `===`/`typeof` folds over that call's result misclassify it on this tree AND on `origin/main`, so the identity is not observable from compiled source. Pre-existing; named here because it is why one pin is a non-throw assertion rather than an identity one. |
+| — | `Object/seal/seal-{finalizationregistry,sharedarraybuffer}.js` stay `compile_error` and `Object/{freeze,seal}/proxy-with-defineProperty-handler.js` stay `fail` on both trees — other lanes' territory. |
+
+Not claimed and not touched, per the lane protocol: the generator carrier
+(#2864), the promise/microtask carrier (#2867) and built-in method reflection
+(#2175).
+
+### Two process notes for the next lane
+
+- **The 464-row control does not fit in a 2-hour cap on a shared box.** Two
+  runs were lost to `timeout 7200` before that was understood; splitting the
+  list in halves and concatenating the outputs is both faster and failure-safe,
+  because `run-test262-paths.mts` writes NOTHING until it finishes — a timeout
+  is a total loss of the run.
+- **Rebuild the compiler bundle AND the quickjs adapter after the last source
+  edit, and do not start a corpus run mid-edit.** One 81-row run was measured
+  against a tree whose new module was written but not yet imported, and reported
+  `registerOrdinarySetWithReceiver is not defined` as a `compile_error` row.
