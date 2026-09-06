@@ -2500,7 +2500,7 @@ export function compileBinaryExpression(
   }
 
   // (#4208 S1) §7.2.16 step 1 then the i32↔f64 promotion — ORDER is the fix.
-  const promoted = foldTypeDisjointThenPromote(fctx, expr, op, leftType, rightType, leftTsType, rightTsType);
+  const promoted = foldTypeDisjointThenPromote(ctx, fctx, expr, op, leftType, rightType, leftTsType, rightTsType);
   if (promoted.folded !== undefined) return promoted.folded;
   leftType = promoted.leftType;
   rightType = promoted.rightType;
