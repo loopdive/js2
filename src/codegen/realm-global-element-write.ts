@@ -42,7 +42,7 @@ import type { ts } from "../ts-api.js";
 import type { InnerResult } from "./shared.js";
 import { allocLocal } from "./context/locals.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { realmGlobalObjectCarriesModuleGlobal } from "./helpers/sloppy-this-global.js";
+import { receiverIsRealmGlobalObject } from "./helpers/sloppy-this-global.js";
 import { localGlobalIdx } from "./registry/imports.js";
 import { coerceType, compileExpression, resolveComputedKeyExpression } from "./shared.js";
 
@@ -56,13 +56,11 @@ export function tryEmitRealmGlobalElementWrite(
   target: ts.ElementAccessExpression,
   value: ts.Expression,
 ): InnerResult | undefined {
+  if (!receiverIsRealmGlobalObject(ctx, fctx, target.expression)) return undefined;
   const key = resolveComputedKeyExpression(ctx, target.argumentExpression);
   if (key === undefined) return undefined;
   const globalIdx = ctx.moduleGlobals.get(key);
   if (globalIdx === undefined) return undefined;
-  // (#5342) Script goal only — the read twin declines in module code, and a
-  // half-fixed pair is worse than neither half (see this file's header).
-  if (!realmGlobalObjectCarriesModuleGlobal(ctx, fctx, target.expression, key)) return undefined;
 
   const globalType = ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type;
   const rhsType = compileExpression(ctx, fctx, value, globalType);
