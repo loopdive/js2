@@ -139,3 +139,74 @@ explicitly NOT wanted.
    `false`, `undefined == false` is `false`, `0 == false` is `true`) are
    unchanged.
 3. A/B at one head over the 17 dogfood suites.
+
+## Implementation Plan
+
+The previous agent located the emitter exactly and argued, correctly, that a
+static fold cannot fix prettier (`onEnter?.(doc) === false` has an `any`
+left operand). The fix is to stop the ToNumber collapse from ever seeing a
+pair it cannot decide, and route those pairs into the reference-equality arm
+that already implements JS `===` in both lanes.
+
+1. **Capture the parent** (`.tmp/binary-ops-typed-dispatch.orig.ts`) and
+   reproduce the whole nine-row matrix in one standalone probe
+   (`compileAndRunUpstreamModule`, untyped `.js`), plus `1 === true` (#4208)
+   and the three loose-equality rows, so every later run answers all of
+   them at once.
+2. **Read the two arms** in `src/codegen/binary-ops-typed-dispatch.ts`:
+   the reference-identity / `__host_eq` block (~L1330 on `01ce47aba7`; host
+   lane emits the `__host_eq` import, `semanticProviders === "native-first"`
+   emits the #1776 native tag dispatch) and the `__unbox_number` + `f64.eq`
+   tail (~L1545–1566). Also `strict-eq-type-disjoint.ts` (#4208) for how the
+   scalar regime folds disjoint types, and how a Boolean is boxed to
+   `externref` today (grep `type-coercion.ts` for the i32→externref boolean
+   arm used when a `true`/`false` is passed to a host function — reuse it,
+   do not invent a box).
+3. **Factor the reference arm's emission** into a helper
+   (`emitReferenceStrictEquality(ctx, fctx, isEqOp)` or similar, in a small
+   new module — `binary-ops-typed-dispatch.ts` is near its ceiling) that both
+   the existing ~L1330 site and the new call site use, so the host/native
+   lane split stays in one place. **A host-lane-only fix is explicitly not
+   wanted.**
+4. **Reroute the collapse.** In the tail, before `__unbox_number`:
+   - if the scalar side is **statically Boolean** → box it to `externref`
+     and call the helper. §7.2.16 step 1: `Type(x) ≠ Type(y)` is `false`,
+     and `__host_eq` / the native tag dispatch implement that. This also
+     fixes `x === true` for a reference holding `1` (the collapse answers
+     `true` there too — add that row to the matrix).
+   - if the scalar side is **statically Number** and the reference side is
+     not statically numeric → emit a `ref.is_null` guard first (nullish
+     reference ⇒ `false` for `===`, `true` for `!==`), then keep the
+     numeric fast path **only if** the unboxed value is genuinely a number;
+     otherwise route to the helper. Check what `__unbox_number` does with a
+     non-number (it is `Number()` semantics — a string `"0"` would compare
+     equal to `0`, also wrong for `===`; if the existing tests already pin
+     that, the fast path is unsound and the whole pair goes to the helper).
+   - leave the collapse untouched when the reference side is statically
+     numeric (`number`-typed externref, the case the fast path exists for).
+5. **test262 before pushing**: PR #272 cost −12 on a nearby fallback. Run
+   the scoped corpus locally — `test/language/expressions/strict-equals`,
+   `strict-does-not-equals`, `equals`, `does-not-equals` (find the path
+   filter in `tests/test262-runner.ts` / the vitest runner's env, e.g.
+   `TEST262_FILTER`) — on parent and fix; the numbers must not go down in
+   either lane. Note in the PR body what you ran.
+6. **Regression test** per the acceptance criteria, both lanes (find how
+   an existing test drives `semanticProviders: "native-first"` /
+   `--target wasi` and reuse it). Loose equality rows and #4208 rows as
+   no-change controls.
+7. **A/B at one HEAD**, 17 suites, per file. Expected: prettier
+   `is-empty-doc` 7/16 → ≥ 15/16 (with #5665's optional-call fix on your
+   base), and `=== false` / `=== 0` against `any`-typed values are common
+   library idioms — hono, jest, axios, redux may all move; report per file,
+   improvements welcome, no regressions. `print-doc-to-string` also needs
+   #5356; report its state without claiming it.
+
+Independent of #5356 (disjoint files); both needed for prettier's
+`print-doc-to-string`.
+
+## Dispatch
+
+Model: **fable** (`feasibility: hard`, `reasoning_effort: max`). Two
+lanes, a fast path whose soundness boundary has to be established by
+measurement, and a test262 history (#272) of a nearby change costing net
+conformance. Dispatch after PR #5665 lands (it carries this file).
