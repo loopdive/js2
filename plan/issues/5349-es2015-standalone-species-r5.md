@@ -49,6 +49,13 @@ func-budget-allow:
   # above, in the function that already owns every other `.length` receiver
   # shape.
   - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
+  # 2026-09-06 round 3: +17 in the `$__ta_ctor` source dispatcher — the
+  # `i8_byte` carrier joins the plain-vec copy arms (it is a typed-array SOURCE,
+  # not a byte buffer) plus the mechanism note explaining why the ArrayBuffer
+  # arm used to swallow it. The arms are one generated loop; splitting the
+  # dispatcher would separate a chain that must be built inside-out in one
+  # `liveBodies` scope.
+  - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
 ---
 
 ## Problem

@@ -3295,13 +3295,67 @@ export function emitDynamicUint8ArrayBufferAlias(
   );
   fctx.body = savedBody;
 
+  // (#5349 r3) §23.2.5.1.2 InitializeTypedArrayFromTypedArray — a packed-byte
+  // TypedArray source is a COPY, not an alias.
+  //
+  // The #5194 doc block above states a premise that round 2 falsified: "both
+  // backing arrays are packed array(mut i8) … build the normal __vec_i8_byte
+  // carrier over the SAME array". Before the brand a Uint8Array source PASSED
+  // the `ref.test $__vec_i32_byte` above and took the buffer arm — which
+  // ALIASED it, so `new Uint8Array(u)[0] = 9` was visible in `u` (node: it is
+  // not). With the brand that test answers false and control fell through to the
+  // numeric arm: ToNumber of a boxed vec is NaN, so `new Uint8Array(u).length`
+  // became 0 (probes p6/h01, p6/h02, pb/r2, p5/g02).
+  //
+  // This arm restores the length AND fixes the aliasing: a fresh backing array
+  // of the same byte width, `array.copy`, a fresh carrier. Byte width is equal
+  // on both sides, so no per-element conversion is needed and the copy is right
+  // for an `Int8Array`/`Uint8ClampedArray` source too (§23.2.5.1.2 stores
+  // ToUint8 of the source element, whose byte image is identical).
+  const viewCopyArm: Instr[] = [];
+  {
+    const srcLocal = allocLocal(fctx, `__dyn_u8_src_${fctx.locals.length}`, { kind: "ref", typeIdx: uintVecIdx });
+    const dstArrLocal = allocLocal(fctx, `__dyn_u8_dst_${fctx.locals.length}`, { kind: "ref", typeIdx: uintArrIdx });
+    viewCopyArm.push(
+      { op: "local.get", index: argAnyLocal },
+      { op: "ref.cast", typeIdx: uintVecIdx },
+      { op: "local.set", index: srcLocal },
+      { op: "local.get", index: srcLocal },
+      { op: "struct.get", typeIdx: uintVecIdx, fieldIdx: 0 },
+      { op: "local.set", index: countLocal },
+      { op: "local.get", index: countLocal },
+      { op: "array.new_default", typeIdx: uintArrIdx },
+      { op: "local.set", index: dstArrLocal },
+      { op: "local.get", index: dstArrLocal },
+      { op: "i32.const", value: 0 },
+      { op: "local.get", index: srcLocal },
+      { op: "struct.get", typeIdx: uintVecIdx, fieldIdx: 1 },
+      { op: "ref.as_non_null" },
+      { op: "i32.const", value: 0 },
+      { op: "local.get", index: countLocal },
+      { op: "array.copy", dstTypeIdx: uintArrIdx, srcTypeIdx: uintArrIdx },
+      { op: "local.get", index: countLocal },
+      { op: "local.get", index: dstArrLocal },
+      { op: "struct.new", typeIdx: uintVecIdx },
+    );
+  }
+
   fctx.body.push({ op: "local.get", index: argAnyLocal });
   fctx.body.push({ op: "ref.test", typeIdx: byteVecIdx });
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "ref_null", typeIdx: uintVecIdx } },
     then: bufferArm,
-    else: numericArm,
+    else: [
+      { op: "local.get", index: argAnyLocal },
+      { op: "ref.test", typeIdx: uintVecIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "ref_null", typeIdx: uintVecIdx } },
+        then: viewCopyArm,
+        else: numericArm,
+      },
+    ],
   });
   return { kind: "ref_null", typeIdx: uintVecIdx };
 }
@@ -4294,6 +4348,19 @@ function emitTaPlainVecElementToF64(
       fctx.body.push({ op: "local.get", index: iLocal });
       fctx.body.push({ op: "array.get", typeIdx: srcArrIdx });
     });
+  } else if (elemType.kind === "i8" || elemType.kind === "i16") {
+    // (#5349 r3) A PACKED source element needs `array.get_u`/`_s`; plain
+    // `array.get` does not validate on a packed array. Read UNSIGNED: the three
+    // byte views (`Int8Array`, `Uint8Array`, `Uint8ClampedArray`) share ONE
+    // `$__vec_i8_byte` carrier and signedness is a static property of the TS
+    // name, so an erased `Int8Array` source widening into a >1-byte destination
+    // reads 255 where node reads −1. Recorded as a representation residual in
+    // #5349; a byte-width destination is unaffected (the stored byte is the
+    // same either way).
+    fctx.body.push({ op: "local.get", index: srcDataLocal });
+    fctx.body.push({ op: "local.get", index: iLocal });
+    fctx.body.push({ op: "array.get_u", typeIdx: srcArrIdx });
+    fctx.body.push({ op: "f64.convert_i32_u" });
   } else {
     fctx.body.push({ op: "local.get", index: srcDataLocal });
     fctx.body.push({ op: "local.get", index: iLocal });
@@ -6004,8 +6071,25 @@ export function emitTaDynCtorConstructFromLocals(
     // ── Plain-vec copy arms: one per registered numeric-capable carrier.
     // Skip `i32_byte` (the ArrayBuffer arm below owns it) and non-numeric
     // carriers (`ref_*` struct-elem vecs).
+    //
+    // (#5349 r3) `i8_byte` — the packed-byte TypedArray carrier — belongs HERE,
+    // as a typed-array SOURCE read element-wise, not in the ArrayBuffer arm.
+    // Until round 2 branded it, `ref.test $__vec_i32_byte` answered TRUE for it
+    // and the buffer arm reinterpreted a `Uint8Array` as a byte BUFFER: the
+    // harness idiom `testWithTypedArrayConstructors(TA => new TA(sample))` got a
+    // view over the sample's bytes rather than the §23.2.5.1.2 element copy.
+    // With the brand that test answers false and the value fell all the way to
+    // the count form — ToIndex of a boxed vec is 0, so `new TA(u8).length`
+    // became 0 (probes p8/m01, p5/g04). Reading it as a typed-array source is
+    // both the fix and the spec-correct behaviour.
     for (const [carrierKey, vIdx] of Array.from(ctx.vecTypeMap.entries())) {
-      if (carrierKey !== "f64" && carrierKey !== "i32" && carrierKey !== "i32_elem" && carrierKey !== "externref")
+      if (
+        carrierKey !== "f64" &&
+        carrierKey !== "i32" &&
+        carrierKey !== "i32_elem" &&
+        carrierKey !== "externref" &&
+        carrierKey !== "i8_byte"
+      )
         continue;
       const srcArrIdx = getArrTypeIdxFromVec(ctx, vIdx);
       if (srcArrIdx < 0) continue;
