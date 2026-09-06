@@ -12,6 +12,7 @@ import {
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "./readonly-erasure-mapped-type.js";
+import { isShapelessObjectType } from "./shapeless-object-type.js"; // (#5348)
 import { genericStructFactoryExpression } from "./generic-struct-factory.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
 import {
@@ -29,6 +30,7 @@ import { makeIrDynamicCarrierDivergenceProbe, resolveFnctorInstanceType } from "
 import { resolveFnctorTypedBindingType } from "./fnctor-typed-bindings.js";
 import { isLinearU8RepresentableNew } from "./linear-uint8-signatures.js";
 import { definedFuncAt, isImportFuncIdx, mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S2) positional-read chokepoint
+import { wrapHostFacingExportsForThrow } from "./export-throw-boundary.js"; // (#5247) export-boundary throw unwrapping
 import { promoteTrampolineTailCalls } from "./closures/funcref-as-closure.js"; // (#5270 step 1.3) finalize-time return_call promotion
 import { fillHostFnctorMethodDrivers, maxHostFnctorMethodArity } from "./host-fnctor-method-driver.js";
 import { fillNativeConstructDrivers, maxReservedNativeConstructArity } from "./native-construct.js";
@@ -2535,9 +2537,17 @@ function recordObservedIrOutcomes(
   if (ctx.irOutcomes === undefined) return;
   const target: IrObservedOutcome["target"] = ctx.wasi ? "wasi" : ctx.standalone ? "standalone" : "gc";
   const preparedCallableUnitIds = ctx.irProgramCallablePreparedUnitIds;
+  const preparedModuleInitUnitIds = new Set<IrUnitId>([
+    ...(ctx.irProgramPreparedModuleInitUnitId ? [ctx.irProgramPreparedModuleInitUnitId] : []),
+    ...(ctx.irProgramPreparedModuleInitUnitIds ?? []),
+  ]);
   const existingOutcomes = preparedCallableUnitIds
-    ? ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId))
-    : ctx.irOutcomes;
+    ? ctx.irOutcomes.filter(
+        (outcome) =>
+          (!outcome.unitId || !preparedCallableUnitIds.has(outcome.unitId)) &&
+          (!outcome.unitId || !preparedModuleInitUnitIds.has(outcome.unitId)),
+      )
+    : ctx.irOutcomes.filter((outcome) => !outcome.unitId || !preparedModuleInitUnitIds.has(outcome.unitId));
   const directFunctionBodyReceiptAudit = ctx.irBodyRouteAuditSession?.directFunctionBodyReceiptAudit(sourceFile);
   // (#5263) Units the prepared-callable publication path already owns. Reconcile
   // cannot see that preparation, so it reached `late-preparation-unsupported`
@@ -2548,6 +2558,7 @@ function recordObservedIrOutcomes(
   const ownedElsewhereUnitIds = new Set<IrUnitId>([
     ...(ctx.irProgramCallablePreparedUnitIds ?? []),
     ...(ctx.irProgramPreparedModuleInitUnitId ? [ctx.irProgramPreparedModuleInitUnitId] : []),
+    ...(ctx.irProgramPreparedModuleInitUnitIds ?? []),
   ]);
   const reconciled = reconcileIrOverlayOutcomes({
     sourceFile,
@@ -2576,7 +2587,8 @@ function recordObservedIrOutcomes(
       .filter(
         (outcome) =>
           (!outcome.unitId || !preparedCallableUnitIds?.has(outcome.unitId)) &&
-          outcome.unitId !== preparedModuleInitUnitId,
+          outcome.unitId !== preparedModuleInitUnitId &&
+          (!outcome.unitId || !preparedModuleInitUnitIds.has(outcome.unitId)),
       )
       .map((outcome) =>
         moduleBindingRefusals && outcome.unitKind === "module-init" ? { ...outcome, moduleBindingRefusals } : outcome,
@@ -3954,10 +3966,11 @@ function compileMultiIrOverlaySource(
   safeSelection = removeMultiIrAttemptedCallableUnits(ctx, plan, safeSelection);
   // M2 owns the exact contributor's module-init body at the program level.
   // The ordinary per-source overlay must not rediscover or patch that unit.
+  const sourceModuleInitUnitId = plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
   if (
-    ctx.irProgramPreparedModuleInitUnitId !== undefined &&
-    plan.identityPlan.identityContext.moduleInitUnitIdBySourceFile.get(sourceFile) ===
-      ctx.irProgramPreparedModuleInitUnitId
+    sourceModuleInitUnitId !== undefined &&
+    (ctx.irProgramPreparedModuleInitUnitId === sourceModuleInitUnitId ||
+      ctx.irProgramPreparedModuleInitUnitIds?.has(sourceModuleInitUnitId) === true)
   ) {
     safeSelection = { ...safeSelection, moduleInit: undefined };
   }
@@ -5040,6 +5053,11 @@ export interface GeneratedCodegenModule extends CodegenResult {
   irPostClaimErrors?: { kind: string; func: string; message: string }[];
   irCompiledFuncs?: readonly string[];
   programAbi?: PublishedProgramAbi;
+  /** Test-only evidence that aggregate initializer receipts were revoked. */
+  irPreparedModuleInitBatchAbortAudit?: {
+    readonly attempted: number;
+    readonly aborted: number;
+  };
   /** Internal M0 whole-program Prepared ownership evidence. */
   multiPreparedProgramAudit?: MultiPreparedProgramAudit;
 }
@@ -6782,6 +6800,12 @@ export function generateModule(
     // provider build, before DCE so their exports keep the full dependency
     // closure alive and all type references are remapped together.
     emitSharedRuntimeProviderExports(ctx);
+
+    // (#5247) Re-point each host-facing function export at a wrapper that
+    // unwraps an escaping `__exn` payload. After every export is published,
+    // before dead-elim remaps the rewritten descriptors. No-op unless the
+    // module can throw and targets a JS host.
+    wrapHostFacingExportsForThrow(ctx);
 
     // Dead import and type elimination pass
     // (#4645) Every whole-module finalize pass below is named so a pathological
@@ -11476,6 +11500,10 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     // #2527 — same provider publication point as the single-source pipeline.
     profilePhase("emit-shared-runtime-provider-exports", () => emitSharedRuntimeProviderExports(ctx));
 
+    // (#5247) Same export-boundary throw unwrapping + placement as the
+    // single-source pipeline above.
+    profilePhase("wrap-host-facing-exports-for-throw", () => wrapHostFacingExportsForThrow(ctx));
+
     // Dead import and type elimination pass
     // (#4645) Module-scale marker, then main's phase names/signatures.
     reportModuleScale("before-finalize", mod);
@@ -11568,6 +11596,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     irOutcomes: ctx.irOutcomes,
     irBodyRouteAudit: snapshotLegacyBodyAudit(ctx),
     programAbi: ctx.programAbiSession?.publication,
+    ...(ctx.irPreparedModuleInitBatchAbortAudit
+      ? { irPreparedModuleInitBatchAbortAudit: ctx.irPreparedModuleInitBatchAbortAudit }
+      : {}),
     multiPreparedProgramAudit: multiPreparedProgram?.audit,
   };
 }
@@ -12946,7 +12977,13 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
         !(member.flags & ts.TypeFlags.Undefined) &&
         !(member.flags & ts.TypeFlags.Void),
     );
-    if (nonNullish.length === 1 && tsType.types.length === 2) {
+    // (#5348) …but only when that member carries a shape. Registration mutates
+    // `ctx.anonTypeMap` GLOBALLY, so registering `{}` makes every later
+    // `{}`-typed value resolve to a closed zero-field struct and `Object.keys`
+    // report none — which is how `state = {}` (redux `combineReducers`) lost
+    // referential identity. An optional local *interface*, the #1058 binder case
+    // this branch exists for, has members and still registers.
+    if (nonNullish.length === 1 && tsType.types.length === 2 && !isShapelessObjectType(nonNullish[0]!)) {
       ensureStructForType(ctx, nonNullish[0]!);
     }
     return;

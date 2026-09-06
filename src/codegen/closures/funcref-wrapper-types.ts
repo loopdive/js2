@@ -10,6 +10,7 @@
 
 import type { ClosureInfo, CodegenContext } from "../context/types.js";
 import type { ValType } from "../../ir/types.js";
+import { ts } from "../../ts-api.js";
 import { funcSignatureOf } from "../func-space.js"; // (#1916 S2 read chokepoint)
 import { addFuncType } from "../index.js";
 import { closureArityField, closureBagField } from "./closure-header-layout.js";
@@ -205,6 +206,88 @@ export function getOrCreateConstructibleFuncRefWrapperTypes(
     liftedSelfTypeIdx: base.liftedSelfTypeIdx,
     closureInfo,
   };
+}
+
+/**
+ * Is `structTypeIdx` one of the SHARED per-signature wrappers (plain or
+ * constructible)? Their records in `closureInfoByTypeIdx` describe every
+ * captureless allocation of the signature at once, so a `hasRestParam` flag on
+ * them cannot single out any one function (#5334).
+ */
+export function isSharedSignatureWrapperStruct(ctx: CodegenContext, structTypeIdx: number): boolean {
+  for (const cache of [ctx.funcRefWrapperCache, ctx.constructibleFuncRefWrapperCache]) {
+    for (const info of cache.values()) if (info.structTypeIdx === structTypeIdx) return true;
+  }
+  return false;
+}
+
+/**
+ * (#4616) Get-or-create the rest-marker subtype of a funcref-wrapper struct:
+ * the base wrapper's fields plus one immutable f64 marker. The f64 (vs the
+ * constructible subtype's i32 marker) keeps the canonical shape distinct, so
+ * `ref.test` can discriminate rest-param singleton closures at dispatch time.
+ */
+export function ensureRestFnWrapSubtype(ctx: CodegenContext, baseStructTypeIdx: number): number {
+  const holder = ctx as unknown as { __restFnWrapSubtypeByBase?: Map<number, number> };
+  const cache = (holder.__restFnWrapSubtypeByBase ??= new Map());
+  const hit = cache.get(baseStructTypeIdx);
+  if (hit !== undefined) return hit;
+  const baseDef = ctx.mod.types[baseStructTypeIdx];
+  const baseFields = baseDef?.kind === "struct" ? baseDef.fields : [];
+  const idx = ctx.mod.types.length;
+  ctx.mod.types.push({
+    kind: "struct",
+    name: `__rest_fn_wrap_${ctx.closureCounter++}_struct`,
+    fields: [...baseFields, { name: "__rest_marker", type: { kind: "f64" as const }, mutable: false }],
+    superTypeIdx: baseStructTypeIdx,
+  });
+  cache.set(baseStructTypeIdx, idx);
+  return idx;
+}
+
+/**
+ * (#5334) Pre-register the rest-marker allocation subtypes a rest DECLARATION's
+ * cached singleton (`ensureFuncClosureSingleton`) will allocate, so a call site
+ * compiled BEFORE the declaration's first value read — in an earlier source
+ * file, say — already knows the struct whose `ref.test` proves the rest
+ * reading. The singleton keys the marker on the wrapper it was asked for, and
+ * its callers do not all agree on constructibility (#4491 T12), so both bases
+ * are registered for an ordinary (constructible) declaration. Async and
+ * generator declarations are left alone: their singleton wraps a different
+ * result. Types only: no trampoline, no global, no function index moves.
+ */
+export function registerRestDeclarationWrapperShapes(
+  ctx: CodegenContext,
+  declaration: ts.FunctionDeclaration,
+  userParams: ValType[],
+  resultTypes: ValType[],
+): void {
+  if (
+    userParams.length === 0 ||
+    declaration.asteriskToken !== undefined ||
+    (declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false) ||
+    !declaration.parameters.some((parameter) => parameter.dotDotDotToken !== undefined)
+  ) {
+    return;
+  }
+  const plain = getOrCreateFuncRefWrapperTypes(ctx, userParams, resultTypes, "support");
+  if (!plain) return;
+  const bases = [plain.structTypeIdx];
+  const marked = getOrCreateConstructibleFuncRefWrapperTypes(ctx, userParams, resultTypes);
+  if (marked) bases.push(marked.structTypeIdx);
+  for (const base of bases) {
+    const restIdx = ensureRestFnWrapSubtype(ctx, base);
+    if (!ctx.closureInfoByTypeIdx.has(restIdx)) {
+      ctx.closureInfoByTypeIdx.set(restIdx, {
+        structTypeIdx: restIdx,
+        funcTypeIdx: plain.liftedFuncTypeIdx,
+        returnType: resultTypes.length > 0 ? resultTypes[0]! : null,
+        paramTypes: userParams,
+        hasRestParam: true,
+      });
+    }
+    if (base !== plain.structTypeIdx) ctx.constructibleClosureTypeIdxs.add(restIdx);
+  }
 }
 
 /**

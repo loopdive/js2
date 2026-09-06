@@ -49,6 +49,7 @@ files:
   - tests/issue-3525-multi-prepared-module-init.test.ts
   - tests/issue-3525-ir-whole-program-multi-source.test.ts
 loc-budget-allow:
+  - src/codegen/context/types.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
   - src/codegen/multi-prepared-program.ts
@@ -56,7 +57,9 @@ loc-budget-allow:
   - src/ir/prepared-component-dependencies.ts
 func-budget-allow:
   - src/codegen/declarations.ts::compileDeclarations
+  - src/codegen/index.ts::generateMultiModule
   - src/ir/integration.ts::compileIrPathFunctions
+  - src/codegen/multi-prepared-module-init-batch.ts::planMultiPreparedModuleInitBatch
 ---
 
 # #3525 — IR-only R5: whole-program single- and multi-source Prepared ownership
@@ -2499,3 +2502,383 @@ Validation at the merged candidate:
 This is a structural M2-P1 prerequisite only. It reports no population gain,
 does not change provider/ABI/runtime contracts, and leaves R5 and mixed
 callable/initializer emission open.
+
+## Implementation Plan — 2026-09-05 — M2-P2 atomic initializer ownership and mixed-graph prerequisites
+
+**Source base:** PR5598 at `2c18cd7a6fb4d38a477f63a9b625e2907d265c29`.
+The M2-P1 record above is copied unchanged from that exact revision. Astra
+planning; Luna `max` implementation. Dispatch **P2A**, proposed claim
+`3525:m2-p2a-atomic-init-batch`, after the lead reserves it and integrates P1.
+The lead's claim audit at `ede1a327229e8bdd2cafb25eb18d2b5d02627dfe`
+found no P2 claim; P1 is still owned. Recheck at dispatch. R5 stays open.
+
+### Source findings and bounded result
+
+P1 supplies the retained, authenticated whole-source semantic/parity census
+(`multi-prepared-module-init-census.ts:396,502,594`). The next barrier is the
+transaction: `planMultiPreparedModuleInit` (`multi-prepared-module-init.ts:154`)
+selects one contributor and calls `prepareIrBodies`, which already seals and
+installs that body's IR. Mapping this function over sources would publish a
+successful prefix before another contributor could fail.
+
+Existing detached machinery is reusable but not initializer-ready:
+`compilePreparedProgramComponent` (`ir/integration.ts:5648`) returns an opaque
+pending receipt, and `ProgramAbiSession.commitPreparedScopes` supports one
+batch commit. Its source preflight (`:1797`), final-IR allocator check (`:1691`),
+and receipt publisher (`:2730`) presently require source functions and reject
+module-init artifacts. The receipt's currentness check also consults only
+`programAbiSourceCallables`. Removing those tests without supplying their
+initializer equivalents would discard the proof of safe detached emission.
+
+**P2A's delivered behavior:** any finite number of executable contributors
+whose existing initializer semantics and complete support requirements can be
+prepared receives one atomic owner decision, one IR body per exact source
+initializer, and one graph startup adapter. Every source remains in the census,
+including sources with no executable initializer. There is no contributor-count,
+filename, declaration-spelling, or fixture-signature admission rule. This phase
+removes the singleton publication barrier; it does not widen the R4 storage
+language or enable mixed callable/initializer ownership.
+
+Source-qualified physical storage and mixed dependency discovery are separate,
+real prerequisites, not consequences of R2-B1:
+
+- `program-callable-bindings.ts:764` scans calls rooted in source functions;
+  it does not retain initializer-owned calls. Callable preflight then expects
+  every use owner to have a source-function record.
+- `module-bindings.ts:889` requires a variable declaration in the use's own
+  SourceFile. Imported-global reads are not an existing exact binding route.
+- `ProgramAbiGlobalRegistry` retains declaration observations, but
+  `registerModuleGlobal`/`registerModuleTdzGlobal`
+  (`module-global-registration.ts:147,207`) reuse bare-name compatibility
+  slots. Separate module declarations must not be certified as aliases merely
+  because those observations point to the same allocator object.
+
+The lead's `experimentalIR: true, trackIrOutcomes: true` probes make the
+storage risk concrete:
+two contributing modules respectively initialize `10; += 1` and `20; += 2`,
+and entry computes `readA() * 100 + readB()`. On P1 source tree
+`63758cc2958a40e51859a13236d16bb8ddaa2160`, host GC and standalone both return
+`1122` with distinct private names and silently return `2222` with both named
+`value`. Both lanes reproduce both results on pre-P1 commit
+`6d601f91a51993eaa7586299a3f3bde07b49f367`, source tree
+`9142845c1aa6b845d6efd1f25f62e5ab3062b298`. All eight isolated compilations
+succeed without diagnostics: two source versions × two targets × unique/same
+private names, each three sources/two contributors, using the same `compileMulti`
+harness/options. Unique-name controls return the expected `1122`; same-name
+controls return the wrong `2222` in both versions and targets. The defect
+therefore predates P1 in both lanes. These are direct initializer controls,
+not P2 results. Their legacy body row describes an aggregate pass;
+an unmarked second source is not evidence that its initializer did not run.
+
+Keep the full acceptance above unchecked. P2A's source bodies plus one graph
+adapter are also an intermediate representation, not completion of the final
+single program-init-body/consolidated-registry requirement. The production
+`PreparedIrProgram` reconciliation in `ir/program.ts` remains a separate open
+handoff; a successful owner audit does not fill it in by assertion.
+
+### P2A producer, preparation and publication order
+
+1. **Freeze eligibility before a route emits.** In
+   `planMultiPreparedProgramEarlyRoutes` (`multi-prepared-callable-orchestration.ts:1243`),
+   consume P1's observed census, cache every resolved source plan, and classify
+   the entire initializer population before calling any preparing early route.
+   Use the existing `preparedExactLexicalModuleInit` result
+   (`index.ts:4311`) and explicit plan gaps; do not rebuild semantic plans or
+   discover contributors from selector survivors. The batch is all contributors
+   or none. Keep existing mixed/dedicated-route exclusions until P2B supplies
+   their joint transaction. A typed preclaim decline resumes existing routing
+   with no initializer reservation, body, alias, outcome or skip prefix.
+2. **Separate description from materialization.** Add a small
+   `codegen/multi-prepared-module-init-batch.ts` coordinator. Its private batch
+   input retains the exact context/session/inventory/census, ordered
+   `(SourceFile, SourceId, UnitId, population, lowering plan)` entries, full
+   selection evidence and invocation intent. Describe value/TDZ globals by
+   checker declaration and `IrBindingId`, their allocator objects, carrier
+   types/mutability and storage-owner UnitId. A TDZ flag not yet allocated must
+   have an explicit allocation intent tied to its exact declaration; its
+   absence cannot mean no TDZ requirement. Split the existing
+   `resolveModuleBindingGlobal` handoff (`ir/integration.ts:5735`) so this
+   description does not call `planProgramAbiGlobal` or an `ensure*` helper.
+   A missing observation or an unproven shared physical slot is a visible
+   preclaim capability gap; a changed/contradictory previously retained join
+   is an invariant. Do not repair storage producers in this slice.
+3. **Build every initializer once before lowering any.** Extract a reusable
+   preparation boundary from `compileIrPathFunctions`: the module-init build
+   loop (`integration.ts:3667`), common final-IR passes, runtime/support
+   preparation (`:1410`, `:4579` onward), and detached lowering remain one
+   implementation. Supply a vector of exact initializer inputs, not one
+   representative SourceFile with every body's statements appended to it.
+   Each `lowerFunctionAstToIr(..., moduleInitUnit: true)` uses its own original
+   population, source bindings and UnitId. Keep resulting IR artifacts and
+   diagnostics; never compile a source again to recover a later dependency.
+   Compatibility labels may be unique private projections, but neither the
+   repeated `<module-init>` label nor `funcMap` chooses an owner.
+4. **Complete the resource census before reservation.** For the full built IR
+   vector, derive all runtime/provider/type/string/exception/global demands,
+   export/startup intents and source `[] -> []` signatures using the existing
+   manifest/support producers. An AST builder callback that materializes a
+   resource must become a planned request or a lookup of described evidence;
+   it may not mutate shared context and then report Unsupported. Validate
+   target availability, complete dependencies and storage/ABI parity before
+   accepting the batch. This is a prerequisite of detached initializer
+   lowering, not permission to delete the allocator-neutral checks. Replace
+   those checks for this route with an authenticated complete resource receipt
+   and an independent final-IR demand reconciliation. A missing provider keeps
+   its explicit gap and owner; an empty manifest is valid only after a complete
+   demand scan. Reuse R6 contracts rather than adding a second provider table.
+5. **Reserve the complete accepted batch.** Extend
+   `ProgramAbiModuleInitCallableRegistry.reservePreparedExactUnit`
+   (`program-abi-module-init-planning.ts:265`) with an exact batch reservation;
+   preserve the single-source API as a checked one-element adapter. Reserve one
+   allocator slot per executable UnitId and one structurally identified
+   compiler support slot for the graph adapter. Split
+   `preallocateModuleInitCallable` (`declarations.ts:5191`) so source-slot
+   reservation does not install a deferred export for each contributor. Plan
+   all value/TDZ ABI locators and materialize the already-described resources
+   before the first Wasm body is lowered. Complete dependency closure and open
+   the pending scopes through `prepareDependencyCompletePreparedComponents`
+   (`prepared-component-sealing.ts:504`); every initializer storage owner must
+   be in the certified batch. Keep its derived component partition, including
+   multiple independent scopes, instead of forcing all terminals into one
+   artificial component to fit today's single-receipt API. Do not use the
+   final retained-global sweep as
+   an early substitute for this exact source-owned plan.
+6. **Lower into detached patches, then commit once.** Extend the existing
+   `PendingPreparedProgramComponentReceipt` path with initializer allocator
+   lookup through `programAbiModuleInitCallables`, exact kind/source/unit joins,
+   one own-body patch per terminal and unchanged `[] -> []` slots. The batch
+   producer returns one authenticated receipt per derived scope, partitioning
+   retained patches by exact component/terminal identity; it does not rebuild
+   or relower bodies per receipt. Keep source
+   initializer tail-return removal and the no-early-return invariant
+   (`integration.ts:5359`); no tail-call rewrite may skip startup epilogues.
+   Prepare all scopes/tokens, the graph-adapter body, publication arrays and
+   owner state before any live body/ABI/alias write. Recheck P1 currentness,
+   resource demand, source order, allocator identity, signatures and every
+   detached patch. Commit all pending scopes in one call; publication then
+   consists only of precomputed assignments. No per-contributor commit loop.
+7. **Preserve the existing pre-body publication phase for P2A.** Once every
+   initializer and the adapter has passed that batch check, publish before
+   ordinary declaration-body visits, as the current M2 route does. This avoids
+   leaving detached bodies outside normal index-fixup ownership while direct
+   sources can still request unrelated support. Replace the owner's singleton
+   preparation, reservation and skipped-source fields with exact maps/vectors
+   (`multi-prepared-program.ts:776,1011,1231`). Every source uses prepared init
+   mode; only contributors receive exact skip handoffs. Empty sources must not
+   run the final legacy `full` initializer pass. Verify each actual skip and
+   terminal emission count after its source visit, and exclude these units from
+   the late overlay. Any mismatch after acceptance/publication is fatal, never
+   a direct retry. Do not falsely label these skips as observed before the
+   declaration consumer has run.
+8. **Construct one startup adapter from the frozen order.** Its body calls
+   each contributor's exact `[] -> []` handle once in P1 semantic order; within
+   each body retain original evaluation ordinals. Canonical inventory order is
+   never execution order. Preplan any init-flag/marshal/dispatch support and
+   place it around this graph adapter, not around each source body. Update
+   `finalizeMultiPreparedModuleInitStartup` (`index.ts:7063`) and the module-init
+   registry's `planRetained`/invocation audit to use that exact graph handle and
+   authenticate the full call sequence. Finalization attaches the one planned
+   Wasm start or deferred export and checks construction; it must not discover
+   helper requirements or rewrite contributor bodies. Preserve exception
+   propagation and the existing deferred invocation contract; do not invent a
+   new per-source idempotence policy. WASI/fast remain measured controls until
+   their graph-adapter contracts are separately implemented.
+
+The adapter uses ordinary `call` instructions to the exact contributor handles
+in semantic order, with any preplanned init-flag prologue and epilogue outside
+that sequence. Its compiler-support binding and detached body assignment
+participate in the same batch. It has no fabricated source terminal or extra
+source IR-emission credit.
+
+Preclaim Unsupported is recoverable only while preparation is side-effect-free
+or an existing authenticated transaction can abort all of its unpublished
+state. Once accepted resource/slot materialization begins, an unexpected gap,
+allocator change, failed lower or stale receipt is an invariant and terminates
+compilation. Do not claim rollback by truncating shared arrays/maps, reusing a
+partly sealed session, or retrying direct after a source skip. Abort all still
+pending scopes on failure; never convert a commit failure into Unsupported.
+
+### P2B dependency contract — mixed graphs remain unimplemented by P2A
+
+The follow-up must feed a joint immutable graph from the same P1 census,
+callable binding graph and exact module-binding uses before preparing any
+component. Extend `collectCallableGraphUses` to cover each initializer's exact
+evaluation population while excluding nested callable bodies; retain
+initializer-to-callable calls by owner/target UnitId and canonical alias ID.
+Add a checker-owned imported-global resolver with an explicit import/re-export
+chain, canonical source binding and declaration. Namespace/default/renamed
+uses must reference that identity, not copy compatibility maps. Supply exact
+source-qualified value/TDZ allocation and per-source direct compatibility
+views before accepting same-spelled declarations. This work requires its own
+storage-owner coordination; P2A must not borrow the active R4 storage claims.
+
+Derive components from both calls and storage dependencies. A callable reading
+an initializer's global depends on that storage owner; it does not mean that
+calling the function invokes initialization again. Initialization order edges
+also constrain the graph adapter. Reconcile the final IR against the complete
+attempted population and preplan support for every component and initializer
+together; no survivor regrouping, earlier component publication, or body-first
+provider discovery. Deferred/within-cycle reads keep TDZ checks unless an
+owner-qualified execution-order proof permits omission. In particular a
+function reachable from an initializer is not automatically post-Wasm-start.
+
+R2-B1's current interface is
+`ProgramAbiSourceCallableRegistry.issuePreparedCallableBoundary(unitId, signature)`
+and `PreparedCallableBoundaryCandidate.certify`, with final `assertCurrent` and
+`assertSupportCurrent` checks (`ir/prepared-callable-boundary.ts`). It certifies
+the actual final IR signature/support in an open scope; a candidate is not yet
+a contract. Consume this interface for callable boundary dependencies and
+recheck it before batch publication. R2-B1 does not supply imported globals,
+initializer call edges, or general detached provider allocation. Coordinate
+the shared integration extraction with its author and use its merged API.
+
+Only after these prerequisites pass may P2B remove the executable-init callable
+disable, the owner composition refusal, and source-has-init callable rejection
+(`multi-prepared-callable-orchestration.ts:363,1276`;
+`multi-prepared-program.ts:663,784`). Replace the competing publication owners
+with one batch over all callable components and init patches. Reuse M1A's exact
+source-body skip ledger and `prepareCommit`/`commitPreparedScopes` protocol;
+freeze the complete resource census before keeping that mixed batch pending
+across direct visits. The final write must publish all bodies, aliases, startup
+state and outcome rows together. P2A does not certify this transition.
+
+### Validation, ownership and dispatch brief
+
+Own this issue, the new batch coordinator and the proposed extracted helper
+`src/ir/prepared-module-init-integration.ts` if extraction is necessary;
+`multi-prepared-module-init.ts`, the early-route function in
+`multi-prepared-callable-orchestration.ts`, init-specific lifecycle/audit parts
+of `multi-prepared-program.ts`, `program-abi-module-init-planning.ts`, and only
+the named preparation/publication seams in `ir/integration.ts`,
+`declarations.ts`, `index.ts` and `prepared-component-publication.ts`.
+Keep the P1 census producer, `module-init-plan.ts`, R2 admission/lowering
+contracts, module-binding storage producers, callable graph producer and
+module-callable alias planner unchanged in P2A. New test ownership:
+`tests/issue-3525-atomic-module-init-batch.test.ts`; update the superseded
+two-contributor refusal in the existing M2 test only when the new positive
+case and its exact receipts pass. No concurrent writers in these transaction
+seams. Active `3523:w2b` and `3523:r4m1` remain outside this claim.
+
+- First measure exact P1 and candidate SHAs/options. Cover multiple contributor
+  counts, dependency and entry contributors, empty/type-only/re-export sources,
+  and arbitrary renamed inputs. Prove complete source/unit denominators, one
+  prepare and IR emission per executable init, zero direct init roots, exact
+  per-source skips and one ordered graph adapter. For all-empty input, verify
+  no adapter/reservation while retaining every genuine inventory terminal and
+  its applicable non-executable outcome; fabricate no terminal for an absent
+  unit. Do not infer an outcome denominator from contributor count.
+- Execute enabled/disabled host and native-first standalone binaries, normal
+  and deferred startup, and compare exported values, thrown values and
+  invocation behavior. Use the existing direct runtime as an A/B control and
+  explicit expected results. Independent source-local arithmetic alone cannot
+  prove observable inter-source effect order: inspect the exact adapter call
+  sequence for P2A and retain an order-sensitive mixed/imported-read fixture
+  as a non-admitted runtime control. P2B must turn that same control into a
+  prepared positive with noncommuting effects, initializer-to-callable calls,
+  callable-to-init global reads, forward/cyclic TDZ and a live value updated
+  through the exporting source. Check same-spelling functions and globals
+  across files, re-export/namespace aliases and both contributor directions.
+  P2A must expose missing/shared storage evidence before reservation; matching
+  a wrong direct result is not evidence that source identity is correct.
+- With `JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY=1`, admitted multi-init
+  graphs must compile and execute; disabling the cutover must hit the actual
+  direct emitter poison. Use exact-unit direct-function poison for the mixed
+  callable positive in P2B, with a known reachable disabled control. Assert
+  no late per-source IR recompile of an already prepared initializer.
+- Inject a late contributor's preclaim Unsupported and missing resource,
+  then stale/foreign inventory, source reorder/omission/duplication, altered
+  AST or parity, value/TDZ alias retarget, duplicate slot, changed signature,
+  changed detached body, missing terminal patch, aborted last scope, duplicate
+  skip and missing/reordered/duplicate startup call. Distinguish the ordinary
+  preclaim decline from fatal contradictory evidence. On every prepublication
+  failure assert no published body/ABI/alias/outcome/startup prefix, including
+  an earlier valid contributor. Exercise at least two pending scopes when
+  testing scope-batch atomicity; one scope cannot prove that property.
+- Required commands: `pnpm typecheck`; then
+  `VITEST_MAX_FORKS=1 node node_modules/vitest/dist/cli.js run` over the new test,
+  `tests/issue-3525-multi-prepared-module-init.test.ts`,
+  `tests/issue-3525-ordered-module-init-census.test.ts`,
+  `tests/issue-3525-multi-prepared-program-census.test.ts`,
+  `tests/issue-3525-multi-prepared-callable-bindings.test.ts`,
+  `tests/issue-3525-prepared-program-abi-aggregate.test.ts`,
+  `tests/issue-3523-ir-module-init-compile-once.test.ts`, and
+  `tests/issue-3521-r2-withdrawal-multi-source.test.ts`. Run multi-file/equivalence
+  and startup controls named above,
+  `tests/issue-3521-prepared-callable-boundary.test.ts` after R2-B1 integration,
+  both `node --import tsx scripts/check-ir-only.ts --json --policy=hybrid` and
+  `--policy=ir-only`, `node --import tsx scripts/check-ir-fallbacks.ts`, and the
+  normal format/layering/dialect/size/issue-integrity and merge-group Test262
+  gates. Record base residuals with exact controls; do not weaken baselines or
+  claim a corpus/population gain without measuring it.
+
+**Luna dispatch:** implement P2A's all-contributor prepare/commit and exact
+graph adapter. Stop for a revised prerequisite if a build callback cannot
+describe its resource without mutating shared state, an admitted initializer
+needs another source body to run first, or correct startup needs a late
+unplanned provider. Do not replace that missing proof with more names, counts
+or a new storage allowlist. Return measured runtime/receipt evidence and list
+P2B plus the full R5 acceptance as unfinished.
+## M2-P2A implementation record — 2026-09-05
+
+P2A is implemented on `codex/3525-m2-p2a-luna-20260905` with signed
+implementation commit `2d8e449da3b2787b9b4080c9b99b8aeb4f556d73` and current-main
+merge `dc9ef587fa376da90467d5a473de45516e2b3a6f` (current `origin/main`
+`39e4a13b94273dc9074e5b45e9a4cec661605ef0`). The Luna Max implementation
+adds one source-qualified batch coordinator that preclaims storage and TDZ
+declaration evidence, materializes existing declaration preparation, builds
+the complete initializer vector once, captures the final allocator/resource
+census, reserves exact ordered units and one flat graph adapter, then commits
+all detached component scopes and bodies together. Registration, currentness,
+resource, body, terminal and adapter failures abort all pending receipts before
+publication. Existing singleton M2, disabled cutover, ordinary deferred
+initialization, and mixed callable/init admission remain outside this slice.
+
+The post-review transaction repair retains the complete raw receipt vector
+through exact partition validation and revokes every receipt when a late
+partition, report, resource, or owner check fails. Only a fully typed
+resolver-stage `late-preparation-unsupported` outcome may decline the
+aggregate route; lower, verify, patch, and other post-promise failures remain
+fatal and cannot retry direct module-init emission. The test-only revocation
+audit counts a receipt only after both its post-abort `assertCurrent` and
+claim capabilities reject, rather than counting `abort()` callback returns.
+The focused malformed-partition control observed two real pending receipts and
+aborted both (`attempted: 2, aborted: 2`), while the tagged-union injection
+control remained fatal with no direct-init fallback or published prefix.
+
+The positive two-contributor production control has two executable source
+plans, two IR body emissions, zero direct module-init roots, two resource
+artifact IDs matching the contributor UnitIds, and one ordered adapter. Its
+compiled production result returns `111` on both exported calls. An owned clone
+of the generated Wasm module adds a separate i32 trace global only in the test
+copy: normal startup records `12`, an explicit second adapter invocation
+records `1212`, reversed blocks record `21`, and duplicated blocks record
+`1122`. The deferred clone starts at `0` and records `12` then `1212` across two
+explicit calls. This observes order and per-invocation execution without
+instrumenting production code.
+
+The negative controls retain both source storage gaps for string-valued
+contributors, reject the non-scalar `[seed, 2][0]` late-resource candidate
+before P2A reservation, and reject both dropped-terminal and pending-body
+mutations with an empty binary and no published initializer prefix. The
+preexisting cross-source storage measurement remains explicit: distinct
+private names return the expected `1122`, while same private `value` spelling
+returns `2222` in both pre-P1 and P1 lanes; P2A refuses that unproved alias and
+does not claim the storage defect as a gain.
+
+Validation on the merged candidate:
+
+- `pnpm run typecheck` — pass.
+- The required single-fork suite over the eight P2A/M2/R2 files — 8 files,
+  121 tests passed, including the late-partition receipt-revocation and
+  tagged-union fatal-routing controls.
+- `pnpm run check:ir-fallbacks`, `check:ir-layering`, `check:ir-dialect`,
+  `check:ir-kind-neutrality`, `check:ir-optimization-retirement`,
+  `check:ir-adoption`, `check:issues`, and `check:issue-spec-coverage` — pass.
+- `node --import tsx scripts/check-ir-only.ts --json --policy=hybrid` and
+  `--policy=ir-only` — both ready: 5 entries, 41 terminal units, 38 emitted,
+  3 non-executable, and 0 legacy body emissions per lane.
+
+P2B still owns mixed callable/init graphs, imported-global and re-export
+storage proofs, and noncommuting initializer-to-callable effects. Full R5
+acceptance and merge-group CI remain open; no full local Test262 run is claimed
+by this landing.

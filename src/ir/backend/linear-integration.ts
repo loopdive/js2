@@ -74,11 +74,13 @@ import {
 import { irIntrinsicFuncRef, irUnitFuncRef } from "../callable-bindings.js";
 import { attachIrStringSupport } from "../string-support.js";
 import { planCountedStringAppend } from "../analysis/counted-string-append.js";
-import { lowerIrFunctionBody, type IrLowerResolver } from "../lower.js";
+import type { IrLowerResolver } from "../lower.js";
 import { AllocSiteRegistry } from "../alloc-registry.js";
 import {
   defaultOperationsForLayout,
   linearRuntimeOperationKey,
+  planLinearMemoryFromFrozenFacts,
+  prepareLinearAllocationFacts,
   planLinearMemory,
   planLinearStringLayout,
   planLinearVectorLayout,
@@ -133,6 +135,12 @@ import { IrInvariantError } from "../outcomes.js";
 import type { FuncTypeDef, Instr, ValType, WasmFunction } from "../types.js";
 import { verifyIrFunction } from "../verify.js";
 import { prepareIrRuntimeManifest } from "../intrinsic-support.js";
+import {
+  prepareLinearIrBodyBatch,
+  projectFrozenIrBodyOwnerCensus,
+  type FrozenIrBodyBatch,
+} from "../frozen-body-batch.js";
+import { consumeFrozenIrBodyBatchWithFactories } from "./frozen-body-consumer.js";
 import {
   BOOLEAN_BOUNDARY_POLICY_DISABLED,
   EXTERN_IS_UNDEFINED_POLICY_DISABLED,
@@ -217,6 +225,8 @@ export interface LinearIrResult {
   readonly memoryPlan: LinearMemoryPlan;
   /** Exact counted-string plans authenticated against final provider-bound IR. */
   readonly preparedCountedStringAppendReceipts: readonly PreparedCountedStringAppendReceipt[];
+  /** Authenticated executable body handoff used by the linear consumer. */
+  readonly frozenBodyBatch?: FrozenIrBodyBatch;
 }
 
 /** Direct-backend registration before the ProgramAbiSession cutover. */
@@ -666,35 +676,34 @@ export type {
   PreparedLinearIrCoveragePopulation,
 } from "./linear-ir-coverage.js";
 
-function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourceFile: string): readonly IrFunction[] {
-  return (
-    prepareIrRuntimeManifest({
-      functions,
-      sourceFile,
-      // (#3526 F1-S1, F1-S2) The linear adapter exposes no f64⇄externref number
-      // boundary and no i32⇄externref boolean boundary: both DISABLED policies
-      // resolve every arm to unsupported, and the backend legality gate
-      // independently rejects the externref intrinsics (its `intrinsic` arm is
-      // an allowlist), so a linear owner demotes rather than receiving a
-      // provider it cannot lower.
-      policy: {
-        target: "host",
-        backend: "linear",
-        numberBoundary: NUMBER_BOUNDARY_POLICY_DISABLED,
-        booleanBoundary: BOOLEAN_BOUNDARY_POLICY_DISABLED,
-        externIsUndefined: EXTERN_IS_UNDEFINED_POLICY_DISABLED,
-        generatorNumberBox: GENERATOR_NUMBER_BOX_POLICY_DISABLED,
-        stringCompare: STRING_COMPARE_POLICY_DISABLED,
-        stringEq: STRING_EQ_POLICY_DISABLED,
-        stringLen: STRING_LEN_POLICY_DISABLED,
-        stringConcat: STRING_CONCAT_POLICY_DISABLED,
-        stringCharCodeAt: STRING_CHAR_CODE_AT_POLICY_DISABLED,
-        stringConcatMany: STRING_CONCAT_MANY_POLICY_DISABLED,
-        stringConst: STRING_CONST_POLICY_DISABLED,
-        hostCallbackWrap: HOST_CALLBACK_WRAP_POLICY_DISABLED,
-      },
-    })?.functions ?? functions
-  );
+function prepareLinearIntrinsicFunctions(functions: readonly IrFunction[], sourceFile: string) {
+  const prepared = prepareIrRuntimeManifest({
+    functions,
+    sourceFile,
+    // (#3526 F1-S1, F1-S2) The linear adapter exposes no f64⇄externref number
+    // boundary and no i32⇄externref boolean boundary: both DISABLED policies
+    // resolve every arm to unsupported, and the backend legality gate
+    // independently rejects the externref intrinsics (its `intrinsic` arm is
+    // an allowlist), so a linear owner demotes rather than receiving a
+    // provider it cannot lower.
+    policy: {
+      target: "host",
+      backend: "linear",
+      numberBoundary: NUMBER_BOUNDARY_POLICY_DISABLED,
+      booleanBoundary: BOOLEAN_BOUNDARY_POLICY_DISABLED,
+      externIsUndefined: EXTERN_IS_UNDEFINED_POLICY_DISABLED,
+      generatorNumberBox: GENERATOR_NUMBER_BOX_POLICY_DISABLED,
+      stringCompare: STRING_COMPARE_POLICY_DISABLED,
+      stringEq: STRING_EQ_POLICY_DISABLED,
+      stringLen: STRING_LEN_POLICY_DISABLED,
+      stringConcat: STRING_CONCAT_POLICY_DISABLED,
+      stringCharCodeAt: STRING_CHAR_CODE_AT_POLICY_DISABLED,
+      stringConcatMany: STRING_CONCAT_MANY_POLICY_DISABLED,
+      stringConst: STRING_CONST_POLICY_DISABLED,
+      hostCallbackWrap: HOST_CALLBACK_WRAP_POLICY_DISABLED,
+    },
+  });
+  return prepared ?? { functions, manifest: undefined, providers: new Map() };
 }
 
 function prepareLinearStringRepeatFunctions(
@@ -826,6 +835,7 @@ export function compileLinearIrFunctions(
   const allocRegistry = new AllocSiteRegistry();
   let irModule: IrModule = { functions: [] };
   let memoryPlan = planLinearMemory(irModule, allocRegistry, allocationPolicy);
+  let frozenBodyBatch: FrozenIrBodyBatch | undefined;
   let preparedCountedStringAppendReceipts: readonly PreparedCountedStringAppendReceipt[] = [];
   let helperStartFuncIdx = 0;
   for (const funcIdx of ctx.funcMap.values()) helperStartFuncIdx = Math.max(helperStartFuncIdx, funcIdx + 1);
@@ -860,6 +870,9 @@ export function compileLinearIrFunctions(
     },
     get preparedCountedStringAppendReceipts() {
       return preparedCountedStringAppendReceipts;
+    },
+    get frozenBodyBatch() {
+      return frozenBodyBatch;
     },
   };
   lastReport = result;
@@ -1111,9 +1124,10 @@ export function compileLinearIrFunctions(
     const fn = built.get(ownerUnitId);
     return fn ? [fn] : [];
   });
+  const preparedIntrinsic = prepareLinearIntrinsicFunctions(plannedFunctions, sourceFile.fileName);
   const preparedStringRepeat = prepareLinearStringRepeatFunctions(
     ctx,
-    prepareLinearIntrinsicFunctions(plannedFunctions, sourceFile.fileName),
+    preparedIntrinsic.functions,
     prepared,
     countedPlansByUnitId,
   );
@@ -1125,25 +1139,125 @@ export function compileLinearIrFunctions(
   const preparedCountedStringAppendReceiptCandidates = preparedStringRepeat.receipts;
   for (const fn of preparedFunctions) built.set(fn.unitId, fn);
   irModule = { functions: preparedFunctions };
-  memoryPlan = planLinearMemory(irModule, allocRegistry, allocationPolicy);
+  const allocationFacts = prepareLinearAllocationFacts(irModule, allocRegistry);
+
+  const rejectionByOwner = new Map<IrUnitId, LinearIrRejection>();
+  for (const evidence of ownerEvidence) {
+    if (evidence.outcome === "rejected") rejectionByOwner.set(evidence.ownerUnitId, evidence.rejection);
+  }
+  const terminalByOwner = new Map(
+    identityContext.inventory.terminalUnits.map((terminal) => [terminal.id, terminal] as const),
+  );
+  const sourceById = new Map(identityContext.inventory.sources.map((source) => [source.id, source] as const));
+  const batchOwners = projectFrozenIrBodyOwnerCensus({
+    rows: ownerIndex.owners.map((owner) => {
+      const terminal = terminalByOwner.get(owner.ownerUnitId);
+      const source = terminal ? sourceById.get(terminal.sourceId) : undefined;
+      if (!terminal || !source) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `linear-ir: owner ${owner.ownerUnitId} has no complete source/terminal projection`,
+        );
+      }
+      return {
+        ownerUnitId: owner.ownerUnitId,
+        sourceId: source.id,
+        sourceKey: source.sourceKey,
+        legacyName: owner.legacyName,
+        terminalKind: terminal.kind,
+        observedKind: terminal.observedKind,
+      };
+    }),
+    builtOwnerIds: new Set(built.keys()),
+    rejections: rejectionByOwner,
+  });
+  const sourceId = requireIrPlanningSourceId(identityContext, sourceFile);
+  const sourceRecord = sourceById.get(sourceId);
+  if (!sourceRecord) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      `linear-ir: prepared source ${sourceId} is absent from the identity inventory`,
+    );
+  }
+  frozenBodyBatch = prepareLinearIrBodyBatch({
+    module: irModule,
+    owners: batchOwners,
+    allocationFacts,
+    runtime: {
+      manifest: preparedIntrinsic.manifest,
+      providers: preparedIntrinsic.providers,
+    },
+    countedStringReceipts: preparedCountedStringAppendReceiptCandidates.map((receipt) => ({
+      siteId: receipt.siteId,
+      ownerUnitId: receipt.plan.ownerUnitId,
+      sourceId: receipt.plan.sourceId,
+      finalInstructionDigest: receipt.finalInstructionDigest,
+    })),
+    producer: {
+      backend: "linear",
+      policy: allocationPolicy.id,
+      source: { sourceId, sourceKey: sourceRecord.sourceKey, fileName: sourceFile.fileName },
+      version: "l0-p1-v1",
+      representation: "linear-ir",
+      boundaries: Object.freeze([
+        "frontend-preparation-remains-linear-specific",
+        "wasmgc-production-consumer-not-yet-routed",
+        "program-abi-and-whole-program-transaction-remain-outside-l0-p1",
+      ]),
+    },
+  });
+  irModule = frozenBodyBatch.module;
+  memoryPlan = planLinearMemoryFromFrozenFacts(irModule, frozenBodyBatch.allocationFacts, allocationPolicy);
   bindMemoryPlan(memoryPlan);
 
-  // Lower only after the module-wide plan is complete. Every allocation-site
-  // handle below is therefore a view of the same canonical decision.
+  // Every body is lowered through the authenticated batch consumer. The
+  // existing local-slot/vector-scratch adaptation remains below this point,
+  // but the captured function and lowerer output are now the sole authority.
+  let consumedBodies: ReturnType<typeof consumeFrozenIrBodyBatchWithFactories<Instr[], ValType>>;
+  try {
+    consumedBodies = consumeFrozenIrBodyBatchWithFactories<Instr[], ValType>({
+      batch: frozenBodyBatch,
+      backend: "linear",
+      factories: {
+        resolver,
+        moduleSession: ctx.mod,
+        makeTypeConverter: (fn) => linearValueTypeConverter(resolver, fn.name),
+        makeEmitter: () =>
+          new LinearEmitter({
+            resolveRuntimeOperation: (operation) => resolveLinearRuntimeOperation(ctx, operation),
+            stringRuntime: resolver,
+          }),
+      },
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    const preparedOwner = [...preparedCountedOwnerUnitIds].find((ownerUnitId) => detail.includes(ownerUnitId));
+    if (preparedOwner && detail.includes("failed during lowering")) {
+      const lowerDetail = detail.split(" failed during lowering: ").at(-1) ?? detail;
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "lower",
+        `linear-ir: prepared counted-string owner ${preparedOwner} failed after reservation: ${lowerDetail}`,
+      );
+    }
+    throw error;
+  }
+  const consumedByOwner = new Map(consumedBodies.map((entry) => [entry.ownerUnitId, entry] as const));
+
   for (const owner of claimedDecls) {
     const { ownerUnitId, legacyName: name } = owner;
-    const main = built.get(ownerUnitId);
-    if (!main) {
+    const consumed = consumedByOwner.get(ownerUnitId);
+    if (!consumed) {
       const failure = lastFailure.get(ownerUnitId);
       if (failure) recordRejection(owner, failure);
       continue;
     }
-    try {
-      const emitter = new LinearEmitter({
-        resolveRuntimeOperation: (operation) => resolveLinearRuntimeOperation(ctx, operation),
-        stringRuntime: resolver,
-      });
-      const body = lowerIrFunctionBody(main, resolver, emitter, linearValueTypeConverter(resolver, main.name));
+    {
+      const main = consumed.func;
+      const body = consumed.lowered;
+      const emitter = consumed.emitter as LinearEmitter;
       requireLinearOwnerPair(owner, body.name);
       const vecScratchLocals = new Set(emitter.getVecScratchLocalIndices());
       const wasmLocals = body.locals.flatMap((local) =>
@@ -1181,22 +1295,6 @@ export function compileLinearIrFunctions(
       });
       compiled.push(name);
       ownerEvidence.push({ outcome: "compiled", ownerUnitId, legacyName: name });
-    } catch (e) {
-      if (preparedCountedOwnerUnitIds.has(ownerUnitId)) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "lower",
-          `linear-ir: prepared counted-string owner ${ownerUnitId} failed after reservation: ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        );
-      }
-      rethrowLinearOwnerInvariant(e);
-      recordRejection(owner, {
-        func: name,
-        reason: "build",
-        detail: e instanceof Error ? e.message : String(e),
-      });
     }
   }
 

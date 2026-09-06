@@ -26,3 +26,5 @@ export * from "./analysis/ownership.js";
 export * from "./analysis/stack-alloc.js";
 export * from "./analysis/escape.js";
 export * from "./analysis/linear-memory-plan.js";
+export * from "./frozen-body-batch.js";
+export * from "./backend/frozen-body-consumer.js";
