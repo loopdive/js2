@@ -37,7 +37,7 @@
 // issue is that silent wrong answers are the expensive failure mode, the
 // asymmetry decides the design.
 //
-// THE THREE ADMITTED KINDS, and the evidence each rests on:
+// THE ADMITTED KINDS, and the evidence each rests on:
 //
 //   1. User `class` declarations — `ctx.classDeclarationMap`, which
 //      `collectClassDeclaration` populates keyed by the same display name
@@ -53,6 +53,9 @@
 //
 //   3. Object-literal / inferred structural shapes — the `__anon_` prefix,
 //      minted only from a user `ts.Type` in `literals.ts` and `index.ts`.
+//   4. Named structural carriers registered from non-declaration-file
+//      interfaces/object aliases. Record the physical type object: a later
+//      builtin registration reusing its display name is not that carrier.
 //
 // Anything else — `__Date`, `$Promise`, the RegExp carrier, iterator records,
 // async frames, tuples, vec/arr runtime structs — is a compiler carrier and is
@@ -66,6 +69,21 @@
 // working one.
 
 import type { CodegenContext } from "./context/types.js";
+import type { StructTypeDef } from "../ir/types.js";
+
+const declaredStructuralCarriers = new WeakMap<CodegenContext, WeakSet<StructTypeDef>>();
+
+/** Record a source interface/type-alias carrier, not a builtin sharing its name. */
+export function recordUserStructuralCarrier(ctx: CodegenContext, typeIdx: number): void {
+  const type = ctx.mod.types[typeIdx];
+  if (type?.kind !== "struct") return;
+  let carriers = declaredStructuralCarriers.get(ctx);
+  if (!carriers) {
+    carriers = new WeakSet();
+    declaredStructuralCarriers.set(ctx, carriers);
+  }
+  carriers.add(type);
+}
 
 /** `__fnctor_<Name>` — a constructor function's instance struct. */
 const FNCTOR_PREFIX = "__fnctor_";
@@ -90,5 +108,8 @@ const ANON_PREFIX = "__anon_";
 export function isUserDeclaredStruct(ctx: CodegenContext, structName: string): boolean {
   if (structName.startsWith(FNCTOR_PREFIX)) return true;
   if (structName.startsWith(ANON_PREFIX)) return true;
+  const typeIdx = ctx.structMap.get(structName);
+  const type = typeIdx === undefined ? undefined : ctx.mod.types[typeIdx];
+  if (type?.kind === "struct" && declaredStructuralCarriers.get(ctx)?.has(type)) return true;
   return ctx.classDeclarationMap.has(structName);
 }

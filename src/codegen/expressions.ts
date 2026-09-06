@@ -58,6 +58,7 @@ import {
   pushDefaultValue,
 } from "./type-coercion.js";
 import { assertedStructFactoryExpression } from "./generic-struct-factory.js";
+import { emitGenericScalarUnionResult } from "./generic-scalar-union-result.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { emitVoidOperandSideEffects } from "./expressions/void-operand.js";
 
@@ -922,6 +923,9 @@ function compileExpressionBody(
     return fallbackType;
   }
   if (result !== null) {
+    if (result.kind === "externref" && emitGenericScalarUnionResult(ctx, fctx, expr)) {
+      result = { kind: "ref", typeIdx: ctx.anyValueTypeIdx };
+    }
     if (expectedType && result.kind !== expectedType.kind) {
       const nullableBindingTarget = nullableErasedLocalBindingProjectionTarget(ctx, fctx, expr, result, expectedType);
       if (nullableBindingTarget) {
@@ -1174,7 +1178,11 @@ function compileExpressionInner(
     return { kind: "externref" };
   }
 
-  if (ts.isIdentifier(expr) && expr.text === "undefined") {
+  if (
+    ts.isIdentifier(expr) &&
+    expr.text === "undefined" &&
+    (ctx.checker.getTypeAtLocation(expr).flags & ts.TypeFlags.Undefined) !== 0
+  ) {
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
   }

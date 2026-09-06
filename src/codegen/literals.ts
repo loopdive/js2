@@ -9,6 +9,7 @@
  */
 
 import ts from "typescript";
+import { objectLiteralHasIndexedSpread } from "./indexed-object-spread.js";
 import { hoistFunctionDeclarations } from "./statements/nested-declarations.js";
 import { isStringType, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, StructTypeDef, ValType, WasmFunction } from "../ir/types.js";
@@ -1793,6 +1794,7 @@ export function objectLiteralForcesHostPath(ctx: CodegenContext, expr: ts.Object
 export function objectLiteralSpreadTakesHostPath(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   if (expr.properties.length === 0) return false;
   if (!expr.properties.some((p) => ts.isSpreadAssignment(p))) return false;
+  if (objectLiteralHasIndexedSpread(ctx, expr)) return true;
   let spreadCtxType = ctx.checker.getContextualType(expr);
   // (#4616) An OPTIONAL slot's contextual type is `T | undefined` (jest's
   // `options = { …defaults, ...options }` param reassignment): the union's

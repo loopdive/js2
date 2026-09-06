@@ -567,6 +567,14 @@ export function emitToBoolean(ctx: CodegenContext, valType: ValType | null, sink
     return sink;
   }
   const kind = valType.kind;
+  // Map/Set and erased result readers can leave their JS value internalized
+  // as an abstract GC reference. Externalizing is an identity conversion, not
+  // a truthiness test: null, boxed false/zero/NaN and empty strings still need
+  // the canonical value classifier below.
+  if (kind === "anyref" || kind === "eqref") {
+    sink.push({ op: "extern.convert_any" });
+    return emitToBoolean(ctx, { kind: "externref" }, sink);
+  }
   if (kind === "f64") {
     // |x| > 0 so NaN, +0, -0 are all falsy (f64.ne 0 would make NaN truthy).
     sink.push({ op: "f64.abs" }, { op: "f64.const", value: 0 }, { op: "f64.gt" });

@@ -74,6 +74,7 @@ import { emitIsUndefF64 } from "./value-tags.js";
 import { hasStaticBigIntOperand, usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { objectCoercionBigIntArgumentOf } from "./object-ctor-primitive-receiver.js";
 import { emitUninitialisedFieldStrictNullish, readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
+import { readsUninitialisedVariableSlot } from "./uninitialised-variable-undefined.js";
 
 /**
  * (#1930) Keep the nullish AnyValue gate on the oracle side of the checker
@@ -856,10 +857,16 @@ export function compileBinaryExpression(
     const trackedScalarOmission = compileTrackedScalarOmissionComparison(ctx, fctx, expr);
     if (trackedScalarOmission) return trackedScalarOmission;
     const rightIsNullKeyword = expr.right.kind === ts.SyntaxKind.NullKeyword;
-    const rightIsUndefinedId = ts.isIdentifier(expr.right) && expr.right.text === "undefined";
+    const rightIsUndefinedId =
+      ts.isIdentifier(expr.right) &&
+      expr.right.text === "undefined" &&
+      (ctx.checker.getTypeAtLocation(expr.right).flags & ts.TypeFlags.Undefined) !== 0;
     const rightIsNullish = rightIsNullKeyword || rightIsUndefinedId;
     const leftIsNullKeyword = expr.left.kind === ts.SyntaxKind.NullKeyword;
-    const leftIsUndefinedId = ts.isIdentifier(expr.left) && expr.left.text === "undefined";
+    const leftIsUndefinedId =
+      ts.isIdentifier(expr.left) &&
+      expr.left.text === "undefined" &&
+      (ctx.checker.getTypeAtLocation(expr.left).flags & ts.TypeFlags.Undefined) !== 0;
     const leftIsNullish = leftIsNullKeyword || leftIsUndefinedId;
     // A declaration binding whose element type is a heterogeneous primitive
     // union is physically a nullable `$AnyValue`.  Do not consume its
@@ -1027,10 +1034,18 @@ export function compileBinaryExpression(
         // write. Fields whose annotation admits `null` are excluded inside the
         // predicate — there `ref.null` is ambiguous.
         if (isStrictEqOp || isStrictNeqOp) {
+          const isUninitialisedVariableSlot = readsUninitialisedVariableSlot(ctx, nonNullExpr);
           const nullRepresentsUndefined =
-            nonNullUnionHasUndefined || isNullableNativeString || isUninitialisedFieldSlot;
+            nonNullUnionHasUndefined ||
+            isNullableNativeString ||
+            isUninitialisedFieldSlot ||
+            isUninitialisedVariableSlot;
           const nullRepresentsNull =
-            nonNullUnionHasNull || (!nonNullUnionHasUndefined && !isNullableNativeString && !isUninitialisedFieldSlot);
+            nonNullUnionHasNull ||
+            (!nonNullUnionHasUndefined &&
+              !isNullableNativeString &&
+              !isUninitialisedFieldSlot &&
+              !isUninitialisedVariableSlot);
           const comparesRepresentedNullish = nullSideIsUndefinedId ? nullRepresentsUndefined : nullRepresentsNull;
           if (!comparesRepresentedNullish) {
             fctx.body.push({ op: "drop" });

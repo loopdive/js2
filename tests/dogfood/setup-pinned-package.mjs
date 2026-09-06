@@ -124,6 +124,7 @@ export function setupPinnedPackage({
   extractionDirectory,
   force = false,
   allowMissingEntry = false,
+  wireDependencies = true,
 }) {
   const pin = suppliedPin ?? loadPinnedPackagePin(here, pinFile);
   const tarballPath = resolve(here, pin.tarball);
@@ -161,7 +162,7 @@ export function setupPinnedPackage({
     throw new Error(`[dogfood] extraction did not produce ${pin.entryModule} under ${root}`);
   }
 
-  const dependencyNodeModulesPath = wireInstalledDependencies(root, name, pin);
+  const dependencyNodeModulesPath = wireDependencies ? wireInstalledDependencies(root, name, pin) : null;
   return {
     root,
     entryModulePath,

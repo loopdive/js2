@@ -21,6 +21,8 @@ import { ensureExternIsUndefinedImport, flushLateImportShifts } from "./late-imp
 import { getFuncParamTypes } from "./helpers.js";
 import { resolveStructName } from "./misc.js";
 import { compileReceiverMethodCall } from "./call-receiver-method.js";
+import { compileOptionalNativeCollectionLookup } from "./optional-native-set.js";
+import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
 
 export function compileOptionalCallExpression(
   ctx: CodegenContext,
@@ -59,7 +61,13 @@ export function compileOptionalCallExpression(
   // non-reference receiver here is the compiler's representation of
   // `undefined`/`null`, which short-circuits the call: drop it and emit the
   // default result.
-  if (objType.kind !== "ref" && objType.kind !== "ref_null" && objType.kind !== "externref") {
+  if (
+    objType.kind !== "ref" &&
+    objType.kind !== "ref_null" &&
+    objType.kind !== "externref" &&
+    objType.kind !== "anyref" &&
+    objType.kind !== "eqref"
+  ) {
     fctx.body.push({ op: "drop" });
     let shortType: ValType = resultType;
     if (shortType.kind === "ref") shortType = { kind: "ref_null", typeIdx: shortType.typeIdx };
@@ -74,11 +82,12 @@ export function compileOptionalCallExpression(
   // even when the standalone undefined-singleton regime is inactive (for
   // example an omitted argument supplied by the generic call wrapper).
   // Optional chaining must short-circuit both representations.
-  if (objType.kind === "externref") {
+  if (objType.kind === "externref" || objType.kind === "anyref" || objType.kind === "eqref") {
     const isUndefIdx = ensureExternIsUndefinedImport(ctx);
     if (isUndefIdx !== undefined) {
       flushLateImportShifts(ctx, fctx);
       fctx.body.push({ op: "local.get", index: tmp });
+      if (objType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
       fctx.body.push({ op: "call", funcIdx: isUndefIdx });
       fctx.body.push({ op: "i32.or" });
     }
@@ -92,6 +101,15 @@ export function compileOptionalCallExpression(
   const tsReceiverType = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(propAccess.expression));
   const methodName = ts.isPrivateIdentifier(propAccess.name) ? propAccess.name.text.slice(1) : propAccess.name.text;
   let methodResolved = false;
+  let shortCircuitInstrs: Instr[] | undefined;
+
+  if (
+    compileOptionalNativeCollectionLookup(ctx, fctx, expr, tsReceiverType.getSymbol()?.name, methodName, tmp, objType)
+  ) {
+    resultType = { kind: "externref" };
+    shortCircuitInstrs = canonicalUndefinedExternInstrs(ctx);
+    methodResolved = true;
+  }
 
   if (!methodResolved && isExternalDeclaredClass(tsReceiverType, ctx.checker)) {
     const className = tsReceiverType.getSymbol()?.name;
@@ -324,7 +342,7 @@ export function compileOptionalCallExpression(
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: resultType },
-    then: defaultValueInstrs(resultType),
+    then: shortCircuitInstrs ?? defaultValueInstrs(resultType),
     else: elseInstrs,
   });
 

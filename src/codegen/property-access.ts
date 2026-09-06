@@ -93,6 +93,7 @@ import { resolveVecHostBridgeHelper } from "./vec-access-exports.js";
 import { emitJsonStringifyValue } from "./json-codec-native.js";
 import { tryCompileNativeGeneratorResultProperty } from "./generators-native.js";
 import { tryCompileNativeMapSizeGet } from "./map-runtime.js";
+import { compileOptionalNativeCollectionSize } from "./expressions/optional-native-set.js";
 import {
   tryCompileNativeDisposableStackAnyDisposedGet,
   tryCompileNativeDisposableStackDisposedGet,
@@ -2477,8 +2478,10 @@ export function compileOptionalPropertyAccess(
   // leaving the receiver ref stranded on the stack (#1603).
   const tsObjType = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(expr.expression));
   const propName = expr.name.text;
-  let elseResultType: ValType | null = null;
-  if (isExternalDeclaredClass(tsObjType, ctx.checker) || hostMapCarrierClassName(ctx, tsObjType) !== undefined) {
+  let elseResultType = compileOptionalNativeCollectionSize(ctx, fctx, objType, tsObjType, propName);
+  if (elseResultType !== null) {
+    // The saved native collection receiver was consumed by its size helper.
+  } else if (isExternalDeclaredClass(tsObjType, ctx.checker) || hostMapCarrierClassName(ctx, tsObjType) !== undefined) {
     compileExternPropertyGetFromStack(ctx, fctx, tsObjType, propName);
     elseResultType = { kind: "externref" };
   } else if (isStringType(tsObjType) && propName === "length") {

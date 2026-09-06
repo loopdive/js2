@@ -1,0 +1,20 @@
+{
+  "buffer": {
+    "version": "5.7.1",
+    "tarball": "fixtures/buffer-5.7.1.tgz",
+    "shasum": "ba62e7c13133053582197160851a8f648e99eed0",
+    "entryModule": "package/index.js"
+  },
+  "base64-js": {
+    "version": "1.5.1",
+    "tarball": "fixtures/base64-js-1.5.1.tgz",
+    "shasum": "1b1b440160a5bf7ad40b650f095963481903930a",
+    "entryModule": "package/index.js"
+  },
+  "ieee754": {
+    "version": "1.2.1",
+    "tarball": "fixtures/ieee754-1.2.1.tgz",
+    "shasum": "8eb7a10a63fff25d15a57b001586d177d1b0d352",
+    "entryModule": "package/index.js"
+  }
+}

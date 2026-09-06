@@ -1918,8 +1918,14 @@ function compileIdentifierCore(
   // standalone; gc/host and the namespace-object / native-error-tag builtins are
   // untouched. Order: AFTER local/module/declared-global shadowing and the
   // class-object / promise-subclass singleton blocks (so a user binding or a real
-  // class always wins), BEFORE the null-externref fallback.
-  if (ctx.standalone && isBuiltinConstructorIdentityName(name)) {
+  // class always wins), BEFORE the null-externref fallback. Source function
+  // declarations are wrapped later, so explicitly exclude them here: the
+  // TypeScript allocator's `() => Symbol` must return its own constructor.
+  if (
+    ctx.standalone &&
+    isBuiltinConstructorIdentityName(name) &&
+    (resolvedValueDeclaration === undefined || readsAmbientDeclaration)
+  ) {
     return emitBuiltinConstructorIdentity(ctx, fctx, name);
   }
 

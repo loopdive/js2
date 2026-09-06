@@ -5,9 +5,17 @@ import { describe, expect, it } from "vitest";
 import { compile, compileMulti } from "../src/index.js";
 
 describe("#1058 sibling interface projection write-through", () => {
-  it("keeps a mutable sibling-interface write on the concrete source object", async () => {
-    const result = await compile(
-      `
+  it.each([
+    ["gc", false],
+    ["standalone", false],
+    ["gc", true],
+    ["standalone", true],
+  ] as const)(
+    "keeps a mutable sibling-interface write on the concrete source object in %s (shared Node: %s)",
+    async (target, sharedNode) => {
+      const result = await compile(
+        `
+        ${sharedNode ? "// The brands are never actually given values. At runtime they have zero cost." : ""}
         interface ReadonlyPragmaContext {
           languageVersion: number;
           pragmas?: ReadonlyPragmaMap;
@@ -30,7 +38,7 @@ describe("#1058 sibling interface projection write-through", () => {
         interface ReadonlyPragmaMap extends ReadonlyMap<string, number> {}
         interface PragmaMap extends Map<string, number>, ReadonlyPragmaMap {}
 
-        interface NodeDeclaration {
+        interface Node {
           kind: number;
           pos: number;
           end: number;
@@ -40,7 +48,7 @@ describe("#1058 sibling interface projection write-through", () => {
           locals?: Map<string, number>;
         }
 
-        interface SourceFile extends NodeDeclaration, LocalsContainer {
+        interface SourceFile extends Node, LocalsContainer {
           text: string;
           fileName: string;
           nodeCount: number;
@@ -51,6 +59,24 @@ describe("#1058 sibling interface projection write-through", () => {
         interface SourceFile extends ReadonlyPragmaContext {}
 
         function createSourceFile(): SourceFile {
+          ${
+            sharedNode
+              ? `
+          const node = { kind: 1, pos: 0, end: 6 } as SourceFile;
+          node.text = "source";
+          node.fileName = "input.ts";
+          node.nodeCount = 3;
+          node.identifierCount = 4;
+          node.languageVersion = 99;
+          node.pragmas = undefined as any;
+          node.referencedFiles = undefined as any;
+          node.typeReferenceDirectives = undefined as any;
+          node.libReferenceDirectives = undefined as any;
+          node.amdDependencies = undefined as any;
+          node.hasNoDefaultLib = false;
+          return node;
+          `
+              : `
           return {
             text: "source",
             fileName: "input.ts",
@@ -67,6 +93,8 @@ describe("#1058 sibling interface projection write-through", () => {
             amdDependencies: undefined as any,
             hasNoDefaultLib: false,
           };
+          `
+          }
         }
 
         function processCommentPragmas(context: PragmaContext): void {
@@ -86,8 +114,12 @@ describe("#1058 sibling interface projection write-through", () => {
           context.hasNoDefaultLib = false;
           let seen = 0;
           context.pragmas!.forEach((value, key) => {
-            if (key === "sentinel") seen = value;
+            if (key === "sentinel") {
+              seen = value;
+              context.hasNoDefaultLib = true;
+            }
           });
+          if (seen !== 0 && context.hasNoDefaultLib !== true) return -1;
           return seen * 100 + context.pragmas!.size;
         }
 
@@ -110,50 +142,54 @@ describe("#1058 sibling interface projection write-through", () => {
         }
 
       `,
-      {
-        fileName: "issue-1058-sibling-projection-write-through.ts",
-        target: "gc",
-        platform: "node",
-        skipSemanticDiagnostics: true,
-      },
-    );
+        {
+          fileName: sharedNode ? "/fixture/src/compiler/types.ts" : "issue-1058-sibling-projection-write-through.ts",
+          target,
+          platform: "node",
+          skipSemanticDiagnostics: true,
+        },
+      );
 
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(WebAssembly.validate(result.binary)).toBe(true);
-    const importNames = WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).map(
-      ({ module, name }) => `${module}.${name}`,
-    );
-    expect(importNames).toEqual(
-      expect.arrayContaining(["env.Map_new", "env.Map_set", "env.Map_forEach", "env.Map_get_size"]),
-    );
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      const module = new WebAssembly.Module(result.binary);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      const importNames = WebAssembly.Module.imports(module).map(({ module, name }) => `${module}.${name}`);
+      if (target === "standalone") expect(importNames).toEqual([]);
+      else
+        expect(importNames).toEqual(
+          expect.arrayContaining(["env.Map_new", "env.Map_set", "env.Map_forEach", "env.Map_get_size"]),
+        );
 
-    const imports = result.importObject ?? {};
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
-    const exports = instance.exports as unknown as {
-      repeatedProjection(): number;
-      emptyRepeatedProjection(): number;
-      concreteReadAfterProjectionWrite(): number;
-    };
+      const imports = result.importObject ?? {};
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+      const exports = instance.exports as unknown as {
+        repeatedProjection(): number;
+        emptyRepeatedProjection(): number;
+        concreteReadAfterProjectionWrite(): number;
+      };
 
-    // This is the TypeScript parser shape: separate sibling casts must still
-    // alias the same merged SourceFile storage rather than independent structs.
-    expect(exports.repeatedProjection()).toBe(1701);
-    expect(exports.emptyRepeatedProjection()).toBe(0);
-    expect(exports.concreteReadAfterProjectionWrite()).toBe(1);
-  });
+      // This is the TypeScript parser shape: separate sibling casts must still
+      // alias the same merged SourceFile storage rather than independent structs.
+      expect(exports.repeatedProjection()).toBe(1701);
+      expect(exports.emptyRepeatedProjection()).toBe(0);
+      expect(exports.concreteReadAfterProjectionWrite()).toBe(1);
+    },
+  );
 
-  it("keeps an open identity-preserving ABI when another module has an ordinary caller", async () => {
-    const result = await compileMulti(
-      {
-        "./mutate.ts": `
+  it.each(["gc", "standalone"] as const)(
+    "keeps an open identity-preserving ABI when another module has an ordinary caller in %s",
+    async (target) => {
+      const result = await compileMulti(
+        {
+          "./mutate.ts": `
           export interface Destination { value: number }
           export function mutate(context: Destination): number {
             context.value += 1;
             return context.value;
           }
         `,
-        "./asserted.ts": `
+          "./asserted.ts": `
           import { mutate, type Destination } from "./mutate.js";
           interface Source { value: number; extra: number }
           export function asserted(): number {
@@ -162,34 +198,37 @@ describe("#1058 sibling interface projection write-through", () => {
             return source.value * 10 + source.extra;
           }
         `,
-        "./ordinary.ts": `
+          "./ordinary.ts": `
           import { mutate, type Destination } from "./mutate.js";
           export function ordinary(): number {
             const destination: Destination = { value: 40 };
             return mutate(destination);
           }
         `,
-        "./entry.ts": `
+          "./entry.ts": `
           import { asserted } from "./asserted.js";
           import { ordinary } from "./ordinary.js";
           export function test(): number {
             return asserted() * 100 + ordinary();
           }
         `,
-      },
-      "./entry.ts",
-      { target: "gc", platform: "node", skipSemanticDiagnostics: true },
-    );
+        },
+        "./entry.ts",
+        { target, platform: "node", skipSemanticDiagnostics: true },
+      );
 
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(WebAssembly.validate(result.binary)).toBe(true);
-    const imports = result.importObject ?? {};
-    const { instance } = await WebAssembly.instantiate(result.binary, imports);
-    (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
-    // Both carriers keep identity: the asserted Source observes its write and
-    // the ordinary Destination remains valid through the same open ABI.
-    expect((instance.exports.test as () => number)()).toBe(4741);
-  });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      const imports = result.importObject ?? {};
+      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      (imports as { __setInstance?: (value: WebAssembly.Instance) => void }).__setInstance?.(instance);
+      // Both carriers keep identity: the asserted Source observes its write and
+      if (target === "standalone")
+        expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+      // the ordinary Destination remains valid through the same open ABI.
+      expect((instance.exports.test as () => number)()).toBe(4741);
+    },
+  );
 
   it("keeps own expando writes on a Map-refining host interface", async () => {
     const result = await compile(
@@ -221,9 +260,11 @@ describe("#1058 sibling interface projection write-through", () => {
     expect((instance.exports.test as () => number)()).toBe(901);
   });
 
-  it("does not classify a user class named Map as the ambient host Map", async () => {
-    const result = await compile(
-      `
+  it.each(["gc", "standalone"] as const)(
+    "does not classify a user class named Map as ambient in %s",
+    async (target) => {
+      const result = await compile(
+        `
         class Map<K, V> {
           value = 7;
           bump(): number {
@@ -237,23 +278,30 @@ describe("#1058 sibling interface projection write-through", () => {
           return map.bump() * 10 + map.value;
         }
       `,
-      {
-        fileName: "issue-1058-user-map-shadow.ts",
-        target: "gc",
-        platform: "node",
-      },
-    );
+        {
+          fileName: "issue-1058-user-map-shadow.ts",
+          target,
+          platform: "node",
+        },
+      );
 
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(WebAssembly.validate(result.binary)).toBe(true);
-    expect(
-      WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).some(({ name }) => name.startsWith("Map_")),
-    ).toBe(false);
-  });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      expect(
+        WebAssembly.Module.imports(new WebAssembly.Module(result.binary)).some(({ name }) => name.startsWith("Map_")),
+      ).toBe(false);
+      const module = new WebAssembly.Module(result.binary);
+      if (target === "standalone") expect(WebAssembly.Module.imports(module)).toEqual([]);
+      const instance = await WebAssembly.instantiate(module, result.importObject ?? {});
+      expect((instance.exports.test as () => number)()).toBe(88);
+    },
+  );
 
-  it("does not classify a user interface named Map as the ambient host Map", async () => {
-    const result = await compile(
-      `
+  it.each(["gc", "standalone"] as const)(
+    "does not classify a user interface named Map as ambient in %s",
+    async (target) => {
+      const result = await compile(
+        `
         interface Map {
           set(value: number): number;
         }
@@ -268,16 +316,19 @@ describe("#1058 sibling interface projection write-through", () => {
           return map.set(4);
         }
       `,
-      {
-        fileName: "issue-1058-user-map-interface-shadow.ts",
-        target: "gc",
-        platform: "node",
-      },
-    );
+        {
+          fileName: "issue-1058-user-map-interface-shadow.ts",
+          target,
+          platform: "node",
+        },
+      );
 
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(WebAssembly.validate(result.binary)).toBe(true);
-    const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
-    expect((instance.exports.test as () => number)()).toBe(5);
-  });
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
+      const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+      expect((instance.exports.test as () => number)()).toBe(5);
+      if (target === "standalone")
+        expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+    },
+  );
 });

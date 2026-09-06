@@ -16,6 +16,50 @@ const mode = process.argv[3] ?? "project";
 
 const emit = emitWorkerResult;
 
+function resolveDogfoodTarget(value) {
+  if (value === undefined) return "gc";
+  if (value === "gc" || value === "standalone") return value;
+  throw new Error(`DOGFOOD_TARGET expects gc or standalone, received ${JSON.stringify(value)}`);
+}
+
+function describeModuleImports(module) {
+  return WebAssembly.Module.imports(module).map(({ module: namespace, name, kind }) => ({
+    module: namespace,
+    name,
+    kind,
+  }));
+}
+
+function compileProvenance(requestedTarget, actualTarget, moduleImports, linkedModuleImports = []) {
+  const linkedImportsKnown = linkedModuleImports.every((entry) => Array.isArray(entry.imports));
+  const moduleImportCount = Array.isArray(moduleImports) ? moduleImports.length : null;
+  const linkedModuleImportCount = linkedImportsKnown
+    ? linkedModuleImports.reduce((count, entry) => count + entry.imports.length, 0)
+    : null;
+  const totalModuleImportCount =
+    moduleImportCount === null || linkedModuleImportCount === null ? null : moduleImportCount + linkedModuleImportCount;
+  return {
+    requestedTarget,
+    actualTarget,
+    targetMatches: actualTarget === requestedTarget,
+    moduleImports,
+    moduleImportCount,
+    linkedModuleImports,
+    totalModuleImportCount,
+    importPolicyMatches: requestedTarget !== "standalone" || totalModuleImportCount === 0,
+  };
+}
+
+function describeImportFrontier(provenance) {
+  const imports = [
+    ...(provenance.moduleImports ?? []).map((entry) => ({ artifact: "entry", ...entry })),
+    ...provenance.linkedModuleImports.flatMap((linked) =>
+      (linked.imports ?? []).map((entry) => ({ artifact: linked.namespace, ...entry })),
+    ),
+  ];
+  return imports.map((entry) => `${entry.artifact}:${entry.module}::${entry.name} (${entry.kind})`).join(", ");
+}
+
 function errorText(error, instance) {
   let text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   if (error && typeof error.getArg === "function" && instance?.exports) {
@@ -153,7 +197,34 @@ async function loadWebHostDependencies() {
 
 async function main() {
   const started = performance.now();
-  const platform = process.env.DOGFOOD_PLATFORM ?? "web";
+  let requestedTarget;
+  try {
+    requestedTarget = resolveDogfoodTarget(process.env.DOGFOOD_TARGET);
+    if (
+      requestedTarget === "standalone" &&
+      (process.env.DOGFOOD_PLATFORM !== undefined ||
+        process.env.DOGFOOD_NODE_HOST_DEPS === "1" ||
+        process.env.DOGFOOD_INSTALL_JSDOM === "1")
+    ) {
+      throw new Error(
+        "DOGFOOD_TARGET=standalone does not accept DOGFOOD_PLATFORM, DOGFOOD_NODE_HOST_DEPS, or DOGFOOD_INSTALL_JSDOM",
+      );
+    }
+  } catch (error) {
+    emit({
+      compile: {
+        success: false,
+        validates: false,
+        durationMs: Math.round(performance.now() - started),
+        binaryBytes: 0,
+        errors: [{ message: errorText(error) }],
+        ...compileProvenance(process.env.DOGFOOD_TARGET ?? null, null, null),
+      },
+      wasm: null,
+    });
+    return;
+  }
+  const platform = requestedTarget === "gc" ? (process.env.DOGFOOD_PLATFORM ?? "web") : null;
   // ReactDOM's original tests execute against Jest's jsdom environment. The
   // compiler worker is a separate process, so the parent harness's globals do
   // not cross the process boundary. Install the same explicit browser-global
@@ -175,14 +246,16 @@ async function main() {
     const projectOptions = {
       allowJs: true,
       skipSemanticDiagnostics: true,
-      target: "gc",
-      platform,
+      target: requestedTarget,
+      ...(requestedTarget === "gc" ? { platform } : {}),
       // A package opts into the Node host lane explicitly when it imports
       // path-based `node:fs` APIs. Keep the default web lane hermetic, but do
       // enable the compiler's real-fs capability gate for that same opt-in;
       // otherwise the worker resolves the namespace and still emits a null
       // provider for `readFileSync`/`existsSync`.
-      allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1",
+      ...(requestedTarget === "gc"
+        ? { allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1" }
+        : {}),
       experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
       // The upstream compatibility lane only needs the binary. WAT is a
       // diagnostic artifact and can become quadratic for large generated
@@ -212,8 +285,13 @@ async function main() {
             skipSemanticDiagnostics: true,
             experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
             sourceMap: true,
-            platform,
-            allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1",
+            target: requestedTarget,
+            ...(requestedTarget === "gc"
+              ? {
+                  platform,
+                  allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1",
+                }
+              : {}),
             deferTopLevelInit: true,
           })
         : await compileProject(generatedPath, projectOptions);
@@ -225,6 +303,7 @@ async function main() {
         durationMs: Math.round(performance.now() - started),
         binaryBytes: 0,
         errors: [{ message: errorText(error) }],
+        ...compileProvenance(requestedTarget, null, null),
       },
       wasm: null,
     });
@@ -232,6 +311,7 @@ async function main() {
   }
 
   const durationMs = Math.round(performance.now() - started);
+  const actualTarget = result.targetProfile?.target ?? null;
   // The parent owns two independent deadlines. Signal the stage boundary
   // before validation, instantiation, or an upstream async test can wait on
   // runtime/host behavior and be mislabeled as a compile timeout.
@@ -245,14 +325,27 @@ async function main() {
         binaryBytes: 0,
         errors: result.errors ?? [],
         linkPlan: result.linkPlan ?? null,
+        ...compileProvenance(requestedTarget, actualTarget, null),
       },
       wasm: null,
     });
     return;
   }
 
+  let module;
+  let moduleImports;
+  let linkedModuleImports;
   try {
-    await WebAssembly.compile(result.binary);
+    module = await WebAssembly.compile(result.binary);
+    moduleImports = describeModuleImports(module);
+    linkedModuleImports = (result.linkedModules ?? []).map((artifact) => {
+      try {
+        const linkedModule = new WebAssembly.Module(artifact.binary);
+        return { namespace: artifact.namespace, imports: describeModuleImports(linkedModule), validationError: null };
+      } catch (error) {
+        return { namespace: artifact.namespace, imports: null, validationError: errorText(error) };
+      }
+    });
   } catch (error) {
     emit({
       compile: {
@@ -263,11 +356,21 @@ async function main() {
         linkPlan: result.linkPlan ?? null,
         errors: [],
         validationError: errorText(error),
+        ...compileProvenance(requestedTarget, actualTarget, null),
       },
       wasm: null,
     });
     return;
   }
+
+  const provenance = compileProvenance(requestedTarget, actualTarget, moduleImports, linkedModuleImports);
+  const targetFrontier = !provenance.targetMatches
+    ? `target provenance mismatch: requested ${requestedTarget}, compiler reported ${String(actualTarget)}`
+    : !provenance.importPolicyMatches
+      ? `standalone import gate: expected zero WebAssembly.Module.imports entries, found ${String(
+          provenance.totalModuleImportCount,
+        )}: ${describeImportFrontier(provenance)}`
+      : null;
 
   if (mode === "source") {
     emit({
@@ -278,13 +381,104 @@ async function main() {
         binaryBytes: result.binary.length,
         linkPlan: result.linkPlan ?? null,
         errors: [],
+        ...provenance,
       },
-      wasm: null,
+      wasm: targetFrontier ? { fatal: targetFrontier, count: 0, statuses: [] } : null,
+    });
+    return;
+  }
+
+  if (targetFrontier) {
+    emit({
+      compile: {
+        success: true,
+        validates: true,
+        durationMs,
+        binaryBytes: result.binary.length,
+        linkPlan: result.linkPlan ?? null,
+        errors: [],
+        ...provenance,
+      },
+      wasm: { fatal: targetFrontier, count: 0, statuses: [] },
     });
     return;
   }
 
   try {
+    if (requestedTarget === "standalone") {
+      if (result.linkedModules?.length) {
+        throw new Error(
+          `standalone raw runner does not yet instantiate linked projects (${result.linkedModules.length} provider modules)`,
+        );
+      }
+      const instance = await WebAssembly.instantiate(module, {});
+      try {
+        instance.exports.__module_init?.();
+      } catch (error) {
+        const sourceLocation =
+          process.env.DOGFOOD_SOURCE_DIAG === "1" ? sourceLocationForWasmError(error, result.sourceMap) : null;
+        emit({
+          compile: {
+            success: true,
+            validates: true,
+            durationMs,
+            binaryBytes: result.binary.length,
+            linkPlan: result.linkPlan ?? null,
+            errors: [],
+            ...provenance,
+          },
+          wasm: {
+            fatal: `standalone module init: ${errorText(error, instance)}${
+              sourceLocation ? `\nsource: ${sourceLocation}` : ""
+            }`,
+            count: 0,
+            statuses: [],
+          },
+        });
+        return;
+      }
+
+      const exports = instance.exports;
+      if (typeof exports.upstreamTestCount !== "function") {
+        throw new Error("standalone raw runner requires numeric export upstreamTestCount()");
+      }
+      if (typeof exports.runStandaloneUpstreamTest !== "function") {
+        throw new Error("standalone raw runner requires numeric export runStandaloneUpstreamTest(index)");
+      }
+      const count = Number(exports.upstreamTestCount());
+      if (!Number.isSafeInteger(count) || count < 1) {
+        throw new Error(`standalone raw runner received invalid upstream test count ${String(count)}`);
+      }
+      const rawValues = new Map();
+      const testTimeoutMs = configuredUpstreamTestTimeoutMs();
+      const { statuses, errors } = await runSequentialUpstreamTests({
+        ids: Array.from({ length: count }, (_, index) => index),
+        invoke: (index) => {
+          const value = exports.runStandaloneUpstreamTest(index);
+          rawValues.set(index, value);
+          return value;
+        },
+        timeoutMs: testTimeoutMs,
+        thrownText: (error) => errorText(error, instance),
+        failureText: (index) =>
+          `standalone callback ${index} returned ${String(rawValues.get(index))}; expected numeric 1`,
+      });
+      exports.cleanupUpstreamTestEnvironment?.();
+      emit({
+        compile: {
+          success: true,
+          validates: true,
+          durationMs,
+          binaryBytes: result.binary.length,
+          linkPlan: result.linkPlan ?? null,
+          errors: [],
+          ...provenance,
+        },
+        wasm: { count, statuses, errors },
+      });
+      return;
+    }
+
     const imports = buildCompiledImports(
       result,
       platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1"
@@ -309,6 +503,7 @@ async function main() {
           binaryBytes: result.binary.length,
           linkPlan: result.linkPlan ?? null,
           errors: [],
+          ...provenance,
         },
         wasm: {
           fatal: `module init: ${errorText(error, instance)}${sourceLocation ? `\nsource: ${sourceLocation}` : ""}`,
@@ -369,6 +564,7 @@ async function main() {
         binaryBytes: result.binary.length,
         linkPlan: result.linkPlan ?? null,
         errors: [],
+        ...provenance,
       },
       wasm: { count: Number(exports.upstreamTestCount()), statuses, errors },
     });
@@ -381,6 +577,7 @@ async function main() {
         binaryBytes: result.binary.length,
         linkPlan: result.linkPlan ?? null,
         errors: [],
+        ...provenance,
       },
       wasm: { fatal: errorText(error), count: 0, statuses: [] },
     });
@@ -396,6 +593,7 @@ main().catch((error) => {
         durationMs: 0,
         binaryBytes: 0,
         errors: [{ message: errorText(error) }],
+        ...compileProvenance(process.env.DOGFOOD_TARGET ?? null, null, null),
       },
       wasm: null,
     },

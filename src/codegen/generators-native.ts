@@ -38,6 +38,11 @@ import type { TypeFact } from "../checker/oracle.js";
 import type { FieldDef, Instr, ValType, WasmFunction } from "../ir/types.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
 import { ensureNativeIteratorRuntime } from "./iterator-native.js";
+import {
+  emitNativeForOfTerminator,
+  forOfBindingIsFrameSafe,
+  type NativeForOfTerminator,
+} from "./generators-native-for-of.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import type { CodegenContext, FunctionContext, NativeGeneratorInfo } from "./context/types.js";
 import { reportError } from "./context/errors.js";
@@ -115,6 +120,7 @@ const MAX_NATIVE_GENERATOR_STATES = 256;
  *              else jump to `elseState`. No suspension.
  */
 type StateTerminator =
+  | NativeForOfTerminator
   | { kind: "yield"; expr: ts.Expression | undefined; next: number }
   | { kind: "return"; expr: ts.Expression | undefined }
   | { kind: "done" }
@@ -742,6 +748,10 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
       }
       if (ts.isForStatement(stmt)) {
         if (!lowerFor(stmt, unwind)) return false;
+        continue;
+      }
+      if (ts.isForOfStatement(stmt)) {
+        if (!lowerForOf(stmt, unwind)) return false;
         continue;
       }
 
@@ -1797,6 +1807,50 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     curResumeBindings = [];
     curAbrupt = undefined;
     curUnwind = undefined;
+    return ok;
+  }
+
+  /** Lazy synchronous iteration with a state-lowered IteratorClose region. */
+  function lowerForOf(stmt: ts.ForOfStatement, unwind: readonly UnwindEntry[]): boolean {
+    if (!ctx.standalone || stmt.awaitModifier || stateFinallyDepth > 0 || nodeContainsYield(stmt.expression))
+      return fail();
+    if (!ts.isVariableDeclarationList(stmt.initializer) || stmt.initializer.declarations.length !== 1) return fail();
+    const binding = stmt.initializer.declarations[0]!;
+    if (!ts.isIdentifier(binding.name) || loopBodyHasUnsupportedJump(stmt.statement)) return fail();
+    if (!forOfBindingIsFrameSafe(decl.body!, binding.name)) return fail();
+    if (decl.parameters.some((p) => ts.isIdentifier(p.name) && p.name.text === binding.name.getText())) return fail();
+    const iterator = continuationSpillName("operand");
+    addSpill(iterator);
+    continuationSpillTypes.set(iterator, { kind: "externref" });
+    needsPending = true;
+    hasThrowRoutes = true;
+    const outerRoute = curThrowRoute;
+    const header = reserveState();
+    const exit = reserveState();
+    const close = reserveState();
+    const closeExit = reserveState();
+    const region: TryRegionPlan = { finallyEntryState: close };
+    finishState(curId, { kind: "iterator-init", subject: stmt.expression, iterator, next: header });
+    curThrowRoute = { kind: "finally", region };
+    const bodyEntry = reserveState();
+    resetCursor(bodyEntry);
+    const bodyOk = lowerStatements(thenBody(stmt.statement), [...unwind, { kind: "finally", region }], false);
+    curThrowRoute = outerRoute;
+    if (!bodyOk) return false;
+    finishState(curId, { kind: "jump", next: header });
+    resetCursor(header);
+    finishState(header, {
+      kind: "iterator-step",
+      iterator,
+      binding: binding.name.text,
+      bodyState: bodyEntry,
+      doneState: exit,
+    });
+    resetCursor(close);
+    finishState(close, { kind: "iterator-close", iterator, next: closeExit });
+    resetCursor(closeExit);
+    finishState(closeExit, { kind: "finally-exit", join: exit, unwind: [...unwind].reverse() });
+    resetCursor(exit);
     return ok;
   }
 
@@ -4237,6 +4291,11 @@ function compileState(
 
   const term = state.terminator;
   switch (term.kind) {
+    case "iterator-init":
+    case "iterator-step":
+    case "iterator-close":
+      emitNativeForOfTerminator(ctx, fctx, info, term, selfLocal, loopDepth);
+      break;
     case "yield": {
       const tmp = withNativeGeneratorContinuationLocals(ctx, fctx, state.continuationReplacements, () =>
         emitYieldValueAsElem(ctx, fctx, term.expr, info),

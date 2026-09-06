@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { objectLiteralHasIndexedSpread } from "./indexed-object-spread.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -537,6 +538,7 @@ import { compileDeclarations } from "./audited-declarations.js";
 import { snapshotLegacyBodyAudit } from "./legacy-body-audit.js";
 import type { ModuleInitMode } from "./declarations.js";
 import { prepareModuleTdzGlobals } from "./module-global-registration.js";
+import { projectModuleBindings } from "./module-binding-projection.js";
 import { hoistedVarPreInitValueIsObserved } from "./declarations/hoisted-var-preinit-read.js";
 import { inferParamTypeFromCallSites } from "./declarations/param-return-inference.js";
 import {
@@ -10848,6 +10850,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
           ctx.funcMap.set(name, idx);
         }
         rebindPerSourceGeneratorState(ctx, ownNativeGenBySource.get(sf), ownFuncIdxBySource.get(sf));
+        projectModuleBindings(ctx, sf);
         profilePhase(sf.fileName, () => {
           if (multiPreparedProgram) multiPreparedProgram.compileBodySource(sf, moduleInitMode);
           else compileDeclarations(ctx, sf, undefined, undefined, undefined, moduleInitMode);
@@ -12250,15 +12253,12 @@ function inheritsMapCarrier(checker: ts.TypeChecker, type: ts.Type | undefined, 
 }
 
 /**
- * Return the ambient host class that implements a Map-refining interface.
- *
- * JS-host builds can dispatch `PragmaMap extends Map` directly through the
- * ordinary Map imports. Native-string/standalone builds deliberately retain
- * their existing exact-symbol routing until the native Map runtime supports
- * refined interface receivers as a separate change.
+ * Return the ambient Map family implemented by a refining interface.
+ * Host and native dispatch use the same inheritance proof; the selected
+ * target still determines whether the carrier is externref or native Map.
  */
 export function hostMapCarrierClassName(ctx: CodegenContext, type: ts.Type): "Map" | undefined {
-  return !ctx.nativeStrings && inheritsMapCarrier(ctx.checker, type) ? "Map" : undefined;
+  return inheritsMapCarrier(ctx.checker, type) ? "Map" : undefined;
 }
 
 /**
@@ -12440,7 +12440,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // the same native Map instance, just as NodeArray is a view over Array.
     // Resolve it before the named-interface struct lookup below so method calls
     // retain the `$Map` receiver created by `new Map()`.
-    if (hostMapCarrierClassName(ctx, tsType) !== undefined) {
+    if (!ctx.nativeStrings && hostMapCarrierClassName(ctx, tsType) !== undefined) {
       return { kind: "externref" };
     }
 
@@ -12512,7 +12512,7 @@ export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0
     // becomes `ref $Map` so `new Map()` stores directly and method/.size
     // dispatch reads a typed receiver (no externref round-trip / illegal cast).
     // JS-host mode keeps Map as an externref-backed externClass (falls through).
-    if (builtinSymName === "Map" && ctx.nativeStrings) {
+    if (ctx.nativeStrings && (builtinSymName === "Map" || inheritsMapCarrier(ctx.checker, tsType))) {
       ensureMapRuntimeTypes(ctx);
       if (ctx.mapTypeIdx >= 0) return { kind: "ref", typeIdx: ctx.mapTypeIdx };
     }
@@ -13728,7 +13728,7 @@ function hoistVarDecl(
           (spreadCtxType.flags & ts.TypeFlags.Unknown) !== 0 ||
           (spreadCtxType.flags & ts.TypeFlags.NonPrimitive) !== 0 ||
           spreadCtxType.getProperties().length === 0;
-        if (nonSpecificCtx) initForcesExternref = true;
+        if (nonSpecificCtx || objectLiteralHasIndexedSpread(ctx, decl.initializer)) initForcesExternref = true;
       }
     }
     // (#684) Usage-narrowed f64 override for a boxed-`any` var — computed

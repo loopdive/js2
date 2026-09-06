@@ -6,6 +6,8 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts, forEachChild } from "../ts-api.js";
+import { objectLiteralHasIndexedSpread } from "./indexed-object-spread.js";
+import { registerResolvedRestParameter } from "./resolved-rest-parameter.js";
 import {
   isBigIntType,
   isBooleanType,
@@ -186,6 +188,7 @@ import {
   reserveModuleInitChunkHelperName,
 } from "./module-init-chunks.js";
 import { emitModuleVarUndefinedSeeds } from "./declarations/module-var-undefined-seed.js";
+import { projectModuleBindings } from "./module-binding-projection.js";
 import { inferStandaloneRegExpMatchGlobalType } from "./regexp-standalone.js";
 import {
   prepareModuleTdzGlobals,
@@ -717,14 +720,18 @@ function assertedMutableStructuralParamCarrier(
   wasmType: ValType,
   paramType: ts.Type,
 ): AssertedMutableStructuralParamCarrier | undefined {
-  if (!stmt.body || !ts.isIdentifier(param.name) || noJsHost(ctx)) return undefined;
-
+  if (!stmt.body || !ts.isIdentifier(param.name)) return undefined;
   const hasDoublyAssertedCall =
     (wasmType.kind === "ref" || wasmType.kind === "ref_null") &&
     parameterHasPropertyWrite(ctx, param, stmt) &&
     assertedStructuralParamsByContext.get(ctx)?.get(stmt)?.has(index);
   const hasGenericAssertedWrite =
-    isDirectObjectTypeParameter(ctx, param, stmt, paramType) && parameterHasAssertedPropertyWrite(ctx, param, stmt);
+    // Generic concrete native parameters retain their struct dispatch. A
+    // proven double-asserted mutable call, however, must preserve the source
+    // identity in either lane instead of copying/casting a sibling struct.
+    (!noJsHost(ctx) || wasmType.kind === "externref" || wasmType.kind === "ref_extern") &&
+    isDirectObjectTypeParameter(ctx, param, stmt, paramType) &&
+    parameterHasAssertedPropertyWrite(ctx, param, stmt);
   if (!hasDoublyAssertedCall && !hasGenericAssertedWrite) return undefined;
   return {
     open: true,
@@ -1681,8 +1688,21 @@ function resolveGenericDeclarationCallSiteTypes(
     lowerParamType(ctx, param, name, index, stmt, sourceFile),
   );
   if (!resolved) return null;
+  const identityReturnParamIndex = directIdentityReturnParamIndex(stmt);
   const params = resolved.params.map((wasmType, index) => {
     const param = stmt.parameters[index];
+    // A shared constrained T -> T body must accept every subtype, not the
+    // nominal subtype observed at its first call. Native structs can retain
+    // the declared constraint carrier without the host lane's open-object ABI.
+    if (
+      param &&
+      noJsHost(ctx) &&
+      identityReturnParamIndex === index &&
+      isDirectObjectTypeParameter(ctx, param, stmt, ctx.checker.getTypeAtLocation(param)) &&
+      nativeTypeOfDeclaration(ctx.checker, param) === null
+    ) {
+      return lowerParamType(ctx, param, name, index, stmt, sourceFile);
+    }
     // The checker-resolved signature of a generic call includes every formal,
     // even when the call omitted an optional one. Do not let that specialization
     // bypass lowerParamType's undefined-capable ABI: a scalar slot would receive
@@ -1711,13 +1731,31 @@ function resolveGenericDeclarationCallSiteTypes(
     const paramType = ctx.checker.getTypeAtLocation(param);
     return preserveIdentityForStructuralParam(ctx, param, index, stmt, wasmType, paramType);
   });
-  const identityReturnParamIndex = directIdentityReturnParamIndex(stmt);
   const identityCarrier = identityReturnParamIndex === undefined ? undefined : params[identityReturnParamIndex];
   const callbackResultCarrier = genericCallbackResultDeclaration(ctx, stmt)
     ? ({ kind: "externref" } as const)
     : undefined;
   const freshFactorySource = genericStructFactorySourceResultAbi(ctx, stmt);
   const freshFactoryCarrier = freshFactorySource ? resolveWasmType(ctx, freshFactorySource) : undefined;
+  const signature = ctx.checker.getSignatureFromDeclaration(stmt);
+  const declaredResult = signature && ctx.checker.getReturnTypeOfSignature(signature);
+  const arrayElement =
+    declaredResult && ctx.checker.isArrayType(declaredResult)
+      ? ctx.checker.getTypeArguments(declaredResult as ts.TypeReference)[0]
+      : undefined;
+  const arrayParameterIndex = stmt.parameters.findIndex(
+    (param) => ctx.checker.getTypeAtLocation(param) === declaredResult,
+  );
+  // A single generic body cannot specialize T[] to the first caller's element.
+  // Keep its erased element carrier; each caller projects the returned array.
+  const genericArrayCarrier =
+    arrayElement &&
+    (arrayElement.flags & ts.TypeFlags.TypeParameter) !== 0 &&
+    !ctx.checker.getBaseConstraintOfType(arrayElement)
+      ? arrayParameterIndex >= 0
+        ? params[arrayParameterIndex]
+        : resolveWasmType(ctx, declaredResult!)
+      : undefined;
   // (#1058) `finishNode<T extends Node>(node: T): T` is called with many
   // concrete TypeScript AST node layouts. Its parameter is already widened to
   // externref to preserve those identities, but the result used to retain the
@@ -1730,17 +1768,29 @@ function resolveGenericDeclarationCallSiteTypes(
   // empty result vector. TypeScript's runtime Parser namespace has exactly that
   // order: its reset callback precedes scalar and AST-producing callbacks.
   const results =
-    resolved.results.length === 1 &&
-    freshFactoryCarrier !== undefined &&
-    (freshFactoryCarrier.kind === "ref" || freshFactoryCarrier.kind === "ref_null")
-      ? [freshFactoryCarrier]
-      : callbackResultCarrier !== undefined
-        ? [callbackResultCarrier]
-        : resolved.results.length === 1 &&
-            identityCarrier !== undefined &&
-            (identityCarrier.kind === "externref" || identityCarrier.kind === "ref_extern")
-          ? [identityCarrier]
-          : resolved.results;
+    genericArrayCarrier !== undefined
+      ? [genericArrayCarrier]
+      : resolved.results.length === 1 &&
+          freshFactoryCarrier !== undefined &&
+          (freshFactoryCarrier.kind === "ref" || freshFactoryCarrier.kind === "ref_null")
+        ? [freshFactoryCarrier]
+        : callbackResultCarrier !== undefined
+          ? [callbackResultCarrier]
+          : resolved.results.length === 1 &&
+              identityCarrier !== undefined &&
+              (identityCarrier.kind === "externref" ||
+                identityCarrier.kind === "ref_extern" ||
+                identityCarrier.kind === "ref" ||
+                identityCarrier.kind === "ref_null")
+            ? [identityCarrier]
+            : declaredResult &&
+                (declaredResult.flags & ts.TypeFlags.TypeParameter) !== 0 &&
+                !ctx.checker.getBaseConstraintOfType(declaredResult)
+              ? // A shared unconstrained T result cannot use its first call's
+                // void/scalar ABI even when callback provenance is unprovable.
+                // Keep the declaration's erased result; callers narrow it.
+                [{ kind: "externref" } as ValType]
+              : resolved.results;
   return {
     params,
     results,
@@ -1803,6 +1853,7 @@ function registerBodylessFunctionDeclaration(
   } else if (resolved) {
     params = resolved.params;
     results = resolved.results;
+    registerResolvedRestParameter(ctx, stmt, name, params);
   } else {
     params = [];
     for (let i = 0; i < stmt.parameters.length; i++) {
@@ -2922,6 +2973,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // Use call-site resolved types for generic functions
         params = resolved.params;
         results = resolved.results;
+        registerResolvedRestParameter(ctx, stmt, name, params);
       } else {
         params = [];
         for (let i = 0; i < stmt.parameters.length; i++) {
@@ -3384,6 +3436,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
     // the null-access payload before strict [[Set]] can produce TypeError.
     if (!ctx.sourceIsModule && decl.initializer.kind === ts.SyntaxKind.ThisKeyword) return true;
     if (!ts.isObjectLiteralExpression(decl.initializer)) return false;
+    if (objectLiteralHasIndexedSpread(ctx, decl.initializer)) return true;
     // (#802 Slice A / #4163) A proto-RECEIVER or proto-SOURCE object literal
     // (marked by scanForDynamicProto, which runs before declaration collection)
     // is built as an open `$Object` (externref) by the literals.ts routing —
@@ -5987,6 +6040,7 @@ export function compileDeclarations(
       return;
     }
 
+    projectModuleBindings(ctx, initEntry.statement.getSourceFile());
     const group = runtimeModuleGroupForStatement(initEntry.statement);
     if (group) {
       withRuntimeModuleBindings(ctx, group, exactRuntimeModuleFunctionEntries(ctx, group), () => {
@@ -6303,6 +6357,7 @@ export function compileDeclarations(
     }
   }
 
+  projectModuleBindings(ctx, sourceFile);
   // Compile top-level function declarations
   for (const stmt of sourceFile.statements) {
     if (ts.isFunctionDeclaration(stmt) && (stmt.name || hasExportModifier(stmt)) && !hasDeclareModifier(stmt)) {

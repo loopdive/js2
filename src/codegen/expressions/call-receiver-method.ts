@@ -89,7 +89,7 @@ import {
   STRING_METHODS,
   typedArrayVecStorage,
 } from "../index.js";
-import { isTaViewTypeIdx } from "../registry/types.js";
+import { isTaViewTypeIdx, taCtorKindOf } from "../registry/types.js";
 import { ensureIteratorNextCallableHandle } from "../iter-hof-native.js";
 import { isLazyIterForm, LAZY_ITER_METHODS } from "../iter-lazy-native.js";
 import { stringConstantExternrefInstrs } from "../native-strings.js";
@@ -134,9 +134,10 @@ import { ensureTaMapFilterHelper } from "../ta-hof-map-filter.js";
 import { ensureUint8ToBase64, ensureUint8ToHex } from "../uint8-codec.js";
 import { tryCompileTemporalMethodCall } from "../temporal-native.js";
 import { ensureTextEncodingHelpers } from "../text-encoding-native.js";
+import { tryVecPrototypeToString } from "../vec-prototype-method-call.js";
 import { isArgumentsObjectIdentifier } from "../arguments-object-mop.js";
 import { emitSymbolArgToNumberThrow } from "../tonumber-symbol-throw.js"; // (#4779)
-import { defaultValueInstrs, emitGuardedRefCast, pushDefaultValue } from "../type-coercion.js";
+import { defaultValueInstrs, emitGuardedRefCast, getVecInfo, pushDefaultValue } from "../type-coercion.js";
 import { compileDateMethodCall } from "./builtins.js";
 // (#4479 slice 2) Annex B §B.2.2 legacy accessor methods on an ordinary receiver.
 import { tryCompileAnnexBAccessorCall } from "../object-proto-annex-b-accessors.js";
@@ -266,6 +267,7 @@ import {
   emitWrapperDynamicMethodCall,
   flattenCallArgs,
   isNumberDotPrototype,
+  isGlobalBuiltinIdentifier,
   isNumberMethodReceiver,
   normalizeNaNToZero,
   resolveAssignedNominalType,
@@ -2641,6 +2643,8 @@ export function compileReceiverMethodCall(
     ctx.standalone &&
     ts.isPropertyAccessExpression(propAccess) &&
     tracesToTypedArrayIntrinsicProto(ctx, propAccess.expression);
+  const vecPrototypeCall = tryVecPrototypeToString(ctx, fctx, expr, propAccess, receiverType);
+  if (vecPrototypeCall !== undefined) return vecPrototypeCall;
   if (
     !receiverIsTypedArrayIntrinsicProto &&
     !(
@@ -4567,7 +4571,9 @@ export function compileReceiverMethodCall(
         );
         // For built-in class identifiers, import __get_builtin to resolve real JS object
         const receiverIsBuiltin =
-          ts.isIdentifier(propAccess.expression) && BUILTIN_CLASS_NAMES.has(propAccess.expression.text);
+          ts.isIdentifier(propAccess.expression) &&
+          BUILTIN_CLASS_NAMES.has(propAccess.expression.text) &&
+          isGlobalBuiltinIdentifier(ctx, fctx, propAccess.expression);
         const getBuiltinIdx = receiverIsBuiltin
           ? ensureLateImport(ctx, "__get_builtin", [{ kind: "externref" }], [{ kind: "externref" }])
           : undefined;
@@ -4642,6 +4648,19 @@ export function compileReceiverMethodCall(
         return { kind: "externref" };
       }
     }
+  }
+
+  // Packed typed arrays can inherit user methods through their prototype
+  // override. Earlier compiled-method paths retain precedence; marshal the
+  // raw vec here so inherited `this` refers to the original byte storage.
+  if (
+    ctx.standalone &&
+    (recvWasm.kind === "ref" || recvWasm.kind === "ref_null") &&
+    getVecInfo(ctx, recvWasm.typeIdx) !== null &&
+    taCtorKindOf(recvTsType.symbol?.name ?? "") >= 0
+  ) {
+    const delegated = emitFnctorSubclassDynamicMethodCall(ctx, fctx, expr, propAccess, propAccess.name.text, true);
+    if (delegated !== undefined) return delegated;
   }
 
   // (#3201) Unknown-method fallback for NATIVE (ref/ref_null) receivers on

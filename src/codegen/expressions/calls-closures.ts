@@ -126,27 +126,18 @@ type FuncCandidate = {
  * `(externref) -> externref`, while a concrete interface field holding it can
  * be called as `(ref Box) -> ref Box`. Both crossings preserve the same GC
  * reference: export the concrete argument and narrow the declared concrete
- * result at the field boundary. In standalone, #5255 admits the analogous
- * result-only crossing only for a registered native-generator state. `$AnyValue`
+ * result at the field boundary. These Wasm conversions need no host imports
+ * and preserve native-generator state references as well. `$AnyValue`
  * is a tagged carrier rather than a raw object reference, so it must keep its
  * semantic projection path.
  */
 function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValType): Instr[] | null {
   const isHostExtern = (type: ValType): boolean => type.kind === "externref" || type.kind === "ref_extern";
   if (valTypesMatch(from, to) || (isHostExtern(from) && isHostExtern(to))) return [];
-  if (ctx.standalone || ctx.wasi) {
-    if ((from.kind === "ref" || from.kind === "ref_null") && isHostExtern(to)) {
-      for (const info of ctx.nativeGenerators.values()) {
-        if (info.stateTypeIdx === from.typeIdx) return [{ op: "extern.convert_any" }];
-      }
-    }
-    return null;
-  }
-
   if ((from.kind === "ref" || from.kind === "ref_null") && from.typeIdx !== ctx.anyValueTypeIdx && isHostExtern(to)) {
     return [{ op: "extern.convert_any" }];
   }
-  if (isHostExtern(from) && (to.kind === "ref" || to.kind === "ref_null")) {
+  if (isHostExtern(from) && (to.kind === "ref" || to.kind === "ref_null") && to.typeIdx !== ctx.anyValueTypeIdx) {
     return [
       { op: "any.convert_extern" },
       { op: to.kind === "ref_null" ? "ref.cast_null" : "ref.cast", typeIdx: to.typeIdx },

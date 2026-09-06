@@ -901,7 +901,10 @@ export function tryCompileNativeGeneratorResultProperty(
     valueStaticNumeric = mapped.kind === "f64" || mapped.kind === "i32";
   }
 
-  if (valueStaticNumeric) {
+  // A generic generator can instantiate to number while its shared result
+  // frame still carries externref. Do not filter that actual frame out of the
+  // reader merely because this consumer has a numeric TypeScript annotation.
+  if (valueStaticNumeric && resultEntries.every((entry) => entry.elemValType.kind === "f64")) {
     // Statically-numeric `.value`: the historical f64-singleton fast path.
     // (#2864 wave-2 S1) The read itself is byte-identical — but the RESULT now
     // carries the `undefSentinel` brand. The pre-existing rationale here ("an

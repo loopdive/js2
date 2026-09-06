@@ -15,6 +15,7 @@
  */
 
 import { ts, forEachChild } from "../ts-api.js";
+import { preserveOptionalDeclarationParameter } from "./optional-declaration-parameter.js";
 import { isVoidType, unwrapPromiseType, isPromiseType } from "../checker/type-mapper.js";
 import type { FieldDef, Instr, LocalDef, StructTypeDef, ValType } from "../ir/types.js";
 import { isStandalonePromiseActive } from "./async-scheduler.js"; // (#2867 Gap 1) native-$Promise carrier gate
@@ -2041,6 +2042,7 @@ export function computeClosureWrapperSig(
         : !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
           ? EXTERNREF_PARAM
           : resolveWasmType(ctx, paramType);
+    if (ts.isFunctionDeclaration(arrow)) wasmType = preserveOptionalDeclarationParameter(ctx, p, wasmType);
     // JSDoc optional parameters (for example `@param {number=} size`) are
     // commonly exported from JavaScript modules and called from a different
     // source file. The local call-site scan cannot see those callers, so a
