@@ -1,0 +1,11 @@
+{
+  "id": "3518",
+  "slice": "call-arg-ref-nullability",
+  "assignee": "ttraenkler/astra-ir-producers-b-20260905",
+  "requested_by": "ttraenkler/astra-ir-producers-b-20260905",
+  "status": "in-progress",
+  "branch": "codex/3518-call-arg-ref-nullability-20260906",
+  "claimed_at": "2026-09-06T19:16:00Z",
+  "updated_at": "2026-09-06T19:16:00Z",
+  "write_id": "46919-0hz5e426"
+}
