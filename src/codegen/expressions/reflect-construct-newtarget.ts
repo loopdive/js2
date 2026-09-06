@@ -57,7 +57,15 @@
  *     global keyed by class NAME (#2023); the constructed frame cannot carry a
  *     NewTarget VALUE, so the body reads `undefined` and a standard
  *     `if (new.target === undefined) throw` guard fires where node constructs.
- *     Refused.
+ *     Refused. A read inside a NESTED function counts too whenever that
+ *     function can itself be constructed — `readsNewTarget` explains why.
+ *   - **A dynamic (reassigned) in-file function target that can hold anything
+ *     but an ordinary function.** Review round 1 found this admitted on the
+ *     kind of the binding's INITIALIZER alone, so `T = A` (async),
+ *     `T = () => {}`, `T = function*(){}`, `T = C`, `T = G.bind(null)`,
+ *     `T = undefined` and an alias chain all compiled and answered wrongly.
+ *     `dynamicTargetIsAllOrdinaryFunctions` enumerates the value set instead,
+ *     and also refuses a binding carrying an explicit type annotation.
  *   - **A NewTarget expression that is not a bare identifier.** The fallback
  *     route hands target+arguments to `compileNewExpression`, which evaluates
  *     AND constructs in one step, and §26.1.2 requires the IsConstructor check
@@ -271,6 +279,87 @@ function isPlainFunctionLike(node: ts.FunctionDeclaration | ts.FunctionExpressio
 }
 
 /**
+ * Can `target` — a REASSIGNED binding, which `isUnreassignedOrdinaryFunction`
+ * by definition rejects — only ever hold an ordinary function?
+ *
+ * The r4 cut admitted such a binding on the KIND OF ITS INITIALIZER alone
+ * (`let T = F` ⇒ "function") and never looked at the later writes, so every
+ * `T = <something else>` compiled and answered WRONGLY where base refused
+ * (review round 1, all measured `--target standalone` vs node 22):
+ * `T = A` async and `T = A2` through a `const A2 = A` alias returned an object
+ * at 5 where node throws TypeError 0 (`c2`, `o1`); likewise `T = () => {}`
+ * (`c3`), `T = function*(){}` (`c4`) and `T = undefined` (`o3`). `T = C` for a
+ * class read prototype+field 13 vs node 3 (`i5`), and `T = G.bind(null)`
+ * answered NaN vs node 2 (`o2`).
+ *
+ * So the value set is enumerated instead: the declaration's initializer plus
+ * the right-hand side of every plain `T = …` in the file. Every member must be
+ * an unreassigned ordinary function declaration — no alias hop, no call
+ * result, no class, no arrow, no async/generator — and any write whose value
+ * set is not enumerable (`+=`, `++`, a destructuring target, a `for…of`
+ * binding, `with`, direct `eval`) refuses outright.
+ *
+ * An explicit type ANNOTATION on the binding also refuses. `let T: any = F;
+ * T = G` is not the same program as `let T = F; T = G` for the compiled
+ * callee lowering: it read a wrong prototype (`b1` 4 vs node 2) and trapped on
+ * the following field read (`i3`). Consulting the declared type is legitimate
+ * here because the only thing it can do is turn an answer into a refusal.
+ */
+function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!ts.isIdentifier(target)) return false;
+  const name = target.text;
+  const source = target.getSourceFile();
+  const declarations = ctx.oracle.declarationsOf(target).filter((d) => d.getSourceFile() === source);
+  if (declarations.length !== 1) return false;
+  const declaration = declarations[0]!;
+  const values: ts.Expression[] = [];
+  if (ts.isFunctionDeclaration(declaration)) {
+    if (!isPlainFunctionLike(declaration)) return false;
+  } else if (ts.isVariableDeclaration(declaration)) {
+    // `let T: any = F` steers a different callee lowering than `let T = F`.
+    if (declaration.type !== undefined) return false;
+    if (declaration.initializer === undefined) return false;
+    values.push(declaration.initializer);
+  } else {
+    return false;
+  }
+
+  let enumerable = true;
+  const visit = (node: ts.Node): void => {
+    if (!enumerable) return;
+    if (
+      ts.isWithStatement(node) ||
+      (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") ||
+      ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        ts.isIdentifier(node.operand) &&
+        node.operand.text === name) ||
+      ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && mentions(node.initializer, name))
+    ) {
+      enumerable = false;
+      return;
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      mentions(node.left, name)
+    ) {
+      // Only a plain `T = <expr>` contributes a value that can be read off the
+      // source; a compound assignment or a destructuring target does not.
+      if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !isNamed(node.left, name)) {
+        enumerable = false;
+        return;
+      }
+      values.push(node.right);
+    }
+    forEachChild(node, visit);
+  };
+  visit(source);
+  if (!enumerable || values.length === 0) return false;
+  return values.every((value) => isUnreassignedOrdinaryFunction(ctx, value));
+}
+
+/**
  * Any construct that could make `name` denote something other than the single
  * function declaration: an assignment, a `++`/`--`, a second binding (var /
  * let / const / parameter / catch / import / class), a destructuring target, or
@@ -452,23 +541,6 @@ const UNSETTABLE_PROTOTYPE_CONSTRUCTORS: ReadonlySet<string> = new Set([
   "WeakSet",
 ]);
 
-/**
- * Does `expr` resolve to an `async function` declared in this file (through at
- * most `depth` `const x = y` aliases)? Such a target is not a constructor.
- */
-function resolvesToAsyncFunction(ctx: CodegenContext, expr: ts.Expression, depth = 4): boolean {
-  const isAsync = (node: ts.FunctionDeclaration | ts.FunctionExpression): boolean =>
-    node.modifiers?.some((m: ts.ModifierLike) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false;
-  if (ts.isFunctionExpression(expr)) return isAsync(expr);
-  if (!ts.isIdentifier(expr) || depth <= 0) return false;
-  const declarations = ctx.oracle.declarationsOf(expr);
-  if (declarations.some((d) => ts.isFunctionDeclaration(d) && isAsync(d))) return true;
-  if (declarations.length !== 1) return false;
-  if (!ts.isVariableDeclaration(declarations[0]!)) return false;
-  const initializer = ctx.oracle.variableInitializerOf(expr);
-  return initializer !== undefined && resolvesToAsyncFunction(ctx, initializer, depth - 1);
-}
-
 /** What a value expression provably denotes, for the gate below. */
 type BindingKind =
   | { kind: "class" }
@@ -504,8 +576,16 @@ function resolveBindingKind(ctx: CodegenContext, expr: ts.Expression, depth = 4)
  *
  * `new.target` is scoped to the nearest enclosing non-arrow function
  * environment (ES §9.1.1.3). An ordinary function, a method, an accessor and a
- * class constructor each get their own; an arrow function, a class field
- * initialiser and a class static block do NOT — they read the enclosing one.
+ * class constructor each get their own; an arrow function does NOT — it reads
+ * the enclosing one.
+ *
+ * A class field initialiser and a class static block are NOT owners either,
+ * but they do not inherit the enclosing `new.target` the way an arrow does:
+ * §15.7.10 [[Call]]s them, so they see `undefined`. `a4_class_field.ts` pins
+ * that (node 1). They are still descended into rather than treated as owners —
+ * measured on this tree, treating them as owners admits `a4` at 2 where node
+ * answers 1, because the compiled class-field lowering reports a defined
+ * `new.target` there. Descending keeps the site refused, which is correct.
  */
 function ownsNewTarget(node: ts.Node): boolean {
   return (
@@ -521,14 +601,24 @@ function ownsNewTarget(node: ts.Node): boolean {
 /**
  * Does `node`'s BODY read the `new.target` that `node` itself introduces?
  *
- * The scan stops at every nested scope that owns a `new.target` of its own, so
- * `function F(){ function inner(){ return new.target; } }` does not count as a
- * read by `F` — `inner`'s `new.target` is `inner`'s, and under
- * `Reflect.construct(F, [], NT)` node answers `undefined` for it, which is what
- * the compiled i32 class-id lowering already answers. Descent continues through
- * arrows, class field initialisers and static blocks, which inherit.
+ * The scan stops at a nested scope that owns a `new.target` of its own ONLY
+ * when that scope can never be constructed, so
+ * `function F(){ function inner(){ return new.target; } inner(); }` does not
+ * count as a read by `F` — `inner`'s `new.target` is `inner`'s, and a plain
+ * call gives `undefined` on both sides.
+ *
+ * A nested function that IS constructed is a different case, and the r4 cut
+ * got it wrong: `k1_nested_ctor_use.ts` does `new inner()` inside the target,
+ * where node reads `inner`'s own `new.target` as defined (2) and the compiled
+ * class-id lowering reads it as `undefined` (1). So the stop is kept only for
+ * a nested function whose name never appears anywhere but a direct call —
+ * anything else (a `new`, a `Reflect.construct` argument, a `.bind`, any
+ * escape) counts as a read and refuses the site.
+ *
+ * Descent continues through arrows, class field initialisers and static blocks.
  */
 function readsNewTarget(node: ts.Node): boolean {
+  const source = node.getSourceFile();
   let found = false;
   const visit = (child: ts.Node): void => {
     if (found) return;
@@ -536,11 +626,52 @@ function readsNewTarget(node: ts.Node): boolean {
       found = true;
       return;
     }
-    if (ownsNewTarget(child)) return;
+    if (ownsNewTarget(child) && neverConstructed(source, child)) return;
     forEachChild(child, visit);
   };
   forEachChild(node, visit);
   return found;
+}
+
+/**
+ * Can this nested `new.target` owner provably never be reached by
+ * [[Construct]]? Only then may the scan stop at it.
+ */
+function neverConstructed(source: ts.SourceFile, node: ts.Node): boolean {
+  // Methods and accessors have no [[Construct]] at all.
+  if (ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) {
+    return true;
+  }
+  if (ts.isConstructorDeclaration(node)) return false;
+  const name = ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ? node.name : undefined;
+  // An anonymous function expression is unreachable by name; only an immediate
+  // call leaves it unconstructible.
+  if (name === undefined) return isImmediatelyCalled(node);
+  let escapes = false;
+  const visit = (child: ts.Node): void => {
+    if (escapes) return;
+    if (ts.isIdentifier(child) && child.text === name.text && child !== name && !isDirectCallee(child)) {
+      escapes = true;
+      return;
+    }
+    forEachChild(child, visit);
+  };
+  visit(source);
+  return !escapes;
+}
+
+/** Is `id` the callee of a plain `id(...)` call — the one benign mention? */
+function isDirectCallee(id: ts.Identifier): boolean {
+  const parent = id.parent as ts.Node | undefined;
+  return parent !== undefined && ts.isCallExpression(parent) && parent.expression === id;
+}
+
+/** Is this function expression the callee of its own immediate call (an IIFE)? */
+function isImmediatelyCalled(node: ts.Node): boolean {
+  let outer: ts.Node = node;
+  while (outer.parent !== undefined && ts.isParenthesizedExpression(outer.parent)) outer = outer.parent;
+  const parent = outer.parent as ts.Node | undefined;
+  return parent !== undefined && ts.isCallExpression(parent) && parent.expression === outer;
 }
 
 /**
@@ -769,19 +900,14 @@ export function classifyRuntimeNewTargetSite(
     // driver's argument-shape conditions too.
     if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
     if (args.some((a) => ts.isSpreadElement(a))) return undefined;
-    // An `async function` is not a constructor: node throws a TypeError, the
-    // carrier route returns an object (`j11_async_target.js`: node 1, admitted
-    // 0). A generator function target DOES throw correctly there (node 1,
-    // admitted 1) and is not excluded.
-    if (resolvesToAsyncFunction(ctx, target)) return undefined;
-    // RESIDUAL, recorded rather than refused: a dynamic target whose binding is
-    // annotated `any` (`let T: any = F; T = G;`) traps here. That trap is the
-    // `any`-callee construct lowering, not this arm — on BASE, with no distinct
-    // NewTarget at all, `Reflect.construct(T, [1])` on the same binding traps
-    // identically, and `new T(1)` answers 1 where node answers 0. The untyped
-    // spelling `let T = F` answers node. Refusing on a declared type would put
-    // a wasm-lowering question inside a source-shape gate; the fix belongs in
-    // that lowering.
+    // Every value the binding can hold must be an ordinary function. Resolving
+    // the binding by the KIND OF ITS INITIALIZER admitted `T = A` (async),
+    // `T = () => {}`, `T = function*(){}`, `T = C`, `T = G.bind(null)` and
+    // `T = undefined` and answered each of them wrongly where base refused;
+    // see `dynamicTargetIsAllOrdinaryFunctions` for the measurements. That
+    // predicate also refuses an annotated binding, which is the `let T: any`
+    // wrong-prototype case this branch used to record as a residual.
+    if (!dynamicTargetIsAllOrdinaryFunctions(ctx, target)) return undefined;
     return prototypeIsPristine(ctx, newTarget) ? "carrier" : undefined;
   }
   if (targetKind.kind === "foreign") {
