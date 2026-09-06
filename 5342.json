@@ -1,10 +1,11 @@
 {
   "id": "5342",
   "assignee": "ttraenkler/senior-dev",
-  "requested_by": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5342a-callable-property-host-builtin",
   "claimed_at": "2026-09-06T03:56:53Z",
-  "updated_at": "2026-09-06T03:56:53Z",
-  "write_id": "14685-gvqhk4zx"
+  "updated_at": "2026-09-06T06:41:25Z",
+  "write_id": "19070-uds9c4mh",
+  "released_at": "2026-09-06T06:41:25Z"
 }
