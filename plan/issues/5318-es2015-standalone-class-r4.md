@@ -365,6 +365,63 @@ the single-assignment / shadowing proof or a runtime check — never a name.
   sha, and every residual with its mechanism.
 
 
+## Implementation Plan — r5 / round 2 (2026-09-05, Fable lane; Opus-medium implements)
+
+Scope: restore the nested-class static-accessor installs the round-1
+compiled-body gate over-declines (see "Review round 1 — reviewer verdict, and
+the round-2 residual" above), then the object-literal computed-key residuals
+that share r4's evaluated-key install mechanism.
+
+1. **Tri-state gate with a hardened syntactic fallback** —
+   `src/codegen/class-static-sidecar.ts::staticAccessorHalfIsReceiverFree`
+   becomes `readsThis === false || (readsThis === undefined &&
+   syntacticallyReceiverFree(half))`, where `readsThis =
+   compiledBodyReadsThis(ctx, funcIdx)` (src/codegen/closures/method-
+   trampolines.ts) and `syntacticallyReceiverFree` is the HARDENED walker
+   round 1 measured and discarded: it descends into nested class-likes and
+   nested function-likes' computed names, parameter defaults and computed
+   keys; it counts `this`, `super`, `arguments`, `eval`, `new.target` anywhere
+   in that subtree as receiver-reading; anything `genBodyReferencesThis` skips
+   but `methodBodyReadsThis` would flag counts as receiver-reading. A `true`
+   compiled answer always wins (decline). Never a trap: before shipping,
+   compile every nested-class shape you can write (`this` in a nested arrow /
+   default parameter / computed key of a nested member / via `arguments` / in
+   a nested class's static block, field, method / `super.x` / `eval`) and
+   confirm that once the enclosing function has finished compiling
+   `compiledBodyReadsThis` agrees with the walker; a disagreement in the
+   unsafe direction (walker says free, compiled body reads local 0) is a bug
+   in the walker to fix, not a shape to admit.
+2. **Object-literal computed keys that share the class mechanism** — from
+   the census, language/computed-property-names/{object/accessor/getter,
+   setter, getter-super, setter-super, object/method/super, object/method/
+   number (illegal cast), object/method/symbol, basics/symbol, class/method/
+   symbol, class/method/string, class/static/method-symbol-order,
+   to-name-side-effects/class}.js. Inventory each row's mechanism on the
+   checkout first (probe + node). Implement ONLY the rows whose fix is the
+   evaluated-key install r4 built for classes (`class-proto-accessors.ts`
+   pattern: symbol / numeric / runtime-string keys installed under their
+   evaluated key, accessor pairs merged, install order = source order);
+   record every other row (super in object-literal methods belongs to the
+   super lane; the `illegal cast` needs its cast named) with its mechanism.
+
+Measurement protocol: base = `git archive origin/main`; node 22 oracle, node 25
+for changed test files; harness `.claude/worktrees/.../.tmp/r1/multi.mts`
+pattern (recreate as `.tmp/w5/5318/multi.mts` if the old worktree is gone);
+probes h3/h4/g1/d1 from the round-1 residual are one-liners above — recreate
+them. Rebuild the compiler bundle AND `node scripts/build-quickjs-eval-provider.mjs`
+after the last src edit before any test262 run.
+
+Acceptance: (a) h3 probeH = 23, h4 all six placements = node, g1 probeFnMixed
+= 23, d1 probeHoist = 23, t1.js stays base's -1 with no trap; (b) the 783-row
+class control (list from the r4 section; regenerate from the census tsv if the
+old list is gone) is ≤ 246 non-pass with ZERO rows lost against origin/main
+(set-diff of non-pass paths; timeouts re-run alone at COMPILER_POOL_SIZE=1);
+(c) tests/issue-5318-r4-computed-accessor-keys.test.ts gains pins for h3, h4
+(six placements), g1, d1, t1 and the trap-safety matrix, all with
+`result.imports` [] on standalone; (d) wasi and host byte-identical to
+origin/main on the reviewer's b1/b2/c1/d1/a1/h1 shapes; (e) all gates green
+bare and with `LOC_GATE_BASE=origin/main`; grants in this frontmatter.
+
 ## 2026-09-04 r4 implementation (Opus)
 
 Worktree `/home/user/js2/.claude/worktrees/wf_a9776683-b00-3`, branch
