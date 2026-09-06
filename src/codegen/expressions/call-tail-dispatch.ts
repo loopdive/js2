@@ -69,6 +69,7 @@ import {
   noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
+import { patchInlinedIifeReturns } from "./iife-return-patch.js"; // (#5339)
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { resolveStructName } from "./misc.js";
 import { tryReshapeBindToNamedThisCall } from "../named-this-call.js"; // (#4203)
@@ -487,34 +488,10 @@ export function compileTailDispatch(
               fctx.savedBodies.pop();
               fctx.body = savedBody;
 
-              // Post-process: replace `return` / `return_call` / `return_call_ref` ops
-              // with `local.set retLocal + br <depth>`.  Tail-call optimization in
-              // compileReturnStatement may have merged call+return into return_call;
-              // inside an IIFE we must undo that since we need local.set + br instead.
-              function patchReturns(instrs: Instr[], depth: number): void {
-                for (let i = 0; i < instrs.length; i++) {
-                  const op = instrs[i]!.op;
-                  if (op === "return") {
-                    // The instruction before `return` is the return value expression.
-                    // Replace `return` with `local.set + br`
-                    instrs[i] = { op: "local.set", index: retLocal };
-                    instrs.splice(i + 1, 0, { op: "br", depth });
-                    i++; // skip the inserted br
-                  } else if (op === "return_call" || op === "return_call_ref") {
-                    // Undo tail-call: return_call funcIdx → call funcIdx + local.set + br
-                    const instr = instrs[i] as any;
-                    instr.op = op === "return_call" ? "call" : "call_ref";
-                    instrs.splice(i + 1, 0, { op: "local.set", index: retLocal }, { op: "br", depth });
-                    i += 2; // skip inserted instructions
-                  }
-                  // Recurse into sub-blocks (if/then/else/block/loop)
-                  const instr = instrs[i] as any;
-                  if (instr.then) patchReturns(instr.then, depth + 1);
-                  if (instr.else) patchReturns(instr.else, depth + 1);
-                  if (instr.body && Array.isArray(instr.body)) patchReturns(instr.body, depth + 1);
-                }
-              }
-              patchReturns(blockBody, 0);
+              // Redirect the inlined body's `return`s to the wrapper block —
+              // see `iife-return-patch.ts` for the label-depth rules and for
+              // why the value and void arms must share one walker (#5339).
+              patchInlinedIifeReturns(blockBody, 0, retLocal);
 
               // Emit: block { <body> } local.get retLocal
               fctx.body.push({
@@ -589,36 +566,10 @@ export function compileTailDispatch(
               fctx.savedBodies.pop();
               fctx.body = savedBody;
 
-              // Post-process: replace `return` / `return_call` / `return_call_ref`
-              // with `br <depth>`. Tail-call optimization in compileReturnStatement
-              // may have merged call+return into return_call; inside an IIFE we
-              // must undo that and lower it back to a plain call.
-              function patchVoidReturns(instrs: Instr[], depth: number): void {
-                for (let i = 0; i < instrs.length; i++) {
-                  const op = instrs[i]!.op;
-                  if (op === "return") {
-                    // void IIFE: no value to capture — replace with br
-                    instrs[i] = { op: "br", depth };
-                  } else if (op === "return_call" || op === "return_call_ref") {
-                    // Undo tail-call: rewrite as plain call + br
-                    const instr = instrs[i] as any;
-                    instr.op = op === "return_call" ? "call" : "call_ref";
-                    instrs.splice(i + 1, 0, { op: "br", depth });
-                    i++; // skip inserted br
-                  }
-                  const instr = instrs[i] as any;
-                  if (instr.then) patchVoidReturns(instr.then, depth + 1);
-                  if (instr.else) patchVoidReturns(instr.else, depth + 1);
-                  if (instr.body && Array.isArray(instr.body)) patchVoidReturns(instr.body, depth + 1);
-                  if (instr.catchAll && Array.isArray(instr.catchAll)) patchVoidReturns(instr.catchAll, depth + 1);
-                  if (Array.isArray(instr.catches)) {
-                    for (const c of instr.catches) {
-                      if (Array.isArray(c.body)) patchVoidReturns(c.body, depth + 1);
-                    }
-                  }
-                }
-              }
-              patchVoidReturns(blockBody, 0);
+              // Same rewrite as the value arm, with no result local to capture
+              // into — `compileReturnStatement` already dropped the value
+              // because `fctx.returnType` was null (#5339).
+              patchInlinedIifeReturns(blockBody, 0, null);
 
               // Emit: block { <body> }
               fctx.body.push({
