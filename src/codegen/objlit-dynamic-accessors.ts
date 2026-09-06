@@ -166,3 +166,110 @@ export function emitObjectLiteralDataStore(
   fctx.body.push({ op: "call", funcIdx: defineValueIdx });
   fctx.body.push({ op: "drop" }); // the helper returns the target; discard
 }
+
+/**
+ * Function indices the define-flavoured spread copy needs. The symbol pair is
+ * optional: a lane that cannot resolve both `__getOwnPropertySymbols` and the
+ * enumerability predicate skips the symbol pass rather than mis-copying a
+ * non-enumerable symbol key.
+ */
+export interface ObjLitDefineCopyHelpers {
+  objectKeysIdx: number;
+  externLengthIdx: number;
+  externGetIdxIdx: number;
+  externGetIdx: number;
+  definePropertyValueIdx: number;
+  ownSymbolsIdx?: number | undefined;
+  propertyIsEnumerableIdx?: number | undefined;
+}
+
+/**
+ * (#5318 r5 review r2) Copy `source`'s own enumerable properties onto `target`
+ * with DEFINE semantics — §7.3.25 CopyDataProperties, which a `SpreadElement`
+ * in an object literal (§13.2.5.5) reaches through CreateDataPropertyOrThrow.
+ *
+ * `__object_assign` is [[Set]]-shaped: over a key that already carries a
+ * getter-only accessor it throws in strict code instead of replacing the
+ * property. That is only reachable once an evaluated-key accessor has been
+ * installed earlier in the SAME literal, which is why the caller supplies this
+ * path exclusively for spreads that FOLLOW such an install; every other spread
+ * keeps the `__object_assign` encoding byte-for-byte.
+ *
+ * `source` here is the scratch object `__object_assign` already merged into, so
+ * the spread's own source handling (nullish no-op, primitive wrapping, a source
+ * getter invoked through [[Get]], proxies) is untouched — this pass only
+ * re-lands the RESULT onto the literal with the right verb. Strings first, then
+ * symbols, matching §7.3.25's OwnPropertyKeys order.
+ */
+export function emitObjectLiteralDefineCopy(
+  fctx: FunctionContext,
+  targetLocal: number,
+  sourceLocal: number,
+  h: ObjLitDefineCopyHelpers,
+): void {
+  const keysLocal = allocLocal(fctx, `__objlit_dcp_keys_${fctx.locals.length}`, { kind: "externref" });
+  const keyLocal = allocLocal(fctx, `__objlit_dcp_key_${fctx.locals.length}`, { kind: "externref" });
+  const nLocal = allocLocal(fctx, `__objlit_dcp_n_${fctx.locals.length}`, { kind: "i32" });
+  const iLocal = allocLocal(fctx, `__objlit_dcp_i_${fctx.locals.length}`, { kind: "i32" });
+  // `__defineProperty_value(target, key, __extern_get(source, key), FLAGS)`.
+  const defineOne: Instr[] = [
+    { op: "local.get", index: targetLocal },
+    { op: "local.get", index: keyLocal },
+    { op: "local.get", index: sourceLocal },
+    { op: "local.get", index: keyLocal },
+    { op: "call", funcIdx: h.externGetIdx },
+    { op: "f64.const", value: OBJLIT_DATA_DEFINE_FLAGS },
+    { op: "call", funcIdx: h.definePropertyValueIdx },
+    { op: "drop" },
+  ];
+  const emitPass = (keysIdx: number, guard: Instr[] | undefined): void => {
+    const step: Instr[] =
+      guard === undefined ? defineOne : [...guard, { op: "if", blockType: { kind: "empty" }, then: defineOne }];
+    fctx.body.push({ op: "local.get", index: sourceLocal });
+    fctx.body.push({ op: "call", funcIdx: keysIdx });
+    fctx.body.push({ op: "local.set", index: keysLocal });
+    fctx.body.push({ op: "local.get", index: keysLocal });
+    fctx.body.push({ op: "call", funcIdx: h.externLengthIdx });
+    fctx.body.push({ op: "i32.trunc_sat_f64_s" });
+    fctx.body.push({ op: "local.set", index: nLocal });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: iLocal });
+    fctx.body.push({
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [
+        {
+          op: "loop",
+          blockType: { kind: "empty" },
+          body: [
+            { op: "local.get", index: iLocal },
+            { op: "local.get", index: nLocal },
+            { op: "i32.ge_s" },
+            { op: "br_if", depth: 1 },
+            { op: "local.get", index: keysLocal },
+            { op: "local.get", index: iLocal },
+            { op: "f64.convert_i32_s" },
+            { op: "call", funcIdx: h.externGetIdxIdx },
+            { op: "local.set", index: keyLocal },
+            ...step,
+            { op: "local.get", index: iLocal },
+            { op: "i32.const", value: 1 },
+            { op: "i32.add" },
+            { op: "local.set", index: iLocal },
+            { op: "br", depth: 0 },
+          ],
+        },
+      ],
+    });
+  };
+  emitPass(h.objectKeysIdx, undefined);
+  if (h.ownSymbolsIdx !== undefined && h.propertyIsEnumerableIdx !== undefined) {
+    // `__getOwnPropertySymbols` is NOT enumerability-filtered, so each symbol
+    // key is screened before it is defined.
+    emitPass(h.ownSymbolsIdx, [
+      { op: "local.get", index: sourceLocal },
+      { op: "local.get", index: keyLocal },
+      { op: "call", funcIdx: h.propertyIsEnumerableIdx },
+    ]);
+  }
+}

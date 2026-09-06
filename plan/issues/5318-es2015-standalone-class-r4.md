@@ -40,7 +40,16 @@ loc-budget-allow:
   # two capture scans (#2128 / #3051) from paired accessors to every accessor in
   # the literal, so a dynamic half's captured locals share the same ref cells as
   # its siblings. Measured +25 LOC after the extraction (was +77 before it).
+  # 2026-09-06 r5 review round 3: the §B.3.1 `__proto__` exemption from the
+  # define route (2 lines + rationale) and the define-flavoured spread copy call
+  # site (~35 lines: helper resolution + the scratch-object merge). The copy
+  # emitter itself lives in objlit-dynamic-accessors.ts.
   - src/codegen/literals.ts
+  # 2026-09-06 r5 review round 3: restated here so the grant is not STRANDED.
+  # The +32/-5 in this file arrives with the integration branch this round-3 fix
+  # branches from; CI diffs the MERGE PREVIEW against origin/main, so the
+  # allowance has to live in a file THIS change-set touches.
+  - src/codegen/expressions/calls-closures.ts
 func-budget-allow:
   # 2026-09-06 r5 review round 2 (F1/F2): the same function gains the
   # define-vs-[[Set]] router for members after an evaluated-key accessor.
@@ -1262,3 +1271,150 @@ change. The 12-row `object/**` subfamily is a subset of this run: 6 pass, 6
 non-pass (`accessor/{getter,setter}-super`, `method/{generator,number,super,symbol}`)
 — all four mechanisms already named in the r2 record (super home object,
 numeric-key method cast, #2864 generators).
+
+### Review round 2 (2026-09-06) — the round-3 fix lane
+
+Worktree `/home/user/js2/.claude/worktrees/wf_a3d774b3-5df-1`, branch
+`worktree-wf_a3d774b3-5df-1` = the integration branch
+`claude/es6-test262-standalone-g10c7u` (`b374fcdc5a`) with the round-2 fix
+branch `worktree-wf_fa92ba2a-1ac-1` (`dfcde0820d`, which already contains the
+r5 lane `worktree-wf_eb120fff-87d-2`) merged in — clean merge, no conflict.
+Trees compared throughout: **base** `.tmp/rev5318r2/base` (`git archive`
+`c9a8b48616`) · **pre** the r5 lane before any review fix
+(`wf_eb120fff-87d-2`) · **r2** the round-2 fix (`wf_fa92ba2a-1ac-1`) · **fix**
+this tree. Oracle node 22.22.2; the vitest pins additionally run on node 25.9.0.
+
+**Harness correction, and it is load-bearing.** The reviewer's
+`.tmp/rev5318r3/run.mts` instantiates the JS-host target with
+`result.importObject` but never calls the documented
+`result.importObject.__setInstance(instance)` (`src/index.ts` §CompileResult).
+Without that call the host object sidecars never see the instance and the whole
+open-object model is dead on that lane: on **base**, `{...src}` copies nothing,
+`{ m() {} }.m` is not a function, and `{a:1,[k]:2,c(){}}` sums to `NaN`. Every
+host number below was therefore re-measured through `.tmp/run2.mts`, which is
+the reviewer's script plus that one line; `runHostTarget` in the pin file got
+the same fix. On the corrected harness base reproduces the reviewer's reported
+values (e.g. `sp.mjs` = 5), so the two runs are comparable.
+
+#### R1 — FIXED: a non-computed `__proto__` after an evaluated-key accessor
+
+§B.3.1 `__proto__` in an object initializer is not a property definition; it
+runs `[[SetPrototypeOf]]`. The native lanes have a dedicated arm for it, but the
+JS-host lane has no `__object_setPrototypeOf` and relied on `__extern_set`
+reaching the host object's own `__proto__` setter. The round-2 define switch
+routed it to `__defineProperty_value`, which made an own enumerable
+`'__proto__'` data property instead. Fix: `storeMember(i)` now exempts a
+**PropertyAssignment with a non-computed key spelled `__proto__`** from the
+define route (`isAnnexBProtoKey`); a computed `[k]: v`, a shorthand
+`{ __proto__ }` and a `__proto__()` method all keep it, because §B.3.1 is
+syntactic.
+
+`p/zpin.mjs`, score = `getPrototypeOf(o)===p ? 1` + `hasOwn('__proto__') ? 10`
+(the `null` and shorthand rows score the own-property bit only):
+
+| probe | target | base | r2 | **fix** | node |
+|---|---|---|---|---|---|
+| `probeProtoIdentAfterAcc` | host | 0 | **10** | **0** | 1 |
+| `probeProtoStrAfterAcc` | host | 0 | **10** | **0** | 1 |
+| `probeProtoNullAfterAcc` | host | 0 | **10** | **0** | 0 |
+| `probeProtoComputedAfterAcc` | host | 0 | 10 | 10 | 10 |
+| `probeProtoShorthandAfterAcc` | host | 0 | 10 | 10 | 10 |
+| all five | standalone | 10 | 10 | 10 | 1/1/0/10/10 |
+
+So: the round-2 regression is gone (host is back to base for the three §B.3.1
+forms), and the two rows round-2 legitimately IMPROVED (computed key, shorthand
+— both `0 → 10`, matching node) are kept. The host lane still answers `0` rather
+than node's `1` for the identifier/string forms: its `__proto__` write does not
+make `getPrototypeOf(o)` identical to `p`. That is **base** behaviour, unchanged
+by either round, and out of scope here. Standalone answers `10` for every form —
+also pre-existing on base, recorded and not widened.
+
+The whole-file reviewer probes agree: `pm.mjs` host `0 / 0 / 10 / 0` (base /
+pre / r2 / fix, node 1); `pm2.mjs` host `probeProtoStrKeyAfterAcc`
+`0 / 0 / 10 / 0`, `probeProtoComputedAfterAcc` `0 / 0 / 10 / 10` (node 10);
+`proto.mjs` host `probeProtoNullAfterAcc` `1 / 1 / 0 / 1` (node 1).
+
+#### R2 — FIXED: a spread after a same-key evaluated-key accessor
+
+§13.2.5.5 lowers `...src` through §7.3.25 CopyDataProperties, which uses
+CreateDataProperty — it DEFINES. `__object_assign` is [[Set]], so over the
+getter-only accessor the literal had just installed under the same key it threw
+(`Cannot set property sb of #<Object> which has only a getter` on the host, a
+raw `WebAssembly.Exception` on standalone/wasi). Fix: when a spread follows the
+`firstDynAccIdx` boundary, `__object_assign` merges into a **scratch plain
+object** first — so nullish sources, primitives, proxies and source getters keep
+exactly the semantics `__object_assign` defines, and a source getter still runs
+once through [[Get]] — and the scratch object is then re-landed on the literal
+key-by-key with `__defineProperty_value` (`emitObjectLiteralDefineCopy`,
+strings via `__object_keys`, then own symbols screened by
+`__propertyIsEnumerable`).
+
+| probe | target | base | pre | r2 | **fix** | node |
+|---|---|---|---|---|---|---|
+| `sp.mjs::probeSpreadSameKeyCaught` | host | 5 | 900 | 900 | **5** | 5 |
+| `misc.mjs::probeSpreadSameKey` | host | 5 | THREW | THREW | **5** | 5 |
+| `x2.mjs::probeSpreadSameKey2` | host | — | — | THREW | **5** | 5 |
+| `sp.mjs::probeSpreadSameKeyCaught` | standalone | — | — | 900 | **5** | 5 |
+| `misc.mjs::probeSpreadSameKey` | standalone | — | — | THREW | **5** | 5 |
+| `x2.mjs::probeSpreadSameKey2` | standalone | — | — | THREW | **5** | 5 |
+| `sp.mjs::probeSpreadSameKeyCaught` | wasi | — | — | 900 | **5** | 5 |
+| `misc.mjs::probeSpreadSameKey` | wasi | — | — | THREW | **5** | 5 |
+| `zpin::probeSpreadSourceGetterOnce` | host / standalone | — | — | THREW | **11** | 11 |
+| `zpin::probeSpreadBeforeAcc` | host / standalone | 11 | — | 111 | **111** | 111 |
+
+`probeSpreadSourceGetterOnce` = `(o.sb === 5) + 10 × callCount`, so `11` is the
+proof the source getter ran exactly once. `probeSpreadBeforeAcc` is the
+before-the-boundary control: base `11` (no accessor was installed at all — the
+r5 defect), `111` on r2 and on fix, i.e. unchanged by this round.
+
+#### Nothing else moved
+
+The whole reviewer probe set (`bid, hm, key, misc, noobj, pm, pm2, proto,
+shape, sp, x2`) was re-run on **all three targets** on the r2 tree and on this
+tree. Every probe answers identically except the rows in the two tables above.
+`x2.mjs` does not instantiate on wasi (`Import #0 module="env"`) on both trees.
+
+**Byte identity vs the r2 tree**, `BYTES=only` (sha256 + length) on host,
+standalone and wasi: `zb_e1.mjs` (an all-folded accessor literal incl. a folded
+`__proto__`), `zb_spread.mjs` (`{...a,...b}` and `{x:1,...a}` — spread-only, no
+accessor), `bid.mjs` and `noobj.mjs` — **identical on every target** (e.g.
+standalone `zb_e1` `25f859fc…` len 140569 on both; `zb_spread` `42779480…` len
+135723 on both). `zb_e1` does not compile on wasi on either tree (0 bytes, pre-
+existing).
+
+#### Rows
+
+`language/computed-property-names/**` (48) + the 13 rows directly under
+`language/expressions/object/` whose source names `__proto__` or object-spread
+(`__proto__-*.js`, `computed-__proto__.js`, `object-spread-proxy-*.js`) = 61,
+`--isolate --standalone`, `COMPILER_POOL_SIZE=2`:
+
+| | pass | fail | compile_error | non-pass |
+|---|---|---|---|---|
+| r2 (`wf_fa92ba2a-1ac-1`) | 42 | 15 | 4 | 19 |
+| **fix** | **42** | 15 | 4 | **19** |
+
+**Set-diff of the non-pass PATHS, r2 vs fix: EMPTY in both directions** — the
+19 paths are byte-identical lists (`diff` exit 0). Zero lost, zero gained.
+
+The 13-row `expressions/object/` subfamily was additionally run on **base**:
+10 pass / 3 fail (`__proto__-fn-name`, `__proto__-poisoned-object-prototype`,
+`computed-__proto__`) — the SAME three that fail on r2 and on fix, so this
+round neither fixed nor broke a row there.
+
+(The round-2 worktree had no usable `test262` tree — its per-entry symlink farm
+pointed at a worktree that has since been deleted, so the first two attempts
+reported `ENOENT` for every row. `test`/`harness` were repointed at the shared
+checkout before the run that produced the numbers above.)
+
+#### Gates
+
+`check-loc-budget` / `check-func-budget` / `check-coercion-sites` /
+`check:oracle-ratchet` / `check:dead-exports` all pass bare **and** with
+`LOC_GATE_BASE=$(git rev-parse origin/main)` = `78f1b2d03c`; the CI-base run
+initially failed on a **stranded grant** — `src/codegen/expressions/calls-closures.ts`
+`2699 → 2726 (+27)`, growth that arrives with the integration branch, not with
+this fix — so the allowance is restated in this file's `loc-budget-allow`.
+`check:speculative-rollback`, `check:stack-balance`, `check:codegen-fallbacks`,
+`check:any-box-sites`, TS7 `--noEmit`, `npm run lint` and `prettier --check` all
+clean.

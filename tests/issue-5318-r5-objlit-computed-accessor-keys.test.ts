@@ -206,7 +206,14 @@ describe("#5318 r5 Step 2 — the object-literal evaluated-key accessor matrix",
 async function runHostTarget(source: string, exportName: string, fileName: string): Promise<unknown> {
   const result = await compile(source, { allowJs: true, fileName, skipSemanticDiagnostics: true });
   expect(result.success, result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n")).toBe(true);
-  const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+  const importObject = result.importObject ?? {};
+  const { instance } = await WebAssembly.instantiate(result.binary, importObject);
+  // The documented host wiring step (`src/index.ts` §CompileResult.importObject):
+  // without it the host object sidecars never see the instance, so open-object
+  // operations (`{...src}`, a method call, a `__proto__` setter) silently
+  // misbehave — a literal without ANY accessor already answers wrongly, which
+  // makes every measurement on this lane unusable.
+  (importObject as { __setInstance?: (i: WebAssembly.Instance) => void }).__setInstance?.(instance);
   return (instance.exports as Record<string, () => unknown>)[exportName]!();
 }
 
@@ -309,4 +316,118 @@ describe("#5318 r5 review r2 — a later same-key member OVERRIDES an evaluated-
     );
     expect(runHost(DESCRIPTOR, "probeDynAccessorDescriptor")).toBe(1111);
   });
+});
+
+describe("#5318 r5 review r2 — `__proto__` and spread AFTER an evaluated-key accessor", () => {
+  // Two regressions the review-round-2 measurement found in the define switch
+  // above, both reproduced on 2026-09-06 against
+  // `.tmp/rev5318r2/base` (git archive c9a8b48616) and node 22.22.2:
+  //
+  //  R1 (JS-host target) A NON-computed `__proto__: v` is §B.3.1, not a
+  //     property definition — it runs `[[SetPrototypeOf]]`. The host lane has
+  //     no `__object_setPrototypeOf`, so it depends on `__extern_set` reaching
+  //     the host object's own `__proto__` SETTER; routing it to
+  //     `__defineProperty_value` created an own enumerable `'__proto__'` data
+  //     property instead (0 → 10 below).
+  //  R2 (all targets) A spread that follows the accessor went through
+  //     `__object_assign`, which is [[Set]]: over the getter-only accessor the
+  //     literal had just installed under the SAME key it threw
+  //     ("Cannot set property sb of #<Object> which has only a getter" on the
+  //     host; a raw `WebAssembly.Exception` on standalone/wasi) where node
+  //     answers 5.
+  //
+  // NOTE ON THE HOST HARNESS: these numbers are only readable once
+  // `result.importObject.__setInstance(instance)` runs (see `runHostTarget`).
+  // Without it even a literal with NO accessor answers wrongly on this lane.
+  const PROTO_AND_SPREAD = `
+    function rk(v) { return v; }
+    export function probeProtoIdentAfterAcc() {
+      const p = { pm: 7 };
+      const o = { get [rk('zz')]() { return 1; }, __proto__: p };
+      return (Object.getPrototypeOf(o) === p ? 1 : 0) + (Object.prototype.hasOwnProperty.call(o, '__proto__') ? 10 : 0);
+    }
+    export function probeProtoStrAfterAcc() {
+      const p = { pm: 7 };
+      const o = { get [rk('zz')]() { return 1; }, "__proto__": p };
+      return (Object.getPrototypeOf(o) === p ? 1 : 0) + (Object.prototype.hasOwnProperty.call(o, '__proto__') ? 10 : 0);
+    }
+    export function probeProtoNullAfterAcc() {
+      const o = { get [rk('yy')]() { return 1; }, __proto__: null };
+      return Object.prototype.hasOwnProperty.call(o, '__proto__') ? 10 : 0;
+    }
+    export function probeProtoComputedAfterAcc() {
+      const p = { pm: 7 };
+      const o = { get [rk('zy')]() { return 1; }, [rk('__proto__')]: p };
+      return (Object.getPrototypeOf(o) === p ? 1 : 0) + (Object.prototype.hasOwnProperty.call(o, '__proto__') ? 10 : 0);
+    }
+    export function probeProtoShorthandAfterAcc() {
+      const __proto__ = 7;
+      const o = { get [rk('zw')]() { return 1; }, __proto__ };
+      return Object.prototype.hasOwnProperty.call(o, '__proto__') ? 10 : 0;
+    }
+    export function probeSpreadSameKeyAfterAcc() {
+      const src = { sb: 5 };
+      const o = { get [rk('sb')]() { return 3; }, ...src };
+      return o.sb === undefined ? -1 : o.sb;
+    }
+    export function probeSpreadSourceGetterOnce() {
+      let calls = 0;
+      const src = { get sb() { calls = calls + 1; return 5; } };
+      const o = { get [rk('sb')]() { return 3; }, ...src };
+      return (o.sb === 5 ? 1 : 0) + calls * 10;
+    }
+    export function probeSpreadBeforeAcc() {
+      const src = { p: 1, q: 2 };
+      const o = { ...src, get [rk('sa')]() { return 3; } };
+      return (o.p === 1 ? 1 : 0) + (o.q === 2 ? 10 : 0) + (o.sa === 3 ? 100 : 0);
+    }
+  `;
+
+  // node 22.22.2 answers, in probe order:
+  //   1 / 1 / 0 / 10 / 10 / 5 / 11 / 111
+  //
+  // The host target answers 0 for the three §B.3.1 forms rather than node's
+  // 1 / 1 / 0: this lane's `__proto__` write reaches a sidecar rather than a
+  // real JS object, so the prototype does not become `p` by IDENTITY. That is
+  // BASE behaviour (measured 0 / 0 / 0 there too) and out of scope here — what
+  // this pins is that no own `'__proto__'` property appears, which is exactly
+  // what the define route created.
+  const HOST_EXPECTED: ReadonlyArray<readonly [string, number]> = [
+    ["probeProtoIdentAfterAcc", 0],
+    ["probeProtoStrAfterAcc", 0],
+    ["probeProtoNullAfterAcc", 0],
+    ["probeProtoComputedAfterAcc", 10],
+    ["probeProtoShorthandAfterAcc", 10],
+    ["probeSpreadSameKeyAfterAcc", 5],
+    ["probeSpreadSourceGetterOnce", 11],
+    ["probeSpreadBeforeAcc", 111],
+  ];
+
+  for (const [probe, expected] of HOST_EXPECTED) {
+    it(`host target: ${probe} === ${expected}`, async () => {
+      expect(await runHostTarget(PROTO_AND_SPREAD, probe, "issue-5318-r5-objlit-proto-spread-host.js")).toBe(expected);
+    });
+  }
+
+  // Standalone reaches `__object_setPrototypeOf`, but a `__proto__` member
+  // placed AFTER a dynamic-keyed accessor still lands as an own property there
+  // (10, not node's 1) — measured identical on base, on the r5 lane and here,
+  // so it is pre-existing and merely pinned against widening. The three spread
+  // rows DO match node.
+  const STANDALONE_EXPECTED: ReadonlyArray<readonly [string, number]> = [
+    ["probeProtoIdentAfterAcc", 10],
+    ["probeProtoStrAfterAcc", 10],
+    ["probeProtoNullAfterAcc", 10],
+    ["probeProtoComputedAfterAcc", 10],
+    ["probeProtoShorthandAfterAcc", 10],
+    ["probeSpreadSameKeyAfterAcc", 5],
+    ["probeSpreadSourceGetterOnce", 11],
+    ["probeSpreadBeforeAcc", 111],
+  ];
+
+  for (const [probe, expected] of STANDALONE_EXPECTED) {
+    it(`standalone: ${probe} === ${expected}`, async () => {
+      expect(await runStandalone(PROTO_AND_SPREAD, probe, "issue-5318-r5-objlit-proto-spread.js")).toBe(expected);
+    });
+  }
 });
