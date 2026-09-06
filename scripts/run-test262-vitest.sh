@@ -194,10 +194,29 @@ if [ -z "$ESBUILD_BIN" ]; then
   echo "ERROR: esbuild not found (checked PATH, node_modules/.bin, pnpm store)"
   exit 1
 fi
-"$ESBUILD_BIN" src/index.ts --bundle --platform=node --format=esm \
+# (#5353) Build from the bundle ENTRIES, not from src/ directly. The entries are
+# what publish `buildTemporalProvider` (compiler) and the linked-provider
+# lifecycle (runtime); a bundle built straight from src/ silently degrades every
+# Temporal row in the sharded worker back to the unlinked lane.
+"$ESBUILD_BIN" scripts/compiler-bundle-entry.ts --bundle --platform=node --format=esm \
   --outfile=scripts/compiler-bundle.mjs --external:typescript --external:binaryen 2>&1 | tail -1
-"$ESBUILD_BIN" src/runtime.ts --bundle --platform=node --format=esm \
+"$ESBUILD_BIN" scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
   --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen 2>&1 | tail -1
+
+# ── Pre-warm the compiled `Temporal` provider (#4628/#5353) ──────
+# The fork pool kills a job at 30 s and a cold provider build is ~40-65 s, so
+# the PARENT builds it once here; each fork then hits the content-addressed
+# cache (~1 s) and links `Temporal` into the ~6,600 Temporal rows. Without this
+# step the worker finds no pre-warm stamp and runs those rows unlinked — the
+# pre-#5353 behaviour, loudly announced on stderr, never a per-row timeout.
+# JS2WASM_TEST262_TEMPORAL=0 skips the build and the linking together.
+export JS2WASM_TEMPORAL_CACHE="${JS2WASM_TEMPORAL_CACHE:-$MAIN_DIR/.test262-cache/temporal}"
+if [ "${JS2WASM_TEST262_TEMPORAL:-1}" = "0" ]; then
+  echo "Temporal provider: DISABLED (JS2WASM_TEST262_TEMPORAL=0)"
+else
+  echo "Pre-warming Temporal provider into $JS2WASM_TEMPORAL_CACHE ..."
+  node scripts/prewarm-temporal-provider.mjs
+fi
 
 # ── Prebuild the standalone runtime-eval provider (#2928 E6/E7) ──
 # Standalone modules that use dynamic eval / new Function link a core-Wasm

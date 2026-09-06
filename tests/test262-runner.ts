@@ -11,7 +11,6 @@
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { createHash } from "crypto";
-import { tmpdir } from "node:os";
 import { createContext, runInContext } from "node:vm";
 import { compile, compileMulti } from "../src/index.js";
 // (#5248) The compile-once `Temporal` provider (#4628). Source ACQUISITION is
@@ -30,6 +29,11 @@ import {
   tryNativeExnRender as sharedTryNativeExnRender,
 } from "../scripts/lib/wasm-exn-render.mjs";
 import { isModuleGoal } from "../scripts/test262-module-goal.mjs";
+// (#5353) ONE Temporal gate + ONE cache-dir rule, shared with the sharded lane.
+import {
+  temporalCacheDir,
+  test262NeedsTemporalGlobal as sharedTest262NeedsTemporalGlobal,
+} from "../scripts/test262-temporal.mjs";
 import { hasSelfModuleImport } from "../scripts/test262-fixture-graph.mjs";
 // (#4162) ONE import-object finaliser, shared with scripts/test262-worker.mjs
 // and tests/test262-shared.ts. This lane used to instantiate the binary
@@ -4244,30 +4248,23 @@ function appendOriginalHarnessFailureContext(detail: string, source: string): st
 let temporalProviderPromise: Promise<TemporalProvider | null> | undefined;
 
 /**
- * `JS2WASM_TEST262_TEMPORAL=0` opts a consumer of this lane OUT of the provider.
- *
- * Read LAZILY, not into a module-scope const: a consumer that sets the variable
- * in its own module body — `scripts/validate-test262-baseline.ts` does, for the
- * lane-parity reason documented there — runs AFTER this module is evaluated,
- * because ESM imports are hoisted. A hoisted `const` would capture the unset
- * value and silently ignore the opt-out.
- */
-function temporalProviderDisabled(): boolean {
-  return process.env.JS2WASM_TEST262_TEMPORAL === "0";
-}
-
-/**
  * Does this test need the real `Temporal` global?
  *
- * Path OR `features:`, because neither alone is complete: `intl402/Temporal/**`
- * and `built-ins/Temporal/**` are the bulk, while a handful of files elsewhere
- * (e.g. `built-ins/Date/**` interop rows) declare `features: [Temporal]`
- * without living under such a directory.
+ * (#5353) The RULE now lives in `scripts/test262-temporal.mjs` and is shared
+ * with the sharded lane (`tests/test262-shared.ts` → `scripts/test262-worker.mjs`),
+ * which #5248 left unwired. Two lanes that disagree about which rows get a
+ * `Temporal` binding do not merely differ — the baseline validator samples one
+ * lane against a baseline written by the other and reports the difference as
+ * drift. This wrapper keeps the `Test262Meta` signature this file's callers and
+ * `tests/issue-5248-test262-temporal-wiring.test.ts` use.
+ *
+ * The `JS2WASM_TEST262_TEMPORAL=0` opt-out is likewise read there, LAZILY: a
+ * consumer that sets it in its own module body (`scripts/validate-test262-baseline.ts`
+ * does) runs after this module is evaluated, because ESM imports are hoisted, so
+ * a module-scope const would capture the unset value and drop the opt-out.
  */
 export function test262NeedsTemporalGlobal(filePath: string, meta: Test262Meta): boolean {
-  if (temporalProviderDisabled()) return false;
-  if (/[\\/]Temporal[\\/]/.test(filePath)) return true;
-  return meta.features?.includes("Temporal") === true;
+  return sharedTest262NeedsTemporalGlobal(filePath, meta.features);
 }
 
 /**
@@ -4285,7 +4282,7 @@ async function getTest262TemporalProvider(): Promise<TemporalProvider | null> {
   temporalProviderPromise = (async () => {
     const { setupTemporalPolyfill, linkPolyfillSource } = await import("./dogfood/setup-temporal-polyfill.mjs");
     const linked = linkPolyfillSource(setupTemporalPolyfill());
-    const cacheDir = process.env.JS2WASM_TEMPORAL_CACHE ?? join(tmpdir(), "js2wasm-temporal-cache");
+    const cacheDir = temporalCacheDir();
     const provider = await buildTemporalProvider({ polyfillSource: linked.source, cacheDir });
     console.error(
       `[test262] Temporal provider ${provider.namespace} (${provider.artifact.binary.length} B) ` +

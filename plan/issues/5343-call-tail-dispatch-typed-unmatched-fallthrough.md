@@ -1,10 +1,11 @@
 ---
 id: 5343
 title: "call-tail-dispatch: a callee with a checker signature but no registered closure falls through to a silent `undefined`"
-status: ready
+status: done
 sprint: current
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-06
+completed: 2026-09-06
 priority: high
 horizon: s
 feasibility: medium
@@ -74,3 +75,82 @@ are "a compiled callee answered nothing to the host".
 Model: **sonnet**. Mechanism, site, and fix direction are all established by
 the #5335 agent's WAT analysis; the untyped twin shows the exact shape of the
 repair. Well-specified, small blast radius.
+
+## Test Results
+
+**Fix**: `src/codegen/expressions/call-tail-dispatch.ts` — in the
+"CallExpression as callee" arm, the dynamic-call-ladder fallback
+(`tryEmitInlineDynamicCall`) is now unconditional at that point (previously
+gated on `!callSigs || callSigs.length === 0`). Reaching that line already
+means the exact-match arm above did not return, so it is always a registry
+miss — whether from no checker signature at all, or a signature with no
+matching registered closure. The fast `call_ref`/`return_call_ref` arm above
+is untouched.
+
+**Mechanism confirmed in WAT** (`.tmp/repro/host-callee.wat`, not committed):
+pre-fix, `f()(1, 3)` for `function f() { return Math.max; }` compiled to
+`<compile callee> drop <compile arg> drop <compile arg> drop ref.null extern
+call $__unbox_number` — the callee and both arguments are evaluated for side
+effects only, then discarded.
+
+**Regression tests** — `tests/issue-5343.test.ts`, 3 cases:
+
+1. **(a) host callee** — untyped `.js`, single file. `f()` returns `Math.max`
+   (checker infers a real call signature from the return statement); an
+   unrelated closure (`other`/`oc`) is present so `ctx.closureInfoByTypeIdx`
+   is non-empty (otherwise `tryEmitInlineDynamicCall` declines outright with
+   no dispatch arm to build in JS-host mode). `f()(1, 3)`:
+   - Parent: `0` (FAIL). Fixed: `3` (PASS, `Math.max(1, 3)`).
+2. **(b) callee exported by a second module, compiled after the call site** —
+   untyped `.js`, three files, exploiting the entry-anchored DFS in
+   `src/checker/index.ts` (dependency-first, cycle back-edges are no-ops,
+   first-seen wins): `entry.js` → `moduleB.js` (defines `outer`, imports `run`
+   from `moduleA.js`) → `moduleA.js` (imports `outer` from `moduleB.js`, a
+   back-edge no-op since `moduleB` is already on the DFS stack; defines
+   `run`). Resulting compile order `[moduleA, moduleB, entry]` — `run`'s body
+   (`outer()()`) compiles BEFORE `outer`'s own body (which mints the returned
+   closure). `outer()()`:
+   - Parent: `0` (FAIL). Fixed: `3` (PASS, `1 + 2`).
+3. **Anti-vacuity control** — a same-file, already-matched `outer()(n)` (outer
+   declared above the call site, closure already registered): WAT is
+   **byte-identical** before/after the fix (`diff -a`) and still contains
+   `return_call_ref` — the fast exact-match arm is untouched.
+
+Exact counts both ways (`node node_modules/vitest/vitest.mjs run
+tests/issue-5343.test.ts`): **parent 1 passed / 2 failed; fixed 3 passed / 0
+failed.** `tests/issue-5335-module-init-pass2-closure-registry.test.ts` stays
+**11/11** with the fix applied.
+
+**Ratchet gates**: `check-loc-budget` (net **-6** LOC in the changed file —
+the fix also shrank the guard), `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:dogfood-validation`
+(6/6 gated packages compile and validate) — all green, no allowances needed.
+
+**A/B at one HEAD** (base `upstream/main` @ `68e1c0c2cb`), 17 dogfood suites,
+one at a time:
+
+| suite | result | anchor | match |
+| --- | --- | --- | --- |
+| webpack | 16/16 | 16/16 | yes |
+| three | 17/18 | 17/18 | yes |
+| clsx | 32/32 | 32/32 | yes |
+| cookie | 63740/63740 | 63740/63740 | yes |
+| lodash | 53/62 | 53/62 | yes |
+| redux | 61/82 | 61/82 (open regression, #5640) | yes, unaffected |
+| axios | 200/231 | 200/231 | yes |
+| stylelint | 108/108 | 108/108 | yes |
+| tailwindcss | 13/13 | 13/13 | yes |
+| jsdom | 6/6 | 6/6 | yes |
+| styled-components | 9/9 | 9/9 | yes |
+| uuid | 75/75 | 75/75 | yes |
+| marked | 9/30 | 9/30 | yes |
+| moment | 10/10 | 10/10 | yes |
+| prettier | 101/151 | 101/151 | yes |
+| jest | 329/356 | 329/356 | yes |
+| hono | 244/324 | 244/324 | yes |
+
+No regressions. No suite-level improvement observed either — hono's
+`ipaddr.test.ts` stayed 4/16 and axios's `buildURL.test.js` stayed 14/20, so
+the specific miss this PR closes is not exercised by these admitted test
+files' currently-passing/failing boundary. The fix is validated by the
+targeted regression tests above, not by a dogfood-suite delta.
