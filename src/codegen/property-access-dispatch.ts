@@ -4885,6 +4885,33 @@ export function finalizeStructAndDynamicMemberGet(
                   k,
                   structCandidates.map((candidate) => candidate.fieldType),
                 );
+                // (#5251) The receiver here is DYNAMIC — the dispatcher's
+                // terminal is `__extern_get`, which answers `undefined` when the
+                // property is ABSENT. f64 cannot hold `undefined`, so narrowing
+                // to a bare f64 laundered every absent read into NaN-the-NUMBER
+                // (`typeof` "number", `x !== undefined`). Brand the narrowed f64
+                // as undefined-sentinel-carrying: the externref→f64 coercion
+                // encodes `undefined` as `UNDEF_F64_BITS` and the caller's
+                // f64→externref boxing resurrects it (type-coercion.ts's
+                // `undefSentinel` arms). Numeric consumers are untouched — they
+                // read a plain f64 and NaN is the correct ToNumber(undefined).
+                //
+                // i32 is deliberately left alone: it has no spare bit pattern,
+                // and its narrowing is boolean-brand territory (#2938).
+                if (resultWasm.kind === "f64" && resultWasm.undefSentinel !== true) {
+                  resultWasm = { kind: "f64", undefSentinel: true };
+                  // `canonicalUndefinedExternInstrs` is deliberately read-only
+                  // over funcMap (it must not shift funcidxs mid-body), so the
+                  // host lane's real `undefined` producer has to be registered
+                  // HERE or the resurrection falls back to a null externref —
+                  // which reads as JS `null`, not `undefined`. Same precedent as
+                  // `reserveMemberGetDispatch`'s `value` arm.
+                  if (!ctx.nativeStrings && !ctx.standalone) {
+                    ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+                    flushLateImportShifts(ctx, fctx);
+                    unboxIdx = undefined;
+                  }
+                }
                 if (unboxIdx === undefined) {
                   unboxIdx = ensureScalarUnbox(ctx, fctx, resultWasm);
                 }
