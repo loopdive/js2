@@ -159,6 +159,21 @@ So the check was simultaneously too loud (blaming innocent PRs) and too quiet
 - **`README.md`** — it claimed CI gates "each PR"; the `pull_request` trigger
   was removed when the merge queue landed, so the gate runs in `merge_group`.
 
+Two smaller corrections found while reviewing the job against how it would
+actually run, both of which would have failed *quietly* rather than loudly:
+
+- The job's `permissions:` block needs **`pull-requests: read`**. The queue gate
+  reads `repository.mergeQueue` over GraphQL, which `contents: read` +
+  `actions: read` does not cover. Because that gate fails OPEN by design (a
+  broken gate must never freeze the baseline), the miss would not have broken
+  the refresh — it would have warned and pushed on every run, silently
+  surrendering the merge-group protection the job exists to respect.
+- **`force_refresh` now forces the write, not just the queue bypass.** Mapped
+  only onto the queue gate, a manual dispatch could never get past the "nothing
+  changed" short-circuit, so the escape hatch could be pulled and produce
+  nothing — an operator control that cannot demonstrate itself, which is this
+  issue in miniature.
+
 ### Two design decisions worth the argument
 
 **1. The baseline is now a projection, not a copy of the report.** The report
