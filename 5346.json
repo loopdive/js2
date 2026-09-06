@@ -1,10 +1,11 @@
 {
   "id": "5346",
   "assignee": "ttraenkler/senior-dev-5346",
-  "requested_by": "ttraenkler/senior-dev-5346",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "issue-5346-print-doc-illegal-cast",
   "claimed_at": "2026-09-06T00:18:22Z",
-  "updated_at": "2026-09-06T00:18:22Z",
-  "write_id": "72764-zbj7mdh7"
+  "updated_at": "2026-09-06T07:01:02Z",
+  "write_id": "76735-5gajylmb",
+  "released_at": "2026-09-06T07:01:02Z"
 }
