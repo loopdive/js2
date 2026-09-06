@@ -1,0 +1,301 @@
+---
+id: 5350
+title: "ES2015 standalone super property access — r1: class [[HomeObject]] read, dynamic-key base-before-key, extends null, uninitialised this, object-literal super calls"
+status: in-progress
+sprint: current
+created: 2026-09-05
+updated: 2026-09-05
+priority: high
+horizon: m
+feasibility: medium
+model: opus
+reasoning_effort: medium
+task_type: conformance
+area: codegen
+language_feature: super
+es_edition: ES2015
+goal: standalone-mode
+requested_by: claude.ai@loopdive.com/fable-es6
+related: [4688, 5195, 3594, 3522, 2046, 5316, 4444]
+---
+
+## Problem
+
+38 rows under `language/expressions/super/` are non-pass in the ES2015
+standalone baseline (2026-09-05; 56 pass). A read-only investigation
+(scratch `.tmp/w5/super/`, probes `p2`-`p20.js`, driver `run.mts`, WAT dumper
+`wat.mts`) found one dominant defect: **`super.<x>` in a CLASS method has no
+runtime prototype lookup**. `compileSuperPropertyAccess`
+(`src/codegen/expressions/new-super.ts:1277`) resolves `super.<name>` only
+through three static tables (parent accessors `ctx.classAccessorSet`, parent
+struct fields `ctx.structFields`, parent methods) and otherwise emits a
+type-shaped default (`ref.null.extern` / `f64.const 0` / `i32.const 0`,
+L1398-1409). A property put on the parent prototype at runtime
+(`A.prototype.fromA = 'a'`) is invisible, so `super.fromA` compiles to a literal
+null — the `Expected SameValue(«null», «"a"»)` bucket verbatim (WAT `p2.wat:6402`:
+three instructions). The object-literal twin was fixed by #4688
+(`compileStandaloneObjectLiteralSuperPropertyRead`, L1211: `__getPrototypeOf(home)`
+→ RequireObjectCoercible → `__reflect_get_receiver(base, key, this)`) and only
+lacks the class [[HomeObject]] input — which exists since #5195 as the `$Object`
+prototype singleton (`emitLazyProtoGet(ctx, fctx, className)`,
+`expressions/extern.ts:302`). Proof: the lowering written as source
+(`Reflect.get(Object.getPrototypeOf(C.prototype), 'fromA', this)`) answers `'a'`
+on the base tree with `imports: []` (probe `p19`).
+
+Super WRITES (`super.x = v`, 9 rows) write nowhere and never throw (probe `p10`)
+because standalone has no receiver-aware [[Set]] — that native is being built by
+#5316 r5 step 6 (`__reflect_set_receiver`) and is NOT built here.
+
+## Implementation Plan — r1 (2026-09-05, Fable lane; Opus-medium implements)
+
+All gated on `ctx.standalone` exactly as L1216 does; wasi and host untouched.
+Steps independent, ordered by rows-per-risk.
+
+1. **Class methods get their [[HomeObject]] (4 clean rows, +2 after the eval
+   bridge).** Generalise `compileStandaloneObjectLiteralSuperPropertyRead`
+   (L1211) to take an `emitHomeObject: () => boolean` instead of reading the
+   `SUPER_HOME_OBJECT_CAPTURE_NAME` local (L1230-1235); object-literal callers
+   pass the existing `local.get`, the class caller passes
+   `() => emitLazyProtoGet(ctx, fctx, currentClassName)`. Wire it in exactly two
+   places: L1398 (immediately before the final default in
+   `compileSuperPropertyAccess`) and L1556 (same position in
+   `compileSuperElementAccess`) — AFTER the parent-accessor walk (L1497-1515)
+   and struct-field walk (L1517-1555), so `tests/issue-3522-super-accessor.test.ts:407-419`
+   keeps its single static call. Receiver: the `this` LOCAL when
+   `fctx.localMap.get("this")` exists (`local.get` + `extern.convert_any`),
+   never `__current_this` in a class method; a static method (no `this` local)
+   keeps today's default. Restrict to `parentClassName !== undefined` — do NOT
+   touch the `!parentClassName` arms at L1306/L1484: a base class's prototype
+   `$Object` has a null [[Prototype]] today (probe `p18`), so the coercible
+   guard would turn every base-class `super.x` (must be `undefined`) into a
+   TypeError. Check `standaloneClassProtoObjectApplies(ctx, currentClassName)`
+   BEFORE committing to the runtime lowering (re-entrancy guard
+   `protoObjectsInProgress`, `class-proto-object.ts:120/204`; builtin-parent
+   subclasses like `extends Map` return false and keep the
+   `emitSuperExternMethodCall` route). Call `flushLateImportShifts` at the two
+   points the #4688 arm does (L1221, L1256). Rows: `prop-{dot,expr}-cls-val.js`,
+   `prop-{dot,expr}-cls-val-from-arrow.js`.
+2. **Dynamic-key super element read: base before key (2 rows).** In the
+   `propName === undefined` arm (L1435-1459) stop dropping the key: emit the
+   home object → `__getPrototypeOf` FIRST, spill the base to a local, then the
+   key + `emitToPropertyKeyOnce`, then `emitSuperBaseCoercibleGuard` and
+   `__reflect_get_receiver(base, key, this)` (both `-getsuperbase-before-
+   topropertykey-*` rows assert GetSuperBase precedes ToPropertyKey; the key's
+   `toString` mutates the home object's prototype). Rows:
+   `prop-expr-getsuperbase-before-topropertykey-getvalue.js`,
+   `prop-poisoned-underscore-proto.js`.
+3. **`class C extends null`: super read is a TypeError (2 rows).** Narrow arm
+   ahead of the `!parentClassName` default at L1306 and L1484: when the
+   enclosing class's heritage expression is the literal `null`,
+   `emitThrowTypeError(ctx, fctx, "Cannot read properties of null (super base)")`.
+   Record the general fix (base-class `D.prototype.[[Prototype]] ===
+   Object.prototype`, `class-proto-object.ts:243-260`) as a separate issue.
+   Rows: `prop-{dot,expr}-cls-null-proto.js`.
+4. **Uninitialised `this` in a derived constructor (3 rows).** (a) call the
+   existing `emitSuperUninitializedThisGuard(ctx, fctx, expr.argumentExpression)`
+   (`helpers.ts:381`) at the top of `compileSuperElementAccess` (L1422),
+   mirroring `assignment.ts:5522` — row `prop-expr-uninitialized-this-getvalue.js`.
+   (b) extend the guard with a second trigger: in a derived constructor, a
+   `super.<x>` READ not lexically preceded by any `super()` call in the
+   constructor's statement list is unconditionally a ReferenceError; when a
+   `super()` appears earlier (even inside `if`/loops) keep today's behaviour —
+   conservative in the safe direction, never invert it. Rows:
+   `prop-{dot,expr}-cls-this-uninit.js`.
+5. **Object-literal `super.m()` (2 rows).** `compileSuperMethodCallCore`
+   (L1059-1163) bails at L1086 for object literals; before
+   `evalArgsAndDefault()`, obtain the method value with step 1's read
+   (`__reflect_get_receiver(getPrototypeOf(home), name, this)`) and invoke it
+   with `this` = the current receiver through the `__extern_method_call` /
+   `__js2_call_fn_method_argc_N` path `emitSuperExternMethodCall` (L1000-1043)
+   already uses. Respect the `selfOffset` / no-pad contract (L1118-1127,
+   `tests/issue-3024-static-super-arity.test.ts`). Rows:
+   `prop-{dot,expr}-obj-ref-this.js`.
+6. **Record, do not build:** super WRITE (9 rows; needs #5316 r5 step 6's
+   `__reflect_set_receiver` — then a `super` target arm in
+   `compilePropertyAssignment`/`compileElementAssignment` after the static
+   accessor-setter dispatch, §13.15.2 order base → key → RHS → Set, and a strict-
+   mode TypeError on a false status via `isStrictContext`); the `C.prototype`
+   narrowing to the instance struct (`ref.test` fails against the #5195 `$Object`,
+   `p9.wat`; blocks `prop-{dot,expr}-cls-ref-this.js`); the eval [[HomeObject]]
+   bridge (4 `-from-eval` rows); derived-`super()` this-rebinding (4 rows);
+   `super(...spread)` arity (4 rows); `call-construct-invocation.js` (#3371).
+
+Measurement protocol: base = `git archive origin/main` (linked deps, rebuilt
+bundle + eval provider after the last src edit); node 22 oracle, node 25 for
+changed test files; reuse `.tmp/w5/super/*.js` + `run.mts`; rows via
+`run-test262-paths.mts --isolate --standalone`. Controls (zero rows lost by
+set-diff): every ES2015 row under `language/expressions/super` (94),
+`language/statements/class` + `language/expressions/class` (~700 — the class
+pins `tests/issue-5195*.test.ts`, `issue-5309`, `issue-5312`, `issue-5318-r4-*`,
+`issue-3522-super-accessor`, `issue-3024-static-super-arity` must stay green),
+and `language/expressions/object` (~260).
+
+## Acceptance criteria
+
+- 13 rows (steps 1-5) pass; the from-eval and cls-ref-this rows are NOT counted.
+- Zero rows lost across the three controls; the pins above green on node 22
+  and node 25 at 4G single fork.
+- Byte-identical: every non-standalone target; the parent-accessor arm (one
+  static call, no `call_ref`/`ref.test`/`__box_number`, `issue-3522` pin) and the
+  struct-field arm; `src/ir/select.ts` untouched (selector outcome codes pinned).
+- Behaviour change accepted and measured: PARENT_FIELD `super.label` moves from
+  `ref.null.extern` to the prototype lookup's `undefined` (= node).
+- Pins in `tests/issue-5350-super-property-r1.test.ts` (standalone,
+  `result.imports` `[]`) for every step and for the base-class `super.x`
+  staying `undefined` without a throw.
+- Gates green bare and with `LOC_GATE_BASE=origin/main`; grants here.
+
+## Lane protocol
+
+As in #5316/#5318: fresh worktree of the session branch, commit per step with
+the measurement in the body, `Model: Claude Opus 5 Medium`, never push/PR/
+enqueue; append `## 2026-09-05 r1 implementation (Opus)` with rows base→lane,
+control set-diffs, gates, residuals with mechanisms.
+
+## 2026-09-05 r1 implementation (Opus)
+
+Branch `wf5350` off the wave-5 integration branch (`claude/es6-test262-standalone-g10c7u`
+@4324022bd5 = origin/main @2257b950ee + the wave-5 plans). Five commits, one per plan
+step, each carrying its own measurement.
+
+### What landed
+
+| Step | Commit | Mechanism |
+| --- | --- | --- |
+| 1 | `6796fd1b8d` | Class methods get their [[HomeObject]]: `compileStandaloneObjectLiteralSuperPropertyRead` generalised into a shared `compileStandaloneSuperPropertyRead` taking home-object and receiver EMITTERS; the class caller materialises `C.prototype` through `emitLazyProtoGet` (#5195 `$Object` singleton). Wired at the two final-default positions only, AFTER the parent-accessor and struct-field walks. |
+| 2 | `dc02c17b6f` | `super[<dynamic key>]` reads for real, with GetSuperBase spilled to a local BEFORE ToPropertyKey runs. |
+| 3 | `f38e235725` | `class C extends null` — the super base is null, so the read is a TypeError; a BASE class stays on its `undefined`-shaped default. |
+| 4 | `1e45f94a7f` | (a) the #2709 `super[super()]` guard now runs on the READ path too; (b) a derived-constructor `super.x` with no lexically preceding `super()` is a ReferenceError; plus a correction to step 1 (see below). |
+| 5 | `375e7a72f8` | An object literal's `super.m(args)` is INVOKED via `__apply_closure(fn, thisValue, argsCarrier)` with the call-time receiver, instead of leaving a typed default. Plus `tests/issue-5350-super-property-r1.test.ts`. |
+
+### Rows (`run-test262-paths.mts --isolate --standalone`, base = origin/main @2257b950ee with its own bundle + eval provider)
+
+Base: 13/13 fail. Lane: **5 pass, 8 fail**.
+
+| Row | base | lane |
+| --- | --- | --- |
+| `prop-dot-cls-null-proto.js` | fail | **pass** |
+| `prop-expr-cls-null-proto.js` | fail | **pass** |
+| `prop-expr-uninitialized-this-getvalue.js` | fail | **pass** |
+| `prop-dot-obj-ref-this.js` | fail | **pass** |
+| `prop-expr-obj-ref-this.js` | fail | **pass** |
+| `prop-dot-cls-val.js` | fail («null») | fail («null») |
+| `prop-expr-cls-val.js` | fail («null») | fail («null») |
+| `prop-dot-cls-val-from-arrow.js` | fail («null») | fail («null») |
+| `prop-expr-cls-val-from-arrow.js` | fail («null») | fail («null») |
+| `prop-expr-getsuperbase-before-topropertykey-getvalue.js` | fail («null») | fail («undefined») |
+| `prop-poisoned-underscore-proto.js` | fail («null») | fail («null») |
+| `prop-dot-cls-this-uninit.js` | fail | fail |
+| `prop-expr-cls-this-uninit.js` | fail | fail |
+
+The plan projected 13 rows. Five landed. The eight that did not are blocked by
+defects OUTSIDE this lowering, each isolated with a probe rather than inferred:
+
+1. **A block-scoped class method's write to a captured `var` of the enclosing
+   function is dropped** — pre-existing, present identically on origin/main, and
+   it has nothing to do with `super`. `.tmp/w5350/q26.ts` is the whole repro:
+   `fromA = 'a'` inside `C.prototype.method()` where `C` sits in an `if (1) { }`
+   block and `fromA` is declared outside it. base **2** (`fromA` still
+   `undefined`), lane **2**, node 22 **1**.
+   This is why the four `prop-{dot,expr}-cls-val{,-from-arrow}.js` rows and the
+   two `prop-{dot,expr}-cls-this-uninit.js` rows still fail: `wrapTest` puts
+   every test body inside `try { }`, so EVERY row's class is block-scoped, and
+   all six store their observation in an outer `var` (`fromA`, `caught`). The
+   super read itself is now correct in that shape — `.tmp/w5350/q25.ts` performs
+   the same two-level chain read from a block-scoped class and answers **6**
+   (both reads right), matching node.
+   The plan's proof for step 1 (probe `p19`) was FUNCTION-scoped, which is why
+   this did not surface in planning.
+2. **`prop-expr-getsuperbase-before-topropertykey-getvalue.js`** moved «null» →
+   «undefined» (the read now happens) and is blocked twice over: the row's key
+   variable is captured by a lifted object-literal method and reads as absent
+   inside it (`.tmp/w5350/q33.ts`), and node 22 itself answers `"bad"` for this
+   row (`.tmp/w5350/row1b.mjs`) — it evaluates ToPropertyKey before
+   GetSuperBase, so this row cannot be validated against the node oracle at all.
+3. **`prop-poisoned-underscore-proto.js`** is unchanged; its first assertion is
+   an object-literal `super['constructor']` reaching `Object`, which the read
+   declines on today.
+
+### Regression caught and fixed inside the lane
+
+Step 1 as first committed made `class D extends Object { … super.y … }` throw a
+TypeError where node answers `undefined`: a builtin parent has no §15.7.14
+step-6 link out of `D.prototype`, so `__getPrototypeOf` answered nullish and the
+RequireObjectCoercible guard fired. Step 4's probe caught it; the class arm now
+also requires the PARENT to own a `$Object` prototype. `.tmp/w5350/q52.ts`:
+base **36**, step-1-only **73** (the regression), lane **37**, node 22 **37**.
+
+### Pins
+
+`tests/issue-5350-super-property-r1.test.ts` — six cases, one per step plus two
+regression guards (a BASE class's `super.x` must not throw; a derived read after
+`super()`, and one in an arrow written before it, must still answer). Every case
+asserts `result.imports` is `[]`. Green on node 22.22.2 and node 25.9.0,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks --poolOptions.forks.singleFork=true`.
+
+Named class pins re-run green on this branch: `issue-3024-static-super-arity`,
+`issue-3522-super-accessor`, `issue-5195-es2015-class-r2`,
+`issue-5195-r3-heritage-check`, `issue-5195-r3-restricted-properties`,
+`issue-5195-r3-review`, `issue-5309-child-field-shadows-parent-method`,
+`issue-5312-uninitialised-field-reads-undefined`,
+`issue-5318-r4-computed-accessor-keys` — 309 tests, 0 failures.
+
+### Byte-identity outside standalone
+
+`compile()` on three probe shapes (`q23.ts` class chain, `q61.ts` object-literal
+super call, `q40.ts` `extends null` + base class), sha256 of `.binary`, lane vs
+base:
+
+| probe | host | wasi | standalone |
+| --- | --- | --- | --- |
+| q23 | identical `ac355d7c…` | identical `385d6200…` | changed |
+| q61 | identical `bf7b0786…` | identical `bb336190…` | changed |
+| q40 | identical `e68b3193…` | identical `3a021e4b…` | changed |
+
+`src/ir/select.ts` is untouched — the whole change-set is
+`src/codegen/expressions/new-super.ts` plus the new test file.
+
+### Gates
+
+Run bare, exit status read directly, after the last src edit:
+`check-loc-budget` (also with `LOC_GATE_BASE=origin/main`), `check-func-budget`
+(same), `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+`check:speculative-rollback`, `check:stack-balance`, `check:codegen-fallbacks`,
+`check:any-box-sites`, TS7 `--noEmit -p tsconfig.ts7.json`, `pnpm lint` — all 0.
+
+`oracle-ratchet` needed work rather than a grant: the step-4 throw hooks first
+added three `getTypeAtLocation` sites. Both super-access functions now take ONE
+hoisted checker query and every arm answers from it, a NET −7. The LOC and
+function budgets carry a dated `loc-budget-allow` / `func-budget-allow` grant
+for `src/codegen/expressions/new-super.ts` in this issue's own frontmatter (the
+whole change is in that one file). No `scripts/*-baseline.json` was touched.
+
+### Residuals, with mechanisms
+
+- **Block-scoped class method → captured-`var` write is dropped** (defect 1
+  above). This is the single largest blocker for this row family and is NOT a
+  `super` defect; it wants its own issue. Repro `.tmp/w5350/q26.ts`, ten lines,
+  no `super`.
+- **A BASE class's `super.x` answers `ref.null.extern`, not `undefined`**
+  (`.tmp/w5350/q40.ts` D-half: base 32, lane 32, node 16). Needs
+  `D.prototype.[[Prototype]] === Object.prototype`
+  (`class-proto-object.ts:243-260`) — the general fix the plan's step 3 asked to
+  record separately.
+- **Builtin-parent subclasses** (`extends Map`, `extends Object`) keep the
+  historical default: no `$Object` prototype on the parent, so no chain to walk.
+- **`super.x = v` (9 rows)** — not built, per plan step 6; needs #5316 r5's
+  `__reflect_set_receiver`.
+- **The `-from-eval` [[HomeObject]] bridge, `C.prototype` narrowing to the
+  instance struct (`prop-{dot,expr}-cls-ref-this.js`), derived-`super()`
+  this-rebinding, `super(...spread)` arity, `call-construct-invocation.js`
+  (#3371)** — untouched, per plan step 6.
+- **Object-literal `super.m()` on a MISS answers the old typed default, not
+  §13.3.6's TypeError** — deliberate ("absent-not-wrong"): the reflective read
+  does not see every prototype surface.
+- **`super.m(...spread)` in an object literal** declines to the old arm; the
+  args carrier is built by `__objvec_push` per argument and spreads were out of
+  scope.
+
+### Control not completed (integrator note, 2026-09-06)
+
+The lane started a 1,089-row class/super control (`language/statements/class/*`, `language/expressions/class/*`, `language/expressions/object/*`, `.../class/subclass`, `.../class/definition`, `language/expressions/super`) three times; every run died mid-way on the shared box (only the tier headers were written) and the lane wedged waiting for the result file. The integrator stopped the lane at 05:20 UTC and committed this record from the lane's draft. The control is deferred to the integrated-tree sweep (fix tree vs the fresh standalone baseline, set-diff of non-pass paths) before the PR.
