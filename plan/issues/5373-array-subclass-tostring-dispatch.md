@@ -11,20 +11,20 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-06
 # 2026-09-06 — the ordering rule has to be applied at the member-resolution
-# sites themselves, and all four of them live in `src/runtime.ts` (the two
-# string-coercion imports, the dynamic method call, and the property read plus
-# its two twins). +154 LOC there is the two shared helpers (`_classChainRead`,
-# `_classChainToString`) plus the four call sites and their rationale comments;
-# moving them to a subsystem module would put the gate one indirection away from
-# the built-in read it has to precede, which is the exact thing that made this
-# bug survive #5204's partial fix.
+# sites themselves, and all three of them live in `src/runtime.ts`
+# (`__extern_toString`, `__extern_join_str`, `__extern_method_call`). The +95
+# LOC is the three shared helpers (`_isTaggedUserClassInstance`,
+# `_classChainMethod`, `_classChainToString`) plus the three call sites and
+# their rationale comments; moving them to a subsystem module would put the
+# gate one indirection away from the built-in read it has to precede, which is
+# exactly the split that let this bug survive #5204's partial fix.
 loc-budget-allow:
   - src/runtime.ts
-# Same change, same reason: `resolveImport` is the import-factory switch that
-# physically contains `__extern_toString`, `__extern_join_str`,
-# `__extern_method_call` and `__extern_get`, and `<anonymous>#95` is the
-# `intent`-table twin of `__extern_get` (`case "extern_get"`), which is the copy
-# actually wired for a compiled member read. Both grow by the guard clause only.
+# Same change, same reason. `resolveImport` is the import-factory switch that
+# physically contains all three imports, and `<anonymous>#95` is the
+# `__extern_method_call` closure inside it — the dynamic method-call path, where
+# the class-chain lookup has to sit ahead of `wrappedObj[method]`. Both grow by
+# the guard clause and its comment only.
 func-budget-allow:
   - src/runtime.ts::resolveImport
   - src/runtime.ts::<anonymous>#95
@@ -171,3 +171,91 @@ gate at baseline.
 - Id reserved via `claim-issue --allocate --allow-unscanned` (no `gh` in this
   container); open PRs hand-checked 2026-09-06 — highest in-flight issue file
   is #5364.
+
+## Outcome (2026-09-06, dev-5373)
+
+### Step 1 — the dispatch sites
+
+Not the ones the plan guessed. `class B extends Array` is compiled
+**externref-backed**, so the instance reaching the host is a **real host JS
+Array** (`Array.isArray` true, `_isWasmStruct` false, `constructor.name === "B"`,
+tagged `"B"` in `_userClassTags`), not a WasmGC vec. `_wrapVecForHost`'s get trap
+— the plan's prime suspect — never fires for it; it fires only for PLAIN arrays.
+All the sites are in `src/runtime.ts`:
+
+| expression | site | line |
+| --- | --- | --- |
+| `String(x)`, `` `${x}` `` | `__extern_toString` → `if (typeof v.toString === "function") return v.toString();` | 12748 / fix at 12773 |
+| a subclass instance as a join ELEMENT | `__extern_join_str`'s `joinElem`, same read | 12839 / fix at 12884 |
+| any-typed `x.toString()` / `x.toString(10)` / `x.join()` / `x.valueOf()` | `__extern_method_call` → `const fn = wrappedObj[method];`; the class chain was consulted only in the `typeof fn !== "function"` arm below it | 14232 / fix at 14331 |
+
+A **fourth** site with the identical defect — the member READ `const f = x.toString`
+(`__extern_get`, its `intent`-table twin `case "extern_get"`, and `_safeGet`) — is
+NOT fixed here; see below.
+
+### Steps 2–4 — what shipped
+
+The ordering rule (`_isTaggedUserClassInstance` / `_classChainMethod` /
+`_classChainToString`, runtime.ts 6926–6963) is gated on the **user-class tag**,
+never on "looks like an array": a plain array is a vec, is never tagged, and pays
+one `WeakMap.has`. A class that does not declare the member keeps the inherited
+built-in. `tests/issue-5373-array-subclass-tostring.test.ts` covers both lanes;
+10 cells are base-failing in the single-module lane.
+
+### Step 5 — measurements
+
+- **123-row #5249 list** (`.tmp/base-123.tsv` vs `.tmp/fix2-123.tsv`, 13 pass /
+  110 fail both sides): **0 pass→fail, 0 fail→pass, 0 changed failure reasons.**
+  The 21 `infinity is out of range` rows did not move — they are blocked on the
+  `constructor`-identity defect below, not on this ordering.
+- **`built-ins/Temporal/Instant/**` + `ZonedDateTime/prototype/{year,month,day,epochNanoseconds,epochMilliseconds}/**`**,
+  481 rows, no overlap with the 123 (`.tmp/base-instzdt.tsv` vs
+  `.tmp/fix2-instzdt.tsv`, 225 pass / 256 fail both sides): **0 pass→fail,
+  0 fail→pass, 0 changed reasons.**
+- **Direct probes**: unchanged from base. `Instant.from(…).epochNanoseconds`
+  still throws `SyntaxError: Cannot convert 23396352,513294428,1 to a BigInt`;
+  ISO `ZonedDateTime.year` still throws `RangeError: infinity is out of range`.
+  **Acceptance criterion 3 is NOT met, and cannot be by this ordering** — see the
+  root cause below.
+- Equivalence gate: 22 failing / 1720 passing vs baseline 24 / 1718.
+
+### Reported, not fixed
+
+1. **`i.constructor === C` is false for ANY compiled class read through an
+   any-typed receiver** (not just Array subclasses — a plain `class P {}` behaves
+   the same). `mkP().constructor === P` is 1, but `f(mkP())` with
+   `function f(i){ return i.constructor === P; }` is 0. Root cause: the instance's
+   `[[Prototype]]` is a **synthetic** `class Sub extends Parent {}` minted by the
+   `__set_subclass_proto` host import and cached by class NAME in `_subclassCtors`;
+   nothing maps it back to the compiled class object. **This is the actual blocker
+   for every Temporal BigInt read**: `JSBI.BigInt(i)` short-circuits on
+   `i.constructor === JSBI` in node and falls through to `JSBI.__toPrimitive` here.
+2. **The member-READ path.** Fixing it (`_classChainRead` before the native read in
+   `__extern_get` / its intent twin / `_safeGet`) is correct per node in isolation
+   and was measured: it **regresses 9 rows** of `built-ins/Temporal/Instant/**`
+   (`from/argument-string-date-with-utc-offset`, `from/instant-string-multiple-offsets`,
+   `from/instant-string-sub-minute-offset`, `prototype/add/blank-duration`,
+   `prototype/equals/argument-object-tostring`,
+   `prototype/equals/argument-string-date-with-utc-offset`,
+   `prototype/equals/instant-string-multiple-offsets`,
+   `prototype/equals/instant-string-sub-minute-offset`,
+   `prototype/subtract/blank-duration`) because it makes `i.valueOf` resolve to
+   jsbi's own `valueOf`, which throws by design and which node never reaches
+   thanks to (1). Do it together with (1), not before it.
+3. **Cross-linked-seam dispatch is unfixed** (#5223 family): a subclass instance
+   minted in a separately-linked provider and dispatched on in the CONSUMER still
+   takes the built-in, because the consumer's exports carry no `__class_call_B_*`
+   bridge. Pinned in the test's linked lane.
+4. **A defaulted numeric parameter reaches a host class bridge as NaN.**
+   `toString(radix = 10)` called through `__class_call_J_toString_1(inst, undefined)`
+   answers `"J(3:NaN)"`: the bridge pads the missing argument with `undefined`,
+   which the externref→f64 coercion turns into NaN, so the default never fires.
+   Affects `String(x)` on any subclass whose `toString` has a numeric default.
+5. **`String(a)` / `"" + a` on a PLAIN array through an any-typed parameter
+   answers `"null"`**, and `a["toString"]` read through an any-typed parameter
+   answers `undefined` (node: `"1,2,3"` for all three). Pre-existing, unchanged,
+   pinned as controls in the test.
+6. `tests/issue-1933.test.ts` fails identically before and after
+   (`expected … to contain 'legacyRegExpState?:'`), i.e. already red on
+   `origin/main`. Under the default `forks` pool it OOMs while vitest serializes
+   the ~19k-line assertion string; `--pool=threads` shows the real assertion.
