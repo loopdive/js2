@@ -423,7 +423,7 @@
     {
       "name": "Functions & closures",
       "testCategories": ["language/statements/function", "language/function-code", "built-ins/Function"],
-      "passCount": 1095,
+      "passCount": 1096,
       "totalCount": 1177,
       "editionSpread": [
         {
@@ -448,7 +448,7 @@
         },
         {
           "edition": "ES2018",
-          "pass": 8,
+          "pass": 9,
           "total": 16
         },
         {
@@ -523,7 +523,7 @@
     {
       "name": "try / catch / finally",
       "testCategories": ["language/statements/try"],
-      "passCount": 195,
+      "passCount": 196,
       "totalCount": 201,
       "editionSpread": [
         {
@@ -538,7 +538,7 @@
         },
         {
           "edition": "ES2018",
-          "pass": 2,
+          "pass": 3,
           "total": 3
         },
         {
@@ -1098,7 +1098,7 @@
     {
       "name": "Modules (import / export)",
       "testCategories": ["language/module-code", "language/import", "language/export"],
-      "passCount": 385,
+      "passCount": 388,
       "totalCount": 731,
       "editionSpread": [
         {
@@ -1123,7 +1123,7 @@
         },
         {
           "edition": "ES2025",
-          "pass": 3,
+          "pass": 4,
           "total": 30
         },
         {
@@ -1143,7 +1143,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 134,
+          "pass": 136,
           "total": 225
         }
       ]
@@ -1203,7 +1203,7 @@
     {
       "name": "Object spread / rest",
       "testCategories": ["language/expressions/object/spread"],
-      "passCount": 264,
+      "passCount": 285,
       "totalCount": 401
     },
     {
@@ -1216,13 +1216,13 @@
         "language/expressions/async-generator",
         "language/statements/async-generator"
       ],
-      "passCount": 2457,
+      "passCount": 2468,
       "totalCount": 3812
     },
     {
       "name": "Optional chaining (?.)",
       "testCategories": ["language/expressions/optional-chaining"],
-      "passCount": 38,
+      "passCount": 39,
       "totalCount": 52
     },
     {

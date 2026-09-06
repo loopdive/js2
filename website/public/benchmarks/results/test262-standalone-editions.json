@@ -1062,8 +1062,8 @@
   },
   {
     "edition": "ES2018",
-    "pass": 3352,
-    "fail": 490,
+    "pass": 3373,
+    "fail": 469,
     "ce": 981,
     "skip": 0,
     "total": 4823,
@@ -1071,21 +1071,21 @@
     "features": [
       {
         "name": "async-iteration",
-        "pass": 2456,
-        "fail": 380,
+        "pass": 2467,
+        "fail": 369,
         "ce": 974,
         "skip": 0,
         "total": 3810,
-        "pct": 64
+        "pct": 65
       },
       {
         "name": "destructuring-binding",
-        "pass": 844,
-        "fail": 83,
+        "pass": 863,
+        "fail": 64,
         "ce": 458,
         "skip": 0,
         "total": 1385,
-        "pct": 61
+        "pct": 62
       },
       {
         "name": "Symbol.iterator",
@@ -1107,8 +1107,8 @@
       },
       {
         "name": "generators",
-        "pass": 270,
-        "fail": 34,
+        "pass": 272,
+        "fail": 32,
         "ce": 165,
         "skip": 0,
         "total": 469,
@@ -1125,12 +1125,12 @@
       },
       {
         "name": "object-rest",
-        "pass": 179,
-        "fail": 77,
+        "pass": 200,
+        "fail": 56,
         "ce": 26,
         "skip": 0,
         "total": 282,
-        "pct": 63
+        "pct": 71
       },
       {
         "name": "object-spread",
@@ -1143,12 +1143,12 @@
       },
       {
         "name": "default-parameters",
-        "pass": 91,
-        "fail": 20,
+        "pass": 96,
+        "fail": 15,
         "ce": 4,
         "skip": 0,
         "total": 115,
-        "pct": 79
+        "pct": 83
       },
       {
         "name": "regexp-named-groups",
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 942,
-    "fail": 570,
+    "pass": 943,
+    "fail": 569,
     "ce": 505,
     "skip": 18,
     "total": 2035,
@@ -1642,12 +1642,12 @@
       },
       {
         "name": "optional-chaining",
-        "pass": 38,
-        "fail": 11,
+        "pass": 39,
+        "fail": 10,
         "ce": 3,
         "skip": 0,
         "total": 52,
-        "pct": 73
+        "pct": 75
       },
       {
         "name": "Symbol.iterator",
@@ -2856,8 +2856,8 @@
   },
   {
     "edition": "ES2024",
-    "pass": 366,
-    "fail": 81,
+    "pass": 368,
+    "fail": 79,
     "ce": 109,
     "skip": 0,
     "total": 556,
@@ -2865,8 +2865,8 @@
     "features": [
       {
         "name": "TypedArray",
-        "pass": 98,
-        "fail": 58,
+        "pass": 100,
+        "fail": 56,
         "ce": 91,
         "skip": 0,
         "total": 247,
@@ -2883,21 +2883,21 @@
       },
       {
         "name": "align-detached-buffer-semantics-with-web-reality",
-        "pass": 97,
-        "fail": 56,
+        "pass": 99,
+        "fail": 54,
         "ce": 5,
         "skip": 0,
         "total": 158,
-        "pct": 61
+        "pct": 63
       },
       {
         "name": "BigInt",
-        "pass": 50,
-        "fail": 32,
+        "pass": 51,
+        "fail": 31,
         "ce": 39,
         "skip": 0,
         "total": 121,
-        "pct": 41
+        "pct": 42
       },
       {
         "name": "Atomics",
@@ -3263,12 +3263,12 @@
   },
   {
     "edition": "ES2025",
-    "pass": 555,
+    "pass": 556,
     "fail": 333,
-    "ce": 113,
+    "ce": 112,
     "skip": 0,
     "total": 1001,
-    "pct": 55,
+    "pct": 56,
     "features": [
       {
         "name": "iterator-helpers",
@@ -3299,12 +3299,12 @@
       },
       {
         "name": "import-attributes",
-        "pass": 9,
+        "pass": 10,
         "fail": 13,
-        "ce": 73,
+        "ce": 72,
         "skip": 0,
         "total": 95,
-        "pct": 9
+        "pct": 11
       },
       {
         "name": "dynamic-import",
@@ -3326,12 +3326,12 @@
       },
       {
         "name": "globalThis",
-        "pass": 0,
+        "pass": 1,
         "fail": 13,
-        "ce": 10,
+        "ce": 9,
         "skip": 0,
         "total": 23,
-        "pct": 0
+        "pct": 4
       },
       {
         "name": "RegExp.escape",
@@ -4304,9 +4304,9 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4410,
+    "pass": 4412,
     "fail": 951,
-    "ce": 84,
+    "ce": 82,
     "skip": 0,
     "total": 5445,
     "pct": 81
