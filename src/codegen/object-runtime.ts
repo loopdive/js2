@@ -133,6 +133,7 @@ import {
   reserveInstanceTombstones,
 } from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
+import { REFLECT_SET_RECEIVER, registerOrdinarySetWithReceiver } from "./object-runtime-ordinary-set.js"; // (#5316)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
 // arms (vec test first, unchanged closure arm as fallthrough).
 import {
@@ -6837,6 +6838,14 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // `protoMemberDirty` AND actually materialized a proto.
   flushPendingNativeProtoSeeders(ctx);
 
+  // (#5316 r5 step 6 / #2046) §10.1.9.2 OrdinarySetWithOwnDescriptor, the
+  // receiver-threaded `[[Set]]` behind `Reflect.set`'s 4-argument form.
+  // Registered LAST, and deliberately so: it reads `__getOwnPropertyDescriptor`,
+  // `__getPrototypeOf`, `__extern_get/set/has` and the `__call_accessor_set`
+  // driver out of `funcMap`, all of which are in place only by here — and
+  // appending at the very end of the sequence shifts no existing funcIdx.
+  registerOrdinarySetWithReceiver(ctx, registerNative);
+
   return types;
 }
 
@@ -12455,6 +12464,7 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   "__extern_set",
   "__extern_set_strict", // (#3983) distinct helper: __reflect_set + strict-PutValue TypeError
   "__reflect_set",
+  REFLECT_SET_RECEIVER, // (#5316) Reflect.set 4-arg — §10.1.9.2 with a receiver
   "__to_primitive",
   "__extern_toString",
   "__delete_property",

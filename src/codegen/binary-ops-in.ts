@@ -30,6 +30,7 @@ import type { InnerResult } from "./shared.js";
 import { coerceType, compileExpression, flushLateImportShifts } from "./shared.js";
 import { inRhsIsExclusivelyPrimitive } from "./binary-ops.js";
 import { identifierEscapesToCall } from "./in-escaped-receiver.js";
+import { isDirectProxyBinding } from "./proxy-value-provenance.js"; // (#5316) `in` must ask the has trap
 import { identifierIsWrittenTo } from "./native-ordinary-instanceof.js"; // (#4484) reassigned-binding guard
 import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) overlay-aware index presence
 // (#4062 array bag / #4491 T9 Date+RegExp bag) a statically-known key may live in
@@ -602,12 +603,29 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // `prototype`; answering from the syntactic form is exact where the type is
     // structurally wrong.
     const arrowPrototypeRoute = staticKey === "prototype" && receiverIsArrowFunctionValue(ctx, expr.right);
-    const has = arrowPrototypeRoute
+    // (#5316) A `$Proxy` receiver has NO own properties of its own — §10.5.7
+    // [[HasProperty]] is a trap call, and the answer is whatever the handler
+    // says. Every fold below reads the TARGET's compile-time shape through the
+    // proxy, so `"attr" in new Proxy({attr:1},{has(){return false}})` folded
+    // TRUE and never called the trap at all (probe `j1`: node `10` — one trap
+    // call, answer false — against base `1`). Suppressing the fold sends the
+    // site to `__extern_has`, whose `$Proxy` arm delegates the trap exactly
+    // once; a receiver that turns out not to be a proxy is answered there too,
+    // so this can only trade a fold for a correct runtime answer.
+    //
+    // `isDirectProxyBinding`, NOT `tracesToProxyValue`: the wider trace accepts
+    // aliases (`var q = p`) that the alias-widening defect documented in
+    // `proxy-value-provenance.ts` nulls out, and routing one of those turns a
+    // correct answer into a wrong one. A missed proxy keeps today's behaviour.
+    const proxyReceiverRoute = (ctx.standalone || ctx.wasi) && isDirectProxyBinding(ctx, expr.right);
+    const has = proxyReceiverRoute
       ? false
-      : terminalAwareObjectPrototypeRoute
+      : arrowPrototypeRoute
         ? false
-        : inheritsFromObjectPrototype ||
-          (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
+        : terminalAwareObjectPrototypeRoute
+          ? false
+          : inheritsFromObjectPrototype ||
+            (!growableReceiver && !escapedReceiverRoute && (hasInStruct || tsTypeHasProperty));
     // (#1444) When RHS is externref/anyref AND static analysis came up empty
     // (no struct field, no TS-typed prop), the answer is NOT reliably false
     // — the host object may carry dynamic keys (e.g. regex `result.groups`).
@@ -659,6 +677,7 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
         reassignedReceiverRoute ||
         escapedReceiverRoute ||
         fnctorProtoRoute ||
+        proxyReceiverRoute ||
         terminalAwareObjectPrototypeRoute)
     ) {
       const hasIdx = ensureLateImport(

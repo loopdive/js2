@@ -579,16 +579,23 @@ export function ensureProxyRuntime(
 
     const forwardArm: Instr[] = isSet
       ? [
-          // __object_setPrototypeOf(target, proto) -> externref ; drop, push the
-          // proxy itself as a truthy boolean-ish success token (no trap → spec
-          // OrdinarySetPrototypeOf, which succeeded since we just performed it).
+          // §10.5.2 step 7.a: `return ? target.[[SetPrototypeOf]](V)` — the
+          // TARGET's answer, not a manufactured success token.
+          //
+          // (#5316) This used to drop the forwarded result and push the proxy as
+          // a truthy token, on the reasoning that OrdinarySetPrototypeOf always
+          // succeeds. It does not when the target is ITSELF a Proxy: the front
+          // guard on `__object_setPrototypeOf` sends that case to the inner
+          // proxy's own dispatch, whose trap may answer false, and the token
+          // overwrote it (`setPrototypeOf/trap-is-missing-target-is-proxy.js`).
+          // Returning the forwarded value is a superset of the old behaviour —
+          // for an ordinary target the helper answers the target object, which
+          // is truthy exactly like the token was.
           { op: "local.get", index: 2 },
           { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
           { op: "extern.convert_any" },
           { op: "local.get", index: 1 },
           { op: "call", funcIdx: forwardIdx },
-          { op: "drop" },
-          { op: "local.get", index: 0 }, // truthy success token (the proxy externref)
         ]
       : [
           // __getPrototypeOf(target) -> externref
@@ -704,14 +711,16 @@ export function ensureProxyRuntime(
           { op: "call", funcIdx: ctx.funcMap.get("__box_boolean")! },
         ]
       : [
-          // __object_preventExtensions(target) -> externref ; drop, push the proxy
-          // as a truthy success token.
+          // §10.5.4 step 6.a: `return ? target.[[PreventExtensions]]()`. Same
+          // (#5316) correction as the setPrototypeOf arm above — a Proxy TARGET
+          // answers through its own dispatch and its `false` must survive
+          // (`preventExtensions/trap-is-missing-target-is-proxy.js`); an
+          // ordinary target answers the object itself, which is truthy exactly
+          // like the dropped token was.
           { op: "local.get", index: 2 },
           { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
           { op: "extern.convert_any" },
           { op: "call", funcIdx: forwardIdx },
-          { op: "drop" },
-          { op: "local.get", index: 0 },
         ];
     return [
       { op: "local.get", index: 0 },
