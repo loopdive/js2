@@ -45,6 +45,45 @@ export function temporalProviderDisabled() {
 }
 
 /**
+ * (#5364) Substring that identifies a realm-global the compiled Temporal
+ * polyfill installs on `globalThis` for its own use.
+ *
+ * `@js-temporal/polyfill` keeps every Temporal object's internal slots in ONE
+ * store reached through `globalThis[Symbol('@@Temporal__GetSlots')]` /
+ * `@@Temporal__CreateSlots`, and it installs them FIRST-WRITER-WINS. That is
+ * correct for its own assumption — one polyfill instance per realm — and it is
+ * exactly the assumption a test262 fork breaks: since #5353 every Temporal row
+ * instantiates the provider AGAIN in the same realm, and every row after the
+ * first silently reuses row 1's slot store, i.e. row 1's provider instance.
+ */
+const TEMPORAL_REALM_GLOBAL_MARKER = "Temporal__";
+
+/**
+ * Drop the previous row's Temporal realm globals so the next instance installs
+ * its OWN, and report what was dropped.
+ *
+ * Measured on the 123-row #5249 calendar list (`.tmp/probe-slotreset.mts`, an
+ * `era-japanese` + `month-boundary-gregory` pair): without this,
+ * `month-boundary-gregory.js` fails `endYesterdayNextDay: instanceof` in a
+ * batch and `Unsupported era name: gregory` alone — a per-row verdict that
+ * depends on which rows ran before it in the same fork. With it, the batch
+ * answers what the solo process answers.
+ *
+ * This is a HARNESS-level repair, not a compiler fix: the polyfill is entitled
+ * to assume one instance per realm, and it is the multi-row fork that violates
+ * that. Retiring the marker between rows is what restores the assumption.
+ */
+export function resetTemporalRealmGlobals() {
+  const dropped = [];
+  for (const symbol of Object.getOwnPropertySymbols(globalThis)) {
+    if (!String(symbol).includes(TEMPORAL_REALM_GLOBAL_MARKER)) continue;
+    delete globalThis[symbol];
+    dropped.push(String(symbol));
+  }
+  return dropped;
+}
+
+/**
  * Does this test need the real `Temporal` global?
  *
  * PATH or `features:`, because neither alone is complete: `built-ins/Temporal/**`

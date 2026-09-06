@@ -6165,6 +6165,30 @@ export function registerLinkedConsumerModule(exports: Record<string, Function>):
 }
 
 /**
+ * (#5364) Retire the linked project that is no longer live, so the NEXT one
+ * starts from an empty registry.
+ *
+ * Both registries above are module-level singletons with no unregister path.
+ * That is correct while a process hosts one linked project, and wrong for a
+ * process that hosts many: `scripts/test262-worker.mjs` runs many rows per fork
+ * and since #5353 every Temporal row re-instantiates the SAME provider binary.
+ * Two instances of one binary share canonical WasmGC types, so project 1's
+ * `__struct_field_names` happily names a struct project 2 minted — and
+ * `_owningClassObject` (#5354) then answers with project 1's class-object
+ * singleton. Nothing throws; the consumer's live `C` and the instance's
+ * resolved constructor are simply two unrelated mirrors, so `x instanceof C`
+ * is false while `x.constructor.name` reads right.
+ *
+ * Call it BEFORE instantiating a project, not after tearing one down: "after"
+ * has no single owner (a row can throw out of instantiate) and would leave the
+ * stale entries live for exactly the window that matters.
+ */
+export function resetLinkedProjectRegistry(): void {
+  _crossModuleStructs.reset();
+  _linkedProviderMirrors.reset();
+}
+
+/**
  * (#5225) The exports that can DECODE `obj` — the reader's own, unless another
  * module of the same linked project minted it.
  *
@@ -6426,6 +6450,107 @@ function _classObjectPrototypeStruct(obj: any): any {
   if (obj == null || typeof obj !== "object") return undefined;
   const proto = _classProtoStructs.get(obj);
   return proto == null ? undefined : proto;
+}
+
+/**
+ * (#5354) Name of the owning-module export that answers "which class is this
+ * struct an instance of" — see src/codegen/class-object-of.ts.
+ */
+const CLASS_OBJECT_OF_EXPORT = "__class_object_of";
+const CLASS_PARENT_OF_EXPORT = "__class_parent_object_of";
+
+/**
+ * (#5354) Resolved owning class OBJECT per instance struct, or `null` for
+ * "asked, no answer". A struct's class never changes, so one question per
+ * struct is enough; `undefined` from the map means "never asked".
+ */
+const _instanceClassObject = new WeakMap<object, any>();
+
+/**
+ * (#5354) The class OBJECT `raw` is an instance of, asked of the module that
+ * OWNS the struct (#5225's minting-module rule — only that module has the type
+ * to read the `__tag` discriminator).
+ *
+ * The class object and the class prototype are carriers of the SAME struct type
+ * with the same `__tag` as an instance, so both answer the export. Neither is
+ * an instance of the class, and both identities are held right here — screening
+ * them on this side costs no wasm bytes and cannot go stale.
+ */
+function _owningClassObject(raw: any, exports: Record<string, Function> | undefined): any {
+  if (raw == null || typeof raw !== "object" || !_canBeWeakKey(raw)) return undefined;
+  const cached = _instanceClassObject.get(raw);
+  if (cached !== undefined) return cached ?? undefined;
+  const resolve = exports?.[CLASS_OBJECT_OF_EXPORT] as ((value: any) => any) | undefined;
+  // Deliberately NOT cached: a module compiled before #5354, or an export view
+  // that has not settled yet (the #5202 start-export registry), must be free to
+  // answer later.
+  if (typeof resolve !== "function") return undefined;
+  let classObj: any;
+  try {
+    classObj = resolve(raw);
+  } catch {
+    classObj = undefined;
+  }
+  if (
+    classObj == null ||
+    typeof classObj !== "object" ||
+    classObj === raw ||
+    _classProtoStructs.get(classObj) === raw ||
+    _prototypeMethodNames.has(raw)
+  ) {
+    _instanceClassObject.set(raw, null);
+    return undefined;
+  }
+  _instanceClassObject.set(raw, classObj);
+  return classObj;
+}
+
+/**
+ * (#5354) The class OBJECT of `classObj`'s `extends` parent, asked of the
+ * owning module. A STATIC heritage (`class B extends A` inside one module) is
+ * resolved wholly at compile time and registers nothing host-side, so this is
+ * the only record of it the boundary can consult.
+ */
+function _owningClassParentObject(classObj: any, exports: Record<string, Function> | undefined): any {
+  if (classObj == null || typeof classObj !== "object") return undefined;
+  const resolve = exports?.[CLASS_PARENT_OF_EXPORT] as ((value: any) => any) | undefined;
+  if (typeof resolve !== "function") return undefined;
+  try {
+    const parent = resolve(classObj);
+    return parent != null && typeof parent === "object" && parent !== classObj ? parent : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * (#5354) The host mirror of the class `raw` is an instance of — the object a
+ * consumer's `instance.constructor` must answer, and the same identity the
+ * consumer's `C` binding holds (`_wrapForHost` caches the mirror per class
+ * object).
+ */
+function _hostConstructorForInstance(raw: any, exports: Record<string, Function> | undefined): any {
+  const classObj = _owningClassObject(raw, exports);
+  if (classObj === undefined || !_classCtorClosures.has(classObj)) return undefined;
+  const mirror = _wrapForHost(classObj, exports);
+  return typeof mirror === "function" ? mirror : undefined;
+}
+
+/**
+ * (#5354) The host object that IS this instance's `[[Prototype]]` across the
+ * linked-provider seam: the class mirror's `.prototype` facade.
+ *
+ * This is the whole point of the issue. `C.prototype` read through the mirror
+ * answers that facade, so answering anything else here (the historical
+ * hardcoded `Object.prototype`) makes OrdinaryHasInstance walk a chain that can
+ * never meet `C.prototype` — `instanceof` false, `getPrototypeOf` unequal, and
+ * `constructor` unreachable, all from the one missing edge.
+ */
+function _hostPrototypeForInstance(raw: any, exports: Record<string, Function> | undefined): any {
+  const mirror = _hostConstructorForInstance(raw, exports);
+  if (mirror === undefined) return undefined;
+  const proto = (mirror as { prototype?: unknown }).prototype;
+  return proto != null && typeof proto === "object" ? proto : undefined;
 }
 
 /** (#4618) `__register_class_parent` import: dynamic `extends <value>`
@@ -8368,6 +8493,15 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       ) {
         return (Object.prototype as Record<string, unknown>)[key as string];
       }
+      // (#5354) `instance.constructor` is an INHERITED read off the class
+      // prototype, which a get trap has to serve itself — the engine does not
+      // consult [[Prototype]] once a trap is installed. Same class identity the
+      // consumer's `C` binding holds, so `d.constructor === C` holds too. Own
+      // properties still shadow it (`val !== undefined` never reaches here).
+      if (val === undefined && key === "constructor" && !_wasmStructHasOwn(obj, key, currentExports())) {
+        const ctorMirror = _hostConstructorForInstance(obj, currentExports());
+        if (ctorMirror !== undefined) return ctorMirror;
+      }
       return val;
     },
     set(_t, key, val) {
@@ -8590,8 +8724,17 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       }
       return desc;
     },
-    getPrototypeOf() {
-      return Object.prototype;
+    getPrototypeOf(_t) {
+      // (#5354) A compiled class INSTANCE inherits from its class's prototype,
+      // not straight from %Object.prototype%. Across the linked-provider seam
+      // the consumer's `C.prototype` IS the mirror's facade, so that is the
+      // object this must answer or `x instanceof C` can never be true.
+      //
+      // §10.5.1: once the target is non-extensible the trap result must be
+      // SameValue as the target's own [[Prototype]] — `preventExtensions` below
+      // pins the resolved answer onto the target precisely so that stays true.
+      if (!Reflect.isExtensible(_t)) return Reflect.getPrototypeOf(_t);
+      return _hostPrototypeForInstance(obj, currentExports()) ?? Object.prototype;
     },
     defineProperty(_t, key, descriptor) {
       // Route through sidecar descriptor validation so non-configurable/non-writable
@@ -8649,6 +8792,16 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
         } catch {
           /* best-effort — an unmaterializable key keeps prior behavior */
         }
+      }
+      // (#5354) Pin the [[Prototype]] the `getPrototypeOf` trap answers onto
+      // the target BEFORE locking it: §10.5.1 requires the trap to report the
+      // target's own prototype once the target is non-extensible, and a
+      // null-proto target would otherwise make every post-freeze
+      // `instanceof` / `getPrototypeOf` throw the proxy invariant TypeError.
+      try {
+        Reflect.setPrototypeOf(t, _hostPrototypeForInstance(obj, currentExports()) ?? Object.prototype);
+      } catch {
+        /* exotic target — the trap's non-extensible arm serves whatever it has */
       }
       _wasmNonExtensibleObjs.add(obj);
       return Reflect.preventExtensions(t);
@@ -8779,18 +8932,37 @@ function _makeClassCtorMirrorForHost(
     const viaFnctor = _classFnctorParents.get(classObj);
     if (viaFnctor != null) return viaFnctor;
     if (className === "") return undefined;
-    return classStaticParent.getClassParent(className);
+    const registered = classStaticParent.getClassParent(className);
+    if (registered != null) return registered;
+    // (#5354) A STATIC `class B extends A` heritage is resolved entirely inside
+    // the compiler and registers nothing on the host, so neither record above
+    // has it. Ask the owning module (see codegen/class-object-of.ts).
+    return _owningClassParentObject(classObj, callbackState.getExports() ?? exports);
   };
   const resolveParentProto = (): any => {
     const pf = resolveParent();
     if (pf == null) return undefined;
     if (typeof pf === "function") return (pf as any).prototype;
+    // (#5354) A parent that is itself a registered compiled class answers its
+    // own MIRROR's facade — the same object the consumer's `A.prototype` reads
+    // — so the child facade's `[[Prototype]]` chain meets it and
+    // `new B() instanceof A` holds. The wrapped prototype struct below is a
+    // different object, which is exactly the identity split this issue is about.
+    if (typeof pf === "object" && _classCtorClosures.has(pf)) {
+      const parentMirror = _wrapForHost(pf, callbackState.getExports() ?? exports);
+      const parentProto = typeof parentMirror === "function" ? (parentMirror as any).prototype : undefined;
+      if (parentProto != null) return parentProto;
+    }
     if (typeof pf === "object" && _classProtoStructs.has(pf)) {
       const pp = _classProtoStructs.get(pf);
       return pp != null ? _wrapForHost(pp, exports) : undefined;
     }
     return _getOrVivifyFnPrototype(pf, callbackState);
   };
+  // (#5354) The mirror itself, needed by the prototype facade's `constructor`
+  // answer below. Assigned at the end of this function; every read of it
+  // happens inside a trap, i.e. strictly after that assignment.
+  let mirrorSelf: any;
   const protoStruct = _classProtoStructs.get(classObj);
   // (#4618) Install the prototype facade even when the proto struct did not
   // register (the react per-file batch crossed a null protoObj through the
@@ -8807,14 +8979,29 @@ function _makeClassCtorMirrorForHost(
           const own = (protoHost as any)[key];
           if (own !== undefined && own !== null) return _maybeWrapCallableUnknownArity(own, callbackState);
         }
+        // (#5354) §15.7.13: a class prototype's `constructor` is the class.
+        // The compiled prototype struct carries no such field, so the facade
+        // is the only place this edge can exist — and `d.constructor` (served
+        // by the instance mirror) must answer the SAME object.
+        if (key === "constructor" && mirrorSelf !== undefined) return mirrorSelf;
         const pp = resolveParentProto();
         if (pp == null) return undefined;
         return _maybeWrapCallableUnknownArity((pp as any)[key], callbackState);
       },
       has(_ft, key) {
         if (protoHost !== undefined && key in (protoHost as any)) return true;
+        if (key === "constructor" && mirrorSelf !== undefined) return true; // (#5354)
         const pp = resolveParentProto();
         return pp != null ? key in (pp as any) : false;
+      },
+      // (#5354) The facade is a prototype OBJECT, so its own [[Prototype]] is
+      // the parent class's prototype and, at the root, %Object.prototype%.
+      // Without this the target's null proto terminated the chain and
+      // `instance instanceof Object` — true for every object — answered false
+      // the moment instances started inheriting from the facade.
+      getPrototypeOf() {
+        const pp = resolveParentProto();
+        return pp != null && (typeof pp === "object" || typeof pp === "function") ? pp : Object.prototype;
       },
       // (#5237) Without this the facade reported ZERO own keys, because its
       // target is a bare `Object.create(null)` and only `get`/`has` were
@@ -8967,7 +9154,8 @@ function _makeClassCtorMirrorForHost(
       return Function.prototype;
     },
   };
-  return new Proxy(fnTarget, handler);
+  mirrorSelf = new Proxy(fnTarget, handler); // (#5354) see the facade's `constructor`
+  return mirrorSelf;
 }
 
 function _unwrapForHost(v: any, reader?: MarshalExportSource): any {
