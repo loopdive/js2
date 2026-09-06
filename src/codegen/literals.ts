@@ -49,6 +49,14 @@ import { arrayIteratorOverrideGlobalIdx, emitArrayProtoIteratorDrive } from "./e
 import { sourceOverridesBuiltinPrototypeMember } from "./builtin-proto-member-override.js";
 import { isSealedNominalStructParent } from "./struct-hierarchy-layout.js";
 import { ensureObjVecBuilders } from "./object-runtime.js";
+import {
+  OBJLIT_ACCESSOR_FLAGS,
+  collectDynamicAccessorHalves,
+  emitDynamicObjectLiteralAccessorHalf,
+  emitObjectLiteralDataStore,
+  emitObjectLiteralDefineCopy,
+} from "./objlit-dynamic-accessors.js"; // (#5318 r5) evaluated-key accessor halves
+import type { ObjLitDefineCopyHelpers } from "./objlit-dynamic-accessors.js";
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
 import { isStrictFunction, isSimpleParameterList } from "./helpers/is-strict-function.js";
@@ -882,6 +890,53 @@ function compileRuntimeComputedPropertyKey(
 }
 
 /**
+ * (#5318 r5 review r2) Resolve the helpers {@link emitObjectLiteralDefineCopy}
+ * needs, or `undefined` when the lane cannot supply the mandatory five (the
+ * caller then keeps the legacy `__object_assign` encoding rather than dropping
+ * the spread). The symbol pair is best-effort: without it the copy covers
+ * string keys only, which is what `__object_keys` enumerates.
+ */
+function ensureDefineCopyHelpers(ctx: CodegenContext): ObjLitDefineCopyHelpers | undefined {
+  const externRef: ValType = { kind: "externref" };
+  const f64: ValType = { kind: "f64" };
+  const objectKeysIdx = ensureLateImport(ctx, "__object_keys", [externRef], [externRef]);
+  const externLengthIdx = ensureLateImport(ctx, "__extern_length", [externRef], [f64]);
+  const externGetIdxIdx = ensureLateImport(ctx, "__extern_get_idx", [externRef, f64], [externRef]);
+  const externGetIdx = ensureLateImport(ctx, "__extern_get", [externRef, externRef], [externRef]);
+  const definePropertyValueIdx = ensureLateImport(
+    ctx,
+    "__defineProperty_value",
+    [externRef, externRef, externRef, f64],
+    [externRef],
+  );
+  if (
+    objectKeysIdx === undefined ||
+    externLengthIdx === undefined ||
+    externGetIdxIdx === undefined ||
+    externGetIdx === undefined ||
+    definePropertyValueIdx === undefined
+  ) {
+    return undefined;
+  }
+  const ownSymbolsIdx = ensureLateImport(ctx, "__getOwnPropertySymbols", [externRef], [externRef]);
+  const propertyIsEnumerableIdx = ensureLateImport(
+    ctx,
+    "__propertyIsEnumerable",
+    [externRef, externRef],
+    [{ kind: "i32" }],
+  );
+  return {
+    objectKeysIdx,
+    externLengthIdx,
+    externGetIdxIdx,
+    externGetIdx,
+    definePropertyValueIdx,
+    ownSymbolsIdx,
+    propertyIsEnumerableIdx,
+  };
+}
+
+/**
  * (#1239) Compile an object literal whose property list contains at least
  * one `GetAccessorDeclaration` / `SetAccessorDeclaration`.
  *
@@ -938,18 +993,30 @@ function compileObjectLiteralWithAccessors(
     else pair.setter = p;
   }
 
+  // (#5318 r5) Accessor halves whose key does NOT fold at compile time — see
+  // `objlit-dynamic-accessors.ts`. Exactly complementary to `accessorPairs`:
+  // both partitions ask `resolveAccessorPropName`.
+  const dynamicAccessorHalves = collectDynamicAccessorHalves(ctx, expr, resolveAccessorPropName);
+
+  // Every accessor function in this literal, paired or not. The capture scans
+  // below must see the dynamic halves too, or a variable a dynamic getter reads
+  // and its sibling setter writes ends up in two storages.
+  const allAccessorFns: ts.AccessorDeclaration[] = [];
+  for (const pair of accessorPairs.values()) {
+    if (pair.getter) allAccessorFns.push(pair.getter);
+    if (pair.setter) allAccessorFns.push(pair.setter);
+  }
+  for (const half of dynamicAccessorHalves) allAccessorFns.push(half);
+
   // (#2128) Pre-compute, across ALL accessors in this literal, which outer
   // locals any accessor body writes. Each such local is captured through ONE
   // shared ref cell by every accessor in the literal, so a getter observes
   // its paired setter's writes. The map is per-literal: each evaluation of
   // the literal re-runs the creation sequence and re-fills the cell local.
   const accessorForceMutable = new Set<string>();
-  for (const pair of accessorPairs.values()) {
-    for (const accFn of [pair.getter, pair.setter]) {
-      if (!accFn) continue;
-      for (const n of collectMutatedCaptureNames(fctx, accFn as unknown as ts.FunctionExpression)) {
-        accessorForceMutable.add(n);
-      }
+  for (const accFn of allAccessorFns) {
+    for (const n of collectMutatedCaptureNames(fctx, accFn as unknown as ts.FunctionExpression)) {
+      accessorForceMutable.add(n);
     }
   }
   // (#3051 Slice 3) Also capture-by-reference any local an accessor READS that
@@ -963,24 +1030,21 @@ function compileObjectLiteralWithAccessors(
   // so the conservative superset is safe.
   {
     const accessorCaptured = new Set<string>();
-    for (const pair of accessorPairs.values()) {
-      for (const accFn of [pair.getter, pair.setter]) {
-        if (!accFn) continue;
-        const fnNode = accFn as unknown as ts.FunctionExpression;
-        const own = new Set<string>();
-        addFunctionOwnLocals(fnNode, own);
-        const refd = new Set<string>();
-        const b = fnNode.body;
-        if (b !== undefined) {
-          if (ts.isBlock(b)) {
-            for (const s of b.statements) collectReferencedIdentifiers(s, refd, own);
-          } else {
-            collectReferencedIdentifiers(b, refd, own);
-          }
+    for (const accFn of allAccessorFns) {
+      const fnNode = accFn as unknown as ts.FunctionExpression;
+      const own = new Set<string>();
+      addFunctionOwnLocals(fnNode, own);
+      const refd = new Set<string>();
+      const b = fnNode.body;
+      if (b !== undefined) {
+        if (ts.isBlock(b)) {
+          for (const s of b.statements) collectReferencedIdentifiers(s, refd, own);
+        } else {
+          collectReferencedIdentifiers(b, refd, own);
         }
-        for (const n of refd) {
-          if (fctx.localMap.has(n)) accessorCaptured.add(n);
-        }
+      }
+      for (const n of refd) {
+        if (fctx.localMap.has(n)) accessorCaptured.add(n);
       }
     }
     if (accessorCaptured.size > 0) {
@@ -1026,6 +1090,20 @@ function compileObjectLiteralWithAccessors(
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
     [{ kind: "externref" }],
   );
+  // (#5318 r5 review r2) Members that FOLLOW an evaluated-key accessor install
+  // must DEFINE, not [[Set]] — see `emitObjectLiteralDataStore`. Only reach for
+  // the define helper when the literal actually installs such an accessor, so
+  // every other literal keeps the legacy `__extern_set` bytes.
+  const firstDynAccIdx = dynamicAccessorHalves.length > 0 ? expr.properties.indexOf(dynamicAccessorHalves[0]!) : -1;
+  const dpValueIdx =
+    firstDynAccIdx >= 0
+      ? ensureLateImport(
+          ctx,
+          "__defineProperty_value",
+          [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+          [{ kind: "externref" }],
+        )
+      : undefined;
   flushLateImportShifts(ctx, fctx);
   if (setIdx === undefined || accIdx === undefined) return null;
   // Late imports can be inserted while compiling a key, value, or method
@@ -1033,6 +1111,39 @@ function compileObjectLiteralWithAccessors(
   // the property walk, so resolve the setters at each emission site.
   const currentSetIdx = (): number => ctx.funcMap.get("__extern_set") ?? setIdx;
   const currentAccIdx = (): number => ctx.funcMap.get("__defineProperty_accessor") ?? accIdx;
+  // A member at source position `i`: define when an evaluated-key accessor is
+  // already installed at that point, else the legacy [[Set]]. `dpValueIdx`
+  // undefined (the define helper is unreachable on this target) degrades to the
+  // legacy encoding rather than dropping the member.
+  // (#5318 r5 review r2) §B.3.1 `__proto__` is NOT a property definition at
+  // all: a non-computed `__proto__:` key runs `[[SetPrototypeOf]]`. On the
+  // native lanes the dedicated arm below handles it, but the JS-host lane has
+  // no `__object_setPrototypeOf` and relies on `__extern_set` reaching the host
+  // object's own `__proto__` SETTER. Routing it to `__defineProperty_value`
+  // instead — which the define switch above would do for any member after the
+  // first evaluated-key accessor — creates an own enumerable `'__proto__'` data
+  // property and leaves the prototype untouched. A COMPUTED `[k]: v` key that
+  // happens to evaluate to `"__proto__"` IS an ordinary definition (§B.3.1 is
+  // syntactic), so it keeps the define route; so does a shorthand `{ __proto__ }`
+  // and a `__proto__()` method.
+  const isAnnexBProtoKey = (i: number): boolean => {
+    const prop = expr.properties[i];
+    return (
+      prop !== undefined &&
+      ts.isPropertyAssignment(prop) &&
+      !ts.isComputedPropertyName(prop.name) &&
+      resolvePropertyNameText(ctx, prop) === "__proto__"
+    );
+  };
+  const storeMember = (i: number): void => {
+    emitObjectLiteralDataStore(
+      fctx,
+      currentSetIdx(),
+      firstDynAccIdx >= 0 && i > firstDynAccIdx && dpValueIdx !== undefined && !isAnnexBProtoKey(i)
+        ? (ctx.funcMap.get("__defineProperty_value") ?? dpValueIdx)
+        : undefined,
+    );
+  };
 
   // 3. Walk properties in source order. Value/method properties → __extern_set.
   //    Accessor declarations → emit __defineProperty_accessor at the FIRST
@@ -1090,7 +1201,18 @@ function compileObjectLiteralWithAccessors(
           [{ kind: "externref" }, { kind: "externref" }],
           [{ kind: "externref" }],
         );
+        // (#5318 r5 review r2) A spread that FOLLOWS an evaluated-key accessor
+        // must land with DEFINE semantics (§13.2.5.5 → §7.3.25
+        // CopyDataProperties → CreateDataPropertyOrThrow). `__object_assign` is
+        // [[Set]]: over the getter-only accessor this literal just installed
+        // under the same key it throws a TypeError instead of overriding it.
+        // Everything else — including every spread BEFORE the boundary and every
+        // literal without such an accessor — keeps the `__object_assign` bytes.
+        const wantsDefineCopy = firstDynAccIdx >= 0 && i > firstDynAccIdx && ensureDefineCopyHelpers(ctx) !== undefined;
         flushLateImportShifts(ctx, fctx);
+        // Re-resolved AFTER the flush: registering the helpers above can shift
+        // every function index captured before it.
+        const copy = wantsDefineCopy ? ensureDefineCopyHelpers(ctx) : undefined;
         if (arrNewIdx !== undefined && arrPushIdx !== undefined && assignIdx !== undefined) {
           const srcLocal = allocLocal(fctx, `__spread_src_${fctx.locals.length}`, { kind: "externref" });
           fctx.body.push({ op: "local.set", index: srcLocal });
@@ -1100,10 +1222,26 @@ function compileObjectLiteralWithAccessors(
           fctx.body.push({ op: "local.get", index: arrLocal });
           fctx.body.push({ op: "local.get", index: srcLocal });
           fctx.body.push({ op: "call", funcIdx: arrPushIdx });
-          fctx.body.push({ op: "local.get", index: objLocal });
-          fctx.body.push({ op: "local.get", index: arrLocal });
-          fctx.body.push({ op: "call", funcIdx: assignIdx });
-          fctx.body.push({ op: "local.set", index: objLocal });
+          const finalAssignIdx = ctx.funcMap.get("__object_assign") ?? assignIdx;
+          if (copy === undefined) {
+            fctx.body.push({ op: "local.get", index: objLocal });
+            fctx.body.push({ op: "local.get", index: arrLocal });
+            fctx.body.push({ op: "call", funcIdx: finalAssignIdx });
+            fctx.body.push({ op: "local.set", index: objLocal });
+          } else {
+            // Merge into a scratch object first, so the spread's own source
+            // handling (nullish no-op, primitives, source getters read through
+            // [[Get]], proxies) stays exactly as `__object_assign` defines it;
+            // then re-land the result on the literal with `defineProperty`.
+            const scratchLocal = allocLocal(fctx, `__spread_defcopy_${fctx.locals.length}`, { kind: "externref" });
+            fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__new_plain_object") ?? newObjIdx });
+            fctx.body.push({ op: "local.set", index: scratchLocal });
+            fctx.body.push({ op: "local.get", index: scratchLocal });
+            fctx.body.push({ op: "local.get", index: arrLocal });
+            fctx.body.push({ op: "call", funcIdx: finalAssignIdx });
+            fctx.body.push({ op: "local.set", index: scratchLocal });
+            emitObjectLiteralDefineCopy(fctx, objLocal, scratchLocal, copy);
+          }
         }
       }
     } else if (
@@ -1214,7 +1352,7 @@ function compileObjectLiteralWithAccessors(
       } else if (valType.kind !== "externref") {
         coerceType(ctx, fctx, valType, { kind: "externref" });
       }
-      fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
+      storeMember(i);
     } else if (ts.isMethodDeclaration(prop)) {
       // Compile method as a callback closure, then __extern_set.
       //
@@ -1253,7 +1391,7 @@ function compileObjectLiteralWithAccessors(
         if (!ok) {
           fctx.body.push({ op: "ref.null.extern" });
         }
-        fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
+        storeMember(i);
         continue;
       }
       if (methodName === undefined && ts.isComputedPropertyName(prop.name)) {
@@ -1267,7 +1405,7 @@ function compileObjectLiteralWithAccessors(
         compileRuntimeComputedPropertyKey(ctx, fctx, prop.name.expression);
         const okRt = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
         if (okRt) {
-          fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
+          storeMember(i);
         } else {
           // Callback compilation declined — keep the pre-#2126 "property
           // skipped" semantics (drop key + obj) but the key expression's
@@ -1291,14 +1429,31 @@ function compileObjectLiteralWithAccessors(
       if (!ok) {
         fctx.body.push({ op: "ref.null.extern" });
       }
-      fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
+      storeMember(i);
     } else if (ts.isGetAccessorDeclaration(prop) || ts.isSetAccessorDeclaration(prop)) {
       // Emit one __defineProperty_accessor call per pair, at the position
       // of the FIRST get/set declaration on this name. Subsequent siblings
       // for the same name are skipped (their info was merged into the pair
       // during the pre-pass).
       const propName = resolveAccessorPropName(ctx, prop.name); // (#820b)
-      if (propName === undefined) continue;
+      if (propName === undefined) {
+        // (#5318 r5) A key only the literal's evaluation knows.
+        emitDynamicObjectLiteralAccessorHalf(
+          ctx,
+          fctx,
+          prop,
+          objLocal,
+          currentAccIdx,
+          (expression) => compileRuntimeComputedPropertyKey(ctx, fctx, expression),
+          (half, isGetter) =>
+            emitObjectLiteralAccessorFn(ctx, fctx, half as unknown as ts.FunctionExpression, {
+              forceMutableCaptures: accessorForceMutable,
+              sharedRefCells: accessorSharedRefCells,
+              ...(isGetter ? {} : { forceExternrefParams: true }),
+            }),
+        );
+        continue;
+      }
       const pair = accessorPairs.get(propName);
       if (!pair) continue;
       if (emittedAccessors.has(propName)) continue;
@@ -1346,13 +1501,7 @@ function compileObjectLiteralWithAccessors(
         fctx.body.push({ op: "ref.null.extern" });
       }
 
-      // Flags: enumerable=true, configurable=true (writable is N/A for
-      // accessor descriptors; matches `computeRuntimeFlags(undefined,
-      // true, true, false)` from object-ops.ts).
-      // Bits: enumerable_specified (1<<4) | enumerable_value (1<<1)
-      //     | configurable_specified (1<<5) | configurable_value (1<<2)
-      const flags = (1 << 4) | (1 << 1) | (1 << 5) | (1 << 2);
-      fctx.body.push({ op: "f64.const", value: flags });
+      fctx.body.push({ op: "f64.const", value: OBJLIT_ACCESSOR_FLAGS });
 
       fctx.body.push({ op: "call", funcIdx: currentAccIdx() });
       fctx.body.push({ op: "drop" }); // returns the same externref

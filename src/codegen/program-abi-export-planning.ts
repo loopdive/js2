@@ -294,6 +294,24 @@ export class ProgramAbiExportRegistry {
     }
   }
 
+  /**
+   * (#5247) True when the export at `ordinal` already has a planted alias
+   * draft — i.e. a prepared IR component sealed it, pinning that ordinal to the
+   * exact allocator it pointed at then. A later pass may not retarget such a
+   * row: `ensurePlan` compares the re-derived draft against the planted one and
+   * refuses a different `aliasOf`. Read-only; plants nothing.
+   */
+  hasPlannedAlias(ordinal: number): boolean {
+    return this.session.hasPlan(
+      createIrBindingId({
+        ownerId: canonicalEntrySource(this.session),
+        domain: "export",
+        role: "module-value-export",
+        ordinal,
+      }),
+    );
+  }
+
   planRetained(): void {
     if (this.planned) return;
     this.planned = true;
