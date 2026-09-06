@@ -146,3 +146,84 @@ any analysis is written.
 2. The for-await-of / async-dstr family #2692 named stays green.
 3. A/B at one head over the 17 dogfood suites: prettier's
    `print-doc-to-string.js` improves, nothing else regresses.
+
+## Implementation Plan
+
+Everything the previous agent measured stands: deleting the
+`if (cap.hasTdzFlag) continue;` skip in `emitEagerCaptureBoxes`
+(`src/codegen/statements/nested-declarations.ts`) fixes every row of the
+table and then miscompiles prettier. The plan is to find out **which** of two
+candidate races the miscompile is, by the cheapest experiment first, and fix
+that race rather than the eligibility rule if it turns out to be fixable.
+
+1. **Capture the parent** (`.tmp/nested-declarations.orig.ts`) and reproduce
+   both ends before touching anything: the minimal `v=null` repro, and the
+   prettier miscompile with the skip deleted (array-valued doc →
+   non-terminating loop, first popped command's `doc` reads `[object Object]`
+   while `getDocType` says `"array"`). Reduce the miscompile to a standalone
+   two-file untyped `.js` project via `compileAndRunUpstreamModule` — the
+   skeleton is `printDocToString`'s shape: a parameter `doc`, a `const cmds =
+   [{ ind, mode, doc }]`, a `while (cmds.length > 0) { const { ind, mode, doc }
+   = cmds.pop(); switch (getDocType(doc)) { … } }`, a `let output = ""`
+   mutated by a hoisted `function trim() { output = "" }` declared after the
+   `return`. A reproduction that loops or reads the wrong `doc` in under 40
+   lines is the deliverable of this step; without it the rest is guesswork.
+2. **Name-scoped probe** (the previous agent's suggestion, ~20 lines, throw
+   away afterwards): allow eager boxing of a TDZ capture only when the
+   captured name is declared **exactly once** in the enclosing function's
+   scope tree — count `VariableDeclaration` / `Parameter` / `BindingElement`
+   / `FunctionDeclaration` / `ClassDeclaration` / catch-clause names with the
+   identifier text, walking the parent function but **not** descending into
+   nested function bodies (a nested function's own local is a different
+   binding). Run prettier's `print-doc-to-string` and the reduction.
+   - Miscompile gone, repro fixed ⇒ the race is **shadowing**: a box minted
+     at function top for the outer binding, then an inner block-scoped
+     declaration of the same name that the declaration path treats as "already
+     boxed" (`boxedForInitStore` #3396 / the #3534 boxed-before-declared arm)
+     and stores into the outer cell, or re-aims `localMap[name]` so reads in
+     the inner scope hit the cell. Fix at the declaration path: an inner
+     declaration that **shadows** a boxed outer name must allocate its own
+     slot (or its own cell, if it is itself captured by a hoisted function)
+     and must **not** consult the outer name's box. `dropStaleBindingBox` is
+     the closest existing hook — read it. Then drop the probe's eligibility
+     narrowing and re-run: the goal is the general mechanism with shadowing
+     handled, not a rule that silently keeps the shadowed shape on the lazy
+     path. If the general fix costs more than a day, ship the narrowed
+     eligibility with a test that pins the shadowed shape as *still lazy and
+     still correct*, and say so.
+   - Miscompile persists with unshadowed names only ⇒ the race is the
+     **declaration re-allocating the value slot** after the cell exists
+     (block scope, type reset, `let` re-declared in a loop body). Reduce to
+     that shape (a captured `let` whose declaration follows a differently
+     typed assignment, or lives inside a loop) and trace where the
+     declaration path allocates a fresh local while the hoisted callee still
+     writes the cell. The cell must be minted with the binding's **declared**
+     slot type, not the type of whatever value the name holds at function
+     top.
+3. **Per-iteration semantics**: a `let` captured by a hoisted function
+   declaration is not a per-iteration closure binding (the function is
+   hoisted once), so one cell per function invocation is correct. Confirm the
+   #2692 for-await-of / async-dstr family stays green — run
+   `tests/issue-2692*.test.ts` and `tests/issue-2669*.test.ts` and the
+   closure equivalence group in `tests/equivalence.test.ts`.
+4. **Regression test** per the acceptance criteria: dead-branch call,
+   never-called, number-valued counter, **and** the shadowed shape from step
+   1 (the miscompile must be pinned so it cannot return). Untyped `.js`
+   two-file fixtures, counts both ways, anti-vacuity control.
+5. **A/B at one HEAD**, 17 suites, per file. `print-doc-to-string` reaches
+   3/3 only together with #5357 — if #5357 has not landed, measure the file
+   with and without #5357's branch merged in and report both; do not claim
+   the bucket. Closure-heavy packages (jest, hono, prettier) are the ones to
+   watch for movement.
+
+Serial with nothing; independent of #5357 (disjoint files:
+`nested-declarations.ts` vs `binary-ops-typed-dispatch.ts`). Both must land
+for prettier's `print-doc-to-string`.
+
+## Dispatch
+
+Model: **fable** (`feasibility: hard`, `reasoning_effort: max`). The
+one-line fix is known and known to miscompile; the work is finding which
+race the declaration path has with an eager cell, on a mechanism (#2692,
+#3396, #3534) that has already been patched three times. Dispatch after PR
+#5665 lands (it carries this file).
