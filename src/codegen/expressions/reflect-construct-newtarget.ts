@@ -57,7 +57,15 @@
  *     global keyed by class NAME (#2023); the constructed frame cannot carry a
  *     NewTarget VALUE, so the body reads `undefined` and a standard
  *     `if (new.target === undefined) throw` guard fires where node constructs.
- *     Refused.
+ *     Refused. A read inside a NESTED function counts too whenever that
+ *     function can itself be constructed — `readsNewTarget` explains why.
+ *   - **A dynamic (reassigned) in-file function target that can hold anything
+ *     but an ordinary function.** Review round 1 found this admitted on the
+ *     kind of the binding's INITIALIZER alone, so `T = A` (async),
+ *     `T = () => {}`, `T = function*(){}`, `T = C`, `T = G.bind(null)`,
+ *     `T = undefined` and an alias chain all compiled and answered wrongly.
+ *     `dynamicTargetIsAllOrdinaryFunctions` enumerates the value set instead,
+ *     and also refuses a binding carrying an explicit type annotation.
  *   - **A NewTarget expression that is not a bare identifier.** The fallback
  *     route hands target+arguments to `compileNewExpression`, which evaluates
  *     AND constructs in one step, and §26.1.2 requires the IsConstructor check
@@ -149,8 +157,21 @@ export function emitRuntimeNewTargetPrototype(ctx: CodegenContext, fctx: Functio
  * is exactly the prototype the ordinary construction already installed, so
  * skipping the write IS the fix. Without this guard the raw non-object landed
  * in the carrier field and `Object.getPrototypeOf` answered `undefined`
- * (DataView) or `null` (typed array) where node answers the intrinsic
- * prototype; on `--target wasi` the DataView case trapped.
+ * (DataView) where node answers the intrinsic prototype; on `--target wasi`
+ * that case trapped.
+ *
+ * ## Correction (r2 step 6, measured): the guard repaired DataView only.
+ * The comment used to claim the typed-array carrier as well. Measured on the
+ * CURRENT tree, `--target standalone`, oracle node 22 — a bound NewTarget with
+ * no own `prototype`:
+ *
+ *   - `.tmp/p/f1_dv_bind_noproto.js` (DataView): node 3, base 3, here 3 —
+ *     repaired, and the guard is what keeps it repaired.
+ *   - `.tmp/p/f2_ta_bind_noproto.js` (Uint8Array): node 3, base 1, here 1 —
+ *     UNCHANGED. `Object.getPrototypeOf` on a dynamically-typed typed-array
+ *     view answers null on base with no `Reflect.construct` in the program at
+ *     all, so the guard cannot repair what that reader reports. It stays a
+ *     residual of the typed-array carrier, not of this arm.
  */
 export function applyRuntimeNewTargetPrototype(
   ctx: CodegenContext,
@@ -255,6 +276,87 @@ function isPlainFunctionLike(node: ts.FunctionDeclaration | ts.FunctionExpressio
     node.asteriskToken === undefined &&
     !(node.modifiers?.some((m: ts.ModifierLike) => m.kind === ts.SyntaxKind.AsyncKeyword) ?? false)
   );
+}
+
+/**
+ * Can `target` — a REASSIGNED binding, which `isUnreassignedOrdinaryFunction`
+ * by definition rejects — only ever hold an ordinary function?
+ *
+ * The r4 cut admitted such a binding on the KIND OF ITS INITIALIZER alone
+ * (`let T = F` ⇒ "function") and never looked at the later writes, so every
+ * `T = <something else>` compiled and answered WRONGLY where base refused
+ * (review round 1, all measured `--target standalone` vs node 22):
+ * `T = A` async and `T = A2` through a `const A2 = A` alias returned an object
+ * at 5 where node throws TypeError 0 (`c2`, `o1`); likewise `T = () => {}`
+ * (`c3`), `T = function*(){}` (`c4`) and `T = undefined` (`o3`). `T = C` for a
+ * class read prototype+field 13 vs node 3 (`i5`), and `T = G.bind(null)`
+ * answered NaN vs node 2 (`o2`).
+ *
+ * So the value set is enumerated instead: the declaration's initializer plus
+ * the right-hand side of every plain `T = …` in the file. Every member must be
+ * an unreassigned ordinary function declaration — no alias hop, no call
+ * result, no class, no arrow, no async/generator — and any write whose value
+ * set is not enumerable (`+=`, `++`, a destructuring target, a `for…of`
+ * binding, `with`, direct `eval`) refuses outright.
+ *
+ * An explicit type ANNOTATION on the binding also refuses. `let T: any = F;
+ * T = G` is not the same program as `let T = F; T = G` for the compiled
+ * callee lowering: it read a wrong prototype (`b1` 4 vs node 2) and trapped on
+ * the following field read (`i3`). Consulting the declared type is legitimate
+ * here because the only thing it can do is turn an answer into a refusal.
+ */
+function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Expression): boolean {
+  if (!ts.isIdentifier(target)) return false;
+  const name = target.text;
+  const source = target.getSourceFile();
+  const declarations = ctx.oracle.declarationsOf(target).filter((d) => d.getSourceFile() === source);
+  if (declarations.length !== 1) return false;
+  const declaration = declarations[0]!;
+  const values: ts.Expression[] = [];
+  if (ts.isFunctionDeclaration(declaration)) {
+    if (!isPlainFunctionLike(declaration)) return false;
+  } else if (ts.isVariableDeclaration(declaration)) {
+    // `let T: any = F` steers a different callee lowering than `let T = F`.
+    if (declaration.type !== undefined) return false;
+    if (declaration.initializer === undefined) return false;
+    values.push(declaration.initializer);
+  } else {
+    return false;
+  }
+
+  let enumerable = true;
+  const visit = (node: ts.Node): void => {
+    if (!enumerable) return;
+    if (
+      ts.isWithStatement(node) ||
+      (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") ||
+      ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+        ts.isIdentifier(node.operand) &&
+        node.operand.text === name) ||
+      ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && mentions(node.initializer, name))
+    ) {
+      enumerable = false;
+      return;
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      mentions(node.left, name)
+    ) {
+      // Only a plain `T = <expr>` contributes a value that can be read off the
+      // source; a compound assignment or a destructuring target does not.
+      if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !isNamed(node.left, name)) {
+        enumerable = false;
+        return;
+      }
+      values.push(node.right);
+    }
+    forEachChild(node, visit);
+  };
+  visit(source);
+  if (!enumerable || values.length === 0) return false;
+  return values.every((value) => isUnreassignedOrdinaryFunction(ctx, value));
 }
 
 /**
@@ -396,6 +498,33 @@ export function tryEmitOrdinaryConstructWithNewTarget(
  * prototype those programs observe is wrong with or without this arm — a
  * pre-existing carrier gap, not a refusal turned into a wrong answer. They are
  * listed as residuals in the issue file.
+ *
+ * Re-measured 2026-09-05 (r2 step 2), all nine named entries, with the set
+ * emptied, `--target standalone`, oracle node 22 — `getPrototypeOf` identity
+ * AND one method read through the patched chain:
+ *
+ *   | target  | node | admitted | verdict                                     |
+ *   | ------- | ---- | -------- | ------------------------------------------- |
+ *   | Array   | 1    | 0        | proto not recorded — keep                    |
+ *   | Map     | 1    | 0        | proto not recorded — keep                    |
+ *   | RegExp  | 1    | 0        | proto not recorded — keep                    |
+ *   | Set     | 1    | 0        | proto not recorded — keep                    |
+ *   | Function| 1    | LEAK     | pulls a `js2wasm:runtime-eval` import — keep |
+ *   | Boolean | 5    | 7        | proto recorded, dispatch nominal — keep      |
+ *   | Number  | 5    | 7        | proto recorded, dispatch nominal — keep      |
+ *   | String  | 5    | 3        | proto recorded, dispatch nominal — keep      |
+ *   | Symbol  | 1    | 1        | never constructs; TypeError = node — DROPPED |
+ *
+ * Boolean/Number/String are the correction to the r2 plan's premise: a probe
+ * that only compares `Object.getPrototypeOf(o)` says they take the patch, and
+ * they do — but a probe that also calls `o.valueOf()` through the patched
+ * chain shows the wrapper carrier still dispatches NOMINALLY, so the program
+ * answers 7/7/3 where node answers 5/5/5. That is a compile error turned into
+ * a wrong answer, which this arm may not do. The nominal dispatch is itself
+ * pre-existing (on BASE, with no `Reflect.construct` in the program at all,
+ * `Object.setPrototypeOf(new Boolean(true), P)` reads back 2 where node reads
+ * 1) — but a defect being older does not make it acceptable to newly compile a
+ * program onto it.
  */
 const UNSETTABLE_PROTOTYPE_CONSTRUCTORS: ReadonlySet<string> = new Set([
   "Array",
@@ -407,7 +536,6 @@ const UNSETTABLE_PROTOTYPE_CONSTRUCTORS: ReadonlySet<string> = new Set([
   "RegExp",
   "Set",
   "String",
-  "Symbol",
   "WeakMap",
   "WeakRef",
   "WeakSet",
@@ -443,14 +571,107 @@ function resolveBindingKind(ctx: CodegenContext, expr: ts.Expression, depth = 4)
   return { kind: "unknown" };
 }
 
-/** Does `node`'s subtree read the `new.target` meta-property? */
+/**
+ * Does `node` introduce a `new.target` binding of its OWN?
+ *
+ * `new.target` is scoped to the nearest enclosing non-arrow function
+ * environment (ES §9.1.1.3). An ordinary function, a method, an accessor and a
+ * class constructor each get their own; an arrow function does NOT — it reads
+ * the enclosing one.
+ *
+ * A class field initialiser and a class static block are NOT owners either,
+ * but they do not inherit the enclosing `new.target` the way an arrow does:
+ * §15.7.10 [[Call]]s them, so they see `undefined`. `a4_class_field.ts` pins
+ * that (node 1). They are still descended into rather than treated as owners —
+ * measured on this tree, treating them as owners admits `a4` at 2 where node
+ * answers 1, because the compiled class-field lowering reports a defined
+ * `new.target` there. Descending keeps the site refused, which is correct.
+ */
+function ownsNewTarget(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isConstructorDeclaration(node)
+  );
+}
+
+/**
+ * Does `node`'s BODY read the `new.target` that `node` itself introduces?
+ *
+ * The scan stops at a nested scope that owns a `new.target` of its own ONLY
+ * when that scope can never be constructed, so
+ * `function F(){ function inner(){ return new.target; } inner(); }` does not
+ * count as a read by `F` — `inner`'s `new.target` is `inner`'s, and a plain
+ * call gives `undefined` on both sides.
+ *
+ * A nested function that IS constructed is a different case, and the r4 cut
+ * got it wrong: `k1_nested_ctor_use.ts` does `new inner()` inside the target,
+ * where node reads `inner`'s own `new.target` as defined (2) and the compiled
+ * class-id lowering reads it as `undefined` (1). So the stop is kept only for
+ * a nested function whose name never appears anywhere but a direct call —
+ * anything else (a `new`, a `Reflect.construct` argument, a `.bind`, any
+ * escape) counts as a read and refuses the site.
+ *
+ * Descent continues through arrows, class field initialisers and static blocks.
+ */
 function readsNewTarget(node: ts.Node): boolean {
-  if (ts.isMetaProperty(node) && node.keywordToken === ts.SyntaxKind.NewKeyword) return true;
+  const source = node.getSourceFile();
   let found = false;
-  forEachChild(node, (child) => {
-    if (!found && readsNewTarget(child)) found = true;
-  });
+  const visit = (child: ts.Node): void => {
+    if (found) return;
+    if (ts.isMetaProperty(child) && child.keywordToken === ts.SyntaxKind.NewKeyword) {
+      found = true;
+      return;
+    }
+    if (ownsNewTarget(child) && neverConstructed(source, child)) return;
+    forEachChild(child, visit);
+  };
+  forEachChild(node, visit);
   return found;
+}
+
+/**
+ * Can this nested `new.target` owner provably never be reached by
+ * [[Construct]]? Only then may the scan stop at it.
+ */
+function neverConstructed(source: ts.SourceFile, node: ts.Node): boolean {
+  // Methods and accessors have no [[Construct]] at all.
+  if (ts.isMethodDeclaration(node) || ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) {
+    return true;
+  }
+  if (ts.isConstructorDeclaration(node)) return false;
+  const name = ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ? node.name : undefined;
+  // An anonymous function expression is unreachable by name; only an immediate
+  // call leaves it unconstructible.
+  if (name === undefined) return isImmediatelyCalled(node);
+  let escapes = false;
+  const visit = (child: ts.Node): void => {
+    if (escapes) return;
+    if (ts.isIdentifier(child) && child.text === name.text && child !== name && !isDirectCallee(child)) {
+      escapes = true;
+      return;
+    }
+    forEachChild(child, visit);
+  };
+  visit(source);
+  return !escapes;
+}
+
+/** Is `id` the callee of a plain `id(...)` call — the one benign mention? */
+function isDirectCallee(id: ts.Identifier): boolean {
+  const parent = id.parent as ts.Node | undefined;
+  return parent !== undefined && ts.isCallExpression(parent) && parent.expression === id;
+}
+
+/** Is this function expression the callee of its own immediate call (an IIFE)? */
+function isImmediatelyCalled(node: ts.Node): boolean {
+  let outer: ts.Node = node;
+  while (outer.parent !== undefined && ts.isParenthesizedExpression(outer.parent)) outer = outer.parent;
+  const parent = outer.parent as ts.Node | undefined;
+  return parent !== undefined && ts.isCallExpression(parent) && parent.expression === outer;
 }
 
 /**
@@ -483,30 +704,67 @@ function targetReadsNewTarget(ctx: CodegenContext, target: ts.Expression): boole
  * `Object.defineProperty(NT, "prototype", …)` fails that test and is dropped
  * without a word, leaving the instance on `%Object.prototype%`. A pristine
  * binding cannot be in that state, so the driver route is limited to one.
+ *
+ * That rationale is MEASURED, not assumed (r2 step 4): with every clause that
+ * would refuse it disabled, `.tmp/p/d1_defineprop_slot.js` — an ordinary
+ * function target and `Object.defineProperty(NT, "prototype", { value: P })`
+ * — compiles and answers 1 where node answers 7, i.e. the instance lands on
+ * `%Object.prototype%` and neither `Object.getPrototypeOf(o) === P` nor
+ * `o.tag === 9` holds. The shape is refused twice over, since TypeScript also
+ * synthesises an expando declaration for that `defineProperty`, which the
+ * declaration-count check below rejects on its own.
+ *
+ * ## Mutation is not replacement (r2 step 4, measured)
+ * `NT.prototype.tag = 9`, `Object.assign(NT.prototype, …)` and
+ * `Object.defineProperty(NT.prototype, …)` MUTATE the object the slot already
+ * holds; the slot still holds the plain `$Object` the declaration installed,
+ * so the `ref.test` above still passes and all three answer node (7, 7, 7 —
+ * `.tmp/p/b2_driver_protomut.js`, `b7_object_assign_proto.js`,
+ * `c3_defineprop_on_proto.js`, each a `(#3371)` compile error on base). Only a
+ * write whose target is the SLOT — `NT.prototype = …`, `NT["prototype"] = …`,
+ * a computed `NT[k] = …`, or an `Object.*` call whose RECEIVER is the bare
+ * `NT` — replaces it.
+ *
+ * ## Why the WRITE clauses stay keyed on the NAME (r2 step 3, measured)
+ * The plan asked for the whole predicate to resolve through `ctx.oracle`.
+ * Only the BINDING-COUNT clause can: the compiler's own model of a function's
+ * `prototype` slot is itself name-keyed, and a prototype write to a
+ * same-spelled binding in another scope corrupts the read of THIS one. With no
+ * `Reflect.construct` in the program at all, `.tmp/p/m5e_read_only_base.js`
+ * — an outer `function NT(){}` plus an inner `const NT = function(){}` whose
+ * prototype slot is redefined — reads the OUTER `NT.prototype` as null on
+ * BASE (base 5, node 6). Resolving the write clauses by symbol therefore
+ * admitted `.tmp/p/m5_nt_block_shadow_mutates.js` at 1 where node answers 3.
+ * So: the binding count is gone (that was the measured over-refusal — an
+ * unrelated parameter of the same name), and a prototype-slot write to ANY
+ * same-spelled binding still refuses, matching what the reader can actually
+ * distinguish.
  */
-function prototypeIsPristine(source: ts.SourceFile, name: string): boolean {
+function prototypeIsPristine(ctx: CodegenContext, newTarget: ts.Identifier): boolean {
+  // Resolve the NewTarget binding by declaration identity: zero declarations is
+  // unresolvable, and more than one means the name is declared twice in this
+  // scope chain, where no single declaration answers for it. Replaces the
+  // file-wide count of same-spelled bindings, which refused a site over a
+  // helper's unrelated parameter (`m2_shadow.js`: node 7, base refused,
+  // admitted here; `m1_control_noshadow.js` differs only in that parameter's
+  // name and was admitted on base).
+  const name = newTarget.text;
+  const source = newTarget.getSourceFile();
+  // Count declarations IN THIS FILE only. A lib global is declared many times
+  // across the .d.ts files (`Array` is an interface plus a var plus
+  // `ArrayConstructor`), and requiring exactly one declaration outright turned
+  // `built-ins/Reflect/construct/return-with-newtarget-argument.js` — a
+  // function target with `Array` as the NewTarget — from pass into a compile
+  // error. Two IN-FILE declarations still refuse: that is the second-binding
+  // case the file-wide count used to catch, and it is also how the expando
+  // declaration TypeScript synthesises for
+  // `Object.defineProperty(NT, "prototype", …)` is caught.
+  if (ctx.oracle.declarationsOf(newTarget).filter((d) => d.getSourceFile() === source).length > 1) return false;
+
   let touched = false;
-  let bindings = 0;
   const visit = (node: ts.Node): void => {
     if (touched) return;
-    // The NewTarget's OWN declaration is expected; a SECOND binding of the same
-    // name is not. (`isRebound` cannot be reused here — it counts the single
-    // `const NT = …` this predicate is asked about as a rebinding.)
-    if (
-      (ts.isVariableDeclaration(node) ||
-        ts.isParameter(node) ||
-        ts.isBindingElement(node) ||
-        ts.isFunctionDeclaration(node) ||
-        ts.isClassDeclaration(node) ||
-        ts.isImportSpecifier(node) ||
-        ts.isImportClause(node)) &&
-      node.name !== undefined &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === name &&
-      ++bindings > 1
-    ) {
-      touched = true;
-    } else if (ts.isWithStatement(node)) {
+    if (ts.isWithStatement(node)) {
       touched = true;
     } else if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
       touched = true;
@@ -520,8 +778,7 @@ function prototypeIsPristine(source: ts.SourceFile, name: string): boolean {
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
       node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-      // Covers `NT = …`, `[NT] = …` and `NT.prototype = …` in one predicate.
-      mentions(node.left, name)
+      replacesSlot(node.left, name)
     ) {
       touched = true;
     } else if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
@@ -532,7 +789,13 @@ function prototypeIsPristine(source: ts.SourceFile, name: string): boolean {
           method === "setPrototypeOf" ||
           method === "assign") &&
         node.arguments.length > 0 &&
-        mentions(node.arguments[0]!, name)
+        // The RECEIVER, not any mention. `Object.assign(NT, {prototype: P})`
+        // and `Object.defineProperty(NT, "prototype", …)` write the slot;
+        // `Object.assign(NT.prototype, …)` and
+        // `Object.defineProperty(NT.prototype, …)` mutate the object the slot
+        // already holds, which stays a plain `$Object` and still passes
+        // `__native_construct_N`'s `ref.test $Object`.
+        isNamed(node.arguments[0]!, name)
       ) {
         touched = true;
       }
@@ -541,6 +804,36 @@ function prototypeIsPristine(source: ts.SourceFile, name: string): boolean {
   };
   visit(source);
   return !touched;
+}
+
+/** Is `node` the bare identifier `name`? */
+function isNamed(node: ts.Node, name: string): boolean {
+  return ts.isIdentifier(node) && node.text === name;
+}
+
+/**
+ * Does assigning to `left` REPLACE the `name` binding or its `prototype` slot?
+ *
+ * Replacement is `NT = …`, a destructuring target that binds `NT`,
+ * `NT.prototype = …`, `NT["prototype"] = …` and any computed `NT[k] = …` whose
+ * key is not a literal. MUTATION of the object the slot already holds
+ * (`NT.prototype.tag = 9`) is not replacement: the slot still holds the plain
+ * `$Object` the declaration installed, which is what the driver route needs.
+ */
+function replacesSlot(left: ts.Node, name: string): boolean {
+  if (ts.isParenthesizedExpression(left)) return replacesSlot(left.expression, name);
+  if (ts.isPropertyAccessExpression(left)) {
+    return isNamed(left.expression, name) && left.name.text === "prototype";
+  }
+  if (ts.isElementAccessExpression(left)) {
+    if (!isNamed(left.expression, name)) return false;
+    const key = left.argumentExpression;
+    // A non-literal key could be "prototype" at runtime; assume it is.
+    if (!ts.isStringLiteral(key) && !ts.isNoSubstitutionTemplateLiteral(key)) return true;
+    return key.text === "prototype";
+  }
+  // A bare identifier or a destructuring pattern: rebinding `NT` itself.
+  return mentions(left, name);
 }
 
 /**
@@ -569,14 +862,54 @@ export function classifyRuntimeNewTargetSite(
     args.length <= MAX_NATIVE_CONSTRUCT_ARITY &&
     !args.some((a) => ts.isSpreadElement(a)) &&
     isUnreassignedOrdinaryFunction(ctx, target) &&
-    prototypeIsPristine(newTarget.getSourceFile(), newTarget.text);
+    prototypeIsPristine(ctx, newTarget);
   if (driverEligible) return "driver";
 
   const targetKind = resolveBindingKind(ctx, target);
-  // A user function or class instance is a CLOSED struct: the post-construction
-  // prototype patch is a silent no-op on it, so if the driver route did not
-  // take the site, nothing can.
-  if (targetKind.kind === "class" || targetKind.kind === "function") return undefined;
+  // A class instance is a CLOSED struct: the post-construction prototype patch
+  // is a silent no-op on it, so if the driver route did not take the site,
+  // nothing can.
+  if (targetKind.kind === "class") return undefined;
+  // An in-file FUNCTION target the driver declined (r2 step 5). The same
+  // instance shape reached through the `unknown` route below takes the generic
+  // `__object_setPrototypeOf` patch and answers node — `k1_target_param.js`
+  // (node 3) does exactly that on base — so the refusal keyed on how well the
+  // target resolves, not on a property of the carrier.
+  //
+  // But only when the driver declined for a reason that has nothing to do with
+  // the NewTarget's `prototype`. Routing every declined function target here
+  // was measured to turn three refusals into WRONG answers, all of them
+  // NewTarget-prototype declines whose fetched prototype the closed instance
+  // struct then drops: `d1_defineprop_slot.js` 1 vs node 7,
+  // `m5_nt_block_shadow_mutates.js` 1 vs node 3, `d3_setprotoof_nt.js` 1 vs
+  // node 3. Keeping `prototypeIsPristine` as a precondition admits
+  // `j6_reassigned_target.js` (node 3 — the target is a reassigned `let`) and
+  // leaves those three refused.
+  if (targetKind.kind === "function") {
+    if (!ctx.standalone) return undefined;
+    // A target that DOES statically resolve to one unreassigned function
+    // declaration gets the closed-struct `new` lowering, on which the
+    // post-construction patch is a silent no-op — so if the driver declined
+    // such a target (too many arguments, a spread, a non-pristine NewTarget
+    // prototype), nothing can serve it. Measured: `j7_spread_args.js` 0 vs
+    // node 7 and `j8_many_args.js` 1 vs node 3 when admitted.
+    if (isUnreassignedOrdinaryFunction(ctx, target)) return undefined;
+    // A spread argument list on a dynamic function target TRAPS where node
+    // returns a value (`j9_reassigned_target_spread.js`: node 7, exception),
+    // and an over-arity list loses the prototype, so this branch keeps the
+    // driver's argument-shape conditions too.
+    if (args.length > MAX_NATIVE_CONSTRUCT_ARITY) return undefined;
+    if (args.some((a) => ts.isSpreadElement(a))) return undefined;
+    // Every value the binding can hold must be an ordinary function. Resolving
+    // the binding by the KIND OF ITS INITIALIZER admitted `T = A` (async),
+    // `T = () => {}`, `T = function*(){}`, `T = C`, `T = G.bind(null)` and
+    // `T = undefined` and answered each of them wrongly where base refused;
+    // see `dynamicTargetIsAllOrdinaryFunctions` for the measurements. That
+    // predicate also refuses an annotated binding, which is the `let T: any`
+    // wrong-prototype case this branch used to record as a residual.
+    if (!dynamicTargetIsAllOrdinaryFunctions(ctx, target)) return undefined;
+    return prototypeIsPristine(ctx, newTarget) ? "carrier" : undefined;
+  }
   if (targetKind.kind === "foreign") {
     return UNSETTABLE_PROTOTYPE_CONSTRUCTORS.has(targetKind.name) ? undefined : "carrier";
   }
