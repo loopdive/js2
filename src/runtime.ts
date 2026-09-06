@@ -6164,6 +6164,30 @@ export function registerLinkedConsumerModule(exports: Record<string, Function>):
 }
 
 /**
+ * (#5364) Retire the linked project that is no longer live, so the NEXT one
+ * starts from an empty registry.
+ *
+ * Both registries above are module-level singletons with no unregister path.
+ * That is correct while a process hosts one linked project, and wrong for a
+ * process that hosts many: `scripts/test262-worker.mjs` runs many rows per fork
+ * and since #5353 every Temporal row re-instantiates the SAME provider binary.
+ * Two instances of one binary share canonical WasmGC types, so project 1's
+ * `__struct_field_names` happily names a struct project 2 minted — and
+ * `_owningClassObject` (#5354) then answers with project 1's class-object
+ * singleton. Nothing throws; the consumer's live `C` and the instance's
+ * resolved constructor are simply two unrelated mirrors, so `x instanceof C`
+ * is false while `x.constructor.name` reads right.
+ *
+ * Call it BEFORE instantiating a project, not after tearing one down: "after"
+ * has no single owner (a row can throw out of instantiate) and would leave the
+ * stale entries live for exactly the window that matters.
+ */
+export function resetLinkedProjectRegistry(): void {
+  _crossModuleStructs.reset();
+  _linkedProviderMirrors.reset();
+}
+
+/**
  * (#5225) The exports that can DECODE `obj` — the reader's own, unless another
  * module of the same linked project minted it.
  *

@@ -1,7 +1,8 @@
 ---
 id: 5364
 title: "Cross-module decoder registry is process-global — a second linked project against the same provider binary resolves its instances through the FIRST project's exports (every batched `instanceof` count for Temporal is inflated)"
-status: ready
+status: in-progress
+assignee: ttraenkler/dev-5364
 sprint: current
 priority: high
 horizon: m
@@ -9,6 +10,28 @@ goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-06
+# 2026-09-06 (#5364). This PR's own runtime growth is ~30 LOC in src/runtime.ts
+# (the exported `resetLinkedProjectRegistry` + the comment that says WHY the
+# reset happens before instantiate rather than after teardown). The rest of the
+# figure the gate sees is INHERITED from the stack this branch merges (#5251 /
+# #5354 / #5208 / #5363); those grants are restated below so CI's merge-preview
+# base cannot strand them by dropping the granting issue file from the
+# change-set.
+loc-budget-allow:
+  - src/runtime.ts
+  # Inherited from #5354 (PR #5670) and, through it, #5251 (PR #5648).
+  - src/codegen/index.ts
+  - src/codegen/destructuring-params.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/type-coercion.ts
+func-budget-allow:
+  # Inherited from #5354 / #5251 — no function in this PR's own diff grows.
+  - src/runtime.ts::_wrapForHost
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/destructuring-params.ts::destructureParamObject
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/type-coercion.ts::coerceType
 ---
 
 # #5364 — the #5225 registry assumes ONE live linked project per process

@@ -19,6 +19,15 @@ import {
   wrapLinkedProviderValue,
 } from "./runtime.js";
 
+// (#5364) Re-exported so the ONE test262 instantiate seam
+// (`scripts/test262-import-object.mjs`) can retire the previous row's project
+// through the SAME runtime copy that `instantiateLinkedProviders` registers
+// into. The in-process lanes reach that copy by dynamically importing THIS
+// module; the sharded worker passes `scripts/runtime-bundle.mjs` instead. Both
+// therefore need the reset on the same object as the wiring — a reset in the
+// other copy is the silent-wrong-copy bug #5353 finding 3 describes.
+export { resetLinkedProjectRegistry } from "./runtime.js";
+
 function wasmBytes(binary: Uint8Array): BufferSource {
   return binary as unknown as BufferSource;
 }
