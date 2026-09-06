@@ -1473,6 +1473,25 @@ function superReadPrecedesSuperCall(fctx: FunctionContext, expr: ts.Node): boole
   if (!fctx.isDerivedConstructor) return false;
   let current: ts.Node | undefined = expr.parent;
   while (current && !ts.isConstructorDeclaration(current)) {
+    // (#5350 r1 review, F2) NO BACK-EDGE OVER THE READ. Source position orders
+    // the TEXT, not the execution — and the one construct that lets a
+    // textually LATER `super()` run BEFORE this read is a loop's back-edge:
+    // `while (true) { if (i === 1) { v = super.zz; break } super(); i = 1 }`
+    // reaches the read on the second iteration, with `this` long since
+    // initialised. Node answers 5; the unconditional lexical throw made it a
+    // ReferenceError escaping the export (probes n4/n5). Forward-only branches
+    // (`if` / `switch` / `try`) cannot re-run an earlier `super()`, and a
+    // `super()` sitting in a branch BEFORE the read is already handled by the
+    // preceded-by check below, so only a loop (and a labelled statement, whose
+    // `continue`/`break` targets one) suppresses the throw. Everything
+    // suppressed here falls through to the ordinary read, which answers
+    // `undefined` rather than inventing a throw. The compiler cannot be more
+    // precise without a runtime this-initialised flag: a derived constructor's
+    // `this` local is `struct.new`-allocated at entry (class-bodies.ts), so
+    // there is no null to test at the read.
+    if (ts.isIterationStatement(current, /* lookInLabeledStatements */ false) || ts.isLabeledStatement(current)) {
+      return false;
+    }
     if (
       ts.isArrowFunction(current) ||
       ts.isFunctionExpression(current) ||

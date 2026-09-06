@@ -172,6 +172,129 @@ export function test(): number {
     ).toBe(11);
   });
 
+  // ── Review round 1 (2026-09-06) ────────────────────────────────────────
+  //
+  // F1: `super` over a literal whose prototype is set with the §B.3.1
+  // `__proto__:` colon form. The literal used to build as a closed struct, so
+  // its runtime [[Prototype]] was never linked and `__getPrototypeOf(home)`
+  // answered nullish — a silent wrong default before the lane, an ESCAPING
+  // TypeError after it. Node 22 answers 3 / 3 / 11 / 8 for these four.
+  it("calls a super method over a `__proto__:` object literal", async () => {
+    expect(
+      await runStandalone(`
+export function test(): number {
+  var proto: any = { m() { return 3; } };
+  var o: any = { __proto__: proto, m() { return super.m(); } };
+  return o.m();
+}
+`),
+    ).toBe(3);
+  });
+
+  it("resolves a differently-named super method over a `__proto__:` literal", async () => {
+    expect(
+      await runStandalone(`
+export function test(): number {
+  var proto: any = { p() { return 3; } };
+  var o: any = { __proto__: proto, m() { return super.p(); } };
+  return o.m();
+}
+`),
+    ).toBe(3);
+  });
+
+  it("binds `this` to the call-time receiver in a `__proto__:` literal super call", async () => {
+    expect(
+      await runStandalone(`
+export function test(): number {
+  var proto: any = { who() { return this.tag; } };
+  var o: any = { __proto__: proto, tag: 11, m() { return super.who(); } };
+  return o.m();
+}
+`),
+    ).toBe(11);
+  });
+
+  it("reads a super DATA property over a `__proto__:` literal", async () => {
+    expect(
+      await runStandalone(`
+export function test(): number {
+  var proto: any = { v: 8 };
+  var o: any = { __proto__: proto, m() { return super.v; } };
+  return o.m();
+}
+`),
+    ).toBe(8);
+  });
+
+  // F2: the uninitialised-`this` guard is lexical, and source position orders
+  // the TEXT, not the execution. On a loop's back-edge the read runs AFTER
+  // `super()`, so the unconditional throw was a false positive. Node 22
+  // answers 5 for both; the second proves no ReferenceError is raised at all.
+  it("does not throw for a super read reached on a loop back-edge", async () => {
+    expect(
+      await runStandalone(`
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor() {
+    let i = 0;
+    let v: any;
+    while (true) {
+      if (i === 1) { v = (super.zz as any); break; }
+      super();
+      i = 1;
+    }
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number { return new B().b; }
+`),
+    ).toBe(5);
+  });
+
+  it("raises no ReferenceError for that back-edge read", async () => {
+    expect(
+      await runStandalone(`
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor() {
+    let i = 0; let v: any; let t = 0;
+    while (true) {
+      if (i === 1) { try { v = (super.zz as any); } catch (e) { t = e instanceof ReferenceError ? 8 : 9; } break; }
+      super();
+      i = 1;
+    }
+    this.b = t === 0 ? (v === undefined ? 5 : 6) : t;
+  }
+}
+export function test(): number { return new B().b; }
+`),
+    ).toBe(5);
+  });
+
+  it("still throws ReferenceError for a straight-line read before super()", async () => {
+    // The narrowing must not cost the genuine case: with no loop over it, the
+    // text order IS the execution order. Node 22 answers 8.
+    expect(
+      await runStandalone(`
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor() {
+    const v: any = (super.zz as any);
+    super();
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number {
+  try { return new B().b; } catch (e) { return e instanceof ReferenceError ? 8 : 9; }
+}
+`),
+    ).toBe(8);
+  });
+
   it("keeps a base class's super read answering without a throw", async () => {
     // The acceptance criterion's own regression guard: `class B {}` has no
     // parent, so `super.anything` must complete. 1 = it did.
