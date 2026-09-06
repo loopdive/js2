@@ -1,7 +1,8 @@
 ---
 id: 5373
 title: "`String(x)` / `${x}` / any-typed `x.toString()` on a `class extends Array` instance run the built-in array join instead of the subclass override — every linked-Temporal `Instant`/`ZonedDateTime` read fails (JSBI is `class JSBI extends Array`)"
-status: ready
+status: done
+completed: 2026-09-06
 sprint: current
 priority: high
 horizon: m
@@ -9,6 +10,24 @@ goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-06
+# 2026-09-06 — the ordering rule has to be applied at the member-resolution
+# sites themselves, and all four of them live in `src/runtime.ts` (the two
+# string-coercion imports, the dynamic method call, and the property read plus
+# its two twins). +154 LOC there is the two shared helpers (`_classChainRead`,
+# `_classChainToString`) plus the four call sites and their rationale comments;
+# moving them to a subsystem module would put the gate one indirection away from
+# the built-in read it has to precede, which is the exact thing that made this
+# bug survive #5204's partial fix.
+loc-budget-allow:
+  - src/runtime.ts
+# Same change, same reason: `resolveImport` is the import-factory switch that
+# physically contains `__extern_toString`, `__extern_join_str`,
+# `__extern_method_call` and `__extern_get`, and `<anonymous>#95` is the
+# `intent`-table twin of `__extern_get` (`case "extern_get"`), which is the copy
+# actually wired for a compiled member read. Both grow by the guard clause only.
+func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::<anonymous>#95
 ---
 
 # #5373 — Array-subclass `toString` override is bypassed by the coercion paths
