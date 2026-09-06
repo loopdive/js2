@@ -670,3 +670,153 @@ measured, pins green on node 22 and node 25, host/wasi bytes identical,
 `in-progress` until that blocker is filed and cleared or the criterion is
 re-scoped. The 1,089-row class/super sweep remains deferred to the
 integrated-tree run before the PR.
+
+### Review round 3 (2026-09-06)
+
+Three findings from the round-2 review, all confirmed against node 22 before any
+edit and all fixed. Comparisons are against the **round-2 tree**
+(`wf_2df860c7-e4b-1` @ `0cd31c943b`) — the tree this round was cut from — because
+comparing a fix tree against the older LANE snapshot produces false host-byte
+positives (the round-2 record's own refutation, carried forward).
+
+#### S1 — the loop rule was position-blind; the decision is now made at runtime
+
+Round 2 suppressed the ReferenceError for **any** `super.x` read inside a loop
+that also contains a `super(...)`, reasoning that the back-edge might have run
+that `super()` already. It might, or might not, and **the two cases are the same
+lexical shape**, so no lexical rule can score both:
+
+- `for (let i = 0; i < 1; i++) { v = super.zz; super() }` — iteration 1 reads
+  with `this` uninitialised. Node throws.
+- `while (true) { if (i === 1) { v = super.zz; break } super(); i = 1 }` — the
+  same textual read is reached on iteration 2, `this` long initialised. Node
+  answers 5.
+
+**Shipped: the RUNTIME flag** (not the position-aware static fallback). A derived
+constructor whose body contains such a read allocates an i32 local
+`__js2_super_done` — zero at entry, so no initialising store is needed — every
+`super(...)` lowering stores 1 into it on return, and the read emits
+`local.get; i32.eqz; if → <the same ReferenceError>` before falling through to
+the ordinary read. Straight-line reads with no enclosing loop keep the
+unconditional throw. The flag is allocated by a pre-scan run **before** the
+constructor body compiles, because a `super(...)` is routinely lowered before the
+read that motivates it, and it lives on the constructor's own `FunctionContext`,
+which is what makes a nested class's `super()` structurally unable to set it.
+
+Two secondary corrections fell out. Both `super()`-scans (the "already completed
+textually" one and the "a loop can carry one back" one) now skip **nested
+classes**: a nested `class C extends A { constructor(){ super() } }` initialises
+C's `this`, never the enclosing constructor's. Nested **functions** are still
+descended into, because `const f = () => super(); f();` really does initialise it.
+
+Measured standalone — node 22 / base / lane / r1 / r2 / this:
+
+| probe | shape | node | base | lane | r1 | r2 | this |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| xa13 | `for` … read; `super()` | 9 | 6 | 9 | 6 | 6 | **9** |
+| xa12 | `while`, same shape | 9 | 6 | 9 | 6 | 6 | **9** |
+| xa3 | `do-while`, read under an `if` | 9 | 6 | 9 | 6 | 6 | **9** |
+| xa11 | only a NESTED class's `super()` in the loop | 9 | 6 | 9 | 6 | 6 | **9** |
+| n4, n5 | read on iteration 2 | 5 | 5 | 5 | 5 | 5 | 5 |
+| xa1 | `super()` in a nested loop, read on iteration 2 | 6 | — | — | — | 6 | 6 |
+| xa6, xa7, xa9 | labelled / `switch` / `try` back-edges | 6 | — | — | 6 | 6 | 6 |
+| xa2, xa4, xa5 | `super()` after the loop (incl. for-of / for-in) | 9 | — | — | 9 | 9 | 9 |
+| xa10 | both halves in one module | 96 | — | — | 96 | 96 | 96 |
+| **xa8** | read inside an ARROW inside the loop | 9 | — | — | 6 | 6 | **6 — residual** |
+
+xa8 is left unfixed and is **not** a regression: the arrow compiles to a separate
+wasm function and cannot read the flag local, and a lexical rule cannot help
+either, since an arrow's position says nothing about when it runs.
+
+#### S2 — the callee guard tested absence, not callability
+
+Round 2's guard was absence (`__nullish_to_null` + `ref.is_null`) plus the three
+POSITIVE primitive brands. A resolved super member that is a plain **object** or
+a **class** matches none of those and fell through to `__apply_closure`'s legacy
+`undefined` — the same silent answer the r2 guard existed to remove, for a
+different carrier. It now runs a POSITIVE `__typeof_function` test, the module's
+canonical standalone IsCallable predicate; the brand guard is kept verbatim as
+the fallback for a module that never registered it.
+
+| probe | shape | node | base | lane | r1 | r2 | this |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| xb6 | `super.v()`, `v` is `{ q: 1 }` | 2 | null | 2\* | null | null | **2** |
+| xb7 | `v` is a class `K` | 2 | null | 2\* | null | null | **2** |
+
+\* the lane's 2 was the nullish-base escape, not a callable check.
+
+Regression half — every callable carrier still CALLS, each measured on its own
+over a named `__proto__` prototype, identical on r2 and here: bound 11, arrow 12,
+getter-returned function 13, function with an own `prototype` 14, generator
+(returns an iterator) 21, async function (returns a promise) 31.
+
+Two residuals, both **byte-identical to r2** and therefore pre-existing:
+`Math.max` as the super member throws a TypeError (how a builtin function object
+survives as a literal property value), and `super.missing?.()` answers 8 where
+node answers 7 (probe xb12).
+
+#### S3 — the guard never reached an object literal's ACCESSOR body
+
+`emitObjectLiteralMethodFn` passes the literal's local into
+`compileArrowAsClosure` as the synthetic [[HomeObject]]; its sibling
+`emitObjectLiteralAccessorFn` passed nothing. So a getter/setter body found no
+home-object local, the object-literal `super` arm declined entirely, and **both**
+the r1 resolution and the r2/r3 callee guard were dead code for accessors. That
+is why xd1 was byte-identical across r1 and r2 — a different lowering path from
+the method arm those rounds fixed. The accessor arm now takes the same
+`objLocal`, under the same "only a body that mentions `super`" narrowing.
+
+| probe | shape | node | base | lane | r1 | r2 | this |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| xd1 | `get g() { return super.missing() }` | 2 | null | null | null | null | **2** |
+| m4 | `get g() { return super.m() }`, `m` present | 3 | null | null | null | null | **3** |
+
+#### Controls
+
+- **Probes**: all **213** across the three sets (73 `rev5350/p`, 101
+  `rev5350b/p`, 39 `rev5350c/p`), standalone, this tree vs round 2 vs node 22.
+  **Exactly 8 answers move** — xa3, xa11, xa12, xa13, xb6, xb7, xd1, m4 — and all
+  8 move from disagreeing with node to agreeing. Set-differenced against node:
+  round 2 disagrees on 67 rows, this tree on 59, and the 59 are a strict subset —
+  **zero rows newly disagree**.
+- **Host + wasi**: byte-identical to round 2 on
+  k1/k2/c4/h1b/b5/d02b/d10/d01b/xa13/xb6, both targets.
+- **53-row super control** (`run-test262-paths.mts --isolate ctrl53.txt
+  --standalone`): `{ compile_error: 2, fail: 27, pass: 24 }` — the same 29
+  non-pass paths as round 2, zero lost. All 8 target rows present in `ctrl53`
+  still pass. `language/expressions/object/getter-super-prop.js` still fails but
+  now on a LATER assertion — the getter resolves; what remains is
+  `Object.setPrototypeOf` after creation, outside this round's scope.
+- **Pins**: `tests/issue-5350-super-property-r1.test.ts` grows 18 → **27** cases
+  (four S1 shapes, three S2, two S3). Green on node 22 **and** node 25.
+- **Neighbours**, ≤3-file batches, all green: issue-2709 + issue-1824 +
+  issue-3522-super-accessor; issue-3024 + issue-5212 + issue-5309; issue-5312 +
+  issue-5195-es2015-class-r2 + issue-5195-r3-heritage-check;
+  issue-5195-r3-restricted-properties + issue-5195-r3-review + issue-5270;
+  issue-4527 + issue-1058-generic-callback-result + closed-imports; safe-mode +
+  issue-4376.
+- **Every `class`/`super` suite under `tests/`** (97 files beyond the neighbour
+  list), ≤3 per fork. 20 test cases fail across 5 files — and the **identical
+  set of 20 fails on the round-2 tree**, so all are pre-existing on the
+  integration branch: issue-1965-super-ctor-body,
+  issue-3522-ir-nested-class-{expression-,}ownership,
+  issue-3522-nested-class-static, issue-4618-class-capture-owner-isolation.
+- **Gates**: the chained source ratchets bare and with
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`, plus `check:speculative-rollback`,
+  `check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, the
+  TS7 typecheck and lint — all exit 0, run before each of the three commits.
+  New grants in this file: `loc-budget-allow` for `calls.ts` (+1 line, the
+  nested-`super(...)` arm's flag store) and `func-budget-allow` for
+  `compileClassBodiesInner` (+5) and `compileCallExpression` (+1). The
+  alternative — wrapping `compileSuperCall` so the store has one home —
+  registers a 387-LOC "new over-budget function" for what is only a rename, so
+  the call-site form is the smaller change.
+
+#### Status after this round: still `in-progress`, deliberately
+
+Unchanged, and for the same reason as rounds 1 and 2: the plan's acceptance
+criterion "13 rows (steps 1-5) pass" still does not hold, and the 8 that do not
+are blocked by the pre-existing block-scoped-class capture defect the r1 record
+isolated. This round moved 8 probe answers onto node and lost nothing. The
+1,089-row class/super sweep remains deferred to the integrated-tree run before
+the PR.
