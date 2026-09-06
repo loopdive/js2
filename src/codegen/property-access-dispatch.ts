@@ -3397,6 +3397,24 @@ export function tryLengthAndNameReads(
           // (sibling subtype of `$__vec_base`, not the vec) and returns 0.
           const exprTypeIdx = (exprResult as { typeIdx: number }).typeIdx;
           const exprTypeDef = ctx.mod.types[exprTypeIdx];
+          // (#5349 r3) A `$__ta_view_<name>` receiver is the same mismatch class
+          // as the `$__subview_<elem>` above — TS types `new Uint8Array(buf)` as
+          // the plain packed vec while the constructor emitted the shared-backing
+          // view. Its field 1 is `buf` (not `data`), so the struct-shape probe
+          // just below misses it and the `ref.test vecTypeIdx` ladder ALWAYS
+          // fails on it and answers 0 (`new Uint8Array(b).length` → 0, node 4).
+          // Read the view's effective length, which also honours the auto-length
+          // `-1` sentinel over a resizable buffer.
+          if (isTaViewTypeIdx(ctx, exprTypeIdx)) {
+            const tvTmp = allocLocal(fctx, `__len_tav_${fctx.locals.length}`, {
+              kind: "ref_null",
+              typeIdx: exprTypeIdx,
+            });
+            fctx.body.push({ op: "local.set", index: tvTmp });
+            pushTaViewEffectiveLen(ctx, fctx, tvTmp, exprTypeIdx);
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
+            return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+          }
           if (
             exprTypeDef?.kind === "struct" &&
             exprTypeDef.fields[0]?.name === "length" &&

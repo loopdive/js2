@@ -34,6 +34,21 @@ loc-budget-allow:
   # of that scaffolding is deleted. Measured against origin/main efa9e76f07:
   # 15 changed src files, net +1 LOC for the whole branch, and no function
   # needs a growth allowance at all.
+  # 2026-09-06 round 3: the brand made several emitters that RELIED on the two
+  # byte vecs canonicalizing to one runtime type trap or misdispatch. The
+  # `.length` of a `$__ta_view` receiver is one of them — `new Uint8Array(b)`
+  # emits the shared-backing view whose field 1 is `buf`, so the existing
+  # struct-shape probe in `tryLengthAndNameReads` misses it and the
+  # `ref.test <vec>` ladder answers 0 where node answers 4 (probes pb/r1,
+  # pb/r3). The read has to happen inside that dispatcher, next to the
+  # `$__subview_<elem>` case it mirrors.
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/node-fs-api.ts
+func-budget-allow:
+  # 2026-09-06 round 3: +18 lines in the `$__ta_view` length arm described
+  # above, in the function that already owns every other `.length` receiver
+  # shape.
+  - src/codegen/property-access-dispatch.ts::tryLengthAndNameReads
 ---
 
 ## Problem

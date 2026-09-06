@@ -2963,6 +2963,174 @@ export function pushTaViewEffectiveLen(
 }
 
 /**
+ * (#5349 round 3) Recover the `$__vec_i32_byte` buffer struct for a TypedArray /
+ * DataView constructor argument whose STATIC provenance claimed "ArrayBuffer",
+ * when that claim is not verifiable at compile time.
+ *
+ * `nativeBufferBuiltinOf` answers from a binding's SINGLE declaration
+ * initializer (and from the checker's declared element type for `xs[0]`), so a
+ * later `b = new Uint8Array(4)` — or an array element rewritten after its
+ * literal — leaves the answer "ArrayBuffer" while the runtime value is the
+ * packed-byte view carrier `$__vec_i8_byte`. Before #5349 round 2 the two vec
+ * structs canonicalized to ONE runtime type and the unguarded `ref.cast` simply
+ * succeeded (aliasing the view's bytes as a buffer — wrong, but silent). The
+ * round-2 brand makes them distinct, so the same cast now TRAPS.
+ *
+ * This replaces the unguarded cast with a three-way runtime dispatch:
+ *   - `$__vec_i32_byte`  → the buffer itself (the previous fast path, unchanged)
+ *   - `$__vec_i8_byte`   → §23.2.5.1.2 InitializeTypedArrayFromTypedArray: a
+ *                          FRESH byte buffer holding the element-wise COPY of the
+ *                          source, converted to `desc`'s width/encoding. Node
+ *                          copies here — the old aliasing was a masked bug.
+ *   - anything else      → a zero-length buffer (no trap; the static provenance
+ *                          was simply wrong and there is no buffer to view).
+ *
+ * The i8 source is read UNSIGNED. `Int8Array`, `Uint8Array` and
+ * `Uint8ClampedArray` share one packed carrier and the view's signedness is a
+ * static property of the TS name, so an erased `Int8Array` source widening into
+ * a >1-byte view reads 255 where node reads −1. Recorded as a representation
+ * residual in #5349; a byte-width-preserving destination (the dominant
+ * `new Uint8Array(src)` case) is unaffected because the stored byte is identical
+ * either way.
+ *
+ * Emitted ONLY where a cast would have been emitted anyway (an externref or
+ * foreign-ref operand). A statically `$__vec_i32_byte`-typed operand keeps its
+ * bare `local.set` and stays byte-identical.
+ */
+function emitRecoverBufferVecGuarded(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  bufLocal: number,
+  desc: { bytes: number; signed: boolean; float: boolean },
+): void {
+  const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
+  // Register the packed-byte carrier unconditionally: a module can construct one
+  // in a function compiled AFTER this site, so "not registered yet" is not proof
+  // that no packed-byte value can reach here.
+  const i8VecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
+  const i8ArrIdx = getArrTypeIdxFromVec(ctx, i8VecIdx);
+
+  const srcAnyLocal = allocLocal(fctx, `__tav_src_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  fctx.body.push({ op: "local.set", index: srcAnyLocal });
+
+  const bufferArm: Instr[] = [
+    { op: "local.get", index: srcAnyLocal },
+    { op: "ref.cast", typeIdx: vecTypeIdx },
+    { op: "local.set", index: bufLocal },
+  ];
+  const emptyArm: Instr[] = [
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "array.new_default", typeIdx: arrTypeIdx },
+    { op: "struct.new", typeIdx: vecTypeIdx },
+    { op: "local.set", index: bufLocal },
+  ];
+
+  if (i8ArrIdx < 0) {
+    fctx.body.push({ op: "local.get", index: srcAnyLocal });
+    fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: bufferArm, else: emptyArm });
+    return;
+  }
+
+  // §23.2.5.1.2 copy arm — built detached so the byte-encode helper's locals and
+  // instructions land inside the `else` branch, not before the type test.
+  const copyArm: Instr[] = [];
+  const savedBody = fctx.body;
+  const releaseSaved = retainLiveBody(ctx, savedBody);
+  const releaseCopy = retainLiveBody(ctx, copyArm);
+  fctx.body = copyArm;
+  try {
+    const srcVecLocal = allocLocal(fctx, `__tav_csrc_${fctx.locals.length}`, { kind: "ref", typeIdx: i8VecIdx });
+    const srcDataLocal = allocLocal(fctx, `__tav_cdat_${fctx.locals.length}`, { kind: "ref", typeIdx: i8ArrIdx });
+    const nLocal = allocLocal(fctx, `__tav_cn_${fctx.locals.length}`, { kind: "i32" });
+    const blLocal = allocLocal(fctx, `__tav_cbl_${fctx.locals.length}`, { kind: "i32" });
+    const dstArrLocal = allocLocal(fctx, `__tav_cdst_${fctx.locals.length}`, { kind: "ref", typeIdx: arrTypeIdx });
+    const iLocal = allocLocal(fctx, `__tav_ci_${fctx.locals.length}`, { kind: "i32" });
+    const offLocal = allocLocal(fctx, `__tav_coff_${fctx.locals.length}`, { kind: "i32" });
+    const valLocal = allocLocal(fctx, `__tav_cval_${fctx.locals.length}`, { kind: "f64" });
+    const leLocal = allocLocal(fctx, `__tav_cle_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.get", index: srcAnyLocal });
+    fctx.body.push({ op: "ref.cast", typeIdx: i8VecIdx });
+    fctx.body.push({ op: "local.tee", index: srcVecLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: i8VecIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "local.set", index: nLocal });
+    fctx.body.push({ op: "local.get", index: srcVecLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: i8VecIdx, fieldIdx: 1 });
+    fctx.body.push({ op: "ref.as_non_null" });
+    fctx.body.push({ op: "local.set", index: srcDataLocal });
+    fctx.body.push({ op: "local.get", index: nLocal });
+    if (desc.bytes !== 1) {
+      fctx.body.push({ op: "i32.const", value: desc.bytes });
+      fctx.body.push({ op: "i32.mul" });
+    }
+    fctx.body.push({ op: "local.tee", index: blLocal });
+    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+    fctx.body.push({ op: "local.set", index: dstArrLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "local.set", index: leLocal });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: iLocal });
+    const loopBody: Instr[] = [];
+    const savedLoop = fctx.body;
+    fctx.body = loopBody;
+    fctx.body.push({ op: "local.get", index: iLocal });
+    fctx.body.push({ op: "local.get", index: nLocal });
+    fctx.body.push({ op: "i32.ge_s" });
+    fctx.body.push({ op: "br_if", depth: 1 });
+    fctx.body.push({ op: "local.get", index: srcDataLocal });
+    fctx.body.push({ op: "local.get", index: iLocal });
+    fctx.body.push({ op: "array.get_u", typeIdx: i8ArrIdx });
+    fctx.body.push({ op: "f64.convert_i32_u" });
+    fctx.body.push({ op: "local.set", index: valLocal });
+    fctx.body.push({ op: "local.get", index: iLocal });
+    if (desc.bytes !== 1) {
+      fctx.body.push({ op: "i32.const", value: desc.bytes });
+      fctx.body.push({ op: "i32.mul" });
+    }
+    fctx.body.push({ op: "local.set", index: offLocal });
+    emitWriteBytes(
+      ctx,
+      fctx,
+      { kind: "set", bytes: desc.bytes, signed: desc.signed, float: desc.float },
+      dstArrLocal,
+      offLocal,
+      valLocal,
+      leLocal,
+      arrTypeIdx,
+    );
+    fctx.body.push({ op: "local.get", index: iLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.set", index: iLocal });
+    fctx.body.push({ op: "br", depth: 0 });
+    fctx.body = savedLoop;
+    fctx.body.push({
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+    });
+    fctx.body.push({ op: "local.get", index: blLocal });
+    fctx.body.push({ op: "local.get", index: dstArrLocal });
+    fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+    fctx.body.push({ op: "local.set", index: bufLocal });
+  } finally {
+    fctx.body = savedBody;
+    releaseCopy();
+    releaseSaved();
+  }
+
+  const nonBufferArm: Instr[] = [
+    { op: "local.get", index: srcAnyLocal },
+    { op: "ref.test", typeIdx: i8VecIdx },
+    { op: "if", blockType: { kind: "empty" }, then: copyArm, else: emptyArm },
+  ];
+  fctx.body.push({ op: "local.get", index: srcAnyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: bufferArm, else: nonBufferArm });
+}
+
+/**
  * (#3054 B1) `new <TA>(arrayBuffer)` → a shared-backing `$__ta_view_<name>` that
  * REFS the buffer's `$__vec_i32_byte` struct instead of COPYING its bytes into a
  * fresh backing array (the verified copy bug: sibling views / DataViews over the
@@ -2971,6 +3139,9 @@ export function pushTaViewEffectiveLen(
  * `compileExpr` compiles the buffer arg expression. Returns the view ValType, or
  * null (leaving the stack balanced) when the buffer can't be recovered as a
  * native vec — the caller then falls back to the numeric-length ctor path.
+ *
+ * (#5349 r3) The recover step is GUARDED — see {@link emitRecoverBufferVecGuarded}
+ * for why an unguarded `ref.cast $__vec_i32_byte` is an uncatchable trap here.
  */
 export function emitTaViewConstruct(
   ctx: CodegenContext,
@@ -2987,19 +3158,23 @@ export function emitTaViewConstruct(
   // Compile the buffer expression and recover the shared i32_byte vec struct.
   const bufType = compileExpr(bufExpr);
   if (!bufType) return null;
+  // (#5349 r3) `guarded` marks every operand whose provenance was STATIC-only —
+  // exactly the operands that used to take an unguarded `ref.cast`.
+  let guarded = false;
   if (bufType.kind === "externref") {
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    guarded = true;
   } else if (bufType.kind === "ref" || bufType.kind === "ref_null") {
     if ("typeIdx" in bufType && (bufType as { typeIdx: number }).typeIdx !== vecTypeIdx) {
-      fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+      guarded = true;
     }
   } else {
     fctx.body.push({ op: "drop" });
     return null;
   }
   const bufLocal = allocLocal(fctx, `__tav_buf_${fctx.locals.length}`, { kind: "ref", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "local.set", index: bufLocal });
+  if (guarded) emitRecoverBufferVecGuarded(ctx, fctx, bufLocal, desc);
+  else fctx.body.push({ op: "local.set", index: bufLocal });
 
   // struct.new order = [length, buf, byteOffset, kind]. length field = fixed element
   // count `buf.length / elementSize` (B1/B2). (#3054 C) When the MODULE contains a
@@ -4341,19 +4516,26 @@ export function emitTaViewConstructWindowed(
   // Recover the shared buffer vec struct (mirror emitTaViewConstruct exactly).
   const bufType = compileExpr(bufExpr);
   if (!bufType) return null;
+  let guarded = false;
   if (bufType.kind === "externref") {
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    guarded = true;
   } else if (bufType.kind === "ref" || bufType.kind === "ref_null") {
     if ("typeIdx" in bufType && (bufType as { typeIdx: number }).typeIdx !== vecTypeIdx) {
-      fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+      guarded = true;
     }
   } else {
     fctx.body.push({ op: "drop" });
     return null;
   }
   const bufLocal = allocLocal(fctx, `__tavw_buf_${fctx.locals.length}`, { kind: "ref", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "local.set", index: bufLocal });
+  // (#5349 r3) Same brand guard as the offset-0 form. A packed-byte source
+  // materializes the §23.2.5.1.2 COPY and the offset/length protocol below then
+  // runs against that copy — a deviation from spec (which IGNORES byteOffset and
+  // length when the first argument is a TypedArray), but a bounded wrong answer
+  // in place of the uncatchable trap the bare cast produces. Recorded in #5349.
+  if (guarded) emitRecoverBufferVecGuarded(ctx, fctx, bufLocal, desc);
+  else fctx.body.push({ op: "local.set", index: bufLocal });
 
   // bufByteLen = buf.length (field0 = byte count for an ArrayBuffer vec).
   const bufByteLenLocal = allocLocal(fctx, `__tavw_blen_${fctx.locals.length}`, { kind: "i32" });
@@ -5151,19 +5333,25 @@ export function emitDynamicTaViewConstruct(
   // Recover the shared buffer vec struct (mirror emitTaViewConstruct).
   const bufType = compileExpr(bufExpr);
   if (!bufType) return null;
+  let guarded = false;
   if (bufType.kind === "externref") {
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    guarded = true;
   } else if (bufType.kind === "ref" || bufType.kind === "ref_null") {
     if ("typeIdx" in bufType && (bufType as { typeIdx: number }).typeIdx !== vecTypeIdx) {
-      fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+      guarded = true;
     }
   } else {
     fctx.body.push({ op: "drop" });
     return null;
   }
   const bufLocal = allocLocal(fctx, `__dtav_buf_${fctx.locals.length}`, { kind: "ref", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "local.set", index: bufLocal });
+  // (#5349 r3) The constructor kind is only known at RUNTIME here, so there is no
+  // static element width to re-encode a packed-byte source into: recover it as a
+  // raw BYTE copy (`bytes: 1`). That is right for the byte-width kinds and a
+  // bounded wrong length for the wider ones — the alternative was the trap.
+  if (guarded) emitRecoverBufferVecGuarded(ctx, fctx, bufLocal, { bytes: 1, signed: false, float: false });
+  else fctx.body.push({ op: "local.set", index: bufLocal });
 
   // byteOffset = ToIndex(offsetExpr) (0 when omitted). Element-count length arg is
   // kind-independent, so compute it ONCE (shared across all arms).
