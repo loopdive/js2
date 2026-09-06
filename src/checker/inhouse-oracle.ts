@@ -125,6 +125,14 @@ export class InHouseOracle implements TypeOracle {
     return binding.valueDeclaration ?? binding.declarations[0];
   }
 
+  aliasedValueDeclarationOf(id: ts.Node): ts.Declaration | undefined {
+    // The in-house binder resolves within a file and has no cross-module alias
+    // graph, so an imported name answers with its own import declaration. That
+    // is the same answer `valueDeclarationOf` gives; callers must treat a
+    // non-followed alias as "unknown", never as "not a host value".
+    return this.valueDeclarationOf(id);
+  }
+
   variableDeclarationOf(id: ts.Node): ts.VariableDeclaration | undefined {
     const decl = this.valueDeclarationOf(id);
     if (!decl || !ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name)) return undefined;
