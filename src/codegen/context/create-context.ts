@@ -240,6 +240,8 @@ export function createCodegenContext(
     // bytes. Only the package linker sets the option.
     sharedExnTag:
       options?.sharedExceptionTag === true && targetProfile.target !== "wasi" && targetProfile.target !== "standalone",
+    // (#5247) Provider builds only — their exports are wasm→wasm call targets.
+    exportsConsumedByWasm: options?.exportsConsumedByWasm === true,
     hasUnionImports: false,
     asyncFunctions: new Set(),
     generatorFunctions: new Set(),
