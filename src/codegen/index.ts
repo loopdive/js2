@@ -12,6 +12,7 @@ import {
 import { analyzeLinearUint8 } from "./linear-uint8-analysis.js";
 import { usesHostBigIntCarrier } from "./host-bigint-carrier.js";
 import { readonlyErasureMappedAliasTarget } from "./readonly-erasure-mapped-type.js";
+import { isShapelessObjectType } from "./shapeless-object-type.js"; // (#5348)
 import { genericStructFactoryExpression } from "./generic-struct-factory.js";
 import { analyzeFnctorEscapeGate, deriveFnctorFields } from "./fnctor-escape-gate.js";
 import {
@@ -12965,7 +12966,13 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
         !(member.flags & ts.TypeFlags.Undefined) &&
         !(member.flags & ts.TypeFlags.Void),
     );
-    if (nonNullish.length === 1 && tsType.types.length === 2) {
+    // (#5348) …but only when that member carries a shape. Registration mutates
+    // `ctx.anonTypeMap` GLOBALLY, so registering `{}` makes every later
+    // `{}`-typed value resolve to a closed zero-field struct and `Object.keys`
+    // report none — which is how `state = {}` (redux `combineReducers`) lost
+    // referential identity. An optional local *interface*, the #1058 binder case
+    // this branch exists for, has members and still registers.
+    if (nonNullish.length === 1 && tsType.types.length === 2 && !isShapelessObjectType(nonNullish[0]!)) {
       ensureStructForType(ctx, nonNullish[0]!);
     }
     return;
