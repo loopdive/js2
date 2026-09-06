@@ -262,7 +262,26 @@ export function ensureProxyRuntime(
   // `isSet` switches the 3-arg (set) / 2-arg (get/has) forward + arg shape.
   // params: 0=proxyExtern 1=key 2=receiver(get/has)/value(set)
   // locals: 3=p (ref $Proxy)  4=trap (externref)
-  const buildDispatch = (trapFieldIdx: number, forwardName: string, isSet: boolean): Instr[] => {
+  //
+  // (#5316 review r1 F2) `setReceiverParam` builds the FOURTH shape from the
+  // same source: `(proxy, key, value, receiver) -> externref`, §10.5.9 with an
+  // EXPLICIT receiver, for `Reflect.set(proxy, k, v, recv)`. It shifts the
+  // locals by one (4 params ⇒ p=4, trap=5, res=6), takes the receiver from
+  // param 3 instead of param 0, and forwards a trap-absent call to
+  // `__reflect_set_receiver` (§10.5.9 step 6 `target.[[Set]](P, V, Receiver)`)
+  // rather than to `__extern_set`, which would drop the receiver. Everything
+  // else — the revoked check, GetMethod's callable guard, the trap call, the
+  // §10.5.9 step 9-10 invariant validation — is shared, so there is exactly one
+  // implementation of the set-trap protocol.
+  const buildDispatch = (
+    trapFieldIdx: number,
+    forwardName: string,
+    isSet: boolean,
+    setReceiverParam = false,
+  ): Instr[] => {
+    const P = setReceiverParam ? 4 : 3;
+    const TRAPL = setReceiverParam ? 5 : 4;
+    const RECEIVER = setReceiverParam ? 3 : 0;
     const forwardIdx =
       trapFieldIdx === TRAP_GET ? ctx.funcMap.get("__reflect_get_receiver")! : ctx.funcMap.get(forwardName)!;
     // The trap-invoke arm: read handler + target, then call the reserved driver.
@@ -271,22 +290,23 @@ export function ensureProxyRuntime(
     // set:  driver(handler, trap, target, key, value=param2, receiver=proxy)
     const trapArm: Instr[] = [
       // handler
-      { op: "local.get", index: 3 },
+      { op: "local.get", index: P },
       { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PHANDLER },
       { op: "extern.convert_any" },
       // trap closure
-      { op: "local.get", index: 4 },
+      { op: "local.get", index: TRAPL },
       // target
-      { op: "local.get", index: 3 },
+      { op: "local.get", index: P },
       { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
       { op: "extern.convert_any" },
       // key
       { op: "local.get", index: 1 },
     ];
     if (isSet) {
-      // value, then receiver (= the proxy itself, param 0)
+      // value, then receiver — the proxy itself (param 0) on the 3-argument
+      // shape, the caller's explicit receiver (param 3) on the 4-argument one.
       trapArm.push({ op: "local.get", index: 2 });
-      trapArm.push({ op: "local.get", index: 0 });
+      trapArm.push({ op: "local.get", index: RECEIVER });
       trapArm.push({ op: "call", funcIdx: callSetIdx });
     } else if (trapFieldIdx === TRAP_HAS) {
       trapArm.push({ op: "call", funcIdx: callHasIdx });
@@ -308,7 +328,7 @@ export function ensureProxyRuntime(
     // these 3-param helpers (3 params + p + trap). [[Set]] additionally passes
     // its value (param 2) so step 9 can SameValue it against the target's.
     if (descriptorInvariants !== null) {
-      const RES = 5;
+      const RES = P + 2;
       const validator = isSet
         ? descriptorInvariants.set
         : trapFieldIdx === TRAP_HAS
@@ -318,7 +338,7 @@ export function ensureProxyRuntime(
             : trapFieldIdx === TRAP_GOPD
               ? descriptorInvariants.gopd
               : descriptorInvariants.get;
-      trapArm.push(...validateTrapResult(validator, 3, RES, 1, isSet ? [2] : []));
+      trapArm.push(...validateTrapResult(validator, P, RES, 1, isSet ? [2] : []));
     }
 
     const body: Instr[] = [
@@ -326,13 +346,13 @@ export function ensureProxyRuntime(
       { op: "local.get", index: 0 },
       { op: "any.convert_extern" },
       { op: "ref.cast", typeIdx: proxyTypeIdx },
-      { op: "local.set", index: 3 },
+      { op: "local.set", index: P },
       // if p.revoked: throw TypeError
-      { op: "local.get", index: 3 },
+      { op: "local.get", index: P },
       { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_REVOKED },
       { op: "if", blockType: { kind: "empty" }, then: throwRevoked() },
       // trap = p.ptraps==null ? null : p.ptraps.<field>
-      { op: "local.get", index: 3 },
+      { op: "local.get", index: P },
       { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
       { op: "ref.is_null" },
       {
@@ -340,71 +360,87 @@ export function ensureProxyRuntime(
         blockType: { kind: "val", type: externref },
         then: [{ op: "ref.null.extern" }],
         else: [
-          { op: "local.get", index: 3 },
+          { op: "local.get", index: P },
           { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTRAPS },
           { op: "ref.as_non_null" },
           { op: "struct.get", typeIdx: proxyTrapsTypeIdx, fieldIdx: trapFieldIdx },
         ],
       },
-      { op: "local.set", index: 4 },
+      { op: "local.set", index: TRAPL },
       // if trap == null: forward to ordinary op on target
-      { op: "local.get", index: 4 },
+      { op: "local.get", index: TRAPL },
       { op: "ref.is_null" },
       {
         op: "if",
         blockType: { kind: "val", type: externref },
-        then: isSet
+        then: setReceiverParam
           ? [
-              // __extern_set(target, key, value) -> (void) ; push undefined
-              { op: "local.get", index: 3 },
+              // (#5316 F2) §10.5.9 step 6 `target.[[Set]](P, V, Receiver)` —
+              // the SAME receiver the caller passed, not the proxy. That is
+              // `__reflect_set_receiver`, which returns a real i32 boolean, so
+              // box it: this 4-argument shape owns its answer and never routes
+              // through the #4504 shared channel.
+              { op: "local.get", index: P },
               { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
               { op: "extern.convert_any" },
               { op: "local.get", index: 1 },
               { op: "local.get", index: 2 },
+              { op: "local.get", index: RECEIVER },
               { op: "call", funcIdx: forwardIdx },
-              // The outer __extern_set proxy guard distinguishes this
-              // trap-absent forward from a real set-trap result. In #4504 it
-              // must leave the target's result channel untouched, including
-              // UNADMITTED; this placeholder is dropped by that guard.
-              { op: "ref.null.extern" },
+              { op: "call", funcIdx: ctx.funcMap.get("__box_boolean")! },
             ]
-          : trapFieldIdx === TRAP_HAS || trapFieldIdx === TRAP_DELETE
+          : isSet
             ? [
-                // has:    __extern_has(target, key)     -> i32
-                // delete: __delete_property(target, key) -> i32
-                // Both are 2-arg `(target,key) -> i32`; box back to a boolean any
-                // so the dispatch result stays uniform externref.
-                { op: "local.get", index: 3 },
+                // __extern_set(target, key, value) -> (void) ; push undefined
+                { op: "local.get", index: P },
                 { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
                 { op: "extern.convert_any" },
                 { op: "local.get", index: 1 },
+                { op: "local.get", index: 2 },
                 { op: "call", funcIdx: forwardIdx },
-                { op: "call", funcIdx: ctx.funcMap.get("__box_boolean")! },
+                // The outer __extern_set proxy guard distinguishes this
+                // trap-absent forward from a real set-trap result. In #4504 it
+                // must leave the target's result channel untouched, including
+                // UNADMITTED; this placeholder is dropped by that guard.
+                { op: "ref.null.extern" },
               ]
-            : [
-                // [[Get]](target, key, receiver) -> externref. Other
-                // two-argument dispatch operations retain their original
-                // forward helper.
-                { op: "local.get", index: 3 },
-                { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
-                { op: "extern.convert_any" },
-                { op: "local.get", index: 1 },
-                ...(trapFieldIdx === TRAP_GET ? ([{ op: "local.get", index: 2 }] satisfies Instr[]) : []),
-                { op: "call", funcIdx: forwardIdx },
-              ],
+            : trapFieldIdx === TRAP_HAS || trapFieldIdx === TRAP_DELETE
+              ? [
+                  // has:    __extern_has(target, key)     -> i32
+                  // delete: __delete_property(target, key) -> i32
+                  // Both are 2-arg `(target,key) -> i32`; box back to a boolean any
+                  // so the dispatch result stays uniform externref.
+                  { op: "local.get", index: P },
+                  { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+                  { op: "extern.convert_any" },
+                  { op: "local.get", index: 1 },
+                  { op: "call", funcIdx: forwardIdx },
+                  { op: "call", funcIdx: ctx.funcMap.get("__box_boolean")! },
+                ]
+              : [
+                  // [[Get]](target, key, receiver) -> externref. Other
+                  // two-argument dispatch operations retain their original
+                  // forward helper.
+                  { op: "local.get", index: P },
+                  { op: "struct.get", typeIdx: proxyTypeIdx, fieldIdx: F_PTARGET },
+                  { op: "extern.convert_any" },
+                  { op: "local.get", index: 1 },
+                  ...(trapFieldIdx === TRAP_GET ? ([{ op: "local.get", index: 2 }] satisfies Instr[]) : []),
+                  { op: "call", funcIdx: forwardIdx },
+                ],
         // trap present → GetMethod requires a callable trap before invoking it.
         // (#4721) landed this for [[Get]]; (#5140) extends it to every trap —
         // §7.3.9 GetMethod is shared by all of §10.5.
         else:
           trapFieldIdx === TRAP_GET && typeofFunctionIdx !== undefined
             ? [
-                { op: "local.get", index: 4 },
+                { op: "local.get", index: TRAPL },
                 { op: "call", funcIdx: typeofFunctionIdx },
                 { op: "i32.eqz" },
                 { op: "if", blockType: { kind: "empty" }, then: throwGetTrapNotCallable() },
                 ...trapArm,
               ]
-            : [...trapCallableGuard(4), ...trapArm],
+            : [...trapCallableGuard(TRAPL), ...trapArm],
       },
     ];
     return body;
@@ -1099,6 +1135,22 @@ export function ensureProxyRuntime(
     dispatchLocals(),
     buildDispatch(TRAP_SET, "__extern_set", true),
   );
+  // (#5316 review r1 F2) __proxy_set_receiver_dispatch(proxy, key, value,
+  // receiver) -> externref — §10.5.9 [[Set]] with an EXPLICIT receiver, behind
+  // `Reflect.set`'s 4-argument form and behind every prototype hop of
+  // `__reflect_set_receiver`'s walk. Only registered when that walk was
+  // reserved (standalone with all its primitives); its trap-absent arm calls
+  // the walk back, so the two are mutually recursive by construction and the
+  // walk's funcIdx has to exist first — see `reserveOrdinarySetWithReceiver`.
+  if (ctx.funcMap.get("__reflect_set_receiver") !== undefined) {
+    registerNative(
+      "__proxy_set_receiver_dispatch",
+      [externref, externref, externref, externref],
+      [externref],
+      dispatchLocals(),
+      buildDispatch(TRAP_SET, "__reflect_set_receiver", true, true),
+    );
+  }
   registerNative(
     "__proxy_has_dispatch",
     [externref, externref, externref],
@@ -1924,6 +1976,39 @@ export function ensureProxyRuntime(
       },
     ];
     setBody.unshift(...guard);
+  }
+
+  // (#5316 review r1 F2) __reflect_set(obj, key, value) -> i32 : if proxy →
+  // ToBoolean(set_receiver_dispatch(obj, key, value, obj)). §26.1.13 step 3 is
+  // `target.[[Set]](key, V, target)` when no receiver is supplied, and for a
+  // `$Proxy` target that is §10.5.9 — its `set` trap. Without this guard a
+  // `$Proxy` fell through to the ordinary `ref.test $Object` walk (a proxy IS-A
+  // `$Object`), which found no own entry, refused the write and returned false
+  // WITHOUT invoking the trap. Measured on `origin/main` and on the r5 lane
+  // alike (probe `k13`: node 11, both trees 0), so this is a pre-existing hole
+  // the 4-argument work exposes, not a regression it introduced.
+  const reflectSetBody = findBody("__reflect_set");
+  const setReceiverDispatchIdx = ctx.funcMap.get("__proxy_set_receiver_dispatch");
+  const reflectSetTruthyIdx = ctx.funcMap.get("__is_truthy");
+  if (reflectSetBody && setReceiverDispatchIdx !== undefined && reflectSetTruthyIdx !== undefined) {
+    reflectSetBody.unshift(
+      { op: "local.get", index: 0 },
+      { op: "any.convert_extern" },
+      { op: "ref.test", typeIdx: proxyTypeIdx },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: 0 },
+          { op: "local.get", index: 1 },
+          { op: "local.get", index: 2 },
+          { op: "local.get", index: 0 }, // receiver = the proxy itself
+          { op: "call", funcIdx: setReceiverDispatchIdx },
+          { op: "call", funcIdx: reflectSetTruthyIdx },
+          { op: "return" },
+        ],
+      },
+    );
   }
 
   // __extern_has(obj, key) -> i32 : if proxy → ToBoolean(has_dispatch(obj,key,obj))

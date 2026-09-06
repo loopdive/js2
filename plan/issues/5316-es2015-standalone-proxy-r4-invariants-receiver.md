@@ -99,6 +99,14 @@ coercion-sites-allow:
   # for a trap result.
   - src/codegen/expressions/call-builtin-static.ts
   - src/codegen/object-runtime-ordinary-set.ts
+  # 2026-09-06 review r1 F2: one more `__is_truthy`, in the `$Proxy` front
+  # guard this round adds to `__reflect_set`. §26.1.13 step 3 is
+  # `target.[[Set]](key, V, target)` and §10.5.9 returns the trap's booleanish
+  # result, so the guard has to ToBoolean it exactly as the sibling
+  # `__extern_has` and `__delete_property` guards in this same file already do
+  # (they are 2 of the 6 pre-existing hits). Same helper, same spec operation,
+  # no new matrix.
+  - src/codegen/object-runtime-proxy.ts
 ---
 
 ## Problem
