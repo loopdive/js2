@@ -6905,6 +6905,59 @@ const _resolveClassMember = createClassMemberResolver({
   unwrapReceiver: (value) => _unwrapForHost(value),
 });
 const _invokeClassMethod = createResolvedClassMethodInvoker(_resolveClassMember, _MISS, _unwrapForHost);
+
+/**
+ * (#5373) Is `v` an instance of a COMPILED user class whose members live only in
+ * the module's `__class_call_*` bridges?
+ *
+ * `class B extends Array` (jsbi's `class JSBI extends Array`) is compiled
+ * externref-backed: the instance reaching the host is a REAL JS Array whose
+ * prototype chain carries the BUILT-IN `Array.prototype.toString`/`join`/
+ * `valueOf` and none of B's overrides — those are only reachable through
+ * `_resolveClassMember`. So every host path that reads a method off the
+ * receiver finds the built-in and the override is silently bypassed.
+ *
+ * This predicate is the gate for looking at the class chain FIRST. It answers
+ * "the receiver is a compiled class instance", NOT "the receiver looks like an
+ * array": a plain array (a WasmGC vec, never tagged) and a plain object both
+ * answer `false` on one `WeakMap.has`, so the array fast paths of #3903 keep
+ * their exact shape and cost.
+ */
+function _isTaggedUserClassInstance(v: unknown): boolean {
+  if (v === null || (typeof v !== "object" && typeof v !== "function")) return false;
+  return _userClassTags.has(v as object);
+}
+
+/**
+ * (#5373) The compiled override of `key` on a tagged class instance, or `_MISS`.
+ *
+ * Returns a callable bound to `v`; `_MISS` when `v` is not a compiled class
+ * instance or the class declares no such member — in which case the caller must
+ * keep its previous behaviour byte-for-byte (an inherited built-in the class did
+ * NOT override still wins, which is what the spec asks for).
+ */
+function _classChainMethod(v: any, key: string, exports: Record<string, Function> | undefined): any {
+  if (exports === undefined || !_isTaggedUserClassInstance(v)) return _MISS;
+  const member = _resolveClassMember(v, key, exports);
+  return typeof member === "function" ? member : _MISS;
+}
+
+/**
+ * (#5373) ToString of a tagged class instance through its OWN `toString`.
+ *
+ * Used by the string-coercion imports before they read `v.toString` off the
+ * host prototype chain. Only `toString` is consulted — promoting a compiled
+ * `valueOf` over an inherited built-in `toString` would break §7.1.1.1's
+ * string-hint order, which asks for `toString` first whether or not it is
+ * inherited.
+ */
+function _classChainToString(v: any, exports: Record<string, Function> | undefined): string | typeof _MISS {
+  const own = _classChainMethod(v, "toString", exports);
+  if (own === _MISS) return _MISS;
+  const prim = own.call(v);
+  if (prim != null && typeof prim === "object") return _MISS; // not a primitive — fall through
+  return String(prim);
+}
 // (#3673) Hoisted from `_resolveHostField` — was a per-call closure on a hot
 // path (invoked for every dynamic field read that reaches the host resolver).
 // #1336 — accessor properties (Object.defineProperty(obj, k, {get})) must
@@ -12709,6 +12762,17 @@ assert._isSameValue = isSameValue;
               return "[object Object]";
             }
           }
+          // (#5373) A compiled class that extends a builtin reaches here as a
+          // REAL host object (`class JSBI extends Array` → a JS Array), so the
+          // `v.toString` read below finds `Array.prototype.toString` and joins
+          // the elements — `String(jsbi)` answered "23396352,513294428,1"
+          // instead of the class's own radix-10 digits. Consult the class chain
+          // first; `_MISS` (plain array/object, or a class with no `toString`)
+          // leaves the path below untouched.
+          {
+            const own = _classChainToString(v, callbackState?.getExports());
+            if (own !== _MISS) return own;
+          }
           if (typeof v.toString === "function") return v.toString();
           if (typeof v === "object") {
             const prim = _toPrimitive(v, "string", callbackState);
@@ -12813,6 +12877,12 @@ assert._isSameValue = isSameValue;
             } catch {
               return "[object Object]";
             }
+          }
+          // (#5373) Same ordering fix as `__extern_toString`, for a subclass
+          // instance appearing as an ELEMENT of the array being joined.
+          {
+            const own = _classChainToString(v, callbackState?.getExports());
+            if (own !== _MISS) return own;
           }
           if (typeof v.toString === "function") return v.toString();
           if (typeof v === "object") {
@@ -14243,6 +14313,31 @@ assert._isSameValue = isSameValue;
           const vecMutation = _tryWasmVecMutation(obj, method, args, exports);
           if (vecMutation.handled) return vecMutation.value;
 
+          // (#5373) A compiled class that extends a builtin is externref-backed:
+          // its instance reaches the host as a real Array/Map/Error whose
+          // prototype chain carries the BUILT-IN member and none of the class's
+          // overrides. `wrappedObj[method]` therefore finds e.g.
+          // `Array.prototype.toString` and the `typeof fn !== "function"`
+          // recovery below — the only place the class chain is consulted — never
+          // runs. Resolve the class chain FIRST, so an override wins over the
+          // inherited built-in (`jsbi.toString(10)` joined the digit array
+          // instead of formatting it, breaking every Temporal BigInt read).
+          //
+          // Gated on the user-class tag, NOT on "the receiver looks like an
+          // array": a plain vec is never tagged, so it skips on one
+          // `WeakMap.has` and the #3903 array fast path is unchanged. A class
+          // that does NOT declare `method` misses here and keeps the built-in,
+          // which is the spec-correct inherited lookup.
+          if (_isTaggedUserClassInstance(obj) || _isTaggedUserClassInstance(_unwrapForHost(obj))) {
+            const ownMember = _invokeClassMethod(
+              _unwrapForHost(obj),
+              method,
+              marshalExports(callbackState, exports),
+              wrappedObj,
+              wrappedArgs,
+            );
+            if (ownMember !== _MISS) return ownMember;
+          }
           // (#5237) Pass this module's callback state below to preserve provider-owned mirrors returned by methods.
           const fn = wrappedObj[method];
           // (#1320) Some chained `Array.from.call(C, items)` shapes lower as a
