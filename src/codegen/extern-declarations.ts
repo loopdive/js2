@@ -644,9 +644,32 @@ export function collectReferencedGlobalNames(
     const p = id.parent;
     return (ts.isPropertyAccessExpression(p) && p.name === id) || (ts.isQualifiedName(p) && p.right === id);
   };
+  // #5351 — a lib.dom ambient `declare function` (e.g. `toString`, `blur`,
+  // `focus`) shadows a same-named binding the script itself creates at top
+  // level (`var toString = Object.prototype.toString;`). TypeScript does not
+  // merge the script's `var` with the ambient declaration, so a USE of that
+  // name still resolves to the lib declaration — `isAmbientGlobalDecl` above
+  // sees only the lib decl and never the user's own. Fix is therefore by
+  // NAME, not by re-resolving the use-site symbol: collect every name the
+  // user's own top-level statements bind, and never register one of those
+  // names as lib-referenced even though its uses resolve to the ambient decl.
+  const userBound = new Set<string>();
+  for (const sf of userFiles) {
+    for (const stmt of sf.statements) {
+      if (ts.isVariableStatement(stmt)) {
+        for (const decl of stmt.declarationList.declarations) {
+          if (ts.isIdentifier(decl.name)) userBound.add(decl.name.text);
+        }
+      } else if (ts.isFunctionDeclaration(stmt) && stmt.name && !hasDeclareModifier(stmt)) {
+        userBound.add(stmt.name.text);
+      } else if (ts.isClassDeclaration(stmt) && stmt.name && !hasDeclareModifier(stmt)) {
+        userBound.add(stmt.name.text);
+      }
+    }
+  }
   const names = new Set<string>();
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && !isPropertyNamePosition(node)) {
+    if (ts.isIdentifier(node) && !isPropertyNamePosition(node) && !userBound.has(node.text)) {
       const decls = checker.getSymbolAtLocation(node)?.getDeclarations();
       if (decls && decls.some(isAmbientGlobalDecl)) {
         names.add(node.text);
