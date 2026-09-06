@@ -163,7 +163,7 @@ import {
   recordInModuleInitFlagRead,
 } from "./registry/imports.js";
 import { tryCompileArrayMethodValue } from "./array-method-value.js";
-import { receiverIsRealmGlobalObject } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
+import { realmGlobalModuleGlobalReadApplies } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver; (#5342) self-referential probe
 import { dvDetachedThrowInstrs, getOrRegisterDvWindowType } from "./dataview-native.js"; // (#2159/#38) DataView windowing; (#3173) detached TypeError
 import {
   getArrTypeIdxFromVec,
@@ -3699,7 +3699,7 @@ function tryEmitRealmGlobalModuleGlobalRead(
 ): ValType | undefined {
   const globalIdx = ctx.moduleGlobals.get(propName);
   if (globalIdx === undefined) return undefined;
-  if (!receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) return undefined;
+  if (!realmGlobalModuleGlobalReadApplies(ctx, fctx, expr, propName)) return undefined;
   fctx.body.push({ op: "global.get", index: globalIdx });
   return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
 }
@@ -3725,11 +3725,11 @@ function tryEmitRealmGlobalModuleGlobalElementRead(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | undefined {
-  if (!receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) return undefined;
   const key = resolveComputedKeyExpression(ctx, expr.argumentExpression);
   if (key === undefined) return undefined;
   const globalIdx = ctx.moduleGlobals.get(key);
   if (globalIdx === undefined) return undefined;
+  if (!realmGlobalModuleGlobalReadApplies(ctx, fctx, expr, key)) return undefined;
   fctx.body.push({ op: "global.get", index: globalIdx });
   return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
 }

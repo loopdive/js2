@@ -33,6 +33,7 @@ import {
 } from "../checker/type-mapper.js";
 import { structGrowsWithMetadata } from "./struct-carrier-growth.js"; // (#5180) builtin-carrier field-metadata divergence
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
+import { isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
@@ -212,6 +213,7 @@ import {
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
+import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -3600,6 +3602,13 @@ export function tryNamespaceConstantAndSymbolReads(
       fctx.body.push({ op: "local.get", index: rawTmp });
       return { kind: "ref_null", typeIdx: baseVecTypeIdx };
     }
+    // (#5338) An ordinary named tag's strings parameter is a plain `externref`
+    // slot, so the static shapes above cannot claim it. Discriminate at runtime
+    // instead, keeping the generic dynamic get as the miss arm.
+    if (isDynamicTemplateRawRead(ctx, fctx, expr, propName)) {
+      const dynamicRaw = emitDynamicTemplateRawRead(ctx, fctx, expr);
+      if (dynamicRaw) return dynamicRaw;
+    }
   }
 
   // Handle Math constants
@@ -4867,20 +4876,11 @@ export function finalizeStructAndDynamicMemberGet(
             );
             if (fieldKinds.size === 1 && !anyGeneratorSentinelCandidate) {
               const k = [...fieldKinds][0];
-              if (k === "f64" || k === "i32") {
-                // (#2938) Preserve the #2030/#2785 boolean BRAND through the
-                // Phase-3 narrowing. When EVERY candidate field is a boolean-
-                // branded i32 (e.g. the native generator result's `done`,
-                // generators-native.ts ensureNativeGeneratorResultType), the
-                // narrowed read result is boolean too — the caller's
-                // i32→externref boxing then routes through `__box_boolean`
-                // (coerceType's #2785 brand-aware arm), so the test262 harness
-                // shape `const d: any = g.next().done; d === true` holds. A
-                // fresh unbranded `{kind:"i32"}` here ERASED the brand: the
-                // value re-boxed as $BoxedNumber(1), the any-`===` typeof
-                // partition saw number-vs-boolean, fell to ref identity, and
-                // answered UNEQUAL (the residual wrong-value failure of the
-                // #2938 no-yield relax — generators/no-yield.js, return.js).
+              // (#5345) Only kinds that can REPRESENT the terminal's `undefined`
+              // may be narrowed to — `i32` cannot, and answered a definite
+              // `false` for an absent property. Rationale and the marked/acorn
+              // measurements live in `dynamic-read-narrowing.ts`.
+              if (k !== undefined && isAdmissibleDynamicReadNarrowing(k)) {
                 resultWasm = commonScalarFieldType(
                   k,
                   structCandidates.map((candidate) => candidate.fieldType),

@@ -10,7 +10,7 @@
 import { ts } from "../../ts-api.js";
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
+import { callablePropertyIsExtractedHostBuiltin } from "./callable-property-host-value.js"; // (#5342)
 import {
   getClosureFuncSelfTypeIdx,
   getFuncRefWrapperRootTypeIdx,
@@ -167,33 +167,6 @@ function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValTy
 
 /** `fillApplyClosure` only emits dynamic method dispatchers for arities 0..8. */
 const REALM_DYNAMIC_CALL_MAX_ARITY = 8;
-
-/**
- * True when a closed object's callable property is a shorthand reference to a
- * function extracted from a host builtin, for example:
- *
- *   const { isArray } = Array;
- *   export default { isArray };
- *
- * The field contains a genuine host function externref, not a compiled Wasm
- * closure. Calling it through the typed closure-wrapper path null-casts the
- * value and traps. Keep these declaration-proven values on the ordinary host
- * method bridge, which also materializes Wasm array arguments for native
- * `Array.isArray` and similar observers.
- */
-function callablePropertyIsExtractedHostBuiltin(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
-  const propertyDecl = ctx.oracle.declarationsOf(propAccess.name).find(ts.isShorthandPropertyAssignment);
-  if (!propertyDecl || !ts.isShorthandPropertyAssignment(propertyDecl)) return false;
-
-  const valueDecl = ctx.oracle.valueDeclarationOf(propertyDecl.name);
-  if (!valueDecl || !ts.isBindingElement(valueDecl) || !ts.isObjectBindingPattern(valueDecl.parent)) return false;
-
-  const variableDecl = valueDecl.parent.parent;
-  if (!ts.isVariableDeclaration(variableDecl) || !variableDecl.initializer) return false;
-  let source = variableDecl.initializer;
-  while (ts.isParenthesizedExpression(source)) source = source.expression;
-  return ts.isIdentifier(source) && (BUILTIN_CLASS_NAMES.has(source.text) || ctx.declaredGlobals.has(source.text));
-}
 
 /**
  * True when a callable property comes from a function-declaration shorthand
@@ -1800,8 +1773,8 @@ export function compileCallablePropertyCall(
     }
   }
 
-  // Field is externref — try to find or create matching closure wrapper types
-  if (fieldType.kind === "externref") {
+  // Field is externref, or the `eqref` own-`valueOf`/`toString` carrier (#4394/#5342 cause B).
+  if (fieldType.kind === "externref" || fieldType.kind === "eqref") {
     const resultTypes = sigRetWasm ? [sigRetWasm] : [];
     const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, sigParamWasmTypes, resultTypes);
 
@@ -1870,7 +1843,7 @@ export function compileCallablePropertyCall(
           typeIdx: selfTypeIdx,
         };
         const closureLocal = allocLocal(fctx, `__cprop_ext_${fctx.locals.length}`, closureRefType);
-        fctx.body.push({ op: "any.convert_extern" });
+        if (fieldType.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
         emitGuardedRefCast(fctx, selfTypeIdx);
         fctx.body.push({ op: "local.set", index: closureLocal });
 
@@ -1926,7 +1899,7 @@ export function compileCallablePropertyCall(
       // intact (mirrors calls.ts #2174).
       const rootRefType: ValType = { kind: "ref_null", typeIdx: rootIdx };
       const closureLocal = allocLocal(fctx, `__cprop_ext_${fctx.locals.length}`, rootRefType);
-      fctx.body.push({ op: "any.convert_extern" });
+      if (fieldType.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
       emitGuardedRefCast(fctx, rootIdx);
       fctx.body.push({ op: "local.set", index: closureLocal });
 
