@@ -530,7 +530,7 @@ jobs:
           git submodule update --init --checkout test262
           git submodule update --init --checkout test262-fyi/data
           pnpm run build:compiler-bundle
-          pnpm exec esbuild src/runtime.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+          pnpm exec esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
           # Changed root tests that run eval-mentioning test262 files need the
           # runtime-eval REFUSAL provider linked, or instantiate fails with
           # 'Import "js2wasm:runtime-eval": module is not an object' (#4234).

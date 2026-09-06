@@ -286,6 +286,7 @@
     "benchmark:landing-four-lane": "tsx scripts/benchmark-landing-four-lane.mts",
     "benchmark:bench-string-ir-runtime": "tsx scripts/measure/bench-string-ir-runtime.mts",
     "build:compiler-bundle": "esbuild scripts/compiler-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/compiler-bundle.mjs --external:typescript --external:binaryen --external:typescript7 --external:typescript7/*",
+    "build:runtime-bundle": "esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen --external:typescript7 --external:typescript7/*",
     "build:standalone-cli": "node scripts/build-standalone-cli.mjs",
     "format": "prettier --write 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'",
     "format:check": "prettier --check 'src/**/*.ts' 'tests/**/*.ts' 'scripts/**/*.ts'",
