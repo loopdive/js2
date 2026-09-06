@@ -517,4 +517,36 @@ export function test(): number {
 `),
     ).toBe(50);
   });
+
+  // ── (r3 review, S3) The guard must reach an ACCESSOR body, not only a method ──
+
+  it("throws TypeError for a missing super method inside a getter", async () => {
+    // Probe xd1 — byte-identical across r1 and r2 because an object-literal
+    // ACCESSOR is lowered by a different arm (`emitObjectLiteralAccessorFn`)
+    // than the method arm those rounds fixed, and that arm passed no
+    // [[HomeObject]] at all.
+    expect(
+      await runStandalone(`
+export function test(): number {
+  var proto: any = { p: 1 };
+  var o: any = { __proto__: proto, get g() { try { return super.missing(); } catch (e) { return e instanceof TypeError ? 2 : 3; } } };
+  return o.g;
+}
+`),
+    ).toBe(2);
+  });
+
+  it("calls a present super method from inside a getter", async () => {
+    // The S3 regression half (probe m4): the home object must resolve, not
+    // merely fail differently. r1 and r2 answered null here.
+    expect(
+      await runStandalone(`
+export function test(): number {
+  var proto: any = { m() { return 3; } };
+  var o: any = { __proto__: proto, get g() { return super.m(); } };
+  return o.g;
+}
+`),
+    ).toBe(3);
+  });
 });

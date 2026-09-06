@@ -1364,11 +1364,11 @@ function compileObjectLiteralWithAccessors(
       // stored $PropEntry.$get holds a real callable closure that __extern_get's
       // accessor arm dispatches via __call_accessor_get → __call_fn_method_0
       // (receiver bound as `this` through __current_this). Else JS-host callback.
+      // (#5350 r3 review, S3) `objLocal` is the accessor's [[HomeObject]].
+      const accOpts = { forceMutableCaptures: accessorForceMutable, sharedRefCells: accessorSharedRefCells };
       if (pair.getter) {
-        const ok = emitObjectLiteralAccessorFn(ctx, fctx, pair.getter as unknown as ts.FunctionExpression, {
-          forceMutableCaptures: accessorForceMutable,
-          sharedRefCells: accessorSharedRefCells,
-        });
+        const get = pair.getter as unknown as ts.FunctionExpression;
+        const ok = emitObjectLiteralAccessorFn(ctx, fctx, get, accOpts, objLocal);
         if (!ok) fctx.body.push({ op: "ref.null.extern" });
       } else {
         fctx.body.push({ op: "ref.null.extern" });
@@ -1376,11 +1376,9 @@ function compileObjectLiteralWithAccessors(
 
       // Setter
       if (pair.setter) {
-        const ok = emitObjectLiteralAccessorFn(ctx, fctx, pair.setter as unknown as ts.FunctionExpression, {
-          forceMutableCaptures: accessorForceMutable,
-          sharedRefCells: accessorSharedRefCells,
-          forceExternrefParams: true,
-        });
+        const set = pair.setter as unknown as ts.FunctionExpression;
+        const setOpts = { ...accOpts, forceExternrefParams: true };
+        const ok = emitObjectLiteralAccessorFn(ctx, fctx, set, setOpts, objLocal);
         if (!ok) fctx.body.push({ op: "ref.null.extern" });
       } else {
         fctx.body.push({ op: "ref.null.extern" });
@@ -1421,9 +1419,24 @@ function emitObjectLiteralAccessorFn(
     sharedRefCells?: SharedRefCellMap;
     forceExternrefParams?: boolean;
   },
+  // (#5350 r3 review, S3) The object literal being built, so an accessor body
+  // that reads `super.<x>` carries the same synthetic [[HomeObject]] capture a
+  // METHOD body already got (`emitObjectLiteralMethodFn`). Without it the
+  // accessor's `super` resolution finds no home-object local, declines, and
+  // `super.missing()` inside a getter answered a typed default (null) where
+  // node throws a TypeError — probe xd1, byte-identical across r1 and r2
+  // because the accessor is a DIFFERENT lowering path from the method arm the
+  // earlier rounds fixed.
+  homeObjectLocal?: number,
 ): boolean {
   if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
-    const closureType = compileArrowAsClosure(ctx, fctx, fn);
+    // Same narrowing as the method arm: only a body that actually mentions
+    // `super` takes the capture, so every other accessor stays byte-stable.
+    const superHomeLocal =
+      homeObjectLocal !== undefined && fn.body !== undefined && genBodyReferencesSuper(fn.body)
+        ? homeObjectLocal
+        : undefined;
+    const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
     if (!closureType) return false;
     if (closureType.kind !== "externref") {
       fctx.body.push({ op: "extern.convert_any" });
