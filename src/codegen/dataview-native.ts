@@ -555,14 +555,40 @@ export function emitArrayBufferSlice(
     else: [],
   });
 
-  // dstArr = new i32[sliceLen]
+  // (#5349 step 5) §25.1.5.3 steps 13-20 — SpeciesConstructor, Construct and the
+  // four refusals — run HERE: after `newLen` (step 11) and before any byte is
+  // copied (step 25), which is what `species-returns-*.js` observe.
+  const speciesResultLocal = emitArrayBufferSliceSpecies(ctx, fctx, srcVecLocal, sliceLenLocal, vecTypeIdx);
+
+  // dstArr = new i32[sliceLen] — or, on the species lane, the CONSTRUCTED
+  // buffer's own data array, so the copy loop below fills it in place.
   const dstArrLocal = allocLocal(fctx, `__abs_dstarr_${fctx.locals.length}`, {
     kind: "ref",
     typeIdx: arrTypeIdx,
   });
-  fctx.body.push({ op: "local.get", index: sliceLenLocal });
-  fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
-  fctx.body.push({ op: "local.set", index: dstArrLocal });
+  if (speciesResultLocal === null) {
+    fctx.body.push({ op: "local.get", index: sliceLenLocal });
+    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+    fctx.body.push({ op: "local.set", index: dstArrLocal });
+  } else {
+    fctx.body.push({ op: "local.get", index: speciesResultLocal }, { op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: sliceLenLocal },
+        { op: "array.new_default", typeIdx: arrTypeIdx },
+        { op: "local.set", index: dstArrLocal },
+      ],
+      else: [
+        { op: "local.get", index: speciesResultLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: vecTypeIdx },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+        { op: "local.set", index: dstArrLocal },
+      ],
+    });
+  }
 
   // for (i = 0; i < sliceLen; i++) dstArr[i] = srcArr[begin + i]
   const iLocal = allocLocal(fctx, `__abs_i_${fctx.locals.length}`, { kind: "i32" });
@@ -596,6 +622,24 @@ export function emitArrayBufferSlice(
 
   // struct.new vec(sliceLen, dstArr); return as externref (matches the
   // externref local that user code declares for the slice() result).
+  // On the species lane the constructed buffer IS the result (§25.1.5.3 step
+  // 26) — `species.js` asserts `result === resultBuffer` by identity — so the
+  // branch returns it untouched rather than re-wrapping its data array.
+  if (speciesResultLocal !== null) {
+    fctx.body.push({ op: "local.get", index: speciesResultLocal }, { op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        { op: "local.get", index: sliceLenLocal },
+        { op: "local.get", index: dstArrLocal },
+        { op: "struct.new", typeIdx: vecTypeIdx },
+        { op: "extern.convert_any" },
+      ],
+      else: [{ op: "local.get", index: speciesResultLocal }],
+    });
+    return { kind: "externref" };
+  }
   fctx.body.push({ op: "local.get", index: sliceLenLocal });
   fctx.body.push({ op: "local.get", index: dstArrLocal });
   fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
@@ -5994,6 +6038,306 @@ export function emitTaDynCtorConstructFromLocals(
  * check; subarray deliberately omits it because its constructor receives the
  * buffer tuple rather than a requested result length.
  */
+/**
+ * (#5349 step 5) §7.3.22 SpeciesConstructor's constructor-VALUE ladder, shared
+ * by the TypedArray path (`emitTaDynSpeciesCreate`, #4449) and by
+ * `ArrayBuffer.prototype.slice` (§25.1.5.3 step 13).
+ *
+ * `selectedLocal` must already hold the DEFAULT constructor — the intrinsic the
+ * spec passes as `defaultConstructor` — and the ladder overwrites it only when
+ * the receiver names a live species. Steps, in order:
+ *
+ *   1. `C = ? Get(O, "constructor")`; undefined ⇒ keep the default.
+ *   2. `C` null, or Type(C) not Object ⇒ TypeError (`notObjectArm`).
+ *   3. `S = ? Get(C, @@species)`; null or undefined ⇒ keep the default.
+ *   4. otherwise `selectedLocal = S`.
+ *
+ * The `IsConstructor(S)` refusal is NOT here: the two callers throw different
+ * messages and validate the constructed value differently, so each keeps its
+ * own. `notObjectArm` is a FACTORY, called once per arm, because the finalize
+ * walks remap every Instr object they reach and one array spliced into two body
+ * positions would be remapped twice.
+ */
+/**
+ * (#5349 step 5) §25.1.5.3 steps 13-20 for `ArrayBuffer.prototype.slice` in the
+ * no-JS-host lane: `ctor = SpeciesConstructor(O, %ArrayBuffer%)`,
+ * `new = ? Construct(ctor, «newLen»)`, then the four refusals of steps 17-20.
+ *
+ * The step was simply ABSENT — `emitArrayBufferSlice` went from the byte copy
+ * straight to `struct.new $vec_i32_byte`, so a species constructor was never
+ * invoked and every one of the twelve
+ * `built-ins/ArrayBuffer/prototype/slice/species*.js` rows failed.
+ *
+ * Returns an externref local holding the CONSTRUCTED buffer, or **null** for
+ * the default lane — the same null-sentinel shape `emitArraySpeciesCreate`
+ * uses, so the caller keeps its existing `array.new_default` + `struct.new`
+ * path byte-for-byte whenever no species is in play. Returns `null` (the
+ * TypeScript value) when the module cannot observe species at all, and then not
+ * one instruction is emitted.
+ *
+ * `newLenLocal` is the i32 `newLen` the clamp already computed. The receiver is
+ * read from `srcVecLocal`, which the caller has already detach-checked.
+ */
+export function emitArrayBufferSliceSpecies(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  srcVecLocal: number,
+  newLenLocal: number,
+  vecTypeIdx: number,
+): number | null {
+  if (!noJsHost(ctx) || !ctx.arraySpeciesDirty) return null;
+  // (#5349 review r1) Step 16 ("if new does not have an [[ArrayBufferData]]
+  // slot, throw a TypeError") is decided below by `ref.test $__vec_i32_byte`.
+  // That is a REPRESENTATION test, and since #2835 packed the ArrayBuffer byte
+  // buffer to `(array (mut i8))` the packed-byte TypedArray carrier
+  // `$__vec_i8_byte` is structurally IDENTICAL to it — same two fields, same
+  // `sub final $__vec_base` clause — so Wasm GC canonicalizes the two struct
+  // definitions to ONE runtime type and the test answers `true` for a
+  // `new Uint8Array(n)`. Measured on the lane before this gate: a species
+  // returning `new Uint8Array(4)` was accepted, the byte-copy loop wrote
+  // THROUGH the caller's typed array, and slice returned it by identity (611)
+  // where node throws a TypeError.
+  //
+  // No runtime discriminator exists for that pair — this is the same
+  // canonicalization that makes `ArrayBuffer.isView`'s chain imprecise — so the
+  // species arm cannot answer step 16 in a module that can build one. Decline
+  // the whole arm there rather than return a value the spec forbids; the module
+  // keeps main's pre-#5349 emission byte-for-byte. Every other view kind stays
+  // distinguishable (`i16_byte`/`i32_elem`/the f64 views have different element
+  // arrays; `$__ta_view_*`, `$__ta_dyn_view` and `$__dv_window` carry extra
+  // fields), so an `Int32Array`/`DataView` species result still refuses.
+  //
+  // RESIDUAL, owned by the typed-array construction path
+  // (`emitDynamicUint8ArrayBufferAlias` + `TYPED_ARRAY_PACKED_STORAGE`): until
+  // the packed-byte view carries a brand distinguishing it from the buffer,
+  // `ArrayBuffer.prototype.slice` in such a module does not observe @@species.
+  if (ctx.moduleUsesPackedByteTaCarrier) return null;
+  ensureObjectRuntime(ctx);
+  ensureSymbolCarrier(ctx);
+  const externGetIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  const isUndefinedIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const typeofObjectIdx = ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const typeofFunctionIdx = ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const boxNumberIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  addStringConstantGlobal(ctx, "constructor");
+  const isConstructorIdx = ensureReflectIsConstructor(ctx);
+  const driverIdx = reserveNativeConstructDriver(ctx, 1, stringConstantExternrefInstrs(ctx, "prototype"));
+  flushLateImportShifts(ctx, fctx);
+  const symbolBoxIdx = ctx.funcMap.get("__box_symbol");
+  const construct1Idx = ctx.funcMap.get("__native_construct_1");
+  if (
+    externGetIdx === undefined ||
+    isUndefinedIdx === undefined ||
+    typeofObjectIdx === undefined ||
+    typeofFunctionIdx === undefined ||
+    boxNumberIdx === undefined ||
+    symbolBoxIdx === undefined ||
+    isConstructorIdx === undefined ||
+    driverIdx === undefined ||
+    construct1Idx === undefined
+  ) {
+    // Substrate missing ⇒ keep today's emission exactly.
+    return null;
+  }
+
+  const selectedLocal = allocLocal(fctx, `__abs_sel_${fctx.locals.length}`, { kind: "externref" });
+  const ctorLocal = allocLocal(fctx, `__abs_ctor_${fctx.locals.length}`, { kind: "externref" });
+  const speciesLocal = allocLocal(fctx, `__abs_spc_${fctx.locals.length}`, { kind: "externref" });
+  const resultLocal = allocLocal(fctx, `__abs_new_${fctx.locals.length}`, { kind: "externref" });
+  const resultAnyLocal = allocLocal(fctx, `__abs_newany_${fctx.locals.length}`, { kind: "anyref" });
+  const resultVecLocal = allocLocal(fctx, `__abs_newvec_${fctx.locals.length}`, { kind: "ref", typeIdx: vecTypeIdx });
+
+  const typeErrorArm = (message: string): Instr[] => {
+    const saved = fctx.body;
+    const body: Instr[] = [];
+    fctx.body = body;
+    emitThrowTypeError(ctx, fctx, message);
+    fctx.body = saved;
+    return body;
+  };
+
+  // The DEFAULT lane is the null sentinel: %ArrayBuffer% is not reified as a
+  // callable carrier here, and constructing it would be observationally
+  // identical to the `struct.new` the caller already emits.
+  fctx.body.push({ op: "ref.null.extern" }, { op: "local.set", index: selectedLocal });
+  fctx.body.push({ op: "ref.null.extern" }, { op: "local.set", index: resultLocal });
+
+  emitSpeciesConstructorLadder(ctx, fctx, {
+    receiverInstrs: [{ op: "local.get", index: srcVecLocal }, { op: "extern.convert_any" }],
+    selectedLocal,
+    constructorLocal: ctorLocal,
+    speciesLocal,
+    notObjectArm: () => typeErrorArm("ArrayBuffer.prototype.slice: constructor is not an object"),
+    deps: { externGetIdx, isUndefinedIdx, typeofObjectIdx, typeofFunctionIdx, symbolBoxIdx },
+  });
+
+  fctx.body.push({ op: "local.get", index: selectedLocal }, { op: "ref.is_null" }, { op: "i32.eqz" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      // step 14 — IsConstructor(ctor) is false ⇒ TypeError.
+      { op: "local.get", index: selectedLocal },
+      { op: "call", funcIdx: isConstructorIdx },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("ArrayBuffer.prototype.slice: species is not a constructor"),
+        else: [],
+      },
+      // step 15 — new = ? Construct(ctor, «newLen»).
+      { op: "local.get", index: selectedLocal },
+      { op: "ref.null.extern" },
+      { op: "local.get", index: newLenLocal },
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: boxNumberIdx },
+      { op: "call", funcIdx: construct1Idx },
+      { op: "local.set", index: resultLocal },
+      // step 16 — the result must BE an ArrayBuffer. Anything else (a plain
+      // object, a TypedArray, null) is the §25.1.5.3 step 16 TypeError; without
+      // this the `ref.cast` below would trap uncatchably instead.
+      { op: "local.get", index: resultLocal },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: resultAnyLocal },
+      { op: "ref.test", typeIdx: vecTypeIdx },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("ArrayBuffer.prototype.slice: species constructor returned a non-ArrayBuffer"),
+        else: [],
+      },
+      { op: "local.get", index: resultAnyLocal },
+      { op: "ref.cast", typeIdx: vecTypeIdx },
+      { op: "local.set", index: resultVecLocal },
+      // step 17 — IsDetachedBuffer(new). The native detached marker is the
+      // shared vec's negative length.
+      { op: "local.get", index: resultVecLocal },
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("ArrayBuffer.prototype.slice: species constructor returned a detached buffer"),
+        else: [],
+      },
+      // step 18 — SameValue(new, O) ⇒ TypeError. Struct identity, not contents.
+      { op: "local.get", index: resultVecLocal },
+      { op: "local.get", index: srcVecLocal },
+      { op: "ref.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("ArrayBuffer.prototype.slice: species constructor returned the same buffer"),
+        else: [],
+      },
+      // step 20 — byteLength < newLen ⇒ TypeError. LARGER is legal and is
+      // returned as-is (`species-returns-larger-arraybuffer.js` asserts
+      // `result.byteLength === 10` for a newLen of 8).
+      { op: "local.get", index: resultVecLocal },
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+      { op: "local.get", index: newLenLocal },
+      { op: "i32.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("ArrayBuffer.prototype.slice: species constructor returned too small a buffer"),
+        else: [],
+      },
+    ],
+  });
+  return resultLocal;
+}
+
+export interface SpeciesConstructorLadderDeps {
+  externGetIdx: number;
+  isUndefinedIdx: number;
+  typeofObjectIdx: number;
+  typeofFunctionIdx: number;
+  symbolBoxIdx: number;
+}
+
+export function emitSpeciesConstructorLadder(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  options: {
+    /** Pushes the receiver as an EXTERNREF. */
+    receiverInstrs: readonly Instr[];
+    selectedLocal: number;
+    constructorLocal: number;
+    speciesLocal: number;
+    notObjectArm: () => Instr[];
+    deps: SpeciesConstructorLadderDeps;
+  },
+): void {
+  const { externGetIdx, isUndefinedIdx, typeofObjectIdx, typeofFunctionIdx, symbolBoxIdx } = options.deps;
+  const { selectedLocal, constructorLocal, speciesLocal } = options;
+  fctx.body.push(
+    ...options.receiverInstrs,
+    ...stringConstantExternrefInstrs(ctx, "constructor"),
+    { op: "call", funcIdx: externGetIdx },
+    { op: "local.set", index: constructorLocal },
+    { op: "local.get", index: constructorLocal },
+    { op: "call", funcIdx: isUndefinedIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [], // undefined C keeps the intrinsic default in selectedLocal
+      else: [
+        // null is not a constructor object. Keep it separate from the
+        // Type(Object(null)) classifier, whose null policy is intentionally
+        // different for ordinary dynamic reads.
+        { op: "local.get", index: constructorLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: options.notObjectArm(),
+          else: [],
+        },
+        { op: "local.get", index: constructorLocal },
+        { op: "call", funcIdx: typeofObjectIdx },
+        { op: "local.get", index: constructorLocal },
+        { op: "call", funcIdx: typeofFunctionIdx },
+        { op: "i32.or" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: options.notObjectArm(),
+          else: [],
+        },
+        { op: "local.get", index: constructorLocal },
+        { op: "i32.const", value: 5 },
+        { op: "call", funcIdx: symbolBoxIdx },
+        { op: "call", funcIdx: externGetIdx },
+        { op: "local.set", index: speciesLocal },
+        { op: "local.get", index: speciesLocal },
+        { op: "ref.is_null" },
+        { op: "local.get", index: speciesLocal },
+        { op: "call", funcIdx: isUndefinedIdx },
+        { op: "i32.or" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [], // null/undefined species keeps the intrinsic default
+          else: [
+            { op: "local.get", index: speciesLocal },
+            { op: "local.set", index: selectedLocal },
+          ],
+        },
+      ],
+    },
+  );
+}
+
 export interface TaDynSpeciesCreateOptions {
   dvLocal: number;
   argLocals: readonly number[];
@@ -6100,64 +6444,14 @@ export function emitTaDynSpeciesCreate(
   // C = ? Get(exemplar, "constructor"). The dynamic MOP has already handled
   // own expandos and inherited prototype accessors, so this call preserves
   // their exact abrupt completion and lookup order.
-  fctx.body.push(
-    { op: "local.get", index: options.dvLocal },
-    { op: "extern.convert_any" },
-    ...stringConstantExternrefInstrs(ctx, "constructor"),
-    { op: "call", funcIdx: externGetIdx },
-    { op: "local.set", index: constructorLocal },
-    { op: "local.get", index: constructorLocal },
-    { op: "call", funcIdx: isUndefinedIdx },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [], // undefined C keeps the intrinsic default in selectedLocal
-      else: [
-        // null is not a constructor object. Keep it separate from the
-        // Type(Object(null)) classifier, whose null policy is intentionally
-        // different for ordinary dynamic reads.
-        { op: "local.get", index: constructorLocal },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: typeErrorArm("TypedArray constructor is not an object"),
-          else: [],
-        },
-        { op: "local.get", index: constructorLocal },
-        { op: "call", funcIdx: typeofObjectIdx },
-        { op: "local.get", index: constructorLocal },
-        { op: "call", funcIdx: typeofFunctionIdx },
-        { op: "i32.or" },
-        { op: "i32.eqz" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: typeErrorArm("TypedArray constructor is not an object"),
-          else: [],
-        },
-        { op: "local.get", index: constructorLocal },
-        { op: "i32.const", value: 5 },
-        { op: "call", funcIdx: symbolBoxIdx },
-        { op: "call", funcIdx: externGetIdx },
-        { op: "local.set", index: speciesLocal },
-        { op: "local.get", index: speciesLocal },
-        { op: "ref.is_null" },
-        { op: "local.get", index: speciesLocal },
-        { op: "call", funcIdx: isUndefinedIdx },
-        { op: "i32.or" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [], // null/undefined species keeps the intrinsic default
-          else: [
-            { op: "local.get", index: speciesLocal },
-            { op: "local.set", index: selectedLocal },
-          ],
-        },
-      ],
-    },
-  );
+  emitSpeciesConstructorLadder(ctx, fctx, {
+    receiverInstrs: [{ op: "local.get", index: options.dvLocal }, { op: "extern.convert_any" }],
+    selectedLocal,
+    constructorLocal,
+    speciesLocal,
+    notObjectArm: () => typeErrorArm("TypedArray constructor is not an object"),
+    deps: { externGetIdx, isUndefinedIdx, typeofObjectIdx, typeofFunctionIdx, symbolBoxIdx },
+  });
 
   // SpeciesConstructor requires an actual constructor before Construct.  The
   // classifier is finalized after closure registration and understands both

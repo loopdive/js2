@@ -820,3 +820,49 @@ export function sourceOverridesArrayIterator(sourceFile: ts.SourceFile): boolean
   walk(sourceFile);
   return found;
 }
+
+/**
+ * (#5349 review r1) True when the source can materialize a PACKED-BYTE
+ * TypedArray carrier — `Int8Array` / `Uint8Array` / `Uint8ClampedArray`.
+ *
+ * Why this exists: since #2835 the ArrayBuffer byte buffer is
+ * `$__vec_i32_byte { length: i32, data: (ref null $__arr_i32_byte) }` with
+ * `$__arr_i32_byte = (array (mut i8))`, and the packed-byte TypedArray carrier
+ * is `$__vec_i8_byte { length: i32, data: (ref null $__arr_i8_byte) }` with
+ * `$__arr_i8_byte = (array (mut i8))`. The two definitions are STRUCTURALLY
+ * IDENTICAL (same fields, same `sub final $__vec_base` clause), so Wasm GC
+ * canonicalizes them to ONE runtime type and `ref.test $__vec_i32_byte` answers
+ * `true` for a `new Uint8Array(n)`. Every other view kind stays distinguishable
+ * (`i16_byte` is `(array (mut i16))`, `i32_elem` `(array (mut i32))`, the float
+ * views `(array (mut f64))`, and the buffer-window/dyn carriers carry extra
+ * fields), so ONLY these three names create the ambiguity.
+ *
+ * Deliberately syntactic and over-approximating: it matches any identifier
+ * spelled with one of the three names outside a property-name position, so
+ * `var TA = Uint8Array; new TA(4)` is caught too. Over-approximating is the
+ * safe direction — the only consequence is that a caller declines an
+ * emission it cannot decide, never a wrong runtime answer.
+ */
+const PACKED_BYTE_TA_NAMES: ReadonlySet<string> = new Set(["Int8Array", "Uint8Array", "Uint8ClampedArray"]);
+
+export function sourceHasPackedByteTaConstruct(sourceFile: ts.SourceFile): boolean {
+  let found = false;
+  function walk(node: ts.Node): void {
+    if (found) return;
+    if (ts.isIdentifier(node) && PACKED_BYTE_TA_NAMES.has(node.text)) {
+      // `obj.Uint8Array` names a property, not the intrinsic carrier.
+      const parent = node.parent as ts.Node | undefined;
+      const isPropertyName =
+        parent !== undefined &&
+        ((ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+          (ts.isPropertyAssignment(parent) && parent.name === node));
+      if (!isPropertyName) {
+        found = true;
+        return;
+      }
+    }
+    forEachChild(node, walk);
+  }
+  walk(sourceFile);
+  return found;
+}

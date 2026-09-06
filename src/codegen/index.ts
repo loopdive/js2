@@ -347,6 +347,7 @@ import {
   scanModuleMemberDeletes,
   sourceHasDynamicTaConstruct,
   sourceHasStaticTaViewConstruct,
+  sourceHasPackedByteTaConstruct,
   sourceContainsBindingPattern,
   sourceOverridesArrayIterator,
 } from "./source-scan-predicates.js"; // (#3104) whole-program AST pre-scan predicates
@@ -5226,6 +5227,7 @@ export function generateModule(
   if (ctx.standalone || ctx.wasi) {
     ctx.moduleUsesDynTaView = sourceHasDynamicTaConstruct(ast.checker, ast.sourceFile);
     ctx.moduleUsesStaticTaView = sourceHasStaticTaViewConstruct(ast.checker, ast.sourceFile);
+    ctx.moduleUsesPackedByteTaCarrier = sourceHasPackedByteTaConstruct(ast.sourceFile);
   }
   // (#4630) Collect `globalThis.<fn> =` shadow targets so bare reads/calls of a
   // reassigned top-level function consult the override slot.
@@ -10423,6 +10425,7 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
     ctx.moduleUsesStaticTaView = multiAst.sourceFiles.some((sf) =>
       sourceHasStaticTaViewConstruct(multiAst.checker, sf),
     );
+    ctx.moduleUsesPackedByteTaCarrier = multiAst.sourceFiles.some((sf) => sourceHasPackedByteTaConstruct(sf));
   }
   // (#4223) Same demand gate as the single-source path — any source file that
   // reads a `constructor` property arms the wrapper carriers.
