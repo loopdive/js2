@@ -1,7 +1,7 @@
 ---
 id: 5355
 title: "`Intl.DateTimeFormat` is a shell — the constructor yields a value that is `=== undefined` with typeof 'object'; format()/formatToParts() return undefined (66 of 123 Temporal calendar rows)"
-status: ready
+status: done
 sprint: current
 priority: high
 horizon: l
@@ -9,6 +9,30 @@ goal: standalone-gap
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-06
+assignee: ttraenkler/dev-5355
+completed: 2026-09-06
+# 2026-09-06 (#5355): the fix is ONE extern-class registration, and it has to
+# live in the registry that owns "which extern classes exist" — the same block
+# that already registers its two siblings `Intl.ListFormat` and
+# `Intl.NumberFormat`. 36 of the lines are the rationale comment (why the typed
+# spelling missed, and why this one entry is host-lane-gated when the siblings
+# are not); the table itself is 12. Splitting one sibling entry out of a
+# sibling list into a new module would make the list harder to read, not easier.
+loc-budget-allow:
+  - src/codegen/extern-declarations.ts
+  - src/codegen/expressions/new-super.ts
+  - src/runtime.ts
+# 2026-09-06 (#5355): `compileNewExpression` grows by the 8-line dispatch hookup
+# only — the standalone-refusal LOGIC lives in the new
+# `src/codegen/expressions/new-intl-host-bridge.ts`. The arm must sit at this
+# exact point (immediately before the terminal `reportError`) so it can only
+# fire where every other arm declined, so it cannot be lifted out of the
+# function. `registerBuiltinExternClasses` and `resolveImport` are the sibling
+# lists described above.
+func-budget-allow:
+  - src/codegen/extern-declarations.ts::registerBuiltinExternClasses
+  - src/codegen/expressions/new-super.ts::compileNewExpression
+  - src/runtime.ts::resolveImport
 ---
 
 # #5355 — `Intl.DateTimeFormat` exists but does nothing

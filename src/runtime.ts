@@ -10809,6 +10809,12 @@ function resolveImport(
           ...(typeof Intl !== "undefined" && typeof Intl.NumberFormat !== "undefined"
             ? { NumberFormat: Intl.NumberFormat }
             : {}),
+          // (#5355) `Intl.DateTimeFormat` — the host-mirror bridge's constructor.
+          // Registered host-lane only (see extern-declarations.ts); standalone
+          // throws a TypeError instead of reaching any of this.
+          ...(typeof Intl !== "undefined" && typeof Intl.DateTimeFormat !== "undefined"
+            ? { DateTimeFormat: Intl.DateTimeFormat }
+            : {}),
           // (#1792) node:url — WHATWG URL / URLSearchParams globals (Node 18+ /
           // every browser). Registered as extern-class host constructors so
           // `new URL(...)` / `new URLSearchParams(...)` bind to the real host
