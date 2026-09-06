@@ -213,6 +213,7 @@ import {
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
+import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -3601,6 +3602,13 @@ export function tryNamespaceConstantAndSymbolReads(
       fctx.body.push({ op: "local.get", index: rawTmp });
       return { kind: "ref_null", typeIdx: baseVecTypeIdx };
     }
+    // (#5338) An ordinary named tag's strings parameter is a plain `externref`
+    // slot, so the static shapes above cannot claim it. Discriminate at runtime
+    // instead, keeping the generic dynamic get as the miss arm.
+    if (isDynamicTemplateRawRead(ctx, fctx, expr, propName)) {
+      const dynamicRaw = emitDynamicTemplateRawRead(ctx, fctx, expr);
+      if (dynamicRaw) return dynamicRaw;
+    }
   }
 
   // Handle Math constants
@@ -4877,6 +4885,33 @@ export function finalizeStructAndDynamicMemberGet(
                   k,
                   structCandidates.map((candidate) => candidate.fieldType),
                 );
+                // (#5251) The receiver here is DYNAMIC — the dispatcher's
+                // terminal is `__extern_get`, which answers `undefined` when the
+                // property is ABSENT. f64 cannot hold `undefined`, so narrowing
+                // to a bare f64 laundered every absent read into NaN-the-NUMBER
+                // (`typeof` "number", `x !== undefined`). Brand the narrowed f64
+                // as undefined-sentinel-carrying: the externref→f64 coercion
+                // encodes `undefined` as `UNDEF_F64_BITS` and the caller's
+                // f64→externref boxing resurrects it (type-coercion.ts's
+                // `undefSentinel` arms). Numeric consumers are untouched — they
+                // read a plain f64 and NaN is the correct ToNumber(undefined).
+                //
+                // i32 is deliberately left alone: it has no spare bit pattern,
+                // and its narrowing is boolean-brand territory (#2938).
+                if (resultWasm.kind === "f64" && resultWasm.undefSentinel !== true) {
+                  resultWasm = { kind: "f64", undefSentinel: true };
+                  // `canonicalUndefinedExternInstrs` is deliberately read-only
+                  // over funcMap (it must not shift funcidxs mid-body), so the
+                  // host lane's real `undefined` producer has to be registered
+                  // HERE or the resurrection falls back to a null externref —
+                  // which reads as JS `null`, not `undefined`. Same precedent as
+                  // `reserveMemberGetDispatch`'s `value` arm.
+                  if (!ctx.nativeStrings && !ctx.standalone) {
+                    ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+                    flushLateImportShifts(ctx, fctx);
+                    unboxIdx = undefined;
+                  }
+                }
                 if (unboxIdx === undefined) {
                   unboxIdx = ensureScalarUnbox(ctx, fctx, resultWasm);
                 }

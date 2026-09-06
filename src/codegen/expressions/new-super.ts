@@ -148,6 +148,7 @@ import {
   typedArrayCtorArgIsArithmeticPrimitive,
 } from "./typed-array-host-carrier.js";
 import { NEW_INDEXED_FALLTHROUGH, tryCompileIndexedBuiltinNew } from "./new-indexed.js"; // (#3281 slice 2) indexed builtin ctor dispatch
+import { tryCompileIntlHostOnlyNew } from "./new-intl-host-bridge.js"; // (#5355) standalone Intl refusal
 import { emitFnctorProtoGet, resolveUserFnctorName } from "./fnctor-prototype.js"; // (#2660 S3a) reconstruct `new F()` as $Object; (#3981) proto for a value-bound ctor
 import { emitStandalonePromiseFromExecutor, emitStandalonePromiseFromExecutorValue } from "../promise-executor.js"; // (#2959 / #2903 R1) native new Promise(executor)
 import { deriveFnctorFields, resolveFnctorSymbol, resolveEnclosingFnctorOwner } from "../fnctor-escape-gate.js"; // (#2660 S3a) canonical fnctor-name key; (#2773 S1) shared field derivation; (#2681/#2686 A1) `new this()` owner
@@ -7307,6 +7308,14 @@ function compileNewExpression(ctx: CodegenContext, fctx: FunctionContext, expr: 
   {
     const r = tryCompileIndexedBuiltinNew(ctx, fctx, expr, className);
     if (r !== NEW_INDEXED_FALLTHROUGH) return r;
+  }
+
+  // (#5355) Standalone/WASI `new Intl.DateTimeFormat(...)` — a catchable
+  // TypeError naming the bound, instead of the `undefined` this terminal
+  // reportError yields (whose first method call then traps).
+  {
+    const r = tryCompileIntlHostOnlyNew(ctx, fctx, expr, className);
+    if (r !== undefined) return r;
   }
 
   reportError(ctx, expr, `Unsupported new expression for class: ${className}`);

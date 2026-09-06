@@ -161,7 +161,7 @@ export function isSimpleParameterList(params: readonly ts.ParameterDeclaration[]
  * sloppy `.js` source compiled under a `.ts` filename has `scriptKind: TS` but
  * no module markers, and must stay sloppy.
  */
-export function isModuleSourceFile(sf: ts.SourceFile): boolean {
+function isModuleSourceFile(sf: ts.SourceFile): boolean {
   const internal = sf as ts.SourceFile & { externalModuleIndicator?: ts.Node };
   if (internal.externalModuleIndicator !== undefined) return true;
   if (sf.impliedNodeFormat === ts.ModuleKind.ESNext) return true;

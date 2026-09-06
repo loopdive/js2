@@ -304,6 +304,42 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     });
   }
 
+  // (#5355) Intl.DateTimeFormat — the host-mirror bridge. #5206 made the `Intl`
+  // NAMESPACE resolve to the host global, which fixed the fully dynamic (`any`)
+  // spelling. The TYPED spelling (`new Intl.DateTimeFormat(...)`, the one the
+  // `@js-temporal/polyfill` bundle and ordinary TS both emit) still resolved its
+  // class name from the checker to "DateTimeFormat", found no extern class here,
+  // fell through every arm of `compileNewExpression` and yielded `undefined` —
+  // while `typeof` was constant-folded from the declared TS type to "object".
+  // Registering it alongside its siblings gives the receiver an opaque host
+  // externref and routes every method to the real ICU-backed host object, which
+  // is the #679/#682 dual-backend shape: host fast path now, standalone declared
+  // out of scope with its bound (there is no ICU in pure Wasm, so a compiled
+  // shim would have to reimplement calendar + time-zone data).
+  //
+  // Unlike ListFormat/NumberFormat above this is gated on the JS-host lane. Those
+  // two predate the #2961 no-leak ratchet and still emit `Intl_*_new` into a
+  // `--target standalone` binary with a host-import-leak warning; a NEW host
+  // import must not add to that. Standalone/WASI instead get a catchable
+  // `TypeError` from `tryCompileIntlHostOnlyNew` (new-intl-host-bridge.ts) —
+  // never a trap, never an unsatisfiable import.
+  if (!ctx.externClasses.has("DateTimeFormat") && !ctx.standalone && !ctx.wasi && !ctx.nativeStrings) {
+    const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
+    methods.set("format", externMethod(1)); // format(date?) → string (externref)
+    methods.set("formatToParts", externMethod(1)); // formatToParts(date?) → array (externref)
+    methods.set("resolvedOptions", externMethod(0)); // resolvedOptions() → object (externref)
+    methods.set("formatRange", externMethod(2)); // formatRange(start, end) → string
+    methods.set("formatRangeToParts", externMethod(2)); // formatRangeToParts(start, end) → array
+    ctx.externClasses.set("DateTimeFormat", {
+      importPrefix: "Intl_DateTimeFormat",
+      namespacePath: ["Intl"],
+      className: "DateTimeFormat",
+      constructorParams: [{ kind: "externref" }, { kind: "externref" }], // locales?, options?
+      methods,
+      properties: new Map(),
+    });
+  }
+
   // (#1792) node:url — `URL` / `URLSearchParams` as host constructors. Both are
   // WHATWG globals present in Node 18+ and every browser, so the JS-host path
   // binds them via `builtinCtors` (runtime.ts) exactly like Set/Map. `new

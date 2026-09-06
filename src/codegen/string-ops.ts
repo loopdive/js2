@@ -75,6 +75,7 @@ import {
   VOID_RESULT,
 } from "./shared.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { publishTaggedTemplateArguments, resetTaggedTemplateArguments } from "./tagged-template-arguments.js";
 import {
   coerceType,
   emitGuardedRefCast,
@@ -1327,6 +1328,18 @@ export function compileTaggedTemplateExpression(
         const expectedParamType = closureInfo.paramTypes[i + 1];
         compileExpression(ctx, fctx, substitutions[i]!, expectedParamType);
       }
+      // (#5338) Surplus substitutions are still call ARGUMENTS — publish them
+      // so a tag reading `arguments` sees them. `needsCallSiteArity === false`
+      // is positive evidence this closure ignores call-site arity.
+      const publishedNamedClosure =
+        closureInfo.needsCallSiteArity !== false &&
+        publishTaggedTemplateArguments(
+          ctx,
+          fctx,
+          substitutions,
+          closureInfo.paramTypes.length,
+          Math.max(0, closureMaxSubs),
+        );
 
       // Push funcref from closure struct field 0 and call_ref
       fctx.body.push({ op: "local.get", index: selfLocal });
@@ -1338,6 +1351,7 @@ export function compileTaggedTemplateExpression(
       emitGuardedFuncRefCast(fctx, closureInfo.funcTypeIdx);
       fctx.body.push({ op: "ref.as_non_null" });
       fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
+      if (publishedNamedClosure) resetTaggedTemplateArguments(ctx, fctx);
 
       return closureInfo.returnType ?? VOID_RESULT;
     }
@@ -1404,6 +1418,7 @@ export function compileTaggedTemplateExpression(
 
       const restInfo = ctx.funcRestParams.get(tagName);
       const paramTypes = getFuncParamTypes(ctx, funcIdx);
+      let publishedKnownFunc = false;
 
       // Push the strings array as the first USER param (wasm index captureCount).
       fctx.body.push({ op: "local.get", index: stringsLocal });
@@ -1454,11 +1469,23 @@ export function compileTaggedTemplateExpression(
             }
           }
         }
+        // (#5338) The callee is statically known here, so publish the surplus
+        // substitutions only when its body actually reads `arguments`.
+        if (ctx.funcUsesArguments.has(tagName)) {
+          publishedKnownFunc = publishTaggedTemplateArguments(
+            ctx,
+            fctx,
+            substitutions,
+            (paramTypes?.length ?? 0) - captureCount,
+            Math.max(0, maxSubs),
+          );
+        }
       }
 
       // Re-lookup funcIdx in case imports shifted during compilation
       const finalFuncIdx = ctx.funcMap.get(tagName) ?? funcIdx;
       fctx.body.push({ op: "call", funcIdx: finalFuncIdx });
+      if (publishedKnownFunc) resetTaggedTemplateArguments(ctx, fctx);
 
       // Determine return type
       const sig = ctx.checker.getResolvedSignature(expr);
@@ -1564,6 +1591,17 @@ export function compileTaggedTemplateExpression(
       for (let i = substitutions.length + 1; i < matchedClosureInfo.paramTypes.length; i++) {
         pushDefaultValue(fctx, matchedClosureInfo.paramTypes[i]!, ctx);
       }
+      // (#5338) The CALLEE here is dynamic — `matchedClosureInfo` is only the
+      // signature shape the tag expression resolves to, never proof of which
+      // function runs. Publish the surplus substitutions unconditionally and
+      // clear the globals after the call.
+      const publishedMatchedClosure = publishTaggedTemplateArguments(
+        ctx,
+        fctx,
+        substitutions,
+        matchedClosureInfo.paramTypes.length,
+        Math.max(0, closureMaxSubs),
+      );
 
       // Push funcref from closure struct field 0 and call_ref
       fctx.body.push({ op: "local.get", index: closureLocal });
@@ -1579,6 +1617,7 @@ export function compileTaggedTemplateExpression(
         op: "call_ref",
         typeIdx: matchedClosureInfo.funcTypeIdx,
       });
+      if (publishedMatchedClosure) resetTaggedTemplateArguments(ctx, fctx);
 
       return matchedClosureInfo.returnType ?? VOID_RESULT;
     }
@@ -1612,6 +1651,14 @@ export function compileTaggedTemplateExpression(
           for (let i = substitutions.length + 1; i < closureInfo.paramTypes.length; i++) {
             pushDefaultValue(fctx, closureInfo.paramTypes[i]!, ctx);
           }
+          // (#5338) Same dynamic-callee reasoning as the signature-matched arm.
+          const publishedDynClosure = publishTaggedTemplateArguments(
+            ctx,
+            fctx,
+            substitutions,
+            closureInfo.paramTypes.length,
+            Math.max(0, closureMaxSubs),
+          );
 
           fctx.body.push({ op: "local.get", index: closureLocal });
           fctx.body.push({
@@ -1622,6 +1669,7 @@ export function compileTaggedTemplateExpression(
           emitGuardedFuncRefCast(fctx, closureInfo.funcTypeIdx);
           fctx.body.push({ op: "ref.as_non_null" });
           fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
+          if (publishedDynClosure) resetTaggedTemplateArguments(ctx, fctx);
 
           return closureInfo.returnType ?? VOID_RESULT;
         }
