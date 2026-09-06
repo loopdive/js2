@@ -187,3 +187,74 @@ describe("#5349 step 4 — DECLINED, with the measurement that declined it", () 
     expect(await runStandalone(body)).toBe(701);
   });
 });
+
+describe("#5349 review r1 — step 16 must not accept a TypedArray as an ArrayBuffer", () => {
+  it("throws TypeError for an Int32Array species result (node 22: TypeError)", async () => {
+    // §25.1.5.3 step 16: the constructed value must have an [[ArrayBufferData]]
+    // slot. `$__vec_i32_elem` is `(array (mut i32))`-backed, so it is a
+    // DISTINCT canonical type from the ArrayBuffer's `$__vec_i32_byte` and the
+    // `ref.test` decides it correctly. Base returned 501 (species never
+    // invoked); node 22 throws.
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(8); var C={}; C[Symbol.species]=function(n){ return new Int32Array(n) };
+         ab.constructor=C; var r=ab.slice(0,4); return 500+(Number(r.byteLength)===4?1:0);`,
+      ),
+    ).toBe(1);
+  });
+
+  it("throws TypeError for a DataView species result (node 22: TypeError)", async () => {
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(8); var C={}; C[Symbol.species]=function(n){ return new DataView(new ArrayBuffer(n)) };
+         ab.constructor=C; var r=ab.slice(0,4); return 500+(Number(r.byteLength)===4?1:0);`,
+      ),
+    ).toBe(1);
+  });
+
+  it("throws TypeError for a plain-object species result (species-returns-not-arraybuffer.js)", async () => {
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(8); var C={}; C[Symbol.species]=function(n){ return {} };
+         ab.constructor=C; ab.slice(0,4); return 500;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("RESIDUAL: a packed-byte-TypedArray module declines the species arm entirely", async () => {
+    // `$__vec_i8_byte` (Int8Array/Uint8Array/Uint8ClampedArray) and the
+    // ArrayBuffer's `$__vec_i32_byte` are STRUCTURALLY IDENTICAL since #2835
+    // packed the byte buffer to `(array (mut i8))`, so Wasm GC canonicalizes
+    // them to ONE runtime type and no `ref.test` can separate them. Before this
+    // gate the probe returned 611: the byte-copy loop wrote THROUGH the
+    // caller's Uint8Array and slice returned it by identity. node 22 throws
+    // TypeError; the gate returns the module to main's pre-#5349 emission
+    // (601), which is still not node but neither aliases nor mutates the
+    // caller's view.
+    //
+    // Owner of the residual: the typed-array construction path
+    // (`emitDynamicUint8ArrayBufferAlias` + `TYPED_ARRAY_PACKED_STORAGE`) —
+    // until the packed-byte view carries a brand, step 16 is undecidable here.
+    expect(
+      await runStandalone(
+        `var made; var ab=new ArrayBuffer(8); var C={};
+         C[Symbol.species]=function(n){ made=new Uint8Array(n); return made };
+         ab.constructor=C; var r=ab.slice(0,4);
+         return 500+(r===made?10:0)+(Number(r.length)===4?100:0)+(Number(r.byteLength)===4?1:0);`,
+      ),
+    ).toBe(601);
+  });
+
+  it("keeps the species arm in a module with a NON-packed-byte view", async () => {
+    // The gate is keyed on the three packed-byte names only; a Float64Array
+    // module keeps the full ladder, so a genuine ArrayBuffer species still
+    // constructs and is returned.
+    expect(
+      await runStandalone(
+        `var f=new Float64Array(2); f[0]=1; var ab=new ArrayBuffer(8); var C={};
+         C[Symbol.species]=function(n){ return new ArrayBuffer(n) };
+         ab.constructor=C; var r=ab.slice(0,4); return 700+(Number(r.byteLength)===4?1:0);`,
+      ),
+    ).toBe(701);
+  });
+});

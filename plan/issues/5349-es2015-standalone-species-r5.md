@@ -26,6 +26,23 @@ loc-budget-allow:
   - src/codegen/dataview-native.ts
   - src/codegen/array-species.ts
   - src/codegen/array-holes.ts
+  # 2026-09-06 review round 1: step 16 was a REPRESENTATION test that a
+  # packed-byte TypedArray passes (`$__vec_i8_byte` and `$__vec_i32_byte` are
+  # structurally identical since #2835, so Wasm GC canonicalizes them to one
+  # runtime type). The undecidable case is gated off via a new module pre-scan
+  # in source-scan-predicates.ts, carried on a context flag.
+  - src/codegen/source-scan-predicates.ts
+  - src/codegen/context/types.ts
+  - src/codegen/context/create-context.ts
+  - src/codegen/index.ts
+func-budget-allow:
+  # 2026-09-06 review round 1: one line each — the new context flag's
+  # initializer and the two pre-scan wirings that set it. The flag has to be a
+  # whole-program PRE-SCAN, not emit-order state, because the `Uint8Array`
+  # construction may compile after the `ab.slice` site it has to gate.
+  - src/codegen/context/create-context.ts::createCodegenContext
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
 ---
 
 ## Problem
@@ -455,8 +472,98 @@ Pins: `tests/issue-5349-species-r5.test.ts`, 17 tests, standalone with
    mode`. Pre-existing, unrelated to this change; recorded so the wasi lane's
    silence is not read as coverage.
 
+### Review round 1 (2026-09-06)
+
+One confirmed finding, reproduced base/lane/node and fixed as far as the
+representation allows.
+
+**Finding.** `emitArrayBufferSliceSpecies` implements §25.1.5.3 step 16 ("if
+`new` does not have an `[[ArrayBufferData]]` slot, throw a TypeError") as
+`any.convert_extern; ref.test $__vec_i32_byte`. A species returning a
+`Uint8Array` PASSED that test: the copy loop then wrote through the caller's
+typed array and slice returned it by identity.
+
+**Root cause — a canonicalization, not a missing arm.** Since #2835 the
+ArrayBuffer byte buffer is `$__vec_i32_byte { length: i32, data: (ref null
+$__arr_i32_byte) }` with `$__arr_i32_byte = (array (mut i8))`, and the
+packed-byte view carrier is `$__vec_i8_byte { length: i32, data: (ref null
+$__arr_i8_byte) }` with `$__arr_i8_byte = (array (mut i8))`. Both structs
+declare the same two fields and the same `sub final $__vec_base` clause, so
+they are STRUCTURALLY IDENTICAL and Wasm GC canonicalizes them to ONE runtime
+type. Read off the emitted WAT of the b15 probe: the species closure's
+numeric-length arm emits `array.new_default $__arr_i8_byte; struct.new
+$__vec_i8_byte`, and `$run`'s step-16 `ref.test` names `$__vec_i32_byte` —
+different type indices, same canonical rtt. No `ref.test`, brand read or
+property query can separate them; this is the same canonicalization the
+`ArrayBuffer.isView` chain documents as its "KNOWN IMPRECISION". Only the three
+i8-backed names are affected — `i16_byte` is `(array (mut i16))`, `i32_elem`
+`(array (mut i32))`, the float views `(array (mut f64))`, and `$__ta_view_*` /
+`$__ta_dyn_view` / `$__dv_window` carry extra fields.
+
+**Fix.** A new module pre-scan `sourceHasPackedByteTaConstruct`
+(source-scan-predicates.ts) sets `ctx.moduleUsesPackedByteTaCarrier` when the
+source can build an `Int8Array` / `Uint8Array` / `Uint8ClampedArray`, and
+`emitArrayBufferSliceSpecies` returns its null sentinel in that case — the
+module keeps main's pre-#5349 emission byte-for-byte rather than answering step
+16 with a test that cannot decide. Pre-scan, not emit-order state, because the
+`Uint8Array` construction may compile after the `slice` site. Deliberately
+over-approximating (any identifier with one of the three names outside a
+property-name position): the only cost is a declined emission, never a wrong
+runtime answer.
+
+**Outcomes** (`--target standalone`, `imports: []` asserted on every row;
+node 22 oracle in brackets):
+
+| probe | base | lane | fix | node |
+| --- | --- | --- | --- | --- |
+| b15 / `new Uint8Array(n)` species | 601 | **611** (aliases + mutates `made`) | 601 | 1 (TypeError) |
+| `new Uint8Array(new ArrayBuffer(n))` species | 501 | 501 | 501 | 1 |
+| `new Uint8Array(receiver)` species | 500 | 501 | 500 | 1 |
+| instrumented b15 (species-called bit) | — | 1111 | 1001 | 101 |
+| `new Int32Array(n)` species | 501 | 1 | **1** | 1 |
+| b16 / `new DataView(...)` species | — | 1 | **1** | 1 |
+| `{}` species (`species-returns-not-arraybuffer`) | — | 1 | **1** | 1 |
+| `class MyAB extends ArrayBuffer` species | 501 | 1 | 1 | 511 |
+
+The last row is NOT a lost working program: `new MyAB(4).byteLength` already
+answers wrongly on base (probe returns 1, node 11), so ArrayBuffer subclassing
+is unsupported in this lane independently of species — and a subclass instance
+is an `$Object`, indistinguishable from the `{}` that
+`species-returns-not-arraybuffer.js` requires the TypeError for. Recorded as a
+pre-existing gap, not adopted.
+
+**Corpus.** All 33 rows of `built-ins/ArrayBuffer/prototype/slice` (which
+includes the 12 `species*` rows), run three ways in one harness: **fix is
+row-for-row identical to lane on all 33**, and 0 rows are lost against base.
+None of the 33 files, nor `assert.js` / `sta.js` / `compareArray.js` /
+`propertyHelper.js` / `detachArrayBuffer.js`, mentions any of the three
+packed-byte names, so the gate never fires on that directory.
+
+**Byte identity.** The four `speciesctor-get-species-custom-ctor-returns-
+another-instance.js` shapes (slice / subarray, plain and BigInt) hash
+identically lane vs fix: `d3c4d649…`, `2cec2e21…`, `1e007e7f…`, `aea948e5…`.
+An unarmed `Uint8Array` module (no `.constructor` write) is also byte-identical
+lane vs fix — the gate sits after the `arraySpeciesDirty` guard, so nothing
+unarmed reaches it.
+
+**Residual, with its owner.** In a module that constructs a packed-byte
+TypedArray, `ArrayBuffer.prototype.slice` does not observe `@@species` at all.
+Repro: `var made; var ab=new ArrayBuffer(8); var C={};
+C[Symbol.species]=function(n){ made=new Uint8Array(n); return made };
+ab.constructor=C; ab.slice(0,4)` — 601 here, TypeError in node. Closing it needs
+the packed-byte view carrier to be distinguishable from the buffer's, which is
+owned by the **typed-array construction path** (`emitDynamicUint8ArrayBufferAlias`
+plus `TYPED_ARRAY_PACKED_STORAGE` in `src/codegen/index.ts`), not by the species
+emitter. The same canonicalization also mis-answers
+`Object.prototype.toString.call` and `ArrayBuffer.isView` for that carrier.
+
+Pins: five cases in `tests/issue-5349-species-r5.test.ts` (Int32Array result,
+DataView result, plain-object result, the residual, and a Float64Array module
+that keeps the full ladder). 22/22 green on node 22 and node 25.
+
 ### Status
 
 Left at `status: in-progress`, not `done`: steps 6 and 7 (26 TypedArray rows)
 are diagnosed but unimplemented, and steps 3 and 4 are recorded as declined
-with their measurements. The three landed steps are complete and self-contained.
+with their measurements. The three landed steps are complete and self-contained;
+review round 1 added the step-16 gate above.
