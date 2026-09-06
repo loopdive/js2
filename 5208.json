@@ -1,11 +1,10 @@
 {
   "id": "5208",
-  "assignee": "",
-  "requested_by": "ttraenkler/fable-lead",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-08-29T22:54:47Z",
-  "updated_at": "2026-08-29T22:54:47Z",
-  "write_id": "28564-1kun9wg6",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/dev-5208",
+  "requested_by": "ttraenkler/dev-5208",
+  "status": "in-progress",
+  "branch": "issue-5208-compiled-date-host-bridge",
+  "claimed_at": "2026-09-06T04:43:32Z",
+  "updated_at": "2026-09-06T04:43:32Z",
+  "write_id": "12496-rir3gxcm"
 }
