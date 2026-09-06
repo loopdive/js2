@@ -1,7 +1,9 @@
 ---
 id: 5352
 title: "Open-receiver `this.m()` statically binds to candidates[0] when the tag-cascade emitter bails — routes every non-Hebrew Temporal calendar into HebrewHelper (120 of 123 rows)"
-status: ready
+status: done
+completed: 2026-09-05
+assignee: ttraenkler/dev-5352
 sprint: current
 priority: high
 horizon: m
@@ -95,6 +97,80 @@ the emitter declines.
    receiver with >1 candidate.
 3. 123-row family re-measured; the 120-row Hebrew chain gone; new counts and
    next-layer reasons stated. Gates + suites green; equivalence at baseline.
+
+## Implementation Notes (2026-09-05)
+
+### Step 1 — which bail-out fires (measured, not inferred)
+
+All nine `return undefined` sites in `emitVirtualMethodDispatchByTag` were
+instrumented with a temporary `JS2WASM_DEBUG_VDISPATCH=1` log and the whole
+`@js-temporal/polyfill@0.5.1` provider was built (cold, 39.4 s, 2,028,477 bytes).
+
+**Exactly ONE site fires, nine times: `unified === undefined` — the
+`unifyCascadeResultType` decline (the plan's L152 top suspect).** The other
+eight sites fire zero times in the entire provider.
+
+| method                          | candidates | arm result types                                       |
+| ------------------------------- | ---------- | ------------------------------------------------------ |
+| `maximumMonthLength` (×4)       | 25         | 23 × `f64`, 2 × `externref` (Hebrew, Indian)           |
+| `minimumMonthLength` (×3)       | 25         | 23 × `f64`, 2 × `externref` (Hebrew, Indian)           |
+| `monthDaySearchStartYear` (×1)  | 26         | 23 × `f64`, 3 × `externref` (the three Chinese helpers)|
+| `maxLengthOfMonthCodeInAnyYear` | 25         | 24 × `f64`, 1 × `externref` (Indian)                   |
+
+No arm is void. The divergence is purely numeric-vs-`any`: the polyfill's
+bodies return `30` / `12===t?29:t<=6?31:30` (both `f64`) alongside
+`this.minMaxMonthLength(e,"max")` and `this.getMonthInfo(e).length` (both typed
+`any` by the checker, so `externref`). `armWideningKind` called `f64`
+"unrepresentable", the emitter declined, and the caller static-bound all 25
+receivers to `candidates[0]` — `HebrewHelper`.
+
+### Step 2 — fix shape (a): fix the bail-out, keep dispatch in-Wasm
+
+Shape (b) (route the decline to the dynamic host method path) was NOT chosen.
+The measured decline is a pure result-type question with a known in-Wasm answer,
+so (b) would have replaced a Wasm cascade with a host round trip for every one
+of these calls, and it would have changed behaviour for the *other* eight
+bail-out sites too — sites that never fire here and whose static fallback is
+load-bearing elsewhere (e.g. the `externref`-receiver decline that `lit`'s
+`class extends HTMLElement` relies on). (a) is strictly narrower.
+
+Three changes, all in `src/codegen/expressions/virtual-dispatch.ts`:
+
+1. `armIsBoxableNumber` — an `f64` arm reaches an `externref` cascade by
+   BOXING. `armWideningKind` answers "is there a *free* representation
+   change"; that is not the same question as "is there a representation at
+   all", and conflating them is what turned a solvable type mismatch into an
+   unsound static bind.
+2. `ensureCascadeNumericBoxing` — registers `__box_number` **before the
+   speculative snapshot and before any function index is captured**. This
+   ordering is the load-bearing part: `ensureLateImport` can add an import,
+   which shifts every defined-function index, and `candFinalIdx` is a plain
+   `Map<number, number>` that no shift pass can reach. Registering after that
+   capture would leave every arm calling one function too low. It registers
+   only when the cascade actually mixes a boxable numeric with an `any`-side
+   arm, so an all-numeric hierarchy neither widens nor gains an import.
+3. `buildDispatchArmCall` — a numeric arm emits `call $__box_number` after its
+   own call. Emitting a `call` inside an arm array is safe *here* precisely
+   because the helper already exists; what #5178 ruled out was **minting** an
+   import while building an arm array. The index is read from `ctx.funcMap` at
+   build time, and `funcMap` is updated by every shift pass.
+
+### Reported, not fixed (with bounds)
+
+- **Void/value divergence still declines** (and still static-binds). Zero
+  occurrences in the polyfill; would need a per-arm `drop` under an `empty`
+  block type, or a pre-materialized default local for the void arms.
+- **`i32` arms are not boxed.** `i32` is also this compiler's boolean
+  representation and an arm's Wasm result type does not distinguish the two, so
+  `__box_number` would be the wrong boxer for the boolean half. Zero
+  occurrences in the polyfill.
+- **The `candidates.length === 1` collapse to a direct call is unchanged.**
+  It is the same unsoundness in principle when the receiver's static class has
+  descendants that declare no implementation, but making it a 1-arm cascade
+  turns today's wrong-body call into an `unreachable` trap for those receivers,
+  which is a behaviour change with a much wider blast radius than the measured
+  defect. Zero occurrences in the polyfill's four affected methods (all have
+  25–26 candidates). Left for a separate, separately-measured change.
 
 ## Notes
 

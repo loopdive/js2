@@ -374,7 +374,18 @@ import { HOST_CALLBACK_WRAP_CAPABILITY_RECORD } from "./runtime-host-capabilitie
 import { AllocSiteRegistry, ALLOC_NAMESPACES } from "./alloc-registry.js";
 import { analyzeEncoding } from "./analysis/encoding.js";
 import { assertAllocProvenance, assertFinalAllocProvenance } from "./verify-alloc.js";
-import type { FieldDef, FuncTypeDef, GlobalDef, Import, Instr, StructTypeDef, ValType, WasmFunction } from "./types.js";
+import type {
+  FieldDef,
+  FuncTypeDef,
+  GlobalDef,
+  Import,
+  Instr,
+  StructTypeDef,
+  TagDef,
+  TypeDef,
+  ValType,
+  WasmFunction,
+} from "./types.js";
 import {
   collectIntegrationFunctionDeclarations,
   definedFuncAt,
@@ -666,6 +677,80 @@ interface BuiltFn {
   readonly moduleInit?: boolean;
 }
 
+/**
+ * Complete resource evidence retained for an aggregate prepared component.
+ * The manifest is produced only after the final built IR vector has passed
+ * verification and before detached lowering.  Keeping this evidence behind
+ * the report identity lets the owner authenticate that reservation consumed
+ * the same build/resource census, without making the compatibility report a
+ * second runtime-provider table.
+ */
+export interface PreparedIrResourceCensus {
+  readonly artifactUnitIds: readonly IrUnitId[];
+  readonly intrinsicIds: readonly string[];
+  readonly features: readonly string[];
+  readonly providerIds: readonly string[];
+  readonly hostCapabilityIds: readonly string[];
+  readonly backendRequirements: readonly string[];
+  /**
+   * Allocator identities captured immediately before detached lowering.  The
+   * manifest alone cannot describe a type/global/import that a lowering
+   * resolver might have materialized outside the provider table.
+   */
+  readonly preLoweringAllocator?: PreparedIrResourceAllocatorSnapshot;
+  /**
+   * The complete allocator identity snapshot at the final pre-reservation
+   * report boundary.  P2A compares it with `preLoweringAllocator` to prove
+   * lowering did not mint an unplanned resource between the two phases.
+   */
+  readonly finalAllocator?: PreparedIrResourceAllocatorSnapshot;
+}
+
+/** Exact module allocator objects retained by a detached prepared build. */
+export interface PreparedIrResourceAllocatorSnapshot {
+  readonly types: readonly TypeDef[];
+  readonly imports: readonly Import[];
+  readonly functions: readonly WasmFunction[];
+  readonly globals: readonly GlobalDef[];
+  readonly tags: readonly TagDef[];
+  readonly stringPool: readonly string[];
+}
+
+function preparedIrResourceAllocatorSnapshot(ctx: CodegenContext): PreparedIrResourceAllocatorSnapshot {
+  return Object.freeze({
+    types: Object.freeze([...ctx.mod.types]),
+    imports: Object.freeze([...ctx.mod.imports]),
+    functions: Object.freeze([...ctx.mod.functions]),
+    globals: Object.freeze([...ctx.mod.globals]),
+    tags: Object.freeze([...ctx.mod.tags]),
+    stringPool: Object.freeze([...ctx.mod.stringPool]),
+  });
+}
+
+/** Compare snapshots by ordered allocator identity, including nonmanifest resources. */
+export function samePreparedIrResourceAllocatorSnapshot(
+  left: PreparedIrResourceAllocatorSnapshot,
+  right: PreparedIrResourceAllocatorSnapshot,
+): boolean {
+  const same = <T>(a: readonly T[], b: readonly T[]): boolean =>
+    a.length === b.length && a.every((value, index) => value === b[index]);
+  return (
+    same(left.types, right.types) &&
+    same(left.imports, right.imports) &&
+    same(left.functions, right.functions) &&
+    same(left.globals, right.globals) &&
+    same(left.tags, right.tags) &&
+    same(left.stringPool, right.stringPool)
+  );
+}
+
+const preparedIrResourceCensusByReport = new WeakMap<IrIntegrationReport, PreparedIrResourceCensus>();
+
+/** Return the frozen resource census authenticated by one integration report. */
+export function preparedIrResourceCensusFor(report: IrIntegrationReport): PreparedIrResourceCensus | undefined {
+  return preparedIrResourceCensusByReport.get(report);
+}
+
 interface PreparedClosureTransaction {
   readonly registry: ClosureStructRegistry;
   readonly refCells: RefCellRegistry;
@@ -679,6 +764,76 @@ interface PreparedClosureTransaction {
   readonly sealPreparedScopes: () => void;
   sealCompilerTimerShim(): void;
   bindLowerResolver(resolver: IrLowerResolver): void;
+}
+
+/**
+ * Present all still-open component scopes through one exact lookup surface.
+ *
+ * R5 may produce several independent initializer components.  The lowerer is
+ * built once for the whole detached vector, so passing only the first scope's
+ * lookup would make a later source appear to have an unplanned global/import
+ * even though its own scope is valid.  This adapter keeps lookup authority
+ * partitioned by binding while retaining one resolver boundary.  A binding
+ * observed in two scopes is rejected as a scope-ownership contradiction;
+ * structural reference queries return the union so the import resolver's
+ * existing exact-cardinality check remains authoritative.
+ */
+function mergePreparedScopeLookups(
+  ctx: CodegenContext,
+  openScopes: readonly PreparedComponentOpenScope[],
+): PreparedComponentScopeLookup | undefined {
+  if (openScopes.length === 0) return undefined;
+  const ownerScopeForBinding = (id: IrBindingId): PreparedComponentOpenScope | undefined => {
+    const session = ctx.programAbiSession;
+    let draft = session?.getDraft(id);
+    const visited = new Set<IrBindingId>();
+    while (draft?.slotPolicy === "alias" && !visited.has(draft.id)) {
+      visited.add(draft.id);
+      draft = session?.getDraft(draft.aliasOf);
+    }
+    const ownerUnitId =
+      draft?.intent.kind === "callable" || draft?.intent.kind === "global" ? draft.intent.unitId : undefined;
+    return ownerUnitId === undefined
+      ? undefined
+      : openScopes.find(({ terminalUnitIds }) => terminalUnitIds.includes(ownerUnitId));
+  };
+  const matchesForBinding = (id: IrBindingId): readonly PreparedComponentScopeLookup[] => {
+    const owner = ownerScopeForBinding(id);
+    if (owner) return owner.lookup.get(id) === undefined ? [] : [owner.lookup];
+    // Shared runtime/support/type drafts are copied into each scope overlay.
+    // They have no terminal owner, so any one exact overlay is authoritative.
+    const shared = openScopes.find(({ lookup }) => lookup.get(id) !== undefined);
+    return shared ? [shared.lookup] : [];
+  };
+  const oneForBinding = (id: IrBindingId): PreparedComponentScopeLookup | undefined => {
+    const matches = matchesForBinding(id);
+    return matches[0];
+  };
+  return Object.freeze({
+    get: (id: IrBindingId) => oneForBinding(id)?.get(id),
+    bindingIdsForStructuralReference: (key: string) =>
+      Object.freeze([...new Set(openScopes.flatMap(({ lookup }) => lookup.bindingIdsForStructuralReference(key)))]),
+    getLocator: (id: IrBindingId) => oneForBinding(id)?.getLocator(id),
+    resolveCurrentIndex: (
+      id: IrBindingId,
+      expectedSpace: Parameters<PreparedComponentScopeLookup["resolveCurrentIndex"]>[1],
+      structuralReferenceKey: string,
+    ) => {
+      const lookup = oneForBinding(id);
+      if (!lookup) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "lower",
+          `prepared ABI binding ${id} is absent from every open component scope`,
+        );
+      }
+      return lookup.resolveCurrentIndex(id, expectedSpace, structuralReferenceKey);
+    },
+    currentCallableSignature: (id: IrBindingId) => oneForBinding(id)?.currentCallableSignature(id),
+    currentCallableContract: (id: IrBindingId) => oneForBinding(id)?.currentCallableContract(id),
+    locatorObject: (id: IrBindingId) => oneForBinding(id)?.locatorObject(id),
+    locatorObjectForBinding: (id: IrBindingId) => oneForBinding(id)?.locatorObjectForBinding(id),
+  });
 }
 
 function exactAccessorWritebackGlobals(
@@ -860,7 +1015,11 @@ function prepareClosureTransaction(input: {
       : {}),
     onSealFailure: input.onSealFailure,
   });
-  let preparedScopeLookup = timerTransaction.openScopes[0]?.lookup;
+  // Keep the lookup dynamic because the timer-shim sidecar can append an
+  // independently prepared scope when lowering reaches its deferred entry.
+  // P2A itself has no timer owners, but the shared preparation boundary must
+  // not silently discard that scope when it is used by another aggregate.
+  const preparedScopeLookup = mergePreparedScopeLookups(input.ctx, timerTransaction.openScopes);
   const abortedComponentIds = new Set<string>();
   const sealedComponentIds = new Set<string>();
   return {
@@ -869,10 +1028,8 @@ function prepareClosureTransaction(input: {
     freshSlots,
     componentIds: timerTransaction.componentIds,
     openScopes: timerTransaction.openScopes,
+    preparedScopeLookup,
     closureSupport,
-    get preparedScopeLookup() {
-      return preparedScopeLookup;
-    },
     abortOpenScopes: timerTransaction.abortOpenScopes,
     abortPreparedComponent: (componentId) => {
       if (abortedComponentIds.has(componentId) || sealedComponentIds.has(componentId)) return;
@@ -890,7 +1047,6 @@ function prepareClosureTransaction(input: {
     },
     sealCompilerTimerShim: () => {
       timerTransaction.sealDeferred();
-      preparedScopeLookup ??= timerTransaction.openScopes[0]?.lookup;
     },
     bindLowerResolver: (resolver) => {
       resolveValType = (type) => lowerIrTypeToValType(type, resolver, "<closure-registry>");
@@ -1777,14 +1933,18 @@ function atomicDeferredIrTypeIsAllocatorNeutral(type: IrType): boolean {
  * IR subset whose lowering is allocator-neutral; every other component stays
  * direct-owned before any lazy preparation helper can run.
  */
-function atomicDeferredComponentIsAllocatorNeutral(entries: readonly BuiltFn[]): boolean {
+function atomicDeferredComponentIsAllocatorNeutral(
+  entries: readonly BuiltFn[],
+  allowPreparedModuleInit = false,
+): boolean {
+  const initializerOnly = allowPreparedModuleInit && entries.every((entry) => entry.moduleInit === true);
   for (const entry of entries) {
     const fn = entry.fn;
     if (
       entry.derivedUnit !== undefined ||
       entry.synthesized === true ||
       entry.classMember === true ||
-      entry.moduleInit === true ||
+      (entry.moduleInit === true && !allowPreparedModuleInit) ||
       (entry.countedStringAppendPlans?.length ?? 0) !== 0 ||
       (fn.funcKind !== undefined && fn.funcKind !== "regular") ||
       fn.closureSubtype !== undefined ||
@@ -1825,6 +1985,11 @@ function atomicDeferredComponentIsAllocatorNeutral(entries: readonly BuiltFn[]):
             case "unary":
             case "select":
             case "if":
+              break;
+            case "global.get":
+            case "global.set":
+              neutral = initializerOnly;
+              break;
             case "slot.read":
             case "slot.write":
             case "early.return":
@@ -2480,14 +2645,29 @@ export function compileIrPathFunctions(
       "ir/integration: ProgramAbiSession and lowering plans use different identity inventories",
     );
   }
+  const preparedModuleInitBatchSources = options?.preparedModuleInitBatchSources;
+  const batchModuleInitProjectionEntries = preparedModuleInitBatchSources?.flatMap(({ sourceFile }) => {
+    const sourceId = moduleBindingIdentityContext.sourceIdBySourceFile.get(sourceFile);
+    const unitId = moduleBindingIdentityContext.moduleInitUnitIdBySourceFile.get(sourceFile);
+    return sourceId === undefined || unitId === undefined
+      ? []
+      : [{ unitId, legacyName: `${MODULE_INIT_UNIT_NAME}@${sourceId}` }];
+  });
   const activeOwnerProjection =
-    loweringPlans?.ownerProjection ??
-    buildIrLegacyUnitProjection(
-      compatibilityInventory?.terminalUnits.map((unit) => ({
-        unitId: unit.id,
-        legacyName: unit.legacyMatchName,
-      })) ?? [],
-    );
+    preparedModuleInitBatchSources && preparedModuleInitBatchSources.length > 0 && loweringPlans
+      ? buildIrLegacyUnitProjection([
+          ...loweringPlans.ownerProjection.entries.filter(
+            ({ unitId }) => !batchModuleInitProjectionEntries?.some((entry) => entry.unitId === unitId),
+          ),
+          ...(batchModuleInitProjectionEntries ?? []),
+        ])
+      : (loweringPlans?.ownerProjection ??
+        buildIrLegacyUnitProjection(
+          compatibilityInventory?.terminalUnits.map((unit) => ({
+            unitId: unit.id,
+            legacyName: unit.legacyMatchName,
+          })) ?? [],
+        ));
   const inventoryUnitById = new Map(
     moduleBindingIdentityContext.inventory.allUnits.map((unit) => [unit.id, unit] as const),
   );
@@ -2634,7 +2814,7 @@ export function compileIrPathFunctions(
       ...backendCapabilitySelectionOptions,
     });
   const integrationPopulation =
-    loweringPlans && !options?.atomicComponent
+    loweringPlans && (!options?.atomicComponent || options?.preparedModuleInitBatch === true)
       ? validateIrIntegrationPopulation(sourceFile, selected, loweringPlans)
       : undefined;
   // Compatibility-only direct callers (principally focused integration
@@ -2740,7 +2920,7 @@ export function compileIrPathFunctions(
   const failures = new IrIntegrationFailureLog();
   const { errors } = failures;
   const detachedPreparedPatches: PreparedComponentDetachedPatch<BuiltFn>[] = [];
-  let pendingPreparedReceipt: PendingPreparedProgramComponentReceipt | undefined;
+  const pendingPreparedReceipts: PendingPreparedProgramComponentReceipt[] = [];
   let abortDeferredOpenScopes: (() => void) | undefined;
   let preparedClosure: PreparedClosureTransaction | undefined;
   let deferredPublicationFinalizing = false;
@@ -2750,6 +2930,9 @@ export function compileIrPathFunctions(
   // behind the independent post-build whitelist.
   const atomicPreflightSnapshot: { value?: AtomicDeferredPreflightSnapshot } = {};
   let atomicPreflightSnapshotChecked = false;
+  let preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined;
+  const preparedResourceArtifactUnitIds: { value?: readonly IrUnitId[] } = {};
+  let preparedIrPreLoweringAllocator: PreparedIrResourceAllocatorSnapshot | undefined;
   const abortDeferredPublication = (): void => {
     if (!options?.deferPreparedPublication && !callableBoundaryRequested) return;
     try {
@@ -2770,7 +2953,7 @@ export function compileIrPathFunctions(
     if (
       (options?.deferPreparedPublication || callableBoundaryRequested) &&
       !deferredPublicationFinalizing &&
-      !pendingPreparedReceipt
+      pendingPreparedReceipts.length === 0
     ) {
       abortDeferredPublication();
     }
@@ -2781,7 +2964,7 @@ export function compileIrPathFunctions(
       reportCompiled.length === 0 &&
       reportCompiledArtifactEvidence.length === 0 &&
       reportCountedStringAppendReceipts.length === 0 &&
-      pendingPreparedReceipt === undefined
+      pendingPreparedReceipts.length === 0
     ) {
       atomicPreflightSnapshotChecked = true;
       assertAtomicDeferredPreflightStateUnchanged(ctx, atomicPreflightSnapshot.value);
@@ -2811,27 +2994,51 @@ export function compileIrPathFunctions(
       hardenedErrors.push(invariant);
       return { ...event, error: invariant, errors: [invariant, ...event.errors] };
     });
-    return buildIrIntegrationReport(
+    const report = buildIrIntegrationReport(
       reportCompiled,
       hardenedErrors,
-      loweringPlans?.ownerProjection,
+      activeOwnerProjection,
       reportCompiledOwners,
       hardenedTerminalFailures,
       reportCompiledArtifactEvidence,
       reportCountedStringAppendReceipts,
     );
+    if (preparedResourceArtifactUnitIds.value) {
+      const manifest = preparedRuntimeManifest?.manifest;
+      const finalArtifactUnitIds = Object.freeze(
+        reportCompiledArtifactEvidence.map(({ artifactUnitId }) => artifactUnitId),
+      );
+      preparedIrResourceCensusByReport.set(
+        report,
+        Object.freeze({
+          // A final artifact vector is authoritative when the report reached
+          // the publication boundary.  The early vector remains a fallback
+          // for a failure report that has no patches to enumerate.
+          artifactUnitIds:
+            finalArtifactUnitIds.length > 0 ? finalArtifactUnitIds : preparedResourceArtifactUnitIds.value,
+          intrinsicIds: Object.freeze(manifest?.intrinsicUses.map(({ id }) => id) ?? []),
+          features: Object.freeze([...(manifest?.features ?? [])]),
+          providerIds: Object.freeze(manifest?.providers.map(({ id }) => id) ?? []),
+          hostCapabilityIds: Object.freeze([...(manifest?.hostCapabilities ?? [])]),
+          backendRequirements: Object.freeze([...(manifest?.backendRequirements ?? [])]),
+          ...(preparedIrPreLoweringAllocator ? { preLoweringAllocator: preparedIrPreLoweringAllocator } : {}),
+          finalAllocator: preparedIrResourceAllocatorSnapshot(ctx),
+        }),
+      );
+    }
+    return report;
   };
   const publishPreparedReceipt = (report: IrIntegrationReport): void => {
     if (!options?.deferPreparedPublication) return;
     const sink = options.preparedComponentPublicationSink;
     const openScopes = preparedClosure?.openScopes ?? [];
-    if (!sink || !preparedClosure || openScopes.length !== 1) {
+    if (!sink || !preparedClosure || openScopes.length === 0) {
       preparedClosure?.abortOpenScopes();
       if (!sink) {
         throw new IrInvariantError(
           "selection-preparation-mismatch",
           "patch",
-          "detached prepared integration requires one aggregate publication sink",
+          "detached prepared integration requires an aggregate publication sink",
         );
       }
       return;
@@ -2840,37 +3047,62 @@ export function compileIrPathFunctions(
       preparedClosure.abortOpenScopes();
       return;
     }
-    const open = openScopes[0]!;
-    const terminalUnitIds = [...open.terminalUnitIds];
-    const preparedComponentIds = new Set(
-      terminalUnitIds.map((unitId) => preparedComponentIdByTerminalUnitId.get(unitId)),
-    );
-    if (preparedComponentIds.size !== 1 || preparedComponentIds.has(undefined)) {
-      preparedClosure.abortOpenScopes();
-      throw new IrInvariantError(
-        "selection-preparation-mismatch",
-        "patch",
-        "detached prepared integration produced an incomplete component identity",
+    const scopeByTerminal = new Map<IrUnitId, PreparedComponentOpenScope>();
+    for (const open of openScopes) {
+      if (open.terminalUnitIds.length === 0) {
+        preparedClosure.abortOpenScopes();
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          `detached prepared component ${open.componentId} has an invalid terminal scope`,
+        );
+      }
+      const componentIds = new Set(
+        open.terminalUnitIds.map((unitId) => preparedComponentIdByTerminalUnitId.get(unitId)),
       );
+      if (
+        componentIds.size !== 1 ||
+        componentIds.has(undefined) ||
+        componentIds.values().next().value !== open.componentId
+      ) {
+        preparedClosure.abortOpenScopes();
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          `detached prepared component ${open.componentId} has an incomplete component identity`,
+        );
+      }
+      for (const unitId of open.terminalUnitIds) {
+        if (scopeByTerminal.has(unitId)) {
+          preparedClosure.abortOpenScopes();
+          throw new IrInvariantError(
+            "selection-preparation-mismatch",
+            "patch",
+            `detached prepared terminal ${unitId} belongs to more than one component scope`,
+          );
+        }
+        scopeByTerminal.set(unitId, open);
+      }
     }
-    const preparedComponentId = [...preparedComponentIds][0]!;
-    const expectedTerminalIds = new Set(terminalUnitIds);
+    const patchesByScope = new Map<PreparedComponentOpenScope, PreparedComponentDetachedPatch<BuiltFn>[]>();
+    for (const open of openScopes) patchesByScope.set(open, []);
     const patchedTerminalIds = new Set<IrUnitId>();
     const patchedArtifactIds = new Set<IrUnitId>();
     const patchedFuncIndices = new Set<number>();
-    if (
-      expectedTerminalIds.size !== terminalUnitIds.length ||
-      detachedPreparedPatches.length !== terminalUnitIds.length
-    ) {
+    if (scopeByTerminal.size !== detachedPreparedPatches.length) {
       preparedClosure.abortOpenScopes();
       throw new IrInvariantError(
         "selection-preparation-mismatch",
         "patch",
-        `detached prepared component ${preparedComponentId} does not have one exact terminal patch per terminal`,
+        "detached prepared components do not have one exact terminal patch per terminal",
       );
     }
     for (const patch of detachedPreparedPatches) {
+      const open = scopeByTerminal.get(patch.terminalOwnerUnitId);
+      const preparedComponentId = open?.componentId;
       if (
+        !open ||
+        preparedComponentId === undefined ||
         patch.artifactUnitId !== patch.terminalOwnerUnitId ||
         patch.entry.artifactUnitId !== patch.artifactUnitId ||
         patch.entry.terminalOwnerUnitId !== patch.terminalOwnerUnitId ||
@@ -2878,10 +3110,9 @@ export function compileIrPathFunctions(
         patch.entry.derivedUnit !== undefined ||
         patch.entry.synthesized === true ||
         patch.entry.classMember === true ||
-        patch.entry.moduleInit === true ||
+        (patch.entry.moduleInit === true && !options?.preparedModuleInitBatch) ||
         !Number.isSafeInteger(patch.funcIdx) ||
         patch.funcIdx < 0 ||
-        !expectedTerminalIds.has(patch.terminalOwnerUnitId) ||
         preparedComponentIdByTerminalUnitId.get(patch.terminalOwnerUnitId) !== preparedComponentId ||
         patchedTerminalIds.has(patch.terminalOwnerUnitId) ||
         patchedArtifactIds.has(patch.artifactUnitId) ||
@@ -2897,53 +3128,72 @@ export function compileIrPathFunctions(
       patchedTerminalIds.add(patch.terminalOwnerUnitId);
       patchedArtifactIds.add(patch.artifactUnitId);
       patchedFuncIndices.add(patch.funcIdx);
+      patchesByScope.get(open)!.push(patch);
+    }
+    for (const open of openScopes) {
+      const patches = patchesByScope.get(open)!;
+      if (patches.length !== open.terminalUnitIds.length) {
+        preparedClosure.abortOpenScopes();
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "patch",
+          `detached prepared component ${open.componentId} does not have one exact terminal patch per terminal`,
+        );
+      }
     }
     try {
-      const receipt = sink.publish({
-        preparedComponentId,
-        terminalUnitIds,
-        report,
-        patches: detachedPreparedPatches,
-        assertCurrent: () => {
-          for (const patch of detachedPreparedPatches) {
-            const current = definedFuncAt(ctx, patch.funcIdx);
-            if (
-              current !== patch.existing ||
-              ctx.irUnitFuncMap.get(patch.artifactUnitId) !== patch.existing ||
-              ctx.programAbiSourceCallables?.functionForUnit(patch.artifactUnitId) !== patch.existing
-            ) {
-              throw new IrInvariantError(
-                "selection-preparation-mismatch",
-                "patch",
-                `prepared component ${preparedComponentId} lost exact allocator authority ${patch.artifactUnitId}`,
-              );
+      for (const open of openScopes) {
+        const preparedComponentId = open.componentId;
+        const terminalUnitIds = Object.freeze([...open.terminalUnitIds]);
+        const patches = Object.freeze([...patchesByScope.get(open)!]);
+        const receipt = sink.publish({
+          preparedComponentId,
+          terminalUnitIds,
+          report,
+          patches,
+          assertCurrent: () => {
+            for (const patch of patches) {
+              const current = definedFuncAt(ctx, patch.funcIdx);
+              if (
+                current !== patch.existing ||
+                ctx.irUnitFuncMap.get(patch.artifactUnitId) !== patch.existing ||
+                (patch.entry.moduleInit
+                  ? ctx.programAbiModuleInitCallables?.functionForUnit(patch.artifactUnitId)
+                  : ctx.programAbiSourceCallables?.functionForUnit(patch.artifactUnitId)) !== patch.existing
+              ) {
+                throw new IrInvariantError(
+                  "selection-preparation-mismatch",
+                  "patch",
+                  `prepared component ${preparedComponentId} lost exact allocator authority ${patch.artifactUnitId}`,
+                );
+              }
+              if (
+                patch.existing.typeIdx !== patch.replacement.typeIdx ||
+                patch.existing.name !== patch.replacement.name ||
+                patch.existing.exported !== patch.replacement.exported
+              ) {
+                throw new IrInvariantError(
+                  "abi-type-index-mismatch",
+                  "patch",
+                  `prepared component ${preparedComponentId} lost callable contract for ${patch.entry.name}`,
+                );
+              }
+              const bindingId = unitCallableSlots.get(patch.artifactUnitId)?.programAbiBindingId;
+              if (bindingId !== undefined && open.lookup.locatorObject(bindingId) !== patch.existing) {
+                throw new IrInvariantError(
+                  "selection-preparation-mismatch",
+                  "patch",
+                  `prepared component ${preparedComponentId} lost ABI locator for ${patch.artifactUnitId}`,
+                );
+              }
             }
-            if (
-              patch.existing.typeIdx !== patch.replacement.typeIdx ||
-              patch.existing.name !== patch.replacement.name ||
-              patch.existing.exported !== patch.replacement.exported
-            ) {
-              throw new IrInvariantError(
-                "abi-type-index-mismatch",
-                "patch",
-                `prepared component ${preparedComponentId} lost callable contract for ${patch.entry.name}`,
-              );
-            }
-            const bindingId = unitCallableSlots.get(patch.artifactUnitId)?.programAbiBindingId;
-            if (bindingId !== undefined && open.lookup.locatorObject(bindingId) !== patch.existing) {
-              throw new IrInvariantError(
-                "selection-preparation-mismatch",
-                "patch",
-                `prepared component ${preparedComponentId} lost ABI locator for ${patch.artifactUnitId}`,
-              );
-            }
-          }
-        },
-        prepareSeal: () => open.scope.prepareSeal(),
-        scopePublicationState: () => open.scope.publicationState,
-        abortScope: () => open.scope.abort(),
-      });
-      pendingPreparedReceipt = receipt;
+          },
+          prepareSeal: () => open.scope.prepareSeal(),
+          scopePublicationState: () => open.scope.publicationState,
+          abortScope: () => open.scope.abort(),
+        });
+        pendingPreparedReceipts.push(receipt);
+      }
     } catch (error) {
       preparedClosure.abortOpenScopes();
       throw error;
@@ -3089,7 +3339,7 @@ export function compileIrPathFunctions(
     process.env.JS2WASM_TEST_ASSERT_MULTI_PREPARED_PREFLIGHT_READ_ONLY === "1"
       ? snapshotAtomicDeferredPreflightState(ctx)
       : undefined;
-  if (options?.atomicComponent && options.deferPreparedPublication) {
+  if (options?.atomicComponent && options.deferPreparedPublication && !options.preparedModuleInitBatch) {
     const preflightDetail = atomicDeferredComponentPreflightFailure(
       integrationSourceFiles,
       selected,
@@ -3759,10 +4009,60 @@ export function compileIrPathFunctions(
   //     the #1789-adjacent collection note in declarations.ts; executing
   //     them would diverge from the legacy baseline).
   // -------------------------------------------------------------------------
-  const moduleInitOwner = moduleInitClaim ? requireTerminalOwner(MODULE_INIT_UNIT_NAME) : undefined;
-  if (moduleInitClaim && moduleInitOwner && !unsupportedHostDateOwners.has(moduleInitOwner.unitId)) {
+  /**
+   * P2A supplies all source-owned initializer inputs at once. Keeping the
+   * build loop here, beside the ordinary function/class loops, is deliberate:
+   * every initializer enters the same BuiltFn vector before hygiene, resource
+   * preparation, and detached lowering begin. The one-source compatibility
+   * call retains the old singleton input shape.
+   */
+  type PreparedModuleInitBuildInput = NonNullable<IrIntegrationOptions["preparedModuleInitBatchSources"]>[number];
+  const moduleInitOwner =
+    moduleInitClaim && (!preparedModuleInitBatchSources || preparedModuleInitBatchSources.length === 0)
+      ? requireTerminalOwner(MODULE_INIT_UNIT_NAME)
+      : undefined;
+  const moduleInitBuildSources: readonly PreparedModuleInitBuildInput[] =
+    preparedModuleInitBatchSources && preparedModuleInitBatchSources.length > 0
+      ? preparedModuleInitBatchSources
+      : moduleInitClaim && moduleInitOwner
+        ? [
+            {
+              sourceFile,
+              selection: selected,
+              ...(overrides ? { overrides } : {}),
+              ...(classShapes ? { classShapes } : {}),
+              ...(loweringPlans ? { loweringPlans } : {}),
+            } as PreparedModuleInitBuildInput,
+          ]
+        : [];
+  for (const moduleInitInput of moduleInitBuildSources) {
+    const moduleInitSourceFile = moduleInitInput.sourceFile;
+    const moduleInitSelection = moduleInitInput.selection;
+    const moduleInitAssessment = moduleInitSelection.moduleInit;
+    const moduleInitUnitId = moduleBindingIdentityContext.moduleInitUnitIdBySourceFile.get(moduleInitSourceFile);
+    const moduleInitSourceOwner = moduleInitUnitId
+      ? requireTerminalOwnerUnitId(moduleInitUnitId)
+      : moduleInitSourceFile === sourceFile
+        ? moduleInitOwner
+        : undefined;
+    if (
+      !moduleInitAssessment ||
+      moduleInitAssessment.reason !== null ||
+      moduleInitAssessment.stmtCount <= 0 ||
+      !moduleInitSourceOwner ||
+      unsupportedHostDateOwners.has(moduleInitSourceOwner.unitId)
+    ) {
+      continue;
+    }
     try {
-      if (!ctx.programAbiModuleInitCallables?.functionForUnit(moduleInitOwner.unitId)) {
+      if (!moduleInitUnitId) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "build",
+          `ir/integration: module init ${moduleInitSourceFile.fileName} has no exact artifact identity`,
+        );
+      }
+      if (!ctx.programAbiModuleInitCallables?.functionForUnit(moduleInitUnitId)) {
         throw new IrUnsupportedError(
           "module-init-legacy-coupling",
           "build",
@@ -3783,7 +4083,9 @@ export function compileIrPathFunctions(
           "module-init: live function-binding seeds present — legacy body carries them",
         );
       }
-      const population = integrationPopulation?.moduleInitPopulation ?? collectModuleInitPopulation(sourceFile);
+      const population =
+        moduleBindingIdentityContext.moduleInitPopulationBySourceFile.get(moduleInitSourceFile) ??
+        collectModuleInitPopulation(moduleInitSourceFile);
       if (!ctx.wasi) {
         for (const s of population) {
           if (ts.isThrowStatement(s)) {
@@ -3797,41 +4099,26 @@ export function compileIrPathFunctions(
       }
       const moduleBindings = buildModuleBindingsMap(ctx, population, moduleBindingResolver);
       const synthetic = makeModuleInitSynthetic(population);
-      const moduleInitUnitId =
-        integrationPopulation?.moduleInitUnitId ?? compatibilityUnitIdByDeclaration?.get(sourceFile);
-      if (!moduleInitUnitId) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "build",
-          "ir/integration: selected module init has no exact artifact identity",
-        );
-      }
-      if (moduleInitUnitId !== moduleInitOwner.unitId) {
-        throw new IrInvariantError(
-          "selection-preparation-mismatch",
-          "build",
-          `ir/integration: module init artifact ${moduleInitUnitId} does not match terminal owner ${moduleInitOwner.unitId}`,
-        );
-      }
       for (const statement of population) directCallsFor(statement, moduleInitUnitId);
+      const sourceLoweringPlans = moduleInitInput.loweringPlans ?? loweringPlans;
       const result = lowerFunctionAstToIr(synthetic, {
         exported: false,
         funcName: MODULE_INIT_UNIT_NAME,
         ownerUnitId: moduleInitUnitId,
         directCalls: preparedDirectCalls,
-        fnctorParameterPreselection: loweringPlans?.fnctorParameterPreselection,
-        fnctorNativeStringBoundaries: loweringPlans?.fnctorNativeStringBoundaries,
+        fnctorParameterPreselection: sourceLoweringPlans?.fnctorParameterPreselection,
+        fnctorNativeStringBoundaries: sourceLoweringPlans?.fnctorNativeStringBoundaries,
         returnTypeOverride: null,
         moduleInitUnit: true,
         moduleBindings,
         calleeTypes,
-        importedCalls: loweringPlans?.importedCalls,
-        topLevelFunctionValues: loweringPlans?.topLevelFunctionValues,
-        hostVoidCallbacks: loweringPlans?.hostVoidCallbacks,
-        hostDateSnapshots: loweringPlans?.hostDateSnapshots,
-        hostDateGetters: loweringPlans?.hostDateGetters,
+        importedCalls: sourceLoweringPlans?.importedCalls,
+        topLevelFunctionValues: sourceLoweringPlans?.topLevelFunctionValues,
+        hostVoidCallbacks: sourceLoweringPlans?.hostVoidCallbacks,
+        hostDateSnapshots: sourceLoweringPlans?.hostDateSnapshots,
+        hostDateGetters: sourceLoweringPlans?.hostDateGetters,
         identityContext: moduleBindingIdentityContext,
-        classShapes,
+        classShapes: moduleInitInput.classShapes ?? classShapes,
         resolver: fromAstResolver,
         allocRegistry,
         checker: ctx.checker,
@@ -3846,13 +4133,13 @@ export function compileIrPathFunctions(
           `ir/integration: module init lowered as artifact ${result.main.unitId}, expected ${moduleInitUnitId}`,
         );
       }
-      const liftedAbiRecords = liftedProgramAbiRecords(result, moduleInitUnitId, moduleInitOwner.unitId);
+      const liftedAbiRecords = liftedProgramAbiRecords(result, moduleInitUnitId, moduleInitSourceOwner.unitId);
       const mainErrors = verifyBuiltArtifact(result.main, MODULE_INIT_UNIT_NAME, false);
       if (mainErrors.length > 0) {
-        failures.recordVerifierDetails(moduleInitOwner, mainErrors);
+        failures.recordVerifierDetails(moduleInitSourceOwner, mainErrors);
       } else {
         const anyLiftedFailed = failures.recordVerifierGroups(
-          moduleInitOwner,
+          moduleInitSourceOwner,
           result.lifted.map((lifted) => ({
             details: verifyBuiltArtifact(lifted, MODULE_INIT_UNIT_NAME, true),
             detailPrefix: `synthetic artifact ${lifted.name}: `,
@@ -3861,18 +4148,18 @@ export function compileIrPathFunctions(
         if (!anyLiftedFailed) {
           built.push({
             artifactUnitId: result.main.unitId,
-            terminalOwnerUnitId: moduleInitOwner.unitId,
+            terminalOwnerUnitId: moduleInitSourceOwner.unitId,
             name: MODULE_INIT_UNIT_NAME,
-            ownerName: moduleInitOwner.legacyName,
+            ownerName: moduleInitSourceOwner.legacyName,
             fn: result.main,
             moduleInit: true,
           });
           for (const lifted of result.lifted) {
             built.push({
               artifactUnitId: lifted.unitId,
-              terminalOwnerUnitId: moduleInitOwner.unitId,
+              terminalOwnerUnitId: moduleInitSourceOwner.unitId,
               name: lifted.name,
-              ownerName: moduleInitOwner.legacyName,
+              ownerName: moduleInitSourceOwner.legacyName,
               fn: lifted,
               derivedUnit: liftedAbiRecords.get(lifted.unitId),
               synthesized: true,
@@ -3881,7 +4168,7 @@ export function compileIrPathFunctions(
         }
       }
     } catch (e) {
-      failures.record(moduleInitOwner, caughtIntegrationFailure(moduleInitOwner.legacyName, e, "build"));
+      failures.record(moduleInitSourceOwner, caughtIntegrationFailure(moduleInitSourceOwner.legacyName, e, "build"));
     }
   }
 
@@ -4406,7 +4693,8 @@ export function compileIrPathFunctions(
   if (
     options?.atomicComponent &&
     options.deferPreparedPublication &&
-    (ctx.pendingLateImportShift !== null || !atomicDeferredComponentIsAllocatorNeutral(healthyForLower))
+    (ctx.pendingLateImportShift !== null ||
+      !atomicDeferredComponentIsAllocatorNeutral(healthyForLower, options.preparedModuleInitBatch === true))
   ) {
     failEveryOwner(
       healthyForLower,
@@ -4674,7 +4962,6 @@ export function compileIrPathFunctions(
   }
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
-  let preparedRuntimeManifest: PreparedIrRuntimeManifest | undefined;
   if (!runGlobalPreparation(() => (healthyForLower = prepareStrings(ctx, healthyForLower)))) return finishReport();
   if (
     !runGlobalPreparation(() => {
@@ -4800,6 +5087,11 @@ export function compileIrPathFunctions(
   );
   healthyForLower = retainHealthyOwners(healthyForLower);
   if (healthyForLower.length === 0) return finishReport();
+  // This vector is intentionally captured only after every final IR/resource
+  // preparation and verification stage above.  The manifest's earlier entry
+  // list is a provider view; this late vector is the report's artifact
+  // fallback and therefore cannot silently omit a post-vector withdrawal.
+  preparedResourceArtifactUnitIds.value = Object.freeze(healthyForLower.map(({ artifactUnitId }) => artifactUnitId));
   const importedCallableCatalog = catalogProgramAbiCallableImports(ctx);
   const freshSlots: PreparedDerivedCallableSlot[] = [];
   let preparedComponentIdByTerminalUnitId: ReadonlyMap<IrUnitId, string> = new Map();
@@ -4813,7 +5105,10 @@ export function compileIrPathFunctions(
           entries: healthyForLower,
           originalArtifactUnitIds,
           inventory: moduleBindingIdentityContext.inventory,
-          ...(options.atomicComponent ? { atomicTerminalPopulation: true } : {}),
+          // P2A must retain independent dependency components and commit all
+          // of their scopes together.  Other aggregate callers keep the
+          // historical atomic population union as their component contract.
+          ...(options.atomicComponent && !options.preparedModuleInitBatch ? { atomicTerminalPopulation: true } : {}),
           callableImports: importedCallableCatalog,
           ...(options.preparedBindingIdsByTerminalUnitId
             ? { preparedBindingIdsByTerminalUnitId: options.preparedBindingIdsByTerminalUnitId }
@@ -5357,6 +5652,12 @@ export function compileIrPathFunctions(
     ownerFailed: (unitId) => failedOwners.has(unitId),
   });
   const lowerEntries = timerLoweringBoundary.order(healthyForLower);
+  if (options?.preparedModuleInitBatch) {
+    // All helper/provider/type/global preparation is complete at this point.
+    // Keep the allocator identity epoch beside the final report so the batch
+    // owner can prove detached lowering did not mint an unplanned resource.
+    preparedIrPreLoweringAllocator = preparedIrResourceAllocatorSnapshot(ctx);
+  }
   // (#3551) Exact artifact identities withdrawn by the typeIdx-parity guard
   // below. Every
   // IR body was compiled against `calleeTypes` — the IR's shared view of each
@@ -5766,7 +6067,10 @@ export function compileIrPathFunctions(
       const owner =
         dropTerminal === "1"
           ? healthyForLower[0] && terminalOwnerOf(healthyForLower[0])
-          : loweringPlans?.ownerProjection.getByLegacyName(dropTerminal);
+          : dropTerminal === "last"
+            ? healthyForLower[healthyForLower.length - 1] &&
+              terminalOwnerOf(healthyForLower[healthyForLower.length - 1]!)
+            : loweringPlans?.ownerProjection.getByLegacyName(dropTerminal);
       if (owner) {
         const retainedCompiled: string[] = [];
         const retainedCompiledArtifacts: IrIntegrationCompiledArtifactEvidence[] = [];
@@ -5810,6 +6114,10 @@ export function compileIrPathFunctions(
 export interface PreparedProgramComponentCompilationResult {
   readonly report: IrIntegrationReport;
   readonly pendingReceipt?: PendingPreparedProgramComponentReceipt;
+  /** Every independently derived ABI scope retained by the detached build. */
+  readonly pendingReceipts?: readonly PendingPreparedProgramComponentReceipt[];
+  /** Complete built-IR/resource manifest snapshot used by atomic owners. */
+  readonly resourceCensus?: PreparedIrResourceCensus;
 }
 
 /**
@@ -5827,11 +6135,11 @@ export function compilePreparedProgramComponent(
   loweringPlans?: IrIntegrationLoweringPlans,
   options?: IrIntegrationOptions,
 ): PreparedProgramComponentCompilationResult {
-  let pendingReceipt: PendingPreparedProgramComponentReceipt | undefined;
+  const pendingReceipts: PendingPreparedProgramComponentReceipt[] = [];
   const publicationSink = {
     publish: (draft: import("./prepared-component-publication.js").PreparedComponentPublicationDraft) => {
       const receipt = createPendingPreparedProgramComponentReceipt(draft);
-      pendingReceipt = receipt;
+      pendingReceipts.push(receipt);
       return receipt;
     },
   };
@@ -5842,7 +6150,14 @@ export function compilePreparedProgramComponent(
     deferPreparedPublication: true,
     preparedComponentPublicationSink: publicationSink,
   });
-  return pendingReceipt ? { report, pendingReceipt } : { report };
+  const resourceCensus = preparedIrResourceCensusFor(report);
+  const receipts = Object.freeze([...pendingReceipts]);
+  return {
+    report,
+    ...(receipts.length === 1 ? { pendingReceipt: receipts[0] } : {}),
+    ...(receipts.length > 0 ? { pendingReceipts: receipts } : {}),
+    ...(resourceCensus ? { resourceCensus } : {}),
+  };
 }
 
 function hasExportModifier(fn: ts.FunctionDeclaration): boolean {
@@ -6152,7 +6467,64 @@ function buildModuleBindingsMap(
           `module-init: declaration '${name}' no longer resolves to the direct top-level binding selected for this unit`,
         );
       }
+      const observed = ctx.programAbiGlobals?.moduleBinding(d);
       const binding = resolveModuleBindingGlobal(ctx, inspected.identity);
+      // The lowering map must consume the allocator object authenticated for
+      // this exact declaration.  A name-compatible global, or a global already
+      // owned by another binding, would let a rebuilt/foreign storage census
+      // pass the source preclaim while lowering into the wrong slot.
+      const session = ctx.programAbiSession;
+      if (observed && session) {
+        const valueOwner = session.locatorBindingId(observed.value);
+        if (valueOwner !== undefined && valueOwner !== inspected.identity.globalBindingId) {
+          throw new IrInvariantError(
+            "unknown-global-ref",
+            "build",
+            `module-init: value storage for '${name}' is owned by ${valueOwner}, not ${inspected.identity.globalBindingId}`,
+          );
+        }
+        if (!session.hasLocator(inspected.identity.globalBindingId, observed.value)) {
+          throw new IrInvariantError(
+            "unknown-global-ref",
+            "build",
+            `module-init: value storage for '${name}' was not retained by its exact Program ABI binding`,
+          );
+        }
+        if (binding.globalRef.binding.bindingId !== inspected.identity.globalBindingId) {
+          throw new IrInvariantError(
+            "unknown-global-ref",
+            "build",
+            `module-init: value reference for '${name}' does not retain its exact binding identity`,
+          );
+        }
+        if (observed.tdz) {
+          if (!binding.tdzGlobalRef) {
+            throw new IrInvariantError(
+              "unknown-global-ref",
+              "build",
+              `module-init: TDZ storage for '${name}' was observed without an exact IR binding`,
+            );
+          }
+          const tdzOwner = session.locatorBindingId(observed.tdz);
+          if (tdzOwner !== undefined && tdzOwner !== inspected.identity.tdzBindingId) {
+            throw new IrInvariantError(
+              "unknown-global-ref",
+              "build",
+              `module-init: TDZ storage for '${name}' is owned by ${tdzOwner}, not ${inspected.identity.tdzBindingId}`,
+            );
+          }
+          if (
+            !session.hasLocator(inspected.identity.tdzBindingId, observed.tdz) ||
+            binding.tdzGlobalRef.binding.bindingId !== inspected.identity.tdzBindingId
+          ) {
+            throw new IrInvariantError(
+              "unknown-global-ref",
+              "build",
+              `module-init: TDZ storage for '${name}' was not retained by its exact Program ABI binding`,
+            );
+          }
+        }
+      }
       map.set(name, binding);
     }
   }

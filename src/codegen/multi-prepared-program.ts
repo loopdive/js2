@@ -19,6 +19,7 @@ import { IrInvariantError, PreparedProgramAbiCommitError, type IrObservedOutcome
 import type { IrLegacyUnitProjectionEntry, IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { IrSelection } from "../ir/select.js";
 import type { Instr, WasmFunction, WasmModule } from "../ir/types.js";
+import type { PendingPreparedProgramComponentReceipt } from "../ir/prepared-component-publication.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext, CodegenOptions } from "./context/types.js";
 import {
@@ -46,6 +47,7 @@ import type {
 } from "./multi-prepared-scalar-leaf.js";
 import type { PreparedIrFreeFunctionBodies } from "./ir-prepared-free-functions.js";
 import type { MultiPreparedModuleInitPreparation } from "./multi-prepared-module-init.js";
+import type { MultiPreparedModuleInitBatchPreparation } from "./multi-prepared-module-init-batch.js";
 import type { ModuleInitMode } from "./declarations.js";
 import type { ProgramAbiSession, PublishedProgramAbi } from "./program-abi-session.js";
 import type { IrExactFunctionClaim } from "./ir-overlay-safety.js";
@@ -136,6 +138,15 @@ export interface MultiPreparedProgramAudit {
   readonly overlaySourceIds: readonly IrSourceId[];
   readonly abiSessionBound: true;
   readonly moduleInitCensus: MultiPreparedModuleInitCensusProjection;
+  /**
+   * Source-qualified storage capability gaps observed before a P2A batch
+   * reservation.  A declined batch keeps this evidence visible to callers so
+   * the ordinary route cannot be mistaken for an atomic admission.
+   */
+  readonly moduleInitPreclaimGaps?: readonly {
+    readonly sourceId: IrSourceId;
+    readonly gaps: readonly string[];
+  }[];
   readonly moduleInit?: MultiPreparedProgramModuleInitAudit;
 }
 
@@ -147,14 +158,57 @@ export interface MultiPreparedProgramModuleInitAudit {
     readonly executable: boolean;
     readonly evaluationCount: number;
   }[];
-  readonly executablePlanCount: 1;
+  readonly executablePlanCount: number;
   readonly emptyPlanCount: number;
-  readonly contributorSourceId: IrSourceId;
-  readonly contributorUnitId: IrUnitId;
-  readonly preparedComponentId: string;
+  readonly contributorSourceId?: IrSourceId;
+  readonly contributorUnitId?: IrUnitId;
+  readonly contributorSourceIds?: readonly IrSourceId[];
+  readonly contributorUnitIds?: readonly IrUnitId[];
+  readonly preparedComponentId?: string;
+  readonly preparedComponentIds?: readonly string[];
+  /** Exact built-IR vector authenticated before the batch reservation. */
+  readonly resourceArtifactUnitIds?: readonly IrUnitId[];
+  readonly resourceFeatureIds?: readonly string[];
+  readonly resourceProviderIds?: readonly string[];
   readonly invocationKind: "wasm-start" | "deferred-export";
   readonly directCompileModuleInitBodyRoots: number;
-  readonly irBodyEmissions: 1;
+  readonly irBodyEmissions: number;
+}
+
+function exactPreparedReceiptPartition(
+  receipts: readonly PendingPreparedProgramComponentReceipt[] | undefined,
+  unitIds: readonly IrUnitId[],
+): ReadonlyMap<IrUnitId, PendingPreparedProgramComponentReceipt> | undefined {
+  if (
+    !receipts ||
+    receipts.length === 0 ||
+    unitIds.length === 0 ||
+    !Object.isFrozen(receipts) ||
+    new Set(unitIds).size !== unitIds.length
+  ) {
+    return undefined;
+  }
+  const expected = new Set(unitIds);
+  const byUnitId = new Map<IrUnitId, PendingPreparedProgramComponentReceipt>();
+  const componentIds = new Set<string>();
+  for (const receipt of receipts) {
+    if (
+      !Object.isFrozen(receipt.terminalUnitIds) ||
+      receipt.terminalUnitIds.length === 0 ||
+      receipt.terminalUnitIds.some((unitId) => !expected.has(unitId)) ||
+      new Set(receipt.terminalUnitIds).size !== receipt.terminalUnitIds.length ||
+      componentIds.has(receipt.preparedComponentId)
+    ) {
+      return undefined;
+    }
+    componentIds.add(receipt.preparedComponentId);
+    for (const unitId of receipt.terminalUnitIds) {
+      if (byUnitId.has(unitId)) return undefined;
+      byUnitId.set(unitId, receipt);
+    }
+  }
+  if (byUnitId.size !== unitIds.length || unitIds.some((unitId) => !byUnitId.has(unitId))) return undefined;
+  return byUnitId;
 }
 
 /** The overlay consumer is run only after the owner authenticates its report. */
@@ -436,6 +490,9 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   #callableSkippedUnitIds: ReadonlySet<IrUnitId> = new Set();
   #callableSkippedUnitIdsBySourceFile: ReadonlyMap<SourceFile, ReadonlySet<IrUnitId>> = new Map();
   #moduleInitPreparation: MultiPreparedModuleInitPreparation | undefined;
+  #moduleInitBatchPreparation: MultiPreparedModuleInitBatchPreparation | undefined;
+  #moduleInitBatchBodySnapshots: ReadonlyMap<IrUnitId, readonly Instr[]> = new Map();
+  #moduleInitBatchAdapterInstructions: readonly Instr[] | undefined;
   #moduleInitCensus: MultiPreparedModuleInitCensus;
   #moduleInitCensusProjection: MultiPreparedModuleInitCensusProjection | undefined;
   readonly #moduleInitSkippedSourceFiles = new Set<SourceFile>();
@@ -659,7 +716,10 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     try {
       this.#requireState("collecting");
       if (!this.#routesPlanned) this.#fail("completion-order", "callable components were staged before route planning");
-      if (this.#moduleInitPreparation !== undefined && components.length > 0) {
+      if (
+        (this.#moduleInitPreparation !== undefined || this.#moduleInitBatchPreparation !== undefined) &&
+        components.length > 0
+      ) {
         this.#fail("module-init-plan-mismatch", "Prepared module-init cannot compose with callable components");
       }
       if (components.length === 0 || this.#callablePublication !== undefined) {
@@ -772,12 +832,165 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     return this.#moduleInitPreparation?.unitId;
   }
 
+  /** Exact source-owned initializer units retained by the P2A batch. */
+  get preparedModuleInitUnitIds(): ReadonlySet<IrUnitId> {
+    if (this.#moduleInitBatchPreparation) {
+      return new Set(this.#moduleInitBatchPreparation.contributors.map(({ unitId }) => unitId));
+    }
+    return this.#moduleInitPreparation ? new Set([this.#moduleInitPreparation.unitId]) : new Set();
+  }
+
+  get preparedModuleInitStartupHandle(): number | undefined {
+    return this.#moduleInitBatchPreparation?.adapterHandle;
+  }
+
+  get preparedModuleInitStartupFunction(): WasmFunction | undefined {
+    return this.#moduleInitBatchPreparation?.adapterFunction;
+  }
+
+  /** Register the already-prepared P2A batch before ordinary body routes run. */
+  registerPreparedModuleInitBatch(preparation: MultiPreparedModuleInitBatchPreparation): void {
+    try {
+      // Test-only prepublication seam: mutate the final detached contributor
+      // after aggregate lowering but before owner registration.  Receipt
+      // currentness must reject this without committing any sibling scope or
+      // emitting an initializer outcome prefix.
+      if (process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_PENDING_BODY === "1") {
+        const last = preparation.contributors[preparation.contributors.length - 1];
+        if (last) last.preparedFunction.body = [{ op: "unreachable" }];
+      }
+      this.#registerPreparedModuleInitBatch(preparation);
+    } catch (error) {
+      // Registration is still before publication.  Revoke the authenticated
+      // detached scope when any owner/currentness check rejects the batch so
+      // no initializer receipt survives a failed admission.
+      preparation.abort();
+      throw error;
+    }
+  }
+
+  #registerPreparedModuleInitBatch(preparation: MultiPreparedModuleInitBatchPreparation): void {
+    this.#requireState("collecting");
+    if (this.#moduleInitPreparation !== undefined || this.#moduleInitBatchPreparation !== undefined) {
+      this.#fail("module-init-reservation-mismatch", "Prepared module-init was registered more than once");
+    }
+    if (this.#callablePublication !== undefined || this.#callableComponents.length > 0) {
+      this.#fail("module-init-plan-mismatch", "Prepared module-init cannot compose with callable components");
+    }
+    assertMultiPreparedModuleInitCensusCurrent(this.#moduleInitCensus);
+    if (!this.#moduleInitCensus.parityObserved) {
+      this.#fail("module-init-parity-mismatch", "Prepared module-init was registered before queue reconciliation");
+    }
+    const censusPlans = this.#moduleInitCensus.sourcePlans;
+    const sourcePlans = preparation.sourcePlans;
+    if (
+      sourcePlans.length !== this.#sourceFiles.length ||
+      sourcePlans.some(
+        (plan, index) =>
+          plan.sourceFile !== this.#sourceFiles[index] ||
+          plan.sourceId !== this.#sourceId(plan.sourceFile) ||
+          plan.plan !== censusPlans[index]?.plan ||
+          plan.parity !== censusPlans[index]?.parity ||
+          plan.planning?.plan !== censusPlans[index]?.plan ||
+          plan.planning?.parity !== censusPlans[index]?.parity,
+      )
+    ) {
+      this.#fail("module-init-plan-mismatch", "Prepared initializer batch census is not semantic-order exact");
+    }
+    const executable = sourcePlans.filter((plan) => plan.executable && plan.unitId !== null);
+    const contributors = preparation.contributors;
+    if (
+      contributors.length !== executable.length ||
+      contributors.some(
+        (contributor, index) =>
+          contributor.sourceFile !== executable[index]?.sourceFile ||
+          contributor.sourceId !== executable[index]?.sourceId ||
+          contributor.unitId !== executable[index]?.unitId ||
+          contributor.sourcePlan !== executable[index],
+      ) ||
+      new Set(contributors.map(({ unitId }) => unitId)).size !== contributors.length
+    ) {
+      this.#fail("module-init-plan-mismatch", "Prepared initializer contributors are not exact semantic order");
+    }
+    const registry = this.#ctx.programAbiModuleInitCallables;
+    const unitIds = contributors.map(({ unitId }) => unitId);
+    const pendingReceipts = preparation.pendingReceipts;
+    const receiptByUnitId = exactPreparedReceiptPartition(pendingReceipts, unitIds);
+    const resourceCensus = preparation.resourceCensus;
+    if (
+      !registry ||
+      !sameArray(registry.preparedExactUnitIdVector, unitIds) ||
+      !receiptByUnitId ||
+      !sameArray(
+        preparation.preparedComponentIds,
+        pendingReceipts.map((receipt) => receipt.preparedComponentId),
+      ) ||
+      new Set(preparation.preparedComponentIds).size !== preparation.preparedComponentIds.length ||
+      pendingReceipts.some((receipt) => receipt.report !== contributors[0]?.report) ||
+      !resourceCensus ||
+      !Object.isFrozen(resourceCensus) ||
+      !Object.isFrozen(resourceCensus.artifactUnitIds) ||
+      !sameArray(resourceCensus.artifactUnitIds, unitIds) ||
+      new Set(resourceCensus.artifactUnitIds).size !== resourceCensus.artifactUnitIds.length ||
+      !Object.isFrozen(resourceCensus.intrinsicIds) ||
+      !Object.isFrozen(resourceCensus.features) ||
+      !Object.isFrozen(resourceCensus.providerIds) ||
+      !Object.isFrozen(resourceCensus.hostCapabilityIds) ||
+      !Object.isFrozen(resourceCensus.backendRequirements)
+    ) {
+      this.#fail(
+        "module-init-reservation-mismatch",
+        "Prepared initializer batch lost its exact registry, resource, or receipt vector",
+      );
+    }
+    for (const contributor of contributors) {
+      const terminal = this.#terminalMap.get(contributor.unitId);
+      if (
+        !terminal ||
+        terminal.sourceId !== contributor.sourceId ||
+        terminal.kind !== "module-init" ||
+        terminal.observedKind !== "module-init" ||
+        terminal.terminalOwnerId !== contributor.unitId ||
+        registry.functionForUnit(contributor.unitId) !== contributor.preparedFunction ||
+        registry.handleForUnit(contributor.unitId) !== contributor.preparedHandle ||
+        contributor.pendingReceipt !== receiptByUnitId?.get(contributor.unitId) ||
+        contributor.pendingReceipt.report !== contributor.report ||
+        contributor.preparedComponentId !== contributor.pendingReceipt.preparedComponentId
+      ) {
+        this.#fail(
+          "module-init-reservation-mismatch",
+          `Prepared initializer ${contributor.unitId} lost exact ownership`,
+        );
+      }
+    }
+    const adapter = registry.preparedGraphAdapterInfo;
+    if (
+      !adapter ||
+      adapter.handle !== preparation.adapterHandle ||
+      adapter.func !== preparation.adapterFunction ||
+      !sameArray(adapter.unitIds, unitIds) ||
+      preparation.adapterFunction.body.length !== unitIds.length ||
+      preparation.adapterFunction.body.some(
+        (instruction, index) =>
+          instruction.op !== "call" || instruction.funcIdx !== contributors[index]?.preparedHandle,
+      )
+    ) {
+      this.#fail(
+        "module-init-startup-mismatch",
+        "Prepared initializer graph adapter is not an exact ordered call list",
+      );
+    }
+    this.#moduleInitBatchPreparation = preparation;
+    this.#ctx.irProgramPreparedModuleInitUnitIds = new Set(unitIds);
+    delete this.#ctx.irProgramPreparedModuleInitUnitId;
+  }
+
   /** Exact M2 Prepared module-init receipt, registered before body emission. */
   registerPreparedModuleInit(preparation: MultiPreparedModuleInitPreparation): void {
     this.#requireState("collecting");
     if (!this.#routesPlanned)
       this.#fail("completion-order", "Prepared module-init was registered before route planning");
-    if (this.#moduleInitPreparation !== undefined) {
+    if (this.#moduleInitPreparation !== undefined || this.#moduleInitBatchPreparation !== undefined) {
       this.#fail("module-init-reservation-mismatch", "Prepared module-init was registered more than once");
     }
     if (this.#callablePublication !== undefined || this.#callableComponents.length > 0) {
@@ -891,6 +1104,11 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
           } catch {
             // Preserve the original pre-publication currentness failure.
           }
+          try {
+            this.#moduleInitBatchPreparation?.abort();
+          } catch {
+            // Preserve the original pre-publication currentness failure.
+          }
         }
         throw error;
       }
@@ -961,6 +1179,21 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
           preparedBeforeDirectBodies: true,
           publicationPhase: "before-direct-bodies",
         });
+      } else if (this.#moduleInitBatchPreparation) {
+        for (const contributor of this.#moduleInitBatchPreparation.contributors) {
+          if (reservedUnits.has(contributor.unitId)) {
+            this.#fail("duplicate-reservation-unit", `terminal ${contributor.unitId} was reserved twice`);
+          }
+          reservedUnits.add(contributor.unitId);
+          reservations.push({
+            unitId: contributor.unitId,
+            sourceId: contributor.sourceId,
+            routeKind: "module-init",
+            preparedComponentId: contributor.preparedComponentId,
+            preparedBeforeDirectBodies: true,
+            publicationPhase: "before-direct-bodies",
+          });
+        }
       }
       reservations.sort((a, b) => this.#terminalIndex(a.unitId) - this.#terminalIndex(b.unitId));
       const terminalUnitIds = this.#terminalUnits.map((unit) => unit.id);
@@ -996,12 +1229,36 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
         unreservedTerminalUnitIds: Object.freeze(terminalUnitIds.filter((unitId) => !reservedUnits.has(unitId))),
       });
       this.#assertBodyPlan(bodyPlan, callableComponents);
+      // P2A publishes all detached initializer bodies and ABI scopes before
+      // the first ordinary declaration/body visit. The coordinator owns one
+      // all-scope commit; this is deliberately not a per-contributor loop.
+      this.#moduleInitBatchPreparation?.commit();
+      if (this.#moduleInitBatchPreparation) {
+        this.#moduleInitBatchBodySnapshots = new Map(
+          this.#moduleInitBatchPreparation.contributors.map((contributor) => [
+            contributor.unitId,
+            Object.freeze([...contributor.preparedFunction.body]),
+          ]),
+        );
+        this.#moduleInitBatchAdapterInstructions = Object.freeze([
+          ...this.#moduleInitBatchPreparation.adapterFunction.body,
+        ]);
+      }
       if (this.#callablePublication) this.#callablePublication.sealBodyBoundary(bodyPlan);
       else this.#bodyPlan = bodyPlan;
       this.#state = "body-boundary-sealed";
       return this.#bodyPlan;
     } catch (error) {
-      this.#callablePublication?.abort();
+      try {
+        this.#callablePublication?.abort();
+      } catch {
+        // Preserve the original pre-publication body-plan failure.
+      }
+      try {
+        this.#moduleInitBatchPreparation?.abort();
+      } catch {
+        // Preserve the original pre-publication body-plan failure.
+      }
       if (this.#state !== "failed") this.#state = "failed";
       throw error;
     }
@@ -1014,33 +1271,48 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       // Module-init mode is graph-owned. Once M2 admits one contributor, every
       // source pass uses prepared mode; the final semantic source must never
       // fall back to the old `full` pass and mint/replace a second slot.
-      const effectiveModuleInitMode: ModuleInitMode = this.#moduleInitPreparation ? "prepared" : moduleInitMode;
+      const preparedModuleInit = this.#moduleInitPreparation;
+      const batchContributor = this.#moduleInitBatchPreparation?.contributors.find(
+        (contributor) => contributor.sourceFile === sourceFile,
+      );
+      const hasPreparedModuleInit = preparedModuleInit !== undefined || this.#moduleInitBatchPreparation !== undefined;
+      const effectiveModuleInitMode: ModuleInitMode = hasPreparedModuleInit ? "prepared" : moduleInitMode;
       const moduleInitRouting =
-        this.#moduleInitPreparation?.sourceFile === sourceFile
+        preparedModuleInit?.sourceFile === sourceFile
           ? {
               skipBody: true,
               preserveSkippedBody: true,
               skippedNames: [],
               exactSourceFile: sourceFile,
-              exactUnitId: this.#moduleInitPreparation.unitId,
+              exactUnitId: preparedModuleInit.unitId,
               skippedUnitIds: [],
             }
-          : undefined;
+          : batchContributor
+            ? {
+                skipBody: true,
+                preserveSkippedBody: true,
+                skippedNames: [],
+                exactSourceFile: sourceFile,
+                exactUnitId: batchContributor.unitId,
+                skippedUnitIds: [],
+              }
+            : undefined;
       compileMultiPreparedScalarLeafDeclarations(this.#ctx, sourceFile, state, effectiveModuleInitMode, {
         skipBodies: this.#callableSkipNames(sourceFile),
         preserveBodies: this.#callableSkipNames(sourceFile),
         skipBodyUnitIds: this.#callableSkipUnitIds(sourceFile),
         preserveBodyUnitIds: this.#callableSkipUnitIds(sourceFile),
         onSkippedUnitIds: (unitIds) => this.#recordCallableSkippedUnitIds(sourceFile, unitIds),
-        ...(this.#moduleInitPreparation
+        ...(hasPreparedModuleInit
           ? {
               moduleInitBodyRouting: moduleInitRouting,
             }
           : {}),
       });
-      if (this.#moduleInitPreparation) {
+      if (hasPreparedModuleInit) {
+        const expectedUnitId = preparedModuleInit?.unitId ?? batchContributor?.unitId;
         if (moduleInitRouting?.skippedUnitIds?.length === 1) {
-          if (moduleInitRouting.skippedUnitIds[0] !== this.#moduleInitPreparation.unitId) {
+          if (moduleInitRouting.skippedUnitIds[0] !== expectedUnitId) {
             this.#fail(
               "module-init-body-skip-mismatch",
               `source ${sourceFile.fileName} skipped a foreign module-init unit`,
@@ -1230,6 +1502,43 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   /** Assert the Prepared body and exact ABI slot before intentional startup wrapping. */
   assertPreparedModuleInitCurrent(): void {
     this.#requireState("routes-complete");
+    const batch = this.#moduleInitBatchPreparation;
+    if (batch) {
+      if (process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_BODY === "1") {
+        const first = batch.contributors[0];
+        if (first) first.preparedFunction.body = [{ op: "unreachable" }];
+      }
+      const registry = this.#ctx.programAbiModuleInitCallables;
+      const unitIds = batch.contributors.map(({ unitId }) => unitId);
+      const adapter = registry?.preparedGraphAdapterInfo;
+      if (
+        !registry ||
+        !sameArray(registry.preparedExactUnitIdVector, unitIds) ||
+        !adapter ||
+        adapter.handle !== batch.adapterHandle ||
+        adapter.func !== batch.adapterFunction ||
+        !sameArray(adapter.unitIds, unitIds) ||
+        this.#moduleInitBatchAdapterInstructions === undefined ||
+        !sameIdentityArray(adapter.func.body, this.#moduleInitBatchAdapterInstructions)
+      ) {
+        this.#fail("module-init-startup-mismatch", "Prepared initializer batch changed before startup finalization");
+      }
+      for (const contributor of batch.contributors) {
+        const expected = this.#moduleInitBatchBodySnapshots.get(contributor.unitId);
+        if (
+          registry.functionForUnit(contributor.unitId) !== contributor.preparedFunction ||
+          registry.handleForUnit(contributor.unitId) !== contributor.preparedHandle ||
+          expected === undefined ||
+          !sameIdentityArray(contributor.preparedFunction.body, expected)
+        ) {
+          this.#fail(
+            "module-init-startup-mismatch",
+            `Prepared initializer ${contributor.unitId} changed before startup finalization`,
+          );
+        }
+      }
+      return;
+    }
     const preparation = this.#moduleInitPreparation;
     if (!preparation) return;
     if (process.env.JS2WASM_TEST_MUTATE_MULTI_PREPARED_MODULE_INIT_BODY === "1") {
@@ -1252,6 +1561,62 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   /** Finalize the exact retained module-init slot after all source passes. */
   finalizePreparedModuleInitStartup(): void {
     this.#requireState("routes-complete");
+    const batch = this.#moduleInitBatchPreparation;
+    if (batch) {
+      if (this.#moduleInitFinalized) {
+        this.#fail("module-init-startup-mismatch", "Prepared initializer batch startup was finalized twice");
+      }
+      this.assertPreparedModuleInitCurrent();
+      const registry = this.#ctx.programAbiModuleInitCallables;
+      const adapter = registry?.preparedGraphAdapterInfo;
+      if (
+        !registry ||
+        !adapter ||
+        adapter.handle !== batch.adapterHandle ||
+        adapter.func !== batch.adapterFunction ||
+        adapter.func.body.length !== batch.contributors.length
+      ) {
+        this.#fail("module-init-startup-mismatch", "Prepared initializer batch lost its exact startup adapter");
+      }
+      const exportModuleInit = this.#ctx.deferTopLevelInit;
+      if (exportModuleInit) {
+        if (this.#ctx.mod.startFuncIdx !== undefined) {
+          this.#fail("module-init-startup-mismatch", "Prepared deferred initializer batch already has a start adapter");
+        }
+        adapter.func.exported = true;
+        this.#ctx.mod.exports = this.#ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
+        this.#ctx.mod.exports.push({
+          name: "__module_init",
+          desc: { kind: "func", index: batch.adapterHandle },
+        });
+      } else {
+        if (this.#ctx.mod.startFuncIdx !== undefined && this.#ctx.mod.startFuncIdx !== batch.adapterHandle) {
+          this.#fail("module-init-startup-mismatch", "Prepared initializer start adapter points at a foreign function");
+        }
+        this.#ctx.mod.startFuncIdx = batch.adapterHandle;
+      }
+      if (process.env.JS2WASM_TEST_MODULE_INIT_DOUBLE_ADAPTER === "1") {
+        if (exportModuleInit) this.#ctx.mod.startFuncIdx = batch.adapterHandle;
+        else this.#ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: batch.adapterHandle } });
+      }
+      const exportedAliases = this.#ctx.mod.exports.filter(
+        (entry) =>
+          entry.name === "__module_init" && entry.desc.kind === "func" && entry.desc.index === batch.adapterHandle,
+      ).length;
+      const startsOnInstantiation = this.#ctx.mod.startFuncIdx === batch.adapterHandle;
+      if (
+        (exportModuleInit && (exportedAliases !== 1 || startsOnInstantiation)) ||
+        (!exportModuleInit && (exportedAliases !== 0 || !startsOnInstantiation))
+      ) {
+        this.#fail(
+          "module-init-startup-mismatch",
+          `Prepared initializer batch must have exactly one ${exportModuleInit ? "deferred export" : "wasm start"} adapter`,
+        );
+      }
+      this.#ctx.mod.hasTopLevelStatements = true;
+      this.#moduleInitFinalized = true;
+      return;
+    }
     const preparation = this.#moduleInitPreparation;
     if (!preparation) return;
     if (this.#moduleInitFinalized) {
@@ -1333,6 +1698,7 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
       this.#assertBodyPlan();
       for (const snapshot of this.#routeSnapshots) this.#assertRouteSnapshot(snapshot);
       const moduleInitAudit = this.#moduleInitAudit();
+      const moduleInitPreclaimGaps = this.#ctx.irProgramPreparedModuleInitBatchPreclaimGaps;
       const audit: MultiPreparedProgramAudit = Object.freeze({
         schema: "multi-prepared-program-audit-v1",
         bodyPlan: this.#bodyPlan!,
@@ -1340,6 +1706,18 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
         overlaySourceIds: Object.freeze([...this.#overlaySourceIds]),
         abiSessionBound: true,
         moduleInitCensus: this.#moduleInitCensusProjection!,
+        ...(moduleInitPreclaimGaps
+          ? {
+              moduleInitPreclaimGaps: Object.freeze(
+                [...moduleInitPreclaimGaps.entries()].map(([sourceFile, gaps]) =>
+                  Object.freeze({
+                    sourceId: this.#sourceId(sourceFile),
+                    gaps: Object.freeze([...gaps]),
+                  }),
+                ),
+              ),
+            }
+          : {}),
         ...(moduleInitAudit ? { moduleInit: moduleInitAudit } : {}),
       });
       this.#publication = publication;
@@ -1720,6 +2098,24 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   }
 
   #assertAllModuleInitBodySkips(): void {
+    if (this.#moduleInitBatchPreparation) {
+      const expected = new Set(this.#moduleInitBatchPreparation.contributors.map(({ sourceFile }) => sourceFile));
+      if (
+        this.#moduleInitSkippedSourceFiles.size !== expected.size ||
+        [...expected].some((source) => !this.#moduleInitSkippedSourceFiles.has(source))
+      ) {
+        this.#fail(
+          "module-init-body-skip-mismatch",
+          "Prepared initializer batch was not skipped exactly once by every contributor source",
+        );
+      }
+      for (const sourcePlan of this.#moduleInitBatchPreparation.sourcePlans) {
+        if (!sourcePlan.executable && sourcePlan.unitId !== null) {
+          this.#fail("module-init-plan-mismatch", `empty source ${sourcePlan.sourceId} retained a module-init unit`);
+        }
+      }
+      return;
+    }
     const preparation = this.#moduleInitPreparation;
     if (!preparation) return;
     if (
@@ -1739,6 +2135,49 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   }
 
   #recordModuleInitIrTelemetry(): void {
+    const batch = this.#moduleInitBatchPreparation;
+    if (batch) {
+      if (this.#moduleInitTelemetryRecorded) return;
+      if (!this.#ctx.irCompiledFuncs?.includes("<module-init>")) {
+        this.#ctx.irCompiledFuncs = [...(this.#ctx.irCompiledFuncs ?? []), "<module-init>"];
+      }
+      const outcomes = this.#ctx.irOutcomes;
+      if (outcomes) {
+        const target: IrObservedOutcome["target"] = this.#ctx.wasi
+          ? "wasi"
+          : this.#ctx.standalone
+            ? "standalone"
+            : "gc";
+        for (const contributor of batch.contributors) {
+          const terminal = this.#terminalMap.get(contributor.unitId);
+          if (!terminal)
+            this.#fail("module-init-reservation-mismatch", `missing module-init terminal ${contributor.unitId}`);
+          if (outcomes.some((outcome) => outcome.unitId === contributor.unitId || outcome.key === terminal.legacyKey)) {
+            this.#fail("module-init-reservation-mismatch", `module-init ${contributor.unitId} already has an outcome`);
+          }
+          outcomes.push({
+            key: terminal.legacyKey,
+            sourceId: terminal.sourceId,
+            unitId: terminal.id,
+            file: contributor.sourceFile.fileName,
+            unitKind: terminal.observedKind,
+            displayName: terminal.displayName,
+            ordinal: terminal.legacyOrdinal,
+            line: terminal.line,
+            column: terminal.column,
+            backend: "wasmgc",
+            target,
+            legacyBodyEmitted: false,
+            irBodyEmitted: true,
+            preparedComponentId: contributor.preparedComponentId,
+            kind: "emitted",
+            stage: "patch",
+          });
+        }
+      }
+      this.#moduleInitTelemetryRecorded = true;
+      return;
+    }
     const preparation = this.#moduleInitPreparation;
     if (!preparation || this.#moduleInitTelemetryRecorded) return;
     const terminal = this.#terminalMap.get(preparation.unitId);
@@ -1775,6 +2214,41 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
   }
 
   #moduleInitAudit(): MultiPreparedProgramModuleInitAudit | undefined {
+    const batch = this.#moduleInitBatchPreparation;
+    if (batch) {
+      const directCompileModuleInitBodyRoots =
+        this.#ctx.irBodyRouteAuditSession?.countRoots("compileModuleInitBody") ?? 0;
+      if (directCompileModuleInitBodyRoots !== 0) {
+        this.#fail(
+          "module-init-body-skip-mismatch",
+          `Prepared initializer batch recorded ${directCompileModuleInitBodyRoots} direct body roots`,
+        );
+      }
+      return Object.freeze({
+        schema: "multi-prepared-program-module-init-audit-v1" as const,
+        sourcePlans: Object.freeze(
+          batch.sourcePlans.map((plan) =>
+            Object.freeze({
+              sourceId: plan.sourceId,
+              unitId: plan.unitId,
+              executable: plan.executable,
+              evaluationCount: plan.evaluationCount,
+            }),
+          ),
+        ),
+        executablePlanCount: batch.contributors.length,
+        emptyPlanCount: batch.sourcePlans.filter((plan) => !plan.executable).length,
+        contributorSourceIds: Object.freeze(batch.contributors.map(({ sourceId }) => sourceId)),
+        contributorUnitIds: Object.freeze(batch.contributors.map(({ unitId }) => unitId)),
+        preparedComponentIds: batch.preparedComponentIds,
+        resourceArtifactUnitIds: batch.resourceCensus.artifactUnitIds,
+        resourceFeatureIds: batch.resourceCensus.features,
+        resourceProviderIds: batch.resourceCensus.providerIds,
+        invocationKind: batch.invocationKind,
+        directCompileModuleInitBodyRoots,
+        irBodyEmissions: batch.contributors.length,
+      });
+    }
     const preparation = this.#moduleInitPreparation;
     if (!preparation) return undefined;
     const directCompileModuleInitBodyRoots =
@@ -1880,7 +2354,18 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
               publicationPhase: "before-direct-bodies" as const,
             },
           ]
-        : []),
+        : this.#moduleInitBatchPreparation
+          ? this.#moduleInitBatchPreparation.contributors.map(
+              (contributor): MultiPreparedProgramReservation => ({
+                unitId: contributor.unitId,
+                sourceId: contributor.sourceId,
+                routeKind: "module-init",
+                preparedComponentId: contributor.preparedComponentId,
+                preparedBeforeDirectBodies: true,
+                publicationPhase: "before-direct-bodies",
+              }),
+            )
+          : []),
     ].sort((a, b) => this.#terminalIndex(a.unitId) - this.#terminalIndex(b.unitId));
     const reserved = new Set(expectedReservations.map((reservation) => reservation.unitId));
     if (
@@ -2028,6 +2513,13 @@ export class MultiPreparedProgramOwner<Plan extends MultiPreparedScalarLeafPlan 
     assertMultiPreparedModuleInitCensusCurrent(this.#moduleInitCensus);
     if (this.#ctx.irProgramPreparedModuleInitUnitId !== this.#moduleInitPreparation?.unitId) {
       this.#fail("module-init-reservation-mismatch", "module-init owner marker changed after exact registration");
+    }
+    if (
+      !sameSet(this.#ctx.irProgramPreparedModuleInitUnitIds ?? new Set<IrUnitId>(), [
+        ...(this.#moduleInitBatchPreparation?.contributors.map(({ unitId }) => unitId) ?? []),
+      ])
+    ) {
+      this.#fail("module-init-reservation-mismatch", "module-init batch owner marker changed after exact registration");
     }
     if (
       !sameSet(this.#ctx.irProgramCallablePreparedUnitIds ?? new Set<IrUnitId>(), [

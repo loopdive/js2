@@ -5188,7 +5188,11 @@ export interface ModuleInitBodyCompileRouting {
  * Direct fallback later fills this same object; successful preparation keeps
  * the IR body in place, so both routes preserve one exact startup handle.
  */
-export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: ts.SourceFile): void {
+export function preallocateModuleInitCallable(
+  ctx: CodegenContext,
+  sourceFile: ts.SourceFile,
+  options?: { readonly publishDeferredExport?: boolean },
+): void {
   let initFunc = ctx.programAbiModuleInitCallables?.functionForSource(sourceFile);
   let initFuncIdx = ctx.programAbiModuleInitCallables?.handleForSource(sourceFile);
   if (!initFunc || initFuncIdx === undefined) {
@@ -5207,7 +5211,7 @@ export function preallocateModuleInitCallable(ctx: CodegenContext, sourceFile: t
   // that alias before prepared-component sealing so final export planning does
   // not discover a new alias into an already sealed scope. The later direct
   // declaration pass replaces this same-name entry with the same handle.
-  if (ctx.deferTopLevelInit && !ctx.wasi) {
+  if (ctx.deferTopLevelInit && !ctx.wasi && options?.publishDeferredExport !== false) {
     initFunc.exported = true;
     ctx.mod.exports = ctx.mod.exports.filter((entry) => entry.name !== "__module_init");
     ctx.mod.exports.push({ name: "__module_init", desc: { kind: "func", index: initFuncIdx } });
