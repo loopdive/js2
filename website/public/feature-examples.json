@@ -23486,7 +23486,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">class</span><span style=\"color:#FFCB6B\"> Point</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#F07178\">  x</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#F07178\">  y</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">  constructor</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">x</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#BABED8;font-style:italic\"> y</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">)</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">    this.</span><span style=\"color:#BABED8\">x</span><span style=\"color:#89DDFF\"> =</span><span style=\"color:#BABED8\"> x</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">    this.</span><span style=\"color:#BABED8\">y</span><span style=\"color:#89DDFF\"> =</span><span style=\"color:#BABED8\"> y</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">  }</span></span>\n<span class=\"line\"><span style=\"color:#F07178\">  dist</span><span style=\"color:#89DDFF\">():</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\"> {</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span><span style=\"color:#BABED8\"> Math</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">sqrt</span><span style=\"color:#F07178\">(</span><span style=\"color:#89DDFF\">this.</span><span style=\"color:#BABED8\">x</span><span style=\"color:#89DDFF\"> *</span><span style=\"color:#89DDFF\"> this.</span><span style=\"color:#BABED8\">x</span><span style=\"color:#89DDFF\"> +</span><span style=\"color:#89DDFF\"> this.</span><span style=\"color:#BABED8\">y</span><span style=\"color:#89DDFF\"> *</span><span style=\"color:#89DDFF\"> this.</span><span style=\"color:#BABED8\">y</span><span style=\"color:#F07178\">)</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">  }</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF\">}</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $Point_dist</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#C792EA\">param</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#FFCB6B\">ref</span><span style=\"color:#BABED8\"> null </span><span style=\"color:#F78C6C\">4</span><span style=\"color:#BABED8\">)) (</span><span style=\"color:#C792EA\">result</span><span style=\"color:#FFCB6B\"> f64</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    struct</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 4</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    struct</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 4</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.mul</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    struct</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 4</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    struct</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 4</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.mul</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.add</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.sqrt</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    return</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 3760,
+      "passCount": 3766,
       "totalCount": 4581,
       "tests": [
         {
@@ -26499,7 +26499,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 617,
+          "pass": 619,
           "total": 752
         },
         {
@@ -26554,7 +26554,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 362,
+          "pass": 366,
           "total": 397
         }
       ]
@@ -34993,7 +34993,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> nums </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> [</span><span style=\"color:#F78C6C\">1</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#F78C6C\"> 2</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#F78C6C\"> 3</span><span style=\"color:#BABED8\">]</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> doubled </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> nums</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">map</span><span style=\"color:#BABED8\">(</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">x</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">)</span><span style=\"color:#C792EA\"> =></span><span style=\"color:#BABED8\"> x </span><span style=\"color:#89DDFF\">*</span><span style=\"color:#F78C6C\"> 2</span><span style=\"color:#BABED8\">)</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> sum </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> nums</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">reduce</span><span style=\"color:#BABED8\">(</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">a</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#BABED8;font-style:italic\"> b</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">)</span><span style=\"color:#C792EA\"> =></span><span style=\"color:#BABED8\"> a </span><span style=\"color:#89DDFF\">+</span><span style=\"color:#BABED8\"> b</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#F78C6C\"> 0</span><span style=\"color:#BABED8\">)</span><span style=\"color:#89DDFF\">;</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $__closure_0</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#FFCB6B\">type</span><span style=\"color:#F78C6C\"> 6</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.mul</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2191,
+      "passCount": 2190,
       "totalCount": 3161,
       "tests": [
         {
@@ -38046,7 +38046,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 1636,
+          "pass": 1635,
           "total": 2250
         }
       ]
@@ -56911,7 +56911,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> id </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#82AAFF\"> Symbol</span><span style=\"color:#BABED8\">(</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#C3E88D\">id</span><span style=\"color:#89DDFF\">\"</span><span style=\"color:#BABED8\">)</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> desc </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> id</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#BABED8\">description</span><span style=\"color:#89DDFF\">;</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $__module_init</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 5</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    i32</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    i32</span><span style=\"color:#89DDFF\">.add</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 5</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 5</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    call</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 5</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    call</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    call</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 3</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1449,
+      "passCount": 1450,
       "totalCount": 1955,
       "tests": [
         {
@@ -57524,7 +57524,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 926,
+      "passCount": 928,
       "totalCount": 1106,
       "tests": [
         {
@@ -77302,7 +77302,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> big </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#F78C6C\"> 9007199254740993</span><span style=\"color:#C792EA\">n</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> sum </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> big </span><span style=\"color:#89DDFF\">+</span><span style=\"color:#F78C6C\"> 1</span><span style=\"color:#C792EA\">n</span><span style=\"color:#89DDFF\">;</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $__module_init</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    i64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 9007199254740993</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    i64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    i64</span><span style=\"color:#89DDFF\">.add</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    global</span><span style=\"color:#89DDFF\">.set</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 834,
+      "passCount": 839,
       "totalCount": 1048,
       "tests": [
         {
@@ -81691,7 +81691,7 @@
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> nums </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> [</span><span style=\"color:#F78C6C\">1</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#F78C6C\"> 2</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#F78C6C\"> 3</span><span style=\"color:#89DDFF\">,</span><span style=\"color:#F78C6C\"> 4</span><span style=\"color:#BABED8\">]</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> last </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> nums</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">findLast</span><span style=\"color:#BABED8\">(</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">x</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">)</span><span style=\"color:#C792EA\"> =></span><span style=\"color:#BABED8\"> x </span><span style=\"color:#89DDFF\">%</span><span style=\"color:#F78C6C\"> 2</span><span style=\"color:#89DDFF\"> ===</span><span style=\"color:#F78C6C\"> 0</span><span style=\"color:#BABED8\">)</span><span style=\"color:#89DDFF\">;</span></span>\n<span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> lastIdx </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> nums</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">findLastIndex</span><span style=\"color:#BABED8\">(</span><span style=\"color:#89DDFF\">(</span><span style=\"color:#BABED8;font-style:italic\">x</span><span style=\"color:#89DDFF\">:</span><span style=\"color:#FFCB6B\"> number</span><span style=\"color:#89DDFF\">)</span><span style=\"color:#C792EA\"> =></span><span style=\"color:#BABED8\"> x </span><span style=\"color:#89DDFF\">%</span><span style=\"color:#F78C6C\"> 2</span><span style=\"color:#89DDFF\"> ===</span><span style=\"color:#F78C6C\"> 0</span><span style=\"color:#BABED8\">)</span><span style=\"color:#89DDFF\">;</span></span></code></pre>",
       "watHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#BABED8\">(</span><span style=\"color:#FFCB6B\">func</span><span style=\"color:#82AAFF\"> $__closure_0</span><span style=\"color:#BABED8\"> (</span><span style=\"color:#FFCB6B\">type</span><span style=\"color:#F78C6C\"> 6</span><span style=\"color:#BABED8\">)</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    local</span><span style=\"color:#89DDFF\">.get</span><span style=\"color:#F78C6C\"> 1</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 2</span></span>\n<span class=\"line\"><span style=\"color:#89DDFF;font-style:italic\">    call</span><span style=\"color:#F78C6C\"> 4</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.const</span><span style=\"color:#F78C6C\"> 0</span></span>\n<span class=\"line\"><span style=\"color:#FFCB6B\">    f64</span><span style=\"color:#89DDFF\">.eq</span></span>\n<span class=\"line\"><span style=\"color:#BABED8\">  )</span></span></code></pre>",
       "testCategories": ["built-ins/Array/prototype/findLast", "built-ins/Array/prototype/findLastIndex"],
-      "passCount": 77,
+      "passCount": 79,
       "totalCount": 109,
       "tests": [],
       "testsTruncated": false
@@ -81713,7 +81713,7 @@
         "built-ins/Array/prototype/toReversed",
         "built-ins/Array/prototype/toSpliced"
       ],
-      "passCount": 101,
+      "passCount": 102,
       "totalCount": 132,
       "tests": [],
       "testsTruncated": false
@@ -86356,7 +86356,7 @@
       "compileSuccess": false,
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> now </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> Temporal</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#BABED8\">Now</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">plainDateTimeISO</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#464B5D;font-style:italic\"> // not supported</span></span></code></pre>",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 2564,
+      "passCount": 2560,
       "totalCount": 4603,
       "tests": [
         {
@@ -89364,7 +89364,7 @@
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 2564,
+          "pass": 2560,
           "total": 4603
         }
       ]

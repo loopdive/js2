@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4317,
+      "passCount": 4327,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -584,7 +584,7 @@
         },
         {
           "edition": "ES2015",
-          "pass": 638,
+          "pass": 644,
           "total": 752
         },
         {
@@ -634,12 +634,12 @@
         },
         {
           "edition": "ES2027",
-          "pass": 48,
+          "pass": 46,
           "total": 55
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 355,
+          "pass": 361,
           "total": 397
         }
       ]
@@ -647,7 +647,7 @@
     {
       "name": "Strings",
       "testCategories": ["built-ins/String", "built-ins/StringIteratorPrototype"],
-      "passCount": 1125,
+      "passCount": 1128,
       "totalCount": 1230,
       "editionSpread": [
         {
@@ -697,7 +697,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 61,
+          "pass": 64,
           "total": 75
         }
       ]
@@ -796,7 +796,7 @@
         "built-ins/AggregateError",
         "built-ins/SuppressedError"
       ],
-      "passCount": 142,
+      "passCount": 143,
       "totalCount": 234,
       "editionSpread": [
         {
@@ -831,7 +831,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 16,
+          "pass": 17,
           "total": 24
         }
       ]
@@ -897,7 +897,7 @@
     {
       "name": "Regular expressions",
       "testCategories": ["built-ins/RegExp", "built-ins/RegExpStringIteratorPrototype"],
-      "passCount": 1674,
+      "passCount": 1675,
       "totalCount": 1896,
       "editionSpread": [
         {
@@ -942,7 +942,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 28,
+          "pass": 29,
           "total": 33
         }
       ]
@@ -1061,7 +1061,7 @@
         "language/expressions/new",
         "language/expressions/new.target"
       ],
-      "passCount": 368,
+      "passCount": 370,
       "totalCount": 461
     },
     {
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1408,
+      "passCount": 1415,
       "totalCount": 1955
     },
     {
@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 933,
+      "passCount": 934,
       "totalCount": 1106
     },
     {
@@ -1151,7 +1151,7 @@
     {
       "name": "Proxy / Reflect",
       "testCategories": ["built-ins/Proxy", "built-ins/Reflect"],
-      "passCount": 804,
+      "passCount": 822,
       "totalCount": 1072
     },
     {
@@ -1240,7 +1240,7 @@
     {
       "name": "BigInt",
       "testCategories": ["built-ins/BigInt"],
-      "passCount": 539,
+      "passCount": 540,
       "totalCount": 1048
     },
     {
