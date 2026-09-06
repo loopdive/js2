@@ -1773,8 +1773,8 @@ export function compileCallablePropertyCall(
     }
   }
 
-  // Field is externref — try to find or create matching closure wrapper types
-  if (fieldType.kind === "externref") {
+  // Field is externref, or the `eqref` own-`valueOf`/`toString` carrier (#4394/#5342 cause B).
+  if (fieldType.kind === "externref" || fieldType.kind === "eqref") {
     const resultTypes = sigRetWasm ? [sigRetWasm] : [];
     const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, sigParamWasmTypes, resultTypes);
 
@@ -1843,7 +1843,7 @@ export function compileCallablePropertyCall(
           typeIdx: selfTypeIdx,
         };
         const closureLocal = allocLocal(fctx, `__cprop_ext_${fctx.locals.length}`, closureRefType);
-        fctx.body.push({ op: "any.convert_extern" });
+        if (fieldType.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
         emitGuardedRefCast(fctx, selfTypeIdx);
         fctx.body.push({ op: "local.set", index: closureLocal });
 
@@ -1899,7 +1899,7 @@ export function compileCallablePropertyCall(
       // intact (mirrors calls.ts #2174).
       const rootRefType: ValType = { kind: "ref_null", typeIdx: rootIdx };
       const closureLocal = allocLocal(fctx, `__cprop_ext_${fctx.locals.length}`, rootRefType);
-      fctx.body.push({ op: "any.convert_extern" });
+      if (fieldType.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
       emitGuardedRefCast(fctx, rootIdx);
       fctx.body.push({ op: "local.set", index: closureLocal });
 
