@@ -399,3 +399,231 @@ describe("#5349 round 2 — the packed-byte carrier is branded by FINALITY", () 
     ).toBe(320);
   });
 });
+
+describe("#5349 round 3 — every site that relied on the two byte vecs being ONE type", () => {
+  // Round 2's brand made `$__vec_i8_byte` and `$__vec_i32_byte` distinct
+  // canonical types. Three emitters had been written against their identity: a
+  // `ref.cast $__vec_i32_byte` on a Uint8Array used to succeed (aliasing the
+  // view's bytes as a buffer) and a `ref.test $__vec_i32_byte` on one used to
+  // answer TRUE. With the brand the first TRAPS and the second misdispatches.
+  // Each case below names node 22's answer, main's, and round 2's.
+
+  it("X1 a reassigned binding: `new Uint8Array(b).length` (node 4, main 0, r2 TRAP)", async () => {
+    // `nativeBufferBuiltinOf` reads only the declaration initializer, so it
+    // still answers "ArrayBuffer" after `b = new Uint8Array(4)`.
+    expect(await runStandalone(`var b=new ArrayBuffer(4); b=new Uint8Array(4); return new Uint8Array(b).length;`)).toBe(
+      4,
+    );
+  });
+
+  it("X1 a rewritten array element (node 4, main 0, r2 TRAP)", async () => {
+    // Here the wrong provenance comes from the checker's ELEMENT type, which no
+    // binding-level value-set analysis could have caught.
+    expect(
+      await runStandalone(`var xs=[new ArrayBuffer(4)]; xs[0]=new Uint8Array(4); return new Uint8Array(xs[0]).length;`),
+    ).toBe(4);
+  });
+
+  it("X1 reassign then write through the view (node 49, main 49, r2 TRAP)", async () => {
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(4); b=new Uint8Array(4); b[0]=9; var v=new Uint8Array(b); return v.length*10+v[0];`,
+      ),
+    ).toBe(49);
+  });
+
+  it("X3 an erased typed-array source through a helper (node 3, main 3, r2 0)", async () => {
+    expect(await runStandalone(`function mk(x){ return new Uint8Array(x) } return mk(new Uint8Array(3)).length;`)).toBe(
+      3,
+    );
+  });
+
+  it("X3 one helper called with BOTH a buffer and a view (node 442, main 442, r2 400)", async () => {
+    expect(
+      await runStandalone(
+        `function mk(buf){ return new Uint8Array(buf) }
+         var ab=new ArrayBuffer(4); var a=mk(ab); a[0]=1;
+         var u=new Uint8Array(4); u[1]=2; var b=mk(u);
+         return a.length*100+b.length*10+b[1];`,
+      ),
+    ).toBe(442);
+  });
+
+  it("X3 the erased view keeps its elements (node 33, main 33, r2 0)", async () => {
+    expect(
+      await runStandalone(
+        `function mk(x){ return new Uint8Array(x) }
+         var u=new Uint8Array(3); u[0]=1;u[1]=2;u[2]=3; var c=mk(u); return c.length*10+c[2];`,
+      ),
+    ).toBe(33);
+  });
+
+  it("X3 the erased source is COPIED, not aliased (node 313, main 393, r2 110)", async () => {
+    // main's 393 is the masked bug: the write through `v` reached `u`.
+    expect(
+      await runStandalone(
+        `function id(x){ return x }
+         var u=new Uint8Array(3); u[0]=1;u[1]=2;u[2]=3;
+         var x=id(u); var v=new Uint8Array(x); v[0]=9;
+         return v.length*100+u[0]*10+v[2];`,
+      ),
+    ).toBe(313);
+  });
+
+  it("X3 copy-not-alias, minimal (node 1)", async () => {
+    expect(await runStandalone(`var u=new Uint8Array([1,2]); var c=new Uint8Array(u); c[0]=9; return u[0];`)).toBe(1);
+  });
+
+  it("X3 `new Int32Array(u8)` copies ELEMENT-wise (node 8, main 2, r2 0)", async () => {
+    // main's 2 came from reinterpreting the 8 bytes as a buffer.
+    expect(
+      await runStandalone(`function id(x){ return x } var u=new Uint8Array(8); return new Int32Array(id(u)).length;`),
+    ).toBe(8);
+  });
+
+  it("X3 the testWithTypedArrayConstructors harness idiom (node 333, main 331, r2 0)", async () => {
+    expect(
+      await runStandalone(
+        `function testWithTypedArrayConstructors(f){ var cs=[Uint8Array, Int8Array, Int16Array]; var r=0;
+           for(var i=0;i<cs.length;i++){ r=r*10+f(cs[i]); } return r; }
+         return testWithTypedArrayConstructors(function(TA){ var s=new Uint8Array([1,2,3]); return new TA(s).length; });`,
+      ),
+    ).toBe(333);
+  });
+
+  for (const kind of [
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float32Array",
+    "Float64Array",
+  ]) {
+    it(`X3 \`new ${kind}(u8)\` through an erased binding copies all 3 elements (node 3)`, async () => {
+      expect(
+        await runStandalone(
+          `function id(x){ return x } var u=new Uint8Array([1,2,3]); return new ${kind}(id(u)).length;`,
+        ),
+      ).toBe(3);
+    });
+  }
+
+  it("keeps the buffer arm an ALIAS: `new Uint8Array(ab)` still shares ab's bytes", async () => {
+    // The i32_byte arm must NOT become a copy — this is the case the erased
+    // path was originally written for (#5194 copyIntoArrayBuffer).
+    expect(
+      await runStandalone(
+        `function id(x){ return x }
+         var ab=new ArrayBuffer(4); var d=new Uint8Array(ab); d[0]=7;
+         var v=new Uint8Array(id(ab)); v[1]=5;
+         return v.length*100 + v[0]*10 + d[1];`,
+      ),
+    ).toBe(475);
+  });
+
+  it("X2 wasi: process.stdout.write through a reassigned binding writes the bytes", async () => {
+    // Round 2 trapped here (`ref.cast $__vec_i32_byte` on a Uint8Array) BEFORE
+    // fd_write ran; main wrote ABC. Executed against a minimal
+    // wasi_snapshot_preview1 shim that captures fd_write.
+    const result = await compile(
+      `export function run(){ var b=new ArrayBuffer(3); b=new Uint8Array(3);
+         b[0]=65;b[1]=66;b[2]=67; process.stdout.write(b); return 1; }`,
+      { target: "wasi", allowJs: true, skipSemanticDiagnostics: true } as never,
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+    const written: number[] = [];
+    const cell: { memory?: WebAssembly.Memory } = {};
+    const noop = (): number => 0;
+    const imports = {
+      wasi_snapshot_preview1: {
+        fd_write: (_fd: number, iovs: number, n: number, nwritten: number): number => {
+          const view = new DataView(cell.memory!.buffer);
+          const bytes = new Uint8Array(cell.memory!.buffer);
+          let total = 0;
+          for (let i = 0; i < n; i++) {
+            const ptr = view.getUint32(iovs + i * 8, true);
+            const len = view.getUint32(iovs + i * 8 + 4, true);
+            for (let j = 0; j < len; j++) written.push(bytes[ptr + j]!);
+            total += len;
+          }
+          view.setUint32(nwritten, total, true);
+          return 0;
+        },
+        proc_exit: (code: number): never => {
+          throw new Error(`exit ${code}`);
+        },
+        fd_close: noop,
+        fd_seek: noop,
+        fd_read: noop,
+        environ_get: noop,
+        environ_sizes_get: noop,
+        args_get: noop,
+        args_sizes_get: noop,
+        clock_time_get: noop,
+        random_get: noop,
+        path_open: noop,
+        fd_prestat_get: (): number => 8,
+        fd_prestat_dir_name: noop,
+        fd_fdstat_get: noop,
+      },
+    };
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    cell.memory = (instance.exports as { memory: WebAssembly.Memory }).memory;
+    expect((instance.exports as Record<string, () => unknown>).run()).toBe(1);
+    expect(written).toEqual([65, 66, 67]);
+  });
+
+  it("host emission is untouched: the keep-open is gated on the host-free lanes", async () => {
+    // `$__vec_i8_byte` never exists on the JS-host lane, so there is nothing for
+    // `$__vec_i32_byte` to canonicalize against and dropping its `final` bit
+    // only changed bytes. Measured over 102 probes: round 2 moved 70 host
+    // modules, this tree moves 0.
+    const result = await compile(`export function run(){ var ab=new ArrayBuffer(8); return ab.byteLength; }`, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      emitWat: true,
+    } as never);
+    expect(result.success).toBe(true);
+    expect(result.wat ?? "").toContain("(type $__vec_i32_byte (sub final ");
+  });
+
+  it("X3 a BigInt destination from a non-BigInt source is a TypeError (§23.2.5.1.2 step 5; node TypeError, main 0, r2 0)", async () => {
+    // Before this arm the value fell to the count form (0). With the copy arm
+    // and no refusal it produced a length-3 BigInt64Array of numeric bits.
+    expect(
+      await runStandalone(
+        `function id(x){ return x } var u=new Uint8Array([1,2,3]); new BigInt64Array(id(u)); return 0;`,
+      ),
+    ).toBe(1);
+    expect(
+      await runStandalone(
+        `function id(x){ return x } var u=new Uint8Array([1,2,3]); new BigUint64Array(id(u)); return 0;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("X4 `ab.slice` on a reassigned binding (node 4, main 4, r2 TRAP)", async () => {
+    // `emitArrayBufferSlice` recovers its RECEIVER with the same static-provenance
+    // cast. Node runs %TypedArray%.prototype.slice here and returns a Uint8Array;
+    // this emitter can only return a byte buffer, so the shape is still wrong —
+    // but the length matches and it no longer traps.
+    expect(
+      await runStandalone(`var b=new ArrayBuffer(8); b=new Uint8Array(8); var s=b.slice(0,4); return s.length;`),
+    ).toBe(4);
+  });
+
+  it("X4 `.byteLength` on a reassigned binding (node 8, main 8, r2 0)", async () => {
+    // The byteLength probe already had a `ref.test` with a 0 fallback, so the
+    // brand turned it from a right answer into a wrong one rather than a trap.
+    expect(await runStandalone(`var b=new ArrayBuffer(8); b=new Uint8Array(8); return b.byteLength;`)).toBe(8);
+  });
+
+  it("X4 a DataView over a reassigned binding is a TypeError (node TypeError, main 8)", async () => {
+    // The brand IMPROVED this one and round 3 keeps it: main built a DataView
+    // over the Uint8Array's bytes and reported 8.
+    expect(await runStandalone(`var b=new ArrayBuffer(8); b=new Uint8Array(8); new DataView(b); return 0;`)).toBe(1);
+  });
+});

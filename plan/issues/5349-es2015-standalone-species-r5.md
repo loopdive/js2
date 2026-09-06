@@ -56,6 +56,9 @@ func-budget-allow:
   # dispatcher would separate a chain that must be built inside-out in one
   # `liveBodies` scope.
   - src/codegen/dataview-native.ts::emitTaDynCtorConstructFromLocals
+  # 2026-09-06 round 3 audit: +8 for the comment on the `byteLength` probe's new
+  # packed-byte `else` arm (the arm itself is a separate helper function).
+  - src/codegen/property-access-dispatch.ts::tryBufferViewAttributeReads
 ---
 
 ## Problem

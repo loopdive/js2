@@ -450,17 +450,28 @@ export function emitArrayBufferSlice(
     typeIdx: vecTypeIdx,
   });
   const recvType = compileExpr(receiver);
+  // (#5349 r3) Same brand guard as `emitTaViewConstruct`: the receiver was routed
+  // here by a STATIC "ArrayBuffer" answer, which survives a later
+  // `b = new Uint8Array(8)`. The unguarded cast used to succeed on that value by
+  // canonicalization (`b.slice(0,4).length` → 4 on main); with round 2's brand it
+  // TRAPS. Recover a packed-byte receiver as a fresh byte buffer of its own
+  // bytes (`bytes: 1` — no re-encode), which reproduces main's answer without
+  // the trap. Node runs `%TypedArray%.prototype.slice` for that receiver and
+  // returns a Uint8Array, which this emitter cannot produce; the shape mismatch
+  // is a separate, pre-existing gap recorded in #5349.
+  let guarded = false;
   if (recvType && recvType.kind === "externref") {
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    guarded = true;
   } else if (recvType && (recvType.kind === "ref" || recvType.kind === "ref_null")) {
     if ("typeIdx" in recvType && recvType.typeIdx !== vecTypeIdx) {
-      fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+      guarded = true;
     }
   } else {
     return null;
   }
-  fctx.body.push({ op: "local.set", index: srcVecLocal });
+  if (guarded) emitRecoverBufferVecGuarded(ctx, fctx, srcVecLocal, { bytes: 1, signed: false, float: false });
+  else fctx.body.push({ op: "local.set", index: srcVecLocal });
 
   // srcLen = src.length (field 0); srcArr = src.data (field 1).
   const srcLenLocal = allocLocal(fctx, `__abs_srclen_${fctx.locals.length}`, { kind: "i32" });
@@ -3004,9 +3015,18 @@ function emitRecoverBufferVecGuarded(
   desc: { bytes: number; signed: boolean; float: boolean },
 ): void {
   const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
-  // Register the packed-byte carrier unconditionally: a module can construct one
-  // in a function compiled AFTER this site, so "not registered yet" is not proof
-  // that no packed-byte value can reach here.
+  // The JS-host lane never registers `$__vec_i8_byte` (`TYPED_ARRAY_PACKED_STORAGE`
+  // is gated on `wasi || standalone`), so no packed-byte value can reach this
+  // cast there and the guard would only add a type and change bytes. Keep the
+  // bare cast — byte-identical to main on host.
+  if (!noJsHost(ctx)) {
+    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    fctx.body.push({ op: "local.set", index: bufLocal });
+    return;
+  }
+  // Register the packed-byte carrier unconditionally on the host-free lanes: a
+  // module can construct one in a function compiled AFTER this site, so "not
+  // registered yet" is not proof that no packed-byte value can reach here.
   const i8VecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
   const i8ArrIdx = getArrTypeIdxFromVec(ctx, i8VecIdx);
 
@@ -6110,6 +6130,24 @@ export function emitTaDynCtorConstructFromLocals(
       fctx.body.push({ op: "local.get", index: srcVecLocal });
       fctx.body.push({ op: "struct.get", typeIdx: vIdx, fieldIdx: 1 });
       fctx.body.push({ op: "local.set", index: srcDataLocal });
+      if (carrierKey === "i8_byte") {
+        // (#5349 r3) §23.2.5.1.2 step 5: a content-type mismatch between the
+        // source TypedArray and the destination is a TypeError. This carrier is
+        // ALWAYS a non-BigInt typed array, so a BigInt destination (kinds 9/10 —
+        // `BigInt64Array` / `BigUint64Array`) must throw rather than store the
+        // numeric bits. Restricted to this arm: a plain `f64`/`i32` vec is an
+        // ARRAY-like source, where §23.2.5.1.3 applies ToBigInt per element.
+        const bigIntThrow = buildThrowJsErrorInstrs(
+          ctx,
+          "TypeError",
+          "TypeError: Cannot mix BigInt and other types in a TypedArray constructor",
+          { flush: fctx },
+        );
+        fctx.body.push({ op: "local.get", index: kindLocal });
+        fctx.body.push({ op: "i32.const", value: taCtorKindOf("BigInt64Array") });
+        fctx.body.push({ op: "i32.ge_s" });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: bigIntThrow, else: [] });
+      }
       emitAllocViewFromN();
       emitCopyLoop((iLocal) => {
         emitTaPlainVecElementToF64(ctx, fctx, elemType, srcDataLocal, iLocal, srcArrIdx);
