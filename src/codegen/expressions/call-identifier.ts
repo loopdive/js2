@@ -125,6 +125,7 @@ import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
+import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js";
 import {
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
@@ -1402,6 +1403,7 @@ export function compileIdentifierCall(
       const argType = compileExpression(ctx, fctx, strArg0, hostBigIntArg ? { kind: "externref" } : undefined);
 
       if (argType === null) {
+        if (process.env.JS2WASM_DBG5360) console.error("[5360] String() argType===null for", strArg0.getText());
         // String(void-expr) → "undefined"
         return compileStringLiteral(ctx, fctx, "undefined", strArg0) ?? { kind: "externref" };
       }
@@ -1433,12 +1435,20 @@ export function compileIdentifierCall(
       if (argType?.kind === "externref") {
         // Check TS type to determine what this externref actually is
         const argTsType = ctx.checker.getTypeAtLocation(strArg0);
-        if (argTsType.flags & ts.TypeFlags.Null) {
+        // (#5360) …unless that type is the artifact of the argument's OWN
+        // parameter default (`function f(a, b = undefined)`): the slot is
+        // externref precisely because a JS caller can pass anything, so the
+        // null/undefined constant folds below would drop a live value. Fall
+        // through to the dynamic `__extern_toString` arm.
+        const foldableStaticType = !paramUndefinedTypeIsDefaultArtifact(ctx, strArg0);
+        if (process.env.JS2WASM_DBG5360)
+          console.error("[5360] String() externref arm", strArg0.getText(), "foldable=", foldableStaticType);
+        if (foldableStaticType && argTsType.flags & ts.TypeFlags.Null) {
           // Drop the ref.null.extern, push "null" constant (#1470: native-aware)
           fctx.body.push({ op: "drop" });
           return compileStringLiteral(ctx, fctx, "null", strArg0) ?? { kind: "externref" };
         }
-        if (argTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) {
+        if (foldableStaticType && argTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) {
           fctx.body.push({ op: "drop" });
           return compileStringLiteral(ctx, fctx, "undefined", strArg0) ?? { kind: "externref" };
         }
@@ -1456,7 +1466,12 @@ export function compileIdentifierCall(
         // explicit hint also keeps the dispatch table in
         // `__extern_method_call` honest for wasmGC structs that V8
         // can't introspect natively.
-        return emitToString(ctx, fctx, argType, argTsType, "string");
+        //
+        // (#5360) When the static type is a parameter-default artifact, hand
+        // the coercion engine `any` — it applies the SAME null/undefined
+        // constant folds off `staticType`, so passing the checker's
+        // `undefined` here would re-introduce the drop this arm just avoided.
+        return emitToString(ctx, fctx, argType, foldableStaticType ? argTsType : { kind: "any" }, "string");
       }
 
       if (argType?.kind === "ref" || argType?.kind === "ref_null") {
