@@ -40,7 +40,7 @@ import { compileIdentifier } from "../expressions/identifiers.js";
 import { inlinedCalleeHasBoundReceiver } from "../expressions/inlined-call-receiver.js"; // (#4555)
 import { emitUndefined, ensureLateImport, flushLateImportShifts } from "../expressions/late-imports.js";
 import { coerceType } from "../shared.js";
-import { isStrictContext, isStrictFunction } from "./is-strict-function.js";
+import { isModuleSourceFile, isStrictContext, isStrictFunction } from "./is-strict-function.js";
 
 /**
  * True when an unbound `this` at `expr` must evaluate to the global object
@@ -284,6 +284,50 @@ export function receiverIsRealmGlobalObject(
   if (cur.kind === ts.SyntaxKind.ThisKeyword) return thisReceiverIsGlobalObject(ctx, fctx, cur);
   if (!ts.isIdentifier(cur) || cur.text !== "globalThis") return false;
   return fctx.localMap.get("globalThis") === undefined && !ctx.moduleGlobals.has("globalThis");
+}
+
+/**
+ * (#5342) True when `receiver` is the realm global object AND `name`'s wasm
+ * module global IS that object's property of that name — the full precondition
+ * every #4500 Slice A arm needs before it may answer a `globalThis.<name>` /
+ * `this.<name>` access from the module global. Supersedes the bare
+ * `receiverIsRealmGlobalObject` test at those four sites.
+ *
+ * It holds for SCRIPT goal only. §9.1.1.4.18 CreateGlobalVarBinding makes a
+ * script's top-level `var` a property of the global object, which is the whole
+ * reason Slice A exists. §16.2.1.6.4 InitializeEnvironment puts a MODULE's
+ * top-level `var` in the module environment record instead, where it creates
+ * NO global-object property — so in module code the two are different storage
+ * and the access must consult the real object.
+ *
+ * Getting this wrong does not merely lose precision, it INVERTS the program.
+ * The published capability-probe idiom
+ *
+ *     var Symbol = typeof globalThis.Symbol === "function" ? globalThis.Symbol : undefined;
+ *
+ * compiled `globalThis.Symbol` into a read of the not-yet-initialised global
+ * the same statement is defining, so the true arm stored `null`, the shadow
+ * stayed falsy for the rest of the module, and every later `Symbol(...)` /
+ * `Symbol.iterator` read off it was dead. lodash's fixture is exactly this
+ * shape (#5342); jQuery/underscore-era `var Map = ... globalThis.Map ...`
+ * probes are the same idiom.
+ *
+ * Module-ness is read from the RECEIVER's own source file rather than
+ * `ctx.sourceIsModule`, which multi-file linking sets unconditionally, and it
+ * honours `inferModuleStrictArguments === false` — the test262 harness's
+ * synthetic `export function test()` wrapper marks genuinely script-goal
+ * sources as modules, and Slice A's own witnesses (`var p1 = 7; this.p1`) are
+ * script-goal tests that must keep the module-global answer.
+ */
+export function realmGlobalObjectCarriesModuleGlobal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiver: ts.Expression,
+  name: string,
+): boolean {
+  if (!ctx.moduleGlobals.has(name)) return false;
+  if (ctx.inferModuleStrictArguments !== false && isModuleSourceFile(receiver.getSourceFile())) return false;
+  return receiverIsRealmGlobalObject(ctx, fctx, receiver);
 }
 
 /**
