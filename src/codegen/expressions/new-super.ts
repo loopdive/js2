@@ -1293,6 +1293,59 @@ function compileStandaloneSuperPropertyRead(
   return resultType;
 }
 
+/**
+ * (#5350 step 3) Is the class that lexically encloses this `super` reference
+ * declared `extends null`?
+ *
+ * §15.7.14 gives such a class a prototype whose [[Prototype]] IS null, so
+ * `GetSuperBase()` answers null and RequireObjectCoercible throws a TypeError —
+ * unlike a BASE class (no `extends` at all), whose super base is
+ * `Object.prototype` and whose `super.x` must quietly answer `undefined`.
+ * `ctx.classParentMap` cannot tell the two apart (both have no parent NAME), so
+ * the distinction is read off the heritage clause. The walk stops at an object
+ * literal: `super` inside an object-literal method binds to that literal, not
+ * to any class the literal happens to sit in.
+ */
+function enclosingClassExtendsNull(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isObjectLiteralExpression(current)) return false;
+    if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) {
+      const heritage = current.heritageClauses?.find((clause) => clause.token === ts.SyntaxKind.ExtendsKeyword);
+      const heritageExpr = heritage?.types[0]?.expression;
+      return heritageExpr !== undefined && heritageExpr.kind === ts.SyntaxKind.NullKeyword;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+/**
+ * (#5350 step 3) Emit the `class C extends null` super-base TypeError and a
+ * type-shaped value so the enclosing expression stays stack-balanced (the
+ * value is unreachable — the throw precedes it). Returns the result type, or
+ * `undefined` when this is not that shape and the caller keeps its default.
+ */
+function emitSuperExtendsNullThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Node,
+  accessType: ts.Type,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  if (!enclosingClassExtendsNull(expr)) return undefined;
+  emitThrowTypeError(ctx, fctx, "Cannot read properties of null (super base)");
+  const wasmType = resolveWasmType(ctx, accessType);
+  if (wasmType.kind === "f64") {
+    fctx.body.push({ op: "f64.const", value: 0 });
+  } else if (wasmType.kind === "i32") {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  return wasmType;
+}
+
 function compileStandaloneObjectLiteralSuperPropertyRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1465,6 +1518,10 @@ export function compileSuperPropertyAccess(
   if (!parentClassName) {
     // In a base class, super.prop resolves to Object.prototype[prop] — usually undefined.
     const accessType = ctx.checker.getTypeAtLocation(expr);
+    // (#5350 step 3) `extends null` is NOT a base class: its super base is
+    // null, so the read is a TypeError rather than `undefined`.
+    const nullHeritageThrow = emitSuperExtendsNullThrow(ctx, fctx, expr, accessType);
+    if (nullHeritageThrow !== undefined) return nullHeritageThrow;
     const wasmType = resolveWasmType(ctx, accessType);
     if (wasmType.kind === "f64") {
       fctx.body.push({ op: "f64.const", value: 0 });
@@ -1687,6 +1744,9 @@ export function compileSuperElementAccess(
   const parentClassName = ctx.classParentMap.get(currentClassName);
   if (!parentClassName) {
     const accessType2 = ctx.checker.getTypeAtLocation(expr);
+    // (#5350 step 3) Same `extends null` TypeError as the dot form.
+    const nullHeritageThrow2 = emitSuperExtendsNullThrow(ctx, fctx, expr, accessType2);
+    if (nullHeritageThrow2 !== undefined) return nullHeritageThrow2;
     const wasmType2 = resolveWasmType(ctx, accessType2);
     if (wasmType2.kind === "f64") {
       fctx.body.push({ op: "f64.const", value: 0 });
