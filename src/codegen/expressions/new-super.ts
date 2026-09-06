@@ -123,7 +123,13 @@ import { compileStringLiteral } from "../string-ops.js";
 import { canStructurallyProjectRef, coerceType as coerceTypeImpl, pushDefaultValue } from "../type-coercion.js";
 import { ensureDateDaysFromCivilHelper, ensureDateStruct } from "./builtins.js";
 import { emitNativeDateParse } from "../date-parse-native.js"; // (#2164) pure-Wasm new Date(str)
-import { compileSpreadCallArgs, emitLazyClassObjectGet, emitRegisterDynamicClassParent } from "./extern.js";
+import {
+  compileSpreadCallArgs,
+  emitLazyClassObjectGet,
+  emitLazyProtoGet,
+  emitRegisterDynamicClassParent,
+} from "./extern.js";
+import { standaloneClassProtoObjectApplies } from "../class-proto-object.js"; // (#5350 step 1) class [[HomeObject]] gate
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
 import { compileTemporalNewExpression } from "../temporal-native.js";
 import {
@@ -1209,12 +1215,29 @@ function emitSuperBaseCoercibleGuard(ctx: CodegenContext, fctx: FunctionContext)
   fctx.body.push({ op: "local.get", index: baseLocal });
 }
 
-function compileStandaloneObjectLiteralSuperPropertyRead(
+/**
+ * (#5350 step 1) The runtime `super.<name>` read, shared by the object-literal
+ * arm (#4688) and the class-method arm.
+ *
+ * The two differ ONLY in where the [[HomeObject]] and the receiver come from,
+ * so both are injected:
+ *
+ *   - `emitHomeObject` leaves the home object on the stack as an externref and
+ *     returns `false` — having emitted NOTHING — when it cannot. Object
+ *     literals read the synthetic `SUPER_HOME_OBJECT_CAPTURE_NAME` capture; a
+ *     class method materialises `C.prototype` through the #5195 `$Object`
+ *     prototype singleton.
+ *   - `emitReceiver` leaves the §12.3.5.3 step 3 `actualThis`. Object literals
+ *     use `__current_this` (the standalone call carrier); a class method uses
+ *     its own `this` LOCAL, which is the receiver the call actually bound.
+ */
+function compileStandaloneSuperPropertyRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  expr: ts.PropertyAccessExpression | ts.ElementAccessExpression,
   propName: string,
   accessType: ts.Type,
+  emitHomeObject: () => boolean,
+  emitReceiver: () => void,
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
 
@@ -1226,13 +1249,7 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
   const reflectGetReceiverIdx = ctx.funcMap.get("__reflect_get_receiver");
   if (getPrototypeOfIdx === undefined || reflectGetReceiverIdx === undefined) return undefined;
 
-  const currentThisIdx = ensureCurrentThisGlobal(ctx);
-  const homeObjectLocal = fctx.localMap.get(SUPER_HOME_OBJECT_CAPTURE_NAME);
-  // A standalone object-literal method must carry its actual [[HomeObject]].
-  // Falling back to __current_this would make a borrowed method resolve
-  // `super` against the call-time receiver.
-  if (homeObjectLocal === undefined) return undefined;
-  fctx.body.push({ op: "local.get", index: homeObjectLocal });
+  if (!emitHomeObject()) return undefined;
   fctx.body.push({ op: "call", funcIdx: getPrototypeOfIdx });
   // (#5153 C.1) §12.3.5.3 step 5: RequireObjectCoercible(GetSuperBase()). With
   // the home object's [[Prototype]] set to null the read must throw a
@@ -1240,9 +1257,8 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
   emitSuperBaseCoercibleGuard(ctx, fctx);
   fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
   // The property receiver is the call-time `this`, not [[HomeObject]]. This
-  // distinction is observable through inherited accessors on a borrowed
-  // method; `__current_this` is the established standalone call carrier.
-  fctx.body.push({ op: "global.get", index: currentThisIdx });
+  // distinction is observable through an inherited accessor.
+  emitReceiver();
   fctx.body.push({ op: "call", funcIdx: reflectGetReceiverIdx });
 
   const resultType = resolveWasmType(ctx, accessType);
@@ -1253,6 +1269,121 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
   // the helper calls emitted above before the enclosing body continues.
   flushLateImportShifts(ctx, fctx);
   return resultType;
+}
+
+function compileStandaloneObjectLiteralSuperPropertyRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  _expr: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  propName: string,
+  accessType: ts.Type,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  const currentThisIdx = ensureCurrentThisGlobal(ctx);
+  return compileStandaloneSuperPropertyRead(
+    ctx,
+    fctx,
+    propName,
+    accessType,
+    () => {
+      // A standalone object-literal method must carry its actual
+      // [[HomeObject]]. Falling back to __current_this would make a borrowed
+      // method resolve `super` against the call-time receiver.
+      const homeObjectLocal = fctx.localMap.get(SUPER_HOME_OBJECT_CAPTURE_NAME);
+      if (homeObjectLocal === undefined) return false;
+      fctx.body.push({ op: "local.get", index: homeObjectLocal });
+      return true;
+    },
+    () => {
+      fctx.body.push({ op: "global.get", index: currentThisIdx });
+    },
+  );
+}
+
+/**
+ * (#5350 step 1) `super.<name>` / `super[<static key>]` inside a CLASS method,
+ * standalone.
+ *
+ * The [[HomeObject]] of a class instance method is `C.prototype`, which since
+ * #5195 is a real `$Object` singleton, so the same `__getPrototypeOf` →
+ * RequireObjectCoercible → `__reflect_get_receiver` lowering the object-literal
+ * arm uses applies verbatim. Before this the three static tables (parent
+ * accessors / parent struct fields / parent methods) were the ONLY resolution,
+ * and anything installed on the parent prototype at runtime
+ * (`A.prototype.fromA = 'a'`) compiled to a type-shaped literal default.
+ *
+ * Declines — emitting nothing — outside the narrow gate:
+ *   - no parent class: a base class's `C.prototype.[[Prototype]]` is null in
+ *     this runtime today (probe `.tmp/w5/super/p18.js`), so the coercible guard
+ *     would turn every `super.x` that must answer `undefined` into a TypeError;
+ *   - `standaloneClassProtoObjectApplies` false (builtin-parent subclasses such
+ *     as `extends Map`), which keeps the `emitSuperExternMethodCall` route;
+ *   - a static method (no `this` local), which keeps today's default.
+ */
+function compileStandaloneClassSuperPropertyRead(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  propName: string,
+  accessType: ts.Type,
+  currentClassName: string,
+  parentClassName: string | undefined,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  if (parentClassName === undefined) return undefined;
+  if (!standaloneClassProtoObjectApplies(ctx, currentClassName)) return undefined;
+  const selfIdx = fctx.localMap.get("this");
+  if (selfIdx === undefined) return undefined;
+
+  return compileStandaloneSuperPropertyRead(
+    ctx,
+    fctx,
+    propName,
+    accessType,
+    () => {
+      // `emitLazyProtoGet` can still decline (the #5195 F1 re-entrancy guard,
+      // an accessor store it cannot reach). Capture into a fresh buffer so a
+      // decline leaves the real body untouched and the caller keeps its
+      // historical default — never a half-emitted prototype read.
+      const saved = fctx.body;
+      const captured: Instr[] = [];
+      fctx.body = captured;
+      let emitted: boolean;
+      try {
+        emitted = emitLazyProtoGet(ctx, fctx, currentClassName);
+      } finally {
+        fctx.body = saved;
+      }
+      if (!emitted) return false;
+      fctx.body.push(...captured);
+      return true;
+    },
+    () => {
+      // §12.3.5.3 step 3 `actualThis` is the receiver the call actually bound.
+      // In a class method that is the `this` LOCAL — except that the local is
+      // typed to the INSTANCE struct, so a call whose receiver is not a `$C`
+      // instance leaves it null. `C.prototype.method()` is exactly that shape
+      // (the #5195 prototype is an `$Object`, and `ref.test` against `$C`
+      // fails), and it is the shape four of these rows use. Measured: the
+      // local reads null there while the standalone call carrier
+      // `__current_this` holds the real receiver, so select at RUNTIME —
+      // typed local when it is bound, carrier otherwise. Never a throw either
+      // way, and an ordinary `new C().method()` keeps the typed local.
+      fctx.body.push({ op: "local.get", index: selfIdx });
+      const selfType = getLocalType(fctx, selfIdx);
+      if (selfType?.kind !== "externref" && selfType?.kind !== "ref_extern") {
+        fctx.body.push({ op: "extern.convert_any" });
+      }
+      const recvLocal = allocLocal(fctx, `__super_recv_${fctx.locals.length}`, { kind: "externref" });
+      fctx.body.push({ op: "local.tee", index: recvLocal });
+      fctx.body.push({ op: "ref.is_null" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: { kind: "externref" } },
+        then: [{ op: "global.get", index: ensureCurrentThisGlobal(ctx) }],
+        else: [{ op: "local.get", index: recvLocal }],
+      });
+    },
+  );
 }
 
 /**
@@ -1398,6 +1529,18 @@ export function compileSuperPropertyAccess(
   // Fallback: could be a method reference (not a call) — try to find a parent method
   // For now, emit a default based on the TypeScript type at the access site
   const accessType = ctx.checker.getTypeAtLocation(expr);
+  // (#5350 step 1) Standalone: before defaulting, do the real prototype-chain
+  // read. Deliberately AFTER the parent-accessor and struct-field walks above,
+  // so both keep their single static call (`tests/issue-3522-super-accessor`).
+  const classRuntimeRead = compileStandaloneClassSuperPropertyRead(
+    ctx,
+    fctx,
+    propName,
+    accessType,
+    currentClassName,
+    parentClassName,
+  );
+  if (classRuntimeRead !== undefined) return classRuntimeRead;
   const wasmType = resolveWasmType(ctx, accessType);
   if (wasmType.kind === "f64") {
     fctx.body.push({ op: "f64.const", value: 0 });
@@ -1556,6 +1699,16 @@ export function compileSuperElementAccess(
 
   // Fallback: emit default value based on TypeScript type
   const accessType = ctx.checker.getTypeAtLocation(expr);
+  // (#5350 step 1) Same runtime prototype read as the dot form, same position.
+  const classRuntimeRead = compileStandaloneClassSuperPropertyRead(
+    ctx,
+    fctx,
+    propName,
+    accessType,
+    currentClassName,
+    parentClassName,
+  );
+  if (classRuntimeRead !== undefined) return classRuntimeRead;
   const wasmType = resolveWasmType(ctx, accessType);
   if (wasmType.kind === "f64") {
     fctx.body.push({ op: "f64.const", value: 0 });
