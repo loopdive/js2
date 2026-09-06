@@ -146,8 +146,16 @@ jobs:
     timeout-minutes: 10
     environment: baseline-promote
     permissions:
+      # Read-only throughout: the push to `main` goes over SSH with the deploy
+      # key, not with GITHUB_TOKEN (which the ruleset rejects, GH013).
+      # `pull-requests: read` is for the queue gate's `repository.mergeQueue`
+      # GraphQL query — without it that read fails, and while the gate is
+      # designed to fail OPEN (a broken gate must never freeze the baseline),
+      # failing open here would silently cost the merge-group protection this
+      # job exists to respect.
       contents: read
       actions: read
+      pull-requests: read
     steps:
       - name: Checkout main at the measured revision
         uses: actions/checkout@v5
