@@ -4,7 +4,7 @@ title: "ES2015 standalone super property access — r1: class [[HomeObject]] rea
 status: in-progress
 sprint: current
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-06
 priority: high
 horizon: m
 feasibility: medium
@@ -17,6 +17,23 @@ es_edition: ES2015
 goal: standalone-mode
 requested_by: claude.ai@loopdive.com/fable-es6
 related: [4688, 5195, 3594, 3522, 2046, 5316, 4444]
+# 2026-09-06 (r1 review round): the whole change-set is these three files.
+# `new-super.ts` carries the r1 super-read lowering (steps 1-5) — restated here
+# because the lane's growth was covered only by OTHER issues' grants, which is a
+# stranded grant the moment CI diffs the merge preview. `literals.ts` and
+# `dynamic-proto.ts` grow by the §B.3.1 `__proto__:` arm and its prescan mark
+# (review finding F1): a colon-`__proto__` literal now links its runtime
+# [[Prototype]] instead of storing an own property, which is what makes
+# `super.m()` over such a literal answer node instead of throwing an escaping
+# TypeError. Both additions sit in the module that owns the mechanism.
+loc-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/literals.ts
+  - src/codegen/dynamic-proto.ts
+func-budget-allow:
+  - src/codegen/expressions/new-super.ts
+  - src/codegen/literals.ts
+  - src/codegen/dynamic-proto.ts
 ---
 
 ## Problem
@@ -299,3 +316,199 @@ whole change is in that one file). No `scripts/*-baseline.json` was touched.
 ### Control not completed (integrator note, 2026-09-06)
 
 The lane started a 1,089-row class/super control (`language/statements/class/*`, `language/expressions/class/*`, `language/expressions/object/*`, `.../class/subclass`, `.../class/definition`, `language/expressions/super`) three times; every run died mid-way on the shared box (only the tier headers were written) and the lane wedged waiting for the result file. The integrator stopped the lane at 05:20 UTC and committed this record from the lane's draft. The control is deferred to the integrated-tree sweep (fix tree vs the fresh standalone baseline, set-diff of non-pass paths) before the PR.
+
+### Review round 1 (2026-09-06)
+
+Fix round for the reviewer's two confirmed findings, on a fresh worktree of the
+wave-5 integration branch with `wf5350` merged in. Two commits, one per finding.
+Every number below was measured on this tree; "base" is this same tree with the
+three source files reverted by file copy (`.tmp/base-*.ts`), bundle and eval
+provider rebuilt — i.e. the lane's own behaviour.
+
+#### F1 — `super` over a `__proto__:` object literal threw an escaping TypeError
+
+**Root cause, one level below where the reviewer looked.** The lane did not
+break these shapes; it made an existing hole audible. A NON-computed
+`__proto__:` key (§B.3.1) sets the object's [[Prototype]] during literal
+evaluation. `compileObjectLiteralWithAccessors` learned that in #5270 step 2 —
+but the OPEN-`$Object` construction path (`compileObjectLiteralAsExternref`)
+never did, and, worse, a literal carrying a colon-`__proto__` was not routed to
+that path at all: it built as a CLOSED struct, which has no `$proto` field, so
+`__object_setPrototypeOf`'s `ref.test $Object` fails and the link is dropped in
+silence. Every chain walk over such a literal was therefore dead — long before
+`super` entered the picture.
+
+Fix (a) of the two the review proposed, in two parts:
+
+- `src/codegen/dynamic-proto.ts` — `scanForDynamicProto` now marks a literal
+  with a colon-`__proto__` as a proto-mutation RECEIVER, and its value as a
+  #4163 proto-SOURCE. That reuses the whole #802 Slice-A promotion: the literal
+  builds as an open `$Object` and `variables.ts` / `index.ts` type the binding
+  slot externref in lockstep. Standalone-gated at the mark, because
+  `nested-declarations.ts`'s capture-typing consumer of this set is not
+  target-gated.
+- `src/codegen/literals.ts` — `compileObjectLiteralAsExternref` gets the §B.3.1
+  arm: `__object_setPrototypeOf(obj, v)` instead of storing an own property
+  through `__extern_set`.
+
+| probe | base (= lane) | this fix | node 22 |
+| --- | --- | --- | --- |
+| `h1b` `super.m()` over `{__proto__: proto, m(){…}}` | TypeError escapes | **3** | 3 |
+| `i1` different method name | TypeError escapes | **3** | 3 |
+| `h1` `super.m() + 1` | TypeError escapes | **4** | 4 |
+| `h2` `super.m(2, 5)` | TypeError escapes | **7** | 7 |
+| `h3` `super.who()` reading `this.tag` | TypeError escapes | **11** | 11 |
+| `h1c` throw caught inside the method | 77 | **4** | 4 |
+| `h1d` TypeError classified by the method | 91 | **3** | 3 |
+| `h3b` inherited method, no `this` | TypeError escapes | **5** | 5 |
+| `i3` `super.v` DATA read | TypeError escapes | **8** | 8 |
+| `m3` TypeError classified by the caller | 91 | **3** | 3 |
+
+Ordinary prototype-chain reads through such a literal improved with it, which is
+the check that this is the real fix rather than a `super`-shaped patch:
+
+| probe | base | this fix | node 22 |
+| --- | --- | --- | --- |
+| `x1` `Object.getPrototypeOf(o) === proto` (method literal) | 8 (false) | **7** | 7 |
+| `x2` inherited `o.p()` | trap | **3** | 3 |
+| `x3` `Object.getPrototypeOf(o) === proto` (data literal) | 8 (false) | **7** | 7 |
+| `x4` same, method-bearing proto | 8 (false) | **7** | 7 |
+
+#### F2 — the uninitialised-`this` guard false-positived on a loop back-edge
+
+`superReadPrecedesSuperCall` threw unless some `super(...)` node ENDED before the
+read's source position. Source position orders the text, not the execution: the
+one construct that lets a textually later `super()` run first is a loop's
+back-edge. The guard now declines when a loop (or a labelled statement, whose
+`continue`/`break` targets one) encloses the read; forward-only branches
+(`if` / `switch` / `try`) cannot re-run an earlier `super()`, and a `super()`
+sitting in a branch before the read was already handled by the existing
+preceded-by check, so they keep today's answer.
+
+The plan's suggested shape — emit the #2709 `ref.is_null` runtime check on the
+constructor's `this` local — is **not implementable as written**: a derived
+constructor's `this` is `struct.new`-allocated at function entry
+(`class-bodies.ts:2522`), so there is no null to test. Recorded rather than
+silently substituted.
+
+| probe | base (= lane) | this fix | node 22 |
+| --- | --- | --- | --- |
+| `n4` read on a `while(true)` back-edge | ReferenceError escapes | **5** | 5 |
+| `n5` same, ReferenceError observed | 8 | **5** | 5 |
+| `s1` straight-line read BEFORE `super()` | 8 | **8** (throw kept) | 8 |
+| `g1`–`g4`, `g6` | 5 | 5 | 5 |
+| `g5` read in a `try` whose `catch` calls `super()` | 0 | 0 | 9 (both wrong, unchanged) |
+| `n1`, `n2`, `n3` | 5 / 4 / 5 | 5 / 4 / 5 | 5 / 4 / 8 (`n3` unchanged) |
+
+#### F3 — refuted, recorded so a wider sweep does not re-open it
+
+A class `super.x` whose parent-prototype property is installed at runtime
+(`A.prototype.fromA = 5`) moved from base's `0` to `NaN`. It is **pre-existing
+and not a `super` defect**: the ORDINARY read `new B().fromA` is `NaN` on both
+trees. Do not read the `0` → `NaN` drift as new damage.
+
+#### Full probe set, this tree vs the lane
+
+All 73 reviewer probes (`.tmp/rev5350/p/*.ts`, standalone). Exactly 11 rows moved
+— the F1 and F2 rows above — and every other row is identical to the lane,
+including the ones that already equalled node. `l4`'s pre-existing `env::` import
+and `h4`/`h5`'s pre-existing nulls are unchanged.
+
+#### Byte identity (A/B on this tree, sha256 of `.binary`)
+
+`host` and `wasi` are **byte-identical for every probe measured** (k1, k2, c4,
+h1b, b5, x1, x3, i2, a2, f7). On `standalone` only the three probes whose source
+contains a colon-`__proto__` move (h1b, x1, x3); literals without one — k1, k2,
+c4, b5, i2, a2, f7 — are byte-identical there too.
+
+#### Rows
+
+- **53-row super control** (`ctrl53`, the reviewer's list), non-pass set-diff vs
+  the lane's run: **zero lost, one gained** —
+  `prop-expr-getsuperbase-before-topropertykey-getvalue.js` now passes (that row
+  reads through a `__proto__:` literal). Lane 23 pass / 30 non-pass → this tree
+  24 pass / 29 non-pass.
+- **13 target rows**: the lane's 5 passes all kept, plus that same gained row =
+  **6 pass**.
+- **10 rows under `language/expressions/object` whose source contains
+  `__proto__`** (the complete grep, not a sample), base vs this tree: identical —
+  7 pass / 3 fail on both. The three failures (`__proto__-fn-name.js`,
+  `__proto__-poisoned-object-prototype.js`, `computed-__proto__.js`) fail for
+  reasons this change does not touch.
+
+#### Pins
+
+`tests/issue-5350-super-property-r1.test.ts` grows from 6 to 13 cases: four F1
+cases (`super.m()` / a differently-named method / a `this`-dependent method /
+`super.v` over a `__proto__:` literal) and three F2 cases (the back-edge read,
+the same read proving no ReferenceError, and a straight-line pre-`super()` read
+that must still throw). **13/13 green on node 22.22.2 AND node 25.9.0**, at
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+--poolOptions.forks.singleFork=true --dangerouslyIgnoreUnhandledErrors`.
+
+Named suites re-run green on this tree, in ≤3-file batches: `issue-2709`,
+`issue-1824-super-as-value`, `issue-3522-super-accessor` (38);
+`issue-3024-static-super-arity`, `issue-5212-es2015-class-collection-super`,
+`issue-5309-child-field-shadows-parent-method` (61);
+`issue-5312-uninitialised-field-reads-undefined`, `issue-5195-es2015-class-r2`,
+`issue-5195-r3-heritage-check` (151); `issue-5195-r3-restricted-properties`,
+`issue-5195-r3-review`, `issue-3024` (34). Plus every other suite whose source
+contains a colon-`__proto__` literal, since that lowering changed:
+`issue-5270-es2015-expressions-r2`, `issue-4527-call-dyn-bridge`,
+`issue-1058-generic-callback-result` (155); `closed-imports`, `safe-mode`,
+`issue-4376-deno-primordials-runtime` (50).
+
+#### Gates
+
+Run bare, status read directly, after the last src edit: `check-loc-budget`,
+`check-func-budget` (both also with `LOC_GATE_BASE=origin/main`),
+`check-coercion-sites`, `check:oracle-ratchet` (net −7 `getTypeAtLocation`, −5
+`ctx.checker`), `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+`--noEmit -p tsconfig.ts7.json`, `pnpm lint` — all 0.
+
+One gate does NOT pass at the CI base and it is **not this change-set's**: with
+`LOC_GATE_BASE=origin/main`, `check-loc-budget` fails on
+`src/codegen/expressions/calls-closures.ts` (2726 > 2699). Measured with the
+three source files reverted, it fails identically — the integration branch is
+behind main's #5342, which shrank that file. It clears when the integration
+branch merges `origin/main`.
+
+Growth grants are restated in THIS issue's frontmatter (`loc-budget-allow` /
+`func-budget-allow` for `new-super.ts`, `literals.ts`, `dynamic-proto.ts`) with a
+dated rationale: the lane's `new-super.ts` growth was covered only by #3371's and
+#5318's issue files, which is a stranded grant the moment CI diffs the merge
+preview.
+
+#### Residuals
+
+Unchanged from the r1 record, plus:
+
+- **`g5` / `n3`** — a `super` read inside a `try` whose handler calls `super()`
+  still answers instead of throwing (node throws). Neither base nor this tree
+  gets it right; making it right needs a runtime this-initialised flag the
+  compiler does not have. Deliberately left alone: this round's rule change was
+  narrowed to loops precisely so these two rows do not move.
+- **The `__proto__:` literal now takes the open-`$Object` path in standalone.**
+  That is the correct representation for a literal whose prototype is linked, but
+  it IS a representation change for those literals: 10 test262 rows and six
+  in-repo suites were measured across it, and standalone bytes move for exactly
+  the literals that carry the key.
+- **The 1,089-row class/super control the r1 record deferred is still deferred.**
+  This round measured the 53-row super control, the 13 target rows and the 10
+  `__proto__` object rows; the wide sweep belongs to the integrated-tree run
+  before the PR.
+
+#### Status after this round: still `in-progress`, deliberately
+
+Both review findings are fixed and every control the round could run is clean,
+but ONE acceptance criterion the plan states for the landed steps still does not
+hold: **"13 rows (steps 1-5) pass"** — 6 do. The other eight are blocked by the
+defect the r1 record isolated (a block-scoped class method's write to a captured
+`var` of the enclosing function is dropped; repro `.tmp/w5350/q26.ts`, ten lines,
+no `super`), which is pre-existing and not a `super` defect. The remaining
+criteria hold: zero rows lost across the controls measured, pins green on node 22
+and node 25, non-standalone bytes identical, `src/ir/select.ts` untouched, grants
+in this file. Flipping to `done` would report a row count this tree does not
+have, so the status stays `in-progress` until that blocker is filed and cleared
+or the criterion is re-scoped.
