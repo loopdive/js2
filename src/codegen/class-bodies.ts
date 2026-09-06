@@ -638,32 +638,28 @@ function emitSetSubclassProto(
   // import can record instance → class object and `i.constructor === C` holds
   // through an any-typed receiver.
   //
-  // Built into its OWN array, then re-reading the two name globals afterwards:
-  // the lazy class-object materializer interns string constants, an interned
-  // constant is an IMPORTED global, and inserting one shifts the whole global
-  // index space — so an index captured before this point would be baked stale
-  // (the #4618 hazard, measured there as reads returning the PROTO struct).
-  // Registered in `ctx.liveBodies` for the same reason, so the shift repair
-  // reaches these instructions while the array is still detached from
-  // `fctx.body`.
-  const classObjectArg: Instr[] = [];
-  ctx.liveBodies.add(classObjectArg);
-  {
-    const savedBody = fctx.body;
-    fctx.body = classObjectArg;
-    let emitted = false;
-    try {
-      emitted = emitLazyClassObjectGet(ctx, fctx, subName);
-    } finally {
-      fctx.body = savedBody;
-    }
-    if (!emitted) {
-      // No class-object singleton for this name — pass null; the host import
-      // keeps its pre-#5377 behaviour exactly.
-      classObjectArg.length = 0;
-      classObjectArg.push({ op: "ref.null.extern" });
-    }
+  // Emitted straight into `fctx.body` and carried to the call site in a LOCAL,
+  // NOT built into a detached array and spliced into the `else` arm below. That
+  // was the first shape and it is MEASURED wrong: `emitLazyClassObjectGet`
+  // bakes `global.set/get __class_<C>`, an interned string constant is an
+  // IMPORTED global whose insertion shifts the whole global index space, and
+  // the shift repair only reaches bodies that are live at the time — a detached
+  // array spliced and then dropped is repaired by nothing. On the Temporal
+  // polyfill that stale index made the constructor initialise a DIFFERENT
+  // global, so the module ended up with TWO class-object singletons both
+  // registered as `JSBI`: `i.constructor` answered the second while the
+  // compiled `JSBI` identifier read the first, and `===` stayed false with the
+  // instance→class-object link hitting on every read (`.tmp/dbg4.log`:
+  // `a=…/id=JSBI#2 b=…/id=JSBI#1 same=false`). A local index cannot shift.
+  const classObjectLocal = allocLocal(fctx, `__class_obj_${subName}_${fctx.locals.length}`, { kind: "externref" });
+  if (!emitLazyClassObjectGet(ctx, fctx, subName)) {
+    // No class-object singleton for this name — pass null; the host import
+    // keeps its pre-#5377 behaviour exactly.
+    fctx.body.push({ op: "ref.null.extern" });
   }
+  fctx.body.push({ op: "local.set", index: classObjectLocal });
+  // Re-read the two name globals AFTER the materializer: it interns string
+  // constants, and each intern shifts the global index space.
   const subNameGlobalNow = ctx.stringGlobalMap.get(subName);
   const parentNameGlobalNow = ctx.stringGlobalMap.get(parentLookupName);
   if (
@@ -687,12 +683,11 @@ function emitSetSubclassProto(
       { op: "local.get", index: selfLocal },
       { op: "global.get", index: subNameGlobalNow },
       { op: "global.get", index: parentNameGlobalNow },
-      ...classObjectArg,
+      { op: "local.get", index: classObjectLocal },
       { op: "call", funcIdx: setProtoIdx },
       { op: "local.set", index: selfLocal },
     ],
   });
-  ctx.liveBodies.delete(classObjectArg);
 }
 
 /**

@@ -7022,6 +7022,14 @@ function _classChainToString(v: any, exports: Record<string, Function> | undefin
  * externref, so `i.constructor === C` has to hold by reference across the two
  * lanes. This is the same reasoning `_classObjectPrototypeStruct` and
  * `compiledClassInstancePrototype` (#5347) already give for `C.prototype`.
+ *
+ * The mirror was tried first and MEASURED wrong in the lane that matters. In a
+ * separately linked provider `_unwrapForHost` deliberately refuses to unwrap a
+ * mirror it considers foreign (#5222 — the consumer has no decoder for the
+ * provider's raw struct), so `i.constructor === JSBI` stayed false INSIDE the
+ * Temporal polyfill even with the instance→class-object link hit on every read
+ * (`.tmp/dbg-temporal.log`: 10 reads, `byInstance=true hit=true`, probe still
+ * failing). The raw struct has no such boundary.
  */
 function _classObjectForInstance(v: any, exports: Record<string, Function> | undefined): any {
   if (v === null || (typeof v !== "object" && typeof v !== "function")) return undefined;
@@ -7060,7 +7068,7 @@ function _classChainRead(v: any, key: any, exports: Record<string, Function> | u
   if (typeof key !== "string") return _MISS;
   if (key === "constructor") {
     const classObj = _classObjectForInstance(v, exports);
-    return classObj === undefined ? _MISS : _wrapForHost(classObj, exports);
+    return classObj === undefined ? _MISS : classObj;
   }
   return _classChainMethod(v, key, exports);
 }
