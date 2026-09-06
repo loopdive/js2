@@ -911,3 +911,258 @@ on its own brand, the module-wide arm decline is gone with all its scaffolding,
 zero rows lost across 3,147 controls, and the false round-1 sentence is
 corrected in place. Steps 6 and 7 (26 TypedArray rows) remain diagnosed and
 unimplemented, so the issue stays `in-progress`.
+
+### Round 3 (2026-09-06)
+
+Round 2 branded the packed-byte TypedArray carrier `$__vec_i8_byte` `final` and
+kept the ArrayBuffer byte vec `$__vec_i32_byte` open, so the two structurally
+identical structs stopped canonicalizing to ONE Wasm GC runtime type. The brand
+is right — it is what lets `ArrayBuffer.prototype.slice` step 16 discriminate —
+but **several emitters had been written against that identity**, and round 2 did
+not look for them. A `ref.cast $__vec_i32_byte` applied to a `Uint8Array` used to
+succeed (silently aliasing the view's bytes as a buffer); with the brand it
+TRAPS. A `ref.test $__vec_i32_byte` used to answer TRUE for one; with the brand
+it answers false and control falls into a numeric fallback.
+
+Five commits on this branch, in the order the defects were found. The brand
+itself is kept in full; nothing here reinstates the module-wide arm decline.
+
+#### The site audit
+
+Every `ref.cast` / `ref.test` / `ref.cast_null` in `src/` whose typeIdx comes
+from `i32ByteVec(ctx)` or `getOrRegisterVecType(ctx, "i8_byte"|"i32_byte", …)`
+— 41 sites, enumerated mechanically (`.tmp/r3/audit.mjs`), plus every static
+provenance helper that feeds one (`nativeBufferBuiltinOf`, `isArrayBufferArg`,
+`argSymName === "Uint8Array"`). Classes: **(i)** the value can only ever be one
+carrier, or the site is already brand-guarded — keep; **(ii)** it can be either —
+dispatch on both; **(iii)** it relied on the identity to ALIAS — copy or alias
+per spec.
+
+| site | class | what changed |
+| --- | --- | --- |
+| `emitTaViewConstruct` (dataview-native) | ii + iii | The recover cast is guarded: `$__vec_i32_byte` → the buffer (unchanged fast path), `$__vec_i8_byte` → §23.2.5.1.2 element-wise COPY into a fresh byte buffer, anything else → a zero-length buffer. Emitted only where a cast would have been emitted anyway. |
+| `emitTaViewConstructWindowed` | ii | Same guard. `byteOffset`/`length` then validate against the copy — a deviation from §23.2.5.1.2 (which IGNORES them for a TypedArray source), recorded, not a trap. |
+| `emitDynamicTaViewConstruct` | ii | Same guard at `bytes: 1` (raw byte copy) — the destination kind is a RUNTIME value here, so there is no static element width to re-encode into. |
+| `emitArrayBufferSlice` (receiver) | ii | Same guard at `bytes: 1`. Found by the audit, not by the review. |
+| `tryLengthAndNameReads` (property-access-dispatch) | ii | `.length` of a `$__ta_view` receiver: that carrier's field 1 is `buf`, not `data`, so the struct-shape probe missed it and the `ref.test <vec>` ladder answered 0. |
+| `tryBufferViewAttributeReads` `.byteLength` | ii | Consults `$__vec_i8_byte` before answering 0. Found by the audit; it was a wrong ANSWER, not a trap, because the probe already had a `ref.test`. |
+| `tryCompileNodeProcessApi` (node-fs-api) | ii | The write carrier is picked from the raw checker symbol and the call boundary casts to it. Now an externref argument tests the brand and calls the matching helper (`__wasi_write_uint8array_i8` / `__wasi_write_arraybuffer`), neither → write nothing. |
+| `emitDynamicUint8ArrayBufferAlias` | iii | New `$__vec_i8_byte` arm: fresh array + `array.copy` + fresh carrier. The `$__vec_i32_byte` arm keeps its buffer-ALIAS semantics. The #5194 doc block's premise ("build the carrier over the SAME array") is corrected in place. |
+| `emitTaDynCtorConstructFromLocals` | iii | `i8_byte` joins the PLAIN-VEC copy arms — a typed-array source read element-wise through `array.get_u`, not a byte buffer. §23.2.5.1.2 step 5 comes with it: a BigInt destination from this source is a TypeError. |
+| `emitTaPlainVecElementToF64` | ii | Packed source elements read with `array.get_u` (plain `array.get` does not validate on a packed array). |
+| `finalizeLeafStructTypes` (index.ts) | — | The keep-open is gated on `ctx.wasi \|\| ctx.standalone`. `$__vec_i8_byte` is never registered on the JS-host lane, so there was no second type to separate from and the dropped `final` bit only moved bytes. |
+| `ensureArrayBufferTransferHelper` | i | The cast sits under a `ref.test` that already decides; a non-buffer is simply not transferred. |
+| `tryCompileStandaloneDetachedWrite` | i | Same shape — `ref.test` then cast. |
+| `emitTaViewDynamicByteLength` | i | The value is a `$__ta_view`'s `buf` field, typed `$__vec_i32_byte` by construction. |
+| `emitArrayBufferSliceSpecies` (step 16) | i | This IS round 2's brand test. Unchanged, and now decided by two genuinely distinct types. |
+| `emitDataViewByteExports` (vec-access-exports) | i | `ref.test` then cast, per export. |
+| `tryCompileIndexedBuiltinNew` (new-indexed) | i | Casts a value the same expression just built. |
+| `emitObjectProtoToStringClassifier` | i | A brand TEST with no cast; the brand makes it MORE accurate (a Uint8Array no longer answers `[object ArrayBuffer]`). |
+| `emitArrayBufferSlice` (species result) | i | Guarded by step 16's `ref.test` in `emitArrayBufferSliceSpecies`, which throws otherwise. |
+
+#### Probes — 102 files, `--target standalone`, `result.imports` asserted `[]`
+
+Trees: **node** = node 22 oracle · **base** = `.tmp/rev5349/base` (`4324022bd5`) ·
+**lane** = `wf_2c593ff3-433-2` (`42cf719b19`, pre-fix r5) ·
+**r2** = the merge state `53022bc096` (round 2) · **fix** = HEAD.
+Harness `.tmp/r3/allprobe.mts`; every row of the 102 that any tree disagrees on:
+
+| probe | node | base | lane | r2 | fix |
+| --- | --- | --- | --- | --- | --- |
+| `pb/r1` reassigned binding | 4 | 0 | 0 | **TRAP** | **4** |
+| `pb/r3` rewritten array element | 4 | 0 | 0 | **TRAP** | **4** |
+| `p5/g01` reassign + element write | 49 | 49 | 49 | **TRAP** | **49** |
+| `p5/g10` array-element ctor arg | 4 | 4 | 4 | **TRAP** | **4** |
+| `p4b/s01` (wasi) `process.stdout.write` | ABC/1 | ABC/1 | ABC/1 | **TRAP** | **ABC/1** |
+| `p6/h01` helper, both shapes | 442 | 442 | 442 | 400 | **442** |
+| `p6/h02` helper, view source | 33 | 33 | 33 | 0 | **33** |
+| `pb/r2` `mk(new Uint8Array(3)).length` | 3 | 3 | 3 | 0 | **3** |
+| `p8/m01` testWithTypedArrayConstructors | 333 | 331 | 331 | 0 | **333** |
+| `p5/g02` copy-not-alias observation | 313 | 393 | 393 | 110 | **313** |
+| `p5/g04` `new Int32Array(u8)` | 8 | 2 | 2 | 0 | **8** |
+| `p6/h04` `new Int32Array` via a param | 28 | 22 | 22 | 20 | **28** |
+
+Six of the twelve now beat **base** as well as round 2, because base's answers
+came from the aliasing the brand exposed. Every other probe of the 102 is
+**identical on r2 and fix**; the ones where base differs are round-2's own gains
+(`c12`, `c13`, `e12`, `g05`, `h05`, `q03`) and they are preserved.
+
+Audit probes (`.tmp/r3/paud`, same protocol), the four the 102 did not cover:
+
+| probe | node | base/main | r2 | fix |
+| --- | --- | --- | --- | --- |
+| `ab.slice` on a reassigned binding | 4 | 4 | **TRAP** | **4** |
+| `.byteLength` on the same | 8 | 8 | **0** | **8** |
+| `new DataView` over the same | TypeError | 8 | TypeError | TypeError |
+| `new BigInt64Array(erased u8)` | TypeError | 0 | 0 | **TypeError** |
+
+The `DataView` row is a round-2 GAIN, kept. `.buffer` (−1 vs node 8),
+`ArrayBuffer.isView` and `Object.prototype.toString` on a reassigned binding
+(0 vs node 1), `ab.slice` on an erased ArrayBuffer (−1 vs 4) and `.set` on a
+reassigned binding (0 vs 12) are IDENTICAL on all three trees — pre-existing,
+not this round's, not fixed.
+
+#### Residuals this round creates or leaves, stated plainly
+
+- **An erased `Int8Array` source widening into a >1-byte destination reads
+  UNSIGNED.** `Int8Array`, `Uint8Array` and `Uint8ClampedArray` share one
+  `$__vec_i8_byte` carrier and signedness is a static property of the TS name,
+  so `new Int16Array(erasedInt8Array)` stores 255 where node stores −1. A
+  byte-width destination is unaffected (the stored byte is identical either
+  way). Closing it needs the carrier to record its element signedness.
+- **`emitTaViewConstructWindowed` validates `byteOffset`/`length` against the
+  COPY.** §23.2.5.1.2 ignores both for a TypedArray source; this returns a
+  windowed view of the copy instead. A bounded wrong answer where round 2 had a
+  trap.
+- **`emitDynamicTaViewConstruct` recovers at `bytes: 1`.** Right for the
+  byte-width ctor kinds, a wrong element count for the wider ones.
+- **`ab.slice` on a packed-byte receiver returns a byte buffer**, not the
+  Uint8Array node returns. The length matches; the type does not. Pre-existing
+  in kind (main was equally wrong), non-trapping now.
+
+#### wasi
+
+**Compile-only over ALL 233 packed-byte-view rows**, not a sample. The row
+runner has no wasi target (`runTest262File` accepts only `"standalone"`), so
+`.tmp/r3/wasicompile.mts` assembles what the runner would — `assert.js` +
+`sta.js` + every `includes:` harness file + the test body — compiles it at
+`--target wasi` and calls `WebAssembly.validate`:
+
+| tree | ok | compile_error | invalid | crash |
+| --- | --- | --- | --- | --- |
+| round 2 (`53022bc096`) | 222 | 9 | 2 | 0 |
+| **this tree** | **222** | **9** | **2** | **0** |
+
+The 11 non-ok rows are the SAME 11 on both trees (set-diff empty). None is a
+packed-byte-map failure: nine are host-import refusals in `staging/sm`
+(`env.isNaN`, `env.SharedArrayBuffer_new`, `env.__proto_method_call` under
+`--no-host-imports`) and two are pre-existing `WebAssembly.validate false`
+(`staging/sm/TypedArray/set-negative-offset.js`,
+`staging/sm/generators/iterator-next-non-object.js`). Round 3 introduces zero
+wasi compile regressions.
+
+The 102-probe set was also RUN under `--target wasi` against a minimal
+`wasi_snapshot_preview1` shim (`.tmp/r3/allwasi.mts`), on base / round 2 / this
+tree: every standalone row above reproduces, including `p4b/s01` writing
+`[65,66,67]` and returning 1.
+
+#### Host byte identity
+
+`.tmp/r3/allprobe.mts <tree> host`, sha256 of the emitted binary, 102 probes,
+against `git archive 50c81e5487` (this branch's main merge-base):
+
+| tree | modules differing from main |
+| --- | --- |
+| round 2 | **70 of 102** |
+| this tree | **0 of 102** |
+
+Round 2's host delta was one byte per module (`sub final` → `sub` on
+`$__vec_i32_byte`) and bought nothing: `$__vec_i8_byte` is registered only under
+`wasi || standalone`, so on the host lane there is no second type to separate
+from. Gating the keep-open on `ctx.wasi || ctx.standalone` removes it entirely.
+`emitRecoverBufferVecGuarded` is gated the same way for the same reason — without
+that, its `getOrRegisterVecType("i8_byte", …)` added a type to the six host
+`ab.slice` modules.
+
+#### Pins
+
+`tests/issue-5349-species-r5.test.ts` — **60/60 green on node 22 (v22.22.2) and
+node 25 (v25.9.0)** at `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+--poolOptions.forks.singleFork=true --dangerouslyIgnoreUnhandledErrors`. Round 3
+adds 26: the four X1 shapes, the six X3 shapes, a copy-not-alias minimum
+(`new Uint8Array(u); c[0]=9; u[0]` → 1), a buffer-ALIAS pin that the i32_byte arm
+did NOT become a copy, all nine numeric TA kinds from a Uint8Array source through
+an erased binding, the BigInt refusal, the wasi `process.stdout.write` case
+(executed against an inline fd_write shim), the two audit shapes, and a host
+`sub final` shape pin.
+
+Related suites, 48 files in 16 three-file batches (`.tmp/r3/suites/`).
+**11 batches fully green**, including `issue-5194-{r2,r3,set-r2}`,
+`issue-3054-{b1,b2,b3}`, `issue-5195-{r2,r3-heritage,r3-restricted,r3-review}`,
+`issue-5309`, `issue-5312`, `issue-2631`/`issue-2633`/`issue-2655` (node-fs),
+`wasi`/`wasi-target`/`wasi-stdin`, `real-world-wasi`. Five batches red — **every
+failure reproduced identically on the round-2 tree**, and the wasi four also on
+`main`:
+
+| file(s) | failures | round-2 tree | main |
+| --- | --- | --- | --- |
+| `arraybuffer-dataview` + `typed-array-basic` + `issue-5193` | 18 (6 + 11 + 1) | same 18 | — |
+| `issue-1654-wasi-dataview-arraybuffer` + `issue-1655-…` | 4 (`illegal cast`) | same 4 | same 4 |
+| `wasi-environ` | 3 | same 3 | — |
+
+#### Gates
+
+Run from inside the worktree, bare, statuses read directly: the chained ratchet
+(`check-loc-budget` → `check-func-budget` → `check-coercion-sites` →
+`check:oracle-ratchet` → `check:dead-exports`) **RC 0**;
+`check:speculative-rollback` 0, `check:stack-balance` 0,
+`check:codegen-fallbacks` 0, `check:any-box-sites` 0, TS7
+`--noEmit -p tsconfig.ts7.json` 0, `lint` 0.
+
+**`LOC_GATE_BASE=$(git rev-parse origin/main)` is RC 0 for BOTH budget gates** —
+unlike round 2, which failed it on `type-coercion.ts` /
+`expressions/calls-closures.ts` / `property-access-dispatch.ts`. Those were
+main's post-merge shrink showing up as growth against a base the branch had not
+merged; this branch merged main `50c81e5487`, so the simulation now matches CI.
+
+Growth allowances, all in this issue's frontmatter with dated rationales:
+`property-access-dispatch.ts` and `node-fs-api.ts` (LOC), and the functions
+`tryLengthAndNameReads`, `emitTaDynCtorConstructFromLocals`,
+`tryBufferViewAttributeReads`.
+
+#### Controls — the same five lists, 3,147 rows, every row run
+
+Driver `.tmp/r3/drive2.sh` (21 chunks of ≤150 rows, `COMPILER_POOL_SIZE=2`,
+`--standalone`), started only AFTER the last src edit and with the compiler
+bundle + `runtime-bundle.mjs` + the QuickJS eval provider rebuilt (the adapter is
+keyed on the bundle hash; a stale one reads as a phantom compile_error). An
+earlier start was discarded and rerun from scratch when a later fix landed
+mid-run — a control from two different trees is not a control.
+
+**Set-diff against the standalone baseline** (`test262-standalone-current.jsonl`,
+main `efa9e76f07`), `.tmp/r3/perlist.mjs`:
+
+| list | scope | rows | non-pass | LOST | GAINED |
+| --- | --- | --- | --- | --- | --- |
+| L1 | `built-ins/ArrayBuffer` | 221 | 63 | **0** | 9 |
+| L2 | `built-ins/DataView` | 561 | 99 | **0** | 0 |
+| L3 | `built-ins/TypedArray` | 1,446 | 543 | **0** | 0 |
+| L4 | `built-ins/TypedArrayConstructors` | 738 | 223 | **0** | 1 |
+| L5 | rows elsewhere naming a packed-byte view | 181 | 107 | **0** | 0 |
+
+**Zero rows lost, on every list. No row changed non-pass KIND either.** The nine
+L1 gains are r5 step 5's `ArrayBuffer/prototype/slice/species*` rows, unchanged
+from round 2. The one L4 gain is **round 3's own**:
+`TypedArrayConstructors/ctors/typedarray-arg/returns-new-instance.js`, which is
+literally §23.2.5.1.2 — on the round-2 tree it fails
+`Expected SameValue(«0», «10»)` (the erased typed-array source produced an empty
+view), and the baseline records it `fail`.
+
+**Set-diff against ROUND 2's own chunk outputs** (`wf_76a5e57d-8c2-1/.tmp/r2/fixrun`),
+`.tmp/r3/runsdiff.mjs`: `compared=3146 LOST=0 GAINED=3 changedNonPassKind=0`.
+Two of the three (`TypedArrayConstructors/internals/Get{,/BigInt}/infinity-detached-buffer.js`)
+are **not** round-3 gains — the baseline records both `pass` and this tree passes
+them; they are non-pass only in round 2's chunk output, i.e. an artifact of that
+run.
+
+**3,146 of 3,147 rows carry a verdict from a run that reached `=== counts ===`.**
+Chunk 14 OOM-killed at 150 rows; it was re-run split to 25 rows, then 5, then 1
+(`.tmp/r3/rerun14{,a,b}`), which gives 149 of its 150 a clean verdict. The
+remaining row is `TypedArray/prototype/subarray/coerced-begin-end-shrink.js`,
+which **OOM-kills the compiler run alone at `COMPILER_POOL_SIZE=1` on THIS tree
+AND on main** (`git archive 50c81e5487`, exit 134,
+`Runtime_AllocateInOldGeneration`) — measured here, not inherited; the baseline
+records it `compile_timeout`. Recorded, not counted.
+
+**49 of L5's 181 rows carry no baseline entry** (mostly `staging/sm` and newer
+`built-ins/Uint8Array` base64/hex rows). They ran; they cannot be scored against
+a baseline that does not list them, so they are counted in "rows" and excluded
+from LOST/GAINED.
+
+#### Status
+
+The three defects the review reproduced are closed, two more the audit found are
+closed, and the brand is intact and now host-free-lane-only. Zero rows lost over
+3,147 controls, one real conformance gain, host emission byte-identical to main.
+Steps 6 and 7 (26 TypedArray rows) remain diagnosed and unimplemented, so the
+issue stays `in-progress`.
