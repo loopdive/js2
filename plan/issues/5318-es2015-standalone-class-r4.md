@@ -1418,3 +1418,14 @@ this fix — so the allowance is restated in this file's `loc-budget-allow`.
 `check:speculative-rollback`, `check:stack-balance`, `check:codegen-fallbacks`,
 `check:any-box-sites`, TS7 `--noEmit`, `npm run lint` and `prettier --check` all
 clean.
+
+**Integration note (2026-09-06, PR #5688).** With #5350 r1 on the same branch
+(a `__proto__:` literal is now a dynamic-proto receiver), the standalone
+`__proto__`-after-dynamic-accessor pins moved 10 → 11: the prototype link is
+now real (node's 1), while `Object.prototype.hasOwnProperty.call(o, '__proto__')`
+still answers true on such an object — measured identical on a plain
+`{ a: 1, __proto__: p }` with no accessor, so it is a pre-existing
+`__hasOwnProperty` gap over the `$Object` proto entry (gopd already answers
+`undefined`, `Object.keys` already excludes it). Residual, owner: the object
+runtime's own-key predicate; the pins were re-set to 11 in the PR.
+

@@ -409,14 +409,18 @@ describe("#5318 r5 review r2 — `__proto__` and spread AFTER an evaluated-key a
     });
   }
 
-  // Standalone reaches `__object_setPrototypeOf`, but a `__proto__` member
-  // placed AFTER a dynamic-keyed accessor still lands as an own property there
-  // (10, not node's 1) — measured identical on base, on the r5 lane and here,
-  // so it is pre-existing and merely pinned against widening. The three spread
-  // rows DO match node.
+  // Standalone: since #5350 r1 (the `__proto__:` literal is a dynamic-proto
+  // receiver) the identifier / string forms DO link the prototype (the 1 bit,
+  // node's answer), but `Object.prototype.hasOwnProperty.call(o, '__proto__')`
+  // still answers true on such an object (the 10 bit; node false) — measured
+  // identical on a plain `{ a: 1, __proto__: p }` with no accessor at all, so
+  // it is a pre-existing `__hasOwnProperty` gap on the `$Object` proto entry,
+  // not this file's routing. Pinned at 11 (was 10 before the link was real)
+  // so the next change to either bit is deliberate. The three spread rows DO
+  // match node.
   const STANDALONE_EXPECTED: ReadonlyArray<readonly [string, number]> = [
-    ["probeProtoIdentAfterAcc", 10],
-    ["probeProtoStrAfterAcc", 10],
+    ["probeProtoIdentAfterAcc", 11],
+    ["probeProtoStrAfterAcc", 11],
     ["probeProtoNullAfterAcc", 10],
     ["probeProtoComputedAfterAcc", 10],
     ["probeProtoShorthandAfterAcc", 10],
