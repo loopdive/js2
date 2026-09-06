@@ -91,6 +91,7 @@ import {
   getOrCreateFuncRefWrapperTypes,
   runtimeParameters,
 } from "../closures.js";
+import { registerRestDeclarationWrapperShapes } from "../closures/funcref-wrapper-types.js"; // (#5334)
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import {
@@ -4109,6 +4110,9 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     if (sig.params.length < sourceParamSlotCount) return false;
     const params = sourceParamSlotCount === 0 ? [] : sig.params.slice(sig.params.length - sourceParamSlotCount);
     const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, sig.results);
+    // (#5334) Register the rest-marker struct a rest declaration's singleton
+    // allocates, so a dispatcher compiled EARLIER can already prove rest-ness.
+    if (wrapper) registerRestDeclarationWrapperShapes(ctx, declaration, params, sig.results);
     const safeGenericReferenceCallback =
       genericReferenceCallbackDeclarations.has(declaration) &&
       params.length === 1 &&
