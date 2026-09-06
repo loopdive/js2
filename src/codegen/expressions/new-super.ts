@@ -133,6 +133,7 @@ import { standaloneClassProtoObjectApplies } from "../class-proto-object.js"; //
 import { emitStandaloneHeritageCheck } from "../class-heritage-check.js"; // (#5195 r3-5)
 import { compileTemporalNewExpression } from "../temporal-native.js";
 import {
+  emitSuperUninitializedThisGuard,
   emitThrowReferenceError,
   emitThrowTypeError,
   getFuncParamTypes,
@@ -1346,6 +1347,86 @@ function emitSuperExtendsNullThrow(
   return wasmType;
 }
 
+/**
+ * (#5350 step 4b) In a DERIVED constructor, is this `super.<x>` read provably
+ * evaluated while `this` is still uninitialised?
+ *
+ * §13.3.7.1 resolves a SuperProperty by calling `GetThisBinding()` FIRST, and
+ * in a derived constructor that binding stays uninitialised until `super(...)`
+ * returns — so the read is a ReferenceError. Proving it needs only a LEXICAL
+ * check, kept deliberately conservative in the safe direction: the answer is
+ * `true` only when the enclosing constructor contains NO `super(...)` call that
+ * ends before this reference begins. A `super()` anywhere earlier — including
+ * inside an `if` or a loop, where it may not actually have run — keeps today's
+ * behaviour rather than risking a throw in a working program.
+ *
+ * A reference inside a nested function or arrow is excluded outright: its
+ * source position says nothing about when it runs (`() => super.x` written
+ * before `super()` and called after it is correct code), and an arrow is
+ * compiled into the constructor's own FunctionContext, so `isDerivedConstructor`
+ * alone cannot tell them apart.
+ */
+function superReadPrecedesSuperCall(fctx: FunctionContext, expr: ts.Node): boolean {
+  if (!fctx.isDerivedConstructor) return false;
+  let current: ts.Node | undefined = expr.parent;
+  while (current && !ts.isConstructorDeclaration(current)) {
+    if (
+      ts.isArrowFunction(current) ||
+      ts.isFunctionExpression(current) ||
+      ts.isFunctionDeclaration(current) ||
+      ts.isMethodDeclaration(current) ||
+      ts.isGetAccessorDeclaration(current) ||
+      ts.isSetAccessorDeclaration(current) ||
+      ts.isClassDeclaration(current) ||
+      ts.isClassExpression(current) ||
+      ts.isObjectLiteralExpression(current)
+    ) {
+      return false;
+    }
+    current = current.parent;
+  }
+  if (!current?.body) return false;
+  let precededBySuperCall = false;
+  const visit = (node: ts.Node): void => {
+    if (precededBySuperCall) return;
+    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.SuperKeyword && node.end <= expr.pos) {
+      precededBySuperCall = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(current.body, visit);
+  return !precededBySuperCall;
+}
+
+/**
+ * (#5350 step 4b) Emit that ReferenceError plus a type-shaped (unreachable)
+ * value so the enclosing expression stays stack-balanced.
+ */
+function emitSuperUninitializedThisReadThrow(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  expr: ts.Node,
+  accessType: ts.Type,
+): ValType | undefined {
+  if (!ctx.standalone) return undefined;
+  if (!superReadPrecedesSuperCall(fctx, expr)) return undefined;
+  emitThrowReferenceError(
+    ctx,
+    fctx,
+    "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
+  );
+  const wasmType = resolveWasmType(ctx, accessType);
+  if (wasmType.kind === "f64") {
+    fctx.body.push({ op: "f64.const", value: 0 });
+  } else if (wasmType.kind === "i32") {
+    fctx.body.push({ op: "i32.const", value: 0 });
+  } else {
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  return wasmType;
+}
+
 function compileStandaloneObjectLiteralSuperPropertyRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1405,6 +1486,15 @@ function compileStandaloneClassSuperPropertyRead(
   if (!ctx.standalone) return undefined;
   if (parentClassName === undefined) return undefined;
   if (!standaloneClassProtoObjectApplies(ctx, currentClassName)) return undefined;
+  // (#5350 step 1, corrected in step 4) The PARENT must own a `$Object`
+  // prototype too, or the §15.7.14 step 6 link out of `C.prototype` is not
+  // built and `__getPrototypeOf` answers nullish — which the coercible guard
+  // would turn into a TypeError for a read that must answer `undefined`.
+  // Measured on `class D extends Object { … super.y … }`
+  // (`.tmp/w5350/q52.ts`): without this the read threw a TypeError where node
+  // answers `undefined`. A builtin parent keeps the historical default and the
+  // `emitSuperExternMethodCall` route.
+  if (!standaloneClassProtoObjectApplies(ctx, parentClassName)) return undefined;
   const selfIdx = fctx.localMap.get("this");
   if (selfIdx === undefined) return undefined;
 
@@ -1485,10 +1575,16 @@ export function compileSuperPropertyAccess(
   expr: ts.PropertyAccessExpression,
   propName: string,
 ): ValType | null {
+  // One checker query for the whole function — every arm below answers with the
+  // type at this access site.
+  const accessType = ctx.checker.getTypeAtLocation(expr);
+  // (#5350 step 4b) §13.3.7.1: GetThisBinding precedes everything else, and in
+  // a derived constructor before `super()` that throws a ReferenceError.
+  const uninitThrow = emitSuperUninitializedThisReadThrow(ctx, fctx, expr, accessType);
+  if (uninitThrow !== undefined) return uninitThrow;
   // Determine which class we're in
   const currentClassName = resolveEnclosingClassName(fctx);
   if (!currentClassName) {
-    const accessType = ctx.checker.getTypeAtLocation(expr);
     // (#4688) Object-literal methods have a runtime home-object prototype in
     // standalone mode. Resolve the named read through the native object
     // runtime before retaining the old type-shaped fallback for other lanes.
@@ -1517,7 +1613,6 @@ export function compileSuperPropertyAccess(
   const parentClassName = ctx.classParentMap.get(currentClassName);
   if (!parentClassName) {
     // In a base class, super.prop resolves to Object.prototype[prop] — usually undefined.
-    const accessType = ctx.checker.getTypeAtLocation(expr);
     // (#5350 step 3) `extends null` is NOT a base class: its super base is
     // null, so the read is a TypeError rather than `undefined`.
     const nullHeritageThrow = emitSuperExtendsNullThrow(ctx, fctx, expr, accessType);
@@ -1559,8 +1654,7 @@ export function compileSuperPropertyAccess(
           fctx.body.push({ op: "local.get", index: selfIdx });
         }
         fctx.body.push({ op: "call", funcIdx });
-        const propType = ctx.checker.getTypeAtLocation(expr);
-        return resolveWasmType(ctx, propType);
+        return resolveWasmType(ctx, accessType);
       }
     }
     ancestor = ctx.classParentMap.get(ancestor);
@@ -1611,7 +1705,6 @@ export function compileSuperPropertyAccess(
 
   // Fallback: could be a method reference (not a call) — try to find a parent method
   // For now, emit a default based on the TypeScript type at the access site
-  const accessType = ctx.checker.getTypeAtLocation(expr);
   // (#5350 step 1) Standalone: before defaulting, do the real prototype-chain
   // read. Deliberately AFTER the parent-accessor and struct-field walks above,
   // so both keep their single static call (`tests/issue-3522-super-accessor`).
@@ -1645,6 +1738,25 @@ export function compileSuperElementAccess(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | null {
+  // (#5350 step 4a) `super[super()]` — the #2709 guard, which the WRITE and
+  // UPDATE paths already call (assignment.ts:5522) but the READ never did.
+  // One checker query for the whole function — every arm below answers with the
+  // type at this access site.
+  const accessType = ctx.checker.getTypeAtLocation(expr);
+  if (emitSuperUninitializedThisGuard(ctx, fctx, expr.argumentExpression)) {
+    const guardedType = resolveWasmType(ctx, accessType);
+    if (guardedType.kind === "f64") {
+      fctx.body.push({ op: "f64.const", value: 0 });
+    } else if (guardedType.kind === "i32") {
+      fctx.body.push({ op: "i32.const", value: 0 });
+    } else {
+      fctx.body.push({ op: "ref.null.extern" });
+    }
+    return guardedType;
+  }
+  // (#5350 step 4b) Same uninitialised-`this` ReferenceError as the dot form.
+  const uninitThrow = emitSuperUninitializedThisReadThrow(ctx, fctx, expr, accessType);
+  if (uninitThrow !== undefined) return uninitThrow;
   const argExpr = expr.argumentExpression;
   // Try to resolve the key to a static string
   let propName: string | undefined;
@@ -1659,7 +1771,6 @@ export function compileSuperElementAccess(
   }
 
   if (propName === undefined) {
-    const accessType = ctx.checker.getTypeAtLocation(expr);
     // (#5350 step 2) Standalone: the VALUE is a runtime read, not a default.
     // GetSuperBase runs first, then ToPropertyKey on the evaluated key, then
     // the receiver-aware [[Get]] — see compileStandaloneSuperPropertyRead.
@@ -1717,7 +1828,6 @@ export function compileSuperElementAccess(
   // Determine which class we're in
   const currentClassName = resolveEnclosingClassName(fctx);
   if (!currentClassName) {
-    const accessType = ctx.checker.getTypeAtLocation(expr);
     // (#4688) Mirror the dot-property lowering for a statically resolved
     // element key. Dynamic keys stay on the historical fallback path.
     const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(
@@ -1743,11 +1853,10 @@ export function compileSuperElementAccess(
   // Find parent class — if none, super resolves to Object.prototype
   const parentClassName = ctx.classParentMap.get(currentClassName);
   if (!parentClassName) {
-    const accessType2 = ctx.checker.getTypeAtLocation(expr);
     // (#5350 step 3) Same `extends null` TypeError as the dot form.
-    const nullHeritageThrow2 = emitSuperExtendsNullThrow(ctx, fctx, expr, accessType2);
+    const nullHeritageThrow2 = emitSuperExtendsNullThrow(ctx, fctx, expr, accessType);
     if (nullHeritageThrow2 !== undefined) return nullHeritageThrow2;
-    const wasmType2 = resolveWasmType(ctx, accessType2);
+    const wasmType2 = resolveWasmType(ctx, accessType);
     if (wasmType2.kind === "f64") {
       fctx.body.push({ op: "f64.const", value: 0 });
     } else if (wasmType2.kind === "i32") {
@@ -1771,8 +1880,7 @@ export function compileSuperElementAccess(
           fctx.body.push({ op: "local.get", index: selfIdx });
         }
         fctx.body.push({ op: "call", funcIdx });
-        const propType = ctx.checker.getTypeAtLocation(expr);
-        return resolveWasmType(ctx, propType);
+        return resolveWasmType(ctx, accessType);
       }
     }
     ancestor = ctx.classParentMap.get(ancestor);
@@ -1819,7 +1927,6 @@ export function compileSuperElementAccess(
   }
 
   // Fallback: emit default value based on TypeScript type
-  const accessType = ctx.checker.getTypeAtLocation(expr);
   // (#5350 step 1) Same runtime prototype read as the dot form, same position.
   const classRuntimeRead = compileStandaloneClassSuperPropertyRead(
     ctx,
