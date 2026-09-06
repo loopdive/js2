@@ -1,10 +1,10 @@
 {
   "id": "5344",
-  "assignee": "ttraenkler/agent-a067dce24451828bd",
-  "requested_by": "ttraenkler/agent-a067dce24451828bd",
+  "assignee": "ttraenkler/senior-developer",
+  "requested_by": "ttraenkler/senior-developer",
   "status": "in-progress",
-  "branch": "issue-5344-diff-test-baseline-refresh",
-  "claimed_at": "2026-09-05T20:45:03Z",
-  "updated_at": "2026-09-05T20:45:03Z",
-  "write_id": "98971-8hombpuh"
+  "branch": "issue-5344-diff-test-baseline-refresh-v3",
+  "claimed_at": "2026-09-06T02:54:12Z",
+  "updated_at": "2026-09-06T02:54:12Z",
+  "write_id": "58835-20xu6wbl"
 }
