@@ -96,6 +96,11 @@ import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapt
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
+import {
+  installFreshDataStructAssociationToken,
+  sameAssociationToken,
+  sameExportedFunction,
+} from "./runtime/exported-function-identity.js";
 import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
 import {
   CLOCK_CAPABILITY_AUTHORITY,
@@ -1453,14 +1458,14 @@ function _dataStructHostBridgeMetadata(
   if (!_hasOwn(exports, tokenLogicalName)) return undefined;
   const token = _terminalHostBridgeAlias(exports, tokenPhysicalBase);
   if (!(token instanceof WebAssembly.Global)) return undefined;
-  if (expectedToken !== undefined && token !== expectedToken) return undefined;
+  if (expectedToken !== undefined && !sameAssociationToken(token, expectedToken)) return undefined;
 
   const helpers: (Function | undefined)[] = [];
   for (let bit = 0; bit < _DATA_STRUCT_HOST_BRIDGE_EXPORTS.length; bit++) {
     const [, physicalBase] = _DATA_STRUCT_HOST_BRIDGE_EXPORTS[bit]!;
     const helper = _terminalHostBridgeAlias(exports, physicalBase);
     if ((bits & (1 << bit)) !== 0) {
-      if (typeof helper !== "function" || helper !== bindings.get(bit)) return undefined;
+      if (typeof helper !== "function" || !sameExportedFunction(helper, bindings.get(bit))) return undefined;
       helpers.push(helper);
     } else {
       helpers.push(undefined);
@@ -1476,12 +1481,13 @@ function _dataStructHostBridgeMetadata(
       authority.marker !== marker ||
       authority.manifest !== manifest ||
       authority.bindings !== bindings ||
-      authority.token !== token
+      !sameAssociationToken(token, authority.token)
     ) {
       return undefined;
     }
     for (let bit = 0; bit < helpers.length; bit++) {
-      if (authority.helpers[bit] !== helpers[bit] || authority.helpers[bit] !== bindings.get(bit)) return undefined;
+      if (authority.helpers[bit] !== helpers[bit] || !sameExportedFunction(authority.helpers[bit], bindings.get(bit)))
+        return undefined;
     }
     return authority;
   }
@@ -1536,7 +1542,8 @@ function _hostBridgeExportView<T extends Record<string, any>>(exports: T, option
     let helper: unknown;
     if (closureMetadata !== undefined && (closureMetadata.bits & (1 << bit)) !== 0) {
       helper = _terminalHostBridgeAlias(exports, physicalBase);
-      if (typeof helper !== "function" || helper !== closureMetadata.bindings.get(bit)) helper = undefined;
+      if (typeof helper !== "function" || !sameExportedFunction(helper, closureMetadata.bindings.get(bit)))
+        helper = undefined;
     }
     if (exports[logicalName] === helper) continue;
     overrides.set(logicalName, helper);
@@ -1556,7 +1563,8 @@ function _hostBridgeExportView<T extends Record<string, any>>(exports: T, option
     let helper: unknown;
     if (dataStructMetadata !== undefined && (dataStructMetadata.bits & (1 << bit)) !== 0) {
       helper = _terminalHostBridgeAlias(exports, physicalBase);
-      if (typeof helper !== "function" || helper !== dataStructMetadata.bindings.get(bit)) helper = undefined;
+      if (typeof helper !== "function" || !sameExportedFunction(helper, dataStructMetadata.bindings.get(bit)))
+        helper = undefined;
     }
     if (exports[logicalName] === helper) continue;
     overrides.set(logicalName, helper);
@@ -7290,7 +7298,23 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
         // __sget_<name> per-shape dispatcher yields null/undefined when the
         // receiver's struct shape doesn't carry the field at all.
         const v = getter(obj);
-        if (v !== undefined && v !== null) return v;
+        // (#5250) `0` is the shape-MISS default of a NUMERIC `__sget_<name>`
+        // exactly as `null` is for a ref-typed one, and the getter is
+        // module-GLOBAL — so one unrelated `{ month: 11 }` literal anywhere in
+        // the program made `month` read as a present `0` on EVERY struct here
+        // (and, since this resolver backs the host proxy's `has` trap, made
+        // `"month" in { year: 1994 }` true). Gate the miss-shaped values on
+        // the single-key field-name registry, and only when it positively says
+        // absent, so every other read keeps its old cost and answer. The
+        // `false` arm is defensive, not measured. Full measurement + controls:
+        // tests/issue-5250-sget-numeric-shape-miss.test.ts.
+        if (v !== undefined && v !== null) {
+          if ((v === 0 || v === false) && _structOwnFieldStatus(obj, String(key), exports) === false) {
+            // Shape miss: fall through to the prototype / sidecar walk below.
+          } else {
+            return v;
+          }
+        }
         // (#3051 Slice 3) `null` disambiguation: a compiled `null` literal is
         // stored as ref.null (reads back `null` — same as the dispatcher's
         // shape-miss), while compiled `undefined` is the distinguished host
@@ -18589,6 +18613,7 @@ export function buildImports(
     // programs (an unused import namespace is ignored by V8).
     string_constants16: buildStringConstants16(stringPool),
   };
+  installFreshDataStructAssociationToken(result.string_constants, _DATA_STRUCT_HOST_BRIDGE_TOKEN_VALUE); // (#5337)
   const dataStructHostBridgeToken = result.string_constants[_DATA_STRUCT_HOST_BRIDGE_TOKEN_VALUE];
   // Always provide setExports — needed for callbacks, native string marshaling,
   // and struct field getter discovery (__sget_*). Raw records cannot establish

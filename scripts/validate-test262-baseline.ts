@@ -53,17 +53,70 @@ import {
 
 const ROOT = resolve(fileURLToPath(import.meta.url), "..", "..");
 
-// (#5248) LANE PARITY. This validator re-runs rows the COMMITTED baseline says
-// pass, and that baseline is produced exclusively by `scripts/test262-worker.mjs`
-// — the sharded lane, which is NOT wired to the compiled `Temporal` provider.
-// The in-process lane this file imports IS wired, so a Temporal row that passes
-// in the baseline for want of a `Temporal` binding (measured: ~12 % of the
-// Temporal bucket's baseline passes are of that shape) would fail here and
-// report a baseline drift that does not exist. Sampling a lane the baseline was
-// not measured on is a false positive, not a finding, so the validator runs the
-// provider OFF until the worker is wired too. `JS2WASM_TEST262_TEMPORAL=1`
-// overrides, for the run that checks the two lanes have converged.
-process.env.JS2WASM_TEST262_TEMPORAL ??= "0";
+// (#5248/#5353) LANE PARITY, decided from the BASELINE rather than pinned.
+//
+// This validator re-runs rows the published baseline says pass, through the
+// IN-PROCESS lane, while the baseline itself is produced by the SHARDED lane.
+// Whether a Temporal row's verdict is comparable across those two lanes depends
+// entirely on whether both had a `Temporal` binding. Mismatch in EITHER
+// direction is a false positive:
+//
+//   baseline unlinked + validator linked → rows that passed for want of a
+//     `Temporal` binding fail here (~12 % of the Temporal bucket's baseline
+//     passes are of that shape, measured in #5248)
+//   baseline linked + validator unlinked → rows that pass only WITH the
+//     provider fail here
+//
+// #5248 pinned the default OFF because only one lane was wired. #5353 wires the
+// sharded lane, so the correct default FLIPS the moment a provider-linked
+// baseline is promoted — one merge AFTER #5353 lands, not with it. A hardcoded
+// constant is therefore wrong on one side of that promotion whatever value it
+// takes, and being wrong here is expensive: `test262-baseline-validate` is a
+// NON-required check, and a red one drives `mergeStateStatus` to `UNSTABLE`,
+// which `auto-enqueue` skips silently and indefinitely (#3878/#3904).
+//
+// So the default is READ OFF THE BASELINE, which carries the evidence: a
+// baseline produced without the provider contains rows whose error is literally
+// `Temporal is not defined`, and a linked one contains none. This self-corrects
+// across the promotion in both directions — including a future CI failure that
+// silently un-links the shards, where matching the baseline is again correct.
+// `JS2WASM_TEST262_TEMPORAL=0|1` still overrides explicitly.
+//
+// Cost when it resolves to ON: the in-process lane builds the provider cold
+// (~42 s, once) the first time a sampled row is a Temporal row — roughly a
+// 1-in-2 chance at 50 samples, since Temporal passes are ~1.8 % of all passes.
+const TEMPORAL_UNLINKED_MARKER = "Temporal is not defined";
+
+/**
+ * Point the in-process lane's `Temporal` provider at whatever the baseline was
+ * measured with. Must run BEFORE any row executes; the runner reads the
+ * variable lazily on every row, so setting it here is sufficient.
+ */
+function alignTemporalProviderWithBaseline(baselinePath: string): void {
+  if (process.env.JS2WASM_TEST262_TEMPORAL !== undefined) {
+    console.log(`Temporal provider: ${process.env.JS2WASM_TEST262_TEMPORAL === "0" ? "OFF" : "ON"} (explicit).`);
+    return;
+  }
+  let unlinkedRows = 0;
+  try {
+    const raw = readFileSync(baselinePath, "utf-8");
+    for (const line of raw.split("\n")) {
+      if (line.includes(TEMPORAL_UNLINKED_MARKER)) unlinkedRows++;
+    }
+  } catch (e: unknown) {
+    // Unreadable baseline: keep the pre-#5353 conservative default. The lane
+    // that cannot be established is the one that must not introduce drift.
+    process.env.JS2WASM_TEST262_TEMPORAL = "0";
+    console.log(`Temporal provider: OFF (baseline unreadable: ${(e as Error).message}).`);
+    return;
+  }
+  process.env.JS2WASM_TEST262_TEMPORAL = unlinkedRows > 0 ? "0" : "1";
+  console.log(
+    `Temporal provider: ${unlinkedRows > 0 ? "OFF" : "ON"} — the baseline carries ${unlinkedRows} ` +
+      `"${TEMPORAL_UNLINKED_MARKER}" row(s), i.e. it was produced by a lane that ` +
+      `${unlinkedRows > 0 ? "did NOT" : "DID"} link the provider.`,
+  );
+}
 
 /** Prepare the default standalone eval engine before sampling its baseline. */
 function prepareStandaloneEvalProvider(): void {
@@ -356,6 +409,10 @@ async function main(): Promise<void> {
     );
     standaloneAvailable = false;
   }
+
+  // Decide the provider default from the HOST baseline — it is the lane that
+  // carries Temporal rows (standalone never links the provider at all).
+  alignTemporalProviderWithBaseline(BASELINE_CACHE_PATH);
 
   const seed = resolveSeed();
   console.log(`Seed=${seed}. Per-lane sample: ${SAMPLE_SIZE} pass rows + ${FAIL_SAMPLE_SIZE} fail rows.`);

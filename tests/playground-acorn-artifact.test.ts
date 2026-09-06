@@ -105,3 +105,46 @@ describe("playground AST explorer — committed acorn.wasm artifact", () => {
     expect(() => compiled.parse("function (", PARSE_OPTIONS)).toThrow(/./);
   }, 120_000);
 });
+
+// (#5337) The iOS Safari symptom, produced under V8 by the one thing that
+// yields it here: an instance whose export set was never published
+// (`setInstance` not called). The module cannot read the host options object,
+// acorn falls back to its defaults (warning "Since Acorn 8.0.0,
+// options.ecmaVersion is required"), and then dies inside its keyword table
+// with "Cannot read properties of null (reading 'replace')" — thrown by the
+// runtime's own `__extern_method_call` guard, hence V8 wording on every engine.
+//
+// The actual iOS cause was different (helpers MASKED by identity checks JSC
+// cannot satisfy — see tests/issue-5337-exported-function-identity.test.ts);
+// this pins the symptom the panel's load-time canary detects, so a future fix
+// that makes the unwired case loud is recognised as a change, not a surprise.
+describe("#5337 — unwired host boundary degrades silently", () => {
+  it("parses with default options and then throws deep inside, instead of failing loudly", async () => {
+    const bytes = readFileSync(WASM_PATH);
+    const manifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf-8"));
+
+    const imports = buildCompiledAdapterImports(manifest);
+    const { instance } = await instantiateWasm(
+      bytes,
+      imports.env,
+      imports.string_constants,
+      imports.string_constants16,
+    );
+    // Deliberately NOT calling imports.setInstance(instance).
+    const exports = wrapExports(instance, {
+      signatures: manifest.exportSignatures,
+      boundaryPolicies: manifest.exportBoundaries,
+    }) as { parse: (src: string, opts: typeof PARSE_OPTIONS) => any };
+
+    expect(typeof exports.parse).toBe("function");
+    expect(() => exports.parse(SAMPLE, PARSE_OPTIONS)).toThrow(/Cannot read properties of null/);
+  }, 120_000);
+
+  it("a wired instance parses the same input correctly", async () => {
+    const compiled = await loadCompiledAcorn();
+    // The canary the panel runs at load: a one-token parse must round-trip.
+    const canary = compiled.parse("0", PARSE_OPTIONS);
+    expect(canary.body[0].expression.value).toBe(0);
+    expect(compiled.parse(SAMPLE, PARSE_OPTIONS).type).toBe("Program");
+  }, 120_000);
+});

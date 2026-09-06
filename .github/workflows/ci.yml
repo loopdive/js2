@@ -295,6 +295,22 @@ jobs:
         # scripts/harness-compile-budget.json (set from post-#3433 main).
         run: pnpm run check:harness-compile-budget
 
+      - name: Dogfood emitted-binary validation floor (#5336)
+        if: steps.npm_compat.outputs.only != 'true'
+        # Compiles the pinned npm-compat tarball entry of six dogfood packages
+        # (no test execution, no upstream clone) and asserts the one thing that
+        # is always a compiler bug when it breaks: `compile.success` ⇒ the
+        # emitted binary passes WebAssembly validation. #5390 broke exactly
+        # that for moment — codegen reported success, the module would not
+        # load ("call[25] expected type (ref null 84), found struct.get of type
+        # i32") — and it survived FIVE merges with all six required checks
+        # green because nothing asserted the field. NOT a pass-count gate and
+        # NOT a baseline: pass counts move legitimately, and asserting
+        # `compile.success` itself is measurably noisy (one npm-compat refresh
+        # revision flipped five packages at once). Re-derive the package set
+        # with `pnpm run survey:dogfood-validation`.
+        run: pnpm run check:dogfood-validation
+
       - name: IR adoption table freshness (#2145)
         if: steps.npm_compat.outputs.only != 'true'
         # Fails when plan/log/ir-adoption.md drifts from its generator data or
@@ -514,7 +530,7 @@ jobs:
           git submodule update --init --checkout test262
           git submodule update --init --checkout test262-fyi/data
           pnpm run build:compiler-bundle
-          pnpm exec esbuild src/runtime.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
+          pnpm exec esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
           # Changed root tests that run eval-mentioning test262 files need the
           # runtime-eval REFUSAL provider linked, or instantiate fails with
           # 'Import "js2wasm:runtime-eval": module is not an object' (#4234).

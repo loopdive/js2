@@ -15,5 +15,7 @@ declare module "./context/types.js" {
     irProgramCallablePreparedUnitIds?: ReadonlySet<IrUnitId>;
     /** Exact M2 module-init unit suppressed from generic overlay reconciliation. */
     irProgramPreparedModuleInitUnitId?: IrUnitId;
+    /** Exact M2-P2A source-owned initializer units suppressed from overlays. */
+    irProgramPreparedModuleInitUnitIds?: ReadonlySet<IrUnitId>;
   }
 }
