@@ -41,6 +41,47 @@ loc-budget-allow:
   # §10.1.14 step-3 Type(proto)-is-Object guard on the carrier write. Both live
   # in reflect-construct-newtarget.ts; call-namespace-static.ts grows by the
   # dispatch and the restored refusal.
+  # 2026-09-05 review round 2 (Opus, +207 LOC): the six admitted-shape
+  # narrowings from the round-1 verdict, and the measurement each one rests on
+  # written down beside it. Most of the growth is that evidence — the
+  # nine-constructor wrapper table, the base-attribution for the name-keyed
+  # `prototype` reader, the descriptor-write measurement the round-1 comment
+  # asserted without one, and the four narrowings of the in-file function
+  # target, each recorded with the wrong answer that forced it. A refusal whose
+  # measurement is not next to it is the defect this round was called to fix.
+  # 2026-09-06 review round 1 of r2 (Opus, +126 LOC net): the dynamic in-file
+  # function target is now gated on the VALUE SET of its binding rather than on
+  # the kind of its initializer (`dynamicTargetIsAllOrdinaryFunctions`), and the
+  # nested-`new.target` stop is gated on whether that nested function can itself
+  # be constructed (`neverConstructed`). Seven measured wrong answers become
+  # refusals. As in round 2, the growth is mostly the measurement written next
+  # to the clause it justifies; `resolvesToAsyncFunction` was deleted, since the
+  # value-set gate subsumes it.
+  # 2026-09-06 review round 2 of r2 (Opus): four more measured wrong answers
+  # become refusals — the value-set gate now re-runs the `new.target` check on
+  # every MEMBER body (it only ever scanned the initializer's identifier), a
+  # function EXPRESSION in initializer position is refused (its callee lowering
+  # drops the fetched prototype), the annotation refusal covers JSDoc `@type`
+  # in `.js` sources as well as TS syntax, and `neverConstructed`'s
+  # name-escape scan is limited to function DECLARATIONS (a named function
+  # EXPRESSION is reached through what it is assigned to, not its own name).
+  # The write scan also resolves each `T = …` through the oracle, so an
+  # unrelated same-spelled parameter or block shadow no longer over-refuses.
+  # As before, most of the growth is the measurement written beside the clause.
+  - src/codegen/expressions/reflect-construct-newtarget.ts
+  # 2026-09-06 STRANDED GRANT, restated — not this round's growth. Simulating
+  # CI's base (`LOC_GATE_BASE=$(git rev-parse origin/main)` = 78f1b2d03c) fails
+  # on `calls-closures.ts` 2726 > 2699 (+27). That +27 is #5334's
+  # rest-param-wrapper work, already carried by this integration branch and
+  # granted in `plan/issues/5334-rest-param-wrapper-metadata-illegal-cast.md`,
+  # which THIS change-set does not modify — so against main the grant is
+  # stranded and the gate cannot see it. `git diff origin/main..HEAD` on that
+  # file shows only #5334's hunks and none of this round's; against the round-1
+  # head the same gate reports it as "granted by …5334…" and exits 0. Restated
+  # here per CLAUDE.md's stranded-grant rule; it lapses once the branch merges
+  # origin/main, which supersedes that hunk (main's own copy is 2699 with the
+  # helper moved into callable-property-host-value.ts).
+  - src/codegen/expressions/calls-closures.ts
 func-budget-allow:
   # 2026-09-04 r4 implementation (Opus): four helpers for the runtime
   # NewTarget.prototype read, its carrier application, the single-assignment
@@ -835,3 +876,706 @@ answers; they are the round-2 list, cheapest first:
 Probe files: `/home/user/js2/.tmp/rv/p/*.js` with harness `.tmp/rv/cmp.mts`
 (base / lane / fix / node) while the container lives; every shape is a
 one-liner quoted above.
+
+## Implementation Plan — r2 (2026-09-05, Fable lane; Opus-medium implements)
+
+Scope: the six lane-only over-refusals from the round-1 verdict above, cheapest
+first. Every step re-admits a program the r4 lane answered correctly and round 1
+refused; nothing here touches the shapes round 1 refused for a WRONG answer
+(class NewTarget, non-identifier NewTarget, `new.target` read in the target's
+own body, non-object prototype on a carrier). All in
+`src/codegen/expressions/reflect-construct-newtarget.ts` unless stated.
+
+1. **`targetReadsNewTarget` stops at nested ordinary functions.** In
+   `readsNewTarget`, do not descend into `FunctionDeclaration`,
+   `FunctionExpression`, method declarations, getters/setters or class
+   constructors nested in the target's body — each has its own `new.target`.
+   Keep descending into arrow functions, class field initialisers and static
+   blocks (they inherit). Probe `.tmp/rv/p/b5_nt_nested_newtarget.js`
+   (node 7); keep `c2`/`c6` (a direct read, an arrow read) refused.
+2. **`UNSETTABLE_PROTOTYPE_CONSTRUCTORS` drops Boolean, String, Symbol.**
+   Measured: those wrapper carriers take the post-construction prototype
+   patch (`e_Boolean` 1, `e_String` 1, `e_Symbol` TypeError = node). Keep
+   Array, Number, Map, Set, RegExp, Function, each of which was measured to
+   discard it; re-measure all nine before committing and record the table.
+3. **`prototypeIsPristine` resolves the binding by symbol, not by name.**
+   Replace the file-wide `name.text` count with `ctx.oracle`'s declaration
+   identity for the NewTarget identifier (the same `declarationsOf` route r4
+   used); an unrelated parameter or local of the same name in another scope
+   must not count. Probes `m2_shadow.js` (node 7) vs `m1_control_noshadow.js`.
+4. **Mutation of `NT.prototype` is not replacement.** Only an assignment whose
+   LEFT side is exactly `NT.prototype` (or a `defineProperty`/`defineProperties`
+   call whose target is `NT` and whose key is the literal `"prototype"`, or
+   `Object.setPrototypeOf(NT, …)`) replaces the slot. `NT.prototype.tag = 9`,
+   `Object.assign(NT.prototype, …)` and `Object.defineProperty(NT.prototype,
+   …)` mutate the object the slot already holds, which stays a plain
+   `$Object` and passes `__native_construct_N`'s `ref.test $Object`. Probes
+   `b2_driver_protomut.js`, `b7`, `c3` (node 7 each). Fix the code comment
+   that cites the `defineProperty(NT, "prototype", {value: {…}})` shape as
+   the rationale: measure it — if the descriptor-written object-literal
+   carrier IS dropped by the `ref.test`, keep refusing that one shape and say
+   so precisely; if it is not, admit it.
+5. **In-file function targets use the carrier route the `unknown` target
+   already takes.** `classifyRuntimeNewTargetSite` returns `undefined` for
+   `targetKind.kind === "function"` when the driver declines; `k1_target_param.js`
+   shows the same instance shape through the `unknown` route takes the generic
+   `__object_setPrototypeOf` patch and answers node. Route a declined in-file
+   function target through that carrier path instead of refusing, ONLY where
+   the measured answer equals node (`j6_reassigned_target.js` → 3); if any
+   in-file function shape still reads a wrong prototype, keep the refusal for
+   that shape and name it.
+6. **Doc-comment correction** in `applyRuntimeNewTargetPrototype`: the
+   §10.1.14 guard repaired DataView only; the typed-array carrier still
+   answers `null` because its `Object.getPrototypeOf` reader is broken on main
+   (`f2_ta_bind_noproto.js`). No code change.
+
+Measurement protocol: base = a `git archive origin/main` tree; oracle node 22,
+changed test files also under node 25. Harness `.tmp/rv/cmp.mts` (base / fix /
+node) with the probes in `.tmp/rv/p/` while the container lives — re-create any
+missing probe from the one-liners in the verdict section. Every admitted shape
+must equal node on standalone AND wasi; every shape still refused must carry
+the verbatim `(#3371)` error on both targets.
+
+Acceptance: (a) the 11 kept rows and the positive control still pass, and the
+218-row control corpus (built-ins/Reflect/construct, language/expressions/
+new.target, language/expressions/super, built-ins/Function/prototype/bind) loses
+zero rows against origin/main — compile timeouts re-run alone at
+`COMPILER_POOL_SIZE=1` before they count; (b) tests/issue-3371-r4-reflect-
+construct-newtarget.test.ts gains one pin per step (admitted shape = node) and
+keeps its `refusals kept` block green on standalone and wasi; (c) programs
+without `Reflect.construct` byte-identical to origin/main on standalone, wasi
+and host; (d) all gates green bare and with `LOC_GATE_BASE=origin/main`;
+growth grants in this file's frontmatter with a dated rationale.
+
+## 2026-09-05 r2 implementation (Opus)
+
+**What this round is.** r2 implements the six lane-only over-refusals from the
+round-1 verdict. It is a **soundness round, not a row-count round**: the owned
+test262 rows are unchanged (12 pass / 12 non-pass, base and branch, set-diff
+empty in both directions). What changed is the set of PROGRAMS the compiler
+accepts — five shapes that node answers and round 1 refused now compile and
+answer node, and four shapes the plan wanted admitted are shown by measurement
+to answer WRONGLY and keep the refusal.
+
+Worktree `/home/user/js2/.claude/worktrees/wf_eb120fff-87d-1`, branch
+`worktree-wf_eb120fff-87d-1`, spawn base `origin/main` **c9a8b48616** plus the
+plan commit 6f445141d3. `origin/main` advanced to 2257b950ee during the
+session; the A/B base tree is c9a8b48616 (`git archive`, `.tmp/base`, verified
+byte-equal to `c9a8b48616:src/codegen/expressions/reflect-construct-newtarget.ts`).
+Oracle node 22 in this container; harness `.tmp/cmp.mts` (base / branch / node),
+probes `.tmp/p/*.js`. Every number below is a run executed in this session.
+
+### Steps — outcome per plan step
+
+| Step | Plan asked | Outcome |
+| --- | --- | --- |
+| 1 | `targetReadsNewTarget` stops at nested ordinary functions | **Done as asked.** `readsNewTarget` stops at every scope that owns a `new.target` (function declaration/expression, method, accessor, class constructor); arrows, field initialisers and static blocks still inherit. |
+| 2 | drop Boolean, String, Symbol from `UNSETTABLE_PROTOTYPE_CONSTRUCTORS` | **Only Symbol dropped.** The plan's premise does not survive re-measurement — see the table below. |
+| 3 | `prototypeIsPristine` resolves the binding by symbol | **Partly.** The binding COUNT is gone (that was the over-refusal). The WRITE clauses must stay name-keyed; the reader they protect is itself name-keyed. |
+| 4 | mutation of `NT.prototype` is not replacement | **Done as asked**, plus the measurement the plan requested for the descriptor-write shape. |
+| 5 | in-file function targets use the `unknown` carrier route | **Narrowed four times.** Only a target that does NOT resolve to one unreassigned function declaration is admitted. |
+| 6 | doc-comment correction | **Done**, with both carriers measured. |
+
+### Step 1 — a nested function's `new.target` is its own
+
+| probe | node | base | branch |
+| --- | --- | --- | --- |
+| `b5_nt_nested_newtarget.js` (nested function declaration) | 7 | `(#3371)` CE | **7** |
+| `b5b_nt_nested_fnexpr.js` (nested function expression) | 7 | `(#3371)` CE | **7** |
+| `c2_direct_newtarget.js` (the target itself reads it) | 3 | `(#3371)` CE | `(#3371)` CE |
+| `c6_arrow_newtarget.js` (an arrow in the target reads it) | 3 | `(#3371)` CE | `(#3371)` CE |
+
+### Step 2 — the wrapper constructors, re-measured
+
+Run with `UNSETTABLE_PROTOTYPE_CONSTRUCTORS` emptied, `--target standalone`:
+
+| target | node | admitted | verdict |
+| --- | --- | --- | --- |
+| Array | 1 | 0 | prototype not recorded — keep refusing |
+| Map | 1 | 0 | prototype not recorded — keep refusing |
+| RegExp | 1 | 0 | prototype not recorded — keep refusing |
+| Set | 1 | 0 | prototype not recorded — keep refusing |
+| Function | 1 | LEAK | pulls a `js2wasm:runtime-eval` import — keep refusing |
+| Boolean | 5 | 7 | dispatch stays nominal — keep refusing |
+| Number | 5 | 7 | dispatch stays nominal — keep refusing |
+| String | 5 | 3 | dispatch stays nominal — keep refusing |
+| Symbol | 1 | 1 | never constructs; TypeError = node — **DROPPED** |
+
+**The correction.** The plan's evidence for Boolean/String was a probe that only
+compares `Object.getPrototypeOf(o)`. That probe passes. A probe that ALSO reads
+a method through the patched chain does not: `o.valueOf()` answers the
+primitive where node answers the wrapper object, and `String`'s `o.length` is
+wrong too. Admitting them would convert a compile error into a wrong answer.
+The nominal dispatch is pre-existing — with no `Reflect.construct` in the
+program at all, `Object.setPrototypeOf(new Boolean(true), P)` reads back 2 on
+BASE where node reads 1 (`.tmp/p/g_wrapper_setproto_base.js`; the String twin
+is 6 vs node 5) — but a defect being older is not a licence to compile new
+programs onto it.
+
+`Number` was on the plan's keep-list for the wrong reason (it was said to
+discard the prototype; it records it). It keeps the refusal for the same reason
+Boolean and String do.
+
+### Step 3 — resolve the binding, keep the write clauses name-keyed
+
+| probe | node | base | branch |
+| --- | --- | --- | --- |
+| `m2_shadow.js` (a helper's parameter is also called `NT`) | 7 | `(#3371)` CE | **7** |
+| `m5b_shadow_nodefprop.js` (an inner `const NT`, untouched) | 3 | `(#3371)` CE | **3** |
+| `m1_control_noshadow.js` | 7 | 7 | 7 |
+| `m3_control_nomut.js` | 7 | 7 | 7 |
+| `m4_nt_reassigned.js` (a real reassignment) | 0 | 0 | 0 |
+| `m5_nt_block_shadow_mutates.js` (a slot write to the inner `NT`) | 3 | `(#3371)` CE | `(#3371)` CE |
+
+**Why the write clauses stay name-keyed.** The compiler's model of a function's
+`prototype` slot is itself name-keyed. `.tmp/p/m5e_read_only_base.js` contains
+no `Reflect.construct` at all — an outer `function NT(){}` and an inner
+`const NT = function(){}` whose prototype slot is redefined — and the OUTER
+`NT.prototype` reads null on **base** (base 5, node 6). With the write clauses
+symbol-resolved, `m5_nt_block_shadow_mutates.js` compiled and answered 1 where
+node answers 3. So symbol resolution is used for what it can decide (is this
+identifier's binding declared once here?) and the spelling for what the reader
+can actually distinguish.
+
+### Step 4 — mutation vs replacement, and the descriptor-write measurement
+
+| probe | node | base | branch |
+| --- | --- | --- | --- |
+| `b2_driver_protomut.js` (`NT.prototype.tag = 9`) | 7 | `(#3371)` CE | **7** |
+| `b7_object_assign_proto.js` (`Object.assign(NT.prototype, …)`) | 7 | `(#3371)` CE | **7** |
+| `c3_defineprop_on_proto.js` (`Object.defineProperty(NT.prototype, …)`) | 7 | `(#3371)` CE | **7** |
+| `d1_defineprop_slot.js` (`Object.defineProperty(NT, "prototype", …)`) | 7 | `(#3371)` CE | `(#3371)` CE |
+| `d3_setprotoof_nt.js` (`Object.setPrototypeOf(NT, …)`) | 3 | `(#3371)` CE | `(#3371)` CE |
+
+**The plan's open question, answered.** With every refusing clause disabled,
+`d1_defineprop_slot.js` compiles and answers **1** where node answers **7** —
+the instance lands on `%Object.prototype%`, neither `getPrototypeOf(o) === P`
+nor `o.tag === 9` holds. The descriptor-written object-literal carrier IS
+dropped by `__native_construct_N`'s `ref.test $Object`; the code comment citing
+that shape as the rationale is correct as written, and now carries the
+measurement. The shape is refused twice over: TypeScript synthesises an expando
+declaration for that `defineProperty`, so the in-file declaration count is 2.
+
+`d3` is a deliberate conservative keep, not a defect: admitted, it measured 3 =
+node, but `Object.setPrototypeOf(NT, …)` can change what `NT.prototype`
+resolves to for a NewTarget with no own `prototype`, and the gate does not
+require the NewTarget to be a function declaration.
+
+### Step 5 — the in-file function target, narrowed four times
+
+The plan's blanket version (route every declined function target to the carrier)
+produces six wrong answers. Each narrowing below is one of them:
+
+| probe | node | base | blanket | branch |
+| --- | --- | --- | --- | --- |
+| `j6_reassigned_target.js` (target is a reassigned `let`) | 3 | `(#3371)` CE | 3 | **3** |
+| `j10_const_alias_target.js` (`const T = F`) | 3 | `(#3371)` CE | 3 | **3** |
+| `j12_generator_target.js` | 1 | `(#3371)` CE | 1 | **1** |
+| `d1_defineprop_slot.js` | 7 | `(#3371)` CE | 1 | `(#3371)` CE |
+| `m5_nt_block_shadow_mutates.js` | 3 | `(#3371)` CE | 1 | `(#3371)` CE |
+| `d3_setprotoof_nt.js` | 3 | `(#3371)` CE | 1 | `(#3371)` CE |
+| `j7_spread_args.js` (static target, spread) | 7 | `(#3371)` CE | 0 | `(#3371)` CE |
+| `j8_many_args.js` (static target, 10 args) | 3 | `(#3371)` CE | 1 | `(#3371)` CE |
+| `j9_reassigned_target_spread.js` (dynamic target, spread) | 7 | `(#3371)` CE | TRAP | `(#3371)` CE |
+| `j11_async_target.js` (`async function` target) | 1 | `(#3371)` CE | 0 | `(#3371)` CE |
+
+The mechanism the round-1 refusal named — "the post-construction patch is a
+no-op on a closed instance struct" — is real, but it applies only when the
+ordinary `new` lowering can pick the closed-struct path, which needs the target
+to resolve statically. A target it cannot resolve takes the generic
+`__object_setPrototypeOf` route, exactly as an `unknown` target does on base
+(`k1_target_param.js`: node 3, base 3). So the branch admits only a function
+target that does NOT resolve to one unreassigned function declaration, and
+still requires: standalone, `prototypeIsPristine`, the driver's argument-shape
+limits, and that the target is not an `async function`.
+
+### Step 6 — the §10.1.14 guard repaired DataView only
+
+| probe | node | base | branch |
+| --- | --- | --- | --- |
+| `f1_dv_bind_noproto.js` (DataView, bound NewTarget with no own prototype) | 3 | 3 | 3 |
+| `f2_ta_bind_noproto.js` (Uint8Array, same) | 3 | 1 | 1 |
+
+Comment corrected; no code change. `Object.getPrototypeOf` on a
+dynamically-typed typed-array view answers null on base with no
+`Reflect.construct` in the program, so no guard in this arm can repair what
+that reader reports.
+
+### One regression, found by the row run and repaired
+
+Step 3's first cut required the NewTarget identifier to have exactly one
+declaration. A lib global has many (`Array` is an interface plus a var plus
+`ArrayConstructor`), so
+`built-ins/Reflect/construct/return-with-newtarget-argument.js` — one of the
+eleven rows r4 gained — went **pass → compile_error**. The count is now over
+declarations in THIS source file only: a lib global has zero, a genuine second
+in-file binding still refuses, and TypeScript's synthesised expando declaration
+for `Object.defineProperty(NT, "prototype", …)` is in-file, so `d1` stays
+refused by that clause too.
+
+### Rows — 24 owned (23 + the positive control)
+
+`.tmp/rows-owned.txt`, `npx tsx scripts/run-test262-paths.mts --isolate …
+--standalone`, `COMPILER_POOL_SIZE=2`, 2026-09-05; base tree `.tmp/base`
+(`git archive` of c9a8b48616), branch tree this worktree.
+
+| | base c9a8b48616 | branch |
+| --- | --- | --- |
+| pass | 12 | **12** |
+| fail | 9 | 9 |
+| compile_error | 3 | 3 |
+
+**Rows lost: 0. Rows gained: 0. Non-pass set-difference: empty in both
+directions.** All eleven rows r4 gained plus the positive control
+`return-without-newtarget-argument.js` still pass.
+
+### Probe sweep — 44 probes, standalone and wasi
+
+`.tmp/sweep2-standalone.txt` and `.tmp/sweep-wasi.txt`:
+
+- **standalone:** every probe that compiled on base answers identically on the
+  branch (zero base-drift); every newly-admitted probe equals node; every
+  remaining refusal carries the verbatim `(#3371)` error.
+- **wasi:** only the two `Symbol` probes differ from base, both to node's
+  answer. The step-5 branch is gated on `ctx.standalone`, so a wasi build sees
+  base's refusal for every other shape.
+
+### Byte identity — programs without the distinct-NewTarget arm
+
+`.tmp/bytes.mts`, sha256 of the emitted binary, base vs branch, three targets:
+
+| program | standalone | wasi | host |
+| --- | --- | --- | --- |
+| `z_plain.js` (classes, `new`, `super`, a nested `new.target`) | SAME | SAME | SAME |
+| `z_views.js` (DataView, typed array, bind, setPrototypeOf) | SAME | SAME | SAME |
+| `z_reflect_other.js` (2-arg construct, `NT === F`, static `NT.prototype = …`) | SAME | SAME | SAME |
+
+`BYTE-IDENTICAL: all` — main's own `Reflect.construct` paths are untouched.
+
+### Control corpus — 218 rows, 0 lost
+
+`built-ins/Reflect/construct/**` + `language/expressions/new.target/**` +
+`language/expressions/super/**` + `built-ins/Function/prototype/bind/**`
+(`.tmp/rows-controls.txt`, 218 rows), same isolated standalone runner,
+`COMPILER_POOL_SIZE=2`, both trees run concurrently under identical box load,
+2026-09-05:
+
+| | base c9a8b48616 | branch |
+| --- | --- | --- |
+| pass | 166 | **166** |
+| fail | 49 | 49 |
+| compile_error | 3 | 3 |
+
+Zero rows changed status in either direction; the non-pass set-difference is
+empty both ways. **No `compile_timeout` in any of the four runs**, so the
+re-run-alone step the lane protocol requires did not apply.
+
+### Pins
+
+`tests/issue-3371-r4-reflect-construct-newtarget.test.ts` — **42 tests, all
+green** at `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, `--pool=forks
+--poolOptions.forks.singleFork=true --no-file-parallelism`, on **node 22 AND
+node 25.9.0**. Nine are new this round: five parity pins (one per admitted
+step) and four refusal pins (the Boolean wrapper, the `async function` target,
+the spread-on-dynamic-target trap, the same-named prototype-slot write). The
+refusal block runs on standalone AND wasi.
+
+Two pins were first written with TypeScript spellings that do not compile to
+the shape they name, and the first pin run caught both. Both are separate
+PRE-EXISTING defects, measured on base:
+
+- `(NT.prototype as any).tag = 9` loses the mutation (3); the plain
+  `NT.prototype.tag = 9` answers 0.
+- `let T: any = F; T = G;` traps — the `any` annotation, not the NewTarget. On
+  BASE, `Reflect.construct(T, [1])` (two arguments, main's own path) on the
+  same binding traps identically, and `new T(1)` answers 1 where node answers
+  0. The untyped `let T = F` answers node.
+  **Corrected 2026-09-06 (review round 1):** "traps" understated it. The shape
+  reads a silently WRONG prototype first and traps only on a later field read,
+  so it is now refused rather than recorded — see the round-1 subsection and
+  residual 3 below.
+
+### Gates
+
+`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+`--noEmit`, `lint` — all exit 0, run bare and with `LOC_GATE_BASE` set to BOTH
+the spawn base c9a8b48616 and the advanced 2257b950ee. Growth grants are in
+this file's frontmatter. No `scripts/*-baseline.json` was touched.
+
+### Residuals — with mechanisms
+
+Everything r4/round-1 listed stays open; this round adds three, each measured
+on base rather than inferred:
+
+1. **The wrapper carriers dispatch nominally.** `Boolean`/`Number`/`String`
+   record a patched prototype but keep resolving methods on the intrinsic; on
+   BASE, `Object.setPrototypeOf(new Boolean(true), P)` then `o.valueOf()`
+   already answers the primitive where node answers the object. Until that
+   carrier learns prototype-chain dispatch, those three NewTargets refuse.
+2. **The compiler's function-`prototype` model is name-keyed.** A prototype-slot
+   write to a same-spelled binding in another scope makes the OUTER
+   `NT.prototype` read null on base. That is why `prototypeIsPristine`'s write
+   clauses cannot be symbol-resolved, and why `m5_nt_block_shadow_mutates.js`
+   refuses.
+3. **A dynamic target annotated `any` is REFUSED (corrected 2026-09-06).** This
+   entry said the shape "traps" and was "recorded rather than refused". Both
+   halves were wrong. Re-measured in review round 1: `let T: any = F; T = G;`
+   reads a **silently wrong prototype** first (`b1_dyn_two_fns` answers 4 —
+   the probe's not-`NT.prototype` sentinel — where node answers 2) and only
+   traps on a following field read (`i3_b1_detail`). A wrong answer is not a
+   trap, and this arm may not produce one, so the shape now refuses;
+   `dynamicTargetIsAllOrdinaryFunctions` declines any binding with an explicit
+   type annotation. The underlying `any`-callee construct lowering is still the
+   defect (on base the same binding misbehaves through the plain two-argument
+   `Reflect.construct(T, [1])`), and fixing it is still not this arm's job —
+   but until it is fixed the site is refused rather than answered.
+
+Unchanged and still owned by other lanes: the `new.target` VALUE carrier
+(#2023, 2 rows), reified class prototypes in standalone, the ArrayBuffer/Date/
+Error carriers (#5150/#3240/#5156), the DataView post-read detach re-check and
+the ArrayBuffer read-before-allocation point, the bound-function NewTarget
+forwarding (#4196) and the realm shim, and the Proxy rows (#5316).
+
+### Review round 1 (2026-09-06)
+
+Five findings from the round-1 review of r2, each reproduced base/lane/node
+before any edit and re-measured base/lane/fix after. Compile API via `npx tsx`,
+`--target standalone` unless stated, oracle node 22, probes in
+`.tmp/p/` (the reviewer's set, copied verbatim), harness `.tmp/b3.mts`.
+
+Two of the five (R2-1, R2-2) were the same defect and share a fix.
+
+#### R2-1 + R2-2 — the dynamic function target was gated on its INITIALIZER
+
+`classifyRuntimeNewTargetSite`'s in-file-function branch called
+`resolveBindingKind`, which follows `let T = F` to `F` and answers `"function"`.
+It never looked at the later assignments, so a binding whose value at the call
+site is something else entirely was admitted and answered wrongly — seven
+programs where BASE refused:
+
+| probe | shape | node | base | lane | fix |
+| --- | --- | --- | --- | --- | --- |
+| `c2_dyn_async_untyped` | `T = A` (async fn) | 0 | refuse | **5** | refuse |
+| `c3_dyn_arrow_untyped` | `T = () => {}` | 0 | refuse | **5** | refuse |
+| `c4_dyn_gen_untyped` | `T = function*(){}` | 0 | refuse | **5** | refuse |
+| `o1_dyn_via_const_alias_chain` | `const A2 = A; T = A2` | 0 | refuse | **5** | refuse |
+| `o3_dyn_undefined` | `T = undefined` | 0 | refuse | **5** | refuse |
+| `o2_dyn_bound` | `T = G.bind(null)` | 2 | refuse | **NaN** | refuse |
+| `i5_dyn_target_class_assigned` | `T = C` (class) | 3 | refuse | **13** | refuse |
+
+The first five are the same failure: node throws a `TypeError` because the value
+is not a constructor, and the lane returned an object instead (5 = "constructed
+something"). `o2` returned `NaN`; `i5` read the wrong prototype AND the wrong
+field.
+
+**Fix** — `dynamicTargetIsAllOrdinaryFunctions` in
+`src/codegen/expressions/reflect-construct-newtarget.ts`. It enumerates the
+value set instead of sampling it: the declaration's initializer plus the
+right-hand side of every plain `T = …` in the file, each of which must satisfy
+`isUnreassignedOrdinaryFunction` (one unreassigned ordinary function
+declaration — no alias hop, no call result, no class, no arrow, no
+async/generator). Any write whose value set is not enumerable — a compound
+assignment, `++`/`--`, a destructuring target, a `for…in`/`for…of` binding,
+`with`, direct `eval` — refuses outright. `resolvesToAsyncFunction` was deleted;
+the new predicate subsumes it.
+
+Re-measured, the six shapes that must STAY admitted are unchanged and all equal
+node: `c1_dyn_two_fns_untyped` 2, `c5_dyn_two_fns_cond` 2,
+`k5_dyn_default_export` 2, `m1_dyn_args` 12, `m2_dyn_objreturn` 7,
+`i4_dyn_target_protomut` 0.
+
+#### R2-3 — an `any`-annotated dynamic target read a WRONG prototype
+
+r2 recorded `let T: any = F; T = G` as "traps", and declined to gate on the
+declared type on the grounds that a wasm-lowering question does not belong in a
+source-shape gate. Measured, the annotated binding is worse than that: it is
+silently wrong first and traps only on a later read.
+
+| probe | node | base | lane | fix |
+| --- | --- | --- | --- | --- |
+| `b1_dyn_two_fns` (`let T: any = F; T = G`) | 2 | refuse | **4** (wrong prototype) | refuse |
+| `i3_b1_detail` (same, then reads a field) | 2 | refuse | **trap** | refuse |
+
+`4` is the probe's "prototype is not `NT.prototype`" sentinel, so the lane
+answered a wrong prototype with no exception at all.
+
+**Fix** — `dynamicTargetIsAllOrdinaryFunctions` refuses any variable
+declaration carrying an explicit type annotation. Consulting the declared type
+is legitimate here because the only thing it can do is turn an answer into a
+refusal; the residual paragraph in `classifyRuntimeNewTargetSite` that called
+this "traps, recorded rather than refused" is deleted. The unannotated twin
+(`let T = F; T = G`) stays admitted and equals node — pinned both ways.
+
+#### R2-4 — a nested function that is itself CONSTRUCTED
+
+r2 stopped `readsNewTarget` at every nested ordinary function, on the reasoning
+that `inner`'s `new.target` is `inner`'s and both sides answer `undefined`. That
+holds only while `inner` is merely called. When `inner` is constructed, node
+gives it a defined `new.target` and the class-id lowering still answers
+`undefined`:
+
+| probe | node | base | lane | fix |
+| --- | --- | --- | --- | --- |
+| `k1_nested_ctor_use` (`new inner()` inside the target) | 2 | refuse | **1** | refuse |
+
+**Fix** — the stop is now conditional on `neverConstructed`: a method or
+accessor (no `[[Construct]]` at all) always stops the scan; a named function
+stops it only when every other mention of its name is the callee of a plain
+call; an anonymous function expression stops it only when it is immediately
+invoked; a class constructor never stops it. `a3_nested_method` (node 1) and
+`a1_nested_fndecl` (node 1) stay admitted and equal node, so the fix is not a
+blanket over-refusal.
+
+Two probes measure a PRE-EXISTING defect this fix does not touch, recorded here
+rather than fixed: `k1b_attr_no_reflect` and `k1c_attr_toplevel` construct a
+function that reads its own `new.target` with no `Reflect.construct` in the
+program at all — base, lane and fix all answer 1 where node answers 2. That is
+the `new.target` VALUE carrier gap (#2023), not this arm.
+
+#### R2-5 — the ownership comment was wrong about class field initialisers
+
+The doc comment on `ownsNewTarget`/`readsNewTarget` said class field
+initialisers and static blocks "inherit" the enclosing `new.target`. Per
+§15.7.10 they are `[[Call]]`ed and see `undefined`; `a4_class_field` confirms it
+(node 1). The comment is corrected.
+
+The review asked whether treating them as owners — which would admit more —
+answers node. **Measured, it does not.** With `PropertyDeclaration` and
+`ClassStaticBlockDeclaration` added to the stop set (A/B via a file copy, the
+only change in the tree), `a4_class_field` compiles and answers **2** where node
+answers 1: the compiled class-field lowering reports a defined `new.target`
+there. So the scan keeps descending into them and the site stays refused. The
+measurement is written into the comment.
+
+#### Full re-validation
+
+**Probe sweep — 85 probes × 2 targets, base vs fix** (`.tmp/sweep-sa-*.txt`,
+`.tmp/sweep-wasi-*.txt`):
+
+| | standalone | wasi |
+| --- | --- | --- |
+| base-drift (base compiled, fix differs) | **0** | **0** |
+| newly admitted (base refused, fix compiles) | 22 | 2 |
+| of those, WRONG vs node | **0** | **0** |
+| standalone host-import leaks | **0** | — |
+
+Every remaining refusal is the verbatim `(#3371)` error (or, for three probes,
+the *other* pre-existing `distinct NewTarget is not implemented for this`
+refusal that base also emits).
+
+**Byte identity — 38 programs × 3 targets (standalone, wasi, host).** The
+corpus is every probe BASE compiles, i.e. every program that does not reach the
+`(#3371)` arm. Comparing this worktree with my edits reverted against the same
+worktree with them applied: **0 of 114 hashes differ.**
+
+One caveat, measured rather than assumed. `b8_dyn_asyncarrow` differs in bytes
+between the reviewer's base tree and this worktree on all three targets — but it
+differs with my edits REVERTED too (`base = lane ≠ pre-edit integration tree`),
+so it is inherited from the integration branch `claude/es6-test262-standalone-g10c7u`,
+not from this round. Its behaviour is unchanged (node 0, base 0, fix 0).
+
+**Rows — 24 owned**, `npx tsx scripts/run-test262-paths.mts .tmp/rows-owned.txt
+--isolate --standalone`, `COMPILER_POOL_SIZE=2`:
+
+| | lane (r2 branch) | fix |
+| --- | --- | --- |
+| pass | 12 | **12** |
+| fail | 9 | 9 |
+| compile_error | 3 | 3 |
+
+**Rows lost: 0.**
+
+**Control corpus — 218 rows** (`built-ins/Reflect/construct/**` +
+`language/expressions/new.target/**` + `language/expressions/super/**` +
+`built-ins/Function/prototype/bind/**`), same isolated standalone runner:
+| | lane (r2 branch) | fix |
+| --- | --- | --- |
+| pass | 166 | **166** |
+| fail | 49 | 49 |
+| compile_error | 3 | 3 |
+
+**Rows lost: 0**, and the comparison is per-TEST, not per-count: diffing this
+run against the lane's own `.tmp/controls-fix.txt` reports `changed: 0` and an
+empty non-pass set-difference in both directions. No `compile_timeout` in
+either run.
+
+#### Pins
+
+`tests/issue-3371-r4-reflect-construct-newtarget.test.ts` grows by **nine**:
+three admitted (R2-1 conditional reassignment, R2-3 the unannotated twin, R2-4 a
+nested method) and six refused (R2-1 async, R2-2 the alias chain and the bound
+function, R2-3 the `any` annotation, R2-4 the constructed nested function, R2-5
+the class field initialiser). The refusal block runs on standalone AND wasi.
+
+**57 tests, all passing, on node 22 AND node 25.9.0**, at
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+--poolOptions.forks.singleFork=true --no-file-parallelism`.
+
+One honest caveat. In THIS worktree vitest exits **1** on a single unhandled
+`[vitest-worker]: Timeout calling "onTaskUpdate"` even though every test passes.
+It is not this round's doing, and that is measured rather than assumed:
+checking out the unmodified 42-test file at `HEAD` in the same worktree and
+running the same command reproduces the identical single error and the
+identical exit 1 (42 passed, 1 error). It also survives `--reporter=dot` and an
+otherwise idle box. So the test-level result is green on both node versions;
+the process exit code is an environment artifact of this worktree, and a future
+round should not read it as a pin failure.
+
+#### Gates
+
+`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+`--noEmit`, `lint` — **all exit 0**, run bare (never piped) and, for the two
+budget gates, again with `LOC_GATE_BASE=$(git rev-parse origin/main)` =
+`22a6e4d51e`. The growth grant for this round is in this file's frontmatter
+with a dated rationale. No `scripts/*-baseline.json` was touched.
+
+### Review round 2 (2026-09-06)
+
+Four findings from the round-2 review of the round-1 fix tree
+(`worktree-wf_f3919b81-91f-1`, head `81352d81ef`). All four are the same class:
+a shape BASE refused with the verbatim `(#3371)` error, which the round-1 tree
+ADMITTED and answered wrongly. Node 22 answers `2` in every one. Compile API via
+`npx tsx`, `--target standalone`, `COMPILER_POOL_SIZE=2`; probes in the round-1
+reviewer's `scratchpad/p/` (copied to `.tmp/r3371r3/p/`), harness
+`.tmp/r3/batch3.mts` (three compilers in one process: base = `git archive` of
+`6f445141d3`, r1, fix).
+
+| finding | probe | node | base | r1 | fix |
+| --- | --- | --- | --- | --- | --- |
+| F1 value-set never re-checks `new.target` | `y1_dyn_target_reads_nt.ts` | 2 | refuse | **1** | refuse |
+| F2 function-expression initializer | `y3_dyn_fnexpr_init.ts` | 2 | refuse | **4** | refuse |
+| F3 JSDoc `@type` bypasses the annotation gate | `w8_jsdoc_js.js` | 2 | refuse | **4** | refuse |
+| F3 (same, `@type {Function}`) | `w11_jsdoc_function.js` | 2 | refuse | **4** | refuse |
+| F4 named function EXPRESSION proved unconstructible | `c1_namedfnexpr_ctor.ts` | 2 | refuse | **1** | refuse |
+| F4 (property-assigned twin) | `c1b_namedfnexpr_prop.ts` | 2 | refuse | **NaN** | refuse |
+
+Controls, all unchanged r1 → fix and equal to node: `y5_ctl_direct_reads_nt.ts`
+(the DIRECT target reading `new.target`) stays refused; `y6_fnexpr_second_value.ts`
+(the same function expression as a LATER value) stays admitted at 1;
+`w9_plain_js.js` (the unannotated `.js` twin) stays admitted at 2;
+`w10_ts_any_twin.ts` (`let T: any = F`) stays refused;
+`w2_typeof_annotation.ts` stays refused.
+
+#### F1 — the value-set gate never re-ran the `new.target` check
+
+`targetReadsNewTarget` resolves `ctx.oracle.declarationsOf(target)`. For a
+REASSIGNED binding that answers the `let T = F` VariableDeclaration, so only
+`F`'s identifier was ever scanned; `dynamicTargetIsAllOrdinaryFunctions` proved
+each member an unreassigned ordinary function but never looked at a member's
+BODY. `G` reading `new.target` was therefore invisible, while the direct control
+`Reflect.construct(G, [], NT)` was correctly refused.
+
+**Fix** — `dynamicTargetIsAllOrdinaryFunctions` now ends
+`values.every((v) => isUnreassignedOrdinaryFunction(ctx, v) && !targetReadsNewTarget(ctx, v))`,
+i.e. the same check the direct-target path runs, on every member.
+
+#### F2 — a function expression in INITIALIZER position
+
+`isUnreassignedOrdinaryFunction`'s first line accepts any non-async
+non-generator `ts.isFunctionExpression`. As the declaration's initializer that
+gives the binding a different callee lowering which drops the fetched
+prototype — `y3` took the `getPrototypeOf(r) !== NT.prototype` branch (4). The
+same expression as the SECOND value is fine (`y6` = node). Refusal is the
+default, so the initializer position is refused rather than the lowering
+chased: `if (ts.isFunctionExpression(declaration.initializer)) return false;`.
+
+#### F3 — the annotation refusal was spelled `declaration.type`
+
+A JSDoc `@type` in a `.js` file compiled with `allowJs` leaves
+`declaration.type` undefined, so the JSDoc twin of the already-refused
+`let T: any = F` slipped through. New `hasDeclaredType(declaration)` consults
+`declaration.type`, then `ts.getJSDocType` on the declaration, its
+VariableDeclarationList and the enclosing VariableStatement (a `@type` on a
+`let` attaches to the statement).
+
+#### F4 — `neverConstructed` proved too much for a named function EXPRESSION
+
+The name-escape scan calls a named function unconstructible when its NAME never
+appears outside a direct call. That is sound for a function DECLARATION and
+wrong for an EXPRESSION, which is reached through the variable or property it is
+assigned to, never through its own name. `neverConstructed` now returns
+`isImmediatelyCalled(node)` for any `ts.isFunctionExpression`, named or not, and
+runs the name-escape scan only for `ts.isFunctionDeclaration`. Controls `x1`/`x2`
+(plain `new fn()` with no `Reflect.construct`) are wrong on BASE too and stay as
+they are — **pre-existing, not this arm's doing**.
+
+#### Optional — the value-set write scan is now symbol-resolved
+
+Done, and it admits exactly the two intended rows. The scan matched `T = …`
+TEXTUALLY, so an unrelated helper's written PARAMETER named `T`
+(`w1_unrelated_param_named_T.ts`) and a block-scoped shadowing `let T`
+(`v6_shadow_block_write.ts`) put `T + 1` and `7` in the value set and refused
+the OUTER binding: both were `refuse` on r1 where node answers 2. Each write's
+identifier is now resolved through `ctx.oracle.declarationsOf` and counted only
+when it resolves to exactly this declaration; the same resolution replaces the
+textual match in the `++`/`--` and `for…in`/`for…of` clauses. Both now answer
+**2 = node**, and the corpus run below shows nothing else moved — so the
+admitted set is exactly (textual-admitted ∪ writes-to-other-symbols).
+
+#### Corpus, probes and bytes
+
+- **89-file corpus** (`/home/user/js2/.tmp/rev3371r2/p/*.ts`, 85 `.ts`), 3-way
+  base/r1/fix, `standalone` and `wasi`, separate runs:
+  `moved(r1→fix)=0 baseChanged=0` on **both** targets. Zero rows that compiled
+  on BASE change answer or compiled-ness.
+- **Round-1 reviewer's probe set** (31 files, `standalone,wasi`):
+  `moved(r1→fix)=8 baseChanged=0` — exactly the six intended refusals plus the
+  two intended admissions, all on `standalone`; no `wasi` row moved.
+- **Byte identity**, r1 vs fix, 85 corpus programs × `standalone`/`wasi`/`host`:
+  `same=255 diff=0`.
+
+#### Rows
+
+`npx tsx scripts/run-test262-paths.mts --isolate <list> --standalone`,
+`COMPILER_POOL_SIZE=2`; the 218 controls split into three ≤73-row chunks. No
+`compile_timeout` in any run.
+
+| | r1 | fix |
+| --- | --- | --- |
+| 24 owned | 12 pass / 9 fail / 3 CE | **12 / 9 / 3** |
+| 218 controls | 166 pass / 49 fail / 3 CE | **166 / 49 / 3** (73+54+39 across the chunks) |
+
+**Rows lost: 0.**
+
+#### Pins
+
+`tests/issue-3371-r4-reflect-construct-newtarget.test.ts` grows by **eight**:
+four refused (F1 `y1`, F2 `y3`, F3 `w8` as a `.js` source with `allowJs`, F4
+`c1`) and four admitted (F2's control `y6`, F3's control `w9`, plus the two
+optional-scan rows `w1` and `v6`). Both source lists gained an optional
+`fileName`, so a `.js` pin compiles under a `.js` name. **69 tests passed on
+node 22 and on node 25** (`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+--poolOptions.forks.singleFork`). The single unhandled
+`[vitest-worker]: Timeout calling "onTaskUpdate"` documented in round 1 is still
+present on node 25 (exit 1 with 69/69 passing) and absent on node 22 (exit 0) —
+an environment artifact of this worktree, not a pin failure.
+
+r3 regression pins, in batches of three files: `issue-5195-es2015-class-r2`,
+`issue-5195-r3-heritage-check`, `issue-5195-r3-restricted-properties` — 96
+passed, exit 0; `issue-5195-r3-review`, `issue-5309`, `issue-5312` — 129 passed,
+exit 0.
+
+#### Gates
+
+`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+`--noEmit`, `lint` — **all exit 0**, run bare (never piped).
+
+**One finding worth acting on.** With `LOC_GATE_BASE=$(git rev-parse origin/main)`
+= `78f1b2d03c` the LOC gate initially FAILED on
+`src/codegen/expressions/calls-closures.ts` 2726 > 2699 (+27) — **not this
+round's growth**. `git diff origin/main..HEAD` on that file shows only #5334's
+rest-param-wrapper hunks and none of this round's; run against the round-1 head
+the same gate names it "granted by …5334…" and exits 0. The grant lives in
+`plan/issues/5334-rest-param-wrapper-metadata-illegal-cast.md`, which this
+change-set does not modify, so against main it is **stranded**. Restated in this
+file's frontmatter per CLAUDE.md, with the note that it lapses once the branch
+merges `origin/main` — main's own copy of that file is 2699 with the helper
+moved into `callable-property-host-value.ts`, i.e. main has superseded the hunk.
+After the restatement both budget gates exit 0 at CI's base. No
+`scripts/*-baseline.json` was touched.
