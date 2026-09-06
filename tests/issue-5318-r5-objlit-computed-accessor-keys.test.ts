@@ -197,3 +197,116 @@ describe("#5318 r5 Step 2 — the object-literal evaluated-key accessor matrix",
     expect(runHost(SIDE_EFFECTS, "probeReads")).toBe(6);
   });
 });
+
+/**
+ * Compile for the DEFAULT (JS-host) target and instantiate through the
+ * compiler's own `importObject`, so the host bridge is exercised rather than
+ * node's native semantics (which is what `runHost` above measures).
+ */
+async function runHostTarget(source: string, exportName: string, fileName: string): Promise<unknown> {
+  const result = await compile(source, { allowJs: true, fileName, skipSemanticDiagnostics: true });
+  expect(result.success, result.errors.map((error) => `L${error.line}: ${error.message}`).join("\n")).toBe(true);
+  const { instance } = await WebAssembly.instantiate(result.binary, result.importObject ?? {});
+  return (instance.exports as Record<string, () => unknown>)[exportName]!();
+}
+
+describe("#5318 r5 review r2 — a later same-key member OVERRIDES an evaluated-key accessor", () => {
+  // §13.2.5.5 defines every object-literal member with
+  // CreateDataPropertyOrThrow — it DEFINES, it does not [[Set]]. Once the
+  // literal has installed a real accessor under an evaluated key, routing the
+  // later members through `__extern_set` ran that accessor instead of
+  // replacing it: the getter-only shapes below answered the GETTER's value
+  // where node answers the later data property / method.
+  //
+  // Measured 2026-09-06 (node 25.9.0 oracle; base = git archive origin/main
+  // c9a8b48616): node 5 / 5 / 7, base 5 / 5 / 7, the r2 lane 1 / 1 / 1 on
+  // standalone and an unreadable value on the JS-host target.
+  const OVERRIDE = `
+    const s = Symbol("a");
+    export function probeDataAfterAccessorSym() {
+      const o = { get [s]() { return 1; }, [s]: 5 };
+      const r = o[s];
+      return r === undefined ? -1 : r;
+    }
+    export function probeDataAfterAccessorStr() {
+      const o = { get [(function () { return "z1"; })()]() { return 1; }, [(function () { return "z1"; })()]: 5 };
+      const r = o["z1"];
+      return r === undefined ? -1 : r;
+    }
+    export function probeMethodAfterAccessor() {
+      const o = {
+        get [(function () { return "z2"; })()]() { return 1; },
+        [(function () { return "z2"; })()]() { return 7; },
+      };
+      const r = o["z2"];
+      return typeof r === "function" ? r() : (r === undefined ? -1 : r);
+    }
+    export function probeAccessorAfterData() {
+      const o = { [(function () { return "z3"; })()]: 5, get [(function () { return "z3"; })()]() { return 1; } };
+      const r = o["z3"];
+      return r === undefined ? -1 : r;
+    }
+    export function probeAccessorMethodAccessor() {
+      const o = {
+        get [(function () { return "z4"; })()]() { return 1; },
+        [(function () { return "z4"; })()]() { return 9; },
+        get [(function () { return "z4"; })()]() { return 2; },
+      };
+      const r = o["z4"];
+      return typeof r === "function" ? -9 : (r === undefined ? -1 : r);
+    }
+  `;
+
+  const CASES: ReadonlyArray<readonly [string, number]> = [
+    ["probeDataAfterAccessorSym", 5],
+    ["probeDataAfterAccessorStr", 5],
+    ["probeMethodAfterAccessor", 7],
+    ["probeAccessorAfterData", 1],
+    ["probeAccessorMethodAccessor", 2],
+  ];
+
+  for (const [probe, expected] of CASES) {
+    it(`standalone: ${probe} (node: ${expected})`, async () => {
+      expect(await runStandalone(OVERRIDE, probe, "issue-5318-r5-objlit-override.js")).toBe(expected);
+      expect(runHost(OVERRIDE, probe)).toBe(expected);
+    });
+  }
+
+  // The install runs on the JS-host target too, so the override must hold
+  // there — through the compiler's own import object, not node's semantics.
+  it("host target: a later data property overrides the evaluated-key accessor (node: 5)", async () => {
+    expect(await runHostTarget(OVERRIDE, "probeDataAfterAccessorStr", "issue-5318-r5-objlit-override-host.js")).toBe(5);
+  });
+
+  // The descriptor materialised for a runtime-keyed accessor carries exactly
+  // the four accessor fields — no `value` slot. Measured by OWN KEYS, not by
+  // `"value" in d`: with `d` statically typed as `PropertyDescriptor` the
+  // compiler answers `in` from the TS type, which reports `value` present on
+  // base too (an unrelated, pre-existing `in` defect — see the issue).
+  const DESCRIPTOR = `
+    function score(d) {
+      const ks = Object.keys(d);
+      let s = 0;
+      for (let i = 0; i < ks.length; i++) {
+        if (ks[i] === "get") s += 1;
+        else if (ks[i] === "set") s += 10;
+        else if (ks[i] === "enumerable") s += 100;
+        else if (ks[i] === "configurable") s += 1000;
+        else s += 100000;
+      }
+      return s;
+    }
+    export function probeDynAccessorDescriptor() {
+      const o = { get [(function () { return "q1"; })()]() { return 8; } };
+      const d = Object.getOwnPropertyDescriptor(o, "q1");
+      return d === undefined ? -1 : score(d);
+    }
+  `;
+
+  it("standalone: a runtime-keyed accessor's descriptor has get/set/enumerable/configurable only (node: 1111)", async () => {
+    expect(await runStandalone(DESCRIPTOR, "probeDynAccessorDescriptor", "issue-5318-r5-objlit-descriptor.js")).toBe(
+      1111,
+    );
+    expect(runHost(DESCRIPTOR, "probeDynAccessorDescriptor")).toBe(1111);
+  });
+});

@@ -28,6 +28,11 @@ loc-budget-allow:
   - src/codegen/expressions/new-super.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  # 2026-09-06 r5 review round 2 (F1/F2): members that FOLLOW an evaluated-key
+  # accessor install must DEFINE, not [[Set]] (§13.2.5.5
+  # CreateDataPropertyOrThrow). +9 lines in literals.ts for the one-time
+  # `__defineProperty_value` reach and the per-member `storeMember(i)` router;
+  # the store itself lives in the objlit-dynamic-accessors.ts subsystem module.
   # 2026-09-05 r5 step 2: object-literal accessors whose ComputedPropertyName is
   # only known at evaluation time. The install itself was put in a NEW subsystem
   # module (src/codegen/objlit-dynamic-accessors.ts), which is what the gate
@@ -37,6 +42,8 @@ loc-budget-allow:
   # its siblings. Measured +25 LOC after the extraction (was +77 before it).
   - src/codegen/literals.ts
 func-budget-allow:
+  # 2026-09-06 r5 review round 2 (F1/F2): the same function gains the
+  # define-vs-[[Set]] router for members after an evaluated-key accessor.
   # 2026-09-05 r5 step 2, same change: +20 lines in the accessor walk of
   # compileObjectLiteralWithAccessors — the `propName === undefined` arm that
   # delegates to objlit-dynamic-accessors.ts, and the flattened capture scans.
@@ -1080,3 +1087,178 @@ difference. `scripts/*-baseline.json` was not touched.
   (`this-access-restriction*.js`, `name-binding/const.js`,
   `strict-mode/arguments-callee.js`) — no predicate was measured to the
   reassignment/shadowing/`eval` standard this pass, so none was started.
+
+### Review round 2 (2026-09-06)
+
+Worktree `/home/user/js2/.claude/worktrees/wf_fa92ba2a-1ac-1`, branch
+`worktree-wf_fa92ba2a-1ac-1` = integration branch
+`claude/es6-test262-standalone-g10c7u` (`22a6e4d51e`) with the r2 lane branch
+`worktree-wf_eb120fff-87d-2` (`eb213c8822`) merged in, clean. Base tree for
+every A/B stays `.tmp/rev5318r2/base` = `git archive origin/main`
+(`c9a8b48616`), with its own bundles. "lane" = the r2 lane tree as reviewed;
+"fix" = this tree. Oracle is node 25.9.0. Probe harness
+`.tmp/rev5318r2/run.mts` (`npx tsx run.mts <tree> <standalone|host|wasi>
+<file>`; the host column instantiates through `result.importObject`), reviewer
+probes `.tmp/rev5318r2/p/*.mjs`, my own additions under
+`<worktree>/.tmp/pr/z*.mjs`. `COMPILER_POOL_SIZE=1`, box load 12-17 throughout
+(three other lanes).
+
+#### F1 / F2 — FIXED: a later same-key member now overrides an evaluated-key accessor
+
+Confirmed exactly as reported, on standalone AND on the JS-host target.
+
+The mechanism, stated once: `compileObjectLiteralWithAccessors` emits every
+data property and method through `__extern_set`, which is **[[Set]]** — under a
+key that already carries a live accessor it runs the accessor (and with a
+getter-only accessor does nothing at all) instead of replacing the property.
+§13.2.5.5 PropertyDefinitionEvaluation uses **CreateDataPropertyOrThrow**,
+which DEFINES. The difference is invisible until something has installed a real
+accessor under that key earlier in the SAME literal, and only
+`emitDynamicObjectLiteralAccessorHalf` can do that (a folded-key accessor is
+paired at compile time and emitted once, and a duplicate folded key is resolved
+by the pre-pass before any code is emitted). So the r2 lane created the
+condition and the [[Set]] verb became observable.
+
+**Fix.** `src/codegen/objlit-dynamic-accessors.ts` gains
+`OBJLIT_DATA_DEFINE_FLAGS` (`computeRuntimeFlags(true, true, true, true)` =
+`writable+enumerable+configurable`, with a value) and
+`emitObjectLiteralDataStore`. `literals.ts` computes the source index of the
+first dynamic-keyed accessor half and routes every member AFTER it through
+`__defineProperty_value` instead of `__extern_set`; members before it, and
+every literal with no such accessor, keep the legacy encoding untouched. If the
+define helper is unreachable the router degrades to `__extern_set` rather than
+dropping the member — no new throw is possible. Both native
+(`object-runtime-descriptors.ts`) and host-shim `__defineProperty_value`
+already implement the accessor→data conversion (clearing the stale `$get`/`$set`
+slots / a full data descriptor through `Object.defineProperty`), so no runtime
+change was needed.
+
+Standalone (identical on wasi):
+
+| probe | node | base | lane | fix |
+|---|---|---|---|---|
+| `d1 probeDataAfterAccessorSym` `{get [s](){1}, [s]:5}` | 5 | 5 | **1** | **5** |
+| `d1 probeDataAfterAccessorStr` (runtime string key) | 5 | 5 | **1** | **5** |
+| `d1 probeMethodAfterAccessor` (method after getter) | 7 | 7 | **1** | **7** |
+| `c3 probeDataAfterAccessor` | 5 | 5 | **1** | **5** |
+| `c3 probeAccessorAfterData` (data first, then getter) | 1 | **5** | 1 | 1 |
+| `c3 probeDupGetter` / `probePairApart` / `probeKeyEvalOrder` | 2 / 320 / 111 | NaN / NaN / 0 | 2 / 320 / 111 | 2 / 320 / 111 |
+| `z7 probeAccessorMethodAccessor` (get, method, get — same key) | 2 | −9 | (n/a) | **2** |
+
+JS-host target, instantiated through `result.importObject`:
+
+| probe | node | base | lane | fix |
+|---|---|---|---|---|
+| `g1 probeHost` | 5 | 5 | **99** (unreadable) | **5** |
+| `f1 probeHostSym` | 5 | 5 | **NaN** | **5** |
+| `f1 probeHostStr` | 5 | 5 | **NaN** | **5** |
+| `z5 probeSetterRead` (`{set [k](v){}}`, write then read) | −1 | **7** | — | **−1** |
+
+**Order preservation.** `e1.mjs` (a literal whose keys all fold) is
+**byte-identical** base vs fix on all three targets — standalone
+`ff4f0663…e056` / 139 620 B, host `cbe772fc…a59a` / 2 763 B, wasi
+`54a1a689…133c` / 106 945 B. `result.imports` stayed `[]` on every standalone
+compile in this section.
+
+#### F4 — NOT a defect, and not what was measured
+
+The claim was that the descriptor materialised for a runtime-keyed accessor
+carries a `value` slot. It does not. Measured by OWN KEYS
+(`.tmp/pr/z3.mjs`, `Object.keys(d)` scored 1/10/100/1000 for
+get/set/enumerable/configurable): **node 1111, fix 1111** — exactly the four
+accessor fields, no `value`.
+
+What probe `c4 probeDescriptor` actually measured is the `in` operator. With
+`d` statically typed as TypeScript's `PropertyDescriptor`, the compiler answers
+a literal-key `in` from the TS TYPE, not from the runtime object. `.tmp/pr/z4.mjs`
+on the **base** tree, standalone: `'value' in d` → **true**, the same key built
+at runtime (`('val'+'ue') in d`) → **false**, `hasOwnProperty(d,'value')` →
+**false**; node answers false to all three. And `.tmp/pr/z1.mjs probeDpAccessor`
+— a plain `Object.defineProperty(o,'k',{get,…})`, no object literal, no dynamic
+key — scores **1111 on base** as well.
+
+So this is a pre-existing, unrelated `in`-operator defect (a literal-string
+`in` on a statically-typed object is answered from the declared type), present
+on `origin/main`, reachable without any part of #5318. Nothing was changed for
+it here; it is recorded as a separate finding for its own issue. The lane's
+`getOwnPropertyDescriptor` accessor entry is correct as it stands, and is now
+pinned by own-keys rather than by `in`.
+
+#### Recorded, not fixed (all pre-existing or wrong-on-both-trees)
+
+- **`JSON.stringify` does not invoke a runtime-keyed getter.**
+  `d1 probeJsonDyn` / `c4 probeJson`: node `{"q11":8}`, base `{}` (property
+  absent), lane and fix `{"q11":null}`. Wrong on every tree; the lane changed
+  *which* wrong answer. Not a regression of a working program.
+- **`delete o[s]` does not remove a symbol-keyed dynamic accessor.**
+  `c3 probeDeleteSym`: node 800, base NaN (nothing installed), lane and fix 809
+  — the property survives the delete. Unchanged by this round.
+- **A setter-only accessor's read does not surface as `undefined` on
+  standalone.** `z6 probeAccessorMethodAccessor` in its original
+  get/method/**set** form: node −1, base 2, fix NaN. This is the same
+  `undefined`-representation gap as `z5 probeSetterRead`; the pin uses the
+  get/method/**get** form instead, where the read is well defined.
+- **Host target: a getter-only dynamic accessor read.** `z5
+  probeGetterOnlyRead` — node 1, **base NaN, fix NaN**. Pre-existing on the
+  host lane, untouched.
+- **The folded-key twin `{get b(){1}, b:5}`** was not fixed: the byte-identity
+  gate for literals whose keys all fold is the stronger constraint, and the
+  define path cannot cover the folded case without changing those bytes. Left
+  as-is, deliberately.
+
+#### Verification
+
+- `tests/issue-5318-r5-objlit-computed-accessor-keys.test.ts` — **19 passed**.
+  New: five `[F1]` override pins on standalone (data-after-accessor by symbol
+  key and by runtime string key, method-after-accessor, accessor-after-data,
+  accessor/method/accessor), a **host-target** pin compiled for the default
+  target and instantiated through `result.importObject`, and the descriptor
+  own-keys pin that replaces the `in`-based F4 probe. Every standalone pin
+  asserts `result.imports` is `[]`.
+- `tests/issue-5318-r4-computed-accessor-keys.test.ts` — **72 passed**. The run
+  also reports one vitest **worker RPC** error (`Timeout calling
+  "onTaskUpdate"` / `ERR_IPC_CHANNEL_CLOSED`), reproducible on this box at load
+  13-16 on 4 cores and originating inside vitest's reporter channel, not in any
+  test. No test failed in any of four runs (node 22 ×2, node 25 ×2); adding the
+  `--dangerouslyIgnoreUnhandledErrors` flag this issue's own plan prescribes for
+  these pins makes the run exit 0.
+- Both #5318 pin files were re-run on **node 25.9.0** (CI's version) as well as
+  the local node 22.22.2: r5 19/19 exit 0, r4 72/72.
+- r3 pins, in batches of three: `issue-5195-es2015-class-r2` +
+  `issue-5195-r3-heritage-check` + `issue-5195-r3-restricted-properties` →
+  **96 passed**; `issue-5195-r3-review` + `issue-5309-…` + `issue-5312-…` →
+  **129 passed**. All at `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+  --poolOptions.forks.singleFork`, and re-run green on node 25 (96 / 129).
+- Gates, run bare and chained: `check-loc-budget`, `check-func-budget`,
+  `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+  `check:speculative-rollback`, `check:stack-balance`,
+  `check:codegen-fallbacks`, `check:any-box-sites`, TS7 `typecheck`, `lint` —
+  **all exit 0**.
+- **`LOC_GATE_BASE=$(git rev-parse origin/main)` fails, and not on this
+  change.** It reports `src/codegen/expressions/call-tail-dispatch.ts: 2258 >
+  2252 (+6)` and the matching `compileTailDispatch` function-budget breach.
+  This tree has **no commit touching that file**; `origin/main` advanced from
+  `22a6e4d51e` to `efa9e76f07` after the branch point and refreshed the
+  baseline underneath it. Reverting my three edited files and re-running the
+  same command reproduces the identical failure, so it is integration-branch
+  drift that a `git merge origin/main` resolves — it is not a stranded grant of
+  this change-set, and no allowance for that file was added here.
+
+#### Rows
+
+`language/computed-property-names/**`, all 48 rows, `--isolate --standalone`,
+`COMPILER_POOL_SIZE=2`:
+
+| | pass | fail | compile_error | non-pass |
+|---|---|---|---|---|
+| base (`.tmp/rev5318r2/base`, `c9a8b48616`), re-run here | 30 | 14 | 4 | 18 |
+| lane (r2 record) | 32 | — | — | 16 |
+| **fix** | **32** | 12 | 4 | **16** |
+
+**Set-diff of the non-pass PATHS, base vs fix: zero lost, and exactly two
+gained** — `object/accessor/getter.js` and `object/accessor/setter.js`,
+i.e. the same two rows the r2 lane flipped, still flipped after the F1/F2
+change. The 12-row `object/**` subfamily is a subset of this run: 6 pass, 6
+non-pass (`accessor/{getter,setter}-super`, `method/{generator,number,super,symbol}`)
+— all four mechanisms already named in the r2 record (super home object,
+numeric-key method cast, #2864 generators).

@@ -53,6 +53,7 @@ import {
   OBJLIT_ACCESSOR_FLAGS,
   collectDynamicAccessorHalves,
   emitDynamicObjectLiteralAccessorHalf,
+  emitObjectLiteralDataStore,
 } from "./objlit-dynamic-accessors.js"; // (#5318 r5) evaluated-key accessor halves
 import { bodyNeedsArgumentsObject, needsImplicitArgumentsObject } from "./helpers/body-uses-arguments.js";
 import { widenedVarKeyFromDecl } from "./widened-var-key.js";
@@ -1040,6 +1041,20 @@ function compileObjectLiteralWithAccessors(
     [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
     [{ kind: "externref" }],
   );
+  // (#5318 r5 review r2) Members that FOLLOW an evaluated-key accessor install
+  // must DEFINE, not [[Set]] — see `emitObjectLiteralDataStore`. Only reach for
+  // the define helper when the literal actually installs such an accessor, so
+  // every other literal keeps the legacy `__extern_set` bytes.
+  const firstDynAccIdx = dynamicAccessorHalves.length > 0 ? expr.properties.indexOf(dynamicAccessorHalves[0]!) : -1;
+  const dpValueIdx =
+    firstDynAccIdx >= 0
+      ? ensureLateImport(
+          ctx,
+          "__defineProperty_value",
+          [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "f64" }],
+          [{ kind: "externref" }],
+        )
+      : undefined;
   flushLateImportShifts(ctx, fctx);
   if (setIdx === undefined || accIdx === undefined) return null;
   // Late imports can be inserted while compiling a key, value, or method
@@ -1047,6 +1062,19 @@ function compileObjectLiteralWithAccessors(
   // the property walk, so resolve the setters at each emission site.
   const currentSetIdx = (): number => ctx.funcMap.get("__extern_set") ?? setIdx;
   const currentAccIdx = (): number => ctx.funcMap.get("__defineProperty_accessor") ?? accIdx;
+  // A member at source position `i`: define when an evaluated-key accessor is
+  // already installed at that point, else the legacy [[Set]]. `dpValueIdx`
+  // undefined (the define helper is unreachable on this target) degrades to the
+  // legacy encoding rather than dropping the member.
+  const storeMember = (i: number): void => {
+    emitObjectLiteralDataStore(
+      fctx,
+      currentSetIdx(),
+      firstDynAccIdx >= 0 && i > firstDynAccIdx && dpValueIdx !== undefined
+        ? (ctx.funcMap.get("__defineProperty_value") ?? dpValueIdx)
+        : undefined,
+    );
+  };
 
   // 3. Walk properties in source order. Value/method properties → __extern_set.
   //    Accessor declarations → emit __defineProperty_accessor at the FIRST
@@ -1228,7 +1256,7 @@ function compileObjectLiteralWithAccessors(
       } else if (valType.kind !== "externref") {
         coerceType(ctx, fctx, valType, { kind: "externref" });
       }
-      fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
+      storeMember(i);
     } else if (ts.isMethodDeclaration(prop)) {
       // Compile method as a callback closure, then __extern_set.
       //
@@ -1267,7 +1295,7 @@ function compileObjectLiteralWithAccessors(
         if (!ok) {
           fctx.body.push({ op: "ref.null.extern" });
         }
-        fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
+        storeMember(i);
         continue;
       }
       if (methodName === undefined && ts.isComputedPropertyName(prop.name)) {
@@ -1281,7 +1309,7 @@ function compileObjectLiteralWithAccessors(
         compileRuntimeComputedPropertyKey(ctx, fctx, prop.name.expression);
         const okRt = emitObjectLiteralMethodFn(ctx, fctx, prop as unknown as ts.FunctionExpression, objLocal);
         if (okRt) {
-          fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
+          storeMember(i);
         } else {
           // Callback compilation declined — keep the pre-#2126 "property
           // skipped" semantics (drop key + obj) but the key expression's
@@ -1305,7 +1333,7 @@ function compileObjectLiteralWithAccessors(
       if (!ok) {
         fctx.body.push({ op: "ref.null.extern" });
       }
-      fctx.body.push({ op: "call", funcIdx: currentSetIdx() });
+      storeMember(i);
     } else if (ts.isGetAccessorDeclaration(prop) || ts.isSetAccessorDeclaration(prop)) {
       // Emit one __defineProperty_accessor call per pair, at the position
       // of the FIRST get/set declaration on this name. Subsequent siblings

@@ -125,3 +125,44 @@ export function emitDynamicObjectLiteralAccessorHalf(
   push({ op: "call", funcIdx: defineAccessorIdx() });
   push({ op: "drop" }); // the helper returns the target; discard
 }
+
+/**
+ * §13.2.5.5 PropertyDefinitionEvaluation attributes for a DATA property or a
+ * METHOD in an object literal: `{writable: true, enumerable: true,
+ * configurable: true}` plus a value — `computeRuntimeFlags(true, true, true,
+ * true)` in the `__defineProperty_value` encoding (bits 0/1/2 are the W/E/C
+ * VALUES, 3/4/5 "this attribute is specified", 7 "has value").
+ */
+export const OBJLIT_DATA_DEFINE_FLAGS = (1 << 7) | (1 << 3) | (1 << 0) | (1 << 4) | (1 << 1) | (1 << 5) | (1 << 2);
+
+/**
+ * Store one data-property / method member, `[obj, key, value]` already on the
+ * stack, leaving nothing behind.
+ *
+ * `__extern_set` is [[Set]]: under a key that already carries a live accessor
+ * it CALLS the setter (and with a getter-only accessor it does nothing at all)
+ * instead of replacing the property. That is the wrong verb for an object
+ * literal — §13.2.5.5 uses CreateDataPropertyOrThrow, which DEFINES, so a
+ * later same-key member overrides the earlier one whatever kind it was.
+ *
+ * The distinction is only observable once a member of the SAME literal has
+ * installed a real accessor under that key, which only the evaluated-key
+ * accessor arm above can do: a folded-key accessor is paired at compile time
+ * and emitted once, and a duplicate folded key is resolved by the pre-pass
+ * before any code is emitted. So `defineValueIdx` is supplied only for the
+ * members that FOLLOW such an install, and every other literal keeps the
+ * legacy `__extern_set` encoding byte-for-byte.
+ */
+export function emitObjectLiteralDataStore(
+  fctx: FunctionContext,
+  setIdx: number,
+  defineValueIdx: number | undefined,
+): void {
+  if (defineValueIdx === undefined) {
+    fctx.body.push({ op: "call", funcIdx: setIdx });
+    return;
+  }
+  fctx.body.push({ op: "f64.const", value: OBJLIT_DATA_DEFINE_FLAGS });
+  fctx.body.push({ op: "call", funcIdx: defineValueIdx });
+  fctx.body.push({ op: "drop" }); // the helper returns the target; discard
+}
