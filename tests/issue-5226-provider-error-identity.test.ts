@@ -31,11 +31,13 @@
 // The single-module control answers the post-fix values on base already; that
 // is what makes this linking-specific rather than a general throw/catch gap.
 //
-// NOT fixed, and pre-existing on both lanes: an exception that escapes an
-// exported function to the HOST still surfaces as a bare
-// `WebAssembly.Exception`, identically in the single-module control. That is a
-// separate export-boundary gap, not a provider seam one — `hostBoundary` below
-// asserts both lanes agree so a future fix has a measured starting point.
+// FIXED SINCE, BY #5247: an exception escaping an exported function to the
+// HOST used to surface as a bare `WebAssembly.Exception` — identically in the
+// single-module control, which is what identified it as a separate
+// export-boundary gap rather than a provider-seam one. #5247 re-points each
+// host-facing export at a wrapper that unwraps the `__exn` payload, so the
+// `hostBoundary` row below now reads a real RangeError on both lanes. The
+// two-lane agreement is kept: it is the property that says export boundary.
 
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -121,13 +123,22 @@ function readAll(exports: Record<string, unknown>, expected: Record<string, unkn
   return observed;
 }
 
-/** What an uncaught provider throw looks like once it reaches the host. */
+/**
+ * What an uncaught provider throw looks like once it reaches the host.
+ *
+ * (#5247) Reads the full identity, not just the wrapper's brand: before that
+ * fix every field but the brand was unreadable.
+ */
 function hostBoundaryShape(exports: Record<string, unknown>): string {
   try {
     (exports.hostBoundary as () => unknown)?.();
     return "no-throw";
   } catch (error) {
-    return `${error instanceof Error ? "E" : "no-E"}|${Object.prototype.toString.call(error)}`;
+    const e = error as { name?: unknown; message?: unknown };
+    return (
+      `${error instanceof RangeError ? "RE" : "no-RE"}|${error instanceof Error ? "E" : "no-E"}|` +
+      `${Object.prototype.toString.call(error)}|n=${String(e?.name)}|m=${String(e?.message)}`
+    );
   }
 }
 
@@ -198,11 +209,14 @@ describe("#5226 — a provider throw keeps its identity in the consumer", () => 
     expect(readAll(controlExports, NS_EXPECTED)).toEqual(NS_EXPECTED);
   });
 
-  // Reported-NOT-fixed, with its bound: an uncaught throw reaching the HOST is
-  // a bare WebAssembly.Exception on BOTH lanes, before and after. Asserting the
-  // two agree is what says "not a seam defect".
-  it("an uncaught throw reaches the host identically in both lanes", { timeout: 300_000 }, async () => {
-    const shape = "no-E|[object WebAssembly.Exception]";
+  // (#5247) FLIPPED. This row used to pin the reported-not-fixed bound —
+  // `no-E|[object WebAssembly.Exception]` on BOTH lanes, before and after the
+  // #5226 shared-tag fix, which is exactly what said "export boundary, not
+  // provider seam". #5247 unwraps the payload at the export boundary, so the
+  // host now catches the RangeError itself. The two lanes still have to agree:
+  // that agreement is what keeps the property an export-boundary one.
+  it("an uncaught throw reaches the host with its identity intact, both lanes", { timeout: 300_000 }, async () => {
+    const shape = "RE|E|[object Error]|n=RangeError|m=range-x";
     expect(hostBoundaryShape(await linked(FN_PROVIDER, FN_IMPORT, FN_PROBES))).toBe(shape);
     expect(hostBoundaryShape(await control(FN_PROVIDER, FN_IMPORT, FN_PROBES))).toBe(shape);
   });

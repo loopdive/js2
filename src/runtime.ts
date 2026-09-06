@@ -7298,7 +7298,23 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
         // __sget_<name> per-shape dispatcher yields null/undefined when the
         // receiver's struct shape doesn't carry the field at all.
         const v = getter(obj);
-        if (v !== undefined && v !== null) return v;
+        // (#5250) `0` is the shape-MISS default of a NUMERIC `__sget_<name>`
+        // exactly as `null` is for a ref-typed one, and the getter is
+        // module-GLOBAL — so one unrelated `{ month: 11 }` literal anywhere in
+        // the program made `month` read as a present `0` on EVERY struct here
+        // (and, since this resolver backs the host proxy's `has` trap, made
+        // `"month" in { year: 1994 }` true). Gate the miss-shaped values on
+        // the single-key field-name registry, and only when it positively says
+        // absent, so every other read keeps its old cost and answer. The
+        // `false` arm is defensive, not measured. Full measurement + controls:
+        // tests/issue-5250-sget-numeric-shape-miss.test.ts.
+        if (v !== undefined && v !== null) {
+          if ((v === 0 || v === false) && _structOwnFieldStatus(obj, String(key), exports) === false) {
+            // Shape miss: fall through to the prototype / sidecar walk below.
+          } else {
+            return v;
+          }
+        }
         // (#3051 Slice 3) `null` disambiguation: a compiled `null` literal is
         // stored as ref.null (reads back `null` — same as the dispatcher's
         // shape-miss), while compiled `undefined` is the distinguished host
@@ -12832,6 +12848,15 @@ assert._isSameValue = isSameValue;
       if (name === "__throw_reference_error")
         return (msg: any) => {
           throw new ReferenceError(msg == null ? "" : String(msg));
+        };
+      // (#5247) Export-boundary rethrow: the export wrapper
+      // (codegen/export-throw-boundary.ts) catches its own `__exn` tag and hands
+      // the payload here so this JS frame raises it by identity, instead of the
+      // caller seeing a bare `WebAssembly.Exception`. Deliberately NO coercion
+      // to Error — a compiled `throw { name, message }` must cross unchanged.
+      if (name === "__rethrow_host_exception")
+        return (payload: any): never => {
+          throw payload;
         };
       // __to_primitive: full ToPrimitive per ECMA-262 §7.1.1 (#1090)
       // Takes (externref obj, externref hint_string) → externref primitive

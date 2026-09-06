@@ -1887,6 +1887,10 @@ export async function compileLinkedProject(input: PackageLinkInput): Promise<Pac
       // (#5226) One exception identity for the whole graph — see the consumer's
       // twin below. Both sides must agree or a provider throw is uncatchable.
       sharedExceptionTag: true,
+      // (#5247) A consumer reaches these exports by direct wasm→wasm call, so
+      // they must keep raising the shared tag; unwrapping here would stop the
+      // consumer's `catch $__exn` matching and regress #5226.
+      exportsConsumedByWasm: true,
       // Provider module initialization is exported and invoked only after its
       // own host adapter has been wired to its own instance.
       deferTopLevelInit: true,

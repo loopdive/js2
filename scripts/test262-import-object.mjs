@@ -169,7 +169,8 @@ export function test262ImportNamespaceNames(binary, importObj, options = {}) {
  *
  * @param {BufferSource} binary
  * @param {Record<string, unknown>} importObj
- * @param {{ target?: string, providerLabel?: string, linkedModules?: readonly unknown[] }} [options]
+ * @param {{ target?: string, providerLabel?: string, linkedModules?: readonly unknown[],
+ *          linkedRuntime?: { instantiateLinkedProviders: Function, wireCompiledInstance: Function } }} [options]
  * @returns {Promise<WebAssembly.Instance>}
  */
 export async function instantiateTest262Module(binary, importObj, options = {}) {
@@ -185,9 +186,22 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
   // `linkedModules`: `scripts/test262-worker.mjs` runs against the prebuilt
   // `compiler-bundle.mjs` with no TypeScript loader, so a static `src/` import
   // here would break the sharded lane on load.
+  //
+  // (#5353) WHICH COPY of the linked-provider runtime does the wiring is a
+  // correctness question, not a packaging one, so the caller may supply it.
+  // `registerLinkedProviderModule` / `registerLinkedConsumerModule` write into
+  // `src/runtime.ts`'s MODULE-LEVEL #5225 decoder registry, and the reads that
+  // consult it happen inside the import object the lane built. The sharded
+  // worker builds its imports from `scripts/runtime-bundle.mjs` while its
+  // compiler lives in a second bundled copy of the runtime, so it passes its
+  // own copy's helpers here; registering in the other copy leaves the reader's
+  // registry empty, which does not throw — it silently answers a cross-module
+  // struct field with the reader's `ref.test`-miss default (0). The in-process
+  // lanes pass nothing and get the `src/` graph they already compile against.
   const linkedModules = options.linkedModules ?? [];
   if (linkedModules.length > 0) {
-    const { instantiateLinkedProviders, wireCompiledInstance } = await import("../src/linked-provider-runtime.js");
+    const { instantiateLinkedProviders, wireCompiledInstance } =
+      options.linkedRuntime ?? (await import("../src/linked-provider-runtime.js"));
     const wasmModule = new WebAssembly.Module(binary);
     attachConditionalImportNamespaces(wasmModule, importObj, options);
     instantiateLinkedProviders(linkedModules, importObj);
