@@ -1,7 +1,8 @@
 ---
 id: 5374
 title: "A consumer object with `valueOf` handed to a linked provider coerces to 0 / no throw — `valueOf` is never called across the seam (`toPrimitiveObserver` rows; `infinity-throws-rangeerror` ×3)"
-status: ready
+status: done
+completed: 2026-09-06
 sprint: current
 priority: high
 horizon: s
@@ -9,6 +10,14 @@ goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-06
+# 2026-09-06 (#5374): +13 lines in src/runtime.ts — one `_crossModuleCallbackState`
+# redirect at the top of each of the two ToPrimitive walkers (`_toPrimitive`,
+# `_hostToPrimitive`) plus the comment that says why the redirect is at the top
+# and not at each of the ~10 probe sites. The walkers live in runtime.ts because
+# every arm they dispatch is a wasm EXPORT lookup; moving them out would move the
+# whole #1090/#1319/#3481 dispatch ladder, which is not this issue's slice.
+loc-budget-allow:
+  - src/runtime.ts
 ---
 
 # #5374 — ToNumber on a consumer-minted `{ valueOf() {…} }` inside the provider
