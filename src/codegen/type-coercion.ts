@@ -3069,6 +3069,41 @@ export function coerceType(
   }
   // externref → f64 (unbox number)
   if (from.kind === "externref" && to.kind === "f64") {
+    // (#5251) INVERSE of the `undefSentinel` boxing arm below. When the
+    // DESTINATION f64 slot is undefined-sentinel-branded, a JS `undefined`
+    // reaching it must become `UNDEF_F64_BITS`, not the plain NaN that
+    // `__unbox_number` produces — otherwise the round trip
+    // `undefined → f64 → externref` re-boxes as the NUMBER NaN and
+    // `typeof x === "number"` while `x !== undefined`.
+    //
+    // Measured (#5251): `o.roundingIncrement` on an object that lacks the
+    // property, where some OTHER object literal in the program declares it
+    // numeric, narrows to f64 at the read site (Phase-3, #1269) and answered
+    // NaN-the-number. `@js-temporal/polyfill`'s `Ft()` reads exactly that
+    // absent option, so every `.until()` / `.since()` on a non-ISO calendar
+    // died in `ToIntegerWithTruncation` with `RangeError: invalid number
+    // value` — 17 rows of the #5249 family, 43 in the #5251 census.
+    //
+    // Straight-line `select`, not a branch: the ordinary unbox chain is
+    // side-effect-free for `undefined` (it yields NaN), and a detached branch
+    // buffer here would need liveBodies bookkeeping against the late imports
+    // that chain registers.
+    if (to.undefSentinel === true) {
+      const isUndefIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+      flushLateImportShifts(ctx, fctx);
+      if (isUndefIdx !== undefined) {
+        const scratch = allocLocal(fctx, `__undef_sentinel_ext_${fctx.locals.length}`, { kind: "externref" });
+        fctx.body.push({ op: "local.set", index: scratch });
+        fctx.body.push({ op: "i64.const", value: UNDEF_F64_BITS });
+        fctx.body.push({ op: "f64.reinterpret_i64" });
+        fctx.body.push({ op: "local.get", index: scratch });
+        coerceType(ctx, fctx, from, { kind: "f64" }, toPrimitiveHint, compileStringLiteralFn, materializeUndefinedVec);
+        fctx.body.push({ op: "local.get", index: scratch });
+        fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__extern_is_undefined") ?? isUndefIdx });
+        fctx.body.push({ op: "select" });
+        return;
+      }
+    }
     if (ctx.standalone) {
       const hint = toPrimitiveHint ?? "number";
       // (#3673) Typed member-get rewrite: when the externref on the stack is
@@ -5091,6 +5126,17 @@ export function coercionInstrs(ctx: CodegenContext, from: ValType, to: ValType, 
 
   const symbolBoundary = symbolBoundaryCoercionInstrs(ctx, from, to, fctx);
   if (symbolBoundary) return symbolBoundary;
+
+  // (#5251) An undefined-sentinel-branded f64 SINK is not a plain unbox row —
+  // `undefined` must land as `UNDEF_F64_BITS`, not as the NaN
+  // the ordinary number-unbox returns. The table has no brand column, so route this one
+  // row through the push-style engine (which grew the matching arm) whenever a
+  // FunctionContext is available; without one there are no locals to build it
+  // with and the plain unbox stands, exactly as before.
+  if (from.kind === "externref" && to.kind === "f64" && to.undefSentinel === true && fctx) {
+    addUnionImports(ctx);
+    return captureBody(fctx, () => coerceType(ctx, fctx, from, to));
+  }
 
   // #1917 Step 0: scalar / numeric / box-unbox rows come from the single
   // coercion table. Excluded here (kept as the original rows below): `from`

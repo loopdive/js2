@@ -1,14 +1,39 @@
 ---
 id: 5251
 title: "Temporal residual numeric/calendar seam families: 'invalid number value' (43), HebrewHelper illegal cast (29), JSBI toNumber seam (11), year/eraYear-required (10) — sampled census"
-status: ready
+status: in-review
 sprint: current
 priority: medium
 horizon: m
 goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
+assignee: ttraenkler/dev-5251
 created: 2026-08-31
+# 2026-09-06 — two value-fidelity fixes, both in the god-files that own the
+# read paths they break. A. the typed destructuring arm must not treat "field
+# not on the struct" as "property absent" for a CLASS instance
+# (destructuring-params.ts); B. the Phase-3 numeric narrowing must carry the
+# undefined sentinel so an ABSENT property stops reading as NaN-the-number
+# (property-access-dispatch.ts + the inverse coercion arm in
+# type-coercion.ts). Each fix is a guarded early-exit at the exact decision
+# site plus the measurement that justifies it; moving them to a new module
+# would separate the rule from the branch it corrects.
+loc-budget-allow:
+  - src/codegen/destructuring-params.ts
+  - src/codegen/type-coercion.ts
+  - src/codegen/property-access-dispatch.ts
+  # Restated from the predecessor branches this PR is stacked on (#5250's
+  # `_resolveHostField` fix, #3527's IR wave), so the grants are not stranded
+  # if CI scores this change-set against a base where those issue files read
+  # as unmodified.
+  - src/runtime.ts
+  - src/ir/from-ast.ts
+func-budget-allow:
+  - src/codegen/destructuring-params.ts::destructureParamObject
+  - src/codegen/type-coercion.ts::coerceType
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/ir/from-ast.ts::lowerExpr
 ---
 
 # #5251 — Temporal residual numeric/calendar seam families (sampled census)
