@@ -64,13 +64,19 @@ describe("#5248 the provider gate", () => {
     }
   });
 
-  it("the baseline validator opts out, because the committed baseline is the UNWIRED lane", () => {
-    // `scripts/test262-worker.mjs` writes the committed baseline and is not
-    // wired; `scripts/validate-test262-baseline.ts` re-runs baseline-passing
-    // rows through the WIRED in-process lane. Without this default, a Temporal
-    // row that passes in the baseline for want of a `Temporal` binding fails
-    // here and is reported as baseline drift that does not exist.
+  it("the baseline validator takes its default FROM the baseline, not from a pin", () => {
+    // #5248 pinned this OFF because only the in-process lane was wired and the
+    // committed baseline came from the unwired sharded lane. #5353 wires the
+    // sharded lane, so the correct default flips one merge AFTER that lands —
+    // when a provider-linked baseline is first promoted. A constant is wrong on
+    // one side of that promotion whichever value it holds, and wrong here is
+    // expensive: a red `test262-baseline-validate` is a NON-required check, and
+    // `UNSTABLE` is skipped by auto-enqueue silently and indefinitely
+    // (#3878/#3904). So the validator reads the evidence the baseline itself
+    // carries — `Temporal is not defined` rows exist only in an unlinked one.
     const source = readFileSync(join(REPO_ROOT, "scripts", "validate-test262-baseline.ts"), "utf-8");
-    expect(source).toMatch(/process\.env\.JS2WASM_TEST262_TEMPORAL \?\?= "0"/);
+    expect(source).not.toMatch(/process\.env\.JS2WASM_TEST262_TEMPORAL \?\?= "0"/);
+    expect(source).toContain("alignTemporalProviderWithBaseline");
+    expect(source).toContain("Temporal is not defined");
   });
 });

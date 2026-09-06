@@ -8,6 +8,7 @@ import { irUnitFuncRef } from "./callable-bindings.js";
 import { createDerivedIrUnitId, type IrDerivedUnitProvenance } from "./identity.js";
 import { INTRINSIC_SIGNATURE_VERSION } from "./intrinsics.js";
 import { NUMBER_BOUNDARY_POLICY_DISABLED, type NumberBoundaryPolicy } from "./runtime-manifest.js";
+import { prepareLinearSuspendingIrFunction } from "./async-linear-prepare.js";
 import {
   asBlockId,
   asValueId,
@@ -682,7 +683,11 @@ export function prepareSuspendingIrFunction(
   return (
     prepareSequentialCountedLoopIrFunction(fn) ??
     prepareFinalMainIrFunction(fn) ??
-    prepareSingleAwaitIrFunction(fn, numberBoundary)
+    // Preserve the established one-await carrier optimization wherever its
+    // exact proof still succeeds.  B2 takes ownership only after that route
+    // declines (for example, when a mutable slot crosses the await).
+    prepareSingleAwaitIrFunction(fn, numberBoundary) ??
+    prepareLinearSuspendingIrFunction(fn)
   );
 }
 
