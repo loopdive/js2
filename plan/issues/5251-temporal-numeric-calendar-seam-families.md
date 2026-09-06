@@ -40,6 +40,24 @@ and the already-filed #5221/#5243 (destructure-null, 74) and #5223-adjacent
 
 ## Implementation Plan (Fable, 2026-09-05)
 
+**Update 2026-09-05 (post PR #5639 measurement).** With #5352's dispatch fix,
+the 123-row #5249 family now fails in the polyfill's OWN guards with wrong
+VALUES — no Wasm trap anywhere in the 123:
+
+| rows | reason |
+| --- | --- |
+| 66 | `RangeError: Invalid ISO date` in `HelperBase_getCalendarParts` (21 carry a `NaN` year) |
+| 45 | `RangeError: infinity is out of range` in `BalanceISODate` |
+| 3 | `RangeError: value out of range` in `RejectToRange` |
+| 3 | `eraYear.valueOf` never fetched (observable ordering) |
+
+This IS the `invalid number value` family, now ~111 rows and the single
+blocker. **First step: re-measure after #5250 lands** — its root cause
+(`0fce2ef0e9`, a numeric `__sget` shape-miss reads as `0` instead of absent)
+is exactly the kind of seam that turns a missing `year` into `0`/`NaN`
+arithmetic. Only then probe what remains, per the sequence below.
+
+
 Blocked on #5352 for the calendar rows. Sequence: (1) after #5352 lands,
 re-run the #5249 `family-123.txt` list and the 838-row census sample; (2) for
 each surviving family write ONE 3-line compiled probe with node-on-polyfill as
