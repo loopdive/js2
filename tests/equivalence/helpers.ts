@@ -97,6 +97,13 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     __throw_type_error: (msg: any) => {
       throw new TypeError(String(msg ?? ""));
     },
+    // (#5247) The export-boundary rethrow. Raises the unwrapped payload from a
+    // JS frame so an uncaught compiled throw reaches the caller as the Error
+    // itself; deliberately uncoerced, since a non-Error throw must cross
+    // unchanged.
+    __rethrow_host_exception: (payload: any) => {
+      throw payload;
+    },
     __extern_slice: (arr: any, start: number) => (Array.isArray(arr) ? arr.slice(start) : []),
     JSON_stringify: (v: any) => JSON.stringify(v),
     JSON_parse: (s: any) => JSON.parse(s),

@@ -6,6 +6,7 @@ import { buildStrictHostImportError, isHostImportAllowed } from "../host-import-
 import { resolveWidenedVarKey } from "../widened-var-key.js";
 import { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from "../../string-surrogate.js";
 import { addFuncType } from "./types.js";
+import { ensureExportThrowRethrowImport } from "../export-throw-boundary.js"; // (#5247)
 // #808 — dependencies of the import-collection/registration functions moved
 // here from index.ts (relative paths rebased for src/codegen/registry/).
 import { ts, forEachChild } from "../../ts-api.js";
@@ -281,6 +282,7 @@ export function localGlobalIdx(ctx: CodegenContext, absIdx: number): number {
 export function ensureExnTag(ctx: CodegenContext): number {
   if (ctx.exnTagIdx >= 0) return ctx.exnTagIdx;
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], []);
+  ensureExportThrowRethrowImport(ctx);
   // (#5226) A separately-linked graph shares ONE host-owned tag. Wasm matches a
   // `catch` clause by tag IDENTITY, so a module-local tag per module means a
   // provider's `throw` can never be caught by its consumer's `catch` — it lands
