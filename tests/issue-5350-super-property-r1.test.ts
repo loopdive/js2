@@ -456,4 +456,65 @@ export function test(): number {
 `),
     ).toBe(9);
   });
+
+  // ── (r3 review, S2) A POSITIVE callable test, not just "absent or primitive" ──
+
+  it("throws TypeError when an object literal's super member is a plain object", async () => {
+    // Probe xb6. r2's guard tested absence plus the primitive brands only, so a
+    // non-callable OBJECT fell through to `__apply_closure`'s legacy undefined.
+    expect(
+      await runStandalone(`
+export function test(): number {
+  var proto: any = { v: { q: 1 } };
+  var o: any = { __proto__: proto, m() { return super.v(); } };
+  try { return o.m(); } catch (e) { return e instanceof TypeError ? 2 : 3; }
+}
+`),
+    ).toBe(2);
+  });
+
+  it("throws TypeError when an object literal's super member is a class", async () => {
+    // Probe xb7. Node throws "Class constructor K cannot be invoked without
+    // 'new'" — a TypeError either way.
+    expect(
+      await runStandalone(`
+class K { k: number; constructor() { this.k = 1; } }
+export function test(): number {
+  var proto: any = { v: K };
+  var o: any = { __proto__: proto, m() { return super.v(); } };
+  try { return o.m(); } catch (e) { return e instanceof TypeError ? 2 : 3; }
+}
+`),
+    ).toBe(2);
+  });
+
+  it("still calls every callable carrier of a super member", async () => {
+    // The S2 guard's regression half, and the reason it uses
+    // `__typeof_function` rather than a hand-rolled negative classifier: a
+    // bound function, an arrow, a getter-returned function and a function
+    // carrying an own `prototype` must all still be CALLED, not thrown on.
+    // 11 + 12 + 13 + 14 = 50. (A generator and an async function were measured
+    // separately and also still call; `Math.max` as a super member throws a
+    // TypeError on this tree, but identically on r2 — a pre-existing residual
+    // of how a builtin function object survives as a literal property value,
+    // not something this guard introduced.)
+    expect(
+      await runStandalone(`
+function f(): number { return 11; }
+function withProto(): number { return 14; }
+(withProto as any).prototype = {};
+export function test(): number {
+  var pBound: any = { v: f.bind(null) };
+  var pArrow: any = { v: () => 12 };
+  var pGetter: any = { get v() { return function () { return 13; }; } };
+  var pProto: any = { v: withProto };
+  var bound: any = { __proto__: pBound, m() { return super.v(); } };
+  var arrow: any = { __proto__: pArrow, m() { return super.v(); } };
+  var viaGetter: any = { __proto__: pGetter, m() { return super.v(); } };
+  var hasProto: any = { __proto__: pProto, m() { return super.v(); } };
+  return bound.m() + arrow.m() + viaGetter.m() + hasProto.m();
+}
+`),
+    ).toBe(50);
+  });
 });

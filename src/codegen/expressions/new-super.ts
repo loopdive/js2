@@ -1107,6 +1107,8 @@ function compileStandaloneObjectLiteralSuperMethodCall(
   const externref: ValType = { kind: "externref" };
   ensureObjectRuntime(ctx);
   ensureLateImport(ctx, "__apply_closure", [externref, externref, externref], [externref]);
+  // (#5350 r3 review, S2) IsCallable for the resolved super member.
+  ensureLateImport(ctx, "__typeof_function", [externref], [{ kind: "i32" }]);
   if (expr.arguments.length > 0) {
     ensureLateImport(ctx, "__objvec_new", [], [externref]);
     ensureLateImport(ctx, "__objvec_push", [externref, externref], []);
@@ -1166,12 +1168,32 @@ function compileStandaloneObjectLiteralSuperMethodCall(
     fctx.body.push({ op: "local.get", index: methodLocal });
     fctx.body.push({ op: "ref.is_null" });
     fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildNotCallableThrow() });
-    for (const brand of ["__typeof_number", "__typeof_string", "__typeof_boolean"]) {
-      const brandIdx = ctx.funcMap.get(brand);
-      if (brandIdx === undefined) continue;
+    // (#5350 r3 review, S2) POSITIVE callable test. The r2 guard tested only
+    // absence plus the three primitive brands, so a resolved super member that
+    // is a plain OBJECT (`{ v: { q: 1 } }`) or a CLASS fell through to
+    // `__apply_closure`'s legacy `undefined` — probes xb6/xb7 answered
+    // undefined where node throws a TypeError. `__typeof_function` is the
+    // module's canonical standalone IsCallable predicate (the same one
+    // `ensureNativeArrayHof` uses for `callbackfn is not a function`), so it
+    // recognises every callable carrier — ordinary function, bound function,
+    // arrow, builtin, generator, async function, class — and the throw fires
+    // only on a genuine non-callable. When the module never registered it the
+    // primitive-brand guard stands in unchanged, so nothing regresses to a
+    // silent default.
+    const typeofFunctionIdx = ctx.funcMap.get("__typeof_function");
+    if (typeofFunctionIdx !== undefined) {
       fctx.body.push({ op: "local.get", index: methodLocal });
-      fctx.body.push({ op: "call", funcIdx: brandIdx });
+      fctx.body.push({ op: "call", funcIdx: typeofFunctionIdx });
+      fctx.body.push({ op: "i32.eqz" });
       fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildNotCallableThrow() });
+    } else {
+      for (const brand of ["__typeof_number", "__typeof_string", "__typeof_boolean"]) {
+        const brandIdx = ctx.funcMap.get(brand);
+        if (brandIdx === undefined) continue;
+        fctx.body.push({ op: "local.get", index: methodLocal });
+        fctx.body.push({ op: "call", funcIdx: brandIdx });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildNotCallableThrow() });
+      }
     }
     fctx.body.push({ op: "local.get", index: methodLocal });
     fctx.body.push({ op: "global.get", index: currentThisIdx });
