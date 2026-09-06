@@ -6086,32 +6086,14 @@ export function emitArrayBufferSliceSpecies(
   vecTypeIdx: number,
 ): number | null {
   if (!noJsHost(ctx) || !ctx.arraySpeciesDirty) return null;
-  // (#5349 review r1) Step 16 ("if new does not have an [[ArrayBufferData]]
-  // slot, throw a TypeError") is decided below by `ref.test $__vec_i32_byte`.
-  // That is a REPRESENTATION test, and since #2835 packed the ArrayBuffer byte
-  // buffer to `(array (mut i8))` the packed-byte TypedArray carrier
-  // `$__vec_i8_byte` is structurally IDENTICAL to it — same two fields, same
-  // `sub final $__vec_base` clause — so Wasm GC canonicalizes the two struct
-  // definitions to ONE runtime type and the test answers `true` for a
-  // `new Uint8Array(n)`. Measured on the lane before this gate: a species
-  // returning `new Uint8Array(4)` was accepted, the byte-copy loop wrote
-  // THROUGH the caller's typed array, and slice returned it by identity (611)
-  // where node throws a TypeError.
-  //
-  // No runtime discriminator exists for that pair — this is the same
-  // canonicalization that makes `ArrayBuffer.isView`'s chain imprecise — so the
-  // species arm cannot answer step 16 in a module that can build one. Decline
-  // the whole arm there rather than return a value the spec forbids; the module
-  // keeps main's pre-#5349 emission byte-for-byte. Every other view kind stays
-  // distinguishable (`i16_byte`/`i32_elem`/the f64 views have different element
-  // arrays; `$__ta_view_*`, `$__ta_dyn_view` and `$__dv_window` carry extra
-  // fields), so an `Int32Array`/`DataView` species result still refuses.
-  //
-  // RESIDUAL, owned by the typed-array construction path
-  // (`emitDynamicUint8ArrayBufferAlias` + `TYPED_ARRAY_PACKED_STORAGE`): until
-  // the packed-byte view carries a brand distinguishing it from the buffer,
-  // `ArrayBuffer.prototype.slice` in such a module does not observe @@species.
-  if (ctx.moduleUsesPackedByteTaCarrier) return null;
+  // (#5349) Step 16 ("if new does not have an [[ArrayBufferData]] slot, throw a
+  // TypeError") is decided below by `ref.test $__vec_i32_byte`. That is a
+  // REPRESENTATION test, and it is decidable because the packed-byte TypedArray
+  // carrier is BRANDED: `$__vec_i8_byte` is declared `final` while
+  // `$__vec_i32_byte` is kept open (see `getOrRegisterVecType` and
+  // `finalizeLeafStructTypes`). Without that brand the two structs — same two
+  // fields over the same `(array (mut i8))` since #2835 — canonicalize to one
+  // runtime type and the test accepts a `new Uint8Array(n)`.
   ensureObjectRuntime(ctx);
   ensureSymbolCarrier(ctx);
   const externGetIdx = ensureLateImport(

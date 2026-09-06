@@ -330,7 +330,6 @@ export function createCodegenContext(
     boundFnTypeIdx: -1, // (#3140) $__bound_fn {target,thisArg,boundArgs} native bound-function carrier, lazy
     moduleUsesDynTaView: false, // (#3057) set by pre-scan when a dynamic `new ctorVar(buf)` exists
     moduleUsesStaticTaView: false, // buffer-backed `new Uint8Array(buf)` etc.; enables any-write dispatch
-    moduleUsesPackedByteTaCarrier: false, // (#5349 r1) Int8/Uint8/Uint8Clamped share the ArrayBuffer's canonical struct
     errorStructTypeIdx: -1,
     widenedTypeProperties: new Map(),
     widenedVarStructMap: new Map(),

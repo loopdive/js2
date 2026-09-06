@@ -232,20 +232,15 @@ describe("#5349 review r1 — step 16 must not accept a TypedArray as an ArrayBu
     ).toBe(1);
   });
 
-  it("RESIDUAL: a packed-byte-TypedArray module declines the species arm entirely", async () => {
-    // `$__vec_i8_byte` (Int8Array/Uint8Array/Uint8ClampedArray) and the
-    // ArrayBuffer's `$__vec_i32_byte` are STRUCTURALLY IDENTICAL since #2835
-    // packed the byte buffer to `(array (mut i8))`, so Wasm GC canonicalizes
-    // them to ONE runtime type and no `ref.test` can separate them. Before this
-    // gate the probe returned 611: the byte-copy loop wrote THROUGH the
-    // caller's Uint8Array and slice returned it by identity. node 22 throws
-    // TypeError; the gate returns the module to main's pre-#5349 emission
-    // (601), which is still not node but neither aliases nor mutates the
-    // caller's view.
-    //
-    // Owner of the residual: the typed-array construction path
-    // (`emitDynamicUint8ArrayBufferAlias` + `TYPED_ARRAY_PACKED_STORAGE`) —
-    // until the packed-byte view carries a brand, step 16 is undecidable here.
+  it("throws TypeError for a length-constructed Uint8Array species result (node 22: TypeError)", async () => {
+    // The case round 1 could not decide. `$__vec_i8_byte` and the ArrayBuffer's
+    // `$__vec_i32_byte` were canonicalized to ONE runtime type, so this
+    // `ref.test` accepted the Uint8Array: the byte-copy loop wrote THROUGH the
+    // caller's view and slice returned it by identity (611 on the lane). Round
+    // 1 answered by declining the whole species arm in any module that could
+    // build such a view (601 — main's pre-#5349 answer, but ALSO losing species
+    // observation for every legitimate ArrayBuffer species in that module).
+    // The round-2 brand decides it instead: 1, which is node's answer.
     expect(
       await runStandalone(
         `var made; var ab=new ArrayBuffer(8); var C={};
@@ -253,13 +248,66 @@ describe("#5349 review r1 — step 16 must not accept a TypedArray as an ArrayBu
          ab.constructor=C; var r=ab.slice(0,4);
          return 500+(r===made?10:0)+(Number(r.length)===4?100:0)+(Number(r.byteLength)===4?1:0);`,
       ),
-    ).toBe(601);
+    ).toBe(1);
+  });
+
+  it("throws TypeError for a buffer-backed Uint8Array species result (node 22: TypeError)", async () => {
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(8); var C={};
+         C[Symbol.species]=function(n){ return new Uint8Array(new ArrayBuffer(n)) };
+         ab.constructor=C; ab.slice(0,4); return 500;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("still observes @@species in a module that builds a packed-byte view (node 22: 716)", async () => {
+    // The regression round 1 traded for the b15 fix: with the module-wide
+    // decline in place this answered 704 — the species was never consulted and
+    // slice returned an ordinary 4-byte buffer, main's pre-#5349 answer. The
+    // brand restores 716 (the species-built 16-byte buffer), which is node's.
+    expect(
+      await runStandalone(
+        `var u=new Uint8Array(2); var ab=new ArrayBuffer(8); var C={};
+         C[Symbol.species]=function(n){ return new ArrayBuffer(16) };
+         ab.constructor=C; var r=ab.slice(0,4); return 700+Number(r.byteLength);`,
+      ),
+    ).toBe(716);
+  });
+
+  it("still refuses an Int32Array species in a module that builds a packed-byte view", async () => {
+    expect(
+      await runStandalone(
+        `var u=new Uint8Array(2); var ab=new ArrayBuffer(8); var C={};
+         C[Symbol.species]=function(n){ return new Int32Array(n) };
+         ab.constructor=C; ab.slice(0,4); return 500;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("still refuses the same-object species (step 18) with a packed-byte view present", async () => {
+    expect(
+      await runStandalone(
+        `var u=new Uint8Array(2); var ab=new ArrayBuffer(8); var C={};
+         C[Symbol.species]=function(n){ return ab };
+         ab.constructor=C; ab.slice(0,4); return 500;`,
+      ),
+    ).toBe(1);
+  });
+
+  it("still refuses a too-small species result (step 20) with a packed-byte view present", async () => {
+    expect(
+      await runStandalone(
+        `var u=new Uint8Array(2); var ab=new ArrayBuffer(8); var C={};
+         C[Symbol.species]=function(n){ return new ArrayBuffer(1) };
+         ab.constructor=C; ab.slice(0,4); return 500;`,
+      ),
+    ).toBe(1);
   });
 
   it("keeps the species arm in a module with a NON-packed-byte view", async () => {
-    // The gate is keyed on the three packed-byte names only; a Float64Array
-    // module keeps the full ladder, so a genuine ArrayBuffer species still
-    // constructs and is returned.
+    // A Float64Array module was never ambiguous — its element array is
+    // `(array (mut f64))`. Kept as the control that the brand did not move it.
     expect(
       await runStandalone(
         `var f=new Float64Array(2); f[0]=1; var ab=new ArrayBuffer(8); var C={};
@@ -294,6 +342,21 @@ describe("#5349 round 2 — the packed-byte carrier is branded by FINALITY", () 
     // without the declaration-site `final` BOTH vecs would be open — identical
     // again. This is the half of the fix that step 2 cannot cover.
     const wat = await watFor(BUILDS_BOTH, "wasi");
+    expect(wat).toContain("(type $__vec_i8_byte (sub final ");
+    expect(wat).toContain("(type $__vec_i32_byte (sub $");
+    expect(wat).not.toContain("(type $__vec_i32_byte (sub final ");
+  });
+
+  it("wasi: the b15 species program still compiles and carries the brand", async () => {
+    // The species arm itself is emitted on wasi too (`noJsHost` covers both
+    // targets), so the brand has to hold there. Compile-only: this lane does
+    // not execute wasi modules.
+    const wat = await watFor(
+      `export function run(){ var ab=new ArrayBuffer(8); var C={};
+         C[Symbol.species]=function(n){ return new Uint8Array(4) };
+         ab.constructor=C; ab.slice(0,4); return 500; }`,
+      "wasi",
+    );
     expect(wat).toContain("(type $__vec_i8_byte (sub final ");
     expect(wat).toContain("(type $__vec_i32_byte (sub $");
     expect(wat).not.toContain("(type $__vec_i32_byte (sub final ");

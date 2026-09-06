@@ -3583,17 +3583,6 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * before the concrete view type is registered by the later constructor.
    */
   moduleUsesStaticTaView: boolean;
-  /**
-   * (#5349 review r1) Set by a module pre-scan when the source can materialize a
-   * PACKED-BYTE TypedArray carrier (`Int8Array` / `Uint8Array` /
-   * `Uint8ClampedArray`). `$__vec_i8_byte` and the ArrayBuffer's
-   * `$__vec_i32_byte` are STRUCTURALLY IDENTICAL after #2835 packed the byte
-   * buffer to `(array (mut i8))`, so Wasm GC canonicalizes them to one runtime
-   * type and `ref.test $__vec_i32_byte` cannot tell an ArrayBuffer from such a
-   * view. Emitters whose correctness depends on that distinction consult this
-   * flag and decline rather than answer wrongly.
-   */
-  moduleUsesPackedByteTaCarrier: boolean;
   /** Type index for the WasmGC `$Error_struct` used in standalone/WASI mode (#1104). -1 = not yet registered. */
   errorStructTypeIdx: number;
   /**
