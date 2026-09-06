@@ -165,6 +165,90 @@ unconditionally per provider (#5225 comment in `linked-provider-runtime.ts`
 ~L242) — keep that. `decoderFor`'s caching of NONE is load-bearing for the
 `__extern_get` hot path (#3903) — do not remove it.
 
+## Findings (dev-5364, 2026-09-06) — the registry is only HALF the leak
+
+**(A) as specified does not meet its own acceptance criterion, and the reason is
+worth more than the fix.** `resetLinkedProjectRegistry` is implemented, exported
+and called per row from the ONE test262 instantiate seam
+(`scripts/test262-import-object.mjs`, which BOTH drivers pass through — a single
+call site that provably lands in the same runtime copy the project registers
+into, rather than two hand-placed driver calls that can drift). Measured on the
+123-row list with a fresh `JS2WASM_TEMPORAL_CACHE`, provider linked, one
+compiler revision:
+
+| lane                                    | `: instanceof` | pass |
+| --------------------------------------- | -------------- | ---- |
+| batch, registry reset ON                 | 23             | 13   |
+| batch, registry reset OFF (base)         | (see PR)       |      |
+| one row per process (solo)               | (see PR)       |      |
+
+`month-boundary-gregory.js` still failed on `endYesterdayNextDay: instanceof`
+in the batch with the reset ON, while failing solo on `Unsupported era name:
+gregory`. So the registry reset moved the batch count by **zero**.
+
+**Why: the stale exports do not come through `decoderFor` at all.** Instrumented
+`_owningClassObject` with a per-project generation counter and an identity map
+over exports objects (`.tmp/` probes, run on the two-row pair
+`era-japanese` + `month-boundary-gregory`):
+
+```
+[5364] reset -> gen 2
+[5364] STALE gen=2 exportsId=E1@g1
+    at _owningClassObject (src/runtime.ts)
+    at _hostPrototypeForInstance / Object.getPrototypeOf (proxy trap, runtime.ts:8770)
+    at [Symbol.hasInstance]
+    at __call_get_day (wasm://wasm/007e5ce2 — the PROVIDER)
+    at __get_member_day (wasm://wasm/0034d2c6 — row 2's CONSUMER)
+    at __module_init  <- row 2, i.e. gen 2
+```
+
+Row 2's consumer is reading a host mirror whose export slot is row **1**'s
+provider exports. The registry was empty of them at the time; the mirror was
+reached directly.
+
+**Root cause — a realm global, not a registry.** `@js-temporal/polyfill` keeps
+every Temporal object's internal slots in ONE store reached through
+`globalThis[Symbol("@@Temporal__GetSlots")]` / `@@Temporal__CreateSlots`, and
+installs it **first-writer-wins**. Confirmed by listing `globalThis`'s own
+symbols after each row (`.tmp/probe-globals.mts`): both symbols appear after row
+1 and are still there for row 2. So every Temporal row after the first in a fork
+resolves its objects through **row 1's provider instance**, whatever the decoder
+registry says.
+
+Deleting those two symbols between rows makes the batch answer what a solo
+process answers — `.tmp/probe-slotreset.mts`, same pair:
+
+```
+dropped: []                                                  ROW era-japanese          fail eraName must be string…
+dropped: ["Symbol(@@Temporal__GetSlots)","Symbol(@@Temporal__CreateSlots)"]
+                                                             ROW month-boundary-gregory fail Unsupported era name: gregory
+```
+
+That is the solo verdict, in a batch. The fix therefore ships as
+`resetTemporalRealmGlobals()` in `scripts/test262-temporal.mjs`, called from the
+same seam. It is a **harness** repair, not a compiler one: the polyfill is
+entitled to assume one instance per realm, and it is the many-rows-per-fork
+model (#5353) that violates it.
+
+## (B) — not attempted, and the plan's premise for it needs revisiting
+
+Deliverable B (a `rootImports`-keyed project scope for the #5225 registry) was
+NOT implemented. The measurement above says why it should be re-scoped before
+anyone spends a lane on it: the observable it was supposed to move — the batched
+`: instanceof` count — is dominated by the realm-global channel, not by
+`decoderFor`. Attempt 1 was reverted for breaking the consumer→provider literal
+route, and re-doing it now would be paid for with that risk against a benefit
+this branch measured at zero on the 123-row list.
+
+What is still true and still unfixed: **two linked projects live SIMULTANEOUSLY
+in one process are unsupported.** `resetLinkedProjectRegistry` retires the
+previous project rather than scoping per project, so reading project 1 after
+project 2 has been instantiated takes the miss path. Nothing in the test262
+lanes does that (a row is finished before the next starts), so it is bounded to
+embedders that hold two linked graphs at once. A follow-up that does the
+`rootImports` keying should be justified by THAT, with its own repro, rather
+than by the Temporal conformance number.
+
 ## Acceptance criteria
 
 1. (A) landed: `resetLinkedProjectRegistry` exported from both bundles and

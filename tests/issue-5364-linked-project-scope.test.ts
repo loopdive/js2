@@ -102,6 +102,28 @@ describe("#5364 — the cross-module decoder registry is scoped to one live proj
     expect(registry.decoderFor(struct, consumer1)).toBeUndefined();
   });
 
+  it("resetTemporalRealmGlobals drops the polyfill's realm slot store and nothing else", async () => {
+    const { resetTemporalRealmGlobals } = await import("../scripts/test262-temporal.mjs");
+    const slots = Symbol("@@Temporal__GetSlots");
+    const unrelated = Symbol("@@Unrelated__Marker");
+    const g = globalThis as unknown as Record<symbol, unknown>;
+    g[slots] = { store: true };
+    g[unrelated] = { store: true };
+    try {
+      const dropped = resetTemporalRealmGlobals() as string[];
+      expect(dropped).toContain(String(slots));
+      expect(g[slots]).toBeUndefined();
+      // The marker is a substring match, so prove it is not a blanket sweep of
+      // every symbol the realm happens to carry.
+      expect(g[unrelated]).toEqual({ store: true });
+      // Idempotent: a fresh process (the solo lane) drops nothing.
+      expect(resetTemporalRealmGlobals()).toEqual([]);
+    } finally {
+      delete g[slots];
+      delete g[unrelated];
+    }
+  });
+
   it("two linked projects back to back: the second still decodes a consumer literal (#5225 route)", async () => {
     const { resetLinkedProjectRegistry } = await import("../src/runtime.js");
 

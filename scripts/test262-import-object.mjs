@@ -173,6 +173,8 @@ export function test262ImportNamespaceNames(binary, importObj, options = {}) {
  *          linkedRuntime?: { instantiateLinkedProviders: Function, wireCompiledInstance: Function } }} [options]
  * @returns {Promise<WebAssembly.Instance>}
  */
+import { resetTemporalRealmGlobals } from "./test262-temporal.mjs";
+
 let announcedMissingLinkedProjectReset = false;
 
 /**
@@ -232,6 +234,15 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
     // runtime copy as the registration above.
     if (typeof resetLinkedProjectRegistry === "function") resetLinkedProjectRegistry();
     else announceMissingLinkedProjectReset();
+    // (#5364) The registry is only HALF of what a finished project leaves
+    // behind. The compiled Temporal polyfill also claims two realm globals for
+    // its internal-slot store, first-writer-wins, so every row after the first
+    // reads its objects through row 1's provider instance no matter how clean
+    // the decoder registry is — measured: the registry reset ALONE moved the
+    // 123-row `: instanceof` count by 0. Retiring both is what makes a batched
+    // row score the same as a solo one. `resetTemporalRealmGlobals` is a no-op
+    // when no polyfill has run.
+    resetTemporalRealmGlobals();
     const wasmModule = new WebAssembly.Module(binary);
     attachConditionalImportNamespaces(wasmModule, importObj, options);
     instantiateLinkedProviders(linkedModules, importObj);
