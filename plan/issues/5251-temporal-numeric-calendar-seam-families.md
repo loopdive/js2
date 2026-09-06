@@ -300,3 +300,24 @@ byte-identical to the node control.
   identity for provider-exported classes. It is the single largest remaining
   blocker after Intl for this bucket (32 of 123 rows).
 - Residual (3) (ZonedDateTime `infinity`) needs its own probe.
+
+### Verification runs
+
+- `node scripts/equivalence-gate.mjs` — **24 failing, 1718 passing, 24
+  known-failures in baseline, no new regressions** (exit 0). Re-run on a
+  stable tree: an earlier attempt overlapped a file-copy A/B revert and was
+  killed rather than reported.
+- Collateral for the property-read change, base-vs-fix **per row** on the same
+  113 rows (`built-ins/Reflect/{get,has,ownKeys,getOwnPropertyDescriptor}` +
+  `built-ins/JSON/stringify`): 75 pass / 38 fail on BOTH sides, **0 flips, 0
+  reason changes**. Not strictly required (this PR touches no `src/runtime.ts`
+  read path) but run because fix B sits on the general property-read route.
+- Suites, one vitest process each, all green: `issue-5250-sget-numeric-shape-miss`,
+  `issue-5352-open-receiver-static-bind`,
+  `issue-5249-open-receiver-descendant-dispatch`, the nine provider suites
+  (5221, 5225, 5226, 5237, 5239, 5241, 5242, 5244, 5248),
+  `issue-4628-temporal-global`, and `issue-5251-temporal-value-seam` (10/10).
+- Gates run bare (never piped): typecheck, lint, loc-budget (also with
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`), func-budget (same),
+  coercion-sites, oracle-ratchet, dead-exports, host-import-policy,
+  `update-issues.mjs --check`.
