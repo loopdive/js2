@@ -1132,6 +1132,10 @@ export function compileNamespaceStaticCall(
               return { kind: "i32" };
             }
             const recvLocals = emitReflectArgumentLocals();
+            // (#5316 review r1 F3) §26.1.13 step 1 for every non-Object target,
+            // not just the statically-branded ones the guard above catches. See
+            // the 3-argument arm below for why this is the by-EXCLUSION emitter.
+            guardReflectTargetIsObject(recvLocals[0]!, "Reflect.set called on non-object");
             coerceReflectPropertyKey(recvLocals[1]);
             for (let i = 0; i < 4; i++) {
               const local = recvLocals[i];
@@ -1186,6 +1190,20 @@ export function compileNamespaceStaticCall(
         // is unchanged — `emitReflectArgumentLocals` compiles the same
         // arguments in the same source order.
         const setLocals = emitReflectArgumentLocals();
+        // (#5316 review r1 F3) §26.1.13 step 1 for every non-Object target.
+        // `emitNonObjectArgGuard` above is a STATIC test on the argument's TS
+        // type, so it never fires for the spelling programs actually use —
+        // `Reflect.set(1 as any, …)`, or a variable the checker calls `any`.
+        // This is the same runtime by-exclusion brand `Reflect.get`/`has` were
+        // given in #5196: it rejects only positively-branded primitives
+        // (number/string/boolean/bigint/Symbol) and admits every unrecognised
+        // object shape, so an ordinary object flowing through a representation
+        // the classifiers do not brand keeps its previous answer instead of
+        // becoming a spurious TypeError. Both `Reflect.set` arms get it: the
+        // 4-argument form is what exposed the hole, but the guard is shared and
+        // the spec text is one step for both (probe `n2`, 3-argument:
+        // base = lane = 11, node = 22).
+        guardReflectTargetIsObject(setLocals[0]!, "Reflect.set called on non-object");
         coerceReflectPropertyKey(setLocals[1]);
         for (let i = 0; i < 3; i++) {
           const local = setLocals[i];
