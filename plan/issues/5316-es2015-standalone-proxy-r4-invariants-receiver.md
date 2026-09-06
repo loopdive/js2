@@ -1,10 +1,11 @@
 ---
 id: 5316
 title: "ES2015 standalone proxy — r4: §10.5 descriptor-model invariants, Reflect.set receiver, [[Construct]] NewTarget forwarding"
-status: in-progress
+status: done
+completed: 2026-09-06
 sprint: current
 created: 2026-09-04
-updated: 2026-09-04
+updated: 2026-09-06
 priority: high
 horizon: xl
 feasibility: hard
@@ -1154,3 +1155,346 @@ Not claimed and not touched, per the lane protocol: the generator carrier
   edit, and do not start a corpus run mid-edit.** One 81-row run was measured
   against a tree whose new module was written but not yet imported, and reported
   `registerOrdinarySetWithReceiver is not defined` as a `compile_error` row.
+
+
+### Review round 1 (2026-09-06)
+
+Fix-round lane, worktree `/home/user/js2/.claude/worktrees/wf_a2be0440-349-1`,
+branch `worktree-wf_a2be0440-349-1`, head `8f535fa599` — the r5 lane branch
+`worktree-wf_2c593ff3-433-1` (`b1fbd2ab63`) merged in, plus three fix commits
+(`42c6274e1f`, `a42e7eb5ff`, `8f535fa599`).
+
+Three columns appear in every table below and they are three different trees:
+**base** = `git archive origin/main` at `2257b950ee` (the r5 lane's read-only
+base tree), **lane** = the r5 lane before this round, **fix** = this worktree.
+node 22 is the oracle. **Everything here was re-measured on 2026-09-06** — the
+container restarted mid-round, so the compiler bundle, the runtime bundle and
+the QuickJS eval adapter were rebuilt in this worktree first (the adapter is
+keyed on the bundle hash; a stale one reads as a phantom `compile_error`).
+Artifacts: `.tmp/fin5316/{k-all,f2pp,hostid,swid,x1wasi,with-fix,gates}.out`,
+harness `.tmp/fin5316/ab2.mts` / `hash2.mts` (the reviewer's `ab.mts` / `hash.mts`
+with a third tree added).
+
+Three findings, all fixed. A fourth is a deliberate behaviour change the review
+asked to see stated rather than reverted.
+
+#### F1 — a Proxy RECEIVER answered `Reflect.set` through its `set` trap (FIXED)
+
+§10.1.9.2 steps 3.d.iv and 3.e write on the receiver through
+`Receiver.[[DefineOwnProperty]]`, not `[[Set]]`. The r5 walk used
+`__extern_set` for both, whose `$Proxy` front guard is §10.5.9 — so a proxy
+receiver ran the wrong trap and `Reflect.set` returned 1 whatever the trap said.
+
+| probe | asks | node | base | lane | fix |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `k5` | which trap fires (dp/st/gp/ok) | 1011 | CE | 111 | **1011** |
+| `k3` | the CreateDataProperty descriptor reaches the trap with W/E/C true | 11111111 | CE | 10000001 | **11111111** |
+| `k7` | a receiver `set` trap returning false must NOT be consulted | 10 | CE | 11 | **10** |
+| `k6` | `set(t,k,v,r){return Reflect.set(t,k,v,r)}` with the proxy as receiver | 11 | CE | RangeError (stack) | **11** |
+
+`k6` is the one worth naming: the canonical forwarding handler recursed —
+receiver write → `set` trap → `Reflect.set` → receiver write — until the stack
+gave out, uncatchably. Routing the write to `[[DefineOwnProperty]]` breaks the
+cycle because that is a different trap.
+
+`base = CE` on all four: `origin/main` REFUSES every 4-argument `Reflect.set`
+at compile time. So each of these was a **wrong answer the r5 lane newly
+admitted**, not a pre-existing one — the failure family this lane exists to
+avoid, one argument further out.
+
+#### F2 — a Proxy TARGET's `set` trap never ran, and the receiver was dropped (FIXED)
+
+The r5 walk opened with `__getOwnPropertyDescriptor(O, P)`, which for a `$Proxy`
+runs its `getOwnPropertyDescriptor` trap, then wrote ordinarily on the receiver.
+§10.5.9 is now dispatched from inside the walk's loop, so it covers both
+spellings the spec distinguishes: the direct target (§26.1.13 step 3) and a
+proxy reached on a later iteration (§10.1.9.2 step 2.b).
+
+| probe | asks | node | base | lane | fix |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `k11` | proxy TARGET, ordinary receiver (ok/setCalls/gopd/r.a) | 11001 | CE | 10111 | **11001** |
+| `f2a` | an inner proxy reached through an outer trap-less proxy | 111 | CE | 10 | **111** |
+| `f2b` | that inner proxy REFUSING — the false must survive the forward | 101 | CE | 10 | **101** |
+| `k13` | 3-argument `Reflect.set` on a proxy target (st/ok) | 11 | **0** | 0 | **11** |
+
+`k13` is a hole in `origin/main` too, not something r5 introduced: a `$Proxy`
+IS-A `$Object`, so `__reflect_set` walked it ordinarily, found no own entry and
+returned false without invoking the trap. The 4-argument surface is what made it
+worth naming; the fix is the front guard every other MOP helper in that file
+already carries.
+
+`f2a`/`f2b` are pinned in the nested-proxy spelling rather than as a literal
+proxy PROTOTYPE because **a `$Proxy` cannot be installed as a prototype on
+standalone at all** — re-measured 2026-09-06, probes `.tmp/fin5316/p/pp5.ts`
+(a `get` trap on such a "prototype" never fires: node 211, base 0, lane 0,
+**fix 0**) and `pp6.ts` (the same shape through `Reflect.set`: node 110, base
+CE, lane 11, **fix 11**). Unchanged by this round; it is a carrier gap, not a
+`[[Set]]` one, and it stays in the residual table.
+
+#### F3 — `Reflect.set` returned instead of throwing on a primitive target (FIXED)
+
+The only target check on either arm was `emitNonObjectArgGuard`, a STATIC test
+on the argument's TypeScript type, so it never fired for the spelling programs
+actually use — `Reflect.set(1 as any, …)`, or a variable the checker calls
+`any`. Both arms now also carry `emitNativeReflectNonObjectGuard`, the runtime
+**by-exclusion** brand `Reflect.get`/`Reflect.has` were given in #5196: it
+rejects only positively-branded primitives (number/string/boolean/bigint/Symbol)
+and admits every unrecognised object shape, so an ordinary object flowing
+through a representation the classifiers do not brand keeps its previous answer
+rather than becoming a spurious TypeError. (#5196 measured the strict
+positive-object guard the six inherited sites use turning 13 of 14 ordinary
+target kinds into throws — that is why this is not that guard.)
+
+| probe | asks | node | base | lane | fix |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `n1` | 4-arg: number / null / throwing key / string target | 2222 | CE | 1221 | **2222** |
+| `n3` | 4-arg: boolean / `any`-typed number / Symbol target | 222 | CE | 111 | **222** |
+| `n2` | 3-arg: number / boolean target | 22 | **11** | 11 | **22** |
+
+`n2` is why the 3-argument arm is in the same commit: the hole is shared, it
+predates r5 (base answers 11 too), and §26.1.13 step 1 is one step for both
+arities. Fixing only the arity the review found it through would have left the
+same wrong answer one argument away.
+
+#### Nothing else moved
+
+The eight r5 receiver probes the review did not flag are **unchanged lane → fix
+and equal to node** (`.tmp/fin5316/k-all.out`, one run, all three trees):
+
+| probe | node | base | lane | fix |
+| --- | ---: | ---: | ---: | ---: |
+| `k1` | 100111 | CE | 100111 | 100111 |
+| `k2` | 111012 | CE | 111012 | 111012 |
+| `k4` | 11111111 | CE | 11111111 | 11111111 |
+| `k8` | 1111111 | CE | 1111111 | 1111111 |
+| `k9` | 1110110 | CE | 1110110 | 1110110 |
+| `k10` | 11111111 | CE | 11111111 | 11111111 |
+| `k12` | 111110 | CE | 111110 | 111110 |
+| `y1` | 11111111 | CE | 11111111 | 11111111 |
+
+#### F4 — the wasi attribute change the round is keeping, stated
+
+On `--target wasi`, `Object.defineProperty` on a frozen object literal moved
+from **silently succeeding** to throwing a **TypeError** — which is node's
+answer. Probe `x1`, re-measured 2026-09-06 (`.tmp/fin5316/x1wasi.out`):
+**wasi/base 10 → wasi/lane 21 → wasi/fix 21, node 21.** The change came in with
+the r5 `__integrity_bag` instance-carrier arm (step 1), which the wasi target
+shares; this round does not touch it. It is a conformance gain, not a
+regression, and it is recorded here because "a program that used to succeed now
+throws" is the shape this lane treats as a defect by default — this is the
+exception, and the oracle is why.
+
+#### Controls
+
+`built-ins/Proxy` + `built-ins/Reflect`, 464 rows, `--isolate --standalone`, run
+as four sequential 116-row chunks at `COMPILER_POOL_SIZE=2`
+(`.tmp/ctl-p00…p03` → `.tmp/mine-p00…p03.out`); the box carried a 1-minute load
+average of 10-16 from three other lanes throughout. A monolithic run does not
+fit and `run-test262-paths.mts` writes nothing until it finishes, so a timeout
+is a total loss — the same lesson the r5 record ends on.
+
+| | base | lane | **fix** |
+| --- | ---: | ---: | ---: |
+| pass | 350 | 365 | **366** |
+| fail | 100 | 92 | **91** |
+| compile_error | 14 | 7 | **7** |
+| total | 464 | 464 | 464 |
+
+Per chunk on the fix tree: `{fail 35, pass 76, CE 5}` · `{pass 92, fail 24}` ·
+`{pass 94, fail 21, CE 1}` · `{pass 104, fail 11, CE 1}`. **No `timeout` and no
+`compile_timeout` row in any chunk**, so nothing needed a solo re-run.
+
+**Set-diff of non-pass PATHS, not counts** (`.tmp/fin5316/setdiff.out`,
+`fix-np.txt` / `lane-np.txt` / `base-np.txt`):
+
+- **vs the r5 lane: ZERO lost.** One gained —
+  `built-ins/Proxy/set/return-true-target-property-is-not-configurable.js`,
+  which is `Reflect.set(p, "attr", 1)` on a proxy whose target has a
+  non-configurable property: exactly the F2 front guard, and its lane failure
+  message was `Expected true but got false`, i.e. the trap never ran.
+- **vs base: ZERO lost, 16 gained.**
+- **No row changed verdict KIND** (no `fail` ↔ `compile_error` swap) on any path
+  non-pass in both runs.
+
+**One gained row out of three fixes is the honest headline, and it is not a
+disappointment — it is what the corpus can see.** The `built-ins` corpus reaches
+`Reflect.set` with a receiver in only a handful of rows, and the four-argument
+form is a compile refusal on `origin/main`, so the wrong answers F1 and F3
+described were mostly invisible to test262 and visible only to the probe
+matrix. The corpus's job here was to prove nothing broke, and it did: 98 non-pass
+paths on the fix tree against 99 on the lane, the 98 a strict subset.
+
+Ten `Proxy/set` + `Reflect/set` rows remain non-pass, **the same ten minus the
+gained one, with the same messages as the lane** — three
+`call-parameters-prototype*` (the handler must be the trap's `this`; the
+standalone call path passes `undefined`), two
+`trap-is-missing-receiver-multiple-calls*` (the walk does not log a
+`getOwnPropertyDescriptor` on the target when the trap is absent), four
+`trap-is-{null,undefined,missing}-target-is-proxy` (string/array exotic own
+properties through a proxy chain — the residual r5 already names), and
+`Reflect/set/set-value-on-data-descriptor.js` (the harness-only row r5 could not
+reproduce outside the runner).
+
+**`built-ins/Object/{freeze,seal,preventExtensions,isExtensible,isFrozen,isSealed}`
+— spot-sampled, not re-run in full.** The lane measured this 317-row corpus at
+309/6/2. This round changes `Reflect.set` and the proxy `[[Set]]` trap, neither
+of which the integrity predicates call, so the corpus was sampled rather than
+repeated: **32 rows** — all 8 the lane reports non-pass, plus 24 passing rows
+spread across `freeze`/`seal`/`preventExtensions`/`isFrozen`
+(`.tmp/int-sample.txt` → `.tmp/mine-int-sample.out`). Result **24 pass / 6 fail /
+2 compile_error**, the six fails and two compile errors being the identical eight
+paths, and every sampled pass still passing. **Zero change, so the full corpus
+was not re-run** — stated plainly because a sample is weaker evidence than a full
+run, and a reader deciding whether to trust it should know which one this is.
+
+The **`with`-proxy-env residual is materially better and no longer a stack
+overflow.** Both rows re-run alone at `COMPILER_POOL_SIZE=1`
+(`.tmp/fin5316/with-fix.out`):
+`language/statements/with/set-mutable-binding-idref{,-compound-assign}-with-proxy-env.js`
+were `compile_error` on base and `fail` with
+`RangeError: Maximum call stack size exceeded` on the r5 lane — a `with (proxy)`
+environment re-entering its own trap with no re-entrancy guard. On the fix tree
+they are `fail` on a **trap-log mismatch** instead: the log reads
+`[has:p, get:Symbol(), set:p, getOwnPropertyDescriptor:p, defineProperty:p]`
+against an expected `[has:p, get:Symbol(Symbol.unscopables), has:p, set:…]`. So
+the receiver-aware proxy `set` DID fix the re-entrancy — the residual that
+remains is a different, narrower one: the `Symbol.unscopables` key does not
+carry its description through the trap, and one `has` probe is missing from the
+sequence. Still 2 rows, still not claimed.
+
+#### Order preservation
+
+lane → fix, `sha256` of the emitted module (`.tmp/fin5316/hostid.out`,
+`swid.out`, harness `hash2.mts`):
+
+- **host byte-identical on all ten review probes** — `e4` `g3` `h3` `c3` `b7`
+  `k5` `f1` `k1` `o3` `o4`, `SAME` for every one. The `$Proxy` arms are
+  standalone/wasi-gated; nothing reached the host path.
+- the two programs the acceptance criteria name as all-target-identical are
+  `SAME` on standalone AND wasi, at the same byte counts the r5 record
+  measured against base: `o/plain.ts` 50,256 B standalone / 50,283 B wasi,
+  `w/w2.ts` 50,541 B / 50,568 B. So they are identical base → lane → fix.
+
+#### Pins
+
+`tests/issue-5316-r5-attribute-model.test.ts` gains a **`review r1` group of 11
+probes** — the four F1 shapes, the four F2 shapes, the three F3 shapes — each
+carrying node's answer as its expectation and `origin/main`'s answer in its
+comment, so a reader can tell a pin that guards a FIX (`base: -1`, a compile
+refusal) from one that guards a hole base had too (`k13`/`n2`, `base: 0` / `11`).
+Every standalone probe asserts `result.imports` is `[]`.
+
+Run at the CI fork heap, `--pool=forks --poolOptions.forks.singleFork=true
+--no-file-parallelism --dangerouslyIgnoreUnhandledErrors`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`, on **node 22 AND node 25**:
+
+| file | tests | node 22 | node 25 |
+| --- | ---: | --- | --- |
+| `issue-5316-r5-attribute-model.test.ts` | **60** | pass | pass |
+| `issue-5316-r4-invariants.test.ts` | 49 | pass | pass |
+| `issue-5195-es2015-class-r2.test.ts` | 76 | pass | pass |
+| `issue-5195-r3-heritage-check.test.ts` | 11 | pass | pass |
+| `issue-5195-r3-restricted-properties.test.ts` | 9 | pass | pass |
+| `issue-5195-r3-review.test.ts` | 21 | pass | pass |
+| `issue-5309-child-field-shadows-parent-method.test.ts` | 44 | pass | pass |
+| `issue-5312-uninitialised-field-reads-undefined.test.ts` | 64 | pass | pass |
+| **total** | **334** | **334 pass** | **334 pass** |
+
+**One process note, because it nearly hid a result.** The first two-file batch
+exited **0** while reporting only ONE of its two files: under the box's load the
+worker lost its `onTaskUpdate` RPC and vitest reported `Test Files 1 passed (2)`
+with `Errors 1 error`, which `--dangerouslyIgnoreUnhandledErrors` turns into a
+zero exit. A green exit code is therefore not evidence a file ran — the summary
+line is. Every file above is accounted for by name from the run output, and the
+r5 file was re-run **alone** to get its number.
+
+#### Gates
+
+Run from inside the worktree, bare (no pipe — a piped gate reports the pipe's
+status). `.tmp/fin5316/gates.out`, `gates2.out`.
+
+**Green bare** (base = `merge-base(origin)`), the whole chained set:
+`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, plus
+`check:speculative-rollback`, `check:stack-balance`, `check:codegen-fallbacks`,
+`check:any-box-sites`, TS7 `tsc --noEmit -p tsconfig.ts7.json`, `pnpm lint`.
+The three §26.1.13/§10.5.9 grants this round needs are in this file's
+frontmatter with dated rationales (the `object-runtime-proxy.ts`
+`coercion-sites-allow` entry is new for the `__reflect_set` front guard); no
+`scripts/*-baseline.json` was touched.
+
+**`LOC_GATE_BASE=$(git rev-parse origin/main)` FAILS — inherited, and the
+integrator has to clear it, not this round.** Two of the five chained gates fail
+against main's tip (measured 2026-09-06 with `origin/main` at `50c81e5487`), and
+every file they name is one this round never opened:
+
+| gate | complaint |
+| --- | --- |
+| `check-loc-budget` | `type-coercion.ts` 5278 > 5194, `expressions/calls.ts` 10640 > 10562, `expressions/calls-closures.ts` 2726 > 2699 |
+| `check-coercion-sites` | `type-coercion.ts` 35 → 37 (`__unbox_number` 23 → 25) |
+
+`check-func-budget`, `check:oracle-ratchet` and `check:dead-exports` are green
+at that base (44 changed `src` files there, +0 / 0 new).
+
+**The complaint tracks MAIN's moving baseline, not this branch — and it moved
+while this round was measuring.** An earlier run of the same command an hour
+before named a partly different set (`property-access-dispatch.ts` and its
+`finalizeStructAndDynamicMemberGet`, since dropped; `expressions/calls.ts`, since
+added) because `main` had advanced from `a1469a5454` to `50c81e5487` in between.
+A gate whose verdict changes without the branch changing is measuring the base,
+not the diff. The branch's merge-base is `efa9e76f07`; `main` has since **shrunk**
+these files and refreshed the ceilings from the smaller copies, so a diff against
+main's tip reads the branch's untouched OLDER copies as growth. This is the
+second failure class the repo guide names — "a ceiling reset by main's
+post-merge baseline refresh".
+
+**And it does not survive the merge — proved without merging.** CI diffs the
+merge PREVIEW, not the branch tip. `git merge-tree --write-tree HEAD origin/main`
+(preview tree `1f9a41889e`) resolves every named file to **main's own blob**,
+sha for sha:
+
+| file | HEAD | main | merge preview |
+| --- | --- | --- | --- |
+| `src/codegen/type-coercion.ts` | `9c1b3c6619` | `05dfcc3134` | **`05dfcc3134`** |
+| `src/codegen/expressions/calls.ts` | `191011cd4c` | `835c168ba7` | **`835c168ba7`** |
+| `src/codegen/expressions/calls-closures.ts` | `3177f739c5` | `538d390dbd` | **`538d390dbd`** |
+
+A file that IS main's file has main's line count and main's coercion vocabulary,
+so it cannot exceed a ceiling refreshed from main — both complaints are green by
+identity in the state CI actually evaluates. The remedy is the ordinary
+`git merge origin/main` at integration time; this round is under instruction not
+to merge, so it is reported rather than performed.
+
+#### Residual bookkeeping
+
+Two entries in the r5 residual table are **retired** by this round, and one is
+restated more narrowly:
+
+- *"A `$Proxy` reached as a PROTOTYPE of the target inside
+  `__reflect_set_receiver` is consulted through its `getOwnPropertyDescriptor`
+  trap, not its §10.5.9 `set` trap"* — **retired.** The walk now dispatches
+  §10.5.9 from inside its loop, so a proxy reached on any iteration runs its own
+  `set` trap and its refusal survives (probes `f2a`/`f2b`). What is left is not a
+  `[[Set]]` gap: a `$Proxy` cannot be installed as a prototype at all on
+  standalone, measured above.
+- *"`with (proxy)` … `RangeError: Maximum call stack size exceeded` … the walk
+  has no re-entrancy guard"* — **retired as a stack overflow.** Both rows still
+  fail, on a trap-log mismatch, as described above. Same 2 rows, different and
+  much narrower mechanism.
+- The `TypedArrayConstructors/internals/Set/*` (6), `Reflect/set/
+  set-value-on-data-descriptor.js` (1), `Proxy/getPrototypeOf/instanceof-…` (1),
+  `Proxy/{deleteProperty,defineProperty}/…-target-is-proxy` (2),
+  `Proxy/defineProperty/null-handler.js` (1) entries are **unchanged**, and the
+  `Proxy/set/call-parameters-prototype*` (3) and
+  `trap-is-missing-receiver-multiple-calls*` (2) rows are named above with their
+  mechanisms — they were inside the lane's aggregate before and are now itemised.
+
+#### Acceptance criteria
+
+| criterion | verdict |
+| --- | --- |
+| the 75 listed rows pass or are given up with a mechanism | holds — no listed row moved; the given-up ones are itemised in the residual tables |
+| control corpus: zero rows lost against base | **holds — zero lost against base AND against the r5 lane**, by path set-diff, +16 / +1 |
+| pinned test files green at the CI fork heap | holds — 334/334 on node 22 and node 25, every file accounted for by name |
+| all gates green bare and against `origin/main` | holds — green bare; the three reds against main's tip are main's own newer, smaller files, and the merge preview resolves them to main's blobs sha-for-sha |
+| Proxy-free programs byte-identical to base on standalone, host and wasi | holds — `o/plain.ts` and `w/w2.ts` `SAME` on all three, at the r5 byte counts; host `SAME` on all ten probes |

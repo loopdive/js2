@@ -428,6 +428,240 @@ const RECEIVER_SET_PROBES: Probe[] = [
 ];
 
 /**
+ * Review round 1 (2026-09-06) — the three findings, and the two pre-existing
+ * holes the 4-argument surface exposed.
+ *
+ * Every one of these is a WRONG ANSWER the r5 lane newly admitted where
+ * `origin/main` refused at compile time (`base: -1`), except `k13`/`n2`, which
+ * are 3-argument spellings base answered wrongly all along. A refusal that
+ * becomes a wrong answer is worse than the refusal, so these are the pins that
+ * matter most in this file.
+ */
+const REVIEW_R1_PROBES: Probe[] = [
+  {
+    // F1. lane: 111 (dp=0 st=1) — the receiver's `set` trap ran instead.
+    name: "F1: a Proxy RECEIVER runs its defineProperty trap, not its set trap",
+    source: `var dp = 0; var st = 0; var gp = 0;
+      export function test(): number {
+        var t: any = { a: 1 };
+        var rt: any = {};
+        var recv: any = new Proxy(rt, {
+          defineProperty: function (tt: any, k: any, d: any) { dp = dp + 1; return Reflect.defineProperty(tt, k, d); },
+          set: function (tt: any, k: any, v: any) { st = st + 1; tt[k] = v; return true; },
+          getOwnPropertyDescriptor: function (tt: any, k: any) { gp = gp + 1; return Reflect.getOwnPropertyDescriptor(tt, k); },
+        });
+        var ok = Reflect.set(t, "a", 5, recv) ? 1 : 0;
+        return ((dp * 10 + st) * 10 + gp) * 10 + ok;
+      }`,
+    expect: 1011,
+    base: -1,
+  },
+  {
+    // F1. lane: 10000001 — the trap never ran, so none of its fields were seen.
+    name: "F1: step 3.e hands the trap {value, writable, enumerable, configurable} all true",
+    source: `var dpCalls = 0; var dpKey: any = 0; var dpVal: any = 0; var dpW: any = 0; var dpE: any = 0; var dpC: any = 0;
+      export function test(): number {
+        var acc = 0;
+        var t: any = { a: 1 };
+        var rt: any = {};
+        var recv: any = new Proxy(rt, {
+          defineProperty: function (tt: any, k: any, d: any) {
+            dpCalls = dpCalls + 1; dpKey = k; dpVal = d.value; dpW = d.writable; dpE = d.enumerable; dpC = d.configurable;
+            return Reflect.defineProperty(tt, k, d);
+          },
+        });
+        acc = acc * 10 + (Reflect.set(t, "a", 5, recv) ? 1 : 0);
+        acc = acc * 10 + dpCalls;
+        acc = acc * 10 + (dpKey === "a" ? 1 : 0);
+        acc = acc * 10 + (dpVal === 5 ? 1 : 0);
+        acc = acc * 10 + (dpW === true ? 1 : 0);
+        acc = acc * 10 + (dpE === true ? 1 : 0);
+        acc = acc * 10 + (dpC === true ? 1 : 0);
+        acc = acc * 10 + (rt.a === 5 ? 1 : 0);
+        return acc;
+      }`,
+    expect: 11111111,
+    base: -1,
+  },
+  {
+    // F1. lane: 11 — returned true and wrote nothing. A receiver whose only
+    // trap is `set` must still take the write through [[DefineOwnProperty]],
+    // which, absent a defineProperty trap, forwards to the real target.
+    name: "F1: a receiver `set` trap returning false is not consulted at all",
+    source: `export function test(): number {
+        var t: any = { a: 1 };
+        var rt: any = {};
+        var recv: any = new Proxy(rt, { set: function () { return false; } });
+        var out = 0;
+        try { out = Reflect.set(t, "a", 5, recv) ? 1 : 2; } catch (e) { out = 9; }
+        return out * 10 + (rt.a === undefined ? 1 : 0);
+      }`,
+    expect: 10,
+    base: -1,
+  },
+  {
+    // F1. lane: RangeError, maximum call stack — uncatchable in practice. The
+    // canonical forwarding handler recursed receiver-write → `set` trap →
+    // `Reflect.set` → receiver-write. Routing the write to the receiver's
+    // [[DefineOwnProperty]] breaks the cycle: it is a different trap.
+    name: "F1: the canonical forwarding handler terminates",
+    source: `export function test(): number {
+        var t: any = { a: 1 };
+        var rt: any = {};
+        var recv: any = new Proxy(rt, {
+          set: function (tt: any, k: any, v: any, r: any) { return Reflect.set(tt, k, v, r); },
+        });
+        var out = 0;
+        try { out = Reflect.set(t, "a", 5, recv) ? 1 : 2; } catch (e) { out = 9; }
+        return out * 10 + (rt.a === 5 ? 1 : 0);
+      }`,
+    expect: 11,
+    base: -1,
+  },
+  {
+    // F2. lane: 10111 — the gopd trap ran and the write went ordinarily to the
+    // receiver, so `setCalls` stayed 0 and `r.a` wrongly became 5.
+    name: "F2: a Proxy TARGET runs its set trap with the caller's receiver",
+    source: `var setCalls = 0; var gopdCalls = 0;
+      export function test(): number {
+        var acc = 0;
+        var tt: any = { a: 1 };
+        var pt: any = new Proxy(tt, {
+          set: function (t2: any, k: any, v: any, r: any) { setCalls = setCalls + 1; return true; },
+          getOwnPropertyDescriptor: function (t2: any, k: any) { gopdCalls = gopdCalls + 1; return Reflect.getOwnPropertyDescriptor(t2, k); },
+        });
+        var r: any = {};
+        var ok = Reflect.set(pt, "a", 5, r) ? 1 : 0;
+        acc = acc * 10 + ok;
+        acc = acc * 10 + setCalls;
+        acc = acc * 10 + (gopdCalls > 0 ? 1 : 0);
+        acc = acc * 10 + (r.a === 5 ? 1 : 0);
+        var g: any = {}; Object.defineProperty(g, "k", { value: 1, writable: false });
+        var recv: any = Object.create(g);
+        var t3: any = { k: 0 };
+        acc = acc * 10 + (Reflect.set(t3, "k", 3, recv) ? 1 : 0);
+        return acc;
+      }`,
+    expect: 11001,
+    base: -1,
+  },
+  {
+    // F2. The dispatch sits INSIDE the walk's loop, so it also fires on a
+    // re-entry: the outer proxy has no `set` trap, its trap-absent arm is
+    // §10.5.9 step 6 `target.[[Set]](P, V, Receiver)` = the walk again, and the
+    // walk's next iteration finds the INNER proxy in the `O` position. That is
+    // the same arm the prototype hop (§10.1.9.2 step 2.b) uses.
+    //
+    // It is pinned in this spelling rather than as a literal proxy PROTOTYPE
+    // because a `$Proxy` cannot be installed as a prototype on standalone at
+    // all — `Object.create(proxy)` and `Object.setPrototypeOf(o, proxy)` both
+    // leave the proxy out of the chain, on `origin/main` and here alike
+    // (re-measured 2026-09-06, probe `.tmp/fin5316/p/pp5.ts`: a `get` trap on
+    // such a "prototype" never fires — node 211, lane 0, fix 0; and `pp6.ts`,
+    // the same shape through `Reflect.set`, is 11 on lane and fix against
+    // node 110). Recorded as a residual in #5316; it is a carrier gap, not a
+    // `[[Set]]` one.
+    name: "F2: a Proxy reached on a later iteration runs its set trap, receiver threaded",
+    source: `var st = 0;
+      export function test(): number {
+        var base: any = { a: 1 };
+        var inner: any = new Proxy(base, { set: function (t: any, k: any, v: any, r: any) { st = st + 1; return true; } });
+        var outer: any = new Proxy(inner, {});
+        var recv: any = {};
+        var ok = Reflect.set(outer, "a", 5, recv) ? 1 : 0;
+        return (st * 10 + ok) * 10 + (recv.a === undefined ? 1 : 0);
+      }`,
+    expect: 111,
+    base: -1,
+  },
+  {
+    // F2. The same shape REFUSING — the boolean has to survive the trap-absent
+    // forward, not be re-synthesised as `true` by the forwarding arm.
+    name: "F2: an inner Proxy's refusal survives the trap-absent forward",
+    source: `var st = 0;
+      export function test(): number {
+        var base: any = { a: 1 };
+        var inner: any = new Proxy(base, { set: function (t: any, k: any, v: any, r: any) { st = st + 1; return false; } });
+        var outer: any = new Proxy(inner, {});
+        var recv: any = {};
+        var ok = Reflect.set(outer, "a", 5, recv) ? 1 : 0;
+        return (st * 10 + ok) * 10 + (recv.a === undefined ? 1 : 0);
+      }`,
+    expect: 101,
+    base: -1,
+  },
+  {
+    // F2, 3-argument. base = lane = 0: a `$Proxy` IS-A `$Object`, so
+    // `__reflect_set` walked it ordinarily, found no own entry and refused
+    // WITHOUT running the trap. Pre-existing on `origin/main`.
+    name: "F2: 3-argument Reflect.set on a Proxy target runs its set trap",
+    source: `var st = 0;
+      export function test(): number {
+        var tt: any = { a: 1 };
+        var pt: any = new Proxy(tt, { set: function (t2: any, k: any, v: any, r: any) { st = st + 1; t2[k] = v; return true; } });
+        var ok = Reflect.set(pt, "a", 5) ? 1 : 0;
+        return st * 10 + ok;
+      }`,
+    expect: 11,
+    base: 0,
+  },
+  {
+    // F3. lane: 1221 — a number and a string target returned instead of
+    // throwing, because the only guard was a STATIC test on the TS type and
+    // `1 as any` is `any`. The `c` digit also pins §7.1.19: a throwing
+    // `toString` on the key must still escape as its own RangeError.
+    name: "F3: 4-argument Reflect.set throws §26.1.13 step 1 on a primitive target",
+    source: `export function test(): number {
+        var a = 0;
+        try { Reflect.set(1 as any, "x", 1, {}); a = 1; } catch (e) { a = (e instanceof TypeError) ? 2 : 3; }
+        var b = 0;
+        try { Reflect.set(null as any, "x", 1, {}); b = 1; } catch (e) { b = (e instanceof TypeError) ? 2 : 3; }
+        var c = 0;
+        var key: any = { toString: function () { throw new RangeError("k"); } };
+        try { Reflect.set({} as any, key, 1, {}); c = 1; } catch (e) { c = (e instanceof RangeError) ? 2 : 3; }
+        var d = 0;
+        try { Reflect.set("s" as any, "x", 1, {}); d = 1; } catch (e) { d = (e instanceof TypeError) ? 2 : 3; }
+        return ((a * 10 + b) * 10 + c) * 10 + d;
+      }`,
+    expect: 2222,
+    base: -1,
+  },
+  {
+    // F3. lane: 111 — boolean, an `any`-typed number held in a variable, and
+    // the standalone Symbol carrier.
+    name: "F3: boolean / any-typed number / Symbol targets all throw",
+    source: `export function test(): number {
+        var a = 0;
+        try { Reflect.set(true as any, "x", 1, {}); a = 1; } catch (e) { a = (e instanceof TypeError) ? 2 : 3; }
+        var n: any = 5;
+        var b = 0;
+        try { Reflect.set(n, "x", 1, {}); b = 1; } catch (e) { b = (e instanceof TypeError) ? 2 : 3; }
+        var s: any = Symbol("q");
+        var c = 0;
+        try { Reflect.set(s, "x", 1, {}); c = 1; } catch (e) { c = (e instanceof TypeError) ? 2 : 3; }
+        return (a * 10 + b) * 10 + c;
+      }`,
+    expect: 222,
+    base: -1,
+  },
+  {
+    // F3, 3-argument. base = lane = 11: the same hole one argument away, which
+    // is why the guard went on BOTH arms rather than only the one the review
+    // found it through.
+    name: "F3: 3-argument Reflect.set throws on a primitive target too",
+    source: `export function test(): number {
+        var a = 0;
+        try { Reflect.set(1 as any, "x", 1); a = 1; } catch (e) { a = (e instanceof TypeError) ? 2 : 3; }
+        var b = 0;
+        try { Reflect.set(true as any, "x", 1); b = 1; } catch (e) { b = (e instanceof TypeError) ? 2 : 3; }
+        return a * 10 + b;
+      }`,
+    expect: 22,
+    base: 11,
+  },
+];
+
+/**
  * Step 1 reaches `--target wasi` too (the bag substrate is shared). These four
  * are the wasi half of the integrity matrix; the §10.5 validators stay gated
  * off there (see `issue-5316-r4-invariants.test.ts`), but the storage fix is
@@ -490,6 +724,7 @@ describe("#5316 r5 standalone attribute model + receiver [[Set]]", () => {
     ["proxy", PROXY_PROBES],
     ["status", STATUS_PROBES],
     ["Reflect.set receiver", RECEIVER_SET_PROBES],
+    ["review r1", REVIEW_R1_PROBES],
   ] as const) {
     for (const probe of probes) {
       it(`standalone ${group} — ${probe.name}`, { timeout: TIMEOUT_MS }, async () => {
