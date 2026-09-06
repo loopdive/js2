@@ -162,6 +162,9 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * consumer's `catch` never matches, and the payload is lost in `catch_all`.
    */
   sharedExceptionTag?: boolean;
+  /** (#5247) Provider build — exports are wasm→wasm call targets, so the
+   *  export-boundary throw unwrapping stays off (export-throw-boundary.ts). */
+  exportsConsumedByWasm?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
@@ -1474,6 +1477,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   programAbiFnctors?: import("../program-abi-fnctor-planning.js").ProgramAbiFnctorRegistry;
   programAbiCallables?: import("../program-abi-callable-planning.js").ProgramAbiCallableRegistry;
   programAbiGlobals?: import("../program-abi-global-planning.js").ProgramAbiGlobalRegistry;
+  /** Source-qualified storage gaps observed before an atomic initializer batch reservation. */
+  irProgramPreparedModuleInitBatchPreclaimGaps?: ReadonlyMap<ts.SourceFile, readonly string[]>;
+  /** Test-only receipt cleanup evidence for an aborted aggregate initializer batch. */
+  irPreparedModuleInitBatchAbortAudit?: {
+    readonly attempted: number;
+    readonly aborted: number;
+  };
   programAbiExports?: import("../program-abi-export-planning.js").ProgramAbiExportRegistry;
   programAbiTypes?: import("../program-abi-type-planning.js").ProgramAbiTypeRegistry;
   irPlanningIdentityContext?: import("../../ir/planning-identity.js").IrPlanningIdentityContext;
@@ -2769,6 +2779,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * either way (imported tags occupy the low indices).
    */
   sharedExnTag: boolean;
+  /** (#5247) True for a linked provider: its exports are called by another WASM
+   *  module, so the export-boundary throw unwrapping is suppressed. */
+  exportsConsumedByWasm: boolean;
   /** Whether union type helper imports have been registered */
   hasUnionImports: boolean;
   /**
