@@ -62,6 +62,23 @@ export const RETHROW_HOST_IMPORT = "__rethrow_host_exception";
 const EXTERNREF: ValType = { kind: "externref" };
 
 /**
+ * True when this module's exports are called by a JS HOST that can receive a
+ * real `Error`.
+ *
+ * The native-first semantic-provider profile joins wasi/standalone in the
+ * exclusion for the same reason: it refuses implicit `env::*` imports outright,
+ * and the fallback is structural — no wrapper is minted, so the module keeps
+ * raising the wasm exception exactly as it does today. A linked PROVIDER is
+ * excluded on different grounds (its exports are wasm→wasm call targets); see
+ * the header note.
+ */
+function hostFacingThrowBoundary(ctx: CodegenContext): boolean {
+  if (ctx.wasi || ctx.standalone || ctx.strictNoHostImports) return false;
+  if (ctx.targetProfile.semanticProviders === "native-first") return false;
+  return ctx.exportsConsumedByWasm !== true;
+}
+
+/**
  * Register the export-boundary rethrow import the MOMENT the module first needs
  * an `__exn` tag — i.e. while bodies are still compiling.
  *
@@ -76,8 +93,7 @@ const EXTERNREF: ValType = { kind: "externref" };
  * dead-import elimination, which runs after the wrapping pass.
  */
 export function ensureExportThrowRethrowImport(ctx: CodegenContext): void {
-  if (ctx.wasi || ctx.standalone || ctx.strictNoHostImports) return;
-  if (ctx.exportsConsumedByWasm) return;
+  if (!hostFacingThrowBoundary(ctx)) return;
   if (ctx.indexSpaceFrozen) return;
   if (ctx.funcMap.has(RETHROW_HOST_IMPORT)) return;
   ensureLateImport(ctx, RETHROW_HOST_IMPORT, [EXTERNREF], []);
@@ -106,8 +122,7 @@ function isCompilerOwnedExport(name: string): boolean {
  */
 export function wrapHostFacingExportsForThrow(ctx: CodegenContext): void {
   if (ctx.exnTagIdx < 0) return; // nothing in this module throws on our tag
-  if (ctx.wasi || ctx.standalone || ctx.strictNoHostImports) return; // no JS host to receive an Error
-  if (ctx.exportsConsumedByWasm) return; // linked provider — see the header note
+  if (!hostFacingThrowBoundary(ctx)) return; // no JS host, or a linked provider
 
   // Ordinals are load-bearing: an export's Program-ABI identity is keyed by its
   // POSITION, and a prepared IR component may already have PLANTED that

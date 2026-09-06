@@ -151,18 +151,78 @@ caught: [object Error] | instanceof Error: true | instanceof RangeError: true | 
 `no-E|[object WebAssembly.Exception]` → `RE|E|[object Error]|n=RangeError|m=range-x`.
 Its other three rows (the provider-seam properties) are unchanged.
 
+Suites: the 9 provider suites (#5221/#5225/#5237/#5239/#5241/#5242/#5244/#5248
+plus #4628) — 53/53 green; `node scripts/equivalence-gate.mjs` — 24 failing,
+1718 passing, exactly the committed baseline, no new regressions. The
+error-model suites found by name (`throw`/`catch`/`exception`/`error`) are
+green except for pre-existing failures in `error-reporting.test.ts` (3),
+`issue-3632-eval-early-errors.test.ts` (2), `issue-4262-error-substrate.test.ts`
+(3), `issue-4154-private-brand-check-typeerror.test.ts` (2) and
+`null-property-access-throws.test.ts` (1) — every one of them reproduces
+identically with this pass disabled, measured row by row —
+plus `report-error-patterns-edition-scope.test.ts` (1), which reads a report
+JSON artifact and compiles nothing. **Not run here:**
+`tests/test262-errors.test.ts`, a full-corpus harvester that OOMs in this
+container by design; CI owns conformance.
+
+**One real regression was found and fixed here**, and it names the class to
+watch: `tests/equivalence/helpers.ts` builds its `env` namespace BY HAND
+instead of using `result.importObject`, so it did not know the new import and
+every throwing module failed to link
+(`LinkError: … "__rethrow_host_exception": function import requires a
+callable`, 7 rows of #3529). That helper is the only hand-built import object
+in the tree — `scripts/test262-import-object.mjs` and every other consumer
+extend `result.importObject`, so they inherit the import automatically.
+
+### test262
+
+30 baseline rows carry `[object WebAssembly.Exception]` as their failure
+reason, and **none of them is this defect**: every one is a
+`language/module-code` (or `import`) test whose exception escapes MODULE INIT,
+not an exported call, and `__module_init` is deliberately not wrapped (see the
+bound below). No baseline row was expected to move, and the value for test262
+is prospective — it is the harness `assert.throws` path once the runner drives
+compiled exports directly (#4628 criterion 2).
+
 ### Reported, NOT fixed — bounds
 
 - **A function export whose descriptor points at an IMPORT is handled** (the
   wrapper simply calls the import), but a **re-export of a provider binding
   that the linker lowers to a host-mirror getter** is not a function export at
   all and keeps its previous behaviour.
+- **An export whose Program-ABI alias a prepared IR component already planted
+  cannot have its descriptor retargeted.** The ABI keys an export's identity by
+  its ORDINAL and refuses a changed `aliasOf` (`ABI draft … was observed with a
+  different plan contract`). Those exports take an IN-PLACE wrap instead —
+  applied only when a whole-module reference scan proves no wasm caller can
+  observe it, since an intra-module `catch $__exn` matches by tag. The scan
+  over-approximates (`collectInternalFuncReferences` mirrors the nested-array
+  traversal `shiftFuncIndices` already relies on module-wide), so an
+  unrecognised reference form SKIPS rather than silently rewriting a function
+  wasm still calls. A skipped export keeps exactly today's behaviour.
+- **A compiled OBJECT LITERAL thrown uncaught** arrives at the host as an
+  opaque WasmGC struct (`[object Object]`, fields unreadable). Pre-existing and
+  orthogonal: the same struct is opaque when merely RETURNED. Primitives
+  (string, number) and every `Error` subclass cross correctly.
+- **A compiler-owned export published under a SHORT PHYSICAL ALIAS** (`$d1`
+  beside `__struct_field_names`, the vec host-bridge family) carries no `_`
+  prefix to recognise it by. The pass therefore decides on the TARGET HANDLE,
+  not the spelling — wrapping one half of such a pair would give one function
+  two exception contracts depending on which name the host used.
 - **`__module_init` is deliberately not wrapped.** A top-level throw during
   module init still reaches the host as a `WebAssembly.Exception`. The test262
   runner already decodes that case explicitly via `__exn_tag`
   (`tests/test262-runner.ts` ~L3976), and changing it would change what that
   path reports.
-- **#5245 is NOT resolved by this** — see that issue's own note.
+- **#5245 is NOT resolved by this.** It is now DIAGNOSED: with the payload
+  legible, the two rows turn out to be two unrelated defects —
+  `total({unit:"hours"})` throws `SyntaxError: Cannot convert 817405952,3352
+  to a BigInt` (a comma-joined pair reaching `BigInt()`, i.e. an
+  array/multi-value carrier where a scalar was expected) and
+  `round({largestUnit:"days"})` throws `RangeError: roundingIncrement must be
+  at least 1 …, not 0` (an absent options-bag property answering `0` instead
+  of `undefined`, defeating the polyfill's default). Both still throw, so
+  #5245 stays open with those measurements recorded in its file.
 
 ## Notes
 

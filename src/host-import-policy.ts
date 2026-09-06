@@ -47,6 +47,12 @@ const VALUE_ADAPTER_BUILTINS = new Set([
   "__str_to_mem",
   "__str_extern_len",
   "__get_caught_exception",
+  // (#5247) Export-boundary rethrow: hands the `__exn` tag's externref payload
+  // to a JS frame so an uncaught compiled throw reaches the host as the Error
+  // itself. Same "exception transfer" family as `__get_caught_exception`, and
+  // the native fallback is structural — a host-free profile never registers it
+  // and simply keeps raising the wasm exception.
+  "__rethrow_host_exception",
   "__unwrap_for_wasm",
 ]);
 
