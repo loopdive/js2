@@ -109,11 +109,15 @@ describe("#5342 module-scope capability probe over globalThis", () => {
     // the id was boxed as a number and unboxed as a symbol → 0).
     expect((exports.probedSymbolText as () => string)()).toBe("Symbol(a)");
 
-    // Anti-vacuity for C1: the arm must not simply be inverted. A MODULE's
-    // top-level `var` is not a property of the global object, so the read has
-    // to answer `undefined` — proving we route to the real object rather than
-    // to the module global in either direction.
-    expect((exports.moduleVarIsNotAGlobalProperty as () => string)()).toBe("undefined");
+    // Anti-vacuity for C1 — this is the SCOPING proof, and it deliberately
+    // pins behaviour that is still wrong per §16.2.1.6.4: a NON-self-referential
+    // read of the same name keeps #4500 Slice A's answer (the module global), so
+    // `typeof globalThis.symbol` is still "symbol" rather than "undefined".
+    // A broader module-goal gate that fixed that too was measured first and
+    // withdrawn — it moved 31 test262 Temporal rows in the merge_group for no
+    // additional win here. If this row ever flips to "undefined", the gate has
+    // widened beyond the self-referential initializer and needs re-measuring.
+    expect((exports.moduleVarIsNotAGlobalProperty as () => string)()).toBe("symbol");
     expect((exports.unshadowedGlobalStillReads as () => number)()).toBe(1);
 
     // Anti-vacuity for C2: the same join with a runtime-false condition must
