@@ -1231,10 +1231,16 @@ function emitSuperBaseCoercibleGuard(ctx: CodegenContext, fctx: FunctionContext)
  *     use `__current_this` (the standalone call carrier); a class method uses
  *     its own `this` LOCAL, which is the receiver the call actually bound.
  */
+/**
+ * The referenced name of a `super` read: a key known at compile time, or (#5350
+ * step 2) an expression evaluated at runtime after the super base is resolved.
+ */
+type SuperReadKey = { kind: "name"; name: string } | { kind: "dynamic"; emit: () => void };
+
 function compileStandaloneSuperPropertyRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  propName: string,
+  key: SuperReadKey,
   accessType: ts.Type,
   emitHomeObject: () => boolean,
   emitReceiver: () => void,
@@ -1242,7 +1248,7 @@ function compileStandaloneSuperPropertyRead(
   if (!ctx.standalone) return undefined;
 
   ensureObjectRuntime(ctx);
-  addStringConstantGlobal(ctx, propName);
+  if (key.kind === "name") addStringConstantGlobal(ctx, key.name);
   flushLateImportShifts(ctx, fctx);
 
   const getPrototypeOfIdx = ctx.funcMap.get("__getPrototypeOf");
@@ -1251,11 +1257,27 @@ function compileStandaloneSuperPropertyRead(
 
   if (!emitHomeObject()) return undefined;
   fctx.body.push({ op: "call", funcIdx: getPrototypeOfIdx });
-  // (#5153 C.1) §12.3.5.3 step 5: RequireObjectCoercible(GetSuperBase()). With
-  // the home object's [[Prototype]] set to null the read must throw a
-  // TypeError, not quietly answer `undefined`.
-  emitSuperBaseCoercibleGuard(ctx, fctx);
-  fctx.body.push(...stringConstantExternrefInstrs(ctx, propName));
+  if (key.kind === "name") {
+    // (#5153 C.1) §12.3.5.3 step 5: RequireObjectCoercible(GetSuperBase()).
+    // With the home object's [[Prototype]] set to null the read must throw a
+    // TypeError, not quietly answer `undefined`.
+    emitSuperBaseCoercibleGuard(ctx, fctx);
+    fctx.body.push(...stringConstantExternrefInstrs(ctx, key.name));
+  } else {
+    // (#5350 step 2) §12.3.5.1 + §6.2.5.5 GetValue: GetSuperBase runs BEFORE
+    // ToPropertyKey, so the base is spilled here and the key expression runs
+    // against the ALREADY-resolved base. A key whose `toString` re-points the
+    // home object's prototype (`prop-expr-getsuperbase-before-topropertykey-*`)
+    // must not move the base out from under the read.
+    const baseLocal = allocLocal(fctx, `__super_dynbase_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: baseLocal });
+    key.emit();
+    const keyLocal = allocLocal(fctx, `__super_dynkey_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.set", index: keyLocal });
+    fctx.body.push({ op: "local.get", index: baseLocal });
+    emitSuperBaseCoercibleGuard(ctx, fctx);
+    fctx.body.push({ op: "local.get", index: keyLocal });
+  }
   // The property receiver is the call-time `this`, not [[HomeObject]]. This
   // distinction is observable through an inherited accessor.
   emitReceiver();
@@ -1274,8 +1296,7 @@ function compileStandaloneSuperPropertyRead(
 function compileStandaloneObjectLiteralSuperPropertyRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  _expr: ts.PropertyAccessExpression | ts.ElementAccessExpression,
-  propName: string,
+  key: SuperReadKey,
   accessType: ts.Type,
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
@@ -1283,7 +1304,7 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
   return compileStandaloneSuperPropertyRead(
     ctx,
     fctx,
-    propName,
+    key,
     accessType,
     () => {
       // A standalone object-literal method must carry its actual
@@ -1323,7 +1344,7 @@ function compileStandaloneObjectLiteralSuperPropertyRead(
 function compileStandaloneClassSuperPropertyRead(
   ctx: CodegenContext,
   fctx: FunctionContext,
-  propName: string,
+  key: SuperReadKey,
   accessType: ts.Type,
   currentClassName: string,
   parentClassName: string | undefined,
@@ -1337,7 +1358,7 @@ function compileStandaloneClassSuperPropertyRead(
   return compileStandaloneSuperPropertyRead(
     ctx,
     fctx,
-    propName,
+    key,
     accessType,
     () => {
       // `emitLazyProtoGet` can still decline (the #5195 F1 re-entrancy guard,
@@ -1418,7 +1439,12 @@ export function compileSuperPropertyAccess(
     // (#4688) Object-literal methods have a runtime home-object prototype in
     // standalone mode. Resolve the named read through the native object
     // runtime before retaining the old type-shaped fallback for other lanes.
-    const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(ctx, fctx, expr, propName, accessType);
+    const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(
+      ctx,
+      fctx,
+      { kind: "name", name: propName },
+      accessType,
+    );
     if (runtimeReadType !== undefined) return runtimeReadType;
 
     // super in object literal method — cannot resolve prototype chain at compile time.
@@ -1535,7 +1561,7 @@ export function compileSuperPropertyAccess(
   const classRuntimeRead = compileStandaloneClassSuperPropertyRead(
     ctx,
     fctx,
-    propName,
+    { kind: "name", name: propName },
     accessType,
     currentClassName,
     parentClassName,
@@ -1576,6 +1602,37 @@ export function compileSuperElementAccess(
   }
 
   if (propName === undefined) {
+    const accessType = ctx.checker.getTypeAtLocation(expr);
+    // (#5350 step 2) Standalone: the VALUE is a runtime read, not a default.
+    // GetSuperBase runs first, then ToPropertyKey on the evaluated key, then
+    // the receiver-aware [[Get]] — see compileStandaloneSuperPropertyRead.
+    if (argExpr && ctx.standalone) {
+      const dynamicKey: SuperReadKey = {
+        kind: "dynamic",
+        emit: () => {
+          const keyType = compileExpression(ctx, fctx, argExpr, { kind: "externref" });
+          if (keyType === null) {
+            fctx.body.push({ op: "ref.null.extern" });
+            return;
+          }
+          if (keyType.kind !== "externref") coerceType(ctx, fctx, keyType, { kind: "externref" });
+          emitToPropertyKeyOnce(ctx, fctx);
+        },
+      };
+      const dynClassName = resolveEnclosingClassName(fctx);
+      const dynRead =
+        dynClassName === undefined
+          ? compileStandaloneObjectLiteralSuperPropertyRead(ctx, fctx, dynamicKey, accessType)
+          : compileStandaloneClassSuperPropertyRead(
+              ctx,
+              fctx,
+              dynamicKey,
+              accessType,
+              dynClassName,
+              ctx.classParentMap.get(dynClassName),
+            );
+      if (dynRead !== undefined) return dynRead;
+    }
     // Dynamic key on super — the VALUE cannot be resolved at compile time, but
     // §12.3.5.1 still evaluates the key expression and runs ToPropertyKey on
     // it, so a throwing key expression (or a poisoned `toString`) must
@@ -1589,7 +1646,6 @@ export function compileSuperElementAccess(
         fctx.body.push({ op: "drop" });
       }
     }
-    const accessType = ctx.checker.getTypeAtLocation(expr);
     const wasmType = resolveWasmType(ctx, accessType);
     if (wasmType.kind === "f64") {
       fctx.body.push({ op: "f64.const", value: 0 });
@@ -1607,7 +1663,12 @@ export function compileSuperElementAccess(
     const accessType = ctx.checker.getTypeAtLocation(expr);
     // (#4688) Mirror the dot-property lowering for a statically resolved
     // element key. Dynamic keys stay on the historical fallback path.
-    const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(ctx, fctx, expr, propName, accessType);
+    const runtimeReadType = compileStandaloneObjectLiteralSuperPropertyRead(
+      ctx,
+      fctx,
+      { kind: "name", name: propName },
+      accessType,
+    );
     if (runtimeReadType !== undefined) return runtimeReadType;
 
     // super in object literal method — emit default value
@@ -1703,7 +1764,7 @@ export function compileSuperElementAccess(
   const classRuntimeRead = compileStandaloneClassSuperPropertyRead(
     ctx,
     fctx,
-    propName,
+    { kind: "name", name: propName },
     accessType,
     currentClassName,
     parentClassName,
