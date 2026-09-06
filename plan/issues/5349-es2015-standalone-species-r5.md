@@ -1,10 +1,11 @@
 ---
 id: 5349
 title: "ES2015 standalone species — r5: ArrayBuffer.slice SpeciesConstructor, Array constructor-null and defineProperty arming, TypedArray species this/validation/inherited ctor"
-status: in-progress
+status: done
+completed: 2026-09-06
 sprint: current
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-06
 priority: high
 horizon: l
 feasibility: medium
@@ -1192,3 +1193,292 @@ closed, and the brand is intact and now host-free-lane-only. Zero rows lost over
 3,147 controls, one real conformance gain, host emission byte-identical to main.
 Steps 6 and 7 (26 TypedArray rows) remain diagnosed and unimplemented, so the
 issue stays `in-progress`.
+
+### Round 4 (2026-09-06)
+
+The round-3 review confirmed two regressions against node 22. Both are closed
+here. Trees in every table below: **node** = node 22 oracle · **main** =
+`git archive 50c81e5487` (this branch's merge-base, `.tmp/rev5349d/mainbase`) ·
+**lane** = `wf_2c593ff3-433-2` (pre-fix r5) · **r2** = round 2 · **r3** =
+`wf_1234dbce-0c2-1` (`fd64a64a08`) · **fix** = this tree.
+
+#### R2 — a packed-byte receiver's `slice` came back as a byte BUFFER
+
+`var b = new ArrayBuffer(8); b = new Uint8Array(8)` routes `b.slice(...)` to
+`emitArrayBufferSlice` on the STATIC "ArrayBuffer" answer, which survives the
+reassignment. Round 3 recovered such a receiver through
+`emitRecoverBufferVecGuarded(..., {bytes: 1})`, which produces a fresh
+`$__vec_i32_byte` — so the slice's BYTES were right and its TYPE was wrong.
+Every downstream dispatch on the result (indexed read, indexed write, `.length`,
+`indexOf`, `map`) tests `$__vec_i8_byte`, missed, and fell through to a numeric
+fallback. Before the brand the two vecs canonicalized, which is why main
+"worked".
+
+**Fix.** `emitArrayBufferSlice` now probes the receiver's brand
+(`probePackedByteSliceReceiver`) and re-wraps the copied bytes in
+`$__vec_i8_byte` when it was a TypedArray. The byte pipeline needed no other
+change: the recover copies at `bytes: 1`, so `srcLen` is the element count and
+the begin/end coercion, the clamp and the copy loop are already the operations
+%TypedArray%.prototype.slice performs. The ArrayBuffer species ladder is fenced
+off the packed arm (`emitArrayBufferSliceSpeciesUnlessPacked`) — a TypedArray
+consults %TypedArray%'s species, not %ArrayBuffer%'s.
+
+| probe | node | main | lane | r2 | r3 | **fix** |
+| --- | --- | --- | --- | --- | --- | --- |
+| `R2a` `b.slice(0)[0]` | 5 | 5 | 5 | TRAP | undefined | **5** |
+| `R2b` write through the slice | 9 | 9 | 9 | TRAP | undefined | **9** |
+| `R2c` `b.slice(1).indexOf(7)` | 1 | 1 | 1 | TRAP | −1 | **1** |
+| `R2d` `.map` over the slice | 8 | 8 | 8 | TRAP | undefined | **8** |
+| `R2e` `for (i < s.length) t += s[i]` | 5 | 5 | 5 | TRAP | null | **5** |
+| `R2b` (wasi) | 9 | 9 | — | — | 5 | **9** |
+| `R2c` (wasi) | 1 | 1 | — | — | −1 | **1** |
+
+`R2d` on **wasi** TRAPs on node's oracle-equivalent lane for main, r3 AND this
+tree alike — `.map` on an ArrayBuffer-typed binding is a pre-existing wasi gap,
+not this round's, and it is unchanged.
+
+#### R1 — `ab.constructor = ArrayBuffer` threw where node returns a buffer
+
+The r5 species prologue arms on the explicit `constructor` write.
+`C[Symbol.species]` then resolves to the reified `%ArrayBuffer%` carrier (its own
+`@@species` getter returns the receiver), and the generic `Reflect.isConstructor`
+helper does not recognise that carrier as constructible — `new C(4)` through the
+native construct driver returns null — so §25.1.5.3 step 14 threw
+`ArrayBuffer.prototype.slice: species is not a constructor`. This predates round
+3: the pre-fix lane and round 2 threw too.
+
+**Fix.** Step 14 with C = %ArrayBuffer% IS ArrayCreate, so the intrinsic is now
+recognised BY IDENTITY (`ref.eq` against the module's `__builtin_ctor_ArrayBuffer`
+slot, reserved through the new `reserveBuiltinConstructorIdentityGlobal`) and
+clears `selectedLocal` back to the default lane. `IsConstructor` itself is
+untouched — no builtin is taught to it.
+
+On **wasi** that identity test could not fire at all: the bare `ArrayBuffer`
+identifier read produced `ref.null.extern` (the reified-carrier arm was gated on
+`ctx.standalone`), so `ab.constructor = ArrayBuffer` stored a value the ladder
+could not tell apart from a genuine `ab.constructor = null` and took the spec's
+"constructor is not an object" TypeError. The carrier arm is widened to
+`noJsHost` for that ONE name.
+
+| probe | node | main | lane | r2 | r3 | **fix** |
+| --- | --- | --- | --- | --- | --- | --- |
+| `R1a` `ab.constructor = ArrayBuffer` | 4 | 4 | TypeError | TypeError | TypeError | **4** |
+| `R1b` `{[Symbol.species]: ArrayBuffer}` | 4 | 4 | TypeError | TypeError | TypeError | **4** |
+| `R1a` (wasi) | 4 | 4 | — | — | TRAP | **4** |
+| `R1b` (wasi) | 4 | 4 | — | — | 4 | **4** |
+
+#### The audit table's class-(i) claim for `emitArrayBufferSliceSpecies` step 16
+
+The claim itself is **correct and unchanged**: step 16's
+`ref.test $__vec_i32_byte` is round 2's brand test, it can only ever see one
+carrier, and the fix does not touch it. What the audit could not see is that
+**R1 lives one arm ABOVE it** — the step-14 `IsConstructor` refusal, which
+contains no `ref.cast`/`ref.test` keyed to a byte vec and therefore fell outside
+the audit's mechanical scope entirely. Two rows are added:
+
+| site | class | what changed (round 4) |
+| --- | --- | --- |
+| `emitArrayBufferSliceSpecies` (step 14, `IsConstructor`) | **NEW — outside the r3 audit's scope** | The refusal has no byte-vec `ref.cast`/`ref.test`, so the cast/test enumeration could not reach it. C = the reified %ArrayBuffer% carrier is now recognised by IDENTITY and takes the default ArrayCreate lane. |
+| `emitArrayBufferSlice` (receiver) | ii → **ii + iii** | Round 3's (ii) verdict was applied to the RECOVER only. The RESULT carrier is the other half: recovering a packed-byte receiver as a byte buffer and then wrapping the copy in `$__vec_i32_byte` loses the brand the caller's own dispatches test for. |
+
+#### Controls — every probe batch of the round-3 review that reaches these sites
+
+`--target standalone`, `result.imports` asserted `[]`, harness
+`.tmp/rev5349d/run.mts`; wasi through `.tmp/rev5349d/wasirun2.mts`.
+
+| batch | rows | fix vs r3 | notes |
+| --- | --- | --- | --- |
+| `pFINAL` (R1/R2) | 7 | 7 moved onto node | the two regressions |
+| `pW2` | 8 | `x01`, `x08` moved onto node | the rest identical |
+| `pA` | 22 | **identical** | |
+| `pALL` | 101 | **identical** (byte-for-byte diff of the outputs) | |
+| `pDIFF` | 12 | **identical** | round 3's twelve movers, all held |
+| `pR4` (this round's own controls) | 22 | 6 moved onto node, 1 unchanged residual | see below |
+| `pR4` wasi | 22 | 4 moved onto node | |
+
+`pR4` is the R1/R2 control set: the four non-intrinsic `constructor` shapes
+(`{}`, `undefined`, `{[Symbol.species]: undefined}`, a species FUNCTION), the
+species-invoked-with-newLen observation, a species returning a `Uint8Array`
+(step-16 TypeError), a subclass species, the three refusals, a genuine
+ArrayBuffer receiver through the same binding shape (`byteLength`, a DataView
+over the result, identity-with-receiver), and the packed-byte slice's
+begin/end/copy semantics. Every row matches node **except**:
+
+- `class B extends ArrayBuffer {}` as the species — node 4, main 4, r3 TRAP,
+  fix TRAP. **A pre-existing r5 regression vs main of the same isConstructor
+  family, unchanged this round and deliberately left in place** (the brief's
+  control list requires it not move). Distinct from R1: the species is a USER
+  subclass, and closing it needs ArrayBuffer subclassing, not intrinsic
+  identity.
+- `Object.prototype.toString.call(b.slice(0))` (undefined) and
+  `ArrayBuffer.isView(b.slice(0))` (0 vs node 1) — identical on main, r3 and
+  this tree. Pre-existing, not this round's.
+
+`new Int8Array([-1,2,3])` through an erased binding sliced and read back gives
+255 where node gives −1: round 3's recorded signedness residual, and this round
+moves it from `undefined` to 255 (right bytes, wrong sign) rather than closing
+it.
+
+#### Controls — L1/L3 (1,667 rows) and the baseline set-diff
+
+Driver `.tmp/r4/drive2.sh` / `drive2r.sh` (chunks of ≤150 rows,
+`COMPILER_POOL_SIZE=2`, `--standalone`), started only AFTER the last src edit and
+with the compiler bundle, `runtime-bundle.mjs` and the QuickJS eval provider
+rebuilt in the tree that ran them.
+
+The control is **L13 = L1 (221 ArrayBuffer rows) + L3 (1,446 TypedArray rows) =
+1,667**, run as the 191-row P1 set (`A_absslice` + `B_taslice` + `C_tasub`) plus
+the 1,476 remaining rows. The P1 outputs are the previous lane's `.tmp/r4/p1all`,
+reused only after establishing that they measure THIS tree: `diff -r` of the two
+`src/` directories is empty, and both bundles are sha256-identical
+(`compiler-bundle.mjs` `3a19a727a82c2347…`, `runtime-bundle.mjs`
+`95ff2b48faf69b38…`). Chunk 09 of the remainder OOMed as a 126-row chunk
+(`exit=134`, V8 `Reached heap limit`); its 125 non-OOM rows were re-run as five
+25-row chunks (`.tmp/r4/c09`, 22:43–22:57) and all five reached `=== counts ===`.
+
+**1,666 of the 1,667 rows produced a verdict.** The one that did not is
+`built-ins/TypedArray/prototype/subarray/coerced-begin-end-shrink.js`, which OOMs
+run ALONE at `COMPILER_POOL_SIZE=1` on this tree **and on the base tree**
+(`git archive 2269b94bec`, its three bundles rebuilt) alike — recorded, not
+counted, exactly as round 3 recorded it.
+
+| comparison | artifact | rows compared | LOST | GAINED | changed non-pass kind |
+| --- | --- | --- | --- | --- | --- |
+| vs **round 3** (`wf_1234dbce-0c2-1/.tmp/r3/fixrun` + its `rerun14{,a,b}`) | `.tmp/r4/RUNSDIFF.out`, 22:58 | **1,666** | **0** | 0 | 0 |
+| vs the **fresh standalone baseline**, L1 | `.tmp/r4/PERLIST.out`, 22:58 | 221 of 221 | **0** | **9** | 0 |
+| vs the same baseline, L3 | `.tmp/r4/PERLIST.out`, 22:58 | 1,445 of 1,446 | **0** | 0 | 0 |
+
+Baseline: `/home/user/js2/.test262-cache/test262-standalone-current.jsonl`,
+promoted from main `2269b94bec` and written 21:10 today — it already contains the
+wave-5 PR-1 lanes, so it is a fair base for this tree. `noBaselineEntry` is **0**
+on both lists: every one of the 1,666 rows is scored, none silently excluded.
+
+The **nine gains are all of `ArrayBuffer.prototype.slice`'s species suite** —
+`species.js`, `species-is-not-object`, `species-is-not-constructor`,
+`species-constructor-is-not-object`, and `species-returns-{same,smaller,larger,
+not-arraybuffer,immutable}-arraybuffer` — each `fail` in the baseline and `pass`
+here. That is r5 step 5 (§25.1.5.3 steps 13–20) landing, measured against main,
+not attributed to it.
+
+Round 3's own comparison covers 1,666 of these rows because its chunk 14 OOMed
+and was re-run in three pieces; the union of `fixrun` + `rerun14{,a,b}` restores
+every row but the one OOM row above.
+
+#### Host byte identity
+
+`.tmp/rev5349d/run.mts <tree> host`, sha256 of the emitted binary, over the
+round-3 reviewer's 101-program host set, against `git archive 50c81e5487`:
+**0 modules differ.** Both fixes are gated off the JS-host lane — the brand
+dispatch on `guarded && noJsHost`, the species ladder on `noJsHost &&
+arraySpeciesDirty`, the identifier widening on `ctx.standalone || noJsHost`.
+
+
+#### Pins
+
+`tests/issue-5349-species-r5.test.ts`, alone, at
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+--poolOptions.forks.singleFork=true --dangerouslyIgnoreUnhandledErrors`:
+
+| node | version | exit | tests |
+| --- | --- | --- | --- |
+| node 22 | v22.22.2 | **0** | **75/75 passed** (79.0 s) |
+| node 25 | v25.9.0 | **0** | **75/75 passed** |
+
+Round 4 adds 15 of those 75: R2a–R2e, the packed-slice begin/end/copy controls,
+the genuine-buffer control, R1a/R1b, the default-lane-result control, the seven
+other constructor shapes, and four wasi rows (R2b, R2c, R1a/R1b, and a wasi
+control that the r5 species gains on that lane are preserved) executed against an
+fd_write-free `wasi_snapshot_preview1` shim.
+
+Related suites: 42 files in 14 three-file batches (`.tmp/r4/pins`). **Eight
+batches fully green** — `issue-3054-{b1,b2,b3}` (50) · `issue-2199{,b}`/`issue-38`
+(27) · `issue-2593`/`issue-2648`/`issue-2934` (50) ·
+`issue-3062`/`issue-5117`/`issue-5137` (60) ·
+`issue-1670`/`issue-3239`/`issue-4383` (41) ·
+`issue-3420`/`issue-4449{,-species-controls}` (25) ·
+`issue-4449-species-producers`/`issue-4778`/`issue-2639` (25) ·
+`issue-5194-{r2,r3,set-r2}` (80).
+
+Six batches red, **31 failures**. Every one of the failing FILES was then re-run
+on the base tree — `git archive 2269b94bec` with its own compiler bundle,
+`runtime-bundle.mjs` and QuickJS provider rebuilt (`.tmp/r4/basepins`) — under the
+identical flags:
+
+| file(s) | failures here | base tree `2269b94bec` |
+| --- | --- | --- |
+| `arraybuffer-dataview` | 6 | same 6 |
+| `issue-1654-wasi-dataview-arraybuffer` + `issue-1655-wasi-arraybuffer-write` | 4 (3 + 1) | same 4 |
+| `typed-array-basic` + `issue-5193-init-marshal-host-typedarray` | 12 (11 + 1) | same 12 |
+| `issue-2984-{ctor-carrier-own-props,alias-receivers,phase3}` | 3 (1 + 1 + 1) | same 3 |
+| `issue-2984` + `issue-3420-standalone-array-own-property` | 6 (3 + 3) | same 6 |
+
+Not just the counts: the **31 fully-qualified `FAIL` names are byte-identical**
+between the two trees (`diff .tmp/r4/fix_fails.txt .tmp/r4/base_fails.txt`, empty).
+Every pin failure is pre-existing on current main, measured on that tree in this
+session rather than inherited from an earlier round's note.
+
+#### Gates
+
+Run from inside this worktree, bare, each status read directly (never through a
+pipe). All **RC 0**:
+
+| gate | RC |
+| --- | --- |
+| `check-loc-budget` · `check-func-budget` · `check-coercion-sites` · `check:oracle-ratchet` · `check:dead-exports` | 0 · 0 · 0 · 0 · 0 |
+| the two budget gates under `LOC_GATE_BASE=$(git rev-parse origin/main)` = `c585852252` (`2269b94bec` + main's `[skip ci]` baseline refresh) | 0 · 0 |
+| `check:speculative-rollback` · `check:stack-balance` · `check:codegen-fallbacks` · `check:any-box-sites` | 0 · 0 · 0 · 0 |
+| `check:host-import-policy` · `check:harness-compile-budget` · `check:ir-adoption` | 0 · 0 · 0 |
+| TS7 `tsc --noEmit -p tsconfig.ts7.json` · `npm run lint` | 0 · 0 |
+| `npx prettier --check` on all 12 changed files | 0 |
+
+`check:harness-compile-budget` reports `measured=146855 budget=142936
+ceiling=164377 (+15%) margin-left=17522 (10.66%)` — inside the ceiling with
+margin, not at it.
+
+Growth allowances, all already in this issue's frontmatter with dated rationales:
+`src/codegen/expressions/identifiers.ts` (LOC) and
+`identifiers.ts::compileIdentifierCore` (function) for round 4's one-name wasi
+widening (+15 lines, 14 of them its safety argument), plus the restatement of the
+round-2/3 `src/codegen/index.ts` brand-gate grant (+16) that main's refreshed
+baseline turned back into growth. `emitArrayBufferSlice` would have crossed the
+300-LOC function threshold; it was SPLIT instead
+(`probePackedByteSliceReceiver`, `emitArrayBufferSliceSpeciesUnlessPacked`) and
+needs no grant. No gate demanded anything further.
+
+#### Residuals
+
+- **`class B extends ArrayBuffer {}` as the species TRAPs** (node 4, main 4, r3
+  TRAP, this tree TRAP). A **pre-existing r5 regression against main**, of the
+  same `IsConstructor` family as R1 but with a USER subclass, which intrinsic
+  identity cannot answer. Deliberately left in place this round — the control set
+  requires it not move, and closing it needs ArrayBuffer subclassing.
+- **`Object.prototype.toString.call(b.slice(0))` (undefined) and
+  `ArrayBuffer.isView(b.slice(0))` (0 vs node 1)** — identical on main, on r3 and
+  here. The brand does not reach those classifiers.
+- **An erased `Int8Array` widening reads UNSIGNED** — round 3's signedness
+  residual, which round 4 moves from `undefined` to 255 (right bytes, wrong sign)
+  rather than closing.
+- **`.map` on an ArrayBuffer-typed binding TRAPs under `--target wasi`** — traps
+  on main and on r3 too; a pre-existing wasi gap, unchanged.
+- **`emitTaViewConstructWindowed` validates `byteOffset`/`length` against the
+  COPY**, and **`emitDynamicTaViewConstruct` recovers at `bytes: 1`** — both
+  carried forward from round 3 unchanged.
+- **#5359** (`standalone: spread of a packed-byte TypedArray emits invalid wasm`),
+  filed by the round-3 finisher, is untouched here and remains open.
+- **`built-ins/TypedArray/prototype/subarray/coerced-begin-end-shrink.js` OOMs**
+  at `COMPILER_POOL_SIZE=1` on this tree and on base `2269b94bec` alike —
+  environmental, recorded, not counted.
+- Steps 6 and 7 (26 TypedArray rows) remain diagnosed and unimplemented.
+
+#### Status
+
+Every acceptance criterion of the steps that landed holds, measured on this tree
+in this session: **zero rows lost** over the 1,666-row L1/L3 control against
+round 3 AND against the fresh standalone baseline, **+9 conformance gains** in
+`ArrayBuffer.prototype.slice`'s species suite and no losses anywhere,
+**75/75 pins green on node 22 and node 25**, all 31 related-suite failures shown
+byte-identical on base `2269b94bec`, and every ratchet and quality gate RC 0
+including both budget gates against CI's base. The declined and pre-existing
+items above stay recorded as residuals rather than blocking the issue.
+
+`status: done`, `completed: 2026-09-06`.
