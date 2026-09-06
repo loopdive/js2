@@ -267,6 +267,7 @@ import {
 import { isDomCapabilityImportName, isDomInteractionImportName } from "../dom-capability-contract.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, getLocalType } from "./context/locals.js";
+import { reinstallPreHoistedLetConstBinding } from "./statements/eager-capture-box.js";
 import type {
   ClosureInfo,
   CodegenContext,
@@ -14077,11 +14078,9 @@ function reinstallPreHoistedCapturedSlots(
       capturedByPlainFn = true;
     }
     if (!capturedByPlainFn || cpsCaptured) continue;
-    fctx.localMap.set(name, record.valueSlot);
-    if (record.flagSlot !== undefined) {
-      if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
-      fctx.tdzFlagLocals.set(name, record.flagSlot);
-    }
+    // (#5356) The cell when the slot was capture-boxed at function top, else
+    // the raw slot — the declaration must write whichever the callee reads.
+    reinstallPreHoistedLetConstBinding(fctx, name, record);
   }
 }
 

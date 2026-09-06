@@ -9,6 +9,7 @@ import type { TypeFact } from "../../checker/oracle.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { popBody, pushBody } from "../context/bodies.js";
 import { allocLocal, allocTempLocal, getLocalType } from "../context/locals.js";
+import { preHoistedBindingIsLive } from "./eager-capture-box.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitEagerAsyncPromiseWrap } from "../async-eager-promise.js"; // (#4630)
 import { emitToBoolean, emitToNumber } from "../coercion-engine.js";
@@ -1624,7 +1625,8 @@ export function compileSwitchStatement(ctx: CodegenContext, fctx: FunctionContex
           const name = decl.name.text;
           directIdentifierNames.add(name);
           const record = fctx.preHoistedLetConstSlots.get(decl);
-          if (!record || fctx.localMap.get(name) !== record.valueSlot) caseScopeOuterNames.push(name);
+          // (#5356) …or in the cell minted from that slot: still this clause's own binding.
+          if (!record || !preHoistedBindingIsLive(fctx, name, record)) caseScopeOuterNames.push(name);
         }
       }
     }
