@@ -1255,6 +1255,50 @@ export function structHintForBindingPattern(
  * zero-init — changing a numeric slot's absent value from `0` to a NaN
  * sentinel is a separate, wider behavioural change with its own blast radius.
  */
+/**
+ * (#5251) True when the typed-struct destructuring fast path would bind
+ * `undefined` for a property that the object may nevertheless CARRY.
+ *
+ * The fast path reads `struct.get`, so a pattern property missing from the
+ * struct's field list is treated as an absent property (`emitAbsentStructPropertyBinding`,
+ * #5221). That inference is sound for a CLOSED anonymous object-literal shape —
+ * the struct enumerates every property the literal has — and unsound for a
+ * CLASS INSTANCE, whose properties may live outside the struct entirely.
+ *
+ * Measured on `@js-temporal/polyfill` (#5251): every `Helper` class struct is
+ * `(struct (field $__tag i32) (field $__shape_brand …))` — no data fields at
+ * all, all instance state in the sidecar. So `const { anchorEra } = this` in
+ * `GregorianBaseHelper.estimateIsoDate` bound `undefined` while `this.anchorEra`,
+ * `this[k]`, `Reflect.get`, and `{...this}` all read the real era record. The
+ * `undefined` reached `n + i.isoEpoch.year` as `NaN`/`Infinity` and surfaced
+ * from the polyfill's own guards as `RangeError: Invalid ISO date: 0NaN-12-01`
+ * / `infinity is out of range` on every non-ISO calendar built from a property
+ * bag.
+ *
+ * The externref arm of `destructureParamObject` has carried the equivalent
+ * check since #1016 (there it also protects getter-throw ordering); this is
+ * that rule applied to the arm that already holds a typed struct ref.
+ */
+function patternMissesOpenStructField(
+  ctx: CodegenContext,
+  structName: string | undefined,
+  pattern: ts.ObjectBindingPattern,
+  fields: { name: string; type: ValType; mutable: boolean }[],
+): boolean {
+  if (structName === undefined || !ctx.classSet.has(structName)) return false;
+  for (const element of pattern.elements) {
+    if (!ts.isBindingElement(element) || element.dotDotDotToken) continue;
+    const pn = element.propertyName ?? element.name;
+    let propText: string | undefined;
+    if (ts.isIdentifier(pn)) propText = pn.text;
+    else if (ts.isStringLiteral(pn)) propText = pn.text;
+    else if (ts.isNumericLiteral(pn)) propText = pn.text;
+    if (propText === undefined) continue;
+    if (!fields.some((f) => f.name === propText)) return true;
+  }
+  return false;
+}
+
 function emitAbsentStructPropertyBinding(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1503,6 +1547,20 @@ export function destructureParamObject(
 
   // Pre-allocate all binding locals so they exist even when param is null
   ensureBindingLocals(ctx, fctx, pattern);
+
+  // (#5251) A CLASS-INSTANCE struct does not enumerate the object's properties,
+  // so "not a declared field" does NOT mean "absent". Route the whole pattern
+  // through the dynamic read instead of binding `undefined`.
+  if (patternMissesOpenStructField(ctx, structName, pattern, fields)) {
+    const extTmp = allocLocal(fctx, `__dstr_open_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.get", index: paramIdx });
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "local.set", index: extTmp });
+    // That helper emits its own RequireObjectCoercible guard, so the typed
+    // null guard below is not needed on this path.
+    destructureParamObjectExternref(ctx, fctx, extTmp, pattern, opts);
+    return;
+  }
 
   // Null guard: wrap destructuring in if-not-null for ref params.
   // Always treat as nullable — callers may pass mismatched values that
