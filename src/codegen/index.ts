@@ -596,6 +596,7 @@ import {
 import { emitInitMarshalHelperRegistration } from "./init-marshal-helpers.js"; // (#5193)
 import { emitInitClassDispatchRegistration } from "./init-class-dispatch-helpers.js"; // (#5202)
 import { emitObjectCreateClassInstanceExport } from "./object-create-class-instance.js"; // (#5239)
+import { emitClassInstanceProtoExport } from "./class-instance-proto.js"; // (#5347)
 import { emitClassValueConstructExports } from "./class-value-construct.js"; // (#5242)
 import { emitClassObjectOfExport } from "./class-object-of.js"; // (#5354)
 import {
@@ -6061,6 +6062,10 @@ export function generateModule(
     // the syntactic `Object.create(Foo.prototype)` fast path.
     emitObjectCreateClassInstanceExport(ctx);
 
+    // (#5347) …and the REVERSE map of the same family: which class minted this
+    // struct, and what is its prototype carrier.
+    emitClassInstanceProtoExport(ctx);
+
     // (#5242) `new <class value>(…)` — the CONSTRUCT twin of the same family.
     emitClassValueConstructExports(ctx, CLASS_VALUE_CONSTRUCT_HELPERS);
 
@@ -11246,6 +11251,9 @@ export function generateMultiModule(multiAst: MultiTypedAST, options?: CodegenOp
 
     // (#5239) See the single-source path — same placement, same gate.
     profilePhase("emit-object-create-class-instance", () => emitObjectCreateClassInstanceExport(ctx));
+
+    // (#5347) See the single-source path — same placement, same gate.
+    profilePhase("emit-class-instance-proto", () => emitClassInstanceProtoExport(ctx));
 
     // (#5242) See the single-source path — same placement, same gate.
     profilePhase("emit-class-value-construct", () =>
