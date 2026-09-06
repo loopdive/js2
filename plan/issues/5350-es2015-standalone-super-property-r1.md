@@ -512,3 +512,147 @@ and node 25, non-standalone bytes identical, `src/ir/select.ts` untouched, grant
 in this file. Flipping to `done` would report a row count this tree does not
 have, so the status stays `in-progress` until that blocker is filed and cleared
 or the criterion is re-scoped.
+
+### Review round 2 (2026-09-06)
+
+Fix round for the round-1 reviewer's two confirmed regressions, on a fresh
+worktree of the wave-5 integration branch with the round-1 fix branch merged in
+(`worktree-wf_aa692654-801-1`, head `9348642c60`). Two commits, one per
+regression. "r1" below is that merged tree measured directly; "lane" is
+`wf_2c593ff3-433-3` (head `8d1542cf59`); "base" is that lane's `.tmp/base`
+archive of `origin/main` `2257b950ee`; "node" is node 22 on the identical
+source. Probes: the round-1 reviewer's `/home/user/js2/.tmp/rev5350b/p/*.ts`
+plus the original `/home/user/js2/.tmp/rev5350/p/*.ts`, both run whole.
+
+#### R1 — the back-edge narrowing suppressed genuine pre-`super()` reads
+
+`superReadPrecedesSuperCall` returned `false` for ANY enclosing
+`ts.isIterationStatement` or `ts.isLabeledStatement`, unconditionally. The
+premise ("a loop's back-edge can carry a textually later `super()` over the
+read") is right; the test was not, because it never asked whether that loop
+contains a `super()` at all. A loop with none has no such edge, and a labelled
+statement is not the case either — a labelled BLOCK is forward-only (`break lbl`
+jumps out, never back) and a labelled LOOP is already an iteration statement.
+
+The rule is now: throw iff **(a)** no `super(...)` ends before the read's
+position **and (b)** no `super(...)` lies inside any ITERATION statement
+enclosing the read. The labelled arm is gone.
+
+| probe (standalone) | base | lane | r1 | this round | node 22 |
+| --- | --- | --- | --- | --- | --- |
+| `d02b` pre-super read in a `for` with no `super()` | 6 | 9 | 6 | **9** | 9 |
+| `d10` same in a `while` | 6 | 9 | 6 | **9** | 9 |
+| `d01b` same in a labelled block | 6 | 9 | 6 | **9** | 9 |
+| `d01`, `d02` same, uncaught in `main` | 6 | throw | 6 | **throw** | ReferenceError |
+| `q1`, `q2` ReferenceError probes | — | — | NaN | **91** | 91 |
+| `q6`, `q8`, `q9` accessor variants | — | — | 5 | **91** | 91 |
+| `n4`, `n5` `super()` inside the same loop, read on iteration 2 | 5 | 5 | 5 | **5** | 5 |
+| `g1`–`g6`, `n1`–`n3` | — | — | unchanged | **unchanged** | — |
+
+`g5` (0 vs node 9) and `n3` (5 vs node 8) stay where round 1 left them: both are
+the pre-existing block-scoped-class capture defect, not a `super` defect.
+
+**The round-1 review's host-byte observation was base drift, not a regression —
+refuted here so it is not re-opened.** The reviewer recorded that round 1
+"changed host bytes and gained an `env::__rethrow_host_exception` import" on
+`d02b`/`d10`/`d01b` relative to the lane. It cannot have: round 1's only
+`new-super.ts` change was the three-line iteration/labelled arm, reachable only
+from `emitSuperUninitializedThisReadThrow`, which returns `undefined` unless
+`ctx.standalone`; the `literals.ts` and `dynamic-proto.ts` additions are
+`ctx.standalone`-gated too. The actual source is
+`src/codegen/export-throw-boundary.ts`, which **does not exist in the lane tree
+at all** (`grep -rl __rethrow_host_exception` finds it only on the integration
+branch) — the import is integration-branch drift between the lane snapshot and
+the branch round 1 was cut from. Measured against the right comparand, host and
+wasi bytes for `k1 k2 c4 h1b b5 d02b d10 d01b` are **byte-identical to r1** on
+both targets (`sha` equal on every row). `x1`/`x3` from the brief do not exist
+in either reviewer probe directory and were not measurable.
+
+#### R2 — `super.missing()` on a `__proto__:` literal answered `undefined`
+
+A true side effect of F1, and one the first cut's own reasoning covers. It kept
+a typed default rather than §13.3.6's TypeError, on the argument that the
+compiler "cannot see the whole prototype surface". Once F1 linked the literal's
+real prototype, the compiler CAN see it: the lookup resolves, to `undefined`,
+and the default is no longer conservative — it is a wrong answer where node
+throws, and the ordinary `o.missing()` on the same object threw on every tree
+(control `c12`).
+
+`compileStandaloneObjectLiteralSuperMethodCall` now runs the same guard
+`buildResolvedCalleeGuard` splices into `__extern_method_call`: absent
+(null/undefined via `__nullish_to_null`) plus the POSITIVE primitive brands
+`__typeof_number` / `__typeof_string` / `__typeof_boolean`, after the arguments
+per §13.3.6.2 step 5. Sharing that shape is the point — a callable the brand
+classifier does not recognise can never be turned into a throw, and a
+non-callable plain object still reaches `__apply_closure`'s legacy `undefined`,
+exactly as on the ordinary path (#4221 declined the negative classifier). So
+"a plain object throws" is deliberately NOT implemented: doing it here and not
+on `o.missing()` would re-create the very divergence this fixes.
+
+| probe (standalone) | base | lane | r1 | this round | node 22 |
+| --- | --- | --- | --- | --- | --- |
+| `c01` `super.missing()` over a `__proto__:` literal | 40 | 2\* | 40 | **2** | 2 |
+| `c12` control, ordinary `o.missing()` | 2 | 2 | 2 | **2** | 2 |
+| `h4` `super.nope()`, TypeError caught in the method | — | — | null | **4** | 4 |
+| `o1` `super.nope()` over `setPrototypeOf` | — | — | 1 | **91** | 91 |
+| `p9` `super.zz()` with an empty proto | — | — | null | **92** | 92 |
+| `h1b` / `i1` / `i2` present super method | — | — | 3 | **3** | 3 |
+| `h3` / `o3` / `o4` present super method | — | — | 11 | **11** | 11 |
+| `c07` present super method, bytes move | 4 | 4 | 4 | **4** | 4 |
+
+\* the lane's `2` was the nullish-base escape (F1), not a callable test — the
+right answer for the wrong reason, which is why it read as a regression when F1
+fixed the base.
+
+Class `super.missing()` was measured on base FIRST, as asked, so the answer is
+not attributed. `class B extends A` where `A` has no `missing`, `super.missing()`
+caught in the method (`.tmp/cls.ts`, five lines) answers **40 (`undefined`) on
+base, lane, r1 and this tree alike**, against node 22's **2 (TypeError)**. So
+this is a **pre-existing gap, not a change** — the class arm does not share the
+object-literal lowering, and nothing this round did moves it. It is left open
+deliberately: widening the guard to the class arm is a separate change with its
+own regression surface (a class `super.m()` resolving through the static tables
+has different miss semantics), and none of it was measured here.
+
+#### Controls
+
+- **Full probe sweep, both sets, standalone, this tree vs r1**: exactly the
+  R1/R2 rows above move. Every other row is byte-identical (`sha` equal); 174
+  probes total (73 in `rev5350/p`, 101 in `rev5350b/p`).
+- **Host + wasi**: byte-identical to r1 on the named subset (above).
+- **53-row super control** (`run-test262-paths.mts --isolate ctrl53.txt
+  --standalone`): `{ compile_error: 2, fail: 27, pass: 24 }` — the same counts
+  AND the same non-pass path SET as r1. Zero lost; the row r1 gained over the
+  lane is kept.
+- **Target rows**: identical to r1 — 8 of the target list present in `ctrl53`
+  pass, the same 8 paths.
+- **Pins**: `tests/issue-5350-super-property-r1.test.ts` grows from 13 to 18
+  cases (three ReferenceError shapes for R1, plus the TypeError miss and its
+  present-method regression guard for R2). 18/18 green on node 22 AND node 25.
+  Neighbours green in ≤3-file batches: issue-2709 + issue-1824-super-as-value +
+  issue-3522-super-accessor (38), issue-3024-static-super-arity + issue-5212 +
+  issue-5309 (61), issue-5312 + issue-5195-es2015-class-r2 +
+  issue-5195-r3-heritage-check (151), issue-5195-r3-restricted-properties +
+  issue-5195-r3-review (30), issue-5270-es2015-expressions-r2 +
+  issue-4527-call-dyn-bridge + issue-1058-generic-callback-result (155),
+  closed-imports + safe-mode + issue-4376-deno-primordials-runtime (50).
+- **Gates**: the chained source ratchets bare and with
+  `LOC_GATE_BASE=$(git rev-parse origin/main)`, plus `check:speculative-rollback`,
+  `check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, the
+  TS7 typecheck and lint — all exit 0. Growth stays inside this file's existing
+  `loc-budget-allow` / `func-budget-allow` grants (restated 2026-09-06 for the
+  same three files; `new-super.ts` +568 over the merge base).
+
+#### Status after this round: still `in-progress`, deliberately
+
+Unchanged from round 1, and for the same reason. The plan's acceptance criterion
+**"13 rows (steps 1-5) pass"** still does not hold — the same 6 of them do, and
+the other 8 are blocked by the pre-existing block-scoped-class capture defect the
+r1 record isolated (repro `.tmp/w5350/q26.ts`, ten lines, no `super`). This round
+neither improved nor worsened that count; it removed two regressions the round-1
+fix introduced. Every other criterion holds: zero rows lost across the controls
+measured, pins green on node 22 and node 25, host/wasi bytes identical,
+`src/ir/select.ts` untouched, grants in this file. The status stays
+`in-progress` until that blocker is filed and cleared or the criterion is
+re-scoped. The 1,089-row class/super sweep remains deferred to the
+integrated-tree run before the PR.
