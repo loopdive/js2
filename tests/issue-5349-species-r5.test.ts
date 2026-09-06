@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
+async function watFor(source: string, target: "standalone" | "wasi"): Promise<string> {
+  const result = await compile(source, {
+    target,
+    allowJs: true,
+    skipSemanticDiagnostics: true,
+    emitWat: true,
+  } as never);
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  return result.wat ?? "";
+}
+
 /**
  * (#5349) ES2015 standalone species, round 5. Three independent defects, all
  * measured against node 22 as the oracle before and after:
@@ -256,5 +267,72 @@ describe("#5349 review r1 — step 16 must not accept a TypedArray as an ArrayBu
          ab.constructor=C; var r=ab.slice(0,4); return 700+(Number(r.byteLength)===4?1:0);`,
       ),
     ).toBe(701);
+  });
+});
+
+describe("#5349 round 2 — the packed-byte carrier is branded by FINALITY", () => {
+  // The two vec structs declare the same two fields over structurally
+  // identical `(array (mut i8))` data. While BOTH are `final` they canonicalize
+  // to ONE runtime type and `ref.test $__vec_i32_byte` accepts a Uint8Array.
+  // The brand is the finality bit itself: `$__vec_i8_byte` is declared `final`
+  // at registration (which is what reaches wasi, where `markLeafStructsFinal`
+  // returns early), and `$__vec_i32_byte` is kept OPEN by
+  // `finalizeLeafStructTypes` (which is what reaches standalone). Neither
+  // changes a field, an instruction, or the module's byte count — the whole
+  // delta is one byte in the type section (0x4f `sub final` -> 0x50 `sub`).
+  const BUILDS_BOTH = `export function run(){ var u=new Uint8Array(2); var ab=new ArrayBuffer(8); return u.length + Number(ab.byteLength); }`;
+
+  it("standalone: $__vec_i8_byte is `sub final`, $__vec_i32_byte is open", async () => {
+    const wat = await watFor(BUILDS_BOTH, "standalone");
+    expect(wat).toContain("(type $__vec_i8_byte (sub final ");
+    expect(wat).toContain("(type $__vec_i32_byte (sub $");
+    expect(wat).not.toContain("(type $__vec_i32_byte (sub final ");
+  });
+
+  it("wasi: the declared `final` brands the carrier even though finalization is skipped", async () => {
+    // `markLeafStructsFinal` returns early on wasi (`skipFinal = ctx.wasi`), so
+    // without the declaration-site `final` BOTH vecs would be open — identical
+    // again. This is the half of the fix that step 2 cannot cover.
+    const wat = await watFor(BUILDS_BOTH, "wasi");
+    expect(wat).toContain("(type $__vec_i8_byte (sub final ");
+    expect(wat).toContain("(type $__vec_i32_byte (sub $");
+    expect(wat).not.toContain("(type $__vec_i32_byte (sub final ");
+  });
+
+  it("keeps buffer/view sharing unchanged (new Uint8Array(ab) aliases ab)", async () => {
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(4); var u=new Uint8Array(ab); u[0]=5;
+         return new Uint8Array(ab)[0] + (u.buffer===ab?10:0) + u.byteLength*100;`,
+      ),
+    ).toBe(415);
+  });
+
+  it("keeps copy-construction unchanged (new Uint8Array(u) copies)", async () => {
+    expect(
+      await runStandalone(`var u=new Uint8Array(2); u[0]=1; var c=new Uint8Array(u); c[0]=3; return u[0]*10+c[0];`),
+    ).toBe(13);
+  });
+
+  it("keeps ArrayBuffer.prototype.slice over an aliased view unchanged", async () => {
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(4); var u=new Uint8Array(ab); u[2]=3; var s=ab.slice(1);
+         return s.byteLength*100 + new Uint8Array(s)[1];`,
+      ),
+    ).toBe(303);
+  });
+
+  it("keeps the PRE-EXISTING `u.buffer` snapshot gap unchanged (320 here, 329 in node 22)", async () => {
+    // NOT fixed by this round and NOT caused by it: `.buffer` of a
+    // length-constructed Uint8Array is a snapshot copy rather than an alias, so
+    // the write through `w` never reaches `u[1]`. Pinned at the pre-brand value
+    // so a later change to that path has to move it deliberately.
+    expect(
+      await runStandalone(
+        `var v=new Uint8Array(new ArrayBuffer(8), 2, 3); var u=new Uint8Array(2); u[0]=1;
+         var w=new Uint8Array(u.buffer, 1); w[0]=9; return v.length*100 + v.byteOffset*10 + u[1];`,
+      ),
+    ).toBe(320);
   });
 });

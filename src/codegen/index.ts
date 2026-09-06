@@ -4918,7 +4918,16 @@ function planIrFirstBodyRouting(
 
 function finalizeLeafStructTypes(ctx: CodegenContext): void {
   const callableRootTypeIdx = getFuncRefWrapperRootTypeIdx(ctx);
-  const keepOpenTypeIdxs = callableRootTypeIdx === undefined ? undefined : new Set([callableRootTypeIdx]);
+  const keepOpenTypeIdxs = new Set<number>();
+  if (callableRootTypeIdx !== undefined) keepOpenTypeIdxs.add(callableRootTypeIdx);
+  // (#5349) The ArrayBuffer byte vec is the open ROOT of the buffer hierarchy —
+  // `$__resizable_ab` subtypes it — so leaving it non-final is the principled
+  // state, and it is what keeps it a distinct canonical type from the `final`
+  // packed-byte TypedArray carrier `$__vec_i8_byte` (same two fields over the
+  // same `(array (mut i8))`). Without this the two canonicalize together and
+  // the `ArrayBuffer.prototype.slice` step-16 `ref.test` accepts a Uint8Array.
+  const abVecIdx = ctx.vecTypeMap.get("i32_byte");
+  if (abVecIdx !== undefined) keepOpenTypeIdxs.add(abVecIdx);
   const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
   ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
 }
