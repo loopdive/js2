@@ -151,6 +151,12 @@ function update(): never {
   const report = load<Report>(REPORT_REL);
   const next = project(report);
   const baselinePath = resolve(ROOT, BASELINE_REL);
+  // `--force` writes even when there is nothing to say. That is the ONLY way a
+  // manual `workflow_dispatch` can produce a visible commit on a healthy
+  // mechanism — without it the escape hatch can be run but never demonstrates
+  // anything, which is the failure this issue is about in miniature. It costs
+  // one merge-group rebuild, which the dispatch input says out loud.
+  const force = process.argv.slice(2).includes("--force");
 
   let reason = "";
   if (!existsSync(baselinePath)) {
@@ -165,6 +171,8 @@ function update(): never {
       else if (age > HEARTBEAT_DAYS) reason = `heartbeat — stamp is ${age.toFixed(1)}d old (> ${HEARTBEAT_DAYS}d)`;
     }
   }
+
+  if (!reason && force) reason = "--force (nothing had changed)";
 
   if (!reason) {
     console.log(`diff-test baseline: unchanged — outcomes identical and stamp is within ${HEARTBEAT_DAYS}d.`);

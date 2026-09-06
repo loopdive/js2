@@ -19,7 +19,7 @@ on:
   workflow_dispatch:
     inputs:
       force_refresh:
-        description: "Push the refreshed baseline even if the merge queue is busy (accepts one merge-group rebuild)"
+        description: "Re-land the baseline even if nothing changed and the merge queue is busy (accepts one merge-group rebuild)"
         type: boolean
         default: false
 
@@ -183,6 +183,8 @@ jobs:
       # is still at the revision that was measured (see the promote step).
       - name: Refresh the committed baseline from the fresh report
         id: refresh
+        env:
+          FORCE: ${{ inputs.force_refresh }}
         shell: bash
         run: |
           set -euo pipefail
@@ -194,7 +196,16 @@ jobs:
           LAST_REFRESH="$(node -e 'try{const b=JSON.parse(require("fs").readFileSync("benchmarks/results/diff-test-baseline.json","utf8"));process.stdout.write(String(b.generatedAt??""))}catch{process.stdout.write("")}')"
           echo "last_refresh=${LAST_REFRESH}" >> "$GITHUB_OUTPUT"
 
-          node --experimental-strip-types scripts/diff-test-gate.ts --update
+          # `--force` only ever comes from a manual dispatch. On the push path
+          # the refresh writes solely on a real change or an expired heartbeat.
+          # Spelled out rather than built as an array: `"${arr[@]}"` on an EMPTY
+          # array is an unbound-variable error under `set -u` before bash 4.4,
+          # and a workflow should not quietly depend on the runner image's bash.
+          if [ "${FORCE:-false}" = "true" ]; then
+            node --experimental-strip-types scripts/diff-test-gate.ts --update --force
+          else
+            node --experimental-strip-types scripts/diff-test-gate.ts --update
+          fi
 
           # `--update` writes only when the corpus OUTCOMES moved or the
           # heartbeat expired — timing noise never reaches the file — so an
@@ -220,8 +231,9 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          FORCE_ARG=()
-          [ "${FORCE:-false}" = "true" ] && FORCE_ARG=(--force)
+          # Scalar, not an array: see the note in the refresh step above.
+          FORCE_ARG=""
+          if [ "${FORCE:-false}" = "true" ]; then FORCE_ARG="--force"; fi
           # `|| RC=$?`, not a bare call then `RC=$?`: the default step shell is
           # `bash -e {0}`, so a bare non-zero exit aborts the step before the
           # next line runs — the DEFER path would look like a step failure.
@@ -231,7 +243,7 @@ jobs:
             --last-refresh "$LAST_REFRESH" \
             --stale-after-hours 6 \
             --reason "differential test baseline refresh" \
-            "${FORCE_ARG[@]}" || RC=$?
+            ${FORCE_ARG} || RC=$?
           if [ "$RC" -eq 10 ]; then
             echo "decision=defer" >> "$GITHUB_OUTPUT"
           else
