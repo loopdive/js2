@@ -8,7 +8,7 @@ import { tryEmitFnctorPrototypeRead } from "./expressions/fnctor-prototype.js";
 import { ensureExternIsUndefinedImport, ensureLateImport, flushLateImportShifts } from "./expressions/late-imports.js";
 import { reserveMemberGetDispatch } from "./member-get-dispatch.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
-import { receiverIsRealmGlobalObject } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A)
+import { realmGlobalObjectCarriesModuleGlobal } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A); (#5342) script-goal gate
 import { compilePropertyAccess, typeErrorThrowInstrs } from "./property-access.js";
 import { coerceType, compileExpression } from "./shared.js";
 import { readsUninitialisedFieldSlot } from "./uninitialised-field-undefined.js"; // (#5312)
@@ -58,7 +58,8 @@ export function compilePropertyAccessForNullishObservation(
   // Both were live in one program. Delegate so the module-global arm decides.
   // (Disjoint from the #4480 fnctor arm below: this one fires only for the
   // realm-global receiver, that one only for a user-function receiver.)
-  if (ctx.moduleGlobals.has(propName) && receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) {
+  // (#5342) Script goal only — a module-scoped `var` is not a global-object property.
+  if (realmGlobalObjectCarriesModuleGlobal(ctx, fctx, expr.expression, propName)) {
     return compilePropertyAccess(ctx, fctx, expr);
   }
 
