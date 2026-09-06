@@ -68,6 +68,16 @@ loc-budget-allow:
   # The write scan also resolves each `T = …` through the oracle, so an
   # unrelated same-spelled parameter or block shadow no longer over-refuses.
   # As before, most of the growth is the measurement written beside the clause.
+  # 2026-09-06 review round 3 of r2 (Opus, +86/-5 LOC): two more measured wrong
+  # answers become refusals — a NAMED function EXPRESSION that reaches ITSELF by
+  # name inside its own body is no longer proved unconstructible by the IIFE
+  # test alone, and a destructuring SHORTHAND write (which the oracle resolves
+  # to the object-literal property, not to the binding) is matched textually
+  # again so it cannot be dropped from the value set. Two over-refusals are also
+  # narrowed, both about WHERE a JSDoc tag applies rather than what it says: a
+  # `@type` in a `.ts` file is inert, and a statement-level tag over several
+  # declarators types the first one. As before, most of the growth is the
+  # measurement written beside the clause it justifies.
   - src/codegen/expressions/reflect-construct-newtarget.ts
   # 2026-09-06 STRANDED GRANT, restated — not this round's growth. Simulating
   # CI's base (`LOC_GATE_BASE=$(git rev-parse origin/main)` = 78f1b2d03c) fails
@@ -1579,3 +1589,188 @@ merges `origin/main` — main's own copy of that file is 2699 with the helper
 moved into `callable-property-host-value.ts`, i.e. main has superseded the hunk.
 After the restatement both budget gates exit 0 at CI's base. No
 `scripts/*-baseline.json` was touched.
+
+### Review round 3 (2026-09-06)
+
+Two findings from the round-3 review of the round-2 fix tree
+(`worktree-wf_d4a1eb9d-d1d-1`, head `65efa1ba38`), both the same class as every
+round before it: a shape BASE refused with the verbatim `(#3371)` error, which
+the round-2 tree ADMITTED and answered wrongly. Plus two **over-refusals** —
+programs round 1 answered like node and round 2 refused for a JSDoc type the
+declaration does not carry. Compile API via `npx tsx`, `COMPILER_POOL_SIZE=2`,
+node 22 as the oracle; probes in `.tmp/rev3371r3/p/` (49 files), harness
+`.tmp/r3/b4.mts` (four compilers in one process: base = `.tmp/rev3371r2/base`,
+r1 = `wf_f3919b81-91f-1`, r2 = `wf_d4a1eb9d-d1d-1`, fix = this tree).
+
+| finding | probe | node | base | r1 | r2 | fix |
+| --- | --- | --- | --- | --- | --- | --- |
+| G1 named fn-expression constructs itself | `d1_named_iife_selfnew.ts` | 2 | refuse | refuse | **0** | refuse |
+| G1 (plain-JS `new inner(0)` twin) | `d1b_named_iife_selfnew_plain.js` | 2 | refuse | refuse | **0** | refuse |
+| G1 (`Reflect.construct(inner,[0])` twin) | `d1c_named_iife_selfreflect.ts` | 2 | refuse | refuse | **0** | refuse |
+| G2 shorthand-destructuring write, arrow | `f1d_shorthand_destr_arrow2.ts` | 7 (TypeError) | refuse | refuse | **1** | refuse |
+| G2 (a class as the written value) | `f1e_shorthand_destr_class.ts` | 3 | refuse | refuse | **NaN** | refuse |
+| G2 (`{ T = 42 }`, defaulted shorthand) | `f1h_shorthand_default.ts` | 7 (TypeError) | refuse | refuse | **1** | refuse |
+| G2 (dead-branch shorthand) | `f1_shorthand_destr_write.ts` | 1 | refuse | refuse | 1 | refuse |
+| G2 (executed shorthand, ordinary fn) | `f1b_shorthand_destr_exec.ts` | 2 | refuse | refuse | 2 | refuse |
+| G3 JSDoc `@type` in a `.ts` file | `c5_ts_with_jsdoc_type.ts` | 2 | refuse | 2 | **refuse** | 2 |
+| G3 `@type` on a sibling declarator | `c7_jsdoc_second_declarator.js` | 2 | refuse | 2 | **refuse** | 2 |
+
+The last two G2 rows are conservative losses, not fixes: round 2 happened to
+answer them like node because the write it dropped was in a dead branch (`f1`)
+or wrote an ordinary function anyway (`f1b`). They are refused again for the
+same reason round 1 refused them — the value set is not readable off the source
+when the write is a pattern — and a refusal is the sanctioned outcome.
+
+Controls, all unchanged r2 → fix: `d2_named_iife_plain.ts` (a named IIFE that
+never mentions its own name) stays admitted at 1 = node; `f1f_destr_renamed.ts`,
+`f1g_destr_rest.ts` and `e7_destructuring_write.ts` were already refused through
+the resolvable `T` inside the pattern; `c1`/`c2`/`c3` (real JSDoc annotations on
+a single declarator in `.js`) stay refused; `c4_jsdoc_param_only.js` stays
+admitted at 2; `a0`–`a5`, `b1`–`b7`, `d4`, `d5`, `d6`, `e1`–`e9`, `f2`, `f3` all
+unchanged.
+
+#### G1 — a named function EXPRESSION can reach itself by its own name
+
+`neverConstructed` gained an unconditional `isFunctionExpression ⇒
+isImmediatelyCalled` arm in round 2 (fixing F4, where a named function
+expression assigned to a variable was wrongly proved unconstructible by the
+name-escape scan). But a named function expression binds its own name **inside
+its own body**, so an IIFE is still reachable from in there:
+`(function inner(n){ if (n) { new inner(0); return } … new.target … })(1)`
+constructs itself, node reads that `new.target` as defined, and the compiled
+class-id lowering reads `undefined` — answer `0` against node's `2`.
+
+The fix keeps the IIFE test and adds the escape scan back for the named case,
+scoped to the body that is the only place the self-name is in scope: a named
+function expression is unconstructible only when it is immediately called AND
+its name never appears in its body except as the callee of a direct
+`inner(...)`. The scan is the same one the function-declaration arm uses,
+factored out as `nameEscapes(scope, name)`.
+
+#### G2 — the oracle cannot resolve a destructuring shorthand
+
+Round 2 made the value-set write scan symbol-resolved, so `T = …` counts only
+when the written identifier resolves to this declaration — which correctly
+stopped an unrelated parameter or block shadow from over-refusing. A shorthand
+`({ T } = src)` is not resolvable that way: its `T` is a
+`ShorthandPropertyAssignment` name and resolves to the object-literal property
+(or to nothing), so `writesThis` answered false, the write was **dropped**, and
+the value set collapsed to the initializer alone. `f1d`/`f1h` then answered `1`
+where node throws a TypeError, and `f1e` answered `NaN` where node answers `3`.
+
+Destructuring targets are matched **textually** again, exactly as round 1 did:
+an `ObjectLiteralExpression`/`ArrayLiteralExpression` on the left of `=`, or in
+a `for…in`/`for…of` head, that MENTIONS the name anywhere is an unenumerable
+write and refuses — shorthand with or without a default, renamed, nested, rest
+and spread alike. The symbol-resolved rule is kept for exactly the targets it
+can resolve: a bare `T`, `T op= …`, `++T`/`T--`. That is the conservative
+direction: a textual match on a pattern can only turn an answer into a refusal.
+
+#### G3 — decided: narrow the two ATTRIBUTION cases, keep the `typeof F` refusal
+
+`hasDeclaredType` consults JSDoc at three levels (declaration, declaration list,
+statement) because a `@type` on a `let` attaches to the enclosing statement.
+Two of those consults fired where the tag does not type this declaration:
+
+- **A JSDoc tag in a `.ts` file is inert** — TypeScript reads types from syntax
+  there and ignores `@type` entirely, so `c5_ts_with_jsdoc_type.ts` is the same
+  program as the unannotated dynamic-target control. Narrowed with an
+  `isInJSFile` guard (spelled off the file name; the project's TS API surface
+  does not re-export `ts.isInJSFile`, which TS7 rejects).
+- **A statement-level tag over several declarators types the FIRST one** —
+  `/** @type {number} */ let n = 0, T = F` describes `n`. The list/statement
+  consults now require a single-declarator list.
+
+Both admitted rows answer **2 = node**.
+
+**`c6_jsdoc_typeof_F.js` (`@type {typeof F}`) stays REFUSED — decided, not
+overlooked.** That tag genuinely types the declaration; admitting it would rest
+on measuring that this particular annotation leaves the callee lowering alone,
+which is a per-annotation result that does not generalise to the next one. The
+refusal costs an answer this arm never owed, and the rule stays legible: a
+declared type refuses, whatever it says.
+
+#### G4 — declined
+
+`d3_named_fnexpr_called_only.ts` (a named function expression assigned to a
+`const` and only ever called) is a conservative loss: round 1 answered 1 = node,
+round 2 and this round refuse. Admitting it needs a second textual scan proving
+the BINDING never escapes either — and the failure mode of that scan is a wrong
+answer, which is precisely the class G1 was called to close in the same
+function. Refusal is the default and it is kept.
+
+#### Corpus, probes and bytes
+
+- **Round-3 probe set** (49 files, `standalone`): `moved(r2→fix) = 10`, and the
+  ten are exactly the intended set — the eight G1/G2 refusals (all carrying the
+  verbatim `… NewTarget.prototype assignment (#3371).` message, checked in full
+  rather than through the harness's 110-char truncation) and the two G3
+  admissions, both equal to node. Nothing else moved.
+- **89-file corpus** (`.tmp/rev3371r2/p/*.ts`, 85 `.ts` × `standalone` + `wasi`,
+  170 rows): `moved(r2→fix) = 0`; of the rows that COMPILED on base, `0` changed.
+- **Round-1 reviewer's probe set** (31 files, `standalone,wasi`, 62 rows):
+  `moved(r2→fix) = 0`, `baseChanged = 0`.
+- **Byte identity**, r2-predicate vs fix, measured **in this tree** by swapping
+  only `reflect-construct-newtarget.ts` (file-copy A/B, no stash): 85 corpus
+  programs × `standalone`/`wasi`/`host` = **255 hashes, 0 differ**. This is a
+  predicate-only change.
+
+  A cross-TREE byte comparison against `wf_d4a1eb9d-d1d-1` is **not** a valid
+  measurement here and was discarded: that worktree does not carry the
+  integration branch's other work, so its `host` bytes differ on 71 of 255
+  programs for reasons unrelated to this change (`standalone` and `wasi` were
+  identical on all 170).
+
+#### Rows
+
+`npx tsx scripts/run-test262-paths.mts --isolate <list> --standalone`,
+`COMPILER_POOL_SIZE=2`; the 218 controls split into three ≤73-row chunks. No
+`compile_timeout` in any run.
+
+| | r2 | fix |
+| --- | --- | --- |
+| 24 owned | 12 pass / 9 fail / 3 CE | **12 / 9 / 3** |
+| 218 controls | 166 pass / 49 fail / 3 CE | **166 / 49 / 3** |
+
+**Rows lost: 0.**
+
+Per-chunk control split: 73 + (54 pass / 16 fail / 3 CE) + (39 pass / 33 fail).
+
+#### Pins
+
+`tests/issue-3371-r4-reflect-construct-newtarget.test.ts` grows by **six**:
+three refused (G1 `d1`, G2 `f1d`, G2 `f1h`) and three admitted (the G1 control
+`d2`, plus the two G3 admissions `c5` and `c7`, the last as a `.js` source
+through the existing optional `fileName`). **78 tests passed on node 22 and on
+node 25**, exit 0 on both (`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+--poolOptions.forks.singleFork=true --dangerouslyIgnoreUnhandledErrors`); the
+`onTaskUpdate` unhandled-error artifact documented in earlier rounds is still
+printed on node 25 and still does not fail the run.
+
+r3 regression pins, in batches of three files: `issue-5195-es2015-class-r2`,
+`issue-5195-r3-heritage-check`, `issue-5195-r3-restricted-properties` — 96
+passed, exit 0; `issue-5195-r3-review`, `issue-5309`, `issue-5312` — 129
+passed, exit 0.
+
+#### Gates
+
+`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+`--noEmit`, `lint` — **all exit 0**, run bare (never piped).
+
+Both budget gates also exit 0 with `LOC_GATE_BASE=$(git rev-parse origin/main)`
+= `a1469a5454`. The round-2 **stranded grant** for
+`src/codegen/expressions/calls-closures.ts` no longer fires: the integration
+branch now carries a main tip in which #5334's hunk is superseded, so the gate
+sees no growth on that file at all. Its restatement in this file's frontmatter
+is left in place (it is inert, and removing it would re-strand the grant if the
+base moves back). `src/codegen/expressions/reflect-construct-newtarget.ts` is
+the only changed source file: 587 → 1072 LOC against main, granted here.
+
+**One TS7 finding worth recording.** The first cut of the G3 narrowing used
+`ts.isInJSFile`, which TS7 rejects — the project's `src/ts-api.ts` surface does
+not re-export it (`error TS2339: Property 'isInJSFile' does not exist on type
+'typeof ts'`), and `npx tsc` alone would not have caught it. Replaced with a
+local file-name predicate matching `src/checker/multi-file-paths.ts`'s existing
+convention.

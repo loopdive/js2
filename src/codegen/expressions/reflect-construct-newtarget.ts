@@ -354,6 +354,26 @@ function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Exp
     });
     return found;
   };
+  // ...but the oracle cannot resolve a destructuring SHORTHAND back to the
+  // binding it writes. In `({ T } = src)` the identifier `T` is a
+  // ShorthandPropertyAssignment name, which resolves to the object-literal
+  // property (or to nothing) rather than to this declaration, so `writesThis`
+  // answered false, the write was dropped and the value set collapsed to the
+  // initializer alone. Review round 3 measured the consequence:
+  // `f1d_shorthand_destr_arrow2.ts` (`src.T` an arrow) and `f1h_shorthand_default.ts`
+  // (`{ T = 42 }`) answered 1 where node throws TypeError (7), and
+  // `f1e_shorthand_destr_class.ts` answered NaN where node answers 3. A
+  // destructuring target is therefore matched TEXTUALLY, exactly as review
+  // round 1 did: any pattern that mentions the NAME anywhere — shorthand with
+  // or without a default, renamed, nested, rest/spread — is an unenumerable
+  // write and refuses. The symbol-resolved rule is kept for the targets it can
+  // actually resolve: a bare `T`, `T op= …`, `++T`/`T--`.
+  const isPatternTarget = (node: ts.Node): boolean =>
+    ts.isObjectLiteralExpression(node) ||
+    ts.isArrayLiteralExpression(node) ||
+    ts.isObjectBindingPattern(node) ||
+    ts.isArrayBindingPattern(node);
+  const targetWrites = (node: ts.Node): boolean => (isPatternTarget(node) ? mentions(node, name) : writesThis(node));
   let enumerable = true;
   const visit = (node: ts.Node): void => {
     if (!enumerable) return;
@@ -363,7 +383,7 @@ function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Exp
       ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
         ts.isIdentifier(node.operand) &&
         writesThis(node.operand)) ||
-      ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && writesThis(node.initializer))
+      ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && targetWrites(node.initializer))
     ) {
       enumerable = false;
       return;
@@ -372,7 +392,7 @@ function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Exp
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
       node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-      writesThis(node.left)
+      targetWrites(node.left)
     ) {
       // Only a plain `T = <expr>` contributes a value that can be read off the
       // source; a compound assignment or a destructuring target does not.
@@ -399,6 +419,16 @@ function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Exp
 }
 
 /**
+ * Is this node in a JavaScript source, where a JSDoc `@type` actually types the
+ * declaration it annotates? Spelled off the file NAME rather than through
+ * `ts.isInJSFile`, which the project's TS API surface does not re-export.
+ */
+function isInJSFile(node: ts.Node): boolean {
+  const name = node.getSourceFile().fileName;
+  return name.endsWith(".js") || name.endsWith(".mjs") || name.endsWith(".cjs") || name.endsWith(".jsx");
+}
+
+/**
  * Does this `let`/`var`/`const` declaration carry a DECLARED type, in TypeScript
  * syntax or in JSDoc?
  *
@@ -411,12 +441,35 @@ function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Exp
  * answered 2 = node). A `@type` tag on a `let` attaches to the enclosing
  * VariableStatement rather than the declaration, so all three levels are
  * consulted.
+ *
+ * Consulted only where the tag actually TYPES this declaration, though — review
+ * round 3 measured two shapes the blanket lookup refused for a type they do not
+ * carry, both of which review round 1 answered like node:
+ *
+ *   - **A JSDoc tag in a `.ts` file** is inert; TypeScript reads types from
+ *     syntax there and ignores `@type` entirely. `c5_ts_with_jsdoc_type.ts` is
+ *     the same program as the unannotated `let T = F; T = G` control, and node
+ *     and the compiler both answer 2 once the tag stops counting.
+ *   - **A statement-level tag over SEVERAL declarators** types the first one,
+ *     not every one. `c7_jsdoc_second_declarator.js` is
+ *     `/** @type {number} *\/ let n = 0, T = F` — the `number` describes `n`;
+ *     attributing it to `T` refused a program node answers 2 on.
+ *
+ * What is NOT narrowed: a tag that genuinely types this declaration, whatever
+ * it says. `c6_jsdoc_typeof_F.js` (`@type {typeof F}`) stays refused — deciding
+ * that a particular annotation happens to leave the callee lowering alone is a
+ * per-annotation measurement that does not generalise, and the refusal costs
+ * only an answer this arm never owed.
  */
 function hasDeclaredType(declaration: ts.VariableDeclaration): boolean {
   if (declaration.type !== undefined) return true;
+  if (!isInJSFile(declaration)) return false;
   if (ts.getJSDocType(declaration) !== undefined) return true;
   const list: ts.Node | undefined = declaration.parent;
   if (list === undefined || !ts.isVariableDeclarationList(list)) return false;
+  // A tag above `let n = 0, T = F` types `n`; only a single-declarator list
+  // lets the statement's tag be read as this declaration's own.
+  if (list.declarations.length !== 1) return false;
   if (ts.getJSDocType(list) !== undefined) return true;
   const statement: ts.Node | undefined = list.parent;
   return statement !== undefined && ts.isVariableStatement(statement) && ts.getJSDocType(statement) !== undefined;
@@ -715,9 +768,37 @@ function neverConstructed(source: ts.SourceFile, node: ts.Node): boolean {
   // where node answers 2 (the property-assigned twin `c1b_namedfnexpr_prop.ts`
   // answered NaN). A function expression follows the anonymous rule: only an
   // immediate call leaves it unconstructible.
-  if (ts.isFunctionExpression(node)) return isImmediatelyCalled(node);
+  //
+  // An immediate call is not enough when the expression is NAMED, because a
+  // named function expression binds its OWN name inside its own body and can
+  // reach itself through it. Review round 3's `d1_named_iife_selfnew.ts` does
+  // `(function inner(n){ if (n) { new inner(0); return } … new.target … })(1)`:
+  // the IIFE test alone called it unconstructible, the nested `new.target` read
+  // went uncounted and the site answered 0 where node answers 2 (same for the
+  // plain-JS `new inner(0)` twin `d1b` and the `Reflect.construct(inner, [0])`
+  // twin `d1c`). So a named function expression must ALSO keep its own name
+  // confined to direct calls within its body — the same escape rule the
+  // function-declaration arm below applies, scoped to the body that is the only
+  // place the self-name is in scope.
+  if (ts.isFunctionExpression(node)) {
+    if (!isImmediatelyCalled(node)) return false;
+    return node.name === undefined || !nameEscapes(node.body, node.name);
+  }
   const name = ts.isFunctionDeclaration(node) ? node.name : undefined;
   if (name === undefined) return isImmediatelyCalled(node);
+  return !nameEscapes(source, name);
+}
+
+/**
+ * Does `name` appear anywhere under `scope` as something other than the callee
+ * of a direct `name(...)` call — i.e. can the thing it denotes be reached by a
+ * `new`, a `Reflect.construct`, a `.bind`, or any other escape as a value?
+ *
+ * `name` itself (the declaration's own identifier) is excluded. Textual, and
+ * deliberately so: an unrelated same-named binding under `scope` only makes the
+ * answer MORE conservative, which can only turn an answer into a refusal.
+ */
+function nameEscapes(scope: ts.Node, name: ts.Identifier): boolean {
   let escapes = false;
   const visit = (child: ts.Node): void => {
     if (escapes) return;
@@ -727,8 +808,8 @@ function neverConstructed(source: ts.SourceFile, node: ts.Node): boolean {
     }
     forEachChild(child, visit);
   };
-  visit(source);
-  return !escapes;
+  visit(scope);
+  return escapes;
 }
 
 /** Is `id` the callee of a plain `id(...)` call — the one benign mention? */

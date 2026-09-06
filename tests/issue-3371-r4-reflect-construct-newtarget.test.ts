@@ -385,6 +385,68 @@ const PARITY_SOURCES: readonly { name: string; source: string; fileName?: string
     `,
   },
   {
+    // r3 (`d2_named_iife_plain.ts`). The G1 refusal added in review round 3 is
+    // about a named function expression reaching ITSELF; one that only reads
+    // `new.target` and is immediately called still stops the scan, and this row
+    // is the control that keeps that arm from being widened into a blanket
+    // refusal of every named IIFE. Node answers `r.k === 1`.
+    name: "r3 a named IIFE that never mentions its own name stays admitted",
+    source: `
+      function NT(): void {}
+      let seen = 0;
+      function F(this: any): void {
+        (function inner(): void { seen = new.target === undefined ? 1 : 2; })();
+        this.k = seen;
+      }
+      export function test(): number {
+        const r: any = Reflect.construct(F, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 2;
+        return r.k === 1 ? 0 : 3;
+      }
+    `,
+  },
+  {
+    // r3 (`c5_ts_with_jsdoc_type.ts`). A JSDoc `@type` in a `.ts` file is inert
+    // — TypeScript reads types from syntax there — so this is the same program
+    // as the unannotated dynamic-target control and must not be refused for a
+    // type it does not have. Node answers `r.k === 2`.
+    name: "r3 a JSDoc @type in a .ts source does not count as an annotation",
+    source: `
+      function NT(): void {}
+      function F(this: any): void { this.k = 1; }
+      function G(this: any): void { this.k = 2; }
+      export function test(): number {
+        /** @type {any} */
+        let T = F;
+        T = G;
+        const r: any = Reflect.construct(T, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 2;
+        return r.k === 2 ? 0 : 3;
+      }
+    `,
+  },
+  {
+    // r3 (`c7_jsdoc_second_declarator.js`). A statement-level `@type` over
+    // several declarators types the FIRST one; attributing the `number` here to
+    // `T` refused a program node answers 2 on.
+    name: "r3 a JSDoc @type on a sibling declarator is not this binding's type",
+    fileName: "issue-3371-r3-c7.js",
+    source: `
+      function NT() {}
+      function F() { this.k = 1; }
+      function G() { this.k = 2; }
+      /** @returns {number} */
+      export function test() {
+        /** @type {number} */
+        let n = 0, T = F;
+        T = G;
+        const r = Reflect.construct(T, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 2;
+        return r.k === 2 && n === 0 ? 0 : 3;
+      }
+    `,
+  },
+  {
     name: "a bound function is a constructor for NewTarget purposes",
     source: `
       export function test(): number {
@@ -760,6 +822,64 @@ const REFUSED_SOURCES: readonly { name: string; source: string; fileName?: strin
         const r: any = Reflect.construct(fn, [], NT);
         if (Object.getPrototypeOf(r) !== NT.prototype) return 4;
         return r.o;
+      }
+    `,
+  },
+  {
+    // G1 (`d1_named_iife_selfnew.ts`). A named function EXPRESSION binds its
+    // own name inside its own body, so an immediate call does not make it
+    // unconstructible: `new inner(0)` reaches it, its `new.target` read is a
+    // real read, and the site answered 0 where node answers 2.
+    name: "r3 a named IIFE that constructs itself by name inside the target",
+    source: `
+      function NT(): void {}
+      let seen = 0;
+      function F(this: any): void {
+        (function inner(this: any, n: number): any {
+          if (n) { new (inner as any)(0); return; }
+          seen = new.target === undefined ? 1 : 2;
+        })(1);
+        this.k = seen;
+      }
+      export function test(): number {
+        const r: any = Reflect.construct(F, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 4;
+        return r.k;
+      }
+    `,
+  },
+  {
+    // G2 (`f1d_shorthand_destr_arrow2.ts`). A destructuring SHORTHAND resolves
+    // to the object-literal property, not to the binding it writes, so the
+    // symbol-resolved write scan dropped it: the value set collapsed to `F`,
+    // the arrow that `src.T` actually holds was never seen, and the site
+    // answered 1 where node throws a TypeError.
+    name: "r3 a shorthand-destructuring write to a dynamic target",
+    source: `
+      function NT(): void {}
+      function F(this: any): void { this.k = 1; }
+      const src: any = { T: (): void => {} };
+      let T = F;
+      export function test(): number {
+        ({ T } = src);
+        const r: any = Reflect.construct(T, [], NT);
+        return Object.getPrototypeOf(r) === NT.prototype ? 1 : 4;
+      }
+    `,
+  },
+  {
+    // G2, the defaulted twin (`f1h_shorthand_default.ts`): `{ T = 42 }` writes
+    // the binding too, and answered 1 where node throws.
+    name: "r3 a defaulted shorthand-destructuring write to a dynamic target",
+    source: `
+      function NT(): void {}
+      function F(this: any): void { this.k = 1; }
+      const src: any = {};
+      let T = F;
+      export function test(): number {
+        ({ T = 42 as any } = src);
+        const r: any = Reflect.construct(T, [], NT);
+        return Object.getPrototypeOf(r) === NT.prototype ? 1 : 4;
       }
     `,
   },
