@@ -32,6 +32,7 @@ import { compileArrowAsClosure, getClosureFuncSelfTypeIdx, getOrCreateFuncRefWra
 import { emitToNumber, emitToString } from "../coercion-engine.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import { eagerCaptureCellForCall } from "../statements/eager-capture-box.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import {
   addImport,
@@ -3806,23 +3807,31 @@ export function compileIdentifierCall(
             // explicitly recorded a lifted capture slot or can prove the old
             // slot is stale. This is not #1177's reverted blanket localMap-first
             // substitution.
-            const capSourceIdx = captureSourceSlot(fctx, cap);
-            fctx.body.push({ op: "local.get", index: capSourceIdx });
-            fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
-            // Also box the outer local so subsequent reads/writes go through the ref cell
-            const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
-              kind: "ref",
-              typeIdx: refCellTypeIdx,
-            });
-            // Duplicate: need the ref cell for the call AND for the outer local
-            fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
-            // Re-register the original name to point to the boxed local
-            fctx.localMap.set(cap.name, boxedLocalIdx);
-            if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
-            fctx.boxedCaptures.set(cap.name, {
-              refCellTypeIdx,
-              valType: cap.valType,
-            });
+            // (#5356) …unless THIS frame minted the binding's cell at function
+            // top and only the NAME is hidden here (shadowing block / CaseBlock
+            // scope): forward that cell — see statements/eager-capture-box.ts.
+            const eagerCell = eagerCaptureCellForCall(fctx, cap, refCellTypeIdx);
+            if (eagerCell !== undefined) {
+              fctx.body.push({ op: "local.get", index: eagerCell });
+            } else {
+              const capSourceIdx = captureSourceSlot(fctx, cap);
+              fctx.body.push({ op: "local.get", index: capSourceIdx });
+              fctx.body.push({ op: "struct.new", typeIdx: refCellTypeIdx });
+              // Also box the outer local so subsequent reads/writes go through the ref cell
+              const boxedLocalIdx = allocLocal(fctx, `__boxed_${cap.name}`, {
+                kind: "ref",
+                typeIdx: refCellTypeIdx,
+              });
+              // Duplicate: need the ref cell for the call AND for the outer local
+              fctx.body.push({ op: "local.tee", index: boxedLocalIdx });
+              // Re-register the original name to point to the boxed local
+              fctx.localMap.set(cap.name, boxedLocalIdx);
+              if (!fctx.boxedCaptures) fctx.boxedCaptures = new Map();
+              fctx.boxedCaptures.set(cap.name, {
+                refCellTypeIdx,
+                valType: cap.valType,
+              });
+            }
           }
           // Coerce mutable capture (ref cell) to expected param type if they differ
           const expectedMutCapType = captureParamTypes?.[capIdx];

@@ -1,10 +1,12 @@
 ---
 id: 5356
 title: "A hoisted inner function that mutates an outer `let` gets its ref cell minted at the first CALL site — a conditional call leaves every later read null"
-status: ready
+status: done
 sprint: current
 created: 2026-09-06
 updated: 2026-09-06
+completed: 2026-09-06
+assignee: ttraenkler/sendev-5356
 priority: high
 horizon: m
 feasibility: hard
@@ -12,6 +14,18 @@ reasoning_effort: max
 task_type: bug
 area: compiler
 goal: correctness
+loc-budget-allow:
+  # 2026-09-06 (#5356): call sites into the new statements/eager-capture-box.ts
+  # module (+9 / +6 / +4 / +2 lines); the mechanism itself lives in the module.
+  - src/codegen/expressions/call-identifier.ts
+  - src/codegen/statements/variables.ts
+  - src/codegen/context/types.ts
+  - src/codegen/statements/control-flow.ts
+func-budget-allow:
+  # 2026-09-06 (#5356): the same call sites (+8 / +1 / +1 lines).
+  - src/codegen/expressions/call-identifier.ts::compileIdentifierCall
+  - src/codegen/statements/control-flow.ts::compileSwitchStatement
+  - src/codegen/statements/variables.ts::compileVariableStatement
 ---
 
 ## Problem
@@ -227,3 +241,103 @@ one-line fix is known and known to miscompile; the work is finding which
 race the declaration path has with an eager cell, on a mechanism (#2692,
 #3396, #3534) that has already been patched three times. Dispatch after PR
 #5665 lands (it carries this file).
+
+## Resolution
+
+Fixed on `50c81e5487` (upstream `main` at dispatch). Regression test:
+`tests/issue-5356-eager-capture-box-tdz.test.ts` over the untyped two-file
+fixture `tests/fixtures/issue-5356/` — **13 of 16 fail on the parent, 16 of
+16 pass with the fix**; the 3 that pass both ways are the never-called shape,
+the taken-branch anti-vacuity control, and the `case`-clause shape that only
+breaks under the *bare* skip removal (kept as the pin for that race).
+
+### What the measurements said (and where they contradict the plan)
+
+- **The "prettier miscompile" attributed to the one-line fix is not caused by
+  it.** With per-test logging in the dogfood worker, `printDocToString(["a"])`
+  loops forever on the **parent** compiler too — the array-doc hang exists
+  with or without the eager cell. Instrumenting a copy of the real printer
+  shows the loop never leaves `commands.push({ indent, mode, doc: doc[index] })`
+  in the `DOC_TYPE_ARRAY` arm; hoisting that object literal into a `const`
+  before the `push` makes the same file terminate (and then read `output` as
+  `null`, i.e. this issue). That is a third, separate defect — filed as
+  #5375 — and it is why `print-doc-to-string` stays 0/3 here even though
+  every `printDocToString` shape in the reduced skeleton now passes. Neither
+  #5356 nor #5357 (`x === false`, also confirmed present: `traverseDoc`
+  visits 1 node instead of 2) can lift that file without #5375.
+- **The race is real, but it lives in the consumers of the raw slot, not in
+  the declaration.** Plan step 2's probe was unnecessary: the bare skip
+  removal was A/B'd over the whole prettier suite (105/151 → 105/151,
+  per-file identical) and over a battery of shapes; exactly one shape
+  regressed — a `let` declared directly in a `case` clause and mutated by a
+  clause-level `function` read `"1"` instead of `"6"`. `compileSwitchStatement`
+  decides "this clause's own binding" by `localMap.get(name) ===
+  record.valueSlot`; once `localMap` points at the cell it hid the binding as
+  an outer one, the declaration got a second slot, and the clause's call site
+  minted a cell from the stale raw slot. The same raw-slot assumption sits in
+  the #2814/#5271 block-`let` re-install (`variables.ts`, `index.ts`) and in
+  the lazy call-site mint when a shadowing block hides the name; both were
+  already wrong on the parent (a dead call inside a shadowing block hijacked
+  the inner binding's name — the inner read `null`; a taken call mutated a
+  throw-away cell — the outer never saw it).
+
+### The fix
+
+`emitEagerCaptureBoxes` boxes `let`/`const` captures too and records each
+cell in the new `FunctionContext.eagerCaptureBoxes`, keyed by the RAW
+pre-hoisted slot it was seeded from — a key that scope hiding cannot lose,
+unlike the name-keyed `localMap`/`boxedCaptures`. `src/codegen/statements/
+eager-capture-box.ts` resolves it for the four consumers that treated the raw
+slot as the binding's storage:
+
+| consumer | before | now |
+| --- | --- | --- |
+| `compileSwitchStatement` case-scope check | `localMap[name] === record.valueSlot` | …or the cell minted from it (`preHoistedBindingIsLive`) |
+| #2814 / #5271 block-`let` re-install | puts the raw slot back | puts the cell + `boxedCaptures` entry back, so the declaration writes through it |
+| call-site fresh mint (`call-identifier.ts`) | `struct.new` from the raw slot, re-aims `localMap` | forwards the function-top cell when this frame owns it, no re-aim (`eagerCaptureCellForCall`) |
+| array-destructuring element stores | `local.set` into the cell slot → `illegal cast` | value-typed scratch per element, flushed through the cell (`redirectBoxedPatternBindings`) — the object lane already did this (#4618) |
+
+Per-iteration semantics are unchanged by design: a hoisted function is
+created once, so one cell per activation is correct (the #2692 loop test pins
+that). #2692/#2669 (22 tests) stay green.
+
+### Still wrong on both sides (out of scope, not regressed)
+
+- `for (let x of xs) { function inc() { x += 1 } inc(); … }` — a for-of HEAD
+  `let` mutated by a block-level function reads the pre-increment value.
+- `let v; set(); String(v)` — a `let` with no initializer (or `= undefined`)
+  written by a hoisted function reads `undefined` even for an unconditional
+  call. The WAT shows the cell IS read (`struct.get … drop`) and then the
+  `"undefined"` string constant is returned: `String(v)` is folded from the
+  checker's flow-narrowed type, which cannot see the nested function's write.
+
+### A/B, one HEAD, 17 dogfood suites
+
+See the table below (filled from the runs on this branch's tree with the
+seven touched files swapped between their `50c81e5487` and fixed copies).
+
+| package | base | fix | per-file delta |
+| --- | --- | --- | --- |
+| axios | 200/231 admitted original tests pass in Wasm | 200/231 admitted original tests pass in Wasm | identical per file |
+| clsx | 32/32 admitted original tests pass in Wasm | 32/32 admitted original tests pass in Wasm | identical per file |
+| cookie | 63740/63740 admitted original tests pass in Wasm | 63740/63740 admitted original tests pass in Wasm | identical per file |
+| hono | 229/324 admitted original tests pass in Wasm | 229/324 admitted original tests pass in Wasm | identical per file |
+| jest | 335/356 admitted original tests pass in Wasm | 335/356 admitted original tests pass in Wasm | identical per file |
+| jsdom | 6/6 admitted original tests pass in Wasm | 6/6 admitted original tests pass in Wasm | identical per file |
+| lodash | 58/62 admitted original tests pass in Wasm | 58/62 admitted original tests pass in Wasm | identical per file |
+| marked | 9/30 admitted original tests pass in Wasm | 9/30 admitted original tests pass in Wasm | identical per file |
+| moment | 10/10 admitted original tests pass in Wasm | 10/10 admitted original tests pass in Wasm | identical per file |
+| prettier | 105/151 admitted original tests pass in Wasm | 105/151 admitted original tests pass in Wasm | identical per file |
+| redux | 66/82 admitted original tests pass in Wasm | 66/82 admitted original tests pass in Wasm | identical per file |
+| styled-components | 9/9 admitted original tests pass in Wasm | 9/9 admitted original tests pass in Wasm | identical per file |
+| stylelint | 108/108 admitted original tests pass in Wasm | 108/108 admitted original tests pass in Wasm | identical per file |
+| tailwindcss | 13/13 admitted original tests pass in Wasm | 13/13 admitted original tests pass in Wasm | identical per file |
+| three | 17/18 admitted original tests pass in Wasm | 17/18 admitted original tests pass in Wasm | identical per file |
+| uuid | 75/75 admitted upstream tests passed in Wasm (0 native-incompatible; 75 total) | 75/75 admitted upstream tests passed in Wasm (0 native-incompatible; 75 total) | identical per file |
+| webpack | 16/16 admitted original tests pass in Wasm | 16/16 admitted original tests pass in Wasm | identical per file |
+
+Every suite: exit 0 with an `admitted` headline on both sides; 17/17 per-file identical.
+
+`print-doc-to-string`: 0/3 both ways here; the #5357 branch
+(`fork/issue-5357-nullish-ref-strict-eq`) was at `50c81e5487` with no commits
+when measured, so "with #5357" is the same measurement. The file needs #5375.
