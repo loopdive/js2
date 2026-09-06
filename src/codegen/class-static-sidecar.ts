@@ -62,10 +62,13 @@
  *    every `static get [k]() { return <literal>; }` in the
  *    `cpn-class-*-accessors-*` family — are installed, and a receiver-reading
  *    one keeps the old missing-property answer rather than gaining a trap. The
- *    predicate reads the COMPILED body, not the syntax: the syntactic
- *    `genBodyReferencesThis` stops descending at a nested class and so installed
- *    a half that traps (#5318 r4 review, finding 2). See
- *    {@link staticAccessorHalfIsReceiverFree}.
+ *    predicate is TRI-STATE: it reads the COMPILED body when that body exists
+ *    (the top-level case), and falls back to a blunt full-subtree syntactic scan
+ *    when it does not (every class nested in a function, arrow or method, whose
+ *    sidecar is emitted while the enclosing function is still compiling). The
+ *    old syntactic `genBodyReferencesThis` was neither: it stops descending at a
+ *    nested class and so installed a half that traps (#5318 r4 review,
+ *    finding 2). See {@link staticAccessorHalfIsReceiverFree}.
  *    Lifting the restriction needs a per-half trampoline supplying the dummy
  *    struct receiver the typed read path already uses
  *    (`property-access.ts::emitGetterCallWithDummy`).
@@ -73,7 +76,7 @@
 
 import type { Instr } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
-import { ts } from "../ts-api.js";
+import { ts, forEachChild } from "../ts-api.js";
 import { allocLocal } from "./context/locals.js";
 import { ensureObjectRuntime } from "./object-runtime.js";
 import { classMemberFuncKey } from "./class-member-keys.js";
@@ -151,13 +154,65 @@ type StaticSidecarEntry =
  * genuinely receiver-free (a nested object literal's computed key, say) and
  * turns a CORRECT answer into a missing property.
  *
- * `undefined` — no defined function, or a minted-but-still-EMPTY body — is a
- * DECLINE. An empty instruction list must never read as "receiver-free".
+ * `undefined` is NOT an answer, and it is the COMMON case: a class nested in a
+ * function, arrow or method has its sidecar emitted at ClassDefinitionEvaluation
+ * while the enclosing function is still being compiled, so the half's funcMap
+ * body is still empty. Round 1 declined all of those and gave back every
+ * nested-class install r4 had bought. The `undefined` arm therefore falls back
+ * to {@link syntacticallyReceiverFree} — the hardened walker below, whose only
+ * permitted error is over-declining.
  */
 function staticAccessorHalfIsReceiverFree(ctx: CodegenContext, member: ts.ClassElement, funcIdx: number): boolean {
   if (!ts.isGetAccessorDeclaration(member) && !ts.isSetAccessorDeclaration(member)) return false;
   if (member.body === undefined) return false;
-  return compiledBodyReadsThis(ctx, funcIdx) === false;
+  const readsThis = compiledBodyReadsThis(ctx, funcIdx);
+  // A compiled `true` always wins: the body demonstrably touches local 0.
+  if (readsThis !== undefined) return readsThis === false;
+  return syntacticallyReceiverFree(member);
+}
+
+/**
+ * (#5318 r5) The syntactic fallback for a half whose body is not compiled yet.
+ *
+ * It is deliberately BLUNT: any `this`, `super`, `new.target`/`import.meta`, or
+ * an identifier spelled `arguments` or `eval`, ANYWHERE in the half's parameter
+ * list or body — including inside a nested class, a nested function's body, its
+ * computed member keys and its parameter defaults — makes the half
+ * receiver-reading. It never stops descending, so it cannot be fooled the way
+ * `genBodyReferencesThis` was (it halts at `ts.isClassLike`, which let
+ * `static get [k]() { class X { static f = this; } return 6; }` read as
+ * receiver-free and turned a missing property into an uncatchable trap —
+ * #5318 r4 review, finding 2).
+ *
+ * The bluntness costs wins, not safety. A nested function declaration binds its
+ * own `this`, so `function f() { return this; }` inside the half does not make
+ * the HALF read its receiver — and this walker declines it anyway. That is the
+ * permitted direction: a decline keeps base's missing-property answer, while a
+ * wrong install is a trap. `eval` counts because the string it runs is not
+ * visible here at all; `arguments` counts because the half's `arguments` object
+ * is built from the same frame as its receiver.
+ */
+function syntacticallyReceiverFree(half: ts.GetAccessorDeclaration | ts.SetAccessorDeclaration): boolean {
+  let readsReceiver = false;
+  const visit = (node: ts.Node): void => {
+    if (readsReceiver) return;
+    if (node.kind === ts.SyntaxKind.ThisKeyword || node.kind === ts.SyntaxKind.SuperKeyword) {
+      readsReceiver = true;
+      return;
+    }
+    if (ts.isMetaProperty(node)) {
+      readsReceiver = true;
+      return;
+    }
+    if (ts.isIdentifier(node) && (node.text === "arguments" || node.text === "eval")) {
+      readsReceiver = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  for (const param of half.parameters) visit(param);
+  if (half.body) visit(half.body);
+  return !readsReceiver;
 }
 
 /**

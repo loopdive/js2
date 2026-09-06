@@ -28,6 +28,35 @@ loc-budget-allow:
   - src/codegen/expressions/new-super.ts
   - src/codegen/declarations.ts
   - src/codegen/index.ts
+  # 2026-09-06 r5 review round 2 (F1/F2): members that FOLLOW an evaluated-key
+  # accessor install must DEFINE, not [[Set]] (§13.2.5.5
+  # CreateDataPropertyOrThrow). +9 lines in literals.ts for the one-time
+  # `__defineProperty_value` reach and the per-member `storeMember(i)` router;
+  # the store itself lives in the objlit-dynamic-accessors.ts subsystem module.
+  # 2026-09-05 r5 step 2: object-literal accessors whose ComputedPropertyName is
+  # only known at evaluation time. The install itself was put in a NEW subsystem
+  # module (src/codegen/objlit-dynamic-accessors.ts), which is what the gate
+  # asks for; what remains in literals.ts is the call site plus generalizing the
+  # two capture scans (#2128 / #3051) from paired accessors to every accessor in
+  # the literal, so a dynamic half's captured locals share the same ref cells as
+  # its siblings. Measured +25 LOC after the extraction (was +77 before it).
+  # 2026-09-06 r5 review round 3: the §B.3.1 `__proto__` exemption from the
+  # define route (2 lines + rationale) and the define-flavoured spread copy call
+  # site (~35 lines: helper resolution + the scratch-object merge). The copy
+  # emitter itself lives in objlit-dynamic-accessors.ts.
+  - src/codegen/literals.ts
+  # 2026-09-06 r5 review round 3: restated here so the grant is not STRANDED.
+  # The +32/-5 in this file arrives with the integration branch this round-3 fix
+  # branches from; CI diffs the MERGE PREVIEW against origin/main, so the
+  # allowance has to live in a file THIS change-set touches.
+  - src/codegen/expressions/calls-closures.ts
+func-budget-allow:
+  # 2026-09-06 r5 review round 2 (F1/F2): the same function gains the
+  # define-vs-[[Set]] router for members after an evaluated-key accessor.
+  # 2026-09-05 r5 step 2, same change: +20 lines in the accessor walk of
+  # compileObjectLiteralWithAccessors — the `propName === undefined` arm that
+  # delegates to objlit-dynamic-accessors.ts, and the flattened capture scans.
+  - src/codegen/literals.ts::compileObjectLiteralWithAccessors
 ---
 
 ## Problem
@@ -364,6 +393,63 @@ the single-assignment / shadowing proof or a runtime check — never a name.
   given up), the control-corpus result, gate status, the worktree path and head
   sha, and every residual with its mechanism.
 
+
+## Implementation Plan — r5 / round 2 (2026-09-05, Fable lane; Opus-medium implements)
+
+Scope: restore the nested-class static-accessor installs the round-1
+compiled-body gate over-declines (see "Review round 1 — reviewer verdict, and
+the round-2 residual" above), then the object-literal computed-key residuals
+that share r4's evaluated-key install mechanism.
+
+1. **Tri-state gate with a hardened syntactic fallback** —
+   `src/codegen/class-static-sidecar.ts::staticAccessorHalfIsReceiverFree`
+   becomes `readsThis === false || (readsThis === undefined &&
+   syntacticallyReceiverFree(half))`, where `readsThis =
+   compiledBodyReadsThis(ctx, funcIdx)` (src/codegen/closures/method-
+   trampolines.ts) and `syntacticallyReceiverFree` is the HARDENED walker
+   round 1 measured and discarded: it descends into nested class-likes and
+   nested function-likes' computed names, parameter defaults and computed
+   keys; it counts `this`, `super`, `arguments`, `eval`, `new.target` anywhere
+   in that subtree as receiver-reading; anything `genBodyReferencesThis` skips
+   but `methodBodyReadsThis` would flag counts as receiver-reading. A `true`
+   compiled answer always wins (decline). Never a trap: before shipping,
+   compile every nested-class shape you can write (`this` in a nested arrow /
+   default parameter / computed key of a nested member / via `arguments` / in
+   a nested class's static block, field, method / `super.x` / `eval`) and
+   confirm that once the enclosing function has finished compiling
+   `compiledBodyReadsThis` agrees with the walker; a disagreement in the
+   unsafe direction (walker says free, compiled body reads local 0) is a bug
+   in the walker to fix, not a shape to admit.
+2. **Object-literal computed keys that share the class mechanism** — from
+   the census, language/computed-property-names/{object/accessor/getter,
+   setter, getter-super, setter-super, object/method/super, object/method/
+   number (illegal cast), object/method/symbol, basics/symbol, class/method/
+   symbol, class/method/string, class/static/method-symbol-order,
+   to-name-side-effects/class}.js. Inventory each row's mechanism on the
+   checkout first (probe + node). Implement ONLY the rows whose fix is the
+   evaluated-key install r4 built for classes (`class-proto-accessors.ts`
+   pattern: symbol / numeric / runtime-string keys installed under their
+   evaluated key, accessor pairs merged, install order = source order);
+   record every other row (super in object-literal methods belongs to the
+   super lane; the `illegal cast` needs its cast named) with its mechanism.
+
+Measurement protocol: base = `git archive origin/main`; node 22 oracle, node 25
+for changed test files; harness `.claude/worktrees/.../.tmp/r1/multi.mts`
+pattern (recreate as `.tmp/w5/5318/multi.mts` if the old worktree is gone);
+probes h3/h4/g1/d1 from the round-1 residual are one-liners above — recreate
+them. Rebuild the compiler bundle AND `node scripts/build-quickjs-eval-provider.mjs`
+after the last src edit before any test262 run.
+
+Acceptance: (a) h3 probeH = 23, h4 all six placements = node, g1 probeFnMixed
+= 23, d1 probeHoist = 23, t1.js stays base's -1 with no trap; (b) the 783-row
+class control (list from the r4 section; regenerate from the census tsv if the
+old list is gone) is ≤ 246 non-pass with ZERO rows lost against origin/main
+(set-diff of non-pass paths; timeouts re-run alone at COMPILER_POOL_SIZE=1);
+(c) tests/issue-5318-r4-computed-accessor-keys.test.ts gains pins for h3, h4
+(six placements), g1, d1, t1 and the trap-safety matrix, all with
+`result.imports` [] on standalone; (d) wasi and host byte-identical to
+origin/main on the reviewer's b1/b2/c1/d1/a1/h1 shapes; (e) all gates green
+bare and with `LOC_GATE_BASE=origin/main`; grants in this frontmatter.
 
 ## 2026-09-04 r4 implementation (Opus)
 
@@ -753,3 +839,593 @@ file is lexically top-level, which is why the suite did not catch this). A
 round-2 agent was dispatched twice on 2026-09-05 and did not finish: the first
 launch died with a container restart, the second was stopped at wind-down; its
 worktree `wf_28a520bf-7c3-1` holds only the merge commit.
+
+## 2026-09-05 r2 implementation (Opus)
+
+Worktree `/home/user/js2/.claude/worktrees/wf_eb120fff-87d-2`, branch
+`worktree-wf_eb120fff-87d-2`, spawned at `c9a8b48616` (= `origin/main`; the r5
+plan above was copied in from the lead's working copy, it was not yet on main).
+Base tree for every A/B is `git archive origin/main` (`c9a8b48616`) unpacked in
+`.tmp/base`, with its own compiler + runtime bundles and its own quickjs eval
+adapter. Probe harness `.tmp/w5/5318/multi.mts` (three columns: node, base,
+lane), byte-identity harness `.tmp/w5/5318/bytes.mts`. Node 22.22.2 is the local
+runtime; the oracle column and every "node:" number below is **node 25.9.0**
+(`/home/user/js2/.tmp/wrap/node25/.../node`), which is also CI's version. Rows
+are `npx tsx scripts/run-test262-paths.mts --isolate <list> --standalone`,
+`COMPILER_POOL_SIZE=1` (the box was carrying three other lanes at load 12-17
+throughout; pool 2 was not affordable).
+
+Two commits, one per plan step.
+
+### Step 1 — the tri-state gate (commit `23b1092cf3`)
+
+`staticAccessorHalfIsReceiverFree` is now
+`readsThis === false || (readsThis === undefined && syntacticallyReceiverFree(half))`.
+
+The round-1 give-back is confirmed, not assumed: `compiledBodyReadsThis` answers
+`undefined` — a decline — for every class nested in a function, arrow or method,
+because `emitClassStaticSidecar` runs at ClassDefinitionEvaluation while the
+enclosing function is still compiling and the half's funcMap body is still
+empty.
+
+The syntactic fallback is deliberately blunt: any `this`, `super`,
+`new.target`/`import.meta`, or an identifier spelled `arguments` or `eval`,
+ANYWHERE in the half's parameters or body — inside nested classes, inside nested
+function bodies, in their computed keys and parameter defaults — makes the half
+receiver-reading. It never stops descending, which is the one thing
+`genBodyReferencesThis` got wrong (it halts at `ts.isClassLike`, which is how r4
+installed a half that trapped). A compiled `true` still always wins.
+
+Acceptance (a), measured 2026-09-05 20:0x UTC:
+
+| probe | node | base | this tree |
+|---|---|---|---|
+| h3 `probeH` | 23 | -1 | **23** |
+| h4 `probeTopLevel` / `probeIfBlock` | 23 | 23 | 23 |
+| h4 `probeArrow` / `probeFnDecl` / `probeStaticMethod` / `probeInline` | 23 | -1 | **23** |
+| g1 `probeFnMixed` | 23 | -1 | **23** |
+| g1 `probeFnMixedMethod` (static method half) | 11 | 11 | 11 |
+| d1 `probeHoist` | 23 | -1 | **23** |
+
+**Trap safety — the walker checked against the compiled gate, not asserted.**
+Each receiver-reading shape was written twice: nested (where the walker decides)
+and as a TOP-LEVEL class (where `compiledBodyReadsThis` decides, and which this
+change does not touch). Comparing the two answers:
+
+| shape inside the half | compiled gate (top-level twin) | walker (nested) |
+|---|---|---|
+| nested class static field reads `this` | declines | declines |
+| `this` in a nested arrow | declines | declines |
+| `this` in a nested computed key | declines | declines |
+| nested class static block reads `this` | declines | declines |
+| nested function's default parameter `= this` | **installs** | declines (safe) |
+| `arguments` | **installs** | declines (safe) |
+| nested class METHOD's own `this` | **installs** | declines (safe) |
+| `eval("…")` | **installs** | declines (safe) |
+| genuinely receiver-free nested class | installs | installs |
+
+**ZERO disagreements in the unsafe direction** (walker "free" while the compiled
+body reads local 0). Four in the safe direction, where the nested twin keeps
+base's `-1`. `t1.js probeC2` stays `-1` and `probeCatch` confirms no throw — the
+pin the review asked for. Six admitted shapes (free nested class, captured outer
+local, captured parameter, `this`-free nested arrow, object-literal method,
+nested `extends`, try/catch/throw) all answer node.
+
+Acceptance (d): host and wasi are **byte-identical** to `origin/main` on all
+seven probe programs; standalone is byte-identical on `a1.js` (a class program
+with no runtime-keyed static accessor) and differs only on the six programs that
+have one.
+
+### Step 2 — object-literal evaluated-key accessors (commit `e080754756`)
+
+Inventory first. Of the twelve `language/computed-property-names/**` rows the
+plan named, only **one** is the evaluated-key install — the rest are a different
+mechanism and are recorded below rather than attempted. Probing the shapes on
+the checkout (`.tmp/w5/5318/o1.js`, `o2.js`, `o3.js`) isolated the defect: a
+symbol-keyed DATA property, a symbol-keyed assignment, a symbol-keyed METHOD in
+an object literal and a symbol-keyed getter on a CLASS prototype all already
+worked; a symbol-keyed **getter in an object literal** did not.
+
+Cause: `literals.ts`'s accessor pre-pass resolves each key to a compile-time
+string and skipped anything it could not fold ("arbitrary computed key: out of
+scope"). So the accessor installed nothing, the read answered `undefined`, and a
+later `A[s] = v` quietly created a plain DATA property where the spec has an
+accessor. No throw — a wrong answer.
+
+The fix is the object-literal twin of r4's class mechanism, in a NEW subsystem
+module `src/codegen/objlit-dynamic-accessors.ts`: each half evaluates its own key
+at its own source position (which §13.2.5.5 wants anyway — `get [f()]` and
+`set [f()]` call `f` twice) and installs itself alone, marking which half it
+defines with bits 8/9 of the `__defineProperty_accessor` flag word so
+§10.1.6.3 merges a sibling under the same evaluated key. On the JS-host lane the
+same bits are ignored and the merge falls out of `Object.defineProperty`'s own
+semantics: the runtime shim omits an absent `get`/`set` field from the
+descriptor, so the existing half survives.
+
+| probe | node | base | this tree |
+|---|---|---|---|
+| symbol-keyed getter (`A[s] === s`) | 1 | 0 | **1** |
+| symbol-keyed setter (`calls`) | 1 | 0 | **1** |
+| symbol-keyed get/set pair | 23 | 3 | **23** |
+| runtime-string-keyed pair | 34 | 4 | **34** |
+| string / numeric folding keys | 1 / 1 | 1 / 1 | 1 / 1 |
+| duplicated folding key | 2 | 2 | 2 |
+| each dynamic key evaluated once, in source order | 11 | (n/a) | 11 |
+
+Rows, the whole `language/computed-property-names/**` directory (48 rows,
+isolated, standalone):
+
+| | pass | non-pass |
+|---|---|---|
+| base (`.tmp/base`, `c9a8b48616`) | 30 | 18 |
+| this tree | **32** | **16** |
+
+Set-diff of non-pass paths: `object/accessor/getter.js` and
+`object/accessor/setter.js` flip fail → pass, **zero rows lost**.
+
+On the default (JS-host) target the same six-row slice goes base 4 pass / 2 fail
+→ **5 pass / 1 fail**: `setter.js` flips, and `getter.js` improves from
+`undefined` to a wrong value (`101` instead of the Symbol) — the getter now runs
+but the host bridge does not carry a Symbol return. Still a wrong answer, not a
+new throw, and not a regression.
+
+Order preservation: a literal whose accessor keys all fold is byte-identical to
+`origin/main` on host, wasi AND standalone (`o4.js`, `a1.js`) — the flag-word
+constant moved into the new module without changing its value.
+
+### Control corpus — 773-row class sweep
+
+The r4 section's 783-row list was not recoverable, so the corpus was
+regenerated from its stated definition: the non-recursive rows of
+`language/{statements,expressions}/class`, plus
+`statements/class/{definition,subclass}` and `expressions/super`, UNION every
+path named in this issue's own claim lists (which reach deeper directories —
+`method-static/`, `elements/syntax/valid/`, `dstr/`, `arguments/`,
+`name-binding/`, `strict-mode/`). That is **773 rows**, ten short of the r4
+figure; the ten are not identifiable from the record, so this is a
+regenerated corpus, not the same one, and its absolute number is not
+comparable to r4's 246. `.tmp/w5/5318/control.txt` holds the list.
+
+Isolated, standalone, `COMPILER_POOL_SIZE=1`, both trees, finished
+2026-09-06 00:04 (base) and 02:16 (lane) UTC:
+
+| | pass | fail | compile_error | non-pass |
+|---|---|---|---|---|
+| base (`.tmp/base`, `c9a8b48616`) | 497 | 257 | 19 | 276 |
+| this tree | 497 | 257 | 19 | **276** |
+
+**Set-diff of the non-pass PATHS: empty in both directions — zero rows lost
+and zero rows gained.** Zero `compilation timeout` verdicts on either tree
+(the runner's 120 s per-row budget held even at load 24), zero `ENOENT`, zero
+"quickjs provider is not built" — the eval provider was rebuilt after the last
+`src/` edit, per the r4 caveat. The 248 `cpn-class-*` rows in the corpus are
+64 non-pass on BOTH trees, i.e. the 25 rows r4 flipped are all still flipped.
+
+**Zero gained is the expected result and worth stating plainly: this corpus
+cannot see step 1.** Every `cpn-class-*` file declares its class at TOP level,
+where `compiledBodyReadsThis` already answered and round 1 was never wrong. The
+shape step 1 restores — a class nested in a function, arrow or method — has no
+row of its own in test262's class corpus, which is exactly why the round-1
+give-back was invisible to it. Step 1's evidence is the probe matrix above and
+the new pins; the control's job here is to show it costs nothing, and it
+doesn't. Step 2's two flipped rows live in
+`language/computed-property-names/**`, which is not part of this corpus and was
+measured separately above.
+
+### Pins
+
+- `tests/issue-5318-r4-computed-accessor-keys.test.ts`: 45 → **72**, adding h3,
+  h4's six placements, g1, d1, the nine-shape trap matrix, the "declined read is
+  not a throw" probe and the six admitted shapes. **72/72 on node 22 AND node
+  25.9.0**, single fork at `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096`.
+- `tests/issue-5318-r5-objlit-computed-accessor-keys.test.ts` (new): **12/12 on
+  node 22 AND node 25.9.0** — the two flipped rows plus the node-parity matrix
+  above.
+- r3 pins (`issue-5195-es2015-class-r2`, `issue-5195-r3-heritage-check`,
+  `issue-5195-r3-restricted-properties`, `issue-5195-r3-review`,
+  `issue-5309-child-field-shadows-parent-method`,
+  `issue-5312-uninitialised-field-reads-undefined`): **225/225**.
+
+Every standalone control in both files asserts `result.imports` is `[]`.
+
+### Gates
+
+`check-loc-budget` · `check-func-budget` — both bare AND with
+`LOC_GATE_BASE=c9a8b48616` ("no unallowed growth in 3 changed src files, net
++207 LOC") · `check-coercion-sites` · `check:oracle-ratchet` ·
+`check:dead-exports` · `check:speculative-rollback` · `check:stack-balance` ·
+`check:codegen-fallbacks` · `check:any-box-sites` · TS7 `--noEmit` · `lint` —
+all exit 0, each run bare with its status read directly.
+
+Two growth grants were needed and are in this issue's frontmatter with a dated
+rationale: `src/codegen/literals.ts` (+25 LOC) and
+`literals.ts::compileObjectLiteralWithAccessors` (+20 lines). Both are what
+remains after moving the install into `objlit-dynamic-accessors.ts` — the gate
+first reported +77 / +57, and the module extraction is what removed the
+difference. `scripts/*-baseline.json` was not touched.
+
+### Residuals, with their mechanisms
+
+- **The syntactic fallback over-declines four measured shapes** (a nested
+  function's default parameter, `arguments`, a nested class method's own `this`,
+  `eval`). The compiled gate installs all four when the class is top-level, so
+  the walker is strictly more conservative than it needs to be. Refining it means
+  proving, syntactically, that a `this` belongs to a nested function's own
+  binding — and the cost of getting that wrong is an uncatchable trap, not a
+  wrong answer, which is why the blunt version ships. Pinned so the cost is
+  visible.
+- **`C[k] = v` still never reaches an installed static setter** (unchanged from
+  r4). The class prototype/sidecar lookup arm is prepended into `__extern_get` /
+  `__extern_get_idx` only (`class-proto-lookup.ts::fillClassProtoLookupArm`);
+  there is no `__extern_set` twin, so a write through a runtime-keyed static
+  setter is dropped. Measured: a nested class with `static set [k]` and
+  `static get [m]` answers 100 where node answers 107 (base answers -1, since
+  neither half was reachable at all). This is why
+  `accessor-name-{inst,static}-computed-in.js` still fail.
+- **A static FIELD still does not shadow the sidecar** (round-1 finding 3,
+  unchanged): `class Q { static get [x||"k"]() { return 11; } static k = 7; }`
+  answers 11 in both declaration orders where node answers 7. Closing it means
+  widening the sidecar to static fields and resolving the mutable-slot
+  duplication the module header excludes.
+- **`getter.js` on the JS-HOST target** now runs the symbol-keyed getter but
+  returns `101` instead of the Symbol — the host accessor bridge
+  (`_markAccessorGetterReturn` / `_maybeWrapCallable` in `src/runtime.ts`) does
+  not carry a Symbol return value. Standalone is correct; the host lane needs the
+  return boxing fixed, which is not this lane's.
+- **The other 16 `computed-property-names` non-pass rows, by mechanism:**
+  - `Object.getOwnPropertyNames` / `getOwnPropertySymbols` on `C.prototype` or
+    `C` — `class/method/{string,symbol}`, `class/static/method-{number,
+    number-order,symbol-order}`, `basics/symbol`, `object/method/symbol`,
+    `to-name-side-effects/class`. This is #5195 **cluster B** (the reflective
+    own-property surface on the class object), which r4 also gave up on: it needs
+    the reflective natives redirected, not just `__extern_get`.
+  - `super` inside an object-literal method or accessor —
+    `object/accessor/{getter-super,setter-super}`, `object/method/super`
+    (all answer `"anull"`, a null home object). The super lane's, per the plan.
+  - `object/method/number.js` — "illegal cast in `__module_init()`": a numeric
+    computed METHOD key in an object literal. Not the accessor path; the cast is
+    in the numeric-key method install and needs naming before it can be fixed.
+  - Four generator rows (`class/method/{constructor-can-be-generator,generator}`,
+    `class/static/generator-constructor`, `object/method/generator`) — they emit
+    `env::__create_generator`, i.e. #2864's carrier. Gated, not claimed.
+- **Not attempted this round, unchanged from r4:** the 30
+  `subclass/builtin-objects/**` rows (#3371 NewTarget carrier), the generator
+  rows (#2864), the 16 `dstr` rows, the `definition/*` descriptor cluster, the
+  four `-assignment-expression-assignment` rows whose decline #5195's review set,
+  and every row that would require ADDING a throw
+  (`this-access-restriction*.js`, `name-binding/const.js`,
+  `strict-mode/arguments-callee.js`) — no predicate was measured to the
+  reassignment/shadowing/`eval` standard this pass, so none was started.
+
+### Review round 2 (2026-09-06)
+
+Worktree `/home/user/js2/.claude/worktrees/wf_fa92ba2a-1ac-1`, branch
+`worktree-wf_fa92ba2a-1ac-1` = integration branch
+`claude/es6-test262-standalone-g10c7u` (`22a6e4d51e`) with the r2 lane branch
+`worktree-wf_eb120fff-87d-2` (`eb213c8822`) merged in, clean. Base tree for
+every A/B stays `.tmp/rev5318r2/base` = `git archive origin/main`
+(`c9a8b48616`), with its own bundles. "lane" = the r2 lane tree as reviewed;
+"fix" = this tree. Oracle is node 25.9.0. Probe harness
+`.tmp/rev5318r2/run.mts` (`npx tsx run.mts <tree> <standalone|host|wasi>
+<file>`; the host column instantiates through `result.importObject`), reviewer
+probes `.tmp/rev5318r2/p/*.mjs`, my own additions under
+`<worktree>/.tmp/pr/z*.mjs`. `COMPILER_POOL_SIZE=1`, box load 12-17 throughout
+(three other lanes).
+
+#### F1 / F2 — FIXED: a later same-key member now overrides an evaluated-key accessor
+
+Confirmed exactly as reported, on standalone AND on the JS-host target.
+
+The mechanism, stated once: `compileObjectLiteralWithAccessors` emits every
+data property and method through `__extern_set`, which is **[[Set]]** — under a
+key that already carries a live accessor it runs the accessor (and with a
+getter-only accessor does nothing at all) instead of replacing the property.
+§13.2.5.5 PropertyDefinitionEvaluation uses **CreateDataPropertyOrThrow**,
+which DEFINES. The difference is invisible until something has installed a real
+accessor under that key earlier in the SAME literal, and only
+`emitDynamicObjectLiteralAccessorHalf` can do that (a folded-key accessor is
+paired at compile time and emitted once, and a duplicate folded key is resolved
+by the pre-pass before any code is emitted). So the r2 lane created the
+condition and the [[Set]] verb became observable.
+
+**Fix.** `src/codegen/objlit-dynamic-accessors.ts` gains
+`OBJLIT_DATA_DEFINE_FLAGS` (`computeRuntimeFlags(true, true, true, true)` =
+`writable+enumerable+configurable`, with a value) and
+`emitObjectLiteralDataStore`. `literals.ts` computes the source index of the
+first dynamic-keyed accessor half and routes every member AFTER it through
+`__defineProperty_value` instead of `__extern_set`; members before it, and
+every literal with no such accessor, keep the legacy encoding untouched. If the
+define helper is unreachable the router degrades to `__extern_set` rather than
+dropping the member — no new throw is possible. Both native
+(`object-runtime-descriptors.ts`) and host-shim `__defineProperty_value`
+already implement the accessor→data conversion (clearing the stale `$get`/`$set`
+slots / a full data descriptor through `Object.defineProperty`), so no runtime
+change was needed.
+
+Standalone (identical on wasi):
+
+| probe | node | base | lane | fix |
+|---|---|---|---|---|
+| `d1 probeDataAfterAccessorSym` `{get [s](){1}, [s]:5}` | 5 | 5 | **1** | **5** |
+| `d1 probeDataAfterAccessorStr` (runtime string key) | 5 | 5 | **1** | **5** |
+| `d1 probeMethodAfterAccessor` (method after getter) | 7 | 7 | **1** | **7** |
+| `c3 probeDataAfterAccessor` | 5 | 5 | **1** | **5** |
+| `c3 probeAccessorAfterData` (data first, then getter) | 1 | **5** | 1 | 1 |
+| `c3 probeDupGetter` / `probePairApart` / `probeKeyEvalOrder` | 2 / 320 / 111 | NaN / NaN / 0 | 2 / 320 / 111 | 2 / 320 / 111 |
+| `z7 probeAccessorMethodAccessor` (get, method, get — same key) | 2 | −9 | (n/a) | **2** |
+
+JS-host target, instantiated through `result.importObject`:
+
+| probe | node | base | lane | fix |
+|---|---|---|---|---|
+| `g1 probeHost` | 5 | 5 | **99** (unreadable) | **5** |
+| `f1 probeHostSym` | 5 | 5 | **NaN** | **5** |
+| `f1 probeHostStr` | 5 | 5 | **NaN** | **5** |
+| `z5 probeSetterRead` (`{set [k](v){}}`, write then read) | −1 | **7** | — | **−1** |
+
+**Order preservation.** `e1.mjs` (a literal whose keys all fold) is
+**byte-identical** base vs fix on all three targets — standalone
+`ff4f0663…e056` / 139 620 B, host `cbe772fc…a59a` / 2 763 B, wasi
+`54a1a689…133c` / 106 945 B. `result.imports` stayed `[]` on every standalone
+compile in this section.
+
+#### F4 — NOT a defect, and not what was measured
+
+The claim was that the descriptor materialised for a runtime-keyed accessor
+carries a `value` slot. It does not. Measured by OWN KEYS
+(`.tmp/pr/z3.mjs`, `Object.keys(d)` scored 1/10/100/1000 for
+get/set/enumerable/configurable): **node 1111, fix 1111** — exactly the four
+accessor fields, no `value`.
+
+What probe `c4 probeDescriptor` actually measured is the `in` operator. With
+`d` statically typed as TypeScript's `PropertyDescriptor`, the compiler answers
+a literal-key `in` from the TS TYPE, not from the runtime object. `.tmp/pr/z4.mjs`
+on the **base** tree, standalone: `'value' in d` → **true**, the same key built
+at runtime (`('val'+'ue') in d`) → **false**, `hasOwnProperty(d,'value')` →
+**false**; node answers false to all three. And `.tmp/pr/z1.mjs probeDpAccessor`
+— a plain `Object.defineProperty(o,'k',{get,…})`, no object literal, no dynamic
+key — scores **1111 on base** as well.
+
+So this is a pre-existing, unrelated `in`-operator defect (a literal-string
+`in` on a statically-typed object is answered from the declared type), present
+on `origin/main`, reachable without any part of #5318. Nothing was changed for
+it here; it is recorded as a separate finding for its own issue. The lane's
+`getOwnPropertyDescriptor` accessor entry is correct as it stands, and is now
+pinned by own-keys rather than by `in`.
+
+#### Recorded, not fixed (all pre-existing or wrong-on-both-trees)
+
+- **`JSON.stringify` does not invoke a runtime-keyed getter.**
+  `d1 probeJsonDyn` / `c4 probeJson`: node `{"q11":8}`, base `{}` (property
+  absent), lane and fix `{"q11":null}`. Wrong on every tree; the lane changed
+  *which* wrong answer. Not a regression of a working program.
+- **`delete o[s]` does not remove a symbol-keyed dynamic accessor.**
+  `c3 probeDeleteSym`: node 800, base NaN (nothing installed), lane and fix 809
+  — the property survives the delete. Unchanged by this round.
+- **A setter-only accessor's read does not surface as `undefined` on
+  standalone.** `z6 probeAccessorMethodAccessor` in its original
+  get/method/**set** form: node −1, base 2, fix NaN. This is the same
+  `undefined`-representation gap as `z5 probeSetterRead`; the pin uses the
+  get/method/**get** form instead, where the read is well defined.
+- **Host target: a getter-only dynamic accessor read.** `z5
+  probeGetterOnlyRead` — node 1, **base NaN, fix NaN**. Pre-existing on the
+  host lane, untouched.
+- **The folded-key twin `{get b(){1}, b:5}`** was not fixed: the byte-identity
+  gate for literals whose keys all fold is the stronger constraint, and the
+  define path cannot cover the folded case without changing those bytes. Left
+  as-is, deliberately.
+
+#### Verification
+
+- `tests/issue-5318-r5-objlit-computed-accessor-keys.test.ts` — **19 passed**.
+  New: five `[F1]` override pins on standalone (data-after-accessor by symbol
+  key and by runtime string key, method-after-accessor, accessor-after-data,
+  accessor/method/accessor), a **host-target** pin compiled for the default
+  target and instantiated through `result.importObject`, and the descriptor
+  own-keys pin that replaces the `in`-based F4 probe. Every standalone pin
+  asserts `result.imports` is `[]`.
+- `tests/issue-5318-r4-computed-accessor-keys.test.ts` — **72 passed**. The run
+  also reports one vitest **worker RPC** error (`Timeout calling
+  "onTaskUpdate"` / `ERR_IPC_CHANNEL_CLOSED`), reproducible on this box at load
+  13-16 on 4 cores and originating inside vitest's reporter channel, not in any
+  test. No test failed in any of four runs (node 22 ×2, node 25 ×2); adding the
+  `--dangerouslyIgnoreUnhandledErrors` flag this issue's own plan prescribes for
+  these pins makes the run exit 0.
+- Both #5318 pin files were re-run on **node 25.9.0** (CI's version) as well as
+  the local node 22.22.2: r5 19/19 exit 0, r4 72/72.
+- r3 pins, in batches of three: `issue-5195-es2015-class-r2` +
+  `issue-5195-r3-heritage-check` + `issue-5195-r3-restricted-properties` →
+  **96 passed**; `issue-5195-r3-review` + `issue-5309-…` + `issue-5312-…` →
+  **129 passed**. All at `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+  --poolOptions.forks.singleFork`, and re-run green on node 25 (96 / 129).
+- Gates, run bare and chained: `check-loc-budget`, `check-func-budget`,
+  `check-coercion-sites`, `check:oracle-ratchet`, `check:dead-exports`,
+  `check:speculative-rollback`, `check:stack-balance`,
+  `check:codegen-fallbacks`, `check:any-box-sites`, TS7 `typecheck`, `lint` —
+  **all exit 0**.
+- **`LOC_GATE_BASE=$(git rev-parse origin/main)` fails, and not on this
+  change.** It reports `src/codegen/expressions/call-tail-dispatch.ts: 2258 >
+  2252 (+6)` and the matching `compileTailDispatch` function-budget breach.
+  This tree has **no commit touching that file**; `origin/main` advanced from
+  `22a6e4d51e` to `efa9e76f07` after the branch point and refreshed the
+  baseline underneath it. Reverting my three edited files and re-running the
+  same command reproduces the identical failure, so it is integration-branch
+  drift that a `git merge origin/main` resolves — it is not a stranded grant of
+  this change-set, and no allowance for that file was added here.
+
+#### Rows
+
+`language/computed-property-names/**`, all 48 rows, `--isolate --standalone`,
+`COMPILER_POOL_SIZE=2`:
+
+| | pass | fail | compile_error | non-pass |
+|---|---|---|---|---|
+| base (`.tmp/rev5318r2/base`, `c9a8b48616`), re-run here | 30 | 14 | 4 | 18 |
+| lane (r2 record) | 32 | — | — | 16 |
+| **fix** | **32** | 12 | 4 | **16** |
+
+**Set-diff of the non-pass PATHS, base vs fix: zero lost, and exactly two
+gained** — `object/accessor/getter.js` and `object/accessor/setter.js`,
+i.e. the same two rows the r2 lane flipped, still flipped after the F1/F2
+change. The 12-row `object/**` subfamily is a subset of this run: 6 pass, 6
+non-pass (`accessor/{getter,setter}-super`, `method/{generator,number,super,symbol}`)
+— all four mechanisms already named in the r2 record (super home object,
+numeric-key method cast, #2864 generators).
+
+### Review round 2 (2026-09-06) — the round-3 fix lane
+
+Worktree `/home/user/js2/.claude/worktrees/wf_a3d774b3-5df-1`, branch
+`worktree-wf_a3d774b3-5df-1` = the integration branch
+`claude/es6-test262-standalone-g10c7u` (`b374fcdc5a`) with the round-2 fix
+branch `worktree-wf_fa92ba2a-1ac-1` (`dfcde0820d`, which already contains the
+r5 lane `worktree-wf_eb120fff-87d-2`) merged in — clean merge, no conflict.
+Trees compared throughout: **base** `.tmp/rev5318r2/base` (`git archive`
+`c9a8b48616`) · **pre** the r5 lane before any review fix
+(`wf_eb120fff-87d-2`) · **r2** the round-2 fix (`wf_fa92ba2a-1ac-1`) · **fix**
+this tree. Oracle node 22.22.2; the vitest pins additionally run on node 25.9.0.
+
+**Harness correction, and it is load-bearing.** The reviewer's
+`.tmp/rev5318r3/run.mts` instantiates the JS-host target with
+`result.importObject` but never calls the documented
+`result.importObject.__setInstance(instance)` (`src/index.ts` §CompileResult).
+Without that call the host object sidecars never see the instance and the whole
+open-object model is dead on that lane: on **base**, `{...src}` copies nothing,
+`{ m() {} }.m` is not a function, and `{a:1,[k]:2,c(){}}` sums to `NaN`. Every
+host number below was therefore re-measured through `.tmp/run2.mts`, which is
+the reviewer's script plus that one line; `runHostTarget` in the pin file got
+the same fix. On the corrected harness base reproduces the reviewer's reported
+values (e.g. `sp.mjs` = 5), so the two runs are comparable.
+
+#### R1 — FIXED: a non-computed `__proto__` after an evaluated-key accessor
+
+§B.3.1 `__proto__` in an object initializer is not a property definition; it
+runs `[[SetPrototypeOf]]`. The native lanes have a dedicated arm for it, but the
+JS-host lane has no `__object_setPrototypeOf` and relied on `__extern_set`
+reaching the host object's own `__proto__` setter. The round-2 define switch
+routed it to `__defineProperty_value`, which made an own enumerable
+`'__proto__'` data property instead. Fix: `storeMember(i)` now exempts a
+**PropertyAssignment with a non-computed key spelled `__proto__`** from the
+define route (`isAnnexBProtoKey`); a computed `[k]: v`, a shorthand
+`{ __proto__ }` and a `__proto__()` method all keep it, because §B.3.1 is
+syntactic.
+
+`p/zpin.mjs`, score = `getPrototypeOf(o)===p ? 1` + `hasOwn('__proto__') ? 10`
+(the `null` and shorthand rows score the own-property bit only):
+
+| probe | target | base | r2 | **fix** | node |
+|---|---|---|---|---|---|
+| `probeProtoIdentAfterAcc` | host | 0 | **10** | **0** | 1 |
+| `probeProtoStrAfterAcc` | host | 0 | **10** | **0** | 1 |
+| `probeProtoNullAfterAcc` | host | 0 | **10** | **0** | 0 |
+| `probeProtoComputedAfterAcc` | host | 0 | 10 | 10 | 10 |
+| `probeProtoShorthandAfterAcc` | host | 0 | 10 | 10 | 10 |
+| all five | standalone | 10 | 10 | 10 | 1/1/0/10/10 |
+
+So: the round-2 regression is gone (host is back to base for the three §B.3.1
+forms), and the two rows round-2 legitimately IMPROVED (computed key, shorthand
+— both `0 → 10`, matching node) are kept. The host lane still answers `0` rather
+than node's `1` for the identifier/string forms: its `__proto__` write does not
+make `getPrototypeOf(o)` identical to `p`. That is **base** behaviour, unchanged
+by either round, and out of scope here. Standalone answers `10` for every form —
+also pre-existing on base, recorded and not widened.
+
+The whole-file reviewer probes agree: `pm.mjs` host `0 / 0 / 10 / 0` (base /
+pre / r2 / fix, node 1); `pm2.mjs` host `probeProtoStrKeyAfterAcc`
+`0 / 0 / 10 / 0`, `probeProtoComputedAfterAcc` `0 / 0 / 10 / 10` (node 10);
+`proto.mjs` host `probeProtoNullAfterAcc` `1 / 1 / 0 / 1` (node 1).
+
+#### R2 — FIXED: a spread after a same-key evaluated-key accessor
+
+§13.2.5.5 lowers `...src` through §7.3.25 CopyDataProperties, which uses
+CreateDataProperty — it DEFINES. `__object_assign` is [[Set]], so over the
+getter-only accessor the literal had just installed under the same key it threw
+(`Cannot set property sb of #<Object> which has only a getter` on the host, a
+raw `WebAssembly.Exception` on standalone/wasi). Fix: when a spread follows the
+`firstDynAccIdx` boundary, `__object_assign` merges into a **scratch plain
+object** first — so nullish sources, primitives, proxies and source getters keep
+exactly the semantics `__object_assign` defines, and a source getter still runs
+once through [[Get]] — and the scratch object is then re-landed on the literal
+key-by-key with `__defineProperty_value` (`emitObjectLiteralDefineCopy`,
+strings via `__object_keys`, then own symbols screened by
+`__propertyIsEnumerable`).
+
+| probe | target | base | pre | r2 | **fix** | node |
+|---|---|---|---|---|---|---|
+| `sp.mjs::probeSpreadSameKeyCaught` | host | 5 | 900 | 900 | **5** | 5 |
+| `misc.mjs::probeSpreadSameKey` | host | 5 | THREW | THREW | **5** | 5 |
+| `x2.mjs::probeSpreadSameKey2` | host | — | — | THREW | **5** | 5 |
+| `sp.mjs::probeSpreadSameKeyCaught` | standalone | — | — | 900 | **5** | 5 |
+| `misc.mjs::probeSpreadSameKey` | standalone | — | — | THREW | **5** | 5 |
+| `x2.mjs::probeSpreadSameKey2` | standalone | — | — | THREW | **5** | 5 |
+| `sp.mjs::probeSpreadSameKeyCaught` | wasi | — | — | 900 | **5** | 5 |
+| `misc.mjs::probeSpreadSameKey` | wasi | — | — | THREW | **5** | 5 |
+| `zpin::probeSpreadSourceGetterOnce` | host / standalone | — | — | THREW | **11** | 11 |
+| `zpin::probeSpreadBeforeAcc` | host / standalone | 11 | — | 111 | **111** | 111 |
+
+`probeSpreadSourceGetterOnce` = `(o.sb === 5) + 10 × callCount`, so `11` is the
+proof the source getter ran exactly once. `probeSpreadBeforeAcc` is the
+before-the-boundary control: base `11` (no accessor was installed at all — the
+r5 defect), `111` on r2 and on fix, i.e. unchanged by this round.
+
+#### Nothing else moved
+
+The whole reviewer probe set (`bid, hm, key, misc, noobj, pm, pm2, proto,
+shape, sp, x2`) was re-run on **all three targets** on the r2 tree and on this
+tree. Every probe answers identically except the rows in the two tables above.
+`x2.mjs` does not instantiate on wasi (`Import #0 module="env"`) on both trees.
+
+**Byte identity vs the r2 tree**, `BYTES=only` (sha256 + length) on host,
+standalone and wasi: `zb_e1.mjs` (an all-folded accessor literal incl. a folded
+`__proto__`), `zb_spread.mjs` (`{...a,...b}` and `{x:1,...a}` — spread-only, no
+accessor), `bid.mjs` and `noobj.mjs` — **identical on every target** (e.g.
+standalone `zb_e1` `25f859fc…` len 140569 on both; `zb_spread` `42779480…` len
+135723 on both). `zb_e1` does not compile on wasi on either tree (0 bytes, pre-
+existing).
+
+#### Rows
+
+`language/computed-property-names/**` (48) + the 13 rows directly under
+`language/expressions/object/` whose source names `__proto__` or object-spread
+(`__proto__-*.js`, `computed-__proto__.js`, `object-spread-proxy-*.js`) = 61,
+`--isolate --standalone`, `COMPILER_POOL_SIZE=2`:
+
+| | pass | fail | compile_error | non-pass |
+|---|---|---|---|---|
+| r2 (`wf_fa92ba2a-1ac-1`) | 42 | 15 | 4 | 19 |
+| **fix** | **42** | 15 | 4 | **19** |
+
+**Set-diff of the non-pass PATHS, r2 vs fix: EMPTY in both directions** — the
+19 paths are byte-identical lists (`diff` exit 0). Zero lost, zero gained.
+
+The 13-row `expressions/object/` subfamily was additionally run on **base**:
+10 pass / 3 fail (`__proto__-fn-name`, `__proto__-poisoned-object-prototype`,
+`computed-__proto__`) — the SAME three that fail on r2 and on fix, so this
+round neither fixed nor broke a row there.
+
+(The round-2 worktree had no usable `test262` tree — its per-entry symlink farm
+pointed at a worktree that has since been deleted, so the first two attempts
+reported `ENOENT` for every row. `test`/`harness` were repointed at the shared
+checkout before the run that produced the numbers above.)
+
+#### Gates
+
+`check-loc-budget` / `check-func-budget` / `check-coercion-sites` /
+`check:oracle-ratchet` / `check:dead-exports` all pass bare **and** with
+`LOC_GATE_BASE=$(git rev-parse origin/main)` = `78f1b2d03c`; the CI-base run
+initially failed on a **stranded grant** — `src/codegen/expressions/calls-closures.ts`
+`2699 → 2726 (+27)`, growth that arrives with the integration branch, not with
+this fix — so the allowance is restated in this file's `loc-budget-allow`.
+`check:speculative-rollback`, `check:stack-balance`, `check:codegen-fallbacks`,
+`check:any-box-sites`, TS7 `--noEmit`, `npm run lint` and `prettier --check` all
+clean.
+
+**Integration note (2026-09-06, PR #5688).** With #5350 r1 on the same branch
+(a `__proto__:` literal is now a dynamic-proto receiver), the standalone
+`__proto__`-after-dynamic-accessor pins moved 10 → 11: the prototype link is
+now real (node's 1), while `Object.prototype.hasOwnProperty.call(o, '__proto__')`
+still answers true on such an object — measured identical on a plain
+`{ a: 1, __proto__: p }` with no accessor, so it is a pre-existing
+`__hasOwnProperty` gap over the `$Object` proto entry (gopd already answers
+`undefined`, `Object.keys` already excludes it). Residual, owner: the object
+runtime's own-key predicate; the pins were re-set to 11 in the PR.
+
