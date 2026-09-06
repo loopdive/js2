@@ -496,6 +496,56 @@ export function test(): number {
     ).toBe(5);
   });
 
+  it("leaves the read unguarded when a loop mixes a body super() with a nested-arrow super() (r5)", async () => {
+    // Probe e15 (round-4 review). The loop holds BOTH a constructor-body
+    // `super()` and one inside an arrow; on the path that runs the arrow the
+    // flag store cannot land, so trusting the body carrier threw on an
+    // initialised `this` (r4 answered 9). One untrusted carrier anywhere in
+    // the enclosing loops now leaves the read unguarded: node 22 answers 5 for
+    // this source (`super.zz` is absent).
+    expect(
+      await runStandalone(`
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor(useArrow: boolean) {
+    let i = 0; let v: any;
+    while (true) {
+      if (i === 1) { v = (super.zz as any); break; }
+      if (useArrow) { const f = () => { super(); }; f(); } else { super(); }
+      i = 1;
+    }
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number {
+  try { return new B(true).b; } catch (e) { return e instanceof ReferenceError ? 9 : 10; }
+}
+`),
+    ).toBe(5);
+  });
+
+  it("still guards a loop whose only carriers are constructor-body super() calls (r5 control)", async () => {
+    // The body-only shape keeps the runtime flag: the read on iteration 1
+    // precedes the loop's super(), so node throws (9) — xa13's shape.
+    expect(
+      await runStandalone(`
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor() {
+    let v: any;
+    for (let i = 0; i < 1; i++) { v = (super.zz as any); super(); }
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number {
+  try { return new B().b; } catch (e) { return e instanceof ReferenceError ? 9 : 10; }
+}
+`),
+    ).toBe(9);
+  });
+
   it("does the same when the loop's super() sits in an immediately-invoked arrow", async () => {
     // Probe s1c3 — the same shape written `(() => { super(); })()`. Node 22
     // answers 5 for this source (6 for the probe, which sets `A.prototype.zz`).

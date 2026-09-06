@@ -1672,17 +1672,48 @@ function classifySuperUninitializedRead(fctx: FunctionContext, expr: ts.Node): S
   // which is round-2 and base behaviour): still wrong for a read that really is
   // reached before the arrow's `super()` runs, but wrong in the direction that
   // answers `undefined` rather than inventing a throw.
+  // (#5350 r5 review) … and the flag is trustworthy only when EVERY carrier
+  // an enclosing loop holds can store into it. A loop with a constructor-body
+  // `super()` AND a nested-function `super()` (probe e15: `if (useArrow) { const
+  // f = () => { super() }; f() } else { super() }`) took the "runtime" arm on
+  // the strength of the body carrier, but on the path that ran the arrow's
+  // call the flag stayed 0 and the read threw on an initialised `this` (node 6,
+  // r4 9). One untrustworthy carrier anywhere in the enclosing loops therefore
+  // leaves the read UNGUARDED, whatever else the loop contains.
   let guardableCarrier = false;
-  let anyCarrier = false;
+  let untrustedCarrier = false;
   for (const loop of enclosingLoops) {
+    if (containsSuperCallInNestedFunction(loop)) untrustedCarrier = true;
     if (containsSuperCall(loop, undefined, /* skipNestedClasses */ true, /* skipNestedFunctions */ true)) {
       guardableCarrier = true;
     }
-    if (containsSuperCall(loop, undefined, /* skipNestedClasses */ true)) anyCarrier = true;
   }
+  if (untrustedCarrier) return "never";
   if (guardableCarrier) return "runtime";
-  if (anyCarrier) return "never";
   return "always";
+}
+
+/**
+ * (#5350 r5 review) True when `root` holds a `super(...)` INSIDE a nested
+ * function (arrow / function expression / function declaration), i.e. a
+ * carrier that initialises this constructor's `this` but whose store to the
+ * `__super_done` flag cannot land (it is lowered in the nested function's own
+ * `FunctionContext`). Nested classes are skipped: their `super()` belongs to
+ * another constructor.
+ */
+function containsSuperCallInNestedFunction(root: ts.Node): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) return;
+    if (ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isFunctionDeclaration(node)) {
+      if (containsSuperCall(node, undefined, /* skipNestedClasses */ true)) found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(root, visit);
+  return found;
 }
 
 /**

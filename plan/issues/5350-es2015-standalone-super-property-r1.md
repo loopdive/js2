@@ -942,3 +942,35 @@ criterion still does not hold, blocked by the pre-existing block-scoped-class
 capture defect. This round removed a regression the previous one introduced and
 banked one byte-size improvement; the corpus position is otherwise where round 3
 left it.
+
+### Review round 5 (2026-09-06, Fable lane)
+
+The round-4 reviewer found one shape the r4 rule still mis-guards: a loop
+holding BOTH a constructor-body `super()` and a nested-arrow `super()` (probe
+e15 `if (useArrow) { const f = () => { super() }; f() } else { super() }`,
+called with `useArrow = true`; e12 the branch form). r4 returned `"runtime"` on
+the strength of the body carrier, but on the executed path the arrow's call is
+the one that ran, its flag store cannot land, and the read threw on an
+initialised `this` (node 6, base 6, r2 6, r3 9, r4 9).
+
+Fix (`classifySuperUninitializedRead`, new helper
+`containsSuperCallInNestedFunction`): one untrusted carrier anywhere in the
+enclosing loops leaves the read UNGUARDED (`"never"`), whatever else the loop
+contains; `"runtime"` only when every carrier is a constructor-body `super()`.
+
+Measured, standalone, node 22 / r4 / r5 (probes `.tmp/rev5350e/p`,
+`.tmp/rev5350c/p`, `.tmp/rev5350d/p`, `.tmp/rev5350/p`):
+
+| probe | node | r4 | r5 |
+| --- | --- | --- | --- |
+| e15 mixed carrier (natural) | 6 | 9 | **6** |
+| e12 mixed carrier (branch) | 6 | 9 | **6** |
+| e2 e4 e5 e7 e8 e13 e14 e11 (nested-only carriers) | 6 | 6 | 6 |
+| e10 e3 (read really reached before the arrow's super) | 9 | 6 | 6 — accepted residual, base parity |
+| xa13 xa12 xa3 xa11 (body carrier, read before it) | 9 | 9 | 9 |
+| xa1 xa2 n4 n5 s1c2 s1c3 | 6 9 5 5 6 6 | same | same |
+| xa8 (read inside an arrow) | 9 | 6 | 6 — documented residual |
+
+Pins: two added (mixed carrier → 5 with `super.zz` absent; body-only control
+→ 9). Gates and the pin file green on node 22 and 25 (see the commit).
+
