@@ -680,9 +680,45 @@ export function collectReferencedGlobalNames(
     const p = id.parent;
     return (ts.isPropertyAccessExpression(p) && p.name === id) || (ts.isQualifiedName(p) && p.right === id);
   };
+  // #5351 — a lib.dom ambient `declare function` (e.g. `toString`, `blur`,
+  // `focus`) shadows a same-named binding the script itself creates at top
+  // level (`var toString = Object.prototype.toString;`). TypeScript does not
+  // merge the script's `var` with the ambient declaration, so a USE of that
+  // name still resolves to the lib declaration — `isAmbientGlobalDecl` above
+  // sees only the lib decl and never the user's own. Fix is therefore by
+  // NAME, not by re-resolving the use-site symbol: collect every name the
+  // user's own top-level statements bind, and never register one of those
+  // names as lib-referenced even though its uses resolve to the ambient decl.
+  //
+  // The exclusion is PER SOURCE FILE, and that scoping is load-bearing under
+  // `compileMulti` (review round 1). A top-level binding in a module is local
+  // to that module: `/helper.ts` doing `var queueMicrotask = 1` must not strip
+  // `/main.ts`'s genuine `queueMicrotask(...)` global. With one flat set across
+  // every user file it did — main's host import vanished and the call trapped
+  // on `unreachable`. All multi-file inputs are modules, so no cross-file
+  // script-global sharing has to be modelled: a file's own top-level
+  // `var`/`function`/`class`/`let`/`const` shadows the ambient global for
+  // references in THAT file and nowhere else.
+  const topLevelBindings = (sf: ts.SourceFile): Set<string> => {
+    const bound = new Set<string>();
+    for (const stmt of sf.statements) {
+      if (ts.isVariableStatement(stmt)) {
+        for (const decl of stmt.declarationList.declarations) {
+          if (ts.isIdentifier(decl.name)) bound.add(decl.name.text);
+        }
+      } else if (ts.isFunctionDeclaration(stmt) && stmt.name && !hasDeclareModifier(stmt)) {
+        bound.add(stmt.name.text);
+      } else if (ts.isClassDeclaration(stmt) && stmt.name && !hasDeclareModifier(stmt)) {
+        bound.add(stmt.name.text);
+      }
+    }
+    return bound;
+  };
   const names = new Set<string>();
+  // Reassigned per file below; `visit` never escapes its file's walk.
+  let userBound = new Set<string>();
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && !isPropertyNamePosition(node)) {
+    if (ts.isIdentifier(node) && !isPropertyNamePosition(node) && !userBound.has(node.text)) {
       const decls = checker.getSymbolAtLocation(node)?.getDeclarations();
       if (decls && decls.some(isAmbientGlobalDecl)) {
         names.add(node.text);
@@ -691,6 +727,7 @@ export function collectReferencedGlobalNames(
     forEachChild(node, visit);
   };
   for (const sf of userFiles) {
+    userBound = topLevelBindings(sf);
     for (const stmt of sf.statements) forEachChild(stmt, visit);
   }
   return names;
