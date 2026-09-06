@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-06T08:54:38.706Z",
+  "timestamp": "2026-09-06T15:29:03.040Z",
   "benchmarks": [
     {
       "name": "fib",
@@ -2701,6 +2701,16 @@
             "name": "__call_function_4"
           },
           "paramCount": 6
+        },
+        {
+          "module": "env",
+          "name": "__register_init_export",
+          "kind": "func",
+          "intent": {
+            "type": "builtin",
+            "name": "__register_init_export"
+          },
+          "paramCount": 2
         },
         {
           "module": "env",
