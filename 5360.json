@@ -1,11 +1,10 @@
 {
   "id": "5360",
-  "assignee": "",
-  "requested_by": "ttraenkler/fable-lead",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-09-06T05:16:18Z",
-  "updated_at": "2026-09-06T05:16:18Z",
-  "write_id": "8909-4pq8gubo",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/dev-5360",
+  "requested_by": "ttraenkler/dev-5360",
+  "status": "in-progress",
+  "branch": "issue-5360-temporal-era-seam",
+  "claimed_at": "2026-09-06T05:20:05Z",
+  "updated_at": "2026-09-06T05:20:05Z",
+  "write_id": "19930-3r9wk4vy"
 }
