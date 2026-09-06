@@ -61,13 +61,13 @@
  * correctly by accident of representation.
  */
 import { ts } from "../ts-api.js";
-import { isBigIntType, isBooleanType, isNumberType, isStringType } from "../checker/type-mapper.js";
+import { isBigIntType, isBooleanType, isNumberType, isStringType, isVoidType } from "../checker/type-mapper.js";
 import type { ValType } from "../ir/types.js";
 import { allocTempLocal, releaseTempLocal } from "./context/locals.js";
-import type { FunctionContext } from "./context/types.js";
+import type { CodegenContext, FunctionContext } from "./context/types.js";
 
 /** The §6.1 language types this fold can decide from a scalar representation. */
-export type ScalarJsTypeClass = "number" | "boolean";
+export type ScalarJsTypeClass = "number" | "boolean" | "undefined";
 
 /**
  * Classify an operand's §6.1 `Type()` from its Wasm representation *and* its
@@ -91,12 +91,32 @@ export function scalarJsTypeClass(
   // an intersection or an odd synthetic type that trips two is refused too.
   if (valType.kind === "f64" && num && !bool && !str && !big) return "number";
   if (valType.kind === "i32" && bool && !num && !str && !big) return "boolean";
+  // (#5357) `void` / `undefined` lowers to an `i32` slot holding 0 (type-mapper:
+  // "void → no result"), so `const u = undefined` reaches the scalar regime
+  // looking like a Number and `u === 0` / `u === false` answered `true`. Its
+  // Type() is Undefined — decidable against Number and Boolean by the same
+  // representation-agrees-with-static-type argument as the other two classes.
+  if (valType.kind === "i32" && isVoidType(tsType) && !num && !bool && !str && !big) return "undefined";
   return undefined;
 }
 
 /** Is this identifier a `var` the enclosing function also drives as a for-in target? */
 export function isDynamicForInOperand(fctx: FunctionContext, expr: ts.Expression): boolean {
   return ts.isIdentifier(expr) && fctx.forInIdentifierVars?.has(expr.text) === true;
+}
+
+/**
+ * (#5357) May an `i32` operand typed `undefined` be read as the VALUE
+ * `undefined`? Only for an identifier bound by a plain variable declaration
+ * (`const u = undefined`). A PARAMETER carries whatever the caller passed —
+ * `function g(v = undefined) { return v === 0 }` is typed `undefined` from its
+ * default alone (#5221) and `g(0)` must still answer `true` — and a
+ * destructuring element defaults the same way, so both refuse the class.
+ */
+function isUndefinedValuedBinding(ctx: CodegenContext, expr: ts.Expression): boolean {
+  if (!ts.isIdentifier(expr)) return false;
+  const declarations = ctx.oracle.declarationsOf(expr);
+  return declarations.length > 0 && declarations.every((decl) => ts.isVariableDeclaration(decl));
 }
 
 /**
@@ -108,7 +128,8 @@ export function isDynamicForInOperand(fctx: FunctionContext, expr: ts.Expression
  * the same shape the mixed-`i64`/`f64` strict-eq arm in the typed dispatch uses
  * for BigInt ⊥ Number.
  */
-function tryFoldStrictEqTypeDisjoint(
+function tryFoldTypeDisjoint(
+  ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
@@ -117,22 +138,29 @@ function tryFoldStrictEqTypeDisjoint(
   leftTsType: ts.Type,
   rightTsType: ts.Type,
 ): ValType | undefined {
-  const isStrictEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken;
-  const isStrictNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
-  if (!isStrictEq && !isStrictNeq) return undefined;
+  const isStrict = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsEqualsToken;
+  const isEq = op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken;
+  const isNeq = op === ts.SyntaxKind.ExclamationEqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken;
+  if (!isEq && !isNeq) return undefined;
 
   const leftStale = isDynamicForInOperand(fctx, expr.left);
   const leftClass = scalarJsTypeClass(leftTsType, leftType, leftStale);
   if (leftClass === undefined) return undefined;
+  if (leftClass === "undefined" && !isUndefinedValuedBinding(ctx, expr.left)) return undefined;
   const rightStale = isDynamicForInOperand(fctx, expr.right);
   const rightClass = scalarJsTypeClass(rightTsType, rightType, rightStale);
   if (rightClass === undefined) return undefined;
+  if (rightClass === "undefined" && !isUndefinedValuedBinding(ctx, expr.right)) return undefined;
   if (leftClass === rightClass) return undefined;
+  // (#5357) Loose equality coerces Number ⇄ Boolean (§7.2.15 steps 9-10), so
+  // only an Undefined side is decidable there: nullish equals nothing but
+  // nullish (steps 2-3), never a Number or a Boolean.
+  if (!isStrict && leftClass !== "undefined" && rightClass !== "undefined") return undefined;
 
   // Drop both operands (side effects already emitted) and answer from Type().
   fctx.body.push({ op: "drop" });
   fctx.body.push({ op: "drop" });
-  fctx.body.push({ op: "i32.const", value: isStrictNeq ? 1 : 0 });
+  fctx.body.push({ op: "i32.const", value: isNeq ? 1 : 0 });
   return { kind: "i32" };
 }
 
@@ -151,6 +179,7 @@ function tryFoldStrictEqTypeDisjoint(
  * (caller returns it directly), otherwise the possibly-promoted operand types.
  */
 export function foldTypeDisjointThenPromote(
+  ctx: CodegenContext,
   fctx: FunctionContext,
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
@@ -159,7 +188,7 @@ export function foldTypeDisjointThenPromote(
   leftTsType: ts.Type,
   rightTsType: ts.Type,
 ): { folded?: ValType; leftType: ValType; rightType: ValType } {
-  const folded = tryFoldStrictEqTypeDisjoint(fctx, expr, op, leftType, rightType, leftTsType, rightTsType);
+  const folded = tryFoldTypeDisjoint(ctx, fctx, expr, op, leftType, rightType, leftTsType, rightTsType);
   if (folded !== undefined) return { folded, leftType, rightType };
 
   if (leftType.kind === "i32" && rightType.kind === "f64") {

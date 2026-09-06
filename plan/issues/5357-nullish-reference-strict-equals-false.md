@@ -1,10 +1,12 @@
 ---
 id: 5357
 title: "`x === false` answers TRUE when `x` is a nullish reference — the operands are collapsed to f64 and `Number(null) === Number(false)`"
-status: ready
+status: done
 sprint: current
 created: 2026-09-06
 updated: 2026-09-06
+completed: 2026-09-06
+assignee: ttraenkler/sendev-5357
 priority: high
 horizon: m
 feasibility: hard
@@ -12,6 +14,14 @@ reasoning_effort: max
 task_type: bug
 area: compiler
 goal: correctness
+# 2026-09-06: runtime.ts sits exactly at its ceiling (19149). The change is a
+# one-token gate on the existing `__defineProperties` #2837 branch plus a
+# three-line comment; it cannot live in a subsystem module because it is the
+# branch itself that mis-targets a WasmGC object.
+loc-budget-allow:
+  - src/runtime.ts
+func-budget-allow:
+  - src/runtime.ts::resolveImport
 ---
 
 ## Problem
@@ -210,3 +220,150 @@ Model: **fable** (`feasibility: hard`, `reasoning_effort: max`). Two
 lanes, a fast path whose soundness boundary has to be established by
 measurement, and a test262 history (#272) of a nearby change costing net
 conformance. Dispatch after PR #5665 lands (it carries this file).
+
+## Resolution
+
+Base `50c81e5487` (upstream/main, 2026-09-06). Measured with a 60-row
+standalone probe through `compileAndRunUpstreamModule` (untyped `.js`
+two-file project, host lane) and the same rows single-file under
+`--target standalone` and `semanticProviders: "native-first"`; a
+deliberately failing control and two must-pass controls sanity-check the
+harness (an earlier probe shape — a `function` nested in the test arrow —
+answered `"true"` for every row including a string-returning one, and was
+thrown away).
+
+### What was actually wrong — three mechanisms, not one
+
+| rows | base (host) | base (standalone / native-first) | mechanism |
+| --- | --- | --- | --- |
+| `const n = null; n === false`, `pick(true) === false`, `pick(true) !== false`, `anyOne(true) === true`, `onEnter?.(x) === false` with `() => {}` / `() => 0` / `undefined`, prettier's `guarded` | wrong | right | the `__unbox_number` + `f64.eq` collapse (this issue) |
+| `null == false`, `null == 0`, `null != 0`, `pick(true) == 0` | wrong | right | the same collapse, loose form — the plan listed these as "unchanged" controls; measured wrong on the parent |
+| `const u = undefined; u === false / === 0 / == false / != 0 / !== false` | wrong | **wrong** | not the collapse: `void`/`undefined` maps to `{kind:"i32"}` (type-mapper "void → no result"), so `u` is an `i32` slot holding 0 and `u === 0` is `0 === 0` |
+
+The native lanes were already correct for every collapse row because the
+#1776 tag-dispatch block returns for every externref pair before the tail
+is reached, so the collapse is host-lane-only in practice. The plan's
+"box the scalar and send it to the reference arm, in both lanes" is still
+what landed: the helper carries the native branch so the semantics stay in
+one place if that gate ever moves.
+
+`__unbox_number` in the host lane is `Number(v)` (ToNumber), so the
+numeric fast path is unsound for ANY reference that is not statically
+numeric (`"0" === 0`, `true === 1`, `[0] === 0` would all collapse to
+`true`). Those number-scalar pairs were already routed to `__host_eq` by
+the #1986 arm; the tail only ever saw pairs with a statically-Boolean
+side, and the collapse is kept exactly for the number-typed references
+the fast path exists for.
+
+### Design
+
+- **`src/codegen/strict-eq-reference-arm.ts`** (new) —
+  `emitReferenceEqualityFromStack`: brands an `i32` scalar by its static
+  type (`boolean` → `__box_boolean`, symbol → `__box_symbol`) so the box
+  keeps the JS tag, then host lane → `emitHostEqualityFromStack`
+  (coercion-engine.ts stays the one `__host_eq` emitter), native-first →
+  `__extern_strict_eq` / `__any_eq`. `emitLooseScalarVsReferenceEquality`:
+  `ref.is_null` decides the nullish case (§7.2.15 steps 2-3) in front of
+  the ToNumber comparison, which IS steps 5-10 for a non-nullish reference.
+- **`binary-ops-typed-dispatch.ts`** — the wrapper arm and the #1986 arm
+  call the helper (two of the four inline `__host_eq` emissions gone:
+  coercion-sites net `__host_eq -4`, `__host_loose_eq -1`); the tail
+  reroutes every strict pair with a statically-Boolean side (the only
+  strict pairs that can reach it) and guards loose scalar-vs-reference
+  pairs. File shrinks 1610 → 1593 lines; the function stays under its
+  ceiling.
+- **`src/runtime.ts`** — `__defineProperties`' #2837 branch (a host
+  descriptor object carrying wasm-closure accessors) is gated to HOST
+  targets; a WasmGC target takes the existing opaque-object sidecar path.
+  Found by the A/B: axios's `utils.freezeMethods` runs `reduceDescriptors`
+  at module init and keeps every descriptor whose reducer result is
+  `!== false` — the exact #5357 shape. On the parent the reducer's
+  `undefined` collapsed to `0 !== 0`, every descriptor was dropped and the
+  freeze was a silent no-op; with a correct `!==` the throwing-setter
+  descriptors reached that branch, which called the raw
+  `Object.defineProperty` on the compiled `utils` object — "WebAssembly
+  objects are opaque", 12 of 34 axios unit files dead at module init
+  (200/231 → 73/231 before the gate).
+- **`strict-eq-type-disjoint.ts`** (#4208's scalar module) — an
+  `"undefined"` class for an `i32` whose static type is `void`/`undefined`,
+  decidable against Number and Boolean for `===` and, because nullish equals
+  nothing but nullish, for `==` too. Refused for anything but a plain
+  variable binding: a parameter typed `undefined` from its default alone
+  (`function g(v = undefined) { return v === 0 }`, nested so #5221's
+  widening does not apply) carries whatever the caller passed — with the
+  class applied to it `g(0)` answered `false`; refusing it restores the
+  parent's answers for that shape (`g(0)` right, `g()` wrong — #5221's).
+
+### Measurements
+
+- Probe, 60 rows: host 41/60 → 58/60; standalone 53/60 → 58/60;
+  native-first 53/60 → 58/60. The two residuals in every lane are the
+  deliberately failing control and the nested defaulted-parameter row
+  above (unchanged from the parent).
+- Regression test `tests/issue-5357-nullish-reference-strict-equals-false.test.ts`
+  (22 rows × 3 lanes + the axios `freezeMethods` shape): parent 18 failed /
+  50 passed of 68 (the matrix rows 16; both `freezeMethods` probes, whose
+  module init threw in the #2837 branch on the parent); fix 68/68.
+- Scoped test262 (`strict-equals`, `strict-does-not-equals`, `equals`,
+  `does-not-equals`; 149 tests): gc 139/149 → 139/149, standalone
+  136/149 → 136/149, identical residual sets in both lanes (ToPrimitive /
+  `Symbol.toPrimitive` / IsHTMLDDA / BigInt-width cases).
+- Existing suites #1986, #4208, #1776, #2081, #1065, #2605/#2606, #4397,
+  #5346, #4656, #2508: 149 passed, 2 failed — both fail identically on the
+  parent (`#4397 escape()` under native-first returns null; `#4656`'s
+  opaque-receiver `it.fails` residual), unrelated.
+- Dogfood A/B, 17 suites at one head: see the table below.
+
+### Dogfood A/B (base → fix at `50c81e5487`, 17 suites, one at a time)
+
+| package | base | fix | per-file change |
+| --- | --- | --- | --- |
+| lodash | 58/62 | 59/62 | `test.js` 58 → 59 |
+| axios | 200/231 | 200/231 | none (73/231 before the runtime gate) |
+| prettier | 105/151 | 105/151 | none — `is-empty-doc` 10/16 both, `print-doc-to-string` 0/3 both (#5356) |
+| jest | 335/356 | 335/356 | none |
+| hono | 229/324 | 229/324 | none |
+| redux | 66/82 | 66/82 | none |
+| marked | 9/30 | 9/30 | none |
+| three | 17/18 | 17/18 | none |
+| webpack, clsx, cookie, stylelint, tailwindcss, jsdom, styled-components, uuid, moment | 16/16, 32/32, 63740/63740, 108/108, 13/13, 6/6, 9/9, 75/75, 10/10 | identical | none |
+
+All 17 suites exited 0 with an `admitted` headline in both runs; no file
+regressed. (The jest `queueRunner.test.ts` and hono `cookie.test.ts`
+compile failures are on both sides.)
+
+### Prettier: what this fix does and does not move
+
+The plan expected `is-empty-doc` 7/16 → ≥ 15/16 with #5346 + this fix.
+Measured: 10/16 before (that is #5346's 7 → 10) and 10/16 after, prettier
+105/151 → 105/151. The six remaining rows all expect `false`, and
+`isEmptyDoc` produces `false` only by writing `isEmpty = false` from inside
+the `traverseDoc` callback and reading it after the call. A minimal probe
+(`.tmp/probe-5357/capture.mjs` shape) answers the question directly:
+
+| shape | Node | Wasm (this branch) |
+| --- | --- | --- |
+| `let flag = true; const cb = () => { flag = false }; cb(); flag` | false | false |
+| `let isEmpty = true; traverse(["a"], (d) => { isEmpty = false; return false; }); isEmpty` | false | **true** |
+
+A `let` written inside a callback that is passed through another function
+is not visible to the enclosing function afterwards — #5356's eager
+capture box, exactly as the dispatch note said for `print-doc-to-string`
+(0/3 before and after; it needs #5356 as well). `traverseDoc`'s
+`onEnter?.(doc) === false` gate itself IS fixed here: `guarded(() => {})`
+now visits.
+
+### Left out, deliberately
+
+- `u === undefined` where `u` is the `i32`-lowered `const u = undefined`
+  and the right side materialises via #4656 still answers `false`
+  (`__host_eq(__box_number(0), undefined)`); same on the parent. Fixing it
+  means materialising the `i32` as the canonical `undefined` externref
+  rather than folding, which changes representation for every equality on
+  such a binding — a separate slice.
+- A nested function's `v = undefined` parameter is still an `i32` slot
+  (#5221 applies only where the widening runs); `g()` answers `true` for
+  `v === 0` on the parent and after this fix alike.
+- A statically-number externref against an `any` reference
+  (`numRef === anyRef`) keeps the collapse, as the plan asked; it is wrong
+  when `anyRef` holds `"1"` or `true`, and was not in the matrix.
