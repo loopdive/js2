@@ -36,6 +36,7 @@ import { setProgramAbiInheritedClassCallableAlias } from "./program-abi-class-ca
 import { absoluteFuncIndex } from "../emit/resolve-layout.js"; // (#1916 S3b) resolve handles for order-stable declaredFuncRefs sort
 import { definedFuncAt } from "./func-space.js";
 import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
+import { emitSuperInitializedFlagStore, ensureSuperInitializedFlagLocal } from "./expressions/new-super.js"; // (#5350 r3) runtime this-initialised flag
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";
@@ -2842,6 +2843,10 @@ function compileClassBodiesInner(
       }
       hoistVarDeclarations(ctx, fctx, ctor.body.statements);
       hoistLetConstWithTdz(ctx, fctx, ctor.body.statements);
+      // (#5350 r3 review, S1) Before ANY statement is compiled: a `super(...)`
+      // is routinely lowered before the read whose classification motivates the
+      // flag, so the local must already exist when the store is emitted.
+      ensureSuperInitializedFlagLocal(ctx, fctx, ctor);
       for (const stmt of ctor.body.statements) {
         // Handle super(args) calls: inline parent constructor field initialization
         if (
@@ -2850,6 +2855,7 @@ function compileClassBodiesInner(
           stmt.expression.expression.kind === ts.SyntaxKind.SuperKeyword
         ) {
           compileSuperCall(ctx, fctx, className, selfLocal, stmt.expression, fields);
+          emitSuperInitializedFlagStore(fctx); // (#5350 r3) `this` is initialised from here on
           if (isDerivedClass) {
             emitOwnInstanceFieldInitializers();
           }
@@ -3899,6 +3905,7 @@ function emitPromiseSubclassOnHostCtor(
         stmt.expression.expression.kind === ts.SyntaxKind.SuperKeyword
       ) {
         compileSuperCall(ctx, fctx, className, selfLocal, stmt.expression, [], /* onHost */ true);
+        emitSuperInitializedFlagStore(fctx); // (#5350 r3) `this` is initialised from here on
         continue;
       }
       compileStatement(ctx, fctx, stmt);

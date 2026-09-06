@@ -514,6 +514,46 @@ export function compileObjectLiteralAsExternref(
         }
       }
     }
+    // (#5350 r1 review, F1) §B.3.1 `__proto__` Property Names in Object
+    // Initializers, on the OPEN-`$Object` construction path. The sibling arm in
+    // `compileObjectLiteralWithAccessors` got this in #5270 step 2; this path
+    // did not, so a NON-computed `__proto__:` key was stored by the data-property
+    // arm below as an ordinary own property and the literal's runtime
+    // [[Prototype]] was never linked. Everything that walks the chain then
+    // missed it: `Object.getPrototypeOf(o) === proto` answered false, an
+    // inherited `o.p()` trapped, and — the reason this surfaced — an
+    // object-literal method's `super.m()` resolved its base through
+    // `__getPrototypeOf(homeObject)`, got nullish, and threw an ESCAPING
+    // TypeError out of the export (probes h1b/i1/h1/h2/h3/i3).
+    //
+    // `__object_setPrototypeOf` implements the whole §B.3.1 rule (Object or Null
+    // sets, anything else is silently ignored), so the arm is just the call.
+    // Standalone only: the host/gc lane stores through `__extern_set`, where the
+    // host object's real `__proto__` setter already does this job, and `--target
+    // wasi` keeps its bytes.
+    else if (
+      ctx.standalone &&
+      ts.isPropertyAssignment(prop) &&
+      !ts.isComputedPropertyName(prop.name) &&
+      resolvePropertyNameText(ctx, prop) === "__proto__"
+    ) {
+      const spoIdx = ensureLateImport(
+        ctx,
+        "__object_setPrototypeOf",
+        [{ kind: "externref" }, { kind: "externref" }],
+        [{ kind: "externref" }],
+      );
+      flushLateImportShifts(ctx, fctx);
+      if (spoIdx === undefined) continue;
+      fctx.body.push({ op: "local.get", index: objLocal });
+      const protoType = compileExpression(ctx, fctx, prop.initializer, { kind: "externref" });
+      if (!protoType) fctx.body.push({ op: "ref.null.extern" });
+      else if (protoType.kind !== "externref") coerceType(ctx, fctx, protoType, { kind: "externref" });
+      // Resolved AFTER the value compile: it may have pulled a late import,
+      // which shifts every function index captured before it.
+      fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__object_setPrototypeOf") ?? spoIdx });
+      fctx.body.push({ op: "drop" }); // returns `obj`
+    }
     // (#1901) Named data properties — `key: value` and shorthand `{ x }`. Build
     // them onto the $Object via native __extern_set so a downstream string-key
     // read (`o.x`), method dispatch (`o.m()`), or ToPrimitive (valueOf/toString)
@@ -1479,11 +1519,11 @@ function compileObjectLiteralWithAccessors(
       // stored $PropEntry.$get holds a real callable closure that __extern_get's
       // accessor arm dispatches via __call_accessor_get → __call_fn_method_0
       // (receiver bound as `this` through __current_this). Else JS-host callback.
+      // (#5350 r3 review, S3) `objLocal` is the accessor's [[HomeObject]].
+      const accOpts = { forceMutableCaptures: accessorForceMutable, sharedRefCells: accessorSharedRefCells };
       if (pair.getter) {
-        const ok = emitObjectLiteralAccessorFn(ctx, fctx, pair.getter as unknown as ts.FunctionExpression, {
-          forceMutableCaptures: accessorForceMutable,
-          sharedRefCells: accessorSharedRefCells,
-        });
+        const get = pair.getter as unknown as ts.FunctionExpression;
+        const ok = emitObjectLiteralAccessorFn(ctx, fctx, get, accOpts, objLocal);
         if (!ok) fctx.body.push({ op: "ref.null.extern" });
       } else {
         fctx.body.push({ op: "ref.null.extern" });
@@ -1491,11 +1531,9 @@ function compileObjectLiteralWithAccessors(
 
       // Setter
       if (pair.setter) {
-        const ok = emitObjectLiteralAccessorFn(ctx, fctx, pair.setter as unknown as ts.FunctionExpression, {
-          forceMutableCaptures: accessorForceMutable,
-          sharedRefCells: accessorSharedRefCells,
-          forceExternrefParams: true,
-        });
+        const set = pair.setter as unknown as ts.FunctionExpression;
+        const setOpts = { ...accOpts, forceExternrefParams: true };
+        const ok = emitObjectLiteralAccessorFn(ctx, fctx, set, setOpts, objLocal);
         if (!ok) fctx.body.push({ op: "ref.null.extern" });
       } else {
         fctx.body.push({ op: "ref.null.extern" });
@@ -1530,9 +1568,24 @@ function emitObjectLiteralAccessorFn(
     sharedRefCells?: SharedRefCellMap;
     forceExternrefParams?: boolean;
   },
+  // (#5350 r3 review, S3) The object literal being built, so an accessor body
+  // that reads `super.<x>` carries the same synthetic [[HomeObject]] capture a
+  // METHOD body already got (`emitObjectLiteralMethodFn`). Without it the
+  // accessor's `super` resolution finds no home-object local, declines, and
+  // `super.missing()` inside a getter answered a typed default (null) where
+  // node throws a TypeError — probe xd1, byte-identical across r1 and r2
+  // because the accessor is a DIFFERENT lowering path from the method arm the
+  // earlier rounds fixed.
+  homeObjectLocal?: number,
 ): boolean {
   if (ctx.standalone || ctx.targetProfile.semanticProviders === "native-first") {
-    const closureType = compileArrowAsClosure(ctx, fctx, fn);
+    // Same narrowing as the method arm: only a body that actually mentions
+    // `super` takes the capture, so every other accessor stays byte-stable.
+    const superHomeLocal =
+      homeObjectLocal !== undefined && fn.body !== undefined && genBodyReferencesSuper(fn.body)
+        ? homeObjectLocal
+        : undefined;
+    const closureType = compileArrowAsClosure(ctx, fctx, fn, superHomeLocal);
     if (!closureType) return false;
     if (closureType.kind !== "externref") {
       fctx.body.push({ op: "extern.convert_any" });
