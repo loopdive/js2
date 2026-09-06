@@ -60,6 +60,7 @@ import { reserveNativeConstructDriver } from "./native-construct.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 import { ensureLateImport, flushLateImportShifts } from "./shared.js";
+import { undefinedSingletonActive } from "./any-helpers.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
 const I32: ValType = { kind: "i32" };
@@ -319,6 +320,35 @@ export function emitArraySpeciesCreate(
   const throwNonCtor = buildThrowJsErrorInstrs(ctx, "TypeError", "ArraySpeciesCreate: @@species is not a constructor", {
     flush: fctx,
   });
+
+  // (#5349 step 1) An EXPLICIT `a.constructor = null` is §10.4.2.3 step 9's
+  // TypeError, not the default lane: step 7 only maps a null value to undefined
+  // for the *@@species* read (step 8), and a null `C` is neither an Object (so
+  // step 7 is skipped) nor undefined (so step 8's default return is skipped).
+  //
+  // The two are distinguishable only under the #2106 undefined singleton, where
+  // an absent property answers the `undefined` carrier and an explicit null
+  // answers `ref.null.extern`; with `JS2WASM_UNDEF_SINGLETON=0` they collapse
+  // onto the same value and this discrimination would turn `[].map(f)` on a
+  // plain array into a TypeError, so the arm is emitted only when the singleton
+  // regime is active. The check runs BEFORE `defaultLaneTest`'s `nullish`
+  // disjunct, which is what would otherwise swallow the null; L343's
+  // `defaultLaneTest` on the post-`@@species` value keeps its `ref.is_null`
+  // disjunct untouched (`create-species-null.js`).
+  if (undefinedSingletonActive(ctx)) {
+    fctx.body.push({ op: "local.get", index: ctorLocal }, { op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      // A FRESH array (never `throwNonCtor` itself): the finalize walks remap
+      // every Instr object they reach, and one array spliced into two body
+      // positions is remapped twice. The message is deliberately the same
+      // string as `throwNonCtor` so this arm interns no new constant.
+      then: buildThrowJsErrorInstrs(ctx, "TypeError", "ArraySpeciesCreate: @@species is not a constructor", {
+        flush: fctx,
+      }),
+    });
+  }
 
   const constructArm: Instr[] = [
     { op: "local.get", index: ctorLocal },
