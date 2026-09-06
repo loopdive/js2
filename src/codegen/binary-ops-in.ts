@@ -15,6 +15,8 @@ import { getArrTypeIdxFromVec } from "./registry/types.js"; // (#4491 T11)
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import { popBody, pushBody } from "./context/bodies.js";
 import { allocLocal, allocTempLocal, releaseTempLocal } from "./context/locals.js";
+import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"; // (#5358)
+import { isNumericIndexExpression } from "./property-access.js"; // (#5358)
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
   emitPrivateBrandPredicate,
@@ -783,6 +785,9 @@ export function compileInOperator(ctx: CodegenContext, fctx: FunctionContext, ex
     // covers WasmGC structs / vec types / TS-typed properties where the
     // compile-time answer is reliable.
     if (rightWasm.kind === "externref" || rightWasm.kind === "anyref") {
+      // (#5358) The host answers a class instance's prototype methods through
+      // the same `__member_kind_<key>` bridge the read uses — publish them.
+      if (!isNumericIndexExpression(ctx, expr.left, fctx)) recordRuntimeKeyClassMethodRead(ctx, undefined);
       const hasIdx = ensureLateImport(
         ctx,
         "__extern_has",

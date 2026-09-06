@@ -220,6 +220,7 @@ export function createCodegenContext(
     closureMinimumArgumentCountByFuncTypeIdx: new Map(),
     hostDynamicClassMethodNames: new Set(),
     hostDynamicClassAccessorReads: new Set(),
+    runtimeKeyClassMethodNames: new Set(),
     genericResolved: new Map(),
     funcRestParams: new Map(),
     funcUsesArguments: new Set(),
