@@ -631,3 +631,123 @@ Standalone control (464 rows under `built-ins/Proxy` + `built-ins/Reflect`):
 
 Remaining `-realm` rows (6) and the two exotic-target-is-proxy rows are
 documented in the residuals; none is reachable without a cross-realm model.
+
+## Implementation Plan — r5 (2026-09-05, Fable lane; Opus-high implements)
+
+Investigation (read-only, 2026-09-05, scratch `.tmp/w5/attr/`) overturned the
+r4 residual's framing: the descriptor helpers DO describe an object literal's
+own properties through a proxy dispatch on standalone (measured W/E/C=7,
+`instance-props.ts:367-420` already has the closed-struct arm). Two real
+defects remain, plus a static fold, plus the unbuilt receiver `Reflect.set`
+whose primitives are all measured working on the base tree. Steps in strict
+dependency order; step 1 must land before step 2 (probe `v1`: un-folding gopd
+without the integrity arm ships a spurious TypeError to every Proxy program).
+
+1. **`__integrity_bag` learns the #4194 instance carrier** —
+   `src/codegen/object-integrity-carrier.ts:107` `registerIntegrityBagResolver`:
+   append a fourth arm before the `ref.null.extern` terminal at L153, same shape
+   as the vec/closure/Error arms: `if (__is_instance_expando_carrier(v)) return
+   __closure_bag_ensure(v)`. Both funcIdx are already in `ctx.funcMap`
+   (`reserveInstanceProps` at `object-runtime.ts:1325` precedes
+   `buildObjectDescriptorHelpers` at L6345) — add instructions to the existing
+   body, mint nothing, so no funcIdx shifts. Do not extend the §7.3.15 level walk
+   (`decode(localIdx)` at L376-378 is restricted to the direct `$Object` on
+   purpose). This fixes `Object.isExtensible/isFrozen/isSealed` and
+   `Reflect.isExtensible` on object literals, class instances and `__fnctor_`
+   structs (pristine instance: node 1 / base 6 → 1), and makes
+   `preventExtensions`/`seal`/`freeze` on them actually record (mutators share
+   `integrityBagIdx`, `object-runtime-integrity.ts:114`). Decide explicitly
+   whether the predicate path may ENSURE a bag (the vec/closure/Error arms do;
+   `carrier-bag-visibility.ts:58-62` states the opposite rule for the visibility
+   resolver) — if you keep ENSURE, say why in the arm's comment.
+2. **`Object.getOwnPropertyDescriptor` literal-key fold: the `else` arm calls
+   the dynamic helper** — `src/codegen/expressions/call-builtin-static.ts:2973-2992`:
+   under `ctx.standalone`, replace the `undefined` emit (reached only when the
+   guarded `ref.test structTypeIdx` has already FAILED) with
+   `local.get gopdTmp; extern.convert_any; <key string const>; call
+   __getOwnPropertyDescriptor`, resolved with `ensureLateImport` +
+   `flushLateImportShifts` AFTER the then-arm's late imports (mirror the
+   `ensureGetUndefined` comment). The then-arm stays byte-identical. The second
+   fold arm at L3083-3095 ("property not found in struct → undefined", no
+   runtime guard) is a KNOWN residual — leave it, record it.
+3. **`in` stops its positive fold on a Proxy-provenance receiver** —
+   `src/codegen/binary-ops-in.ts:605`: `const proxyReceiverRoute = (ctx.standalone
+   || ctx.wasi) && isDirectProxyBinding(ctx, expr.right)`; `has = proxyReceiverRoute
+   ? false : <existing cascade>`, and add `proxyReceiverRoute ||` to the runtime
+   route disjunction at L650-663. Use `isDirectProxyBinding`
+   (`proxy-value-provenance.ts:108`), NOT `tracesToProxyValue` — the alias
+   hazard documented at L120-127 is pre-existing and would turn a correct answer
+   into `[]`.
+4. **Restore the two §10.5 clauses r4 declined** —
+   `src/codegen/object-runtime-proxy-invariants.ts`: in `__proxy_inv_has` (L437)
+   append `...notExtensible(0), ...throwIf()` after the configurable check; in
+   `__proxy_inv_delete` (L582) replace the L601-604 DECLINED note with the same
+   two lines (fresh `Instr[]` per splice — the factories, never a shared array;
+   the finalize remap walk has no dedup set). Delete the decline note; it was
+   forced by step 1's gap, not by the clauses. Keep the `ctx.wasi` gate at L88 —
+   step 1 fixes wasi's `isExtensible` but not its `getOwnPropertyNames` (0) or
+   gopd (traps), which are `fillClosedStruct*Arms` being `ctx.standalone`-gated.
+5. **`Object.preventExtensions` / `Object.setPrototypeOf` honour a false
+   status** — `call-builtin-static.ts:1817-1855` returns the helper's externref
+   and never implements §20.1.2.19 step 3 / §20.1.2.22 step 3 "if status is
+   false, throw TypeError" (probes `y1`/`y2`: node throws, base returns). Add
+   the throw on the standalone arm only where the helper reports a boolean
+   status; measure that a Proxy-free `Object.preventExtensions(o)` is
+   behaviour-identical (it always succeeds on ordinary objects).
+6. **`Reflect.set` with an explicit receiver (§10.1.9.2)** — register
+   `__reflect_set_receiver(target, key, value, receiver) -> i32` next to
+   `__reflect_set` (`object-runtime.ts:4230`) and replace the refusal at
+   `call-namespace-static.ts:1099-1118` with a call to it, keeping the
+   `boundaryReflectInterop` arm (L1100-1107) ahead and reusing
+   `emitReflectArgumentLocals` + `coerceReflectPropertyKey` so §7.1.19 abrupt
+   completions still escape. Body from existing natives: `ownDesc =
+   __getOwnPropertyDescriptor(target, key)`; absent ⇒ `parent =
+   __getPrototypeOf(target)`, non-null ⇒ recurse on `(parent, key, value,
+   receiver)`, null ⇒ default `{W,E,C:true}` data descriptor; data ⇒ `writable`
+   falsy ⇒ 0; receiver not an Object (the by-exclusion test at
+   `object-runtime-proxy-invariants.ts:163-178` or `emitNativeReflectNonObjectGuard`)
+   ⇒ 0; `existing = __getOwnPropertyDescriptor(receiver, key)` accessor or
+   non-writable ⇒ 0; present ⇒ `__obj_define_from_desc(receiver, key, {value})`;
+   absent ⇒ `__extern_set(receiver, key, value)` (measured W/E/C=true, probe
+   `r3`); accessor ⇒ `setter = __extern_get(ownDesc,"set")`, absent ⇒ 0, else
+   `__call_accessor_set(receiver, setter, value)` ⇒ 1. The receiver is an explicit
+   parameter throughout — no module-global channel. Keep the 3-arg path
+   (L1121-1150) and the host 4-arg import (L2170) untouched. Then, as a
+   SEPARATE commit, the `ref.test $__ta_dyn_view` arm for §10.4.5.5 in
+   `ta-dyn-mop.ts` (`SameValue(O, Receiver)` ⇒ existing `__reflect_set` TA arm at
+   L1109; else `!IsValidIntegerIndex` ⇒ 1; else the ordinary walk) — without it
+   the 8 TypedArray rows move compile_error → fail. Export the native so the
+   super-property lane (#5350 M2) can call it; that lane does not build its own.
+
+Measurement protocol: base = `git archive origin/main` tree with linked
+node_modules/test262 and a rebuilt bundle + quickjs eval provider (rebuild both
+again after the last src edit); node 22 oracle, node 25 for changed test files;
+reuse the investigation harnesses `.tmp/w5/attr/{runwrap2,hash,dump}.mts` and
+probes `.tmp/w5/attr/*/` while they exist. Row lists: `.tmp/w5/attr/rows.txt`
+(12 target rows), `rows-reg.txt` (9 held rows incl. the two r4 declined over),
+and the two controls that were NOT run by the investigation and are required
+here: every ES2015 row under `built-ins/Proxy` + `built-ins/Reflect` (464) and
+every row under `built-ins/Object/{freeze,seal,preventExtensions,isExtensible,
+isFrozen,isSealed}` (~317) — zero rows lost against base by set-diff of non-pass
+paths, compile timeouts re-run alone at `COMPILER_POOL_SIZE=1`.
+
+Acceptance: (a) the 6 measured flips (3 gopd rows, `has/return-false-target-
+prop-exists`, `has/return-false-target-not-extensible`, `deleteProperty/
+targetdesc-is-configurable-target-is-not-extensible`) + the 2 status rows
+(`preventExtensions/trap-is-missing-target-is-proxy`, `setPrototypeOf/trap-is-
+missing-target-is-proxy`) + 7 `Reflect/set` rows + 8 `TypedArrayConstructors/
+internals/Set/*reflect-set*`/receiver rows pass; (b) both controls zero lost;
+(c) byte-identical to base on host for every program, and on all targets for a
+program that touches no MOP helper and for a Proxy-free program whose only MOP
+use is `in`; the gopd then-arm unchanged; (d) pins in
+`tests/issue-5316-r4-invariants.test.ts` (or a new r5 file) for each step
+including the integrity matrix (pristine/frozen/sealed × literal/class
+instance/array/function/Date = node), `v1`, `j1`/`j2`/`z4`, `w4`/`w5`, `r1`-`r5`
+and the receiver `Reflect.set` shapes, all asserting `result.imports` `[]`; (e)
+gates green bare and with `LOC_GATE_BASE=origin/main`; grants in this
+frontmatter. Residuals to record, not fix: the `instanceof` fold
+(`identifiers.ts:2913` `compileHostInstanceOf`, 1 row), the string/array-exotic
+own properties through a proxy chain (2 rows), `defineProperty/null-handler`
+(revoked proxy on the `__obj_define_from_desc` path), the four `Reflect.set`
+rows reached through `with`/realm/array-length machinery, and the stale entries
+in this issue's 50-row list that already pass (strike them).

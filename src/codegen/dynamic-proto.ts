@@ -237,6 +237,39 @@ export function scanForDynamicProto(ctx: CodegenContext, root: ts.Node): void {
       // (#4163) the assigned value is a proto-source.
       markProtoSource(node.right);
     }
+    // (#5350 r1 review, F1) `{ __proto__: v, … }` — the §B.3.1 colon form. The
+    // literal IS a proto-mutation receiver: its [[Prototype]] is set during
+    // literal evaluation, exactly like `o.__proto__ = v` one statement later.
+    // Without the mark the literal builds as a CLOSED struct, which has no
+    // `$proto` field, so `__object_setPrototypeOf`'s `ref.test $Object` fails
+    // and the link is silently dropped — `Object.getPrototypeOf(o) === proto`
+    // read false, an inherited `o.p()` trapped, and an object-literal method's
+    // `super.m()` threw an escaping TypeError out of the export (its base is
+    // `__getPrototypeOf(homeObject)`, which answered nullish). Marking the
+    // literal reuses the whole Slice-A promotion: literals.ts builds it as an
+    // open `$Object` and variables.ts / index.ts type the binding slot
+    // externref in lockstep. The VALUE is a proto-source (#4163) for the same
+    // reason `Object.setPrototypeOf`'s second argument is.
+    //
+    // Standalone only: the dropped-link gap is standalone-only (the host lane's
+    // `__extern_set(obj, "__proto__", v)` goes through the host object's real
+    // `__proto__` setter), and `nested-declarations.ts`'s capture-typing
+    // consumer of this set is NOT target-gated, so an unconditional mark would
+    // move gc/host and wasi bytes.
+    if (ctx.standalone && ts.isObjectLiteralExpression(node)) {
+      const colonProto = node.properties.find(
+        (p) =>
+          ts.isPropertyAssignment(p) &&
+          !ts.isComputedPropertyName(p.name) &&
+          (ts.isIdentifier(p.name) || ts.isStringLiteral(p.name)) &&
+          p.name.text === "__proto__",
+      );
+      if (colonProto !== undefined) {
+        ctx.usesDynamicProto = true;
+        ctx.dynamicProtoLiteralNodes.add(node);
+        markProtoSource((colonProto as ts.PropertyAssignment).initializer);
+      }
+    }
     // (#4163) `F.prototype = X` for an APPROVED user fnctor (#2660 S2/S3a):
     // the assigned object becomes the live `[[Prototype]]` seed of every
     // reconstructed `new F()` instance, so a literal-initialized binding X
