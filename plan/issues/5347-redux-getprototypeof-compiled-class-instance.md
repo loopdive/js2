@@ -1,10 +1,11 @@
 ---
 id: 5347
 title: "Object.getPrototypeOf on a COMPILED class instance answers Object.prototype — redux isAction 0/1, plus the `vm` gap and a compiler hang, from #5325's residuals"
-status: ready
+status: in-progress
+assignee: ttraenkler/senior-dev
 sprint: current
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-06
 priority: medium
 horizon: m
 feasibility: medium
@@ -12,6 +13,23 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: correctness
+# 2026-09-06 — the whole mechanism lives in two NEW subsystem modules
+# (src/codegen/class-instance-proto.ts, src/runtime/compiled-class-prototype.ts).
+# What lands in the two god-files is the irreducible wiring: one import plus a
+# two-line call in each. In `runtime.ts` the call site cannot move — the answer
+# has to be given INSIDE the `__getPrototypeOf` arm, after the explicit-link /
+# Object.create / fnctor checks and before the `__is_data_struct` default, so
+# the ordering IS the fix (identical argument to #5325's, one arm later). In
+# `codegen/index.ts` the emitter must be invoked from both the single-source and
+# the multi-source finalize sequences, at the same point as its `Object.create`
+# twin, which is +4/+3 lines split across the two drivers.
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/runtime.ts
+func-budget-allow:
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/runtime.ts::resolveImport
 ---
 
 ## Problem

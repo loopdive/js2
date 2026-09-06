@@ -57,6 +57,7 @@ import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./ru
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
 import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime/date-host-method.js";
 import { wasmCarrierBuiltinPrototype } from "./runtime/wasm-carrier-prototype.js"; // (#5325)
+import { compiledClassInstancePrototype } from "./runtime/compiled-class-prototype.js"; // (#5347)
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
@@ -13956,6 +13957,10 @@ assert._isSameValue = isSameValue;
             // runtime/wasm-carrier-prototype.ts for why and for what it declines.
             const carrierProto = wasmCarrierBuiltinPrototype(obj, exports);
             if (carrierProto !== undefined) return carrierProto;
+            // (#5347) …and neither is a compiled CLASS INSTANCE. The position
+            // IS the fix — see runtime/compiled-class-prototype.ts.
+            const classProto = compiledClassInstancePrototype(obj, exports);
+            if (classProto !== undefined) return classProto;
             const isDataStruct = exports?.__is_data_struct as ((value: any) => number) | undefined;
             if (typeof isDataStruct === "function") {
               try {
