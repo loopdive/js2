@@ -8051,6 +8051,20 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
   const promiseValue = _nativePromiseToHost(obj, exports);
   if (promiseValue !== _MISS) return promiseValue;
 
+  // (#5362) A compiled TypedArray and an ordinary Array share ONE vec carrier;
+  // codegen brands the former (`__register_typed_array`). `__make_iterable`
+  // honoured that brand, but this function — which every host-call ARGUMENT
+  // crosses — did not, so the carrier arrived as the vec facade. That facade
+  // is a Proxy, and `ArrayBuffer.isView` reads internal slots a Proxy cannot
+  // forward, so it can never satisfy a WebIDL `BufferSource`. Placed BEFORE
+  // `_hostProxyCache` because `_wrapVecForHost` populates that cache; the
+  // mirror has its own identity cache, so identity stays stable. Full story
+  // and the shapes that reproduce: tests/issue-5362-*.test.ts.
+  if (_compiledTypedArrayKinds.has(obj)) {
+    const typedArrayMirror = _compiledTypedArrayMirror(obj, { getExports: () => exports });
+    if (typedArrayMirror !== undefined) return typedArrayMirror;
+  }
+
   const cached = _hostProxyCache.get(obj);
   if (cached) {
     const slot = _hostProxyExportSlots.get(obj);
