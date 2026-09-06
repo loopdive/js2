@@ -311,4 +311,38 @@ export function test(): number {
 `),
     ).toBe(1);
   });
+  // (r2 review, R1) The back-edge narrowing was over-broad: r1 suppressed the
+  // throw for ANY enclosing loop or labelled statement, so a read genuinely
+  // executed before `super()` stopped throwing whenever it sat inside a loop
+  // that contains no `super()` at all. Node 22 answers 9 (ReferenceError) for
+  // all three; r1 answered 6.
+  const preSuperInEnclosingBlock = (header: string, footer: string): string => `
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor() {
+    let v: any;
+    ${header} v = (super.zz as any); ${footer}
+    super();
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number {
+  try { return new B().b; } catch (e) { return e instanceof ReferenceError ? 9 : 10; }
+}
+`;
+
+  it("throws for a pre-super read inside a for-loop that contains no super()", async () => {
+    expect(await runStandalone(preSuperInEnclosingBlock("for (let i = 0; i < 1; i++) {", "}"))).toBe(9);
+  });
+
+  it("throws for a pre-super read inside a while-loop that contains no super()", async () => {
+    expect(await runStandalone(preSuperInEnclosingBlock("while (true) {", "break; }"))).toBe(9);
+  });
+
+  it("throws for a pre-super read inside a labelled block", async () => {
+    // A labelled BLOCK is forward-only — `break lbl` jumps out, never back — so
+    // it can never carry a later `super()` over the read.
+    expect(await runStandalone(preSuperInEnclosingBlock("lbl: {", "break lbl; }"))).toBe(9);
+  });
 });

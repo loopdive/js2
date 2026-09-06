@@ -1471,26 +1471,32 @@ function emitSuperExtendsNullThrow(
  */
 function superReadPrecedesSuperCall(fctx: FunctionContext, expr: ts.Node): boolean {
   if (!fctx.isDerivedConstructor) return false;
+  // (#5350 r2 review, R1) NO BACK-EDGE THAT CAN CARRY A `super()` OVER THE
+  // READ. Source position orders the TEXT, not the execution, and the one
+  // construct that lets a textually LATER `super()` run BEFORE this read is a
+  // loop's back-edge — but only when that `super()` is INSIDE the same loop:
+  // `while (true) { if (i === 1) { v = super.zz; break } super(); i = 1 }`
+  // reaches the read on the second iteration with `this` long initialised
+  // (node answers 5, probes n4/n5). A loop that contains NO `super()` has no
+  // such edge, so `for (let i = 0; i < 1; i++) { v = super.zz } super()` is
+  // still an unconditional ReferenceError (probes d02b/d10) — r1 suppressed
+  // those too, by returning false for ANY enclosing iteration statement.
+  // Labelled statements are not a case at all: a labelled BLOCK is
+  // forward-only (`break lbl` jumps out, never back — probe d01b), and a
+  // labelled LOOP is an iteration statement already, caught below.
+  // Forward-only branches (`if` / `switch` / `try`) cannot re-run an earlier
+  // `super()`, and a `super()` in a branch textually BEFORE the read is
+  // handled by the preceded-by check. Anything suppressed here falls through
+  // to the ordinary read, which answers `undefined` rather than inventing a
+  // throw. The compiler cannot be more precise without a runtime
+  // this-initialised flag: a derived constructor's `this` local is
+  // `struct.new`-allocated at entry (class-bodies.ts), so there is no null to
+  // test at the read.
+  const enclosingLoops: ts.IterationStatement[] = [];
   let current: ts.Node | undefined = expr.parent;
   while (current && !ts.isConstructorDeclaration(current)) {
-    // (#5350 r1 review, F2) NO BACK-EDGE OVER THE READ. Source position orders
-    // the TEXT, not the execution — and the one construct that lets a
-    // textually LATER `super()` run BEFORE this read is a loop's back-edge:
-    // `while (true) { if (i === 1) { v = super.zz; break } super(); i = 1 }`
-    // reaches the read on the second iteration, with `this` long since
-    // initialised. Node answers 5; the unconditional lexical throw made it a
-    // ReferenceError escaping the export (probes n4/n5). Forward-only branches
-    // (`if` / `switch` / `try`) cannot re-run an earlier `super()`, and a
-    // `super()` sitting in a branch BEFORE the read is already handled by the
-    // preceded-by check below, so only a loop (and a labelled statement, whose
-    // `continue`/`break` targets one) suppresses the throw. Everything
-    // suppressed here falls through to the ordinary read, which answers
-    // `undefined` rather than inventing a throw. The compiler cannot be more
-    // precise without a runtime this-initialised flag: a derived constructor's
-    // `this` local is `struct.new`-allocated at entry (class-bodies.ts), so
-    // there is no null to test at the read.
-    if (ts.isIterationStatement(current, /* lookInLabeledStatements */ false) || ts.isLabeledStatement(current)) {
-      return false;
+    if (ts.isIterationStatement(current, /* lookInLabeledStatements */ false)) {
+      enclosingLoops.push(current);
     }
     if (
       ts.isArrowFunction(current) ||
@@ -1508,17 +1514,30 @@ function superReadPrecedesSuperCall(fctx: FunctionContext, expr: ts.Node): boole
     current = current.parent;
   }
   if (!current?.body) return false;
-  let precededBySuperCall = false;
-  const visit = (node: ts.Node): void => {
-    if (precededBySuperCall) return;
-    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.SuperKeyword && node.end <= expr.pos) {
-      precededBySuperCall = true;
-      return;
-    }
-    forEachChild(node, visit);
+  const containsSuperCall = (root: ts.Node, endsBefore: number | undefined): boolean => {
+    let found = false;
+    const visit = (node: ts.Node): void => {
+      if (found) return;
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.SuperKeyword &&
+        (endsBefore === undefined || node.end <= endsBefore)
+      ) {
+        found = true;
+        return;
+      }
+      forEachChild(node, visit);
+    };
+    forEachChild(root, visit);
+    return found;
   };
-  forEachChild(current.body, visit);
-  return !precededBySuperCall;
+  // (a) no `super(...)` completes textually before the read begins …
+  if (containsSuperCall(current.body, expr.pos)) return false;
+  // (b) … and no enclosing loop can bring a later one back over it.
+  for (const loop of enclosingLoops) {
+    if (containsSuperCall(loop, undefined)) return false;
+  }
+  return true;
 }
 
 /**
