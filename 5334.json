@@ -1,10 +1,11 @@
 {
   "id": "5334",
   "assignee": "ttraenkler/senior-dev",
-  "requested_by": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5334-rest-param-runtime-bridge",
   "claimed_at": "2026-09-05T20:58:24Z",
-  "updated_at": "2026-09-05T20:58:24Z",
-  "write_id": "282-dny91t5c"
+  "updated_at": "2026-09-06T02:17:07Z",
+  "write_id": "2636-vdrhby3h",
+  "released_at": "2026-09-06T02:17:07Z"
 }
