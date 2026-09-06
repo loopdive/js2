@@ -13808,7 +13808,10 @@ assert._isSameValue = isSameValue;
           // function"). Route through the manual per-key path that wraps wasm
           // closures to host callables (no-op for real JS functions). Gated on
           // detection so the common host-literal path is byte-identical.
-          if (_descsHaveWasmClosureAccessor(descsObj, callbackState)) {
+          // (#5357) HOST targets only: the raw `Object.defineProperty` below throws
+          // "WebAssembly objects are opaque" on a WasmGC `obj`, which takes the
+          // sidecar path in the catch arm instead (axios `freezeMethods` at init).
+          if (!_isWasmStruct(obj) && _descsHaveWasmClosureAccessor(descsObj, callbackState)) {
             const keys = getKeys(descsObj);
             const gathered: { key: string | symbol; desc: PropertyDescriptor }[] = [];
             for (const key of keys) {
