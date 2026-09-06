@@ -1516,8 +1516,65 @@ function emitSuperExtendsNullThrow(
  * compiled into the constructor's own FunctionContext, so `isDerivedConstructor`
  * alone cannot tell them apart.
  */
-function superReadPrecedesSuperCall(fctx: FunctionContext, expr: ts.Node): boolean {
-  if (!fctx.isDerivedConstructor) return false;
+type SuperUninitializedReadKind = "always" | "runtime" | "never";
+
+/**
+ * Does `root` contain a `super(...)` call, optionally only one that ends
+ * before `endsBefore`?
+ *
+ * `skipNestedClasses` excludes a NESTED class's own `super()`: it initialises
+ * THAT class's `this`, never the enclosing constructor's, so counting it as a
+ * back-edge carrier wrongly suppressed the throw for
+ * `for (…) { class C extends A { constructor(){ super() } }; v = super.zz }`
+ * (probe xa11 — node throws, this answered 6). It is set for BOTH the
+ * "completes textually before the read" scan and the enclosing-loop scan, for
+ * the same reason in both: that `super()` belongs to another constructor.
+ * Nested FUNCTIONS are still descended into, because
+ * `const f = () => super(); f();` really does initialise this constructor's
+ * `this`, so its `super()` must keep counting as one that may already have run.
+ */
+function containsSuperCall(root: ts.Node, endsBefore: number | undefined, skipNestedClasses: boolean): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (skipNestedClasses && (ts.isClassDeclaration(node) || ts.isClassExpression(node))) return;
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.SuperKeyword &&
+      (endsBefore === undefined || node.end <= endsBefore)
+    ) {
+      found = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(root, visit);
+  return found;
+}
+
+/**
+ * (#5350 r3 review, S1) Classify a `super.<x>` read in a DERIVED constructor.
+ *
+ *   - `"always"`  — no `super(...)` completes before the read and no enclosing
+ *     loop can carry one back over it: an unconditional ReferenceError.
+ *   - `"runtime"` — the read sits inside a loop that ALSO contains a
+ *     `super(...)`. Position cannot decide this case, in either direction:
+ *     `for (let i = 0; i < 1; i++) { v = super.zz; super() }` reaches the read
+ *     on iteration 1 before any `super()` has run (node throws — probes
+ *     xa13/xa12/xa3), while `while (true) { if (i === 1) { v = super.zz; break }
+ *     super(); i = 1 }` reaches the SAME textual read on iteration 2 with
+ *     `this` long initialised (node answers 5 — probes n4/n5). Both shapes are
+ *     "a read textually before a `super()` in the same loop", so the decision
+ *     moves to a runtime test of `fctx.superInitializedFlagLocal`. r2's
+ *     position-blind rule answered "no throw" for the whole class and so lost
+ *     the iteration-1 case.
+ *   - `"never"`   — a `super(...)` completes textually before the read, or the
+ *     reference crosses a nested function/class boundary whose source position
+ *     says nothing about when it runs (`() => super.x` written before
+ *     `super()` and called after it is correct code). Keep the ordinary read.
+ */
+function classifySuperUninitializedRead(fctx: FunctionContext, expr: ts.Node): SuperUninitializedReadKind {
+  if (!fctx.isDerivedConstructor) return "never";
   // (#5350 r2 review, R1) NO BACK-EDGE THAT CAN CARRY A `super()` OVER THE
   // READ. Source position orders the TEXT, not the execution, and the one
   // construct that lets a textually LATER `super()` run BEFORE this read is a
@@ -1556,35 +1613,72 @@ function superReadPrecedesSuperCall(fctx: FunctionContext, expr: ts.Node): boole
       ts.isClassExpression(current) ||
       ts.isObjectLiteralExpression(current)
     ) {
-      return false;
+      return "never";
     }
     current = current.parent;
   }
-  if (!current?.body) return false;
-  const containsSuperCall = (root: ts.Node, endsBefore: number | undefined): boolean => {
-    let found = false;
-    const visit = (node: ts.Node): void => {
-      if (found) return;
-      if (
-        ts.isCallExpression(node) &&
-        node.expression.kind === ts.SyntaxKind.SuperKeyword &&
-        (endsBefore === undefined || node.end <= endsBefore)
-      ) {
-        found = true;
-        return;
-      }
-      forEachChild(node, visit);
-    };
-    forEachChild(root, visit);
-    return found;
-  };
+  if (!current?.body) return "never";
   // (a) no `super(...)` completes textually before the read begins …
-  if (containsSuperCall(current.body, expr.pos)) return false;
-  // (b) … and no enclosing loop can bring a later one back over it.
+  if (containsSuperCall(current.body, expr.pos, /* skipNestedClasses */ true)) return "never";
+  // (b) … and where an enclosing loop could bring a later one back over it,
+  // only a runtime flag can say whether it already did.
   for (const loop of enclosingLoops) {
-    if (containsSuperCall(loop, undefined)) return false;
+    if (containsSuperCall(loop, undefined, /* skipNestedClasses */ true)) return "runtime";
   }
-  return true;
+  return "always";
+}
+
+/**
+ * (#5350 r3 review, S1) Allocate the derived constructor's `__super_done` flag
+ * when — and only when — some read in this constructor classifies `"runtime"`.
+ * A wasm local is zero at entry, so no initialising store is needed.
+ *
+ * Must run BEFORE the constructor body is compiled: `emitSuperInitializedFlagStore`
+ * needs the index at every `super(...)` site, and a `super(...)` can be
+ * compiled before the read that motivates the flag.
+ */
+export function ensureSuperInitializedFlagLocal(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  ctor: ts.ConstructorDeclaration,
+): void {
+  if (!ctx.standalone) return;
+  if (!fctx.isDerivedConstructor) return;
+  if (fctx.superInitializedFlagLocal !== undefined) return;
+  if (!ctor.body) return;
+  let needed = false;
+  const visit = (node: ts.Node): void => {
+    if (needed) return;
+    if (
+      (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) &&
+      node.expression.kind === ts.SyntaxKind.SuperKeyword &&
+      // A `super.m()` CALLEE takes the method-call lowering, which has no
+      // uninitialised-this guard — counting it would allocate a local nothing
+      // reads and move the bytes of every such constructor.
+      !(ts.isCallExpression(node.parent) && node.parent.expression === node) &&
+      classifySuperUninitializedRead(fctx, node) === "runtime"
+    ) {
+      needed = true;
+      return;
+    }
+    forEachChild(node, visit);
+  };
+  forEachChild(ctor.body, visit);
+  if (!needed) return;
+  fctx.superInitializedFlagLocal = allocLocal(fctx, "__js2_super_done", { kind: "i32" });
+}
+
+/**
+ * (#5350 r3 review, S1) `this` is initialised from here on — store 1 into the
+ * flag, immediately after a `super(...)` call's lowering returns. A no-op
+ * unless this constructor allocated the flag, which is why a NESTED class's
+ * `super()` (a different FunctionContext) can never set the outer one.
+ */
+export function emitSuperInitializedFlagStore(fctx: FunctionContext): void {
+  const idx = fctx.superInitializedFlagLocal;
+  if (idx === undefined) return;
+  fctx.body.push({ op: "i32.const", value: 1 });
+  fctx.body.push({ op: "local.set", index: idx });
 }
 
 /**
@@ -1598,12 +1692,26 @@ function emitSuperUninitializedThisReadThrow(
   accessType: ts.Type,
 ): ValType | undefined {
   if (!ctx.standalone) return undefined;
-  if (!superReadPrecedesSuperCall(fctx, expr)) return undefined;
-  emitThrowReferenceError(
-    ctx,
-    fctx,
-    "Must call super constructor in derived class before accessing 'this' or returning from derived constructor",
-  );
+  const kind = classifySuperUninitializedRead(fctx, expr);
+  if (kind === "never") return undefined;
+  const message =
+    "Must call super constructor in derived class before accessing 'this' or returning from derived constructor";
+  if (kind === "runtime") {
+    // (#5350 r3 review, S1) `if (__super_done === 0) throw` — and then fall
+    // through to the ordinary read, which is correct on every iteration where
+    // the flag is set. Returning `undefined` when the flag was not allocated
+    // keeps r2's behaviour rather than inventing a throw.
+    const flagLocal = fctx.superInitializedFlagLocal;
+    if (flagLocal === undefined) return undefined;
+    fctx.body.push({ op: "local.get", index: flagLocal });
+    fctx.body.push({ op: "i32.eqz" });
+    const start = fctx.body.length;
+    emitThrowReferenceError(ctx, fctx, message);
+    const throwInstrs = fctx.body.splice(start);
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: throwInstrs, else: [] });
+    return undefined;
+  }
+  emitThrowReferenceError(ctx, fctx, message);
   const wasmType = resolveWasmType(ctx, accessType);
   if (wasmType.kind === "f64") {
     fctx.body.push({ op: "f64.const", value: 0 });

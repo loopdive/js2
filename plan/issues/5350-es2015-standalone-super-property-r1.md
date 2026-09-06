@@ -30,10 +30,24 @@ loc-budget-allow:
   - src/codegen/expressions/new-super.ts
   - src/codegen/literals.ts
   - src/codegen/dynamic-proto.ts
+  # 2026-09-06 (r3): +1 line — the nested-`super(...)` arm's flag store. The
+  # mechanism lives in new-super.ts; only the one-line call site is here.
+  - src/codegen/expressions/calls.ts
+# 2026-09-06 (r3 review round): the S1 runtime this-initialised flag adds two
+# call sites outside the two modules already granted above — one line each,
+# storing 1 into `__super_done` right after a `super(...)` lowering returns.
+# `compileClassBodiesInner` also takes the one-time `ensureSuperInitializedFlagLocal`
+# pre-scan call that must run before the constructor body is compiled. Both are
+# additions to functions that are already far over the 300-LOC threshold; the
+# alternative — wrapping `compileSuperCall` so the store has a single home —
+# registers a 387-LOC "new over-budget function" for what is only a rename, so
+# the call-site form is the smaller change.
 func-budget-allow:
   - src/codegen/expressions/new-super.ts
   - src/codegen/literals.ts
   - src/codegen/dynamic-proto.ts
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/expressions/calls.ts::compileCallExpression
 ---
 
 ## Problem

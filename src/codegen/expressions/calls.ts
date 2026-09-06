@@ -489,7 +489,7 @@ import {
   tryCompileErrorCtorCallWithoutNew,
   tryCompileCollectionCtorCallWithoutNew,
 } from "./new-builtin-globals.js";
-import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
+import { compileSuperElementMethodCall, compileSuperMethodCall, emitSuperInitializedFlagStore } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
 import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from "./call-builtin-static.js";
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
@@ -7809,6 +7809,7 @@ function compileCallExpression(
     const thisLocal = fctx.localMap.get("this");
     if (enclosingClass !== undefined && thisLocal !== undefined) {
       compileSuperCall(ctx, fctx, enclosingClass, thisLocal, expr, []);
+      emitSuperInitializedFlagStore(fctx); // (#5350 r3) `this` is initialised from here on
       return VOID_RESULT;
     }
   }

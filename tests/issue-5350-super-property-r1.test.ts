@@ -376,4 +376,84 @@ export function test(): number {
 `),
     ).toBe(4);
   });
+
+  // ── (r3 review, S1) The read is decided at RUNTIME, not by position ──
+  //
+  // The three shapes below and the two back-edge cases above are the SAME
+  // lexical shape — a `super.x` read textually before a `super()` in the same
+  // loop — and node answers differently for them (9 vs 5), so no lexical rule
+  // can score both. `__super_done` does: 0 until a `super(...)` in THIS
+  // constructor returns.
+  const preSuperInLoopWithSuperCall = (header: string, body: string, footer: string): string => `
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor() {
+    let i = 0; let v: any;
+    ${header} ${body} ${footer}
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number {
+  try { return new B().b; } catch (e) { return e instanceof ReferenceError ? 9 : 10; }
+}
+`;
+
+  it("throws on iteration 1 for a read before super() in the same for-loop", async () => {
+    // Probe xa13. r2 answered 6 — the read ran with `this` uninitialised and
+    // was not caught, because the loop "contains a super()" suppressed it.
+    expect(
+      await runStandalone(
+        preSuperInLoopWithSuperCall("for (i = 0; i < 1; i++) {", "v = (super.zz as any); super();", "}"),
+      ),
+    ).toBe(9);
+  });
+
+  it("throws on iteration 1 for a read before super() in the same while-loop", async () => {
+    // Probe xa12.
+    expect(
+      await runStandalone(preSuperInLoopWithSuperCall("while (i < 1) {", "v = (super.zz as any); super(); i++;", "}")),
+    ).toBe(9);
+  });
+
+  it("throws on iteration 1 for a read before super() in a do-while", async () => {
+    // Probe xa3 — the read is under an `if`, so a position-aware static rule
+    // would have to suppress it; the runtime flag does not have to guess.
+    expect(
+      await runStandalone(
+        preSuperInLoopWithSuperCall(
+          "do {",
+          "if (i === 0) { v = (super.zz as any); } super(); i++;",
+          "} while (i < 1);",
+        ),
+      ),
+    ).toBe(9);
+  });
+
+  it("keeps throwing when only a NESTED class's super() sits in the loop", async () => {
+    // Probe xa11. The flag is per constructor FUNCTION, and the lexical scan
+    // that decides whether a loop can carry a `super()` over the read skips
+    // nested classes: `class C extends A { constructor() { super() } }`
+    // initialises C's `this`, never B's. r2 answered 6.
+    expect(
+      await runStandalone(`
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor() {
+    let v: any;
+    for (let i = 0; i < 1; i++) {
+      class C extends A { constructor() { super(); } }
+      v = (super.zz as any);
+    }
+    super();
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number {
+  try { return new B().b; } catch (e) { return e instanceof ReferenceError ? 9 : 10; }
+}
+`),
+    ).toBe(9);
+  });
 });
