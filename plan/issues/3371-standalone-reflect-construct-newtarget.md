@@ -57,6 +57,31 @@ loc-budget-allow:
   # refusals. As in round 2, the growth is mostly the measurement written next
   # to the clause it justifies; `resolvesToAsyncFunction` was deleted, since the
   # value-set gate subsumes it.
+  # 2026-09-06 review round 2 of r2 (Opus): four more measured wrong answers
+  # become refusals — the value-set gate now re-runs the `new.target` check on
+  # every MEMBER body (it only ever scanned the initializer's identifier), a
+  # function EXPRESSION in initializer position is refused (its callee lowering
+  # drops the fetched prototype), the annotation refusal covers JSDoc `@type`
+  # in `.js` sources as well as TS syntax, and `neverConstructed`'s
+  # name-escape scan is limited to function DECLARATIONS (a named function
+  # EXPRESSION is reached through what it is assigned to, not its own name).
+  # The write scan also resolves each `T = …` through the oracle, so an
+  # unrelated same-spelled parameter or block shadow no longer over-refuses.
+  # As before, most of the growth is the measurement written beside the clause.
+  - src/codegen/expressions/reflect-construct-newtarget.ts
+  # 2026-09-06 STRANDED GRANT, restated — not this round's growth. Simulating
+  # CI's base (`LOC_GATE_BASE=$(git rev-parse origin/main)` = 78f1b2d03c) fails
+  # on `calls-closures.ts` 2726 > 2699 (+27). That +27 is #5334's
+  # rest-param-wrapper work, already carried by this integration branch and
+  # granted in `plan/issues/5334-rest-param-wrapper-metadata-illegal-cast.md`,
+  # which THIS change-set does not modify — so against main the grant is
+  # stranded and the gate cannot see it. `git diff origin/main..HEAD` on that
+  # file shows only #5334's hunks and none of this round's; against the round-1
+  # head the same gate reports it as "granted by …5334…" and exits 0. Restated
+  # here per CLAUDE.md's stranded-grant rule; it lapses once the branch merges
+  # origin/main, which supersedes that hunk (main's own copy is 2699 with the
+  # helper moved into callable-property-host-value.ts).
+  - src/codegen/expressions/calls-closures.ts
 func-budget-allow:
   # 2026-09-04 r4 implementation (Opus): four helpers for the runtime
   # NewTarget.prototype read, its carrier application, the single-assignment
@@ -1407,3 +1432,150 @@ round should not read it as a pin failure.
 budget gates, again with `LOC_GATE_BASE=$(git rev-parse origin/main)` =
 `22a6e4d51e`. The growth grant for this round is in this file's frontmatter
 with a dated rationale. No `scripts/*-baseline.json` was touched.
+
+### Review round 2 (2026-09-06)
+
+Four findings from the round-2 review of the round-1 fix tree
+(`worktree-wf_f3919b81-91f-1`, head `81352d81ef`). All four are the same class:
+a shape BASE refused with the verbatim `(#3371)` error, which the round-1 tree
+ADMITTED and answered wrongly. Node 22 answers `2` in every one. Compile API via
+`npx tsx`, `--target standalone`, `COMPILER_POOL_SIZE=2`; probes in the round-1
+reviewer's `scratchpad/p/` (copied to `.tmp/r3371r3/p/`), harness
+`.tmp/r3/batch3.mts` (three compilers in one process: base = `git archive` of
+`6f445141d3`, r1, fix).
+
+| finding | probe | node | base | r1 | fix |
+| --- | --- | --- | --- | --- | --- |
+| F1 value-set never re-checks `new.target` | `y1_dyn_target_reads_nt.ts` | 2 | refuse | **1** | refuse |
+| F2 function-expression initializer | `y3_dyn_fnexpr_init.ts` | 2 | refuse | **4** | refuse |
+| F3 JSDoc `@type` bypasses the annotation gate | `w8_jsdoc_js.js` | 2 | refuse | **4** | refuse |
+| F3 (same, `@type {Function}`) | `w11_jsdoc_function.js` | 2 | refuse | **4** | refuse |
+| F4 named function EXPRESSION proved unconstructible | `c1_namedfnexpr_ctor.ts` | 2 | refuse | **1** | refuse |
+| F4 (property-assigned twin) | `c1b_namedfnexpr_prop.ts` | 2 | refuse | **NaN** | refuse |
+
+Controls, all unchanged r1 → fix and equal to node: `y5_ctl_direct_reads_nt.ts`
+(the DIRECT target reading `new.target`) stays refused; `y6_fnexpr_second_value.ts`
+(the same function expression as a LATER value) stays admitted at 1;
+`w9_plain_js.js` (the unannotated `.js` twin) stays admitted at 2;
+`w10_ts_any_twin.ts` (`let T: any = F`) stays refused;
+`w2_typeof_annotation.ts` stays refused.
+
+#### F1 — the value-set gate never re-ran the `new.target` check
+
+`targetReadsNewTarget` resolves `ctx.oracle.declarationsOf(target)`. For a
+REASSIGNED binding that answers the `let T = F` VariableDeclaration, so only
+`F`'s identifier was ever scanned; `dynamicTargetIsAllOrdinaryFunctions` proved
+each member an unreassigned ordinary function but never looked at a member's
+BODY. `G` reading `new.target` was therefore invisible, while the direct control
+`Reflect.construct(G, [], NT)` was correctly refused.
+
+**Fix** — `dynamicTargetIsAllOrdinaryFunctions` now ends
+`values.every((v) => isUnreassignedOrdinaryFunction(ctx, v) && !targetReadsNewTarget(ctx, v))`,
+i.e. the same check the direct-target path runs, on every member.
+
+#### F2 — a function expression in INITIALIZER position
+
+`isUnreassignedOrdinaryFunction`'s first line accepts any non-async
+non-generator `ts.isFunctionExpression`. As the declaration's initializer that
+gives the binding a different callee lowering which drops the fetched
+prototype — `y3` took the `getPrototypeOf(r) !== NT.prototype` branch (4). The
+same expression as the SECOND value is fine (`y6` = node). Refusal is the
+default, so the initializer position is refused rather than the lowering
+chased: `if (ts.isFunctionExpression(declaration.initializer)) return false;`.
+
+#### F3 — the annotation refusal was spelled `declaration.type`
+
+A JSDoc `@type` in a `.js` file compiled with `allowJs` leaves
+`declaration.type` undefined, so the JSDoc twin of the already-refused
+`let T: any = F` slipped through. New `hasDeclaredType(declaration)` consults
+`declaration.type`, then `ts.getJSDocType` on the declaration, its
+VariableDeclarationList and the enclosing VariableStatement (a `@type` on a
+`let` attaches to the statement).
+
+#### F4 — `neverConstructed` proved too much for a named function EXPRESSION
+
+The name-escape scan calls a named function unconstructible when its NAME never
+appears outside a direct call. That is sound for a function DECLARATION and
+wrong for an EXPRESSION, which is reached through the variable or property it is
+assigned to, never through its own name. `neverConstructed` now returns
+`isImmediatelyCalled(node)` for any `ts.isFunctionExpression`, named or not, and
+runs the name-escape scan only for `ts.isFunctionDeclaration`. Controls `x1`/`x2`
+(plain `new fn()` with no `Reflect.construct`) are wrong on BASE too and stay as
+they are — **pre-existing, not this arm's doing**.
+
+#### Optional — the value-set write scan is now symbol-resolved
+
+Done, and it admits exactly the two intended rows. The scan matched `T = …`
+TEXTUALLY, so an unrelated helper's written PARAMETER named `T`
+(`w1_unrelated_param_named_T.ts`) and a block-scoped shadowing `let T`
+(`v6_shadow_block_write.ts`) put `T + 1` and `7` in the value set and refused
+the OUTER binding: both were `refuse` on r1 where node answers 2. Each write's
+identifier is now resolved through `ctx.oracle.declarationsOf` and counted only
+when it resolves to exactly this declaration; the same resolution replaces the
+textual match in the `++`/`--` and `for…in`/`for…of` clauses. Both now answer
+**2 = node**, and the corpus run below shows nothing else moved — so the
+admitted set is exactly (textual-admitted ∪ writes-to-other-symbols).
+
+#### Corpus, probes and bytes
+
+- **89-file corpus** (`/home/user/js2/.tmp/rev3371r2/p/*.ts`, 85 `.ts`), 3-way
+  base/r1/fix, `standalone` and `wasi`, separate runs:
+  `moved(r1→fix)=0 baseChanged=0` on **both** targets. Zero rows that compiled
+  on BASE change answer or compiled-ness.
+- **Round-1 reviewer's probe set** (31 files, `standalone,wasi`):
+  `moved(r1→fix)=8 baseChanged=0` — exactly the six intended refusals plus the
+  two intended admissions, all on `standalone`; no `wasi` row moved.
+- **Byte identity**, r1 vs fix, 85 corpus programs × `standalone`/`wasi`/`host`:
+  `same=255 diff=0`.
+
+#### Rows
+
+`npx tsx scripts/run-test262-paths.mts --isolate <list> --standalone`,
+`COMPILER_POOL_SIZE=2`; the 218 controls split into three ≤73-row chunks. No
+`compile_timeout` in any run.
+
+| | r1 | fix |
+| --- | --- | --- |
+| 24 owned | 12 pass / 9 fail / 3 CE | **12 / 9 / 3** |
+| 218 controls | 166 pass / 49 fail / 3 CE | **166 / 49 / 3** (73+54+39 across the chunks) |
+
+**Rows lost: 0.**
+
+#### Pins
+
+`tests/issue-3371-r4-reflect-construct-newtarget.test.ts` grows by **eight**:
+four refused (F1 `y1`, F2 `y3`, F3 `w8` as a `.js` source with `allowJs`, F4
+`c1`) and four admitted (F2's control `y6`, F3's control `w9`, plus the two
+optional-scan rows `w1` and `v6`). Both source lists gained an optional
+`fileName`, so a `.js` pin compiles under a `.js` name. **69 tests passed on
+node 22 and on node 25** (`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+--poolOptions.forks.singleFork`). The single unhandled
+`[vitest-worker]: Timeout calling "onTaskUpdate"` documented in round 1 is still
+present on node 25 (exit 1 with 69/69 passing) and absent on node 22 (exit 0) —
+an environment artifact of this worktree, not a pin failure.
+
+r3 regression pins, in batches of three files: `issue-5195-es2015-class-r2`,
+`issue-5195-r3-heritage-check`, `issue-5195-r3-restricted-properties` — 96
+passed, exit 0; `issue-5195-r3-review`, `issue-5309`, `issue-5312` — 129 passed,
+exit 0.
+
+#### Gates
+
+`check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports`, `check:speculative-rollback`,
+`check:stack-balance`, `check:codegen-fallbacks`, `check:any-box-sites`, TS7
+`--noEmit`, `lint` — **all exit 0**, run bare (never piped).
+
+**One finding worth acting on.** With `LOC_GATE_BASE=$(git rev-parse origin/main)`
+= `78f1b2d03c` the LOC gate initially FAILED on
+`src/codegen/expressions/calls-closures.ts` 2726 > 2699 (+27) — **not this
+round's growth**. `git diff origin/main..HEAD` on that file shows only #5334's
+rest-param-wrapper hunks and none of this round's; run against the round-1 head
+the same gate names it "granted by …5334…" and exits 0. The grant lives in
+`plan/issues/5334-rest-param-wrapper-metadata-illegal-cast.md`, which this
+change-set does not modify, so against main it is **stranded**. Restated in this
+file's frontmatter per CLAUDE.md, with the note that it lapses once the branch
+merges `origin/main` — main's own copy of that file is 2699 with the helper
+moved into `callable-property-host-value.ts`, i.e. main has superseded the hunk.
+After the restatement both budget gates exit 0 at CI's base. No
+`scripts/*-baseline.json` was touched.

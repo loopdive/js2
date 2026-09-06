@@ -317,13 +317,43 @@ function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Exp
     if (!isPlainFunctionLike(declaration)) return false;
   } else if (ts.isVariableDeclaration(declaration)) {
     // `let T: any = F` steers a different callee lowering than `let T = F`.
-    if (declaration.type !== undefined) return false;
+    if (hasDeclaredType(declaration)) return false;
     if (declaration.initializer === undefined) return false;
+    // A function EXPRESSION as the INITIALIZER gives the binding yet another
+    // callee lowering, one that drops the fetched prototype: review round 2's
+    // `y3_dyn_fnexpr_init.ts` (`let T = function(){…}; T = G`) answered 4 —
+    // the `Object.getPrototypeOf(r) !== NT.prototype` branch — where node
+    // answers 2, and base refused. The same function expression as a LATER
+    // value is fine (`y6_fnexpr_second_value.ts`, node 1 = compiled 1), so
+    // only the initializer position is refused.
+    if (ts.isFunctionExpression(declaration.initializer)) return false;
     values.push(declaration.initializer);
   } else {
     return false;
   }
 
+  // A write is only this binding's when the written identifier RESOLVES to this
+  // declaration. Matching `T = …` textually made an unrelated helper parameter
+  // (`function helper(T: number) { T = T + 1 }`) and a block-scoped shadow
+  // (`{ let T = 0; T = 7 }`) contribute `T + 1` and `7` to the value set, which
+  // is not an ordinary function, so review round 2's `w1_unrelated_param_named_T.ts`
+  // and `v6_shadow_block_write.ts` refused over writes to a DIFFERENT binding
+  // (node 2 on both). Resolving through the oracle counts only same-binding
+  // writes; a write the oracle cannot resolve to exactly this declaration is
+  // treated as another binding's, which can only widen the admitted set by
+  // programs whose `T` is provably a different variable.
+  const writesThis = (node: ts.Node): boolean => {
+    if (ts.isIdentifier(node)) {
+      if (node.text !== name) return false;
+      const resolved = ctx.oracle.declarationsOf(node);
+      return resolved.length === 1 && resolved[0] === declaration;
+    }
+    let found = false;
+    forEachChild(node, (child) => {
+      if (!found && writesThis(child)) found = true;
+    });
+    return found;
+  };
   let enumerable = true;
   const visit = (node: ts.Node): void => {
     if (!enumerable) return;
@@ -332,8 +362,8 @@ function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Exp
       (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") ||
       ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
         ts.isIdentifier(node.operand) &&
-        node.operand.text === name) ||
-      ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && mentions(node.initializer, name))
+        writesThis(node.operand)) ||
+      ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && writesThis(node.initializer))
     ) {
       enumerable = false;
       return;
@@ -342,7 +372,7 @@ function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Exp
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
       node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-      mentions(node.left, name)
+      writesThis(node.left)
     ) {
       // Only a plain `T = <expr>` contributes a value that can be read off the
       // source; a compound assignment or a destructuring target does not.
@@ -356,7 +386,40 @@ function dynamicTargetIsAllOrdinaryFunctions(ctx: CodegenContext, target: ts.Exp
   };
   visit(source);
   if (!enumerable || values.length === 0) return false;
-  return values.every((value) => isUnreassignedOrdinaryFunction(ctx, value));
+  // Every member must be an ordinary function AND must not read `new.target`.
+  // The direct-target path runs `targetReadsNewTarget` on the resolved target;
+  // this path never did, and `ctx.oracle.declarationsOf` on a REASSIGNED
+  // binding answers the `let T = F` VariableDeclaration, so only `F`'s
+  // identifier was ever scanned and `G`'s body was invisible. Review round 2's
+  // `y1_dyn_target_reads_nt.ts` (`let T = F; T = G` with `G` reading
+  // `new.target`) therefore compiled and answered 1 where node answers 2 and
+  // base refused — while the direct control `Reflect.construct(G, [], NT)`
+  // (`y5`) was correctly refused. Run the same check on every member.
+  return values.every((value) => isUnreassignedOrdinaryFunction(ctx, value) && !targetReadsNewTarget(ctx, value));
+}
+
+/**
+ * Does this `let`/`var`/`const` declaration carry a DECLARED type, in TypeScript
+ * syntax or in JSDoc?
+ *
+ * Spelling the refusal as `declaration.type` alone missed the JSDoc half: in a
+ * `.js` file compiled with `allowJs`, `/** @type {any} *\/ let T = F; T = G`
+ * has `declaration.type === undefined` and slipped through to the same wrong
+ * prototype the TypeScript twin `let T: any = F` is refused for (review round
+ * 2: `w8_jsdoc_js.js` and `w11_jsdoc_function.js` both answered 4 vs node 2;
+ * `w10_ts_any_twin.ts` refused; the unannotated `.js` control `w9_plain_js.js`
+ * answered 2 = node). A `@type` tag on a `let` attaches to the enclosing
+ * VariableStatement rather than the declaration, so all three levels are
+ * consulted.
+ */
+function hasDeclaredType(declaration: ts.VariableDeclaration): boolean {
+  if (declaration.type !== undefined) return true;
+  if (ts.getJSDocType(declaration) !== undefined) return true;
+  const list: ts.Node | undefined = declaration.parent;
+  if (list === undefined || !ts.isVariableDeclarationList(list)) return false;
+  if (ts.getJSDocType(list) !== undefined) return true;
+  const statement: ts.Node | undefined = list.parent;
+  return statement !== undefined && ts.isVariableStatement(statement) && ts.getJSDocType(statement) !== undefined;
 }
 
 /**
@@ -643,9 +706,17 @@ function neverConstructed(source: ts.SourceFile, node: ts.Node): boolean {
     return true;
   }
   if (ts.isConstructorDeclaration(node)) return false;
-  const name = ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node) ? node.name : undefined;
-  // An anonymous function expression is unreachable by name; only an immediate
-  // call leaves it unconstructible.
+  // A function EXPRESSION — named or not — is reachable through whatever it is
+  // ASSIGNED to, never through its own name, so the name-escape scan below
+  // proves too much for it. Review round 2's `c1_namedfnexpr_ctor.ts` does
+  // `const q = function inner(){ … new.target … }; new q()`: `inner` never
+  // appears outside its own declaration, so the scan called it unconstructible,
+  // the nested `new.target` read went uncounted and the site was admitted at 1
+  // where node answers 2 (the property-assigned twin `c1b_namedfnexpr_prop.ts`
+  // answered NaN). A function expression follows the anonymous rule: only an
+  // immediate call leaves it unconstructible.
+  if (ts.isFunctionExpression(node)) return isImmediatelyCalled(node);
+  const name = ts.isFunctionDeclaration(node) ? node.name : undefined;
   if (name === undefined) return isImmediatelyCalled(node);
   let escapes = false;
   const visit = (child: ts.Node): void => {

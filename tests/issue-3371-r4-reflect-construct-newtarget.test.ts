@@ -94,7 +94,7 @@ describe("#3371 r4 — runtime NewTarget.prototype for Reflect.construct (standa
  * module must additionally emit ZERO host imports, which is the property CI
  * enforces and the in-process test262 path does not check.
  */
-const PARITY_SOURCES: readonly { name: string; source: string }[] = [
+const PARITY_SOURCES: readonly { name: string; source: string; fileName?: string }[] = [
   {
     name: "an ordinary function target takes NewTarget.prototype",
     source: `
@@ -306,6 +306,84 @@ const PARITY_SOURCES: readonly { name: string; source: string }[] = [
       }
     `,
   },
+  // ---- review round 2 (2026-09-06): the ADMITTED control for each finding.
+  // Each is the nearest neighbour of a shape now refused below, and answers
+  // what node answers; a fix that refuses these has over-refused.
+  {
+    // r2/F2 control (`y6_fnexpr_second_value.ts`). The function expression is a
+    // LATER value, not the initializer, so the binding keeps the lowering the
+    // value-set gate was validated on. Node answers 1 for `r.k`.
+    name: "r2/F2 a function expression as a later value stays admitted",
+    source: `
+      function NT(): void {}
+      function G(this: any): void { this.k = 2; }
+      export function test(): number {
+        let T = G;
+        T = function (this: any): void { this.k = 1; };
+        const r: any = Reflect.construct(T, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 1;
+        return r.k === 1 ? 0 : 2;
+      }
+    `,
+  },
+  {
+    // r2/F3 control (`w9_plain_js.js`). The same `.js` program with NO type
+    // annotation, TypeScript or JSDoc. The annotated twins refuse below; this
+    // one must not, or the JSDoc clause has over-refused. Node answers 2.
+    name: "r2/F3 an unannotated .js dynamic target stays admitted",
+    fileName: "issue-3371-r2-w9.js",
+    source: `
+      function NT() {}
+      function F() { this.k = 1; }
+      function G() { this.k = 2; }
+      /** @returns {number} */
+      export function test() {
+        let T = F;
+        T = G;
+        const r = Reflect.construct(T, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 1;
+        return r.k === 2 ? 0 : 2;
+      }
+    `,
+  },
+  {
+    // r2 optional scan (`w1_unrelated_param_named_T.ts`). `helper`'s parameter
+    // is a DIFFERENT binding spelled `T`; counting its write textually put
+    // `T + 1` in the value set and refused the site. Node answers 2 for `r.k`.
+    name: "r2 an unrelated parameter named like the target does not refuse the site",
+    source: `
+      function NT(): void {}
+      function F(this: any): void { this.k = 1; }
+      function G(this: any): void { this.k = 2; }
+      function helper(T: number): number { T = T + 1; return T; }
+      export function test(): number {
+        let T = F;
+        T = G;
+        const r: any = Reflect.construct(T, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 1;
+        if (helper(0) !== 1) return 2;
+        return r.k === 2 ? 0 : 3;
+      }
+    `,
+  },
+  {
+    // r2 optional scan (`v6_shadow_block_write.ts`). Same, for a block-scoped
+    // shadow rather than a parameter. Node answers 2 for `r.k`.
+    name: "r2 a block-scoped shadow write does not refuse the site",
+    source: `
+      function NT(): void {}
+      function F(this: any): void { this.k = 1; }
+      function G(this: any): void { this.k = 2; }
+      export function test(): number {
+        let T = F;
+        T = G;
+        { let T: any = 0; T = 7; if (T === 8) return 1; }
+        const r: any = Reflect.construct(T, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 2;
+        return r.k === 2 ? 0 : 3;
+      }
+    `,
+  },
   {
     name: "a bound function is a constructor for NewTarget purposes",
     source: `
@@ -323,12 +401,12 @@ const PARITY_SOURCES: readonly { name: string; source: string }[] = [
 describe("#3371 r4 — node-parity probes, zero host imports", () => {
   it.each(PARITY_SOURCES)(
     "$name",
-    async ({ source }) => {
+    async ({ source, fileName }) => {
       const result = await compile(source, {
         target: "standalone",
         allowJs: true,
         skipSemanticDiagnostics: true,
-        fileName: "issue-3371-r4.ts",
+        fileName: fileName ?? "issue-3371-r4.ts",
       });
       expect(
         result.success,
@@ -355,7 +433,7 @@ describe("#3371 r4 — node-parity probes, zero host imports", () => {
  * `standalone` and `wasi`. Delete a pin only together with a measurement
  * showing the shape now answers what node answers.
  */
-const REFUSED_SOURCES: readonly { name: string; source: string }[] = [
+const REFUSED_SOURCES: readonly { name: string; source: string; fileName?: string }[] = [
   {
     name: "a class NewTarget (its prototype object is not reified in standalone)",
     source: `
@@ -604,17 +682,98 @@ const REFUSED_SOURCES: readonly { name: string; source: string }[] = [
       }
     `,
   },
+  // ---- review round 2 (2026-09-06). Four shapes the round-1 tree ADMITTED and
+  // answered wrongly where base refused with the same `(#3371)` error; node
+  // answers 2 in every one. Measurements are in the issue file's "Review round
+  // 2" subsection. The admitted controls are in PARITY_SOURCES above.
+  {
+    // F1 (`y1_dyn_target_reads_nt.ts`). The value-set gate proved each member
+    // an ordinary function but never re-ran the `new.target` check on any
+    // member body, so a reassigned target whose second value reads
+    // `new.target` compiled and answered 1.
+    name: "r2 a dynamic target whose value set reads new.target",
+    source: `
+      function NT(): void {}
+      function F(this: any): void { this.k = 1; }
+      function G(this: any): void { this.k = new.target === undefined ? 1 : 2; }
+      export function test(): number {
+        let T = F;
+        T = G;
+        const r: any = Reflect.construct(T, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 4;
+        return r.k;
+      }
+    `,
+  },
+  {
+    // F2 (`y3_dyn_fnexpr_init.ts`). A function EXPRESSION in the INITIALIZER
+    // position gives the binding a callee lowering that drops the fetched
+    // prototype: the compiled module took the `!== NT.prototype` branch (4).
+    name: "r2 a dynamic target whose initializer is a function expression",
+    source: `
+      function NT(): void {}
+      function G(this: any): void { this.k = 2; }
+      export function test(): number {
+        let T = function (this: any): void { this.k = 1; };
+        T = G;
+        const r: any = Reflect.construct(T, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 4;
+        return r.k;
+      }
+    `,
+  },
+  {
+    // F3 (`w8_jsdoc_js.js`). The annotation refusal was spelled as
+    // `declaration.type`, which a JSDoc `@type` in a `.js` file does not set,
+    // so the JSDoc twin of the already-refused `let T: any = F` slipped
+    // through and answered 4.
+    name: "r2 a JSDoc-annotated dynamic target in a .js source",
+    fileName: "issue-3371-r2-w8.js",
+    source: `
+      function NT() {}
+      function F() { this.k = 1; }
+      function G() { this.k = 2; }
+      /** @returns {number} */
+      export function test() {
+        /** @type {any} */
+        let T = F;
+        T = G;
+        const r = Reflect.construct(T, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 4;
+        return r.k;
+      }
+    `,
+  },
+  {
+    // F4 (`c1_namedfnexpr_ctor.ts`). `neverConstructed` called a NAMED function
+    // EXPRESSION unconstructible because its own name never escapes — but it is
+    // reached through the variable it is assigned to, so the nested
+    // `new.target` read went uncounted and the site answered 1.
+    name: "r2 a constructed named function expression inside the target",
+    source: `
+      function NT(): void {}
+      export function test(): number {
+        function fn(this: any): void {
+          const q = function inner(this: any): void { this.q = new.target === undefined ? 1 : 2; };
+          this.o = (new (q as any)()).q;
+        }
+        const r: any = Reflect.construct(fn, [], NT);
+        if (Object.getPrototypeOf(r) !== NT.prototype) return 4;
+        return r.o;
+      }
+    `,
+  },
 ];
 
 describe.each(["standalone", "wasi"] as const)("#3371 review r1 — refusals kept (%s)", (target) => {
   it.each(REFUSED_SOURCES)(
     "refuses $name",
-    async ({ source }) => {
+    async ({ source, fileName }) => {
       const result = await compile(source, {
         target,
         allowJs: true,
         skipSemanticDiagnostics: true,
-        fileName: "issue-3371-r4-refused.ts",
+        fileName: fileName ?? "issue-3371-r4-refused.ts",
       });
       const errors = (result.errors ?? []).filter((e) => e.severity === "error");
       expect(errors.map((e) => e.message).join("\n")).toContain("(#3371)");
