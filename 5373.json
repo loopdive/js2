@@ -1,11 +1,10 @@
 {
   "id": "5373",
-  "assignee": "",
-  "requested_by": "ttraenkler/fable-lead",
-  "status": "reserved",
-  "branch": "",
-  "reserved_at": "2026-09-06T11:26:57Z",
-  "updated_at": "2026-09-06T11:26:57Z",
-  "write_id": "5816-4r4qnlou",
-  "pr_scan": "degraded"
+  "assignee": "ttraenkler/dev-5373",
+  "requested_by": "ttraenkler/dev-5373",
+  "status": "in-progress",
+  "branch": "issue-5373-array-subclass-tostring",
+  "claimed_at": "2026-09-06T11:32:47Z",
+  "updated_at": "2026-09-06T11:32:47Z",
+  "write_id": "25621-p9qjooxy"
 }
