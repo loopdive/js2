@@ -44,6 +44,26 @@ loc-budget-allow:
   # `$__subview_<elem>` case it mirrors.
   - src/codegen/property-access-dispatch.ts
   - src/codegen/node-fs-api.ts
+  # 2026-09-06 round 4 (R1): §25.1.5.3's species ladder must be able to ask
+  # "is this C the intrinsic %ArrayBuffer%?". On the WASI lane the bare
+  # `ArrayBuffer` identifier read produced `ref.null.extern`, so
+  # `ab.constructor = ArrayBuffer` stored a value indistinguishable from a
+  # genuine `ab.constructor = null` and the ladder threw the spec's
+  # "constructor is not an object" TypeError where node (and pre-species main)
+  # answered 4. The one-name widening of the reified-carrier arm belongs in the
+  # identifier resolver that owns every other builtin bare-value read; +15
+  # lines, of which 14 are the safety argument for the widening.
+  - src/codegen/expressions/identifiers.ts
+  # 2026-09-06 round 4 (integration): the round-2/3 brand-by-finality gate in
+  # `finalizeLeafStructTypes` (+16 lines — the `keepOpenTypeIdxs` set that keeps
+  # the ArrayBuffer byte vec `$__vec_i32_byte` an open root on the host-free
+  # lanes, plus its safety argument) passed this gate on the lanes' own base
+  # 50c81e5487. main's post-merge baseline refresh has since lowered the
+  # index.ts ceiling to 14,995, so the same lines now read as growth against
+  # origin/main; restated here so the grant travels with this PR. The lines
+  # belong in index.ts: `finalizeLeafStructTypes` is the one place the module's
+  # leaf struct types are marked final.
+  - src/codegen/index.ts
 func-budget-allow:
   # 2026-09-06 round 3: +18 lines in the `$__ta_view` length arm described
   # above, in the function that already owns every other `.length` receiver
@@ -59,6 +79,12 @@ func-budget-allow:
   # 2026-09-06 round 3 audit: +8 for the comment on the `byteLength` probe's new
   # packed-byte `else` arm (the arm itself is a separate helper function).
   - src/codegen/property-access-dispatch.ts::tryBufferViewAttributeReads
+  # 2026-09-06 round 4 (R1): the same +15 as the identifiers.ts LOC grant above,
+  # inside the one function that resolves every builtin bare-value identifier
+  # read. The arm is a single `if` in an ordered ladder whose position is the
+  # semantics (after local/module/declared-global shadowing, before the
+  # null-externref fallback); lifting it out would move it out of that order.
+  - src/codegen/expressions/identifiers.ts::compileIdentifierCore
 ---
 
 ## Problem

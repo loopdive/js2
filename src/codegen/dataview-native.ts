@@ -66,6 +66,7 @@ import { ensureReflectIsConstructor } from "./reflect-construct-native.js"; // (
 import { reserveNativeConstructDriver } from "./native-construct.js"; // (#4449) custom species constructors
 import { ensureSymbolCarrier } from "./symbol-native.js"; // (#4449) Symbol.species key
 import { ensureNativeArrayFromIterN } from "./iterator-native.js"; // (#5138 A1) iterable ctor arg
+import { reserveBuiltinConstructorIdentityGlobal } from "./builtin-static-globals.js"; // (#5349 r4) %ArrayBuffer% identity
 
 /** DataView accessor descriptor parsed from a method name like "getUint32". */
 interface DvAccessor {
@@ -428,6 +429,90 @@ export function nullishOrUndefinedExternTestInstrs(ctx: CodegenContext, externId
  * matching that here keeps `new Uint8Array(sliced)` working without
  * additional coercion).
  */
+/**
+ * (#5349 r4) R2 — decide, at runtime, whether `ab.slice`'s receiver is really a
+ * PACKED-BYTE TypedArray rather than an ArrayBuffer, leaving the receiver value
+ * back on the stack for the recover step.
+ *
+ * `var b = new ArrayBuffer(8); b = new Uint8Array(8)` routes to
+ * `emitArrayBufferSlice` on the STATIC "ArrayBuffer" answer, which survives the
+ * reassignment. Round 3's guarded recover answers the right BYTES for that
+ * receiver but wraps them in a `$__vec_i32_byte` byte buffer, and every
+ * downstream indexed read/write/`indexOf`/`map` dispatch tests
+ * `$__vec_i8_byte` — so each one MISSED and `b.slice(0)[0]` read `undefined`
+ * where node and main read 5.
+ *
+ * Node runs %TypedArray%.prototype.slice for that receiver and returns a
+ * Uint8Array. The byte pipeline in `emitArrayBufferSlice` already IS that: the
+ * recover copies at `bytes: 1`, so `srcLen` is the element count and the
+ * begin/end coercion, the clamp and the copy loop are the same operations
+ * %TypedArray%.prototype.slice performs. Only the carrier the result is wrapped
+ * in differed, so recording the brand here is enough to re-wrap at the end.
+ *
+ * Returns `isPackedLocal < 0` when no dispatch is needed — a statically
+ * `$__vec_i32_byte`-typed receiver, or the JS-host lane, which never registers
+ * the packed-byte carrier at all and therefore stays byte-identical.
+ *
+ * Stack: `[receiver] → [receiver]`.
+ */
+function probePackedByteSliceReceiver(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  guarded: boolean,
+): { isPackedLocal: number; i8VecIdx: number; i8ArrIdx: number } {
+  if (!guarded || !noJsHost(ctx)) return { isPackedLocal: -1, i8VecIdx: -1, i8ArrIdx: -1 };
+  const i8VecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
+  const i8ArrIdx = getArrTypeIdxFromVec(ctx, i8VecIdx);
+  if (i8ArrIdx < 0) return { isPackedLocal: -1, i8VecIdx: -1, i8ArrIdx: -1 };
+  const recvAnyLocal = allocLocal(fctx, `__abs_recv_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  const isPackedLocal = allocLocal(fctx, `__abs_packed_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.tee", index: recvAnyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: i8VecIdx });
+  fctx.body.push({ op: "local.set", index: isPackedLocal });
+  fctx.body.push({ op: "local.get", index: recvAnyLocal });
+  return { isPackedLocal, i8VecIdx, i8ArrIdx };
+}
+
+/**
+ * (#5349 r4) Run §25.1.5.3's SpeciesConstructor steps only on the ArrayBuffer
+ * arm. A packed-byte receiver is a TypedArray, whose slice consults
+ * %TypedArray%'s species, not %ArrayBuffer%'s, so the ladder is emitted into a
+ * detached body and executed only when the brand test said "buffer". The
+ * species result local then stays at its Wasm default (null externref) on the
+ * packed arm, which is exactly the ladder's own default-lane sentinel.
+ *
+ * `isPackedLocal < 0` means no brand dispatch is in play, and the ladder is
+ * emitted inline exactly as before.
+ */
+function emitArrayBufferSliceSpeciesUnlessPacked(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  srcVecLocal: number,
+  sliceLenLocal: number,
+  vecTypeIdx: number,
+  isPackedLocal: number,
+): number | null {
+  if (isPackedLocal < 0) return emitArrayBufferSliceSpecies(ctx, fctx, srcVecLocal, sliceLenLocal, vecTypeIdx);
+  const speciesArm: Instr[] = [];
+  const savedBody = fctx.body;
+  const releaseSaved = retainLiveBody(ctx, savedBody);
+  const releaseArm = retainLiveBody(ctx, speciesArm);
+  fctx.body = speciesArm;
+  let speciesResultLocal: number | null;
+  try {
+    speciesResultLocal = emitArrayBufferSliceSpecies(ctx, fctx, srcVecLocal, sliceLenLocal, vecTypeIdx);
+  } finally {
+    fctx.body = savedBody;
+    releaseArm();
+    releaseSaved();
+  }
+  if (speciesArm.length > 0) {
+    fctx.body.push({ op: "local.get", index: isPackedLocal }, { op: "i32.eqz" });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: speciesArm, else: [] });
+  }
+  return speciesResultLocal;
+}
+
 export function emitArrayBufferSlice(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -470,6 +555,7 @@ export function emitArrayBufferSlice(
   } else {
     return null;
   }
+  const { isPackedLocal, i8VecIdx, i8ArrIdx } = probePackedByteSliceReceiver(ctx, fctx, guarded);
   if (guarded) emitRecoverBufferVecGuarded(ctx, fctx, srcVecLocal, { bytes: 1, signed: false, float: false });
   else fctx.body.push({ op: "local.set", index: srcVecLocal });
 
@@ -569,7 +655,14 @@ export function emitArrayBufferSlice(
   // (#5349 step 5) §25.1.5.3 steps 13-20 — SpeciesConstructor, Construct and the
   // four refusals — run HERE: after `newLen` (step 11) and before any byte is
   // copied (step 25), which is what `species-returns-*.js` observe.
-  const speciesResultLocal = emitArrayBufferSliceSpecies(ctx, fctx, srcVecLocal, sliceLenLocal, vecTypeIdx);
+  const speciesResultLocal = emitArrayBufferSliceSpeciesUnlessPacked(
+    ctx,
+    fctx,
+    srcVecLocal,
+    sliceLenLocal,
+    vecTypeIdx,
+    isPackedLocal,
+  );
 
   // dstArr = new i32[sliceLen] — or, on the species lane, the CONSTRUCTED
   // buffer's own data array, so the copy loop below fills it in place.
@@ -636,25 +729,55 @@ export function emitArrayBufferSlice(
   // On the species lane the constructed buffer IS the result (§25.1.5.3 step
   // 26) — `species.js` asserts `result === resultBuffer` by identity — so the
   // branch returns it untouched rather than re-wrapping its data array.
-  if (speciesResultLocal !== null) {
-    fctx.body.push({ op: "local.get", index: speciesResultLocal }, { op: "ref.is_null" });
+  const bufferResultArm: Instr[] =
+    speciesResultLocal !== null
+      ? [
+          { op: "local.get", index: speciesResultLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: sliceLenLocal },
+              { op: "local.get", index: dstArrLocal },
+              { op: "struct.new", typeIdx: vecTypeIdx },
+              { op: "extern.convert_any" },
+            ],
+            else: [{ op: "local.get", index: speciesResultLocal }],
+          },
+        ]
+      : [
+          { op: "local.get", index: sliceLenLocal },
+          { op: "local.get", index: dstArrLocal },
+          { op: "struct.new", typeIdx: vecTypeIdx },
+          { op: "extern.convert_any" },
+        ];
+
+  // (#5349 r4) R2 — re-wrap the copied bytes in the PACKED-BYTE carrier when the
+  // receiver was a TypedArray, so `b.slice(0)[0]`, `s[0] = 9`, `.length`,
+  // `.indexOf` and `.map` on the result all hit the `$__vec_i8_byte` arm of
+  // their dynamic dispatch instead of falling through it. The `ref.cast` to the
+  // packed array type is a no-op wherever the two `(array (mut i8))`
+  // declarations canonicalize (they do — that canonicalization is what made the
+  // pre-brand byte copy work at all); it is spelled out so a future divergence
+  // fails loudly at this site instead of silently mis-typing the result.
+  if (isPackedLocal >= 0) {
+    fctx.body.push({ op: "local.get", index: isPackedLocal });
     fctx.body.push({
       op: "if",
       blockType: { kind: "val", type: { kind: "externref" } },
       then: [
         { op: "local.get", index: sliceLenLocal },
         { op: "local.get", index: dstArrLocal },
-        { op: "struct.new", typeIdx: vecTypeIdx },
+        { op: "ref.cast", typeIdx: i8ArrIdx },
+        { op: "struct.new", typeIdx: i8VecIdx },
         { op: "extern.convert_any" },
       ],
-      else: [{ op: "local.get", index: speciesResultLocal }],
+      else: bufferResultArm,
     });
     return { kind: "externref" };
   }
-  fctx.body.push({ op: "local.get", index: sliceLenLocal });
-  fctx.body.push({ op: "local.get", index: dstArrLocal });
-  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "extern.convert_any" });
+  fctx.body.push(...bufferResultArm);
   return { kind: "externref" };
 }
 
@@ -6467,6 +6590,71 @@ export function emitArrayBufferSliceSpecies(
     notObjectArm: () => typeErrorArm("ArrayBuffer.prototype.slice: constructor is not an object"),
     deps: { externGetIdx, isUndefinedIdx, typeofObjectIdx, typeofFunctionIdx, symbolBoxIdx },
   });
+
+  // (#5349 r4) R1 — §25.1.5.3 step 14 with C = %ArrayBuffer% IS the default
+  // ArrayCreate lane, so it must not reach the IsConstructor refusal below.
+  //
+  // `ab.constructor = ArrayBuffer` (and `ab.constructor = { [Symbol.species]:
+  // ArrayBuffer }`) resolves C to the reified `%ArrayBuffer%` carrier — a real
+  // `$Object` whose own `@@species` getter returns the receiver, so the ladder
+  // above selects it. That carrier has no [[Construct]] the generic
+  // `Reflect.isConstructor` helper can see, so step 14 threw a TypeError where
+  // node returns an ordinary buffer (`ab.slice(0, 4).byteLength` → node 4, main
+  // 4, rounds 1-3 TypeError).
+  //
+  // The cheap spec-equivalent route is IDENTITY with the intrinsic, not a wider
+  // IsConstructor: Construct(%ArrayBuffer%, «newLen») is observationally the
+  // `struct.new` + %ArrayBuffer.prototype% result the default lane already
+  // emits, so clearing `selectedLocal` back to null takes exactly that lane.
+  // Deliberately NOT a general "teach IsConstructor about builtins" change —
+  // every other constructor value still goes through the refusal.
+  const abCtorGlobalIdx = reserveBuiltinConstructorIdentityGlobal(ctx, "ArrayBuffer");
+  const selAnyLocal = allocLocal(fctx, `__abs_selany_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  const intrAnyLocal = allocLocal(fctx, `__abs_intrany_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
+  fctx.body.push(
+    { op: "local.get", index: selectedLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "global.get", index: abCtorGlobalIdx },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: selectedLocal },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: selAnyLocal },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        { op: "global.get", index: abCtorGlobalIdx },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: intrAnyLocal },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: selAnyLocal },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "local.get", index: intrAnyLocal },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "ref.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "ref.null.extern" }, { op: "local.set", index: selectedLocal }],
+              else: [],
+            },
+          ],
+          else: [],
+        },
+      ],
+      else: [],
+    },
+  );
 
   fctx.body.push({ op: "local.get", index: selectedLocal }, { op: "ref.is_null" }, { op: "i32.eqz" });
   fctx.body.push({

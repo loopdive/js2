@@ -627,3 +627,234 @@ describe("#5349 round 3 — every site that relied on the two byte vecs being ON
     expect(await runStandalone(`var b=new ArrayBuffer(8); b=new Uint8Array(8); new DataView(b); return 0;`)).toBe(1);
   });
 });
+
+/**
+ * (#5349 round 4) The two regressions the round-3 review confirmed, both closed
+ * here. Oracle is node 22 in every row; the "main" column is `git archive
+ * 50c81e5487` (this branch's merge-base), measured with the same programs.
+ *
+ *  R2 (round-3-introduced): `b.slice()` on a PACKED-BYTE receiver reached
+ *     through an ArrayBuffer-typed binding materialised a byte BUFFER, so every
+ *     element read/write on the result was lost. `emitArrayBufferSlice` now
+ *     brands the result `$__vec_i8_byte` when the receiver is one, which is what
+ *     the downstream indexed/`indexOf`/`map`/`length` dispatches test for.
+ *  R1 (predates round 3): `ab.constructor = ArrayBuffer` resolved C to the
+ *     reified %ArrayBuffer% carrier, which `IsConstructor` does not recognise,
+ *     so §25.1.5.3 step 14 threw. Step 14 with C = %ArrayBuffer% IS ArrayCreate,
+ *     so the intrinsic is now recognised BY IDENTITY and takes the default lane.
+ */
+describe("#5349 round 4 — R2: a packed-byte receiver's slice stays a TypedArray", () => {
+  it("R2a element read through the slice (node 5, main 5, r2 TRAP, r3 undefined)", async () => {
+    expect(await runStandalone(`var b=new ArrayBuffer(8); b=new Uint8Array(8); b[0]=5; return b.slice(0)[0];`)).toBe(5);
+  });
+
+  it("R2b write through the slice (node 9, main 9, r2 TRAP, r3 undefined)", async () => {
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(8); b=new Uint8Array(8); b[0]=5; var s=b.slice(0); s[0]=9; return s[0];`,
+      ),
+    ).toBe(9);
+  });
+
+  it("R2c indexOf on the slice (node 1, main 1, r2 TRAP, r3 -1)", async () => {
+    expect(
+      await runStandalone(`var b=new ArrayBuffer(8); b=new Uint8Array([9,8,7]); return b.slice(1).indexOf(7);`),
+    ).toBe(1);
+  });
+
+  it("R2d map over the slice (node 8, main 8, r2 TRAP, r3 undefined)", async () => {
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(8); b=new Uint8Array([9,8,7]); return b.slice(1).map(function(x){return x;})[0];`,
+      ),
+    ).toBe(8);
+  });
+
+  it("R2e length-driven sum over the slice (node 5, main 5, r2 TRAP, r3 null)", async () => {
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(8); b=new Uint8Array(8); b[0]=5; var s=b.slice(0); var t=0; for(var i=0;i<s.length;i++) t+=s[i]; return t;`,
+      ),
+    ).toBe(5);
+  });
+
+  it("R2 controls: the begin/end coercion is %TypedArray%.prototype.slice's", async () => {
+    // Negative begin clamps against the ELEMENT count, an explicit `undefined`
+    // end means "to the end", and the copy is a copy, not an alias.
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(8); b=new Uint8Array([1,2,3,4,5]); var s=b.slice(-2); return s[0]*10+s.length;`,
+      ),
+    ).toBe(42);
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(8); b=new Uint8Array([1,2,3,4,5]); var s=b.slice(1,undefined); return s.length*10+s[0];`,
+      ),
+    ).toBe(42);
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(8); b=new Uint8Array([1,2,3]); var s=b.slice(0); s[0]=9; return b[0]*10+s[0];`,
+      ),
+    ).toBe(19);
+  });
+
+  it("R2 control: a GENUINE ArrayBuffer receiver still answers the buffer slice", async () => {
+    // Same binding shape, real buffer: byteLength and a DataView over the result
+    // both keep working, so the brand dispatch did not capture the buffer arm.
+    expect(await runStandalone(`var b=new ArrayBuffer(8); var s=b.slice(2,6); return s.byteLength;`)).toBe(4);
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(8); var s=b.slice(2,6); var v=new DataView(s); v.setUint8(1,3); return v.getUint8(1)*10+s.byteLength;`,
+      ),
+    ).toBe(34);
+  });
+});
+
+describe("#5349 round 4 — R1: %ArrayBuffer% as the species is the default lane", () => {
+  it("R1a `ab.constructor = ArrayBuffer` (node 4, main 4, lane/r2/r3 TypeError)", async () => {
+    expect(
+      await runStandalone(`var ab=new ArrayBuffer(8); ab.constructor=ArrayBuffer; return ab.slice(0,4).byteLength;`),
+    ).toBe(4);
+  });
+
+  it("R1b `{ [Symbol.species]: ArrayBuffer }` (node 4, main 4, lane/r2/r3 TypeError)", async () => {
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(8); var o={}; o[Symbol.species]=ArrayBuffer; ab.constructor=o; return ab.slice(0,4).byteLength;`,
+      ),
+    ).toBe(4);
+  });
+
+  it("R1 control: the default lane's result is a usable buffer, not the receiver", async () => {
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(8); ab.constructor=ArrayBuffer; var s=ab.slice(1,5); var v=new DataView(s); v.setUint8(0,7); return s.byteLength*10+v.getUint8(0);`,
+      ),
+    ).toBe(47);
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(8); ab.constructor=ArrayBuffer; var s=ab.slice(0,4); return (s===ab)?1:0;`,
+      ),
+    ).toBe(0);
+  });
+
+  it("R1 control: every OTHER constructor shape is unchanged", async () => {
+    // `{}` / `undefined` / a null @@species all keep the default lane...
+    expect(await runStandalone(`var ab=new ArrayBuffer(8); ab.constructor={}; return ab.slice(0,4).byteLength;`)).toBe(
+      4,
+    );
+    expect(
+      await runStandalone(`var ab=new ArrayBuffer(8); ab.constructor=undefined; return ab.slice(0,4).byteLength;`),
+    ).toBe(4);
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(8); var o={}; o[Symbol.species]=undefined; ab.constructor=o; return ab.slice(0,4).byteLength;`,
+      ),
+    ).toBe(4);
+    // ...a real species function is still INVOKED with newLen and its buffer returned...
+    expect(
+      await runStandalone(
+        `var hit=0; var ab=new ArrayBuffer(8); var o={}; o[Symbol.species]=function(n){ hit=n; return new ArrayBuffer(n+2); }; ab.constructor=o; var r=ab.slice(0,4); return hit*100+r.byteLength;`,
+      ),
+    ).toBe(406);
+    // ...and every refusal still refuses (null C, a primitive species, and a
+    // species returning a TypedArray = the §25.1.5.3 step-16 slot check).
+    expect(await runStandalone(`var ab=new ArrayBuffer(8); ab.constructor=null; ab.slice(0,4); return 0;`)).toBe(1);
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(8); var o={}; o[Symbol.species]=5; ab.constructor=o; ab.slice(0,4); return 0;`,
+      ),
+    ).toBe(1);
+    expect(
+      await runStandalone(
+        `var ab=new ArrayBuffer(8); var o={}; o[Symbol.species]=function(n){ return new Uint8Array(n); }; ab.constructor=o; ab.slice(0,4); return 0;`,
+      ),
+    ).toBe(1);
+  });
+});
+
+/**
+ * (#5349 round 4) The same two regressions on the wasi target. WASI is a
+ * DIFFERENT target from standalone — it does not set `ctx.standalone` — but it
+ * shares the packed-byte storage and the `$__vec_i8_byte` brand, so both
+ * defects reproduced there and both had to be closed there. R1 needed one
+ * extra step on this lane: the bare `ArrayBuffer` identifier read produced
+ * `ref.null.extern`, so `ab.constructor = ArrayBuffer` stored a value the
+ * species ladder could not tell apart from a genuine `ab.constructor = null`.
+ *
+ * These modules never call `fd_write`; the shim exists only because a wasi
+ * module declares the `wasi_snapshot_preview1` imports.
+ */
+async function runWasiNoIo(body: string): Promise<unknown> {
+  const source = `export function run(){
+    try { ${body} } catch (e) { if (e instanceof TypeError) return 1; if (e instanceof RangeError) return 2; return 3; }
+  }`;
+  const result = await compile(source, {
+    target: "wasi",
+    allowJs: true,
+    skipSemanticDiagnostics: true,
+  } as never);
+  expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+  const noop = (): number => 0;
+  const imports = {
+    wasi_snapshot_preview1: {
+      fd_write: noop,
+      proc_exit: (code: number): never => {
+        throw new Error(`exit ${code}`);
+      },
+      fd_close: noop,
+      fd_seek: noop,
+      fd_read: noop,
+      environ_get: noop,
+      environ_sizes_get: noop,
+      args_get: noop,
+      args_sizes_get: noop,
+      clock_time_get: noop,
+      random_get: noop,
+      path_open: noop,
+      fd_prestat_get: (): number => 8,
+      fd_prestat_dir_name: noop,
+      fd_fdstat_get: noop,
+    },
+  };
+  const { instance } = await WebAssembly.instantiate(result.binary, imports);
+  return (instance.exports as Record<string, () => unknown>).run();
+}
+
+describe("#5349 round 4 — wasi", () => {
+  it("R2b wasi: the write through the slice lands (node 9, main 9, r3 5)", async () => {
+    expect(
+      await runWasiNoIo(
+        `var b=new ArrayBuffer(8); b=new Uint8Array(8); b[0]=5; var s=b.slice(0); s[0]=9; return s[0];`,
+      ),
+    ).toBe(9);
+  });
+
+  it("R2c wasi: indexOf on the slice (node 1, main 1, r3 -1)", async () => {
+    expect(
+      await runWasiNoIo(`var b=new ArrayBuffer(8); b=new Uint8Array([9,8,7]); return b.slice(1).indexOf(7);`),
+    ).toBe(1);
+  });
+
+  it("R1a/R1b wasi: %ArrayBuffer% as the species is the default lane (node 4, main 4, r3 trap/4)", async () => {
+    expect(
+      await runWasiNoIo(`var ab=new ArrayBuffer(8); ab.constructor=ArrayBuffer; return ab.slice(0,4).byteLength;`),
+    ).toBe(4);
+    expect(
+      await runWasiNoIo(
+        `var ab=new ArrayBuffer(8); var o={}; o[Symbol.species]=ArrayBuffer; ab.constructor=o; return ab.slice(0,4).byteLength;`,
+      ),
+    ).toBe(4);
+  });
+
+  it("R1 wasi control: the r5 species gains on this lane are preserved", async () => {
+    // The ladder itself still runs on wasi: a real species function is invoked
+    // and its buffer returned, and the null-constructor refusal still refuses.
+    expect(
+      await runWasiNoIo(
+        `var hit=0; var ab=new ArrayBuffer(8); var o={}; o[Symbol.species]=function(n){ hit=n; return new ArrayBuffer(n+2); }; ab.constructor=o; var r=ab.slice(0,4); return hit*100+r.byteLength;`,
+      ),
+    ).toBe(406);
+    expect(await runWasiNoIo(`var ab=new ArrayBuffer(8); ab.constructor=null; ab.slice(0,4); return 0;`)).toBe(1);
+  });
+});
