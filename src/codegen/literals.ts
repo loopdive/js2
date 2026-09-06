@@ -107,6 +107,7 @@ import { ensureRuntimeEvalCallableWrapHelper } from "./runtime-eval-callable.js"
 import { emitSymbolOperandCoercionThrow } from "./tonumber-symbol-throw.js"; // (#3481)
 import { resolveObjectLiteralCarrier } from "./object-literal-carrier.js";
 import { tagAccessorObjectLiteralReceiver } from "./accessor-object-literal.js";
+import { widenUndefinedDefaultParamSlot } from "./destructuring-params.js";
 /**
  * Check if a TS expression is "undefined-like" — OmittedExpression (array hole),
  * undefined keyword, identifier `undefined`, void expression, or any of the
@@ -3395,6 +3396,9 @@ export function compileObjectLiteralForStruct(
       // `async *method([, , ...x] = […]) {}` (array binding pattern) computes
       // `(ref null vec)` here while the real body uses `externref`, a `kind`
       // divergence `refTypesMatch` cannot reconcile, spuriously forking.
+      // (#5360) A `= undefined` default with no annotation infers the TS type
+      // `undefined`, whose slot is numeric — the argument was coerced away.
+      wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
       const hasBindingPattern = ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name);
       if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
         wasmType = { kind: "externref" };
@@ -4059,6 +4063,8 @@ export function compileObjectLiteralForStruct(
         // so that (a) null/undefined trigger a spec-mandated synchronous TypeError and
         // (b) nested patterns recurse via the generic destructure logic. See #1151
         // Gap B — mirrors closures.ts:1186 and class-bodies.ts:1160.
+        // (#5360) See widenUndefinedDefaultParamSlot — sig and body must agree.
+        wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
         const hasBindingPattern = ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name);
         if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
           wasmType = { kind: "externref" };
@@ -4220,6 +4226,8 @@ export function compileObjectLiteralForStruct(
         // Binding-pattern params MUST route through the externref destructure path
         // (#1151 Gap B). Must mirror the sig-collection phase above so the fctx
         // param type agrees with the function signature.
+        // (#5360) See widenUndefinedDefaultParamSlot — sig and body must agree.
+        wasmType = widenUndefinedDefaultParamSlot(param, wasmType);
         const hasBindingPattern = ts.isArrayBindingPattern(param.name) || ts.isObjectBindingPattern(param.name);
         if (hasBindingPattern && !param.type && !param.dotDotDotToken && wasmType.kind !== "externref") {
           wasmType = { kind: "externref" };

@@ -77,6 +77,7 @@ import { coercionInstrs, emitGuardedRefCast } from "./type-coercion.js";
 import {
   buildDestructureNullThrow,
   isNullOrUndefinedLiteral,
+  widenUndefinedDefaultParamSlot,
   structHintForBindingPattern,
 } from "./destructuring-params.js";
 import { compileObjectLiteralAsExternref } from "./literals.js";
@@ -2104,6 +2105,11 @@ export function computeClosureWrapperSig(
     if (p.initializer && wasmType.kind === "ref") {
       wasmType = { kind: "ref_null", typeIdx: (wasmType as { kind: "ref"; typeIdx: number }).typeIdx };
     }
+    // (#5360) `(a, b = undefined) => …` — the checker infers `b: undefined`
+    // from the default alone, which `resolveWasmType` maps to a NUMERIC slot,
+    // so a real argument was coerced away at the call boundary. Same family as
+    // the JSDoc-optional widening above.
+    wasmType = widenUndefinedDefaultParamSlot(p, wasmType);
     const hasBindingPattern = ts.isArrayBindingPattern(p.name) || ts.isObjectBindingPattern(p.name);
     if (hasBindingPattern && wasmType.kind !== "externref") {
       wasmType = { kind: "externref" };

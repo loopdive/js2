@@ -747,6 +747,80 @@ export function isNullOrUndefinedLiteral(expr: ts.Expression): boolean {
 }
 
 /**
+ * (#5360) Does `expr` read a parameter whose STATIC `undefined`/`null` type is
+ * an artifact of its own default initializer rather than a fact about the
+ * runtime value?
+ *
+ * Under `strictNullChecks: true` (pinned deliberately — see
+ * `src/checker/index.ts`, #2748) TypeScript infers the parameter of
+ * `function f(a, b = undefined)` as the type `undefined`, and of
+ * `function f(a, b = null)` as `null`. That inference is a TS-world statement
+ * about TS callers; it is NOT a statement about the values a JavaScript caller
+ * passes, and this compiler's own lowering already disagrees with it — such a
+ * parameter gets an **externref** slot and the emitted default guard
+ * (`__extern_is_undefined` → assign default) is precisely the code that lets a
+ * real argument survive.
+ *
+ * Every type-directed *fold* that then drops the carrier and substitutes a
+ * constant is therefore unsound for these parameters. Measured on the test262
+ * `intl402/Temporal` calendar family: `temporalHelpers.js` declares
+ * `assertPlainDate(date, …, description = "", era = undefined, eraYear =
+ * undefined)`, and `String(era)` / `typeof era` folded to the constant
+ * `"undefined"` for a call that passed `"heisei"` — surfacing as
+ * `Test262Error: eraName must be string or undefined in canonicalizeCalendarEra`.
+ *
+ * Deliberately NARROW, so the ordinary sound folds keep firing:
+ *  - the parameter must carry **no type annotation** (`b: undefined` is a real
+ *    declaration and stays foldable);
+ *  - its initializer must be the literal `undefined` / `void <num>` / `null`
+ *    (`b = ""` infers `string` and is unaffected; `b?: T` has no initializer).
+ */
+export function paramUndefinedTypeIsDefaultArtifact(ctx: CodegenContext, expr: ts.Expression): boolean {
+  let bare: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(bare)) bare = bare.expression;
+  if (!ts.isIdentifier(bare)) return false;
+  // The question is about the DECLARATION's syntax (annotation present?
+  // initializer shape?), not about a type — `ctx.oracle.declarationsOf` is the
+  // right query and keeps this off the raw checker (#1930/#3273).
+  for (const decl of ctx.oracle.declarationsOf(bare)) {
+    if (!ts.isParameter(decl)) continue;
+    if (decl.type !== undefined) continue;
+    if (decl.initializer === undefined) continue;
+    if (isNullOrUndefinedLiteral(decl.initializer)) return true;
+  }
+  return false;
+}
+
+/**
+ * (#5360) Companion to {@link paramUndefinedTypeIsDefaultArtifact}, at the SLOT.
+ *
+ * `resolveWasmType` maps the TS type `undefined` to a NUMERIC slot ("void → no
+ * result"), which is right for a genuine `void`/`undefined` position and wrong
+ * for `function f(a, b = undefined)`: TypeScript infers that parameter as
+ * `undefined` from its own default (see the doc above), so the ARGUMENT —
+ * anything a JavaScript caller passes — was coerced into an i32/f64 slot and
+ * destroyed at the call boundary. Measured on the test262 `intl402/Temporal`
+ * calendar family: `TemporalHelpers.assertPlainDate(…, era = undefined, …)`
+ * received `"heisei"` and `typeof era` answered `"number"`.
+ *
+ * The free-function lane escaped this only because call-site inference
+ * overrides its registered signature; the object-literal-method and closure
+ * lanes had no such override and kept the numeric slot.
+ *
+ * Both the SIGNATURE-collection phase and the BODY's `fctx.params` must apply
+ * this or the two disagree and the emitted call is invalid Wasm — the same
+ * pairing rule the neighbouring binding-pattern widening documents.
+ */
+export function widenUndefinedDefaultParamSlot(param: ts.ParameterDeclaration, wasmType: ValType): ValType {
+  if (param.type !== undefined) return wasmType;
+  if (param.dotDotDotToken !== undefined) return wasmType;
+  if (param.initializer === undefined) return wasmType;
+  if (!isNullOrUndefinedLiteral(param.initializer)) return wasmType;
+  if (wasmType.kind !== "i32" && wasmType.kind !== "f64" && wasmType.kind !== "i64") return wasmType;
+  return { kind: "externref" };
+}
+
+/**
  * Destructure a function parameter (externref) using __extern_get for property access.
  * This handles primitives, objects, and any externref value safely — no struct cast needed.
  * Used as fallback when the value is not the expected struct type (#852).
