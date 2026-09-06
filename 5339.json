@@ -1,10 +1,11 @@
 {
   "id": "5339",
   "assignee": "ttraenkler/senior-dev",
-  "requested_by": "ttraenkler/senior-dev",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "done",
   "branch": "issue-5339-hono-dev-index-whole-module",
   "claimed_at": "2026-09-06T08:45:27Z",
-  "updated_at": "2026-09-06T08:45:27Z",
-  "write_id": "72493-0p7pvp93"
+  "updated_at": "2026-09-06T10:44:17Z",
+  "write_id": "43931-jn61x8e2",
+  "released_at": "2026-09-06T10:44:17Z"
 }
