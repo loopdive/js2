@@ -159,6 +159,96 @@ const PARITY_SOURCES: readonly { name: string; source: string }[] = [
       }
     `,
   },
+  // ---- r2 (2026-09-05): one pin per admitted step. Each source is a program
+  // BASE refused with the `(#3371)` compile error and node answers; the
+  // measurement for each is in that step's commit body.
+  {
+    // r2 step 1. `inner`'s `new.target` is its own, so both node and the
+    // compiled module see `undefined` for it; only a read of the TARGET's own
+    // `new.target` is unrepresentable.
+    name: "r2/1 a nested function's new.target does not refuse the site",
+    source: `
+      function NT(): void {}
+      function F(this: any, a: number): void {
+        this.a = a;
+        function inner(): any { return new.target; }
+        this.b = inner();
+      }
+      export function test(): number {
+        const o: any = Reflect.construct(F, [1], NT);
+        if (o.a !== 1) return 1;
+        if (Object.getPrototypeOf(o) !== NT.prototype) return 2;
+        return o.b === undefined ? 0 : 3;
+      }
+    `,
+  },
+  {
+    // r2 step 2. Symbol is never constructible, so the site throws before any
+    // prototype is used — the one wrapper constructor whose admitted answer was
+    // measured to equal node.
+    name: "r2/2 a Symbol target throws TypeError, as node does",
+    source: `
+      function NT(): void {}
+      export function test(): number {
+        try {
+          Reflect.construct(Symbol as any, [], NT);
+        } catch (e: any) {
+          return e instanceof TypeError ? 0 : 1;
+        }
+        return 2;
+      }
+    `,
+  },
+  {
+    // r2 step 3. `helper`'s parameter is a different binding; counting it
+    // refused the site.
+    name: "r2/3 an unrelated parameter of the same name does not refuse the site",
+    source: `
+      function NT(): void {}
+      function F(this: any, a: number): void { this.a = a; }
+      function helper(NT: number): number { return NT; }
+      export function test(): number {
+        const o: any = Reflect.construct(F, [1], NT);
+        if (o.a !== 1) return 1;
+        if (Object.getPrototypeOf(o) !== NT.prototype) return 2;
+        return helper(3) === 3 ? 0 : 3;
+      }
+    `,
+  },
+  {
+    // r2 step 4. The slot still holds the plain object the declaration
+    // installed; only a write to the SLOT would replace it.
+    name: "r2/4 mutating NT.prototype does not refuse the site",
+    source: `
+      function NT(): void {}
+      function F(this: any, a: number): void { this.a = a; }
+      NT.prototype.tag = 9;
+      export function test(): number {
+        const o: any = Reflect.construct(F, [1], NT);
+        if (o.a !== 1) return 1;
+        if (Object.getPrototypeOf(o) !== NT.prototype) return 2;
+        return o.tag === 9 ? 0 : 3;
+      }
+    `,
+  },
+  {
+    // r2 step 5. A target the compiler cannot resolve to one function
+    // declaration does not get the closed-struct lowering, so the generic
+    // [[SetPrototypeOf]] reaches it.
+    name: "r2/5 a dynamic in-file function target takes the carrier route",
+    source: `
+      function F(this: any, a: number): void { this.a = a; }
+      function G(this: any, a: number): void { this.a = a; }
+      function NT(): void {}
+      let T = F;
+      T = G;
+      export function test(): number {
+        const o: any = Reflect.construct(T, [1], NT);
+        if (o.a !== 1) return 1;
+        return Object.getPrototypeOf(o) === NT.prototype ? 0 : 2;
+      }
+    `,
+  },
   {
     name: "a bound function is a constructor for NewTarget purposes",
     source: `
@@ -260,6 +350,74 @@ const REFUSED_SOURCES: readonly { name: string; source: string }[] = [
       function NT(): void {}
       export function test(): number {
         const o: any = Reflect.construct(Array, [3], NT);
+        return Object.getPrototypeOf(o) === NT.prototype ? 0 : 1;
+      }
+    `,
+  },
+  {
+    // r2 step 2. A proto-identity-only probe says the wrapper carriers take the
+    // patch; a probe that also reads a method through the patched chain shows
+    // dispatch stays nominal (`o.valueOf()` answers the primitive where node
+    // answers the wrapper object). Boolean/Number/String keep the refusal.
+    name: "r2 a Boolean target (its wrapper dispatch stays nominal)",
+    source: `
+      function NT(): void {}
+      export function test(): number {
+        const o: any = Reflect.construct(Boolean as any, [true], NT);
+        return Object.getPrototypeOf(o) === NT.prototype ? 0 : 1;
+      }
+    `,
+  },
+  {
+    // r2 step 5. An async function is not a constructor: node throws a
+    // TypeError, the carrier route returned an object.
+    name: "r2 an async function target (not a constructor)",
+    source: `
+      async function A(a: number): Promise<number> { return a; }
+      function NT(): void {}
+      export function test(): number {
+        try {
+          Reflect.construct(A as any, [1], NT);
+        } catch (e: any) {
+          return e instanceof TypeError ? 0 : 1;
+        }
+        return 2;
+      }
+    `,
+  },
+  {
+    // r2 step 5. A spread argument list on a dynamic function target TRAPS
+    // where node returns a value.
+    name: "r2 a spread argument list on a dynamic function target",
+    source: `
+      function F(this: any, a: number, b: number): void { this.a = a; this.b = b; }
+      function G(this: any, a: number, b: number): void { this.a = a; this.b = b; }
+      function NT(): void {}
+      let T = F;
+      T = G;
+      const xs: number[] = [1, 2];
+      export function test(): number {
+        const o: any = Reflect.construct(T, [...xs], NT);
+        return Object.getPrototypeOf(o) === NT.prototype ? 0 : 1;
+      }
+    `,
+  },
+  {
+    // r2 step 3. The compiler's model of a function's `prototype` slot is
+    // name-keyed: a slot write to a same-spelled binding in another scope makes
+    // the OUTER `NT.prototype` read null, on base as well.
+    name: "r2 a prototype-slot write to a same-named binding in another scope",
+    source: `
+      function F(this: any, a: number): void { this.a = a; }
+      function NT(): void {}
+      function other(): any {
+        const NT: any = function (): void {};
+        Object.defineProperty(NT, "prototype", { value: { tag: 1 } });
+        return NT;
+      }
+      export function test(): number {
+        other();
+        const o: any = Reflect.construct(F, [1], NT);
         return Object.getPrototypeOf(o) === NT.prototype ? 0 : 1;
       }
     `,
