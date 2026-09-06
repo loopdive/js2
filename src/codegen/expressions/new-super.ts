@@ -143,6 +143,7 @@ import {
   noJsHost,
   wasmFuncReturnsVoid,
 } from "./helpers.js";
+import { buildThrowJsErrorInstrs } from "../js-errors.js"; // (#5350 r2, R2) super-call callable guard
 import { localGlobalIdx } from "../registry/imports.js";
 import { ensureGetUndefined, ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { holeToUndefinedInstrs } from "../array-holes.js";
@@ -1078,10 +1079,21 @@ function emitSuperExternMethodCall(
  *
  * Order follows §13.3.6: the method is fetched first, then the arguments are
  * evaluated (they run on BOTH sides of the callable test, so a miss keeps their
- * side effects). A null/absent method keeps today's typed default rather than
- * §13.3.6's TypeError — declining to throw where the compiler cannot see the
- * whole prototype surface, exactly as `array-tolocalestring.ts` argues for the
- * same shape.
+ * side effects), and only then is callability tested.
+ *
+ * (#5350 r2 review, R2) THAT TEST NOW THROWS. Step 1's real `__proto__:`
+ * prototype link made `super.missing()` on an object literal *resolve* — to
+ * `undefined` — where before the prototype was absent, so the typed default the
+ * first cut kept ("declining to throw where the compiler cannot see the whole
+ * prototype surface") stopped being conservative and became wrong: node throws
+ * `TypeError`, this answered `undefined` (probe c01), while the ordinary
+ * `o.missing()` on the SAME object threw (control c12). The guard here is
+ * deliberately the *same* one `buildResolvedCalleeGuard` splices into
+ * `__extern_method_call` — absent (null/undefined) plus the POSITIVE primitive
+ * brands — so the two call forms agree and no callable shape the brand
+ * classifier fails to recognise can be turned into a throw. A non-callable
+ * plain object still reaches `__apply_closure`'s legacy `undefined`, exactly as
+ * on the ordinary path (#4221 declined the negative classifier).
  */
 function compileStandaloneObjectLiteralSuperMethodCall(
   ctx: CodegenContext,
@@ -1098,6 +1110,16 @@ function compileStandaloneObjectLiteralSuperMethodCall(
     ensureLateImport(ctx, "__objvec_new", [], [externref]);
     ensureLateImport(ctx, "__objvec_push", [externref, externref], []);
   }
+  // (#5350 r2, R2) Register the TypeError constructor + message constant BEFORE
+  // any funcIdx is baked into `fctx.body`, so the guard adds no late shift of
+  // its own further down.
+  const calleeGuardMessage = "called value is not a function";
+  const buildNotCallableThrow = (): Instr[] => {
+    if (!noJsHost(ctx)) return [];
+    emitWasiErrorConstructor(ctx, "TypeError", 1);
+    return buildThrowJsErrorInstrs(ctx, "TypeError", calleeGuardMessage, { flush: fctx });
+  };
+  const calleeGuardThrows = buildNotCallableThrow().length > 0;
   flushLateImportShifts(ctx, fctx);
   const applyIdx = ctx.funcMap.get("__apply_closure");
   if (applyIdx === undefined) return undefined;
@@ -1132,19 +1154,43 @@ function compileStandaloneObjectLiteralSuperMethodCall(
   }
   fctx.body.push({ op: "local.set", index: argsLocal });
 
-  fctx.body.push({ op: "local.get", index: methodLocal });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: externref },
-    then: [{ op: "ref.null.extern" }],
-    else: [
-      { op: "local.get", index: methodLocal },
-      { op: "global.get", index: currentThisIdx },
-      { op: "local.get", index: argsLocal },
-      { op: "call", funcIdx: applyIdx },
-    ],
-  });
+  if (calleeGuardThrows) {
+    // §13.3.6.2 EvaluateCall step 5 — same shape as `buildResolvedCalleeGuard`.
+    const nullishIdx = ctx.funcMap.get("__nullish_to_null");
+    if (nullishIdx !== undefined) {
+      fctx.body.push({ op: "local.get", index: methodLocal });
+      fctx.body.push({ op: "call", funcIdx: nullishIdx });
+      fctx.body.push({ op: "local.set", index: methodLocal });
+    }
+    fctx.body.push({ op: "local.get", index: methodLocal });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildNotCallableThrow() });
+    for (const brand of ["__typeof_number", "__typeof_string", "__typeof_boolean"]) {
+      const brandIdx = ctx.funcMap.get(brand);
+      if (brandIdx === undefined) continue;
+      fctx.body.push({ op: "local.get", index: methodLocal });
+      fctx.body.push({ op: "call", funcIdx: brandIdx });
+      fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: buildNotCallableThrow() });
+    }
+    fctx.body.push({ op: "local.get", index: methodLocal });
+    fctx.body.push({ op: "global.get", index: currentThisIdx });
+    fctx.body.push({ op: "local.get", index: argsLocal });
+    fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get("__apply_closure") ?? applyIdx });
+  } else {
+    fctx.body.push({ op: "local.get", index: methodLocal });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: externref },
+      then: [{ op: "ref.null.extern" }],
+      else: [
+        { op: "local.get", index: methodLocal },
+        { op: "global.get", index: currentThisIdx },
+        { op: "local.get", index: argsLocal },
+        { op: "call", funcIdx: applyIdx },
+      ],
+    });
+  }
 
   const sig = ctx.checker.getResolvedSignature(expr);
   const returnType = sig ? resolveWasmType(ctx, ctx.checker.getReturnTypeOfSignature(sig)) : externref;

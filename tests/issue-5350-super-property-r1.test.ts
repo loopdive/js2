@@ -311,6 +311,7 @@ export function test(): number {
 `),
     ).toBe(1);
   });
+
   // (r2 review, R1) The back-edge narrowing was over-broad: r1 suppressed the
   // throw for ANY enclosing loop or labelled statement, so a read genuinely
   // executed before `super()` stopped throwing whenever it sat inside a loop
@@ -344,5 +345,35 @@ export function test(): number {
     // A labelled BLOCK is forward-only — `break lbl` jumps out, never back — so
     // it can never carry a later `super()` over the read.
     expect(await runStandalone(preSuperInEnclosingBlock("lbl: {", "break lbl; }"))).toBe(9);
+  });
+
+  // (r2 review, R2) With step 1's `__proto__:` prototype link real, a missing
+  // super method RESOLVES — to undefined — so the typed default stopped being
+  // conservative. Node 22 throws TypeError; r1 answered undefined (40).
+  it("throws TypeError for an object literal's missing super method", async () => {
+    expect(
+      await runStandalone(`
+export function test(): number {
+  var proto: any = { p: 1 };
+  var o: any = { __proto__: proto, m() { return super.missing(); } };
+  var r: any;
+  try { r = o.m(); } catch (e) { return e instanceof TypeError ? 2 : 3; }
+  return r === undefined ? 30 : 40;
+}
+`),
+    ).toBe(2);
+  });
+
+  it("still answers for a super method that IS present over a `__proto__:` literal", async () => {
+    // The guard's regression half: a real method must not be turned into a throw.
+    expect(
+      await runStandalone(`
+export function test(): number {
+  var proto: any = { m() { return 3; } };
+  var o: any = { __proto__: proto, m() { return super.m() + 1; } };
+  return o.m();
+}
+`),
+    ).toBe(4);
   });
 });
