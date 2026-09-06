@@ -974,3 +974,18 @@ Measured, standalone, node 22 / r4 / r5 (probes `.tmp/rev5350e/p`,
 Pins: two added (mixed carrier → 5 with `super.zz` absent; body-only control
 → 9). Gates and the pin file green on node 22 and 25 (see the commit).
 
+**Round-5 review verdict (accepted residual, not fixed).** The single reviewer
+showed the r5 rule is a swap, not a strict improvement: a nested-function
+carrier anywhere in the enclosing loops now also disarms reads whose own loop
+has a body carrier that DID run first (f10 dead arrow, f3/f2b outer-loop arrow,
+f11 = e15 with `useArrow = false`) — node throws ReferenceError, r4 threw, r5
+answers the prototype value; base answered the same value. f11 and e15 are the
+SAME source with a different constructor argument, so no static rule decides
+them; only a flag the nested function's `super()` could also store would (the
+captured-cell design r4 rejected on cost). Between the two errors the project
+standard picks r5's: it never invents a throw on a valid program (e15/e12 are
+valid, r4 threw), it only misses one on a program node rejects. Pinned as the
+shipped answer (f11 → 5). Byte-identical to r4 on wasi and host for all 316
+probes; standalone differs only on e12/e15/e16/f3/f10/f11; the 53-row control
+is identical to r4.
+

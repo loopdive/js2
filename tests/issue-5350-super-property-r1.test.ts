@@ -525,6 +525,37 @@ export function test(): number {
     ).toBe(5);
   });
 
+  it("accepts the missed ReferenceError on the mixed-carrier shape's other path (r5 residual)", async () => {
+    // Probe f11 (round-5 review): the SAME source as the mixed-carrier pin,
+    // constructed with useArrow = false, so the read on iteration 1 really
+    // precedes the body super() and node throws (9). No static classifier can
+    // tell this program from the useArrow = true one, and only a flag that the
+    // arrow's super() could also store would decide it at runtime; the read is
+    // left unguarded, which answers 5 here. Pinned at the shipped answer so a
+    // future change to the rule is deliberate: the alternative (round 4)
+    // invented a ReferenceError on the VALID useArrow = true program.
+    expect(
+      await runStandalone(`
+class A { a: number; constructor() { this.a = 1; } }
+class B extends A {
+  b: number;
+  constructor(useArrow: boolean) {
+    let i = 0; let v: any;
+    while (true) {
+      if (i === 1) { v = (super.zz as any); break; }
+      if (useArrow) { const f = () => { super(); }; f(); } else { super(); }
+      i = 1;
+    }
+    this.b = v === undefined ? 5 : 6;
+  }
+}
+export function test(): number {
+  try { return new B(false).b; } catch (e) { return e instanceof ReferenceError ? 9 : 10; }
+}
+`),
+    ).toBe(5);
+  });
+
   it("still guards a loop whose only carriers are constructor-body super() calls (r5 control)", async () => {
     // The body-only shape keeps the runtime flag: the read on iteration 1
     // precedes the loop's super(), so node throws (9) — xa13's shape.
