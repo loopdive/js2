@@ -4926,7 +4926,14 @@ function finalizeLeafStructTypes(ctx: CodegenContext): void {
   // packed-byte TypedArray carrier `$__vec_i8_byte` (same two fields over the
   // same `(array (mut i8))`). Without this the two canonicalize together and
   // the `ArrayBuffer.prototype.slice` step-16 `ref.test` accepts a Uint8Array.
-  const abVecIdx = ctx.vecTypeMap.get("i32_byte");
+  // (#5349 r3) Gated on the host-free lanes. `$__vec_i8_byte` — the type this
+  // brand separates it from — is only ever registered under `wasi || standalone`
+  // (`TYPED_ARRAY_PACKED_STORAGE`), so on the JS-host lane there is no second
+  // type to canonicalize against and dropping `final` bought nothing while
+  // changing one byte of every host module that builds an ArrayBuffer
+  // (`sub final` → `sub`, measured on 14 of 22 probes in round 2). Keeping the
+  // gate makes host byte-identical to main again.
+  const abVecIdx = ctx.wasi || ctx.standalone ? ctx.vecTypeMap.get("i32_byte") : undefined;
   if (abVecIdx !== undefined) keepOpenTypeIdxs.add(abVecIdx);
   const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
   ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
