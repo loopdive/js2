@@ -9,6 +9,19 @@ on:
   merge_group:
     branches: [main]
     types: [checks_requested]
+  # (#5344) Manual escape hatch for the baseline refresh. The refresh below is
+  # driven by pushes to `main`, and its main-push queue gate can legitimately
+  # defer several runs in a row on a busy queue. This lets a maintainer force a
+  # refresh — and, equally important, makes the refresh path something you can
+  # RUN AND WATCH rather than something you have to infer from the absence of
+  # complaints. That inference is exactly what let it stay broken from
+  # 2026-05-22 to 2026-09-06.
+  workflow_dispatch:
+    inputs:
+      force_refresh:
+        description: "Push the refreshed baseline even if the merge queue is busy (accepts one merge-group rebuild)"
+        type: boolean
+        default: false
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -83,8 +96,11 @@ jobs:
           path: diff-triage.md
           if-no-files-found: warn
 
-      # Delta-gate ON PRs ONLY — block merge if a previously-matching program
-      # now mismatches. On `push: main` the baseline is refreshed below.
+      # Delta gate in the MERGE QUEUE — block the merge candidate if a
+      # previously-matching program now mismatches. On `push: main` the
+      # committed baseline is refreshed by the `refresh-baseline` job below, so
+      # the delta this gate reports stays attributable to the candidate rather
+      # than to an accumulating backlog of merged commits (#5344).
       - name: Delta gate (PR + merge queue)
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: npx tsx scripts/diff-test-gate.ts
@@ -99,25 +115,194 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: npx tsx scripts/diff-test-optimize-gate.ts
 
-      # On merge to main, refresh the committed baseline so the next PR
-      # compares against the latest known-good state.
-      #
-      # DISABLED (post #491): The main branch ruleset enforces the merge
-      # queue, so direct `git push` from a workflow job fails with
-      # `GH013: Changes must be made through the merge queue`. The whole
-      # commit-and-push block below is commented out; the diff-test still
-      # RUNS on every push to main (its results are uploaded as artifacts
-      # above), it just no longer auto-refreshes the committed baseline.
-      # The baseline can be refreshed manually via a normal PR when it
-      # drifts too far.
-      # - name: Refresh baseline on main
-      #   if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-      #   run: |
-      #     cp benchmarks/results/diff-test.json benchmarks/results/diff-test-baseline.json
-      #     if ! git diff --quiet benchmarks/results/diff-test-baseline.json; then
-      #       git config user.name "github-actions[bot]"
-      #       git config user.email "github-actions[bot]@users.noreply.github.com"
-      #       git add benchmarks/results/diff-test-baseline.json
-      #       git commit -m "chore(diff-test): refresh baseline [skip ci]"
-      #       git push
-      #     fi
+  # ─────────────────────────────────────────────────────────────────────────
+  # (#5344) Refresh the committed baseline on merges to `main`.
+  #
+  # WHY THIS JOB EXISTS AGAIN. It used to be a plain `git push` step and was
+  # commented out on 2026-05-22 (`239062b95d`) because the `main` ruleset
+  # started requiring the merge queue for every write, so `GITHUB_TOKEN` got
+  # `GH013: Changes must be made through the merge queue`. The comment said the
+  # baseline "can be refreshed manually via a normal PR when it drifts too far".
+  # Nobody did, because nothing asked: the check stayed green, the baseline
+  # froze at 2026-07-19, and by 2026-09-05 the accumulated delta was being
+  # reported against whichever PR was in the merge queue — costing the #5333 P0
+  # fix real time on a `closures/06-nested.js` regression that was really #5335.
+  # 16 corpus files added after the freeze were in no baseline at all.
+  #
+  # The blocker is solved the same way every other bot that writes `main` in
+  # this repo solves it (`benchmark-refresh.yml`, `refresh-baseline.yml`): push
+  # over SSH with the `MAIN_DEPLOY_KEY` deploy key, which the ruleset lets
+  # bypass the queue.
+  refresh-baseline:
+    name: refresh diff-test baseline
+    needs: diff-test
+    if: |
+      needs.diff-test.result == 'success' &&
+      github.repository == 'loopdive/js2' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: baseline-promote
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout main at the measured revision
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      # Straight into `benchmarks/results/`, which is where the gate script
+      # reads its report from — no path plumbing, no copy step to get wrong.
+      - name: Download the fresh diff-test report
+        uses: actions/download-artifact@v6
+        with:
+          name: diff-test-report
+          path: benchmarks/results
+
+      # NO `pnpm install` HERE ON PURPOSE. `diff-test-gate.ts` imports only
+      # node builtins, so Node's own type stripping runs it directly. That
+      # keeps this job to well under a minute, which is not cosmetic: the
+      # shorter the gap between measuring and promoting, the more often `main`
+      # is still at the revision that was measured (see the promote step).
+      - name: Refresh the committed baseline from the fresh report
+        id: refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Read the age of the CURRENTLY COMMITTED baseline before rewriting
+          # it — that is what the queue gate's staleness floor is about. Read
+          # it from the artifact's own `generatedAt`, never from
+          # `git log -1 -- <path>`, which returns EMPTY (not an error) in this
+          # `fetch-depth: 1` checkout and would silently disable the floor.
+          LAST_REFRESH="$(node -e 'try{const b=JSON.parse(require("fs").readFileSync("benchmarks/results/diff-test-baseline.json","utf8"));process.stdout.write(String(b.generatedAt??""))}catch{process.stdout.write("")}')"
+          echo "last_refresh=${LAST_REFRESH}" >> "$GITHUB_OUTPUT"
+
+          node --experimental-strip-types scripts/diff-test-gate.ts --update
+
+          # `--update` writes only when the corpus OUTCOMES moved or the
+          # heartbeat expired — timing noise never reaches the file — so an
+          # unchanged tree here really does mean "nothing to publish".
+          if git diff --quiet -- benchmarks/results/diff-test-baseline.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Committed baseline already describes this revision; nothing to promote."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # (#3915) Any push to `main` — INCLUDING the `[skip ci]` one below — makes
+      # GitHub rebuild every in-flight merge group on the new base and THROW
+      # AWAY the validation running under it. `[skip ci]` suppresses workflows
+      # on the commit; it does not make the push inert to the queue.
+      - name: Gate the main push on the merge queue
+        id: queue_gate
+        if: steps.refresh.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LAST_REFRESH: ${{ steps.refresh.outputs.last_refresh }}
+          FORCE: ${{ inputs.force_refresh }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          FORCE_ARG=()
+          [ "${FORCE:-false}" = "true" ] && FORCE_ARG=(--force)
+          # `|| RC=$?`, not a bare call then `RC=$?`: the default step shell is
+          # `bash -e {0}`, so a bare non-zero exit aborts the step before the
+          # next line runs — the DEFER path would look like a step failure.
+          RC=0
+          node scripts/main-push-queue-gate.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --last-refresh "$LAST_REFRESH" \
+            --stale-after-hours 6 \
+            --reason "differential test baseline refresh" \
+            "${FORCE_ARG[@]}" || RC=$?
+          if [ "$RC" -eq 10 ]; then
+            echo "decision=defer" >> "$GITHUB_OUTPUT"
+          else
+            # 0 = proceed. Anything else is a gate malfunction, and a broken
+            # gate must never freeze the baseline — fail OPEN, loudly.
+            [ "$RC" -eq 0 ] || echo "::warning title=main-push-queue-gate::gate exited ${RC}; failing open"
+            echo "decision=proceed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Promote the refreshed baseline
+        # A deferred refresh is not a failure: the next push to `main`
+        # re-measures and retries, and the gate's 6h staleness floor bounds how
+        # long a permanently busy queue can hold the baseline back.
+        if: steps.refresh.outputs.changed == 'true' && steps.queue_gate.outputs.decision != 'defer'
+        env:
+          MAIN_DEPLOY_KEY: ${{ secrets.MAIN_DEPLOY_KEY }}
+          SOURCE_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${MAIN_DEPLOY_KEY:-}" ]; then
+            echo "::error::MAIN_DEPLOY_KEY is empty in the baseline-promote environment. GITHUB_TOKEN cannot write a queue-protected main (GH013), so the baseline cannot be published without it."
+            exit 1
+          fi
+
+          eval "$(ssh-agent -s)"
+          echo "$MAIN_DEPLOY_KEY" | ssh-add -
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add deploykey "git@github.com:${GITHUB_REPOSITORY}.git"
+          git fetch deploykey main
+
+          # PUBLISH ONLY ONTO THE REVISION THAT WAS MEASURED. The project rule
+          # for artifact promotion is "gate on freshness, never on commit-sha
+          # equality — replay onto current main instead" (CLAUDE.md, from the
+          # npm-compat livelock). That rule is about DASHBOARD DATA, where a
+          # measurement replayed onto a newer main is merely slightly old.
+          #
+          # This artifact is a GATE BASELINE, and replaying it would reinstate
+          # the exact bug #5344 is about: a baseline measured at K but
+          # published onto K+2 records `match` for a program that K+1 may have
+          # broken, so the next merge group blames the PR under test for a
+          # regression that is already on `main`. Attribution soundness
+          # requires the baseline to describe a revision that really existed.
+          #
+          # The livelock the rule guards against cannot arise here: this
+          # workflow has NO `cancel-in-progress`, so every superseding push
+          # gets its own run and one of them lands (the same guard in
+          # `benchmark-refresh.yml` promotes several times a day); and if a
+          # relentless queue did starve promotion for weeks, the delta gate's
+          # own staleness fallback stops it mis-attributing instead of lying
+          # quietly.
+          remote_sha="$(git rev-parse deploykey/main)"
+          if [ "$remote_sha" != "$SOURCE_SHA" ]; then
+            echo "Main advanced from measured ${SOURCE_SHA} to ${remote_sha}; the newer push run owns promotion."
+            exit 0
+          fi
+
+          # No `-f`: HEAD is already SOURCE_SHA, and the refreshed baseline is
+          # an uncommitted change in this working tree that must survive.
+          git checkout -B _diff_test_baseline_refresh_tmp
+
+          git add -- benchmarks/results/diff-test-baseline.json
+          if git diff --cached --quiet; then
+            echo "Baseline is already current."
+            exit 0
+          fi
+
+          git commit -m "chore(diff-test): refresh baseline [skip ci]"
+          if ! git push deploykey HEAD:main; then
+            git fetch deploykey main
+            advanced_sha="$(git rev-parse deploykey/main)"
+            if [ "$advanced_sha" != "$SOURCE_SHA" ]; then
+              echo "Main advanced during promotion; the newer push run will publish its own snapshot."
+              exit 0
+            fi
+            echo "::error::Diff-test baseline promotion failed without a main-branch race."
+            exit 1
+          fi
