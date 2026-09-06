@@ -273,6 +273,8 @@ function reserveSpeculativeClosureFuncCandidateTypes(
   ctx: CodegenContext,
   declared: FuncCandidate,
   sigParamWasmTypes: ValType[],
+  /** (#5334) The call site's file, for the program-wide rest-parameter check. */
+  sourceFile?: ts.SourceFile,
 ): FuncCandidate[] {
   const funcCandidates: FuncCandidate[] = [declared];
   const seen = new Set<number>([declared.funcTypeIdx]);
@@ -314,7 +316,7 @@ function reserveSpeculativeClosureFuncCandidateTypes(
   // slot is filled at runtime by the bridge.
   if (!ctx.standalone && !ctx.wasi) {
     const declaredResult = declared.returnType === null ? [] : [declared.returnType];
-    for (const info of restShapedWrapperCandidates(ctx, [declaredResult, [{ kind: "externref" }], []])) {
+    for (const info of restShapedWrapperCandidates(ctx, sourceFile, [declaredResult, [{ kind: "externref" }], []])) {
       if (seen.has(info.funcTypeIdx)) continue;
       seen.add(info.funcTypeIdx);
       funcCandidates.push({ ...info, restReading: true });
@@ -1820,6 +1822,7 @@ export function compileCallablePropertyCall(
         ctx,
         declaredCandidate,
         sigParamWasmTypes,
+        expr.getSourceFile(),
       );
       const calleeIsAsync = isPromiseType(sigRetType);
       const expectedReturn: ValType | null = calleeIsAsync ? { kind: "externref" } : matchedClosureInfo.returnType;
@@ -1958,9 +1961,13 @@ export function compileCallablePropertyCall(
         for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
         fctx.body.push({ op: "call", funcIdx: deferredDispatchIdx });
       } else {
-        // (#5334) The real arguments' externref views, for a rest arm's pack.
+        // (#5334) The real arguments' externref views, for a rest arm's pack —
+        // only when some candidate takes the rest reading, so a rest-free
+        // program keeps its bytes.
         const restArgCount = Math.min(expr.arguments.length, argLocals.length);
-        const argExternLocals = argumentExternViews(ctx, fctx, argLocals, matchedClosureInfo.paramTypes, restArgCount);
+        const argExternLocals = funcCandidates.some((candidate) => candidate.restReading === true)
+          ? argumentExternViews(ctx, fctx, argLocals, matchedClosureInfo.paramTypes, restArgCount)
+          : [];
         emitRootFuncrefDispatch(
           ctx,
           fctx,

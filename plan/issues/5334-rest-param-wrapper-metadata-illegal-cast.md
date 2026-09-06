@@ -306,6 +306,26 @@ shim). `controlGStr` (`g(["ab", "c"])` through `(xs: any) => unknown`) answers
   (`candidateFixedFormalCount` honours the flag off the host lane and
   `bridgedRestFixedCount` answers null there).
 
+### Caught by CI on the first push, then fixed: rest-free programs must stay byte-identical
+
+PR #5642's first run failed `equivalence-shard (2)` on
+`tests/equivalence/optimize-differential.test.ts :: closure-trampoline (#1941
+repro)` with `LinkError: Import "env" "__unwrap_for_wasm": function import
+requires a callable`. Not a stale baseline: the eager pure-rest wrappers
+register a `(vec) -> R` record in `closureInfoByTypeIdx` at every typed
+callable call, and `calls.ts`'s dynamic call path (`tryEmitInlineDynamicCall`)
+then sees a ref-typed formal among its candidates and pulls the
+`__unwrap_for_wasm` host import into a numeric-only module that never had it.
+A harness with a fixed import set (the equivalence helpers) cannot instantiate
+that. Fix: `programHasRestParameter` (a cached syntactic scan of
+`ctx.callableSourceFiles ?? [currentFile]`) gates the speculative wrappers,
+and the property ladder computes argument views only when a rest-reading
+candidate exists. Measured after the gate: the three rest-free probe programs
+(the #1941 trampoline, a callable-property field, a typed callback) compile to
+the SAME binary hash as the parent, raw and optimized, and none imports
+`__unwrap_for_wasm`; the rest shapes are unchanged (regression test 7/7,
+jest movers intact).
+
 ### Pre-existing failures met on the way (A/B'd on the parent, not mine)
 
 - `tests/issue-3214-callable-abi.test.ts` › "runs a legacy captured closure

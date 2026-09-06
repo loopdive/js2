@@ -2636,7 +2636,11 @@ export function compileIdentifierCall(
           // compiled AFTER this site (jest's `vi.fn()` spy) has an arm; its vec
           // slot is decided at runtime by the bridge.
           if (hostLane) {
-            for (const info of restShapedWrapperCandidates(ctx, [resultTypes, [{ kind: "externref" }], []])) {
+            for (const info of restShapedWrapperCandidates(ctx, expr.getSourceFile(), [
+              resultTypes,
+              [{ kind: "externref" }],
+              [],
+            ])) {
               if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
               seenFuncTypeIdx.add(info.funcTypeIdx);
               funcCandidates.push(info);

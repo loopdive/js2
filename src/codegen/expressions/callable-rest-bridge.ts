@@ -53,6 +53,7 @@
  */
 
 import type { Instr, ValType } from "../../ir/types.js";
+import { ts } from "../../ts-api.js";
 import { allocLocal } from "../context/locals.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "../context/types.js";
 import {
@@ -298,17 +299,56 @@ export function restSlotMarshalInstrs(ctx: CodegenContext, site: RestSlotSite): 
 }
 
 /**
+ * Does the program contain ANY source rest parameter? Cached per context (per
+ * source file when the cross-module source set is unknown). This gates the
+ * speculative pure-rest wrappers below: registering a `(vec) -> R` record in
+ * a program that has no rest function gives it nothing to match, while it DOES
+ * change other dispatchers' candidate sets — the dynamic call path in
+ * `calls.ts` saw the ref-typed formal and pulled the `__unwrap_for_wasm` host
+ * import into a numeric-only module (the #1941 optimize-differential program;
+ * measured 2026-09-06 as a LinkError in the equivalence harness). A rest-free
+ * program must compile byte-identically to the parent.
+ */
+function programHasRestParameter(ctx: CodegenContext, sourceFile: ts.SourceFile | undefined): boolean {
+  const holder = ctx as unknown as { __restBridgeProgramHasRest?: Map<string, boolean> };
+  const cache = (holder.__restBridgeProgramHasRest ??= new Map());
+  const files = ctx.callableSourceFiles ?? (sourceFile === undefined ? [] : [sourceFile]);
+  const key = ctx.callableSourceFiles !== undefined ? "*" : (sourceFile?.fileName ?? "");
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isParameter(node) && node.dotDotDotToken !== undefined) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  for (const file of files) {
+    if (file.isDeclarationFile) continue;
+    visit(file);
+    if (found) break;
+  }
+  cache.set(key, found);
+  return found;
+}
+
+/**
  * The pure-rest shape `(...args) -> R` gets a wrapper — and therefore an arm —
  * at this call site even when the rest closure is compiled LATER (the same
  * get-or-create family as the #4616 prefix wrappers, so the later closure
  * reuses the identical funcref type). Without it the jest `vi.fn()` spy,
  * compiled in the test module after the library's `onChange(...)`, matched no
- * arm at all and the call ended in the TypeError terminal.
+ * arm at all and the call ended in the TypeError terminal. Empty when the
+ * program has no rest parameter at all (see `programHasRestParameter`).
  */
 export function restShapedWrapperCandidates(
   ctx: CodegenContext,
+  sourceFile: ts.SourceFile | undefined,
   resultVariants: readonly (readonly ValType[])[],
 ): ClosureInfo[] {
+  if (!programHasRestParameter(ctx, sourceFile)) return [];
   const vecTypeIdx = ctx.vecTypeMap.get("externref") ?? getOrRegisterVecType(ctx, "externref", { kind: "externref" });
   const out: ClosureInfo[] = [];
   for (const results of resultVariants) {
