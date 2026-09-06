@@ -162,9 +162,15 @@ function identityGuard(typeIdx: number, globalIdx: number, then: Instr[]): Instr
 export function emitClassInstanceProtoExport(ctx: CodegenContext): void {
   if (ctx.wasi || ctx.standalone || noJsHost(ctx)) return;
   if (ctx.funcMap.has(CLASS_INSTANCE_PROTO_EXPORT)) return; // idempotent
-  // Only a module that reaches the host `__getPrototypeOf` import can ask this
-  // question; everything else keeps byte-identical output.
-  if (!ctx.funcMap.has("__getPrototypeOf")) return;
+  // Only a module that reaches one of the two host imports which can ask this
+  // question emits it; everything else keeps byte-identical output.
+  // (#5377) `__extern_get` joined `__getPrototypeOf` here: the dynamic member
+  // read is the OTHER caller — `i.constructor` through an any-typed receiver
+  // has to reach the class object, and the two identity hops it takes are
+  // `__class_instance_proto(instance)` → prototype carrier → class object.
+  // Without this a module that never calls `Object.getPrototypeOf` answered
+  // `%Object%` for a struct-backed instance's `constructor`.
+  if (!ctx.funcMap.has("__getPrototypeOf") && !ctx.funcMap.has("__extern_get")) return;
   if (ctx.protoGlobals.size === 0) return;
 
   const eligible: string[] = [];
@@ -239,11 +245,57 @@ export function emitClassInstanceProtoExport(ctx: CodegenContext): void {
       { op: "return" },
     );
 
-    body.push(
-      { op: "local.get", index: 1 },
-      { op: "ref.test", typeIdx: structTypeIdx },
-      { op: "if", blockType: { kind: "empty" }, then: arm, else: [] },
-    );
+    // (#5377) `ref.test` is a STRUCTURAL test, and WasmGC structs have no field
+    // names — so `class P { constructor(v){this.v=v} }` and
+    // `class D { constructor(v){this.w=v} }` compile to the SAME struct shape
+    // and `ref.test $P` succeeds for a `$D` instance. With the arms ordered
+    // only by inheritance depth (both 0 here), the first-declared class claims
+    // both, and `Object.getPrototypeOf(new D())` answered `P.prototype`
+    // (measured on `origin/main`, `.tmp/dbg-struct.mts` variant
+    // `twoStructClasses`: `=== P.prototype` reads 1, `=== D.prototype` reads 0).
+    //
+    // The `$__tag` field is the nominal discriminator the module already
+    // carries for exactly this reason (`ctx.classTagMap`, the `instanceof`
+    // lane), so gate the arm on it and let a mismatch FALL THROUGH to the next
+    // arm rather than return a foreign class's prototype. A class without a
+    // `__tag` field keeps the old unguarded shape byte-for-byte.
+    const tagFieldIdx = fields.findIndex((field) => field.name === "__tag");
+    const guardedArm =
+      tagFieldIdx >= 0
+        ? [
+            {
+              op: "if" as const,
+              blockType: { kind: "empty" as const },
+              then: arm,
+              else: [],
+            },
+          ]
+        : arm;
+    if (tagFieldIdx >= 0) {
+      body.push(
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: structTypeIdx },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: 1 },
+            { op: "ref.cast", typeIdx: structTypeIdx },
+            { op: "struct.get", typeIdx: structTypeIdx, fieldIdx: tagFieldIdx },
+            { op: "i32.const", value: ctx.classTagMap.get(className) ?? 0 },
+            { op: "i32.eq" },
+            ...guardedArm,
+          ],
+          else: [],
+        },
+      );
+    } else {
+      body.push(
+        { op: "local.get", index: 1 },
+        { op: "ref.test", typeIdx: structTypeIdx },
+        { op: "if", blockType: { kind: "empty" }, then: arm, else: [] },
+      );
+    }
   }
   body.push({ op: "ref.null.extern" });
 

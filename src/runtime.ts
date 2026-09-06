@@ -1788,7 +1788,15 @@ function _applyWithPrefix(fn: Function, thisArg: any, prefix: ArrayLike<any>, su
 
 function _hostEqComparableValue(v: any): any {
   if (typeof v === "function") {
-    return _wasmClosureWrapperTargets.get(v as Function) ?? v;
+    // (#5377) A CALLABLE host mirror is a boundary view of a raw wasm value in
+    // exactly the way the object case below already canonicalizes — a compiled
+    // class object crosses as a constructible function mirror (#4618), and
+    // `i.constructor === C` compares that mirror against the raw class-object
+    // struct the bare `C` identifier resolves to. `_unwrapForHost` consults
+    // `_hostProxyReverse` first and then falls through to the same
+    // `_wasmClosureWrapperTargets` lookup this line used to do alone, so no
+    // previously-equal pair changes.
+    return _unwrapForHost(v);
   }
   // #1712: canonicalize identity-stable host proxies before reference comparison;
   // otherwise dynamic proxy and typed raw-struct reads of one object compare unequal.
@@ -5636,6 +5644,14 @@ function _safeGet(
     const native = obj[key];
     return native === null ? undefined : native;
   }
+  // (#5377) An externref-backed class instance is a REAL host object, so the
+  // direct read below finds the built-in that the class overrode — and, for
+  // `constructor`, the synthetic `Sub` rather than the class object. Same gate
+  // as #5373: a plain host object is never tagged and pays one `WeakMap.has`.
+  {
+    const own = _classChainRead(obj, key, marshalExports(callbackState));
+    if (own !== _MISS) return own;
+  }
   const direct = obj[key];
   if (direct !== undefined) return direct;
   // Check sidecar for properties set via __extern_set on non-WasmGC objects
@@ -6394,7 +6410,12 @@ function _registerClassCtorHandler(
   if (classObj == null || typeof classObj !== "object") return;
   if (liveExportSource !== undefined) _classCtorCallbackStates.set(classObj, liveExportSource);
   if (ctorClosure != null && typeof ctorClosure === "object") _classCtorClosures.set(classObj, ctorClosure);
-  if (protoObj != null && typeof protoObj === "object") _classProtoStructs.set(classObj, protoObj);
+  if (protoObj != null && typeof protoObj === "object") {
+    _classProtoStructs.set(classObj, protoObj);
+    // (#5377) …and the reverse edge, so a struct-backed instance can reach its
+    // class object from the prototype carrier `__class_instance_proto` answers.
+    _classObjectByProtoStruct.set(protoObj, classObj);
+  }
   if (parentFnctor != null && typeof parentFnctor === "object") _classFnctorParents.set(classObj, parentFnctor);
   if (typeof classNameArg === "string" && classNameArg.length > 0)
     classStaticParent.registerClassObject(classObj, classNameArg);
@@ -6490,6 +6511,40 @@ function _registerClassParentRefHandler(className: any, obj: any, key: any, expo
  * `instance instanceof Sub` true.
  */
 const _subclassCtors = new Map<string, Function[]>();
+
+/**
+ * (#5377) Compiled class INSTANCE → the class-object singleton it was minted
+ * from. This is the identity `i.constructor` has to answer with, and it is
+ * keyed by the INSTANCE itself — never by class name.
+ *
+ * Two disjoint producers, one per backing:
+ *   - externref-backed (`class B extends Array`, i.e. jsbi's
+ *     `class JSBI extends Array`): recorded by `__set_subclass_proto`, which
+ *     now receives the class object as a fourth argument. Recording the
+ *     INSTANCE rather than the synthetic `Sub` is deliberate: jsbi's own
+ *     constructor runs `Object.setPrototypeOf(this, JSBI.prototype)` right
+ *     after `super(i)`, so a `Sub`-keyed link would be silently orphaned by
+ *     the very class this issue exists for.
+ *   - struct-backed (`class P {}`): resolved on demand through
+ *     `__class_instance_proto` → `_classObjectByProtoStruct` below, because a
+ *     WasmGC-struct instance never reaches a host import at construction.
+ *
+ * Why not the name-keyed `_subclassCtors` bucket beside it: class NAME is not
+ * an identity. Two classes named `P` in one module, or the same name across
+ * the ~hundreds of files one sharded test262 worker compiles in a process,
+ * collide — that is #5280, which parked three PRs on 2026-09-02. Object
+ * identity cannot collide, so this map needs no per-`instanceState` split and
+ * the `__instanceof` walk keeps its name-keyed bucket untouched.
+ */
+const _classObjectByInstance = new WeakMap<object, any>();
+
+/**
+ * (#5377) Class PROTOTYPE carrier → class-object singleton, the reverse of the
+ * `_classProtoStructs` link `__register_class_ctor` already records. Lets a
+ * struct-backed instance reach its class object in two identity hops:
+ * `__class_instance_proto(instance)` → prototype carrier → here.
+ */
+const _classObjectByProtoStruct = new WeakMap<object, any>();
 
 /**
  * (#1395) Cache of static-method-name → bridge JS function for class objects.
@@ -6957,6 +7012,57 @@ function _classChainToString(v: any, exports: Record<string, Function> | undefin
   const prim = own.call(v);
   if (prim != null && typeof prim === "object") return _MISS; // not a primitive — fall through
   return String(prim);
+}
+
+/**
+ * (#5377) The class-object singleton `v` was constructed from, or `undefined`.
+ *
+ * Returns the RAW class-object struct, deliberately not a `_wrapForHost`
+ * mirror: compiled code reading the bare identifier `C` gets exactly that
+ * externref, so `i.constructor === C` has to hold by reference across the two
+ * lanes. This is the same reasoning `_classObjectPrototypeStruct` and
+ * `compiledClassInstancePrototype` (#5347) already give for `C.prototype`.
+ */
+function _classObjectForInstance(v: any, exports: Record<string, Function> | undefined): any {
+  if (v === null || (typeof v !== "object" && typeof v !== "function")) return undefined;
+  if (!_canBeWeakKey(v)) return undefined;
+  const direct = _classObjectByInstance.get(v as object);
+  if (direct !== undefined) return direct;
+  if (!_isWasmStruct(v)) return undefined;
+  const proto = compiledClassInstancePrototype(v, exports);
+  if (proto == null || typeof proto !== "object") return undefined;
+  return _classObjectByProtoStruct.get(proto as object);
+}
+
+/**
+ * (#5377) The member READ on a compiled class instance, in the order the spec
+ * asks for. `_MISS` means the caller keeps its previous behaviour byte-for-byte.
+ *
+ * Two arms, both gated on "the receiver is a compiled class instance":
+ *
+ *  - `constructor` — the class object itself. Without this a struct-backed
+ *    instance answers `%Object%` (the ordinary-fields arm of `__extern_get`)
+ *    and an externref-backed one answers the synthetic `Sub` minted by
+ *    `__set_subclass_proto`, neither of which is the value the compiled `C`
+ *    identifier resolves to. `jsbi`'s `__isBigInt`/`__toPrimitive`/`BigInt`
+ *    all open with `x.constructor === JSBI`, so with that false every
+ *    `Instant.epochNanoseconds` read fell through to `__toPrimitive` on a raw
+ *    digit array (#5373's residual).
+ *
+ *  - any other key — #5373's `_classChainMethod`, ported here from the three
+ *    coercion/call sites to the member-READ path (`const f = x.toString`).
+ *    PR #5685 measured this arm ALONE regressing 9 `Temporal/Instant` rows,
+ *    because `i.valueOf` then resolves to jsbi's deliberately-throwing
+ *    `valueOf` — which node never reaches, thanks to the `constructor`
+ *    short-circuit above. The two arms are therefore one change, not two.
+ */
+function _classChainRead(v: any, key: any, exports: Record<string, Function> | undefined): any {
+  if (typeof key !== "string") return _MISS;
+  if (key === "constructor") {
+    const classObj = _classObjectForInstance(v, exports);
+    return classObj === undefined ? _MISS : _wrapForHost(classObj, exports);
+  }
+  return _classChainMethod(v, key, exports);
 }
 // (#3673) Hoisted from `_resolveHostField` — was a per-call closure on a hot
 // path (invoked for every dynamic field read that reaches the host resolver).
@@ -12005,6 +12111,14 @@ assert._isSameValue = isSameValue;
       }
       if (name === "__extern_get")
         return (obj: any, key: any) => {
+          // (#5377) A compiled class instance answers its OWN members before
+          // the built-in prototype chain the host would read them off. Ahead
+          // of the direct read below, because for an externref-backed instance
+          // (`class B extends Array`) that read is what wins today.
+          {
+            const own = _classChainRead(obj, key, callbackState?.getExports());
+            if (own !== _MISS) return own;
+          }
           // (#2743 a) A registered arguments object is an ordinary Object whose
           // `[[Prototype]]` is %Object.prototype%. The vec is opaque to the
           // host, so resolve the inherited members it would otherwise miss:
@@ -17551,9 +17665,17 @@ assert._isSameValue = isSameValue;
       // first call (idempotent), keyed by `name`, and reused thereafter so
       // `instance instanceof Sub` returns true (matched by `__instanceof`).
       if (name === "__set_subclass_proto")
-        return (instance: any, subName: string, parentName: string) => {
+        return (instance: any, subName: string, parentName: string, classObject?: any) => {
           if (instance == null || typeof subName !== "string" || typeof parentName !== "string") {
             return instance;
+          }
+          // (#5377) Record instance → class object while both are in hand. This
+          // is the only moment an externref-backed instance and its compiled
+          // class object meet, and it is keyed by instance identity so a later
+          // `Object.setPrototypeOf(this, C.prototype)` in the user constructor
+          // (jsbi does exactly that) cannot orphan the link.
+          if (classObject != null && typeof classObject === "object" && _canBeWeakKey(instance)) {
+            _classObjectByInstance.set(instance as object, classObject);
           }
           const Parent: any = resolveSubclassParent(parentName, deps, _resolveNamespacedClass);
           if (typeof Parent !== "function") {
@@ -17997,6 +18119,11 @@ assert._isSameValue = isSameValue;
       return (v: any) => (v ? 1 : 0);
     case "extern_get":
       return (obj: any, key: any) => {
+        // (#5377) Same ordering as the by-name `__extern_get` above.
+        {
+          const own = _classChainRead(obj, key, callbackState?.getExports());
+          if (own !== _MISS) return own;
+        }
         if (obj != null && typeof obj === "object") {
           if (key === "buffer") {
             const typedArrayBuffer = _compiledTypedArrayBuffer(obj, callbackState);

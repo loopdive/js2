@@ -1,7 +1,8 @@
 ---
 id: 5377
 title: "`i.constructor === C` is false for a compiled-class instance read through an any-typed receiver — the synthetic `__set_subclass_proto` ctor never maps back to the class value (blocks every linked-Temporal BigInt read: `JSBI.BigInt(i)` cannot short-circuit)"
-status: ready
+status: done
+completed: 2026-09-06
 sprint: current
 priority: high
 horizon: m
@@ -9,6 +10,39 @@ goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-06
+# 2026-09-06 — the identity has to be established where the two values MEET,
+# and the three places they meet are the class constructor (`class-bodies.ts`),
+# the member-read imports (`runtime.ts`) and the instance→prototype cascade
+# (`class-instance-proto.ts`). No new module can sit between a host import and
+# the built-in read it must precede — that split is exactly what let the
+# defect survive #5204's and #5373's partial fixes.
+#
+# `src/runtime.ts` (+222 net over `origin/main`): #5373's +95 (its three
+# coercion sites and the `_isTaggedUserClassInstance` / `_classChainMethod` /
+# `_classChainToString` helpers, RESTATED here because this PR carries that
+# commit) plus this issue's ~127 — the two instance→class-object registries,
+# `_classObjectForInstance`, `_classChainRead`, three call sites, the
+# `__set_subclass_proto` fourth argument, and their rationale comments.
+#
+# `src/codegen/class-bodies.ts` (+70): the `__set_subclass_proto` fourth
+# argument (built into its own live body so the #4618 global-shift hazard
+# cannot bake a stale index) and the constructor-entry class-object
+# materialization, plus the comments recording the measurements that forced
+# both shapes.
+loc-budget-allow:
+  - src/runtime.ts
+  - src/codegen/class-bodies.ts
+# Same change, same reason. `resolveImport` physically contains the member-read
+# imports and `__set_subclass_proto`; `<anonymous>#95` is the
+# `__extern_method_call` closure inside it (both inherited from #5373, restated
+# because the grant must live in a file THIS PR modifies).
+# `compileClassBodiesInner` is the function that builds every class
+# constructor's `FunctionContext`, so the one-line constructor-entry
+# materialization and its rationale comment land inside it.
+func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::<anonymous>#95
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
 ---
 
 # #5377 — constructor identity of a compiled-class instance through an any-typed receiver
