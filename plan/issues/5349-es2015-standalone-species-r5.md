@@ -26,23 +26,14 @@ loc-budget-allow:
   - src/codegen/dataview-native.ts
   - src/codegen/array-species.ts
   - src/codegen/array-holes.ts
-  # 2026-09-06 review round 1: step 16 was a REPRESENTATION test that a
-  # packed-byte TypedArray passes (`$__vec_i8_byte` and `$__vec_i32_byte` are
-  # structurally identical since #2835, so Wasm GC canonicalizes them to one
-  # runtime type). The undecidable case is gated off via a new module pre-scan
-  # in source-scan-predicates.ts, carried on a context flag.
-  - src/codegen/source-scan-predicates.ts
-  - src/codegen/context/types.ts
-  - src/codegen/context/create-context.ts
-  - src/codegen/index.ts
-func-budget-allow:
-  # 2026-09-06 review round 1: one line each — the new context flag's
-  # initializer and the two pre-scan wirings that set it. The flag has to be a
-  # whole-program PRE-SCAN, not emit-order state, because the `Uint8Array`
-  # construction may compile after the `ab.slice` site it has to gate.
-  - src/codegen/context/create-context.ts::createCodegenContext
-  - src/codegen/index.ts::generateModule
-  - src/codegen/index.ts::generateMultiModule
+  # 2026-09-06 round 2: the round-1 grants for source-scan-predicates.ts,
+  # context/types.ts, context/create-context.ts and index.ts are REMOVED, not
+  # renewed. Round 1 gated the undecidable step-16 case behind a whole-program
+  # pre-scan (`sourceHasPackedByteTaConstruct` + a context flag); round 2 makes
+  # the case decidable by branding the packed-byte carrier with `final`, so all
+  # of that scaffolding is deleted. Measured against origin/main efa9e76f07:
+  # 15 changed src files, net +1 LOC for the whole branch, and no function
+  # needs a growth allowance at all.
 ---
 
 ## Problem
@@ -500,16 +491,28 @@ i8-backed names are affected — `i16_byte` is `(array (mut i16))`, `i32_elem`
 `(array (mut i32))`, the float views `(array (mut f64))`, and `$__ta_view_*` /
 `$__ta_dyn_view` / `$__dv_window` carry extra fields.
 
-**Fix.** A new module pre-scan `sourceHasPackedByteTaConstruct`
-(source-scan-predicates.ts) sets `ctx.moduleUsesPackedByteTaCarrier` when the
-source can build an `Int8Array` / `Uint8Array` / `Uint8ClampedArray`, and
-`emitArrayBufferSliceSpecies` returns its null sentinel in that case — the
-module keeps main's pre-#5349 emission byte-for-byte rather than answering step
+**Fix (SUPERSEDED by round 2 below — read the correction with it).** A new
+module pre-scan `sourceHasPackedByteTaConstruct` (source-scan-predicates.ts)
+set `ctx.moduleUsesPackedByteTaCarrier` when the source could build an
+`Int8Array` / `Uint8Array` / `Uint8ClampedArray`, and
+`emitArrayBufferSliceSpecies` returned its null sentinel in that case — the
+module kept main's pre-#5349 emission byte-for-byte rather than answering step
 16 with a test that cannot decide. Pre-scan, not emit-order state, because the
-`Uint8Array` construction may compile after the `slice` site. Deliberately
-over-approximating (any identifier with one of the three names outside a
-property-name position): the only cost is a declined emission, never a wrong
-runtime answer.
+`Uint8Array` construction may compile after the `slice` site.
+
+> **CORRECTION (2026-09-06, round 2).** The sentence that stood here —
+> *"Deliberately over-approximating …: the only cost is a declined emission,
+> never a wrong runtime answer"* — **is false**, and the round-2 lane measured
+> it. Declining the arm is not a refusal; it silently reverts the module to
+> main's "species never consulted" answer, which is a WRONG answer wherever the
+> species was legitimate. In a module that merely mentions one of the three
+> names: a legitimate ArrayBuffer species answered 704 instead of 716 (node
+> 716); the species-called observation, a buffer-derived species and all seven
+> must-throw shapes (plain object, `Int32Array`, string, same-object step 18,
+> too-small step 20, `new Uint8Array(new ArrayBuffer(n))`,
+> `new Uint8Array(receiver)`) all reverted — on standalone and on wasi. Round 2
+> removes the pre-scan entirely and brands the carrier instead, so step 16
+> decides the case with the `ref.test` it already had.
 
 **Outcomes** (`--target standalone`, `imports: []` asserted on every row;
 node 22 oracle in brackets):
@@ -546,15 +549,17 @@ An unarmed `Uint8Array` module (no `.constructor` write) is also byte-identical
 lane vs fix — the gate sits after the `arraySpeciesDirty` guard, so nothing
 unarmed reaches it.
 
-**Residual, with its owner.** In a module that constructs a packed-byte
-TypedArray, `ArrayBuffer.prototype.slice` does not observe `@@species` at all.
+**Residual, with its owner (CLOSED by round 2 below).** In a module that
+constructs a packed-byte TypedArray, `ArrayBuffer.prototype.slice` does not
+observe `@@species` at all.
 Repro: `var made; var ab=new ArrayBuffer(8); var C={};
 C[Symbol.species]=function(n){ made=new Uint8Array(n); return made };
 ab.constructor=C; ab.slice(0,4)` — 601 here, TypeError in node. Closing it needs
-the packed-byte view carrier to be distinguishable from the buffer's, which is
-owned by the **typed-array construction path** (`emitDynamicUint8ArrayBufferAlias`
-plus `TYPED_ARRAY_PACKED_STORAGE` in `src/codegen/index.ts`), not by the species
-emitter. The same canonicalization also mis-answers
+the packed-byte view carrier to be distinguishable from the buffer's — which
+round 2 does at the **declaration site** (`final` on the `i8_byte` vec, the
+`i32_byte` vec kept open), not in the typed-array construction path this
+paragraph guessed at (`emitDynamicUint8ArrayBufferAlias` /
+`TYPED_ARRAY_PACKED_STORAGE`), and without touching a field or an instruction. The same canonicalization also mis-answers
 `Object.prototype.toString.call` and `ArrayBuffer.isView` for that carrier.
 
 Pins: five cases in `tests/issue-5349-species-r5.test.ts` (Int32Array result,
@@ -703,3 +708,181 @@ corrected (the false "never a wrong runtime answer" sentence replaced by the
 measurement); `sourceHasPackedByteTaConstruct` gone; gates green bare and with
 `LOC_GATE_BASE=origin/main`; TS7 typecheck; lint; `Model: Claude Opus 5
 Medium`; nothing pushed.
+
+### Round 2 (2026-09-06)
+
+Two commits, both on this branch, measured on the box that carried three other
+lanes at 1-minute load 15-18 throughout:
+
+- `3e02bb9d7c` — **the brand.** `getOrRegisterVecType` declares the `i8_byte`
+  vec `final: true`; `finalizeLeafStructTypes` keeps the `i32_byte` vec OPEN
+  (it is the root `$__resizable_ab` subtypes). Two structurally identical
+  structs become two distinct canonical Wasm GC types, on standalone (where the
+  open `i32_byte` does the work) and on wasi (where `markLeafStructsFinal`
+  returns early and the declared `final` does it). No field, no instruction,
+  no byte-count change.
+- `52ac986120` — **the gate removal.** `emitArrayBufferSliceSpecies` decides
+  §25.1.5.3 step 16 with the `ref.test $__vec_i32_byte` it already had. Deleted
+  with it: `sourceHasPackedByteTaConstruct` + `PACKED_BYTE_TA_NAMES`, the
+  `moduleUsesPackedByteTaCarrier` context field and its two pre-scan
+  assignments, the `index.ts` re-export. `grep -rn` over `src/` and `tests/`
+  finds none of the three names.
+
+**Probes, `--target standalone`, `result.imports` asserted `[]`, node 22
+oracle** (harness `.tmp/r2/run.mts`, probes `/home/user/js2/.tmp/w5/i8brand/p`,
+output `.tmp/r2/probetable3.txt`; trees: this worktree HEAD, `.tmp/r2/r1` =
+round-1 state, `.tmp/r2/base` = `origin/main` `efa9e76f07`):
+
+| probe | main | round 1 | **lane (HEAD)** | node 22 |
+| --- | --- | --- | --- | --- |
+| b15 species → `new Uint8Array(4)` | 600 | 600 | **1 (TypeError)** | 1 |
+| b16 species → `new Uint8Array(new ArrayBuffer(n))` | 600 | 600 | **1** | 1 |
+| r5 ArrayBuffer species, `new Uint8Array(2)` in module | 704 | 704 | **716** | 716 |
+| r8 `Int32Array` species, `new Uint8Array(2)` in module | 501 | 501 | **1** | 1 |
+| t1–t19 (19 packed-byte programs) | — | — | **identical on all three trees** | — |
+
+So the brand admits exactly the b15/b16 shape as a TypeError, restores the
+legitimate-species answer round 1 had reverted, and moves nothing else in those
+19 programs. Round 1's column is flat against main on all four species probes —
+i.e. round 1 bought its wrong-answer fix by giving the whole arm back.
+
+**Round-1 correction (also applied in place above).** The round-1 sentence
+"the only cost is a declined emission, never a wrong runtime answer" is false;
+the replacement quotes this table.
+
+**Controls — five lists, 3,147 rows, every row run, set-diff against the
+standalone baseline** (`/home/user/js2/.test262-cache/test262-standalone-current.jsonl`,
+fetched 08:12 UTC today from main `efa9e76f07`, which is this branch's
+merge-base). Driver `.tmp/r2/drive2.sh` (21 chunks of ≤150 rows,
+`COMPILER_POOL_SIZE=2`), diff `.tmp/r2/perlist.mjs`:
+
+| list | scope | rows | non-pass | LOST | GAINED |
+| --- | --- | --- | --- | --- | --- |
+| L1 | `built-ins/ArrayBuffer` | 221 | 63 | **0** | 9 |
+| L2 | `built-ins/DataView` | 561 | 99 | **0** | 0 |
+| L3 | `built-ins/TypedArray` | 1,446 | 543 | **0** | 1 (flake, below) |
+| L4 | `built-ins/TypedArrayConstructors` | 738 | 226 | **0** | 0 |
+| L5 | rows elsewhere naming a packed-byte view | 181 | 107 | **0** | 0 |
+
+**Zero rows lost, on every list.** No row changed non-pass KIND either.
+
+Both classes of difference were re-run on the base tree (`origin/main` `efa9e76f07`, bundles
+and QuickJS provider rebuilt there first — the adapter is keyed on the bundle
+hash and a stale one reads as a phantom compile_error):
+
+- **The 9 `ArrayBuffer/prototype/slice/species*` gains are real and are r5 step
+  5's**, preserved by round 2: 9 fail on main, 9 pass on the round-1 tree, 9
+  pass on the lane (`.tmp/r2/base-gained10.txt`, `.tmp/r2/r1-gained9b.out`,
+  `.tmp/r2/lane-gained9.out`). None of the nine mentions a packed-byte name, so
+  round 1's pre-scan never fired on them.
+- **`TypedArray/prototype/subarray/coerced-begin-end-shrink.js` is NOT a gain —
+  it is a flaky V8 heap exhaustion, and it is excluded.** The baseline recorded
+  it `compile_timeout`; it passed inside its chunk on the lane; run alone at
+  `COMPILER_POOL_SIZE=1` it **OOMs the compiler on the lane AND on main**
+  (exit 134, `Runtime_AllocateInOldGeneration`). Its neighbour
+  `coerced-begin-end-grow.js` OOM-killed a whole 150-row chunk once and then
+  answered `fail: illegal cast` — identically on lane and main — when re-run
+  alone. Two chunks (12, 14) were lost to this and were re-run split into
+  50-row and 10-row pieces (`.tmp/r2/rp2.sh`, `rp3.sh`, `rp4.sh`); every row in
+  the table above has a verdict from a run that reached `=== counts ===`.
+
+**49 of L5's 181 rows carry no baseline entry at all** (mostly `staging/sm` and
+newer `built-ins/Uint8Array` base64/hex rows). They ran, but they cannot be
+scored against a baseline that does not list them; they are counted in "rows"
+and excluded from LOST/GAINED.
+
+**WAT evidence** (`.tmp/r2/b15.*.wat`). Standalone, round 1 → lane, the whole
+diff is two lines — one type:
+
+```
+-  (type $__vec_i32_byte (sub final $type0 (struct (field $length (mut i32)) …)))
++  (type $__vec_i32_byte (sub       $type0 (struct (field $length (mut i32)) …)))
+   (type $__vec_i8_byte  (sub final $type0 (struct (field $length (mut i32)) …)))   ← both trees
+```
+
+Under `--target wasi` it is the mirror: `$__vec_i8_byte` carries the declared
+`final`, `$__vec_i32_byte` stays open. Two distinct canonical types on both
+targets, which is what lets step 16's `ref.test` answer.
+
+**Host byte identity — the plan's "identical on every program" is WRONG, and
+the correction is one byte.** `finalizeLeafStructTypes` is not target-gated, so
+a host module that registers an `i32_byte` vec also loses that type's `final`:
+`sub final` → `sub`, `@105 0x4f → 0x50` on b15 (`.tmp/r2/b15.m0.host.wat` vs
+`b15.fix.host.wat`, one line of diff). Measured over the 22 probes: 14 modules
+differ by exactly that byte, 8 are byte-identical, and t16/t19 were excluded
+because an identical-tree control shows those two are non-deterministic
+independently of this change. Nothing else moves on host: `$__vec_i8_byte` is
+never registered there (packed storage is `wasi || standalone`), so there is no
+second type for the canonicalization to collapse against, and dropping `final`
+only widens what MAY subtype — it changes no `ref.test` answer.
+
+**wasi — 60-row compile-only sample, not the full lists, deliberately.** The
+standalone pass alone took ~5 h wall-clock at this load; a full wasi pass over
+the same 3,147 rows would have been comparable, far past the 90-minute
+allowance the plan set for it. Sample: every 4th row of the 233 control rows
+whose source constructs a packed-byte view (`.tmp/r2/wasi60.txt`). Result
+`{ pass: 32, fail: 21, skip: 7 }` — **zero compile_error, zero invalid, zero
+crash**; all 21 failures are runtime/semantic (`transfer is not a function`,
+`setFromBase64 is not a function`, …), i.e. the wasi packed map still compiles
+everywhere the brand reaches it. What this leaves unmeasured: a wasi row
+outside those 233 that the brand changes behaviourally.
+
+**Pins.** `tests/issue-5349-species-r5.test.ts` — **34/34 green on node 22
+(v22.22.2) and node 25 (v25.9.0)** at `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096
+--pool=forks --poolOptions.forks.singleFork=true`, including the round-2 six:
+the standalone and wasi WAT shape, buffer/view sharing (415), copy-construction
+(13), slice over an aliased view (303), and the pre-existing `u.buffer`
+snapshot gap (320 here, 329 in node 22) pinned as unchanged.
+
+Related suites, in ≤3-file batches (`.tmp/r2/pins3.txt`, `pins4.txt`,
+`pins5.txt`). Green: `issue-5195*` (4 files), `issue-5309`, `issue-5312`,
+`issue-3054-{b1,b2,b3,c,de}`, `issue-1787`, `issue-2199`, `issue-2199b`,
+`issue-2593`, `issue-2639`, `issue-2648`, `issue-2861`, `issue-2934`,
+`issue-3062`, `issue-3239`, `issue-38`, `issue-4383`, `issue-4778`,
+`issue-5117`, `issue-5137`, `issue-5194-{r2,r3,set-r2}`, `issue-1670`.
+Four files fail — **every one shown identical on the base tree, so
+pre-existing**:
+
+| file | failures | base tree (`origin/main`) |
+| --- | --- | --- |
+| `arraybuffer-dataview.test.ts` | 6 (`Import #0 module="string_constants"`) | same 6 |
+| `typed-array-basic.test.ts` | 11 (same import) | same 11 |
+| `issue-1654-wasi-dataview-arraybuffer.test.ts` + `issue-1655-…` | 4 | same 4 |
+| `issue-5193-init-marshal-host-typedarray.test.ts` | 1 (module-scope sibling-view aliasing) | same 1 |
+
+**Pre-existing gaps re-confirmed on all three trees** (probe table above, and
+so NOT this round's): `u.buffer` of a length-constructed `Uint8Array` is a
+snapshot copy, not an alias (t1 40 / node 47, t2 90 / 99, t11 200 / 242,
+t17 320 / 329); `u.sort()` in place is a no-op and `indexOf`/`join` follow
+(t18 342 / 11162); `Object.keys(u)` is empty (t19 30205 / 30213); and
+`[...u]` over a packed-byte view emits INVALID wasm (t16) — filed as
+**#5359** with a narrowed repro that shows **spread alone is the trigger and
+`for-in` is not implicated**, correcting the round-2 plan's "for-in + spread"
+attribution.
+
+**Gates**, run from inside the worktree, bare, statuses read directly
+(`.tmp/r2/gates2.txt`): the chained ratchet (`check-loc-budget` →
+`check-func-budget` → `check-coercion-sites` → `check:oracle-ratchet` →
+`check:dead-exports`) **RC 0**, `check:speculative-rollback` 0,
+`check:stack-balance` 0 (no bucket increase), `check:codegen-fallbacks` 0,
+`check:any-box-sites` 0, TS7 `--noEmit -p tsconfig.ts7.json` 0, `lint` 0.
+LOC across the 15 changed src files vs the merge-base is **net +1**, and no
+function needs a growth allowance.
+
+- **`LOC_GATE_BASE=$(git rev-parse origin/main)` FAILS, and it is not this
+  branch's growth.** It names `type-coercion.ts` (5278 > 5148),
+  `expressions/calls-closures.ts` (2726 > 2699) and
+  `property-access-dispatch.ts` (5206 > 5198) — three files this branch does
+  not touch (`git diff --name-only efa9e76f07..HEAD` lists none of them). Main
+  **shrank** all three after `efa9e76f07`; this branch still carries the older,
+  larger copies, so simulating against a base it has not merged reads that as
+  growth. `LOC_GATE_BASE=efa9e76f07` (the real merge-base, and the revision the
+  baseline JSON was written at) is **RC 0**. The real merge preview takes main's
+  shrunken files, so this clears on the catch-up merge — which this lane was
+  instructed not to perform.
+
+**Status.** The round-2 objective is met: step 16 decides the packed-byte case
+on its own brand, the module-wide arm decline is gone with all its scaffolding,
+zero rows lost across 3,147 controls, and the false round-1 sentence is
+corrected in place. Steps 6 and 7 (26 TypedArray rows) remain diagnosed and
+unimplemented, so the issue stays `in-progress`.
