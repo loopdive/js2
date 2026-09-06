@@ -269,3 +269,22 @@ export function createClassMemberResolver(
     return fn;
   };
 }
+
+/**
+ * (#5358) Does `obj` — a compiled class instance or prototype singleton —
+ * carry `key` as a compiled prototype member? Presence only, through the same
+ * `__member_kind_<key>` discriminator `createClassMemberResolver` resolves
+ * with, so `k in h` and `h[k]` agree; a getter is NOT invoked. A key whose
+ * bridge was never published (nothing registered the demand) answers false,
+ * which is the pre-#5358 answer.
+ */
+export function hasCompiledClassMember(obj: any, key: any, exports: ClassMethodExports | undefined): boolean {
+  if (exports === undefined || typeof key !== "string") return false;
+  const kindFn = exports[`__member_kind_${key}`];
+  if (typeof kindFn !== "function") return false;
+  try {
+    return kindFn(obj) !== 0;
+  } catch {
+    return false;
+  }
+}

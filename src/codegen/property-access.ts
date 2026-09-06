@@ -30,6 +30,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
+import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"; // (#5358)
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
@@ -5465,6 +5466,13 @@ export function compileElementAccessBody(
     // no compile-time name and registers nothing.
     if (ts.isStringLiteral(expr.argumentExpression)) {
       recordDynamicClassAccessorRead(ctx, objType, expr.argumentExpression.text);
+    } else if (
+      !ts.isNumericLiteral(expr.argumentExpression) &&
+      !isNumericIndexExpression(ctx, expr.argumentExpression, fctx)
+    ) {
+      // (#5358) A non-numeric runtime key may name a prototype method of
+      // whichever class instance the `any` holds: publish every class's bridges.
+      recordRuntimeKeyClassMethodRead(ctx, undefined);
     }
     // (#2784 S3) Native-vec-aware element read. A numeric `recv[i]` on an
     // `any`/externref receiver that is actually a NATIVE vec (a reconstructed-
@@ -6220,6 +6228,11 @@ export function compileElementAccessBody(
         }
       }
       // Non-vec, non-tuple struct: fallback to externref conversion + __extern_get
+      // (#5358) A non-numeric key: publish the receiver class family's method
+      // bridges the host resolver needs (runtime-key-class-methods.ts).
+      if (!isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
+        recordRuntimeKeyClassMethodRead(ctx, typeIdx, fieldName);
+      }
       // Convert struct ref (already on stack) to externref
       fctx.body.push({ op: "extern.convert_any" });
       // Compile the key as externref

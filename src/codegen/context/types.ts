@@ -2670,6 +2670,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * as an accessor emits nothing at all.
    */
   hostDynamicClassAccessorReads: Set<string>;
+  /**
+   * (#5358) Member names a RUNTIME-key read on a class instance may need. Kept
+   * separate from the method set: only the bridge emitters consume the union
+   * (`hostBridgeMethodKeys`), so closed-method-dispatch's named-call arity
+   * relaxation never moves. See runtime-key-class-methods.ts.
+   */
+  runtimeKeyClassMethodNames: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
   /** Rest parameter info per function (functions with ...rest syntax) */
