@@ -1107,6 +1107,63 @@ export function compileNamespaceStaticCall(
             }
             return fallbackReturn(4, "i32-false");
           }
+          // (#5316 r5 step 6) The refusal is replaced by the real thing:
+          // `__reflect_set_receiver` is §10.1.9.2 OrdinarySetWithOwnDescriptor
+          // with the receiver as an explicit parameter (see
+          // `object-runtime-ordinary-set.ts`). Same argument machinery as the
+          // 3-argument form — locals rather than the bare stack, so a throwing
+          // `toString` in ToPropertyKey still escapes (§7.1.19) — and the same
+          // §26.1.13 step 1 Object-target guard. The 3-argument path below is
+          // untouched and keeps its byte-identical lowering.
+          //
+          // The probe is done BEFORE any operand is emitted: this name is in
+          // `OBJECT_RUNTIME_HELPER_NAMES`, so `ensureLateImport` resolves it to
+          // the DEFINED native and adds no import (hence no funcIdx shift), and
+          // it answers `undefined` on a target where the native was not
+          // registered — wasi, and any tree where a primitive it needs is
+          // missing. Then the refusal below still stands, unchanged.
+          if (
+            ensureLateImport(ctx, "__reflect_set_receiver", [externRef, externRef, externRef, externRef], [i32Ty]) !==
+            undefined
+          ) {
+            const targetArg4 = expr.arguments[0]!;
+            if (emitNonObjectArgGuard(ctx, fctx, targetArg4, "Reflect.set")) {
+              fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
+              return { kind: "i32" };
+            }
+            const recvLocals = emitReflectArgumentLocals();
+            // (#5316 review r1 F3) §26.1.13 step 1 for every non-Object target,
+            // not just the statically-branded ones the guard above catches. See
+            // the 3-argument arm below for why this is the by-EXCLUSION emitter.
+            guardReflectTargetIsObject(recvLocals[0]!, "Reflect.set called on non-object");
+            coerceReflectPropertyKey(recvLocals[1]);
+            for (let i = 0; i < 4; i++) {
+              const local = recvLocals[i];
+              if (local === undefined) fctx.body.push({ op: "ref.null.extern" });
+              else fctx.body.push({ op: "local.get", index: local });
+            }
+            const recvSetIdx = ensureLateImport(
+              ctx,
+              "__reflect_set_receiver",
+              [externRef, externRef, externRef, externRef],
+              [i32Ty],
+            );
+            flushLateImportShifts(ctx, fctx);
+            if (recvSetIdx !== undefined) {
+              fctx.body.push({ op: "call", funcIdx: recvSetIdx });
+              releaseReflectArgumentLocals(recvLocals);
+              return { kind: "i32" };
+            }
+            releaseReflectArgumentLocals(recvLocals);
+            fctx.body.push(
+              { op: "drop" },
+              { op: "drop" },
+              { op: "drop" },
+              { op: "drop" },
+              { op: "i32.const", value: 0 },
+            );
+            return { kind: "i32" };
+          }
           reportError(
             ctx,
             expr,
@@ -1133,6 +1190,20 @@ export function compileNamespaceStaticCall(
         // is unchanged — `emitReflectArgumentLocals` compiles the same
         // arguments in the same source order.
         const setLocals = emitReflectArgumentLocals();
+        // (#5316 review r1 F3) §26.1.13 step 1 for every non-Object target.
+        // `emitNonObjectArgGuard` above is a STATIC test on the argument's TS
+        // type, so it never fires for the spelling programs actually use —
+        // `Reflect.set(1 as any, …)`, or a variable the checker calls `any`.
+        // This is the same runtime by-exclusion brand `Reflect.get`/`has` were
+        // given in #5196: it rejects only positively-branded primitives
+        // (number/string/boolean/bigint/Symbol) and admits every unrecognised
+        // object shape, so an ordinary object flowing through a representation
+        // the classifiers do not brand keeps its previous answer instead of
+        // becoming a spurious TypeError. Both `Reflect.set` arms get it: the
+        // 4-argument form is what exposed the hole, but the guard is shared and
+        // the spec text is one step for both (probe `n2`, 3-argument:
+        // base = lane = 11, node = 22).
+        guardReflectTargetIsObject(setLocals[0]!, "Reflect.set called on non-object");
         coerceReflectPropertyKey(setLocals[1]);
         for (let i = 0; i < 3; i++) {
           const local = setLocals[i];
