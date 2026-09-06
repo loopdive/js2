@@ -212,6 +212,7 @@ import {
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
+import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -3599,6 +3600,13 @@ export function tryNamespaceConstantAndSymbolReads(
       });
       fctx.body.push({ op: "local.get", index: rawTmp });
       return { kind: "ref_null", typeIdx: baseVecTypeIdx };
+    }
+    // (#5338) An ordinary named tag's strings parameter is a plain `externref`
+    // slot, so the static shapes above cannot claim it. Discriminate at runtime
+    // instead, keeping the generic dynamic get as the miss arm.
+    if (isDynamicTemplateRawRead(ctx, fctx, expr, propName)) {
+      const dynamicRaw = emitDynamicTemplateRawRead(ctx, fctx, expr);
+      if (dynamicRaw) return dynamicRaw;
     }
   }
 

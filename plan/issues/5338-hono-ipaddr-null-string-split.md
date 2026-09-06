@@ -1,10 +1,12 @@
 ---
 id: 5338
 title: "hono ipaddr: a compiled string-producing function answers null to the host — `Cannot read properties of null (reading 'split')` (10 tests)"
-status: ready
+status: done
 sprint: current
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-06
+completed: 2026-09-06
+assignee: ttraenkler/senior-dev
 priority: high
 horizon: m
 feasibility: medium
@@ -12,6 +14,17 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: correctness
+# 2026-09-06 — both mechanisms live in NEW modules
+# (src/codegen/tagged-template-arguments.ts, src/codegen/template-raw-dynamic.ts).
+# What lands in the two god-files is only what cannot leave them: the four
+# per-arm call sites inside `compileTaggedTemplateExpression` (+48) and the
+# dispatch hook in `tryNamespaceConstantAndSymbolReads` (+8, which stays at
+# 235 LOC — under the 300-LOC function ceiling, so it needs no func grant).
+loc-budget-allow:
+  - src/codegen/string-ops.ts
+  - src/codegen/property-access-dispatch.ts
+func-budget-allow:
+  - "src/codegen/string-ops.ts::compileTaggedTemplateExpression"
 ---
 
 ## Problem
@@ -98,3 +111,92 @@ elsewhere in hono are a host-shim gap, not codegen.
 Model: **opus**. The producer is unknown and the family has three live
 candidates; this needs judgement across codegen subsystems, but the reduction
 path is well-trodden.
+
+## Implementation Notes (2026-09-06)
+
+### All three candidates in the plan were wrong, and so was the premise
+
+The plan assumed a compiled function ANSWERED null. It did not. The null was a
+**test argument**, and the reason it existed at all is that the harness's
+`test.each\`table\`` helper had silently fallen back to a different case list.
+
+`__upstreamEach` (in `UPSTREAM_TEST_SHIM`, shared by every dogfood suite) gates
+the tagged-template table path on
+
+```js
+Array.isArray(cases) && cases.raw && values.length > 0
+```
+
+with `values = Array.prototype.slice.call(arguments, 1)`. In the Wasm lane
+`cases.raw` was `undefined` and `values.length` was `0`, so the gate failed and
+`sourceCases = cases` — **the template STRINGS array**. `test.each` then
+registered one test per template chunk and called each body with a *string*.
+Destructuring `({ input, expected })` from a string yields nullish, and
+`convertIPv4ToBinary(null)` reaches `null.split('.')`. The `.split` receiver
+being null is three layers downstream of the defect.
+
+Two independent compiler bugs produced that:
+
+1. **Tagged-template substitutions were never passed as arguments.**
+   `compileTaggedTemplateExpression` (`src/codegen/string-ops.ts`) marshalled at
+   most `declaredParams - 1` substitutions into positional slots and dropped the
+   rest — it did not even COMPILE them, so their side effects were lost too. A
+   tag reading `arguments` saw `arguments.length === 1`. Fixed in all four
+   non-host-bridge arms via the existing `__argc` / `__extras_argv` protocol
+   (`src/codegen/tagged-template-arguments.ts`).
+2. **`strings.raw` was unreadable for an ordinary named tag.** The template vec
+   struct's third field is `raw`, but `tryNamespaceConstantAndSymbolReads` only
+   read it when the receiver could be typed statically — a vec-typed slot, or
+   the first parameter of an INLINE tag (`` ((s) => s.raw)`x` ``). A named tag's
+   parameter is a plain `externref`, so the read fell through to `__extern_get`,
+   and the JS-host `__extern_get` cannot index a WasmGC struct: `undefined`.
+   (Standalone's NATIVE `__extern_get` already has a template-vec `raw` arm —
+   `object-runtime-template-raw.ts` — so only the host lane was blind, which is
+   why this never showed up in a standalone measurement.)
+   Fixed by a runtime discriminator in
+   `src/codegen/template-raw-dynamic.ts`: `ref.test` the template-vec type, read
+   field 2 on a hit, and fall through to the ORIGINAL `__extern_get` on a miss —
+   so an ordinary object that really carries a `raw` property (marked's tokens)
+   is untouched.
+
+Ruled out by measurement, not by argument: #5343's typed-but-unmatched
+fall-through (already merged, hono unchanged), the `type-coercion.ts` terminal
+`ref.null` fallback, and the capture-cell families (#5320/#5323/#5333) — the
+reduced repro needs no captures, no conditionals and no dispatch miss, just a
+tagged template and a tag that reads `arguments`.
+
+### Why publication is unconditional on the dynamic arms
+
+Where the callee is statically known (`ctx.funcMap` by name) the extras are
+published only when `ctx.funcUsesArguments` says the body reads `arguments`.
+Where the tag is resolved at RUNTIME (`` obj.tag`…` `` — hono's own spelling) no
+such proof exists, so the arms publish unconditionally and RESET `__argc` /
+`__extras_argv` to their sentinels after the call (the #2704 discipline).
+Without the reset, a callee that ignored the extras would leak them into the
+next `arguments`-reading call, whose own call site would not have set them.
+
+### Result, and the residual that is NOT this issue
+
+hono `src/utils/ipaddr.test.ts`: **4/16 → 13/16**; the package 220/324 →
+229/324 (this HEAD's baseline is 220, not the 244 quoted in the acceptance
+criteria — main moved between the two measurements).
+
+All ten `Cannot read properties of null (reading 'split')` failures are gone.
+AC1 asked for ≥14/16 and this is 13/16, because the pre-fix per-test labels in
+the report were **not trustworthy**: the Wasm lane registered a different NUMBER
+of tests than the native lane (each `test.each` expanded to one test per
+template chunk), so the index-keyed report mislabelled everything after the
+first each-block. The three residual failures are all one distinct defect,
+filed as **#5361**: `splice` with a SPREAD argument inserts the spread source as
+a single element, which `expandIPv6('::ffff:127.0.0.1')` hits on its
+IPv4-mapped branch. Verified independent — it reproduces byte-identically with
+this change reverted.
+
+Two further defects observed during reduction, neither introduced here (both
+reproduce on the parent) and both left alone:
+
+- a tag reached through a PROPERTY in a module with no signature-matching
+  registered closure compiles to the `__tagged_template` host bridge, which
+  hands the raw closure carrier to JS — `TypeError: tag is not a function`;
+- an arrow tag with a `...rest` parameter answers `undefined` (Case 1
+  deliberately declines it and the generic arms mis-marshal the rest vec).
