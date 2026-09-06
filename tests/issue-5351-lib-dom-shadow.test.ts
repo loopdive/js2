@@ -33,7 +33,7 @@
  * surface entirely — is a separate, wider issue.
  */
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.ts";
+import { compile, compileMulti } from "../src/index.ts";
 
 /** Extract `env` import names from WAT (mirrors tests/issue-2961.test.ts). */
 function envImportNames(wat: string): string[] {
@@ -100,6 +100,52 @@ describe("#5351 — lib.dom ambient declare function no longer shadows a user to
       const r = await compileScript(TOSTRING_SHADOW_SRC, "wasi");
       expect(r.success).toBe(true);
       expect(r.imports).toEqual([]);
+    });
+  });
+
+  // Review round 1 (2026-09-06) — the exclusion must be scoped PER SOURCE
+  // FILE. `compileMulti` hands `collectReferencedGlobalNames` every user file
+  // at once; a single flat set of bound names let a MODULE-local binding in
+  // one file strip another file's genuine lib global. Measured on the
+  // pre-fix tree: the `env::queueMicrotask` import vanished and `main()`
+  // trapped on `unreachable` where node returns 1.
+  describe("compileMulti — a module-local binding is scoped to its own file", () => {
+    const HELPER_BINDS = {
+      "/helper.ts": `var queueMicrotask = 1;\nexport function h(): number { return queueMicrotask; }\n`,
+      "/main.ts": `import { h } from "./helper.ts";\nexport function main(): number { var o = Object.prototype; queueMicrotask(function () {}); return h(); }\n`,
+    };
+    const MAIN_BINDS = {
+      "/helper.ts": `export function h(): number { return 1; }\n`,
+      "/main.ts": `import { h } from "./helper.ts";\nvar queueMicrotask = 7;\nexport function main(): number { var o = Object.prototype; return h() + queueMicrotask; }\n`,
+    };
+
+    it("helper binds `queueMicrotask`, main uses the GLOBAL: import present and main() matches node (1)", async () => {
+      const r = await compileMulti(HELPER_BINDS, "/main.ts", {
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+      });
+      expect(r.success).toBe(true);
+      expect((r.imports ?? []).map((i) => `${i.module}::${i.name}`)).toEqual(["env::queueMicrotask"]);
+      let hostCalled = false;
+      const inst = await WebAssembly.instantiate(r.binary, {
+        env: {
+          queueMicrotask: () => {
+            hostCalled = true;
+          },
+        },
+      });
+      // node oracle for the same shape: `queueMicrotask(fn)` then `return 1`.
+      expect((inst.instance.exports as { main: () => number }).main()).toBe(1);
+      expect(hostCalled).toBe(true);
+    });
+
+    it("MAIN itself binds `queueMicrotask` at top level: no env import", async () => {
+      const r = await compileMulti(MAIN_BINDS, "/main.ts", {
+        skipSemanticDiagnostics: true,
+        target: "standalone",
+      });
+      expect(r.success).toBe(true);
+      expect(r.imports ?? []).toEqual([]);
     });
   });
 });

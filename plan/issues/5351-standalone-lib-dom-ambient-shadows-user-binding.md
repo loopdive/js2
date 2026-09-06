@@ -1,10 +1,11 @@
 ---
 id: 5351
 title: "standalone/wasi: a lib.dom ambient `declare function` shadows the script's own top-level binding and leaks an env:: import (env::toString, env::blur, …)"
-status: in-progress
+status: done
 sprint: current
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-06
+completed: 2026-09-06
 priority: medium
 horizon: s
 feasibility: easy
@@ -26,6 +27,17 @@ loc-budget-allow:
   # separate module to split it into without breaking the single walk over
   # `userFiles` the function already performs.
   - src/codegen/extern-declarations.ts
+  # 2026-09-06 (Opus-medium review round 1): scoping that same collector PER
+  # SOURCE FILE (review finding F1 — a module-local binding in one file was
+  # stripping another file's genuine lib global under compileMulti) costs a
+  # further ~+14 LOC in the same function: the collection moves into a
+  # `topLevelBindings(sf)` helper called once per file inside the existing
+  # walk loop. It stays in this module for the same reason as above.
+  - tests/issue-5351-lib-dom-shadow.test.ts
+  # 2026-09-06 (Opus-medium review round 1): +~45 LOC of compileMulti pins in
+  # the issue's own pin file — the F1 regression was invisible to every
+  # single-file pin, so the guard has to be multi-file. Verified to FAIL on
+  # the pre-fix tree (1 failed / 6 passed) and pass after.
 ---
 
 ## Problem
@@ -255,3 +267,86 @@ All run bare, exit code read directly (never piped):
   `branding.js` null-receiver defect — 8 rows; Array-method genericity — 1
   row). Not in scope for this issue; #2175 is already tracked and cited in
   `related:`.
+
+### Review round 1 (2026-09-06)
+
+Opus fix-round lane, on a fresh worktree of the integration branch with the
+Sonnet lane merged in. Two reviewer findings; one fixed, one recorded.
+
+**F1 [high, CONFIRMED — fixed]. `userBound` was one flat set across every
+user file, so under `compileMulti` a module-local top-level binding in file A
+stripped file B's genuine lib global.** `collectReferencedGlobalNames` built
+one `Set<string>` from the top-level statements of every file in `userFiles`
+and filtered every identifier in every file against it, with no per-file
+scoping. Single-file `compile()` was unaffected; `compileMulti` was not.
+
+Measured on the `/helper.ts` binds + `/main.ts` uses shape
+(`var queueMicrotask = 1; export function h(){ return queueMicrotask }` in the
+helper; `queueMicrotask(function(){}); return h()` in main, with
+`Object.prototype` present so the lib scan is enabled), `--target standalone`:
+
+| tree | `imports` | `main()` | host `queueMicrotask` called |
+| --- | --- | --- | --- |
+| base (`origin/main` 22a6e4d51e) | `["env::queueMicrotask"]` | `1` | yes |
+| lane (Sonnet fix, pre-review) | `[]` | **TRAP (`unreachable`)** | no |
+| fix (this round) | `["env::queueMicrotask"]` | `1` | yes |
+| node 22 oracle | — | `1` | — |
+
+So the lane turned a working host call into a trap. Same result for `var
+focus`, `class close`, `var btoa`.
+
+**Fix**: the collection moved into a `topLevelBindings(sf)` helper, called once
+per file inside the walk loop that already iterates `userFiles`; `userBound`
+is reassigned per file and `visit` (which never escapes its file's walk) reads
+the current file's set. A file's own top-level `var`/`function`/`class`/
+`let`/`const` shadows the ambient global for references in that file and
+nowhere else. No cross-file script-global modelling is attempted, and none is
+needed: all `compileMulti` inputs are modules.
+
+**Re-validation after the fix** (all probes under `.tmp/rev5351/`, base column
+always `origin/main` 22a6e4d51e via `.tmp/base/src/index.ts`):
+
+- p14 / p5 / p6 / p12 multi-file: base == fix on every row. p14 fix tree
+  `["env::queueMicrotask"]`, `main() = 1`, host called — equals node.
+- 24 known leak rows (batch harness): **24/24 CLEAN**, byte-identical row
+  verdicts to the lane run.
+- p1 non-shadow shapes (function-local `var`, parameter, class method,
+  object-literal method, user `declare function`, block/for/destructuring
+  `var`, `let`/`const`/generator/async top level): **output identical to the
+  lane**, 15 rows.
+- p2 / p2b / p4 40-name sweeps: **base == fix** on all rows, 0 DIFF.
+- p7 byte identity: the 6 programs binding no lib name are byte-identical to
+  base on host, standalone and wasi (18 hashes).
+- p11 runtime: the two shadowed programs instantiate and run clean on the fix
+  tree where base fails to instantiate; both controls unchanged.
+- 6 acceptance rows, real runner
+  (`npx tsx scripts/run-test262-paths.mts --isolate <list> --standalone`):
+  `{ pass: 6 }`, 0 non-pass.
+- Pins: `tests/issue-5351-lib-dom-shadow.test.ts` 7/7 green on node 22 and
+  node 25 (`VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+  --poolOptions.forks.singleFork=true`); `tests/issue-2509.test.ts` 5/5.
+  The two new `compileMulti` pins were verified to **fail** on the pre-review
+  lane code (1 failed / 6 passed) — the guard bites.
+
+**F2 [REFUTED as a regression — recorded, not fixed].** The collector does not
+see a `var` hoisted out of a top-level block/`if`/`for`
+(`if (true) { var toString = … }`, `for (var toString = …;;)`) or a
+destructuring `var { toString } = …`. Those still leak `env::toString`, but
+they leak **on base as well as on the lane and the fix** — measured as p1 rows
+A1/A2/A3, `["env::toString"]` in all three columns. It is a pre-existing gap,
+not something this issue introduced, and it is outside the 24-row acceptance
+set. Extending the collector to hoisted `var` at any depth below a top-level
+statement plus destructuring binding names is a real improvement but needs its
+own before/after measurement across the p1 shapes; deliberately left out of
+this round rather than folded in unmeasured.
+
+**Record correction — the wasi claim.** The lane's line that the `toString`
+shadow fix is "identical under `--target wasi`" is **behavioural, not
+byte-identical**. Measured (p7): the shadow-`toString` program under wasi
+hashes `bdaa974741ba0720` on base and `7c4234f2323dc30e` on the fix, both with
+`imports: []`. The fix removes a strict-mode host-import error, which
+reindexes the type section, so the bytes move while the observable import
+table and behaviour do not. Under standalone the same program goes
+`["env::toString"]` → `[]` (hash `ff1c39d644be4da2` → `40ac118143e63779`); the
+host lane is byte-identical (`2f0544eed44cd58f` both sides), as expected —
+that lane never passes `libRefs`.
