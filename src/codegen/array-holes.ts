@@ -637,6 +637,50 @@ function isArraySpeciesObservable(node: ts.Node): boolean {
       return true;
     }
   }
+  return isConstructorDescriptorDefine(node);
+}
+
+/**
+ * (#5349 step 2) The third trigger: a DESCRIPTOR install of `constructor`.
+ * `Object.defineProperty(a, 'constructor', {get})` makes step 5's
+ * `Get(O, "constructor")` observable exactly the way a plain assignment does —
+ * `{concat,map,filter,slice,splice}/create-ctor-poisoned.js` install a throwing
+ * getter that way and assert the callback never runs — but it is not an
+ * assignment, so the two arms above never see it and the whole species prologue
+ * stayed unemitted.
+ *
+ * Matched shapes, over-approximated on purpose (a false positive costs the
+ * runtime-null prologue, never a wrong answer, and the pre-scan is per-MODULE):
+ *
+ *  - `Object|Reflect.defineProperty(_, 'constructor', _)` — second argument a
+ *    string literal `constructor`;
+ *  - `Object.defineProperties(_, { constructor: … })` — an object literal with
+ *    a `constructor` key.
+ *
+ * A computed / non-literal key is NOT matched: it is indistinguishable from
+ * every other `defineProperty(o, k, d)` in the corpus, and arming on it would
+ * widen every producer's result type across unrelated modules. Such a program
+ * keeps today's behaviour.
+ */
+function isConstructorDescriptorDefine(node: ts.Node): boolean {
+  if (!ts.isCallExpression(node)) return false;
+  const callee = unwrapExpr(node.expression);
+  if (!ts.isPropertyAccessExpression(callee) || !ts.isIdentifier(callee.expression)) return false;
+  const ns = callee.expression.text;
+  if (ns !== "Object" && ns !== "Reflect") return false;
+  const method = callee.name.text;
+  if (method === "defineProperty") {
+    const key = node.arguments[1];
+    return key !== undefined && ts.isStringLiteralLike(key) && key.text === "constructor";
+  }
+  if (method !== "defineProperties") return false;
+  const props = node.arguments[1];
+  if (props === undefined || !ts.isObjectLiteralExpression(props)) return false;
+  for (const prop of props.properties) {
+    const name = prop.name;
+    if (name === undefined) continue;
+    if ((ts.isIdentifier(name) || ts.isStringLiteralLike(name)) && name.text === "constructor") return true;
+  }
   return false;
 }
 

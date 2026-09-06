@@ -835,3 +835,73 @@ answers; they are the round-2 list, cheapest first:
 Probe files: `/home/user/js2/.tmp/rv/p/*.js` with harness `.tmp/rv/cmp.mts`
 (base / lane / fix / node) while the container lives; every shape is a
 one-liner quoted above.
+
+## Implementation Plan — r2 (2026-09-05, Fable lane; Opus-medium implements)
+
+Scope: the six lane-only over-refusals from the round-1 verdict above, cheapest
+first. Every step re-admits a program the r4 lane answered correctly and round 1
+refused; nothing here touches the shapes round 1 refused for a WRONG answer
+(class NewTarget, non-identifier NewTarget, `new.target` read in the target's
+own body, non-object prototype on a carrier). All in
+`src/codegen/expressions/reflect-construct-newtarget.ts` unless stated.
+
+1. **`targetReadsNewTarget` stops at nested ordinary functions.** In
+   `readsNewTarget`, do not descend into `FunctionDeclaration`,
+   `FunctionExpression`, method declarations, getters/setters or class
+   constructors nested in the target's body — each has its own `new.target`.
+   Keep descending into arrow functions, class field initialisers and static
+   blocks (they inherit). Probe `.tmp/rv/p/b5_nt_nested_newtarget.js`
+   (node 7); keep `c2`/`c6` (a direct read, an arrow read) refused.
+2. **`UNSETTABLE_PROTOTYPE_CONSTRUCTORS` drops Boolean, String, Symbol.**
+   Measured: those wrapper carriers take the post-construction prototype
+   patch (`e_Boolean` 1, `e_String` 1, `e_Symbol` TypeError = node). Keep
+   Array, Number, Map, Set, RegExp, Function, each of which was measured to
+   discard it; re-measure all nine before committing and record the table.
+3. **`prototypeIsPristine` resolves the binding by symbol, not by name.**
+   Replace the file-wide `name.text` count with `ctx.oracle`'s declaration
+   identity for the NewTarget identifier (the same `declarationsOf` route r4
+   used); an unrelated parameter or local of the same name in another scope
+   must not count. Probes `m2_shadow.js` (node 7) vs `m1_control_noshadow.js`.
+4. **Mutation of `NT.prototype` is not replacement.** Only an assignment whose
+   LEFT side is exactly `NT.prototype` (or a `defineProperty`/`defineProperties`
+   call whose target is `NT` and whose key is the literal `"prototype"`, or
+   `Object.setPrototypeOf(NT, …)`) replaces the slot. `NT.prototype.tag = 9`,
+   `Object.assign(NT.prototype, …)` and `Object.defineProperty(NT.prototype,
+   …)` mutate the object the slot already holds, which stays a plain
+   `$Object` and passes `__native_construct_N`'s `ref.test $Object`. Probes
+   `b2_driver_protomut.js`, `b7`, `c3` (node 7 each). Fix the code comment
+   that cites the `defineProperty(NT, "prototype", {value: {…}})` shape as
+   the rationale: measure it — if the descriptor-written object-literal
+   carrier IS dropped by the `ref.test`, keep refusing that one shape and say
+   so precisely; if it is not, admit it.
+5. **In-file function targets use the carrier route the `unknown` target
+   already takes.** `classifyRuntimeNewTargetSite` returns `undefined` for
+   `targetKind.kind === "function"` when the driver declines; `k1_target_param.js`
+   shows the same instance shape through the `unknown` route takes the generic
+   `__object_setPrototypeOf` patch and answers node. Route a declined in-file
+   function target through that carrier path instead of refusing, ONLY where
+   the measured answer equals node (`j6_reassigned_target.js` → 3); if any
+   in-file function shape still reads a wrong prototype, keep the refusal for
+   that shape and name it.
+6. **Doc-comment correction** in `applyRuntimeNewTargetPrototype`: the
+   §10.1.14 guard repaired DataView only; the typed-array carrier still
+   answers `null` because its `Object.getPrototypeOf` reader is broken on main
+   (`f2_ta_bind_noproto.js`). No code change.
+
+Measurement protocol: base = a `git archive origin/main` tree; oracle node 22,
+changed test files also under node 25. Harness `.tmp/rv/cmp.mts` (base / fix /
+node) with the probes in `.tmp/rv/p/` while the container lives — re-create any
+missing probe from the one-liners in the verdict section. Every admitted shape
+must equal node on standalone AND wasi; every shape still refused must carry
+the verbatim `(#3371)` error on both targets.
+
+Acceptance: (a) the 11 kept rows and the positive control still pass, and the
+218-row control corpus (built-ins/Reflect/construct, language/expressions/
+new.target, language/expressions/super, built-ins/Function/prototype/bind) loses
+zero rows against origin/main — compile timeouts re-run alone at
+`COMPILER_POOL_SIZE=1` before they count; (b) tests/issue-3371-r4-reflect-
+construct-newtarget.test.ts gains one pin per step (admitted shape = node) and
+keeps its `refusals kept` block green on standalone and wasi; (c) programs
+without `Reflect.construct` byte-identical to origin/main on standalone, wasi
+and host; (d) all gates green bare and with `LOC_GATE_BASE=origin/main`;
+growth grants in this file's frontmatter with a dated rationale.
