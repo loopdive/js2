@@ -32,6 +32,12 @@ export const INIT_MARSHAL_HELPER_NAMES: readonly string[] = [
   "__dv_byte_len",
   "__dv_byte_get",
   "__ab_max_len",
+  // (#5208) The Date carrier's classifier + reader. Same window, same reason:
+  // both are EXPORTS, so during the start section a compiled `Date` handed to a
+  // host call could not even be RECOGNISED as one and fell through to the
+  // generic struct proxy.
+  "__\0js2_is_date",
+  "__\0js2_date_value",
 ];
 
 /**

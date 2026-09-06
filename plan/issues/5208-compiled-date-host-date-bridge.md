@@ -1,7 +1,7 @@
 ---
 id: 5208
 title: A compiled Date is a plain {timestamp} object to the host — Intl.DateTimeFormat.formatToParts(new Date(e)) throws Invalid time value
-status: ready
+status: done
 sprint: current
 priority: medium
 horizon: m
@@ -9,6 +9,44 @@ goal: standalone-gap
 reasoning_effort: max
 requested_by: ttraenkler/fable-lead
 created: 2026-08-29
+assignee: ttraenkler/dev-5208
+completed: 2026-09-06
+# 2026-09-06 (#5208): the whole fix is one host-boundary marshaller,
+# `_marshalWasmDateForHost`, plus its three call sites (the measured
+# extern-class method-argument crossing and JSON's two walks). Roughly two
+# thirds of the added lines in `src/runtime.ts` are the rationale comment: WHY
+# the host view is identity-CACHED and yet RE-SYNCED per crossing, which is the
+# one non-obvious property of the change and the thing a future reader would
+# otherwise "simplify" into a regression (mint-per-crossing breaks reference
+# identity; snapshot-once goes stale against the MUTABLE `$__Date` field).
+# The marshaller belongs next to `_nativeErrorToHost` / `_nativePromiseToHost`
+# — the existing carrier→host-object family — not in a new module.
+loc-budget-allow:
+  - src/runtime.ts
+  - src/runtime/date-host-method.ts
+  - src/runtime/init-marshal-registry.ts
+  - src/codegen/init-marshal-helpers.ts
+# 2026-09-06 (#5208): `resolveImport` grows by the ~14-line Date arm at the
+# measured `invokeMethod` crossing; `_serializeJSONProperty` and `_wasmToPlain`
+# by ~8 each. Each is a guarded early conversion inside the function that owns
+# that boundary — hoisting them out would mean re-deriving the boundary's own
+# context at a second site.
+func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::_serializeJSONProperty
+  - src/runtime.ts::_wasmToPlain
+  - src/runtime/date-host-method.ts::tryCallWasmDateHostMethod
+# 2026-09-06 (#5208): restated from the stacked predecessors so the allowances
+# are not STRANDED when CI diffs this PR against the merge preview rather than
+# against its stack base. #5355 (PR #5657) and #5251 are both in this branch's
+# history; their grants are reproduced verbatim in scope, not widened.
+#   #5355: src/codegen/extern-declarations.ts (+36, one extern-class entry),
+#          src/codegen/expressions/new-super.ts, src/runtime.ts,
+#          extern-declarations.ts::registerBuiltinExternClasses,
+#          runtime.ts::resolveImport
+#   #5251: src/codegen/property-access-dispatch.ts, src/codegen/type-coercion.ts,
+#          src/runtime.ts, property-access-dispatch.ts::finalizeStructAndDynamicMemberGet,
+#          type-coercion.ts::coerceType
 ---
 
 # #5208 — compiled `Date` ↔ host `Date` bridging

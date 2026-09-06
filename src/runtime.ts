@@ -55,7 +55,7 @@ import { createCrossModuleStructOwners } from "./runtime/cross-module-struct-own
 import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
-import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime/date-host-method.js";
+import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
 import { wasmCarrierBuiltinPrototype } from "./runtime/wasm-carrier-prototype.js"; // (#5325)
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
@@ -4685,6 +4685,18 @@ function _wasmToPlain(val: any, exports: Record<string, Function> | undefined, s
   }
   if (!_isWasmStruct(val)) return val;
 
+  // (#5208) The Date carrier flattens to its HOST Date, not to its raw
+  // `{timestamp}` field list — `JSON.stringify({d: new Date(0)})` answered
+  // `{"d":{"timestamp":null}}`, the compiler's private carrier field leaked
+  // through the boundary. Handing back a real Date lets §25.5.2.4 step 2 find
+  // `Date.prototype.toJSON` on the host side, so nothing Date-specific has to
+  // be synthesised in compiled code. Ahead of the cycle bookkeeping: a Date is
+  // a leaf, it cannot participate in a cycle.
+  {
+    const hostDate = _marshalWasmDateForHost(val, exports);
+    if (hostDate !== _MISS) return hostDate;
+  }
+
   // (#2671) Cycle detection for the JSON.stringify flatten fast path. When a
   // `seen` ancestor set is supplied, a struct already on the current
   // serialization path is a circular reference — §25.5.2.5 / §25.5.2.6 step 1
@@ -5154,6 +5166,14 @@ function _serializeJSONProperty(
   const exports = callbackState?.getExports();
   // Step 1. Let value be ? Get(holder, key).
   let value = _liveGet(holder, key, exports);
+  // (#5208) The replacer/toJSON walk never reaches `_wasmToPlain`, so the Date
+  // carrier has to be marshalled here too — and BEFORE step 2, because step 2
+  // is `Get(value, "toJSON")` and an opaque carrier has no `toJSON` to find.
+  // With a real Date in hand the spec's own step 2 does the work.
+  {
+    const hostDate = _marshalWasmDateForHost(value, exports);
+    if (hostDate !== _MISS) value = hostDate;
+  }
   // Step 2. If Type(value) is Object or BigInt, try toJSON.
   if (value != null && (typeof value === "object" || typeof value === "bigint")) {
     const toJSON = _liveGet(value, "toJSON", exports);
@@ -6162,6 +6182,23 @@ function _decoderExportsFor(
   exports: Record<string, Function> | undefined,
 ): Record<string, Function> | undefined {
   return _crossModuleStructs.decoderFor(obj, exports) ?? exports;
+}
+
+/**
+ * (#5208) The compiler-owned WasmGC Date carrier as a real host `Date`, or
+ * `_MISS`. The view itself — and why it is identity-CACHED and yet RE-SYNCED on
+ * every crossing — lives in `runtime/date-host-method.ts`, which already owns
+ * the carrier protocol. This is only the binding of the three things that
+ * module cannot see: struct classification, the #5225 cross-module DECODER
+ * selection (without it a linked project's `ref.test` answers 0 and the carrier
+ * silently falls through to the generic proxy), and the reverse identity map.
+ */
+function _marshalWasmDateForHost(value: any, exports: Record<string, Function> | undefined): Date | typeof _MISS {
+  if (value == null || typeof value !== "object" || !_isWasmStruct(value) || !_canBeWeakKey(value)) return _MISS;
+  const hostDate = wasmDateHostView(value, _decoderExportsFor(value, exports), _isWasmStruct, (host, carrier) =>
+    _hostProxyReverse.set(host, carrier),
+  );
+  return hostDate ?? _MISS;
 }
 
 /** (#5225) `_decoderExportsFor` for the paths that thread a callback state. */
@@ -11274,7 +11311,22 @@ function resolveImport(
                 continue;
               }
               const callable = _maybeWrapCallableUnknownArity(a, callbackState);
-              callArgs[i] = callable !== a ? callable : _wrapForHost(a, marshalExp);
+              if (callable !== a) {
+                callArgs[i] = callable;
+                continue;
+              }
+              // (#5208) THE measured crossing point. Instrumenting `_wrapForHost`
+              // and running the 123-row #5249 Temporal family provider-linked
+              // showed exactly ONE site where a compiled `Date` reaches a host
+              // function in the whole @js-temporal/polyfill: here, as the
+              // argument of `Intl_DateTimeFormat_formatToParts`, from
+              // `HelperBase_getCalendarParts` (and once from
+              // `ChineseBaseHelper_getMonthList`). The generic proxy made the
+              // host throw `RangeError: Invalid time value`, which the
+              // polyfill's own `catch` rewrote into `Invalid ISO date` — 68 of
+              // the 123 rows.
+              const hostDate = _marshalWasmDateForHost(a, marshalExp);
+              callArgs[i] = hostDate !== _MISS ? hostDate : _wrapForHost(a, marshalExp);
             }
           }
           // (#3903) Arity switch instead of `fn.call(self, ...callArgs)` — same
