@@ -170,3 +170,76 @@ tests (`tests/issue-5208-*`) are the guard.
 - Id reserved via `claim-issue --allocate --allow-unscanned` (no `gh` in this
   container); open PRs hand-checked 2026-09-07 — highest in-flight issue file
   is #5377 (PR #5699).
+
+## Implementation notes (dev-5378, 2026-09-07)
+
+### Step 1 — answered
+
+**First non-finite: `ZonedDateTime.prototype.offsetNanoseconds` reads `NaN`**
+(`.offset` prints `+NaN:NaN:NaN.000000NaN`). It is minted by an ABSENT PROPERTY
+READ, not by the divmod, not by `Date`, and not by the compiled `Intl` bridge:
+
+```js
+function Rt(e){ … return $t.test(e) ? {offsetMinutes: sr(e)/6e10} : {tzName:e} }
+function Fn(e,t){ const n = Rt(e).offsetMinutes; return void 0 !== n ? 6e10*n : lr(e,t) }
+```
+
+For `"UTC"` the `{tzName}` shape is returned and `.offsetMinutes` — a property
+that is not there — read `NaN` instead of `undefined`, so `void 0 !== n` took
+the FIXED-OFFSET branch and the offset became `6e10 * NaN`. `BalanceISODate`
+rejected the resulting non-finite year two frames later, which is why the throw
+site looked like a calendar bug.
+
+Everything the plan suspected was measured and cleared: `epochMilliseconds` /
+`epochNanoseconds` exact (the latter a real bigint), `PlainDateTime` reads
+exact, `new Date(ms).getUTC*` exact, `Math.floor(x/1e6)` exact,
+`Number(bigint)` exact, `new Date` + `setUTCHours`/`setUTCFullYear` (the
+polyfill's `GetUTCEpochMilliseconds`, verbatim) exact, and the offset-string
+regexes (`$t.test("UTC")`) all correct. The instrumented-`Fn` probe (throwaway
+provider build, patch reverted and byte-compared) is what closed it:
+`offMin=NaN` while `fmt=[1/1/2024 AD, 12:34:00]` and
+`br={"year":2024,"month":1,…}` were already right.
+
+### Why the fix is where it is
+
+The checker is RIGHT here and codegen discarded its answer.
+`getTypeAtLocation` types that read `number | undefined`; `resolveWasmType`
+collapses the union to a bare `f64`, which cannot carry `undefined`, so the
+`__extern_get` miss arm was `__unbox_number`'d into NaN. This is the #5251
+laundering hazard reached through the STATIC door — the dynamic door
+(`accessWasm.kind === "externref"`) already brands its narrowed f64 as
+undefined-sentinel-carrying, but that whole block is guarded on the access being
+statically dynamic, which this one is not. Hence a third arm next to
+`foreignReturnReceiver` / `openObjectReceiver`, at the one point where
+`accessWasm` is decided; the existing #5251 branding then does the rest.
+
+A SECOND, independent primitive is required for the same call, and the A/B run
+proves it: with only the codegen fix, `offsetNanoseconds` stops being NaN and
+instead throws `RangeError: expected 7 parts in "1/1/2024`. The named-time-zone
+path's only source of wall-clock parts is
+`new Intl.DateTimeFormat("en-us", {timeZone, hour12:false, era:"short", …}).format(ms)`
+split into 7 `\w+` runs, and the options bag reached V8 as an opaque WasmGC
+struct — so the host read NO properties from it (`resolvedOptions()` returned
+only the en-US defaults, and `{timeZone:"Asia/Tokyo"}` resolved to `UTC`) and
+`format` produced 3 parts. Marshalling argument 1 through `_wrapForHost` is the
+same arm `Request`/`Response` already carry for their init dictionaries.
+
+### Residual fixed on the way
+
+`typeof-delete.ts` hand-rolled `__box_number` on the bare `typeof x` value path,
+republishing the sentinel bit pattern as a NUMBER — so `typeof obj.absent`
+answered `"number"` while `obj.absent === undefined` (whose comparison path two
+hundred lines below already calls `coerceType`) answered `true`. One arm,
+routed through the same helper.
+
+### Reported, not fixed
+
+- `Intl.NumberFormat` / `Intl.ListFormat` drop their options identically
+  (`new Intl.NumberFormat("en-us",{minimumFractionDigits:3}).format(1.5)`
+  measures `"1.5"`). Same one-line arm; out of scope here. Bound: every
+  `intl402` row asserting a `NumberFormat`/`ListFormat` option — not counted.
+- `Intl.DateTimeFormat(...)` without `new` traps; `Reflect.construct` on it
+  says `undefined is not a constructor`. 2 probe rows, off the Temporal path.
+- The plan's `{year,month,day,daysInMonth,offsetNanoseconds,toPlainDate}` glob
+  is 23 rows on this checkout, not ~250; measured as written plus a 211-row
+  broadening over every `ZonedDateTime.prototype` field-read directory.
