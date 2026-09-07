@@ -231,3 +231,44 @@ yet met; 1,476 rows remain (1,146 fail, 329 compile_error, 1 compile_timeout).
   subclass species, wasi own-key ladder, `Reflect.defineProperty`, #3371 r3,
   then the unowned regexp / generators / promise / for-of clusters).
 
+
+## Results (interim — 2026-09-07 18:00, Temporal lane, re-targeted to standalone)
+
+**Baseline progress (host lane, whole corpus):** 35,498 → **38,343** pass / 48,735
+(+2,845 over the window). Standalone `built-ins/Temporal/**`: **170 / 4,603** —
+unchanged yet; the standalone goal opened today with #5383.
+
+### Merged
+- **#5364 registry leaks across linked projects** (#5678) — batch == solo.
+- **#5373 Array-subclass toString dispatch** (#5685).
+- **#5374 valueOf across the linked seam** (#5682).
+- **#5376 accessor-bearing literal stored as null** (#5691).
+- **#5377 constructor identity through any-typed receivers** (#5699, +7 on 481).
+- **#5378 absent number-typed property reads as undefined + DateTimeFormat options** (#5706, +54 on 334).
+- **#5381 extern-class constructors marshal struct arguments by default** (#5709, +82 on 325).
+- **#5383 S1 — the standalone polyfill validates, import-free** (#5721).
+- docs: #5679 #5686 #5700 #5701 #5707 #5719.
+
+### In flight
+- **#5723** — #5384 (standalone exception renderer exports) + #5383 S2 R3/R4/R5.
+- **#5712** — #5380 (defaulted numeric formal through the host class-method bridge; 9 hangs → 0).
+- **#5704** — #5379 (draft; 0 delta, pins that #5364 closed the channel).
+
+### Closed without merging
+- none.
+
+### Interim retro (Temporal lane)
+- **Went well**: plan/implement split held — every lane shipped with per-row A/B
+  measurements and 0 pass→fail; parks were diagnosed by measurement, not by
+  re-running until green (three collateral parks, all proven with byte-identical
+  wasm or solo re-runs).
+- **Went badly**: the goal was read as host-lane for the whole window until the
+  owner said "standalone only"; a worktree cleanup deleted the shared test262
+  tree box-wide; the runtime.ts ceiling had to be re-measured on every re-merge;
+  the queue dropped PRs to BEHIND on every CI bot push.
+- **Process improvements**: make `test262/` in the main checkout a real
+  submodule (done) and never symlink a worktree's copy into another worktree;
+  read the goal's target mode before planning; release runtime.ts-growing PRs
+  one at a time (kept).
+- **Sprint-close criteria remaining (standalone Temporal, #5383)**: S2 (init
+  throw), S3 (runner + CI wiring), S4 (retire the #661 lowering), S5 (measure).
