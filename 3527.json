@@ -1,8 +1,10 @@
 {
   "id": "3527",
-  "assignee": "",
-  "status": "reserved",
+  "assignee": "codex-c",
+  "requested_by": "codex-c",
+  "status": "in-progress",
   "branch": "",
-  "reserved_at": "2026-07-21T13:44:42Z",
-  "updated_at": "2026-07-21T13:44:42Z"
+  "claimed_at": "2026-09-07T19:04:31Z",
+  "updated_at": "2026-09-07T19:04:32Z",
+  "write_id": "51222-lfyzrtn9"
 }
