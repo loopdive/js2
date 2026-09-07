@@ -182,6 +182,15 @@ files:
 ---
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
 
+## Package-C layering boundary — 2026-09-07
+
+Package C deliberately owns the source-free backend consumer in
+`src/ir/program-consumer.ts`. Its physical emission surface must use the
+existing registry and Wasm type builders, so this one IR consumer adds three
+codegen edges and the bridge adds one existing-file edge. The layering ratchet
+baseline is refreshed to record that explicit handoff; no source frontend or
+checker dependency is introduced.
+
 ## Whole-program A implementation — 2026-09-05
 
 The `3518:authoritative-preparation` package first separates the historical
