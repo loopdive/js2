@@ -53,6 +53,7 @@ import {
   instantiateRuntimeEvalNamespace,
   selectCachedRuntimeEvalProvider,
 } from "./runtime-eval-provider.mjs";
+import { resetTemporalRealmGlobals } from "./test262-temporal.mjs";
 
 export { RUNTIME_EVAL_IMPORT_MODULE };
 
@@ -151,6 +152,23 @@ export function test262ImportNamespaceNames(binary, importObj, options = {}) {
     .sort();
 }
 
+let announcedMissingLinkedProjectReset = false;
+
+/**
+ * (#5364) A runtime bundle built before the reset existed keeps today's
+ * cross-row contamination rather than failing. Say so ONCE per process — a
+ * silent degrade here is what makes a whole shard's Temporal `instanceof`
+ * verdicts order-dependent.
+ */
+function announceMissingLinkedProjectReset() {
+  if (announcedMissingLinkedProjectReset) return;
+  announcedMissingLinkedProjectReset = true;
+  console.error(
+    "[test262] linked runtime has no resetLinkedProjectRegistry — cross-row decoder contamination is NOT suppressed " +
+      "(rebuild scripts/runtime-bundle.mjs from scripts/runtime-bundle-entry.ts)",
+  );
+}
+
 /**
  * Instantiate a compiled test262 module with the namespaces it needs.
  *
@@ -200,8 +218,30 @@ export async function instantiateTest262Module(binary, importObj, options = {}) 
   // lanes pass nothing and get the `src/` graph they already compile against.
   const linkedModules = options.linkedModules ?? [];
   if (linkedModules.length > 0) {
-    const { instantiateLinkedProviders, wireCompiledInstance } =
+    const { instantiateLinkedProviders, wireCompiledInstance, resetLinkedProjectRegistry } =
       options.linkedRuntime ?? (await import("../src/linked-provider-runtime.js"));
+    // (#5364) Retire the PREVIOUS row's linked project before this one
+    // registers. Both test262 drivers run many rows in one process — the
+    // sharded worker recycles a fork only on FATAL — and since #5353 every
+    // Temporal row re-instantiates the same provider binary. Two instances of
+    // one binary share canonical WasmGC types, so without this the #5225
+    // registry answers a struct THIS row minted with a previous row's exports
+    // and #5354's class-object lookup returns the previous row's singleton:
+    // `x instanceof C` false while `x.constructor.name` reads right. Doing it
+    // here rather than at each driver keeps the #4162 rule (one place turns a
+    // binary into an instance) and guarantees the reset lands in the same
+    // runtime copy as the registration above.
+    if (typeof resetLinkedProjectRegistry === "function") resetLinkedProjectRegistry();
+    else announceMissingLinkedProjectReset();
+    // (#5364) The registry is only HALF of what a finished project leaves
+    // behind. The compiled Temporal polyfill also claims two realm globals for
+    // its internal-slot store, first-writer-wins, so every row after the first
+    // reads its objects through row 1's provider instance no matter how clean
+    // the decoder registry is — measured: the registry reset ALONE moved the
+    // 123-row `: instanceof` count by 0. Retiring both is what makes a batched
+    // row score the same as a solo one. `resetTemporalRealmGlobals` is a no-op
+    // when no polyfill has run.
+    resetTemporalRealmGlobals();
     const wasmModule = new WebAssembly.Module(binary);
     attachConditionalImportNamespaces(wasmModule, importObj, options);
     instantiateLinkedProviders(linkedModules, importObj);
