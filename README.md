@@ -13,7 +13,7 @@ Conformance is tracked along the two compile paths — both figures auto-update 
 
 <!-- AUTO:conformance-start -->
 
-**test262 conformance**: 38,129 / 48,232 (79.1 %)
+**test262 conformance**: 38,149 / 48,232 (79.1 %)
 
 <!-- AUTO:conformance-end -->
 
@@ -21,7 +21,7 @@ The line above is the **JS-host path** (default `gc` target): runs alongside the
 
 <!-- AUTO:conformance-standalone-start -->
 
-**standalone (host-free) test262 conformance**: 34,978 / 48,232 (72.5 %)
+**standalone (host-free) test262 conformance**: 34,979 / 48,232 (72.5 %)
 
 <!-- AUTO:conformance-standalone-end -->
 

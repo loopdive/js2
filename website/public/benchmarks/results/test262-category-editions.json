@@ -405,8 +405,8 @@
   },
   "built-ins/Temporal": {
     "ES2026": {
-      "pass": 3139,
-      "fail": 1451,
+      "pass": 3159,
+      "fail": 1431,
       "ce": 13,
       "skip": 0
     }
@@ -957,6 +957,32 @@
       "skip": 0
     }
   },
+  "built-ins/Math": {
+    "ES5": {
+      "pass": 81,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2015": {
+      "pass": 151,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2025": {
+      "pass": 5,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2026": {
+      "pass": 0,
+      "fail": 10,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/Symbol": {
     "ES2015": {
       "pass": 72,
@@ -985,32 +1011,6 @@
     "ES2027": {
       "pass": 6,
       "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/Math": {
-    "ES5": {
-      "pass": 81,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2015": {
-      "pass": 151,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2025": {
-      "pass": 5,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2026": {
-      "pass": 0,
-      "fail": 10,
       "ce": 0,
       "skip": 0
     }
@@ -1233,6 +1233,14 @@
       "skip": 0
     }
   },
+  "built-ins/DisposableStack": {
+    "ES2027": {
+      "pass": 78,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/reserved-words": {
     "ES5": {
       "pass": 13,
@@ -1243,14 +1251,6 @@
     "ES2015": {
       "pass": 2,
       "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/DisposableStack": {
-    "ES2027": {
-      "pass": 78,
-      "fail": 15,
       "ce": 0,
       "skip": 0
     }
@@ -1305,6 +1305,14 @@
       "skip": 0
     }
   },
+  "language/computed-property-names": {
+    "ES2015": {
+      "pass": 29,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/destructuring": {
     "ES2015": {
       "pass": 17,
@@ -1315,14 +1323,6 @@
     "ES2022": {
       "pass": 0,
       "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "language/computed-property-names": {
-    "ES2015": {
-      "pass": 29,
-      "fail": 15,
       "ce": 0,
       "skip": 0
     }
@@ -1359,18 +1359,18 @@
       "skip": 0
     }
   },
-  "built-ins/ArrayIteratorPrototype": {
-    "ES2015": {
-      "pass": 17,
-      "fail": 10,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/isNaN": {
     "ES2015": {
       "pass": 5,
       "fail": 3,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/ArrayIteratorPrototype": {
+    "ES2015": {
+      "pass": 17,
+      "fail": 10,
       "ce": 0,
       "skip": 0
     }
