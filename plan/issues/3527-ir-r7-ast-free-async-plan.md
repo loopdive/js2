@@ -1592,3 +1592,110 @@ The full `118/118` cohort above is separate. The parent integration lane owns
 the already-reviewed #4106 exnref validation fix and must pass that existing
 control and the normal combined hooks on the composed candidate before any
 publication is authorized.
+
+## Isolated Astra lane B forward checkpoint (2026-09-07)
+
+This is forward continuation from exact recoverable package-C checkpoint
+`651034e4fd295e826d73a769200279210b2b35e7`, in
+`/private/tmp/js2-3527-b-forward-20260907`, branch
+`codex/3527-b-forward-20260907`. The lead authorized this independent tree;
+it does not replace the original B branch or reclaim its assignments.
+Live upstream `issue-assignments` at inspection was
+`db9a738faa39f80c3554507ea9a5d927936a534c`: the original
+`3518-prepared-async-frame-engine` and `3518-semantic-runtime-producers`
+claims remain assigned to `ttraenkler/astra-ir-producers-b-20260905`.
+The former names `codex/3518-prepared-async-frame-reconciled-20260907`;
+the fork did not advertise that branch in the inspected refs. This is not
+proof its work was abandoned. No duplicate extraction file was present in
+the authorized checkpoint. Live PR 5692 advertised the same checkpoint.
+
+Own changes are confined to `prepared-async-frame-engine.ts`,
+`prepared-async-frame-types.ts`, the two prepared-frame tests and this handoff.
+The production `ir-async-frame.ts` adapter remains unchanged while its caller
+cannot supply the full preaccepted resource view. C's consumer, physical plan,
+codec, replay and all runtime/provider/scheduler sources remain read-only.
+
+### Measured base and candidate, separate denominators
+
+On Node `v22.23.2`, the untouched base ran **24/26**: linear preparation
+**4/4**, linear suspension runtime **7/7**, settled-owner runtime **13/15**.
+The two failed rows are the prepared owner/caller closure and same-spelling
+foreign-binding controls. They report `selection-preparation-mismatch` at
+resolve: the generic Promise owner lost its source proof/ABI closure after
+issuance. These are baseline failures, not candidate acceptance evidence.
+
+The new physical-engine harness runs **10/10**, using emitted Wasm and actual
+JavaScript Promises. An input-dependent two-await frame returns `24` for `7`
+and `36` for `11`, with callback order `after-call`, first callback,
+`after-flush`, second callback. Two same-named allocator functions with
+different source-owner semantics return `12` and `21` for the same input `3`
+after a late import and function-order remap. A scalar user export matching
+the old resume spelling returns `77`. Each frame has nine fields, including
+one captured parameter, two live spills and the result Promise; emission
+returns exactly four detached function bodies and allocates no module slots.
+Synchronous throws and rejected awaits reject the existing result Promise.
+Missing resources, post-preflight removal, foreign owner, stale authority,
+duplicate states, unsupported handlers, missing spills and wrong result
+carrier fail without replacing the reserved entry body.
+
+Fresh-process engine census runs **6/6**, including real legacy-import and
+injected `ts-api` detector controls and failed instrumentation/module loading.
+This proves the new engine's runtime import boundary, not the unchanged
+production adapter's boundary. A direct baseline adapter import also exposed
+a module-cycle initialization error in `collections-brand.ts`; it is not an
+empty successful census. Neither source-free C replay nor native scheduler
+execution is claimed by these host harness results.
+
+Candidate adjacent preparation/runtime suites run **36/38**, retaining the
+same two baseline failures and adding the **12/12** async-plan suite.
+Async equivalence, existing native frame and host-throw controls run **17/17**
+(`7 + 8 + 2`). Those unchanged production-route tests do not exercise the new
+engine. The new **16/16** denominator remains distinct.
+
+The current full typecheck passed after sealed conversion/callback roles and
+the review fixes. All four outputs, including step bodies, are now built
+before final currentness checks. Each callable resolution must match its
+initial object/index binding, including a transient changed resolution during
+step emission; the dedicated seam fails before returning output. Sparse or
+duplicate parameter positions and invalid spill ranges/types fail before
+operations execute. Formatting, scoped lint, IR layering/dialect/kind,
+LOC/function ratchets and the harness compile-work budget pass.
+
+The dead-export gate reports **eight** new unreachable engine functions while
+production wiring is intentionally absent: `constant`, `emitPreparedFrame`,
+`get`, `physicalIndex`, `preflightPreparedFrame`, `resources`, `sameType`,
+and `set`, all in `prepared-async-frame-engine.ts`. No baseline was changed
+and no dummy production import added. This is an explicit integration gate
+failure, not a fully green production checkpoint.
+
+### Remaining owner materialization and integration
+
+Follow High's resource clarification through explicit caller argument
+injection. `PreparedFrameResources` carries canonical binding/object handles
+for frame, entry, resume, both steps and exception tag; lookup returns the
+current index and identical object. The host view also supplies create,
+resolve, react, callback-wrap, fulfill/reject and caught-exception functions,
+plus callback IDs associated with the exact reserved step objects. Sealed
+conversion roles select identities, enumerated numeric conversions or
+accepted helper objects; canonical undefined requires its explicitly bound
+helper. No names, provider imports, generic coercion delegates or lazy
+`ensure` calls are consulted by the engine.
+
+The native view requires Promise and reaction-node type objects, fulfill,
+reject and enqueue functions, and an explicit mark-handled/not-required
+policy. C/provider ownership must supply the fixed-point scheduler/global
+closure, canonical value boundaries, exact function/type/tag contracts and
+authenticated session/plan/runtime currentness. This checkpoint includes the
+native instruction branch reusing `prepared-native-async-await.ts`, but its
+runtime validation and production materialization remain open.
+
+C must validate requirements before acceptance, bind the complete resource
+view before lowering, pass it explicitly into the prepared adapter, install
+the four returned bodies, and reconcile observations. The adapter must then
+lower actual validated IR through these operations and remove its old live
+engine/provider imports. C's existing located async materialization refusal
+remains unchanged. Post-acceptance missing handles are fatal, never a retry
+through the old engine. Until that composition and its import census run,
+this is an **unconnected physical-engine checkpoint**, not completed lane B
+or full direct-codegen retirement. Any PR retaining this base depends on
+PR 5692 and must identify that stack dependency.
