@@ -8266,20 +8266,20 @@ function _wrapHostArrayElems(arr: any[], exports: Record<string, Function> | und
 function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): any {
   if (obj == null || typeof obj !== "object") return obj;
   if (!_isWasmStruct(obj)) return obj;
-
   // (#5225) A struct minted by another module of this linked project must be
   // mirrored against the exports that can DECODE it, not against whichever
   // module happens to be reading. Every trap below (field reads, key
   // enumeration, callable members) resolves through these exports.
   exports = _decoderExportsFor(obj, exports);
-
   const primitiveValue = _nativePrimitiveToHost(obj, exports);
   if (primitiveValue !== _MISS) return primitiveValue;
   const errorValue = _nativeErrorToHost(obj, exports);
   if (errorValue !== _MISS) return errorValue;
   const promiseValue = _nativePromiseToHost(obj, exports);
   if (promiseValue !== _MISS) return promiseValue;
-
+  // (#5362) Preserve a branded TypedArray host mirror before the generic vec facade/cache.
+  const mirror = _compiledTypedArrayKinds.has(obj) && _compiledTypedArrayMirror(obj, { getExports: () => exports });
+  if (mirror) return mirror;
   const cached = _hostProxyCache.get(obj);
   if (cached) {
     const slot = _hostProxyExportSlots.get(obj);
