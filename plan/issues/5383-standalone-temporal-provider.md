@@ -11,6 +11,16 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-07 (S2) — three more codegen fixes, each reduced from the exact
+  # statement in the linked polyfill bundle that hit it (see "S2 findings"
+  # below for the measurement behind each). Plain-path spelling: the gate's
+  # frontmatter reader takes `- <path>` items and stops at the first line that
+  # is not one, so a mapping-style entry silently ends the list.
+  - src/codegen/index.ts
+  - src/codegen/builtin-value-read.ts
+  - src/codegen/math-value-read.ts
+  - src/codegen/builtin-static-plain-alias.ts
+  - src/codegen/native-ordinary-instanceof.ts
   # 2026-09-07 (S1) — two codegen fixes that make the compiled
   # @js-temporal/polyfill a VALID, import-free standalone module. Both are
   # net-new arms plus the rationale comments that keep the next reader from
@@ -22,7 +32,19 @@ loc-budget-allow:
   - path: src/codegen/expressions/calls-optional.ts
     lines: 60
     reason: "#5383 S1 R2 — `recv.m?.(args)` host/native split so the standalone lane uses __objvec_new/__objvec_push/__apply_closure instead of leaking env::__js_array_new/__js_array_push/__call_function/__get_undefined (#2961)."
+  # 2026-09-07 (S2) — three more codegen fixes, each reduced from the exact
+  # statement in the linked polyfill bundle that hit it. Growth is the fix plus
+  # the measurement that justifies it; no lines are replaced.
+  - path: src/codegen/index.ts
+    lines: 30
+    reason: "#5383 S2 R3 — `registerModuleClassStaticAssignments` must admit a minifier's comma-chained `C.a = 1, C.f = function(){}` statement; on a class extending Array the missing value cell made the later call read a non-callable."
+  - path: src/codegen/builtin-value-read.ts
+    lines: 20
+    reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+  - path: src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
+    reason: "#5383 S2 R4 — the 8-line pre-registration hook plus its rationale; splitting a single call out of this dispatcher would hide the ordering constraint it exists to document."
   - path: src/codegen/coercion-engine.ts
     reason: "#5383 S1 — no new functions; allowance restated here so the grant is not stranded in a file this PR does not touch."
   - path: src/codegen/expressions/calls-optional.ts
@@ -296,3 +318,59 @@ to a line of the polyfill.
 host-free consumer link) · `s2b.mts` / `s2c.mts` (provider vs no-linker
 `__module_init`) · `s2d.mts` (the render-export gap) · `ab.mts` (small-module
 byte A/B) · `host-ab.mts` (host-lane provider key + sha A/B).
+
+## S2 findings (2026-09-07) — three more defects fixed, and where init still stops
+
+Re-ran the S2 probe with #5384's renderer in place (that fix is what made any of
+this legible — before it, every one of these read as
+`"uncaught Wasm-GC exception (non-stringifiable payload)"`).
+
+Probe: `linkPolyfillSource(setupTemporalPolyfill())` (157,541 B) →
+`compileMulti({ "polyfill.js": src }, "polyfill.js", { target: "standalone",
+hostBridge: "off", allowJs: true, skipSemanticDiagnostics: true,
+deferTopLevelInit: true })` → ~50 s, **2.92 MB, ZERO imports**, instantiates with
+`{}` → call `__module_init` → render the payload.
+
+| # | error the probe reported | root cause | fix |
+| --- | --- | --- | --- |
+| R3 | `TypeError: called value is not a function` | `registerModuleClassStaticAssignments` (`src/codegen/index.ts`) admitted only an expression statement whose WHOLE expression is `=`. A minifier writes `JSBI.__kBitConversionInts = …, JSBI.__clz30 = …, JSBI.__imul = …` as ONE comma statement, so no static value cell was registered. A plain class survives on the host class-object setter; `class JSBI extends Array` has no such singleton, so the write went through `null`. | flatten top-level comma operands before the existing per-assignment admission (admission-only; no order/CF/delete change) |
+| R4a | `TypeError: Math.imul is not yet implemented in --target standalone` | `emitMathValueReadBody` READS `__any_from_extern` / `__any_to_f64` / `__box_number` from `funcMap`, and nothing had registered them at that point — a body emitter must not register a native mid-body (#2704). So EVERY `Math.<fn>` value read declined, including #4565's own transcendentals: `[1,4,9].map(Math.sqrt)` still threw. | `prepareMathValueRead` in the value-read switch, before the wrapper/`FunctionContext` is built |
+| R4b | same | no inline-kernel bodies: `Math.imul` / `clz32` / `floor` / `ceil` / `trunc` / `abs` / `sqrt` / `fround` have a short direct-call lowering, not a `Math_<name>` provider, so the value read had nothing to point at | `MATH_INLINE_F64_OPS` + the exact §7.1.6/7.1.7 ToInt32/ToUint32 reuse from `ir/backend/wasm-int32-coercion.ts`. `round`/`sign` deliberately excluded — `f64.nearest` rounds ties to even, §21.3.2.28 rounds toward +∞, so an entry would be a WRONG ANSWER, not a miss |
+| R5 | `TypeError: Cannot access property on null or undefined at 1:381` (`_(i)`, jsbi's `var _ = Math.floor` in `BigInt(number)`) | two gates: `FIXED_ARITY_PLAIN_ALIAS_STATICS` did not include `Math.*`, and `identifierIsWrittenTo` was a file-wide SPELLING test — a minified bundle binds `_`/`t`/`g` in hundreds of scopes and assigns most of them, so the alias declined everywhere | widen the alias set to `Math.<fn>` names that have a real body (`mathValueReadHasBody`), and make both soundness gates scope-aware via an optional `sameBinding` predicate resolved through `ctx.oracle` (an unresolvable identifier still counts as a write, so it still declines) |
+
+All four are reduced to ≤10-line cases in
+`tests/issue-5383-standalone-temporal-provider.test.ts` (S2 R3 / S2 R4), each
+asserting the value, plus a negative case (a genuinely reassigned alias still
+declines) so the widening cannot silently swallow its own soundness gate.
+
+### Where `__module_init` still stops
+
+`TypeError: Cannot access property on null or undefined at 1:4117` —
+jsbi's `static subtract(i,_){const t=i.sign; …}`, i.e. `subtract` is reached
+with a **null argument**. Not reproducible in isolation: with the jsbi prefix
+alone, `JSBI.subtract(JSBI.BigInt(5), JSBI.BigInt(3))`, `add`, `unaryMinus` and
+`a.sign` all answer correctly. Prefix-bisecting the 342 top-level statements for
+this exact signature first reaches it at statement **224**
+(`function xo(t){ … return e.multiply(e.BigInt(t), c) }`), so the null is
+produced by a top-level computation between statements 29 and 224 and only
+observed later. Note prefix bisection is no longer sound past statement ~29 on
+its own — a truncated prefix legitimately raises `ReferenceError: xo is not
+defined` for a binding the full file declares later; the signature filter
+(`SIG=1:4117`) is what keeps it usable.
+
+Next step for whoever picks this up: instrument which top-level statement first
+stores a null into a module binding that later reaches `JSBI.subtract`, rather
+than bisecting further. One suspect worth checking first — measured while
+reducing R4 and NOT yet fixed — is that a property write on a `class … extends
+Array` instance (`constructor(n, s) { super(n); this.sign = s; }`) throws
+`Cannot access property on null or undefined` on this lane; `subtract` reads
+exactly `i.sign`.
+
+### Not reached
+
+The S2 smoke test from the plan (`buildTemporalProvider` +
+`compileWithTemporalGlobal` + host-free `instantiateLinkedProject`, asserting
+`Temporal.PlainDate.from("2024-01-01").day === 1` and
+`Temporal.Duration.from({hours:1}).total("minutes") === 60`) is NOT written:
+it cannot pass while `__module_init` throws, and a skipped assertion would be
+worse than an honest gap.

@@ -180,3 +180,100 @@ describe("#5383 S1 R2 — `recv.m?.(args)` must not leak JS-host imports (#2961)
     expect(callExport(mod)).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #5383 S2 — the polyfill's `__module_init` throws. Three more defects, each
+// reduced from the exact statement in the linked bundle that hit it. Diagnosing
+// them at all needed #5384 (a host-free standalone throw had no renderer, so
+// every one of these read as "non-stringifiable payload").
+// ---------------------------------------------------------------------------
+
+describe("#5383 S2 R3 — a minifier's comma-chained class static assignment", () => {
+  it("`C.a = …, C.f = function(){}` on a class extending Array registers the static cell", async () => {
+    // jsbi's header is ONE expression statement:
+    //   JSBI.__kBitConversionInts = new Int32Array(…), JSBI.__clz30 = …,
+    //   JSBI.__imul = Math.imul || function (i, _) { return 0 | i * _; };
+    // `registerModuleClassStaticAssignments` admitted only a statement whose
+    // whole expression is `=`, so the comma chain registered NO value cell. A
+    // plain class survives on the host class-object setter; an externref-backed
+    // builtin subclass has no such singleton, so the write went through null and
+    // the later call read a non-callable: "called value is not a function",
+    // thrown from the polyfill's own __module_init before any Temporal code ran.
+    const mod = await compileStandalone(`
+      class C extends Array {}
+      C.g = function () { return 1; }, C.f = function (a, b) { return a * b; };
+      export function test() { return C.f(2, 3) + C.g(); }
+    `);
+    expect(callExport(mod)).toBe(7);
+  });
+
+  it("the single-assignment and plain-class spellings keep working", async () => {
+    const mod = await compileStandalone(`
+      class D extends Array {}
+      D.f = function (a) { return a + 1; };
+      class E {}
+      E.x = 1, E.f = function (a) { return a + 2; };
+      export function test() { return D.f(1) + E.f(1) + E.x; }
+    `);
+    expect(callExport(mod)).toBe(6);
+  });
+});
+
+describe("#5383 S2 R4 — `Math.<fn>` read as a VALUE, host-free", () => {
+  it("`C.f = Math.imul || fallback; C.f(a, b)` calls the real Math.imul", async () => {
+    // The jsbi feature-detect. `Math.imul` is truthy, so the fallback never
+    // runs — and before this the reified value's body was the generic
+    // "not yet implemented in --target standalone" refusal, because
+    // `emitMathValueReadBody` could not find `__any_from_extern` /
+    // `__any_to_f64` / `__box_number`: nothing had registered them, and a body
+    // emitter must not register a native mid-body (#2704).
+    const mod = await compileStandalone(`
+      class C {}
+      C.f = Math.imul || function (a, b) { return 0 | (a * b); };
+      C.g = Math.clz32 ? function (i) { return Math.clz32(i) - 2; } : function () { return 30; };
+      export function test() { return C.f(0x7fffffff, 3) + C.g(1); }
+    `);
+    // Math.imul(0x7fffffff, 3) === 2147483645 (exact ToInt32 wraparound, NOT
+    // the f64 product); Math.clz32(1) - 2 === 29.
+    expect(callExport(mod)).toBe(2147483645 + 29);
+  });
+
+  it("an extracted value computes, through a local alias and through `map`", async () => {
+    // `var _ = Math.floor` is jsbi's `BigInt(number)` header. Both spellings
+    // threw before: the local alias with "Cannot access property on null or
+    // undefined" (no host to fall back to), `map` with the refusal body.
+    const mod = await compileStandalone(`
+      function f(x) { var g = Math.floor, h = Number.isFinite; return h(x) ? g(x) : -1; }
+      export function test() {
+        var viaMap = [1, 4, 9].map(Math.sqrt)[2];
+        return f(3.7) + viaMap + Math.abs(-2) + Math.trunc(1.9) + Math.ceil(0.2);
+      }
+    `);
+    // 3 + 3 + 2 + 1 + 1
+    expect(callExport(mod)).toBe(10);
+  });
+
+  it("an unrelated same-spelled binding elsewhere no longer declines the alias", async () => {
+    // The soundness gate was a file-wide SPELLING test. Minified bundles bind
+    // `g`/`_`/`t` in hundreds of scopes and assign most of them, so the gate
+    // declined every alias in the polyfill.
+    const mod = await compileStandalone(`
+      function other(g) { g = 1; return g; }
+      function useIt(x) { var g = Math.floor; return g(x); }
+      export function test() { return useIt(2.5) + other(0); }
+    `);
+    expect(callExport(mod)).toBe(3);
+  });
+
+  it("a REASSIGNED alias still declines — the gate keeps its meaning", async () => {
+    const mod = await compileStandalone(`
+      export function test() {
+        var g = Math.floor;
+        g = function (x) { return x + 100; };
+        return g(1.5);
+      }
+    `);
+    // If the alias fold had been taken despite the write, this would answer 1.
+    expect(callExport(mod)).toBe(101.5);
+  });
+});

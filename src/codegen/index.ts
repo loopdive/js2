@@ -9914,46 +9914,65 @@ function directlyReassignedClassDeclarations(
  */
 function registerModuleClassStaticAssignments(ctx: CodegenContext, sourceFiles: readonly ts.SourceFile[]): void {
   const reassignedClasses = directlyReassignedClassDeclarations(ctx, sourceFiles);
+  // (#5383 S2) A MINIFIER writes `C.a = 1, C.f = function(){}, …` as ONE
+  // expression statement, so the top-level node is a comma `BinaryExpression`
+  // and the `=` test below rejected the whole chain — no value cell for any of
+  // them. For a plain class the host class-object setter covers the miss; for
+  // an externref-backed builtin subclass (`class JSBI extends Array`) there is
+  // no class-object singleton, so the write went through `null` and the later
+  // `JSBI.__imul(a, b)` read answered non-callable:
+  // `TypeError: called value is not a function`, thrown from
+  // `@js-temporal/polyfill`'s own `__module_init` before any Temporal code ran.
+  // Flattening is admission-only — each operand still passes every check below,
+  // and no control flow, order or delete semantics change.
+  const commaOperands = (expression: ts.Expression): ts.Expression[] => {
+    if (ts.isParenthesizedExpression(expression)) return commaOperands(expression.expression);
+    if (ts.isBinaryExpression(expression) && expression.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      return [...commaOperands(expression.left), ...commaOperands(expression.right)];
+    }
+    return [expression];
+  };
   for (const sourceFile of sourceFiles) {
     for (const statement of sourceFile.statements) {
       if (!ts.isExpressionStatement(statement)) continue;
-      const expression = statement.expression;
-      if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
-        continue;
+      for (const expression of commaOperands(statement.expression)) {
+        if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+          continue;
+        }
+        const target = expression.left;
+        if (!ts.isPropertyAccessExpression(target) || !ts.isIdentifier(target.expression)) continue;
+
+        const sourceName = target.expression.text;
+        const resolvedClass = ctx.classExprNameMap.get(sourceName) ?? sourceName;
+        if (!ctx.classSet.has(resolvedClass)) continue;
+
+        // A same-spelled non-class binding in another source must not acquire the
+        // graph-wide class's static storage merely because class registries are
+        // currently keyed by display name.
+        const declaration = ctx.oracle.valueDeclarationOf(target.expression);
+        if (declaration === undefined || !ts.isClassDeclaration(declaration)) continue;
+        if (ctx.classDeclarationMap.get(resolvedClass) !== declaration) continue;
+        if (reassignedClasses.has(declaration)) continue;
+
+        const propName = target.name.text;
+        // These are intrinsic Function/Class properties, not assignment-created
+        // ordinary data slots.  Existing declared fields/methods/accessors retain
+        // their established lowering and descriptor semantics below as well.
+        if (propName === "prototype" || propName === "name" || propName === "length") continue;
+        const fullName = `${resolvedClass}_${propName}`;
+        if (ctx.staticProps.has(fullName) || ctx.staticMethodSet.has(fullName) || ctx.staticAccessorSet.has(fullName)) {
+          continue;
+        }
+
+        const globalIdx = nextModuleGlobalIdx(ctx);
+        ctx.mod.globals.push({
+          name: `__static_${fullName}`,
+          type: { kind: "externref" },
+          mutable: true,
+          init: [{ op: "ref.null.extern" }],
+        });
+        ctx.staticProps.set(fullName, globalIdx);
       }
-      const target = expression.left;
-      if (!ts.isPropertyAccessExpression(target) || !ts.isIdentifier(target.expression)) continue;
-
-      const sourceName = target.expression.text;
-      const resolvedClass = ctx.classExprNameMap.get(sourceName) ?? sourceName;
-      if (!ctx.classSet.has(resolvedClass)) continue;
-
-      // A same-spelled non-class binding in another source must not acquire the
-      // graph-wide class's static storage merely because class registries are
-      // currently keyed by display name.
-      const declaration = ctx.oracle.valueDeclarationOf(target.expression);
-      if (declaration === undefined || !ts.isClassDeclaration(declaration)) continue;
-      if (ctx.classDeclarationMap.get(resolvedClass) !== declaration) continue;
-      if (reassignedClasses.has(declaration)) continue;
-
-      const propName = target.name.text;
-      // These are intrinsic Function/Class properties, not assignment-created
-      // ordinary data slots.  Existing declared fields/methods/accessors retain
-      // their established lowering and descriptor semantics below as well.
-      if (propName === "prototype" || propName === "name" || propName === "length") continue;
-      const fullName = `${resolvedClass}_${propName}`;
-      if (ctx.staticProps.has(fullName) || ctx.staticMethodSet.has(fullName) || ctx.staticAccessorSet.has(fullName)) {
-        continue;
-      }
-
-      const globalIdx = nextModuleGlobalIdx(ctx);
-      ctx.mod.globals.push({
-        name: `__static_${fullName}`,
-        type: { kind: "externref" },
-        mutable: true,
-        init: [{ op: "ref.null.extern" }],
-      });
-      ctx.staticProps.set(fullName, globalIdx);
     }
   }
 }
