@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9943,
-    "fail": 1702,
+    "pass": 9944,
+    "fail": 1701,
     "ce": 59,
     "skip": 0,
     "total": 11704,
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 888,
-        "fail": 162,
+        "pass": 889,
+        "fail": 161,
         "ce": 0,
         "skip": 0,
         "total": 1050,
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1371,
-    "fail": 634,
+    "pass": 1372,
+    "fail": 633,
     "ce": 12,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 842,
-        "fail": 205,
+        "pass": 843,
+        "fail": 204,
         "ce": 1,
         "skip": 0,
         "total": 1048,
@@ -1525,8 +1525,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 558,
-        "fail": 150,
+        "pass": 559,
+        "fail": 149,
         "ce": 0,
         "skip": 0,
         "total": 708,
@@ -3571,48 +3571,48 @@
   },
   {
     "edition": "ES2026",
-    "pass": 3293,
-    "fail": 1558,
-    "ce": 70,
+    "pass": 3313,
+    "fail": 1595,
+    "ce": 13,
     "skip": 0,
     "total": 4921,
     "pct": 67,
     "features": [
       {
         "name": "Temporal",
-        "pass": 3119,
-        "fail": 1422,
-        "ce": 70,
+        "pass": 3139,
+        "fail": 1459,
+        "ce": 13,
         "skip": 0,
         "total": 4611,
         "pct": 68
       },
       {
         "name": "Symbol",
-        "pass": 279,
-        "fail": 115,
+        "pass": 276,
+        "fail": 118,
         "ce": 0,
         "skip": 0,
         "total": 394,
-        "pct": 71
+        "pct": 70
       },
       {
         "name": "BigInt",
-        "pass": 160,
-        "fail": 18,
+        "pass": 156,
+        "fail": 22,
         "ce": 1,
         "skip": 0,
         "total": 179,
-        "pct": 89
+        "pct": 87
       },
       {
         "name": "arrow-function",
-        "pass": 154,
-        "fail": 24,
+        "pass": 153,
+        "fail": 25,
         "ce": 0,
         "skip": 0,
         "total": 178,
-        "pct": 87
+        "pct": 86
       },
       {
         "name": "Reflect.construct",
