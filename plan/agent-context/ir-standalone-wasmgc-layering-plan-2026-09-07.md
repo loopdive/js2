@@ -6,6 +6,9 @@ and canonical Promise ABI**. This continuation supersedes implementation
 priority in the recovery/post-CPB documents. Their generic contracts,
 evidence and unfinished work remain preserved.
 
+The approved [first bounded dispatch map](3518-first-boundary-dispatch-2026-09-07.md)
+specifies D0's boundary checker and the subsequent identity foundation split.
+
 ## User direction and present hold
 
 The coordinator relayed this exact user instruction from side conversation
