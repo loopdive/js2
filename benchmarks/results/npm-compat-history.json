@@ -15180,7 +15180,7 @@
       }
     },
     {
-      "generatedAt": "2026-09-07T12:20:56.925Z",
+      "generatedAt": "2026-09-07T12:49:31.562Z",
       "sourceRevision": "855acee6a7ac662500edec8fa1806c9d9e7ee0d2",
       "optimizationLevels": {
         "js-host": 4,
@@ -15244,6 +15244,12 @@
         "moment": {
           "jsHost": {
             "dynamic": 0.007634793385301113
+          },
+          "standalone": {}
+        },
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.00820833950027124
           },
           "standalone": {}
         }
