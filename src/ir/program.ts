@@ -1,9 +1,186 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { IrBackendKind } from "./backend/legality.js";
-import type { IrBindingId, IrSourceId, IrUnitId } from "./identity.js";
-import { IR_CLASS_SHAPE_CELL } from "./nodes.js";
-import type { ProgramAbiCallableSignature, ProgramAbiPlanEntry } from "./program-abi.js";
+import type { IrBindingId, IrSourceId, IrTerminalUnitRecord, IrUnitId, IrUnitInventory } from "./identity.js";
+import {
+  IR_CLASS_SHAPE_CELL,
+  type IrClassShape,
+  type IrFuncRef,
+  type IrGlobalRef,
+  type IrModule,
+  type IrType,
+  type IrTypeRef,
+} from "./nodes.js";
+import type { ProgramAbiCallableSignature, ProgramAbiDerivedUnitRecord, ProgramAbiPlanEntry } from "./program-abi.js";
+import type { IrCanonicalPromiseAbi } from "./async-plan.js";
+import type { PreparedIrRuntimeManifest } from "./intrinsic-support.js";
+import type { IrModuleInitPlan } from "./module-init-plan.js";
+import type { IrPreparationFailure } from "./outcomes.js";
+import type { PreparedComponentAbiLookup } from "./prepared-component-dependencies.js";
+import type { RuntimeManifestPolicy } from "./runtime-manifest.js";
+import { assertPreparedIrProgram } from "./program-validation.js";
+import type { AllocRegistrySnapshot } from "./alloc-registry.js";
+import type { WasmModule } from "./types.js";
+import type { LinearOptions } from "../codegen-linear/index.js";
+
+/** Semantic contracts enrich the existing ABI entries; there is no second binding authority. */
+export type PreparedIrAbiContract =
+  | {
+      readonly kind: "callable";
+      readonly ref: IrFuncRef;
+      readonly params: readonly IrType[];
+      readonly results: readonly IrType[];
+      readonly promise?: IrCanonicalPromiseAbi;
+    }
+  | { readonly kind: "global"; readonly ref: IrGlobalRef; readonly type: IrType; readonly mutable: boolean }
+  | { readonly kind: "type"; readonly ref: IrTypeRef; readonly type: IrType }
+  | { readonly kind: "class"; readonly ref: IrTypeRef; readonly shape: IrClassShape }
+  | { readonly kind: "export"; readonly externalName: string; readonly targetId: IrBindingId }
+  | { readonly kind: "support"; readonly role: string };
+
+export interface PreparedIrAbiEntry {
+  readonly plan: ProgramAbiPlanEntry;
+  readonly contract: PreparedIrAbiContract;
+}
+
+/** Data only. Lookup methods are reconstructed from these entries after decoding. */
+export interface PreparedIrAbiSnapshot {
+  readonly entries: readonly PreparedIrAbiEntry[];
+}
+
+/** One complete producer input while the frontend still owns preparation. */
+export interface PreparedIrProgramProducerInput {
+  readonly inventory: IrUnitInventory;
+  readonly ir: IrModule;
+  readonly derivedUnits: readonly ProgramAbiDerivedUnitRecord[];
+  readonly abi: PreparedComponentAbiLookup;
+  readonly policy: RuntimeManifestPolicy;
+}
+
+export type PreparedIrProgramFailure = IrPreparationFailure & {
+  readonly unitId: IrUnitId;
+  readonly location: PreparedIrSourceLocation;
+  readonly sourceFile: string;
+};
+
+/** Backend attachment phase, distinct from the semantic functions and async plans. */
+export interface PreparedIrProgramRuntimeProjection {
+  readonly backend: RuntimeManifestPolicy["backend"];
+  readonly target: RuntimeManifestPolicy["target"];
+  readonly prepared: PreparedIrRuntimeManifest;
+}
+
+/**
+ * The single source-to-backend handoff. The original terminal inventory is the
+ * complete denominator; pass-created bodies join it through derivedUnits.
+ * declaredSignatures/declaredGlobals in ir remain partial pass tables, never
+ * proof of complete call/global closure. The ABI entries provide that proof.
+ *
+ * Construct only through whole-program preparation. No source/checker objects,
+ * emitter callbacks, direct-body alternatives, or mutable allocator handles
+ * belong in this snapshot. Runtime attachments retain their exact plan/manifest
+ * joins and must be revalidated by the runtime producer after codec replay.
+ */
+export interface PreparedIrProgram {
+  readonly schema: "prepared-ir-program-v1";
+  readonly inventory: IrUnitInventory;
+  readonly units: ReadonlyMap<IrUnitId, IrTerminalUnitRecord>;
+  readonly ir: IrModule;
+  readonly abi: PreparedIrAbiSnapshot;
+  readonly derivedUnits: readonly ProgramAbiDerivedUnitRecord[];
+  /** Includes empty sources and preserves semantic module evaluation order. */
+  readonly startup: readonly IrModuleInitPlan[];
+  readonly allocations: AllocRegistrySnapshot;
+  readonly runtime: readonly PreparedIrProgramRuntimeProjection[];
+  readonly reconciliation: "complete";
+  readonly sealed: true;
+}
+
+export type IrProgramPreparationResult =
+  | { readonly kind: "prepared"; readonly program: PreparedIrProgram }
+  | PreparedIrProgramFailure;
+
+/** Resolved physical setup only; no source, policy callback or frontend option bag. */
+export interface PreparedIrBackendOptions {
+  readonly backend: RuntimeManifestPolicy["backend"];
+  readonly target: RuntimeManifestPolicy["target"];
+  readonly sharedExceptionTag: boolean;
+  readonly utf8Storage: boolean;
+  readonly sourceMap: boolean;
+  readonly moduleName: string;
+  readonly linear?: Readonly<
+    Pick<
+      LinearOptions,
+      "exposeArenaReset" | "allocationPolicy" | "externImports" | "importMemory" | "linkedHeap" | "heapAllocator"
+    >
+  >;
+}
+
+declare const acceptedPreparedIrProgramBrand: unique symbol;
+
+/** C owns token authentication; emitting a structurally forged acceptance must fail. */
+export interface AcceptedPreparedIrProgram {
+  readonly kind: "accepted";
+  readonly [acceptedPreparedIrProgramBrand]: true;
+  readonly program: PreparedIrProgram;
+  readonly options: PreparedIrBackendOptions;
+  readonly runtime: PreparedIrProgramRuntimeProjection;
+}
+
+export type PreparedIrBackendAcceptance = AcceptedPreparedIrProgram | PreparedIrProgramFailure;
+
+/** Exact physical body receipts, returned by C's actual emission loop. */
+export interface EmittedPreparedIrProgram {
+  readonly module: WasmModule;
+  readonly emittedUnitIds: readonly IrUnitId[];
+}
+
+export interface PreparedIrProgramOwner {
+  readonly unitId: IrUnitId;
+  readonly location: PreparedIrSourceLocation;
+  readonly sourceFile: string;
+}
+
+/** Resolve diagnostics through the existing original/derived ownership records. */
+export function preparedIrProgramOwner(
+  input: Pick<PreparedIrProgramProducerInput, "inventory" | "derivedUnits">,
+  unitId: IrUnitId,
+): PreparedIrProgramOwner | undefined {
+  const derived = input.derivedUnits.find((record) => record.id === unitId);
+  const source = input.inventory.allUnits.find((record) => record.id === unitId);
+  const ownerId = derived?.terminalOwnerId ?? source?.terminalOwnerId ?? unitId;
+  const owner = input.inventory.terminalUnits.find((record) => record.id === ownerId);
+  if (!owner) return undefined;
+  const sourceRecord = input.inventory.sources.find((record) => record.id === owner.sourceId);
+  if (!sourceRecord) return undefined;
+  return Object.freeze({
+    unitId: owner.id,
+    sourceFile: sourceRecord.sourceKey,
+    location: Object.freeze({
+      sourceId: owner.sourceId,
+      line: owner.line,
+      column: owner.column,
+      declarationStart: owner.declarationStart,
+      declarationEnd: owner.declarationEnd,
+    }),
+  });
+}
+
+/** Reconstructed read surface over the one owned ABI entry vector. */
+export function preparedIrProgramAbiLookup(program: PreparedIrProgram): PreparedComponentAbiLookup {
+  assertPreparedIrProgram(program);
+  const entries = Object.freeze(program.abi.entries.map(({ plan }) => plan));
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  if (byId.size !== entries.length) {
+    throw new PreparedIrProgramInvariantError("invalid-prepared-data", "program ABI contains duplicate binding IDs");
+  }
+  return Object.freeze({
+    get: (id: IrBindingId) => byId.get(id),
+    entries: () => entries,
+    bindingIdsForStructuralReference: (key: string) =>
+      Object.freeze(entries.filter((entry) => entry.structuralReferenceKey === key).map((entry) => entry.id)),
+  });
+}
 
 export type PreparedIrCandidateRoute = "ir" | "direct" | "neither";
 export type PreparedIrEmitter = Exclude<PreparedIrCandidateRoute, "neither">;
@@ -158,7 +335,7 @@ export interface PreparedIrProvenanceCandidate {
   readonly evidenceStatus: "unvalidated-candidate";
 }
 
-export interface PreparedIrAbiSnapshot {
+export interface PreparedIrCandidateAbiSnapshot {
   readonly planningSealed: true;
   readonly entries: readonly ProgramAbiPlanEntry[];
   get(id: IrBindingId): ProgramAbiPlanEntry | undefined;
@@ -187,8 +364,8 @@ export interface PreparedIrCandidatePublication {
   readonly ledger: ReadonlyMap<IrUnitId, PreparedIrEmissionLedgerEntry>;
 }
 
-export interface PreparedIrProgram {
-  readonly abi: PreparedIrAbiSnapshot;
+export interface PreparedIrCandidateProgram {
+  readonly abi: PreparedIrCandidateAbiSnapshot;
   /** Exact authoritative R2 denominator; every value remains an unvalidated candidate. */
   readonly units: ReadonlyMap<IrUnitId, PreparedIrUnitCandidate>;
   readonly irCandidates: ReadonlyMap<IrUnitId, PreparedIrIrCandidate>;
@@ -283,6 +460,56 @@ export function preparedIrReadonlyMap<K, V>(entries: Iterable<readonly [K, V]>):
   return new FrozenMap(entries);
 }
 
+/** Exact data comparison for replay/projection evidence, including recursive layouts and collection entries. */
+export function preparedIrDataMismatch(left: unknown, right: unknown): string | undefined {
+  const visited = new WeakMap<object, WeakSet<object>>();
+  const compare = (expected: unknown, actual: unknown, path: string): string | undefined => {
+    if (typeof expected === "function" || typeof actual === "function") return `${path} (executable function)`;
+    if (expected === null || actual === null || typeof expected !== "object" || typeof actual !== "object") {
+      return Object.is(expected, actual) ? undefined : path;
+    }
+    const prior = visited.get(expected);
+    if (prior?.has(actual)) return undefined;
+    if (prior) prior.add(actual);
+    else visited.set(expected, new WeakSet([actual]));
+    const expectedMap = expected instanceof FrozenMap || expected instanceof Map;
+    const actualMap = actual instanceof FrozenMap || actual instanceof Map;
+    if (expectedMap || actualMap) {
+      if (!expectedMap || !actualMap) return `${path} (map kind)`;
+      return compare([...expected], [...actual], `${path}.entries`);
+    }
+    const expectedSet = expected instanceof FrozenSet || expected instanceof Set;
+    const actualSet = actual instanceof FrozenSet || actual instanceof Set;
+    if (expectedSet || actualSet) {
+      if (!expectedSet || !actualSet) return `${path} (set kind)`;
+      return compare([...expected], [...actual], `${path}.values`);
+    }
+    if (Array.isArray(expected) !== Array.isArray(actual)) return `${path} (array kind)`;
+    for (const value of [expected, actual]) {
+      const prototype = Object.getPrototypeOf(value);
+      if (
+        hasNativeCollectionState(value) ||
+        (!Array.isArray(value) && prototype !== null && prototype !== Object.prototype)
+      ) {
+        return `${path} (non-data object)`;
+      }
+    }
+    const expectedKeys = Reflect.ownKeys(expected);
+    const actualKeys = Reflect.ownKeys(actual);
+    if (expectedKeys.length !== actualKeys.length) return `${path} (field population)`;
+    for (const key of expectedKeys) {
+      const before = Object.getOwnPropertyDescriptor(expected, key);
+      const after = Object.getOwnPropertyDescriptor(actual, key);
+      const field = `${path}.${String(key)}`;
+      if (!before || !after || !("value" in before) || !("value" in after)) return field;
+      const mismatch = compare(before.value, after.value, field);
+      if (mismatch !== undefined) return mismatch;
+    }
+    return undefined;
+  };
+  return compare(left, right, "$root");
+}
+
 function invalidPreparedData(detail: string): never {
   throw new PreparedIrProgramInvariantError("invalid-prepared-data", detail);
 }
@@ -362,6 +589,61 @@ export function freezePreparedIrValue(value: unknown): unknown {
   return immutableCopy(value);
 }
 
+function hasNativeCollectionState(value: object): boolean {
+  for (const has of [Map.prototype.has, Set.prototype.has, WeakMap.prototype.has, WeakSet.prototype.has]) {
+    try {
+      Reflect.apply(has, value, [value]);
+      return true;
+    } catch {
+      // Native methods authenticate internal slots even when the prototype was erased.
+    }
+  }
+  return false;
+}
+
+/** Freeze producer-owned attachments without replacing authenticated plan/manifest identities. */
+export function freezePreparedIrRuntimeValue<T>(value: T): T {
+  const visited = new Set<object>();
+  const active = new Set<object>();
+  const freeze = (item: unknown): void => {
+    if (typeof item === "function") invalidPreparedData("runtime data cannot contain executable functions");
+    if (item === null || typeof item !== "object") return;
+    if (active.has(item)) {
+      if (!isRecursiveIrClassShape(item))
+        invalidPreparedData("runtime data must be acyclic outside exact IR class shapes");
+      return;
+    }
+    if (visited.has(item)) return;
+    active.add(item);
+    if (item instanceof FrozenMap) {
+      for (const [key, entry] of item) {
+        freeze(key);
+        freeze(entry);
+      }
+    } else if (item instanceof FrozenSet) {
+      for (const entry of item) freeze(entry);
+    } else {
+      const prototype = Object.getPrototypeOf(item);
+      if (
+        hasNativeCollectionState(item) ||
+        (!Array.isArray(item) && prototype !== Object.prototype && prototype !== null)
+      )
+        invalidPreparedData("runtime data contains mutable or executable context state");
+      for (const key of Reflect.ownKeys(item)) {
+        const descriptor = Object.getOwnPropertyDescriptor(item, key);
+        if (!descriptor || !("value" in descriptor))
+          invalidPreparedData(`runtime property ${String(key)} must be non-executable data`);
+        freeze(descriptor.value);
+      }
+    }
+    active.delete(item);
+    Object.freeze(item);
+    visited.add(item);
+  };
+  freeze(value);
+  return value;
+}
+
 interface MutableLedgerEntry {
   readonly unitId: IrUnitId;
   readonly candidateRoute: PreparedIrCandidateRoute;
@@ -372,13 +654,13 @@ interface MutableLedgerEntry {
 const EMISSION_TRANSACTION_CAPABILITY = Symbol("PreparedIrProgram.beginEmission");
 
 export class PreparedIrEmissionTransaction {
-  readonly #program: PreparedIrProgram;
+  readonly #program: PreparedIrCandidateProgram;
   readonly #staged = new Map<IrUnitId, PreparedIrStagedBody>();
   readonly #ledger = new Map<IrUnitId, MutableLedgerEntry>();
   #state: "open" | "published" | "aborted" = "open";
   #publication?: PreparedIrCandidatePublication;
 
-  private constructor(program: PreparedIrProgram, capability: symbol) {
+  private constructor(program: PreparedIrCandidateProgram, capability: symbol) {
     if (capability !== EMISSION_TRANSACTION_CAPABILITY) {
       throw new PreparedIrProgramInvariantError(
         "invalid-transaction-capability",
@@ -397,7 +679,7 @@ export class PreparedIrEmissionTransaction {
   }
 
   /** @internal Runtime capability remains module-private. */
-  static open(program: PreparedIrProgram, capability: symbol): PreparedIrEmissionTransaction {
+  static open(program: PreparedIrCandidateProgram, capability: symbol): PreparedIrEmissionTransaction {
     return new PreparedIrEmissionTransaction(program, capability);
   }
 
@@ -548,11 +830,11 @@ function expectedCandidateRoute(candidate: PreparedIrUnitCandidate): PreparedIrC
  * @internal Defensively owns every input. prepare.ts is the supported caller;
  * the output remains explicitly pending production reconciliation.
  */
-export function createPreparedIrCandidateProgram(input: PreparedIrCandidateProgramInput): PreparedIrProgram {
+export function createPreparedIrCandidateProgram(input: PreparedIrCandidateProgramInput): PreparedIrCandidateProgram {
   const ownedInput = ownCandidate(input);
   const entries = Object.freeze(ownedInput.abiEntries.map((entry) => ownCandidate(entry)));
   const entryMap = new Map(entries.map((entry) => [entry.id, entry]));
-  const abi: PreparedIrAbiSnapshot = Object.freeze({
+  const abi: PreparedIrCandidateAbiSnapshot = Object.freeze({
     planningSealed: true as const,
     entries,
     get: (id: IrBindingId) => entryMap.get(id),
@@ -639,7 +921,7 @@ export function createPreparedIrCandidateProgram(input: PreparedIrCandidateProgr
     ),
   );
   let emissionStarted = false;
-  const program: PreparedIrProgram = Object.freeze({
+  const program: PreparedIrCandidateProgram = Object.freeze({
     abi,
     units,
     irCandidates,

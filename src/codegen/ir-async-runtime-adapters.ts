@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import {
-  type AsyncHostAdapter,
+  type PreparedAsyncHostAdapter,
   type AsyncHostAdapterValueType,
-  type AsyncHostCapabilityId,
+  type PreparedAsyncHostCapabilityId,
 } from "../ir/async-runtime-providers.js";
 import { assertPreparedIrAsyncRuntimeCurrent } from "../ir/async-plan.js";
 import type { IrFunction } from "../ir/nodes.js";
@@ -16,7 +16,8 @@ import { addFuncType } from "./registry/types.js";
 import { ensureAsyncDriveRuntime } from "./async-scheduler.js";
 import { prepareNativePromiseNumberBoundary } from "./native-promise-number-boundary.js";
 
-function lowerAdapterType(type: AsyncHostAdapterValueType): ValType {
+function lowerAdapterType(type: AsyncHostAdapterValueType | "f64"): ValType {
+  if (type === "f64") return { kind: "f64" };
   return type === "i32" ? { kind: "i32" } : { kind: "externref" };
 }
 
@@ -24,7 +25,7 @@ function sameValType(left: ValType, right: ValType): boolean {
   return left.kind === right.kind;
 }
 
-function expectedSignature(adapter: AsyncHostAdapter): FuncTypeDef {
+function expectedSignature(adapter: PreparedAsyncHostAdapter): FuncTypeDef {
   return {
     kind: "func",
     params: adapter.params.map(lowerAdapterType),
@@ -32,7 +33,7 @@ function expectedSignature(adapter: AsyncHostAdapter): FuncTypeDef {
   };
 }
 
-function assertImportSignature(ctx: CodegenContext, imported: Import, adapter: AsyncHostAdapter): void {
+function assertImportSignature(ctx: CodegenContext, imported: Import, adapter: PreparedAsyncHostAdapter): void {
   if (imported.desc.kind !== "func") {
     throw new Error(`IR async adapter ${adapter.capability} resolved to a non-function import`);
   }
@@ -52,7 +53,7 @@ function assertImportSignature(ctx: CodegenContext, imported: Import, adapter: A
   }
 }
 
-function findExactImport(ctx: CodegenContext, adapter: AsyncHostAdapter): Import | undefined {
+function findExactImport(ctx: CodegenContext, adapter: PreparedAsyncHostAdapter): Import | undefined {
   for (let index = ctx.mod.imports.length - 1; index >= 0; index--) {
     const imported = ctx.mod.imports[index]!;
     if (imported.module === adapter.module && imported.name === adapter.field) return imported;
@@ -61,7 +62,7 @@ function findExactImport(ctx: CodegenContext, adapter: AsyncHostAdapter): Import
 }
 
 interface PreparedAsyncRuntimeRequestCensus {
-  readonly hostRecords: readonly AsyncHostAdapter[];
+  readonly hostRecords: readonly PreparedAsyncHostAdapter[];
   readonly backendRequirements: readonly RuntimeBackendRequirement[];
 }
 
@@ -80,7 +81,7 @@ function collectPreparedAsyncRuntimeRequests(
   ctx: CodegenContext,
   functions: readonly IrFunction[],
 ): PreparedAsyncRuntimeRequestCensus {
-  const requested = new Map<AsyncHostCapabilityId, AsyncHostAdapter>();
+  const requested = new Map<PreparedAsyncHostCapabilityId, PreparedAsyncHostAdapter>();
   const requirements = new Set<RuntimeBackendRequirement>();
   for (const fn of functions) {
     if (!fn.asyncPlan && !fn.asyncRuntime && fn.funcKind !== "async") continue;

@@ -25,13 +25,10 @@ import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } f
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
-// (#3125) Thenable-assimilation substrate deps. `closures.js` ← here is an
-// eval-time-SAFE cycle (closures.ts imports `isStandalonePromiseActive` from
-// this module; both bindings are only dereferenced inside function bodies,
-// never at module evaluation). The other three are cycle-free leaves relative
-// to this module.
-import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures.js";
-import { closureBagField, closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
+// (#3125) Thenable-assimilation helpers use the physical wrapper registry and
+// header leaf directly, avoiding the closure-dispatch barrel and its scheduler cycle.
+import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
+import { closureBagField, closureBagInitInstr } from "./closures/closure-header-layout.js";
 // (#5197 Slice B) The settle closures escape to user code as real function
 // objects, so they carry the standard builtin-function metadata subtype rather
 // than a Promise-local imitation. Cycle-free: builtin-fn-meta.ts imports only

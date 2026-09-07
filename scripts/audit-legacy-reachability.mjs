@@ -34,8 +34,9 @@
 import ts from "typescript";
 import { readFileSync, writeFileSync, readdirSync, statSync, mkdirSync } from "fs";
 import path from "path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = path.join(ROOT, "src");
 
 // The legacy front-end body-dispatch pair — the cut set.

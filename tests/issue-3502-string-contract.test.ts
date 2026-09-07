@@ -9,6 +9,7 @@ import { AllocSiteRegistry } from "../src/ir/alloc-registry.js";
 import {
   bindLinearStringRuntime,
   LINEAR_STRING_ASCII_PROOF_REQUIRED,
+  LinearStringEncodingUnsupportedError,
 } from "../src/ir/analysis/linear-string-runtime.js";
 import {
   LINEAR_STRING_ELEMENTS_OFFSET,
@@ -204,6 +205,7 @@ describe("#3502 backend-neutral string contract", () => {
     expect(() => bindLinearStringRuntime(plan, { intrinsic: "length" })).toThrow(
       `${LINEAR_STRING_ASCII_PROOF_REQUIRED} for length input (got unproven)`,
     );
+    expect(() => bindLinearStringRuntime(plan, { intrinsic: "length" })).toThrow(LinearStringEncodingUnsupportedError);
     expect(JSON.stringify(concatBinding)).not.toMatch(/funcIdx|typeIdx|RawC|renderer|#include|__str_/);
   });
 
@@ -223,14 +225,31 @@ describe("#3502 backend-neutral string contract", () => {
     );
     const report = getLastLinearIrReport();
     expect(report?.compiled).toStrictEqual([]);
-    expect(report?.rejected).toContainEqual({
-      func: "unicodeAppend",
-      reason: "build",
-      detail: `${LINEAR_STRING_ASCII_PROOF_REQUIRED} for constant result (got utf8-guaranteed)`,
-    });
+    expect(report?.rejected).toContainEqual(
+      expect.objectContaining({
+        func: "unicodeAppend",
+        reason: "build",
+        detail: `${LINEAR_STRING_ASCII_PROOF_REQUIRED} for constant result (got utf8-guaranteed)`,
+        outcome: expect.objectContaining({
+          kind: "unsupported",
+          code: "string-evidence-unsupported",
+          stage: "resolve",
+        }),
+      }),
+    );
+    expect(report?.irModule.functions).toEqual([]);
+    expect(report?.frozenBodyBatch?.owners.some((owner) => owner.outcome === "built")).toBe(false);
+    // A refused production owner is absent from the executable batch. Keep
+    // the independent Porffor boundary check on an explicitly supplied graph.
+    const registry = new AllocSiteRegistry();
+    const builder = new IrFunctionBuilder(identities.next("nonAscii"), [STRING], true, registry);
+    builder.openBlock();
+    const value = builder.emitStringConst("é");
+    builder.terminate({ kind: "return", values: [value] });
+    const module = { functions: [builder.finish()] };
     expect(() =>
-      lowerIrModuleToPorffor(report!.irModule, {
-        memoryPlan: report!.memoryPlan,
+      lowerIrModuleToPorffor(module, {
+        memoryPlan: planLinearMemory(module, registry),
         prefs: { gc: false },
       }),
     ).toThrow(`${LINEAR_STRING_ASCII_PROOF_REQUIRED} for constant result (got utf8-guaranteed)`);

@@ -62,7 +62,7 @@ function capabilityCatalogWith(
 }
 
 describe("#4103 IR async runtime provider schema", () => {
-  it("closes all seven semantic requirements to the exact six existing host imports", () => {
+  it("closes all seven semantic requirements to the exact seven existing host imports", () => {
     const forward = builder();
     const reverse = new RuntimeManifestBuilder(
       { target: "host", backend: "wasmgc" },
@@ -89,10 +89,11 @@ describe("#4103 IR async runtime provider schema", () => {
       "Promise_settle_reject",
       "Promise_settle_resolve",
       "Promise_then2",
+      "__get_caught_exception",
       "__make_callback",
     ]);
-    expect(manifest.hostCapabilities).toHaveLength(6);
-    expect(new Set(manifest.hostCapabilities)).toHaveLength(6);
+    expect(manifest.hostCapabilities).toHaveLength(7);
+    expect(new Set(manifest.hostCapabilities)).toHaveLength(7);
     expect(manifest.hostCapabilityRecords).toEqual(ASYNC_HOST_ADAPTERS);
     expect(
       manifest.hostCapabilityRecords.every((record, index) => record === ASYNC_HOST_CAPABILITY_RECORDS[index]),
@@ -113,7 +114,7 @@ describe("#4103 IR async runtime provider schema", () => {
     const mandatory = builder();
     requestAll(mandatory, ASYNC_RUNTIME_FEATURES);
     const optional = builder();
-    requestAll(optional, [...ASYNC_RUNTIME_FEATURES, ...ASYNC_OPTIONAL_RUNTIME_FEATURES]);
+    requestAll(optional, [...ASYNC_RUNTIME_FEATURES, "value.undefined"]);
 
     const before = mandatory.freeze();
     const after = optional.freeze();
@@ -123,9 +124,28 @@ describe("#4103 IR async runtime provider schema", () => {
     expect(after.hostCapabilityRecords.at(-1)).toBe(ASYNC_OPTIONAL_HOST_ADAPTERS[0]);
   });
 
+  it("composes every optional Promise feature through the exact canonical host records", () => {
+    const value = builder();
+    const requested = [...ASYNC_RUNTIME_FEATURES, ...ASYNC_OPTIONAL_RUNTIME_FEATURES].sort();
+    requestAll(value, requested);
+    const manifest = value.freeze();
+    expect(manifest.features).toEqual(requested);
+    expect(manifest.providers.map((provider) => provider.id)).toEqual(
+      asyncProviderIdsForTarget("host", new Set(requested)),
+    );
+    const expected = RUNTIME_HOST_CAPABILITY_RECORDS.filter(
+      (record) =>
+        ASYNC_HOST_CAPABILITY_RECORDS.some((asyncRecord) => asyncRecord === record) ||
+        record.capability === "number.box" ||
+        record.capability === "number.unbox",
+    );
+    expect(manifest.hostCapabilityRecords).toEqual(expected);
+    expect(manifest.hostCapabilityRecords.every((record, index) => record === expected[index])).toBe(true);
+  });
+
   it("closes the standalone catalogue to native-managed providers without host capabilities", () => {
     const value = builder("standalone");
-    const requested = [...ASYNC_RUNTIME_FEATURES, ...ASYNC_OPTIONAL_RUNTIME_FEATURES];
+    const requested = [...ASYNC_RUNTIME_FEATURES, ...ASYNC_OPTIONAL_RUNTIME_FEATURES].sort();
     requestAll(value, requested);
 
     const manifest = value.freeze();
@@ -157,6 +177,14 @@ describe("#4103 IR async runtime provider schema", () => {
         params: ["i32", "externref"],
         results: ["externref"],
         exceptionPolicy: "module-tag-payload",
+      },
+      {
+        capability: "async.exception.caught",
+        module: "env",
+        field: "__get_caught_exception",
+        kind: "func",
+        params: [],
+        results: ["externref"],
       },
       {
         capability: "async.promise.capability.create",

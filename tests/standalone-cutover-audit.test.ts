@@ -334,8 +334,20 @@ describe("standalone physical IR cutover audit", () => {
       expect(result.success).toBe(false);
       const audit = result.irBodyRouteAudit!;
       expect(audit.structurallyComplete).toBe(false);
-      expect(audit.dispositions.filter((row) => row.disposition === "unresolved-terminal")).toHaveLength(2);
-      expect(audit.violations.filter((violation) => violation.code === "missing-terminal-evidence")).toHaveLength(2);
+      // The timer shim is an inventoried terminal alongside the two source functions.
+      const failed = result.irOutcomes!.filter((outcome) => outcome.kind === "invariant");
+      expect(failed.map((outcome) => outcome.displayName)).toEqual(["setTimeout", "delay", "fetchUser"]);
+      expect(failed.every((outcome) => !outcome.irBodyEmitted && !outcome.legacyBodyEmitted)).toBe(true);
+      const unresolved = audit.dispositions.filter((row) => row.disposition === "unresolved-terminal");
+      expect(unresolved.map((row) => row.unitKind)).toEqual([
+        "synthetic-support",
+        "top-level-function",
+        "top-level-function",
+      ]);
+      expect(unresolved.map((row) => row.unitId)).toEqual(failed.map((outcome) => outcome.unitId));
+      expect(
+        audit.violations.filter((violation) => violation.code === "missing-terminal-evidence").map((row) => row.unitId),
+      ).toEqual(failed.map((outcome) => outcome.unitId));
     } finally {
       if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_INJECT_IR_PHASE_THROW");
       else process.env.JS2WASM_TEST_INJECT_IR_PHASE_THROW = previous;
