@@ -185,3 +185,21 @@ This is an internal checkpoint stacked on #5692, not completed frontend
 retirement. No full equivalence/Test262 or linked-object runtime matrix was
 run. Preserve the isolated baseline checkout for audit. Original owners and
 held claims were not modified.
+
+## Main integration conflict repair — 2026-09-07
+
+PR #5715 at f10c42d97a was confirmed CONFLICTING/DIRTY. The remote head still
+matched local HEAD. A normal merge integrates canonical upstream main
+`b577c29420d98069748c4416293e2ba019893db1`; C #5692 was still open/unmerged at
+`62285503f25059e7f5266cea46eec01defa82155` when checked.
+
+Only plan/issues/3518-ir-only-default-and-direct-frontend-retirement.md and
+plan/issues/3527-ir-r7-ast-free-async-plan.md conflicted. Both were append-only
+collisions between historical implementation notes and the landed September 7
+High specification. Resolution retains both complete sections in that order.
+No A TypeScript file changed, and no source conflict required resolution.
+
+Merged-tree validation: driver/public controls 16/16 passed in one 2048MB fork;
+issue integrity and diff whitespace checks passed; default LOC/function,
+coercion, oracle and dead-export checks passed. Prior pre-integration failure
+measurements above remain historical evidence, not measurements of this merge.
