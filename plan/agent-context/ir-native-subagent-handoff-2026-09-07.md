@@ -8,6 +8,33 @@ merely because its old claim is still held.
 
 ## Active ownership and publication
 
+Updated 2026-09-08: the entries below preserve initial dispatch provenance.
+F0 `a877767aa16406e945ce9fed0742fb1907ec18f2` landed in PR 5733 at
+`fa9e1ea0c7986b53f290e88822b262ab10ca62f4`; parent fetched upstream/main
+and verified ancestry and identical checkpoint content.
+N1 is composed in the parent's isolated checkpoint, with 34/34 tests,
+typecheck, inventory and exact paired byte/order evidence. Its gate is now
+composed: preservation exits 0 with 6/6 canonical full/cut witnesses, strict
+exits 1 on both unchanged imports, and the old ratchet remains 25/25. Normal
+hooks and ready publication are parent-owned; final status lives on the PR.
+
+Maxwell's same native context completed the seven-file canonical ABI draft
+in `/private/tmp/js2-3518-program-abi-seam-20260908`, preserving the original N1
+draft. Its 59 tests and typecheck passed; parent artifact pairing and integration
+remain pending. Boyle's same context completed the user-approved two-verdict extension:
+exact open-site provenance and additive controls, with strict unknown failures
+retained, passing all 105 controls. The expanded map and approval are in the
+[two-verdict contract](./3518-open-import-preservation-contract-2026-09-08.md).
+The parent owns policy/package integration, serial validation and every PR.
+Huygens's Astra High native plan is complete; no standalone app task was added.
+
+See the [current validation/handoff](./3518-native-foundation-validation-2026-09-08.md)
+and [ABI implementation plan](./3518-program-abi-seam-dispatch-2026-09-08.md).
+The [later lowering-cycle proposal](./3518-lowering-cycle-plan-2026-09-08.md)
+is preserved but not dispatched or accepted as implemented.
+
+### Initial dispatch record
+
 - Coordinator: integrate and publish the boundary/identity checkpoint from
   `codex/3518-ir-foundation-checkpoint-20260907`. D0 commit
   `57aa0d73025526812d06a3863d63552929618288` is pushed and its upstream SHA

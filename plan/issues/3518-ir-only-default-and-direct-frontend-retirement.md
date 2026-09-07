@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-07
+updated: 2026-09-08
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -68,9 +68,10 @@ remain preserved. This priority does not remove the epic's full acceptance
 criteria or declare the hybrid compiler retired.
 
 Astra High specifies and independently reviews the implementation plan;
-Astra Low workers implement isolated slices. Cloud workers provide independent
-dependency and regression evidence. The coordinator retains integration and
-publication. These assignments supersede the older session/model ownership
+Astra Low native subagents implement isolated slices. Earlier cloud evidence
+and standalone task drafts remain preserved; new implementation is coordinated
+through native subagents under the user's 2026-09-07 direction. The coordinator
+retains integration and publication. These assignments supersede older ownership
 directions below without discarding their implementation contracts.
 
 The [approved first dispatch](../agent-context/3518-first-boundary-dispatch-2026-09-07.md)
@@ -89,6 +90,36 @@ nonempty activated boundaries and preserves its report; a passing inventory
 does not certify IR-only production execution. The existing cutover and
 dead-export checks remain unchanged. Further backend/runtime moves require
 reviewed dependency removal, not relabeling or test-only callers.
+
+### Approved extraction evidence amendment — 2026-09-08
+
+The user approved separating moved-caller preservation from retirement proof:
+**“Yes—separate preservation from retirement proof.”** The new rooted auditor
+found two actual nonliteral imports, in the optional Binaryen loader and the
+platform dynamic-import callback. Both remain unresolved in strict evidence.
+Their supported inputs and runtime behavior are not restricted to manufacture
+a closed graph.
+
+The [two-verdict contract](../agent-context/3518-open-import-preservation-contract-2026-09-08.md)
+permits the N1 extraction check to use six resolved real-caller witnesses with
+exact, reviewed provenance for those two open sites. It preserves the strict
+failure result, all unknown rows, missing-consumer failures and the ordinary
+dead-export ratchet. Additional unknowns still fail preservation. A passing
+preservation check is not retirement/deletion authorization; every acceptance
+criterion below remains open until independently proved.
+
+The [N1 validation checkpoint](../agent-context/3518-native-foundation-validation-2026-09-08.md)
+records actual code, focused execution and byte/order evidence. The next
+[canonical ABI seam](../agent-context/3518-program-abi-seam-dispatch-2026-09-08.md)
+removes a real frontend dependency from the existing program authority without
+replacing the producer or modifying the preserved P/C drafts. These are
+intermediate checkpoints, not a new public compiler mode or completed cutover.
+
+Foundation PR 5733 landed at `fa9e1ea0c7986b53f290e88822b262ab10ca62f4`;
+the published F0 head is verified in upstream/main ancestry. The isolated ABI
+draft has 59/59 tests and typecheck passing, with parent composition and artifact
+parity still pending. The [lowering-cycle proposal](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
+is the next bounded plan, not a competing dispatch or completed dependency split.
 
 ## Historical execution plan — whole-program cutover (2026-09-05)
 

@@ -144,23 +144,36 @@ describe("prepared native queue physical closure", () => {
     expect(seen).toEqual(["throw", "next"]);
   });
 
-  it("imports the physical leaf in a fresh process with legacy/frontend imports denied", () => {
-    const script = `
+  it("imports the native leaf in a fresh process with compiler dependencies denied", () => {
+    const script = String.raw`
       import { registerHooks } from "node:module";
+      import { fileURLToPath, pathToFileURL } from "node:url";
+      import { relative, resolve, sep } from "node:path";
       const loaded = [];
+      const root = resolve("src");
       registerHooks({ resolve(specifier, context, next) {
-        if (/async-scheduler|shared\\.js|context\\/|typescript|checker|from-ast/.test(specifier)) {
-          throw new Error("Forbidden import: " + specifier);
+        const result = next(specifier, context);
+        if (result.url.startsWith("file:")) {
+          const path = relative(root, fileURLToPath(result.url)).split(sep).join("/");
+          if (/^(codegen|frontend|checker|ts-api|compiler|legacy)(\/|\.|$)/.test(path) ||
+              /^ir\/types\.(ts|js)$/.test(path) || /typescript|checker|from-ast/.test(specifier)) {
+            throw new Error("Forbidden import: " + path);
+          }
+          loaded.push(path);
         }
-        loaded.push(specifier);
-        return next(specifier, context);
+        return result;
       }});
-      const leaf = await import("./src/codegen/prepared-native-async-runtime.ts");
+      const leaf = await import("./src/runtime/wasmgc/async/microtask-queue-bodies.ts");
       if (typeof leaf.buildDrainBody !== "function") throw new Error("Missing builder");
-      let denied = false;
-      try { await import("./src/codegen/async-scheduler.ts"); }
-      catch (error) { denied = String(error).includes("Forbidden import:"); }
-      if (!denied) throw new Error("Import barrier failed its positive control");
+      if (!loaded.includes("runtime/wasmgc/async/microtask-queue-bodies.ts")) throw new Error("Leaf not observed");
+      for (const path of ["codegen/async-scheduler.ts", "ir/types.ts", "compiler.ts"]) {
+        const forbidden = pathToFileURL(resolve("src", path)).href;
+        const injected = "data:text/javascript," + encodeURIComponent("import " + JSON.stringify(forbidden));
+        let denied = false;
+        try { await import(injected); }
+        catch (error) { denied = String(error).includes("Forbidden import:"); }
+        if (!denied) throw new Error("Import barrier failed its positive control: " + path);
+      }
       console.log("physical-leaf-loaded");
     `;
     const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
@@ -170,5 +183,27 @@ describe("prepared native queue physical closure", () => {
     });
     expect(child.status, child.stderr).toBe(0);
     expect(child.stdout).toContain("physical-leaf-loaded");
+  });
+
+  it("preserves all five compatibility function objects in a separate fresh process", () => {
+    const script = `
+      const leaf = await import("./src/runtime/wasmgc/async/microtask-queue-bodies.ts");
+      const adapter = await import("./src/codegen/prepared-native-async-runtime.ts");
+      const names = ["buildGrowLocals", "buildGrowBody", "buildEnqueueBody", "buildDrainLocals", "buildDrainBody"];
+      if (JSON.stringify(Object.keys(adapter).sort()) !== JSON.stringify([...names].sort())) {
+        throw new Error("Unexpected compatibility surface");
+      }
+      for (const name of names) {
+        if (typeof leaf[name] !== "function" || adapter[name] !== leaf[name]) throw new Error("Identity lost: " + name);
+      }
+      console.log("five-builder-identities-preserved");
+    `;
+    const child = spawnSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: 30_000,
+    });
+    expect(child.status, child.stderr).toBe(0);
+    expect(child.stdout).toContain("five-builder-identities-preserved");
   });
 });

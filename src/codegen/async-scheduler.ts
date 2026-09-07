@@ -56,7 +56,7 @@ import {
   buildDrainLocals,
   buildDrainBody,
   type PreparedNativeMicrotaskReservations,
-} from "./prepared-native-async-runtime.js";
+} from "../runtime/wasmgc/async/microtask-queue-bodies.js";
 
 /**
  * #1326 — Sentinel state values for `$Promise.state`. Match the JS spec
