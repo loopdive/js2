@@ -291,6 +291,7 @@ export function createCodegenContext(
     nativeStrLiteralGlobals: new Map(),
     usesStandaloneConsoleSink: false,
     stdoutAccGlobalIdx: -1,
+    usesSourceThrowStatement: false,
     symbolTypeIdx: -1,
     utf8StrDataTypeIdx: -1,
     utf8StrTypeIdx: -1,
