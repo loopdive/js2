@@ -1,7 +1,8 @@
 ---
 id: 5380
 title: "`TimeDuration.fdiv`'s bounded `for (; !JSBI.equal(s, ZERO) && c.length < 50; ) { … c.push(…) }` never terminates through the linked provider — `ZonedDateTime.prototype.hoursInDay` hangs (fail → hang once #5378 makes the path reachable; a synchronous Wasm loop kills the shard fork at 30 s)"
-status: ready
+status: done
+completed: 2026-09-07
 sprint: current
 priority: high
 horizon: s
@@ -9,6 +10,55 @@ goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
+# 2026-09-07 — growth grants, MEASURED by the LOC/func gates on the merged tree
+# (`LOC_GATE_BASE=$(git rev-parse origin/main)`). This branch stacks on #5378's
+# PR #5706, which stacks on #5377's #5699, so BOTH of their grants are restated
+# below: the gate reads the change-set's own issue files, and a grant that lives
+# only in a file this PR does not modify is a stranded grant.
+#
+# THIS issue's own growth:
+#
+# `src/codegen/index.ts` (+58): `undefinedAwareF64BridgeArg` and
+# `hostClassBridgeFormalIsOptional` (+46 with the doc block recording the
+# measured JSBI `u >>>= 0` spin), plus the two short call sites. Both sites live
+# in this file by construction — they wrap the argument lowering of the TWO host
+# class bridges, `emitMethodDispatch`'s class arm (struct receivers) and
+# `emitExternrefClassMethodDispatch` (externref-backed receivers), and a bridge
+# argument cannot be lowered from outside the loop that emits it.
+# `emitIteratorMethodExport` (+10) is the enclosing function of
+# `emitMethodDispatch` (+10) — ONE growth, counted at both levels.
+#
+# `src/codegen/closed-method-dispatch.ts` (+63): `ensureUnboxNumberOrOmitted`
+# (+55 with its rationale for being a minted FUNCTION rather than inline
+# instructions — the arm's argument may come from `__extern_get_idx`, which must
+# not be evaluated twice) plus the `CoerceIdxs` field and the `buildEntryArm`
+# arm. `fillClosedMethodDispatch` (+1) is the line installing the thunk.
+#
+# `src/codegen/class-bodies.ts` (+13 on top of #5377's +65): widening the
+# existing `__extern_is_undefined` PRE-ENSURE to cover an f64 formal with a
+# default, plus the comment recording why the import can only be added there —
+# an import added in the finalize pass shifts every funcidx under a body that is
+# no longer swappable.
+#
+# Inherited, unchanged by this issue: `src/runtime.ts` (#5377 +187, #5378 +25),
+# `src/codegen/property-access-dispatch.ts` (#5378 +64),
+# `src/codegen/typeof-delete.ts` (#5378 +9).
+loc-budget-allow:
+  - src/codegen/index.ts
+  - src/codegen/closed-method-dispatch.ts
+  - src/codegen/class-bodies.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/typeof-delete.ts
+  - src/runtime.ts
+func-budget-allow:
+  - src/codegen/index.ts::emitIteratorMethodExport
+  - src/codegen/index.ts::emitMethodDispatch
+  - src/codegen/closed-method-dispatch.ts::fillClosedMethodDispatch
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::<anonymous>#95
 ---
 
 # #5380 — a `c.length < 50`-bounded loop runs forever in the compiled polyfill
