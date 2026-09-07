@@ -929,6 +929,76 @@ non-mergeable checkpoint may remain draft. A separate shepherd agent verifies
 the required PR body, mergeability, reviews, CI, exact tested head, and
 ready/queue state before landing.
 
+## 2026-09-07 Codex resume: current baseline and measurement setup
+
+The resumed goal remains 100% ES2015 standalone conformance. The integration
+worktree starts at upstream `95186a4835a1fe7a024172a61be94781c7995670` on
+`codex/4444-es2015-standalone-resume`; `/workspace` remains on `main` with its
+pre-existing local files preserved.
+
+A fresh download of the standalone baseline contains 48,735 physical rows.
+The exact core ES2015 selection contains 11,704 unique rows, with no missing
+or duplicate selected paths: 10,228 pass, 1,146 fail, 329 compile_error, and
+1 compile_timeout, all labelled honest oracle version 13. This downloaded
+snapshot is triage evidence, not a new execution of the current checkout.
+
+The current edition map also labels 74 `intl402/` paths ES2015. Separating
+those ECMA-402 tests from the core ECMA-262 selection reproduces the frozen
+11,704-path filter byte-for-byte: sorted `test/`-prefixed LF text has SHA-256
+`45de809c6bfce7371cee1d20e327758246b0524ecd75481a08b8c03344fced8a`.
+The Test262 checkout is still `b363f29d3c43c626dc852744ad64a0b48a003693`.
+No core tests were removed to obtain the historical denominator.
+
+The compiler and runtime bundles were rebuilt from the isolated checkout.
+The shared root cache is not writable by this container user, so this worktree
+uses its own freshly downloaded cache. A portable pinned QuickJS toolchain
+was built under `/workspace/.tmp/es2015-toolchain`; no shared dependency
+installation was changed. Its 1,033,484-byte artifact has SHA-256
+`8533e46749cc1dbce2684fcfb92539e63a69046c923d0cdcde286faaebda4ba6`.
+The artifact passed all six acceptance value checks and WASI-only import
+verification. The linked adapter then built and passed its canaries (cache
+key `eb058a007ccfcb23`).
+
+All seven historical super-property residuals failed in fresh isolated
+untouched-harness runs on the base commit. Six are in ES2015; the poisoned
+`__proto__` row is unclassified and is retained only as a cross-scope control.
+The historical captured-variable diagnosis depended on the older wrapped
+harness and is not assumed current.
+Local evidence lives under this worktree's `.tmp/`, including the exact scope,
+baseline digest/counts, and isolated-row log.
+
+### Bounded implementation and review evidence
+
+The immutable base archive `/tmp/js2-es2015-base-95186a` was checked against
+the commit: all 6,012 archived `src/`, `scripts/`, and `tests/` blobs match.
+Its fresh isolated core-super cohort measures 36 pass, 21 fail, and
+1 compile_error out of 58. The final provider-valid super candidate measures
+43 pass, 14 fail, and 1 compile_error: seven exact pass flips and no new
+non-pass paths in that cohort. These are bounded measurements, not a new
+11,704-test numerator. Review found default-`this` and super-write constructor
+regressions outside those 58; both were corrected and revalidated before
+accepting this increment. General derived-constructor completion remains open.
+
+The three neighboring class/capture test files have the same five failing
+test names and error texts on base and candidate (29/34 pass each). The
+focused super-property suite passes 41/41, six host/WASI probes remain
+byte-identical, and exact pinned TypeScript 7.0.2 checking passes. The owning
+super issue records final source hashes, provider provenance, and checks.
+
+The generator lane is isolated at `/tmp/js2-es2015-generators`, from the same
+base. Its fresh 20-row protocol/control baseline is 8 pass and
+12 compile_error. The in-progress implementation has passed 22 source-level
+protocol probes against Node (11 original fixtures plus 11 explicitly labelled
+function-expression equivalents); each resulting Wasm module validates and
+has no imports. Those probes do not count as Test262 gains. A fresh 44-row
+protocol/control baseline then measured 8 pass and 36 compile_error; the first
+candidate passed 44/44, preserving all eight controls. That candidate predates
+subsequent object-payload, finally, reentrancy, and native-generator bridge
+corrections. Final protocol-cohort validation after those corrections remains
+required, with results owned by the generator residual issue. The immutable
+44-row input and provenance live in the base archive under
+`.tmp/protocol44-{paths.txt,provenance.json,baseline.log}`.
+
 ## 2026-08-30 current integrated-head census implementation plan
 
 The numeric title no longer repeats the stale 2026-08-28 snapshot. Historical

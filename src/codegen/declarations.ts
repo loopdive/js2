@@ -152,6 +152,7 @@ import {
 } from "./registry/types.js";
 import { isArrayProtoIteratorAssignTarget } from "./expressions/proto-override.js";
 import { isFnctorPrototypeAssignTarget } from "./expressions/fnctor-prototype.js";
+import { shouldKeepClassPrototypeWrite } from "./class-prototype-write-keeps.js";
 import { shouldKeepBuiltinReceiverWrite } from "./builtin-write-keeps.js"; // (#4176/#4199) builtin-receiver write keeps
 import { compileExpression, compileStatement, skipTransparentExpressions } from "./shared.js";
 import { functionReturnsPreInitVarValue } from "./function-declaration-observation.js";
@@ -4328,7 +4329,7 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // interception and the host lane's `_getOrVivifyFnPrototype` path use
         // the same source-level assignment; dropping it only in the host lane
         // leaves `new F().method()` with an empty prototype.
-        if (isFnctorPrototypeAssignTarget(ctx, expr.left)) {
+        if (isFnctorPrototypeAssignTarget(ctx, expr.left) || shouldKeepClassPrototypeWrite(ctx, expr.left)) {
           ctx.moduleInitStatements.push(stmt);
           continue;
         }
