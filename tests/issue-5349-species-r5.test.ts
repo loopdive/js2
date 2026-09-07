@@ -858,3 +858,153 @@ describe("#5349 round 4 — wasi", () => {
     expect(await runWasiNoIo(`var ab=new ArrayBuffer(8); ab.constructor=null; ab.slice(0,4); return 0;`)).toBe(1);
   });
 });
+
+/**
+ * (#5349 round 5) The round-4 brand gate left the species ladder's own two
+ * default-lane resets INSIDE the gated arm, so `resultLocal` was only ever
+ * re-nulled on the executions that ran the ladder. Wasm locals live for the
+ * whole invocation, so the SECOND execution of one slice site on the packed arm
+ * read the buffer the FIRST execution's species constructor had returned, copied
+ * the new slice into it and handed back a `$__vec_i8_byte` aliasing it — an
+ * uncatchable trap when the new slice was longer, silent cross-object corruption
+ * otherwise.
+ *
+ * Every pin below executes ONE slice site at least twice. That is the whole
+ * point: round 4's pins each executed their site exactly once, which is why a
+ * 75/75-green suite could not see this.
+ */
+describe("#5349 round 5 — the species-result local resets on EVERY execution of a slice site", () => {
+  it("m01: buffer then packed at one site — no trap, node 4", async () => {
+    // The trapping shape: iteration 1 constructs a 1-byte species buffer,
+    // iteration 2 is packed with a 4-byte slice, and the stale destination is
+    // only 1 element long.
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(1); var o={}; o[Symbol.species]=function(k){ return new ArrayBuffer(k); };` +
+          ` b.constructor=o; var n=0;` +
+          ` for (var i=0;i<2;i++){ var s=b.slice(0); n = s.length ? s.length : -3; b=new Uint8Array(4); }` +
+          ` return n;`,
+      ),
+    ).toBe(4);
+  });
+
+  it("m02: the species buffer of execution 1 is not written by execution 2 (node 0)", async () => {
+    // Same-or-shorter second slice: no trap, but the write through the packed
+    // result landed in the species buffer. 200 was the corrupted reading.
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(8); var kept=null; var o={}; o[Symbol.species]=function(k){ kept=new ArrayBuffer(k); return kept; };` +
+          ` b.constructor=o; var s2=null;` +
+          ` for (var i=0;i<2;i++){ var s=b.slice(0); if(i===1) s2=s; b=new Uint8Array(2); b[0]=1; b[1]=2; }` +
+          ` s2[0]=200; return new DataView(kept).getUint8(0);`,
+      ),
+    ).toBe(0);
+  });
+
+  it("g01: a GROWING second slice traps without the reset (node 8)", async () => {
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(2); var o={}; o[Symbol.species]=function(k){ return new ArrayBuffer(k); };` +
+          ` b.constructor=o; var r=-1;` +
+          ` for (var i=0;i<2;i++){ var s=b.slice(0); r = (i===1) ? (s.length===undefined?-2:s.length) : 0;` +
+          ` b=new Uint8Array(8); for (var j=0;j<8;j++) b[j]=j+1; }` +
+          ` return r;`,
+      ),
+    ).toBe(8);
+  });
+
+  it("i01/i02: the alias survives a DataView read of the species buffer (node 0, 0)", async () => {
+    const shape = (tail: string): string =>
+      `var b=new ArrayBuffer(8); var kept=null; var o={}; o[Symbol.species]=function(k){ kept=new ArrayBuffer(k); return kept; };` +
+      ` b.constructor=o; var s2=null;` +
+      ` for (var i=0;i<2;i++){ var s=b.slice(0); if(i===1) s2=s; b=new Uint8Array(2); b[0]=1; b[1]=2; }` +
+      tail;
+    expect(await runStandalone(shape(` s2[0]=200; var d=new DataView(kept); return d.getUint8(0);`))).toBe(0);
+    expect(await runStandalone(shape(` s2[1]=200; var d=new DataView(kept); return d.getUint8(1);`))).toBe(0);
+  });
+
+  it("i03: a one-byte species buffer then a four-byte packed slice (node 4)", async () => {
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(1); var o={}; o[Symbol.species]=function(k){ return new ArrayBuffer(k); };` +
+          ` b.constructor=o; var n=0;` +
+          ` for (var i=0;i<2;i++){ var s=b.slice(0); n = (s.length===undefined) ? -1 : s.length; b=new Uint8Array(4); }` +
+          ` return n;`,
+      ),
+    ).toBe(4);
+  });
+
+  it("control: an ALWAYS-packed loop never sees a species result (node 444)", async () => {
+    // The ladder is emitted (a species is armed on an unrelated buffer) but
+    // never executes, so the result local must read null on all three
+    // iterations. This is the case the hoisted reset must not disturb.
+    expect(
+      await runStandalone(
+        `var arm=new ArrayBuffer(2); var o={}; o[Symbol.species]=function(k){ return new ArrayBuffer(k); }; arm.constructor=o;` +
+          ` var b=new ArrayBuffer(4); b=new Uint8Array(4); b[0]=1; b[1]=2; b[2]=3; b[3]=4; var acc=0;` +
+          ` for (var i=0;i<3;i++){ var s=b.slice(0); acc = acc*10 + (s.length===undefined ? -1 : s.length); }` +
+          ` return acc;`,
+      ),
+    ).toBe(444);
+  });
+
+  it("control: a WHILE loop alternating receivers four times (node 3535)", async () => {
+    expect(
+      await runStandalone(
+        `var b=new ArrayBuffer(3); var o={}; o[Symbol.species]=function(k){ return new ArrayBuffer(k); };` +
+          ` b.constructor=o; var acc=0; var i=0;` +
+          ` while (i<4){ var s=b.slice(0); acc = acc*10 + (s.length===undefined ? s.byteLength : s.length);` +
+          ` if (i%2===0){ b=new Uint8Array(5); } else { b=new ArrayBuffer(3); b.constructor=o; } i=i+1; }` +
+          ` return acc;`,
+      ),
+    ).toBe(3535);
+  });
+
+  it("control: the species flips %ArrayBuffer% -> custom -> packed at one site (node 456)", async () => {
+    // Exercises R1's intrinsic-identity arm and a real species function at the
+    // SAME site, then the packed arm, in one invocation.
+    expect(
+      await runStandalone(
+        `var custom={}; custom[Symbol.species]=function(k){ return new ArrayBuffer(k); };` +
+          ` var intrinsic={}; intrinsic[Symbol.species]=ArrayBuffer;` +
+          ` var b=new ArrayBuffer(4); b.constructor=intrinsic; var acc=0;` +
+          ` for (var i=0;i<3;i++){ var s=b.slice(0); acc = acc*10 + (s.length===undefined ? s.byteLength : s.length);` +
+          ` if (i===0){ b=new ArrayBuffer(5); b.constructor=custom; } else { b=new Uint8Array(6); } }` +
+          ` return acc;`,
+      ),
+    ).toBe(456);
+  });
+
+  it("control: TWO slice sites in one iteration reset independently (node 6532)", async () => {
+    expect(
+      await runStandalone(
+        `var o={}; o[Symbol.species]=function(k){ return new ArrayBuffer(k); };` +
+          ` var b=new ArrayBuffer(6); b.constructor=o; var acc=0;` +
+          ` for (var i=0;i<2;i++){ var s1=b.slice(0); var s2=b.slice(1);` +
+          ` var l1 = s1.length===undefined ? s1.byteLength : s1.length;` +
+          ` var l2 = s2.length===undefined ? s2.byteLength : s2.length;` +
+          ` acc = acc*100 + l1*10 + l2; b=new Uint8Array(3); }` +
+          ` return acc;`,
+      ),
+    ).toBe(6532);
+  });
+
+  it("m01/m02 wasi: the same two shapes on the wasi lane (node 4, 0)", async () => {
+    expect(
+      await runWasiNoIo(
+        `var b=new ArrayBuffer(1); var o={}; o[Symbol.species]=function(k){ return new ArrayBuffer(k); };` +
+          ` b.constructor=o; var n=0;` +
+          ` for (var i=0;i<2;i++){ var s=b.slice(0); n = s.length ? s.length : -3; b=new Uint8Array(4); }` +
+          ` return n;`,
+      ),
+    ).toBe(4);
+    expect(
+      await runWasiNoIo(
+        `var b=new ArrayBuffer(8); var kept=null; var o={}; o[Symbol.species]=function(k){ kept=new ArrayBuffer(k); return kept; };` +
+          ` b.constructor=o; var s2=null;` +
+          ` for (var i=0;i<2;i++){ var s=b.slice(0); if(i===1) s2=s; b=new Uint8Array(2); b[0]=1; b[1]=2; }` +
+          ` s2[0]=200; return new DataView(kept).getUint8(0);`,
+      ),
+    ).toBe(0);
+  });
+});

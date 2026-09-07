@@ -477,12 +477,21 @@ function probePackedByteSliceReceiver(
  * (#5349 r4) Run §25.1.5.3's SpeciesConstructor steps only on the ArrayBuffer
  * arm. A packed-byte receiver is a TypedArray, whose slice consults
  * %TypedArray%'s species, not %ArrayBuffer%'s, so the ladder is emitted into a
- * detached body and executed only when the brand test said "buffer". The
- * species result local then stays at its Wasm default (null externref) on the
- * packed arm, which is exactly the ladder's own default-lane sentinel.
+ * detached body and executed only when the brand test said "buffer".
+ *
+ * (#5349 r5) The ladder's own two default-lane resets are hoisted OUT of that
+ * detached body and emitted ahead of the gate, so they run on every execution
+ * of this slice site. A Wasm local keeps its value for the whole invocation, so
+ * leaving them inside the gate only zeroed the species result on the executions
+ * that ran the ladder: a site executed twice — buffer receiver first, packed
+ * receiver second — read the FIRST execution's species-constructed buffer on
+ * the second, copied the new slice into it and returned a `$__vec_i8_byte`
+ * aliasing it (trapping outright when the new slice was longer). The Wasm
+ * default of an externref local is null, so the first execution was always
+ * correct and the round-4 pins, which execute each site once, could not see it.
  *
  * `isPackedLocal < 0` means no brand dispatch is in play, and the ladder is
- * emitted inline exactly as before.
+ * emitted inline exactly as before — resets included, in place.
  */
 function emitArrayBufferSliceSpeciesUnlessPacked(
   ctx: CodegenContext,
@@ -494,18 +503,30 @@ function emitArrayBufferSliceSpeciesUnlessPacked(
 ): number | null {
   if (isPackedLocal < 0) return emitArrayBufferSliceSpecies(ctx, fctx, srcVecLocal, sliceLenLocal, vecTypeIdx);
   const speciesArm: Instr[] = [];
+  const defaultLaneResets: Instr[] = [];
   const savedBody = fctx.body;
   const releaseSaved = retainLiveBody(ctx, savedBody);
   const releaseArm = retainLiveBody(ctx, speciesArm);
   fctx.body = speciesArm;
   let speciesResultLocal: number | null;
   try {
-    speciesResultLocal = emitArrayBufferSliceSpecies(ctx, fctx, srcVecLocal, sliceLenLocal, vecTypeIdx);
+    speciesResultLocal = emitArrayBufferSliceSpecies(
+      ctx,
+      fctx,
+      srcVecLocal,
+      sliceLenLocal,
+      vecTypeIdx,
+      defaultLaneResets,
+    );
   } finally {
     fctx.body = savedBody;
     releaseArm();
     releaseSaved();
   }
+  // Unconditional first — see the r5 note above. The ladder that follows sets
+  // both locals itself, so re-null-ing them here is redundant on the buffer arm
+  // and load-bearing on every other execution of the site.
+  fctx.body.push(...defaultLaneResets);
   if (speciesArm.length > 0) {
     fctx.body.push({ op: "local.get", index: isPackedLocal }, { op: "i32.eqz" });
     fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: speciesArm, else: [] });
@@ -6517,6 +6538,7 @@ export function emitArrayBufferSliceSpecies(
   srcVecLocal: number,
   newLenLocal: number,
   vecTypeIdx: number,
+  resetSink?: Instr[],
 ): number | null {
   if (!noJsHost(ctx) || !ctx.arraySpeciesDirty) return null;
   // (#5349) Step 16 ("if new does not have an [[ArrayBufferData]] slot, throw a
@@ -6579,8 +6601,32 @@ export function emitArrayBufferSliceSpecies(
   // The DEFAULT lane is the null sentinel: %ArrayBuffer% is not reified as a
   // callable carrier here, and constructing it would be observationally
   // identical to the `struct.new` the caller already emits.
-  fctx.body.push({ op: "ref.null.extern" }, { op: "local.set", index: selectedLocal });
-  fctx.body.push({ op: "ref.null.extern" }, { op: "local.set", index: resultLocal });
+  //
+  // (#5349 r5) `resultLocal` is RETURNED to the caller, so its reset must run on
+  // EVERY execution of the slice site — including the executions on which this
+  // ladder does not run at all. Wasm locals live for the whole invocation, so
+  // when the caller gates the ladder behind a runtime brand test
+  // (`emitArrayBufferSliceSpeciesUnlessPacked`) and the arm that SKIPS the
+  // ladder is taken, `resultLocal` would otherwise still hold the buffer an
+  // EARLIER execution's species constructor produced — and the caller's
+  // destination-array selection reads it, writing the copy into that buffer and
+  // returning a carrier that aliases it (a longer new slice then `array.set`s
+  // past the old length and traps uncatchably). So a gating caller passes
+  // `resetSink` and emits these instructions ahead of its own gate; the ungated
+  // path passes nothing and keeps them inline, byte-for-byte where they were.
+  //
+  // `selectedLocal` never escapes this function, so only `resultLocal` is
+  // load-bearing here; the pair is hoisted together because it is ONE
+  // initialisation of the default lane and splitting it would leave the next
+  // reader to re-derive which half mattered.
+  const defaultLaneResets: Instr[] = [
+    { op: "ref.null.extern" },
+    { op: "local.set", index: selectedLocal },
+    { op: "ref.null.extern" },
+    { op: "local.set", index: resultLocal },
+  ];
+  if (resetSink) resetSink.push(...defaultLaneResets);
+  else fctx.body.push(...defaultLaneResets);
 
   emitSpeciesConstructorLadder(ctx, fctx, {
     receiverInstrs: [{ op: "local.get", index: srcVecLocal }, { op: "extern.convert_any" }],
