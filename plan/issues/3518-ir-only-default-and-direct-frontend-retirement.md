@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-06
+updated: 2026-09-07
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -17,7 +17,7 @@ horizon: xl
 complexity: XL
 es_edition: n/a
 lane: ir-retirement
-model: gpt-5.6-sol
+model: gpt-6-astra
 related: [1373b, 2855, 2950, 3090, 3142, 3143, 3341, 3517, 3529, 3520, 3521, 3522, 3523, 3525, 3526, 3527, 3528, 3678, 3681, 4382, 4576, 4577]
 origin: "2026-07-21 explicit user directive: enable IR-only by default and retire the old direct codegen path"
 oracle-ratchet-allow:
@@ -58,7 +58,39 @@ func-budget-allow:
 > both WasmGC and linear consume the same prepared IR program, unsupported
 > source fails explicitly, and the direct front-end is deleted.
 
-## Current execution plan — whole-program cutover (2026-09-05)
+## Active sequencing amendment — standalone separation (2026-09-07)
+
+The user now prioritizes the standalone WasmGC implementation and requires
+frontend, pure IR, backend, Wasm physical/model support and generated runtime
+concerns to have real folder and dependency boundaries. New host and linear
+backend implementation is deferred; existing behavior and unfinished drafts
+remain preserved. This priority does not remove the epic's full acceptance
+criteria or declare the hybrid compiler retired.
+
+Astra High specifies and independently reviews the implementation plan;
+Astra Low workers implement isolated slices. Cloud workers provide independent
+dependency and regression evidence. The coordinator retains integration and
+publication. These assignments supersede the older session/model ownership
+directions below without discarding their implementation contracts.
+
+The [approved first dispatch](../agent-context/3518-first-boundary-dispatch-2026-09-07.md)
+and [standalone layering plan](../agent-context/ir-standalone-wasmgc-layering-plan-2026-09-07.md)
+were published in PR 5730, merged as
+`9b0358ec7d373034de6ff524eae286a50aaf2a4e`. D0 introduces an exact source
+inventory and a dependency checker, including type-only paths and independent
+base-policy comparison. F0 extracts the shared identity/source-origin
+foundation while retaining compatible old imports and one canonical brand
+declaration. Implementations may proceed in parallel; publication requires
+their composition and validation.
+
+`check:compiler-boundaries` is the full-separation check and must still fail
+while migration debt remains. CI's explicitly named inventory mode enforces
+nonempty activated boundaries and preserves its report; a passing inventory
+does not certify IR-only production execution. The existing cutover and
+dead-export checks remain unchanged. Further backend/runtime moves require
+reviewed dependency removal, not relabeling or test-only callers.
+
+## Historical execution plan — whole-program cutover (2026-09-05)
 
 The user approved replacing continued hybrid feature-by-feature expansion with
 a coordinated whole-program cutover, and requested parallel implementation.
