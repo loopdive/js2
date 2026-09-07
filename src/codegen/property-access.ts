@@ -4668,6 +4668,9 @@ function emitTypedArrayUndefinedOobGet(
   // View-name-driven signedness (`"s"` Int*, `"u"` Uint*); undefined for float
   // views. Drives both the bounded read's extension AND the i32→f64 conversion.
   signedness: "s" | "u" | undefined,
+  // Host-lane compiled TypedArrays can become detached while retaining their
+  // fixed-capacity Wasm backing. In that case field 0 is the observable bound.
+  lengthBoundInstrs?: readonly Instr[],
 ): void {
   // Save index + array ref (consumed by the bounds test AND the bounded read).
   const idxLocal = allocLocal(fctx, `__taoob_idx_${fctx.locals.length}`, { kind: "i32" });
@@ -4679,8 +4682,12 @@ function emitTypedArrayUndefinedOobGet(
   // unsigned value > any length, so it falls into the OOB (undefined) arm.
   const inBoundsLocal = allocLocal(fctx, `__taoob_in_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.get", index: idxLocal });
-  fctx.body.push({ op: "local.get", index: arrLocal });
-  fctx.body.push({ op: "array.len" });
+  if (lengthBoundInstrs) {
+    fctx.body.push(...lengthBoundInstrs.map((instr) => ({ ...instr })));
+  } else {
+    fctx.body.push({ op: "local.get", index: arrLocal });
+    fctx.body.push({ op: "array.len" });
+  }
   fctx.body.push({ op: "i32.lt_u" });
   fctx.body.push({ op: "local.set", index: inBoundsLocal });
 
@@ -6409,9 +6416,11 @@ export function compileElementAccessBody(
     // popped slot instead of being OOB. That broke the test262 HOF "-c-ii-5"
     // family on iteration 2+ (`kIndex[1]` after `kIndex[0]=1` grew capacity to 4).
     // Tee the vec ref so the length field is available to the bounded-read arms
-    // below; skipped on the proven fast path and the TA arm (a typed-array view
-    // is fixed-length — capacity === length — so its bytes stay identical).
-    const useLenBound = !isSafeBoundsEliminated(fctx, expr) && !oobUndefinedTypedArray;
+    // below. Host-lane TypedArrays deliberately retain their Wasm backing after
+    // transfer, so their logical length must remain the bound even when a loop
+    // had proved an index in range before an intervening host call detached it.
+    const boundsEliminated = isSafeBoundsEliminated(fctx, expr) && (taClass === "other" || noJsHost(ctx));
+    const useLenBound = !boundsEliminated;
     let vecLenBoundInstrs: Instr[] | undefined;
     if (useLenBound) {
       const vecRefLocal = allocLocal(fctx, `__vecref_${fctx.locals.length}`, { kind: "ref_null", typeIdx });
@@ -6429,7 +6438,7 @@ export function compileElementAccessBody(
     compileElementIndexI32(ctx, fctx, expr.argumentExpression);
     const valueType: ValType =
       arrDef.element.kind === "i8" || arrDef.element.kind === "i16" ? { kind: "i32" } : arrDef.element;
-    if (isSafeBoundsEliminated(fctx, expr)) {
+    if (boundsEliminated) {
       // Bounds check elided: loop guard guarantees index < array.length
       const getOp =
         arrDef.element.kind === "i8" || arrDef.element.kind === "i16"
@@ -6485,7 +6494,7 @@ export function compileElementAccessBody(
       // threads the view-name signedness (so `Int8Array`/`Uint16Array`/
       // `Uint32Array` read with the right extension) and boxes as a number —
       // dedicated, so the shared helper / plain-array helper are untouched.
-      emitTypedArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, taSignedness);
+      emitTypedArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, taSignedness, vecLenBoundInstrs);
       return { kind: "externref" };
     } else {
       // (#2001 S1) Pass `ctx` so the in-bounds `$Hole → undefined` read-boundary

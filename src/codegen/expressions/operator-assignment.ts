@@ -96,22 +96,11 @@ import {
   isStrictContext,
 } from "./assignment.js";
 import { tryEmitConstIdentifierCompoundAssignment } from "./identifier-assignment.js";
+import { hostTypedArrayCarrierNameForExpression } from "./typed-array-host-carrier.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
 function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
-  const numericName = elementAccessTypedArrayName(ctx, receiver);
-  if (numericName !== undefined) return numericName;
-  const type = ctx.checker.getTypeAtLocation(receiver);
-  let name = type.getSymbol()?.name ?? type.aliasSymbol?.name;
-  if (
-    name !== "BigInt64Array" &&
-    name !== "BigUint64Array" &&
-    ts.isNewExpression(receiver) &&
-    ts.isIdentifier(receiver.expression)
-  ) {
-    name = receiver.expression.text;
-  }
-  return name === "BigInt64Array" || name === "BigUint64Array" ? name : undefined;
+  return elementAccessTypedArrayName(ctx, receiver) ?? hostTypedArrayCarrierNameForExpression(ctx, receiver);
 }
 
 /**
@@ -3292,11 +3281,18 @@ function compileVecElementCompoundAssignment(
   const taViewName = vecElementTypedArrayName(ctx, target.expression);
   const isBigIntTypedArray =
     elemType.kind === "i64" && (taViewName === "BigInt64Array" || taViewName === "BigUint64Array");
+  const typedArrayLengthBound: Instr[] | undefined =
+    taViewName === undefined
+      ? undefined
+      : [
+          { op: "local.get", index: objTmp },
+          { op: "struct.get", typeIdx, fieldIdx: 0 },
+        ];
 
   fctx.body.push({ op: "local.get", index: objTmp });
   fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
   fctx.body.push({ op: "local.get", index: idxTmp });
-  emitBoundsCheckedArrayGet(fctx, arrayTypeIdx, elemType);
+  emitBoundsCheckedArrayGet(fctx, arrayTypeIdx, elemType, undefined, false, undefined, typedArrayLengthBound);
 
   // BigInt has no unsigned-right-shift operation. Preserve compound-assignment
   // evaluation order (the receiver/index and GetValue ran above; the RHS still
@@ -3360,9 +3356,13 @@ function compileVecElementCompoundAssignment(
   fctx.body.push({ op: "local.set", index: resultTmp });
 
   fctx.body.push({ op: "local.get", index: idxTmp });
-  fctx.body.push({ op: "local.get", index: objTmp });
-  fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
-  fctx.body.push({ op: "array.len" });
+  if (typedArrayLengthBound) {
+    fctx.body.push(...typedArrayLengthBound.map((instr) => ({ ...instr })));
+  } else {
+    fctx.body.push({ op: "local.get", index: objTmp });
+    fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 1 });
+    fctx.body.push({ op: "array.len" });
+  }
   fctx.body.push({ op: "i32.lt_u" });
   {
     const setInstrs: Instr[] = [

@@ -4,8 +4,8 @@ title: "REGRESSION on main: a typed array built in compiled code no longer reach
 status: done
 sprint: current
 created: 2026-09-06
-updated: 2026-09-06
-completed: 2026-09-06
+updated: 2026-09-07
+completed: 2026-09-07
 priority: high
 horizon: s
 feasibility: medium
@@ -13,19 +13,28 @@ reasoning_effort: high
 task_type: bug
 area: compiler
 goal: correctness
-# 2026-09-06 (#5362): the fix is 14 lines in the compiled→host marshaller
-# `_wrapForHost` — 4 of code, the rest the comment naming why the check must
-# sit BEFORE `_hostProxyCache`. `_wrapForHost` is the single function every
-# host-call argument crosses, and "which host representation does this
-# compiled value get" is exactly its question, so the growth can be relocated
-# neither to a smaller file nor to a smaller function without putting the
-# decision somewhere it does not belong (`_wrapVecForHost`, whose contract is
-# to return an ARRAY-backed view). The comment was already cut once to keep
-# this to the minimum; the long-form rationale lives in the test header.
+# 2026-09-07 (#5362): the three-line marshaller selection remains in
+# `_wrapForHost`. Post-review transfer handling lives in the existing mirror
+# write-back subsystem; the array-method and carrier files only connect its
+# branded detach marker to ValidateTypedArray.
 loc-budget-allow:
   - src/runtime.ts
+  - src/runtime/vec-mirror-writeback.ts
+  - src/runtime/host-call-abi.ts
+  - src/codegen/array-methods.ts
+  - src/codegen/expressions/typed-array-host-carrier.ts
+  - src/codegen/property-access.ts
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/expressions/operator-assignment.ts
+  - src/codegen/fixed-host-method-call.ts
+  - src/codegen/vec-access-exports.ts
 func-budget-allow:
   - src/runtime.ts::_wrapForHost
+  - src/runtime/vec-mirror-writeback.ts::reconcileVecMirrors
+  - src/codegen/array-methods.ts::emitReceiverNullGuard
+  - src/codegen/property-access.ts::compileElementAccessBody
+  - src/codegen/expressions/assignment.ts::compileElementAssignment
+  - src/codegen/vec-access-exports.ts::_emitVecAccessExportsInner
 ---
 
 ## Problem
@@ -234,6 +243,51 @@ with `registerVecMirror`, and a host API that fills the buffer in place
 (`crypto.getRandomValues(buf)`) is still observed by compiled code. This is
 asserted, because the facade it replaces wrote through immediately and a silent
 loss there would have been the obvious way to trade one bug for another.
+
+### Post-review repair: host transfer must detach the carrier
+
+Independent review found one semantic blocker in the first checkpoint. A host
+could transfer the real mirror's backing buffer; native state then read
+`view=true,before=3,after=0`, but generic mirror reconciliation interpreted the
+zero length as `Array` truncation. It rewrote the compiled vec and a later
+compiled `fill()` returned `no-throw:0:1`; native JavaScript throws `TypeError`.
+
+The repaired flow is explicit:
+
+1. `vec-mirror-writeback.ts` uses captured host intrinsics to distinguish a
+   detached view from an attached zero-length view.
+2. A detached mirror marks its registered compiled source, sets only the
+   carrier's observable logical length to zero, and keeps the fixed backing
+   inaccessible instead of treating transfer as mutable-array truncation.
+3. Reconciliation runs on normal and abrupt host-call completion. Native
+   TypedArray methods query the marker before reading length or coercing
+   arguments, while indexed reads and writes use logical length so retained
+   bytes cannot leak or be resurrected.
+
+The focused regression covers non-empty and zero-length transfers, abrupt
+completion through both host-call bridges, indexed reads/writes, and validating
+mutating, observing, and iterator methods, while retaining the existing
+write-through and plain-array controls.
+
+### Recovery validation and handoff (2026-09-07)
+
+The post-review repair was recovered onto the existing #5675 branch and
+rechecked independently after the interrupted session:
+
+- focused #5362 boundary suite: **11/11 passed**;
+- vec mirror write-back: **17/17 passed**;
+- dynamic dispatch: **25/25 passed**;
+- fixed host-method calls: **5/5 passed**;
+- TypeScript 7 typecheck, LOC/function budgets, host-import policy, issue
+  metadata, formatting, and the six-package dogfood validation gate passed.
+
+Two adjacent ABI assertions and one sibling-view assertion remain red at the
+recovered checkpoint, but each exact failure reproduces on the pristine
+`12df8387be` PR head: `programAbi` is absent in the late-import compaction
+probe, `__export_throw_boundary_main` remains on the positional fallback, and
+the #5193 sibling-view constructor still reaches a null receiver. They are
+therefore recorded as pre-existing non-regressions rather than hidden or
+folded into #5362.
 
 ### Regression test
 

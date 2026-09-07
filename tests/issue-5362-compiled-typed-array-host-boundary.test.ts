@@ -75,13 +75,18 @@ export function fillRandom(buf) {
   let sum = 0;
   for (let i = 0; i < buf.length; i++) sum += buf[i];
   return sum;
+}
+
+export function handToHost(probe, value) {
+  return probe.detach(value);
 }`;
 
-const ENTRY = `import { describeValue, importRaw, fillRandom } from "./mod.js";
+const ENTRY = `import { describeValue, fillRandom, handToHost, importRaw } from "./mod.js";
 
 const describe_ = describeValue as unknown as (probe: unknown, value: unknown) => string;
 const importRaw_ = importRaw as unknown as (secret: unknown) => unknown;
 const fillRandom_ = fillRandom as unknown as (buf: unknown) => number;
+const handToHost_ = handToHost as unknown as (probe: unknown, value: unknown) => void;
 
 export function shapeOfConstBound(probe: unknown): string {
   const secret = new Uint8Array([172, 142, 204, 63, 210, 136, 58, 143, 25, 18, 159, 16, 161, 34, 94]);
@@ -115,6 +120,83 @@ export function keyFromSizedAndFilled(): unknown {
 export function randomSumOfCompiledBuffer(): number {
   const buf = new Uint8Array(24);
   return fillRandom_(buf);
+}
+
+export function fillAfterTransferredBuffer(probe: unknown): number {
+  const buf = new Uint8Array([1, 2, 3]);
+  handToHost_(probe, buf);
+  buf.fill(9);
+  return buf[0];
+}
+
+export function fillAfterTransferredEmptyBuffer(probe: unknown): number {
+  const buf = new Uint8Array(0);
+  handToHost_(probe, buf);
+  buf.fill(9);
+  return buf.length;
+}
+
+export function fillAfterObservedEmptyBuffer(probe: unknown): number {
+  const buf = new Uint8Array(0);
+  handToHost_(probe, buf);
+  buf.fill(9);
+  return buf.length;
+}
+
+export function readAfterTransferredBuffer(probe: unknown): unknown {
+  const buf = new Uint8Array([1, 2, 3]);
+  handToHost_(probe, buf);
+  return buf[0];
+}
+
+export function writeAfterTransferredBuffer(probe: unknown): string {
+  const buf = new Uint8Array([1, 2, 3]);
+  handToHost_(probe, buf);
+  const assigned = (buf[0] = 9);
+  return assigned + ":" + String(buf[0]) + ":" + buf.length;
+}
+
+export function setAfterTransferredBuffer(probe: unknown): void {
+  const buf = new Uint8Array([1, 2, 3]);
+  handToHost_(probe, buf);
+  buf.set([9]);
+}
+
+export function includesAfterTransferredBuffer(probe: unknown): boolean {
+  const buf = new Uint8Array([1, 2, 3]);
+  handToHost_(probe, buf);
+  return buf.includes(1);
+}
+
+export function includesAfterTransferredNullableBuffer(probe: unknown, present: boolean): boolean {
+  const buf: Uint8Array | undefined = present ? new Uint8Array([1, 2, 3]) : undefined;
+  handToHost_(probe, buf);
+  return buf.includes(1);
+}
+
+export function valuesAfterTransferredBuffer(probe: unknown): unknown {
+  const buf = new Uint8Array([1, 2, 3]);
+  handToHost_(probe, buf);
+  return buf.values();
+}
+
+export function fillAfterAbruptTransferredBuffer(probe: unknown): number {
+  const buf = new Uint8Array([1, 2, 3]);
+  try {
+    handToHost_(probe, buf);
+  } catch {}
+  buf.fill(9);
+  return buf[0];
+}
+
+export function fillAfterAbruptFunctionTransfer(detach: unknown): number {
+  const buf = new Uint8Array([1, 2, 3]);
+  const detach_ = detach as (value: unknown) => void;
+  try {
+    detach_(buf);
+  } catch {}
+  buf.fill(9);
+  return buf[0];
 }`;
 
 /** Host-side observer: what did the compiled value actually arrive as? */
@@ -133,6 +215,17 @@ type Exports = {
   keyFromConstBound: () => unknown;
   keyFromSizedAndFilled: () => unknown;
   randomSumOfCompiledBuffer: () => unknown;
+  fillAfterTransferredBuffer: (probe: unknown) => unknown;
+  fillAfterTransferredEmptyBuffer: (probe: unknown) => unknown;
+  fillAfterObservedEmptyBuffer: (probe: unknown) => unknown;
+  readAfterTransferredBuffer: (probe: unknown) => unknown;
+  writeAfterTransferredBuffer: (probe: unknown) => unknown;
+  setAfterTransferredBuffer: (probe: unknown) => unknown;
+  includesAfterTransferredBuffer: (probe: unknown) => unknown;
+  includesAfterTransferredNullableBuffer: (probe: unknown, present: boolean) => unknown;
+  valuesAfterTransferredBuffer: (probe: unknown) => unknown;
+  fillAfterAbruptTransferredBuffer: (probe: unknown) => unknown;
+  fillAfterAbruptFunctionTransfer: (detach: unknown) => unknown;
 };
 
 let cached: Promise<Exports> | undefined;
@@ -200,5 +293,84 @@ describe("#5362 a compiled TypedArray crosses to a host API as a TypedArray", ()
   it("a host API that WRITES into the buffer is still observed by compiled code", async () => {
     const exports = await compiled();
     expect(Number(await exports.randomSumOfCompiledBuffer())).toBeGreaterThan(0);
+  });
+
+  it("propagates a host transfer instead of reconciling detachment as a zero-length mutation", async () => {
+    const exports = await compiled();
+    let observed: { isView: boolean; before: number; after: number } | undefined;
+    const transferProbe = {
+      detach(value: unknown): void {
+        const view = value as ArrayBufferView;
+        const before = Number((view as { length?: number }).length);
+        structuredClone(view.buffer, { transfer: [view.buffer] });
+        observed = {
+          isView: ArrayBuffer.isView(value),
+          before,
+          after: Number((view as { length?: number }).length),
+        };
+      },
+    };
+
+    expect(() => exports.fillAfterTransferredBuffer(transferProbe)).toThrow(TypeError);
+    expect(observed).toEqual({ isView: true, before: 3, after: 0 });
+  });
+
+  it("distinguishes a detached zero-length buffer from an attached zero-length buffer", async () => {
+    const exports = await compiled();
+    const transferProbe = {
+      detach(value: unknown): void {
+        const view = value as ArrayBufferView;
+        structuredClone(view.buffer, { transfer: [view.buffer] });
+      },
+    };
+
+    expect(() => exports.fillAfterTransferredEmptyBuffer(transferProbe)).toThrow(TypeError);
+    expect(
+      exports.fillAfterObservedEmptyBuffer({
+        detach(value: unknown): void {
+          expect(ArrayBuffer.isView(value)).toBe(true);
+        },
+      }),
+    ).toBe(0);
+  });
+
+  it("hides retained backing bytes and ignores indexed writes after transfer", async () => {
+    const exports = await compiled();
+    const transferProbe = {
+      detach(value: unknown): void {
+        const view = value as ArrayBufferView;
+        structuredClone(view.buffer, { transfer: [view.buffer] });
+      },
+    };
+
+    expect(exports.readAfterTransferredBuffer(transferProbe)).toBeUndefined();
+    expect(exports.writeAfterTransferredBuffer(transferProbe)).toBe("9:undefined:0");
+  });
+
+  it("validates detached receivers across mutating, observing, and iterator methods", async () => {
+    const exports = await compiled();
+    const transferProbe = {
+      detach(value: unknown): void {
+        const view = value as ArrayBufferView;
+        structuredClone(view.buffer, { transfer: [view.buffer] });
+      },
+    };
+
+    expect(() => exports.setAfterTransferredBuffer(transferProbe)).toThrow(TypeError);
+    expect(() => exports.includesAfterTransferredBuffer(transferProbe)).toThrow(TypeError);
+    expect(() => exports.includesAfterTransferredNullableBuffer(transferProbe, true)).toThrow(TypeError);
+    expect(() => exports.valuesAfterTransferredBuffer(transferProbe)).toThrow(TypeError);
+  });
+
+  it("reconciles transfer state when either host-call bridge completes abruptly", async () => {
+    const exports = await compiled();
+    const detachAndThrow = (value: unknown): never => {
+      const view = value as ArrayBufferView;
+      structuredClone(view.buffer, { transfer: [view.buffer] });
+      throw new Error("after transfer");
+    };
+
+    expect(() => exports.fillAfterAbruptTransferredBuffer({ detach: detachAndThrow })).toThrow(TypeError);
+    expect(() => exports.fillAfterAbruptFunctionTransfer(detachAndThrow)).toThrow(TypeError);
   });
 });
