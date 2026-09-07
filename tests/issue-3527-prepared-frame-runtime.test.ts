@@ -11,6 +11,19 @@ import type {
   PreparedFrameResources,
 } from "../src/codegen/prepared-async-frame-types.js";
 
+import { emitPreparedIrAsyncFrame } from "../src/codegen/prepared-async-frame-adapter.js";
+import type { PreparedIrAsyncFrameResources, PreparedFrameOutput } from "../src/codegen/prepared-async-frame-types.js";
+import {
+  asAsyncStateId,
+  canonicalPromiseAbi,
+  createIrAsyncPlan,
+  createPreparedIrAsyncRuntime,
+} from "../src/ir/async-plan.js";
+import { ASYNC_RUNTIME_FEATURES, asPreparedAsyncHostAdapter } from "../src/ir/async-runtime-providers.js";
+import { RuntimeManifestBuilder, projectRuntimeBackendRequirements } from "../src/ir/runtime-manifest.js";
+import { irCallableBindingKey, irImportFuncRef, irSupportFuncRef } from "../src/ir/callable-bindings.js";
+import { asValueId, irVal, type IrFunction } from "../src/ir/nodes.js";
+
 const ext = { kind: "externref" } as const;
 const num = { kind: "f64" } as const;
 const i32 = { kind: "i32" } as const;
@@ -199,8 +212,11 @@ function harness() {
     };
     return { plan, resources };
   };
-  const publish = (item: ReturnType<typeof make>, exportName: string) => {
-    const out = emitPreparedFrame(item.plan, item.resources);
+  const publish = (
+    item: ReturnType<typeof make>,
+    exportName: string,
+    out: PreparedFrameOutput = emitPreparedFrame(item.plan, item.resources),
+  ) => {
     for (const key of ["entry", "resume", "fulfillStep", "rejectStep"] as const)
       Object.assign(item.resources[key].target, out[key]);
     for (const [name, h] of [
@@ -230,6 +246,9 @@ function harness() {
           capabilities.set(p, { resolve, reject });
           return p;
         },
+        undefinedValue: () => undefined,
+        increment: (n: number) => n + 1,
+        sum: (a: number, b: number) => a + b,
         resolve: (v: unknown) => Promise.resolve(v),
         react: (p: Promise<unknown>, yes: (v: unknown) => unknown, no: (v: unknown) => unknown) => p.then(yes, no),
         wrap: (id: number, frame: unknown) => (v: unknown) => {
@@ -494,6 +513,271 @@ describe("prepared physical frame engine", () => {
     ).toThrow("missing spill");
     a.resources.frame.target.fields[8]!.type = num;
     expect(() => emitPreparedFrame(a.plan, a.resources)).toThrow("Promise result carrier");
+    expect(a.resources.entry.target.body).toEqual([{ op: "unreachable" }]);
+  });
+});
+
+function adapterFixture(
+  h: ReturnType<typeof harness>,
+  suffix = "a",
+  callbacks = 0,
+  mode: "plain" | "converted" | "discard" | "undefined" | "f32" | "i64" = "plain",
+) {
+  const item = h.make(`ir-unit:v1:adapter:${suffix}`, callbacks);
+  const owner = item.resources.owner;
+  const increment = irSupportFuncRef(owner, "increment", "same");
+  const sum = irSupportFuncRef(owner, "sum", "same");
+  const callType = mode === "converted" ? ext : num;
+  const incrementHandle = h.imported("increment", [callType], [callType]);
+  const sumHandle = h.imported("sum", [callType, callType], [callType]);
+  const constantType =
+    mode === "undefined"
+      ? ext
+      : mode === "f32"
+        ? ({ kind: "f32" } as const)
+        : mode === "i64"
+          ? ({ kind: "i64" } as const)
+          : undefined;
+  const undefinedHelper = mode === "undefined" ? h.imported("undefinedValue", [], [ext]) : undefined;
+  const number = irVal(num);
+  const value = asValueId;
+  const plan = createIrAsyncPlan({
+    schemaVersion: 1,
+    ownerUnitId: owner,
+    kind: "async-function",
+    entry: asAsyncStateId(0),
+    abi: canonicalPromiseAbi(mode === "undefined" ? irVal(ext) : number),
+    params: [{ value: value(0), type: number }],
+    values: [
+      ...[0, 1, 2, 3, 4, 5].map((id) => ({ value: value(id), type: number })),
+      ...(constantType ? [{ value: value(6), type: irVal(constantType) }] : []),
+    ],
+    spills: [1, 2].map((id) => ({ value: value(id), type: number, storage: "ssa" as const })),
+    handlers: [],
+    runtimeIntents: [
+      ...ASYNC_RUNTIME_FEATURES,
+      "promise.number.bridge",
+      ...(mode === "undefined" ? ["value.undefined" as const] : []),
+    ],
+    states: [
+      {
+        id: asAsyncStateId(0),
+        body: [{ kind: "call", target: increment, args: [value(0)], result: value(1), resultType: number }],
+        terminator: {
+          kind: "suspend",
+          awaited: value(0),
+          resume: { state: asAsyncStateId(1), value: value(2) },
+          rejected: { kind: "reject" },
+          live: [value(1)],
+        },
+      },
+      {
+        id: asAsyncStateId(1),
+        resume: { value: value(2), type: number, source: "fulfilled" },
+        body: [],
+        terminator: {
+          kind: "suspend",
+          awaited: value(2),
+          resume: { state: asAsyncStateId(2), value: value(3) },
+          rejected: { kind: "reject" },
+          live: [value(1), value(2)],
+        },
+      },
+      {
+        id: asAsyncStateId(2),
+        resume: { value: value(3), type: number, source: "fulfilled" },
+        body: [
+          { kind: "call", target: sum, args: [value(1), value(2)], result: value(4), resultType: number },
+          { kind: "call", target: sum, args: [value(4), value(3)], result: value(5), resultType: number },
+          ...(mode === "discard"
+            ? [{ kind: "call" as const, target: increment, args: [value(3)], result: null, resultType: null }]
+            : []),
+          ...(constantType
+            ? [
+                {
+                  kind: "const" as const,
+                  result: value(6),
+                  resultType: irVal(constantType),
+                  value:
+                    mode === "undefined"
+                      ? { kind: "undefined" as const }
+                      : mode === "f32"
+                        ? { kind: "f32" as const, value: 3.5 }
+                        : { kind: "i64" as const, value: 7n },
+                },
+              ]
+            : []),
+        ],
+        terminator: { kind: "resolve", value: value(mode === "undefined" ? 6 : 5) },
+      },
+    ],
+  });
+  const builder = new RuntimeManifestBuilder({
+    target: "host",
+    backend: "wasmgc",
+    numberBoundary: { box: "host", unbox: "host" },
+  });
+  for (const feature of plan.runtimeIntents) builder.requestFeature(feature);
+  const manifest = builder.freeze();
+  const providers = Object.freeze(manifest.providers.filter((p) => plan.runtimeIntents.some((f) => f === p.feature)));
+  const capabilities = new Set(providers.flatMap((p) => p.hostCapabilities));
+  const adapters = Object.freeze(
+    manifest.hostCapabilityRecords
+      .filter((r) => capabilities.has(r.capability))
+      .map((r) => {
+        const record = asPreparedAsyncHostAdapter(r);
+        return Object.freeze({
+          capability: record.capability,
+          record,
+          target: irImportFuncRef(record.module, record.field, record.field),
+        });
+      }),
+  );
+  const runtime = createPreparedIrAsyncRuntime({
+    kind: "host-wasmgc",
+    plan,
+    manifest,
+    providers,
+    backendRequirements: projectRuntimeBackendRequirements(providers),
+    states: plan.states,
+    adapters,
+  });
+  const fn: IrFunction = {
+    unitId: owner,
+    name: "same",
+    params: [{ value: value(0), type: number, name: "seed" }],
+    resultTypes: [irVal(ext)],
+    blocks: [],
+    exported: true,
+    valueCount: 6,
+    funcKind: "async",
+    asyncPlan: plan,
+    asyncRuntime: runtime,
+  };
+  const resources: PreparedIrAsyncFrameResources = {
+    ...item.resources,
+    values: [
+      ...item.plan.values,
+      { id: 4, type: num },
+      { id: 5, type: num },
+      ...(constantType ? [{ id: 6, type: constantType }] : []),
+    ],
+    operations: [
+      ...item.resources.operations,
+      incrementHandle,
+      sumHandle,
+      ...(undefinedHelper ? [undefinedHelper] : []),
+    ],
+    undefinedSource: undefinedHelper ? { kind: "helper", target: undefinedHelper } : item.resources.undefinedSource,
+    callTargets: new Map([
+      [irCallableBindingKey(increment.binding), incrementHandle],
+      [irCallableBindingKey(sum.binding), sumHandle],
+    ]),
+    callSignatures: new Map([
+      [irCallableBindingKey(increment.binding), { params: [callType], results: [callType] }],
+      [irCallableBindingKey(sum.binding), { params: [callType, callType], results: [callType] }],
+    ]),
+  };
+  return { item, fn, runtime, resources };
+}
+
+describe("prepared IR adapter — isolated resources, not C production acceptance", () => {
+  it("executes authentic two-await IR through bound calls, delivery, live spills and settlement", async () => {
+    const h = harness();
+    const a = adapterFixture(h);
+    h.publish(a.item, "run", emitPreparedIrAsyncFrame(a.fn, a.runtime, a.resources));
+    const { exports, events } = await h.run();
+    const p = (exports.run as CallableFunction)(7);
+    events.push("after-call");
+    expect(await p).toBe(22);
+    expect(events).toEqual(["after-call", "callback:0", "callback:0"]);
+    expect(await (exports.run as CallableFunction)(11)).toBe(34);
+  });
+  it("keeps same-spelling call bindings and owners separate across remapping", async () => {
+    const h = harness();
+    const a = adapterFixture(h, "a", 0);
+    const b = adapterFixture(h, "b", 2);
+    h.imported("box", [num], [ext]);
+    h.mod.functions.reverse();
+    h.publish(a.item, "a", emitPreparedIrAsyncFrame(a.fn, a.runtime, a.resources));
+    h.publish(b.item, "b", emitPreparedIrAsyncFrame(b.fn, b.runtime, b.resources));
+    const { exports } = await h.run();
+    expect(await (exports.a as CallableFunction)(7)).toBe(22);
+    expect(await (exports.b as CallableFunction)(11)).toBe(34);
+    expect(() =>
+      emitPreparedIrAsyncFrame(a.fn, a.runtime, {
+        ...a.resources,
+        callTargets: b.resources.callTargets,
+        callSignatures: b.resources.callSignatures,
+      }),
+    ).toThrow("call binding");
+  });
+  it.each(["converted", "discard", "undefined", "f32", "i64"] as const)(
+    "executes accepted %s call/constant forms",
+    async (mode) => {
+      const h = harness();
+      const a = adapterFixture(h, "a", 0, mode);
+      h.publish(a.item, "run", emitPreparedIrAsyncFrame(a.fn, a.runtime, a.resources));
+      const { exports } = await h.run();
+      expect(await (exports.run as CallableFunction)(7)).toBe(mode === "undefined" ? undefined : 22);
+      if (mode === "undefined")
+        expect(() =>
+          emitPreparedIrAsyncFrame(a.fn, a.runtime, { ...a.resources, undefinedSource: { kind: "not-required" } }),
+        ).toThrow("canonical undefined");
+    },
+  );
+  it("rejects missing, malformed and changed physical call signatures", () => {
+    const h = harness();
+    const a = adapterFixture(h);
+    const key = [...a.resources.callTargets.keys()][0]!;
+    for (const signature of [
+      undefined,
+      { params: [], results: [num] },
+      { params: [num], results: [] },
+      { params: [num], results: [num, num] },
+    ]) {
+      const callSignatures = new Map(a.resources.callSignatures);
+      if (signature) callSignatures.set(key, signature);
+      else callSignatures.delete(key);
+      expect(() => emitPreparedIrAsyncFrame(a.fn, a.runtime, { ...a.resources, callSignatures })).toThrow(
+        /signature|call result/,
+      );
+      expect(a.resources.entry.target.body).toEqual([{ op: "unreachable" }]);
+    }
+  });
+  it("rejects missing mappings, conversions and foreign authority without installing outputs", () => {
+    const h = harness();
+    const a = adapterFixture(h);
+    const variants: PreparedIrAsyncFrameResources[] = [
+      { ...a.resources, values: a.resources.values.slice(1) },
+      { ...a.resources, callTargets: new Map() },
+      { ...a.resources, conversions: [] },
+      { ...a.resources, owner: "foreign" as IrUnitId },
+      { ...a.resources, values: a.resources.values.map((v) => (v.id === 1 ? { ...v, spill: undefined } : v)) },
+    ];
+    for (const r of variants) {
+      expect(() => emitPreparedIrAsyncFrame(a.fn, a.runtime, r)).toThrow();
+      expect(a.resources.entry.target.body).toEqual([{ op: "unreachable" }]);
+    }
+    expect(() => emitPreparedIrAsyncFrame(a.fn, { ...a.runtime }, a.resources)).toThrow("runtime attachment");
+  });
+  it("rejects resource-map mutation during detached emission", () => {
+    const h = harness();
+    const a = adapterFixture(h);
+    const callTargets = new Map(a.resources.callTargets);
+    const lookup = a.resources.allocator.function;
+    const r = {
+      ...a.resources,
+      callTargets,
+      allocator: {
+        ...a.resources.allocator,
+        function(handle: Parameters<typeof lookup>[0]) {
+          callTargets.clear();
+          return lookup(handle);
+        },
+      },
+    };
+    expect(() => emitPreparedIrAsyncFrame(a.fn, a.runtime, r)).toThrow("mapping changed");
     expect(a.resources.entry.target.body).toEqual([{ op: "unreachable" }]);
   });
 });

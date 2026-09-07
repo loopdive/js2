@@ -129,3 +129,16 @@ export interface PreparedFrameOutput {
   readonly fulfillStep: Pick<WasmFunction, "body" | "locals">;
   readonly rejectStep: Pick<WasmFunction, "body" | "locals">;
 }
+
+/** C's process-local, accepted IR-to-physical mapping; never serialized. */
+export interface PreparedIrAsyncFrameResources extends PreparedFrameResources {
+  readonly values: PreparedFramePlan["values"];
+  /** Canonical keys; C authenticates signatures against the reserved objects. */
+  readonly callTargets: ReadonlyMap<string, PreparedFrameFunction>;
+  readonly callSignatures: ReadonlyMap<string, PreparedIrAsyncCallSignature>;
+}
+
+export interface PreparedIrAsyncCallSignature {
+  readonly params: readonly ValType[];
+  readonly results: readonly ValType[];
+}

@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const forbidden =
-  /(?:\/typescript\/|\/ts-api\.|\/checker\/|\/codegen\/expressions(?:\/|\.)|\/codegen\/statements(?:\/|\.)|\/async-cps\.|\/async-frame\.|\/async-scheduler\.|\/ir-async-runtime-adapters\.|\/native-promise-number-boundary\.)/;
+  /(?:\/typescript\/|\/ts-api\.|\/checker\/|\/codegen\/expressions(?:\/|\.)|\/codegen\/statements(?:\/|\.)|\/shared\.|\/async-cps\.|\/async-frame\.|\/async-scheduler\.|\/ir-async-runtime-adapters\.|\/native-promise-number-boundary\.)/;
 
 function census(modules: string[]) {
   const script = `
@@ -42,6 +42,12 @@ describe("prepared frame loaded-module boundary", () => {
     const row = census(["./src/codegen/prepared-async-frame-engine.ts"]);
     expect(row.loaded.some((url) => url.endsWith("/prepared-async-frame-engine.ts"))).toBe(true);
     expect(row.loaded.some((url) => url.endsWith("/prepared-native-async-await.ts"))).toBe(true);
+    expect(() => assertBoundary(row)).not.toThrow();
+  });
+  it("loads the actual IR adapter with a nonempty engine dependency census", () => {
+    const row = census(["./src/codegen/prepared-async-frame-adapter.ts"]);
+    expect(row.loaded.some((url) => url.endsWith("/prepared-async-frame-adapter.ts"))).toBe(true);
+    expect(row.loaded.some((url) => url.endsWith("/prepared-async-frame-engine.ts"))).toBe(true);
     expect(() => assertBoundary(row)).not.toThrow();
   });
   it("detects restoring the legacy engine import in an isolated process", () => {

@@ -1879,3 +1879,38 @@ semantic value IDs to physical types/parameter/spill fields and canonical
 callable bindings to reserved handles/physical signatures. The existing
 operations membership list does not encode those maps. No consumer, native
 provider, public adapter or gate was changed; hold remains necessary.
+
+### B source-free IR adapter checkpoint
+
+The new `prepared-async-frame-adapter.ts` exports
+`emitPreparedIrAsyncFrame(fn, currentRuntime, resources)` and consumes only
+C's explicit process-local `values`, `callTargets`, and `callSignatures` maps.
+Both callable maps use `irCallableBindingKey`; C authenticates their handles
+and physical signatures against actual reservations. The adapter checks the
+current semantic owner/runtime, exact value/parameter/spill mapping, supported
+state shapes and mapping stability through detached emission. No compiler
+context, provider builder, parser, mutable registry or old adapter is imported.
+
+It lowers constants, bound calls, sequential updates, suspend, resolve, goto
+and i32 branches. Call arguments/results use explicitly accepted conversions;
+discarded non-void call results are dropped. f32/i64 and canonical undefined
+constants are handled. Resume reads the engine SENT seam and converts to its
+accepted value carrier. Missing conversions/signatures/undefined providers,
+foreign bindings, unsupported handlers and invalid successor forms fail
+before detached outputs are returned. Updated parameters require a mutable
+carrier and remain a C acceptance dependency.
+
+Focused one-fork validation: 28/28 tests across two files (21 runtime controls
+and 7 loaded-module census controls). This includes real authenticated async
+attachments, emitted Wasm execution with two awaits, same-spelling bindings
+after remapping, signature conversion/discard/constant cases, resource removal
+and mutation controls. The physical reservations/Promise helpers are still
+explicit test harness resources, not C producer/consumer acceptance evidence.
+The runtime census loads the real adapter and engine and excludes the legacy
+module families; restoring old imports still fails. Logs are local under
+`.tmp/b-adapter/`. The preexisting two caller-closure failures retain the
+separate pre-refresh baseline evidence above; they were not repaired here.
+
+C now owns real producer/consumer composition through this interface. B does
+not add a dummy caller to clear dead exports, does not touch producer/schema,
+native providers, public cutover or gates, and does not remove PR 5716's hold.
