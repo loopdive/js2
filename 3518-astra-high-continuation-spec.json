@@ -2,10 +2,11 @@
   "id": "3518",
   "slice": "astra-high-continuation-spec",
   "assignee": "ttraenkler/astra-high-spec-20260907",
-  "requested_by": "ttraenkler/astra-high-spec-20260907",
-  "status": "in-progress",
+  "requested_by": "git@thomas.traenkler.com",
+  "status": "released",
   "branch": "codex/3518-ir-retirement-spec-astra-high",
   "claimed_at": "2026-09-07T12:39:48Z",
-  "updated_at": "2026-09-07T12:39:48Z",
-  "write_id": "30991-ghg1u2zs"
+  "updated_at": "2026-09-07T12:52:19Z",
+  "write_id": "49020-fnhxqx8n",
+  "released_at": "2026-09-07T12:52:19Z"
 }
