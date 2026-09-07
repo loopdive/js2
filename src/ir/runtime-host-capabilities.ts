@@ -20,7 +20,7 @@
  * sufficient: `boolean.box` is `(i32) -> externref`, so every one of its value
  * types IS admissible under `AsyncHostAdapterValueType`. What keeps it out of
  * the async projection is the ID filter — `ASYNC_HOST_CAPABILITY_ID_SET`, the
- * seven `async.*` names — not the value union. Never replace that filter with
+ * closed `async.*` names — not the value union. Never replace that filter with
  * a value-type test.
  *
  * (#3526 F2-S2) The schema is now KIND-DISCRIMINATED. Family 2's remaining
@@ -51,6 +51,7 @@
  */
 export const RUNTIME_HOST_CAPABILITY_FUNC_IDS = Object.freeze([
   "async.callback.wrap",
+  "async.exception.caught",
   "async.promise.capability.create",
   "async.promise.react",
   "async.promise.resolve",
@@ -61,6 +62,7 @@ export const RUNTIME_HOST_CAPABILITY_FUNC_IDS = Object.freeze([
   "callable.host_call.array",
   "callback.wrap.ctor",
   "callback.wrap.getter",
+  "error.reference.construct",
   "extern.is_undefined",
   "number.box",
   "number.unbox",
@@ -584,6 +586,8 @@ function globalRecord(
  */
 export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityRecord[] = Object.freeze([
   record("async.callback.wrap", "__make_callback", ["i32", "externref"], ["externref"], HOST_CALLBACK_EXCEPTION_POLICY),
+  // Host catch_all retrieves the value retained by the existing host import wrapper.
+  record("async.exception.caught", "__get_caught_exception", [], ["externref"]),
   record("async.promise.capability.create", "Promise_new_pending", [], ["externref"]),
   record("async.promise.react", "Promise_then2", ["externref", "externref", "externref"], ["externref"]),
   record("async.promise.resolve", "Promise_resolve", ["externref"], ["externref"]),
@@ -698,6 +702,8 @@ export const RUNTIME_HOST_CAPABILITY_RECORDS: readonly RuntimeHostCapabilityReco
   record("callback.wrap.ctor", "__make_callback_ctor", ["i32", "externref"], ["externref"]),
   record("callback.wrap.getter", "__make_getter_callback", ["i32", "externref"], ["externref"]),
   // ---- end family 3 -------------------------------------------------------
+  // Imported-global TDZ guards share this exact ABI with the native constructor.
+  record("error.reference.construct", "__new_ReferenceError", ["externref"], ["externref"]),
   // (#3526 F1-S4) The externref undefined probe. NOT a member of the
   // `addUnionImports` family: on the host lane `__extern_is_undefined` is a
   // standalone `ensureLateImport` registration, which is why the preregistration

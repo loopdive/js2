@@ -135,6 +135,96 @@ function providerOptionFingerprint(options: CompileOptions | undefined): string 
   });
 }
 
+type ProjectFilesystem = NonNullable<ReturnType<typeof getDefaultEnvironment>["fs"]>;
+
+function verifyTemporalProject(fs: ProjectFilesystem, root: string, files: ReadonlyMap<string, Buffer>): void {
+  for (const relative of ["", "node_modules", "node_modules/@js-temporal", "node_modules/@js-temporal/polyfill"]) {
+    if (!fs.lstatSync(path.join(root, relative)).isDirectory()) {
+      throw new Error(`Invalid Temporal synthetic project directory: ${relative || "."}`);
+    }
+  }
+  for (const [relative, expected] of files) {
+    const file = path.join(root, relative);
+    if (!fs.lstatSync(file).isFile() || !fs.readFileSync(file).equals(expected)) {
+      throw new Error(`Invalid Temporal synthetic project file: ${relative}`);
+    }
+  }
+}
+
+function materializeTemporalProject(fs: ProjectFilesystem, cacheDir: string, key: string, source: string): string {
+  // Versioned separately from provider identity: old bundles may still mutate
+  // the legacy directory. Only complete, immutable trees live in this layout.
+  const root = path.join(cacheDir, `temporal-project-v2-${key}`);
+  const entry = "__js2wasm_temporal_entry.js";
+  const packagePath = "node_modules/@js-temporal/polyfill";
+  const files = new Map([
+    [
+      `${packagePath}/package.json`,
+      Buffer.from(JSON.stringify({ name: TEMPORAL_PACKAGE_NAME, version: "0.0.0-linked", main: "index.js" })),
+    ],
+    [`${packagePath}/index.js`, Buffer.from(source)],
+    [
+      entry,
+      Buffer.from(
+        `import { ${TEMPORAL_EXPORT_NAME} } from "${TEMPORAL_PACKAGE_NAME}";\n` +
+          `export function __js2wasm_temporal_probe() { return typeof ${TEMPORAL_EXPORT_NAME}; }\n`,
+      ),
+    ],
+  ]);
+  fs.mkdirSync(cacheDir, { recursive: true });
+  let present = true;
+  try {
+    fs.lstatSync(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    present = false;
+  }
+  if (present) {
+    verifyTemporalProject(fs, root, files);
+    return path.join(root, entry);
+  }
+
+  const stage = fs.mkdtempSync(path.join(cacheDir, `.temporal-project-v2-${key}.staging-`));
+  let owned = true;
+  let failed = false;
+  let failure: unknown;
+  try {
+    fs.mkdirSync(path.join(stage, packagePath), { recursive: true });
+    for (const [relative, bytes] of files) fs.writeFileSync(path.join(stage, relative), bytes);
+    verifyTemporalProject(fs, stage, files);
+    try {
+      fs.renameSync(stage, root);
+      owned = false;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST" && code !== "ENOTEMPTY") throw error;
+      try {
+        verifyTemporalProject(fs, root, files);
+      } catch (verificationError) {
+        throw new AggregateError([error, verificationError], "Temporal synthetic project publication collision", {
+          cause: error,
+        });
+      }
+    }
+    verifyTemporalProject(fs, root, files);
+  } catch (error) {
+    failed = true;
+    failure = error;
+  }
+  if (owned) {
+    try {
+      fs.rmSync(stage, { recursive: true, force: true });
+    } catch (cleanupError) {
+      if (!failed) throw cleanupError;
+      throw new AggregateError([failure, cleanupError], "Temporal synthetic project publication and cleanup failed", {
+        cause: failure,
+      });
+    }
+  }
+  if (failed) throw failure;
+  return path.join(root, entry);
+}
+
 /**
  * Compile the polyfill once into a linked provider artifact.
  *
@@ -164,22 +254,7 @@ export async function buildTemporalProvider(options: BuildTemporalProviderOption
   // The linker consumes a real module graph, so the bundle is materialized as
   // a one-file npm package next to its own provider cache. The directory is
   // keyed by the source fingerprint, so a bundle bump never reuses stale text.
-  const projectRoot = path.join(options.cacheDir, `temporal-project-${key.slice(0, 16)}`);
-  const packageRoot = path.join(projectRoot, "node_modules", "@js-temporal", "polyfill");
-  fs.mkdirSync(packageRoot, { recursive: true });
-  fs.writeFileSync(
-    path.join(packageRoot, "package.json"),
-    JSON.stringify({ name: TEMPORAL_PACKAGE_NAME, version: "0.0.0-linked", main: "index.js" }),
-  );
-  fs.writeFileSync(path.join(packageRoot, "index.js"), options.polyfillSource);
-  const entryPath = path.join(projectRoot, "__js2wasm_temporal_entry.js");
-  // The root exists only to make `Temporal` an external package edge the
-  // linker must plan; its own binary is discarded.
-  fs.writeFileSync(
-    entryPath,
-    `import { ${TEMPORAL_EXPORT_NAME} } from "${TEMPORAL_PACKAGE_NAME}";\n` +
-      `export function __js2wasm_temporal_probe() { return typeof ${TEMPORAL_EXPORT_NAME}; }\n`,
-  );
+  const entryPath = materializeTemporalProject(fs, options.cacheDir, key, options.polyfillSource);
 
   const result = await compileProject(entryPath, {
     ...options.compileOptions,

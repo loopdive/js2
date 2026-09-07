@@ -248,7 +248,7 @@ function valueTypesOf(fn: IrFunction): Map<IrValueId, IrType> {
 
 function isAwaitCarrier(type: IrType): boolean {
   const scalar = asVal(type);
-  return scalar?.kind === "externref" || type.kind === "extern";
+  return scalar?.kind === "externref" || scalar?.kind === "f64" || type.kind === "extern";
 }
 
 function makeHelper(
@@ -549,8 +549,13 @@ export function prepareLinearSuspendingIrFunction(fn: IrFunction): PreparedLinea
     spills,
     states: planStates,
     handlers: [],
-    runtimeIntents:
-      fn.resultTypes.length === 0 ? [...ASYNC_RUNTIME_FEATURES, "value.undefined"] : ASYNC_RUNTIME_FEATURES,
+    runtimeIntents: [
+      ...ASYNC_RUNTIME_FEATURES,
+      ...(fn.resultTypes.length === 0 ? ["value.undefined" as const] : []),
+      ...(states.some((state) => state.suspension && irTypeEquals(valueTypes.get(state.suspension.awaited)!, F64))
+        ? ["promise.number.bridge" as const]
+        : []),
+    ],
   });
 
   return {

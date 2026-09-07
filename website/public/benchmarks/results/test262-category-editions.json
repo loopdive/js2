@@ -57,8 +57,8 @@
       "skip": 0
     },
     "ES2015": {
-      "pass": 246,
-      "fail": 32,
+      "pass": 247,
+      "fail": 31,
       "ce": 0,
       "skip": 0
     },
@@ -69,8 +69,8 @@
       "skip": 0
     },
     "ES2018": {
-      "pass": 641,
-      "fail": 6,
+      "pass": 642,
+      "fail": 5,
       "ce": 1,
       "skip": 0
     },
@@ -317,8 +317,8 @@
   },
   "built-ins/TypedArray": {
     "ES2015": {
-      "pass": 581,
-      "fail": 98,
+      "pass": 583,
+      "fail": 96,
       "ce": 0,
       "skip": 0
     },
@@ -405,8 +405,8 @@
   },
   "built-ins/Temporal": {
     "ES2026": {
-      "pass": 2616,
-      "fail": 1974,
+      "pass": 3139,
+      "fail": 1451,
       "ce": 13,
       "skip": 0
     }
@@ -517,8 +517,8 @@
       "skip": 0
     },
     "ES2022": {
-      "pass": 1874,
-      "fail": 537,
+      "pass": 1875,
+      "fail": 536,
       "ce": 7,
       "skip": 0
     },
@@ -543,8 +543,8 @@
       "skip": 0
     },
     "ES2025": {
-      "pass": 296,
-      "fail": 88,
+      "pass": 299,
+      "fail": 85,
       "ce": 5,
       "skip": 0
     },
@@ -689,8 +689,8 @@
       "skip": 0
     },
     "ES2022": {
-      "pass": 1878,
-      "fail": 544,
+      "pass": 1879,
+      "fail": 543,
       "ce": 6,
       "skip": 0
     },
@@ -815,6 +815,20 @@
       "skip": 0
     }
   },
+  "built-ins/Uint8Array": {
+    "ES2026": {
+      "pass": 60,
+      "fail": 8,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2027": {
+      "pass": 0,
+      "fail": 2,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/TypedArrayConstructors": {
     "ES2015": {
       "pass": 257,
@@ -829,34 +843,20 @@
       "skip": 0
     },
     "ES2020": {
-      "pass": 210,
-      "fail": 46,
+      "pass": 211,
+      "fail": 45,
       "ce": 0,
       "skip": 0
     },
     "ES2022": {
-      "pass": 6,
-      "fail": 2,
+      "pass": 5,
+      "fail": 3,
       "ce": 0,
       "skip": 0
     },
     "ES2024": {
       "pass": 84,
       "fail": 46,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2027": {
-      "pass": 0,
-      "fail": 2,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/Uint8Array": {
-    "ES2026": {
-      "pass": 47,
-      "fail": 21,
       "ce": 0,
       "skip": 0
     },
@@ -957,32 +957,6 @@
       "skip": 0
     }
   },
-  "built-ins/Math": {
-    "ES5": {
-      "pass": 81,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2015": {
-      "pass": 151,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2025": {
-      "pass": 5,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    },
-    "ES2026": {
-      "pass": 0,
-      "fail": 10,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "built-ins/Symbol": {
     "ES2015": {
       "pass": 72,
@@ -1011,6 +985,32 @@
     "ES2027": {
       "pass": 6,
       "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/Math": {
+    "ES5": {
+      "pass": 81,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2015": {
+      "pass": 151,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2025": {
+      "pass": 5,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    },
+    "ES2026": {
+      "pass": 0,
+      "fail": 10,
       "ce": 0,
       "skip": 0
     }
@@ -1085,6 +1085,14 @@
       "skip": 0
     }
   },
+  "built-ins/decodeURI": {
+    "ES2015": {
+      "pass": 0,
+      "fail": 1,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "built-ins/SharedArrayBuffer": {
     "ES2017": {
       "pass": 51,
@@ -1093,16 +1101,8 @@
       "skip": 0
     },
     "ES2022": {
-      "pass": 28,
-      "fail": 16,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/decodeURI": {
-    "ES2015": {
-      "pass": 0,
-      "fail": 1,
+      "pass": 29,
+      "fail": 15,
       "ce": 0,
       "skip": 0
     }
@@ -1141,8 +1141,8 @@
       "skip": 0
     },
     "ES2025": {
-      "pass": 168,
-      "fail": 14,
+      "pass": 175,
+      "fail": 7,
       "ce": 4,
       "skip": 0
     }
@@ -1169,8 +1169,8 @@
       "skip": 0
     },
     "ES2022": {
-      "pass": 44,
-      "fail": 8,
+      "pass": 45,
+      "fail": 7,
       "ce": 0,
       "skip": 0
     },
@@ -1249,8 +1249,8 @@
   },
   "built-ins/DisposableStack": {
     "ES2027": {
-      "pass": 77,
-      "fail": 16,
+      "pass": 78,
+      "fail": 15,
       "ce": 0,
       "skip": 0
     }
@@ -1319,6 +1319,14 @@
       "skip": 0
     }
   },
+  "language/computed-property-names": {
+    "ES2015": {
+      "pass": 29,
+      "fail": 15,
+      "ce": 0,
+      "skip": 0
+    }
+  },
   "language/module-code": {
     "ES2015": {
       "pass": 42,
@@ -1351,10 +1359,10 @@
       "skip": 0
     }
   },
-  "language/computed-property-names": {
+  "built-ins/ArrayIteratorPrototype": {
     "ES2015": {
-      "pass": 29,
-      "fail": 15,
+      "pass": 17,
+      "fail": 10,
       "ce": 0,
       "skip": 0
     }
@@ -1371,14 +1379,6 @@
     "ES2015": {
       "pass": 0,
       "fail": 1,
-      "ce": 0,
-      "skip": 0
-    }
-  },
-  "built-ins/ArrayIteratorPrototype": {
-    "ES2015": {
-      "pass": 8,
-      "fail": 19,
       "ce": 0,
       "skip": 0
     }
@@ -1723,14 +1723,6 @@
       "skip": 0
     }
   },
-  "built-ins/NaN": {
-    "ES5": {
-      "pass": 5,
-      "fail": 0,
-      "ce": 0,
-      "skip": 0
-    }
-  },
   "language/identifier-resolution": {
     "ES5": {
       "pass": 6,
@@ -1746,6 +1738,14 @@
     },
     "ES2022": {
       "pass": 1,
+      "fail": 0,
+      "ce": 0,
+      "skip": 0
+    }
+  },
+  "built-ins/NaN": {
+    "ES5": {
+      "pass": 5,
       "fail": 0,
       "ce": 0,
       "skip": 0

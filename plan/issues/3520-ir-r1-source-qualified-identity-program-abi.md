@@ -5751,3 +5751,52 @@ preclaim (67), producer parity (3), issue-4502 (29), direct-member equality
 preflight remains 10/13: two module-init expectation rows now observe the
 existing `module-init-legacy-coupling` fallback, and the Date provider collision
 row now emits; these are unrelated drift from the scoped equality change.
+
+## Astra High R1 boundary audit for the full cutover (2026-09-07)
+
+Pinned source and owner records are in the
+[epic continuation specification](3518-ir-only-default-and-direct-frontend-retirement.md).
+This is an architecture contract for the continuing A/B/C owners, not a new
+R1 implementation claim. C30–C33 and the implicit-constructor slice remain
+held in the ledger; their source and acceptance evidence must be verified
+before any ownership reassignment. A merged PR title or completed sub-slice
+never closes the complete R1 contract.
+
+At upstream `b3133d1d4da1151d82ef45b58db9566565097c57`, prepared async entry
+still has a downstream name-based resume lookup in `async-frame.ts`, and
+`program.ts` retains direct candidates and pending production reconciliation.
+The unmerged package C stack instead binds a `ProgramAbiMap` from the prepared
+entries inside `program-consumer.ts`. It resolves function/global references
+by binding key and builds a slot-to-unit ownership map before deriving final
+receipts. That is existing implementation to preserve, not a second ABI map
+for a new implementer to invent. Its unresolved type materialization and
+runtime support are C dependencies, not permission for source-name fallback.
+
+Required boundary invariants for the three continuation lanes:
+
+1. A creates one inventory and identity context for the complete input graph
+   before handing it to the existing producer. No output finalizer rebuilds
+   identities by reparsing source or joining display names. Diagnostics retain
+   original source/owner identity through transforms and output conversion.
+2. B requests entry/resume/callback/frame resources by original or derived
+   owner plus stable role/ordinal. Name collisions cannot alter the binding.
+   Backend-local numeric indices are final locators over those handles and
+   never become persisted semantic identity.
+3. C remains sole owner of backend binding/reservation, codec authentication
+   and emission receipts. A accepts its output without reconstructing
+   authority from module-array order; D observes the authentic evidence
+   without synthesizing it from its expected test population.
+4. A/B enumerate readers, mutators and late-remap consumers before moving any
+   shared ABI data. Reserve/fill object identity must survive imports and DCE.
+   Missing, duplicate, foreign or contradictory bindings are fatal; they
+   cannot be converted to a warning or a lowerer name scan.
+
+Acceptance joins equal-name functions across two sources, an imported alias,
+re-export, a source function named `__module_init`, a colliding async resume
+label, and a late import/remap control. Assert distinct semantic owners,
+correct runtime values, exact final object ownership, and correctly located
+failures. Swap donor bindings/projections or omit a source and require failure.
+These controls apply to tracked and untracked public compilation; telemetry
+must not change compiler decisions or bytes. The final R1 audit additionally
+must enumerate remaining display-name and module-array consumers across both
+backends; this bounded continuation is not that exhaustive census.

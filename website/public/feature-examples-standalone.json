@@ -574,7 +574,7 @@
     {
       "name": "Objects",
       "testCategories": ["language/expressions/object", "built-ins/Object"],
-      "passCount": 4327,
+      "passCount": 4329,
       "totalCount": 4581,
       "editionSpread": [
         {
@@ -634,7 +634,7 @@
         },
         {
           "edition": "ES2027",
-          "pass": 46,
+          "pass": 48,
           "total": 55
         },
         {
@@ -839,7 +839,7 @@
     {
       "name": "Arrays",
       "testCategories": ["built-ins/Array", "built-ins/ArrayIteratorPrototype", "language/expressions/array"],
-      "passCount": 2221,
+      "passCount": 2232,
       "totalCount": 3161,
       "editionSpread": [
         {
@@ -864,7 +864,7 @@
         },
         {
           "edition": "ES2019",
-          "pass": 14,
+          "pass": 15,
           "total": 39
         },
         {
@@ -889,7 +889,7 @@
         },
         {
           "edition": "Unclassified (untagged)",
-          "pass": 1667,
+          "pass": 1677,
           "total": 2250
         }
       ]
@@ -1080,7 +1080,7 @@
     {
       "name": "Symbol",
       "testCategories": ["built-ins/Symbol"],
-      "passCount": 1415,
+      "passCount": 1423,
       "totalCount": 1955
     },
     {
@@ -1092,7 +1092,7 @@
         "built-ins/DataView",
         "built-ins/Uint8Array"
       ],
-      "passCount": 934,
+      "passCount": 935,
       "totalCount": 1106
     },
     {
@@ -1300,7 +1300,7 @@
     {
       "name": "Array.prototype.flat / flatMap",
       "testCategories": ["built-ins/Array/prototype/flat", "built-ins/Array/prototype/flatMap"],
-      "passCount": 10,
+      "passCount": 11,
       "totalCount": 35
     },
     {

@@ -79,6 +79,8 @@ import {
   vecForMirror,
   recordVecMirrorElements,
   vecMirrorElementsChanged,
+  isDetachedVecMirrorSource as vecMirrorDetached,
+  applyWithVecMirrorWriteback as applyVecMirror,
 } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back; (#4531) mirror→vec mutation routing
 import {
   arrayIndexForPropertyKey as _asArrayIndex,
@@ -122,6 +124,7 @@ import {
   callResolvedClassPrimitive,
   createClassMemberResolver,
   createResolvedClassMethodInvoker,
+  hasStructPrototypeMember, // (#5358)
 } from "./runtime/class-method-host-bridge.js";
 import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
 import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-class-instance.js";
@@ -578,7 +581,6 @@ const _abHostBufferReverse = new WeakMap<ArrayBuffer, object>();
 const _compiledTypedArrayKinds = new WeakMap<object, number>();
 const _compiledTypedArrayMirrors = new WeakMap<object, ArrayBufferView>();
 const _compiledTypedArrayBuffers = new WeakMap<object, ArrayBuffer>();
-
 // Codegen contract: keep in lock-step with TYPED_ARRAY_HOST_TAGS in
 // expressions/typed-array-host-carrier.ts. Index zero is intentionally empty.
 const _COMPILED_TYPED_ARRAY_CTORS: ReadonlyArray<Function | undefined> = [
@@ -771,9 +773,59 @@ function _marshalHostConstructArg(
       const nm = typeof hostCallee.name === "string" && hostCallee.name ? hostCallee.name : "TypedArray";
       throw new TypeError(`cannot marshal opaque compiled value to host ${nm} constructor`);
     }
+    // (#5381) The DYNAMIC twin of the extern-class construct arm. `new
+    // (Intl as any).PluralRules("en-US", {type:"ordinal"})` does not resolve to
+    // a registered extern class — it lowers to `__construct` on the host
+    // function fetched off the `Intl` global (#5206) — so it never reached the
+    // options-bag marshalling and answered `select(2) === "other"` (node:
+    // "two"). Same defect, same fix: a compiled struct handed to a HOST
+    // constructor is a data bag, and the host can only read it through the
+    // `_wrapForHost` mirror. Measured with `Intl.RelativeTimeFormat`
+    // ({numeric:"auto"}, format(-1,"day")): "1 day ago" → "yesterday".
+    //
+    // Scoped the same way as the static arm: only when the callee is a host
+    // function, and never for the constructors that consume an argument by
+    // identity (`_structArgIdentityCtors` — `new WeakRef(obj).deref() === obj`
+    // must keep holding). The vec / ArrayBuffer / TypedArray probes above run
+    // first and still own their shapes, so this only sees what they declined.
+    if (
+      typeof hostCallee === "function" &&
+      !_structArgIdentityCtors.has(typeof hostCallee.name === "string" ? hostCallee.name : "")
+    ) {
+      const mirror = _wrapForHost(a, eff);
+      if (mirror !== a) return mirror;
+    }
   }
   return a;
 }
+
+/**
+ * (#5381) Extern-class constructors that consume a struct argument BY IDENTITY
+ * — they store it, return it, or hand it back — so the default "marshal every
+ * compiled struct through `_wrapForHost`" rule must not apply to them.
+ *
+ * `Object(x)` returns x itself (§7.1.18 ToObject on an object is the identity),
+ * `Array(x)` with one non-numeric argument yields `[x]`, `WeakRef(t)` hands `t`
+ * back from `deref()`, and `AggregateError`/`SuppressedError` expose their
+ * `errors`/`error`/`suppressed` arguments verbatim. Wrapping any of those would
+ * make the program observe a proxy where it stored a value, which is a
+ * strictly worse failure than the opaque struct it gets today (the opaque
+ * struct at least still compares equal to itself). `Function` is here for the
+ * separate reason that its arguments are ToString'd source text.
+ *
+ * The Error family, iterables, buffer consumers and the ToPrimitive family are
+ * excluded by their own flags at the construct site rather than by this set.
+ */
+const _structArgIdentityCtors = new Set([
+  "Object",
+  "Function",
+  "Array",
+  "WeakRef",
+  "FinalizationRegistry",
+  "AggregateError",
+  "SuppressedError",
+  "Test262Error",
+]);
 
 /** (#3335) Is `fn` a host %TypedArray% subclass constructor (Int8Array … BigUint64Array)? */
 const _HOST_TYPED_ARRAY_CTOR_NAMES = new Set([
@@ -3433,6 +3485,11 @@ function _toPrimitive(
   // Unwrap host proxy to raw WasmGC struct for sidecar lookups (#1090).
   // Proxies are created by _wrapForHost and _hostProxyReverse maps them back.
   const raw = _hostProxyReverse.get(obj) ?? obj;
+  // (#5374) Every probe below — `__sget_valueOf`, `__call_fn_method_0`,
+  // `__call_@@toPrimitive` — is an export of ONE module. See the note on the
+  // same redirect in `_hostToPrimitive` for why the whole walker is retargeted
+  // once, here, rather than per probe.
+  callbackState = _crossModuleCallbackState(raw, callbackState);
   // (#4616, cookie Expires family) The compiler-owned WasmGC Date carrier —
   // see _wasmDateToPrimitive.
   {
@@ -4048,6 +4105,14 @@ function _hostToPrimitive(
 
   // Check Symbol.toPrimitive via real JS property access (goes through proxy if applicable)
   const raw = _hostProxyReverse.get(obj) ?? obj;
+  // (#5374) The #5225 seam, one step past the field read: every arm below
+  // dispatches through an export of ONE module (`__sget_valueOf`,
+  // `__call_fn_method_0`, `__call_@@toPrimitive`, …) resolved from the module
+  // the coercion is RUNNING in — so a consumer-minted object coerced inside a
+  // linked provider found no method and bottomed out at "[object Object]".
+  // Retargeted once here, not per probe: the arms must agree on a module.
+  // Miss path only (the registry's `enabled` boolean). Detail in the issue.
+  callbackState = _crossModuleCallbackState(raw, callbackState);
   // (#4616) WasmGC Date carrier — see _wasmDateToPrimitive.
   {
     const dateMs = _wasmDateToPrimitive(raw, hint, callbackState);
@@ -8392,20 +8457,20 @@ function _wrapHostArrayElems(arr: any[], exports: Record<string, Function> | und
 function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): any {
   if (obj == null || typeof obj !== "object") return obj;
   if (!_isWasmStruct(obj)) return obj;
-
   // (#5225) A struct minted by another module of this linked project must be
   // mirrored against the exports that can DECODE it, not against whichever
   // module happens to be reading. Every trap below (field reads, key
   // enumeration, callable members) resolves through these exports.
   exports = _decoderExportsFor(obj, exports);
-
   const primitiveValue = _nativePrimitiveToHost(obj, exports);
   if (primitiveValue !== _MISS) return primitiveValue;
   const errorValue = _nativeErrorToHost(obj, exports);
   if (errorValue !== _MISS) return errorValue;
   const promiseValue = _nativePromiseToHost(obj, exports);
   if (promiseValue !== _MISS) return promiseValue;
-
+  // (#5362) Preserve a branded TypedArray host mirror before the generic vec facade/cache.
+  const mirror = _compiledTypedArrayKinds.has(obj) && _compiledTypedArrayMirror(obj, { getExports: () => exports });
+  if (mirror) return mirror;
   const cached = _hostProxyCache.get(obj);
   if (cached) {
     const slot = _hostProxyExportSlots.get(obj);
@@ -11348,7 +11413,69 @@ function resolveImport(
         // data-struct proxy before Request/Response consume the dictionary.
         // Statically visible bags are materialized by codegen; this runtime
         // arm is the erased-value counterpart and runs after exports are live.
-        const webInitArgIndex = intent.className === "Request" || intent.className === "Response" ? 1 : undefined;
+        //
+        // (#5378) `Intl.DateTimeFormat(locales, options)` is the SAME shape and
+        // was missing from this list, which is what made every linked-Temporal
+        // `ZonedDateTime` field read throw `RangeError: infinity is out of
+        // range`. The chain, measured through the runner (probe ladder in the
+        // issue): `ZonedDateTime.prototype.year` → `GetISODateTimeFor` →
+        // `GetOffsetNanosecondsFor("UTC", ns)` → `GetNamedTimeZoneOffsetNanoseconds`,
+        // whose ONLY source of wall-clock parts is
+        //   `new Intl.DateTimeFormat("en-us", {timeZone, hour12:false, era:"short",
+        //      year/month/day/hour/minute/second:"numeric"}).format(date)`
+        // split into 7 `\w+` runs. The options struct reached V8 opaque, so the
+        // host constructor read NO properties from it and fell back to the
+        // en-US default (year/month/day only): the format string came back
+        // "1/1/2024" instead of "1/1/2024 AD, 12:34:00". The polyfill's parse
+        // then yields non-finite wall-clock fields, `offsetNanoseconds` reads
+        // `NaN`, and `BalanceISODate` rejects the NaN with that RangeError —
+        // several frames above the actual defect, which is why the throw site
+        // looked like a calendar bug. `epochMilliseconds` never touches the
+        // formatter, which is exactly why it stayed correct.
+        //
+        // (#5381) …and it stayed a per-class list for exactly one issue. The
+        // three names above were not three bugs: `Request`, `Response` and
+        // `DateTimeFormat` are three instances of ONE shape — a host
+        // constructor that READS PROPERTIES off an argument. Every other
+        // constructor in that shape lost its bag the same way and had to wait
+        // for someone to notice and add a fourth name (measured on this branch
+        // before the change: `new Intl.NumberFormat("en-US",{minimumFractionDigits:3})
+        // .format(1.5)` → "1.5", node "1.500"; `new Intl.ListFormat("en",
+        // {type:"disjunction"}).format(["a","b"])` → "a and b", node "a or b").
+        //
+        // So the rule is inverted: a compiled struct argument is marshalled
+        // through `_wrapForHost` by DEFAULT, and the exceptions are the
+        // constructors that consume an argument by a protocol OTHER than
+        // "read its properties" — every one of which already has its own arm
+        // a few lines above:
+        //   * `isWrapperCtor`        — String/Number/Boolean, arity-sensitive;
+        //   * `isIterableCtor`       — Map/Set/WeakMap/WeakSet, want the
+        //                              iteration protocol (`_convertIterableForHost`);
+        //   * `isBufferConsumer`     — DataView/TypedArrays, want real bytes;
+        //   * `coercesArgsToPrimitive` — RegExp/Date/String/Number, run
+        //                              ToPrimitive on the struct (#1716);
+        //   * the Error family       — arg 0 is ToString'd (#3481) and arg 1
+        //                              carries `cause`, whose OBJECT IDENTITY
+        //                              §20.5.8.1 preserves verbatim; a proxy
+        //                              there would break `e.cause === obj`;
+        //   * `isPromiseExecutorCtor` — arg 0 is a callable, not a bag;
+        //   * `_structArgIdentityCtors` — Object/Function/Array/WeakRef/…,
+        //                              which store or return the argument
+        //                              itself, so a proxy changes what the
+        //                              program observes.
+        // Anything else — every registered extern class, including ones nobody
+        // has written yet — gets the marshalling for free. Primitives and
+        // host externrefs are untouched: the guard is `_isWasmStruct`, and a
+        // host object never satisfies it.
+        const marshalsStructArgsForHost = !(
+          isWrapperCtor ||
+          isIterableCtor ||
+          isBufferConsumer ||
+          coercesArgsToPrimitive ||
+          isPromiseExecutorCtor ||
+          errorMessageArgIndex >= 0 ||
+          _structArgIdentityCtors.has(intent.className)
+        );
         return (...args: any[]) => {
           if (isPromiseExecutorCtor && args.length > 0) {
             args[0] = _maybeWrapCallable(args[0], 2, callbackState);
@@ -11358,13 +11485,16 @@ function resolveImport(
             while (len > 0 && args[len - 1] == null) len--;
             args = args.slice(0, len);
           }
-          if (
-            webInitArgIndex !== undefined &&
-            args.length > webInitArgIndex &&
-            args[webInitArgIndex] != null &&
-            _isWasmStruct(args[webInitArgIndex])
-          ) {
-            args[webInitArgIndex] = _wrapForHost(args[webInitArgIndex], callbackState?.getExports());
+          if (marshalsStructArgsForHost) {
+            let hostExports: Record<string, Function> | undefined;
+            for (let i = 0; i < args.length; i++) {
+              const a = args[i];
+              if (a == null || typeof a !== "object" || !_isWasmStruct(a)) continue;
+              // Resolve exports lazily: the common case has no struct argument
+              // at all, and `getExports()` is not free during module init.
+              if (hostExports === undefined) hostExports = callbackState?.getExports();
+              args[i] = _wrapForHost(a, hostExports);
+            }
           }
           if (
             errorMessageArgIndex >= 0 &&
@@ -12981,10 +13111,7 @@ assert._isSameValue = isSameValue;
           // object never has `e`; the source struct's shape no longer leaks).
           if (typeof obj === "object" && _isWasmStruct(obj)) {
             if (_wasmStructHasOwn(obj, key, callbackState?.getExports())) return 1;
-            // (#1991) `in` walks the [[Prototype]] chain (§13.10.1 → §7.3.12):
-            // every object inherits the Object.prototype members.
-            if (typeof key === "string" && _OBJECT_PROTO_KEYS.has(key)) return 1;
-            return 0;
+            return hasStructPrototypeMember(obj, key, _OBJECT_PROTO_KEYS, () => marshalExports(callbackState)) ? 1 : 0;
           }
           // Plain JS object (or host-supplied object) — native HasProperty walks
           // its own prototype chain. HasProperty is value-independent (§7.3.12),
@@ -14564,7 +14691,7 @@ assert._isSameValue = isSameValue;
       // #1515: query whether a buffer is detached. Returns 1 if detached, 0 otherwise.
       if (name === "__is_detached_buffer")
         return (buf: any): number => {
-          if (buf != null && typeof buf === "object" && _detachedBuffers.has(buf)) return 1;
+          if (buf != null && typeof buf === "object" && (_detachedBuffers.has(buf) || vecMirrorDetached(buf))) return 1;
           return 0;
         };
       if (name === "__extern_method_call")
@@ -14855,9 +14982,7 @@ assert._isSameValue = isSameValue;
           // (#3603 S1) `Array.prototype.push.call(vec, x)` arrives as obj=push,
           // method="call", args[0]=the vec's `__make_iterable` mirror — bracket
           // the dispatch so the mutation reaches the vec (silent no-op before).
-          const mirrorSnaps = snapshotVecMirrors(dispatchRecv, wrappedArgs, exports);
-          const ret = Reflect.apply(fn, dispatchRecv, wrappedArgs);
-          reconcileVecMirrors(mirrorSnaps, exports, _unwrapForHost);
+          const ret = applyVecMirror(fn, dispatchRecv, wrappedArgs, exports, _unwrapForHost);
           // (#1333) Annex B — RegExp.prototype.exec/test post-match slot update.
           if (
             (method === "exec" || method === "test") &&

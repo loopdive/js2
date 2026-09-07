@@ -12,6 +12,18 @@ import type { Encoding } from "./encoding.js";
 
 export const LINEAR_STRING_ASCII_PROOF_REQUIRED = "ir/linear-string: ASCII encoding proof required";
 
+/** A known representation gap, distinct from a missing layout/allocation. */
+export class LinearStringEncodingUnsupportedError extends Error {
+  constructor(
+    readonly intrinsic: IrStringRuntimeIntrinsic,
+    readonly position: "input" | "result",
+    readonly encoding: Encoding | undefined,
+  ) {
+    super(`${LINEAR_STRING_ASCII_PROOF_REQUIRED} for ${intrinsic} ${position} (got ${encoding ?? "unproven"})`);
+    this.name = "LinearStringEncodingUnsupportedError";
+  }
+}
+
 export interface LinearStringRuntimeRequest {
   readonly intrinsic: IrStringRuntimeIntrinsic;
   readonly alloc?: AllocSiteId;
@@ -34,6 +46,28 @@ export interface LinearStringRuntimeBinding {
   readonly operation: LinearStringRuntimeOperation;
 }
 
+/** Validate producer encoding facts without choosing an allocation policy. */
+export function validateLinearStringRuntimeEncoding(
+  request: LinearStringRuntimeRequest,
+  allocation?: Pick<LinearAllocationSitePlan, "id" | "encoding">,
+): void {
+  const { intrinsic, alloc } = request;
+  const spec = IR_STRING_RUNTIME[intrinsic];
+  if (spec.allocatesResult) {
+    if (alloc === undefined) throw new Error(`linear string contract: ${intrinsic} requires an allocation site`);
+    if (!allocation) throw new Error(`linear string contract: allocation site ${alloc as number} is absent`);
+    if (allocation.id !== alloc)
+      throw new Error(`linear string contract: allocation site ${alloc as number} is mismatched`);
+    requireAscii(intrinsic, "result", allocation.encoding);
+  }
+  if (spec.operands.includes("string")) {
+    // An ASCII concat result proves both operands ASCII under the existing
+    // encoding lattice. Non-allocating reads and charAt need receiver proof.
+    const inputEncoding = intrinsic === "concat" ? allocation?.encoding : request.inputEncoding;
+    requireAscii(intrinsic, "input", inputEncoding);
+  }
+}
+
 /**
  * Bind semantic string work to the source-derived linear-memory layout and,
  * for allocating operations, to the exact allocation-site decision.
@@ -48,24 +82,15 @@ export function bindLinearStringRuntime(
 
   const spec = IR_STRING_RUNTIME[intrinsic];
   let allocation: LinearAllocationSitePlan | undefined;
-  if (spec.allocatesResult) {
-    if (alloc === undefined) throw new Error(`linear string contract: ${intrinsic} requires an allocation site`);
+  if (spec.allocatesResult && alloc !== undefined) {
     allocation = plan.allocation(alloc);
-    if (!allocation) throw new Error(`linear string contract: allocation site ${alloc as number} is absent`);
-    if (allocation.layoutId !== layout.id) {
+    if (allocation && allocation.layoutId !== layout.id) {
       throw new Error(
         `linear string contract: allocation site ${alloc as number} uses '${allocation.layoutId}', expected '${layout.id}'`,
       );
     }
-    requireAscii(intrinsic, "result", allocation.encoding);
   }
-
-  if (spec.operands.includes("string")) {
-    // An ASCII concat result proves both operands ASCII under the existing
-    // encoding lattice. Non-allocating reads and charAt need receiver proof.
-    const inputEncoding = intrinsic === "concat" ? allocation?.encoding : request.inputEncoding;
-    requireAscii(intrinsic, "input", inputEncoding);
-  }
+  validateLinearStringRuntimeEncoding(request, allocation);
 
   const operation: LinearStringRuntimeOperation = Object.freeze({
     family: "string",
@@ -88,5 +113,5 @@ function requireAscii(
   encoding: Encoding | undefined,
 ) {
   if (encoding === "ascii") return;
-  throw new Error(`${LINEAR_STRING_ASCII_PROOF_REQUIRED} for ${intrinsic} ${position} (got ${encoding ?? "unproven"})`);
+  throw new LinearStringEncodingUnsupportedError(intrinsic, position, encoding);
 }

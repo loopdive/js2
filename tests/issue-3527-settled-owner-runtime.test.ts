@@ -2,8 +2,25 @@
 /** #3527 B3 — settled non-thenable owners use the canonical Promise ABI. */
 import { afterEach, describe, expect, it } from "vitest";
 
+import { analyzeSource } from "../src/checker/index.js";
+import { createCodegenContext } from "../src/codegen/context/create-context.js";
+import {
+  prepareAsyncCallableAbi,
+  preparedIrAsyncAwaitSite,
+  preparedIrAsyncSourceCanSuspend,
+} from "../src/codegen/async-ir-planning.js";
+import {
+  forgetPreparedIrAsyncSettledOwner,
+  preparedIrAsyncSettledOwner,
+  preparedIrAsyncSettledOwnerWasIssued,
+} from "../src/codegen/async-linear-planning.js";
+import { ProgramAbiSession } from "../src/codegen/program-abi-session.js";
 import { compile, type CompileResult, type IrObservedOutcome } from "../src/index.js";
+import { buildIrUnitInventory, type IrTerminalUnitRecord, type IrUnitId } from "../src/ir/identity.js";
+import { buildIrPlanningIdentityContext, type IrPlanningIdentityContext } from "../src/ir/planning-identity.js";
+import { createEmptyModule } from "../src/ir/types.js";
 import { buildCompiledImports } from "../src/runtime.js";
+import { ts } from "../src/ts-api.js";
 
 const SETTLED_SOURCE = `
 let phase = 0;
@@ -89,6 +106,120 @@ export async function promiseResolve(seed: number): Promise<number> {
   return value + 1;
 }
 `;
+
+const IDENTITY_MUTATION_SOURCE = `
+export async function owner(): Promise<number> { return await 42; }
+export async function other(): Promise<number> { return await 43; }
+`;
+
+type MutableIdentity = IrPlanningIdentityContext & {
+  readonly unitIdByDeclaration: Map<ts.Node, IrUnitId>;
+  readonly declarationByUnitId: Map<IrUnitId, ts.Node>;
+  readonly terminalByUnitId: Map<IrUnitId, IrTerminalUnitRecord>;
+};
+
+interface SettledOwnerIdentityProbe {
+  readonly ctx: ReturnType<typeof createCodegenContext>;
+  readonly identity: MutableIdentity;
+  readonly owner: ts.FunctionDeclaration;
+  readonly other: ts.FunctionDeclaration;
+  readonly awaitSite: ts.AwaitExpression;
+  readonly ownerId: IrUnitId;
+  readonly otherId: IrUnitId;
+}
+
+function makeSettledOwnerIdentityProbe(label: string): SettledOwnerIdentityProbe {
+  const ast = analyzeSource(IDENTITY_MUTATION_SOURCE, `issue-3527-settled-owner-identity-${label}.ts`);
+  const inventory = buildIrUnitInventory([ast.sourceFile], { entrySource: ast.sourceFile, checker: ast.checker });
+  const original = buildIrPlanningIdentityContext(inventory);
+  const identity = {
+    ...original,
+    unitIdByDeclaration: new Map(original.unitIdByDeclaration),
+    declarationByUnitId: new Map(original.declarationByUnitId),
+    terminalByUnitId: new Map(original.terminalByUnitId),
+  } as MutableIdentity;
+  const mod = createEmptyModule();
+  const session = new ProgramAbiSession(inventory, mod);
+  const ctx = createCodegenContext(
+    mod,
+    ast.checker,
+    { experimentalIR: true, trackIrOutcomes: true, target: "gc" },
+    session,
+    identity,
+  );
+  ctx.callableSourceFiles = [ast.sourceFile];
+
+  const declarations = ast.sourceFile.statements.filter(ts.isFunctionDeclaration);
+  const owner = declarations.find((declaration) => declaration.name?.text === "owner");
+  const other = declarations.find((declaration) => declaration.name?.text === "other");
+  let awaitSite: ts.AwaitExpression | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isAwaitExpression(node)) awaitSite = node;
+    ts.forEachChild(node, visit);
+  };
+  if (owner) visit(owner);
+  const ownerId = owner === undefined ? undefined : identity.unitIdByDeclaration.get(owner);
+  const otherId = other === undefined ? undefined : identity.unitIdByDeclaration.get(other);
+  if (!owner || !other || !awaitSite || !ownerId || !otherId) {
+    throw new Error(`identity mutation fixture did not produce owner/other/await for ${label}`);
+  }
+  return { ctx, identity, owner, other, awaitSite, ownerId, otherId };
+}
+
+function issueSettledOwner(probe: SettledOwnerIdentityProbe): void {
+  expect(preparedIrAsyncSettledOwner(probe.ctx, probe.owner)).not.toBeNull();
+  expect(preparedIrAsyncSettledOwnerWasIssued(probe.ctx, probe.owner)).toBe(true);
+  expect(prepareAsyncCallableAbi(probe.ctx, probe.owner, [], [{ kind: "f64" }])[1]).toEqual([{ kind: "externref" }]);
+}
+
+function expectIssuedOwnerWithdrawal(probe: SettledOwnerIdentityProbe): void {
+  expect(preparedIrAsyncSettledOwnerWasIssued(probe.ctx, probe.owner)).toBe(true);
+  expect(preparedIrAsyncSettledOwner(probe.ctx, probe.owner)).toBeNull();
+  expect(() => preparedIrAsyncSourceCanSuspend(probe.ctx, probe.owner)).toThrow(/lost its source proof/);
+  expect(() => preparedIrAsyncAwaitSite(probe.ctx, probe.awaitSite)).toThrow(/lost its source proof/);
+  expect(() => prepareAsyncCallableAbi(probe.ctx, probe.owner, [], [{ kind: "f64" }])).toThrow(/lost its source proof/);
+}
+
+const E2E_IDENTITY_LOSS_SOURCE = `
+export async function owner(): Promise<number> { return await 42; }
+export async function other(): Promise<number> { return await 43; }
+`;
+
+function isOwnerFunctionKey(key: unknown, fileName: string): key is ts.FunctionDeclaration {
+  if (typeof key !== "object" || key === null) return false;
+  const node = key as ts.FunctionDeclaration;
+  return (
+    ts.isFunctionDeclaration(node) && node.name?.text === "owner" && node.getSourceFile().fileName.endsWith(fileName)
+  );
+}
+
+async function compileWithIdentityLoss(fileName: string): Promise<CompileResult> {
+  const mapPrototype = Map.prototype as unknown as {
+    get: (key: unknown) => unknown;
+  };
+  const originalGet = mapPrototype.get;
+  let ownerIdentityLookups = 0;
+  let receiptObserved = false;
+  mapPrototype.get = function (this: Map<unknown, unknown>, key: unknown): unknown {
+    const stack = new Error().stack ?? "";
+    const identityLookup = isOwnerFunctionKey(key, fileName) && stack.includes("settledOwnerIdentity");
+    const buildLookup = identityLookup && stack.includes("buildPreparedIrAsyncSettledOwner");
+    const initialReceiptLookup = identityLookup && stack.includes("preparedIrAsyncSettledOwner") && !buildLookup;
+    const value = originalGet.call(this, key);
+    if (identityLookup) {
+      if (initialReceiptLookup) ownerIdentityLookups++;
+      const allowInitialReceiptLookup = initialReceiptLookup && ownerIdentityLookups === 1;
+      if (allowInitialReceiptLookup) receiptObserved = true;
+      if (receiptObserved && !buildLookup && !allowInitialReceiptLookup) return undefined;
+    }
+    return value;
+  };
+  try {
+    return await compile(E2E_IDENTITY_LOSS_SOURCE, options(fileName));
+  } finally {
+    mapPrototype.get = originalGet;
+  }
+}
 
 function options(fileName: string) {
   return {
@@ -203,6 +334,73 @@ describe("#3527 B3 settled non-thenable owners", () => {
     );
     expect(result.success).toBe(false);
     expect(result.errors.some((error) => error.message.includes("lost its source proof"))).toBe(true);
+    expect(result.irCompiledFuncs ?? []).not.toContain("owner__ir_async_state_0");
+  });
+
+  it("retains issuance when the declaration-to-unit mapping disappears", () => {
+    const probe = makeSettledOwnerIdentityProbe("unit-map-deleted");
+    issueSettledOwner(probe);
+    probe.identity.unitIdByDeclaration.delete(probe.owner);
+    expectIssuedOwnerWithdrawal(probe);
+
+    // The withdrawal seam itself must still find the original UnitId after
+    // current identity lookup has failed, so restoring the map cannot revive
+    // a previously promised ABI.
+    forgetPreparedIrAsyncSettledOwner(probe.ctx, probe.owner);
+    probe.identity.unitIdByDeclaration.set(probe.owner, probe.ownerId);
+    expect(preparedIrAsyncSettledOwner(probe.ctx, probe.owner)).toBeNull();
+    expect(preparedIrAsyncSettledOwnerWasIssued(probe.ctx, probe.owner)).toBe(true);
+  });
+
+  it("retains issuance when the terminal identity disappears", () => {
+    const probe = makeSettledOwnerIdentityProbe("terminal-map-deleted");
+    issueSettledOwner(probe);
+    probe.identity.terminalByUnitId.delete(probe.ownerId);
+    expectIssuedOwnerWithdrawal(probe);
+  });
+
+  it("retains issuance when the declaration is rebound to another UnitId", () => {
+    const probe = makeSettledOwnerIdentityProbe("unit-map-rebound");
+    issueSettledOwner(probe);
+    probe.identity.unitIdByDeclaration.set(probe.owner, probe.otherId);
+    expectIssuedOwnerWithdrawal(probe);
+
+    // A rebound declaration cannot mint a second receipt under the other
+    // owner's UnitId, even if the original binding is restored later.
+    forgetPreparedIrAsyncSettledOwner(probe.ctx, probe.owner);
+    probe.identity.unitIdByDeclaration.set(probe.owner, probe.ownerId);
+    expect(preparedIrAsyncSettledOwner(probe.ctx, probe.owner)).toBeNull();
+  });
+
+  it("fails closed when the current source shape disappears after issuance", () => {
+    const probe = makeSettledOwnerIdentityProbe("source-shape-disappeared");
+    issueSettledOwner(probe);
+    const originalBody = probe.owner.body;
+    probe.owner.body = undefined;
+    try {
+      expect(preparedIrAsyncSettledOwnerWasIssued(probe.ctx, probe.owner)).toBe(true);
+      expect(preparedIrAsyncSettledOwner(probe.ctx, probe.owner)).toBeNull();
+      expect(() => preparedIrAsyncSourceCanSuspend(probe.ctx, probe.owner)).toThrow(/lost its source proof/);
+      expect(() => preparedIrAsyncAwaitSite(probe.ctx, probe.awaitSite)).toThrow(/lost its source proof/);
+    } finally {
+      probe.owner.body = originalBody;
+    }
+  });
+
+  it("rejects identity loss before direct body publication", async () => {
+    const fileName = "issue-3527-settled-owner-identity-loss-e2e.ts";
+    const result = await compileWithIdentityLoss(fileName);
+    expect(result.success).toBe(false);
+    const row = outcome(result, "owner");
+    expect(row).toMatchObject({
+      kind: "invariant",
+      code: "selection-preparation-mismatch",
+      legacyBodyEmitted: false,
+      irBodyEmitted: false,
+    });
+    expect(row.directBodyEmissions ?? 0).toBe(0);
+    expect(row.irBodyEmissions ?? 0).toBe(0);
+    expect(row.detail).toContain("lost its source proof");
     expect(result.irCompiledFuncs ?? []).not.toContain("owner__ir_async_state_0");
   });
 
