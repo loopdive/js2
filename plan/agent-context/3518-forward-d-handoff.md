@@ -168,3 +168,34 @@ not automatically attributed to a compiler regression. Parent shepherding and
 integration with C's later head remain explicit. No merge, main push, baseline
 change, force push, signing override, hook bypass, or manual stash operation
 was performed by this continuation.
+
+## Held PR 5717 — canonical-main conflict repair, 2026-09-07
+
+Normal merge of canonical main `b577c29420d98069748c4416293e2ba019893db1`
+into D checkpoint `cdd1035494df1a1cd734a13b5c8e866ecf203bd2`, in the same
+isolated D worktree/branch. Only the 3518 and 3527 plan documents conflicted.
+Their resolutions retain each complete historical HEAD document followed by
+the already-published canonical-main continuation section, verified byte for
+byte. No unpublished draft was obtained or shared. All twelve incoming source
+files match the canonical merge parent; D gate, tests and fixtures are unchanged.
+
+After B explicitly released the resource slot, serial focused verification
+passed 53/53 tests in five files: 16 public-retirement instrument controls,
+14 existing IR-only gate controls, 9 whole-program route-audit controls,
+11 incoming typed-array host-boundary tests, and 3 class-constructor identity
+tests. This includes pending-promise/Wasm-loop timeout and genuine replay
+global-read controls.
+
+The full public gate was rerun on the merged working tree before the merge
+commit (its HEAD field therefore names `cdd1035494df1a1cd734a13b5c8e866ecf203bd2`,
+not the resulting merge commit). Local report:
+`.tmp/3518-forward-d/public-report-merged-main.json`. Gate and corpus hashes
+remain the exact values recorded above. It exits 1, **incomplete**, with
+49/49 accounted and completed entries, 39 compiler successes, 9 failures,
+1 unavailable success status, 280 findings, zero public phase events, and
+84/116 runtime call rows returned with 63/116 matching. These aggregate
+results are unchanged from the preceding checkpoint; passing instrument tests
+is not passing migration evidence. The production requirements above remain.
+
+PR 5717 remains held, with PR 5692 an explicit stack dependency and parent
+shepherding unchanged. Original claims, branches and worktrees are preserved.

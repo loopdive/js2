@@ -16,6 +16,7 @@ import { ensureHoleType } from "./array-holes.js";
 import type { CodegenContext } from "./context/types.js";
 import { exportFunc } from "./emit-helpers.js";
 import { ensureGetUndefined } from "./expressions/late-imports.js";
+import { hasFixedHostMethodCallImport } from "./fixed-host-method-call.js";
 import { definedFuncAt, definedFuncHandleOf, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { PROGRAM_ABI_CALLABLE_ROLE } from "./program-abi-planning.js";
 import { addUnionImports } from "./registry/imports.js";
@@ -1218,6 +1219,7 @@ function _emitVecAccessExportsInner(ctx: CodegenContext): void {
       // before compiled aliases observe the vec again.
       ctx.funcMap.has("__proto_method_call") ||
       ctx.funcMap.has("__extern_method_call") ||
+      hasFixedHostMethodCallImport(ctx) ||
       ctx.funcMap.has("__call_function") ||
       ctx.funcMap.has("__call_function_0") ||
       ctx.funcMap.has("__call_function_1") ||

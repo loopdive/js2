@@ -1592,3 +1592,133 @@ The full `118/118` cohort above is separate. The parent integration lane owns
 the already-reviewed #4106 exnref validation fix and must pass that existing
 control and the normal combined hooks on the composed candidate before any
 publication is authorized.
+
+## Astra High lane B — prepared frame engine without AST reachability (2026-09-07)
+
+Continue `ttraenkler/astra-ir-producers-b-20260905`'s held
+`prepared-async-frame-engine` scope, branch
+`codex/3518-prepared-async-frame-reconciled-20260907`; liveness and latest
+commits must be recovered by the lead. Implementation model: **Astra Low**.
+The [epic continuation specification](3518-ir-only-default-and-direct-frontend-retirement.md)
+records all peer claims and package C's exclusive files. This plan is not a
+replacement dispatch and does not authorize rewriting C's consumer.
+
+### Why the current prepared input does not retire the direct graph
+
+At upstream `b3133d1d4da1151d82ef45b58db9566565097c57`,
+`src/codegen/ir-async-frame.ts` imports
+`emitPreparedAsyncFrameStateMachine` from `src/codegen/async-frame.ts`.
+`lowerPreparedIrAsyncFunction` verifies current runtime identity, builds a
+frame layout and passes a callback CFG to that shared engine. The wrapper
+calls `emitAsyncFrameEntry(..., null, cfg)`; the shared engine still imports
+AST expression/statement dispatch and the checker-backed CPS machinery.
+`AsyncCfgOperand` in `async-cps.ts` accepts either a `ts.Expression` or an
+emit callback. The runtime path's type surface therefore permits AST fallback,
+and its transitive import graph retains the direct walkers even when one
+particular function supplies only callbacks.
+
+`buildFrameInfo` also allocates types immediately, and the shared entry code
+recovers a resume index from `ctx.funcMap` by a sanitized function name. The
+next slice must separate pure physical requirements from allocation and
+preserve exact allocated object identity across index changes. Copying the
+AST-bearing union into a differently named file does not achieve this.
+
+### Ownership, design and invariants
+
+Write only `src/codegen/ir-async-frame.ts`, new/recovered
+`src/codegen/prepared-async-frame-engine.ts`, new
+`src/codegen/prepared-async-frame-types.ts`,
+`tests/issue-3527-prepared-frame-import-boundary.test.ts`, and
+`tests/issue-3527-prepared-frame-runtime.test.ts`. Reuse already implemented
+B extraction modules if recovery finds them. Treat `async-frame.ts`,
+`async-cps.ts`, A's program contracts, C's consumer/physical plan and the
+separate runtime host-adapter owner as read-only. If a required shared API is
+absent, report the exact contract change to its owner rather than silently
+widening this lock.
+
+1. Define prepared-only local emission types. State leads are emission
+   operations derived from validated IR, terminators reference typed value
+   IDs or local emission operations, and handler/finalizer state comes from
+   the semantic plan. No `ts.Node`, checker, AST-or-emit union, source text or
+   parser callback belongs to these types. Process-local emission callbacks
+   are permitted only **after** backend acceptance; they are never serialized
+   as part of `PreparedIrProgram` or its runtime projection.
+2. Move only the prepared entry/resume algorithm into the new engine. Consume
+   a complete preaccepted frame layout, spill mapping, Promise carrier,
+   callback adapters, type/function/global handles and exception contract.
+   Preflight proves all required resources and supported state/handler shapes
+   before allocation. Unknown materialization remains C's located Unsupported;
+   malformed plans are invariants. No lazy `ensure*` discovery in accepted
+   emission, and no emitter-internal frontend selection.
+3. Replace the import from `async-frame.ts` and the dependency on
+   `AsyncCfgPlan` from `async-cps.ts` in `ir-async-frame.ts`. Reuse physical
+   helpers only when their runtime import closure excludes AST/checker/direct
+   dispatch. Type-only imports are erased and should be distinguished by the
+   boundary test. Avoid the broad `shared.ts` barrel when it pulls legacy
+   dispatchers; name the actual primitive module for required coercion/locals.
+4. Bind entry/resume/callback references by existing symbolic binding IDs and
+   allocator objects, never `fn.name`, sanitized stems or suffix search.
+   Resolve the current physical index from that handle. Preserve import
+   shifting, DCE remapping and recurrence group rules; failing handle
+   resolution cannot fall back to a saved number or name lookup.
+5. Preserve the existing semantic graph and state order. Entry runs once to
+   the first suspension; continuation resumes the planned state; live values
+   survive repeated awaits; fulfillment/rejection/throw keep Promise identity
+   and microtask behavior. This extraction does not widen supported handlers:
+   upstream `preparedCfg` rejects nonempty handlers, so adding full finally
+   support requires separately validated lowering and is not an incidental
+   part of moving the engine.
+6. C adopts the new physical engine through its own acceptance/materialization
+   implementation after B supplies requirements and tests. B demonstrates a
+   real lowerer/runtime positive control; it does not patch C to make a missing
+   runtime provider appear available. Leave legacy AST engine deletion for the
+   final whole-program reachability cut, after all users have migrated.
+
+### Acceptance with load-bearing controls
+
+- Fresh-process runtime import census for the prepared engine and its actual
+  entry adapter must contain no `typescript`, `ts-api`, checker,
+  `codegen/expressions`, `codegen/statements`, `async-cps`, or `async-frame`
+  runtime module. Use actual loaded modules, not only an import-text grep.
+  Inject a forbidden import in a temporary fixture and prove the census fails;
+  absence of events/unsupported instrumentation fails rather than returning
+  an empty successful census.
+- Execute an input-dependent async function with two numeric awaits and a live
+  value carried across both; assert exact result, stable returned Promise and
+  callback/microtask ordering against JavaScript. Exercise host and supported
+  standalone native Promise runtime. C's linear runtime refusal is recorded
+  as a dependency until its owner supplies physical support.
+- Two same-named async functions in different sources must have distinct
+  frames/resume targets. Add a user export matching the old sanitized resume
+  name. Both results remain correct. Inject a late import/remap through an
+  approved allocator test seam and assert handle resolution selects the same
+  object; an unbound handle is fatal, never name-resolved.
+- A stale plan/current-runtime pair, foreign-owner projection, missing spill,
+  missing callback capability, unsupported handler, duplicate state, and wrong
+  Promise result carrier each fail before emission with the appropriate
+  invariant or supported capability classification. After acceptance, remove
+  a bound resource via a test seam: emission fails without publishing output
+  or retrying through AST. Keep a passing scalar control in the same harness.
+- Poison legacy AST body entry on a previously supported prepared async
+  fixture; prepared execution passes. Restore only the legacy-engine import
+  in an isolated removal control and require the module-boundary test to fail.
+  The original body must remain input-dependent so constant folding cannot
+  erase the evidence.
+
+Run the existing prepared async/currentness/frame suites identified in the
+recovered B branch, the two new tests, async equivalence, typecheck, IR
+layering/dialect/kind checks and resource/LOC/function ratchets. Compare base
+and candidate outputs on the same runtime configuration. Record final
+functions/imports/frame fields, executed values, phase and failure rows.
+Do not describe an AST-free parameter type or a mocked engine as completed
+AST-free backend emission.
+
+**Astra Low lane B prompt:** Resume the existing prepared-frame extraction
+with the exact ownership above, after the lead confirms its recovered head.
+You are not alone in the repository; preserve other edits, including C and the
+host-provider owner. Reproduce the actual prepared-to-legacy import path,
+then remove it by a prepared-only physical engine with no semantic AST
+fallback. Validate loaded-module census, two-await runtime behavior,
+source-qualified resume identity, tamper failures and the import removal
+control. Return the exact requirements C must materialize, without changing
+C's implementation or claiming its async acceptance has passed.
