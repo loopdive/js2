@@ -30,7 +30,7 @@ loc-budget-allow:
   - src/ir/builder.ts
   - src/ir/from-ast.ts
   - src/ir/integration.ts
-  - src/ir/lower.ts
+  - src/ir/lower-generic.ts
   - src/ir/nodes.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
@@ -43,8 +43,8 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerFunctionAstToIr
   - src/ir/integration.ts::compileIrPathFunctions
   - src/ir/integration.ts::makeResolver
-  - src/ir/lower.ts::emitInstrTree
-  - src/ir/lower.ts::lowerIrFunctionBody
+  - src/ir/lower-generic.ts::emitInstrTree
+  - src/ir/lower-generic.ts::lowerIrFunctionBody
   - src/ir/passes/inline-small.ts::renameInstrOperands
   - src/ir/prepared-component-dependencies.ts::collectFunctionEvidence
   - src/ir/select-identity.ts::planIrCompilationByIdentity
@@ -119,7 +119,134 @@ Foundation PR 5733 landed at `fa9e1ea0c7986b53f290e88822b262ab10ca62f4`;
 the published F0 head is verified in upstream/main ancestry. The isolated ABI
 draft has 59/59 tests and typecheck passing, with parent composition and artifact
 parity still pending. The [lowering-cycle proposal](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
-is the next bounded plan, not a competing dispatch or completed dependency split.
+was dispatched as the bounded checkpoint below. Neither is direct-codegen retirement.
+
+### Lowering-cycle implementation checkpoint — 2026-09-08
+
+The Astra High [lowering-cycle plan](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
+is implemented by the existing Astra Low native agent, with parent-owned
+integration and controls. The new authoritative claim is
+`3518:lowering-cycle-separation`, owner
+`ttraenkler/codex-astra-lowering-cycle-20260908`, write ID `33574-pj5u0k6s`.
+The old linear handoff PR 5618 was verified merged at
+`e204b64fc810e1cb359f0530dfd7c1c4ec461258`, with its exact head in main's
+ancestry. The earlier recorded Luna stand-down and parent integration scope
+were reconciled. Historical claims and all P/C/ABI drafts remain untouched.
+
+Generic lowering now lives in `src/ir/lower-generic.ts`; concrete Wasm assembly,
+constant instructions and resolver/result contracts live in three explicitly
+named backend modules. `src/ir/lower.ts` is an explicit compatibility facade.
+All eight original runtime exports retain object identity. Generic lowering
+still requires its emitter/converter and no longer imports the concrete
+emitter, convenience wrapper or facade. The measured bounded value graph has
+17 modules/19 edges, including all 12 direct dependencies; negative controls
+inject reverse, unknown, unresolved and unparsed edges. This does not certify
+resolver callbacks, pure IR types or the whole compiler's closure.
+
+The 4595-line original splits into 4193 generic, 313 contract, 90 wrapper,
+31 constant and 22 facade lines: 4649 combined, a 54-line scaffolding increase.
+Three additional import-splitting lines in consumers give net source growth
+of 57 lines. All 22 named function-declaration bodies were compared unchanged;
+the nested `emitInstrTree` arrow was checked separately. The function-budget
+spans remain 2297 and 3380 respectively. Exact braced-body SHA256s are:
+
+- `emitInstrTree`: `75c0cceb6224dda24e892bcc5433532f10985c863b09fd4ae4245037811a2424`.
+- `lowerIrFunctionBody`: `ed92c0a576009ab30571152c9b01dfc6caf19a2e2ca3dfb436edef32b4436739`.
+
+Only the existing issue's one file allowance and two function allowance keys
+move to the new canonical path; old allowance keys are retired. Neither budget
+baseline nor checker is changed. The initial-relocation test verifies exact
+bodies/spans, unchanged baseline contents and the one-for-one allowance map,
+and fails if the comparison base is unavailable. It explicitly skips this
+initial-only receipt after a canonical lowering implementation already exists
+at the comparison base; the ongoing raw-emission controls remain active.
+
+The real pushRaw gate now requires all five resulting files, including in its
+whole-tree and JSON modes. For the first split it compares generic lowering
+against the old file using actual text diffs, including untracked destinations;
+the facade and other new files receive no duplicate legacy-site credit. Later
+changes compare canonical paths against themselves. All 60 current raw sites
+remain (10 tagged, 50 untagged), with zero added sites. The old fallback ceiling
+of 82 untagged sites is unchanged, not reseeded upward or silently reduced by
+the move. Missing destinations, new untagged sites, count-neutral replacements,
+duplicate facade sites and incomplete coverage metadata are negative controls.
+
+One test-only write-map amendment repairs an existing bytecode call fixture:
+`tests/ir-bytecode-proof.test.ts` used a target with no required binding.
+The parent reproduced its exact `binding.kind` failure on clean foundation
+`d71fab8b9565ad3a2bb567ed82f22e8750e804a4` (one selected failure, 22 explicitly
+skipped), before integrating `irUnitFuncRef(irIdentities.next("add"))`.
+Its resolver and exact `LOAD 0 / LOAD 1 / CALL 1 / RET` expectation remain.
+The original existing cohort is now 45/45, while new lowering/relocation plus
+retained pushRaw controls are 57/57; no tests are hidden from those counts.
+After syncing the artifact-only main update `120cd638cf2a971934eaaccf47aaf65f06491f3d`,
+the final combined gate/boundary/self-host cohort passed 101/101: those 57
+controls, all 42 existing D0 controls and both existing self-host producer tests.
+Typecheck and both source-size gates pass. The six N1 production witnesses
+remain 6/6 full and 6/6 with the legacy handlers cut, while both nonliteral
+imports and the strict closure/retirement failures remain visible.
+
+Exact local paired evidence uses Node v22.23.2 + tsx, unoptimized standalone
+WasmGC: clean N1 head `36ea5ce9f54190c1f2c7af0466cf768afb453394` versus that
+source plus this split composed on `b46055f4fefc817368095afbfe1a9b85d72b3082`.
+Incoming main commits changed only artifacts and the existing LOC dashboard.
+The public IR branch/loop fixture has identical full bytes, WAT, imports,
+exports, string pool and results `[7,-2,-7,0,0,10]`: 22707 bytes, SHA256
+`80e45e15ecaa4a83a9319595b0e04236a6865814ae0baf806e86b69982c9706f`.
+The real `emitSelfHostedFunc` producer/registration/lowering fixture preserves
+the complete function/type/global/ordinal order and results `[42,0]`: 114
+bytes, SHA256 `67b02ec78d47fe382c9c2815d1cd42d1ebe472dcafc0d1fc77c5c8f7490cc388`.
+Both modules validate and instantiate with zero imports. This is not an
+optimization-enabled or full-conformance result.
+
+The composed D0 inventory covers 1248 modules, retains six clean modules and
+all older debt, and observes 9770 resolved edges (2502 type-only/7268 runtime),
+four unknown edges and zero inventory errors. All four new lowering files
+remain explicitly unmigrated/mixed; removing this cycle does not promote them
+to certified pure modules. Complete architecture remains false.
+
+### N1 landed CI incident and publication hold — 2026-09-08
+
+PR 5735 landed as `b9a67c10b4b06cabcc020e0dea1dfa105267661e`; its published
+head and exact source/gate/test content were verified on upstream main.
+This is **not a clean CI landing**. Its [actual merge-group regression job](https://github.com/loopdive/js2/actions/runs/34167945399/job/101885705677)
+failed at 23:10:38 UTC September 7 with 20 host pass-to-fail transitions: 18
+Temporal and two BigInt typed-array tests. A hold label was applied at
+23:10:56, but the merge bot landed it at 23:12:42.
+
+Read-only inspection found that ruleset 16700772 uses `HEADGREEN`: only the
+final cumulative head must be green. The subsequent metadata-only PR 5734
+compared `b9a67c10...` to its cumulative head `b46055f4...`, selected no shards,
+and received a [successful no-op regression job](https://github.com/loopdive/js2/actions/runs/34169177677/job/101886099044)
+at 23:11:37. Its comparison excluded N1's changes. The parking helper adds a
+label but does not dequeue. The evidence supports cumulative-head/path-filter
+interaction, not an administrative bypass. Repository settings and CI have
+not been changed; permission for a separate CI-safety PR has been requested.
+
+The failing gate used cached foundation `fa9e1ea0...`, one artifact-only commit
+behind its exact base `8b679f89...`. Direct comparison of that foundation's
+run 34165082130 and N1 run 34167945399 artifacts reproduces exactly 20 host
+transitions and zero standalone status transitions, with 48735 unique paths
+per side per lane. No paired Wasm hashes are present in those JSONL records;
+the gate's "with wasm-hash change" count is not positive evidence of different
+binaries. The two downloaded CI Temporal providers are independently identical:
+1701142 bytes, SHA256
+`332629e79db0b0c3b7e773cb6bb34b4711a17d39ef8bf8cb5936184983eb7ff2`.
+
+Bounded local follow-up used the actual bundled CI worker and honest original
+harness, with fresh workers per row and the normal primary/strict sequence.
+On both clean d71 foundation and published N1, both BigInt failures and three
+representative Temporal failures pass, along with one non-BigInt typed-array
+and one Temporal positive control: 14/14 variants per side, identical complete
+binaries, imports and pools. Temporal uses each side's downloaded CI provider
+and a verified warm cache hit. This samples five of the twenty failing paths;
+it does not reproduce long-lived CI shard history, erase the CI failures or
+establish their cause. The other fifteen paths have not been locally rerun.
+
+The lowering checkpoint may be published non-draft for review, but must retain
+an explicit hold until inherited host-failure attribution and safe queue
+validation are resolved. Do not weaken a gate, waive these rows, claim IR
+retirement, or treat the ABI compatibility question as approved.
 
 ## Historical execution plan — whole-program cutover (2026-09-05)
 
