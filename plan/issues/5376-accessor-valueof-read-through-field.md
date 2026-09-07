@@ -1,6 +1,6 @@
 ---
 id: 5376
-title: "An accessor-backed `get valueOf()` read through a field coerces to 0 with the getter never run — this is the shape `TemporalHelpers.toPrimitiveObserver` mints (the `infinity-throws-rangeerror` ×3 and every observer row)"
+title: "An accessor-backed `get valueOf()` written INLINE as an object-literal field coerces to 0 with the getter never run (the `toPrimitiveObserver` / `infinity-throws-rangeerror` attribution below was MEASURED FALSE — see `## Measurement`)"
 status: done
 sprint: current
 priority: high
@@ -59,6 +59,16 @@ combination — accessor-backed method, object obtained by reading a field —
 loses it, and it loses it silently as `0`, not as a throw.
 
 ## Why it matters
+
+> **Superseded by `## Measurement` below.** Everything in this section is the
+> lane's pre-fix *inference* about Temporal impact, and the post-fix measurement
+> disproves it: `toPrimitiveObserver` mints its object inside a FUNCTION and the
+> test hands it over as an identifier, which never had this defect; and all
+> three `infinity-throws-rangeerror` rows fail at their FIRST assertion, on a
+> raw `eraYear: Infinity` with a `gregory` calendar, before the observer is
+> constructed. Kept, struck through in spirit, because the wrong inference is
+> the interesting part of the record.
+
 
 `TemporalHelpers.toPrimitiveObserver` (test262 `harness/temporalHelpers.js`
 ~L1101) mints exactly that shape:
@@ -203,6 +213,76 @@ stored — the accessor case is that bug one step further along.
 Method-shorthand values keep their struct field type byte-for-byte; the
 direct-coercion rows b/d never reach this code.
 
+## Measurement (2026-09-06/07, resumed lane)
+
+Base = this branch with the `ensureStructForType` hunk reverted (`src/runtime.ts`
+keeps #5374, so the only variable is #5376). Fix = the branch as committed. Both
+sides through `tests/test262-runner.ts` (driver `.tmp/bucket-run.mts`, one TSV row
+per test so a flip inside an already-failing row is visible), `JS2WASM_TEST262_TEMPORAL=1`,
+a FRESH `JS2WASM_TEMPORAL_CACHE` per side (both logged `cacheHit=false`: base
+`built in 47032ms`, fix `built in 53808ms` — the provider was cold-built against
+each compiler, not reused).
+
+Row set = 170: the 3 named `intl402/**/infinity-throws-rangeerror.js` rows plus the
+bounded sample `grep -rl "toPrimitiveObserver\|checkStringOptionWrongType\|checkRoundingIncrement"
+test262/test/built-ins/Temporal | head -400`, which yields **167** files (the `head -400`
+cap never binds). Never the full bucket.
+
+| side | rows | pass | fail | artifact |
+| --- | --- | --- | --- | --- |
+| base | 170 | 1 | 169 | `.tmp/base170.tsv` (md5 `fbf36f04a57ed7d92254dabe312c19ed`) |
+| fix | 170 | 1 | 169 | `.tmp/fix170.tsv` (same md5 — the two files are BYTE-IDENTICAL, reason strings included) |
+
+**0 pass→fail. 0 fail→pass.** The single pass on both sides is
+`built-ins/Temporal/PlainTime/from/observable-get-overflow-argument-string-invalid.js`.
+
+### Acceptance criteria — outcome
+
+1. **Met.** Rows e and f answer `3` / `3:g,c` in all three lanes
+   (single module, two modules in one unit, separately linked provider);
+   `tests/issue-5376-accessor-valueof-field-read.test.ts`. On base the same file
+   fails in all three lanes with exactly `fieldReadValueOf: 0` and
+   `observerCallOrder: "0:"` — measured by reverting only `src/codegen/index.ts`.
+2. **NOT met, and the criterion's premise is false.** The 3 rows fail identically
+   before and after. They fail at their FIRST assertion — L15 / L15 / L14 —
+   which is `assert.throws(RangeError, () => …from({ ...base, eraYear: Infinity }))`
+   with `era: "ad"` and `calendar: "gregory"`, i.e. a raw `Infinity`, no observer
+   in sight. The observer lines (L18–L20) are never reached. Attribution error:
+   the issue read `toPrimitiveObserver` in the file and assumed it was the blocker.
+3. **Met** — table above.
+
+### Why the observer family was never this bug
+
+`toPrimitiveObserver` builds its object inside a function and RETURNS it; the test
+binds it to `const obj` and writes `{ ...base, eraYear: obj }`. The property's value
+is therefore an identifier, not an inline object literal. Measured on base
+(`.tmp/probe-5376b.mts`, single module, host lane):
+
+| shape | base | fix |
+| --- | --- | --- |
+| `num({ v: { get valueOf() { return () => 3 } } })` (inline literal) | **0** | **3** |
+| `num({ v: mk() })` where `mk()` returns the accessor object | 3 | 3 |
+| `const t = mk(); num({ v: t })` | 3 | 3 |
+| `const t = mk(); Number(t)` | 3 | 3 |
+| `const t = mk(); num({ ...base, v: t })` | 3 | 3 |
+
+Only the INLINE-literal store was broken, and only it is fixed. The store site is
+where the field's ValType is decided from the initializer's own syntax; a value
+arriving from a call already has a widened slot.
+
+### Residual, measured, NOT this issue
+
+An accessor-backed `valueOf` handed to the **linked Temporal provider** still
+coerces wrong. Probe `.tmp/probe262/observer.js` — a one-row test262-shaped file
+using the real `TemporalHelpers.toPrimitiveObserver` through
+`Temporal.PlainDate.from({ year: 2000, month: obj, day: 1 })` — answers
+`RangeError: Cannot convert a number less than one to a positive integer`
+**identically on base and on fix**. Method-shorthand `valueOf` through the same
+seam answers 3 (recorded on #5374). So the seam has an ACCESSOR-specific
+ToPrimitive gap that #5374 did not cover and #5376 cannot reach. Bound:
+unmeasured beyond this one probe — it needs its own issue and its own base-vs-fix
+row count.
+
 ## Reported, not fixed
 
 `objectLiteralForcesHostPath` has other arms that build a host externref and so
@@ -212,3 +292,24 @@ colon-form `__proto__`, and (via `objectLiteralSpreadTakesHostPath`) a
 spread-containing literal in a non-specific context. Only the accessor arm is
 fixed here, because only it was measured. Bound: unmeasured — each needs its own
 base-vs-fix row count before the predicate is widened.
+
+## Gates run (2026-09-06/07)
+
+typecheck · lint · `check:loc-budget` (also with `LOC_GATE_BASE=origin/main`) ·
+`check:func-budget` · `check:coercion-sites` · `check:oracle-ratchet` ·
+`check:dead-exports` · `check:host-import-policy` — all OK. `equivalence-gate`:
+**22 failing / 1720 passing** against a 24-known-failure baseline, no new
+regressions (two unrelated `optional-direct-closure-call` baseline rows now pass;
+left un-ratcheted, that is a main-side ratchet, not this change's).
+
+Provider suites (#5221 #5225 #5226 #5237 #5239 #5241 #5242 #5244 #5248 #5250
+#5251 #5352 #5355 #5374 #4628-temporal-global): 15 files, 91 tests, all pass.
+ToPrimitive suites (#1917 #2175 #2358 #2638 #2679 #2891 #3481 #4429 #5102 #5342):
+30 files, 355 pass / 8 skipped / **4 fail**. The 4 are standalone-lane and
+**pre-existing**: re-run with only `src/codegen/index.ts` reverted to base, the
+same 4 fail (`#2358` string-element join, `#4429` ×2 `this`-binding, `#5102`
+getter-abrupt control).
+
+`src/runtime.ts` is 19334 lines after merging main (main 19321 + #5374's +13);
+`plan/audit/host-import-policy-baseline.json` `maximumRuntimeTsLines` set to that
+measured value, and the host-import-policy gate re-run green against it.
