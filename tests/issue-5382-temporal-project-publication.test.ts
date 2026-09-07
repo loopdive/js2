@@ -20,7 +20,7 @@ const expected = {
     'import { Temporal } from "@js-temporal/polyfill";\nexport function __js2wasm_temporal_probe() { return typeof Temporal; }\n',
   ).toString("hex"),
 };
-const root = fs.mkdtempSync(path.join(tmpdir(), "issue-5382-"));
+const root = fs.realpathSync(fs.mkdtempSync(path.join(tmpdir(), "issue-5382-")));
 const bundle = path.join(root, "provider.mjs");
 const fixture = path.join(import.meta.dirname, "fixtures/issue-5382-temporal-publication-child.mjs");
 type Outcome = {
@@ -89,7 +89,12 @@ function child(cacheDir: string, extra: Record<string, unknown> = {}) {
     process.on("error", reject);
     process.on("close", (code) => {
       clearTimeout(timer);
-      if (!reached) rejectBarrier(new Error(`Barrier not reached: ${stderr} ${JSON.stringify(outcome)}`));
+      if (!reached)
+        rejectBarrier(
+          new Error(
+            `Barrier not reached: ${stderr} ${JSON.stringify({ ok: outcome?.ok, error: outcome?.error, readPaths: outcome?.reads?.map((read) => read.path) })}`,
+          ),
+        );
       if (code !== 0 || !outcome) reject(new Error(`child exit=${code}: ${stderr}`));
       else resolve(outcome);
     });
@@ -165,7 +170,9 @@ it.skipIf(!process.env.ISSUE5382_BASELINE_BUNDLE)(
       format: "esm",
       packages: "external",
       outfile: realBundle,
-      banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' },
+      banner: {
+        js: 'import { createRequire as issue5382Require } from "node:module"; const require = issue5382Require(import.meta.url);',
+      },
     });
     fs.symlinkSync(path.join(repo, "node_modules"), path.join(root, "node_modules"));
     const { loadTemporalPolyfillSource, writeTemporalPrewarmStamp, readTemporalPrewarmStamp } =

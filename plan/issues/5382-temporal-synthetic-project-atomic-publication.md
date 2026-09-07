@@ -264,11 +264,12 @@ trees, corrupt winners fail before compilation, old/new processes use
 disjoint synthetic layouts, and compiled-provider identity/cache reuse is
 unchanged. The PR must contain only the scoped source/test repair and this
 issue's measured completion record, pass normal hooks, and retain other
-owners' claims and worktrees. The current change is specification only;
-none of the proposed repair controls has yet been run on an implementation.
+owners' claims and worktrees. At specification authorship, none of the proposed
+repair controls had run; the implementation measurements below supersede that
+specification-only state.
 
 
-## Implementation checkpoint — Astra Low, 2026-09-07
+## Measured implementation handoff — Astra Low, 2026-09-07
 
 Implementation worktree: `/private/tmp/js2-5382-temporal-publication-impl`.
 Branch: `codex/5382-temporal-atomic-publication`.
@@ -291,26 +292,77 @@ most two 192 MB children inside one 512 MB Vitest fork. Barriers acknowledge
 their arrival and block on parent input with a bounded parent deadline.
 These tests do not claim real provider compilation or conformance results.
 
-Measured on Node 22.23.2 / Darwin arm64, TypeScript 5.9.3, Vitest 3.2.4:
-50/50 executed tests pass (32 publication, 14 issue5353 sharded-lane,
-4 issue5248 wiring); 1 real-provider test is explicitly skipped. The focused
-command uses one Vitest fork and no file parallelism. LOC and function budget
-checks pass for the scoped source change. These are local, not CI results.
+The initial checkpoint was `8c3629d4f13231ad142958efe062373cb8593432`.
+Its Node 22.23.2 run had 50 passes and one required real control skipped; that
+was explicitly not acceptance. The parent subsequently released the heavy slot.
+The following Node 25.9.0 / Darwin arm64 measurements supersede that skip:
 
-Verification is in progress. The real linked-provider migration/interleaving
-test is explicitly opt-in via `ISSUE5382_BASELINE_BUNDLE` (the old builder and
-environment exports) and requires the parent-coordinated heavy-test slot.
-It compiles the current provider bundle itself, acquires the pinned polyfill
-through the existing helper, compares source-ref metadata, provider cache key,
-namespace, getter/binary exports, byte/hash identity, prewarm stamp and legacy
-source metadata, and requires real cache hits. Both entry and polyfill reads
-are paused at the actual compiler resolver while the old initializer runs.
-A successful process exit alone is not accepted.
+- Publication file: **33/33 pass, none skipped**, including the real linked
+  migration and both old/new compiler-read interleavings (32.29 s total).
+- Existing controls: **29/29 pass**, comprising issue4628 provider/global
+  controls (11), issue5353 sharded-lane controls (14), and issue5248 wiring (4).
+  The issue4628 heavy child built a fresh provider (`cacheHit: false`), then
+  all **25/25 supported runtime probes** passed. Its three existing known-gap
+  observations remain reported, not silently promoted to supported tests.
+- Total: **62/62 distinct tests**, none skipped in these verification runs.
+  TypeScript compiler dependency 5.9.3; Vitest 3.2.4. One Vitest fork, no file
+  parallelism; real initializer heaps 768 MB, at most two initializer processes.
+  These are local host-lane checks, not CI or a Test262 corpus measurement.
 
-Pending: execute that real control and existing heavy provider controls after
-coordination; full typecheck/pre-push after D's typecheck and B's next pre-push
-slots; normal commit hooks; publication of a ready non-draft PR only when the
-remaining acceptance checks are resolved. No hook bypass is authorized.
+The old builder was read directly from git blob
+`ec6d2efc3241e8698b0755983491a85ebcbca5eb:src/temporal-provider.ts`, source SHA-256
+`674d7c12e519d92c802362cc722cb7559ada3b8e575fd02def780f0df17f6fea`.
+Every other compiler source and dependency was identical to the implementation
+worktree. The test bundles use the same esbuild options, environment exports,
+and require shim; no historical compiler revision was mixed into this A/B.
+The preserved original bundle (`4ba1c719…`) had a duplicate `createRequire`
+banner declaration and could not load. The corrected old bundle is
+`.tmp/issue5382-baseline-provider-v2.mjs`, SHA-256
+`bfdf8cfa2b093579285367f43661c299850853b3c81f4161160816af8375104e`.
+The first executable run also correctly refused acceptance when a noncanonical
+macOS temporary path prevented its compiler-read barrier from being reached.
+Canonicalizing the test root fixed the instrumentation, not production code.
+
+Exact real-control provenance:
+
+- Polyfill source: 157546 bytes, SHA-256
+  `68b811af28240d9ac917c7c26628d7794190e0e367e791b150b5a527cda9e7be`.
+- Unchanged provider/prewarm input key:
+  `372a41be9bdeb22ade63a811b4b26afce75694ee0d9b7cf928c24ddad739020b`.
+- Unchanged linker source fingerprint:
+  `3fac10330db10667fdc54b9f775538cf546827af564bb6efea22e05b2f377ceb`.
+- Provider: **2090802 bytes**, binary SHA-256 and artifact cache key
+  `2d1e8f3deda3fbdab06bcdf204113dc99793d3abeec27507723c23aa25cf5e37`.
+- Namespace: `js2wasm:npm:@js-temporal/polyfill:2d1e8f3deda3fbda`;
+  getter: `__js2wasm_get_Temporal_ba822575`; 901 binary exports agree exactly.
+- Old cold build: cache miss. Repaired migration: real cache hit. Both resumed
+  repaired readers and both old warm initializers: real cache hits. All six
+  builds succeeded with the same artifact identity.
+- Entry and polyfill compiler-read barriers were both acknowledged. Each
+  repaired reader recorded 10 actual reads, all matching complete expected
+  bytes (entry 121, package metadata 75, polyfill 157546). Old initializers
+  performed their production legacy writes while each new reader was paused.
+  New readers performed zero mutations of the published tree. Initial
+  migration preserved all legacy file bytes, inode/mtime/ctime, provider ref
+  contents and prewarm stamp bytes.
+
+Reproduction: set `ISSUE5382_BASELINE_BUNDLE` to that exact old bundle and
+`ISSUE5382_REPORT` to a private report path, then run the focused publication
+file under Node 25.9.0 with `VITEST_MAX_FORKS=1`,
+`VITEST_FORK_MAX_OLD_SPACE_SIZE=512` and `--no-file-parallelism`.
+The report is `.tmp/issue5382-real-migration.json`; the existing end-to-end
+report is `tests/dogfood/report/temporal-global.json`. They are local evidence,
+not committed generated artifacts. Default CI invocation leaves the explicitly
+opt-in migration test skipped; the manual required acceptance run above did not.
+
+Normal checkpoint hooks passed: prettier, lint, LOC/function budgets,
+changed-root publication tests and oracle ratchet. The first commit-message
+attempt rejected shorthand `Model: Astra Low`; inspecting its rule and using
+`Model: Codex Astra Low` passed without bypass. Full `pnpm run typecheck`
+(the repository's TypeScript 7 lane) exited 0. Full `pnpm run lint` exited 0
+at its configured error threshold. `pnpm run sync:conformance:check` passed
+with 0 updates / 5 unchanged files. Normal pre-push/publication results remain
+to be reported; no hook bypass or signing-configuration change is authorized.
 
 Original issue5683 diagnostic snapshots and reports remain untouched. Neither
 this implementation nor the prior forced schedule proves the original CI cause.
