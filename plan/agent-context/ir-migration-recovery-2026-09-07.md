@@ -83,16 +83,20 @@ old claims. The live C implementation is now reserved to task
 Dispatch update: P is the resumed Astra Low A task
 `01a07bf6-3518-7103-a705-3ef1e980d145`; B and C keep the assignments above.
 N's confirmed task is `01a07d4d-64ac-75e1-90c5-345296826880`, worktree
-`/Users/thomas/.codex/worktrees/642d/js2`. Parent reports it was interrupted
-after automatic review rejected detailed census messages; it is not a live
-writer at this record's finalization. Parent will recover its recorded work
-through normal authorized read tools. Its initial receipt identified closure
-dispatch, unhandled-rejection and optional Promise hooks beyond queue/settle;
-the exact extraction scope still needs owner reconciliation. Preserve the
+`/Users/thomas/.codex/worktrees/642d/js2`. At the initial census it was
+interrupted after automatic review rejected detailed census messages. Parent
+subsequently recovered the work and resumed the bounded queue extraction.
+The active N lane has produced PR 5727 at independently resolved commit
+`f735ed9720c0b1dd22d717655ebd441f53613899`; parent reports its checks green
+and queue position 1, with merge still pending at this follow-up. This is not
+an independent CI verification. Its census identified closure dispatch,
+unhandled-rejection and optional Promise hooks beyond queue/settle; the
+post-CPB continuation defines the next bounded ownership proposal. Preserve the
 existing held semantic-runtime claim; the current B worker owns only the
 engine scope. Parent owns the shared
-issue-3527 append and source PR coordination. No implementation ownership or
-wire-contract change is introduced by this documentation checkpoint.
+issue-3527 append and source PR coordination. The later canonical-entry
+prerequisite records the coordinator-approved P source-lowering expansion;
+the shared serialized resource contract remains unchanged.
 
 ## What is actually missing on main
 
@@ -376,6 +380,10 @@ assignment is resolved by the exclusive P assignment above, subject to C's
 review of that exact contract.
 
 ## Ready assignment N — native async physical closure (Astra Low)
+
+The next connected settlement slice and the post-CPB public-metadata/linear
+sequence are specified in [the post-CPB continuation](ir-migration-post-cpb-2026-09-07.md).
+That continuation preserves this document's P/C wire contract and claim ownership.
 
 In parallel with P/B/C, assign one runtime/provider writer to the dependency
 closure extraction. Do not turn C's source-free consumer into a caller of
