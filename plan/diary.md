@@ -481,3 +481,39 @@ IR-migration lane, coordinated against the parallel codex session via the
   #5160 padsUndefined siblings, #5161 config-lane Error cause, #5162
   ctor-prototype trap. #3481 Symbol sub-families stagger at the 22:07Z
   check-in. Handoff: `plan/agent-context/ir-migration-handover-2026-08-28.md`.
+
+## 2026-09-07 04:40 — ES2015 standalone wave 5 closed: 87.0 → 87.4 %, four PRs, one caught regression
+
+Remote CCR session (Fable plans/dispatches, Opus implements, a separate Opus
+reviewer per round) on the ES2015 standalone lane (#4444).
+
+- **Pass rate (ES2015 standalone)**: 10,188 → **10,228 / 11,704 (87.4 %)**;
+  whole corpus standalone 35,213 / 48,735 on the 04:35 UTC baseline.
+- **Merged (4 PRs)**: #5688 (five lanes: #5316 r5, #5350 r1, #5318 r4/round 2,
+  #3371 r2, #5351; +46 / −2 whole corpus), #5694 (#5349 species r5 after five
+  reviewed rounds; +19 owned, +21 / 0), #5696 (#5316 r6 — the −2 restored),
+  #5698 (docs, the umbrella close).
+- **Closes**: none.
+- **New issues filed**: #5359 (spread of a packed-byte TypedArray emits invalid
+  wasm) by the #5349 round-3 finisher. The wasi own-key residual (#5316 r6) was
+  recorded in the issue rather than filed because `claim-issue.mjs --allocate`
+  cannot scan open PRs from this container (no `gh`).
+- **Incidents**: one container restart killed the #5349 round-4 lane mid-control
+  (tree committed as a snapshot after merging main + restating an index.ts LOC
+  grant, then a finisher+reviewer workflow); the round-4 review found a real
+  stale-local regression (fixed in round 5); #5696 auto-parked on a 28-row
+  Temporal host cluster that flips run-to-run (diagnosed as flake — first-run
+  gate passed, local A/B identical on PR head and main — and the queue merged it
+  before the label mattered); the artifact blob store is blocked by the proxy
+  (403), so the full regression report had to be read from the job log.
+- **Context/budget**: ~1.5 M subagent tokens across 7 workflows (5 lanes +
+  finisher + hotfix); the lead session was compacted once.
+- **Key learnings**: execute a site twice on different arms — a gate around an
+  emitter that returns a local must keep the local's initialisation outside the
+  gate; set-diff the promoted baseline after every merge (the aggregate gates
+  passed a −2 behind a +46); a push to main rebuilds the queue group and can
+  re-roll a flaky host bucket into a park; `git archive` + rebuilt bundles is
+  the only base tree that measures.
+- **Handoff**: `plan/agent-context/es2015-standalone-handover-2026-09-07.md`
+  (entry point) + the umbrella's "### Wave-5 close (2026-09-07)".
+
