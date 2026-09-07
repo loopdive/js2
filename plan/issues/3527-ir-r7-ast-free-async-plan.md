@@ -1829,3 +1829,36 @@ fallback. Validate loaded-module census, two-await runtime behavior,
 source-qualified resume identity, tamper failures and the import removal
 control. Return the exact requirements C must materialize, without changing
 C's implementation or claiming its async acceptance has passed.
+
+## Held B checkpoint conflict refresh — 2026-09-07
+
+The coordinator confirmed the preceding B agent unavailable and assigned the
+clean preserved worktree exclusively for conflict refresh. Normal merge of
+canonical main `1b706a128d234d3933650ff542d4e843858cf421` into
+`b4078f9f3bb927d5a625a57dd216e70d9bc467f2` conflicted only in the 3518/3527
+plans. The resolution preserves canonical main and the complete historical B
+checkpoint above. The detached engine, types and two focused tests are
+byte-identical to the prior B head. All other production sources, CI and
+baselines match the canonical main parent.
+
+Serial single-fork validation on Node v22.23.2:
+
+- Detached engine runtime 10/10 and loaded-module boundary 6/6.
+- Adjacent suites 45/47: linear preparation 4/4, linear runtime 7/7, settled
+  owner runtime 13/15, Promise equivalence 11/11, existing async frame 8/8,
+  host throw/reject 2/2.
+- The two failed rows are the prepared caller Promise ABI and same-spelling
+  foreign-binding controls, both returning invariant instead of emitted.
+  A fresh isolated file snapshot of exact pre-refresh head
+  `b4078f9f3bb927d5a625a57dd216e70d9bc467f2` reran the same settled-owner suite
+  at 13/15 with the identical two assertion failures. These remain baseline
+  failures and were not repaired or counted as passing refresh evidence.
+- The initial neighboring run exhausted the default 512 MB heap and was
+  incomplete. The complete 45/47 run and baseline replay used the documented
+  `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096` setting with one fork.
+- Conformance synchronization check: 0 updates, 5 unchanged targets.
+
+PR 5716 remains held. The previously recorded eight dead exports still denote
+missing authentic production integration; this refresh adds no callers, gate
+changes or baseline exceptions. No separate async integration draft was
+accessed and no new async implementation was attempted.
