@@ -1482,3 +1482,315 @@ including both budget gates against CI's base. The declined and pre-existing
 items above stay recorded as residuals rather than blocking the issue.
 
 `status: done`, `completed: 2026-09-06`.
+
+### Round 5 (2026-09-06)
+
+Round 4's own review found a regression that round 4 introduced and that round
+4's evidence could not have caught. It is closed here, and nothing else in the
+round-4 change is touched.
+
+Trees in every table below: **node** = node 22 (v22.22.2) oracle
+(`.tmp/rev5349d/nodeoracle.mjs`) · **pre-r4** = `git archive 55df2dcc76`, the
+tree round 4 started from (`.tmp/r5/pre4`, its three bundles rebuilt) ·
+**parent** = `git archive cee3e270e8`, the round-4 RESULT and this round's base
+(`.tmp/r5/pre5`, its three bundles rebuilt) · **fix** = this tree.
+
+#### The regression — a species-constructed buffer leaked into the NEXT execution of the same slice site
+
+`ArrayBuffer.prototype.slice`'s species ladder keeps its result in a Wasm local
+and hands that local to the caller: null means "no species ran, allocate a fresh
+array", non-null means "the species built the destination, copy into it and
+return it". Round 4 fenced the ladder off the packed-byte (TypedArray) arm by
+emitting **the whole of it**, including its own two
+`ref.null.extern; local.set` initialisers, into a detached body pushed under
+`if (isPacked == 0)` (`emitArrayBufferSliceSpeciesUnlessPacked`,
+`src/codegen/dataview-native.ts`).
+
+So the reset only ran on the executions that ran the ladder. A Wasm local lives
+for the whole invocation, and the destination-array selection right after the
+gate still emits the runtime branch
+`speciesResultLocal == null ? array.new_default : speciesResult.data` — because
+`speciesResultLocal !== null` is a **compile-time** fact about the site, not a
+runtime one. The second execution of one slice site on the packed arm therefore
+read the buffer the **first** execution's species constructor had returned,
+made it `dstArr`, let the copy loop write into it, and wrapped it in a
+`$__vec_i8_byte` that aliases it. Longer new slice ⇒ `array.set` past the old
+length ⇒ an uncatchable trap; same-or-shorter ⇒ silent cross-object corruption
+in both directions.
+
+The Wasm default of an externref local is null, so the **first** execution of
+any site was always correct. That is exactly why round 4's 75 green pins could
+not see this: every one of them executes its slice site once.
+
+**Fix.** The two initialisers are hoisted out of the gated arm and emitted into
+the outer body ahead of the `if`, so they run on every execution of the site.
+`emitArrayBufferSliceSpecies` takes an optional `resetSink`; a gating caller
+passes one and emits the instructions before its gate, and the ungated caller
+(`isPackedLocal < 0`) passes nothing and keeps them inline where they were.
+`resultLocal` is the local that escapes and the one that is load-bearing;
+`selectedLocal` is hoisted with it because the two are one initialisation of the
+default lane. Verified by reading the rest of the ladder: `selectedLocal` has no
+consumer outside `emitArrayBufferSliceSpecies` (so it could not go stale across
+executions), every other local it allocates is set before it is read inside the
+arm, and nothing in the ladder assumes the two resets are adjacent to what
+follows them.
+
+**Read straight off the emitted WAT** (`m01` compiled `--target standalone` with
+`emitWat`, `.tmp/r5/m01.{parent,fix}.wat`). On the parent both resets sit inside
+the gate's `then`; here they sit ahead of it:
+
+```wat
+;; parent cee3e270e8                     ;; fix
+local.get 14   ;; $__abs_packed          ref.null extern
+i32.eqz                                  local.set 30   ;; $__abs_sel
+(if                                      ref.null extern
+  (then                                  local.set 33   ;; $__abs_new
+  ref.null extern                        local.get 14   ;; $__abs_packed
+  local.set 30   ;; $__abs_sel           i32.eqz
+  ref.null extern                        (if
+  local.set 33   ;; $__abs_new             (then
+  …                                        …
+```
+
+#### Probes — the reviewer's, on both lanes
+
+`--target standalone` through `.tmp/rev5349d/run.mts`, `result.imports` asserted
+`[]`; wasi through `.tmp/rev5349d/wasirun2.mts`. Probes under
+`.tmp/rev5349e/{pM,pG,pI}`.
+
+| probe | what it does | node | pre-r4 | parent | **fix** |
+| --- | --- | --- | --- | --- | --- |
+| `m01` | buffer then packed at one site, 1-byte species, 4-byte second slice | 4 | 4 | **TRAP** | **4** |
+| `m02` | write through the packed result lands in the species buffer | 0 | 0 | **200** | **0** |
+| `g01` | growing second slice, 2 → 8 bytes | 8 | 8 | **TRAP** | **8** |
+| `g02` | alias control | 0 | 0 | 0 | 0 |
+| `g03` | shrink control | 2 | 2 | 2 | 2 |
+| `i01` | alias + shrink, read back through a DataView | 0 | 0 | **200** | **0** |
+| `i02` | same at index 1 | 0 | 0 | **12** | **0** |
+| `i03` | 1-byte species then 4-byte packed slice | 4 | 4 | **TRAP** | **4** |
+| `i04` | always-packed loop, no species | 4 | 4 | 4 | 4 |
+| `m01` (wasi) | | 4 | — | **TRAP** | **4** |
+| `m02` (wasi) | | 0 | — | **200** | **0** |
+| `g01` (wasi) | | 8 | — | **TRAP** | **8** |
+| `i01`/`i02`/`i03` (wasi) | | 0 / 0 / 4 | — | **200 / 12 / TRAP** | **0 / 0 / 4** |
+
+The **pre-r4** column is measured here, not carried over: `.tmp/r5/pre4` is a
+`git archive` of `55df2dcc76` with its own compiler bundle, `runtime-bundle.mjs`
+and QuickJS provider built in it, and all nine standalone rows were run against
+it in this session. Every one of them matches node. So round 4 introduced this
+and round 5 restores it — the claim is a measurement, not an inference from the
+diff.
+
+#### Probes — this round's own re-execution set (`.tmp/r5/pR5`)
+
+Seven programs written for this round, each executing a slice site more than
+once. Node oracle, then all three trees.
+
+| probe | shape | node | pre-r4 | parent | **fix** |
+| --- | --- | --- | --- | --- | --- |
+| `r01` | one site ×3: buffer → packed → buffer, species armed | 40206 | 40206 | 40206 | 40206 |
+| `r02` | one site in a `while` loop ×4, alternating receivers | 3535 | 3535 | **TRAP** | **3535** |
+| `r03` | site in a nested function called twice (buffer, then packed) | 702 | THROW | THROW | THROW |
+| `r04` | species flips %ArrayBuffer% → custom → packed at one site | 456 | THROW | **TRAP** | **456** |
+| `r05` | site in a loop whose receiver is ALWAYS packed (no species ever runs) | 444 | 444 | 444 | 444 |
+| `r06` | two slice sites in one iteration, two iterations | 6532 | 6532 | 6532 | 6532 |
+| `r07` | three separate sites; the species buffer must not be written | 0 | 0 | 0 | 0 |
+
+Two of these are **further gains** the reviewer's set did not reach: `r02` and
+`r04` trap on the parent and match node here. `r05` is the control that matters
+for the shape of the fix — the ladder is emitted (a species is armed on an
+unrelated buffer) but never executes, so the hoisted reset must leave the result
+local null on all three iterations, and it does. `r01`, `r06` and `r07` do not
+discriminate: `r01`'s stale destination is never shorter than the new slice, and
+`r06`/`r07` use distinct sites, each with its own locals.
+
+`r03` (a slice site inside a nested function, called first with a buffer and
+then with a packed TypedArray) throws on **pre-r4, on the parent and here
+alike** — a pre-existing gap in that shape, not this round's and not round 4's.
+Recorded as a residual below.
+
+#### Controls — every probe batch of the round-3 and round-4 reviews
+
+`--target standalone`, 15 batches, **213 rows**, fix vs parent, byte-for-byte
+diff of the outputs (`.tmp/r5/SDIFF.txt`):
+
+| batch | rows | fix vs parent |
+| --- | --- | --- |
+| `pB` 29 · `pC` 5 · `pD` 4 · `pJ` 3 · `pL` 4 · `pO` 2 | 47 | **identical** |
+| `pFINAL` 7 · `pW2` 8 · `pA` 22 · `pALL` 101 · `pDIFF` 12 | 150 | **identical** |
+| `pM` 2 · `pG` 3 · `pI` 4 · `pR5` 7 | 16 | **8 rows moved, all onto node** |
+
+The eight movers are exactly `m01`, `m02`, `g01`, `i01`, `i02`, `i03`, `r02`,
+`r04`. **205 of the 213 rows are unchanged**, and no row moved away from node.
+
+On **wasi** (`pM`, `pG`, `pI`, `pD`, `pL`, `pR5`): the same eight movers, every
+other row identical to the parent (`.tmp/r5/WDIFF.txt`; `pD` and `pL` differ only
+in the PID inside node's `ExperimentalWarning` line, confirmed by diffing with
+that line filtered out).
+
+#### Host byte identity
+
+`.tmp/rev5349d/run.mts <tree> host`, sha256 of the emitted binary, over the
+round-3 reviewer's 101-program host set, fix vs parent `cee3e270e8`:
+**0 of 101 modules differ** (`.tmp/r5/host_diff.txt`, empty). Both the JS-host
+lane and the plain-ArrayBuffer inline path are untouched: `isPackedLocal < 0`
+still calls `emitArrayBufferSliceSpecies` with no sink, which emits the two
+resets in the same place, in the same order, as round 4.
+
+#### Controls — test262 rows
+
+The control is the **221-row L1 ArrayBuffer list** (the same list round 4 used,
+`.tmp/r5/lists/L1.txt`) plus **every row** under
+`built-ins/TypedArray/prototype/slice` and
+`built-ins/TypedArray/prototype/subarray` (159 rows, enumerated from the
+submodule — identical to round 4's `B_taslice` + `C_tasub`), **380 rows** in
+total. Run in ≤150-row chunks at `COMPILER_POOL_SIZE=2 --standalone` with round
+4's own `drive2.sh`, started only AFTER the last source edit and with the
+compiler bundle, `runtime-bundle.mjs` and the QuickJS eval provider rebuilt in
+this tree.
+
+Chunk 02 was **OOM-killed** (`exit=137`) and was re-run as four 20-row pieces;
+one of those (`exit=134`, V8 "Reached heap limit") was re-run again in ≤4-row
+pieces with the suspect row alone. **379 of the 380 rows produced a verdict.**
+The one that did not is
+`built-ins/TypedArray/prototype/subarray/coerced-begin-end-shrink.js`, which
+OOMs run **alone at `COMPILER_POOL_SIZE=1`** — recorded, not counted, exactly as
+rounds 3 and 4 recorded it.
+
+| comparison | artifact | rows compared | LOST | GAINED | changed non-pass kind |
+| --- | --- | --- | --- | --- | --- |
+| vs **round 4**'s own run (`wf_4aa60736-6b9-1/.tmp/r4/union`) | `.tmp/r5/RUNSDIFF.out`, 01:15 | **379** | **0** | 0 | 0 |
+| vs the **fresh standalone baseline**, L1 | `.tmp/r5/PERLIST.out`, 01:15 | 221 of 221 | **0** | **9** | 0 |
+| vs the same baseline, TypedArray slice+subarray | `.tmp/r5/PERLIST.out`, 01:15 | 158 of 159 | **0** | 0 | 0 |
+
+Baseline: `/home/user/js2/.test262-cache/test262-standalone-current.jsonl`,
+promoted from main `2269b94bec` and written 2026-09-06 21:10. `noBaselineEntry`
+is **0** on both lists — every scored row is really scored, none silently
+excluded.
+
+The **nine gains are round 4's own**: the whole
+`ArrayBuffer.prototype.slice` species suite. They are reported here to show they
+**survive** this round, not as new ground.
+
+**One deviation from the brief, deliberate.** The brief asked for `--isolate`;
+these runs are **in-process**, because round 4's outputs — the artifact the
+`LOST=0` claim is measured against — were produced in-process
+(their chunk logs read `[test262-in-process]`), and an isolated run is not
+comparable row-for-row with an in-process one. Method-matching the reference was
+worth more than the isolation. The consequence to know: an in-process run shares
+one realm across a chunk, so a row that mutates an intrinsic can colour later
+rows in the same chunk. That risk is identical on both sides of the diff, so it
+cannot manufacture a `LOST=0`; it could in principle hide a regression that both
+runs suffer equally, which the probe batches and pins cover instead.
+
+#### Pins
+
+`tests/issue-5349-species-r5.test.ts` gains a **round 5** describe block of 10
+tests: `m01`, `m02`, `g01`, `i01`/`i02`, `i03`, the always-packed loop control,
+the `while`-loop control, the species-flip control, the two-sites control, and
+`m01`/`m02` on wasi through the file's existing fd_write-free
+`wasi_snapshot_preview1` shim. Every one of them executes a slice site at least
+twice — the property round 4's pins lacked.
+
+Run alone at `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 --pool=forks
+--poolOptions.forks.singleFork=true --dangerouslyIgnoreUnhandledErrors`:
+
+| node | version | exit | tests |
+| --- | --- | --- | --- |
+| node 22 | v22.22.2 | **0** | **85/85 passed** (90.7 s) |
+| node 25 | v25.9.0 | **0** | **85/85 passed** (78.6 s) |
+
+Related suites: the same 42 files round 4 used, in 14 three-file batches
+(`.tmp/r5/pins`). Eight batches fully green; six red, **31 failures**.
+
+Those 31 were then re-measured **on the parent tree in this session** —
+`.tmp/r5/pre5` (`git archive cee3e270e8` with its own compiler bundle,
+`runtime-bundle.mjs` and QuickJS provider), the ten failing files re-run under
+identical flags into `.tmp/r5/basepins`. The parent produces **31 failures too,
+and the fully-qualified FAIL names are byte-identical**
+(`diff .tmp/r5/fix_fails.txt .tmp/r5/base_fails.txt`, empty). Round 4 separately
+showed that same set byte-identical on `2269b94bec`, so the chain from main
+through the parent to this tree is unbroken — but the parent half of it is
+measured here, not inherited.
+
+| file(s) | failures here | parent `cee3e270e8` (measured this session) |
+| --- | --- | --- |
+| `arraybuffer-dataview` | 6 | same 6 |
+| `issue-1654-wasi-dataview-arraybuffer` + `issue-1655-wasi-arraybuffer-write` | 4 | same 4 |
+| `typed-array-basic` + `issue-5193-init-marshal-host-typedarray` | 12 | same 12 |
+| `issue-2984-{ctor-carrier-own-props,alias-receivers,phase3}` | 3 | same 3 |
+| `issue-2984` + `issue-3420-standalone-array-own-property` | 6 | same 6 |
+
+#### Gates
+
+Run from inside this worktree, bare, each status read directly (never through a
+pipe). All **RC 0**:
+
+| gate | RC |
+| --- | --- |
+| `check-loc-budget` · `check-func-budget` · `check-coercion-sites` · `check:oracle-ratchet` · `check:dead-exports` | 0 · 0 · 0 · 0 · 0 |
+| the two budget gates under `LOC_GATE_BASE=$(git rev-parse origin/main)` = `c585852252` | 0 · 0 |
+| `check:speculative-rollback` · `check:stack-balance` · `check:codegen-fallbacks` · `check:any-box-sites` | 0 · 0 · 0 · 0 |
+| `check:host-import-policy` · `check:harness-compile-budget` · `check:ir-adoption` · `check:done-status-integrity` | 0 · 0 · 0 · 0 |
+| TS7 `tsc --noEmit -p tsconfig.ts7.json` · `npm run lint` | 0 · 0 |
+| `npx prettier --check` on both changed files | 0 |
+
+`check:harness-compile-budget` reports `measured=146855 budget=142936
+ceiling=164377 (+15%) margin-left=17522 (10.66%)` — unchanged from round 4.
+
+**No new growth allowance was needed.** `src/codegen/dataview-native.ts` already
+carries a `loc-budget-allow` grant from r5 step 5, and both budget gates pass
+bare and against CI's base with the round-5 diff in place; no function crossed a
+threshold.
+
+#### Residuals
+
+Round 4's residuals are all carried forward unchanged — none of them is touched
+by this round:
+
+- **`class B extends ArrayBuffer {}` as the species TRAPs** (node 4, main 4). A
+  pre-existing r5 regression against main of the `IsConstructor` family that
+  intrinsic identity cannot answer; closing it needs ArrayBuffer subclassing.
+- **`Object.prototype.toString.call(b.slice(0))` (undefined) and
+  `ArrayBuffer.isView(b.slice(0))` (0 vs node 1)** — the brand does not reach
+  those classifiers.
+- **An erased `Int8Array` widening reads UNSIGNED** (255 where node reads −1).
+- **`.map` on an ArrayBuffer-typed binding TRAPs under `--target wasi`** — a
+  pre-existing wasi gap.
+- **`emitTaViewConstructWindowed` validates `byteOffset`/`length` against the
+  COPY**, and **`emitDynamicTaViewConstruct` recovers at `bytes: 1`**.
+- **#5359** (`standalone: spread of a packed-byte TypedArray emits invalid
+  wasm`) remains open and untouched.
+- **`built-ins/TypedArray/prototype/subarray/coerced-begin-end-shrink.js` OOMs**
+  at `COMPILER_POOL_SIZE=1` on this tree and on the base alike — environmental.
+- Steps 6 and 7 (26 TypedArray rows) remain diagnosed and unimplemented.
+
+New this round:
+
+- **A slice site inside a nested function, called with a buffer and then with a
+  packed TypedArray, throws** (`r03`, node 702). Present on **pre-r4, on the
+  parent and here** — it predates round 4 and is a different mechanism from the
+  stale local this round fixes (the throw is not a trap and does not depend on
+  re-execution order). Left open deliberately: closing it is outside the scope
+  the review set for this round.
+- **The class of defect itself is worth naming.** The bug was a
+  *compile-time-known / runtime-varying* mismatch: the caller branched on a
+  runtime value whose initialisation had been made conditional, while its own
+  decision to emit that branch was unconditional. Any future gate placed around
+  an emitter that RETURNS a local to its caller has the same hazard, and the
+  test that catches it is "execute the site twice on different arms", which no
+  round-1-through-4 pin did.
+
+#### Status
+
+The regression the round-4 review reproduced is closed, measured on this tree in
+this session: all six reviewer probes and both of this round's extra movers land
+on node's answers on **standalone and wasi**, **205 of 213** probe-batch rows are
+byte-identical to the parent with no row moving away from node, **0 of 101** host
+modules differ, **zero rows lost** over the 379-row test262 control against both
+round 4's own run and the fresh standalone baseline (with round 4's +9 species
+gains intact), all 31 related-suite failures shown byte-identical on the parent
+tree **measured here**, **85/85 pins green on node 22 and node 25**, and every
+ratchet and quality gate is RC 0 including both budget gates against CI's base.
+
+`status: done`, `completed: 2026-09-06`.
