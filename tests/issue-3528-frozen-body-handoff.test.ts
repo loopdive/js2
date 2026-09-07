@@ -1,9 +1,14 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { compile } from "../src/index.js";
 import { emitBinary } from "../src/emit/binary.js";
-import { getLastLinearIrReport } from "../src/ir/backend/linear-integration.js";
+import { LINEAR_IR_VEC_INIT_F64_FN } from "../src/codegen-linear/runtime.js";
+import {
+  collectLinearBackendResourceDemand,
+  getLastLinearIrReport,
+  validateLinearBackendResourceDemand,
+} from "../src/ir/backend/linear-integration.js";
 import { LinearEmitter } from "../src/ir/backend/linear-emitter.js";
 import { WasmGcEmitter } from "../src/ir/backend/wasmgc-emitter.js";
 import { irImportGlobalRef } from "../src/ir/abi-bindings.js";
@@ -29,14 +34,17 @@ import { irBindingKey } from "../src/ir/declared-types.js";
 import { createEmptyModule, type Instr, type ValType, type WasmModule } from "../src/ir/types.js";
 import {
   asAllocSiteId,
+  forEachInstrDeep,
   irVal,
   mapNestedBuffers,
   IR_CLASS_SHAPE_CELL,
   type IrClassShape,
   type IrFuncRef,
+  type IrInstr,
   type IrType,
 } from "../src/ir/nodes.js";
 import { prepareLinearAllocationFacts } from "../src/ir/analysis/linear-memory-plan.js";
+import * as linearMemoryPlanning from "../src/ir/analysis/linear-memory-plan.js";
 import { createTestIrClassId, createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
 
 function scalarResolver(): IrLowerResolver {
@@ -288,6 +296,20 @@ async function productionAllocationBatch(): Promise<FrozenIrBodyBatch> {
   return batch!;
 }
 
+async function productionStringResourceBatch(): Promise<{
+  readonly batch: FrozenIrBodyBatch;
+  readonly memoryPlan: NonNullable<ReturnType<typeof getLastLinearIrReport>>["memoryPlan"];
+}> {
+  const result = await compile(`export function same(): number { const left = "a"; return left === "a" ? 1 : 0; }`, {
+    target: "linear",
+    fileName: "r8-string-resource.ts",
+  });
+  expect(result.success, result.success ? "" : result.errors.map((error) => error.message).join("; ")).toBe(true);
+  const report = getLastLinearIrReport();
+  expect(report?.frozenBodyBatch?.module.functions).toHaveLength(1);
+  return { batch: report!.frozenBodyBatch!, memoryPlan: report!.memoryPlan };
+}
+
 function declaredReferenceInput(withUnexpectedArgument: boolean, withContradictoryDeclaration = false) {
   const f64 = irVal({ kind: "f64" });
   const registry = new AllocSiteRegistry();
@@ -494,6 +516,293 @@ describe("#3528 L0-P1 frozen executable body handoff", () => {
         producer: batch.producer,
       }),
     ).toThrow(/provider demand has no frozen runtime manifest/);
+  });
+
+  it("keeps typed unsupported build outcomes and exact source/unit location", async () => {
+    const result = await compile(`export function test(): number { const [a, b, c] = [1, 2, 3]; return a + b + c; }`, {
+      target: "linear",
+      fileName: "r8-linear-unsupported.ts",
+    });
+    expect(result.success, result.success ? "" : result.errors.map((error) => error.message).join("; ")).toBe(true);
+    const report = getLastLinearIrReport();
+    expect(report?.compiled).toEqual([]);
+    const rejection = report?.rejected.find((candidate) => candidate.func === "test");
+    expect(rejection).toMatchObject({
+      reason: "build",
+      outcome: {
+        kind: "unsupported",
+        code: "array-representation-unsupported",
+        stage: "build",
+      },
+      location: {
+        sourceKey: "r8-linear-unsupported.ts",
+        file: "r8-linear-unsupported.ts",
+        line: 1,
+      },
+    });
+    expect(rejection?.location?.column).toBeGreaterThan(0);
+    expect(rejection?.location?.sourceId).toBeTruthy();
+    expect(rejection?.location?.unitId).toBe(
+      rejection &&
+        report?.ownerEvidence.find((evidence) => evidence.outcome === "rejected" && evidence.legacyName === "test")
+          ?.ownerUnitId,
+    );
+    expect(rejection?.outcome?.detail).toBe(rejection?.detail);
+    expect(report?.frozenBodyBatch?.module.functions).toEqual([]);
+    expect(report?.frozenBodyBatch?.owners.some((owner) => owner.outcome === "built")).toBe(false);
+  });
+
+  it("preflights demanded helpers and relocatable layout resources before body emission", async () => {
+    const batch = await productionAllocationBatch();
+    const memoryPlan = getLastLinearIrReport()?.memoryPlan;
+    expect(memoryPlan).toBeDefined();
+    const demand = collectLinearBackendResourceDemand(batch.module, memoryPlan!);
+    expect(batch.module.functions.length).toBeGreaterThan(0);
+    expect(demand.runtimeFunctions).toContain("__arr_new");
+    expect(demand.runtimeFunctions).toContain(LINEAR_IR_VEC_INIT_F64_FN);
+    expect(demand.layoutIds.length).toBeGreaterThan(0);
+
+    const completeFunctions = new Set(demand.runtimeFunctions);
+    expect(() =>
+      validateLinearBackendResourceDemand({
+        demand,
+        memoryPlan: memoryPlan!,
+        availableFunctionNames: completeFunctions,
+      }),
+    ).not.toThrow();
+
+    const missingHelper = new Set(completeFunctions);
+    missingHelper.delete("__arr_new");
+    expect(() =>
+      validateLinearBackendResourceDemand({
+        demand,
+        memoryPlan: memoryPlan!,
+        availableFunctionNames: missingHelper,
+      }),
+    ).toThrow(/demanded runtime helper '__arr_new'.*before body emission/);
+
+    const missingLayout = new Set(demand.layoutIds);
+    missingLayout.delete(demand.layoutIds[0]!);
+    expect(() =>
+      validateLinearBackendResourceDemand({
+        demand,
+        memoryPlan: memoryPlan!,
+        availableFunctionNames: completeFunctions,
+        availableLayoutIds: missingLayout,
+      }),
+    ).toThrow(/demanded layout .*before body emission/);
+
+    const { batch: stringBatch, memoryPlan: stringMemoryPlan } = await productionStringResourceBatch();
+    const stringDemand = collectLinearBackendResourceDemand(stringBatch.module, stringMemoryPlan);
+    expect(stringDemand.dataSegmentIds.length).toBeGreaterThan(0);
+    const stringFunctions = new Set(stringDemand.runtimeFunctions);
+    expect(() =>
+      validateLinearBackendResourceDemand({
+        demand: stringDemand,
+        memoryPlan: stringMemoryPlan,
+        availableFunctionNames: stringFunctions,
+      }),
+    ).not.toThrow();
+    const missingDataSegment = new Set(stringDemand.dataSegmentIds);
+    missingDataSegment.delete(stringDemand.dataSegmentIds[0]!);
+    expect(() =>
+      validateLinearBackendResourceDemand({
+        demand: stringDemand,
+        memoryPlan: stringMemoryPlan,
+        availableFunctionNames: stringFunctions,
+        availableDataSegmentIds: missingDataSegment,
+      }),
+    ).toThrow(/demanded data segment .*before body emission/);
+
+    for (const segment of stringMemoryPlan.dataSegments) {
+      expect("address" in segment).toBe(false);
+    }
+  });
+
+  it("declines unproven string reads before accepting or emitting any owner prefix", async () => {
+    const sink = vi.spyOn(LinearEmitter.prototype, "newSink");
+    try {
+      const control = await compile(`export function prefix(x: number): number { return Math.floor(x); }`, {
+        target: "linear",
+        fileName: "r8-string-refusal-control.ts",
+      });
+      expect(control.success, control.errors.map((error) => error.message).join("; ")).toBe(true);
+      expect(sink).toHaveBeenCalled();
+      expect(getLastLinearIrReport()?.frozenBodyBatch?.runtime.providers.has("math.floor")).toBe(true);
+      const { instance: controlInstance } = await WebAssembly.instantiate(control.binary);
+      expect((controlInstance.exports.prefix as (x: number) => number)(12.75)).toBe(12);
+      sink.mockClear();
+      const source = `export function formatted(x: number): number { return Math.floor(x) + x.toString().length; }`;
+      const result = await compile(source, { target: "linear", fileName: "r8-string-refusal.ts" });
+      // The direct path cannot compile Math.floor. It must still receive the
+      // refused owner; this is not permission to accept an unproven string.
+      expect(result.success).toBe(false);
+      expect(result.errors.map((error) => error.message)).toEqual(["Codegen error: Unsupported method call: .floor()"]);
+      expect(sink).not.toHaveBeenCalled();
+      const report = getLastLinearIrReport()!;
+      expect(report.compiled).toEqual([]);
+      expect(report.frozenBodyBatch?.module.functions).toEqual([]);
+      expect(report.frozenBodyBatch?.owners.filter((owner) => owner.outcome === "built")).toEqual([]);
+      expect(report.frozenBodyBatch?.owners.find((owner) => owner.legacyName === "formatted")?.outcome).toBe(
+        "rejected",
+      );
+      expect(report.frozenBodyBatch?.runtime.providers.size).toBe(0);
+      expect(report.frozenBodyBatch?.allocationFacts.allocations).toEqual([]);
+      expect(report.memoryPlan.allocations).toEqual([]);
+      const rejection = report.rejected.find((entry) => entry.func === "formatted")!;
+      expect(rejection).toMatchObject({
+        reason: "build",
+        outcome: { kind: "unsupported", code: "string-evidence-unsupported", stage: "resolve" },
+        location: { sourceKey: "r8-string-refusal.ts", file: "r8-string-refusal.ts", line: 1 },
+      });
+      expect(rejection.detail).toMatch(/ASCII encoding proof required for length input/);
+      expect(rejection.outcome?.detail).toBe(rejection.detail);
+      expect(rejection.location?.unitId).toBe(report.frozenBodyBatch?.owners[0]?.ownerUnitId);
+      expect(rejection.location?.sourceId).toBe(report.frozenBodyBatch?.producer.source.sourceId);
+      expect(rejection.location?.column).toBeGreaterThan(0);
+      const previous = process.env.JS2WASM_LINEAR_IR;
+      try {
+        process.env.JS2WASM_LINEAR_IR = "0";
+        const direct = await compile(source, { target: "linear", fileName: "r8-string-refusal.ts" });
+        expect(direct.success).toBe(false);
+        expect(direct.errors.map((error) => error.message)).toEqual(result.errors.map((error) => error.message));
+      } finally {
+        if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_LINEAR_IR");
+        else process.env.JS2WASM_LINEAR_IR = previous;
+      }
+    } finally {
+      sink.mockRestore();
+    }
+  });
+
+  it("preserves existing ASCII allocation proof on reads and keeps the exact supported owners", async () => {
+    const result = await compile(
+      'export function template(): number { const name = "world"; const msg = `hello ${name}`; return msg.length; }\n' +
+        'export function character(): number { const text = "az"; return text.charAt(1).charCodeAt(0); }',
+      { target: "linear", fileName: "r8-ascii-proof.ts" },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+    const report = getLastLinearIrReport()!;
+    expect(report.compiled).toEqual(["template", "character"]);
+    expect(report.rejected).toEqual([]);
+    const batch = report.frozenBodyBatch!;
+    expect(batch.module.functions.map((fn) => fn.name)).toEqual(["template", "character"]);
+    const template = batch.module.functions[0]!;
+    const instructions: IrInstr[] = [];
+    for (const block of template.blocks) {
+      for (const instr of block.instrs) forEachInstrDeep(instr, (nested) => instructions.push(nested));
+    }
+    const length = instructions.find((instr) => instr.kind === "string.len");
+    expect(length?.inputEncoding).toBe("ascii");
+    const producer = instructions.find((instr) => instr.result === length?.value);
+    expect(producer?.kind).toBe("string.concat");
+    expect(batch.allocationFacts.allocations.find((fact) => fact.id === producer?.alloc)?.encoding).toBe("ascii");
+    const { instance } = await WebAssembly.instantiate(result.binary);
+    expect((instance.exports.template as () => number)()).toBe(11);
+    expect((instance.exports.character as () => number)()).toBe(122);
+  });
+
+  it("keeps an already promised counted-string owner fatal when another string read lacks proof", async () => {
+    const previous = process.env.JS2WASM_IR_STRING_BUILDER;
+    const sink = vi.spyOn(LinearEmitter.prototype, "newSink");
+    try {
+      process.env.JS2WASM_IR_STRING_BUILDER = "1";
+      const result = await compile(
+        `export function counted(x: number): number {
+           let value = "seed";
+           for (let index = 0; index < 3; index++) value = value + "xy";
+           return value.length + x.toString().length;
+         }`,
+        { target: "linear", fileName: "r8-counted-string-refusal.ts" },
+      );
+      expect(result.success).toBe(false);
+      expect(result.errors.map((error) => error.message).join("; ")).toMatch(
+        /prepared counted-string owner .* failed string preparation: .*ASCII encoding proof required for length input/,
+      );
+      expect(sink).not.toHaveBeenCalled();
+      const report = getLastLinearIrReport();
+      expect(report?.compiled).toEqual([]);
+      expect(report?.rejected).toEqual([]);
+      expect(report?.frozenBodyBatch).toBeUndefined();
+      expect(report?.preparedCountedStringAppendReceipts).toEqual([]);
+    } finally {
+      if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_IR_STRING_BUILDER");
+      else process.env.JS2WASM_IR_STRING_BUILDER = previous;
+      sink.mockRestore();
+    }
+  });
+
+  it("evaluates the caller allocation policy once for each retained site and never for declined owners", async () => {
+    const basePolicy = linearMemoryPlanning.linearAllocatorPolicy("arena-v1");
+    const visited: number[] = [];
+    const policy = vi.spyOn(linearMemoryPlanning, "linearAllocatorPolicy").mockReturnValue({
+      id: basePolicy.id,
+      decide(facts) {
+        visited.push(facts.site.id as number);
+        return basePolicy.decide(facts);
+      },
+    });
+    try {
+      const result = await compile(
+        `export function retained(x: number): number { const values = [x, 2]; return values[0]; }
+         export function declined(x: number): number { return x.toString().length; }`,
+        { target: "linear", fileName: "r8-allocation-policy.ts" },
+      );
+      expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+      const report = getLastLinearIrReport()!;
+      expect(report.compiled).toEqual(["retained"]);
+      expect(report.rejected.map((entry) => entry.func)).toEqual(["declined"]);
+      const retained = report.memoryPlan.allocations.map((allocation) => allocation.id as number);
+      expect(retained).toHaveLength(1);
+      expect(visited).toEqual(retained);
+      const { instance } = await WebAssembly.instantiate(result.binary);
+      expect((instance.exports.retained as (x: number) => number)(12.75)).toBe(12.75);
+      expect((instance.exports.declined as (x: number) => number)(12.75)).toBe(5);
+    } finally {
+      policy.mockRestore();
+    }
+  });
+
+  it("closes string refusals over callers and freezes only retained providers and allocation sites", async () => {
+    const result = await compile(
+      `export function caller(x: number): number { return middle(x) + 2; }
+       function middle(x: number): number { return formatted(x) + 1; }
+       function formatted(x: number): number { return (x >>> 0).toString().length; }
+       export function stable(x: number): number { const text = "abc"; return text.charCodeAt(1) + Math.abs(x); }`,
+      { target: "linear", fileName: "r8-string-dependencies.ts" },
+    );
+    expect(result.success, result.errors.map((error) => error.message).join("; ")).toBe(true);
+    const report = getLastLinearIrReport()!;
+    expect(report.compiled).toEqual(["stable"]);
+    expect(report.rejected.map((entry) => entry.func)).toEqual(["caller", "middle", "formatted"]);
+    expect(report.rejected.every((entry) => entry.outcome?.kind === "unsupported" && entry.location?.unitId)).toBe(
+      true,
+    );
+    const batch = report.frozenBodyBatch!;
+    const declined = batch.owners.filter((owner) => owner.outcome === "rejected");
+    expect(declined.map((owner) => owner.legacyName)).toEqual(["caller", "middle", "formatted"]);
+    const middle = declined.find((owner) => owner.legacyName === "middle")!;
+    const formatted = declined.find((owner) => owner.legacyName === "formatted")!;
+    expect(report.rejected[0]?.detail).toContain(middle.ownerUnitId);
+    expect(report.rejected[1]?.detail).toContain(formatted.ownerUnitId);
+    expect(batch.module.functions.map((fn) => fn.name)).toEqual(["stable"]);
+    expect([...batch.runtime.providers.keys()]).toEqual(["math.abs"]);
+    expect(batch.runtime.manifest?.intrinsicUses.map((use) => use.id)).toEqual(["math.abs"]);
+    const liveAllocations: number[] = [];
+    for (const block of batch.module.functions[0]!.blocks) {
+      for (const instr of block.instrs) {
+        forEachInstrDeep(instr, (nested) => {
+          if (nested.alloc !== undefined) liveAllocations.push(nested.alloc as number);
+        });
+      }
+    }
+    expect(liveAllocations.length).toBeGreaterThan(0);
+    expect(batch.allocationFacts.allocations.map((fact) => fact.id as number)).toEqual(liveAllocations);
+    expect(report.memoryPlan.allocations.map((fact) => fact.id as number)).toEqual(liveAllocations);
+    expect(batch.signatures.map((signature) => signature.ownerUnitId)).toEqual([batch.module.functions[0]!.unitId]);
+    const { instance } = await WebAssembly.instantiate(result.binary);
+    expect((instance.exports.caller as (x: number) => number)(12.75)).toBe(5);
+    expect((instance.exports.stable as (x: number) => number)(-3)).toBe(101);
   });
 
   it("preserves ordered imported-call evaluation through both consumers", async () => {

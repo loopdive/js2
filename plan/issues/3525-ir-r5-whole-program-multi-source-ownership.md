@@ -64,6 +64,19 @@ func-budget-allow:
 
 # #3525 — IR-only R5: whole-program single- and multi-source Prepared ownership
 
+## Execution amendment — 2026-09-05
+
+After the current initializer repair is integrated, follow package A of the
+approved [whole-program cutover plan](3518-ir-only-default-and-direct-frontend-retirement.md#current-execution-plan--whole-program-cutover-2026-09-05).
+R2/R5 have one shared integration owner. Reuse the ordered initializer census,
+atomic preparation, source-qualified bindings, and existing class/storage
+interfaces to prepare the complete mixed callable/initializer graph before
+emission. Resolve the actual P2B prerequisites; do not remove its refusals before
+the corresponding contracts are proved or add another fixture-specific overlay.
+The existing seven-unit mixed application is the first checkpoint, with an
+independent mixed application checking generality. P2A publication alone does
+not satisfy it. Existing claims and the complete R5 acceptance remain binding.
+
 ## Objective
 
 Make single-source and `compileMultiSource` use the same whole-program

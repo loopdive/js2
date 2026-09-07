@@ -20,6 +20,7 @@ import type { CodegenContext } from "./context/types.js";
 import { ensureNativeStringHelpers } from "./native-strings.js";
 import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
+import { registerEmitNativeParseNumber } from "./registry/parse-number-delegates.js";
 
 /**
  * (#4234) Largest decimal exponent held in the `10^k` lookup table. `1e308` is
@@ -562,6 +563,8 @@ export function emitNativeParseNumber(ctx: CodegenContext, which: Set<string>): 
     emitStrToNumber(ctx, flattenIdx, strTypeIdx, strDataTypeIdx);
   }
 }
+
+registerEmitNativeParseNumber(emitNativeParseNumber);
 
 /**
  * Native `Number(string)` — ECMA-262 §7.1.4.1 StringToNumber. Signature

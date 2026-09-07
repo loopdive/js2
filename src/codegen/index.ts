@@ -14385,37 +14385,6 @@ function inferStandaloneRegExpMatchArrayType(
   return null;
 }
 
-function isStaticRegExpMatchArrayCallForImportScan(ctx: CodegenContext, call: ts.CallExpression): boolean {
-  const callee = stripRegExpInferenceWrapper(call.expression);
-  if (ts.isPropertyAccessExpression(callee)) {
-    const method = callee.name.text;
-    if (method === "exec") return isStaticRegExpExpressionForInference(ctx, callee.expression);
-    if (method === "match" && call.arguments.length === 1) {
-      return isStaticRegExpExpressionForInference(ctx, call.arguments[0]!);
-    }
-    return false;
-  }
-  // `re[Symbol.match](s)` (#2161) — symbol-protocol dual of `s.match(re)`.
-  if (ts.isElementAccessExpression(callee)) {
-    if (isSymbolMatchKeyForInference(callee.argumentExpression) && call.arguments.length === 1) {
-      return isStaticRegExpExpressionForInference(ctx, callee.expression);
-    }
-  }
-  return false;
-}
-
-export function isStandaloneRegExpMatchArrayValue(ctx: CodegenContext, expr: ts.Expression): boolean {
-  const unwrapped = stripRegExpInferenceWrapper(expr);
-  if (ts.isCallExpression(unwrapped)) return isStaticRegExpMatchArrayCallForImportScan(ctx, unwrapped);
-  if (!ts.isIdentifier(unwrapped)) return false;
-  const sym = ctx.checker.getSymbolAtLocation(unwrapped);
-  const decl = sym?.getDeclarations()?.find((d) => ts.isVariableDeclaration(d)) as ts.VariableDeclaration | undefined;
-  const initializer = decl?.initializer ? stripRegExpInferenceWrapper(decl.initializer) : undefined;
-  return initializer !== undefined && ts.isCallExpression(initializer)
-    ? isStaticRegExpMatchArrayCallForImportScan(ctx, initializer)
-    : false;
-}
-
 function inferLetConstInitializerWasmType(
   ctx: CodegenContext,
   fctx: FunctionContext,

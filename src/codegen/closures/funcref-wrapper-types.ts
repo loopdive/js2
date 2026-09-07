@@ -12,7 +12,7 @@ import type { ClosureInfo, CodegenContext } from "../context/types.js";
 import type { ValType } from "../../ir/types.js";
 import { ts } from "../../ts-api.js";
 import { funcSignatureOf } from "../func-space.js"; // (#1916 S2 read chokepoint)
-import { addFuncType } from "../index.js";
+import { addFuncType } from "../registry/types.js";
 import { closureArityField, closureBagField } from "./closure-header-layout.js";
 
 export type ClosureAllocationMode = "support" | "ordinary" | "host-one-shot";
@@ -27,9 +27,9 @@ function observeAllocation(info: ClosureInfo, mode: ClosureAllocationMode): void
  *
  * These now live in the LEAF module `closure-header-layout.ts` and are
  * re-exported here so the ~10 existing importers are unaffected. The move was
- * forced by a real failure: this module imports the codegen barrel
+ * forced by a real failure: this module formerly imported the codegen barrel
  * (`../index.js`), and `program-abi-type-planning.ts` — which VALIDATES the
- * header on the IR path — is reachable from that barrel, so it could not import
+ * header on the IR path — was reachable from that barrel, so it could not import
  * the constants without closing an initialization cycle. It therefore carried
  * its own hand-written copy of the layout (`fields.length === 2 && funcref &&
  * i32`), which the `$bag` insertion silently invalidated. A leaf that both

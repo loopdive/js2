@@ -261,9 +261,11 @@ describe("#3520 module-init callable Program ABI ownership", () => {
     expect(hardErrors, hardErrors.map((error) => error.message).join("\n")).toEqual([]);
     expect(generated.irPostClaimErrors).toEqual([]);
     expect(generated.irCompiledFuncs).toContain("<module-init>");
+    // The prepared initializer owns its ABI slot before declaration dispatch;
+    // declaration dispatch preserves that body and skips both direct passes.
     expect(generated.irOutcomes?.find((outcome) => outcome.unitId === moduleInit.id)).toMatchObject({
       kind: "emitted",
-      legacyBodyEmitted: true,
+      legacyBodyEmitted: false,
       irBodyEmitted: true,
     });
     expect(generated.programAbi).toBeDefined();
@@ -309,9 +311,43 @@ describe("#3520 module-init callable Program ABI ownership", () => {
     const runtime = await compile(COLLISION_SOURCE, {
       fileName: "module-init-collision.ts",
       experimentalIR: true,
+      trackIrOutcomes: true,
       deferTopLevelInit: true,
     });
     const exports = await instantiate(runtime);
+    const initializerOutcomes = runtime.irOutcomes?.filter((outcome) => outcome.unitId === moduleInit.id);
+    expect(initializerOutcomes).toEqual([
+      expect.objectContaining({
+        sourceId: moduleInit.sourceId,
+        kind: "emitted",
+        prepareAttempts: 1,
+        directBodyEmissions: 0,
+        irBodyEmissions: 1,
+        legacyBodyEmitted: false,
+        irBodyEmitted: true,
+      }),
+    ]);
+    expect(runtime.irBodyRouteAudit).toBeDefined();
+    const audit = runtime.irBodyRouteAudit!;
+    expect(audit).toMatchObject({
+      route: "compile",
+      graph: "single",
+      generator: "generateModule",
+      sourceCount: 1,
+      terminalUnitCount: inventory.terminalUnits.length,
+      structurallyComplete: true,
+      violations: [],
+    });
+    expect(audit.sources).toEqual([expect.objectContaining({ id: moduleInit.sourceId })]);
+    expect(audit.dispositions.filter((unit) => unit.unitId === moduleInit.id)).toEqual([
+      expect.objectContaining({
+        sourceId: moduleInit.sourceId,
+        unitKind: "module-init",
+        terminal: true,
+        disposition: "terminal-ir",
+      }),
+    ]);
+    expect(audit.legacyEntries.filter((entry) => entry.entryPoint === "compileModuleInitBody")).toEqual([]);
     expect((exports.callUserInitializer as () => number)()).toBe(99);
     (exports.__module_init as () => void)();
     expect((exports.readTotal as () => number)()).toBe(3);

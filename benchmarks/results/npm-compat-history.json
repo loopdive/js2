@@ -15254,6 +15254,92 @@
           "standalone": {}
         }
       }
+    },
+    {
+      "generatedAt": "2026-09-07T15:20:33.184Z",
+      "sourceRevision": "0ba8bb4aa4f373083bcbe1d1b5c3279700d16779",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "uuid": {
+          "jsHost": {
+            "dynamic": 0.1031439415224585
+          },
+          "standalone": {}
+        },
+        "acorn": {
+          "jsHost": {
+            "dynamic": 0.0020415836623003908
+          },
+          "standalone": {
+            "static": 286590.9817415,
+            "dynamic": 0.10324091486072647
+          }
+        },
+        "cookie": {
+          "jsHost": {
+            "dynamic": 0.0029990474779347143
+          },
+          "standalone": {
+            "static": 657.4646117360915,
+            "dynamic": 0.20499411228874728
+          }
+        },
+        "react": {
+          "jsHost": {
+            "dynamic": 0.04158012713598221
+          },
+          "standalone": {}
+        },
+        "clsx": {
+          "jsHost": {
+            "dynamic": 0.0027943060689732376
+          },
+          "standalone": {
+            "static": 14.428479408934944,
+            "dynamic": 0.11719710256388965
+          }
+        },
+        "hono": {
+          "jsHost": {
+            "dynamic": 0.006332935501963344
+          },
+          "standalone": {}
+        },
+        "redux": {
+          "jsHost": {
+            "dynamic": 0.0021833241446246464
+          },
+          "standalone": {
+            "static": 0.07546451451131433,
+            "dynamic": 0.07399625776131556
+          }
+        },
+        "moment": {
+          "jsHost": {
+            "dynamic": 0.008710275700038007
+          },
+          "standalone": {}
+        }
+      }
+    },
+    {
+      "generatedAt": "2026-09-07T16:19:43.912Z",
+      "sourceRevision": "7ed40001f3027fd0044f46f360f624c5ceed25c9",
+      "optimizationLevels": {
+        "js-host": 4,
+        "standalone": 4
+      },
+      "packages": {
+        "lit": {
+          "jsHost": {
+            "dynamic": 0.008838452461894065
+          },
+          "standalone": {}
+        }
+      }
     }
   ]
 }

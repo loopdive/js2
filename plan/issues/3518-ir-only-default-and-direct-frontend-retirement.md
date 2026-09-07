@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-05
+updated: 2026-09-06
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -57,6 +57,680 @@ func-budget-allow:
 > patched by an IR overlay. This epic ends only when IR is the sole front-end,
 > both WasmGC and linear consume the same prepared IR program, unsupported
 > source fails explicitly, and the direct front-end is deleted.
+
+## Current execution plan — whole-program cutover (2026-09-05)
+
+The user approved replacing continued hybrid feature-by-feature expansion with
+a coordinated whole-program cutover, and requested parallel implementation.
+This section supersedes future dispatch order in older slice plans. It preserves
+all eleven acceptance criteria below and the correctness obligations of work
+already in flight. It is an execution change, not a new definition of completion.
+
+The planning baseline is the integration record at `3d2dfce953652e3d8491490cdd786b14943342cd`:
+the mixed application executes correctly but all seven terminals remain legacy;
+`PreparedIrProgram.reconciliation` still says `pending-production-wiring`.
+Focused green suites therefore do not establish a complete new compiler path.
+Recheck current main, open implementation PRs, and slice claims before dispatch;
+this recorded baseline is not a claim about future public state.
+
+### Transition and central contract
+
+1. Finish the existing initializer, async currentness, and linear acceptance
+   repairs; integrate their actual source histories and review combined results.
+   Preserve their worktrees, claims, tests, and public updates. Do not interrupt
+   a writer or start a competing implementation under this amendment.
+2. Stop commissioning additional source-shape admission exceptions, feature
+   toggles, and per-component legacy/IR arbitration. Existing safety checks stay
+   until their dependency is removed. Repairing a current regression is allowed;
+   expanding the hybrid framework is no longer the next milestone.
+3. Make the existing prepared program production-authoritative. One preparation
+   driver resolves source-qualified units, bodies, shared ABI contracts, module
+   bindings and startup order, effects, runtime demands, and async plans before
+   either backend emits. Extend and connect existing IR and manifest structures;
+   do not build a second candidate ledger or a replacement compiler from scratch.
+4. The producer returns a complete verified program, a source-located unsupported
+   outcome, or an invariant. A missing fact is explicit. All call, allocation,
+   provider, export, and startup references must resolve within the complete
+   program. Backend representation and capability checks happen before artifact
+   emission; neither backend reconstructs semantic facts from source or live
+   checker/codegen caches. Symbolic relocations may be resolved below this boundary.
+5. Exercise the new path without per-unit legacy fallback. During development,
+   the existing compiler is a separately invoked comparison oracle; keep its
+   public behavior until cutover is justified. Do not add a new public escape
+   option or make the strict path silently invoke the old compiler. Serialization
+   belongs to this same contract, with stable identities and lossless semantic
+   data; it must not capture AST objects, callbacks, or mutable context handles.
+
+### Parallel work packages and exclusive responsibility
+
+The main-thread lead owns architecture, scheduling, integration, and independent
+review. Retain the already selected implementation models. Each writer uses an
+isolated worktree and an explicit slice claim. These are proposed responsibilities,
+not claims acquired by this document; existing owners must be reconciled first.
+
+| Package | Deliverable | Proposed exclusive implementation surface | Dependency / handoff |
+| --- | --- | --- | --- |
+| A — authoritative preparation | One complete program and a strict public-compiler route, including ordinary and multi-source startup/call ownership | R2/R5: `src/ir/program.ts`, `src/ir/prepare.ts`, shared program ABI contracts, `src/ir/integration.ts`, `src/compiler.ts`, `src/codegen/index.ts`, `src/codegen/multi-prepared-program.ts`, `src/codegen/ir-prepared-free-functions.ts` | Publish the minimal typed producer/consumer interface first. A alone integrates changes to shared entry points. Other packages supply typed inputs or consumer APIs. |
+| B — semantic/runtime producers | Populate the program with semantic runtime demands and existing immutable async plans; preserve behavior through shared runtime helpers | R6/R7: `src/ir/runtime-manifest.ts`, runtime-provider modules, `src/ir/async-plan.ts`, `src/ir/async-prepare.ts`, `src/ir/async-from-ast.ts`, and dedicated IR async adapters | Reuse current repair results. Begin the reader/mutator inventory alongside A; implement against A's interface, with no private ABI or ownership cache. Request shared-entry-point wiring from A. |
+| C — backend consumption and replay | Both backend entry points consume the same verified program; lossless codec and fresh-process replay | R8: `src/ir/backend/linear-integration.ts`, WasmGC/linear emitters and legality, `src/codegen-linear/index.ts`, and the program codec module | Assigned exclusively to the user's external Claude Fable 5.1 session after the interface handoff below. A owns the schema; C owns its codec implementation. C does not edit the shared compiler entry points. |
+| D — application evidence | Independent whole-application fixtures, exact unit accounting, oracle comparison, and affected integration checks | R9 evidence under this epic: dedicated whole-program tests/fixtures and their runner; existing coverage scripts only with explicit ownership | Can start immediately alongside A/B on a pinned source snapshot. Owns no compiler source and cannot redefine supported scope, suppress failures, or alter baselines to accept the candidate. |
+
+Existing R1 identity, R3 class/closure, and R4 module-storage owners remain
+authoritative for their modules. A consumes their interfaces and routes concrete
+missing prerequisites to those owners; this table does not grant access to their
+claimed files. B/C likewise enumerate readers and mutators before moving shared
+facts. Every dispatch must say the worker is not alone, must preserve others'
+changes, and must refer out-of-scope defects to the responsible owner.
+
+Use at most the available three Codex worker slots plus the lead. A + B + D run
+in those slots; the user's separately activated Claude session owns C. Do not
+start a competing Codex C worker. Rerun D's harness on each meaningfully changed
+combined candidate. C consumes A's interface and requests schema changes from A.
+Review A's core change independently; authors do not supply their own independent
+acceptance. The lead retains integration and publication for all four packages.
+
+### Evidence runner repair — independent review 2026-09-06
+
+B reviewed D's exact signed `a8e5840492aefb450274ac37d1b6a52c390e1cb8`
+runner (SHA256
+`17ffdd9467df02a1a3291838382538899c633d612ba9b2220a0420d0033f4b04`).
+The original seven counterexamples now pass seven of seven, but an expanded
+24-control predicate review passes only 20. These bounded controls executed
+the unchanged predicate bodies in a fresh VM; they did not compile or replay
+an application. D's candidate remains unaccepted for integration.
+
+The lead assigns this bounded implementation plan to D, retaining its existing
+runner/test ownership and unchanged fixture population:
+
+1. Validate every observed phase's resolved target as well as backend, source
+   and exact program identity. Missing targets and a host-to-standalone target
+   substitution must both fail. The four phases must belong to one actual
+   preparation and emission of the requested target.
+2. Recompute strict accounting from the immutable captured row facts at the
+   admission boundary. An issued proof containing a direct-body emission must
+   remain rejected after a caller changes only `strictAccounting.pass` to true.
+   Preserve exact once preparation/IR counts, zero direct emissions and the
+   existing original-unit/receipt joins; no mutable summary flag supplies truth.
+3. Require separately pinned compiler provenance and affirmative evidence of
+   the executed legacy route for the direct oracle. An explicit checkout,
+   `experimentalIR: false`, successful compilation and runtime parity currently
+   allow the CLI to pass seven prepared IR rows with zero direct rows. Such a
+   run must fail oracle admission. Record actual oracle and candidate revisions
+   and compiler source fingerprints separately. Missing route evidence remains
+   incomplete rather than being interpreted as zero preparation.
+   Consume the existing `CompileResult.irBodyRouteAudit`: `compileMulti` assigns
+   its internal route and `trackIrOutcomes` enables the physical recorder even
+   with IR disabled. Validate its registered graph/generator and direct-entry
+   receipts against the exact fixture identities; no compiler instrumentation
+   rewrite is needed merely to expose those existing observations.
+4. Add the four failed cases to focused regressions, preserve all earlier
+   controls, and rerun B's independent 24-control cohort on the resulting exact
+   signed bytes. Run the affected runner tests and typecheck with normal hooks;
+   a future combined compiler run still must exercise A/C's real boundary.
+
+D edits no compiler source, fixture denominator, baseline or other package's
+files. A retains the next load-clear heavy validation slot. Root owns this
+issue amendment and integration; B owns independent review. This repair does
+not establish whole-program runtime acceptance or retire any epic criterion.
+
+Independent review of D's signed `b3f08613aff01fadfa4d924b4be7924e1a340c8e`
+passes 21 of 24 controls, including only five of the original seven. Three
+valid controls (01, 06, 20) fail because the runner compares A's observation
+`RuntimeTarget` (`host`) directly with the artifact target (`gc`). Its own test
+fixtures changed the observation to `gc`, which does not match A's producer.
+D must keep those two domains separate: derive the expected resolved runtime
+target through the existing explicit target-policy mapping, compare all four
+events to that resolved target, and separately retain exact artifact/backend
+checks. Missing, mixed and wrong resolved targets must still fail. Preserve
+B's unchanged valid controls, add an actual A-schema positive, and obtain B's
+independent replay before integration. B is also reviewing the direct-oracle
+physical audit joins; any resulting defects require an explicit follow-up.
+
+B's second positive-controlled review of the same signed runner passes only
+four of ten direct-audit controls: it accepts a missing terminal, an anonymous
+count-only receipt, explicit structural incompleteness, a foreign entry source,
+a wrong entry target and a `terminal-ir` disposition. A separate target-domain
+cohort passes two of three: changing a standalone record's target to `gc` still
+passes despite its authenticated standalone proof. The accounting-flag repair
+does reject its independently tested counterexample.
+
+This acceptance-boundary repair transfers to Astra/B after D releases its
+runner edits and B signs the granted import-only patch. B must require the
+actual audit's completeness and empty violation set, exact registered graph
+and generator, all required terminal receipts with valid legacy disposition,
+and source/backend/target joins through both oracle admission and the final
+proof-to-record check. Counts alone cannot establish coverage. Preserve the
+existing oracle/candidate fingerprint checks and independently rerun all
+positive and negative cohorts. D returns to bounded read-only evidence; root
+retains independent integration review. No fixture denominator changes or
+compiler-hook rewrites are authorized by this handoff.
+
+### First bounded implementation checkpoint
+
+Review the approach after the first implementation cycle, no later than one
+working day of implementation after prerequisite consolidation. This is a review
+budget, not a promise that the full compiler can be migrated in a day. A publishes
+the minimal interface as its first implementation artifact; do not spend that
+cycle producing another exhaustive specification without executable integration.
+
+- Promote the existing mixed application's sources from the recorded integration
+  probe into a stable test fixture. Pin its source hash and original seven-unit
+  census. Require all seven units to be prepared exactly once, zero direct body
+  emissions, correct initialization order and values, native Promise identity,
+  and the recorded microtask behavior through the public compiler's strict path.
+- Add an independently structured mixed application, plus renamed/reordered
+  declarations and an explicit missing-fact control, to reject fixture-specific
+  admission. Preserve the inputs when reporting a failure; do not simplify away
+  a class of work to claim success.
+- Serialize a real prepared whole program containing startup and cross-unit
+  calls, then replay the exact snapshot through both backends without source or
+  checker access. Compare supported output with the same native/direct oracle.
+  Record a backend capability gap as incomplete evidence, never as successful
+  cross-backend coverage. The async mixed application and common backend subset
+  may be separate fixtures; keep both denominators explicit.
+- After serialization, missing/contradictory ABI, provider, or identity evidence
+  must fail before artifact emission. A positive runtime control must prove that
+  the exercised route is real and does not rebuild the frontend.
+- Review whole-program coverage gained, direct entry edges removed, duplicate
+  ownership mechanisms retired, regressions, and implementation effort. If only
+  metadata, additional guards, or local tests changed, the approach has not passed
+  this checkpoint. Revise the central integration work instead of spawning more
+  admission slices or reducing the acceptance bar.
+
+### Expansion and completion
+
+Once the complete path works, expand by shared semantic mechanisms across the
+full declared class, closure, module, async, fast, standalone, WASI, equivalence,
+and conformance populations. Reuse existing runtime implementations through
+typed IR operations; retain their effects, exceptions, allocation requirements,
+and optimization behavior. AST-driven runtime dispatch cannot be hidden inside
+an opaque IR operation. New optimizations and separate TypeScript/Acorn frontend
+generalization do not precede this cutover; already supported behavior and
+optimization-preservation requirements remain in scope.
+
+Validate affected modules and the combined application path before broad checks;
+repeat unchanged passing suites only for a new concern or changed candidate.
+Full Test262 remains a merge-group CI obligation, not a new local sweep. The final
+IR-only policy, complete serialized handoff, both backends, optimization ledger,
+direct-handler deletion, and all eleven existing acceptance criteria must still
+be proved against landed source. A successful checkpoint does not complete R2,
+R5, R6, R7, R8, or this epic.
+
+Dispatch status: this side conversation updated the plans and, at the user's
+explicit request, sent the parent thread the amendment and dispatch sequence.
+No subagent was started, contacted, or assigned, and no active claim was changed.
+The main thread must perform the live ownership/publication check and execute
+the waves above.
+
+### Whole-program dispatch ownership — 2026-09-05
+
+The combined prerequisite head `1376d702fd272485d07d564ed87754f11349a388`
+passed normal changed-root hooks (129 tests, two existing optional skips across
+12 files), typecheck, and all 26 C1 controls. Both IR-only lanes retained their
+41-terminal census: 38 IR, three non-executable, zero legacy/unsupported/invariant.
+The 13-file fallback gate passed. These bounded gates do not replace the unchanged
+seven-terminal application checkpoint or full conformance CI.
+
+The lead verified current main `2257b950eeab2b1f4ef66a8db4ce32efbf525c74`
+and preserved the published generic-async, settled-async, and initializer branch
+histories in consolidation. The incoming six compiler files include initializer
+terminal identity and pass-two closure-registry currentness fixes. Eight older
+R2/R6 branch-backed claims have merged PRs whose heads are ancestors of this main;
+none has a linked worktree. Their existing implementation can therefore be
+extended by the new packages without commissioning their completed slices again.
+Their claim records are preserved. The unresolved no-branch
+`3521:scoped-prepared-abi-seal` claim remains protected: A must consume existing
+session APIs without editing `src/codegen/program-abi-session.ts` or
+`tests/issue-3521-scoped-prepared-abi-seal.test.ts`. Live R1/R3/R4 ownership remains
+unchanged.
+
+The lead acquired and remotely verified distinct claims
+`3518:authoritative-preparation` (A, Astra Max),
+`3518:semantic-runtime-producers` (B, Astra Max), and
+`3518:application-evidence` (D, Luna Max), and dispatched all three writers in
+isolated worktrees from signed consolidated head
+`af5eef9e24a8fb5b575cb57ce9eee0e8ebe425e8`. Their branches are
+`codex/3518-whole-program-a-20260905`,
+`codex/3518-whole-program-b-20260905`, and
+`codex/3518-whole-program-d-20260905`. This head passed normal hooks: 170 tests,
+two existing optional skips across 16 files, plus formatting, lint, budget and
+oracle checks. Post-merge typecheck and the unchanged mixed application's
+runtime/native-Promise/microtask controls passed; its ownership remains seven
+Unsupported terminals, zero IR bodies and six direct body emissions.
+
+A published the signed typed interface at
+`8e89954c406fed59033b2c54a03d54481fc9773a`, directly after consolidation, and the
+shared population validator at `899bd71cf8e709e4552bbb81a95e40be522d0b18`.
+The lead verified both signatures. A owns shared compiler entry points; B
+supplies existing runtime/async producers; D commits independent executable
+evidence without changing compiler source. Dispatch and compatibility evidence
+do not complete implementation or pass the whole-program checkpoint.
+
+B's signed implementation `4d4c22ef222b8b55ab3e44901458940109f2525c`, directly
+after `1b9ced2d`, is now independently reviewed and fast-forwarded into the
+integration branch. It adds complete-population runtime/async producers and
+the pure replay manifest entry, preserving the exact runtime authentication
+joins. The final committed producer suite passed 25/25; the preceding unique
+focused cohort passed 118/118 across eight files, and standalone typecheck
+passed. Normal commit hooks passed formatting, budgets and oracle checks;
+their changed-root runner automatically skipped at 23 files above its 20-file
+threshold. No hook bypass was used. The root audit dependency passed 25/25
+combined tests and standalone typecheck after this integration. None of this
+closes the full application/replay checkpoint.
+
+### External package C handoff — 2026-09-06
+
+The user supplied a concrete proposal from the active Claude Fable 5.1 session.
+The lead approved exclusive transfer of `3518:backend-consumption-replay` to
+`ttraenkler/claude-fable-ir-backend-c-20260906`, using branch
+`claude/3518-whole-program-c-20260906` and isolated worktree
+`.claude/worktrees/claude-3518-whole-program-c-20260906`. The exact approved base
+is `8e89954c406fed59033b2c54a03d54481fc9773a`; the following population-validator
+commit is an available dependency. No competing Codex C dispatch is authorized.
+The refreshed handoff names current signed integration base
+`7b2e8b038a06e77c69d788690cbd5ce935ac5448`, which contains that interface,
+the population validator, canonical pure identity leaf, B's signed runtime
+producers, the whole-program route audit and A's complete preparation driver.
+Root verified A's signature and 24-file scope, then fast-forwarded integration
+while preserving this issue amendment. A's 15/15 focused controls, full source
+typecheck and corrected original-seven preparation probe passed; emission and
+replay remain unproved.
+A's following signed diagnostic fix is also integrated: required `sourceFile`
+is copied from the resolved owner into source and runtime preparation failures.
+Its five focused controls and full typecheck passed. C must retain that field
+alongside unit identity and source location in its own located failures.
+Claude reported C unassigned and no edits/tests at proposal time. The lead then
+verified its exact owner/branch claim on remote assignment tip
+`33ed83eb238047ee076c67a4a17611d9875008ff` (claimed at 22:10:50 UTC), and its
+registered isolated worktree at the approved base. Existing A/B/D, R8 and scoped
+ABI-seal claims remain intact.
+
+The lead grants the R8 handoff for `src/ir/backend/linear-integration.ts`, retaining
+the integrated repair `272afba2d5de1af082768f45e5cb7b39f61a55e4` and existing
+claim records. C may add `src/ir/program-codec.ts`,
+`src/ir/backend/program-consumer.ts`, `scripts/ir-whole-program-replay.mjs`,
+`tests/issue-3518-program-codec-replay.test.ts`, and
+`tests/issue-3518-backend-program-consumer.test.ts`; it may edit the named linear
+integration module, WasmGC/linear emitter and legality modules, and the linear
+entry in `src/codegen-linear/index.ts`. C updates the R8 issue file for progress
+and justified budgets. A retains schema and WasmGC shared entry-point wiring;
+B's producers, D's fixtures/census, scoped ABI sealing, R1/R3/R4 interfaces, and
+`src/ir/lower.ts` are consumed without C edits.
+
+A's strict producer entry is `prepareWholeIrProgram(sourceInput)`. Its proposed
+C interface separates `acceptPreparedIrProgram(program, options)` from
+`emitAcceptedIrProgram(accepted)`. Acceptance validates the complete population,
+IR, ABI, startup, runtime and backend capabilities before allocation; actual
+emitted unit IDs reconcile against the same program's body vector. A alone
+wires shared compiler entry points and internal preparation/acceptance/emission
+observations. C must preserve all codec values and identities, reconstruct async
+authentication through B's canonical APIs, and reject conflicting decoded
+evidence rather than silently replacing it. Fresh-process replay must prove
+the absence of TypeScript, source lowering and compiler imports. Capability
+gaps remain incomplete coverage with separate fixture/backend denominators.
+
+Concrete codec data review, grounded in the existing schema and A's unsigned
+preparation batch, gives C the following implementation requirements. These
+are representation obligations for the existing program, not new semantic
+authority or permission to edit A's schema:
+
+- `IrModule` contains the function vector and optional declaration Maps;
+  `PreparedIrProgram.units` and each runtime projection's provider table are
+  also Maps. Preserve collection iteration order: full projection comparison
+  compares entry vectors in order. Prepared Maps/Sets are immutable wrappers;
+  encode their public entries, not private object fields or methods.
+- IR `i64` constants contain BigInt values. Retain them exactly, as well as
+  negative zero, non-finite numbers, and present `undefined` versus absent
+  fields. Allocation metadata explicitly distinguishes an omitted row from a
+  row whose value is `undefined`; JSON omission is lossy.
+- Recursive `IrClassShape` graphs carry the exact symbol-keyed
+  `[IR_CLASS_SHAPE_CELL]: true` brand exported by `nodes.ts`. It is a local
+  unique symbol, not a global `Symbol.for` name. Encode the known schema brand
+  explicitly and restore it using that canonical export; stringifying the
+  symbol description is insufficient. Preserve recursive class references and
+  full layouts. Other executable or arbitrary cyclic objects remain invalid.
+- `IrModuleInitPlan` and `ProgramAbiPlanEntry` contain plain data records and
+  vectors. `IrTerminalUnitRecord` additionally permits `directFailure.cause`
+  of type `unknown`; that field cannot be assumed serializable. Accepted
+  snapshots must reject retained errors, source objects and executable causes.
+- Decode the ABI entry vector and reconstruct its lookup methods. Preserve
+  semantic async plans as data, then compare complete regenerated runtime
+  evidence before retaining B's newly authenticated plan/manifest joins.
+  Process-local observation IDs and acceptance-token authority are not part
+  of the serialized semantic program.
+
+#### C first increment and integration repairs — 2026-09-06
+
+C supplied signed `5dd03b8e237a162162fb46490aef6605760762df`, parent8e89954c,
+with seven changed files and a clean worktree. Root verified the signature.
+The reported nine tests use a synthetic typed program, not A's driver or D's
+seven-unit fixture. Three pre-emission negatives pass; five TypeScript-related
+modules still load. Neither result satisfies the complete replay acceptance.
+C remains the exclusive owner of its codec/consumer/replay source and tests.
+
+Root's codec-only probes against exact signed bytes reproduced a positive
+canonical round trip, then three defects: leading-whitespace and duplicate-key
+envelopes are accepted but re-encode differently; an own `__proto__` property
+on an accepted plain-data record disappears. D's separate codec-only controls
+confirm that A's copier preserves integer-like record keys and sparse holes,
+but C cannot decode its own encoding of keys `2` and `10`, and converts an
+array hole into a present `null` while still re-encoding byte-identically.
+The dense-record positive passes. These are synthetic data-model probes, not
+A-driver acceptance or application execution. C must preserve valid data and
+reject noncanonical or unsupported input without silent loss. Its next batch
+also adopts A's complete-program lookup/validator, authenticated runtime
+reconstruction and `acceptPreparedIrProgram`/`emitAcceptedIrProgram` contract.
+The no-TypeScript boundary remains required; loaded libraries are not exempt.
+
+The lead owns two concrete integration-gate repairs, separate from C:
+
+1. In `scripts/audit-legacy-reachability.mjs`, derive the filesystem root with
+   `fileURLToPath(import.meta.url)` instead of URL `pathname`. The existing
+   expression points at nonexistent `Archiv%20Mini`; the decoded path exists.
+   Preserve the complete audited population and every verdict/baseline rule.
+2. Remove only the unused private `directCallTargets` helper from
+   `src/codegen/program-abi-module-init-planning.ts`. Keep the stricter live
+   `exactSequentialCallTargets` and all initializer/session behavior unchanged.
+   Both reported files have identical blobs at C's parent and integrated1dea,
+   establishing that these defects predate C. The saved open-PR census has no
+   audit-script overlap. A one-shot ownership read confirms PR5632,
+   "feat(codegen): atomically prepare multi-source module initializers", merged
+   as `bdea6e9807ce30242c569fd31420def6f014872e`; root inspected its exact module
+   initializer patch. Existing claims and other worktrees remain intact.
+3. Execute the actual dead-export check from the path containing spaces,
+   inspect its nonempty population and any remaining failing rows, then run
+   the affected initializer controls and ordinary formatting/type checks.
+   Do not suppress the audit, weaken a baseline, or equate gate repair with
+   direct-handler retirement.
+
+The actual repaired dead-export gate passed from the path containing spaces:
+815 codegen files, 7190 functions, 25 known unreferenced entries and zero new
+failures. The report contains both real dispatch cut roots and the retained
+sequential helper; the obsolete helper is absent. No baseline changed.
+Full typecheck passes. The affected initializer suite passes five of six;
+its same-named-user-function control expects `legacyBodyEmitted: true`, but
+the compiler reports false. The exact failing control reproduces on unchanged
+signed7b with the original planner bytes restored; the owned deletion was
+restored byte-identically afterward. This is a separately tracked existing
+expectation mismatch, not a six-of-six pass. Review that test against the
+actual initializer dispatch before changing its expectation. The five passing
+controls cover retained direct fallback, graph ownership, invocation policies
+and strict startup authentication. Normal signing of the three-file repair
+follows; no test assertion or baseline is weakened here.
+
+#### Separate common-backend source fixture — implementation plan
+
+D owns this new source fixture:
+`tests/fixtures/ir-whole-program/common-backend-scalar/manifest.json`.
+Its acyclic state/math/entry sources retain synchronous `initial`, `readPhase`
+and `run` exports under the existing native execution protocol, with an
+explicit `promise: false` result. The state initializer updates exported base;
+the math initializer must read that initialized base when computing bias, so
+wrong startup order changes observable results. `combine(seed)` evaluates
+`Math.sqrt(seed + base) + bias`; `run` changes phase and calls it across files.
+The three-source/seven-terminal shape is an expectation to measure, not an
+invented census. Source bytes, exact unit IDs, native values and all six phase
+observations must be derived from actual parsing/execution and recorded with
+their hashes. Preserve all original mixed/renamed fixture bytes and coverage.
+
+After B releases its current validation/signing slot, D may execute native
+derivation, exact inventory and A's preparation on both wasmgc/host and
+linear/host policies, inspecting the nonconstant sqrt demand and both runtime
+projections from one semantic program. The proposal alone proves no backend
+capability. Defer public candidate compilation and decoded backend replay to
+the actual combined A/C implementation; no old hybrid pass supplies that
+acceptance. D edits neither B's runner/test nor C's codec/consumer. Add no
+fixture allowlist and do not replace the mixed-fixture denominator. Sign only
+the complete measured manifest with normal hooks; keep derivation artifacts
+worktree-local. Root integrates the fixture alongside the reviewed runner.
+
+#### Exact fixture census and runner ownership — implementation plan
+
+B owns only `scripts/ir-whole-program-application-evidence.mjs` and
+`tests/ir/whole-program-application-evidence.test.ts` under the granular claim
+`3518:evidence-runner-acceptance`, owner
+`ttraenkler/astra-evidence-acceptance-b-20260906`, branch
+`codex/3518-evidence-acceptance-b-20260906`. D released those two files at
+`b3f08613aff01fadfa4d924b4be7924e1a340c8e`; broad A/B/C/D and scoped claims
+remain held. The claim CLI verified the new claim on the assignment ref.
+
+D also owns metadata-only additions to the existing `original-async-mixed`,
+`renamed-reordered` and `independent-mixed` manifests. For all four manifests,
+derive `inventory.sourceRecords` as `{ sourceId, sourceKey, kind, order }`
+from the actual inventory's source records, and `inventory.terminalRecords`
+as `{ unitId, sourceId, sourceKey, kind, observedKind, displayName }` from its
+terminal records joined to that source map. `kind` is the actual `IrUnitKind`
+(for example `top-level-function`); `observedKind` is the telemetry domain
+(for example `function`). Do not parse opaque identifiers or zip independently
+ordered vectors. Normalize the manifest's relative filenames explicitly when
+joining canonical source keys. Preserve the existing three fixtures' source
+bytes, digests, IDs, ordering, native values and coverage denominators.
+
+The runner must bind each terminal to its expected source and actual kind,
+validate the matching direct entry point, require an exact unique candidate
+source census and candidate mode, and retain the actual raw direct-route audit.
+Its schema-complete controls must reject reassigned terminals, wrong entry
+points, extra or duplicate sources and mode retagging. Repeated legitimate
+initializer passes remain valid. Preserve archived original control results;
+expanded public-schema controls are a new cohort, not an unchanged rerun.
+Do not manufacture per-source receipts when the measured direct compiler lacks
+them. A reviewed terminal ordering: independently constructed, frozen and fully
+validated terminal vectors may permute exact records, because population,
+receipts and ABI authority join by ID. Source order and startup order remain
+semantic. Captured manifest and evidence-row mutations must remain rejected.
+
+The approved dependency-order source fails preparation on A's clean signed
+`49f95b3fe92c710fc4877f50d080296671d87eab`: the math initializer calls
+undeclared callable `runtime|20:__new_ReferenceError`. D retained the actual
+failure report and stable source provenance. A separately measured scale-call
+variant passes preparation but does not establish the planned imported-global
+initializer behavior; its signed `d7e649091ba36e21b940eb8576feabb0c258c214`
+is not accepted as that control. Preserve both measurements. A investigates
+the missing runtime ABI declaration; D must retain the approved source/native
+census and label preparation failure without substituting coverage.
+
+#### Second consumer increment and measured oracle limits — 2026-09-06
+
+C supplied signed `3b2179d2f7e6f617c4484254e61a6a4f1fe3e8ae`; root verified
+the signature and read its actual 19/19 test log. Its A-produced two-source
+scalar subset executes through the codec on both backends. The original mixed
+source retains seven terminals and passes WasmGC acceptance, while linear is
+typed unsupported. Mixed emission remains a physical-plan gap, and the fresh
+child uses the synthetic four-function fixture. These are separate populations.
+
+A's contract review rejects the additional caller-supplied physical-plan
+argument as the production boundary: its mutable resolver, factories and
+assembler remain outside acceptance, and the assembler can omit bodies while
+the consumer still reports all lowered IDs. C must build and validate concrete
+source-free physical setup internally, expose one-argument authenticated
+emission, and derive receipts from actual module construction. C owns the
+accepted/emission-started/emitted observations; A owns prepared and its held
+public wrapper. The scalar test adapter does not replace startup, global,
+provider or async emission. Root also reviews nonempty oracle target/call
+floors, exact receipt identities and deterministic forbidden-module evidence.
+The saved C signing log skipped slow hooks via `SKIP_SLOW_PRECOMMIT=1`;
+normal configured hook completion remains required for the no-bypass handoff.
+
+Root's independent exact-C controls confirm all five original codec fixes and
+the canonical positive. The full replay child runs four units and four values
+on each backend, with 152 module resolutions and no TypeScript/frontend match.
+Empty targets, empty oracle calls and duplicate targets all incorrectly return
+exit0/ok:true. A separate actual consumer control lowers four bodies and reports
+four emitted IDs while its supplied assembler returns zero module functions and
+exports. These are reproduced defects, not merely source-review predictions.
+
+Root combined signed A `fcd2e9109789681f33e2f26d8a3312fb219f40c8` and B
+`45a6c72add4605df078fb2a90cd1f600617f56c2`. Full combined typecheck passes.
+The physical-leaf probe performs real function/tag import registration and
+frozen-tag reuse, with two imports, one function and one function type; its
+deliberate frontend import is rejected. This establishes the bounded physical
+import boundary, not full runtime materialization or mixed-application replay.
+
+B executed the original direct oracle on clean signed45a6, using the distinct
+b3 runner worktree with stable before/after source fingerprints. The actual
+25182-byte module matches native initial212/result224 and the two-tick Promise
+sequence. Its raw audit has 13 entry records and 10 physical records, but only
+six of seven terminals have evidence. The sole structural violation is
+`missing-terminal-evidence` for the b.ts module initializer: it has a
+declaration pass and no body receipt. CLI exit1 correctly rejects this audit,
+independently of temporarily missing fixture metadata. B's focused control
+must pin this failure through the exact terminal-record join while retaining
+all runtime/provenance assertions; do not invent or ignore the missing receipt.
+
+B additionally owns one data-only captured regression fixture,
+`tests/ir/fixtures/captured-original-direct-audit.json`, containing the entire
+measured raw audit, source digest and before/after compiler provenance. The
+always-run predicate control must label this captured evidence and verify the
+exact six-of-seven refusal; it makes no fresh-compile claim. Remove machine
+paths and fixed ephemeral revision assertions from test code. The explicit
+`JS2WASM_WHOLE_PROGRAM_DIRECT_ORACLE` setting supplies actual oracle execution;
+absent or identical checkout configuration must be visibly refused. A configured
+run checks stable distinct provenance, native behavior and its actual returned
+audit independently, and requires the CLI status to match that audit's verdict.
+Retain separate native execution and report captured/configured coverage apart.
+
+The imported-global initializer's ReferenceError constructor requires a
+canonical runtime declaration/provider from B, consumed into A's ABI vector
+before sealing and physically reserved by C before emission. The existing
+allocation-time integration helper supplies no semantic authority. A and B
+confirmed that no catalog entry currently exists. Preserve the TDZ guard;
+linear's rejection of its null/externref/throw instructions is separate coverage.
+An exact-binding proof of prior initialization within ordered startup would
+need its own plan and early/cyclic/deferred-read negative controls. No such
+optimization or source-arm change is authorized by this runtime declaration.
+
+B also has a narrow grant for the await-expression arm/import wiring in
+`src/ir/from-ast.ts`. Read-only ownership review verified the earlier R1 W1-G
+and R3 W1-C implementations landed at merge commits `ae5d2d25` and `6b9c5a1f`,
+with no linked worktrees or overlapping open PR at review time. This grant
+preserves the canonical identity/class APIs and all unrelated from-AST arms.
+B's existing runtime-provider scope includes declaring the existing caught-
+exception host capability and its async reject-provider dependency, so numeric
+await frames cannot allocate that import after manifest acceptance.
+
+For the replay import boundary, A has a mechanical R1 dependency grant: move
+only `createDerivedIrUnitId`, `createIrBindingId`, and their canonical encoding
+helpers to `src/ir/identity-values.ts`, keep the existing `identity.ts` API via
+re-exports, and change only runtime-factory imports in `program-abi.ts`,
+`callable-bindings.ts`, and `abi-bindings.ts`. Existing namespaces, validation,
+and all unrelated R1 behavior remain unchanged. The eight-open-PR file census
+contains no overlap on these four existing modules; the known C30–C33 PRs are
+recorded merged by GitHub, and their claimed branches have no linked worktrees.
+Local July ancestry is unproven because this checkout has shallow history.
+No old claim is released. B owns the new pure `runtime-program-manifest.ts`
+leaf, re-exported by its producer module. Both leaves must demonstrate a fresh
+runtime import graph free of frontend dependencies.
+
+A also owns the mechanical extraction of four existing runtime symbol constants
+(`IR_STRING_COMPARE_FN`, `JSSTR_CHARCODEAT_FN`, `NATIVE_CHARCODEAT_FN`, and
+`FUNCTION_PROTOTYPE_CALL_HELPER`) and the unchanged IR demand scans into pure
+leaves. Their existing modules retain public re-exports. B retains the await arm;
+the two writers coordinate only the shared import hunk. No runtime-helper logic
+or additional source-shape admission belongs to this extraction.
+
+Independent review of the first implementation drafts found obligations that
+remain open before acceptance:
+
+- A's semantic type keys must handle the recursive class shapes permitted by
+  the shared schema, and conflicting layouts must still fail validation.
+- Every runtime function must match all semantic fields of its authoritative
+  program body, apart from its authenticated runtime attachment. Comparing only
+  blocks, parameters and async-plan identity would miss substituted result types
+  or export flags. Allocation provenance must also remain validated after replay.
+- B's review of A's new in-place runtime freezer found that prototype-erased
+  native Map/Set objects can look like null-prototype data records while their
+  contents remain mutable after Object.freeze. A owns the native-brand check
+  and negative controls; accepted runtime graphs must retain authenticated
+  object joins without admitting those mutable collection objects.
+- The original seven-unit source now passes A's complete preparation draft on
+  signed B4d: fourteen typed bodies include seven declared async-derived helpers,
+  with three ordered initializers, six globals and preserved public exports.
+  This is preparation evidence only. Root's subsequent cross-backend review
+  found that promoting runtime functions minus asyncRuntime into the semantic
+  body vector retains intrinsic provider attachments from the first policy.
+  Requiring object identity for every projected block/plan then prevents
+  independently reconstructed backend projections. A/B own exact semantic-field
+  reconciliation plus separately authenticated attachments and a two-projection
+  common-subset control. Entire blocks/plans must not be exempted from validation.
+  Projection selection must also be unambiguous for backend/target pairs.
+- D's strict verdict must require actual shared-program observations, exact
+  phase order and unit-ID joins, and unchanged compiler fingerprints. Pending
+  observations or nonempty telemetry strings cannot establish acceptance. Load
+  scheduling belongs outside correctness tests, and the historical legacy
+  baseline must not become an assertion that prevents the intended cutover.
+  B's executable review of the next draft additionally reproduced copied proof
+  metadata, swapped unit IDs, wrong backend/target labels, and phase objects with
+  custom toJSON passing the gate; canonical source keys also failed its positive
+  control because of display-only './' prefixes. D owns the exact live-event,
+  field-type and identity-to-label joins plus canonical display normalization.
+
+The lead owns the narrow route-audit dependency in
+`src/ir/standalone-route-manifest.ts`, `src/codegen/legacy-body-audit.ts`, and
+`tests/issue-3518-whole-program-route-audit.test.ts`, plus the related existing
+`tests/standalone-cutover-audit.test.ts`. The new generator must
+register its real `generateWholeProgramModule` identity. An internal immutable
+session selection binds that generator to the canonical single/multi graph
+for each public entry; existing legacy sessions retain their exact generator
+checks. This adds no public compiler option and changes no terminal, derived
+unit, or physical legacy-entry reconciliation. A consumes the new session API
+without editing these files. Focused controls must reject missing registration,
+wrong graph/generator, and missing terminal evidence, and must retain actual
+legacy roots even when the new generator is registered.
+
+The existing standalone JSONL validator also hardcodes the old generator
+tuples. Its new-route support remains a separate acceptance dependency: it
+must stay fail-closed until the executed path has observable physical coverage.
+A must not publish a fresh, unused audit session's empty legacy-entry vector as
+proof of direct-dispatch absence. The complete-program observations, actual
+emitted receipts and C's source-free replay controls remain required.
+
+The existing injected-inline-failure audit control expected two unresolved
+terminals. Both the candidate and exact unchanged `1b9ced2d` source reproduce
+three: the source functions `delay` and `fetchUser`, plus the inventoried
+compiler timer shim `setTimeout`. The lead's test repair pins these exact three
+failed owners and their missing-evidence joins, retaining the incomplete
+verdict. The baseline probe restored both candidate audit files byte-for-byte;
+this is an expectation correction, not a new source admission or a relaxed gate.
+
+### Prerequisite consolidation record — 2026-09-05
+
+The main thread has adopted this amendment into the isolated integration
+checkout. P2A ready PR5632, `feat(codegen): atomically prepare multi-source
+module initializers`, is verified OPEN at exact head
+`f9d524da9464ba1c27e8cddc46897c8422c24922`, with the reviewed body. Its claim
+remains held until actual landing. This is a publication fact, not completion
+of R5 or this epic.
+
+The reviewed R8 repair `272afba2d5de1af082768f45e5cb7b39f61a55e4` is integrated
+by signed merge `0c34f27a408187631153724c3d50e2a5142c247e`. Normal integration
+hooks passed 59 tests with two existing optional skips across seven files;
+formatting, lint, budgets, and oracle gates passed. Root verified the SSH
+signature and exact parent history. Allocation-policy callbacks remain confined
+to final retained allocations; the before/after control is `[0,1,0]` to `[0]`.
+
+The async repair `d073f433edfffc8be623d37a2333f3d763af09cc` was independently
+replayed at its exact clean signed head: generic and settled positive controls,
+missing/rebound declaration identity, terminal loss, and rejected cached-owner
+mutation all retained the required result. The integration test conflict is
+resolved by retaining both B2's generic-tail/final-void ownership controls and
+P2A's exact-byte exnref child validator with corrupt-byte rejection. No test is
+removed to reconcile the histories. The unchanged three-source async application
+(source SHA256 `236fa7d971bf9b86aafa778a9a441b2440bae2e2c2c0ae7fdab3f6e517c517fb`)
+compiles to 25,182 bytes and matches initial212/result224, native Promise identity,
+and the original microtask trace on the combined source. It still reports seven
+Unsupported terminals, zero IR bodies and six direct body emissions (the b.ts
+initializer row reports zero). This is compatibility evidence only; it does not
+pass the seven-unit whole-program checkpoint. Remaining combined candidate gates
+must pass before wave dispatch.
+
+The read-only B producer inventory identifies reusable async and manifest
+producers, their readers and mutators, and the six required A interface inputs.
+It confirms that post-hoc `evaluateIrOutcomePolicy` is not a strict compiler
+route, and the current candidate builder excludes initializer units. The
+implementation must fix those central boundaries rather than report the
+candidate ledger as production ownership. New A/B/D claims and worktrees still
+require the current main/open-PR/claim census; existing R1/R3/R4 owners retain
+their authority. Public B2/B3/P2A ancestry must remain intact on consolidation.
 
 ## Product outcome
 
@@ -3013,6 +3687,78 @@ the large graph JSON is not committed as a baseline.
    validation above. No bounded cohort or five-entry readiness check substitutes
    for the epic's acceptance criteria.
 
+## Implementation Plan — 2026-09-05 — consolidate existing migration work
+
+The user explicitly prioritized integrating the current pieces before opening
+more parallel feature slices. Astra owns integration planning and review.
+Following the user's approved model switch on 2026-09-05, Astra Max also owns
+the async ownership/currentness and linear backend acceptance repairs. Both
+previous Luna writers confirmed stand-down before the Astra successors took
+over their existing worktrees, branches, issue plans, and test evidence.
+Luna Max retains initializer publication and bounded validation. Existing
+lane claims remain held under parent coordination. D1a authority implementation
+is deferred; its preserved worktree and approved evidence remain intact.
+
+The integration claim is `3518:integration-consolidation`, owned by
+`ttraenkler/astra-ir-integration-20260905`. It covers candidate composition,
+cross-lane validation, and this plan, not another feature or direct-path
+retirement. Preserve the independent `3518:bench-string-c2` claim and both
+active R4 storage claims. The concise current status is maintained in the
+integration lane's `.tmp/ir-completion-20260905/integration-status.md`;
+historical agent reports do not override that record's source evidence.
+
+1. **Repair the initializer failure boundary before publication.** For
+   **#3525 — IR-only R5: whole-program single- and multi-source Prepared
+   ownership**, retain every authentic returned pending receipt before
+   validating its complete partition. Any malformed or incomplete partition
+   must abort all original pending scopes, including receipts excluded from
+   the invalid partition. Classify failure outcomes explicitly: only supported
+   preclaim `Unsupported` refusals may resume existing routing. An invariant
+   or postclaim failure must abort and remain fatal. Pair real positive
+   production initialization with late-partition and injected-phase failures;
+   measure scope revocation and absence of direct retry, not only empty output.
+2. **Reconcile the actual async prerequisite graph.** For
+   **#3527 — IR-only R7: AST-free async plan**, B3 currently contains B2's
+   source changes. Preserve both published branches and any automatic main
+   merge; never overwrite them with a stale local head. After an actual B2
+   landing event, verify the merge's source ancestry and file contents, then
+   inspect B3's remaining diff against that main. Do not count B2 twice or
+   mark the broader issue complete. B2 currently has a reproduced generic
+   async-to-async call regression in equivalence CI; repair the physical
+   carrier closure before waiting on its landing. Compose the repaired B2/B3
+   histories first and choose a coherent publication path after the actual
+   head and queue census. Review loss of retained owner identity after
+   Promise ABI issuance as an existing B3 acceptance condition.
+3. **Finish the linear handoff's existing contract.** For
+   **#3528 — IR-only R8: shared linear Prepared program**, preserve typed,
+   located preclaim refusals through the linear rejection report. Verify
+   demanded helper/layout availability before the first accepted emission.
+   Distinguish legitimate symbolic relocation from an unproved resource;
+   relocation does not permit late capability discovery. Retain the repaired
+   SSA, declaration, allocation, provider, and one-shot failure controls.
+4. **Compose the repaired candidates in an isolated integration checkout.**
+   Pin main and all candidate heads, merge ordinary branch histories, and
+   inspect every overlapping source hunk. Do not push an integration merge to
+   any author's branch or to main. R5 and async changes share declaration and
+   integration machinery; independently green branch tests are insufficient.
+   Run their focused suites against the combined candidate before broadening
+   validation. Preserve exact input hashes and record preexisting failures.
+5. **Demonstrate a larger path through the public compiler.** Compile a
+   multi-source application with ordered numeric initialization, imported
+   reads, an async export with multiple numeric awaits, and a numeric
+   loop/branch helper. Execute emitted output and compare values, startup
+   order, Promise identity, and microtask observations with native JavaScript.
+   Record terminal ownership and direct-body counts for every source/unit.
+   Where current mixed-graph or backend support declines, retain that refusal
+   as the measured integration boundary; do not call the application IR-only
+   or widen admission to make a test green. Separately consume one captured
+   supported body graph in both backends and execute both outputs.
+6. **Verify landing by effect and preserve the full acceptance bar.** Observe
+   actual merge events without polling. Verify source parent ancestry and
+   changed file contents on main, then rerun integration checks when landed
+   source differs from the candidate. Required merge-group CI, complete
+   Test262 accounting, whole-program ownership, and all eleven epic criteria
+   remain required. Bounded runtime evidence does not authorize deletion.
 ## Astra High continuation specification — 2026-09-07
 
 This is a specification checkpoint for the full migration. It changes no

@@ -151,7 +151,9 @@ describe("#3501 empty-array element inference", () => {
     for (const [index, entry] of cases.entries()) {
       const { report } = await compileLinear(entry.source, `issue-3501-negative-${index}.js`);
       expect(report.compiled).toEqual([]);
-      expect(report.rejected).toContainEqual({ func: "run", reason: "build", detail: entry.detail });
+      expect(report.rejected).toContainEqual(
+        expect.objectContaining({ func: "run", reason: "build", detail: entry.detail }),
+      );
     }
   });
 });
@@ -308,11 +310,13 @@ describe("#3501 shared planned-vector backend operations", () => {
       "issue-3501-oob-read.js",
     );
     expect(report.compiled).toEqual([]);
-    expect(report.rejected).toContainEqual({
-      func: "readMaybeOutOfBounds",
-      reason: "build",
-      detail: "ir/from-ast: inferred linear vector read is not proven in bounds (readMaybeOutOfBounds)",
-    });
+    expect(report.rejected).toContainEqual(
+      expect.objectContaining({
+        func: "readMaybeOutOfBounds",
+        reason: "build",
+        detail: "ir/from-ast: inferred linear vector read is not proven in bounds (readMaybeOutOfBounds)",
+      }),
+    );
   });
 
   const nativeIt = hasOptionalPorffor && cCompiler ? it : nativeRequired ? it : it.skip;

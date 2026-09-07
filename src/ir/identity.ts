@@ -1,6 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import {
+  createDerivedIrUnitId,
+  createIrBindingId,
+  canonicalIrIdentityNumber as canonicalNumber,
+  irIdentityComponent as identityComponent,
+} from "./identity-values.js";
+export { createDerivedIrUnitId, createIrBindingId } from "./identity-values.js";
 import type { CompilerSourceOrigin, CompilerSourceProducer } from "../position-map.js";
 import {
   boundedPreparedNestedOrdinaryClassBindingName,
@@ -300,15 +307,8 @@ export interface CreateIrBindingIdInput {
   readonly ordinal?: number;
 }
 
-const identityComponent = (value: string): string => encodeURIComponent(value);
 const ownerComponent = (owner: IrLexicalOwnerId | null): string => (owner === null ? "root" : identityComponent(owner));
 const compareCanonicalText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-const canonicalNumber = (value: number, label: string): string => {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new RangeError(`${label} must be a non-negative safe integer, received ${value}`);
-  }
-  return value.toString(10).padStart(16, "0");
-};
 
 export function createIrSourceId(input: CreateIrSourceIdInput): IrSourceId {
   return `ir-source:v1:${canonicalNumber(input.order, "source order")}:${input.kind}:${identityComponent(input.sourceKey)}` as IrSourceId;
@@ -319,9 +319,6 @@ export function createIrUnitId(input: CreateIrUnitIdInput): IrUnitId {
 }
 
 /** Derive a unit identity from semantic compiler role, never a display label. */
-export function createDerivedIrUnitId(input: CreateDerivedIrUnitIdInput): IrUnitId {
-  return `ir-unit:v1:derived:${identityComponent(input.parentId)}:${identityComponent(input.role)}:${canonicalNumber(input.ordinal, "derived unit ordinal")}` as IrUnitId;
-}
 
 /** Allocate a lifted artifact's label and structural identity from one ordinal. */
 export function allocateLiftedFunctionArtifact(
@@ -345,10 +342,6 @@ export function createIrClassId(input: CreateIrClassIdInput): IrClassId {
 /** Derive a compiler-created class identity from its parent and semantic role. */
 export function createDerivedIrClassId(input: CreateDerivedIrClassIdInput): IrClassId {
   return `ir-class:v1:derived:${identityComponent(input.parentId)}:${identityComponent(input.role)}:${canonicalNumber(input.ordinal, "derived class ordinal")}` as IrClassId;
-}
-
-export function createIrBindingId(input: CreateIrBindingIdInput): IrBindingId {
-  return `ir-binding:v1:${input.domain}:${identityComponent(input.ownerId)}:${identityComponent(input.role)}:${canonicalNumber(input.ordinal ?? 0, "binding ordinal")}` as IrBindingId;
 }
 
 export function compareIrIdentity(a: IrSourceId | IrUnitId | IrClassId | IrBindingId, b: typeof a): number {

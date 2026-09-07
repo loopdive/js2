@@ -15,11 +15,12 @@
  */
 
 import {
+  ASYNC_HOST_ADAPTERS,
   ASYNC_RUNTIME_FEATURES,
-  assertCanonicalAsyncHostCapabilityRecord,
+  assertCanonicalPreparedAsyncHostCapabilityRecord,
   isAsyncRuntimeFeature,
-  type AsyncHostAdapter,
-  type AsyncHostCapabilityId,
+  type PreparedAsyncHostAdapter,
+  type PreparedAsyncHostCapabilityId,
   type AsyncRuntimeFeature,
 } from "./async-runtime-providers.js";
 import { irImportFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
@@ -197,10 +198,10 @@ export interface IrAsyncPlan {
  * component sealing exact symbolic dependencies for the selected adapter.
  */
 export interface PreparedIrAsyncHostAdapter {
-  readonly capability: AsyncHostCapabilityId;
+  readonly capability: PreparedAsyncHostCapabilityId;
   readonly target: IrFuncRef;
   /** Exact canonical capability record selected by the frozen manifest. */
-  readonly record: AsyncHostAdapter;
+  readonly record: PreparedAsyncHostAdapter;
 }
 
 interface PreparedIrAsyncRuntimeBase {
@@ -448,7 +449,7 @@ export function assertPreparedIrAsyncRuntimeCurrent(
       // (#3526 F2-S2) Fail-closed kind guard: the frozen catalogue is now
       // kind-discriminated, and only a callable record has an import spelling.
       const record = asCallableRuntimeHostCapabilityRecord(records[index]!);
-      assertCanonicalAsyncHostCapabilityRecord(adapter.record);
+      assertCanonicalPreparedAsyncHostCapabilityRecord(adapter.record);
       const target = irImportFuncRef(record.module, record.field, record.field);
       if (
         adapter.record !== record ||
@@ -872,17 +873,49 @@ function verifyCanonicalPromiseAbi(plan: IrAsyncPlan, errors: IrAsyncPlanVerifyE
   }
 }
 
+/** The shared frame currently needs the complete host adapter set even for a smaller valid semantic plan. */
+export function preparedIrAsyncFrameCapabilityFailure(runtime: CurrentPreparedIrAsyncRuntime): string | undefined {
+  if (runtime.kind !== "host-wasmgc") return undefined;
+  const capabilities = new Set(runtime.adapters.map((adapter) => adapter.capability));
+  const missing = ASYNC_HOST_ADAPTERS.filter((adapter) => !capabilities.has(adapter.capability));
+  return missing.length === 0
+    ? undefined
+    : `shared async frame requires host adapters absent from this valid semantic plan: ${missing.map((adapter) => adapter.capability).join(", ")}`;
+}
+
+/** Typed primitive crossings need number boxing/unboxing at the Promise runtime boundary. */
+export function irAsyncPlanNeedsNumberBridge(plan: IrAsyncPlan): boolean {
+  const types = new Map(plan.values.map(({ value, type }) => [value, type] as const));
+  const number = (type: IrType | undefined): boolean => type?.kind === "val" && type.val.kind === "f64";
+  return plan.states.some(
+    (state) =>
+      number(state.resume?.type) ||
+      (state.terminator.kind === "suspend" && number(types.get(state.terminator.awaited))) ||
+      (state.terminator.kind === "resolve" &&
+        state.terminator.value !== undefined &&
+        number(types.get(state.terminator.value))),
+  );
+}
+
 function requiredRuntimeIntents(plan: IrAsyncPlan): ReadonlySet<IrAsyncRuntimeIntent> {
   const required = new Set<IrAsyncRuntimeIntent>(["promise.capability.create"]);
   if (plan.abi.fulfillmentType === null) required.add("value.undefined");
   for (const state of plan.states) {
-    switch (state.terminator.kind) {
+    const terminator = state.terminator;
+    switch (terminator.kind) {
       case "suspend":
+        if (
+          plan.values.some(
+            ({ value, type }) => value === terminator.awaited && type.kind === "val" && type.val.kind === "f64",
+          )
+        ) {
+          required.add("promise.number.bridge");
+        }
         required.add("promise.resolve");
         required.add("promise.react");
         required.add("scheduler.enqueue");
         required.add("scheduler.drain");
-        if (state.terminator.rejected.kind === "reject") required.add("promise.settle.reject");
+        if (terminator.rejected.kind === "reject") required.add("promise.settle.reject");
         break;
       case "resolve":
         required.add("promise.settle.fulfill");

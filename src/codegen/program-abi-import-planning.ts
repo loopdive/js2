@@ -2,7 +2,8 @@
 
 import { irGlobalBindingKey, irImportGlobalRef, irPlannedImportGlobalRef } from "../ir/abi-bindings.js";
 import { irCallableBindingKey, irCapabilityImportFuncRef, irImportFuncRef } from "../ir/callable-bindings.js";
-import { createIrBindingId, type IrBindingId, type IrSourceId } from "../ir/identity.js";
+import type { IrBindingId, IrSourceId } from "../ir/identity.js";
+import { createIrBindingId } from "../ir/identity-values.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { IrGlobalRef } from "../ir/nodes.js";
 import type { FuncTypeDef, Import, ValType } from "../ir/types.js";

@@ -686,7 +686,7 @@ describe("#4124 ownership and optimization parity", () => {
         `process.stdout.write(JSON.stringify({ exact: exact.success, near: near.success, errors: near.errors.map(e => e.message) }));\n`,
     );
     const parsed = JSON.parse(
-      execFileSync("pnpm", ["exec", "tsx", probe], {
+      execFileSync(process.execPath, ["--import", "tsx", probe], {
         cwd: REPO_ROOT,
         env: { ...process.env, JS2WASM_TEST_POISON_DIRECT_ASYNC_BODY: "1" },
       }).toString(),
