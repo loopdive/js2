@@ -122,6 +122,7 @@ import {
   callResolvedClassPrimitive,
   createClassMemberResolver,
   createResolvedClassMethodInvoker,
+  hasStructPrototypeMember, // (#5358)
 } from "./runtime/class-method-host-bridge.js";
 import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
 import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-class-instance.js";
@@ -12994,10 +12995,7 @@ assert._isSameValue = isSameValue;
           // object never has `e`; the source struct's shape no longer leaks).
           if (typeof obj === "object" && _isWasmStruct(obj)) {
             if (_wasmStructHasOwn(obj, key, callbackState?.getExports())) return 1;
-            // (#1991) `in` walks the [[Prototype]] chain (§13.10.1 → §7.3.12):
-            // every object inherits the Object.prototype members.
-            if (typeof key === "string" && _OBJECT_PROTO_KEYS.has(key)) return 1;
-            return 0;
+            return hasStructPrototypeMember(obj, key, _OBJECT_PROTO_KEYS, () => marshalExports(callbackState)) ? 1 : 0;
           }
           // Plain JS object (or host-supplied object) — native HasProperty walks
           // its own prototype chain. HasProperty is value-independent (§7.3.12),
