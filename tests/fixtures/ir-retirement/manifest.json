@@ -1,0 +1,732 @@
+{
+  "schema": 1,
+  "base": "651034e4fd295e826d73a769200279210b2b35e7",
+  "spec": "9afe370642b2475434a21f68e73ce6af1e66c8a7",
+  "oracleSha256": "79c2c1097348e628db740116af98579643cfa2095a27e6fcf6ad089645438732",
+  "fixtures": [
+    {
+      "id": "scalar",
+      "entry": "scalar.ts",
+      "sources": [
+        {
+          "file": "scalar.ts",
+          "sha256": "abfbb3899bc37874ada77d93b3646088fd8ca8c521f21d1470fb6ffd758805ec"
+        }
+      ],
+      "units": [
+        {
+          "source": "scalar.ts",
+          "kind": "top-level-function",
+          "name": "calculate",
+          "ordinal": 0,
+          "terminal": true
+        }
+      ],
+      "calls": [
+        {
+          "export": "calculate",
+          "args": [5],
+          "expected": 17
+        },
+        {
+          "export": "calculate",
+          "args": [-2],
+          "expected": -4
+        }
+      ]
+    },
+    {
+      "id": "namespace",
+      "entry": "namespace.ts",
+      "sources": [
+        {
+          "file": "namespace.ts",
+          "sha256": "8f33c92ed775e867d2ee053ed0f5da5ec162a55867b4c148c34e0a957b4eca6d"
+        }
+      ],
+      "units": [
+        {
+          "source": "namespace.ts",
+          "kind": "top-level-function",
+          "name": "calculate",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "namespace.ts",
+          "kind": "module-init",
+          "name": "<module-init>",
+          "ordinal": 0,
+          "terminal": true
+        }
+      ],
+      "calls": [
+        {
+          "export": "calculate",
+          "args": [5],
+          "expected": 6
+        },
+        {
+          "export": "calculate",
+          "args": [-2],
+          "expected": -1
+        }
+      ]
+    },
+    {
+      "id": "class-closure",
+      "entry": "class-closure.ts",
+      "sources": [
+        {
+          "file": "class-closure.ts",
+          "sha256": "fe3d13a65cd2d476baf22e743a0f7ced5b72395d4199f373cf8601316da4cd78"
+        }
+      ],
+      "units": [
+        {
+          "source": "class-closure.ts",
+          "kind": "class-constructor",
+          "name": "Box_new",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "class-closure.ts",
+          "kind": "class-instance-method",
+          "name": "Box_read",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "class-closure.ts",
+          "kind": "arrow-function",
+          "name": "get",
+          "ordinal": 0,
+          "terminal": false
+        },
+        {
+          "source": "class-closure.ts",
+          "kind": "top-level-function",
+          "name": "calculate",
+          "ordinal": 0,
+          "terminal": true
+        }
+      ],
+      "calls": [
+        {
+          "export": "calculate",
+          "args": [5],
+          "expected": 12
+        },
+        {
+          "export": "calculate",
+          "args": [-2],
+          "expected": 5
+        }
+      ]
+    },
+    {
+      "id": "dynamic",
+      "entry": "dynamic.ts",
+      "sources": [
+        {
+          "file": "dynamic.ts",
+          "sha256": "59d6467cf38dc078599bb4e1acae17bfb1c00279eca7c1776b8a55713afd0924"
+        }
+      ],
+      "units": [
+        {
+          "source": "dynamic.ts",
+          "kind": "top-level-function",
+          "name": "calculate",
+          "ordinal": 0,
+          "terminal": true
+        }
+      ],
+      "calls": [
+        {
+          "export": "calculate",
+          "args": [5],
+          "expected": 14
+        },
+        {
+          "export": "calculate",
+          "args": [-2],
+          "expected": 7
+        }
+      ]
+    },
+    {
+      "id": "cjs",
+      "entry": "common.cjs",
+      "sources": [
+        {
+          "file": "common.cjs",
+          "sha256": "443a3b945e58784526926ea46098135a510be1b72736ef7858828bce3079d41d"
+        }
+      ],
+      "units": [
+        {
+          "source": "common.cjs",
+          "kind": "module-init",
+          "name": "<module-init>",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "common.cjs",
+          "kind": "function-expression",
+          "name": "calculate",
+          "ordinal": 0,
+          "terminal": false
+        }
+      ],
+      "calls": [
+        {
+          "export": "calculate",
+          "args": [5],
+          "expected": 16
+        },
+        {
+          "export": "calculate",
+          "args": [-2],
+          "expected": 9
+        }
+      ]
+    },
+    {
+      "id": "graph",
+      "entry": "entry-scalar.ts",
+      "sources": [
+        {
+          "file": "entry-scalar.ts",
+          "sha256": "c759ae71e67d81bb8c8b964660a25e7c1987bb31147672dff345baf88720992c"
+        },
+        {
+          "file": "state.ts",
+          "sha256": "cde39b2c39b0a4a2a12b573bb08e54dca3938b1b3d88b04407f8ee4a5fad065a"
+        },
+        {
+          "file": "math.ts",
+          "sha256": "ef77dc476a74b82d71384ea32af3e06a35376ea7023cb21cf4491d97ea75f52d"
+        },
+        {
+          "file": "types.ts",
+          "sha256": "5d4683b475068f3480b0ca5dc375b5ca4981e7dcfafac4d9b8c5b2c2d568ea5f"
+        }
+      ],
+      "units": [
+        {
+          "source": "state.ts",
+          "kind": "top-level-function",
+          "name": "helper",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "state.ts",
+          "kind": "top-level-function",
+          "name": "bump",
+          "ordinal": 1,
+          "terminal": true
+        },
+        {
+          "source": "state.ts",
+          "kind": "module-init",
+          "name": "<module-init>",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "math.ts",
+          "kind": "top-level-function",
+          "name": "helper",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "entry-scalar.ts",
+          "kind": "top-level-function",
+          "name": "__module_init",
+          "ordinal": 0,
+          "terminal": true
+        }
+      ],
+      "calls": [
+        {
+          "export": "value",
+          "args": null,
+          "expected": 4
+        },
+        {
+          "export": "calculate",
+          "args": [5],
+          "expected": 25
+        },
+        {
+          "export": "bump",
+          "args": [3],
+          "expected": 7
+        },
+        {
+          "export": "value",
+          "args": null,
+          "expected": 7
+        },
+        {
+          "export": "calculate",
+          "args": [5],
+          "expected": 28
+        },
+        {
+          "export": "__module_init",
+          "args": [2],
+          "expected": 102
+        }
+      ]
+    },
+    {
+      "id": "async",
+      "entry": "entry.ts",
+      "sources": [
+        {
+          "file": "entry.ts",
+          "sha256": "078b7d3696e543c9055d51fcdfe5999261cafd8c22e87e6c47fc12a21b220d89"
+        },
+        {
+          "file": "entry-scalar.ts",
+          "sha256": "c759ae71e67d81bb8c8b964660a25e7c1987bb31147672dff345baf88720992c"
+        },
+        {
+          "file": "state.ts",
+          "sha256": "cde39b2c39b0a4a2a12b573bb08e54dca3938b1b3d88b04407f8ee4a5fad065a"
+        },
+        {
+          "file": "math.ts",
+          "sha256": "ef77dc476a74b82d71384ea32af3e06a35376ea7023cb21cf4491d97ea75f52d"
+        },
+        {
+          "file": "types.ts",
+          "sha256": "5d4683b475068f3480b0ca5dc375b5ca4981e7dcfafac4d9b8c5b2c2d568ea5f"
+        }
+      ],
+      "units": [
+        {
+          "source": "state.ts",
+          "kind": "top-level-function",
+          "name": "helper",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "state.ts",
+          "kind": "top-level-function",
+          "name": "bump",
+          "ordinal": 1,
+          "terminal": true
+        },
+        {
+          "source": "state.ts",
+          "kind": "module-init",
+          "name": "<module-init>",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "math.ts",
+          "kind": "top-level-function",
+          "name": "helper",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "entry-scalar.ts",
+          "kind": "top-level-function",
+          "name": "__module_init",
+          "ordinal": 0,
+          "terminal": true
+        },
+        {
+          "source": "entry.ts",
+          "kind": "top-level-function",
+          "name": "twoAwait",
+          "ordinal": 0,
+          "terminal": true
+        }
+      ],
+      "calls": [
+        {
+          "export": "value",
+          "args": null,
+          "expected": 4
+        },
+        {
+          "export": "calculate",
+          "args": [5],
+          "expected": 25
+        },
+        {
+          "export": "bump",
+          "args": [3],
+          "expected": 7
+        },
+        {
+          "export": "value",
+          "args": null,
+          "expected": 7
+        },
+        {
+          "export": "calculate",
+          "args": [5],
+          "expected": 28
+        },
+        {
+          "export": "__module_init",
+          "args": [2],
+          "expected": 102
+        },
+        {
+          "export": "twoAwait",
+          "args": [4],
+          "expected": 13
+        }
+      ]
+    }
+  ],
+  "profiles": [
+    {
+      "id": "gc",
+      "options": {
+        "target": "gc"
+      }
+    },
+    {
+      "id": "gc-fast",
+      "options": {
+        "target": "gc",
+        "fast": true
+      }
+    },
+    {
+      "id": "standalone",
+      "options": {
+        "target": "standalone"
+      }
+    },
+    {
+      "id": "standalone-fast",
+      "options": {
+        "target": "standalone",
+        "fast": true
+      }
+    },
+    {
+      "id": "linear",
+      "options": {
+        "target": "linear"
+      }
+    },
+    {
+      "id": "wasi",
+      "options": {
+        "target": "wasi"
+      }
+    }
+  ],
+  "entries": [
+    {
+      "id": "scalar/compile/gc",
+      "fixture": "scalar",
+      "api": "compile",
+      "profile": "gc"
+    },
+    {
+      "id": "scalar/compile/gc-fast",
+      "fixture": "scalar",
+      "api": "compile",
+      "profile": "gc-fast"
+    },
+    {
+      "id": "scalar/compile/standalone",
+      "fixture": "scalar",
+      "api": "compile",
+      "profile": "standalone"
+    },
+    {
+      "id": "scalar/compile/standalone-fast",
+      "fixture": "scalar",
+      "api": "compile",
+      "profile": "standalone-fast"
+    },
+    {
+      "id": "scalar/compile/linear",
+      "fixture": "scalar",
+      "api": "compile",
+      "profile": "linear"
+    },
+    {
+      "id": "scalar/compile/wasi",
+      "fixture": "scalar",
+      "api": "compile",
+      "profile": "wasi"
+    },
+    {
+      "id": "scalar/compileSourceSync/gc",
+      "fixture": "scalar",
+      "api": "compileSourceSync",
+      "profile": "gc"
+    },
+    {
+      "id": "scalar/compileSourceSync/gc-fast",
+      "fixture": "scalar",
+      "api": "compileSourceSync",
+      "profile": "gc-fast"
+    },
+    {
+      "id": "scalar/compileSourceSync/standalone",
+      "fixture": "scalar",
+      "api": "compileSourceSync",
+      "profile": "standalone"
+    },
+    {
+      "id": "scalar/compileSourceSync/standalone-fast",
+      "fixture": "scalar",
+      "api": "compileSourceSync",
+      "profile": "standalone-fast"
+    },
+    {
+      "id": "scalar/compileSourceSync/linear",
+      "fixture": "scalar",
+      "api": "compileSourceSync",
+      "profile": "linear"
+    },
+    {
+      "id": "scalar/compileSourceSync/wasi",
+      "fixture": "scalar",
+      "api": "compileSourceSync",
+      "profile": "wasi"
+    },
+    {
+      "id": "scalar/compileMulti/gc",
+      "fixture": "scalar",
+      "api": "compileMulti",
+      "profile": "gc"
+    },
+    {
+      "id": "scalar/compileMulti/gc-fast",
+      "fixture": "scalar",
+      "api": "compileMulti",
+      "profile": "gc-fast"
+    },
+    {
+      "id": "scalar/compileMulti/standalone",
+      "fixture": "scalar",
+      "api": "compileMulti",
+      "profile": "standalone"
+    },
+    {
+      "id": "scalar/compileMulti/standalone-fast",
+      "fixture": "scalar",
+      "api": "compileMulti",
+      "profile": "standalone-fast"
+    },
+    {
+      "id": "scalar/compileMulti/linear",
+      "fixture": "scalar",
+      "api": "compileMulti",
+      "profile": "linear"
+    },
+    {
+      "id": "scalar/compileMulti/wasi",
+      "fixture": "scalar",
+      "api": "compileMulti",
+      "profile": "wasi"
+    },
+    {
+      "id": "scalar/compileFiles/gc",
+      "fixture": "scalar",
+      "api": "compileFiles",
+      "profile": "gc"
+    },
+    {
+      "id": "scalar/compileFiles/gc-fast",
+      "fixture": "scalar",
+      "api": "compileFiles",
+      "profile": "gc-fast"
+    },
+    {
+      "id": "scalar/compileFiles/standalone",
+      "fixture": "scalar",
+      "api": "compileFiles",
+      "profile": "standalone"
+    },
+    {
+      "id": "scalar/compileFiles/standalone-fast",
+      "fixture": "scalar",
+      "api": "compileFiles",
+      "profile": "standalone-fast"
+    },
+    {
+      "id": "scalar/compileFiles/linear",
+      "fixture": "scalar",
+      "api": "compileFiles",
+      "profile": "linear"
+    },
+    {
+      "id": "scalar/compileFiles/wasi",
+      "fixture": "scalar",
+      "api": "compileFiles",
+      "profile": "wasi"
+    },
+    {
+      "id": "scalar/compileProject/gc",
+      "fixture": "scalar",
+      "api": "compileProject",
+      "profile": "gc"
+    },
+    {
+      "id": "scalar/compileProject/gc-fast",
+      "fixture": "scalar",
+      "api": "compileProject",
+      "profile": "gc-fast"
+    },
+    {
+      "id": "scalar/compileProject/standalone",
+      "fixture": "scalar",
+      "api": "compileProject",
+      "profile": "standalone"
+    },
+    {
+      "id": "scalar/compileProject/standalone-fast",
+      "fixture": "scalar",
+      "api": "compileProject",
+      "profile": "standalone-fast"
+    },
+    {
+      "id": "scalar/compileProject/linear",
+      "fixture": "scalar",
+      "api": "compileProject",
+      "profile": "linear"
+    },
+    {
+      "id": "scalar/compileProject/wasi",
+      "fixture": "scalar",
+      "api": "compileProject",
+      "profile": "wasi"
+    },
+    {
+      "id": "scalar/compileToObject/gc",
+      "fixture": "scalar",
+      "api": "compileToObject",
+      "profile": "gc"
+    },
+    {
+      "id": "scalar/compileToObject/gc-fast",
+      "fixture": "scalar",
+      "api": "compileToObject",
+      "profile": "gc-fast"
+    },
+    {
+      "id": "scalar/compileToObject/standalone",
+      "fixture": "scalar",
+      "api": "compileToObject",
+      "profile": "standalone"
+    },
+    {
+      "id": "scalar/compileToObject/standalone-fast",
+      "fixture": "scalar",
+      "api": "compileToObject",
+      "profile": "standalone-fast"
+    },
+    {
+      "id": "scalar/compileToObject/linear",
+      "fixture": "scalar",
+      "api": "compileToObject",
+      "profile": "linear"
+    },
+    {
+      "id": "scalar/compileToObject/wasi",
+      "fixture": "scalar",
+      "api": "compileToObject",
+      "profile": "wasi"
+    },
+    {
+      "id": "scalar/compileToWat/gc",
+      "fixture": "scalar",
+      "api": "compileToWat",
+      "profile": "gc"
+    },
+    {
+      "id": "namespace/compile/gc",
+      "fixture": "namespace",
+      "api": "compile",
+      "profile": "gc"
+    },
+    {
+      "id": "namespace/compile/standalone",
+      "fixture": "namespace",
+      "api": "compile",
+      "profile": "standalone"
+    },
+    {
+      "id": "class-closure/compile/gc",
+      "fixture": "class-closure",
+      "api": "compile",
+      "profile": "gc"
+    },
+    {
+      "id": "class-closure/compile/standalone",
+      "fixture": "class-closure",
+      "api": "compile",
+      "profile": "standalone"
+    },
+    {
+      "id": "dynamic/compile/gc",
+      "fixture": "dynamic",
+      "api": "compile",
+      "profile": "gc"
+    },
+    {
+      "id": "dynamic/compile/standalone",
+      "fixture": "dynamic",
+      "api": "compile",
+      "profile": "standalone"
+    },
+    {
+      "id": "cjs/compile/gc",
+      "fixture": "cjs",
+      "api": "compile",
+      "profile": "gc"
+    },
+    {
+      "id": "cjs/compile/standalone",
+      "fixture": "cjs",
+      "api": "compile",
+      "profile": "standalone"
+    },
+    {
+      "id": "graph/compileMulti/gc",
+      "fixture": "graph",
+      "api": "compileMulti",
+      "profile": "gc"
+    },
+    {
+      "id": "graph/compileMulti/standalone",
+      "fixture": "graph",
+      "api": "compileMulti",
+      "profile": "standalone"
+    },
+    {
+      "id": "async/compileMulti/gc",
+      "fixture": "async",
+      "api": "compileMulti",
+      "profile": "gc"
+    },
+    {
+      "id": "async/compileMulti/standalone",
+      "fixture": "async",
+      "api": "compileMulti",
+      "profile": "standalone"
+    }
+  ]
+}
