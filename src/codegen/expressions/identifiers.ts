@@ -1919,7 +1919,22 @@ function compileIdentifierCore(
   // untouched. Order: AFTER local/module/declared-global shadowing and the
   // class-object / promise-subclass singleton blocks (so a user binding or a real
   // class always wins), BEFORE the null-externref fallback.
-  if (ctx.standalone && isBuiltinConstructorIdentityName(name)) {
+  //
+  // (#5349 r4) `ArrayBuffer` — and ONLY that name — extends to the WASI lane.
+  // §25.1.5.3's species ladder has to answer "is this C the intrinsic
+  // %ArrayBuffer%?", and on WASI the bare read produced `ref.null.extern`, so
+  // `ab.constructor = ArrayBuffer` stored a value indistinguishable from a
+  // genuine `ab.constructor = null` — the ladder took the spec's
+  // "constructor is not an object" TypeError and `ab.slice(0, 4).byteLength`
+  // trapped where node (and pre-species main) answered 4. Safe by the same
+  // argument the wrapper/`Date` blocks above make, re-verified for
+  // `ArrayBuffer`: every SYNTACTIC use is intercepted before identifier
+  // resolution — `new ArrayBuffer(n)` at the construct site,
+  // `ArrayBuffer.isView` / `.prototype` at the property-access site,
+  // `x instanceof ArrayBuffer` at the instanceof lowering, `typeof ArrayBuffer`
+  // at the typeof fold. Only the bare-value read changes, and only from a value
+  // no conforming program can observe as the constructor.
+  if ((ctx.standalone || (noJsHost(ctx) && name === "ArrayBuffer")) && isBuiltinConstructorIdentityName(name)) {
     return emitBuiltinConstructorIdentity(ctx, fctx, name);
   }
 

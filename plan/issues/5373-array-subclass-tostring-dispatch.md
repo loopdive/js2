@@ -1,7 +1,8 @@
 ---
 id: 5373
 title: "`String(x)` / `${x}` / any-typed `x.toString()` on a `class extends Array` instance run the built-in array join instead of the subclass override — every linked-Temporal `Instant`/`ZonedDateTime` read fails (JSBI is `class JSBI extends Array`)"
-status: ready
+status: done
+completed: 2026-09-06
 sprint: current
 priority: high
 horizon: m
@@ -9,6 +10,24 @@ goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-06
+# 2026-09-06 — the ordering rule has to be applied at the member-resolution
+# sites themselves, and all three of them live in `src/runtime.ts`
+# (`__extern_toString`, `__extern_join_str`, `__extern_method_call`). The +95
+# LOC is the three shared helpers (`_isTaggedUserClassInstance`,
+# `_classChainMethod`, `_classChainToString`) plus the three call sites and
+# their rationale comments; moving them to a subsystem module would put the
+# gate one indirection away from the built-in read it has to precede, which is
+# exactly the split that let this bug survive #5204's partial fix.
+loc-budget-allow:
+  - src/runtime.ts
+# Same change, same reason. `resolveImport` is the import-factory switch that
+# physically contains all three imports, and `<anonymous>#95` is the
+# `__extern_method_call` closure inside it — the dynamic method-call path, where
+# the class-chain lookup has to sit ahead of `wrappedObj[method]`. Both grow by
+# the guard clause and its comment only.
+func-budget-allow:
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::<anonymous>#95
 ---
 
 # #5373 — Array-subclass `toString` override is bypassed by the coercion paths
@@ -152,3 +171,180 @@ gate at baseline.
 - Id reserved via `claim-issue --allocate --allow-unscanned` (no `gh` in this
   container); open PRs hand-checked 2026-09-06 — highest in-flight issue file
   is #5364.
+
+## Outcome (2026-09-06, dev-5373)
+
+### Step 1 — the dispatch sites
+
+Not the ones the plan guessed. `class B extends Array` is compiled
+**externref-backed**, so the instance reaching the host is a **real host JS
+Array** (`Array.isArray` true, `_isWasmStruct` false, `constructor.name === "B"`,
+tagged `"B"` in `_userClassTags`), not a WasmGC vec. `_wrapVecForHost`'s get trap
+— the plan's prime suspect — never fires for it; it fires only for PLAIN arrays.
+All the sites are in `src/runtime.ts`:
+
+| expression | site | line |
+| --- | --- | --- |
+| `String(x)`, `` `${x}` `` | `__extern_toString` → `if (typeof v.toString === "function") return v.toString();` | 12748 / fix at 12773 |
+| a subclass instance as a join ELEMENT | `__extern_join_str`'s `joinElem`, same read | 12839 / fix at 12884 |
+| any-typed `x.toString()` / `x.toString(10)` / `x.join()` / `x.valueOf()` | `__extern_method_call` → `const fn = wrappedObj[method];`; the class chain was consulted only in the `typeof fn !== "function"` arm below it | 14232 / fix at 14331 |
+
+A **fourth** site with the identical defect — the member READ `const f = x.toString`
+(`__extern_get`, its `intent`-table twin `case "extern_get"`, and `_safeGet`) — is
+NOT fixed here; see below.
+
+### Steps 2–4 — what shipped
+
+The ordering rule (`_isTaggedUserClassInstance` / `_classChainMethod` /
+`_classChainToString`, runtime.ts 6926–6963) is gated on the **user-class tag**,
+never on "looks like an array": a plain array is a vec, is never tagged, and pays
+one `WeakMap.has`. A class that does not declare the member keeps the inherited
+built-in. `tests/issue-5373-array-subclass-tostring.test.ts` covers both lanes;
+10 cells are base-failing in the single-module lane.
+
+### Step 5 — measurements
+
+- **123-row #5249 list** (`.tmp/base-123.tsv` vs `.tmp/fix2-123.tsv`, 13 pass /
+  110 fail both sides): **0 pass→fail, 0 fail→pass, 0 changed failure reasons.**
+  The 21 `infinity is out of range` rows did not move — they are blocked on the
+  `constructor`-identity defect below, not on this ordering.
+- **`built-ins/Temporal/Instant/**` + `ZonedDateTime/prototype/{year,month,day,epochNanoseconds,epochMilliseconds}/**`**,
+  481 rows, no overlap with the 123 (`.tmp/base-instzdt.tsv` vs
+  `.tmp/fix2-instzdt.tsv`, 225 pass / 256 fail both sides): **0 pass→fail,
+  0 fail→pass, 0 changed reasons.**
+- **Direct probes**: unchanged from base. `Instant.from(…).epochNanoseconds`
+  still throws `SyntaxError: Cannot convert 23396352,513294428,1 to a BigInt`;
+  ISO `ZonedDateTime.year` still throws `RangeError: infinity is out of range`.
+  **Acceptance criterion 3 is NOT met, and cannot be by this ordering** — see the
+  root cause below.
+- Equivalence gate: 22 failing / 1720 passing vs baseline 24 / 1718.
+
+### Reported, not fixed
+
+1. **`i.constructor === C` is false for ANY compiled class read through an
+   any-typed receiver** (not just Array subclasses — a plain `class P {}` behaves
+   the same). `mkP().constructor === P` is 1, but `f(mkP())` with
+   `function f(i){ return i.constructor === P; }` is 0. Root cause: the instance's
+   `[[Prototype]]` is a **synthetic** `class Sub extends Parent {}` minted by the
+   `__set_subclass_proto` host import and cached by class NAME in `_subclassCtors`;
+   nothing maps it back to the compiled class object. **This is the actual blocker
+   for every Temporal BigInt read**: `JSBI.BigInt(i)` short-circuits on
+   `i.constructor === JSBI` in node and falls through to `JSBI.__toPrimitive` here.
+2. **The member-READ path.** Fixing it (`_classChainRead` before the native read in
+   `__extern_get` / its intent twin / `_safeGet`) is correct per node in isolation
+   and was measured: it **regresses 9 rows** of `built-ins/Temporal/Instant/**`
+   (`from/argument-string-date-with-utc-offset`, `from/instant-string-multiple-offsets`,
+   `from/instant-string-sub-minute-offset`, `prototype/add/blank-duration`,
+   `prototype/equals/argument-object-tostring`,
+   `prototype/equals/argument-string-date-with-utc-offset`,
+   `prototype/equals/instant-string-multiple-offsets`,
+   `prototype/equals/instant-string-sub-minute-offset`,
+   `prototype/subtract/blank-duration`) because it makes `i.valueOf` resolve to
+   jsbi's own `valueOf`, which throws by design and which node never reaches
+   thanks to (1). Do it together with (1), not before it.
+3. **Cross-linked-seam dispatch is unfixed** (#5223 family): a subclass instance
+   minted in a separately-linked provider and dispatched on in the CONSUMER still
+   takes the built-in, because the consumer's exports carry no `__class_call_B_*`
+   bridge. Pinned in the test's linked lane.
+4. **A defaulted numeric parameter reaches a host class bridge as NaN.**
+   `toString(radix = 10)` called through `__class_call_J_toString_1(inst, undefined)`
+   answers `"J(3:NaN)"`: the bridge pads the missing argument with `undefined`,
+   which the externref→f64 coercion turns into NaN, so the default never fires.
+   Affects `String(x)` on any subclass whose `toString` has a numeric default.
+5. **`String(a)` / `"" + a` on a PLAIN array through an any-typed parameter
+   answers `"null"`**, and `a["toString"]` read through an any-typed parameter
+   answers `undefined` (node: `"1,2,3"` for all three). Pre-existing, unchanged,
+   pinned as controls in the test.
+6. `tests/issue-1933.test.ts` fails identically before and after
+   (`expected … to contain 'legacyRegExpState?:'`), i.e. already red on
+   `origin/main`. Under the default `forks` pool it OOMs while vitest serializes
+   the ~19k-line assertion string; `--pool=threads` shows the real assertion.
+
+## Merge-group regression (2026-09-07, dev-5373-fix)
+
+**Verdict: not a regression from this issue. Fork-level collateral, same class
+as #5673.** PR #5685 was auto-parked on run 34076352332 / job 101606523559 with
+41 `pass → other` rows (35 fail + 6 `compile_timeout (10s)`), net −16, every
+row under `built-ins/Temporal/**`. The PR was subsequently re-run, passed its
+merge group and landed as `20d438d17d`; the promoted baseline rose to 37,794.
+
+### What was measured
+
+All three runs used `tests/test262-runner.ts` through the #5248 row driver
+(`.tmp/bucket-run.mts`, one TSV row per test so a flip inside an
+already-failing row is still visible), `JS2WASM_TEST262_TEMPORAL=1`, and a
+**fresh `JS2WASM_TEMPORAL_CACHE` per compiler revision** — the provider binary
+is content-addressed on the POLYFILL source, so a shared cache serves a binary
+built by whichever compiler ran last and silently invalidates an A/B. Each run
+reported `cacheHit=false` on its first row.
+
+| side | `src/runtime.ts` | 35 non-timeout rows | compile total |
+| --- | --- | --- | --- |
+| base | current `main` with the three #5373 guard blocks removed (file-copy A/B) | **35 pass, 0 fail** | 119.5 s |
+| main | `72e0f9342a` unmodified | **35 pass, 0 fail** | 115.7 s |
+
+So the 35 rows the park cited pass on the merged state, and they pass with the
+#5373 guard reverted — the change is not what moved them, in either direction.
+The 6 `compile_timeout (10s)` rows are the same story from the other end: the
+guard lives in the host runtime and cannot touch compile time, and the measured
+compile total is 3.2 % **lower** with it than without, i.e. inside run-to-run
+noise rather than a slowdown toward the 10 s ceiling.
+
+None of the 41 paths is in `scripts/test262-host-noise-quarantine.json`, so the
+quarantine did not (and could not) exclude them. That manifest is not a census
+of the noise, though: it was built from **two** same-SHA pool-4 canaries which
+between them recorded **726 pass-flip observations over 932 distinct paths**.
+41 flips in one bucket is well inside what a single fresh draw from that
+distribution produces, and the error shapes are the ones a lane under load
+produces — `Temporal is not defined` (provider never came up for that row) and
+`Cannot read properties of null (reading 'until') [in __module_init_chunk_2()]`
+(provider init aborted), not a wrong answer from a dispatch that ran.
+
+### One real finding, kept separate
+
+The park did surface a genuine latent defect, which is NOT what caused it and is
+not fixed here. Instrumenting the `__extern_method_call` guard on
+`built-ins/Temporal/**` shows it firing for classes the module standing in the
+call does **not** declare:
+
+```
+[5373probe] guard-fired method=until  class=Instant
+[5373probe] guard-fired method=round  class=Duration
+[5373probe] guard-fired method=round  class=Instant
+[5373probe] guard-fired method=subtract class=Duration
+[5373probe] method-hit  method=__digit class=JSBI     (2270×, provider-local — the intended #5373 hit)
+```
+
+`_userClassTags` is **process-wide**, so across the #2527 linked-provider seam a
+provider-declared instance is tagged exactly like a locally-declared one, while
+the guard runs inside the CONSUMER's import closure with the CONSUMER's exports.
+`Instant`/`Duration` therefore reach `_resolveClassMember` against a module
+that publishes no `__class_call_Instant_*` bridge. Today they miss and fall
+through to the #5354 host mirror, which is why nothing breaks — but the miss is
+not free of consequence: the resolver then runs the generic
+`__member_kind_<key>` / `__class_call_<key>_<n>` cascade, which is **name**-keyed
+rather than class-keyed, ahead of the mirror. A consumer that happens to declare
+a member of the same name would answer for a receiver it has never seen. This is
+point 3 of the "Known-unfixed" list above, seen from the dispatch side.
+
+A hardening was written and measured but is deliberately **not** proposed as part
+of this issue, since the regression it was commissioned for does not exist:
+gate `_classChainMethod` on "the consulted module DECLARES this class"
+(memoised scan of the export view for a `__class_call_<C>_` / `__call_get_<C>_`
+prefix), so a foreign-class receiver returns `_MISS` before the name-keyed
+cascade and the pre-#5373 path is byte-identical; and re-check the resolved
+member as a **function** before `.apply`, since the resolver returns a getter's
+VALUE for `kind === 2` and `.apply` on a non-function throws a TypeError out of
+a path that previously could not throw. With it, the probe reads
+`ownership class=Instant declared=false` / `class=JSBI declared=true`, the 35
+rows stay at 35 pass, and `tests/issue-5373-array-subclass-tostring.test.ts`
+stays green. If the name-collision case is ever wanted as a fix, file it against
+the seam (#5223 family), not here.
+
+### Process note
+
+The park was diagnosed by re-running the cited rows, not by reading the error
+strings. The strings pointed convincingly at this change — a class-chain guard
+that plausibly explains "round is not a function" — and were wrong. The cheap
+check that settled it was the base-side run: 35 rows with the guard **removed**,
+which cost one `cp` because the revert copy was captured at the first edit.
