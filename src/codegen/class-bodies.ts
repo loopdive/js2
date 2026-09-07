@@ -74,6 +74,7 @@ import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) str
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
 import { compileStringLiteral } from "./string-ops.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { emitLazyClassObjectGet } from "./expressions/extern.js"; // (#5377)
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
@@ -606,7 +607,7 @@ function emitSetSubclassProto(
   const setProtoIdx = ensureLateImport(
     ctx,
     "__set_subclass_proto",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [{ kind: "externref" }],
   );
   flushLateImportShifts(ctx, fctx);
@@ -634,6 +635,42 @@ function emitSetSubclassProto(
     // String pool not available, or the standalone `-1` sentinel — skip silently.
     return;
   }
+  // (#5377) Fourth argument: this class's class-object singleton, so the host
+  // import can record instance → class object and `i.constructor === C` holds
+  // through an any-typed receiver.
+  //
+  // Emitted straight into `fctx.body` and carried to the call site in a LOCAL,
+  // NOT built into a detached array and spliced into the `else` arm below. That
+  // was the first shape and it is MEASURED wrong: `emitLazyClassObjectGet`
+  // bakes `global.set/get __class_<C>`, an interned string constant is an
+  // IMPORTED global whose insertion shifts the whole global index space, and
+  // the shift repair only reaches bodies that are live at the time — a detached
+  // array spliced and then dropped is repaired by nothing. On the Temporal
+  // polyfill that stale index made the constructor initialise a DIFFERENT
+  // global, so the module ended up with TWO class-object singletons both
+  // registered as `JSBI`: `i.constructor` answered the second while the
+  // compiled `JSBI` identifier read the first, and `===` stayed false with the
+  // instance→class-object link hitting on every read (`.tmp/dbg4.log`:
+  // `a=…/id=JSBI#2 b=…/id=JSBI#1 same=false`). A local index cannot shift.
+  const classObjectLocal = allocLocal(fctx, `__class_obj_${subName}_${fctx.locals.length}`, { kind: "externref" });
+  if (!emitLazyClassObjectGet(ctx, fctx, subName)) {
+    // No class-object singleton for this name — pass null; the host import
+    // keeps its pre-#5377 behaviour exactly.
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  fctx.body.push({ op: "local.set", index: classObjectLocal });
+  // Re-read the two name globals AFTER the materializer: it interns string
+  // constants, and each intern shifts the global index space.
+  const subNameGlobalNow = ctx.stringGlobalMap.get(subName);
+  const parentNameGlobalNow = ctx.stringGlobalMap.get(parentLookupName);
+  if (
+    subNameGlobalNow === undefined ||
+    parentNameGlobalNow === undefined ||
+    subNameGlobalNow < 0 ||
+    parentNameGlobalNow < 0
+  ) {
+    return;
+  }
   // Skip when the instance is null (e.g. standalone `__new_<Parent>` fallback);
   // calling Object.setPrototypeOf on null/undefined throws in JS, which we
   // do not want here. Use ref.is_null + if/else (avoids leaving stack imbalanced).
@@ -645,8 +682,9 @@ function emitSetSubclassProto(
     then: [],
     else: [
       { op: "local.get", index: selfLocal },
-      { op: "global.get", index: subNameGlobal },
-      { op: "global.get", index: parentNameGlobal },
+      { op: "global.get", index: subNameGlobalNow },
+      { op: "global.get", index: parentNameGlobalNow },
+      { op: "local.get", index: classObjectLocal },
       { op: "call", funcIdx: setProtoIdx },
       { op: "local.set", index: selfLocal },
     ],
@@ -2451,6 +2489,33 @@ function compileClassBodiesInner(
       isDerivedConstructor: ctx.classParentMap.has(className),
     };
     fctx.activationEntryBody = fctx.body;
+
+    // (#5377) Materialize this class's class-object singleton at the top of its
+    // constructor, so a compiled instance can answer `i.constructor` with the
+    // class object no matter what the program reads first.
+    //
+    // The singleton is otherwise created by whichever `C` identifier read runs
+    // first, and it is that init which registers `classObject → prototype
+    // carrier` with the host (`__register_class_ctor`). So the ordering decided
+    // whether the identity was answerable at all: measured on this branch
+    // before this line, `eq(readCtor(new P(1)), P)` — argument order puts the
+    // `constructor` read BEFORE the `P` read — answered 0, while the same
+    // module with `const c = P;` hoisted above it answered 1
+    // (`.tmp/dbg-struct.mts`, variants `twoStructClasses` vs `u`).
+    //
+    // Constructor entry is the right place because it is the once-per-class
+    // point that provably precedes the existence of any instance, and it is
+    // the exact counterpart of `emitSetSubclassProto`'s materialization on the
+    // externref-backed lane below. `emitLazyClassObjectGet` is itself guarded
+    // by a null check on the global, so the cost after the first `new` is one
+    // `global.get` + `ref.is_null`, and the singleton keeps ONE identity — a
+    // later `C` read reuses it rather than re-initialising.
+    //
+    // Host lane only: standalone has no class-object host registry to answer
+    // to, and the externref-backed lane is covered by `emitSetSubclassProto`.
+    if (!ctx.standalone && !ctx.wasi && !isExternrefBacked) {
+      if (emitLazyClassObjectGet(ctx, fctx, className)) fctx.body.push({ op: "drop" });
+    }
 
     // Re-resolve the constructor (and init) function types now that all class
     // struct types are registered. Constructor parameter types that reference
