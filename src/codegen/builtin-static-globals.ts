@@ -169,6 +169,34 @@ export function isBuiltinConstructorIdentityName(name: string): boolean {
  *
  * Stack: `[] → [externref]`.
  */
+/**
+ * (#5349 r4) Reserve — without materializing — the module-level slot that holds
+ * the identity-stable reified `<Builtin>` constructor carrier.
+ *
+ * `emitBuiltinConstructorIdentity` allocates this global on the first BARE-VALUE
+ * read of the builtin. A site that needs to ask "is this externref the intrinsic
+ * %Builtin%?" cannot depend on that read having been compiled first — function
+ * compilation order is not the program's evaluation order — so it reserves the
+ * slot itself and compares against it. An unmaterialized slot reads `null`,
+ * which no reified carrier ever equals, so the comparison is simply false until
+ * some read fills it in. Idempotent, and keyed identically, so the later read
+ * reuses this slot rather than minting a second one (which would split identity).
+ */
+export function reserveBuiltinConstructorIdentityGlobal(ctx: CodegenContext, builtinName: string): number {
+  const key = `ctor:${builtinName}`;
+  const existing = ctx.builtinObjectGlobals.get(key);
+  if (existing !== undefined) return existing;
+  const globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
+  ctx.mod.globals.push({
+    name: `__builtin_ctor_${builtinName}`,
+    type: { kind: "externref" },
+    mutable: true,
+    init: [{ op: "ref.null.extern" }],
+  });
+  ctx.builtinObjectGlobals.set(key, globalIdx);
+  return globalIdx;
+}
+
 export function emitBuiltinConstructorIdentity(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -177,18 +205,7 @@ export function emitBuiltinConstructorIdentity(
   ensureObjectRuntime(ctx);
   const newObjectIdx = ctx.funcMap.get("__new_plain_object")!;
 
-  const key = `ctor:${builtinName}`;
-  let globalIdx = ctx.builtinObjectGlobals.get(key);
-  if (globalIdx === undefined) {
-    globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
-      name: `__builtin_ctor_${builtinName}`,
-      type: { kind: "externref" },
-      mutable: true,
-      init: [{ op: "ref.null.extern" }],
-    });
-    ctx.builtinObjectGlobals.set(key, globalIdx);
-  }
+  const globalIdx = reserveBuiltinConstructorIdentityGlobal(ctx, builtinName);
 
   // (#2984 ctor-carrier own props) The carrier is materialized through a local
   // so the §17/§20 own data properties (`length`/`name`/`prototype`) can be

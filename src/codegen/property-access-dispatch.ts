@@ -771,6 +771,32 @@ export function tryBuiltinNamespaceDeferredReads(
   return PA_FALLTHROUGH;
 }
 
+/**
+ * (#5349 r3) The `else` arm of the `byteLength` runtime probe for a statically
+ * "ArrayBuffer" receiver: consult the PACKED-BYTE view carrier before answering
+ * zero. Byte-inert when `$__vec_i8_byte` is not registered in the module (the
+ * whole JS-host lane, and any standalone module with no packed-byte view), so
+ * the arm keeps its previous single `i32.const 0`.
+ */
+function buildPackedByteLengthElse(ctx: CodegenContext, recvAnyLocal: number): Instr[] {
+  const i8VecIdx = ctx.vecTypeMap.get("i8_byte");
+  if (i8VecIdx === undefined) return [{ op: "i32.const", value: 0 }];
+  return [
+    { op: "local.get", index: recvAnyLocal },
+    { op: "ref.test", typeIdx: i8VecIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } as ValType },
+      then: [
+        { op: "local.get", index: recvAnyLocal },
+        { op: "ref.cast", typeIdx: i8VecIdx },
+        { op: "struct.get", typeIdx: i8VecIdx, fieldIdx: 0 },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
+}
+
 export function tryBufferViewAttributeReads(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1098,7 +1124,15 @@ export function tryBufferViewAttributeReads(
             { op: "i32.ge_s" },
             { op: "select" },
           ],
-          else: [{ op: "i32.const", value: 0 }],
+          // (#5349 r3) A statically "ArrayBuffer" receiver whose runtime value is
+          // the packed-byte VIEW carrier. Until round 2 branded the two vec
+          // structs apart this hit the `then` arm by canonicalization and read
+          // the right number; now it misses and answers 0 where node answers the
+          // view's byte length (`var b=new ArrayBuffer(8); b=new Uint8Array(8);
+          // b.byteLength` → node 8, main 8, round 2 0). One byte per element, so
+          // field 0 IS the byte length. Emitted only when the carrier is already
+          // registered, so a module without one is byte-identical.
+          else: buildPackedByteLengthElse(ctx, lenTmpBL),
         });
         if (bytesPerElem !== 1) {
           fctx.body.push({ op: "i32.const", value: bytesPerElem });
@@ -3397,6 +3431,24 @@ export function tryLengthAndNameReads(
           // (sibling subtype of `$__vec_base`, not the vec) and returns 0.
           const exprTypeIdx = (exprResult as { typeIdx: number }).typeIdx;
           const exprTypeDef = ctx.mod.types[exprTypeIdx];
+          // (#5349 r3) A `$__ta_view_<name>` receiver is the same mismatch class
+          // as the `$__subview_<elem>` above — TS types `new Uint8Array(buf)` as
+          // the plain packed vec while the constructor emitted the shared-backing
+          // view. Its field 1 is `buf` (not `data`), so the struct-shape probe
+          // just below misses it and the `ref.test vecTypeIdx` ladder ALWAYS
+          // fails on it and answers 0 (`new Uint8Array(b).length` → 0, node 4).
+          // Read the view's effective length, which also honours the auto-length
+          // `-1` sentinel over a resizable buffer.
+          if (isTaViewTypeIdx(ctx, exprTypeIdx)) {
+            const tvTmp = allocLocal(fctx, `__len_tav_${fctx.locals.length}`, {
+              kind: "ref_null",
+              typeIdx: exprTypeIdx,
+            });
+            fctx.body.push({ op: "local.set", index: tvTmp });
+            pushTaViewEffectiveLen(ctx, fctx, tvTmp, exprTypeIdx);
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
+            return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+          }
           if (
             exprTypeDef?.kind === "struct" &&
             exprTypeDef.fields[0]?.name === "length" &&
