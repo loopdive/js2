@@ -1746,3 +1746,22 @@ lifted out for twenty instructions. No `scripts/*-baseline.json` touched.
   `const s: any = Object.preventExtensions({existing:null})` answers `null`
   where the `var s = …` spelling answers `9`. Same family as the `vd` no-op;
   the pin uses the `var` spelling and this is recorded rather than fixed.
+
+- **WASI target: the same regression is NOT repaired there (round-6 review,
+  2026-09-07).** On `--target wasi` the guard is emitted (the wasi binaries
+  differ from main) but inert: `__hasOwnProperty` answers false for a physical
+  struct-field key on the nativeStrings/wasi lane — the own-key ladder that
+  makes it complete for #4194 carriers does not reach those receivers there,
+  and `Object.prototype.hasOwnProperty.call({existing:null}, 'existing')` even
+  TRAPS on wasi (reviewer probe `g1`; `111` on standalone and node). So
+  `Object.defineProperty(Object.preventExtensions({existing:null}), 'existing',
+  {get, configurable:true})`, its `Reflect.defineProperty` /
+  `Object.defineProperties` spellings and the class-instance receiver (probes
+  `v4`/`f2`/`f3`/`f5`, `/home/user/js2/.tmp/rev5316r6/p`, harness `wasi.mts`)
+  answer node `1` / pre-PR-1 base `1` / main `7` / this fix `7` on wasi. The
+  38-probe wasi sweep shows this fix changes NO wasi answer; the four cells are
+  PR-1's, inherited. test262 conformance runs standalone, so no row is at
+  stake; the follow-up is the wasi own-key ladder (`__hasOwnProperty` for
+  closed-struct carriers under `nativeStrings`), a wasi-lane task outside the
+  ES2015 standalone goal — filed here rather than as a new issue because the
+  id allocator could not scan open PRs from this container.
