@@ -7124,6 +7124,40 @@ function _classChainToString(v: any, exports: Record<string, Function> | undefin
  * lanes. This is the same reasoning `_classObjectPrototypeStruct` and
  * `compiledClassInstancePrototype` (#5347) already give for `C.prototype`.
  */
+/**
+ * (#5377) Was this class object minted by the module whose `exports` is asking?
+ *
+ * One process runs MANY module instantiations — test262 alone runs a sloppy
+ * pass and a strict rerun per file, hundreds of files per worker — and a value
+ * built by instantiation N can reach a host mirror that still dispatches
+ * through instantiation N-1's export map. Measured inside the linked Temporal
+ * provider (`.tmp/dbgM5.log`): a JSBI instance whose class object is
+ * `object#125` (instantiation 2) arriving with `exports=object#3`
+ * (instantiation 1), whose own `JSBI` global is `object#1`.
+ *
+ * In that state the identity is UNANSWERABLE: whatever we return, the compiled
+ * `C === ` on the other side reads the other instantiation's class object, so
+ * `===` is false no matter what. Both arms below therefore stand down to
+ * `_MISS` — the caller keeps its pre-#5377 behaviour — instead of answering a
+ * class object that cannot compare equal.
+ *
+ * This is load-bearing, not defensive: with the arms ungated, the member-READ
+ * arm resolved `i.valueOf` to jsbi's deliberately-throwing `valueOf` in exactly
+ * that cross-instantiation state, and 5 of the 481-row Temporal sample went
+ * pass→fail with `Convert JSBI instances to native numbers using toNumber`
+ * (`.tmp/diff-instzdt.txt`, measured 2026-09-07) — the regression PR #5685
+ * predicted and this issue exists to avoid.
+ *
+ * `undefined` on either side means "not knowable here" and is treated as
+ * owned, so the init window (where `getExports()` is still undefined, #1712)
+ * behaves exactly as before.
+ */
+function _classObjectOwnedBy(classObj: any, exports: Record<string, Function> | undefined): boolean {
+  if (exports === undefined) return true;
+  const owner = _classCtorCallbackStates.get(classObj as object)?.getExports();
+  return owner === undefined || owner === exports;
+}
+
 function _classObjectForInstance(v: any, exports: Record<string, Function> | undefined): any {
   if (v === null || (typeof v !== "object" && typeof v !== "function")) return undefined;
   if (!_canBeWeakKey(v)) return undefined;
@@ -7159,10 +7193,9 @@ function _classObjectForInstance(v: any, exports: Record<string, Function> | und
  */
 function _classChainRead(v: any, key: any, exports: Record<string, Function> | undefined): any {
   if (typeof key !== "string") return _MISS;
-  if (key === "constructor") {
-    const classObj = _classObjectForInstance(v, exports);
-    return classObj === undefined ? _MISS : _wrapForHost(classObj, exports);
-  }
+  const classObj = _classObjectForInstance(v, exports);
+  if (classObj === undefined || !_classObjectOwnedBy(classObj, exports)) return _MISS;
+  if (key === "constructor") return _wrapForHost(classObj, exports);
   return _classChainMethod(v, key, exports);
 }
 // (#3673) Hoisted from `_resolveHostField` — was a per-call closure on a hot
