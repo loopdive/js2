@@ -3291,6 +3291,26 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   /** (#3469) Global index of the `__stdout_acc` accumulator, -1 until minted. */
   stdoutAccGlobalIdx: number;
   /**
+   * (#5384) The compiled source contains a `throw` STATEMENT — i.e. this module
+   * can deliver a payload of its own choosing to whoever catches `__exn_tag`.
+   * Set by `unifiedVisitNode` (path-independent: the unified collector runs for
+   * both the legacy and the IR front-end), read by `stripHostBridgeExports` to
+   * decide whether the host-free `__exn_render_*` readout survives the
+   * `hostBridge: "off"` policy.
+   *
+   * Why not `ctx.exnTagIdx >= 0`: the tag is registered for essentially EVERY
+   * standalone module — `recordExportSignature` → `ensureNativeDynamicBoundaryBridge`
+   * → `addUnionImports` → `throwNativeError` arms the boundary's own TypeError
+   * before any user code is looked at. Gating the export on the tag therefore
+   * pins `__any_to_string` → `number_toString` → the Ryu tables in modules that
+   * never throw anything of their own: measured 2026-09-07, an arith-only
+   * `export function run(n){return n}` goes 6,076 → 49,032 B (`-O3`,
+   * `target: standalone`). That is #4034's cascade exactly. A source `throw` is
+   * the signal that separates the two: for a module that has one, the ToString
+   * chain is already live, so publishing the renderer costs ~150 B.
+   */
+  usesSourceThrowStatement: boolean;
+  /**
    * (#2866) Type index of the native `$Symbol` carrier struct
    * `(struct (field $id i32) (field $desc (ref null $AnyString)))`, used in
    * `--target standalone`/`wasi` (host-free) to represent a Symbol value as a
