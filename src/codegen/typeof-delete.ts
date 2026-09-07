@@ -2096,7 +2096,16 @@ export function compileTypeofExpression(
   if (operandType === null) return null;
 
   // Coerce to externref if needed (e.g. f64 -> boxed number, ref -> extern.convert_any)
-  if (operandType.kind === "f64") {
+  if (operandType.kind === "f64" && operandType.undefSentinel === true) {
+    // (#5378) A sentinel-branded f64 encodes `undefined` as UNDEF_F64_BITS
+    // (#5251). Hand-rolling `__box_number` here republished that bit pattern as
+    // a NUMBER, so `typeof obj.maybeAbsent` answered "number" for a property the
+    // very same read reports as `=== undefined`. `coerceType` owns the
+    // resurrection arm; route through it. The `typeof x === "…"` comparison path
+    // (further down this file) already coerces properly, which is why the
+    // discrepancy only showed on the bare value form.
+    coerceType(ctx, fctx, operandType, { kind: "externref" });
+  } else if (operandType.kind === "f64") {
     const boxIdx = ctx.funcMap.get("__box_number");
     if (boxIdx !== undefined) fctx.body.push({ op: "call", funcIdx: boxIdx });
   } else if (operandType.kind === "i32") {

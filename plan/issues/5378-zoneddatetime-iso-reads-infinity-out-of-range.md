@@ -1,7 +1,8 @@
 ---
 id: 5378
 title: "Every linked-Temporal `ZonedDateTime` field read (`year`, `month`, `day`, `daysInMonth`, `toPlainDate()`) throws `RangeError: infinity is out of range` — even ISO calendar, UTC — while `epochMilliseconds` reads correctly (the epoch→ISO-parts path hands `BalanceISODate` a non-finite)"
-status: ready
+status: done
+completed: 2026-09-07
 sprint: current
 priority: high
 horizon: m
@@ -9,6 +10,49 @@ goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
+# 2026-09-07 — growth grants, measured by the LOC/func gates on the merged
+# tree (this branch stacks on #5377's PR #5699, so its grants are RESTATED
+# below: the gate reads the change-set's own issue files, and a grant that
+# lives only in a file this PR does not modify is a stranded grant).
+#
+# `src/codegen/property-access-dispatch.ts` (+64): the `accessTypeAdmitsUndefined`
+# helper (+21 with its doc block) and the third arm of the `accessWasm`
+# family, whose comment records the measured `@js-temporal/polyfill` chain and
+# the four-line no-Temporal repro. The arm HAS to sit next to
+# `foreignReturnReceiver` / `openObjectReceiver`: all three answer the same
+# question (is the checker's type a sound carrier for this read?) at the one
+# point where `accessWasm` is decided, and the #5251 branding downstream is
+# guarded on the answer being externref. A separate module cannot sit between
+# a local `const` and its own initializer.
+#
+# `src/codegen/typeof-delete.ts` (+9): one `undefSentinel` arm on the bare
+# `typeof x` value path, which hand-rolled `__box_number` where the
+# `typeof x === "…"` path two hundred lines below already calls `coerceType`.
+# The fix is to call the same helper; it lands where the hand-rolled box was.
+#
+# `src/runtime.ts` (+25 for THIS issue on top of #5377's +187): the
+# `DateTimeFormat` member of the existing `webInitArgIndex` options-dictionary
+# arm plus the comment recording the measured Intl chain. One expression, in
+# the `resolveImport` closure that physically contains the extern-class
+# constructor bridge.
+#
+# `src/codegen/class-bodies.ts`: inherited from #5377 verbatim, no growth from
+# this issue.
+loc-budget-allow:
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/typeof-delete.ts
+  - src/runtime.ts
+  - src/codegen/class-bodies.ts
+# `finalizeStructAndDynamicMemberGet` is the function that decides `accessWasm`;
+# `compileTypeofExpression` is the one holding the hand-rolled box. The
+# `runtime.ts` / `class-bodies.ts` entries are #5377's, restated for the same
+# stranded-grant reason as above.
+func-budget-allow:
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::<anonymous>#95
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
 ---
 
 # #5378 — ZonedDateTime field reads die in `BalanceISODate` on a non-finite operand

@@ -11348,7 +11348,34 @@ function resolveImport(
         // data-struct proxy before Request/Response consume the dictionary.
         // Statically visible bags are materialized by codegen; this runtime
         // arm is the erased-value counterpart and runs after exports are live.
-        const webInitArgIndex = intent.className === "Request" || intent.className === "Response" ? 1 : undefined;
+        //
+        // (#5378) `Intl.DateTimeFormat(locales, options)` is the SAME shape and
+        // was missing from this list, which is what made every linked-Temporal
+        // `ZonedDateTime` field read throw `RangeError: infinity is out of
+        // range`. The chain, measured through the runner (probe ladder in the
+        // issue): `ZonedDateTime.prototype.year` → `GetISODateTimeFor` →
+        // `GetOffsetNanosecondsFor("UTC", ns)` → `GetNamedTimeZoneOffsetNanoseconds`,
+        // whose ONLY source of wall-clock parts is
+        //   `new Intl.DateTimeFormat("en-us", {timeZone, hour12:false, era:"short",
+        //      year/month/day/hour/minute/second:"numeric"}).format(date)`
+        // split into 7 `\w+` runs. The options struct reached V8 opaque, so the
+        // host constructor read NO properties from it and fell back to the
+        // en-US default (year/month/day only): the format string came back
+        // "1/1/2024" instead of "1/1/2024 AD, 12:34:00". The polyfill's parse
+        // then yields non-finite wall-clock fields, `offsetNanoseconds` reads
+        // `NaN`, and `BalanceISODate` rejects the NaN with that RangeError —
+        // several frames above the actual defect, which is why the throw site
+        // looked like a calendar bug. `epochMilliseconds` never touches the
+        // formatter, which is exactly why it stayed correct.
+        //
+        // Scoped to `DateTimeFormat` because that is what the ladder implicated.
+        // `Intl.NumberFormat` / `Intl.ListFormat` drop their options the same
+        // way (`new Intl.NumberFormat("en-us",{minimumFractionDigits:3}).format(1.5)`
+        // measures "1.5", should be "1.500") — reported, not fixed here.
+        const webInitArgIndex =
+          intent.className === "Request" || intent.className === "Response" || intent.className === "DateTimeFormat"
+            ? 1
+            : undefined;
         return (...args: any[]) => {
           if (isPromiseExecutorCtor && args.length > 0) {
             args[0] = _maybeWrapCallable(args[0], 2, callbackState);
