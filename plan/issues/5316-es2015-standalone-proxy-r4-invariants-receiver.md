@@ -5,7 +5,7 @@ status: done
 completed: 2026-09-06
 sprint: current
 created: 2026-09-04
-updated: 2026-09-06
+updated: 2026-09-07
 priority: high
 horizon: xl
 feasibility: hard
@@ -46,6 +46,13 @@ loc-budget-allow:
   # expando carrier). Ten instructions plus the comment that records why ENSURE
   # is right here while `carrier-bag-visibility.ts` refuses to ensure.
   - src/codegen/object-integrity-carrier.ts
+  # 2026-09-06 r6: the §10.1.6.3 step-2 arm of `__defineProperty_accessor` grows
+  # an own-key guard (the `accNonExtensibleArm` block) so an EXISTING key of a
+  # non-extensible #4194 carrier stops being read as new. ~20 instruction lines;
+  # the rest is the comment recording WHY the predicate is `__hasOwnProperty`
+  # and not `__desc_has_own` (whose §7.3.12 tail walks the prototype chain) and
+  # why the DATA twin was measured and deliberately left alone. The arm is a
+  # closure over this builder's baked funcIdx, so it has to live in this file.
 func-budget-allow:
   # 2026-09-04 r4 step 1: `registerProxyInvariantValidators` is ONE function
   # only in the TypeScript sense — its body is seven independent
@@ -59,6 +66,12 @@ func-budget-allow:
   # `validateTrapResult` splice helper and the per-arm wiring.
   - src/codegen/object-runtime-proxy-invariants.ts::registerProxyInvariantValidators
   - src/codegen/object-runtime-proxy.ts::ensureProxyRuntime
+  # 2026-09-06 r6: same growth as the LOC grant above, in the one function that
+  # already IS the whole module — `buildObjectDescriptorHelpers` is a sequence
+  # of `registerNative` blocks sharing baked funcIdx and the local `accThrow` /
+  # `accEflBit` emitters, so the new arm cannot be lifted out without
+  # re-threading those through a new signature for twenty instructions.
+  - src/codegen/object-runtime-descriptors.ts::buildObjectDescriptorHelpers
   # 2026-09-05 r5 step 2: see the LOC rationale above — the else arm of the
   # gopd literal-key fold is inside this one dispatcher function, and moving it
   # out would mean re-threading `gopdTmp`, `propLiteral`, `fctx` and the
@@ -1498,3 +1511,257 @@ restated more narrowly:
 | pinned test files green at the CI fork heap | holds — 334/334 on node 22 and node 25, every file accounted for by name |
 | all gates green bare and against `origin/main` | holds — green bare; the three reds against main's tip are main's own newer, smaller files, and the merge preview resolves them to main's blobs sha-for-sha |
 | Proxy-free programs byte-identical to base on standalone, host and wasi | holds — `o/plain.ts` and `w/w2.ts` `SAME` on all three, at the r5 byte counts; host `SAME` on all ten probes |
+
+## r6 — post-merge regression fix (2026-09-06)
+
+Wave-5 PR-1 (#5688, merged as main `2269b94bec`) cost two Test262 rows on the
+standalone lane. Both are regained here; nothing else in the define/integrity
+neighbourhood moves.
+
+| row | main `2269b94bec` | this branch |
+| --- | --- | --- |
+| `test/built-ins/Object/prototype/__defineGetter__/define-non-extensible.js` | fail — `TypeError: Cannot define property, object is not extensible` | **pass** |
+| `test/built-ins/Object/prototype/__defineSetter__/define-non-extensible.js` | fail — same message | **pass** |
+
+The test does `var subject = Object.preventExtensions({ existing: null });
+subject.__defineGetter__('existing', noop)` — which must NOT throw, because the
+key already exists — and only then asserts the throw for a NEW key.
+
+### Mechanism (read, then confirmed by probe)
+
+Three pieces have to line up, and PR-1 moved the first one.
+
+1. **`Object.preventExtensions` on an object literal started actually recording
+   the flag.** #5316's commit `40c1f054eb` taught `__integrity_bag`
+   (`src/codegen/object-integrity-carrier.ts`) the #4194 instance carrier, so
+   every `isUserDeclaredStruct` shape — class instances and the `__anon_*`
+   struct an object LITERAL lowers to — now gets a closure bag on an integrity
+   op. `OBJ_FLAG_NONEXTENSIBLE` lands on that bag where before the whole call
+   was a silent no-op. That part is correct and is not touched here.
+
+2. **The accessor-define native decides "new key" from the BAG.**
+   `__defineProperty_accessor` (`src/codegen/object-runtime-descriptors.ts`,
+   inside `buildObjectDescriptorHelpers`) reaches its §10.1.6.3 step-2 arm when
+   `__obj_find(o, key)` returns null, where `o` (local 5) is the bag `$Object`
+   the carrier arm substituted for the receiver.
+
+3. **An own DATA property of such a receiver is not a bag entry.** It is a
+   physical STRUCT FIELD of the receiver `O` (local 0). `__obj_find` cannot see
+   it, so an EXISTING key reads as new and the throw fires.
+
+Before PR-1 step 1 never happened for these carriers, so the same call fell
+through to the insert and put a bag accessor entry in front of the field. That
+is why the row "passed" on the pre-PR-1 tree, and why probe `vg` reads `9`
+through the newly installed getter.
+
+**The fix.** In the accessor arm only, when `__obj_find` missed AND the object
+is non-extensible, ask whether the RECEIVER already owns the key before
+refusing:
+
+- **owns it** — the property exists. If the bag's flags carry
+  `OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN` the existing property is
+  non-configurable, so the data→accessor conversion is the §10.1.6.3 step-7
+  rejection and throws `Cannot redefine property: cannot convert a
+  non-configurable data property to an accessor`. Otherwise fall through to the
+  existing insert, so the accessor entry shadows the field exactly as it did
+  before PR-1.
+- **does not own it** — genuinely new; throw not-extensible as now.
+
+The predicate is **`__hasOwnProperty`**, not the `__desc_has_own`
+(`?? __hasOwnProperty`) chain the ToPropertyDescriptor readers in the same file
+use. `__desc_has_own`'s final arm is the full §7.3.12 HasProperty and walks the
+PROTOTYPE chain, so it answers `true` for an inherited name; using it made
+`Object.preventExtensions({existing:null}).__defineGetter__('toString', noop)`
+stop throwing (probe `w5`), which is a new wrong answer for a genuinely new key.
+`__hasOwnProperty` is own-only and is nevertheless complete for these receivers:
+it carries the finalize-time closed-struct field ladder (`object-runtime.ts`,
+the `targets` list that unshifts a prologue into it) plus the #3468/#3537
+carrier-bag arm. For a plain `$Object` receiver the guard is a no-op —
+`__obj_find` null there implies own-key absent, so the predicate answers false
+and control reaches the same throw.
+
+`accOwnKeyIdx` is `undefined` on the host/gc lanes, where
+`env::__defineProperty_accessor` owns this path and the native is never
+emitted; the arm then keeps the plain throw. That is why host output is
+byte-identical (below).
+
+### The DATA twin was written, measured, and reverted
+
+The plan called for the same guard on the `s4Preflight` arm of
+`__defineProperty_value`, for symmetry. It was written, and it **cost a
+correct throw**: `Object.defineProperty(Object.freeze({existing:null}),
+'existing', {value:2})` (probe `w3`) throws on node, threw on main, and stopped
+throwing with the guard — so that arm IS reachable for a frozen carrier
+receiver, contradicting the read-only prediction that only the accessor arm was.
+A data→data redefine of an existing property is legal on a merely
+non-extensible object and on a sealed one (a sealed field stays writable) and
+illegal on a frozen one, so relaxing the refusal by ownership alone is too
+coarse. Reverted; the arm now carries a comment saying so. No probe shows the
+data arm refusing a define that must succeed, so nothing is left unfixed by the
+revert.
+
+### Probe table
+
+Each probe exports `test()` returning a number; `7` means it threw. Compiled
+`{ target: 'standalone', allowJs: true, skipSemanticDiagnostics: true }`, every
+one with `result.imports === []`. **main** = `2269b94bec` (this worktree before
+the edit), **base** = git archive of `6e6166d52a`, the commit before PR-1, at
+`/home/user/js2/.tmp/base-prepr1`; **node** = node 22.22.2. All three columns
+measured by the same harness run on 2026-09-06 21:3x–21:44 UTC.
+
+| probe | what it does | main | base | **fix** | node |
+| --- | --- | --- | --- | --- | --- |
+| `v1` | `__defineGetter__` over an existing key of a non-extensible literal | 7 | 1 | **1** | 1 |
+| `v6` | `__defineSetter__`, same | 7 | 1 | **1** | 1 |
+| `v4` | `defineProperty(s,'existing',{get,configurable:true})` | 7 | 1 | **1** | 1 |
+| `w6` | same with `{set,configurable:true}` | 7 | 1 | **1** | 1 |
+| `v8` | class instance, `preventExtensions(new C())`, constructor-assigned field | 7 | 1 | **1** | 1 |
+| `va` | `preventExtensions` as a separate statement | 7 | 1 | **1** | 1 |
+| `ve` | the existing key was ADDED after creation | 1 | 1 | **1** | 1 |
+| `w9` | dynamic `$Object` receiver, dynamically added key | 1 | 1 | **1** | 1 |
+| `v3` | a NEW key still throws | 1 | 1 | **1** | 1 |
+| `wa` | empty `$Object`, new key still throws | 1 | 1 | **1** | 1 |
+| `w5` | an INHERITED name (`toString`) still throws | 1 | 1 | **1** | 1 |
+| `w1` | SEALED literal, `__defineGetter__` of the existing key | 7 | 1 | **7** | 7 |
+| `w2` | FROZEN literal, same | 7 | 1 | **7** | 7 |
+| `vb` | DATA define `{value:2}` on the existing key | 1 | 1 | **1** | 1 |
+| `w4` | SEALED, DATA define `{value:2}` | 1 | 1 | **1** | 1 |
+| `w3` | FROZEN, DATA define `{value:2}` | 7 | 3 | **7** | 7 |
+| `vg` | `{get(){return 9},configurable:true}` then read `s.existing` | 9 | 9 | **9** | 9 |
+| `v2` | `hasOwnProperty` / `isExtensible` control | 10 | 10 | **10** | 10 |
+| `v5`,`v7`,`v9`,`vf` | untouched controls | 1/1/11/1 | 1/1/11/1 | **1/1/11/1** | 1/1/11/1 |
+| `vc` | accessor→accessor redefine (RESIDUAL, pre-existing) | 1 | 1 | **1** | 2 |
+| `vd` | `Reflect.defineProperty` accessor on the existing key | **trap** | null | **null** | 5 |
+| `w7` | same, `{get,configurable:true}`, then read | **trap** | 3 | **3** | 1 |
+| `w8` | `Reflect.defineProperty` accessor on a NEW key | **trap** | 8 | **trap** | 1 |
+
+Note `v4` vs `vg`. They differ only in the getter binding shape (a hoisted
+`noop` variable vs an inline function expression) and the later read, and on
+main one threw while the other did not — which is what said the throw was
+receiver/lowering-specific rather than universal, and pointed at the native's
+arm. The exact reason `vg` never reached the throwing arm on main was NOT
+isolated (the plausible one is that its all-literal `Object.defineProperty` call
+folds to a path that does not call `__defineProperty_accessor`); it is recorded
+as an observation, not a mechanism.
+
+`w1`/`w2` are the reason the sealed/frozen half of the guard exists: main got
+those RIGHT for the first time (base answered `1`, wrongly), and a plain
+"owns ⇒ fall through" would have thrown that away.
+
+### Row control
+
+Rows: every file under `test/built-ins/Object/prototype/__defineGetter__`,
+`__defineSetter__`, `__lookupGetter__`, `__lookupSetter__`,
+`test/built-ins/Object/{defineProperty,defineProperties,preventExtensions,seal,freeze,isExtensible}`
+and `test/built-ins/Reflect/defineProperty` — **2054 rows**, run
+`COMPILER_POOL_SIZE=1 npx tsx scripts/run-test262-paths.mts --isolate <chunk>
+--standalone` in 14 chunks of ≤150, two streams, 2026-09-06 21:45 → 2026-09-07 01:32 UTC.
+
+Compared per-row against the FRESH standalone baseline
+`/home/user/js2/.test262-cache/test262-standalone-current.jsonl`, promoted
+2026-09-06 20:25 UTC from main `2269b94bec` (48,735 rows).
+
+**2054 / 2054 rows accounted for. Zero lost, exactly two regained.**
+
+| | pass | non-pass |
+| --- | --- | --- |
+| baseline (main `2269b94bec`, 20:25 UTC) over these 2054 rows | 2032 | 22 |
+| this branch | **2034** | 20 |
+
+The only two per-row differences are the two target rows, both `fail` → `pass`.
+Every other row keeps its baseline verdict, including the 18 fails and 2
+compile_errors (e.g. `__defineGetter__/define-abrupt.js`,
+`__lookupGetter__/lookup-proto-get-err.js`,
+`Object/freeze/proxy-with-defineProperty-handler.js`) — so no row needed a
+solo re-run on the base tree.
+
+### Pins
+
+`tests/issue-5316-r6-nonextensible-existing-key-accessor.test.ts` — 17 standalone
+node-parity probes (the `v*`/`w*` shapes above, including the sealed and frozen
+throws), one pinned residual (`vd`), the two regained rows and six sibling
+control rows from the same two directories. Every probe asserts
+`result.imports` is `[]`.
+
+- node 22.22.2: **26/26 pass**
+- node 25.9.0 (`/home/user/js2/.tmp/wrap/node25/…/node`): **26/26 pass**
+
+Neighbouring files, same flags, ≤3 per batch:
+
+| file | verdict |
+| --- | --- |
+| `tests/issue-5316-r4-invariants.test.ts` | 49/49 pass |
+| `tests/issue-5316-r5-attribute-model.test.ts` | 60/60 pass |
+| `tests/issue-3474-done-status-integrity.test.ts` | 11/11 pass |
+| `tests/define-property-patterns.test.ts`, `tests/issue-3663-object-define-property-ir.test.ts`, `tests/issue-4394-global-object-define-property.test.ts` | 16/16 pass |
+| `tests/es5-standalone-annexb-other.test.ts`, `tests/issue-4445-annexb-html-methods.test.ts` | 11/11 pass |
+| `tests/es5-standalone-annexb-global-script-eval.test.ts`, `tests/issue-2552-annexb-b33.test.ts`, `tests/issue-3069-annexb-html-wrappers-standalone.test.ts` | 16/16 pass |
+| `tests/issue-3403-object-integrity-var-key.test.ts` | 4/5 — `(b) defineProperty collision — host lane` fails, **identical on the base file** (file-copy A/B revert of `object-runtime-descriptors.ts` to `HEAD`), pre-existing |
+| `tests/issue-2580-m3-bacc-defineproperty-accessor.test.ts` | 9/13 — the four host-lane `forEach`/`some` accessor-element tests fail, **identical on the base file**, pre-existing |
+
+Both pre-existing failures are on the HOST lane, which this change leaves
+byte-identical.
+
+### Host byte-identity
+
+26 probe programs compiled for the JS-host target (`target` omitted) with the
+compiler loaded from source, sha256 of `result.binary`, fix vs the same tree
+with `src/codegen/object-runtime-descriptors.ts` reverted to `HEAD` (file-copy
+A/B): **all 26 identical**. Host routes `defineProperty` through the sidecar
+imports, and `accOwnKeyIdx` resolves to `undefined` there, so the arm is
+unchanged.
+
+### Gates
+
+Bare and with `LOC_GATE_BASE=c5858522525c43e4f2f282ec470ddb5ef0c81eee`
+(`origin/main`): `check-loc-budget`, `check-func-budget`, `check-coercion-sites`,
+`check:oracle-ratchet`, `check:dead-exports` — all exit 0. Also green:
+`check:speculative-rollback`, `check:stack-balance`, `check:codegen-fallbacks`,
+`check:any-box-sites`, `check:host-import-policy`, `check:harness-compile-budget`,
+`check:ir-adoption`, TS7 `--noEmit -p tsconfig.ts7.json`, `npm run lint`,
+`prettier --check` on all three changed files.
+
+Growth granted in this file's frontmatter, dated 2026-09-06:
+`src/codegen/object-runtime-descriptors.ts` +75 LOC and
+`::buildObjectDescriptorHelpers` +57 — the arm is a closure over that builder's
+baked funcIdx and its local `accThrow`/`accEflBit` emitters, so it cannot be
+lifted out for twenty instructions. No `scripts/*-baseline.json` touched.
+
+### Residuals (none of them this fix's to close)
+
+- **`vd` / `w7` — `Reflect.defineProperty` of an accessor over an EXISTING key
+  is a silent no-op.** It answers `null`/`3` where node answers `5`/`1`. PR-1
+  turned this into an uncatchable trap; the trap is removed here and the answer
+  is back to the pre-PR-1 one. The no-op itself pre-dates PR-1 and is NOT
+  widened here.
+- **`w8` — `Reflect.defineProperty` of an accessor over a NEW key of a
+  non-extensible object TRAPS** instead of returning `false` (node) — the
+  §10.1.6.3 throw is correct, but `Reflect.defineProperty` must catch it and
+  answer `false`. Introduced by PR-1, left standing: the throw is the right
+  behaviour and the missing catch is a separate defect in the `Reflect` wrapper,
+  not in this arm. It costs no row against the 2026-09-06 20:25 baseline.
+- **`vc` — an accessor→accessor redefine on a non-extensible object** answers
+  `1` where node answers `2`. Predates PR-1 (`base` = `1` too).
+- **A typed local changes the accessor readback.** `vg` spelled
+  `const s: any = Object.preventExtensions({existing:null})` answers `null`
+  where the `var s = …` spelling answers `9`. Same family as the `vd` no-op;
+  the pin uses the `var` spelling and this is recorded rather than fixed.
+
+- **WASI target: the same regression is NOT repaired there (round-6 review,
+  2026-09-07).** On `--target wasi` the guard is emitted (the wasi binaries
+  differ from main) but inert: `__hasOwnProperty` answers false for a physical
+  struct-field key on the nativeStrings/wasi lane — the own-key ladder that
+  makes it complete for #4194 carriers does not reach those receivers there,
+  and `Object.prototype.hasOwnProperty.call({existing:null}, 'existing')` even
+  TRAPS on wasi (reviewer probe `g1`; `111` on standalone and node). So
+  `Object.defineProperty(Object.preventExtensions({existing:null}), 'existing',
+  {get, configurable:true})`, its `Reflect.defineProperty` /
+  `Object.defineProperties` spellings and the class-instance receiver (probes
+  `v4`/`f2`/`f3`/`f5`, `/home/user/js2/.tmp/rev5316r6/p`, harness `wasi.mts`)
+  answer node `1` / pre-PR-1 base `1` / main `7` / this fix `7` on wasi. The
+  38-probe wasi sweep shows this fix changes NO wasi answer; the four cells are
+  PR-1's, inherited. test262 conformance runs standalone, so no row is at
+  stake; the follow-up is the wasi own-key ladder (`__hasOwnProperty` for
+  closed-struct carriers under `nativeStrings`), a wasi-lane task outside the
+  ES2015 standalone goal — filed here rather than as a new issue because the
+  id allocator could not scan open PRs from this container.

@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1371,
-    "fail": 634,
+    "pass": 1372,
+    "fail": 633,
     "ce": 12,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 842,
-        "fail": 205,
+        "pass": 843,
+        "fail": 204,
         "ce": 1,
         "skip": 0,
         "total": 1048,
@@ -1525,8 +1525,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 558,
-        "fail": 150,
+        "pass": 559,
+        "fail": 149,
         "ce": 0,
         "skip": 0,
         "total": 708,
@@ -2856,8 +2856,8 @@
   },
   {
     "edition": "ES2024",
-    "pass": 362,
-    "fail": 194,
+    "pass": 361,
+    "fail": 195,
     "ce": 0,
     "skip": 0,
     "total": 556,
@@ -2865,8 +2865,8 @@
     "features": [
       {
         "name": "TypedArray",
-        "pass": 99,
-        "fail": 148,
+        "pass": 98,
+        "fail": 149,
         "ce": 0,
         "skip": 0,
         "total": 247,
@@ -2883,12 +2883,12 @@
       },
       {
         "name": "align-detached-buffer-semantics-with-web-reality",
-        "pass": 90,
-        "fail": 68,
+        "pass": 89,
+        "fail": 69,
         "ce": 0,
         "skip": 0,
         "total": 158,
-        "pct": 57
+        "pct": 56
       },
       {
         "name": "BigInt",
@@ -3571,48 +3571,48 @@
   },
   {
     "edition": "ES2026",
-    "pass": 2777,
-    "fail": 2131,
-    "ce": 13,
+    "pass": 2978,
+    "fail": 1924,
+    "ce": 19,
     "skip": 0,
     "total": 4921,
-    "pct": 56,
+    "pct": 61,
     "features": [
       {
         "name": "Temporal",
-        "pass": 2616,
-        "fail": 1982,
-        "ce": 13,
+        "pass": 2817,
+        "fail": 1775,
+        "ce": 19,
         "skip": 0,
         "total": 4611,
-        "pct": 57
+        "pct": 61
       },
       {
         "name": "Symbol",
-        "pass": 273,
-        "fail": 121,
+        "pass": 274,
+        "fail": 120,
         "ce": 0,
         "skip": 0,
         "total": 394,
-        "pct": 69
+        "pct": 70
       },
       {
         "name": "BigInt",
-        "pass": 136,
-        "fail": 42,
+        "pass": 137,
+        "fail": 41,
         "ce": 1,
         "skip": 0,
         "total": 179,
-        "pct": 76
+        "pct": 77
       },
       {
         "name": "arrow-function",
-        "pass": 147,
-        "fail": 31,
+        "pass": 151,
+        "fail": 27,
         "ce": 0,
         "skip": 0,
         "total": 178,
-        "pct": 83
+        "pct": 85
       },
       {
         "name": "Reflect.construct",
@@ -3697,12 +3697,12 @@
       },
       {
         "name": "Intl.Era-monthcode",
-        "pass": 0,
-        "fail": 10,
+        "pass": 7,
+        "fail": 3,
         "ce": 0,
         "skip": 0,
         "total": 10,
-        "pct": 0
+        "pct": 70
       },
       {
         "name": "Math.sumPrecise",
