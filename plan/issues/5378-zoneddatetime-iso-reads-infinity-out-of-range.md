@@ -243,3 +243,34 @@ routed through the same helper.
 - The plan's `{year,month,day,daysInMonth,offsetNanoseconds,toPlainDate}` glob
   is 23 rows on this checkout, not ~250; measured as written plus a 211-row
   broadening over every `ZonedDateTime.prototype` field-read directory.
+
+### Step 4 — measured (2026-09-07)
+
+Row-by-row base vs fix, one process and one 60 s deadline per row, fresh
+`JS2WASM_TEMPORAL_CACHE` per revision (`…:69123eac1df5d986` base,
+`…:27cd287057fd8fcd` fix).
+
+| sample | rows | base pass | fix pass | pass→fail | fail→pass |
+|---|---|---|---|---|---|
+| the plan's six-getter glob | 23 | 4 | 9 | 0 | 5 |
+| `ZonedDateTime.prototype` field-read family (broadening) | 211 | 51 | 100 | 0 | 49 |
+| the 123-row family | 123 | 27 | 32 | 0 | 5 |
+| union | 334 | 78 | 132 | 0 | 54 |
+
+The plan's `{year,month,day,daysInMonth,offsetNanoseconds,toPlainDate}/**` glob
+is **23** rows on this checkout, not ~250; the 211-row broadening over every
+`ZonedDateTime.prototype` field-read/getter directory is the blast radius the
+issue text actually names, and strictly contains the 23.
+
+**One non-pass→fail flip, reported rather than skipped.**
+`built-ins/Temporal/ZonedDateTime/prototype/hoursInDay/basic.js` goes
+fail (6 s) → hang (no termination in 900 s). On base the row threw before
+reaching any duration arithmetic; with a finite offset it reaches
+`TimeDuration.fdiv`'s `for(; !JSBI.equal(s,ZERO) && c.length < 50; )` and does
+not come back. Isolated to the arithmetic, not the zone: `startOfDay()`, `.year`
+and `.offsetNanoseconds` all answer in 5–6 s for `UTC` and `+01` alike, and
+`hoursInDay` hangs for `UTC`, `+00` and `+01` equally. Deliberately NOT added to
+the runner's `HANGING_TESTS` — that converts a counted fail into a skip and
+shrinks the denominator for a defect this change only makes reachable. Needs its
+own issue; the operational risk is that a synchronous Wasm loop cannot be
+interrupted by `TEST_TIMEOUT_MS` and a shard fork is killed at 30 s.
