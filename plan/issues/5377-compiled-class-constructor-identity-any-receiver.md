@@ -17,18 +17,23 @@ created: 2026-09-06
 # the built-in read it must precede — that split is exactly what let the
 # defect survive #5204's and #5373's partial fixes.
 #
-# `src/runtime.ts` (+222 net over `origin/main`): #5373's +95 (its three
-# coercion sites and the `_isTaggedUserClassInstance` / `_classChainMethod` /
-# `_classChainToString` helpers, RESTATED here because this PR carries that
-# commit) plus this issue's ~127 — the two instance→class-object registries,
-# `_classObjectForInstance`, `_classChainRead`, three call sites, the
+# `src/runtime.ts` (+255 net over `origin/main` at 798b8a06e0, MEASURED
+# 2026-09-07 by the LOC gate on the merged tree — the earlier +222 figure was
+# taken before the second main merge and before the ownership gate): #5373's
+# +95 (its three coercion sites and the `_isTaggedUserClassInstance` /
+# `_classChainMethod` / `_classChainToString` helpers, RESTATED here because
+# this PR carries that commit) plus this issue's ~160 — the two
+# instance→class-object registries, `_classObjectForInstance`,
+# `_classObjectOwnedBy` (the cross-instantiation ownership gate, +33 with its
+# rationale), `_classChainRead`, three call sites, the
 # `__set_subclass_proto` fourth argument, and their rationale comments.
 #
-# `src/codegen/class-bodies.ts` (+70): the `__set_subclass_proto` fourth
-# argument (built into its own live body so the #4618 global-shift hazard
-# cannot bake a stale index) and the constructor-entry class-object
-# materialization, plus the comments recording the measurements that forced
-# both shapes.
+# `src/codegen/class-bodies.ts` (+65, measured the same way): the
+# `__set_subclass_proto` fourth argument (carried to the call site in a LOCAL
+# emitted into the LIVE body — a detached array spliced and dropped is reached
+# by no shift repair, and the #4618 global-index hazard then minted a SECOND
+# class object) and the constructor-entry class-object materialization, plus
+# the comments recording the measurements that forced both shapes.
 loc-budget-allow:
   - src/runtime.ts
   - src/codegen/class-bodies.ts
@@ -171,3 +176,95 @@ replace it.
 - Id reserved via `claim-issue --allocate --allow-unscanned` (no `gh` in this
   container); open PRs hand-checked 2026-09-06 — highest in-flight issue file
   is #5376 (PR #5682).
+
+## Implementation notes (dev-5377, 2026-09-06 → 2026-09-07)
+
+All figures below were measured in this lane, on this branch, with the base
+side re-run from `origin/main`'s `src/` at the merge base (`a4d14695ff`) and a
+FRESH `JS2WASM_TEMPORAL_CACHE` per side. The salvaged bases from the killed
+lane were NOT reused: main had moved, and the base failure reasons differ.
+
+### Step 1 — answered, and it is two defects, not one
+
+`.tmp/base-step1.log` vs `.tmp/fix2-step1.log`, single-module lane:
+
+| backing | `i.constructor` answers (base) | `=== C` base → fix |
+| --- | --- | --- |
+| struct-backed `class P {}` | `%Object%` — a function named `Object`, so the READ itself is wrong, not just the compare | 0 → 1 |
+| host-backed `class B extends Array {}` | the synthetic `Sub` — `Object.is(Object.getPrototypeOf(i).constructor, i.constructor)` is `true` on base, and `Object.is(i.constructor, B)` is `false` | 0 → 1 |
+
+The typed-receiver read was already right on base (`sTypedEq`/`hTypedEq` = 1),
+so the defect is specific to the any-typed path, exactly as filed.
+
+### The salvage commit: codegen half kept, runtime half reverted
+
+`ad7925c7ca` (uncommitted-then-salvaged work from the killed lane) changed two
+things. Kept: routing the class object to `__set_subclass_proto` through a
+LOCAL emitted into the live body — with it the Temporal polyfill mints exactly
+ONE class object per class per instantiation (`.tmp/dbgM5.log`). Reverted: the
+`constructor` arm returning the RAW class-object struct instead of the
+`_wrapForHost` mirror. Its rationale ("#5222 makes the mirror unequal inside a
+linked provider") was drawn from a run made BEFORE the codegen half, when the
+module still had two JSBI class objects — so `===` was false for that reason.
+With one class object the mirror compares EQUAL (`.tmp/dbgM2.log`,
+`ca=object#1 cb=object#1 same=true`), the raw struct changes no Temporal
+outcome, and it costs two node-matching cells (`typeof i.constructor` answers
+`"object"` where node says `"function"`).
+
+### The ownership gate — why both arms stand down across instantiations
+
+Landing the two arms UNGATED regressed 5 rows of the 481-row sample
+(`.tmp/diff-instzdt.txt`), 4 of them from the 9 the plan names. Root cause is
+NOT the identity work: one process runs many instantiations (test262 runs a
+sloppy pass and a strict rerun per file, hundreds of files per worker), and a
+value built by instantiation N reaches a host mirror still dispatching through
+instantiation N-1's export map (`.tmp/dbgM5.log`: `inst=object#226`,
+`classObj=object#125`, arriving with `exports=object#3` whose own `JSBI` is
+`object#1`). In that state no answer can compare equal, so `_classObjectOwnedBy`
+detects it and both arms return `_MISS`, preserving the caller's pre-#5377
+behaviour byte-for-byte.
+
+### Measurements
+
+| sample | base | fix | fail→pass | pass→fail |
+| --- | --- | --- | --- | --- |
+| 481-row `Instant/**` + `ZonedDateTime/prototype/**` | 254 pass / 227 fail | **261 pass** / 220 fail | 7 | **0** |
+| 123-row Temporal family | 13 pass / 110 fail | 13 pass / 110 fail | 0 | 0 |
+| the 9 rows named in Step 3 | 9 pass | 9 pass | — | 0 |
+
+Artifacts: `.tmp/base-instzdt.tsv`, `.tmp/fix2-instzdt.tsv`,
+`.tmp/diff2-instzdt.txt`, `.tmp/base-123.tsv`, `.tmp/fix2-123.tsv`,
+`.tmp/diff2-123.txt`.
+
+### Reported, not fixed
+
+1. **Cross-instantiation dispatch through a stale export map.** The direct
+   probe `Temporal.Instant.from("2024-01-01T00:00:00Z").epochNanoseconds` now
+   PASSES outright in a fresh process — it is a `bigint` and equals
+   `1704067200000000000n`, the first time that read has ever worked (base on
+   the same tree: `SyntaxError: Cannot convert 23396352,513294428,1 to a
+   BigInt`; `.tmp/nbase-temporal.json` vs `.tmp/nfix-temporal-fresh.json`).
+   But the result is ORDER-DEPENDENT: in a process that has already run other
+   Temporal files, the strict rerun's values are dispatched through the
+   previous instantiation's export map and the probe fails again
+   (`.tmp/fix2-temporal.json`). That is a pre-existing
+   host-mirror/export-binding defect, orthogonal to constructor identity, and
+   it bounds every remaining linked-Temporal BigInt read — including, since a
+   sharded test262 worker runs hundreds of files per process, how much of the
+   +7 generalises across a full run.
+2. **ISO `ZonedDateTime.year`** still fails with `infinity is out of range`,
+   unchanged from base — a separate arithmetic path, not an identity one.
+3. **`Object.getPrototypeOf(hostBackedInstance) === B.prototype`** stays 0
+   (pinned in the test at the measured value). Unifying the two prototype
+   objects would have to re-point the instance at the compiled carrier, which
+   breaks the `instanceof Parent` walk `__set_subclass_proto` exists to
+   preserve.
+4. **`typeof i.constructor`** is `"object"` in the single-module lane
+   (`"function"` across the linked seam, where the constructible mirror is
+   minted); node says `"function"` for both. Unchanged by this issue.
+
+### Pre-existing red suites, verified identically red on base
+
+`tests/issue-1567.test.ts` (1 test), `tests/issue-2637-b2-ctor-closure-registration.test.ts`
+(1 test) and `tests/issue-1933.test.ts` (OOMs the vitest worker) fail the same
+way with this branch's `src/` replaced by `origin/main`'s.
