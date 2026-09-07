@@ -281,6 +281,26 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     Object.assign(env, buildRuntimeImports(initRegisterImports, undefined, result.stringPool).env);
   }
 
+  // (#5377) Same shape a fourth time. The class-object singleton is now
+  // materialized at CONSTRUCTOR ENTRY (so `i.constructor === C` can be answered
+  // whatever the program reads first), which means a plain host-lane module
+  // with any class — `class Foo { bar({x, y}) {} }` in
+  // `binding-null-guard.test.ts` is the measured case — now imports the
+  // class-object registry family it previously only imported when some site
+  // read the class as a value. Without this overlay such a module fails to
+  // LINK: `Import #4 module="env" function="__register_prototype": function
+  // import requires a callable`. Provided via the production resolver, like the
+  // three overlays above.
+  const classRegistryImports = result.imports.filter(
+    (descriptor) =>
+      descriptor.module === "env" &&
+      descriptor.kind === "func" &&
+      /^__register_(prototype|class_object|class_ctor|class_parent|class_static_method)$/.test(descriptor.name),
+  );
+  if (classRegistryImports.length > 0) {
+    Object.assign(env, buildRuntimeImports(classRegistryImports, undefined, result.stringPool).env);
+  }
+
   return {
     env,
     "wasm:js-string": jsStringPolyfill,

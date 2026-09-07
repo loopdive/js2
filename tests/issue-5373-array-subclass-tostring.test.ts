@@ -13,7 +13,11 @@
 //   `__extern_join_str`     — a subclass instance as an ELEMENT of a join
 //   `__extern_method_call`  — any-typed `b.toString()` / `b.join()`
 //
-// A FOURTH path has the identical defect and is deliberately NOT changed here:
+// A FOURTH path had the identical defect. It is fixed by #5377, which this
+// branch stacks on top of, and the `pAnyRead*` cells below now carry node's
+// answers rather than the pinned base ones. The paragraph that follows records
+// WHY it could not land alone — read it before moving either cell back.
+//
 // the member READ `const f = b.toString` (`__extern_get`, its `intent`-table
 // twin, and `_safeGet`) also answers the built-in. That is the path jsbi takes
 // (`JSBI.__toPrimitive` does `const e = i.toString; e.call(i)`), which is where
@@ -128,10 +132,6 @@ const COMMON: Record<string, unknown> = {
   // — a separate, pre-existing gap in the vec's host view, present identically
   // before and after.
   cAnyReadCall: "ABSENT",
-  // REPORTED, NOT FIXED — the member-READ path. node: "B(3:undefined)". See the
-  // header comment: fixing this one costs 9 measured Temporal/Instant rows until
-  // `i.constructor === C` holds.
-  pAnyReadCall: "1,2,3",
 };
 
 /** Single-module lane: node's answers. The trailing comment is the base value. */
@@ -151,7 +151,13 @@ const EXPECTED_SINGLE: Record<string, unknown> = {
   // returns the receiver — so what moves here is the `String()` of that
   // receiver, through the fixed `__extern_toString`. base: "1,2,3";
   // node: "42", which needs the read path and therefore `i.constructor === C`.
-  pAnyReadValueOf: "B(3:undefined)",
+  // (#5377) The member-READ path, landed together with the `constructor`
+  // identity that made it safe — see this file's header. base: "1,2,3".
+  pAnyReadCall: "B(3:undefined)",
+  // …and with the read fixed, `valueOf` resolves to the class's own override
+  // instead of the built-in that returned the receiver. base: "1,2,3", then
+  // "B(3:undefined)" once #5373's coercion sites landed; node: "42".
+  pAnyReadValueOf: "42",
 };
 
 /**
@@ -179,6 +185,9 @@ const EXPECTED_LINKED: Record<string, unknown> = {
   pAnyValueOf: [1, 2, 3], // node: 42
   pElement: "1,2,3-7", // node: "B(3:undefined)-7"
   pAnyReadValueOf: "1,2,3", // node: "42"
+  // Unchanged across the seam, for the #5223 reason above: the consumer has no
+  // `__class_call_B_*` bridge, so the read still finds the built-in.
+  pAnyReadCall: "1,2,3", // node: "B(3:undefined)"
 };
 
 function readAll(exports: Record<string, unknown>, expected: Record<string, unknown>): Record<string, unknown> {
