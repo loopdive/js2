@@ -30,7 +30,7 @@ export const ASYNC_RUNTIME_FEATURES = Object.freeze([
   "scheduler.enqueue",
 ] as const);
 
-export const ASYNC_OPTIONAL_RUNTIME_FEATURES = Object.freeze(["value.undefined"] as const);
+export const ASYNC_OPTIONAL_RUNTIME_FEATURES = Object.freeze(["value.undefined", "promise.number.bridge"] as const);
 
 export type AsyncRuntimeFeature =
   | (typeof ASYNC_RUNTIME_FEATURES)[number]
@@ -47,6 +47,7 @@ export function isAsyncRuntimeFeature(value: string): value is AsyncRuntimeFeatu
 
 export const ASYNC_HOST_CAPABILITY_IDS = Object.freeze([
   "async.callback.wrap",
+  "async.exception.caught",
   "async.promise.capability.create",
   "async.promise.react",
   "async.promise.resolve",
@@ -140,6 +141,32 @@ export function resolveAsyncHostCapabilityRecord(
   return asAsyncHostAdapter(resolveRuntimeHostCapabilityRecord(records, capability));
 }
 
+/** Numeric Promise crossings reuse the general number ABI without widening the historical async-only catalogue. */
+export type PreparedAsyncHostCapabilityId = AsyncHostCapabilityId | "number.box" | "number.unbox";
+export type PreparedAsyncHostAdapter =
+  | AsyncHostAdapter
+  | RuntimeHostCapabilityFuncRecord<"number.box" | "number.unbox", "f64" | "externref">;
+
+export function isPreparedAsyncHostCapabilityId(value: string): value is PreparedAsyncHostCapabilityId {
+  return isAsyncHostCapabilityId(value) || value === "number.box" || value === "number.unbox";
+}
+
+export function asPreparedAsyncHostAdapter(value: RuntimeHostCapabilityRecord): PreparedAsyncHostAdapter {
+  if (isAsyncHostCapabilityId(value.capability)) return asAsyncHostAdapter(value);
+  if (value.capability !== "number.box" && value.capability !== "number.unbox") {
+    throw new Error(`host capability ${value.capability} is not a prepared Promise adapter`);
+  }
+  assertRuntimeHostCapabilityRecord(value);
+  return asCallableRuntimeHostCapabilityRecord(value) as PreparedAsyncHostAdapter;
+}
+
+export function assertCanonicalPreparedAsyncHostCapabilityRecord(
+  value: unknown,
+): asserts value is PreparedAsyncHostAdapter {
+  assertCanonicalRuntimeHostCapabilityRecord(value);
+  asPreparedAsyncHostAdapter(value);
+}
+
 /** Mandatory and optional compatibility projections share the same records. */
 export const ASYNC_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.freeze(
   ASYNC_HOST_CAPABILITY_RECORDS.filter((record) => record.capability !== "async.value.undefined"),
@@ -149,7 +176,7 @@ export const ASYNC_OPTIONAL_HOST_ADAPTERS: readonly AsyncHostAdapter[] = Object.
   ASYNC_HOST_CAPABILITY_RECORDS.filter((record) => record.capability === "async.value.undefined"),
 );
 
-function capabilities(...ids: readonly AsyncHostCapabilityId[]): readonly AsyncHostCapabilityId[] {
+function capabilities(...ids: readonly PreparedAsyncHostCapabilityId[]): readonly PreparedAsyncHostCapabilityId[] {
   return Object.freeze([...ids].sort());
 }
 
@@ -160,6 +187,7 @@ export const ASYNC_RUNTIME_PROVIDER_IDS = Object.freeze([
   "host.promise.settle.fulfill",
   "host.promise.settle.reject",
   "host.value.undefined",
+  "host.promise.number.bridge",
   "host.scheduler.drain",
   "host.scheduler.enqueue",
   "native.promise.capability.create",
@@ -170,6 +198,7 @@ export const ASYNC_RUNTIME_PROVIDER_IDS = Object.freeze([
   "native.scheduler.drain",
   "native.scheduler.enqueue",
   "native.value.undefined",
+  "native.promise.number.bridge",
 ] as const);
 
 export type AsyncRuntimeProviderId = (typeof ASYNC_RUNTIME_PROVIDER_IDS)[number];
@@ -194,7 +223,7 @@ const NATIVE_MANAGED_IMPLEMENTATION: RuntimeProviderImplementation = Object.free
 function provider(
   id: AsyncRuntimeProviderId,
   feature: AsyncRuntimeFeature,
-  hostCapabilities: readonly AsyncHostCapabilityId[],
+  hostCapabilities: readonly PreparedAsyncHostCapabilityId[],
   implementation: RuntimeProviderImplementation,
 ): RuntimeProviderDefinition {
   return Object.freeze({
@@ -228,7 +257,7 @@ export const ASYNC_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Obj
   provider(
     "host.promise.capability.create",
     "promise.capability.create",
-    capabilities("async.promise.capability.create"),
+    capabilities("async.exception.caught", "async.promise.capability.create"),
     HOST_CAPABILITY_IMPLEMENTATION,
   ),
   provider(
@@ -261,6 +290,12 @@ export const ASYNC_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Obj
     capabilities("async.promise.settle.reject"),
     HOST_CAPABILITY_IMPLEMENTATION,
   ),
+  provider(
+    "host.promise.number.bridge",
+    "promise.number.bridge",
+    capabilities("number.box", "number.unbox"),
+    HOST_CAPABILITY_IMPLEMENTATION,
+  ),
   provider("host.scheduler.drain", "scheduler.drain", NO_HOST_CAPABILITIES, HOST_MANAGED_IMPLEMENTATION),
   provider("host.scheduler.enqueue", "scheduler.enqueue", NO_HOST_CAPABILITIES, HOST_MANAGED_IMPLEMENTATION),
   nativeProvider("native.promise.capability.create", "promise.capability.create"),
@@ -271,4 +306,5 @@ export const ASYNC_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Obj
   nativeProvider("native.scheduler.drain", "scheduler.drain"),
   nativeProvider("native.scheduler.enqueue", "scheduler.enqueue"),
   nativeProvider("native.value.undefined", "value.undefined"),
+  nativeProvider("native.promise.number.bridge", "promise.number.bridge"),
 ]);

@@ -3,7 +3,7 @@ id: 3521
 title: "IR-only R2: prepare-before-emit free-function ownership"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-05
+updated: 2026-09-06
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -40,6 +40,12 @@ loc-budget-allow:
   - src/ir/verify.ts
   - src/ir/builder.ts
   - src/ir/prepared-component-dependencies.ts
+  # 2026-09-07 package-C registry extraction keeps the compatibility façade
+  # and collector registration in their existing god-files while the physical
+  # source-free implementation lives beside them.
+  - src/codegen/declarations/import-collector.ts
+  - src/codegen/parse-number-native.ts
+  - src/codegen/registry/imports.ts
   # 2026-09-02 R2-T1/G1: the admission chain and the ownership fixed point are
   # rewritten from two `||` chains into two ordered predicate TABLES read by a
   # `find`, so the first failing predicate / first crossing edge can be named
@@ -73,6 +79,11 @@ loc-budget-allow:
   # no non-fast lane moved.
   - src/codegen/ir-prepared-free-functions.ts
 oracle-ratchet-allow:
+  # 2026-09-07 package-C's compatibility registry keeps three source-level
+  # predicates in the source-free import collector; their checker reads are
+  # the existing migration seam until the collector's typed oracle surface is
+  # complete.
+  - src/codegen/registry/imports.ts
   - src/codegen/ir-fnctor-admission.ts
   - src/codegen/program-abi-fnctor-producer.ts
   - src/codegen/ir-fnctor-parameter-planning.ts
@@ -96,6 +107,25 @@ func-budget-allow:
 origin: "#3518 R2 — invert single-source free functions from compile/patch to prepare/emit"
 files:
   - src/ir/program.ts
+  - src/ir/program-source.ts
+  - src/ir/program-startup-proof.ts
+  - src/ir/program-preparation.ts
+  - src/ir/program-middleend.ts
+  - src/ir/program-validation.ts
+  - src/ir/program-abi-contracts.ts
+  - src/ir/program-class-layouts.ts
+  - src/ir/program-allocations.ts
+  - src/ir/program-runtime-demands.ts
+  - src/ir/program-runtime-validation.ts
+  - src/ir/program-observation.ts
+  - src/ir/runtime-symbols.ts
+  - src/codegen/registry/imports.ts
+  - src/codegen/registry/physical-imports.ts
+  - tests/issue-3521-physical-import-registration.test.ts
+  - tests/issue-3521-whole-program-source.test.ts
+  - tests/issue-3521-whole-program-validation.test.ts
+  - tests/issue-3521-program-runtime-demands.test.ts
+  - tests/issue-3521-whole-program-projections.test.ts
   - src/ir/prepare.ts
   - src/ir/integration.ts
   - src/ir/abi-bindings.ts
@@ -151,6 +181,397 @@ files:
   - scripts/ir-kind-neutrality-baseline.json
 ---
 # #3521 — IR-only R2: prepare-before-emit free-function ownership
+
+## Package-C layering boundary — 2026-09-07
+
+Package C deliberately owns the source-free backend consumer in
+`src/ir/program-consumer.ts`. Its physical emission surface must use the
+existing registry and Wasm type builders, so this one IR consumer adds three
+codegen edges and the bridge adds one existing-file edge. The layering ratchet
+baseline is refreshed to record that explicit handoff; no source frontend or
+checker dependency is introduced.
+
+## Whole-program A implementation — 2026-09-05
+
+The `3518:authoritative-preparation` package first separates the historical
+structural collector (`PreparedIrCandidateProgram` and
+`PreparedIrCandidateProgramBuilder`) from the production `PreparedIrProgram`
+contract in `src/ir/program.ts`. The latter carries the complete inventory,
+typed IR, enriched existing ABI entries, original ordered initializer plans,
+derived provenance, and distinct runtime attachment projections. Its producer
+input and located-failure types are the shared A/B/C boundary. Reconstructed ABI
+lookups are consumers of serialized data, never serialized authority.
+
+This interface checkpoint does not change production routing and does not pass
+the seven-unit application checkpoint. A continues directly into extraction of
+the shared prepare/emit driver. The existing ABI session and live R1/R3/R4
+modules remain excluded from A ownership.
+
+### Complete preparation implementation — 2026-09-06
+
+Validation of this preparation batch: **15/15** focused tests across four
+files pass, including the real two-backend intrinsic projection, independent
+runtime-data reconstruction and copied-async-authentication refusal. The full
+source typecheck passes. These are preparation/validation results; backend
+emission and fresh-process executable replay remain separate acceptance work.
+
+Package A now builds typed source bodies before creating any codegen context,
+using the existing source inventory, binding resolver, callable graph, module
+initializer plans and AST-to-IR lowering. Startup follows the inventory's
+canonical dependency order; externally reachable function bodies retain their
+export flags before shared optimization. Focused controls cover reversed caller
+source order, reexports, exact failure ownership and an early initializer call
+that must retain its TDZ guard.
+
+`program-validation.ts` validates the original and derived body population,
+complete semantic ABI contracts, ordered startup storage/body joins, recursive
+class layouts and current allocation provenance/analysis. Reconstructing the
+existing ABI lookup requires this complete validation. The semantic IR remains free of intrinsic provider attachments. Each runtime
+projection is regenerated through the existing pure producer and compared in
+full, including every semantic field, recursive layout, provider map entry and
+projected async state. Its existing plan/manifest identities are authenticated
+separately. Multiple projections select an exact backend/target pair; duplicate
+pairs are rejected, even when their nested provider policies differ. Producer-owned runtime attachment
+graphs are frozen in place to preserve that authentication, with mutable native
+collections rejected even if their prototype has been disguised.
+
+The unchanged runtime demand scans and constants now have a source-free leaf.
+The complete driver combines B's reviewed async/runtime producers with shared
+optimization and one `PreparedIrProgram`. The internal observation seam assigns
+a process-local handle to this exact program object; it is telemetry provenance,
+not another semantic identity or a serialized authority. C's real backend
+acceptance/emission and public compiler wiring remain required for the original
+seven-unit application's checkpoint; the old separately invoked compiler is
+still the runtime comparison oracle. No direct-emission or replay success is
+claimed by this preparation work alone.
+
+### Exact diagnostic provenance follow-up — 2026-09-06
+
+Preparation checkpoint `1dea8e0cf4db8dae3f834e733e111397ce58bf18` is signed
+and handed to integration, B and C. The unchanged original application at
+digest `236fa7d971bf9b86aafa778a9a441b2440bae2e2c2c0ae7fdab3f6e517c517fb`
+prepares seven original bodies plus seven derived bodies, three ordered
+initializers and all three exports in one observed program. Its semantic
+provider count is zero and the selected runtime projection has one actual
+intrinsic provider attachment. This remains preparation evidence only.
+
+The next public wiring requires `PreparedIrProgramFailure.sourceFile` to
+preserve the exact filename returned by the existing owner resolver. A's source
+failure and B's shared `runtime-program-manifest.ts::locatedFailure` populate
+that required data field; C must use the same owner for backend failures.
+`CompileError.file` can then consume the failure directly without parsing
+identity strings or rebuilding inventory. Root and B granted only this
+field addition in B's helper; all producer and authentication behavior remains
+owned by B. Focused controls cover a foreign initializer's source failure and
+an imported async owner's runtime preparation failure.
+The complete source-preparation suite passes **5/5**, and the full source
+typecheck passes after the required field addition.
+
+Root also assigned A the separate, bounded extraction of unchanged `addImport`
+and `ensureExnTag` into `registry/physical-imports.ts`, preserving old public
+bindings and every other registry function. B owns the paired type-registry
+import cuts. A's source-free import proof depends on that signed B dependency;
+physical helper extraction does not establish backend acceptance or emission.
+
+The required filename follow-up is signed at
+`7b2e8b038a06e77c69d788690cbd5ce935ac5448`. The physical extraction now
+moves exactly the two granted function bodies and their exclusive imports;
+the old registry imports and re-exports the same bindings. Other registration,
+source collection and index-fixup functions are unchanged. The focused physical
+registration control covers returned descriptor identity, function/global index
+counts, the freeze-point refusal, strict-host allowed and dropped imports,
+repeated local/shared exception-tag identity and old re-export identity.
+Its separate fresh-process frontend import barrier awaits B's signed paired
+type-registry/wrapper import cut.
+The six new physical controls, five existing freeze-point controls and all 25
+runtime-producer controls pass **36/36** together. The full source typecheck
+passes. A direct comparison against `7b2e8b0` confirms both moved function
+bodies are unchanged and all other old-registry text differs only in the
+necessary import/re-export declarations.
+
+### Initializer collision regression review — 2026-09-06
+
+Root's integration run reports **5/6** in
+`tests/issue-3520-module-init-callable-abi.test.ts`; the first control also fails
+on unchanged signed `7b2e8b038a06e77c69d788690cbd5ce935ac5448`. Both stop at
+the old `legacyBodyEmitted: true` assertion, receiving `false`. The later ABI
+and runtime assertions therefore have not been validated by those runs.
+
+The fixture has an executable numeric lexical initializer. Existing
+`prepareIrBodies` emits and seals its exact module-init body before declaration
+dispatch, hands off its skip/preserve receipts, and removes it from the later
+IR population. `compileDeclarations` skips both direct initializer passes and
+uses the reserved source-qualified callable for startup. The same-named user
+function retains a different binding and final slot. Thus `false` describes
+the intended physical route; this fixture is distinct from the ambient-only
+population residual to which the older R1 status table assigns it.
+
+The proposed test-only correction preserves the source and every existing ABI
+ownership, signature, public-alias and runtime assertion. Explain the prepared
+route beside the corrected boolean. Enable outcome tracking on the existing
+public runtime compile, then require its exact initializer receipt to show one
+preparation, zero direct bodies and one IR body. Require the actual route audit
+to exist, positively join its registered generator, source and exact IR terminal,
+and contain no `compileModuleInitBody` entry. A valid route need not enter any
+legacy body dispatcher. Execute the existing user result
+`99`, explicit initializer call, state result `3`, and unchanged user result
+`99` assertions. No compiler, selector, startup, audit or ABI source change is
+part of this proposal. Run all six controls after the coordinated load slot;
+an additional failure must be investigated rather than weakening the test.
+
+The read-only ownership census used upstream assignment tip
+`19cee249a478638e17e7a631459459f7d906373e`: the broad R1/R4 claims are released,
+the historical #5283 claim is done, and active R4m1/W2B storage claims remain
+untouched. Original callable ownership PRs #3779 and #5210 are merged. None of
+the eight current open PRs touches this test. A foreign R4 recovery worktree
+has a staged copy during a merge, but both its staged and working bytes equal
+this baseline exactly; its index and merge remain untouched. The locked
+initializing Codex worktree's staged deletion is also untouched. Root received
+these findings before any test or source edit and approved this exact test-only
+correction plus the owned issue record. The plan was recorded before editing.
+
+After D released its actual process, the corrected suite passed **6/6** on
+signed base `49f95b3fe92c710fc4877f50d080296671d87eab` plus these two owned
+files. The first control reaches and passes the retained ABI and runtime tail,
+the exact initializer's `prepareAttempts: 1`, `directBodyEmissions: 0` and
+`irBodyEmissions: 1`, and its positive route-audit joins. The full project
+typecheck also passes. The single-fork, 4 GB test run and subsequent typecheck
+started under fresh load samples **5.32 < 8** and **5.71 < 8**, respectively;
+their logs are `.tmp/a-initializer-route-regression-tests.log` and
+`.tmp/a-initializer-route-regression-typecheck.log`. This verifies the existing
+prepared initializer route; it does not claim whole-program public cutover or
+backend replay acceptance.
+
+### Imported-global initializer runtime declaration plan — 2026-09-06
+
+The approved common-backend fixture, source digest
+`594eaf3f977ec2717777cdde3ff9813753f4c44faa6e3bf50fc6ced726e61b49`,
+fails complete preparation on clean signed A source `49f95b3`. The preserved
+D report is `.tmp/ir-completion-20260905/common-backend-scalar-preparation-probe-rerun.json`
+in the D worktree. Its TypeScript diagnostics are empty, but the `math.ts`
+module-init body calls undeclared runtime binding `__new_ReferenceError`.
+`state.ts` initializes `base`; `math.ts` imports and reads it while computing
+`bias = base + bias`. Preserve those exact sources and the dependency-order
+control. Substituting a function or scale expression does not repair this gap.
+
+The existing R1 module-binding lowering deliberately emits a TDZ check, a null
+`externref`, the runtime constructor call and a throw. Its declared callable
+contract must be exactly `irRuntimeFuncRef("__new_ReferenceError")`, one
+`externref` parameter and one `externref` result. The historical integration
+resolver supplies that ABI lazily through the host import or native/WASI error
+constructor. That allocating resolver is not a preparation authority. B's
+canonical runtime catalog currently has no corresponding declaration, and A's
+ABI producer currently publishes only source bodies, storage and aliases.
+
+Implement the missing contract in this order, after the owners receive their
+bounded source grants:
+
+1. **B owns the semantic runtime declaration.** Extend the existing runtime
+   feature/provider graph and sole `runtime-host-capabilities.ts` catalog for
+   this exact constructor. Its host record names module `env`, field
+   `__new_ReferenceError`, parameters `[externref]` and results `[externref]`.
+   Publish a data-only callable declaration tied to that same canonical
+   feature, binding and provider authority; do not infer its signature from
+   call operands or create an independent runtime ABI table. Derive demand
+   from exact typed runtime calls in every final body and async state, retaining
+   the requesting unit through the existing owner resolver. Resolve native/WASI
+   dependencies through the existing policy and provider graph; an unavailable
+   physical capability must remain a located failure before allocation.
+2. **A incorporates B's declaration before sealing.** Add the typed runtime
+   callable and its structural reference to the existing `PreparedIrAbiEntry`
+   vector with runtime provenance and deterministic existing ABI order. Make
+   that contract available before any preparation phase resolves the runtime
+   call, then reconcile the final transformed demand and declaration population
+   before freezing the semantic program and preparing its runtime projections.
+   Preserve one ABI authority, exact call-signature checking, and complete
+   original/derived ownership validation. Bind policy-specific providers to
+   this common semantic contract; do not insert a host-specific import into the
+   shared semantic IR or relax undeclared-call rejection.
+3. **C reserves the selected physical implementation.** Its production backend
+   setup must resolve the accepted runtime projection's constructor, import or
+   native helper dependencies, and exception tag before lowering any body.
+   Bind the resulting function slot through the existing Program ABI authority
+   and prohibit late constructor/import allocation during resolution. Require
+   actual assembled body/slot receipts; lowered-body counts or caller-supplied
+   assembly callbacks do not prove emission. Public compiler wiring remains
+   held pending that concrete consumer contract.
+
+Validation must retain the approved fixture's seven original terminals and
+unchanged native oracle. First require host preparation to close every callable
+and produce its exact runtime declaration and provider demand; later require
+actual constructor/tag reservation, initialization order and runtime parity.
+Negative controls must reject a missing declaration, wrong parameter/result
+type, mismatched runtime symbol, contradictory provider or wrong target before
+allocation, preserving the exact owning `unitId`, source location and
+`sourceFile: "math.ts"` where the failure belongs to this demand. Missing or
+forged owner data remains an invariant, not a fabricated first-source location.
+Exercise legal reads after initialization and retained same-module early reads,
+cyclic imported reads, and reads before deferred initialization; failing TDZ
+reads must preserve the real ReferenceError behavior and prevent the guarded
+read/write. Keep guard IR and its early-read semantics unchanged in this slice.
+
+**Separate linear gap:** the current linear legality boundary rejects the
+retained guard's null/`externref` values and `throw`. Supplying a complete
+runtime ABI alone therefore does not establish two-backend execution of this
+fixture. Retain an explicit located linear capability failure until C implements
+the required representation and exception support; refusal is incomplete work,
+not common-backend acceptance. No startup-guard optimization, source reduction,
+selector toggle, direct fallback or public escape option is part of this plan.
+
+This is a bounded planning amendment only. It changes no source or test,
+records no new execution result, and does not amend signed `fcd2e910978968`.
+
+#### Concrete A/B contract and proposed file scope
+
+A and B reconciled the following allocation-free API for B's new pure leaf
+`src/ir/runtime-callable-declarations.ts`. Root subsequently recorded the exact
+source grant in the epic and registered `3518:runtime-callable-abi` for A;
+the new runtime producer agent owns the canonical declaration/provider slice.
+
+```ts
+interface IrRuntimeCallableDeclaration {
+  readonly feature: RuntimeFeature;
+  readonly ref: IrFuncRef;
+  readonly params: readonly IrType[];
+  readonly results: readonly IrType[];
+}
+function irRuntimeCallableDeclaration(ref: IrFuncRef): IrRuntimeCallableDeclaration | undefined;
+```
+
+The first immutable catalog view recognizes only binding kind `runtime` and
+symbol `__new_ReferenceError`, with proposed feature `error.reference.construct`
+and the exact contract above. Display names and prefixes do not select it.
+The declaration is independent of policy: existing host policy selects the
+host import, standalone/WASI select their native constructor, and
+`nativeStrings` does not choose this helper's arm. B's existing complete
+block/state scan requests the same declaration's feature, while its existing
+`requestOwners` map retains the demand owner. No new `IrRuntimeManifestDemands`
+field, manifest ledger, program schema field or source-loading dependency is
+needed. C can derive the same feature from the accepted ABI's runtime reference.
+
+The bounded A source scope is four files:
+
+- New `src/ir/program-runtime-abi.ts`: collect distinct runtime declarations
+  from the complete typed blocks and async states through B's getter; locate
+  an unknown runtime declaration through `preparedIrProgramOwner`. This is
+  ephemeral construction input, not a second accepted binding population.
+- `src/ir/program-abi-contracts.ts`: incorporate that input into the existing
+  vector, deduplicated and sorted by `irCallableBindingKey`. Use the canonical
+  entry source and existing `createIrBindingId` factory for shared callable
+  identity/order; retain runtime provenance and typed parameters/results.
+  The shared ABI anchor is not a substitute diagnostic owner.
+- `src/ir/program-preparation.ts`: supply the declaration projection at the
+  initial, post-async and final ABI construction points. Propagate a located
+  preparation failure immediately; reconcile final demand before freezing and
+  retain existing policy-selected runtime failures.
+- `src/ir/program-validation.ts`: verify exact final runtime-call closure and
+  declaration payloads against B's same canonical getter before reconstructing
+  any lookup. Reject missing, duplicate, unknown or contradictory contracts;
+  reuse existing exact runtime-projection regeneration for provider validation.
+
+Add one A-owned `tests/issue-3521-runtime-callable-abi.test.ts` for the approved
+fixture's unchanged seven-unit preparation, retained TDZ guard, canonical
+single declaration across repeated uses, exact owner diagnostics, and missing,
+duplicated or mutated ABI contracts. Test the no-runtime-demand case and a
+post-async state demand as well. Run the existing source, population, complete
+validation and projection cohorts after implementation; actual constructor
+execution and linear exception support remain C's separate controls. A changes
+no source lowering, startup proof, runtime producer, backend consumer or
+`ProgramAbiSession` module in this slice. A adopted signed integration
+`2e68ccfe6b2996307559952daa94c5acb2a277fb` with this unsigned plan preserved and
+started the granted implementation. This records authorization and scope;
+it is not an additional execution result.
+
+During source review, A found that the shared population validator compared an
+original terminal's ID, source, kind and positions with `terminalUnits`, but
+omitted agreement of `allUnits[].terminalOwnerId`. A forged original terminal
+could point at a different terminal in the same source and mislocate a runtime
+failure. Root confirmed the read finding, found no overlapping open PR, and
+extended A's grant by exactly one comparison in `program-population.ts` plus
+the forged-original-owner regression in the new runtime ABI test. The existing
+same-source positive and derived provenance cases remain controls. No other
+population rule is changed in this extension.
+
+The first focused execution reached the full existing ABI authority and failed
+suite setup (0/17 tests executed): `ProgramAbiMap` forbids source provenance on
+a runtime callable intent. A corrected only the new construction/validation
+payload and focused expectation: the entry source anchors the canonical binding
+ID and numeric order, while the runtime intent has no `sourceId` or source unit.
+The requesting unit still supplies the separate located diagnostic. The existing
+ABI authority remains unchanged; the failed run is retained as development
+evidence, not a passed preparation checkpoint.
+
+#### Runtime callable ABI implementation results — 2026-09-06
+
+A adopted the runtime worker's signed canonical declaration/provider dependency
+`b38d1ecfcf5476f72dd45cbb55342dbbbda14375`, parent
+`2e68ccfe6b2996307559952daa94c5acb2a277fb`, after checking its signature, exact
+eight-file scope, ancestry and preservation of all seven owned draft files.
+The implementation uses that single getter for complete ordinary-block,
+closure-reference and semantic async-state demand. The existing ABI entry
+vector incorporates canonical declarations before initial preparation,
+post-async optimization and final freezing. Final validation reconciles the
+exact runtime declaration population, payload, identity and order before the
+existing ABI authority seals or reconstructs a lookup. No runtime/provider,
+source-lowering, startup, physical-emission or public-entry source was changed
+by A's ABI slice.
+
+The approved source digest
+`594eaf3f977ec2717777cdde3ff9813753f4c44faa6e3bf50fc6ced726e61b49` now prepares
+with its original three sources and seven terminal bodies, one real preparation
+observation, the `math.ts` initializer's retained constructor call, and exactly
+one canonical runtime declaration/provider demand. The focused suite passed
+**17/17**, including repeated use, empty demand, post-async demand, exact
+original/derived diagnostic ownership, forged original-owner rejection, and
+missing, duplicate, unused or coherently mutated declarations. Strict-no-host
+still returns a located unsupported result for `math.ts` and publishes no
+prepared observation.
+
+After correcting the runtime-intent setup failure above, the second focused
+run passed **16/17**; its remaining synthetic async-state fixture represented
+an absent optional field as `alloc: undefined`, which the existing semantic
+plan schema correctly forbids. The test now omits that field while retaining
+the actual runtime call. The third run is the **17/17** result; neither failed
+development run is included as passing evidence.
+
+The combined affected cohort passed **60/60 across seven files**: the new
+runtime ABI controls plus existing whole-source, population, complete
+validation, projection, runtime-demand and runtime-producer suites. This
+includes real provider attachments on both backend projections and the fresh
+process that blocks TypeScript/frontend imports during runtime reattachment.
+Full repository TS7 typecheck passed. All heavy checks used one 4 GB fork where
+applicable and a fresh finite load gate below cores minus two.
+
+The unchanged original mixed-program probe also passed at source digest
+`236fa7d971bf9b86aafa778a9a441b2440bae2e2c2c0ae7fdab3f6e517c517fb`:
+seven original plus seven derived functions, one prepared event tied to the
+actual program object, and the `initial`, `readPhase` and `run` exports. Its
+semantic IR contains zero intrinsic provider attachments and its selected
+runtime projection contains one. The worktree-local logs are
+`.tmp/a-runtime-callable-abi-focused.attempt3.log`,
+`.tmp/a-runtime-callable-abi-combined.log`,
+`.tmp/a-runtime-callable-abi-typecheck.log` and
+`.tmp/a-runtime-callable-abi-original.log`.
+
+These results establish the scoped preparation repair. They do not establish
+constructor execution, early-read runtime parity, linear exception support,
+whole-program public cutover or replay acceptance. C's actual physical
+reservation and authenticated emission remain required; the public wrapper is
+held until that consumer boundary is accepted. The issue and epic remain open.
+
+## Execution amendment — 2026-09-05
+
+The approved [whole-program cutover plan](3518-ir-only-default-and-direct-frontend-retirement.md#current-execution-plan--whole-program-cutover-2026-09-05)
+now controls future dispatch. R2 and R5 jointly supply package A: one authoritative
+program, shared ABI contract, and preparation driver above backend selection.
+The historical single-source slice below remains evidence and an acceptance
+obligation, not the next architectural limit. Connect existing structures rather
+than introducing more candidate ledgers or per-shape ownership exceptions.
+Package A alone owns shared compiler integration files after current claims are
+reconciled; R6/R7 producers and R8 consumers use its minimal typed interface.
+Its checkpoint is a complete mixed application with zero direct emissions and
+real snapshot replay, not another structural-only `PreparedIrProgram` record.
+Current repairs and all original issue acceptance criteria remain required.
 
 ## Objective
 

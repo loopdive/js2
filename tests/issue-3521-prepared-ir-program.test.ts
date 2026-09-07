@@ -13,14 +13,14 @@ import {
   type IrBindingId,
   type IrUnitId,
 } from "../src/ir/identity.js";
-import { PreparedIrProgramBuilder, type PreparedIrIrCandidateInput } from "../src/ir/prepare.js";
+import { PreparedIrCandidateProgramBuilder, type PreparedIrIrCandidateInput } from "../src/ir/prepare.js";
 import { IR_CLASS_SHAPE_CELL, type IrClassShape } from "../src/ir/nodes.js";
 import {
   createPreparedIrCandidateProgram,
   preparedIrReadonlyMap,
   PreparedIrEmissionTransaction,
   PreparedIrProgramInvariantError,
-  type PreparedIrProgram,
+  type PreparedIrCandidateProgram,
   type PreparedIrProgramInvariantCode,
 } from "../src/ir/program.js";
 import { ProgramAbiInvariantError, type ProgramAbiInvariantCode } from "../src/ir/program-abi.js";
@@ -443,13 +443,13 @@ function preparedInput(unitId: IrUnitId, marker: string): PreparedIrIrCandidateI
 }
 
 function validPreparedCore(): {
-  readonly program: PreparedIrProgram;
+  readonly program: PreparedIrCandidateProgram;
   readonly alphaId: IrUnitId;
   readonly betaId: IrUnitId;
   readonly legacyId: IrUnitId;
 } {
   const { abi, alpha, beta, legacy } = preparedCoreFixture();
-  const builder = new PreparedIrProgramBuilder(abi);
+  const builder = new PreparedIrCandidateProgramBuilder(abi);
   builder.recordIrCandidate(preparedInput(alpha.id, "alpha"));
   builder.recordIrCandidate(preparedInput(beta.id, "beta"));
   builder.recordDirectCandidate({
@@ -463,10 +463,10 @@ function validPreparedCore(): {
   return { program: builder.seal(), alphaId: alpha.id, betaId: beta.id, legacyId: legacy.id };
 }
 
-describe("#3521 PreparedIrProgram structural ownership", () => {
+describe("#3521 PreparedIrCandidateProgram structural ownership", () => {
   it("owns the exact inventory while labeling all unwired evidence and components as candidates", () => {
     const { abi, alpha, beta, legacy } = preparedCoreFixture();
-    const builder = new PreparedIrProgramBuilder(abi);
+    const builder = new PreparedIrCandidateProgramBuilder(abi);
     builder.recordIrCandidate(preparedInput(alpha.id, "alpha"));
     builder.recordIrCandidate(preparedInput(beta.id, "beta"));
     builder.recordDirectCandidate({
@@ -566,7 +566,7 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
 
   it("fails sealing for missing or duplicate unit candidates and duplicate component-candidate IDs", () => {
     const missingFixture = preparedCoreFixture();
-    const missing = new PreparedIrProgramBuilder(missingFixture.abi);
+    const missing = new PreparedIrCandidateProgramBuilder(missingFixture.abi);
     missing.recordIrCandidate(preparedInput(missingFixture.alpha.id, "alpha"));
     missing.recordIrCandidate(preparedInput(missingFixture.beta.id, "beta"));
     missing.addComponentCandidate({
@@ -581,7 +581,7 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
     );
 
     const duplicateFixture = preparedCoreFixture();
-    const duplicate = new PreparedIrProgramBuilder(duplicateFixture.abi);
+    const duplicate = new PreparedIrCandidateProgramBuilder(duplicateFixture.abi);
     duplicate.recordIrCandidate(preparedInput(duplicateFixture.alpha.id, "alpha"));
     duplicate.recordIrCandidate(preparedInput(duplicateFixture.alpha.id, "alpha-again"));
     duplicate.recordIrCandidate(preparedInput(duplicateFixture.beta.id, "beta"));
@@ -591,7 +591,7 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
     expectPreparedInvariant(() => duplicate.seal(), "duplicate-unit");
 
     const componentsFixture = preparedCoreFixture();
-    const components = new PreparedIrProgramBuilder(componentsFixture.abi);
+    const components = new PreparedIrCandidateProgramBuilder(componentsFixture.abi);
     components.recordIrCandidate(preparedInput(componentsFixture.alpha.id, "alpha"));
     components.recordIrCandidate(preparedInput(componentsFixture.beta.id, "beta"));
     components.recordDirectCandidate({ unitId: componentsFixture.legacy.id, code: "x", stage: "select", detail: "x" });
@@ -602,7 +602,7 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
 
   it("keeps mixed caller groupings explicitly unvalidated instead of treating them as atomic components", () => {
     const { abi, alpha, beta, legacy } = preparedCoreFixture();
-    const builder = new PreparedIrProgramBuilder(abi);
+    const builder = new PreparedIrCandidateProgramBuilder(abi);
     builder.recordIrCandidate(preparedInput(alpha.id, "alpha"));
     builder.recordDirectCandidate({
       unitId: beta.id,
@@ -626,11 +626,11 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
   it("rejects unsealed ABI input and support requests after the atomic seal", () => {
     const fixture = preparedCoreFixture();
     const unsealed = new ProgramAbiMap(fixture.abi.inventory);
-    expectPreparedInvariant(() => new PreparedIrProgramBuilder(unsealed), "abi-not-sealed");
+    expectPreparedInvariant(() => new PreparedIrCandidateProgramBuilder(unsealed), "abi-not-sealed");
 
     const { program, alphaId } = validPreparedCore();
     expect(program.sealed).toBe(true);
-    const sealedBuilder = new PreparedIrProgramBuilder(fixture.abi);
+    const sealedBuilder = new PreparedIrCandidateProgramBuilder(fixture.abi);
     sealedBuilder.recordIrCandidate(preparedInput(fixture.alpha.id, "alpha"));
     sealedBuilder.recordIrCandidate(preparedInput(fixture.beta.id, "beta"));
     sealedBuilder.recordDirectCandidate({
@@ -666,7 +666,7 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
     const blocks = [{ id: 0, instructions: [] as string[] }];
     const lookup = new Map([["alpha", { slot: 1 }]]);
     const labels = new Set(["prepared"]);
-    const builder = new PreparedIrProgramBuilder(abi);
+    const builder = new PreparedIrCandidateProgramBuilder(abi);
     builder.recordIrCandidate({
       ...preparedInput(alpha.id, "alpha"),
       assertedSignature: { params, results: ["f64"] },
@@ -818,7 +818,7 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
     (left.fields as { name: string; type: unknown }[]).push({ name: "right", type: { kind: "class", shape: right } });
     (right.fields as { name: string; type: unknown }[]).push({ name: "left", type: { kind: "class", shape: left } });
 
-    const builder = new PreparedIrProgramBuilder(abi);
+    const builder = new PreparedIrCandidateProgramBuilder(abi);
     builder.recordIrCandidate({ ...preparedInput(alpha.id, "alpha"), irCandidate: { shape: left } });
     builder.recordIrCandidate(preparedInput(beta.id, "beta"));
     builder.recordDirectCandidate({ unitId: legacy.id, code: "x", stage: "select", detail: "x" });
@@ -838,7 +838,7 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
     } as Record<string, unknown>;
     lookalike.self = lookalike;
     const rejectedFixture = preparedCoreFixture();
-    const rejected = new PreparedIrProgramBuilder(rejectedFixture.abi);
+    const rejected = new PreparedIrCandidateProgramBuilder(rejectedFixture.abi);
     const rejectedUnit = rejectedFixture.alpha;
     expectPreparedInvariant(
       () =>
@@ -902,7 +902,7 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
 
   it("rejects nested functions as non-data and aborts the preparation collector without retry", () => {
     const { abi, alpha, beta } = preparedCoreFixture();
-    const builder = new PreparedIrProgramBuilder(abi);
+    const builder = new PreparedIrCandidateProgramBuilder(abi);
     expectPreparedInvariant(
       () =>
         builder.recordIrCandidate({
@@ -916,7 +916,7 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
 
   it("rejects accessors before executing them in builder and direct-factory inputs", () => {
     const { abi, alpha } = preparedCoreFixture();
-    const builder = new PreparedIrProgramBuilder(abi);
+    const builder = new PreparedIrCandidateProgramBuilder(abi);
     let unitGetterCalls = 0;
     const accessorCandidate = { ...preparedInput(alpha.id, "alpha") };
     Object.defineProperty(accessorCandidate, "unitId", {
@@ -1022,7 +1022,7 @@ describe("#3521 PreparedIrProgram structural ownership", () => {
 
   it("keeps invariant candidates on the neither-emitter route", () => {
     const { abi, alpha, beta, legacy } = preparedCoreFixture();
-    const builder = new PreparedIrProgramBuilder(abi);
+    const builder = new PreparedIrCandidateProgramBuilder(abi);
     builder.recordInvariantCandidate({
       unitId: alpha.id,
       code: "selection-preparation-mismatch",

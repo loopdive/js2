@@ -8,7 +8,7 @@
 import type { ArrayTypeDef, FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { getArgumentsVecTypeIdx } from "../arguments-carrier-brand.js";
-import { closureBagField } from "../closures/funcref-wrapper-types.js"; // (#4241)
+import { closureBagField } from "../closures/closure-header-layout.js"; // (#4241)
 
 /**
  * (#3268) Register a WasmGC struct type: append it to `ctx.mod.types` and wire

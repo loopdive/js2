@@ -58,9 +58,10 @@ import { addFuncType, getOrRegisterTemplateVecType } from "../registry/types.js"
 import { emitNativeUriDecode, emitNativeUriEncode } from "../uri-encoding-native.js";
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
+import { registerImportCollectorDelegates } from "../registry/import-collector-delegates.js";
 
 /** Accumulated state for the single-pass collector */
-interface UnifiedCollectorState {
+export interface UnifiedCollectorState {
   // -- collectConsoleImports --
   consoleNeededByMethod: Map<string, Set<"number" | "bool" | "string" | "externref">>;
   // -- collectPrimitiveMethodImports --
@@ -2266,3 +2267,5 @@ function isAccessorDescriptor(descArg: ts.Expression): boolean {
   }
   return false;
 }
+
+registerImportCollectorDelegates(createUnifiedCollectorState, unifiedVisitNode, finalizeUnifiedCollector);

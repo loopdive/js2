@@ -29,7 +29,13 @@ import { withSelectedTopLevelAccessorUnitIds } from "../ir/module-bindings.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
-import { preparedIrAsyncSourceCanSuspend, preparedIrAsyncSourceShape } from "./async-ir-planning.js";
+import {
+  assertPreparedIrAsyncPromiseOwnerCurrent,
+  preparedIrAsyncPromiseOwnerUnitIds,
+  preparedIrAsyncPromiseOwnerWasIssued,
+  preparedIrAsyncSourceCanSuspend,
+  preparedIrAsyncSourceShape,
+} from "./async-ir-planning.js";
 import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
@@ -1225,6 +1231,12 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
   const functionValueTargets = collectTopLevelFunctionValueTargets(input.ctx, input.sourceFile, functionUnitsByName);
   const callEdges = collectLocalCallEdgesByIdentity(input.sourceFile, input.identityPlan.identityContext);
+  // `suspendingAsyncUnitIds` is the source-shape population used to close an
+  // unsafe component before integration.  This second, exact receipt gate is
+  // the ABI publication authority: an owner may enter R3 only when its
+  // incoming/outgoing Promise contracts were closed against the same fixed
+  // point that declaration preparation used.
+  const promiseOwnerUnitIds = preparedIrAsyncPromiseOwnerUnitIds(input.ctx);
   const selected = new Set<string>();
   const prepared = new Set(input.preparedDependencyLegacyNames);
   for (let changed = true; changed; ) {
@@ -1243,8 +1255,10 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
     for (const legacyName of input.selectedLegacyNames) {
       if (selected.has(legacyName)) continue;
       const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
-      if (!input.suspendingAsyncUnitIds.has(unitId)) continue;
       const claim = input.claimsByUnitId.get(unitId);
+      if (claim) assertPreparedIrAsyncPromiseOwnerCurrent(input.ctx, claim.declaration);
+      if (!input.suspendingAsyncUnitIds.has(unitId)) continue;
+      if (!promiseOwnerUnitIds.has(unitId)) continue;
       const override = input.overridesByUnitId.get(unitId);
       if (!claim || !override) {
         throw new IrInvariantError(
@@ -1254,16 +1268,24 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
         );
       }
       const sourceShape = preparedIrAsyncSourceShape(input.ctx, claim.declaration);
+      const signatureMatches = r3SuspendingAsyncSignatureMatchesAllocatedSlot(
+        input.ctx,
+        unitId,
+        override,
+        sourceShape?.kind === "final-main" || sourceShape?.kind === "linear",
+      );
+      if (!signatureMatches && preparedIrAsyncPromiseOwnerWasIssued(input.ctx, claim.declaration)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `R3 generic Promise owner ${unitId} / ${legacyName} lost its issued allocated ABI`,
+        );
+      }
       if (
         containsNestedExecutableSyntax(claim.declaration) ||
         functionValueTargets.has(unitId) ||
         containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
-        !r3SuspendingAsyncSignatureMatchesAllocatedSlot(
-          input.ctx,
-          unitId,
-          override,
-          sourceShape?.kind === "final-main" || sourceShape?.kind === "linear",
-        )
+        !signatureMatches
       ) {
         continue;
       }
