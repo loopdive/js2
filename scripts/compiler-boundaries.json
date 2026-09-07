@@ -1,6 +1,6 @@
 {
   "schema": "compiler-boundaries-v1",
-  "description": "Exact compiler inventory with F0's three shared-contract modules activated. Other concern labels describe remaining migration work, never proof of clean separation.",
+  "description": "Exact compiler inventory with shared contracts and the bounded Wasm instruction, handle-primitive and native queue modules activated. Remaining model, allocator, runtime-value and compiler concerns stay migration debt.",
   "sourceRoot": "src",
   "tsconfig": "tsconfig.json",
   "requireGitProvenance": true,
@@ -28,18 +28,18 @@
     },
     {
       "id": "wasm-model",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/wasm/model"],
       "required": true,
-      "entries": ["src/wasm/model/types.ts"],
+      "entries": ["src/wasm/model/instructions.ts"],
       "minModules": 1
     },
     {
       "id": "wasm-physical",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/wasm/physical"],
       "required": true,
-      "entries": ["src/wasm/physical/resources.ts"],
+      "entries": ["src/wasm/physical/function-handles.ts"],
       "minModules": 1
     },
     {
@@ -116,10 +116,10 @@
     },
     {
       "id": "native-runtime",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/runtime/wasmgc"],
       "required": true,
-      "entries": ["src/runtime/wasmgc/values/index.ts"],
+      "entries": ["src/runtime/wasmgc/async/microtask-queue-bodies.ts"],
       "minModules": 1
     },
     {
@@ -367,6 +367,21 @@
         "src/shared/contracts/identity-values.ts"
       ],
       "minModules": 3
+    },
+    {
+      "layer": "wasm-model",
+      "entries": ["src/wasm/model/instructions.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "wasm-physical",
+      "entries": ["src/wasm/physical/function-handles.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "native-runtime",
+      "entries": ["src/runtime/wasmgc/async/microtask-queue-bodies.ts"],
+      "minModules": 1
     }
   ],
   "nonModules": [
@@ -5479,11 +5494,11 @@
     },
     {
       "path": "src/codegen/prepared-native-async-runtime.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "native-runtime",
       "owner": "3518-coordinator",
-      "nextBoundary": "Move the merged native microtask builders to runtime/wasmgc only after extracting their Wasm model/physical dependencies; preserve allocation order and the existing legacy adapter without declaring this old-path module clean."
+      "nextBoundary": "N1 moved the five queue builders into runtime/wasmgc/async/microtask-queue-bodies.ts with a pure instruction-model dependency. This one-way adapter has no implementation. Runtime value/provider extraction, physical reservations and module authentication remain outstanding, including the planned runtime/wasmgc/values entry."
     },
     {
       "path": "src/codegen/primitive-absent-property.ts",
@@ -7662,7 +7677,10 @@
     {
       "path": "src/emit/resolve-layout.ts",
       "state": "unmigrated",
-      "layer": "wasm-emit"
+      "layer": "wasm-emit",
+      "destination": "wasm-emit",
+      "owner": "3518-coordinator",
+      "nextBoundary": "N1 moved the unchanged stable-handle constant and live-shift predicate into wasm/physical/function-handles.ts. Complete module-owned allocation and the originally planned wasm/physical/resources.ts boundary separately; absolute-index resolution still reads mixed WasmModule policy here."
     },
     {
       "path": "src/emit/sourcemap.ts",
@@ -9494,9 +9512,9 @@
       "path": "src/ir/types.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "wasm-model",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "N1 moved the closed instruction declarations into wasm/model/instructions.ts. Split remaining Wasm module/type records from compiler metadata before completing the originally planned wasm/model/types.ts boundary; old imports and compiler metadata remain debt."
     },
     {
       "path": "src/ir/update-retyped-bindings.ts",
@@ -9962,6 +9980,11 @@
       "layer": "legacy-host"
     },
     {
+      "path": "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/web-host-constructors.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
@@ -10073,6 +10096,16 @@
       "path": "src/ts-api.ts",
       "state": "unmigrated",
       "layer": "frontend-ts"
+    },
+    {
+      "path": "src/wasm/model/instructions.ts",
+      "state": "clean",
+      "layer": "wasm-model"
+    },
+    {
+      "path": "src/wasm/physical/function-handles.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
     },
     {
       "path": "src/wit-generator.ts",

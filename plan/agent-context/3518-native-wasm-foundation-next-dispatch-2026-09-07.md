@@ -169,3 +169,19 @@ but uncommitted and untested; it must not be published as accepted until the
 composed gate and execution evidence pass. Neither worker may edit the dirty
 root checkout or the preserved producer/consumer drafts.
 
+## Approved evidence amendment and validation — 2026-09-08
+
+The preceding dispatch-time status is historical. Parent composition now passes
+34/34 focused tests, normal typecheck and D0 inventory; its queue registration
+and three public compiler fixtures match the baseline's complete emitted bytes,
+WAT and expected values. See the [pinned validation record](./3518-native-foundation-validation-2026-09-08.md).
+
+The strict rooted check exposed two supported nonliteral imports. The user
+explicitly approved separating six-real-caller preservation from retirement
+proof. The [two-verdict contract](./3518-open-import-preservation-contract-2026-09-08.md)
+supersedes the earlier implication that extraction requires full static graph
+closure. It does not waive either unknown in strict evidence, change runtime
+behavior, or relax any retirement criterion. Boyle retains the auditor and
+adds only the exact two-site provenance manifest and additive controls; the
+parent owns explicit package wiring and final composed acceptance. Every
+existing strict test and ordinary dead-export obligation remains intact.
