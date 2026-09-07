@@ -254,3 +254,115 @@ The 7 + 3 infinity rows look like one root and are the cheapest next slice.
   `return_call[0] expected type (ref null N), found ref.as_non_null of type
   (ref M)` — which reproduces byte-identically on the unmodified base. Not
   caused by this change; not diagnosed further here.
+
+## Merge-group regression (2026-09-07)
+
+PR #5673 was auto-parked on run 34067441960 / job 101580976142 (`check for
+test262 regressions`): net **+143**, but **8 pass→fail**, all `built-ins/
+TypedArray*`, baseline content-current (0 commits behind), each reported under
+*"Regressions with wasm-hash change"*.
+
+**Verdict: not caused by this change. The emitted binary for all 8 rows is
+byte-identical between `origin/main` and this branch.** The park is the
+already-filed #5256 class (inert wasm-identity filter) on top of a fork-state
+flake in the sharded lane. No code change was needed; the only edit in this
+commit is the removal of two leftover `JS2WASM_DBG5360` debug `console.error`
+calls that should not have shipped.
+
+### 1. The worker lane does not reproduce it
+
+The lane the failure came from is `scripts/test262-worker.mjs` driven through
+`CompilerPool(n, "unified")` over the prebuilt bundles — NOT the in-process
+`runTest262File` an earlier probe used. It was driven directly
+(`.tmp/worker-run.mts`, a byte-for-byte transcription of the "normal path"
+in `tests/test262-shared.ts`: `assembleOriginalHarness` → `pool.runTest({
+originalHarness: true, … })` → strict rerun), against freshly built
+`scripts/{compiler,runtime}-bundle.mjs`:
+
+| run | rows | forks | result |
+| --- | --- | --- | --- |
+| `node --import tsx .tmp/worker-run.mts .tmp/rows8.txt .tmp/fix8.tsv` | the 8 | 1 | **8 pass, 0 fail** |
+| `POOL_SIZE=2 node --import tsx .tmp/worker-run.mts .tmp/rows-nbhd.txt .tmp/nbhd-fix.tsv` | 329 (`TypedArray/prototype/{set,reduce,slice,findLastIndex}` + `TypedArrayConstructors/internals/Delete`, all of them, so the 8 run behind ~320 same-family neighbours in a shared fork) | 2 | 259 pass / 70 fail — **all 8 pass** |
+
+### 2. The binary is byte-identical, which settles causation
+
+`.tmp/hash-rows.mts` compiles each row's `assembleOriginalHarness` output
+(primary *and* strict-rerun variants) with the worker's exact single-source
+options (`hostBridge: "always"`, `allowJs`, `fileName: "test.js"`,
+`skipSemanticDiagnostics`, `deferTopLevelInit`, matching
+`scripts/test262-worker.mjs` ~L1370) and prints sha256 of the binary. A/B by
+file copy (`.tmp/base-src` = `origin/main`'s five changed sources, `.tmp/new-src`
+= the branch's):
+
+```
+diff .tmp/hash-base.tsv .tmp/hash-branch.tsv  →  no differences (14 variants over 8 rows)
+```
+
+The reason is structural, and a static scan confirms it independently
+(`.tmp/scan-defaults.mts`): **0** parameters in any of the 8 assembled sources
+satisfy the guards' syntactic precondition (no type annotation, no rest,
+initializer is literal `undefined` / `null` / `void <num>`). All four
+`widenUndefinedDefaultParamSlot` sites and all three
+`paramUndefinedTypeIsDefaultArtifact` guards are gated on exactly that shape,
+so they cannot fire on these rows.
+
+### 3. "wasm-hash change" in the report is a schema guarantee, not a measurement
+
+This is #5256, still open, verified live against the same baseline the job used
+(`.test262-cache/test262-current.jsonl`, stamped `6.9.2026, 21:55:19`):
+
+```
+grep -c wasm_sha .test262-cache/test262-current.jsonl  →  0
+wc -l                                                  →  48735
+```
+
+`scripts/diff-test262.ts` requires **both** sides to carry `wasm_sha` for
+`wasmUnchanged`; the baseline carries it on 0 of 48,735 entries, so *every*
+pass→fail transition is filed under "Regressions with wasm-hash change" and the
+"Wasm-identical noise" line is a guaranteed 0. The banner therefore carries no
+information about this PR, and in this case is provably wrong. Same shape as the
+#5412 / #5280 park.
+
+### 4. What actually happened in that shard, from the error texts
+
+All 8 messages end `(Testing with … and makeArray.)` — the *second* factory in
+`typedArrayCtorArgFactories`. Every one of the 8 failures is exactly what you
+get if `makeCtorArg(2)` returned an **empty** array, i.e. the harness factory
+itself misbehaved for that fork:
+
+| row | reported | consistent with empty `sample` |
+| --- | --- | --- |
+| `reduce/callbackfn-returns-abrupt` | expected Test262Error, got TypeError | `[].reduce(cb)` with no initial value ⇒ TypeError |
+| `findLastIndex/BigInt/return-abrupt-from-predicate-call` | no exception at all | predicate never invoked |
+| `set/BigInt/array-arg-src-values-are-not-cached` | `RangeError: offset is out of bounds` | target length 0 |
+| `set/BigInt/src-typedarray-not-big-throws` | expected TypeError, got RangeError | length check fires before the content-type check |
+| `set/typedarray-arg-src-range-…-rangeerror` | `"2 + 0 > 1"` expected, none thrown | `0 + 0 > 1` is false |
+| `slice/speciesctor-get-species-custom-ctor-length-throws` | expected TypeError, none | species result length 0 is not short |
+| `Delete/indexed-value-ab-non-strict` | `delete sample["0"]` was `true`, expected `false` | deleting an OOB canonical index returns `true` per spec |
+| `Delete/key-is-out-of-bounds-strict` | expected TypeError, none | the indices are out of bounds, so the delete succeeds |
+
+`makeArray` is `Array.from({length: n}, …)` guarded by `assert.js`'s
+`isPrimitive`. A single fork-level event that perturbs `Array.from` /
+`Array.prototype` for the rest of that fork explains all 8 at once and explains
+why they are one contiguous family in one shard. That is the #1957 realm-canary
+class — a mutated surface the canary does not diff, so no recycle was
+requested. Which surface it was is NOT established here (it needs the shard's
+own row order, which the job log does not preserve); this is recorded as the
+mechanism the evidence points at, not as a diagnosed cause. It is a
+sharded-lane defect independent of #5360 and worth its own issue if it recurs.
+
+### Reproduction artifacts
+
+`.tmp/worker-run.mts`, `.tmp/hash-rows.mts`, `.tmp/scan-defaults.mts`,
+`.tmp/rows8.txt`, `.tmp/rows-nbhd.txt`, `.tmp/{hash-base,hash-branch}.tsv`,
+`.tmp/{fix8,nbhd-fix}.tsv` in the `issue-5360-temporal-era-seam` worktree.
+
+### Re-validation on this branch after the debug-line removal
+
+| check | result |
+| --- | --- |
+| `tests/issue-5360-undefined-default-param.test.ts` | 6/6 pass |
+| 123-row Temporal calendar family (`JS2WASM_TEST262_TEMPORAL=1`, fresh `JS2WASM_TEMPORAL_CACHE`) | **15 pass / 108 fail** — the 13→15 gain is intact |
+| `node scripts/equivalence-gate.mjs` | exit 0, "No new equivalence regressions" (22 failing / 1720 passing / 24 known) |
+| typecheck · lint · loc-budget (`LOC_GATE_BASE=origin/main`) · func-budget · coercion-sites · oracle-ratchet · dead-exports · host-import-policy | all exit 0 |
+| every `grep -l TypedArray tests/issue-*.test.ts` suite | 96 of 134 ran (the rest hit `ENOSPC` — the container was at 100% disk, an environment limit, not a test result). **28 failures, and the identical 28 titles fail on `origin/main`** with the same 18 suites re-run under `.tmp/base-src`. Zero branch-only failures. |

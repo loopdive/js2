@@ -1403,7 +1403,6 @@ export function compileIdentifierCall(
       const argType = compileExpression(ctx, fctx, strArg0, hostBigIntArg ? { kind: "externref" } : undefined);
 
       if (argType === null) {
-        if (process.env.JS2WASM_DBG5360) console.error("[5360] String() argType===null for", strArg0.getText());
         // String(void-expr) → "undefined"
         return compileStringLiteral(ctx, fctx, "undefined", strArg0) ?? { kind: "externref" };
       }
@@ -1441,8 +1440,6 @@ export function compileIdentifierCall(
         // null/undefined constant folds below would drop a live value. Fall
         // through to the dynamic `__extern_toString` arm.
         const foldableStaticType = !paramUndefinedTypeIsDefaultArtifact(ctx, strArg0);
-        if (process.env.JS2WASM_DBG5360)
-          console.error("[5360] String() externref arm", strArg0.getText(), "foldable=", foldableStaticType);
         if (foldableStaticType && argTsType.flags & ts.TypeFlags.Null) {
           // Drop the ref.null.extern, push "null" constant (#1470: native-aware)
           fctx.body.push({ op: "drop" });
