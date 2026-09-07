@@ -1,7 +1,8 @@
 ---
 id: 5381
 title: "`Intl.NumberFormat` / `Intl.ListFormat` (and any extern-class constructor taking an options bag) receive an opaque WasmGC struct instead of their options — `new Intl.NumberFormat(\"en-US\", {minimumFractionDigits: 3}).format(1.5)` answers `\"1.5\"`; `Intl.DateTimeFormat` without `new` traps"
-status: ready
+status: done
+completed: 2026-09-07
 sprint: current
 priority: medium
 horizon: s
@@ -9,6 +10,57 @@ goal: core-semantics
 reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
+# 2026-09-07 — growth grants, measured by the LOC/func gates on the MERGED tree
+# (`LOC_GATE_BASE=$(git rev-parse origin/main)`). This branch stacks on #5378,
+# which stacks on #5377's PR #5699, so BOTH predecessors' grants are RESTATED
+# here: the gate reads the change-set's own issue files, and a grant that lives
+# only in a file this PR does not modify is a stranded grant.
+#
+# NEW growth from THIS issue:
+#
+# `src/codegen/expressions/call-namespace-static.ts` (+24): the
+# `argumentsListIndex` parameter of `emitReflectArgs` plus the doc block
+# recording the measured `Reflect.construct(Intl.DateTimeFormat, ["en-US"])`
+# padding. It has to live in `emitReflectArgs`: that closure is the only place
+# the argumentsList expression is compiled, and the `_arrayLiteralForceVec`
+# override must be in scope AROUND that one `compileExpression` call. A
+# separate module cannot wrap a call it does not make.
+#
+# `src/runtime.ts` (+63 for THIS issue on top of #5377's +187 and #5378's +25):
+# the `_structArgIdentityCtors` set with its rationale, the
+# `marshalsStructArgsForHost` predicate that inverts the per-class
+# `webInitArgIndex` list into a default-plus-exceptions rule, and the dynamic
+# twin inside `_marshalHostConstructArg`. Both arms are inside the
+# `resolveImport` closure family that physically contains the extern-class
+# constructor bridge; the comment weight is the measurement record (base
+# answers vs node) for five constructors.
+#
+# `plan/audit/host-import-policy-baseline.json`: `maximumRuntimeTsLines`
+# 19453 → 19728, the measured merged `wc -l src/runtime.ts`. main's baseline
+# file was taken on the merge conflict and re-measured here, per the
+# host-import-policy gate's own instruction.
+#
+# `src/codegen/property-access-dispatch.ts` (+64), `src/codegen/typeof-delete.ts`
+# (+9), `src/codegen/class-bodies.ts`: inherited from #5378/#5377 verbatim, no
+# growth from this issue.
+loc-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts
+  - src/runtime.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/typeof-delete.ts
+  - src/codegen/class-bodies.ts
+# `compileNamespaceStaticCall` is the function holding `emitReflectArgs`;
+# `resolveImport` (and its anonymous constructor factory) is the one holding
+# both runtime arms. The remaining entries are #5378's / #5377's, restated for
+# the same stranded-grant reason as above.
+func-budget-allow:
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
+  - src/runtime.ts::resolveImport
+  - src/runtime.ts::_marshalHostConstructArg
+  - src/runtime.ts::<anonymous>#95
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
+  - src/codegen/typeof-delete.ts::compileTypeofExpression
+  - src/codegen/class-bodies.ts::compileClassBodiesInner
 ---
 
 # #5381 — extern-class constructors do not marshal their options bag

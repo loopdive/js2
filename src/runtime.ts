@@ -771,9 +771,59 @@ function _marshalHostConstructArg(
       const nm = typeof hostCallee.name === "string" && hostCallee.name ? hostCallee.name : "TypedArray";
       throw new TypeError(`cannot marshal opaque compiled value to host ${nm} constructor`);
     }
+    // (#5381) The DYNAMIC twin of the extern-class construct arm. `new
+    // (Intl as any).PluralRules("en-US", {type:"ordinal"})` does not resolve to
+    // a registered extern class — it lowers to `__construct` on the host
+    // function fetched off the `Intl` global (#5206) — so it never reached the
+    // options-bag marshalling and answered `select(2) === "other"` (node:
+    // "two"). Same defect, same fix: a compiled struct handed to a HOST
+    // constructor is a data bag, and the host can only read it through the
+    // `_wrapForHost` mirror. Measured with `Intl.RelativeTimeFormat`
+    // ({numeric:"auto"}, format(-1,"day")): "1 day ago" → "yesterday".
+    //
+    // Scoped the same way as the static arm: only when the callee is a host
+    // function, and never for the constructors that consume an argument by
+    // identity (`_structArgIdentityCtors` — `new WeakRef(obj).deref() === obj`
+    // must keep holding). The vec / ArrayBuffer / TypedArray probes above run
+    // first and still own their shapes, so this only sees what they declined.
+    if (
+      typeof hostCallee === "function" &&
+      !_structArgIdentityCtors.has(typeof hostCallee.name === "string" ? hostCallee.name : "")
+    ) {
+      const mirror = _wrapForHost(a, eff);
+      if (mirror !== a) return mirror;
+    }
   }
   return a;
 }
+
+/**
+ * (#5381) Extern-class constructors that consume a struct argument BY IDENTITY
+ * — they store it, return it, or hand it back — so the default "marshal every
+ * compiled struct through `_wrapForHost`" rule must not apply to them.
+ *
+ * `Object(x)` returns x itself (§7.1.18 ToObject on an object is the identity),
+ * `Array(x)` with one non-numeric argument yields `[x]`, `WeakRef(t)` hands `t`
+ * back from `deref()`, and `AggregateError`/`SuppressedError` expose their
+ * `errors`/`error`/`suppressed` arguments verbatim. Wrapping any of those would
+ * make the program observe a proxy where it stored a value, which is a
+ * strictly worse failure than the opaque struct it gets today (the opaque
+ * struct at least still compares equal to itself). `Function` is here for the
+ * separate reason that its arguments are ToString'd source text.
+ *
+ * The Error family, iterables, buffer consumers and the ToPrimitive family are
+ * excluded by their own flags at the construct site rather than by this set.
+ */
+const _structArgIdentityCtors = new Set([
+  "Object",
+  "Function",
+  "Array",
+  "WeakRef",
+  "FinalizationRegistry",
+  "AggregateError",
+  "SuppressedError",
+  "Test262Error",
+]);
 
 /** (#3335) Is `fn` a host %TypedArray% subclass constructor (Int8Array … BigUint64Array)? */
 const _HOST_TYPED_ARRAY_CTOR_NAMES = new Set([
@@ -11381,14 +11431,49 @@ function resolveImport(
         // looked like a calendar bug. `epochMilliseconds` never touches the
         // formatter, which is exactly why it stayed correct.
         //
-        // Scoped to `DateTimeFormat` because that is what the ladder implicated.
-        // `Intl.NumberFormat` / `Intl.ListFormat` drop their options the same
-        // way (`new Intl.NumberFormat("en-us",{minimumFractionDigits:3}).format(1.5)`
-        // measures "1.5", should be "1.500") — reported, not fixed here.
-        const webInitArgIndex =
-          intent.className === "Request" || intent.className === "Response" || intent.className === "DateTimeFormat"
-            ? 1
-            : undefined;
+        // (#5381) …and it stayed a per-class list for exactly one issue. The
+        // three names above were not three bugs: `Request`, `Response` and
+        // `DateTimeFormat` are three instances of ONE shape — a host
+        // constructor that READS PROPERTIES off an argument. Every other
+        // constructor in that shape lost its bag the same way and had to wait
+        // for someone to notice and add a fourth name (measured on this branch
+        // before the change: `new Intl.NumberFormat("en-US",{minimumFractionDigits:3})
+        // .format(1.5)` → "1.5", node "1.500"; `new Intl.ListFormat("en",
+        // {type:"disjunction"}).format(["a","b"])` → "a and b", node "a or b").
+        //
+        // So the rule is inverted: a compiled struct argument is marshalled
+        // through `_wrapForHost` by DEFAULT, and the exceptions are the
+        // constructors that consume an argument by a protocol OTHER than
+        // "read its properties" — every one of which already has its own arm
+        // a few lines above:
+        //   * `isWrapperCtor`        — String/Number/Boolean, arity-sensitive;
+        //   * `isIterableCtor`       — Map/Set/WeakMap/WeakSet, want the
+        //                              iteration protocol (`_convertIterableForHost`);
+        //   * `isBufferConsumer`     — DataView/TypedArrays, want real bytes;
+        //   * `coercesArgsToPrimitive` — RegExp/Date/String/Number, run
+        //                              ToPrimitive on the struct (#1716);
+        //   * the Error family       — arg 0 is ToString'd (#3481) and arg 1
+        //                              carries `cause`, whose OBJECT IDENTITY
+        //                              §20.5.8.1 preserves verbatim; a proxy
+        //                              there would break `e.cause === obj`;
+        //   * `isPromiseExecutorCtor` — arg 0 is a callable, not a bag;
+        //   * `_structArgIdentityCtors` — Object/Function/Array/WeakRef/…,
+        //                              which store or return the argument
+        //                              itself, so a proxy changes what the
+        //                              program observes.
+        // Anything else — every registered extern class, including ones nobody
+        // has written yet — gets the marshalling for free. Primitives and
+        // host externrefs are untouched: the guard is `_isWasmStruct`, and a
+        // host object never satisfies it.
+        const marshalsStructArgsForHost = !(
+          isWrapperCtor ||
+          isIterableCtor ||
+          isBufferConsumer ||
+          coercesArgsToPrimitive ||
+          isPromiseExecutorCtor ||
+          errorMessageArgIndex >= 0 ||
+          _structArgIdentityCtors.has(intent.className)
+        );
         return (...args: any[]) => {
           if (isPromiseExecutorCtor && args.length > 0) {
             args[0] = _maybeWrapCallable(args[0], 2, callbackState);
@@ -11398,13 +11483,16 @@ function resolveImport(
             while (len > 0 && args[len - 1] == null) len--;
             args = args.slice(0, len);
           }
-          if (
-            webInitArgIndex !== undefined &&
-            args.length > webInitArgIndex &&
-            args[webInitArgIndex] != null &&
-            _isWasmStruct(args[webInitArgIndex])
-          ) {
-            args[webInitArgIndex] = _wrapForHost(args[webInitArgIndex], callbackState?.getExports());
+          if (marshalsStructArgsForHost) {
+            let hostExports: Record<string, Function> | undefined;
+            for (let i = 0; i < args.length; i++) {
+              const a = args[i];
+              if (a == null || typeof a !== "object" || !_isWasmStruct(a)) continue;
+              // Resolve exports lazily: the common case has no struct argument
+              // at all, and `getExports()` is not free during module init.
+              if (hostExports === undefined) hostExports = callbackState?.getExports();
+              args[i] = _wrapForHost(a, hostExports);
+            }
           }
           if (
             errorMessageArgIndex >= 0 &&
