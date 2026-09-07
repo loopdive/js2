@@ -1,6 +1,6 @@
 {
   "schema": "compiler-boundaries-v1",
-  "description": "D0 exact pinned inventory. Concern labels are destinations, never evidence of clean separation. All existing modules remain unmigrated.",
+  "description": "Exact compiler inventory with F0's three shared-contract modules activated. Other concern labels describe remaining migration work, never proof of clean separation.",
   "sourceRoot": "src",
   "tsconfig": "tsconfig.json",
   "requireGitProvenance": true,
@@ -16,7 +16,7 @@
   "layers": [
     {
       "id": "foundation",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/shared/contracts"],
       "required": true,
       "entries": [
@@ -358,7 +358,17 @@
       "reason": "Alternative parser/checker dependency, including erased types."
     }
   ],
-  "activationHistory": [],
+  "activationHistory": [
+    {
+      "layer": "foundation",
+      "entries": [
+        "src/shared/contracts/source-origin.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/identity-values.ts"
+      ],
+      "minModules": 3
+    }
+  ],
   "nonModules": [
     {
       "path": "src/ir/backend/README.md",
@@ -8658,11 +8668,11 @@
     },
     {
       "path": "src/ir/identity-values.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "foundation",
       "owner": "3518-coordinator",
-      "nextBoundary": "F0 moves the four existing implementations into shared/contracts/identity-values.ts, using the canonical shared identity types; the old module becomes a one-way compatibility re-export."
+      "nextBoundary": "F0 moved the four implementations into shared/contracts/identity-values.ts. Retain this one-way compatibility re-export until its existing consumers use the canonical path; it is not a second implementation."
     },
     {
       "path": "src/ir/identity.ts",
@@ -9963,6 +9973,21 @@
       "destination": "compiler",
       "owner": "3518-coordinator",
       "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
+    },
+    {
+      "path": "src/shared/contracts/identity-values.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/ir-identity.ts",
+      "state": "clean",
+      "layer": "foundation"
+    },
+    {
+      "path": "src/shared/contracts/source-origin.ts",
+      "state": "clean",
+      "layer": "foundation"
     },
     {
       "path": "src/stdlib/array-sort.ts",

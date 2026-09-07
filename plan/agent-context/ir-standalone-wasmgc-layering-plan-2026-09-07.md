@@ -7,7 +7,9 @@ priority in the recovery/post-CPB documents. Their generic contracts,
 evidence and unfinished work remain preserved.
 
 The approved [first bounded dispatch map](3518-first-boundary-dispatch-2026-09-07.md)
-specifies D0's boundary checker and the subsequent identity foundation split.
+specifies D0's boundary checker and F0's identity foundation split, including
+approved parallel implementation, gated publication, reconciled claims and
+the coordinator-reported merge/cloud-evidence handoff.
 
 ## User direction and present hold
 
@@ -23,10 +25,12 @@ acceptance work for those backends. Preserve existing host/linear behavior
 and code; do not delete or change their defaults as a side effect. The
 eventual full migration remains open.
 
-P and C are paused per the coordinator, who retains publication and dispatch.
-This is a documentation checkpoint, not permission for file moves or worker
-resumption. No source edits or heavy tests were performed for this revision.
-Reconcile ownership and approve the exact first move set before resuming.
+The original P/C drafts remain paused and preserved. The coordinator has since
+assigned P the isolated nine-file F0 extraction after ownership reconciliation,
+as recorded in the first dispatch map; no broader draft resumption is implied.
+The coordinator retains publication and dispatch. This document itself grants
+no additional file moves or assignments. No source edits or heavy tests were
+performed for this revision.
 
 ## Read-only source and ownership census
 

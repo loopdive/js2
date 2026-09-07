@@ -1,5 +1,26 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type {
+  IrSourceId,
+  IrUnitId,
+  IrClassId,
+  IrBindingId,
+  IrLexicalOwnerId,
+  IrFunctionIdentity,
+  IrSyntheticUnitRole,
+} from "../shared/contracts/ir-identity.js";
+export type {
+  IrSourceId,
+  IrUnitId,
+  IrClassId,
+  IrBindingId,
+  IrLexicalOwnerId,
+  IrFunctionIdentity,
+  IrSyntheticUnitRole,
+  CreateDerivedIrUnitIdInput,
+  CreateIrBindingIdInput,
+} from "../shared/contracts/ir-identity.js";
+
 import { ts } from "../ts-api.js";
 import {
   createDerivedIrUnitId,
@@ -19,28 +40,7 @@ import { collectModuleInitPopulation, moduleInitExportAssignment, MODULE_INIT_UN
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 
-declare const irSourceIdBrand: unique symbol;
-declare const irUnitIdBrand: unique symbol;
-declare const irClassIdBrand: unique symbol;
-declare const irBindingIdBrand: unique symbol;
-
-/** Canonical, program-relative identity for one compiler input source. */
-export type IrSourceId = string & { readonly [irSourceIdBrand]: "IrSourceId" };
-/** Canonical identity for one executable source or synthetic unit. */
-export type IrUnitId = string & { readonly [irUnitIdBrand]: "IrUnitId" };
-/** Canonical identity for one class declaration or expression. */
-export type IrClassId = string & { readonly [irClassIdBrand]: "IrClassId" };
-/** Canonical identity for one program ABI intention. */
-export type IrBindingId = string & { readonly [irBindingIdBrand]: "IrBindingId" };
-
-export type IrLexicalOwnerId = IrUnitId | IrClassId;
 export type IrSourceKind = "entry" | "source" | "library" | "synthetic";
-
-/** Structural function identity plus its temporary compatibility/reference label. */
-export interface IrFunctionIdentity {
-  readonly unitId: IrUnitId;
-  readonly name: string;
-}
 
 export interface IrLiftedFunctionArtifactIdentity extends IrFunctionIdentity {
   readonly parentId: IrUnitId;
@@ -74,13 +74,6 @@ export interface IrLiftedSourceUnitProvenance {
 
 export type IrDerivedUnitProvenance = IrSyntheticUnitProvenance | IrLiftedSourceUnitProvenance;
 
-/** Closed role families for compiler/pass-created executable units. */
-export type IrSyntheticUnitRole =
-  | `compiler-unit:${CompilerSourceProducer}:${string}`
-  | `stdlib-selfhost:${string}`
-  | "ir-async-state"
-  | "lifted-closure"
-  | "monomorphization-clone";
 /** Compiler-created class roles live in a namespace separate from source classes. */
 export type IrSyntheticClassRole = `compiler-class:${CompilerSourceProducer}:${string}`;
 
@@ -281,12 +274,6 @@ export interface CreateIrUnitIdInput {
   readonly ordinal: number;
 }
 
-export interface CreateDerivedIrUnitIdInput {
-  readonly parentId: IrSourceId | IrLexicalOwnerId;
-  readonly role: IrSyntheticUnitRole;
-  readonly ordinal: number;
-}
-
 export interface CreateIrClassIdInput {
   readonly sourceId: IrSourceId;
   readonly lexicalOwnerId: IrLexicalOwnerId | null;
@@ -298,13 +285,6 @@ export interface CreateDerivedIrClassIdInput {
   readonly parentId: IrSourceId | IrLexicalOwnerId;
   readonly role: IrSyntheticClassRole;
   readonly ordinal: number;
-}
-
-export interface CreateIrBindingIdInput {
-  readonly ownerId: IrSourceId | IrUnitId | IrClassId;
-  readonly domain: "callable" | "global" | "type" | "export" | "class" | "support";
-  readonly role: string;
-  readonly ordinal?: number;
 }
 
 const ownerComponent = (owner: IrLexicalOwnerId | null): string => (owner === null ? "root" : identityComponent(owner));
