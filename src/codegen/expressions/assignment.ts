@@ -188,22 +188,11 @@ import { tryEmitStaticI32Expression } from "../i32-static-range-expr.js";
 import { emitToPropertyKeyOnce } from "./computed-member-reference.js";
 import { inheritedSetAffectsKey } from "../inherited-set-gate.js"; // (#4602) per-key #4504 gate
 import { compileRuntimeEvalShadowedAssignment } from "./runtime-eval-assignment.js";
+import { hostTypedArrayCarrierNameForExpression } from "./typed-array-host-carrier.js";
 
 /** Numeric and BigInt TypedArray view name for the native vec element lane. */
 function vecElementTypedArrayName(ctx: CodegenContext, receiver: ts.Expression): string | undefined {
-  const numericName = elementAccessTypedArrayName(ctx, receiver);
-  if (numericName !== undefined) return numericName;
-  const type = ctx.checker.getTypeAtLocation(receiver);
-  let name = type.getSymbol()?.name ?? type.aliasSymbol?.name;
-  if (
-    name !== "BigInt64Array" &&
-    name !== "BigUint64Array" &&
-    ts.isNewExpression(receiver) &&
-    ts.isIdentifier(receiver.expression)
-  ) {
-    name = receiver.expression.text;
-  }
-  return name === "BigInt64Array" || name === "BigUint64Array" ? name : undefined;
+  return elementAccessTypedArrayName(ctx, receiver) ?? hostTypedArrayCarrierNameForExpression(ctx, receiver);
 }
 
 /**
@@ -5992,7 +5981,7 @@ function compileElementAssignment(
     // proves `i < arr.length`, the index is in [0, length) so capacity is
     // already sufficient and `vec.length` does not need to grow. Skip the
     // grow check + length-update entirely and emit a direct `array.set`.
-    if (isSafeBoundsEliminated(fctx, target)) {
+    if (isSafeBoundsEliminated(fctx, target) && (!isTypedArray || noJsHost(ctx))) {
       // Vec data field is `(ref $arr)` (non-nullable), so struct.get yields
       // a non-null ref directly — no ref.as_non_null needed.
       fctx.body.push({ op: "local.get", index: vecLocal });
@@ -6034,6 +6023,21 @@ function compileElementAssignment(
     // compare below turns UNSIGNED (the local holds a u32 bit pattern — index
     // 2**32-2 arrives as `-2`). Full rationale in vec-sparse-index.ts.
     const unbackedLocal = emitUnbackableIndexFlag(fctx, idxLocal);
+    if (isTypedArray) {
+      // Integer-indexed writes outside a TypedArray's current logical length
+      // are ignored. A host transfer sets that length to zero while retaining
+      // the Wasm backing, so this also prevents detached writes from exposing
+      // or resurrecting stale capacity after RHS coercion has completed.
+      fctx.body.push(
+        { op: "local.get", index: unbackedLocal },
+        { op: "local.get", index: idxLocal },
+        { op: "local.get", index: vecLocal },
+        { op: "struct.get", typeIdx, fieldIdx: 0 },
+        { op: "i32.ge_u" },
+        { op: "i32.or" },
+        { op: "local.set", index: unbackedLocal },
+      );
+    }
     fctx.body.push(...needsGrowCondInstrs(unbackedLocal, idxLocal, dataLocal));
     fctx.body.push({
       op: "if",
@@ -6175,25 +6179,26 @@ function compileElementAssignment(
     // array.set: data[idx] = val (skipped for an unbackable index).
     fctx.body.push(...guardedElementSetInstrs(unbackedLocal, dataLocal, idxLocal, valLocal, arrTypeIdx));
 
-    // Update length if idx+1 > current length:
-    // if (idx + 1 > vec.length) vec.length = idx + 1
-    fctx.body.push({ op: "local.get", index: idxLocal });
-    fctx.body.push({ op: "i32.const", value: 1 });
-    fctx.body.push({ op: "i32.add" });
-    fctx.body.push({ op: "local.get", index: vecLocal });
-    fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 }); // get length
-    fctx.body.push({ op: "i32.gt_u" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: vecLocal },
-        { op: "local.get", index: idxLocal },
-        { op: "i32.const", value: 1 },
-        { op: "i32.add" },
-        { op: "struct.set", typeIdx, fieldIdx: 0 },
-      ],
-    });
+    if (!isTypedArray) {
+      // Ordinary arrays grow their logical length after an indexed write.
+      fctx.body.push({ op: "local.get", index: idxLocal });
+      fctx.body.push({ op: "i32.const", value: 1 });
+      fctx.body.push({ op: "i32.add" });
+      fctx.body.push({ op: "local.get", index: vecLocal });
+      fctx.body.push({ op: "struct.get", typeIdx, fieldIdx: 0 });
+      fctx.body.push({ op: "i32.gt_u" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: vecLocal },
+          { op: "local.get", index: idxLocal },
+          { op: "i32.const", value: 1 },
+          { op: "i32.add" },
+          { op: "struct.set", typeIdx, fieldIdx: 0 },
+        ],
+      });
+    }
     // Mapped arguments reverse sync: arguments[i] = X → update param local (#849)
     if (fctx.mappedArgsInfo && ts.isIdentifier(target.expression) && target.expression.text === "arguments") {
       emitMappedArgReverseSync(ctx, fctx, idxLocal, valLocal);

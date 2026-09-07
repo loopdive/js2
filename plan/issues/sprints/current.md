@@ -194,3 +194,40 @@ figure. Each child issue's test plan = its cluster's standalone-CE/fail tests
 flip to host-free pass under full `merge_group` + the standalone high-water floor
 (`check-standalone-highwater.mjs`), with zero host-mode regression (all changes
 `ctx.standalone`-gated).
+
+## Results (interim — 2026-09-07, protected standalone lane, ES2015 wave 5)
+
+**ES2015 standalone:** 10,188 → **10,228** pass / 11,704 = **87.4 %** (+40 over
+waves 4→5's close; whole corpus standalone 35,213 / 48,735). Goal (100 %) not
+yet met; 1,476 rows remain (1,146 fail, 329 compile_error, 1 compile_timeout).
+
+### Merged
+- **#5688 wave-5 PR-1** (#5316 r5, #5350 r1, #5318 r4/round 2, #3371 r2, #5351;
+  +46 / −2 whole corpus)
+- **#5694 #5349 species r5** (rounds 1–5; +19 owned, +21 / 0)
+- **#5696 #5316 r6** (the 2-row Annex B regression #5688 introduced; both rows
+  back)
+- **#5698 docs** (umbrella #4444 wave-5 close)
+
+### Closed without merging
+- none
+
+### Interim retro
+- **Went well**: plan → Opus implement → Opus adversarial review → fix rounds
+  converged on every lane; the post-merge baseline set-diff caught a loss no
+  gate saw; a finisher workflow recovered a lane killed by a container restart
+  without re-running its ~5 h of controls.
+- **Went badly**: five fix rounds on #5350 and five on #5349 — static
+  predicates over dynamic facts, and a gated emitter returning a local, each
+  needed a reviewer to loop what the pins ran once; the Temporal host bucket
+  parked a green PR after a benchmark-artifact push rebuilt its queue group.
+- **Process improvements**: every pin that exercises a codegen site must run
+  it at least twice on different arms; set-diff the promoted baseline after
+  every merge as a standing step; quarantine the Temporal host cluster if it
+  parks a second PR.
+- **Remaining for the lane**: see
+  `plan/agent-context/es2015-standalone-handover-2026-09-07.md` (priority
+  list: #5350 captured-`var` defect, the TypedArray cluster, ArrayBuffer
+  subclass species, wasi own-key ladder, `Reflect.defineProperty`, #3371 r3,
+  then the unowned regexp / generators / promise / for-of clusters).
+

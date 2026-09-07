@@ -259,3 +259,92 @@ built-in. `tests/issue-5373-array-subclass-tostring.test.ts` covers both lanes;
    (`expected … to contain 'legacyRegExpState?:'`), i.e. already red on
    `origin/main`. Under the default `forks` pool it OOMs while vitest serializes
    the ~19k-line assertion string; `--pool=threads` shows the real assertion.
+
+## Merge-group regression (2026-09-07, dev-5373-fix)
+
+**Verdict: not a regression from this issue. Fork-level collateral, same class
+as #5673.** PR #5685 was auto-parked on run 34076352332 / job 101606523559 with
+41 `pass → other` rows (35 fail + 6 `compile_timeout (10s)`), net −16, every
+row under `built-ins/Temporal/**`. The PR was subsequently re-run, passed its
+merge group and landed as `20d438d17d`; the promoted baseline rose to 37,794.
+
+### What was measured
+
+All three runs used `tests/test262-runner.ts` through the #5248 row driver
+(`.tmp/bucket-run.mts`, one TSV row per test so a flip inside an
+already-failing row is still visible), `JS2WASM_TEST262_TEMPORAL=1`, and a
+**fresh `JS2WASM_TEMPORAL_CACHE` per compiler revision** — the provider binary
+is content-addressed on the POLYFILL source, so a shared cache serves a binary
+built by whichever compiler ran last and silently invalidates an A/B. Each run
+reported `cacheHit=false` on its first row.
+
+| side | `src/runtime.ts` | 35 non-timeout rows | compile total |
+| --- | --- | --- | --- |
+| base | current `main` with the three #5373 guard blocks removed (file-copy A/B) | **35 pass, 0 fail** | 119.5 s |
+| main | `72e0f9342a` unmodified | **35 pass, 0 fail** | 115.7 s |
+
+So the 35 rows the park cited pass on the merged state, and they pass with the
+#5373 guard reverted — the change is not what moved them, in either direction.
+The 6 `compile_timeout (10s)` rows are the same story from the other end: the
+guard lives in the host runtime and cannot touch compile time, and the measured
+compile total is 3.2 % **lower** with it than without, i.e. inside run-to-run
+noise rather than a slowdown toward the 10 s ceiling.
+
+None of the 41 paths is in `scripts/test262-host-noise-quarantine.json`, so the
+quarantine did not (and could not) exclude them. That manifest is not a census
+of the noise, though: it was built from **two** same-SHA pool-4 canaries which
+between them recorded **726 pass-flip observations over 932 distinct paths**.
+41 flips in one bucket is well inside what a single fresh draw from that
+distribution produces, and the error shapes are the ones a lane under load
+produces — `Temporal is not defined` (provider never came up for that row) and
+`Cannot read properties of null (reading 'until') [in __module_init_chunk_2()]`
+(provider init aborted), not a wrong answer from a dispatch that ran.
+
+### One real finding, kept separate
+
+The park did surface a genuine latent defect, which is NOT what caused it and is
+not fixed here. Instrumenting the `__extern_method_call` guard on
+`built-ins/Temporal/**` shows it firing for classes the module standing in the
+call does **not** declare:
+
+```
+[5373probe] guard-fired method=until  class=Instant
+[5373probe] guard-fired method=round  class=Duration
+[5373probe] guard-fired method=round  class=Instant
+[5373probe] guard-fired method=subtract class=Duration
+[5373probe] method-hit  method=__digit class=JSBI     (2270×, provider-local — the intended #5373 hit)
+```
+
+`_userClassTags` is **process-wide**, so across the #2527 linked-provider seam a
+provider-declared instance is tagged exactly like a locally-declared one, while
+the guard runs inside the CONSUMER's import closure with the CONSUMER's exports.
+`Instant`/`Duration` therefore reach `_resolveClassMember` against a module
+that publishes no `__class_call_Instant_*` bridge. Today they miss and fall
+through to the #5354 host mirror, which is why nothing breaks — but the miss is
+not free of consequence: the resolver then runs the generic
+`__member_kind_<key>` / `__class_call_<key>_<n>` cascade, which is **name**-keyed
+rather than class-keyed, ahead of the mirror. A consumer that happens to declare
+a member of the same name would answer for a receiver it has never seen. This is
+point 3 of the "Known-unfixed" list above, seen from the dispatch side.
+
+A hardening was written and measured but is deliberately **not** proposed as part
+of this issue, since the regression it was commissioned for does not exist:
+gate `_classChainMethod` on "the consulted module DECLARES this class"
+(memoised scan of the export view for a `__class_call_<C>_` / `__call_get_<C>_`
+prefix), so a foreign-class receiver returns `_MISS` before the name-keyed
+cascade and the pre-#5373 path is byte-identical; and re-check the resolved
+member as a **function** before `.apply`, since the resolver returns a getter's
+VALUE for `kind === 2` and `.apply` on a non-function throws a TypeError out of
+a path that previously could not throw. With it, the probe reads
+`ownership class=Instant declared=false` / `class=JSBI declared=true`, the 35
+rows stay at 35 pass, and `tests/issue-5373-array-subclass-tostring.test.ts`
+stays green. If the name-collision case is ever wanted as a fix, file it against
+the seam (#5223 family), not here.
+
+### Process note
+
+The park was diagnosed by re-running the cited rows, not by reading the error
+strings. The strings pointed convincingly at this change — a class-chain guard
+that plausibly explains "round is not a function" — and were wrong. The cheap
+check that settled it was the base-side run: 35 rows with the guard **removed**,
+which cost one `cp` because the revert copy was captured at the first edit.

@@ -25,8 +25,82 @@ landed on 2026-09-05. Wave 5 ran six lanes from Fable-written plans (Opus
 medium, Opus high for the Proxy lane, Sonnet high for the mechanical lib.dom
 fix), each followed by an adversarial review (one reviewer, two skeptics per
 finding) and as many reviewed fix rounds as the reviewer kept finding real
-defects. PR-1 integrates five lanes; #5349 (species / byte-vec brand) is still
-in its round-3 audit and ships as PR-2.
+defects. PR-1 integrated five lanes; #5349 (species / byte-vec brand) shipped
+as PR-2 after two more reviewed rounds.
+
+### Wave-5 close (2026-09-07)
+
+Three PRs landed, all through the merge queue:
+
+| PR | content | merged (UTC) | promoted standalone baseline |
+| --- | --- | --- | --- |
+| #5688 | the five PR-1 lanes | 2026-09-06 20:21 | ES2015 **10,219 / 11,704 (87.3 %)**; whole corpus +46 / −2 vs the pre-merge baseline |
+| #5694 | #5349 species r5, rounds 1–5 | 2026-09-07 03:14 | ES2015 **10,228 / 11,704 (87.4 %)**; whole corpus +21 / 0 (11 `Array`, 9 `ArrayBuffer`, 1 `TypedArrayConstructors`) |
+| #5696 | #5316 r6 — the 2-row Annex B regression #5688 introduced | 2026-09-07 03:57 | the two rows promote with the next baseline (not yet in the 04:10 fetch) |
+
+The −2 of #5688 was found by set-diffing the promoted baseline against the
+previous copy, not by any gate: `Object.prototype.__defineGetter__` /
+`__defineSetter__` on an EXISTING key of a non-extensible literal or class
+instance threw, because #5316's integrity bag now records
+`preventExtensions` on those carriers and `__defineProperty_accessor` judged
+"new key" from the bag, which cannot see a struct field. Fixed in the accessor
+arm with the own-only `__hasOwnProperty` guard (2,054-row control, 0 lost);
+the data arm's twin guard was measured and reverted because it silenced the
+correct frozen-object throw.
+
+#5349 needed rounds 4 and 5 after the round-3 audit: round 4 kept a
+packed-byte receiver's TypedArray brand through `ab.slice` when reached via an
+ArrayBuffer-typed binding and recognised the intrinsic `%ArrayBuffer%` as the
+species by identity; round 5 hoisted the species ladder's two null
+initialisers out of the `if (isPacked == 0)` gate, because a brand-gated
+slice site executed twice reused the first execution's species buffer (trap
+when longer, silent cross-object corruption otherwise). Full records: the
+issue file's "### Round 4" / "### Round 5"; 85 pins, every round-5 pin
+executes its site at least twice.
+
+**Follow-ups this close leaves, in priority order.**
+
+1. **wasi own-key ladder for closed-struct carriers.** On `--target wasi`
+   `__hasOwnProperty` answers false for a struct-field key (and
+   `Object.prototype.hasOwnProperty.call({existing:null}, 'existing')` traps),
+   so the #5316 r6 guard is emitted but inert there and the four PR-1-regressed
+   wasi shapes keep main's answer. No test262 row is at stake; recorded in
+   #5316's r6 residuals with the probe set.
+2. **`class B extends ArrayBuffer {}` as the species TRAPs** (node 4) — the
+   `IsConstructor` family cannot answer intrinsic identity for a subclass;
+   needs ArrayBuffer subclassing. Recorded in #5349 round 4/5 residuals.
+3. **`Reflect.defineProperty` of an accessor** over an existing key is a silent
+   no-op, over a NEW key of a non-extensible object traps instead of answering
+   `false` (the §10.1.6.3 throw is right; the `Reflect` wrapper's catch is
+   missing).
+4. **#5359** — spreading a packed-byte TypedArray emits invalid wasm.
+5. The **Temporal host-flake cluster**: the rebuilt merge group of #5696 was
+   parked on 28 `built-ins/Temporal/*` host rows that flip run-to-run (the
+   same content passed the gate one run earlier with 10 different Temporal
+   flips; a local A/B on 26 of them answers identically on the PR head and on
+   main). If the cluster recurs, the gate's own text prescribes a
+   `scripts/test262-host-noise-quarantine.json` entry citing both runs.
+
+**Lessons this close added.**
+
+- **Execute a site twice on different arms.** Every round-1…4 pin of #5349 ran
+  its slice site once, so a stale Wasm local was invisible until the round-4
+  reviewer looped it. A gate placed around an emitter that RETURNS a local to
+  its caller must keep that local's initialisation outside the gate.
+- **Set-diff the promoted baseline after every merge.** The merge-group
+  regression gate scores the host target and the standalone guards score the
+  aggregate; a 2-row standalone loss behind a +46 gain passed every one of
+  them. The whole-corpus diff of the two baseline copies took one minute and
+  found it.
+- **A push to main rebuilds the queue group.** The benchmark-artifact refresh
+  that follows every merge rebuilt #5696's group and re-rolled the Temporal
+  host bucket into a park. Read the cited run before touching the label: the
+  first group's log, the changed-path count and a local A/B settle it.
+- **`git archive` + bundles is the only base tree that measures.** Both
+  post-merge findings were attributed only after re-running the rows on an
+  archive of the exact main commit with its own compiler bundle and quickjs
+  adapter; a lane snapshot or a stale checkout would have blamed the wrong
+  change.
 
 | lane | shipped | owned rows (base → lane) | control | review rounds |
 | --- | --- | --- | --- | --- |
