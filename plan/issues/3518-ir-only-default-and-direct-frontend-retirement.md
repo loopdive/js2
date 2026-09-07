@@ -4042,3 +4042,15 @@ unsupported, corrupt and fully validated evidence. It does not close the epic.
 A new typed refusal protects correctness while a migration checkpoint is
 incomplete. It is **not** a license to replace working direct coverage with
 errors and declare the user's full migration complete.
+
+### Suspended Claude recovery and next producer prerequisite (2026-09-07)
+
+The [Astra High recovery plan and disjoint Low assignments](../agent-context/ir-migration-recovery-2026-09-07.md)
+re-ground this migration against canonical main `9feb7bf8fc` and verified
+assignment ledger `df46c34148`. It preserves the old dirty work, distinguishes
+landed Claude/A/C code from held B/D checkpoints, and specifies the missing
+serialized async resource ownership/ABI prerequisite before actual C/B
+integration. It also sequences native and linear resource materialization,
+public metadata/cutover, original-population evidence and eventual deletion.
+This is specification only: no source implementation, gate relaxation,
+claim release or migration-complete declaration is included.
