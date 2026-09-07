@@ -91,6 +91,29 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
     },
 
     /**
+     * (#5364) Forget every module of the project that just finished.
+     *
+     * The registry is MODULE-LEVEL state, so a process that instantiates a
+     * second linked project against the SAME provider binary (the compile-once
+     * Temporal provider, re-instantiated once per test262 row in a long-lived
+     * fork) would otherwise still hold project 1's exports. Those exports share
+     * canonical WasmGC types with project 2's, so `decodes` answers TRUE for a
+     * struct project 1 never minted and `decoderFor` hands back the wrong
+     * module — a complete, internally consistent, WRONG mirror.
+     *
+     * `owners` and `states` are deliberately NOT cleared: both are WeakMaps
+     * keyed on the per-instance objects of the project being dropped, so they
+     * become unreachable with it. Clearing `modules` is what actually retires
+     * the project, and dropping `enabled` back to false restores the
+     * single-module fast path byte-for-byte until the next project registers
+     * two modules.
+     */
+    reset(): void {
+      modules.clear();
+      enabled = false;
+    },
+
+    /**
      * A `callbackState` view of a foreign module's exports, so a read path that
      * threads state (rather than exports) can be redirected with one
      * substitution. One allocation per module, not per call.

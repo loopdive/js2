@@ -133,6 +133,11 @@ import {
   reserveInstanceTombstones,
 } from "./instance-tombstones.js"; // (#4098 G1 s1)
 import { OBJECT_INTEGRITY_OBJ_PREDICATES } from "./object-integrity-carrier.js"; // (#4032)
+import {
+  REFLECT_SET_RECEIVER,
+  fillOrdinarySetWithReceiver,
+  reserveOrdinarySetWithReceiver,
+} from "./object-runtime-ordinary-set.js"; // (#5316)
 // (#3537) array ($Vec) expando side table — composes AROUND the #3468 closure
 // arms (vec test first, unchanged closure arm as fallthrough).
 import {
@@ -6756,6 +6761,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // __extern_get/set/has are registered (the trap dispatch helpers forward to
   // them when a trap is absent) and only adds DEFINED functions, so no index
   // shift (same invariant as the rest of this runtime).
+  // (#5316 r5 step 6 / #2046, review r1 F2) RESERVE §10.1.9.2
+  // OrdinarySetWithOwnDescriptor's funcIdx before the Proxy runtime builds:
+  // `__proxy_set_receiver_dispatch` bakes a call to it (§10.5.9 step 6's
+  // trap-absent forward), and it bakes a call back to that dispatch. Every
+  // primitive the walk reads — `__getOwnPropertyDescriptor`, `__getPrototypeOf`,
+  // `__extern_get/set/has`, the `__call_accessor_set` driver — is registered by
+  // here; the body is filled at the end of this function.
+  reserveOrdinarySetWithReceiver(ctx);
+
   ensureProxyRuntime(ctx, types, registerNative);
 
   // (#4749) Fill Object.assign's standalone Proxy-source CopyDataProperties
@@ -6836,6 +6850,15 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   // mint or register types at finalize. No-op unless the module is
   // `protoMemberDirty` AND actually materialized a proto.
   flushPendingNativeProtoSeeders(ctx);
+
+  // (#5316 r5 step 6 / #2046) FILL §10.1.9.2 OrdinarySetWithOwnDescriptor, the
+  // receiver-threaded `[[Set]]` behind `Reflect.set`'s 4-argument form, into
+  // the slot reserved just before `ensureProxyRuntime`. Filled LAST, and
+  // deliberately so: besides the descriptor/prototype/accessor primitives it
+  // reads `__proxy_set_receiver_dispatch` and `__create_descriptor` /
+  // `__obj_define_from_desc`, which are in place only by here. Mints nothing,
+  // so no funcIdx moves.
+  fillOrdinarySetWithReceiver(ctx);
 
   return types;
 }
@@ -12455,6 +12478,7 @@ export const OBJECT_RUNTIME_HELPER_NAMES: ReadonlySet<string> = new Set([
   "__extern_set",
   "__extern_set_strict", // (#3983) distinct helper: __reflect_set + strict-PutValue TypeError
   "__reflect_set",
+  REFLECT_SET_RECEIVER, // (#5316) Reflect.set 4-arg — §10.1.9.2 with a receiver
   "__to_primitive",
   "__extern_toString",
   "__delete_property",

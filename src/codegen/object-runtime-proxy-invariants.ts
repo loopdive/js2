@@ -417,21 +417,20 @@ export function registerProxyInvariantValidators(
 
   // ── §10.5.7 [[HasProperty]] step 9 ────────────────────────────────────────
   //
-  // DECLINED: step 9.b.ii (`IsExtensible(target)` is false ⇒ throw). Measured
-  // 2026-09-05: adding it turned `has/return-false-target-prop-exists-using-
-  // with.js` — a row that PASSES on `origin/main` — into a TypeError, and the
-  // same clause in [[Delete]] did the same to `deleteProperty/
-  // call-parameters.js`. Both targets are ordinary extensible object literals
-  // (`{attr: 1}`), so the throw is a false positive: called on the proxy's
-  // `ptarget` from inside the dispatch, the standalone `__object_isExtensible`
-  // answers non-extensible for a target that never saw `preventExtensions`.
-  // (A direct `Object.isExtensible` on the same shapes answers correctly, so
-  // this is specific to the dispatch-internal call and was not pinned down
-  // further here.) Dropping the clause costs exactly two rows —
-  // `has/return-false-target-not-extensible.js` and `deleteProperty/
-  // targetdesc-is-configurable-target-is-not-extensible.js` — and buys back
-  // both regressions. A missed throw is a residual; a wrong throw breaks a
-  // working program.
+  // (#5316) Step 9.b.ii (`IsExtensible(target)` is false ⇒ throw) was DECLINED
+  // in r4 because it turned two rows that pass on `origin/main` into TypeErrors
+  // over ordinary extensible `{attr: 1}` targets. The r4 note read that as "the
+  // dispatch-internal `__object_isExtensible` call is special"; it is not. An
+  // object literal lowers to an `__anon_*` closed struct, which is neither a
+  // `$Object` nor any carrier `__integrity_bag` had an arm for, so the helper
+  // fell through to its NON-object terminal (`extensible = false`) — the same
+  // wrong answer a pristine class instance got (probe `x1`). The source-level
+  // `Object.isExtensible(t)` looked right only because `provenJsObject` picks
+  // the `_obj` variant there, whose terminal is the opposite constant.
+  //
+  // The instance-carrier arm added to `__integrity_bag` in this issue's step 1
+  // makes the helper answer from a real flags slot for those receivers, so the
+  // clause states what §10.5.7 says and is restored here.
   //
   // params 0=target 1=key 2=trapResult ; locals 3=td
   const has = registerNative(
@@ -449,7 +448,17 @@ export function registerProxyInvariantValidators(
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: [...truthyField(3, "configurable"), { op: "i32.eqz" }, ...throwIf()],
+        then: [
+          // Step 9.b.i: the target's own property must be configurable …
+          ...truthyField(3, "configurable"),
+          { op: "i32.eqz" },
+          ...throwIf(),
+          // … and step 9.b.ii: the target must be extensible. Fresh `Instr[]`
+          // from the factories on every splice — the finalize funcIdx walk has
+          // no dedup set, so a shared array is remapped once per occurrence.
+          ...notExtensible(0),
+          ...throwIf(),
+        ],
       },
       { op: "local.get", index: 2 },
     ],
@@ -600,8 +609,10 @@ export function registerProxyInvariantValidators(
           ...truthyField(3, "configurable"),
           { op: "i32.eqz" },
           ...throwIf(),
-          // Step 13 (ES2020+, "nor any property of a non-extensible target")
-          // is DECLINED for the reason recorded on `__proxy_inv_has` above.
+          // Step 13 (ES2020+): nor any property of a non-extensible target.
+          // Restored with the `has` clause above — same root cause, same fix.
+          ...notExtensible(0),
+          ...throwIf(),
         ],
       },
       { op: "local.get", index: 2 },

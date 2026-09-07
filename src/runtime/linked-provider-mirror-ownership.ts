@@ -17,6 +17,18 @@ export function createLinkedProviderMirrorOwnership(canBeWeakKey: (value: unknow
       anyLinkedProviderRegistered = true;
     },
 
+    /**
+     * (#5364) Twin of the #5225 registry reset: forget that any linked provider
+     * is live once the project that owned it is gone. `linkedProviderExportSets`
+     * and `hostMirrorOwnerExports` are weak and keyed on the retiring project's
+     * own objects, so only the fast-opt-out boolean needs clearing — but leaving
+     * it TRUE would keep `isForeignModuleMirror` probing on every read of a
+     * process that no longer has a linked project live.
+     */
+    reset(): void {
+      anyLinkedProviderRegistered = false;
+    },
+
     recordMirrorOwner(mirror: unknown, exports: Record<string, Function> | undefined): void {
       if (exports === undefined || !canBeWeakKey(mirror)) return;
       if (!hostMirrorOwnerExports.has(mirror as object)) {
