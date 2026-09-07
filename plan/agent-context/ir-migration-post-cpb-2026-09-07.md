@@ -1,5 +1,10 @@
 # Post-CPB implementation sequence: settlement, public metadata, linear resources
 
+The [standalone WasmGC folder plan](ir-standalone-wasmgc-layering-plan-2026-09-07.md)
+supersedes this document's host-first/linear implementation sequence. Preserve
+the native settlement and forward-reservation contracts below; defer new
+host/linear implementation and use the new plan's ownership/move sequence.
+
 This is a continuation of the frozen recovery plan for issue #3518,
 **IR-only default and direct front-end retirement**, and issue #3527,
 **IR-only R7: AST-free async suspension plans and canonical Promise ABI**.
@@ -99,6 +104,83 @@ Raw `{kind, index}` snapshots alone are not authenticated handles. Legacy
 immediate emission can resolve through its own reservation view; it must
 preserve the existing late-import relocation discipline. Do not impose a
 whole-module early seal that prevents unrelated legacy registration.
+
+### Forward callable reservations: concrete allocator protocol
+
+The identity-fulfill continuation is intentionally referenced before its
+resolve-value body is installed. Requiring an already published WasmFunction
+at that call site would change the existing registration order. Use the
+allocator's actual two-phase protocol instead; this clarification does not
+expand N's three-file scope.
+
+`func-space.ts` already provides `mintDefinedFunc`, `pushDefinedFunc`,
+`definedFuncAt`, `definedFuncHandleOf` and `funcSignatureOf`. Minting returns
+a stable `FuncHandle` backed by a reserved ordinal; its position remains NaN
+until push. `definedFuncAt` deliberately returns undefined while pending.
+Push records the function's eventual position, rejects an unminted/double
+push, and preserves the stable handle across intervening functions/imports.
+Only final layout turns that stable handle into a concrete Wasm index.
+
+Keep that protocol and add a private adapter-owned receipt around it:
+
+1. At the original resolve-value `mintDefinedFunc` statement, retain the exact
+   returned handle. Create the eventual detached WasmFunction object with
+   its existing name and already reserved settle signature. Creating this
+   ordinary JS object must not append to module functions/types or fill its
+   body early. Empty staging arrays are permitted only on this detached,
+   explicitly pending object; they are not a completed body or a receipt.
+2. The adapter creates an opaque frozen token. Its private per-invocation
+   census associates that exact token with the module object, stable handle,
+   exact detached function object, expected type object/signature and state
+   `reserved`. The census creates the receipt directly from its own mint
+   result; it must not accept an arbitrary caller-supplied numeric handle as
+   proof of reservation. Do not recover the target by name from funcMap.
+3. The pure identity builder receives the token through the typed callable
+   resource interface. A read-only resolver verifies token identity and the
+   active owner/module census, expected signature and pending/installed
+   state. In the pending state it permits only a call reference to the
+   captured stable handle, not a claim that a function is already present.
+   An unexpected object at `definedFuncAt(ctx, handle)` while pending fails.
+   The leaf places the stable handle in the call's `funcIdx` exactly as the
+   old builder did. Do not convert it to a guessed absolute function index.
+4. Preserve the original `funcMap.set("__promise_resolve_value", handle)`
+   position and every fulfill/reject/wrapper push. Run the original thenable
+   substrate registration at its original point. Nested registrations may
+   consume arbitrary later ordinals; the captured stable handle remains valid.
+5. At the original resolve-value body construction/push point, build the real
+   locals/body, put those actual builder outputs on the same detached object,
+   and call `pushDefinedFunc(ctx, handle, object)`. Only afterward transition
+   its receipt to `installed`, verifying `definedFuncAt(ctx, handle) === object`
+   and the current signature through the existing func-space accessors. A
+   cloned replacement object or merely nonempty body is not the expected
+   installation; the receipt records the actual completed builder outputs.
+6. Before `ensurePromiseSettleFunctions` successfully returns, require every
+   forward receipt this invocation owns to be installed. Recheck identity
+   and signature, then close the reservation census. Failure/exception revokes
+   its tokens and does not deliver a successful resource result. A recursive
+   ensure that takes the existing early-return guard neither finalizes nor
+   owns the outer invocation's pending receipt. Do not claim its reservation
+   as complete from that recursive path.
+
+The exact object can thus be authenticated before it has a module position;
+final membership is a separate, mandatory lifecycle check. A removed/corrupt
+ordinal cannot become successful installation because `pushDefinedFunc` and
+the final identity lookup must both succeed. Normal final-layout resolution
+also rejects a minted handle that was never pushed. Do not add inline
+`handle - importCount` arithmetic or modify the shared allocator in this cut.
+
+Keep type/global object checks and optional-policy checks as specified above.
+The completed prepared consumer will additionally require its whole-resource
+census at its own seal; this legacy extraction does not replace later module
+finalization or prove that unrelated deferred helpers were filled.
+
+Focused forward-reference controls: insert intervening function registrations
+and late imports before the original resolve-value push, and verify the
+identity wrapper still calls that exact helper with unchanged final behavior.
+Reject a token from another invocation/module, a matching numeric handle with
+no owned token, wrong signature, wrong pushed object, duplicate push and an
+omitted push. The omitted-push case must fail the local completion check;
+never satisfy it with a dummy body, early installation or changed push order.
 
 ### Preserve exact behavior and registration timing
 

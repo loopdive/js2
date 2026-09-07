@@ -1,5 +1,11 @@
 # Blocking prerequisite: canonical async entry and call-site ABI
 
+The generic callable/fulfillment distinction remains applicable under the
+[standalone WasmGC folder plan](ir-standalone-wasmgc-layering-plan-2026-09-07.md).
+Its implementation priority supersedes the host-focused composed acceptance
+sequence below. Preserve P's current generic edits; new host/linear work is
+deferred and resumption requires the coordinator's explicit dispatch.
+
 Issue #3527: **IR-only R7: AST-free async suspension plans and canonical
 Promise ABI**. High decision for the measured CPB composition failure,
 2026-09-07. Read-only specification; the coordinator authorizes the ownership

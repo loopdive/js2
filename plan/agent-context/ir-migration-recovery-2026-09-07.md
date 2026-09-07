@@ -1,5 +1,11 @@
 # IR migration recovery and implementation assignments — 2026-09-07
 
+Current implementation priority is superseded by the
+[standalone WasmGC and folder-separation plan](ir-standalone-wasmgc-layering-plan-2026-09-07.md).
+New host and linear backend work is deferred. The historical census and
+generic resource/ABI contracts below remain preserved. Worker resumption and
+file moves require the coordinator's reconciled dispatch.
+
 Architect: Codex GPT-6 Astra High. Implementation: Astra Low only. This is a
 specification and read-only recovery census, not an implementation or an
 authorization to overwrite another owner's checkout. No PR hold is removed.
