@@ -1592,7 +1592,6 @@ The full `118/118` cohort above is separate. The parent integration lane owns
 the already-reviewed #4106 exnref validation fix and must pass that existing
 control and the normal combined hooks on the composed candidate before any
 publication is authorized.
-
 ## Astra High lane B — prepared frame engine without AST reachability (2026-09-07)
 
 Continue `ttraenkler/astra-ir-producers-b-20260905`'s held

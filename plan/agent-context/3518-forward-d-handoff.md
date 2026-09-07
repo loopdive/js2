@@ -199,3 +199,27 @@ is not passing migration evidence. The production requirements above remain.
 
 PR 5717 remains held, with PR 5692 an explicit stack dependency and parent
 shepherding unchanged. Original claims, branches and worktrees are preserved.
+
+## Recovery conflict refresh — 2026-09-07
+
+The coordinator confirmed the preceding D agent unavailable and assigned this
+clean preserved worktree exclusively to the recovery writer. Normal merge of
+canonical main `9565ef894795e8456b711449356af81de5680ae2` into
+`dd726b04fdc6fdb093f2ce5715b2a4f840f50c10` conflicted only on one extra blank
+line in each of the 3518 and 3527 plan documents. Both resolved documents match
+canonical main byte for byte. All source, CI and baseline content matches that
+main parent; the delta from main remains exactly D's 16 owned files. Gate, test
+and fixture contents are unchanged from the preceding checkpoint.
+
+After C released the shared test slot, serial single-fork validation passed:
+39/39 tests across the public-retirement instrument (16), IR-only gate (14),
+and whole-program route audit (9), followed by 16/16 public prepared-driver
+checks in one file. Total: 55/55 tests across four files. Conformance sync
+check passed with 0 updates and 5 unchanged targets.
+
+The complete 49-entry public migration report was not rerun for this whitespace
+conflict refresh. Earlier report counts above remain historical measurements,
+not a result for this merged tree. Passing controls do not complete migration.
+PR 5717 remains held because public production integration is incomplete;
+existing manifests, evidence requirements, dependency history and parent
+shepherding remain intact. No separate async integration draft was accessed.

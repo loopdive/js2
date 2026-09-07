@@ -3759,7 +3759,6 @@ historical agent reports do not override that record's source evidence.
    source differs from the candidate. Required merge-group CI, complete
    Test262 accounting, whole-program ownership, and all eleven epic criteria
    remain required. Bounded runtime evidence does not authorize deletion.
-
 ## Astra High continuation specification — 2026-09-07
 
 This is a specification checkpoint for the full migration. It changes no
