@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
 import { exactClassExpressionTypeName } from "./class-expression-identity.js";
 import { emitToBoolean } from "./coercion-engine.js";
@@ -13257,6 +13258,12 @@ export function ensureStructForType(ctx: CodegenContext, tsType: ts.Type): void 
       if (refStructName !== "__Date") {
         wasmType = { kind: "externref" };
       }
+    }
+    // (#5376) #1589A one step further — see `propertyValueIsAccessorObjectLiteral`.
+    // A method-shorthand value (`{ v: { valueOf() { return 3 } } }`) builds a real
+    // struct and keeps its existing field type; only accessor values widen.
+    if ((wasmType.kind === "ref" || wasmType.kind === "ref_null") && propertyValueIsAccessorObjectLiteral(prop)) {
+      wasmType = { kind: "externref" };
     }
     // For valueOf/toString callable properties, store as eqref instead of externref
     // so coercion can recover the closure and call it via call_ref
