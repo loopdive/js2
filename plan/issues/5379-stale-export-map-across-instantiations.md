@@ -224,7 +224,7 @@ negative-cache arm short-circuits before the liveness check, so the #3903
 
 | lane | rows | gate evaluations | `_MISS` | distinct registering export sets |
 | --- | --- | --- | --- | --- |
-| `Instant/**` + `ZonedDateTime/prototype/**` | 481 | (run in flight) | **0** | (run in flight) |
+| `Instant/**` + `ZonedDateTime/prototype/**` | 481 | 427,547 | **0** | 776 |
 | 4 linked Temporal probes | 4 | 1,927 | **0** | 5 |
 
 Instrumented with three independent detectors, all reading 0: the gate itself; a
@@ -243,6 +243,22 @@ only thing standing between a future regression of the reset seam and the 5-row
 `pass` in a fresh process AND `pass` after ten other `Instant/**` rows have run
 in the same one (`PROBE_ROWS=10`, `.tmp/probe-inproc.mts`). The issue's headline
 symptom does not reproduce.
+
+## Samples — base vs fix, byte-identical
+
+Both lanes, one compiler revision, one `JS2WASM_TEMPORAL_CACHE` created fresh
+for it (`.tmp/tcache`), provider linked (`JS2WASM_TEST262_TEMPORAL=1`), one row
+per line through `runTest262File` (`.tmp/bucket-run.mts`).
+
+| sample | rows | base | fix | pass→fail | fail→pass |
+| --- | --- | --- | --- | --- | --- |
+| `Instant/**` + `ZonedDateTime/prototype/**` | 481 | 294 pass / 187 fail | 294 pass / 187 fail | **0** | 0 |
+| #5249 calendar family | 123 | 27 pass / 96 fail | 27 pass / 96 fail | **0** | 0 |
+
+`diff` of the sorted TSVs is empty on both — status AND failure-reason string.
+Artifacts: `.tmp/base-instzdt.tsv` / `.tmp/fix-instzdt.tsv`,
+`.tmp/base-123.tsv` / `.tmp/fix-123.tsv`, `.tmp/diff-instzdt.txt`,
+`.tmp/diff-123.txt`.
 
 ## Reported, not fixed
 
