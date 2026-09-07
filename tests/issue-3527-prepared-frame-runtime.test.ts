@@ -293,6 +293,21 @@ describe("prepared physical frame engine", () => {
     expect(await p).toBe(24);
     expect(alias).toBe(p);
     expect(events).toEqual(["after-call", "callback:0", "after-flush", "callback:0"]);
+    const oracleEvents: string[] = [];
+    const javascript = async (seed: number) => {
+      const live = seed + 1;
+      const first = await seed;
+      oracleEvents.push("callback:0");
+      const second = await (first + 2);
+      oracleEvents.push("callback:0");
+      return live + first + second;
+    };
+    const oracle = javascript(7);
+    oracleEvents.push("after-call");
+    await Promise.resolve();
+    oracleEvents.push("after-flush");
+    expect(await p).toBe(await oracle);
+    expect(events).toEqual(oracleEvents);
     expect(await (exports.run as CallableFunction)(11)).toBe(36);
   });
   it("keeps same-named functions distinct after a late import and function remap", async () => {
