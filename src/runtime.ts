@@ -3425,6 +3425,11 @@ function _toPrimitive(
   // Unwrap host proxy to raw WasmGC struct for sidecar lookups (#1090).
   // Proxies are created by _wrapForHost and _hostProxyReverse maps them back.
   const raw = _hostProxyReverse.get(obj) ?? obj;
+  // (#5374) Every probe below — `__sget_valueOf`, `__call_fn_method_0`,
+  // `__call_@@toPrimitive` — is an export of ONE module. See the note on the
+  // same redirect in `_hostToPrimitive` for why the whole walker is retargeted
+  // once, here, rather than per probe.
+  callbackState = _crossModuleCallbackState(raw, callbackState);
   // (#4616, cookie Expires family) The compiler-owned WasmGC Date carrier —
   // see _wasmDateToPrimitive.
   {
@@ -4040,6 +4045,14 @@ function _hostToPrimitive(
 
   // Check Symbol.toPrimitive via real JS property access (goes through proxy if applicable)
   const raw = _hostProxyReverse.get(obj) ?? obj;
+  // (#5374) The #5225 seam, one step past the field read: every arm below
+  // dispatches through an export of ONE module (`__sget_valueOf`,
+  // `__call_fn_method_0`, `__call_@@toPrimitive`, …) resolved from the module
+  // the coercion is RUNNING in — so a consumer-minted object coerced inside a
+  // linked provider found no method and bottomed out at "[object Object]".
+  // Retargeted once here, not per probe: the arms must agree on a module.
+  // Miss path only (the registry's `enabled` boolean). Detail in the issue.
+  callbackState = _crossModuleCallbackState(raw, callbackState);
   // (#4616) WasmGC Date carrier — see _wasmDateToPrimitive.
   {
     const dateMs = _wasmDateToPrimitive(raw, hint, callbackState);
