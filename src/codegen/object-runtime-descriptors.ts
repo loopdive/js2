@@ -171,6 +171,25 @@ export interface ObjectDescriptorHelperState {
 }
 
 /**
+ * (#5316 r6) The own-key predicate `__defineProperty_accessor`'s §10.1.6.3
+ * step-2 arm consults before refusing a define on a non-extensible receiver.
+ * Its data-descriptor twin deliberately does NOT — see the comment there.
+ *
+ * `__hasOwnProperty` is own-only AND complete for the receivers those arms see:
+ * it carries the finalize-time closed-struct field ladder (`object-runtime.ts`,
+ * the `targets` list) plus the #3468/#3537 carrier-bag arm, so it answers `true`
+ * for a physical struct field of a #4194 instance carrier that `__obj_find`
+ * cannot see.
+ *
+ * It is deliberately NOT `__desc_has_own`, which the ToPropertyDescriptor
+ * readers in this file use: that native's final arm is the full §7.3.12
+ * HasProperty and walks the PROTOTYPE chain, so it answers `true` for an
+ * INHERITED name — `Object.preventExtensions({}).__defineGetter__("toString", …)`
+ * would stop throwing, which is a new wrong answer for a genuinely new key.
+ */
+const OWN_KEY_PREDICATE = "__hasOwnProperty";
+
+/**
  * Register the property-descriptor + object-integrity native helpers. Called
  * once, in place, from `ensureObjectRuntime` (standalone/host both — the
  * gc/host-mode paths are no-op-guarded inside exactly as before).
@@ -342,6 +361,18 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
           {
             op: "if",
             blockType: { kind: "empty" },
+            // (#5316 r6) DELIBERATELY NOT guarded by the receiver-owns-the-key
+            // predicate its accessor twin uses (`accNonExtensibleArm` below).
+            // The guard was written here for symmetry, measured, and reverted:
+            // it silenced the throw of
+            // `Object.defineProperty(Object.freeze({existing:null}),"existing",
+            // {value:2})`, which node throws and this arm correctly threw — so
+            // the arm IS reachable for a frozen carrier receiver. A data→data
+            // redefine of an existing property is legal on a merely
+            // non-extensible or sealed object and illegal on a frozen one, so
+            // relaxing the refusal by ownership alone is too coarse, and no
+            // probe shows this arm refusing a define that must succeed. See the
+            // r6 probe table in plan/issues/5316-*.md.
             then: s4Throw("TypeError: Cannot define property, object is not extensible"),
           },
         ],
@@ -820,6 +851,55 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       { op: "i32.const", value: 0 },
       { op: "i32.ne" },
     ];
+    // (#5316 r6) OWN-key predicate for the non-extensible arm below; see
+    // OWN_KEY_PREDICATE for why it is this native and not `__desc_has_own`.
+    // Absent on the host/gc lanes, where `env::__defineProperty_accessor` owns
+    // this path and the native is never emitted — the arm then keeps the plain
+    // throw, which is why host output stays byte-identical.
+    const accOwnKeyIdx = ctx.funcMap.get(OWN_KEY_PREDICATE);
+    // (#5316 r6) `__obj_find` answers the `$Object` prop table ONLY. On a #4194
+    // instance carrier — a class instance, or the `__anon_*` struct an object
+    // LITERAL lowers to — the receiver's own DATA properties are physical STRUCT
+    // FIELDS, not bag entries, so an EXISTING key reads as "new" here and the
+    // §10.1.6.3 step 2 throw fires on a define that must succeed. Consult the
+    // receiver `O` (local 0), not the substituted bag `o` (local 5): only the
+    // receiver can answer for its fields.
+    //   owns  → the property EXISTS; a sealed/frozen carrier makes it
+    //           non-configurable, so the data→accessor conversion is the
+    //           §10.1.6.3 step 7 rejection; otherwise fall through to the insert,
+    //           which shadows the field with a bag accessor entry exactly as it
+    //           did before #5316 recorded the flag on these carriers at all.
+    //   !owns → genuinely new; throw as before.
+    // For a plain `$Object` receiver this guard is a NO-OP: `__obj_find` null
+    // implies own-key absent, so the predicate answers false and control reaches
+    // the same throw.
+    const accNonExtensibleArm: Instr[] =
+      accOwnKeyIdx === undefined
+        ? accThrow("TypeError: Cannot define property, object is not extensible")
+        : [
+            { op: "local.get", index: 0 },
+            { op: "local.get", index: 1 },
+            { op: "call", funcIdx: accOwnKeyIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [
+                { op: "local.get", index: 5 },
+                { op: "ref.as_non_null" },
+                { op: "struct.get", typeIdx: objectTypeIdx, fieldIdx: 4 },
+                { op: "i32.const", value: OBJ_FLAG_SEALED | OBJ_FLAG_FROZEN },
+                { op: "i32.and" },
+                {
+                  op: "if",
+                  blockType: { kind: "empty" },
+                  then: accThrow(
+                    "TypeError: Cannot redefine property: cannot convert a non-configurable data property to an accessor",
+                  ),
+                },
+              ],
+              else: accThrow("TypeError: Cannot define property, object is not extensible"),
+            },
+          ];
     // (#4161, #4098) Carrier-bag substitution; bag local APPENDED at index 16
     // (standalone/wasi only) — same shape as the `__defineProperty_value` arm.
     const dpAccessorClosureArm = defineCarrierBagSubstitutionArm(ctx, {
@@ -1092,7 +1172,7 @@ export function buildObjectDescriptorHelpers(ctx: CodegenContext, s: ObjectDescr
       {
         op: "if",
         blockType: { kind: "empty" },
-        then: accThrow("TypeError: Cannot define property, object is not extensible"),
+        then: accNonExtensibleArm,
       },
       // load = o.count + o.tombstones ; cap = o.props.len ; grow at LF 0.7
       { op: "local.get", index: 5 },
