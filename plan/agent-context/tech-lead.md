@@ -1,12 +1,28 @@
 ---
 agent: tech-lead
-session_end: 2026-04-27-sprint-45-partial
+session_end: 2026-09-07
 next_session_entry_point: >
-  Read this file + plan/issues/sprints/46/sprint.md.
-  Two open PRs: #76 (hold for investigation) and #77 (CI tooling, check CI result first).
-  S46 has 9 issues ready to dispatch. Tag sprint-46/begin before spawning devs.
-last_handoff_reason: "Sprint 45 winding down at 75% weekly token budget. 4 PRs merged today."
+  ES2015 standalone lane: read plan/agent-context/es2015-standalone-handover-2026-09-07.md,
+  then the "### Wave-5 close (2026-09-07)" section of
+  plan/issues/4444-es6-standalone-edition-closeout-umbrella.md. Nothing is in
+  flight on that lane (no open PR, no running lane, no claim held).
+last_handoff_reason: "ES2015 standalone wave 5 closed at 87.4 %; session wound down on stakeholder request."
 ---
+
+## CURRENT STATE (as of 2026-09-07, ES2015 standalone lane)
+
+- ES2015 standalone **10,228 / 11,704 = 87.4 %** (baseline fetched 04:35 UTC);
+  whole corpus standalone 35,213 / 48,735.
+- Merged this session: #5688, #5694, #5696, #5698 — all through the queue.
+- Open PRs of this lane: none. Session branch
+  `claude/es6-test262-standalone-g10c7u` == `origin/main`.
+- Next work, in order: #5350's block-scoped-class captured-`var` write defect
+  (7 rows), the TypedArray cluster (#5349 steps 6–7, #5359, the `u8.buffer`
+  snapshot family), ArrayBuffer-subclass species, the wasi own-key ladder,
+  `Reflect.defineProperty`'s missing catch, #3371 r3; then plans for the
+  unowned regexp / generators / promise / for-of clusters.
+- The older sections below (Sprint 45, 2026-04-27) are historical.
+
 
 ## CURRENT STATE (as of 2026-04-27)
 
