@@ -33,7 +33,7 @@ import {
 import { resolveStructName } from "./expressions/misc.js";
 import { tryEmitArrayProtoIteratorDelete } from "./expressions/proto-override.js";
 import { addUnionImports, parseRegExpLiteral, resolveWasmType } from "./index.js";
-import { emitExternrefDestructureGuard } from "./destructuring-params.js";
+import { emitExternrefDestructureGuard, paramUndefinedTypeIsDefaultArtifact } from "./destructuring-params.js";
 import { buildThrowJsErrorInstrs, type JsErrorKind } from "./js-errors.js";
 import { compileStandaloneRegExpLiteral } from "./regexp-standalone.js";
 import { addImport, localGlobalIdx } from "./registry/imports.js";
@@ -2042,6 +2042,13 @@ export function compileTypeofExpression(
     }
   }
 
+  // (#5360) `function f(a, b = undefined)` — the checker types `b` as
+  // `undefined` from its own default, but the slot is externref and a caller
+  // may pass anything. Read the value.
+  if (!forceRuntimeTypeof && paramUndefinedTypeIsDefaultArtifact(ctx, operand)) {
+    forceRuntimeTypeof = true;
+  }
+
   // Try static resolution first via the shared helper
   if (!forceRuntimeTypeof) {
     if (classStaticMethodTypeofOverride(ctx, operand)) {
@@ -2291,6 +2298,12 @@ export function compileTypeofComparison(
   }
   // (#4204) Same unsound-fold guard as compileTypeofExpression.
   if (staticTypeof !== null && ts.isIdentifier(operand) && moduleGlobalIsDynamicButStaticallyPrimitive(ctx, operand)) {
+    staticTypeof = null;
+  }
+  // (#5360) Same guard as compileTypeofExpression — a parameter's `undefined`/
+  // `null` type inferred from its own default initializer is not a fact about
+  // the argument a JS caller passed.
+  if (staticTypeof !== null && paramUndefinedTypeIsDefaultArtifact(ctx, operand)) {
     staticTypeof = null;
   }
   // binding still holds `undefined`, so the checker's initializer-derived fold is

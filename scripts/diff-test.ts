@@ -68,6 +68,15 @@ interface FileResult {
 }
 
 interface Summary {
+  /**
+   * #5344 — ISO-8601 timestamp of this measurement. Carried INTO the artifact
+   * on purpose: every promote job in this repo checks out `fetch-depth: 1`,
+   * where `git log -1 -- <path>` returns EMPTY rather than erroring, so a
+   * git-derived age silently launders a frozen artifact into "fresh". The
+   * committed baseline keeps this field, and both the main-push queue gate
+   * (`--last-refresh`) and the delta gate's staleness check read it from there.
+   */
+  generatedAt: string;
   total: number;
   match: number;
   mismatch: number;
@@ -348,6 +357,7 @@ async function main(): Promise<void> {
   }
 
   const summary: Summary = {
+    generatedAt: new Date().toISOString(),
     total: results.length,
     match: 0,
     mismatch: 0,

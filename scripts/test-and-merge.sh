@@ -39,9 +39,9 @@ git -C "$WT" merge main --no-edit || { echo "MERGE CONFLICT — fix manually"; e
 
 # Build from branch source
 echo "Building compiler from branch..."
-/workspace/node_modules/.bin/esbuild "$WT/src/index.ts" --bundle --platform=node --format=esm \
+/workspace/node_modules/.bin/esbuild "$WT/scripts/compiler-bundle-entry.ts" --bundle --platform=node --format=esm \
   --outfile=/workspace/scripts/compiler-bundle.mjs --external:typescript --external:binaryen
-/workspace/node_modules/.bin/esbuild "$WT/src/runtime.ts" --bundle --platform=node --format=esm \
+/workspace/node_modules/.bin/esbuild "$WT/scripts/runtime-bundle-entry.ts" --bundle --platform=node --format=esm \
   --outfile=/workspace/scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
 # Run equivalence tests (non-zero exit is OK — pre-existing failures expected)

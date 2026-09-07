@@ -900,6 +900,7 @@ function buildCodegenOptions(
     runtimeProvider: options.runtimeProvider === true,
     canonicalRuntimeTypes: options.canonicalRuntimeTypes === true,
     sharedExceptionTag: options.sharedExceptionTag === true,
+    exportsConsumedByWasm: options.exportsConsumedByWasm === true,
     jsxRuntime: prep?.jsxRuntime,
     dtsEntrypointSeeds: prep?.dtsEntrypointSeeds,
   };

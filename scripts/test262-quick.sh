@@ -12,7 +12,7 @@ MAX="${2:-50}"
 
 echo "Rebuilding compiler bundle..."
 cd /workspace
-npx esbuild src/index.ts --bundle --platform=node --format=esm \
+npx esbuild scripts/compiler-bundle-entry.ts --bundle --platform=node --format=esm \
   --outfile=scripts/compiler-bundle.mjs --external:typescript 2>&1 | tail -1
 
 echo "Finding tests matching: $PATTERN (max $MAX)..."

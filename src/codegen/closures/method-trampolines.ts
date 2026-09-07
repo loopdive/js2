@@ -27,6 +27,7 @@ import {
 } from "../shared.js";
 import {
   closureBagInitInstr,
+  ensureRestFnWrapSubtype,
   getFuncSignature,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
@@ -1227,30 +1228,6 @@ export function ensureFuncClosureSingleton(
     closureStructTypeIdx: structTypeIdx,
     ...(allocStructTypeIdx !== undefined ? { allocStructTypeIdx, metaInit: allocInit } : {}),
   };
-}
-
-/**
- * (#4616) Get-or-create the rest-marker subtype of a funcref-wrapper struct:
- * the base wrapper's fields plus one immutable f64 marker. The f64 (vs the
- * constructible subtype's i32 marker) keeps the canonical shape distinct, so
- * `ref.test` can discriminate rest-param singleton closures at dispatch time.
- */
-function ensureRestFnWrapSubtype(ctx: CodegenContext, baseStructTypeIdx: number): number {
-  const holder = ctx as unknown as { __restFnWrapSubtypeByBase?: Map<number, number> };
-  const cache = (holder.__restFnWrapSubtypeByBase ??= new Map());
-  const hit = cache.get(baseStructTypeIdx);
-  if (hit !== undefined) return hit;
-  const baseDef = ctx.mod.types[baseStructTypeIdx];
-  const baseFields = baseDef?.kind === "struct" ? baseDef.fields : [];
-  const idx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: `__rest_fn_wrap_${ctx.closureCounter++}_struct`,
-    fields: [...baseFields, { name: "__rest_marker", type: { kind: "f64" as const }, mutable: false }],
-    superTypeIdx: baseStructTypeIdx,
-  });
-  cache.set(baseStructTypeIdx, idx);
-  return idx;
 }
 
 /**

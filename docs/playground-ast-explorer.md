@@ -44,6 +44,18 @@ The helper file itself is not shipped: its `from "js2wasm"` specifier cannot
 resolve from a statically-served file, and the playground already has the
 runtime loaded.
 
+### Safari / JavaScriptCore
+
+The panel worked in Chrome and failed on iOS with acorn's `ecmaVersion`
+warning and `Cannot read properties of null (reading 'replace')` (#5337). JSC
+hands out different JS objects for the same Wasm function via `table.get` and
+`instance.exports`, and for a re-exported imported Global — so the runtime's
+host-bridge identity checks masked every helper. The runtime now probes the
+engine once and falls back to an index-based check
+(`src/runtime/exported-function-identity.ts`). To re-check on the engine
+itself without a Mac: `node scripts/jsc-acorn-smoke.mjs` (needs a `jsc` shell,
+e.g. `apt-get install libjavascriptcoregtk-bin`; skips otherwise).
+
 ## TypeScript in, JavaScript AST out
 
 acorn parses JavaScript; the editor holds TypeScript. The panel erases the

@@ -368,3 +368,241 @@ describe("#5318 r4 review — RESIDUAL: a static FIELD does not shadow the sidec
     expect(runHost(FIELD_COLLISION, "probeQ2")).toBe(7);
   });
 });
+
+describe("#5318 r5 — a class NESTED in a function keeps its static-accessor install", () => {
+  // Round 1 replaced the syntactic predicate with the compiled body, which is
+  // `undefined` for every class nested in a function, arrow or method: the
+  // sidecar is emitted at ClassDefinitionEvaluation while the enclosing
+  // function is still being compiled, so the half's funcMap body is still
+  // empty. All of those silently reverted to base's missing-property answer.
+  // The gate is now tri-state — compiled body when it exists, a blunt
+  // full-subtree syntactic scan when it does not.
+  //
+  // Every class in this file before this block is lexically TOP-LEVEL, which
+  // is exactly why the suite did not catch the round-1 give-back.
+  const NESTED = `
+    let x = 0;
+    export function probeH() {
+      class H { static get [x || "k"]() { return 23; } }
+      const v = H[x || "k"]; return v === undefined ? -1 : v;
+    }
+  `;
+
+  it("standalone: h3 — the minimal nested repro installs again (node: 23)", async () => {
+    expect(await runStandalone(NESTED, "probeH", "issue-5318-r5-h3.js")).toBe(23);
+  });
+
+  // Six placements of the same getter. Top-level and top-level-if-block have a
+  // compiled body available and were never affected; the other four are the
+  // ones round 1 gave back.
+  const PLACEMENTS = `
+    let x = 0;
+    class TopLevel { static get [x || "k"]() { return 23; } }
+    let InBlock;
+    if (x === 0) { class B { static get [x || "k"]() { return 23; } } InBlock = B; }
+    const makeArrow = () => { class A { static get [x || "k"]() { return 23; } } return A; };
+    function makeFn() { class F { static get [x || "k"]() { return 23; } } return F; }
+    class Holder { static make() { class M { static get [x || "k"]() { return 23; } } return M; } }
+    export function probeTopLevel() { const v = TopLevel[x || "k"]; return v === undefined ? -1 : v; }
+    export function probeIfBlock() { const v = InBlock[x || "k"]; return v === undefined ? -1 : v; }
+    export function probeArrow() { const v = makeArrow()[x || "k"]; return v === undefined ? -1 : v; }
+    export function probeFnDecl() { const v = makeFn()[x || "k"]; return v === undefined ? -1 : v; }
+    export function probeStaticMethod() { const v = Holder.make()[x || "k"]; return v === undefined ? -1 : v; }
+    export function probeInline() {
+      class I { static get [x || "k"]() { return 23; } }
+      const v = I[x || "k"]; return v === undefined ? -1 : v;
+    }
+  `;
+
+  const PLACEMENT_PROBES = [
+    "probeTopLevel",
+    "probeIfBlock",
+    "probeArrow",
+    "probeFnDecl",
+    "probeStaticMethod",
+    "probeInline",
+  ] as const;
+
+  for (const probe of PLACEMENT_PROBES) {
+    it(`standalone: h4 ${probe} answers node's 23`, async () => {
+      expect(await runStandalone(PLACEMENTS, probe, "issue-5318-r5-h4.js")).toBe(23);
+    });
+  }
+
+  it("host lane agrees on all six placements", () => {
+    for (const probe of PLACEMENT_PROBES) expect(runHost(PLACEMENTS, probe)).toBe(23);
+  });
+
+  // g1: a nested class mixing a static METHOD (whose install arm has no
+  // receiver gate and worked throughout) with a static ACCESSOR.
+  const MIXED = `
+    let x = 0;
+    function mixed() {
+      class G {
+        static get [x || "k"]() { return 23; }
+        static [x || "m"]() { return 11; }
+      }
+      return G;
+    }
+    export function probeFnMixed() { const v = mixed()[x || "k"]; return v === undefined ? -1 : v; }
+    export function probeFnMixedMethod() { const f = mixed()[x || "m"]; return typeof f === "function" ? f() : -1; }
+  `;
+
+  it("standalone: g1 — the accessor installs alongside the method (node: 23)", async () => {
+    expect(await runStandalone(MIXED, "probeFnMixed", "issue-5318-r5-g1.js")).toBe(23);
+  });
+
+  it("standalone: g1 — the method half is unchanged (node: 11)", async () => {
+    expect(await runStandalone(MIXED, "probeFnMixedMethod", "issue-5318-r5-g1.js")).toBe(11);
+  });
+
+  // d1: the probe calls a HOISTED function declaration textually before it, so
+  // the class compiles inside a function whose body is still in flight.
+  const HOISTED = `
+    let x = 0;
+    export function probeHoist() { const v = hoisted()[x || "k"]; return v === undefined ? -1 : v; }
+    function hoisted() { class D { static get [x || "k"]() { return 23; } } return D; }
+  `;
+
+  it("standalone: d1 — a hoisted enclosing function installs too (node: 23)", async () => {
+    expect(await runStandalone(HOISTED, "probeHoist", "issue-5318-r5-d1.js")).toBe(23);
+  });
+});
+
+describe("#5318 r5 — trap safety of the syntactic fallback", () => {
+  // The fallback's ONLY permitted error is over-declining. Each shape below
+  // puts a receiver read somewhere `genBodyReferencesThis` would have missed;
+  // every one must keep base's -1 and none may throw. Measured against the
+  // top-level twin of each shape, where the compiled body IS available: zero
+  // disagreements in the unsafe direction (walker "free" while the compiled
+  // body reads local 0), four in the safe one (a nested function's default
+  // parameter, `arguments`, a nested class method's own `this`, and `eval` —
+  // the compiled gate installs those, the walker declines them).
+  const TRAPS = `
+    let x = 0;
+    export function probeC2() {
+      class T { static get [x || "k"]() { class X { static f = this; } return 6; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeCatch() {
+      class T { static get [x || "k"]() { class X { static f = this; } return 6; } }
+      try { const v = T[x || "k"]; return v === undefined ? -1 : v; } catch (e) { return -99; }
+    }
+    export function probeNestedArrow() {
+      class T { static get [x || "k"]() { const f = () => this; return typeof f() === "undefined" ? 1 : 2; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeNestedDefaultParam() {
+      class T { static get [x || "k"]() { class X { static m(a = this) { return a; } } return X === undefined ? 1 : 3; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeNestedComputedKey() {
+      class T { static get [x || "k"]() { class X { [this === undefined ? "a" : "b"]() { return 1; } } return X === undefined ? 1 : 4; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeArguments() {
+      class T { static get [x || "k"]() { return typeof arguments === "object" ? 5 : 0; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeNestedStaticBlock() {
+      class T { static get [x || "k"]() { class X { static { globalThis.__t = this; } } return X === undefined ? 1 : 7; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeNestedMethod() {
+      class T { static get [x || "k"]() { class X { m() { return this; } } return X === undefined ? 1 : 8; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeEval() {
+      class T { static get [x || "k"]() { return eval("1 + 9"); } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+  `;
+
+  for (const probe of [
+    "probeC2",
+    "probeNestedArrow",
+    "probeNestedDefaultParam",
+    "probeNestedComputedKey",
+    "probeArguments",
+    "probeNestedStaticBlock",
+    "probeNestedMethod",
+    "probeEval",
+  ]) {
+    it(`standalone: ${probe} declines rather than installing a trapping half`, async () => {
+      expect(await runStandalone(TRAPS, probe, "issue-5318-r5-t1.js")).toBe(-1);
+    });
+  }
+
+  it("standalone: the declined read is not a throw", async () => {
+    expect(await runStandalone(TRAPS, "probeCatch", "issue-5318-r5-t1.js")).toBe(-1);
+  });
+
+  // The shapes the fallback ADMITS: no `this`/`super`/`arguments`/`eval`/
+  // `new.target` anywhere in the subtree. Each answers node.
+  const ADMITTED = `
+    let x = 0;
+    export function probeFreeNested() {
+      class T { static get [x || "k"]() { class X { static f = 1; } return X.f + 20; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeCaptureOuterLocal() {
+      const outer = 30;
+      class T { static get [x || "k"]() { return outer + 1; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeNestedArrowNoThis() {
+      class T { static get [x || "k"]() { const f = () => 50; return f() + 3; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeObjectLiteralMethod() {
+      class T { static get [x || "k"]() { const o = { m() { return 60; } }; return o.m() + 4; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeNestedExtends() {
+      class T { static get [x || "k"]() { class A { static f = 5; } class B extends A {} return B.f + 80; } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+    export function probeTryCatchThrow() {
+      class T { static get [x || "k"]() { try { throw new Error("e"); } catch (e) { return 90; } } }
+      const v = T[x || "k"]; return v === undefined ? -1 : v;
+    }
+  `;
+
+  for (const [probe, expected] of [
+    ["probeFreeNested", 21],
+    ["probeCaptureOuterLocal", 31],
+    ["probeNestedArrowNoThis", 53],
+    ["probeObjectLiteralMethod", 64],
+    ["probeNestedExtends", 85],
+    ["probeTryCatchThrow", 90],
+  ] as const) {
+    it(`standalone: ${probe} installs and answers node's ${expected}`, async () => {
+      expect(await runStandalone(ADMITTED, probe, "issue-5318-r5-t3.js")).toBe(expected);
+      expect(runHost(ADMITTED, probe)).toBe(expected);
+    });
+  }
+
+  // RESIDUAL, unchanged by r5: a write through an installed setter is dropped.
+  // The class prototype/sidecar lookup arm is prepended into `__extern_get`
+  // only (`class-proto-lookup.ts::fillClassProtoLookupArm`) — there is no
+  // `__extern_set` twin. Base answers -1 (neither half reachable); this tree
+  // answers the getter and swallows the write.
+  const SETTER = `
+    let x = 0;
+    export function probeSetterHalfNested() {
+      let sink = 0;
+      class T {
+        static set [x || "k"](v) { sink = v; }
+        static get [x || "m"]() { return 100; }
+      }
+      T[x || "k"] = 7;
+      const g = T[x || "m"];
+      return g === undefined ? -1 : g + sink;
+    }
+  `;
+
+  it("standalone: RESIDUAL — the setter write is dropped (node: 107)", async () => {
+    expect(await runStandalone(SETTER, "probeSetterHalfNested", "issue-5318-r5-setter.js")).toBe(100);
+    expect(runHost(SETTER, "probeSetterHalfNested")).toBe(107);
+  });
+});

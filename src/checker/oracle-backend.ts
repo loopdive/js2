@@ -322,6 +322,10 @@ export class DifferentialOracle implements TypeOracle {
     return this.compare("valueDeclarationOf", id, (o) => o.valueDeclarationOf(id), describeOptionalNode);
   }
 
+  aliasedValueDeclarationOf(id: ts.Node): ts.Declaration | undefined {
+    return this.compare("aliasedValueDeclarationOf", id, (o) => o.aliasedValueDeclarationOf(id), describeOptionalNode);
+  }
+
   declarationsOf(node: ts.Node): readonly ts.Declaration[] {
     return this.compare(
       "declarationsOf",

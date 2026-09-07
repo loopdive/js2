@@ -320,7 +320,7 @@ jobs:
       - name: Build compiler bundles
         run: |
           pnpm run build:compiler-bundle
-          ./node_modules/.bin/esbuild src/runtime.ts --bundle --platform=node --format=esm \
+          ./node_modules/.bin/esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm \
             --outfile=scripts/runtime-bundle.mjs --external:typescript --external:binaryen
 
       # Built ONCE by the provider job above and downloaded here. A shard only

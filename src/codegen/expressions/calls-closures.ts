@@ -10,7 +10,7 @@
 import { ts } from "../../ts-api.js";
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
-import { BUILTIN_CLASS_NAMES } from "./builtin-class-names.js";
+import { callablePropertyIsExtractedHostBuiltin } from "./callable-property-host-value.js"; // (#5342)
 import {
   getClosureFuncSelfTypeIdx,
   getFuncRefWrapperRootTypeIdx,
@@ -85,6 +85,13 @@ const STANDALONE_TA_DISPATCHED_METHODS: ReadonlySet<string> = new Set([
 ]);
 import { tryEmitTransferredNativeProtoMethodCall } from "./transferred-native-proto-call.js";
 import { buildArgcExtrasSetupFromLocals } from "./argc-extras.js";
+import {
+  argumentExternViews,
+  bridgedRestFixedCount,
+  collectRestDispatchPlans,
+  restShapedWrapperCandidates,
+  restSlotMarshalInstrs,
+} from "./callable-rest-bridge.js"; // (#5334)
 import { tryCompileGetPrototypeOfIsPrototypeOf } from "./object-get-prototype-of.js";
 import { tryEmitStaticOrNativeIsPrototypeOf } from "../native-is-prototype-of.js";
 import { ensureFunctionNativeProtoGlue } from "../array-object-proto.js";
@@ -118,6 +125,8 @@ type FuncCandidate = {
   structTypeIdx: number;
   returnType: ValType | null;
   paramTypes: ValType[];
+  /** (#5334) The trailing formal is a rest vec the bridge fills at runtime. */
+  restReading?: boolean;
 };
 
 /**
@@ -158,33 +167,6 @@ function callablePropertyRefBridge(ctx: CodegenContext, from: ValType, to: ValTy
 
 /** `fillApplyClosure` only emits dynamic method dispatchers for arities 0..8. */
 const REALM_DYNAMIC_CALL_MAX_ARITY = 8;
-
-/**
- * True when a closed object's callable property is a shorthand reference to a
- * function extracted from a host builtin, for example:
- *
- *   const { isArray } = Array;
- *   export default { isArray };
- *
- * The field contains a genuine host function externref, not a compiled Wasm
- * closure. Calling it through the typed closure-wrapper path null-casts the
- * value and traps. Keep these declaration-proven values on the ordinary host
- * method bridge, which also materializes Wasm array arguments for native
- * `Array.isArray` and similar observers.
- */
-function callablePropertyIsExtractedHostBuiltin(ctx: CodegenContext, propAccess: ts.PropertyAccessExpression): boolean {
-  const propertyDecl = ctx.oracle.declarationsOf(propAccess.name).find(ts.isShorthandPropertyAssignment);
-  if (!propertyDecl || !ts.isShorthandPropertyAssignment(propertyDecl)) return false;
-
-  const valueDecl = ctx.oracle.valueDeclarationOf(propertyDecl.name);
-  if (!valueDecl || !ts.isBindingElement(valueDecl) || !ts.isObjectBindingPattern(valueDecl.parent)) return false;
-
-  const variableDecl = valueDecl.parent.parent;
-  if (!ts.isVariableDeclaration(variableDecl) || !variableDecl.initializer) return false;
-  let source = variableDecl.initializer;
-  while (ts.isParenthesizedExpression(source)) source = source.expression;
-  return ts.isIdentifier(source) && (BUILTIN_CLASS_NAMES.has(source.text) || ctx.declaredGlobals.has(source.text));
-}
 
 /**
  * True when a callable property comes from a function-declaration shorthand
@@ -264,6 +246,8 @@ function reserveSpeculativeClosureFuncCandidateTypes(
   ctx: CodegenContext,
   declared: FuncCandidate,
   sigParamWasmTypes: ValType[],
+  /** (#5334) The call site's file, for the program-wide rest-parameter check. */
+  sourceFile?: ts.SourceFile,
 ): FuncCandidate[] {
   const funcCandidates: FuncCandidate[] = [declared];
   const seen = new Set<number>([declared.funcTypeIdx]);
@@ -300,6 +284,17 @@ function reserveSpeculativeClosureFuncCandidateTypes(
   if (declared.returnType !== null) tryAlt([]);
   if (declaredKind !== "f64") tryAlt([{ kind: "f64" }]);
   if (declaredKind !== "i32") tryAlt([{ kind: "i32" }]);
+  // (#5334) The pure-rest shape `(...args) -> R` as well, so a rest closure
+  // stored after this site compiles (jest's `vi.fn()` spy) has an arm; its vec
+  // slot is filled at runtime by the bridge.
+  if (!ctx.standalone && !ctx.wasi) {
+    const declaredResult = declared.returnType === null ? [] : [declared.returnType];
+    for (const info of restShapedWrapperCandidates(ctx, sourceFile, [declaredResult, [{ kind: "externref" }], []])) {
+      if (seen.has(info.funcTypeIdx)) continue;
+      seen.add(info.funcTypeIdx);
+      funcCandidates.push({ ...info, restReading: true });
+    }
+  }
   return funcCandidates;
 }
 
@@ -321,24 +316,32 @@ function collectClosureFuncCandidates(
   const funcCandidates: FuncCandidate[] = [...initialCandidates];
   const seen = new Set<number>(initialCandidates.map((candidate) => candidate.funcTypeIdx));
 
+  const hostLane = !ctx.standalone && !ctx.wasi;
   for (const [, info] of ctx.closureInfoByTypeIdx) {
-    // A positional helper ABI cannot synthesize a source rest vector.  The
-    // deferred scalar/no-arg admission makes a matching rest candidate
-    // impossible in normal programs; keep this explicit fail-closed guard for
-    // shared/synthetic wrapper registries whose provenance is conservative.
-    if (rejectRestCandidates && info.hasRestParam === true) continue;
-    const shorterArity = info.paramTypes.length < sigParamCount;
-    if (info.paramTypes.length > sigParamCount) continue;
-    // A callable property may expose a wider interface signature than the
-    // closure stored in that field. JavaScript still invokes the shorter
-    // function and ignores surplus arguments. Only admit a shorter source
-    // closure when its body cannot observe the call-site arity through
-    // `arguments`, rest parameters, or defaults; otherwise the declared-width
-    // argc/extras setup below would be observably wrong for that candidate.
-    if (shorterArity && (!admitShorterArity || info.needsCallSiteArity !== false)) continue;
+    // (#5334) A trailing externref vec is admitted on the candidate's FIXED
+    // prefix; whether it is a rest vec or a real array parameter is decided at
+    // runtime by the bridge (callable-rest-bridge.ts). The deferred helper sees
+    // only padded declared formals, so it takes that reading only when the vec
+    // is provably empty. Any other rest carrier keeps the fail-closed guard: a
+    // positional helper ABI cannot synthesize it.
+    const restFixedCount = bridgedRestFixedCount(ctx, info.paramTypes, hostLane);
+    if (restFixedCount === null && rejectRestCandidates && info.hasRestParam === true) continue;
+    if (restFixedCount !== null) {
+      if (restFixedCount > sigParamCount || (rejectRestCandidates && restFixedCount !== sigParamCount)) continue;
+    } else {
+      const shorterArity = info.paramTypes.length < sigParamCount;
+      if (info.paramTypes.length > sigParamCount) continue;
+      // A callable property may expose a wider interface signature than the
+      // closure stored in that field. JavaScript still invokes the shorter
+      // function and ignores surplus arguments. Only admit a shorter source
+      // closure when its body cannot observe the call-site arity through
+      // `arguments`, rest parameters, or defaults; otherwise the declared-width
+      // argc/extras setup below would be observably wrong for that candidate.
+      if (shorterArity && (!admitShorterArity || info.needsCallSiteArity !== false)) continue;
+    }
     if (seen.has(info.funcTypeIdx)) continue;
     let paramsMatch = true;
-    for (let pi = 0; pi < info.paramTypes.length; pi++) {
+    for (let pi = 0; pi < (restFixedCount ?? info.paramTypes.length); pi++) {
       if (callablePropertyRefBridge(ctx, sigParamWasmTypes[pi]!, info.paramTypes[pi]!) === null) {
         paramsMatch = false;
         break;
@@ -351,6 +354,7 @@ function collectClosureFuncCandidates(
         structTypeIdx: info.structTypeIdx,
         returnType: info.returnType,
         paramTypes: info.paramTypes,
+        ...(restFixedCount !== null ? { restReading: true } : {}),
       });
     }
   }
@@ -441,6 +445,10 @@ function emitRootFuncrefDispatch(
   argTypes: ValType[],
   expectedReturn: ValType | null,
   terminal: Instr[] = typeErrorThrowInstrs(ctx),
+  /** (#5334) Externref views of the real arguments, for a rest candidate's pack. */
+  argExternLocals: readonly (number | undefined)[] = [],
+  /** (#5334) Real call-site argument count; the default means "declared formals only". */
+  argCount: number = argTypes.length,
 ): void {
   // Fetch the funcref off the ROOT (field 0 is the root's own field, present on
   // every wrapper subtype), then dispatch on its exact type.
@@ -452,6 +460,8 @@ function emitRootFuncrefDispatch(
   const retBlockType =
     expectedReturn === null ? ({ kind: "empty" } as const) : ({ kind: "val", type: expectedReturn } as const);
   const numericKind = (t: ValType): boolean => t.kind === "i32" || t.kind === "f64" || t.kind === "i64";
+  // (#5334) Read-only over the registry, as the deferred finalizer requires.
+  const restPlans = collectRestDispatchPlans(ctx, !ctx.standalone && !ctx.wasi);
 
   // Build the dispatch chain bottom-up; innermost else = throw TypeError.
   let funcDispatch: Instr[] = terminal;
@@ -470,13 +480,29 @@ function emitRootFuncrefDispatch(
     // source argument was already evaluated into `argLocals`; leaving the
     // surplus locals unread implements JavaScript's ignored-extra-argument
     // rule without dropping their side effects.
-    for (let index = 0; index < fc.paramTypes.length; index++) {
+    const fcFixedCount = fc.restReading === true ? fc.paramTypes.length - 1 : fc.paramTypes.length;
+    for (let index = 0; index < fcFixedCount; index++) {
       fcCallBody.push({ op: "local.get", index: argLocals[index]! });
       const bridge = callablePropertyRefBridge(ctx, argTypes[index]!, fc.paramTypes[index]!);
       if (bridge === null) {
         throw new Error("callable-property candidate admitted without an argument ABI bridge");
       }
       fcCallBody.push(...bridge);
+    }
+    if (fc.restReading === true) {
+      const restMarshal = restSlotMarshalInstrs(ctx, {
+        paramTypes: fc.paramTypes,
+        plan: restPlans.get(fc.funcTypeIdx),
+        closureLocal,
+        sigParamWasmTypes: argTypes,
+        argLocals,
+        argExternLocals,
+        argCount,
+        vecBridge: (from, to) => callablePropertyRefBridge(ctx, from, to),
+      });
+      // No externref view for an argument the pack needs: skip the arm.
+      if (restMarshal === null) continue;
+      fcCallBody.push(...restMarshal);
     }
     fcCallBody.push({ op: "local.get", index: funcrefLocal });
     fcCallBody.push({ op: "ref.cast", typeIdx: fc.funcTypeIdx });
@@ -1747,8 +1773,8 @@ export function compileCallablePropertyCall(
     }
   }
 
-  // Field is externref — try to find or create matching closure wrapper types
-  if (fieldType.kind === "externref") {
+  // Field is externref, or the `eqref` own-`valueOf`/`toString` carrier (#4394/#5342 cause B).
+  if (fieldType.kind === "externref" || fieldType.kind === "eqref") {
     const resultTypes = sigRetWasm ? [sigRetWasm] : [];
     const wrapperTypes = getOrCreateFuncRefWrapperTypes(ctx, sigParamWasmTypes, resultTypes);
 
@@ -1769,6 +1795,7 @@ export function compileCallablePropertyCall(
         ctx,
         declaredCandidate,
         sigParamWasmTypes,
+        expr.getSourceFile(),
       );
       const calleeIsAsync = isPromiseType(sigRetType);
       const expectedReturn: ValType | null = calleeIsAsync ? { kind: "externref" } : matchedClosureInfo.returnType;
@@ -1816,7 +1843,7 @@ export function compileCallablePropertyCall(
           typeIdx: selfTypeIdx,
         };
         const closureLocal = allocLocal(fctx, `__cprop_ext_${fctx.locals.length}`, closureRefType);
-        fctx.body.push({ op: "any.convert_extern" });
+        if (fieldType.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
         emitGuardedRefCast(fctx, selfTypeIdx);
         fctx.body.push({ op: "local.set", index: closureLocal });
 
@@ -1872,7 +1899,7 @@ export function compileCallablePropertyCall(
       // intact (mirrors calls.ts #2174).
       const rootRefType: ValType = { kind: "ref_null", typeIdx: rootIdx };
       const closureLocal = allocLocal(fctx, `__cprop_ext_${fctx.locals.length}`, rootRefType);
-      fctx.body.push({ op: "any.convert_extern" });
+      if (fieldType.kind === "externref") fctx.body.push({ op: "any.convert_extern" });
       emitGuardedRefCast(fctx, rootIdx);
       fctx.body.push({ op: "local.set", index: closureLocal });
 
@@ -1907,6 +1934,13 @@ export function compileCallablePropertyCall(
         for (const argLocal of argLocals) fctx.body.push({ op: "local.get", index: argLocal });
         fctx.body.push({ op: "call", funcIdx: deferredDispatchIdx });
       } else {
+        // (#5334) The real arguments' externref views, for a rest arm's pack —
+        // only when some candidate takes the rest reading, so a rest-free
+        // program keeps its bytes.
+        const restArgCount = Math.min(expr.arguments.length, argLocals.length);
+        const argExternLocals = funcCandidates.some((candidate) => candidate.restReading === true)
+          ? argumentExternViews(ctx, fctx, argLocals, matchedClosureInfo.paramTypes, restArgCount)
+          : [];
         emitRootFuncrefDispatch(
           ctx,
           fctx,
@@ -1916,6 +1950,9 @@ export function compileCallablePropertyCall(
           argLocals,
           matchedClosureInfo.paramTypes,
           expectedReturn,
+          undefined,
+          argExternLocals,
+          restArgCount,
         );
       }
 

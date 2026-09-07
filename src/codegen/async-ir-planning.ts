@@ -1,18 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { PreparedAsyncAwaitSite } from "../ir/async-from-ast.js";
 import { isSingleAwaitReturnAsyncCandidate } from "../ir/async-prepare.js";
-import {
-  forgetPreparedIrAsyncSettledOwner,
-  preparedIrAsyncLinearSource,
-  preparedIrAsyncPromiseCallClosure,
-  preparedIrAsyncSettledOwner,
-  preparedIrAsyncSettledOwnerWasIssued,
-  settledOwnerIdentity,
-  type PreparedIrAsyncLinearSource,
-  type PreparedIrAsyncPromiseCallClosure,
-  type SettledOwnerIdentity,
-} from "./async-linear-planning.js";
-import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import {
   IR_ASYNC_CLOCK_SNAPSHOT_FN,
   IR_ASYNC_CONSOLE_LOG_STRING_FN,
@@ -21,21 +10,32 @@ import {
   IR_ASYNC_STRING_CONCAT_5_FN,
 } from "../ir/async-semantic-runtime.js";
 import type { IrFromAstResolver } from "../ir/from-ast.js";
-import type { PreparedAsyncAwaitSite } from "../ir/async-from-ast.js";
 import {
   awaitIsStaticallyResolved,
   staticPromiseResolveSettledExpr,
   unwrapPromiseTypeNode,
 } from "../ir/async-static.js";
+import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import { irVal, irVec } from "../ir/nodes.js";
+import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrPromiseDelayResolver } from "../ir/promise-delay.js";
+import type { IrSelectionOptions } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { IrSourceId, IrTerminalUnitRecord, IrUnitId } from "../ir/identity.js";
-import type { IrSelectionOptions } from "../ir/select.js";
-import { IrInvariantError } from "../ir/outcomes.js";
 import { asyncEngineWouldActivate } from "./async-activation.js";
 import { analyzeAsyncBody, splitBodyAtAwait } from "./async-cps.js";
+import {
+  type PreparedIrAsyncLinearSource,
+  forgetPreparedIrAsyncSettledOwner,
+  preparedIrAsyncLinearSource,
+  preparedIrAsyncPromiseCallClosure,
+  preparedIrAsyncSettledOwner,
+  preparedIrAsyncSettledOwnerWasIssued,
+  settledOwnerIdentity,
+  type PreparedIrAsyncPromiseCallClosure,
+  type SettledOwnerIdentity,
+} from "./async-linear-planning.js";
 import { nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import type { CodegenContext } from "./context/types.js";
 import type { IrOverlayIdentityPlan } from "./ir-overlay-identity.js";
@@ -547,7 +547,10 @@ export function preparedIrAsyncSourceShape(
       isAmbientPromiseAll(ctx, split.awaitedExpr) &&
       continuationHasNoPreAwaitCapture(ctx, fn, split.prefix, split.suffix)
     ) {
-      return { kind: "promise-all-continuation", awaitedCall: split.awaitedExpr };
+      return {
+        kind: "promise-all-continuation",
+        awaitedCall: split.awaitedExpr,
+      };
     }
   }
   const linear = preparedIrAsyncLinearSource(ctx, fn);
@@ -585,6 +588,8 @@ function sourceAsyncCanSuspend(ctx: CodegenContext, fn: ts.FunctionDeclaration):
       `settled async owner ${fn.name?.text ?? "<anonymous>"} lost its source proof after ABI issuance`,
     );
   }
+  const linearCalleesPrepared =
+    shape?.kind !== "linear" || linearAwaitCalleesArePrepared(ctx, shape.awaitedExpressions);
   const linearHasSupportedAwaitTypes =
     shape?.kind !== "linear" ||
     shape.awaitSites.every(
@@ -600,6 +605,7 @@ function sourceAsyncCanSuspend(ctx: CodegenContext, fn: ts.FunctionDeclaration):
   return (
     shape !== null &&
     linearHasSupportedAwaitTypes &&
+    linearCalleesPrepared &&
     (linearHasRealSuspension || settledOwner !== null) &&
     (shape.kind === "promise-all-continuation" ||
       shape.kind === "sequential-counted-loop" ||
@@ -626,6 +632,17 @@ function sourceFunctionForCall(ctx: CodegenContext, call: ts.CallExpression): ts
   return declaration && ts.isFunctionDeclaration(declaration) && declaration.getSourceFile() === call.getSourceFile()
     ? declaration
     : null;
+}
+
+/** A linear owner may call only async declarations that the same producer can prepare. */
+function linearAwaitCalleesArePrepared(ctx: CodegenContext, expressions: readonly ts.Expression[]): boolean {
+  for (const expression of expressions) {
+    if (!ts.isCallExpression(expression)) continue;
+    const callee = sourceFunctionForCall(ctx, expression);
+    if (!callee || !callee.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)) continue;
+    if (!preparedIrAsyncSourceCanSuspend(ctx, callee)) return false;
+  }
+  return true;
 }
 
 function exactStandaloneFetchUser(
@@ -1434,7 +1451,10 @@ export function preparedIrAsyncFromAstResolver(
       ) {
         return null;
       }
-      return { target: irImportFuncRef("env", "Promise_all"), resultType: irVec(irVal({ kind: "f64" }), true) };
+      return {
+        target: irImportFuncRef("env", "Promise_all"),
+        resultType: irVec(irVal({ kind: "f64" }), true),
+      };
     },
     preparedAsyncAwaitSite: (awaitExpression) => preparedIrAsyncAwaitSite(ctx, awaitExpression),
     preparedAsyncThenableResultType: (call) =>

@@ -287,6 +287,66 @@ export function receiverIsRealmGlobalObject(
 }
 
 /**
+ * (#5342) True when a `globalThis.<name>` / `this.<name>` access sits INSIDE
+ * THE INITIALIZER OF THE VERY `var <name>` IT NAMES — the capability-probe
+ * idiom every published UMD-era package opens with:
+ *
+ *     var Symbol = typeof globalThis.Symbol === "function" ? globalThis.Symbol : undefined;
+ *     var Map    = typeof globalThis.Map    === "function" ? globalThis.Map    : undefined;
+ *
+ * The #4500 Slice A arms answer such an access from `<name>`'s wasm module
+ * global. Here that global is the storage the statement has not written yet,
+ * so the arm read its own uninitialised slot: `typeof` folded to `"function"`,
+ * the true arm stored `null`, the shadow stayed falsy for the rest of the
+ * module, and every later `Symbol(...)` / `Symbol.iterator` read off it was
+ * dead. lodash's fixture is exactly this shape; the same statement also
+ * poisoned an unrelated sibling `var Sym2 = globalThis.Symbol` in the file.
+ *
+ * The self-reference is what makes the answer unambiguous, in BOTH goals, so
+ * no module/script distinction is needed and #4500's model is untouched
+ * everywhere else:
+ *
+ *  - MODULE goal — §16.2.1.6.4 puts the `var` in the module environment
+ *    record, so it is not a global-object property at all and the access must
+ *    consult the real object.
+ *  - SCRIPT goal — §9.1.1.4.18 CreateGlobalVarBinding does NOT overwrite an
+ *    existing property, so during its own initializer `globalThis.<name>` is
+ *    still whatever the realm had (the builtin `Symbol`, or `undefined` when
+ *    the name is new). Reading the real object is right there too.
+ *
+ * Deliberately narrow: a NON-self-referential access (`var p1 = 7;` then
+ * `this.p1` — Slice A's own witness) is untouched, and so is every access
+ * outside a variable initializer. A broader module-goal gate was measured
+ * first and rejected: it moved the compiled Temporal provider by +27 KB and
+ * cost 31 test262 rows in the merge_group, for no additional lodash win.
+ */
+function realmGlobalReadIsSelfReferential(name: string, receiver: ts.Node): boolean {
+  for (let node: ts.Node | undefined = receiver; node; node = node.parent) {
+    if (ts.isVariableDeclaration(node)) {
+      return ts.isIdentifier(node.name) && node.name.text === name;
+    }
+    if (ts.isFunctionLike(node) || ts.isClassLike(node) || ts.isSourceFile(node)) return false;
+  }
+  return false;
+}
+
+/**
+ * (#5342) The full precondition for a #4500 Slice A READ arm: the receiver is
+ * the realm global object AND the access is not the self-referential
+ * capability probe above. Supersedes the bare `receiverIsRealmGlobalObject`
+ * test at those sites so the extra condition costs the god files no lines.
+ */
+export function realmGlobalModuleGlobalReadApplies(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  access: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+  name: string,
+): boolean {
+  if (realmGlobalReadIsSelfReferential(name, access)) return false;
+  return receiverIsRealmGlobalObject(ctx, fctx, access.expression);
+}
+
+/**
  * (#4555) True when `expr` — a `this` — lexically belongs to the body of a
  * **non-arrow function expression that the inline-IIFE path spliced into the
  * current function** (`fctx.inlinedIifeNodes`, recorded by

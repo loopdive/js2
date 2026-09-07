@@ -40,6 +40,12 @@ loc-budget-allow:
   - src/ir/verify.ts
   - src/ir/builder.ts
   - src/ir/prepared-component-dependencies.ts
+  # 2026-09-07 package-C registry extraction keeps the compatibility façade
+  # and collector registration in their existing god-files while the physical
+  # source-free implementation lives beside them.
+  - src/codegen/declarations/import-collector.ts
+  - src/codegen/parse-number-native.ts
+  - src/codegen/registry/imports.ts
   # 2026-09-02 R2-T1/G1: the admission chain and the ownership fixed point are
   # rewritten from two `||` chains into two ordered predicate TABLES read by a
   # `find`, so the first failing predicate / first crossing edge can be named
@@ -73,6 +79,11 @@ loc-budget-allow:
   # no non-fast lane moved.
   - src/codegen/ir-prepared-free-functions.ts
 oracle-ratchet-allow:
+  # 2026-09-07 package-C's compatibility registry keeps three source-level
+  # predicates in the source-free import collector; their checker reads are
+  # the existing migration seam until the collector's typed oracle surface is
+  # complete.
+  - src/codegen/registry/imports.ts
   - src/codegen/ir-fnctor-admission.ts
   - src/codegen/program-abi-fnctor-producer.ts
   - src/codegen/ir-fnctor-parameter-planning.ts

@@ -91,8 +91,24 @@ function compileConditionalExpression(
   fctx.savedBodies.push(elseInstrs);
   fctx.body = savedBody;
 
-  const thenType: ValType = thenResultType ?? { kind: "f64" };
-  const elseType: ValType = elseResultType ?? { kind: "f64" };
+  // (#5342) Re-attach the symbol BRAND to an arm that produced a bare `i32`
+  // symbol id. `compileSymbolCall` deliberately returns the js-host id
+  // UNbranded (#4626: branding it globally routed mid-emission coercions
+  // through a late `__box_symbol` import whose index shift corrupted already
+  // baked `ref.func` operands). The join below is the one place that must know
+  // anyway, and it is already prepared for a coercion-time late import — both
+  // arms are parked in `fctx.savedBodies` precisely so the shift walker sees
+  // them. Without the brand `cond ? Symbol("a") : undefined` boxed the id with
+  // `__box_number` while the `symbol`-typed sink unboxed it with
+  // `__unbox_symbol`, which answers 0 for a JS number — so lodash's
+  // `var symbol = Symbol ? Symbol("a") : undefined` fixture produced
+  // `Symbol(wasm_0)` in place of `Symbol(a)`.
+  const brandSymbolCarrier = (type: ValType, branch: ts.Expression): ValType =>
+    type.kind === "i32" && type.symbol !== true && ctx.oracle.staticJsTypeOf(branch) === "symbol"
+      ? { ...type, symbol: true }
+      : type;
+  const thenType: ValType = brandSymbolCarrier(thenResultType ?? { kind: "f64" }, expr.whenTrue);
+  const elseType: ValType = brandSymbolCarrier(elseResultType ?? { kind: "f64" }, expr.whenFalse);
 
   // Determine the common result type for both branches
   let resultValType: ValType = thenType;

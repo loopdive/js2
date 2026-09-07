@@ -284,15 +284,21 @@ describe("#3915 wiring: refresh-baseline.yml", () => {
 describe("#3915 class coverage: no un-gated pusher is left behind", () => {
   /**
    * The reported instance was `benchmark-refresh`. The class is "a workflow
-   * that pushes to `loopdive/js2wasm:main`". These four are the whole class as of
-   * 2026-08-01: two were already gated inline by #1951, and this change gates
-   * the two that were not. Every other `git push` in `.github/workflows/`
-   * targets the baselines repo or a non-main branch.
+   * that pushes to `loopdive/js2wasm:main`". These five are the whole class as
+   * of 2026-09-06: two were already gated inline by #1951, #3915 gated the two
+   * that were not, and #5344 re-enabled `diff-test`'s baseline promotion —
+   * gated by the same shared script from the start, because this list is what
+   * says whether that was remembered. Every other `git push` in
+   * `.github/workflows/` targets the baselines repo or a non-main branch;
+   * `npm-compat-refresh.yml` mentions `HEAD:main` only in the comment
+   * explaining why it stopped doing it (#3988) and promotes through a PR.
    */
   const cases: Array<[string, string]> = [
     // gated here (#3915) — via the shared script
     ["benchmark-refresh.yml", "main-push-queue-gate.mjs"],
     ["refresh-baseline.yml", "main-push-queue-gate.mjs"],
+    // (#5344) re-enabled after being commented out post-#491; same shared gate
+    ["diff-test.yml", "main-push-queue-gate.mjs"],
     // gated inline by #1951 — left alone deliberately; promote-baseline is the
     // most load-bearing promote path in the repo and its gate works.
     ["test262-sharded.yml", "mergeQueue"],

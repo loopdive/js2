@@ -4,10 +4,10 @@ import { spawnSync } from "node:child_process";
 
 import { describe, expect, it } from "vitest";
 
-import { compile, type CompileResult } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
-import { ASYNC_HOST_ADAPTERS } from "../src/ir/async-runtime-providers.js";
+import { type CompileResult, compile } from "../src/index.js";
 import { isSingleAwaitReturnAsyncCandidate } from "../src/ir/async-prepare.js";
+import { ASYNC_HOST_ADAPTERS } from "../src/ir/async-runtime-providers.js";
+import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 
 const EXACT_SOURCE = `

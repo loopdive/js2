@@ -110,7 +110,15 @@ export class CompilerPool {
   private forkProcess(): ChildProcess {
     const maxOldSpaceSize = process.env.TEST262_WORKER_MAX_OLD_SPACE_SIZE ?? "512";
     return fork(this.workerPath, [], {
-      stdio: ["pipe", "pipe", "pipe", "ipc"],
+      // (#5353) stderr is INHERITED, not piped. Everything a fork writes there
+      // is provenance or a fatal: the runtime-eval tier announcement (#2928 E7,
+      // which was written to be recoverable from a run log and never was), the
+      // `FATAL: … — recycling` lines, the realm-canary drift summary, and the
+      // Temporal provider's linked/NOT-linked line. Piping fd 2 with no reader
+      // discarded all of it, so "did the shards actually link the provider?"
+      // was unanswerable from a shard log. stdout stays piped — that is test
+      // output, and the harness captures it through its own console proxy.
+      stdio: ["pipe", "pipe", "inherit", "ipc"],
       execArgv: ["--expose-gc", `--max-old-space-size=${maxOldSpaceSize}`],
       // Test262 baselines are produced on UTC CI hosts. Pin worker time-zone
       // semantics locally as well so Date parsing/formatting verdicts do not
@@ -224,6 +232,11 @@ export class CompilerPool {
       // whole-assembly compile (unchanged).
       nativeHarness?: boolean;
       harnessPrefix?: string;
+      // (#5353) Link the compile-once `Temporal` provider (#4628) for this row.
+      // The PARENT decides (it owns the path + `features:` gate); the worker
+      // still refuses unless the host lane is in play and a pre-warm stamp
+      // certifies the provider is a cache read rather than a 50 s cold build.
+      temporal?: boolean;
     } = {},
     timeoutMs = 30_000,
   ): Promise<TestResult> {
@@ -246,6 +259,7 @@ export class CompilerPool {
         // worker takes its unchanged honest path.
         nativeHarness: opts.nativeHarness || false,
         harnessPrefix: opts.harnessPrefix,
+        temporal: opts.temporal || false,
       },
       timeoutMs,
       opts.label,

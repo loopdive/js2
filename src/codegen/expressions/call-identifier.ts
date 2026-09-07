@@ -18,6 +18,12 @@ import {
 } from "../closures/capture-source-slot.js";
 import { usesHostBigIntCarrier } from "../host-bigint-carrier.js";
 import { materializeHoistedFunctionValueBinding } from "../closures/funcref-as-closure.js";
+import {
+  candidateFixedFormalCount,
+  collectRestDispatchPlans,
+  restShapedWrapperCandidates,
+  restSlotMarshalInstrs,
+} from "./callable-rest-bridge.js"; // (#5334)
 import { isBooleanType, isPromiseType, isStringType, isVoidType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { resolveArrayInfo } from "../array-methods.js";
@@ -119,6 +125,7 @@ import { resolvesToGlobalFunctionAlias } from "./eval-inline.js";
 import { prepareStandaloneEvalAliasCall } from "./eval-alias.js";
 import { ensureLateImport, flushLateImportShifts } from "./late-imports.js";
 import { isModuleInitChunkFunctionContext } from "../module-init-chunks.js";
+import { paramUndefinedTypeIsDefaultArtifact } from "../destructuring-params.js";
 import {
   calleeIsCapabilityCtorParam,
   calleeIsPromiseExecutorParam,
@@ -1427,12 +1434,18 @@ export function compileIdentifierCall(
       if (argType?.kind === "externref") {
         // Check TS type to determine what this externref actually is
         const argTsType = ctx.checker.getTypeAtLocation(strArg0);
-        if (argTsType.flags & ts.TypeFlags.Null) {
+        // (#5360) …unless that type is the artifact of the argument's OWN
+        // parameter default (`function f(a, b = undefined)`): the slot is
+        // externref precisely because a JS caller can pass anything, so the
+        // null/undefined constant folds below would drop a live value. Fall
+        // through to the dynamic `__extern_toString` arm.
+        const foldableStaticType = !paramUndefinedTypeIsDefaultArtifact(ctx, strArg0);
+        if (foldableStaticType && argTsType.flags & ts.TypeFlags.Null) {
           // Drop the ref.null.extern, push "null" constant (#1470: native-aware)
           fctx.body.push({ op: "drop" });
           return compileStringLiteral(ctx, fctx, "null", strArg0) ?? { kind: "externref" };
         }
-        if (argTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) {
+        if (foldableStaticType && argTsType.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) {
           fctx.body.push({ op: "drop" });
           return compileStringLiteral(ctx, fctx, "undefined", strArg0) ?? { kind: "externref" };
         }
@@ -1450,7 +1463,12 @@ export function compileIdentifierCall(
         // explicit hint also keeps the dispatch table in
         // `__extern_method_call` honest for wasmGC structs that V8
         // can't introspect natively.
-        return emitToString(ctx, fctx, argType, argTsType, "string");
+        //
+        // (#5360) When the static type is a parameter-default artifact, hand
+        // the coercion engine `any` — it applies the SAME null/undefined
+        // constant folds off `staticType`, so passing the checker's
+        // `undefined` here would re-introduce the drop this arm just avoided.
+        return emitToString(ctx, fctx, argType, foldableStaticType ? argTsType : { kind: "any" }, "string");
       }
 
       if (argType?.kind === "ref" || argType?.kind === "ref_null") {
@@ -2413,10 +2431,14 @@ export function compileIdentifierCall(
             boxBooleanIdx: 0,
             unboxNumberIdx: 0,
           };
+          // (#5334) On the host lane a trailing `$__vec_externref` formal is
+          // marshalled by the runtime-disambiguating bridge (see
+          // callable-rest-bridge.ts), so its candidate is admitted and bridged
+          // on its FIXED formals only. Standalone keeps the flag-driven reading.
+          const hostLane = !ctx.standalone && !ctx.wasi;
           let needsScalarBridge = false;
           for (const [, info] of ctx.closureInfoByTypeIdx) {
-            const hasRest = info.hasRestParam === true;
-            const fixedCount = hasRest ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
+            const fixedCount = candidateFixedFormalCount(ctx, info, hostLane);
             if (fixedCount > sigParamWasmTypes.length) {
               continue;
             }
@@ -2498,15 +2520,14 @@ export function compileIdentifierCall(
             tryAltFuncType([]);
           }
           // Also scan closureInfoByTypeIdx for other matching-arity func types
-          const restFuncTypeIdxs = (ctx as unknown as { __restFuncTypeIdxs?: Set<number> }).__restFuncTypeIdxs;
           for (const [, info] of ctx.closureInfoByTypeIdx) {
             // JS ignores surplus call-site arguments. A JSDoc callback typedef
             // can declare two parameters while the actual function expression
             // declares one (Test262's typed-array harness does exactly this),
             // so retain shorter runtime signatures and marshal only their
             // formal prefix in the dispatch arm below.
-            const hasRestParam = info.hasRestParam === true || restFuncTypeIdxs?.has(info.funcTypeIdx) === true;
-            const fixedParamCount = hasRestParam ? Math.max(0, info.paramTypes.length - 1) : info.paramTypes.length;
+            const fixedParamCount = candidateFixedFormalCount(ctx, info, hostLane);
+            const hasRestParam = fixedParamCount < info.paramTypes.length;
             // A runtime function may declare optional parameters that are not
             // present in the callable's public signature. JavaScript still
             // invokes that function and supplies `undefined` for each omitted
@@ -2623,6 +2644,20 @@ export function compileIdentifierCall(
             }
           }
 
+          // (#5334) The pure-rest shape `(...args) -> R` too, so a rest closure
+          // compiled AFTER this site (jest's `vi.fn()` spy) has an arm; its vec
+          // slot is decided at runtime by the bridge.
+          if (hostLane) {
+            for (const info of restShapedWrapperCandidates(ctx, expr.getSourceFile(), [
+              resultTypes,
+              [{ kind: "externref" }],
+              [],
+            ])) {
+              if (seenFuncTypeIdx.has(info.funcTypeIdx)) continue;
+              seenFuncTypeIdx.add(info.funcTypeIdx);
+              funcCandidates.push(info);
+            }
+          }
           // Preserve the JavaScript distinction between an omitted argument
           // and null. A preregistered callback with optional externref formals
           // can be wider than the public callable signature, so keep one
@@ -3140,6 +3175,9 @@ export function compileIdentifierCall(
               ];
             }
 
+            // (#5334) Every registered rest closure struct whose identity an arm
+            // can trust, per funcref type (host lane; see the bridge module).
+            const restPlans = collectRestDispatchPlans(ctx, hostLane);
             for (const fc of [...funcCandidates].reverse()) {
               // (#4491 wave-5 T6) On a statically-known variadic-alias call the
               // MATCHED candidate carries the variadic func type itself — its
@@ -3152,8 +3190,9 @@ export function compileIdentifierCall(
               // Exactness belongs solely to the funcref type; wrapper subtypes
               // are module-local allocation identities.
               const fcCallBody: Instr[] = [];
-              const fcHasRest = fc.hasRestParam === true;
-              const fcFixedParamCount = fcHasRest ? Math.max(0, fc.paramTypes.length - 1) : fc.paramTypes.length;
+              // (#5334) A trailing rest formal is marshalled by the runtime-
+              // disambiguating bridge below; positional formals stop before it.
+              const fcFixedParamCount = candidateFixedFormalCount(ctx, fc, hostLane);
               setCandidateArgc(ctx, fctx, fcCallBody, fcFixedParamCount, actualArgExternLocals, expr.arguments.length);
               appendForwardedOptionalArgcOverride(ctx, fctx, fcCallBody, expr.arguments, fcFixedParamCount);
               // Shared func types use canonical-root self. A private/named
@@ -3208,24 +3247,21 @@ export function compileIdentifierCall(
                 }
               }
               if (!candidateArgsCoercible) continue;
-              if (fcHasRest) {
-                const restType = fc.paramTypes[fcFixedParamCount]!;
-                const restTypeIdx =
-                  restType.kind === "ref" || restType.kind === "ref_null" ? restType.typeIdx : undefined;
-                const restInfo = restTypeIdx === undefined ? null : getVecInfo(ctx, restTypeIdx);
-                if (restTypeIdx === undefined || restInfo === null || restInfo.elemType.kind !== "externref") {
-                  // The candidate scan only admits externref vectors. Keep a
-                  // defensive escape hatch if a future metadata path violates
-                  // that invariant rather than emitting an invalid call_ref arm.
-                  continue;
-                }
-                const restCount = Math.max(0, expr.arguments.length - fcFixedParamCount);
-                fcCallBody.push({ op: "i32.const", value: restCount });
-                for (let ai = fcFixedParamCount; ai < expr.arguments.length; ai++) {
-                  fcCallBody.push({ op: "local.get", index: actualArgExternLocals[ai]! });
-                }
-                fcCallBody.push({ op: "array.new_fixed", typeIdx: restInfo.arrTypeIdx, length: restCount });
-                fcCallBody.push({ op: "struct.new", typeIdx: restTypeIdx });
+              if (fcFixedParamCount < fc.paramTypes.length) {
+                const restMarshal = restSlotMarshalInstrs(ctx, {
+                  paramTypes: fc.paramTypes,
+                  plan: restPlans.get(fc.funcTypeIdx),
+                  closureLocal,
+                  sigParamWasmTypes,
+                  argLocals,
+                  argExternLocals: actualArgExternLocals,
+                  argCount: expr.arguments.length,
+                  vecBridge: vecArgumentBridge,
+                });
+                // A flagged candidate with a typed-vec / tuple rest carrier has no
+                // packable arm; a positional call_ref for it would be wrong.
+                if (restMarshal === null) continue;
+                fcCallBody.push(...restMarshal);
               }
               // Push typed funcref and call
               fcCallBody.push({ op: "local.get", index: funcrefLocal });

@@ -162,6 +162,9 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * consumer's `catch` never matches, and the payload is lost in `catch_all`.
    */
   sharedExceptionTag?: boolean;
+  /** (#5247) Provider build — exports are wasm→wasm call targets, so the
+   *  export-boundary throw unwrapping stays off (export-throw-boundary.ts). */
+  exportsConsumedByWasm?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
@@ -893,6 +896,16 @@ export interface FunctionContext {
    * step 13c requires a derived constructor that returns a non-object, non-undefined
    * value to throw TypeError instead of silently coercing and null-dereffing. */
   isDerivedConstructor?: boolean;
+  /**
+   * (#5350 r3) i32 local of a DERIVED constructor, 0 at entry and set to 1
+   * immediately after every `super(...)` in this constructor returns — the
+   * point where `this` becomes initialised. Allocated only when the body has a
+   * `super.<x>` read inside a loop that also contains a `super(...)`, where a
+   * lexical rule cannot decide: the SAME textual read throws on iteration 1
+   * and succeeds on iteration 2. Per constructor FUNCTION, so a nested class's
+   * own `super()` never sets it.
+   */
+  superInitializedFlagLocal?: number;
   /** Whether this function is a generator (function*) */
   isGenerator?: boolean;
   /**
@@ -2667,6 +2680,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * as an accessor emits nothing at all.
    */
   hostDynamicClassAccessorReads: Set<string>;
+  /**
+   * (#5358) Member names a RUNTIME-key read on a class instance may need. Kept
+   * separate from the method set: only the bridge emitters consume the union
+   * (`hostBridgeMethodKeys`), so closed-method-dispatch's named-call arity
+   * relaxation never moves. See runtime-key-class-methods.ts.
+   */
+  runtimeKeyClassMethodNames: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
   /** Rest parameter info per function (functions with ...rest syntax) */
@@ -2776,6 +2796,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * either way (imported tags occupy the low indices).
    */
   sharedExnTag: boolean;
+  /** (#5247) True for a linked provider: its exports are called by another WASM
+   *  module, so the export-boundary throw unwrapping is suppressed. */
+  exportsConsumedByWasm: boolean;
   /** Whether union type helper imports have been registered */
   hasUnionImports: boolean;
   /**

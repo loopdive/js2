@@ -91,6 +91,7 @@ import {
   getOrCreateFuncRefWrapperTypes,
   runtimeParameters,
 } from "../closures.js";
+import { registerRestDeclarationWrapperShapes } from "../closures/funcref-wrapper-types.js"; // (#5334)
 import { popBody, pushBody } from "../context/bodies.js";
 import { reportError } from "../context/errors.js";
 import {
@@ -405,6 +406,7 @@ import {
   tryExternClassMethodOnAny,
 } from "./calls-closures.js";
 import { compileOptionalCallExpression } from "./calls-optional.js";
+import { compileOptionalDirectCall, isLoweringOptionalDirectCallDynamically } from "./calls-optional-direct.js";
 import {
   emitStandaloneDirectEvalRuntime,
   emitStandaloneIndirectEvalRuntime,
@@ -473,6 +475,7 @@ import { buildHostCallFallbackArm, ensureHostCallFallbackImports, planHostCallFa
 import { analyzeTdzAccessByPos, emitLocalTdzCheck, emitStaticTdzThrow } from "./identifiers.js";
 import {
   emitUndefined,
+  ensureExternIsUndefinedImport,
   ensureGetUndefined,
   ensureLateImport,
   flushLateImportShifts,
@@ -486,7 +489,7 @@ import {
   tryCompileErrorCtorCallWithoutNew,
   tryCompileCollectionCtorCallWithoutNew,
 } from "./new-builtin-globals.js";
-import { compileSuperElementMethodCall, compileSuperMethodCall } from "./new-super.js";
+import { compileSuperElementMethodCall, compileSuperMethodCall, emitSuperInitializedFlagStore } from "./new-super.js";
 import { compileIdentifierCall } from "./call-identifier.js";
 import { compileBuiltinStaticCall, tryCompileFromCharCodeFamilyReflective } from "./call-builtin-static.js";
 import { compileNamespaceStaticCall } from "./call-namespace-static.js";
@@ -3569,86 +3572,6 @@ function tryRuntimeNamespaceMemberCall(
   }
 }
 
-function compileOptionalDirectCall(ctx: CodegenContext, fctx: FunctionContext, expr: ts.CallExpression): InnerResult {
-  const callee = expr.expression as ts.Identifier;
-  const calleeType = compileExpression(ctx, fctx, callee);
-  if (!calleeType) return null;
-
-  if (calleeType.kind !== "ref" && calleeType.kind !== "ref_null" && calleeType.kind !== "externref") {
-    fctx.body.push({ op: "drop" });
-    const syntheticCall = ts.factory.createCallExpression(callee, expr.typeArguments, expr.arguments);
-    ts.setTextRange(syntheticCall, expr);
-    return compileCallExpression(ctx, fctx, syntheticCall as ts.CallExpression);
-  }
-
-  const tmp = allocLocal(fctx, `__optdcall_${fctx.locals.length}`, calleeType);
-  fctx.body.push({ op: "local.tee", index: tmp });
-  fctx.body.push({ op: "ref.is_null" });
-
-  let resultType: ValType = { kind: "externref" };
-  const sig = ctx.checker.getResolvedSignature(expr);
-  if (sig) {
-    const retType = ctx.checker.getReturnTypeOfSignature(sig);
-    if (!isVoidType(retType)) {
-      const resolved = resolveWasmType(ctx, retType);
-      resultType = resolved.kind === "ref" ? { kind: "ref_null", typeIdx: resolved.typeIdx } : resolved;
-    }
-  }
-
-  const savedBody = pushBody(fctx);
-  const funcName = callee.text;
-  const closureInfo = ctx.closureMap.get(funcName);
-  const funcIdx = ctx.funcMap.get(funcName);
-  let resolved = false;
-
-  if (closureInfo && (calleeType.kind === "ref" || calleeType.kind === "ref_null")) {
-    fctx.body.push({ op: "local.get", index: tmp });
-    if (calleeType.kind === "ref_null") fctx.body.push({ op: "ref.as_non_null" });
-    const closureTmp = allocLocal(fctx, `__optdcall_cls_${fctx.locals.length}`, {
-      kind: "ref",
-      typeIdx: calleeType.typeIdx,
-    });
-    fctx.body.push({ op: "local.tee", index: closureTmp });
-    fctx.body.push({ op: "local.get", index: closureTmp });
-    for (const arg of expr.arguments) compileExpression(ctx, fctx, arg);
-    fctx.body.push({ op: "call_ref", typeIdx: closureInfo.funcTypeIdx });
-    resolved = true;
-  } else if (funcIdx !== undefined) {
-    const paramTypes = getFuncParamTypes(ctx, funcIdx);
-    for (let i = 0; i < expr.arguments.length; i++) {
-      compileExpression(ctx, fctx, expr.arguments[i]!, paramTypes?.[i]);
-    }
-    if (paramTypes) {
-      const optInfo = ctx.funcOptionalParams.get(funcName);
-      for (let i = expr.arguments.length; i < paramTypes.length; i++) {
-        const opt = optInfo?.find((o) => o.index === i);
-        if (opt) {
-          pushParamSentinel(fctx, paramTypes[i]!, ctx, opt);
-        } else {
-          pushDefaultValue(fctx, paramTypes[i]!, ctx);
-        }
-      }
-      maybeSetArgcForKnownCall(ctx, fctx, funcName, expr.arguments.length, paramTypes.length);
-    }
-    fctx.body.push({ op: "call", funcIdx });
-    resolved = true;
-  }
-
-  if (!resolved) fctx.body.push(...defaultValueInstrs(resultType));
-
-  const elseInstrs = fctx.body;
-  popBody(fctx, savedBody);
-
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "val", type: resultType },
-    then: defaultValueInstrs(resultType),
-    else: elseInstrs,
-  });
-
-  return resultType;
-}
-
 /**
  * Classify an eval call expression as `direct`, `indirect`, or `none`.
  *
@@ -4109,6 +4032,9 @@ export function ensureFuncValueWrappersRegistered(ctx: CodegenContext, sf: ts.So
     if (sig.params.length < sourceParamSlotCount) return false;
     const params = sourceParamSlotCount === 0 ? [] : sig.params.slice(sig.params.length - sourceParamSlotCount);
     const wrapper = getOrCreateFuncRefWrapperTypes(ctx, params, sig.results);
+    // (#5334) Register the rest-marker struct a rest declaration's singleton
+    // allocates, so a dispatcher compiled EARLIER can already prove rest-ness.
+    if (wrapper) registerRestDeclarationWrapperShapes(ctx, declaration, params, sig.results);
     const safeGenericReferenceCallback =
       genericReferenceCallbackDeclarations.has(declaration) &&
       params.length === 1 &&
@@ -7551,9 +7477,9 @@ function compileCallExpression(
     if (r !== undefined) return r;
   }
 
-  // Optional chaining on direct call: fn?.()
-  if (expr.questionDotToken && ts.isIdentifier(expr.expression)) {
-    return compileOptionalDirectCall(ctx, fctx, expr);
+  // Optional chaining on direct call: fn?.() — guard: see calls-optional-direct.
+  if (expr.questionDotToken && ts.isIdentifier(expr.expression) && !isLoweringOptionalDirectCallDynamically(expr)) {
+    return compileOptionalDirectCall(ctx, fctx, expr, compileCallExpression);
   }
 
   const globalScriptEvalCallee = unwrapTransparent(expr.expression);
@@ -7883,6 +7809,7 @@ function compileCallExpression(
     const thisLocal = fctx.localMap.get("this");
     if (enclosingClass !== undefined && thisLocal !== undefined) {
       compileSuperCall(ctx, fctx, enclosingClass, thisLocal, expr, []);
+      emitSuperInitializedFlagStore(fctx); // (#5350 r3) `this` is initialised from here on
       return VOID_RESULT;
     }
   }

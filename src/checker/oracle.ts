@@ -149,6 +149,16 @@ export interface TypeOracle {
    * boundary without exposing the checker Symbol.
    */
   valueDeclarationOf(id: ts.Node): ts.Declaration | undefined;
+  /**
+   * Value declaration for an identifier binding, resolved THROUGH import
+   * aliases. `valueDeclarationOf` stops at the `import` clause/specifier that
+   * introduced the name, which hides what the imported module actually binds;
+   * this variant follows the alias to the declaration the exporting module
+   * wrote (`var isArray = Array.isArray` behind `import isArray from
+   * "lodash/isArray.js"`). Non-alias bindings answer exactly as
+   * `valueDeclarationOf` does.
+   */
+  aliasedValueDeclarationOf(id: ts.Node): ts.Declaration | undefined;
   /** All declarations for an exact binding, without exposing its Symbol. */
   declarationsOf(node: ts.Node): readonly ts.Declaration[];
   /**
@@ -434,6 +444,25 @@ export class TsCheckerOracle implements TypeOracle {
             ).getShorthandAssignmentValueSymbol?.(id.parent)
           : this.checker.getSymbolAtLocation(id);
       return sym?.valueDeclaration ?? sym?.declarations?.[0];
+    } catch {
+      return undefined;
+    }
+  }
+
+  aliasedValueDeclarationOf(id: ts.Node): ts.Declaration | undefined {
+    try {
+      if (!ts.isIdentifier(id)) return undefined;
+      const sym =
+        id.parent && ts.isShorthandPropertyAssignment(id.parent) && id.parent.name === id
+          ? (
+              this.checker as unknown as {
+                getShorthandAssignmentValueSymbol?: (node: ts.Node) => ts.Symbol | undefined;
+              }
+            ).getShorthandAssignmentValueSymbol?.(id.parent)
+          : this.checker.getSymbolAtLocation(id);
+      if (sym === undefined) return undefined;
+      const resolved = (sym.flags & ts.SymbolFlags.Alias) !== 0 ? this.checker.getAliasedSymbol(sym) : sym;
+      return resolved?.valueDeclaration ?? resolved?.declarations?.[0];
     } catch {
       return undefined;
     }

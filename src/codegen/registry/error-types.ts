@@ -58,6 +58,7 @@ import { undefinedSingletonActive } from "../any-helpers.js";
 import { usesNativeJsErrors } from "../js-errors.js";
 import { CARRIER_BAG_HAS } from "../carrier-bag-visibility.js";
 import { ERROR_PROP_GET } from "../error-props.js";
+import { registerEmitWasiErrorConstructor } from "./error-constructor-delegates.js";
 
 // (#2962) `getOrRegisterErrorStructType` moved to registry/types.ts so
 // native-strings.ts can import it without an import cycle (this module imports
@@ -160,6 +161,11 @@ export function externrefBackedOwnFieldBacking(
 export function emitWasiErrorConstructor(ctx: CodegenContext, errorName: WasiErrorName, argCount: number): void {
   emitErrorStructConstructor(ctx, `__new_${errorName}`, errorName, BUILTIN_TYPE_TAGS[errorName], argCount);
 }
+
+registerEmitWasiErrorConstructor((ctx, errorName, argCount) => {
+  if (!isWasiErrorName(errorName)) throw new Error(`unsupported WASI error constructor '${errorName}'`);
+  emitWasiErrorConstructor(ctx, errorName, argCount);
+});
 
 /**
  * Publish the minimal native-Error value adapter used by a JavaScript boundary.

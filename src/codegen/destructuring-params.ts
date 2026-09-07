@@ -747,6 +747,80 @@ export function isNullOrUndefinedLiteral(expr: ts.Expression): boolean {
 }
 
 /**
+ * (#5360) Does `expr` read a parameter whose STATIC `undefined`/`null` type is
+ * an artifact of its own default initializer rather than a fact about the
+ * runtime value?
+ *
+ * Under `strictNullChecks: true` (pinned deliberately — see
+ * `src/checker/index.ts`, #2748) TypeScript infers the parameter of
+ * `function f(a, b = undefined)` as the type `undefined`, and of
+ * `function f(a, b = null)` as `null`. That inference is a TS-world statement
+ * about TS callers; it is NOT a statement about the values a JavaScript caller
+ * passes, and this compiler's own lowering already disagrees with it — such a
+ * parameter gets an **externref** slot and the emitted default guard
+ * (`__extern_is_undefined` → assign default) is precisely the code that lets a
+ * real argument survive.
+ *
+ * Every type-directed *fold* that then drops the carrier and substitutes a
+ * constant is therefore unsound for these parameters. Measured on the test262
+ * `intl402/Temporal` calendar family: `temporalHelpers.js` declares
+ * `assertPlainDate(date, …, description = "", era = undefined, eraYear =
+ * undefined)`, and `String(era)` / `typeof era` folded to the constant
+ * `"undefined"` for a call that passed `"heisei"` — surfacing as
+ * `Test262Error: eraName must be string or undefined in canonicalizeCalendarEra`.
+ *
+ * Deliberately NARROW, so the ordinary sound folds keep firing:
+ *  - the parameter must carry **no type annotation** (`b: undefined` is a real
+ *    declaration and stays foldable);
+ *  - its initializer must be the literal `undefined` / `void <num>` / `null`
+ *    (`b = ""` infers `string` and is unaffected; `b?: T` has no initializer).
+ */
+export function paramUndefinedTypeIsDefaultArtifact(ctx: CodegenContext, expr: ts.Expression): boolean {
+  let bare: ts.Expression = expr;
+  while (ts.isParenthesizedExpression(bare)) bare = bare.expression;
+  if (!ts.isIdentifier(bare)) return false;
+  // The question is about the DECLARATION's syntax (annotation present?
+  // initializer shape?), not about a type — `ctx.oracle.declarationsOf` is the
+  // right query and keeps this off the raw checker (#1930/#3273).
+  for (const decl of ctx.oracle.declarationsOf(bare)) {
+    if (!ts.isParameter(decl)) continue;
+    if (decl.type !== undefined) continue;
+    if (decl.initializer === undefined) continue;
+    if (isNullOrUndefinedLiteral(decl.initializer)) return true;
+  }
+  return false;
+}
+
+/**
+ * (#5360) Companion to {@link paramUndefinedTypeIsDefaultArtifact}, at the SLOT.
+ *
+ * `resolveWasmType` maps the TS type `undefined` to a NUMERIC slot ("void → no
+ * result"), which is right for a genuine `void`/`undefined` position and wrong
+ * for `function f(a, b = undefined)`: TypeScript infers that parameter as
+ * `undefined` from its own default (see the doc above), so the ARGUMENT —
+ * anything a JavaScript caller passes — was coerced into an i32/f64 slot and
+ * destroyed at the call boundary. Measured on the test262 `intl402/Temporal`
+ * calendar family: `TemporalHelpers.assertPlainDate(…, era = undefined, …)`
+ * received `"heisei"` and `typeof era` answered `"number"`.
+ *
+ * The free-function lane escaped this only because call-site inference
+ * overrides its registered signature; the object-literal-method and closure
+ * lanes had no such override and kept the numeric slot.
+ *
+ * Both the SIGNATURE-collection phase and the BODY's `fctx.params` must apply
+ * this or the two disagree and the emitted call is invalid Wasm — the same
+ * pairing rule the neighbouring binding-pattern widening documents.
+ */
+export function widenUndefinedDefaultParamSlot(param: ts.ParameterDeclaration, wasmType: ValType): ValType {
+  if (param.type !== undefined) return wasmType;
+  if (param.dotDotDotToken !== undefined) return wasmType;
+  if (param.initializer === undefined) return wasmType;
+  if (!isNullOrUndefinedLiteral(param.initializer)) return wasmType;
+  if (wasmType.kind !== "i32" && wasmType.kind !== "f64" && wasmType.kind !== "i64") return wasmType;
+  return { kind: "externref" };
+}
+
+/**
  * Destructure a function parameter (externref) using __extern_get for property access.
  * This handles primitives, objects, and any externref value safely — no struct cast needed.
  * Used as fallback when the value is not the expected struct type (#852).
@@ -1255,6 +1329,50 @@ export function structHintForBindingPattern(
  * zero-init — changing a numeric slot's absent value from `0` to a NaN
  * sentinel is a separate, wider behavioural change with its own blast radius.
  */
+/**
+ * (#5251) True when the typed-struct destructuring fast path would bind
+ * `undefined` for a property that the object may nevertheless CARRY.
+ *
+ * The fast path reads `struct.get`, so a pattern property missing from the
+ * struct's field list is treated as an absent property (`emitAbsentStructPropertyBinding`,
+ * #5221). That inference is sound for a CLOSED anonymous object-literal shape —
+ * the struct enumerates every property the literal has — and unsound for a
+ * CLASS INSTANCE, whose properties may live outside the struct entirely.
+ *
+ * Measured on `@js-temporal/polyfill` (#5251): every `Helper` class struct is
+ * `(struct (field $__tag i32) (field $__shape_brand …))` — no data fields at
+ * all, all instance state in the sidecar. So `const { anchorEra } = this` in
+ * `GregorianBaseHelper.estimateIsoDate` bound `undefined` while `this.anchorEra`,
+ * `this[k]`, `Reflect.get`, and `{...this}` all read the real era record. The
+ * `undefined` reached `n + i.isoEpoch.year` as `NaN`/`Infinity` and surfaced
+ * from the polyfill's own guards as `RangeError: Invalid ISO date: 0NaN-12-01`
+ * / `infinity is out of range` on every non-ISO calendar built from a property
+ * bag.
+ *
+ * The externref arm of `destructureParamObject` has carried the equivalent
+ * check since #1016 (there it also protects getter-throw ordering); this is
+ * that rule applied to the arm that already holds a typed struct ref.
+ */
+function patternMissesOpenStructField(
+  ctx: CodegenContext,
+  structName: string | undefined,
+  pattern: ts.ObjectBindingPattern,
+  fields: { name: string; type: ValType; mutable: boolean }[],
+): boolean {
+  if (structName === undefined || !ctx.classSet.has(structName)) return false;
+  for (const element of pattern.elements) {
+    if (!ts.isBindingElement(element) || element.dotDotDotToken) continue;
+    const pn = element.propertyName ?? element.name;
+    let propText: string | undefined;
+    if (ts.isIdentifier(pn)) propText = pn.text;
+    else if (ts.isStringLiteral(pn)) propText = pn.text;
+    else if (ts.isNumericLiteral(pn)) propText = pn.text;
+    if (propText === undefined) continue;
+    if (!fields.some((f) => f.name === propText)) return true;
+  }
+  return false;
+}
+
 function emitAbsentStructPropertyBinding(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1503,6 +1621,20 @@ export function destructureParamObject(
 
   // Pre-allocate all binding locals so they exist even when param is null
   ensureBindingLocals(ctx, fctx, pattern);
+
+  // (#5251) A CLASS-INSTANCE struct does not enumerate the object's properties,
+  // so "not a declared field" does NOT mean "absent". Route the whole pattern
+  // through the dynamic read instead of binding `undefined`.
+  if (patternMissesOpenStructField(ctx, structName, pattern, fields)) {
+    const extTmp = allocLocal(fctx, `__dstr_open_${fctx.locals.length}`, { kind: "externref" });
+    fctx.body.push({ op: "local.get", index: paramIdx });
+    fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({ op: "local.set", index: extTmp });
+    // That helper emits its own RequireObjectCoercible guard, so the typed
+    // null guard below is not needed on this path.
+    destructureParamObjectExternref(ctx, fctx, extTmp, pattern, opts);
+    return;
+  }
 
   // Null guard: wrap destructuring in if-not-null for ref params.
   // Always treat as nullable — callers may pass mismatched values that

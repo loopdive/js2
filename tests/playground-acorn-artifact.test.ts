@@ -106,19 +106,18 @@ describe("playground AST explorer — committed acorn.wasm artifact", () => {
   }, 120_000);
 });
 
-// (#5337) The failure reported from iOS Safari, reproduced under V8.
+// (#5337) The iOS Safari symptom, produced under V8 by the one thing that
+// yields it here: an instance whose export set was never published
+// (`setInstance` not called). The module cannot read the host options object,
+// acorn falls back to its defaults (warning "Since Acorn 8.0.0,
+// options.ecmaVersion is required"), and then dies inside its keyword table
+// with "Cannot read properties of null (reading 'replace')" — thrown by the
+// runtime's own `__extern_method_call` guard, hence V8 wording on every engine.
 //
-// An instance whose export set was never published (`setInstance` not called)
-// does NOT fail loudly. It parses anyway — wrongly: the module cannot read the
-// host options object, acorn falls back to its defaults (warning "Since Acorn
-// 8.0.0, options.ecmaVersion is required"), and then dies inside its keyword
-// table with "Cannot read properties of null (reading 'replace')" — thrown by
-// the runtime's own `__extern_method_call` guard, which is why the message
-// carries V8 wording on every engine.
-//
-// This is what the panel's load-time canary detects. The test pins the symptom
-// so a future fix that makes the unwired case loud is recognised as a change,
-// not a surprise.
+// The actual iOS cause was different (helpers MASKED by identity checks JSC
+// cannot satisfy — see tests/issue-5337-exported-function-identity.test.ts);
+// this pins the symptom the panel's load-time canary detects, so a future fix
+// that makes the unwired case loud is recognised as a change, not a surprise.
 describe("#5337 — unwired host boundary degrades silently", () => {
   it("parses with default options and then throws deep inside, instead of failing loudly", async () => {
     const bytes = readFileSync(WASM_PATH);

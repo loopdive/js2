@@ -107,6 +107,22 @@ function fingerprint(parts: readonly string[]): string {
   return hash.digest("hex");
 }
 
+/**
+ * The content-addressed identity of the provider `buildTemporalProvider` would
+ * produce for these inputs — the SAME key its memory cache and its on-disk
+ * project directory are keyed by.
+ *
+ * (#5353) Exported so a lane that CANNOT afford a cold build can prove the
+ * provider it is about to ask for is the one a pre-warm step already put in the
+ * cache. `scripts/test262-worker.mjs` runs inside a fork pool that kills a job
+ * at 30 s while a cold build takes ~40-65 s, so it refuses to call
+ * `buildTemporalProvider` at all unless a stamp written by
+ * `scripts/prewarm-temporal-provider.mjs` carries this exact key.
+ */
+export function temporalProviderCacheKey(options: { polyfillSource: string; compileOptions?: CompileOptions }): string {
+  return fingerprint([options.polyfillSource, providerOptionFingerprint(options.compileOptions)]);
+}
+
 function providerOptionFingerprint(options: CompileOptions | undefined): string {
   return JSON.stringify({
     target: options?.target ?? "gc",
@@ -137,7 +153,7 @@ function providerOptionFingerprint(options: CompileOptions | undefined): string 
  * left to a follow-up.
  */
 export async function buildTemporalProvider(options: BuildTemporalProviderOptions): Promise<TemporalProvider> {
-  const key = fingerprint([options.polyfillSource, providerOptionFingerprint(options.compileOptions)]);
+  const key = temporalProviderCacheKey(options);
   const cached = memoryCache.get(key);
   if (cached) return { ...cached.provider, buildMs: 0, cacheHit: true };
 

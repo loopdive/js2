@@ -11,22 +11,173 @@ export { addImport, ensureExnTag } from "./physical-imports.js";
 // here from index.ts (relative paths rebased for src/codegen/registry/).
 import { ts, forEachChild } from "../../ts-api.js";
 import { ensureLateImport, flushLateImportShifts } from "../shared.js";
-import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { nativeStringLiteralInstrs } from "../native-string-literals.js";
 import { shiftAsyncSideChannelFuncIdxs } from "../async-scheduler.js";
 import { shiftFnShadowSlots } from "../fn-global-shadow.js"; // (#4648)
 import { buildIsUndefinedExternBody, undefinedSingletonActive, ensureAnyValueType } from "../any-helpers.js";
-import { createUnifiedCollectorState, unifiedVisitNode, finalizeUnifiedCollector } from "../declarations.js";
+import {
+  createUnifiedCollectorState,
+  finalizeUnifiedCollector,
+  unifiedVisitNode,
+} from "./import-collector-delegates.js";
 import { mapTsTypeToWasm } from "../../checker/type-mapper.js";
 import { inLiveShiftRange } from "../../emit/resolve-layout.js";
 import { UNDEF_F64_BITS } from "../value-tags.js";
 import { STANDALONE_REGEXP_REFLECTION_PROPS } from "../regexp-standalone.js";
 import { reconcileNativeStrFinalizeShift } from "../expressions/late-imports.js";
-import { emitWasiErrorConstructor } from "./error-types.js";
-import { emitNativeParseNumber } from "../parse-number-native.js";
+import { emitWasiErrorConstructor } from "./error-constructor-delegates.js";
+import { emitNativeParseNumber } from "./parse-number-delegates.js";
 import { boxBooleanBody } from "../interned-boolean-boxes.js"; // (#3780) interned true/false carriers
-import { hostMapCarrierClassName, isTupleType, isStandaloneRegExpMatchArrayValue } from "../index.js";
 import { planProgramAbiStringConstantImport } from "../program-abi-import-planning.js";
 import { shiftModuleGlobalExportIndices } from "../global-export-fixup.js";
+
+function stringConstantExternrefInstrs(ctx: CodegenContext, value: string): Instr[] {
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+    return [...nativeStringLiteralInstrs(ctx, value), { op: "extern.convert_any" }];
+  }
+  const strIdx = ctx.stringGlobalMap.get(value);
+  return strIdx === undefined || strIdx < 0 ? [{ op: "ref.null.extern" }] : [{ op: "global.get", index: strIdx }];
+}
+
+/** Keep registry import collection independent of the codegen barrel. */
+function isTupleType(type: ts.Type): boolean {
+  if (!(type.flags & ts.TypeFlags.Object)) return false;
+  const object = type as ts.ObjectType;
+  if ((object.objectFlags & ts.ObjectFlags.Tuple) !== 0) return true;
+  if ((object.objectFlags & ts.ObjectFlags.Reference) !== 0) {
+    const target = (type as ts.TypeReference).target;
+    if (target && (target.objectFlags & ts.ObjectFlags.Tuple) !== 0) return true;
+  }
+  return false;
+}
+
+const inheritedMapCarrierCache = new WeakMap<ts.TypeChecker, WeakMap<ts.Type, boolean>>();
+
+function isAmbientLibraryMapSymbol(symbol: ts.Symbol | undefined): boolean {
+  if (symbol?.name !== "Map" && symbol?.name !== "ReadonlyMap") return false;
+  const declarations = symbol.declarations;
+  if (!declarations || declarations.length === 0) return false;
+  return declarations.every((declaration) => {
+    const sourceFile = declaration.getSourceFile();
+    const baseName = sourceFile.fileName.split(/[\\/]/).pop() ?? sourceFile.fileName;
+    return sourceFile.isDeclarationFile && (sourceFile.hasNoDefaultLib || /^lib\\..*\\.d\\.ts$/i.test(baseName));
+  });
+}
+
+function inheritsMapCarrier(checker: ts.TypeChecker, type: ts.Type | undefined, seen?: Set<ts.Type>): boolean {
+  if (type === undefined) return false;
+  if (seen === undefined) {
+    let byType = inheritedMapCarrierCache.get(checker);
+    if (!byType) {
+      byType = new WeakMap();
+      inheritedMapCarrierCache.set(checker, byType);
+    }
+    const cached = byType.get(type);
+    if (cached !== undefined) return cached;
+    const result = inheritsMapCarrier(checker, type, new Set());
+    byType.set(type, result);
+    return result;
+  }
+  if (seen.has(type) || !(type.flags & ts.TypeFlags.Object)) return false;
+  seen.add(type);
+  const object = type as ts.InterfaceType;
+  const symbol = object.symbol ?? type.symbol;
+  if (object.objectFlags & ts.ObjectFlags.Class) return false;
+  if (isAmbientLibraryMapSymbol(symbol)) return true;
+  const target =
+    object.objectFlags & ts.ObjectFlags.Reference ? (object as unknown as ts.TypeReference).target : undefined;
+  const interfaceType =
+    object.objectFlags & ts.ObjectFlags.Interface
+      ? object
+      : ((target?.objectFlags ?? 0) & ts.ObjectFlags.Interface) !== 0
+        ? target
+        : undefined;
+  if (interfaceType === undefined) return false;
+  try {
+    return (checker.getBaseTypes(interfaceType) ?? []).some((base) => inheritsMapCarrier(checker, base, seen));
+  } catch {
+    return false;
+  }
+}
+
+function hostMapCarrierClassName(ctx: CodegenContext, type: ts.Type): "Map" | undefined {
+  return !ctx.nativeStrings && inheritsMapCarrier(ctx.checker, type) ? "Map" : undefined;
+}
+
+function stripRegExpInferenceWrapper(expr: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expr) ||
+    ts.isAsExpression(expr) ||
+    ts.isTypeAssertionExpression(expr) ||
+    ts.isSatisfiesExpression(expr) ||
+    ts.isNonNullExpression(expr)
+  ) {
+    expr = (
+      expr as
+        | ts.ParenthesizedExpression
+        | ts.AsExpression
+        | ts.TypeAssertion
+        | ts.SatisfiesExpression
+        | ts.NonNullExpression
+    ).expression;
+  }
+  return expr;
+}
+
+function isStaticRegExpExpressionForInference(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const unwrapped = stripRegExpInferenceWrapper(expr);
+  if (unwrapped.kind === ts.SyntaxKind.RegularExpressionLiteral) return true;
+  if (ts.isNewExpression(unwrapped) || (ts.isCallExpression(unwrapped) && !unwrapped.questionDotToken)) {
+    const callee = stripRegExpInferenceWrapper(unwrapped.expression);
+    return ts.isIdentifier(callee) && callee.text === "RegExp";
+  }
+  if (ts.isIdentifier(unwrapped)) {
+    const sym = ctx.checker.getSymbolAtLocation(unwrapped);
+    const declaration = sym?.getDeclarations()?.find((node) => ts.isVariableDeclaration(node)) as
+      | ts.VariableDeclaration
+      | undefined;
+    return declaration?.initializer !== undefined && isStaticRegExpExpressionForInference(ctx, declaration.initializer);
+  }
+  return false;
+}
+
+function isSymbolMatchKeyForInference(arg: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(arg) &&
+    ts.isIdentifier(arg.expression) &&
+    arg.expression.text === "Symbol" &&
+    arg.name.text === "match"
+  );
+}
+
+function isStaticRegExpMatchArrayCallForImportScan(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  const callee = stripRegExpInferenceWrapper(call.expression);
+  if (ts.isPropertyAccessExpression(callee)) {
+    const method = callee.name.text;
+    if (method === "exec") return isStaticRegExpExpressionForInference(ctx, callee.expression);
+    if (method === "match" && call.arguments.length === 1)
+      return isStaticRegExpExpressionForInference(ctx, call.arguments[0]!);
+    return false;
+  }
+  if (ts.isElementAccessExpression(callee) && isSymbolMatchKeyForInference(callee.argumentExpression)) {
+    return call.arguments.length === 1 && isStaticRegExpExpressionForInference(ctx, callee.expression);
+  }
+  return false;
+}
+
+function isStandaloneRegExpMatchArrayValue(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const unwrapped = stripRegExpInferenceWrapper(expr);
+  if (ts.isCallExpression(unwrapped)) return isStaticRegExpMatchArrayCallForImportScan(ctx, unwrapped);
+  if (!ts.isIdentifier(unwrapped)) return false;
+  const sym = ctx.checker.getSymbolAtLocation(unwrapped);
+  const declaration = sym?.getDeclarations()?.find((node) => ts.isVariableDeclaration(node)) as
+    | ts.VariableDeclaration
+    | undefined;
+  const initializer = declaration?.initializer ? stripRegExpInferenceWrapper(declaration.initializer) : undefined;
+  return initializer !== undefined && ts.isCallExpression(initializer)
+    ? isStaticRegExpMatchArrayCallForImportScan(ctx, initializer)
+    : false;
+}
 
 /**
  * Register a string literal as a global import from the "string_constants"

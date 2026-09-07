@@ -23,6 +23,8 @@ import {
 import { join, relative } from "path";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import { CompilerPool, type TestResult } from "../scripts/compiler-pool.js";
+// (#5353) ONE Temporal gate across every lane — see scripts/test262-temporal.mjs.
+import { test262NeedsTemporalGlobal } from "../scripts/test262-temporal.mjs";
 // oracle-version-exempt: #5215 changes callback-completeness evidence only; Test262 scoring is unchanged.
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "../scripts/negative-verdict.mjs";
 import { resolveTest262PoolSize } from "../scripts/test262-concurrency.mjs";
@@ -1087,6 +1089,17 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
             const nativeHarnessOpts: { nativeHarness?: boolean; harnessPrefix?: string } = nativeAssembly
               ? { nativeHarness: true, harnessPrefix: nativeAssembly.primary.harnessPrefix }
               : {};
+            // (#5353) Link the compiled `Temporal` global (#4628) for rows that
+            // need it. The gate is shared with tests/test262-runner.ts
+            // (scripts/test262-temporal.mjs) so the two lanes can never disagree
+            // about which rows get a binding — a disagreement shows up as
+            // phantom baseline drift in the validator, not as a visible bug.
+            //
+            // HOST LANE ONLY: the provider is `--target gc` with the JS host
+            // adapter, so linking it under standalone would emit host imports
+            // and trip the worker's own #2961 guard. `false` ⇒ the message is
+            // byte-identical to the pre-#5353 one.
+            const needsTemporal = IS_HOST_LANE && test262NeedsTemporalGlobal(relPath, meta.features);
             if (nativeAssembly) {
               compileSource = nativeAssembly.primary.bindingShim + nativeAssembly.primary.body;
               lineAdjustOffset = nativeAssembly.primary.bodyLineOffset;
@@ -1105,6 +1118,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   label,
                   target: TEST262_TARGET,
                   inferModuleStrictArguments,
+                  temporal: needsTemporal,
                   ...nativeHarnessOpts,
                 },
                 30_000,
@@ -1178,6 +1192,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       label: relPath + " [poison retry]",
                       target: TEST262_TARGET,
                       inferModuleStrictArguments,
+                      temporal: needsTemporal,
                       ...nativeHarnessOpts,
                     },
                     RETRY_TIMEOUT_MS,
@@ -1250,6 +1265,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       label: relPath + " [retry]",
                       target: TEST262_TARGET,
                       inferModuleStrictArguments,
+                      temporal: needsTemporal,
                       ...nativeHarnessOpts,
                     },
                     RETRY_TIMEOUT_MS,
