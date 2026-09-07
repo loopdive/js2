@@ -79,6 +79,8 @@ import {
   vecForMirror,
   recordVecMirrorElements,
   vecMirrorElementsChanged,
+  isDetachedVecMirrorSource as vecMirrorDetached,
+  applyWithVecMirrorWriteback as applyVecMirror,
 } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back; (#4531) mirror→vec mutation routing
 import {
   arrayIndexForPropertyKey as _asArrayIndex,
@@ -579,7 +581,6 @@ const _abHostBufferReverse = new WeakMap<ArrayBuffer, object>();
 const _compiledTypedArrayKinds = new WeakMap<object, number>();
 const _compiledTypedArrayMirrors = new WeakMap<object, ArrayBufferView>();
 const _compiledTypedArrayBuffers = new WeakMap<object, ArrayBuffer>();
-
 // Codegen contract: keep in lock-step with TYPED_ARRAY_HOST_TAGS in
 // expressions/typed-array-host-carrier.ts. Index zero is intentionally empty.
 const _COMPILED_TYPED_ARRAY_CTORS: ReadonlyArray<Function | undefined> = [
@@ -8267,20 +8268,20 @@ function _wrapHostArrayElems(arr: any[], exports: Record<string, Function> | und
 function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): any {
   if (obj == null || typeof obj !== "object") return obj;
   if (!_isWasmStruct(obj)) return obj;
-
   // (#5225) A struct minted by another module of this linked project must be
   // mirrored against the exports that can DECODE it, not against whichever
   // module happens to be reading. Every trap below (field reads, key
   // enumeration, callable members) resolves through these exports.
   exports = _decoderExportsFor(obj, exports);
-
   const primitiveValue = _nativePrimitiveToHost(obj, exports);
   if (primitiveValue !== _MISS) return primitiveValue;
   const errorValue = _nativeErrorToHost(obj, exports);
   if (errorValue !== _MISS) return errorValue;
   const promiseValue = _nativePromiseToHost(obj, exports);
   if (promiseValue !== _MISS) return promiseValue;
-
+  // (#5362) Preserve a branded TypedArray host mirror before the generic vec facade/cache.
+  const mirror = _compiledTypedArrayKinds.has(obj) && _compiledTypedArrayMirror(obj, { getExports: () => exports });
+  if (mirror) return mirror;
   const cached = _hostProxyCache.get(obj);
   if (cached) {
     const slot = _hostProxyExportSlots.get(obj);
@@ -14428,7 +14429,7 @@ assert._isSameValue = isSameValue;
       // #1515: query whether a buffer is detached. Returns 1 if detached, 0 otherwise.
       if (name === "__is_detached_buffer")
         return (buf: any): number => {
-          if (buf != null && typeof buf === "object" && _detachedBuffers.has(buf)) return 1;
+          if (buf != null && typeof buf === "object" && (_detachedBuffers.has(buf) || vecMirrorDetached(buf))) return 1;
           return 0;
         };
       if (name === "__extern_method_call")
@@ -14719,9 +14720,7 @@ assert._isSameValue = isSameValue;
           // (#3603 S1) `Array.prototype.push.call(vec, x)` arrives as obj=push,
           // method="call", args[0]=the vec's `__make_iterable` mirror — bracket
           // the dispatch so the mutation reaches the vec (silent no-op before).
-          const mirrorSnaps = snapshotVecMirrors(dispatchRecv, wrappedArgs, exports);
-          const ret = Reflect.apply(fn, dispatchRecv, wrappedArgs);
-          reconcileVecMirrors(mirrorSnaps, exports, _unwrapForHost);
+          const ret = applyVecMirror(fn, dispatchRecv, wrappedArgs, exports, _unwrapForHost);
           // (#1333) Annex B — RegExp.prototype.exec/test post-match slot update.
           if (
             (method === "exec" || method === "test") &&
