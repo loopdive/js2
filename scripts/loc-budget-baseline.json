@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-07",
   "threshold": 1500,
-  "totalCeiling": 853831,
+  "totalCeiling": 853925,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -10,7 +10,7 @@
     "src/codegen/array-object-proto.ts": 3989,
     "src/codegen/async-cps.ts": 4080,
     "src/codegen/async-frame.ts": 3615,
-    "src/codegen/async-scheduler.ts": 5401,
+    "src/codegen/async-scheduler.ts": 5139,
     "src/codegen/binary-ops-typed-dispatch.ts": 1593,
     "src/codegen/binary-ops.ts": 3849,
     "src/codegen/builtin-value-read.ts": 1820,
@@ -98,7 +98,7 @@
     "src/ir/backend/porffor/assembler.ts": 1516,
     "src/ir/builder.ts": 1974,
     "src/ir/from-ast.ts": 15369,
-    "src/ir/identity.ts": 1630,
+    "src/ir/identity.ts": 1610,
     "src/ir/integration.ts": 10303,
     "src/ir/lower.ts": 4595,
     "src/ir/module-bindings.ts": 2666,
