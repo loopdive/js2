@@ -252,25 +252,21 @@ describe("#5345 an absent property must not read as `false`", () => {
 });
 
 /**
- * Issue #5345 (Cluster B) — NOT FIXED HERE. Pinned so the follow-up has a
- * failing anchor, in the same idiom #5327 used for its binding-slot residual.
+ * Issue #5345 (Cluster B) — fixed by #5358, which flipped the two pins below.
  *
- * A computed-key read of a class PROTOTYPE method answers `undefined`. The
- * object-literal control passes, because a literal's methods are struct FIELDS
- * (so `__sget_<name>` reaches them) while a class's live on the prototype and
- * have no host-visible carrier at all — measured: with a genuine runtime key,
- * `Hooks.prototype[k]` and `Object.getPrototypeOf(h)[k]` are `undefined` too,
- * so the prototype `$Object` does not physically carry the methods in the JS-host
- * lane. Only a class with a runtime-keyed member gets its prototype force-
- * initialized (#5195 Step 1.5/1.7, standalone-only); widening that to every
- * class is #5195 Step 4.3 and needs a host-lane twin.
+ * A computed-key read of a class PROTOTYPE method answered `undefined`. The
+ * object-literal control passed, because a literal's methods are struct FIELDS
+ * (so `__sget_<name>` reaches them) while a class's live on the prototype. The
+ * host resolves those through the compiled `__member_kind_<key>` /
+ * `__class_call_<key>_<n>` bridges — which were published only for keys some
+ * NAMED dynamic call registered, so a module like this one (nothing calls
+ * `preprocess` by name through a dynamic receiver) published none and the read
+ * missed. #5358 makes the runtime-key read site register the demand.
  *
- * This is what blocks the rest of marked's Hooks suite: `use()` installs hooks
- * with `const prev = hooks[prop]; hooks[prop] = … prev.call(hooks, …)`, so
- * `prev` is null and the wrapped hook returns nothing.
- *
- * Flip the two `toBe("undefined")` expectations to `toBe("function")` when
- * Cluster B lands.
+ * Note (#5358, measured): marked's own module DOES call the hooks by name
+ * (`i.hooks.preprocess(n)`), so its `use()` read already resolved on the
+ * parent; the remaining async Hooks failures are the `await`-in-conditional
+ * defect filed as #5372, not this read.
  */
 const PROTOTYPE_METHOD_MODULE = `
 class Hooks {
@@ -321,13 +317,15 @@ const PROTO_NAMES = [
   "objectLiteralMethodByRuntimeKey",
 ] as const;
 
-describe("#5345 Cluster B — computed-key read of a class prototype method (known limitation)", () => {
-  it("reads undefined for a prototype method, with or without a default parameter", async () => {
+describe("#5345 Cluster B — computed-key read of a class prototype method (fixed by #5358)", () => {
+  it("reads a callable for a prototype method, with or without a default parameter", async () => {
     const exports = await instantiate(PROTOTYPE_METHOD_MODULE, PROTO_NAMES);
-    // Both spellings are broken identically — the issue's "only the two hooks
-    // with a default parameter" framing does not hold; `preprocess` has none.
-    expect(call(exports, "classMethodByRuntimeKey")).toBe("undefined");
-    expect(call(exports, "defaultParamMethodByRuntimeKey")).toBe("undefined");
+    // Both spellings were broken identically — the issue's "only the two hooks
+    // with a default parameter" framing did not hold; `preprocess` has none.
+    // (#5358) The read site now publishes the class's method bridges, so the
+    // host resolver answers the prototype method for a runtime key.
+    expect(call(exports, "classMethodByRuntimeKey")).toBe("function");
+    expect(call(exports, "defaultParamMethodByRuntimeKey")).toBe("function");
   });
 
   it("reads the same method correctly off a plain object literal (control)", async () => {
