@@ -3759,3 +3759,287 @@ historical agent reports do not override that record's source evidence.
    source differs from the candidate. Required merge-group CI, complete
    Test262 accounting, whole-program ownership, and all eleven epic criteria
    remain required. Bounded runtime evidence does not authorize deletion.
+
+## Astra High continuation specification — 2026-09-07
+
+This is a specification checkpoint for the full migration. It changes no
+compiler code and closes no acceptance criterion. Implementation is assigned
+to **Astra Low**, by continuation of the existing owners or a recorded handoff.
+No new parallel replacement of a claimed owner is authorized by this plan.
+
+### Provenance and claim reconciliation
+
+Source base: upstream `loopdive/js2` main
+`b3133d1d4da1151d82ef45b58db9566565097c57`, fetched in the isolated
+`codex/3518-ir-retirement-spec-astra-high` worktree. The fork's main is not the
+base. All source locations below refer to that SHA unless explicitly labelled
+package C. Historical R1/R2 results above remain historical measurements.
+
+The full live claim read returned `read upstream/issue-assignments`, tip
+`a49968cdd47872a5221ef97367214e9f7072e2db`, with 800 held records. Relevant
+records, including exact handles and branch names, are preserved in
+[the filtered owner snapshot](../agent-context/3518-owner-claims-20260907.json).
+The ordinary `--check 3518` and `--check 3520` report no active **bare** claim;
+they do not establish that the issues' slices are free. The pre-dispatch gate
+for this epic returns **STOP**, citing package C and overlapping child issues.
+This documentation-only continuation is the explicit response to that STOP;
+it is not permission to dispatch duplicate implementation. Its own claim is
+`3518:astra-high-continuation-spec`,
+`ttraenkler/astra-high-spec-20260907`.
+
+Owner handles and next actions:
+
+- **A:** `ttraenkler/astra-ir-program-a-20260905`, original branch
+  `codex/3518-whole-program-a-20260905`. Holds authoritative preparation,
+  runtime-callable ABI, observation authority, and the subsequent driver,
+  result-finalizer, object-output, source-position and WASI slices. Continue
+  **lane A** below after recovering the owner's actual latest commits.
+- **B:** `ttraenkler/astra-ir-producers-b-20260905`, original branch
+  `codex/3518-whole-program-b-20260905`; latest relevant ledger branch
+  `codex/3518-prepared-async-frame-reconciled-20260907`. Holds semantic runtime
+  producers and async-frame work. Continue **lane B** below, preserving the
+  separately claimed IIFE return-scope and call-argument nullability work.
+- **D:** `ttraenkler/luna-ir-evidence-d-20260905`, branch
+  `codex/3518-whole-program-d-20260905`, holds application evidence.
+  `ttraenkler/astra-evidence-acceptance-b-20260906`, branch
+  `codex/3518-evidence-acceptance-b-20260906`, holds evidence acceptance,
+  private observation collection and initializer evidence. The lead must
+  reconcile these two evidence owners before **lane D** has one writer.
+- **C, excluded:** `ttraenkler/claude-fable-ir-backend-c-20260906`, branch
+  `claude/3518-whole-program-c-20260906`, active PR **5692 — package C:
+  PreparedIrProgram codec, backend acceptance/emission, fresh-process replay**.
+  Published head inspected: `643ed8ab8dfcee6ec836c71bedd5ddfdb0392435`.
+  The coordinating task subsequently confirmed C's live repair at
+  `a1bf929730a10c262749df31c22a6c093e99f76f`; local worktree enumeration finds
+  that HEAD in `/private/tmp/js2-5692-repair`. It is not treated as merged or
+  as the published PR head. C continues its own layering/acceptance repair.
+- **Runtime host boundary owner, also excluded:**
+  `ttraenkler/astra-reference-error-runtime-20260906`, including
+  `codex/3518-export-marshalling-20260907`,
+  `codex/3518-host-js-string-provider-20260907`, and
+  `codex/3518-reference-error-runtime-20260906`. A consumes its output
+  contracts; B consumes its provider contracts. Neither replaces them.
+
+The ledger contains no process ID or Codex session ID. No A/B/D process was
+identified in this checkout, and their recorded branch names did not appear
+in the queried upstream/fork `codex/3518-*2026090*` remote heads. This is an
+**unresolved location/liveness question**, not proof the work was abandoned.
+The parent coordination task is `01a03e4f-6022-7c10-90a6-f79349570326`; the
+known C shepherd task is `01a035b2-ddc5-79f3-86af-c53857925523`. Do not delete,
+release, override or recreate a claim because its branch is not visible here.
+The A/B implementation present in C's stack is a recoverable checkpoint, not
+proof it is their newest work. Preserve attribution when adopting it.
+
+### Current source and fresh probes
+
+The following remaining dependencies are verified in current source:
+
+1. `src/compiler.ts::runPipeline` calls `generateLinearModule` /
+   `generateLinearMultiModule` or `generateModule` / `generateMultiModule`
+   (`:1089–1104`). All public source/file drivers converge here, but
+   `src/compiler/output.ts::compileToObjectSource` separately calls
+   `generateModule(ast)` at `:355`. Changing just the main driver leaves a
+   public direct route.
+2. `src/codegen/index.ts::generateModule` prepares selected bodies, then calls
+   legacy declaration walking and an overlay. Its policy at `:5741` reads
+   `experimentalIR`, `disableIrFirst` and `JS2WASM_IR_FIRST`. The multi overlay
+   at `:10398` returns early for `ctx.fast`. These are executable routes, not
+   dead compatibility type declarations.
+3. Upstream `src/ir/program.ts` still permits `direct-candidate`,
+   `emitDirect`, and `reconciliation: "pending-production-wiring"`.
+   In C's **unmerged stack**, `program-preparation.ts::prepareWholeIrProgram`
+   instead builds `prepared-ir-program-v1` with complete reconciliation before
+   acceptance. Do not recreate this producer. Its `program-source.ts` still
+   refuses non-function declaration producers and unresolved typed storage;
+   a codec passing does not close classes, closures or the source population.
+4. `src/codegen/ir-async-frame.ts::lowerPreparedIrAsyncFunction` consumes a
+   prepared plan but calls `emitPreparedAsyncFrameStateMachine` imported from
+   `async-frame.ts`. That shared module retains AST statement/expression arms
+   at `:2093`, `:2117`, `:2251`, `:2284`, `:2326`, `:2361`, `:2517` and a
+   name-based resume lookup near `:2926`. `AsyncCfgOperand` in `async-cps.ts`
+   is an AST-or-callback union. Therefore an AST-free input alone does not
+   prove an AST-free reachable emitter graph.
+5. `src/ir/backend/linear-integration.ts::compileLinearIrFunctions` derives
+   signatures and lowers declarations with the checker. The direct linear
+   statement root remains at `src/codegen-linear/index.ts:848`. The legacy
+   reachability script cuts only the two WasmGC dispatchers; it cannot by
+   itself prove linear retirement.
+6. R1 retains both symbolic ABI authority and legacy projections. The new
+   R1 continuation note in the source-qualified identity issue specifies the
+   exact boundary that A/B/C must preserve. A display-name scan or a final
+   numeric slot is not the source of semantic identity.
+
+Fresh commands on the pinned upstream base, with no compiler edits:
+
+- `node --import tsx scripts/check-ir-only.ts --policy=ir-only`: **READY**;
+  single-host and standalone each enumerate **5/5 entries, 41 terminals,
+  38 emitted IR bodies, 3 non-executable, 0 unsupported, 0 invariants,
+  0 legacy bodies**. This is exactly this small corpus, not all applications.
+- `node scripts/check-ir-optimization-retirement.mjs --require-ready`:
+  **exit 1, 46/50 tracked rows not ready**. The ledger is a required
+  optimization obligation list, not a compiler-migration percentage.
+- `node scripts/audit-legacy-reachability.mjs --json <scratch-file>`:
+  **833 codegen files**. The asserted frontend bucket has 115 files,
+  88,395 legacy-only and 17,330 shared function lines. Both actual dispatcher
+  graph nodes are present (22 and 24 lines respectively), supplying a positive
+  detector control. Bucket membership is asserted; these are not deletion
+  permissions. The audit also roots every non-codegen node, including linear,
+  as a survivor, and must be supplemented for final retirement.
+
+- Existing `tests/issue-3519-ir-only-gate.test.ts`: **14/14 pass**.
+- A fresh public `compile` probe of
+  `namespace N { export const x = 1; } export function h(): number { return N.x; }`
+  with `trackIrOutcomes: true` succeeds in gc and standalone, each with **two
+  terminal Unsupported outcomes and two legacy-body receipts** (`h` and module
+  init), zero IR bodies. This is a working direct-route compilation control
+  alongside the five-entry READY result; this probe did not execute its binary.
+
+Scratch outputs are under `.tmp/ir-retirement-spec/` in this worktree. No full
+Test262 run, backend replay run of C, or baseline/candidate performance
+comparison is claimed by this specification.
+
+### Parallel ownership and dependency order
+
+There is no verified unclaimed compiler prerequisite in the overlapping
+preparation/runtime/acceptance surfaces. Use these **three owner continuations**
+after liveness/handoff reconciliation. They may proceed concurrently because
+only one lane writes each named file. Existing owner changes take precedence
+until their exact head is captured and reviewed.
+
+- **A — one public preparation/emission driver:** compiler entry and output
+  orchestration. Exact design and tests are appended to
+  [R5: whole-program ownership](3525-ir-r5-whole-program-multi-source-ownership.md).
+  A owns `src/compiler.ts`, `src/compiler/output.ts`, `src/index.ts`,
+  `src/compiler/ir-program-driver.ts` (new unless recovered),
+  `src/compiler/ir-program-result.ts` (new unless recovered), and its new
+  `tests/issue-3525-public-prepared-driver.test.ts`. Existing A output splits
+  must be reused instead of creating parallel modules. No backend emission,
+  runtime provider, or package C file belongs to A's next slice.
+- **B — detach prepared async emission from AST walkers:** exact design and
+  tests are appended to [R7: AST-free async plan](3527-ir-r7-ast-free-async-plan.md).
+  B owns `src/codegen/ir-async-frame.ts`, the new/recovered
+  `src/codegen/prepared-async-frame-engine.ts`, new
+  `src/codegen/prepared-async-frame-types.ts`, and
+  `tests/issue-3527-prepared-frame-import-boundary.test.ts` plus
+  `tests/issue-3527-prepared-frame-runtime.test.ts`. Existing AST frame modules
+  are read-only in this extraction checkpoint; deletion is a later R10 step.
+- **D — public-route completion gate:** owns new
+  `scripts/check-ir-retirement.ts`,
+  `tests/issue-3518-public-retirement-gate.test.ts`, and
+  `tests/fixtures/ir-retirement/manifest.json` with fixtures beneath that
+  directory. Reuse the recovered evidence collector before adding any new
+  one. Production observation authority belongs to A/C and is read-only.
+  `scripts/check-ir-only.ts`, its baseline, the existing reachability script,
+  C's codec/replay tests and helpers remain read-only for this slice. Wire the
+  new command into CI only after the existing CI owner grants that file scope.
+
+**C-exclusive write set:** `src/ir/program-codec.ts`,
+`src/ir/program-physical-plan.ts`, `src/ir/program-consumer.ts`,
+`scripts/ir-whole-program-replay.mjs`,
+`tests/issue-3518-program-codec-replay.test.ts`, and C's codec/replay helpers.
+A/B/D can import approved APIs or submit a located failing fixture to C; none
+edits or mocks away C's acceptance rules. The remaining preparation, ABI,
+source-population and runtime-producer modules in C's PR are stacked A/B
+history, not free files. This checkpoint gives no new writer those files.
+
+Order: recover/pin A/B/D heads and C's current repair; run each continuation's
+before controls; A builds orchestration against C's real API while B extracts
+the frame engine and D builds the gate against existing observations; compose
+normal merges in an isolated integration branch; C consumes B's prepared
+runtime through its own acceptance work; A then completes the single production
+cutover; D proves it through public APIs. C currently refuses async physical
+materialization and non-scalar layouts, so A cannot truthfully merge a full
+cutover until those dependencies and source coverage close. An intermediate
+non-draft checkpoint may land internal infrastructure that has no public flag;
+it must not advertise a second supported compiler mode or claim migration done.
+
+### D implementation contract: completion evidence through public APIs
+
+Manifest rows are exact input files, entry API, source graph, target, options,
+expected semantic oracle and expected terminal inventory. Hash source contents
+and preserve the same corpus on base and candidate. Include every API from A's
+matrix; fast is a representation option, not permission to omit an IR census.
+Do not infer runtime expectations from the candidate's generated output.
+
+The first checked-in fixture graph is deliberately small but heterogeneous:
+`state.ts` initializes a numeric live binding and exports a mutator;
+`math.ts` imports it and exports a loop/branch helper; `entry.ts` re-exports
+both and contains a two-await async export. Same-spelling helpers in separate
+files, an imported alias, an empty type-only source and a source function named
+`__module_init` provide identity controls. Pin explicit startup order and
+numeric values. Keep the async row separate from the scalar subset so C's
+current typed async refusal cannot erase the working positive control. Add
+runtime namespace, class+closure, dynamic-code, and CJS fixtures as explicit
+coverage obligations; preserve a located refusal while unsupported, but **no
+new refusal of previously supported behavior counts as final success**.
+
+Build the gate with these rules:
+
+1. Establish a bijection between expected sources/units and terminal
+   observations. Reconcile pass-derived units through original owners; list
+   compiler support bodies separately. Empty/type-only units need explicit
+   non-executable evidence. A missing collector, source, row, phase or process
+   result is an error, never zero direct emission.
+2. Require prepare-before-accept-before-emit ordering and exactly one owned
+   final body per executable unit. Count every entry into direct dispatch,
+   including discovery passes whose output is discarded; a boolean
+   `legacyBodyEmitted` cannot certify that no direct work occurred.
+3. Unsupported is a typed source-qualified failure before artifact publication.
+   Invariants and failures after acceptance remain fatal. Refusal rows retain
+   the complete original denominator; a refused program cannot publish a
+   smaller module or masquerade as a successful all-IR compile.
+4. Execute outputs and compare startup, state, throws, exported values and
+   async scheduling to the pinned JavaScript oracle. Use C's fresh-process
+   replay unchanged for the same serialized snapshot on both backends. Treat
+   missing runner output, timeout and skipped execution as failed evidence.
+5. Negative controls: delete a unit row; duplicate another; swap two same-name
+   source IDs; inject a direct-entry receipt; reorder phases; skip an entry;
+   remove a runtime provider; replay a donor projection; zero the corpus;
+   substitute an always-green result. Every mutation must fail for its intended
+   reason while the scalar positive control still executes. An unsupported
+   async fixture must not make the whole gate pass vacuously.
+
+**Astra Low lane D prompt:** Continue the existing D/evidence-acceptance work
+only after its two owner handles are reconciled. Implement the gate and
+fixtures above in the listed files; you are not alone in the repository and
+must preserve peer edits. Do not edit compiler, codec, replay, observer authority,
+CI or baseline files. First reproduce the pinned upstream five-entry READY
+result beside a namespace direct-path control. Then exercise the public A
+adapter and C consumer on the recovered integration head. Return exact
+base/head SHAs, manifest hash, per-unit rows, negative-control failures and
+runtime values. This gate is complete only when it distinguishes unavailable,
+unsupported, corrupt and fully validated evidence. It does not close the epic.
+
+### Final completion audit, required after these continuations
+
+- [ ] A single production route serves async/sync compile, multi-source,
+  file compilation, object/linking output and all CLI/selfhost entry wrappers.
+  No public option or environment switch can select direct codegen. Execute
+  the inventory in [IR/direct policy retirement](4522-ir-kill-switch-inventory-r9.md).
+- [ ] Every accepted source and pass-derived unit has one semantic producer
+  and one emission receipt. Classes, closures, nested/CJS/IIFE bodies,
+  ordered initialization, async/generator state machines and dynamic code
+  are included; they cannot be excluded by naming the census a subset.
+- [ ] A single validated semantic snapshot and ABI feed both backends.
+  Frontend/checker/AST and legacy body modules are absent from backend replay's
+  transitive runtime import graph. Runtime and carrier refusals occur before
+  resource publication. Backend capability gaps remain visible until fixed.
+- [ ] Native/host runtime support and all demanded layouts have authenticated
+  providers. Preserve shared runtime/backends; remove direct source walkers.
+- [ ] All optimization-retirement obligations have executable preservation
+  and removal controls, including Wasm shape and performance where required.
+  Re-enumerate untracked handlers rather than treating 50 rows as exhaustive.
+- [ ] Reachability is checked from actual public roots for **both** backends,
+  including async/eval/object paths and dynamic imports. Require detector
+  positive controls and zero unknown edges before using it as deletion proof.
+  Run the existing [direct frontend deletion issue](3090-shrink-codegen-delete-dormant-legacy-handlers.md)
+  through its owner; do not transfer its still-held bare claim implicitly.
+- [ ] Full host/standalone Test262 and application comparisons use the same
+  corpus/configuration on explicit base/candidate SHAs. Account for skips,
+  fatal runner outcomes, timeouts and missing shards. Required equivalence,
+  linear, typecheck, lint/format, budgets, oracle, dead-export and standalone
+  floor checks pass on the actual merged candidate.
+
+A new typed refusal protects correctness while a migration checkpoint is
+incomplete. It is **not** a license to replace working direct coverage with
+errors and declare the user's full migration complete.

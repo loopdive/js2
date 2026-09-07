@@ -77,6 +77,32 @@ export function isHostTypedArrayCarrierName(name: string | undefined): name is s
   return name !== undefined && TYPED_ARRAY_HOST_TAGS[name] !== undefined;
 }
 
+/** The concrete host-lane TypedArray brand carried by an expression, if any. */
+export function hostTypedArrayCarrierNameForExpression(ctx: CodegenContext, expr: ts.Expression): string | undefined {
+  let type = ctx.checker.getTypeAtLocation(expr);
+  if (type.isUnion()) {
+    const nonNullish = type.types.filter(
+      (member) =>
+        !(member.flags & ts.TypeFlags.Null) &&
+        !(member.flags & ts.TypeFlags.Undefined) &&
+        !(member.flags & ts.TypeFlags.Void),
+    );
+    if (nonNullish.length === 1) type = nonNullish[0]!;
+  }
+  const name = type.aliasSymbol?.name ?? type.getSymbol()?.name;
+  if (isHostTypedArrayCarrierName(name)) return name;
+  return ts.isNewExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    isHostTypedArrayCarrierName(expr.expression.text)
+    ? expr.expression.text
+    : undefined;
+}
+
+/** Whether an expression is statically one of the branded host-lane carriers. */
+export function isHostTypedArrayCarrierExpression(ctx: CodegenContext, expr: ts.Expression): boolean {
+  return hostTypedArrayCarrierNameForExpression(ctx, expr) !== undefined;
+}
+
 /**
  * Consume the freshly-created native TypedArray carrier on the stack, register
  * its concrete TypedArray brand with the host, then leave the same carrier on
