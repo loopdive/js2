@@ -172,3 +172,32 @@ per-row deadline, 0 pass→fail. Never the full bucket.
   unreachable before it).
 - Id reserved via `claim-issue --allocate --allow-unscanned`; open PRs
   hand-checked 2026-09-07 — highest in-flight issue file is #5379.
+
+## Measurement (Step 4, 2026-09-07, dev-5380 — recorded by the lead after the lane's container restart)
+
+Driver `.tmp/bucket-run.mts` over `tests/test262-runner.ts`'s `runTest262File`,
+provider-linked, one fresh `JSWASM_TEMPORAL_CACHE` per side, 60 s per-row
+deadline (`hang` = no result within it). Base = this branch with only the three
+`src/codegen/` files reverted (file-copy A/B, `.tmp/ab/*.base`). Artifacts:
+`.tmp/rows-base.tsv`, `.tmp/rows-fix.tsv`, `.tmp/diff-5380.txt` (worktree
+`agent-a5a33516fa53a63fe`).
+
+| sample | rows | base | fix |
+| --- | --- | --- | --- |
+| `ZonedDateTime/prototype/{hoursInDay,round,total,since,until}/**` | 251 | 199 pass / 72 fail / **9 hang** | 204 pass / 76 fail / **0 hang** |
+| 123-row family (`family-123.txt`) | 123 | 32 pass / 62 fail (rest not linked-lane rows) | unchanged |
+| **total** | **374** | 231 pass / 9 hang | **236 pass / 0 hang** |
+
+- `hoursInDay/basic.js`: hang → **pass** (5.2 s).
+- hang → pass: 5 (`hoursInDay/basic`, `since|until/largestunit-default`,
+  `since|until/rounds-relative-to-receiver`).
+- hang → fail: 4 (`since|until/round-cross-unit-boundary`,
+  `since|until/smallestunit-plurals-accepted`) — all now terminate with
+  `Error: Convert JSBI instances to native numbers using toNumber` (the
+  #5377/#5379 ownership-gate family), the same reason `round/smallestunit-plurals-accepted`
+  already fails on base.
+- **pass → non-pass: 0.**
+
+Step 3 (runner behaviour under a synchronous spin) was NOT established: the
+probe `tests/probe-5380-spin.test.ts` produced no verdict before the box's
+container restart. Left open; the fix removes the only known spin.
