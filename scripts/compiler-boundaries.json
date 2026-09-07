@@ -1,6 +1,6 @@
 {
   "schema": "compiler-boundaries-v1",
-  "description": "Exact compiler inventory with shared contracts and the bounded Wasm instruction, handle-primitive and native queue modules activated. Remaining model, allocator, runtime-value and compiler concerns stay migration debt.",
+  "description": "Exact compiler inventory with shared contracts, bounded Wasm/native leaves and the canonical program ABI authority activated. Full IR nodes/prepared schema, model, allocator, runtime-value and compiler concerns stay migration debt.",
   "sourceRoot": "src",
   "tsconfig": "tsconfig.json",
   "requireGitProvenance": true,
@@ -60,10 +60,10 @@
     },
     {
       "id": "ir-core",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/ir/core"],
       "required": true,
-      "entries": ["src/ir/core/nodes.ts"],
+      "entries": ["src/ir/core/binding-key-primitives.ts"],
       "minModules": 1
     },
     {
@@ -92,11 +92,11 @@
     },
     {
       "id": "ir-program",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/ir/program"],
       "required": true,
-      "entries": ["src/ir/program/index.ts"],
-      "minModules": 1
+      "entries": ["src/ir/program/abi-inventory.ts", "src/ir/program/abi.ts"],
+      "minModules": 2
     },
     {
       "id": "runtime-contracts",
@@ -382,6 +382,16 @@
       "layer": "native-runtime",
       "entries": ["src/runtime/wasmgc/async/microtask-queue-bodies.ts"],
       "minModules": 1
+    },
+    {
+      "layer": "ir-core",
+      "entries": ["src/ir/core/binding-key-primitives.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/abi-inventory.ts", "src/ir/program/abi.ts"],
+      "minModules": 2
     }
   ],
   "nonModules": [
@@ -7834,7 +7844,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Four validation primitives and source-global key grammar now live in the clean core leaf; remaining binding-reference factories and node/type/runtime contracts still need separation."
     },
     {
       "path": "src/ir/alloc-registry.ts",
@@ -8389,6 +8399,11 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/core/binding-key-primitives.ts",
+      "state": "clean",
+      "layer": "ir-core"
+    },
+    {
       "path": "src/ir/counted-string-append-provenance.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -8882,7 +8897,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "F0 redirects only the specified shared identity imports; later split semantic async attachment data from provider-selection implementation. This import change alone does not prove a clean core."
+      "nextBoundary": "F0 redirects only the specified shared identity imports; later split semantic async attachment data from provider-selection implementation. The required src/ir/core/nodes.ts extraction remains pending; activating a binding-key leaf does not prove a clean core."
     },
     {
       "path": "src/ir/number-to-string-provider.ts",
@@ -9120,9 +9135,9 @@
       "path": "src/ir/program-abi.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "legacy-ir-bridge",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Canonical ABI types/state machine are in ir/program/abi.ts. The old rich-inventory constructor specialization and name-based LegacyAbiAdapter remain a mixed compatibility boundary, never an import of the clean authority."
     },
     {
       "path": "src/ir/program-allocations.ts",
@@ -9266,7 +9281,17 @@
       "layer": "mixed-needs-split",
       "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Extract pure prepared data/ABI into ir/program only after splitting frontend inventory/module-init/outcome edges, backend acceptance and emission contracts, and deferred LinearOptions. Preserve runtime validation/transaction behavior through explicit boundaries; no whole-file relocation or clean declaration."
+      "nextBoundary": "The ABI leaf is active, but the required src/ir/program/index.ts prepared-schema extraction remains pending. Split frontend inventory/module-init/outcome edges, backend acceptance/emission contracts and deferred LinearOptions. Preserve runtime validation/transaction behavior; no whole-file relocation or clean declaration."
+    },
+    {
+      "path": "src/ir/program/abi-inventory.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/abi.ts",
+      "state": "clean",
+      "layer": "ir-program"
     },
     {
       "path": "src/ir/promise-delay-lowering.ts",

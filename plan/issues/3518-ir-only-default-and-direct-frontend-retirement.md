@@ -121,6 +121,15 @@ draft has 59/59 tests and typecheck passing, with parent composition and artifac
 parity still pending. The [lowering-cycle proposal](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
 is the next bounded plan, not a competing dispatch or completed dependency split.
 
+The native Wasm/checker checkpoint is published as ready PR 5735, source commit
+`36ea5ce9f54190c1f2c7af0466cf768afb453394`, with 117/117 changed-file tests
+and all normal push hooks passing. Its six canonical full/cut witnesses pass
+preservation while both unknown imports remain strict failures.
+The [ABI integration evidence](../agent-context/3518-program-abi-integration-evidence-2026-09-08.md)
+records exact two-fixture artifact equality against clean d71, the isolated ABI
+draft and actual N1 composition. The caller gate and ready ABI PR are still
+pending; none of this closes an epic acceptance criterion.
+
 ## Historical execution plan — whole-program cutover (2026-09-05)
 
 The user approved replacing continued hybrid feature-by-feature expansion with
