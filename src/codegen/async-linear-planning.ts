@@ -355,10 +355,22 @@ function isSettledNumericExpression(
   );
 }
 
-interface SettledOwnerIdentity {
+export interface SettledOwnerIdentity {
   readonly unitId: IrUnitId;
   readonly sourceId: IrSourceId;
   readonly sourceFile: ts.SourceFile;
+}
+
+/**
+ * Identity retained at the moment a settled-owner proof changes the ABI.
+ *
+ * The current planning maps are read-only snapshots, but every later handoff
+ * still has to fail closed if a stale/corrupt context loses or rebinds one of
+ * those mappings.  Keying this receipt by the original declaration means
+ * `WasIssued` does not first ask the damaged map which UnitId to inspect.
+ */
+interface SettledOwnerIssuance extends SettledOwnerIdentity {
+  readonly declaration: ts.FunctionDeclaration;
 }
 
 interface SettledOwnerCallClosure {
@@ -368,9 +380,32 @@ interface SettledOwnerCallClosure {
   readonly fingerprint: string;
 }
 
+/**
+ * Source ABI closure for an async owner that is about to publish a Promise
+ * result.  The same structural receipt is consumed by declaration ABI
+ * preparation and the later R3 owner selection; keeping the call contracts
+ * here avoids a second name-only approximation at either handoff.
+ */
+export interface PreparedIrAsyncPromiseCallClosure {
+  readonly incomingCallerUnitIds: readonly IrUnitId[];
+  readonly incomingCallContracts: readonly PreparedIrAsyncCallContract[];
+  readonly outgoingCalleeUnitIds: readonly IrUnitId[];
+  readonly fingerprint: string;
+}
+
 const settledOwnerCache = new WeakMap<CodegenContext, Map<IrUnitId, PreparedIrAsyncSettledOwner | null>>();
-const settledOwnerIssued = new WeakMap<CodegenContext, Set<IrUnitId>>();
+const settledOwnerIssued = new WeakMap<CodegenContext, WeakMap<ts.FunctionDeclaration, SettledOwnerIssuance>>();
 const importedResolverCache = new WeakMap<IrPlanningIdentityContext, IrIdentityImportedFunctionResolver>();
+
+function issuedSettledOwner(ctx: CodegenContext, fn: ts.FunctionDeclaration): SettledOwnerIssuance | undefined {
+  return settledOwnerIssued.get(ctx)?.get(fn);
+}
+
+function sameSettledOwnerIdentity(current: SettledOwnerIdentity, issued: SettledOwnerIssuance): boolean {
+  return (
+    current.unitId === issued.unitId && current.sourceId === issued.sourceId && current.sourceFile === issued.sourceFile
+  );
+}
 
 function importedResolver(ctx: CodegenContext): IrIdentityImportedFunctionResolver | null {
   const identity = ctx.irPlanningIdentityContext;
@@ -392,7 +427,7 @@ function sourceFunctionTarget(ctx: CodegenContext, identifier: ts.Identifier): t
   );
 }
 
-function settledOwnerIdentity(ctx: CodegenContext, fn: ts.FunctionDeclaration): SettledOwnerIdentity | null {
+export function settledOwnerIdentity(ctx: CodegenContext, fn: ts.FunctionDeclaration): SettledOwnerIdentity | null {
   const identity = ctx.irPlanningIdentityContext;
   if (!identity || !ts.isSourceFile(fn.parent) || fn.getSourceFile() !== fn.parent) return null;
   const unitId = identity.unitIdByDeclaration.get(fn);
@@ -408,6 +443,7 @@ function settledOwnerIdentity(ctx: CodegenContext, fn: ts.FunctionDeclaration): 
     !terminal ||
     terminal !== unit ||
     terminal.terminalOwnerId !== unitId ||
+    identity.sourceFileBySourceId.get(sourceId) !== fn.getSourceFile() ||
     identity.declarationByUnitId.get(unitId) !== fn
   ) {
     return null;
@@ -453,7 +489,86 @@ function isImportOrExportBindingPosition(node: ts.Identifier): boolean {
   );
 }
 
-function callContractKind(call: ts.CallExpression): PreparedIrAsyncCallContract["kind"] | null {
+function declarationsAreAmbient(ctx: CodegenContext, node: ts.Node): boolean {
+  const declarations = ctx.oracle.declarationsOf(node);
+  return declarations.length > 0 && declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile);
+}
+
+function isPromiseVectorPushCarrier(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  const pushCall = call.parent;
+  if (
+    !ts.isCallExpression(pushCall) ||
+    pushCall.arguments.length !== 1 ||
+    pushCall.arguments[0] !== call ||
+    pushCall.questionDotToken ||
+    pushCall.typeArguments?.length ||
+    !ts.isPropertyAccessExpression(pushCall.expression) ||
+    pushCall.expression.name.text !== "push" ||
+    !ts.isIdentifier(pushCall.expression.expression)
+  ) {
+    return false;
+  }
+  const declaration = ctx.oracle.variableDeclarationOf(pushCall.expression.expression);
+  const type = declaration?.type;
+  if (
+    !declaration ||
+    !type ||
+    !ts.isArrayTypeNode(type) ||
+    !ts.isTypeReferenceNode(type.elementType) ||
+    !ts.isIdentifier(type.elementType.typeName) ||
+    type.elementType.typeName.text !== "Promise" ||
+    type.elementType.typeArguments?.length !== 1 ||
+    type.elementType.typeArguments[0]?.kind !== ts.SyntaxKind.NumberKeyword ||
+    !declarationsAreAmbient(ctx, type.elementType.typeName) ||
+    !declaration.initializer ||
+    !ts.isArrayLiteralExpression(declaration.initializer) ||
+    declaration.initializer.elements.length !== 0
+  ) {
+    return false;
+  }
+  const callFact = ctx.oracle.typeFactOf(call);
+  if (callFact.kind !== "builtin" || callFact.name !== "Promise") return false;
+
+  // The vector is a carrier only when the same lexical owner later awaits
+  // Promise.all on it. This keeps an arbitrary typed-array push from becoming
+  // ABI evidence while admitting the existing prepared Promise.all shape.
+  let owner: ts.FunctionLikeDeclaration | undefined;
+  for (let current: ts.Node | undefined = call.parent; current; current = current.parent) {
+    if (isNestedExecutable(current)) {
+      owner = current as ts.FunctionLikeDeclaration;
+      break;
+    }
+  }
+  if (!owner?.body) return false;
+  let consumesVector = false;
+  const visit = (node: ts.Node): void => {
+    if (consumesVector || (node !== owner && isNestedExecutable(node))) return;
+    if (
+      ts.isAwaitExpression(node) &&
+      ts.isCallExpression(node.expression) &&
+      node.expression.arguments.length === 1 &&
+      !node.expression.questionDotToken &&
+      !node.expression.typeArguments?.length &&
+      ts.isPropertyAccessExpression(node.expression.expression) &&
+      ts.isIdentifier(node.expression.expression.expression) &&
+      ts.isIdentifier(node.expression.expression.name) &&
+      declarationsAreAmbient(ctx, node.expression.expression.expression) &&
+      declarationsAreAmbient(ctx, node.expression.expression.name) &&
+      node.expression.expression.expression.text === "Promise" &&
+      node.expression.expression.name.text === "all" &&
+      ts.isIdentifier(node.expression.arguments[0]!) &&
+      ctx.oracle.variableDeclarationOf(node.expression.arguments[0]!) === declaration
+    ) {
+      consumesVector = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(owner.body);
+  return consumesVector;
+}
+
+function callContractKind(ctx: CodegenContext, call: ts.CallExpression): PreparedIrAsyncCallContract["kind"] | null {
   let current: ts.Node = call;
   let hasAssertion = false;
   for (;;) {
@@ -468,8 +583,9 @@ function callContractKind(call: ts.CallExpression): PreparedIrAsyncCallContract[
       current = parent;
       continue;
     }
-    if (ts.isAwaitExpression(parent) && parent.expression === current) return "awaited-fulfillment";
+    if (ts.isAwaitExpression(parent) && parent.expression === current && !hasAssertion) return "awaited-fulfillment";
     if (ts.isReturnStatement(parent) && parent.expression === current && !hasAssertion) return "promise-carrier";
+    if (current === call && isPromiseVectorPushCarrier(ctx, call)) return "promise-carrier";
     return null;
   }
 }
@@ -495,13 +611,24 @@ function promiseReturnContractIsClosed(
   ctx: CodegenContext,
   caller: ts.FunctionLikeDeclaration,
   call: ts.CallExpression,
+  promiseOwnerUnitIds?: ReadonlySet<IrUnitId>,
 ): boolean {
   // An async caller with no own await still has its legacy f64 declaration
   // ABI in this increment, so returning a newly externref-valued owner from
   // it would strand the call on a stale slot. A synchronous Promise carrier
   // is only accepted when the checker can prove that the call expression and
   // caller signature both carry Promise.
-  if (isAsyncDeclaration(caller)) return false;
+  if (isAsyncDeclaration(caller)) {
+    const callerUnitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(caller);
+    const callFact = ctx.oracle.typeFactOf(call);
+    return (
+      promiseOwnerUnitIds !== undefined &&
+      callerUnitId !== undefined &&
+      promiseOwnerUnitIds.has(callerUnitId) &&
+      callFact.kind === "builtin" &&
+      callFact.name === "Promise"
+    );
+  }
   const callFact = ctx.oracle.typeFactOf(call);
   const callerSignature = ctx.oracle.signatureOf(caller)?.returns;
   return (
@@ -537,15 +664,24 @@ function hasUnresolvedDirectCall(ctx: CodegenContext, fn: ts.FunctionLikeDeclara
  * a matching spelling, an unknown caller, or an unowned module-init call does
  * not establish a compatible edge.
  */
-function settledOwnerCallClosure(
+function buildAsyncCallClosure(
   ctx: CodegenContext,
   owner: ts.FunctionDeclaration,
   ownerIdentity: SettledOwnerIdentity,
-): SettledOwnerCallClosure | null {
+  /**
+   * When supplied, every async source caller/callee must belong to this
+   * fixed-point Promise-owner population.  The settled-owner receipt keeps
+   * the option absent because its non-thenable proof intentionally remains a
+   * narrower, independent B3 contract.
+   */
+  promiseOwnerUnitIds?: ReadonlySet<IrUnitId>,
+): PreparedIrAsyncPromiseCallClosure | null {
   const identity = ctx.irPlanningIdentityContext;
   if (!identity) return null;
   const incoming = new Map<string, PreparedIrAsyncCallContract>();
   const outgoing = new Set<IrUnitId>();
+  const outgoingContracts: { readonly targetUnitId: IrUnitId; readonly callPosition: number; readonly kind: string }[] =
+    [];
   const sourceFiles = ctx.callableSourceFiles ?? [ownerIdentity.sourceFile];
   const inventoryOrder = new Map(identity.inventory.allUnits.map((unit, index) => [unit.id, index] as const));
   let valid = true;
@@ -579,18 +715,22 @@ function settledOwnerCallClosure(
           return;
         }
         if (targetDeclaration === owner) {
-          const kind = callContractKind(node);
+          const kind = callContractKind(ctx, node);
           const caller = boundary?.declaration;
           if (
             !kind ||
             !boundary ||
             !caller ||
+            (promiseOwnerUnitIds !== undefined &&
+              (!ts.isFunctionDeclaration(caller) || settledOwnerIdentity(ctx, caller)?.unitId !== boundary.unitId)) ||
             (boundary.unitId === ownerIdentity.unitId && kind !== "awaited-fulfillment") ||
             (kind === "awaited-fulfillment" &&
               (!isAsyncDeclaration(caller) ||
-                preparedIrAsyncLinearSource(ctx, caller) === null ||
-                hasUnresolvedDirectCall(ctx, caller))) ||
-            (kind === "promise-carrier" && !promiseReturnContractIsClosed(ctx, caller, node))
+                hasUnresolvedDirectCall(ctx, caller) ||
+                (promiseOwnerUnitIds === undefined
+                  ? preparedIrAsyncLinearSource(ctx, caller) === null
+                  : !promiseOwnerUnitIds.has(boundary.unitId)))) ||
+            (kind === "promise-carrier" && !promiseReturnContractIsClosed(ctx, caller, node, promiseOwnerUnitIds))
           ) {
             valid = false;
             return;
@@ -610,18 +750,35 @@ function settledOwnerCallClosure(
           const targetUnitId = identity.unitIdByDeclaration.get(targetDeclaration);
           const targetUnit = targetUnitId === undefined ? undefined : identity.unitByUnitId.get(targetUnitId);
           if (
+            promiseOwnerUnitIds !== undefined &&
+            (targetUnitId === undefined || settledOwnerIdentity(ctx, targetDeclaration)?.unitId !== targetUnitId)
+          ) {
+            valid = false;
+            return;
+          }
+          if (
             targetUnitId !== undefined &&
             targetUnit?.kind === "top-level-function" &&
             isAsyncDeclaration(targetDeclaration)
           ) {
-            // An async source call that is not the admitted numeric await
-            // operand would need the Promise carrier closure of a later R2
-            // increment. Keep this B3 receipt closed over settled/non-async
-            // outgoing calls only.
-            valid = false;
-            return;
+            // B3's settled-owner receipt remains closed over settled/non-async
+            // outgoing calls.  A generic Promise owner may cross this edge,
+            // but only when the exact target declaration is in the same
+            // fixed-point Promise population and will therefore publish the
+            // matching externref carrier.
+            if (promiseOwnerUnitIds === undefined || !promiseOwnerUnitIds.has(targetUnitId)) {
+              valid = false;
+              return;
+            }
           }
-          if (targetUnitId !== undefined && targetUnit?.kind === "top-level-function") outgoing.add(targetUnitId);
+          if (targetUnitId !== undefined && targetUnit?.kind === "top-level-function") {
+            outgoing.add(targetUnitId);
+            outgoingContracts.push({
+              targetUnitId,
+              callPosition: node.pos,
+              kind: callContractKind(ctx, node) ?? "value",
+            });
+          }
         }
       }
       if (
@@ -657,8 +814,39 @@ function settledOwnerCallClosure(
   const fingerprint = JSON.stringify({
     incoming: incomingCallContracts,
     outgoing: outgoingCalleeUnitIds,
+    outgoingContracts,
   });
-  return { incomingCallerUnitIds, incomingCallContracts, outgoingCalleeUnitIds, fingerprint };
+  return Object.freeze({
+    incomingCallerUnitIds: Object.freeze(incomingCallerUnitIds),
+    incomingCallContracts: Object.freeze(incomingCallContracts),
+    outgoingCalleeUnitIds: Object.freeze(outgoingCalleeUnitIds),
+    fingerprint,
+  });
+}
+
+/** B3 wrapper retaining its original narrower outgoing-call contract. */
+function settledOwnerCallClosure(
+  ctx: CodegenContext,
+  owner: ts.FunctionDeclaration,
+  ownerIdentity: SettledOwnerIdentity,
+): SettledOwnerCallClosure | null {
+  return buildAsyncCallClosure(ctx, owner, ownerIdentity);
+}
+
+/**
+ * Close one generic async owner against the exact Promise-owner population.
+ * A source call to an async declaration is accepted only when its target is
+ * in that population; a no-await C1 declaration therefore cannot be used as
+ * a Promise carrier merely because its TypeScript return annotation says
+ * `Promise<T>`.
+ */
+export function preparedIrAsyncPromiseCallClosure(
+  ctx: CodegenContext,
+  owner: ts.FunctionDeclaration,
+  promiseOwnerUnitIds: ReadonlySet<IrUnitId>,
+): PreparedIrAsyncPromiseCallClosure | null {
+  const identity = settledOwnerIdentity(ctx, owner);
+  return identity ? buildAsyncCallClosure(ctx, owner, identity, promiseOwnerUnitIds) : null;
 }
 
 function settledOwnerIsCurrent(
@@ -768,8 +956,14 @@ export function preparedIrAsyncSettledOwner(
   ctx: CodegenContext,
   fn: ts.FunctionDeclaration,
 ): PreparedIrAsyncSettledOwner | null {
+  const issued = issuedSettledOwner(ctx, fn);
   const identity = settledOwnerIdentity(ctx, fn);
   if (!identity) return null;
+  // Once the declaration has promised the Promise ABI, only the original
+  // source/unit receipt may be reused.  A stale handoff must never mint a new
+  // receipt under a rebound UnitId, nor rebuild one after its original cache
+  // entry was withdrawn.
+  if (issued && !sameSettledOwnerIdentity(identity, issued)) return null;
   let cache = settledOwnerCache.get(ctx);
   if (!cache) {
     cache = new Map();
@@ -782,25 +976,25 @@ export function preparedIrAsyncSettledOwner(
     cache.set(identity.unitId, null);
     return null;
   }
+  if (issued) return null;
   const receipt = buildPreparedIrAsyncSettledOwner(ctx, fn);
   cache.set(identity.unitId, receipt);
   if (receipt) {
-    const issued = settledOwnerIssued.get(ctx) ?? new Set<IrUnitId>();
-    issued.add(identity.unitId);
-    settledOwnerIssued.set(ctx, issued);
+    const issuedByDeclaration = settledOwnerIssued.get(ctx) ?? new WeakMap();
+    issuedByDeclaration.set(fn, { ...identity, declaration: fn });
+    settledOwnerIssued.set(ctx, issuedByDeclaration);
   }
   return receipt;
 }
 
 /** True after a settled proof was issued, even if a later handoff withdrew it. */
 export function preparedIrAsyncSettledOwnerWasIssued(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
-  const unitId = settledOwnerIdentity(ctx, fn)?.unitId;
-  return unitId !== undefined && settledOwnerIssued.get(ctx)?.has(unitId) === true;
+  return issuedSettledOwner(ctx, fn) !== undefined;
 }
 
 /** Test/integration seam for modelling proof loss after ABI projection. */
 export function forgetPreparedIrAsyncSettledOwner(ctx: CodegenContext, fn: ts.FunctionDeclaration): void {
-  const unitId = settledOwnerIdentity(ctx, fn)?.unitId;
+  const unitId = issuedSettledOwner(ctx, fn)?.unitId ?? settledOwnerIdentity(ctx, fn)?.unitId;
   if (unitId === undefined) return;
   const cache = settledOwnerCache.get(ctx) ?? new Map<IrUnitId, PreparedIrAsyncSettledOwner | null>();
   cache.set(unitId, null);

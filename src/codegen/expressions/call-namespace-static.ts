@@ -868,12 +868,36 @@ export function compileNamespaceStaticCall(
     const reflectMethod = propAccess.name.text;
 
     // Helper — compile each argument as externref, padding missing positions with ref.null.extern.
-    const emitReflectArgs = (count: number): void => {
+    //
+    // (#5381) `argumentsListIndex` names the position whose value the host
+    // reads with CreateListFromArrayLike (§7.3.18) — argument 1 of
+    // `Reflect.construct`, argument 2 of `Reflect.apply`. There the array
+    // literal's own LENGTH is the argument count, and the contextual type must
+    // not change it. TypeScript types `Reflect.construct<A extends any[]>` so
+    // that `A` infers from the TARGET's constructor signature: for
+    // `Reflect.construct(Intl.DateTimeFormat, ["en-US"])`, `A` is the OPTIONAL
+    // 2-tuple `[locales?, options?]`, and the tuple-literal lowering pads the
+    // one-element literal to a full 2-field struct whose second field is
+    // `undefined`. The host then ran `new Intl.DateTimeFormat("en-US", null)`
+    // and V8 threw "Intl.DateTimeFormat called on null or undefined" — an
+    // arity-signature masquerading as a length. `Reflect.construct(Map, [])`
+    // has the same shape and only escaped notice because `new Map(null)` is
+    // legal. Compiling this one position as a vec keeps the literal's length.
+    const emitReflectArgs = (count: number, argumentsListIndex?: number): void => {
       const externRef: ValType = { kind: "externref" };
+      const forceVecFlag = ctx as unknown as { _arrayLiteralForceVec?: boolean };
       for (let i = 0; i < count; i++) {
         const arg = expr.arguments[i];
         if (arg !== undefined) {
-          const argTy = compileExpression(ctx, fctx, arg, externRef);
+          const forceVec = i === argumentsListIndex && ts.isArrayLiteralExpression(arg);
+          const previousForceVec = forceVecFlag._arrayLiteralForceVec;
+          if (forceVec) forceVecFlag._arrayLiteralForceVec = true;
+          let argTy: ValType | null;
+          try {
+            argTy = compileExpression(ctx, fctx, arg, externRef);
+          } finally {
+            if (forceVec) forceVecFlag._arrayLiteralForceVec = previousForceVec;
+          }
           if (argTy && argTy.kind !== "externref") {
             coerceType(ctx, fctx, argTy, externRef);
           } else if (argTy === null) {
@@ -2426,7 +2450,7 @@ export function compileNamespaceStaticCall(
 
     // Reflect.apply(fn, thisArg, argList) — returns externref. Host performs CreateListFromArrayLike.
     if (reflectMethod === "apply" && expr.arguments.length >= 3) {
-      emitReflectArgs(3);
+      emitReflectArgs(3, 2);
       const funcIdx = ensureLateImport(ctx, "__reflect_apply", [externRef, externRef, externRef], [externRef]);
       flushLateImportShifts(ctx, fctx);
       if (funcIdx !== undefined) {
@@ -2447,7 +2471,7 @@ export function compileNamespaceStaticCall(
     // throwing. Encode presence in the import NAME — the boundary cannot carry
     // it any other way, and the arity is a compile-time fact.
     if (reflectMethod === "construct" && expr.arguments.length >= 2) {
-      emitReflectArgs(3);
+      emitReflectArgs(3, 1);
       const constructImport = expr.arguments.length >= 3 ? "__reflect_construct_newtarget" : "__reflect_construct";
       const funcIdx = ensureLateImport(ctx, constructImport, [externRef, externRef, externRef], [externRef]);
       flushLateImportShifts(ctx, fctx);

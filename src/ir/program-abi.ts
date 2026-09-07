@@ -1,14 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import {
-  createDerivedIrUnitId,
-  type IrBindingId,
-  type IrClassId,
-  type IrSourceId,
-  type IrSyntheticUnitRole,
-  type IrUnitId,
-  type IrUnitInventory,
-} from "./identity.js";
+import { createDerivedIrUnitId } from "./identity-values.js";
+import type { IrBindingId, IrClassId, IrSourceId, IrSyntheticUnitRole, IrUnitId, IrUnitInventory } from "./identity.js";
 import { irGlobalBindingKey } from "./abi-bindings.js";
 
 export type ProgramAbiSlotPolicy = "required" | "alias" | "none";

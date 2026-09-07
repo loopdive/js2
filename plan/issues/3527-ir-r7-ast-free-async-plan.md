@@ -3,7 +3,7 @@ id: 3527
 title: "IR-only R7: AST-free async suspension plans and canonical Promise ABI"
 status: blocked
 created: 2026-07-21
-updated: 2026-09-05
+updated: 2026-09-06
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -49,8 +49,363 @@ func-budget-allow:
   - src/ir/from-ast.ts::lowerExpr
 oracle-ratchet-allow:
   - src/codegen/async-linear-planning.ts
+  - src/codegen/async-ir-planning.ts
 ---
 # #3527 — IR-only R7: AST-free async suspension plans and canonical Promise ABI
+
+## Execution amendment — 2026-09-05
+
+Complete the active carrier/currentness repair before starting new work. Then
+join R6 in package B of the approved
+[whole-program cutover plan](3518-ir-only-default-and-direct-frontend-retirement.md#current-execution-plan--whole-program-cutover-2026-09-05).
+The prepared program owns the complete async call graph, canonical Promise
+contracts, immutable suspension plans, and runtime demands. Preserve the proven
+post-issuance invariants while replacing dependence on mutable live-context
+joins; do not add another parallel ownership cache. Package A integrates the
+producer into the shared driver. The first mixed-application checkpoint must
+preserve Promise identity and microtask behavior with zero direct bodies.
+All async containers and the original R7 retirement criteria remain in scope.
+
+### Package B executable producer checkpoint — 2026-09-06
+
+`prepareWholeProgramAsyncFunctions` in
+`src/ir/runtime-program-producers.ts` now consumes A's complete typed population
+and invokes the existing `prepareSuspendingIrFunction` for every unprepared async
+owner. It returns the complete ordinary/async/derived population and the existing
+`ProgramAbiDerivedUnitRecord` provenance. A's shared population validator runs
+before and after production, including pre-existing semantic state calls and
+derived owners. No selector-owned set, physical signature inference, new ABI
+registry, source callback, or additional ownership cache participates.
+
+Reader/mutator reconciliation confirmed that async production is called by the
+existing integration helper, while state functions/provenance are appended there;
+A owns replacing that wiring. Runtime attachments are produced in
+`intrinsic-support.ts`; `createPreparedIrAsyncRuntime` remains the only issuer
+of the existing `preparedManifestByPlan` authentication, with rollback on failed
+attachment validation. This change does not edit that WeakMap or replace identity
+checks with copied JSON. Physical adapter/materializer calls remain below A/C's
+acceptance boundary.
+
+The source-to-IR await handoff accepts explicit `operandType` and `resultType`
+evidence. Exact f64 operands retain their original value and await edge; the
+semantic async producer declares the Promise number bridge from typed crossings.
+This path cannot carry the historical settled-owner receipt fields, preventing
+unauthenticated receipt metadata from bypassing their separate ownership checks.
+Generic number-boundary policy and existing immutable async planning remain
+unchanged. The shared frame uses authenticated box/unbox targets and the
+manifest-declared caught-exception import after acceptance.
+
+Focused positive controls exercise the generic two-await state producer,
+authenticated host/native projections, and actual gc/nativeStrings Wasm. The
+numeric result is 29 with native Promise identity and the exact two-tick trace;
+frame emission adds no imports and preserves all nine import identities.
+Missing state/provenance, source-body omission, conflicting derived identity,
+numeric/receipt contradictions, and copied runtime authority have mutation
+controls. Eight distinct focused/regression files pass 118/118;
+standalone typechecking passed. Fresh-process source-free reattachment passes with frontend loading blocked
+after A's signed identity dependency `1b9ced2df05cd5ac0415508ec6f8299d07767369`.
+A deliberately blocked frontend import validates the instrument. A fully
+declared settled plan also executes without late imports; a smaller valid
+semantic plan receives a typed backend capability refusal before allocation
+because the shared frame still requires all core host adapters.
+
+The existing producer still declines an async function with zero awaits, such
+as a typed `async immediate() { return 3; }`, and existing manifest providers
+still lack a linear async backend. These are located failure-evidence rows,
+not coverage or preserved behavior claims. The unchanged mixed application,
+zero direct body count, real cross-backend replay, and full R7 retirement
+remain open.
+
+### Source-free physical async bridge implementation plan — 2026-09-06
+
+Root approved the first slice and the exact second mechanical slice below on
+2026-09-06, after reviewing this plan, the fresh ownership census, and the
+preserved local worktree hunks. B must adopt A's signed direct-import dependency
+before removing the barrel. A also has the narrowly granted physical import/tag
+extraction recorded below. Other engine/materializer extractions still await
+exact source-ownership review.
+The source review is grounded in signed producer commit
+`4d4c22ef222b8b55ab3e44901458940109f2525c`, also inspected in the integration
+worktree. It concerns the runtime import closure of `ir-async-frame.ts` and
+`ir-async-runtime-adapters.ts`; C retains exclusive ownership of the codec,
+prepared-program consumer, backend emitters, and replay. No import substitution
+below, by itself, establishes source-free async emission.
+
+#### Observed dependencies and mutation boundaries
+
+These are runtime imports, not TypeScript-only annotations. Paths in the first
+two columns are relative to `src/codegen/` unless prefixed with `src/`.
+
+| Bridge dependency | Short route to frontend loading | Required boundary |
+| --- | --- | --- |
+| `ir-async-frame` → `async-frame` | `async-frame` → `src/ts-api` → `typescript`; also `async-cps`, `index`, and `checker/type-mapper` | Extract the actual prepared frame engine from AST planning and dispatch. |
+| `ir-async-frame` → `shared.coerceType` | `shared` → `src/ts-api`; registered implementation in `type-coercion` → `index` | Extract the required typed coercion implementation, not the delegate or its registrar. |
+| `ir-async-frame` → `func-space.definedFuncAt` | `func-space` export-star → `multi-source-ir-integration` → `src/ts-api` | Remove the unrelated frontend barrel; keep stable-handle accessors unchanged. |
+| adapters → `registry/imports.addImport` | `registry/imports` → `src/ts-api`, `declarations`, `checker/type-mapper`, `index` | Separate physical import/tag registration from AST collection and late fixups. |
+| adapters → `registry/types.addFuncType` | `registry/types` → `closures/funcref-wrapper-types` → `index` | Import the existing header leaf, then make the wrapper registry use the type registry directly. |
+| adapters → `async-scheduler.ensureAsyncDriveRuntime` | `async-scheduler` → `closures` → `src/ts-api` | Remove the barrel dependency; scheduler materializer dependencies still need extraction. |
+| adapters → `any-helpers.canonicalUndefinedExternInstrs` | `any-helpers` → `native-strings` → `native-strings-selfhost` → `stdlib-selfhost` → `src/ir/from-ast` | Extract the existing AnyValue/undefined carrier materializer from broad string/object helpers. |
+| adapters → `native-promise-number-boundary` | number boundary → `shared.addUnionImportsViaRegistry`; implementation registered by `index` | Materialize the exact accepted number providers directly before sealing. |
+| frame → `compiler-support-abi.recordAsyncFrameMachinery` | support ABI → `program-abi-planning` → `src/ir/identity` → `src/ts-api` | Use A's existing pure identity factory; preserve the session and owner contracts. |
+
+The scheduler also directly imports `registry/imports`, `shared`,
+`native-strings`, `registry/error-types`, `closed-method-dispatch`, and
+`object-runtime`. In particular, its actual thenable/callback substrate calls
+`reserveClosedMethodDispatchVararg`, `ensureObjVecBuilders`, and
+`reserveApplyClosure`; `object-runtime` imports `stdlib-selfhost`, while
+`closed-method-dispatch` imports source statement/declaration machinery. These
+are part of the remaining physical bridge dependency chain. Redirecting the
+closure imports does not remove them. `unhandled-rejection` cycles back to the
+scheduler. The reviewed `prepared-native-async-await`, `frame-core`,
+`context/locals`, `closures/closure-header-layout`, and
+`arguments-carrier-brand` leaves already have no frontend value import.
+
+Reader/mutator inventory before any extraction:
+
+- The three exported multi-source helpers have runtime readers only in
+  `src/ir/integration.ts`: `collectIntegrationFunctionDeclarations`,
+  `makeMultiSourceOverrideResolvers`, and `resolveIntegrationSourceFiles`.
+  The existing `func-space` accessors remain the single handle lookup/mint/push
+  authority; changing the export edge does not move their state.
+- `addImport` mutates module imports, function/global import counts and lookup
+  maps, and preserves strict-host/frozen-index-space checks. `ensureExnTag`
+  owns the local or shared imported exception tag through those same registries.
+  All callers must continue to reach the same implementation, never a copied
+  registry or a new lazy import fallback.
+- `registry/types` owns existing physical type caches. Wrapper type factories
+  and `closureBagField` must retain their current layouts and cache identity.
+  `program-abi-planning` and `program-abi-import-planning` consume
+  `createIrBindingId`; `src/ir/identity-values.ts` is the already committed
+  canonical source-free implementation.
+- `emitPreparedAsyncFrameStateMachine` calls `emitAsyncFrameEntry`, which calls
+  `ensureAsyncResumeFunction`; the latter owns resume/step function allocation,
+  emitted bodies, handlers, and frame bookkeeping. `buildStepAdapterLocals` and
+  `buildStepAdapterBody` are shared engine mechanics. `planAsyncResumeCfg`,
+  declaration-based type resolution, `compileExpression`, and
+  `compileStatement` are source producers and must stay above that engine.
+- Undefined/type globals are owned by `ensureAnyValueType`; reads go through
+  `undefinedExternInstrs`/`canonicalUndefinedExternInstrs`. Scheduler state is
+  owned by `getOrRegisterPromiseType`, `ensureMicrotaskQueue`,
+  `ensurePromiseSettleFunctions`, and the helper factories reached from
+  `ensureAsyncDriveRuntime`. Number-boundary publication marks existing helper
+  exports and asks the existing `ProgramAbiSession` export planner for aliases.
+- `shared.coerceType`, `addUnionImportsViaRegistry`, `addStringImportsDelegate`,
+  `ensureLateImport`, and `flushLateImportShifts` are registered delegates.
+  Registrars reside in `type-coercion.ts`, `index.ts`, and `expressions.ts`.
+  Importing those source modules for side effects is not a replay solution.
+
+#### Smallest executable first slice
+
+1. B is authorized only to remove
+   `export * from "./multi-source-ir-integration.js"` in
+   `src/codegen/func-space.ts` and a focused
+   `tests/issue-3518-runtime-producers-import-boundaries.test.ts` control,
+   and update this issue. Preserve every registry/handle implementation.
+2. A has explicitly reserved the matching `src/ir/integration.ts` import hunk:
+   import the three source helpers directly from `multi-source-ir-integration`.
+   Existing physical `func-space` imports remain there. B does not edit
+   `integration.ts`; A acknowledged this coordination on 2026-09-06.
+3. A fresh process must import `func-space` with frontend loading blocked, and
+   a deliberate `ts-api` import must fail to prove the barrier is active.
+   Run the existing `issue-1916-symbolic-func-refs` and
+   `issue-3520-integration-pass-identity`/`integration-population-identity`
+   tests plus typechecking. Report actual test denominators. This slice proves
+   the handle leaf is independent; the two async bridge roots remain impure.
+
+The first slice is signed as `131f2327544d6a5d57a90d38358c31d644be292c`,
+on verified signed A dependency `1dea8e0cf4db8dae3f834e733e111397ce58bf18`. Its fresh-process test observes the
+real handle/layout module loads, preserves exact stable-handle lookup identity,
+and separately rejects deliberate `ts-api` and multi-source frontend imports.
+The four named focused files pass 26/26; standalone typechecking passes. Only
+the unrelated export edge was removed from the handle registry. This is a
+physical leaf import-boundary result, not whole-frame or replay completion.
+
+#### Remaining mechanical cuts
+
+Root's second grant permits only these six value-import substitutions across
+five files, plus now-stale import-area comments. Apply after A's signed
+direct-import dependency and the first `func-space` slice. Keep the paired
+registry/header and wrapper/type-registry substitutions together; preserve
+every definition, compatibility re-export, registry, session, and seal.
+
+- `registry/types.ts`: import `closureBagField` from
+  `closures/closure-header-layout.ts`.
+- `closures/funcref-wrapper-types.ts`: import `addFuncType` from
+  `registry/types.ts`, preserving all wrapper factories and reexports.
+- `async-scheduler.ts`: import `getClosureFuncSelfTypeIdx`,
+  `getOrCreateFuncRefWrapperTypes` from the dedicated wrapper registry; import
+  `closureBagField` and `closureBagInitInstr` from the header leaf. The exact
+  root-wrapper lookup, `getFuncRefWrapperRootTypeIdx`, is already imported
+  directly from `closures/funcref-wrapper-types.ts`; leave that import and its
+  three call sites unchanged.
+- `program-abi-planning.ts` and `program-abi-import-planning.ts`: import the
+  runtime `createIrBindingId` factory from `src/ir/identity-values.ts`; keep
+  identity types and all session/planning behavior unchanged.
+
+The one-shot local owner review inspected 94 existing paths from 114 linked
+worktree records. Three older worktrees have `program-abi-planning.ts` edits:
+R4 call-free recovery changes adjacent imports/role-table and module-alias code;
+the two PR4823 shepherd worktrees add C35 role ordinals. All leave the proposed
+`createIrBindingId` import unchanged. Preserve these edits and every held claim.
+One worktree is locked initializing; twenty linked paths are absent. Neither
+condition implies abandoned work or permission to delete anything.
+
+The exact C31/session claim branches have local and origin refs but no matching
+linked worktree. Local merge records identify PR3827 (C31), PR3825 (session
+seal), and PR3831 (scoped seal). Their merge commits are not reachable from
+integration `8461d61680c142da712c84bf2ba566767aee3920` in the available shallow
+graph, so integration ancestry remains unknown; this does not mean unmerged.
+The scoped claim has no recorded branch, although the corresponding named
+local/origin branch refs and merge record exist. Root grants only the specified
+import/comment hunks; no ownership or claim release is inferred.
+
+The six granted imports are now substituted on the signed first slice. The
+focused fresh-process control additionally loads the type registry, wrapper
+registry, closure header, and both ABI-planning leaves with the frontend blocked;
+it exercises fresh wrapper creation through the changed `addFuncType` import,
+exact cached `ClosureInfo` reuse, the existing host-one-shot to ordinary
+allocation-mode transition, and shared header factories. Root and A requested
+this factory control before the affected cohort because a seeded-root getter
+alone would not execute the changed import. The existing async frame and scheduler roots still require their planned physical
+extractions. The nine-file affected cohort passes 118/118, including all three
+fresh-process boundary controls and all 25 runtime-producer controls. The first
+attempt exhausted the default 512 MB worker heap before reporting any tests;
+its log is retained separately. The complete repeat used the repository's
+existing `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096` setting and one fork, with the same
+nine files and assertions. Full typechecking passes.
+
+Validate the resulting leaf imports and the existing compiler-support ABI,
+callable-planning, import-callable-planning, and closure-host-bridge ABI tests.
+Preserve all `ProgramAbiSession`, scoped-seal, owner/currentness, and constructor
+controls. These cuts cannot complete either physical async root on their own.
+
+#### Actual engine and materializer extraction
+
+Root granted A only the `addImport`/`ensureExnTag` portion of step 1 on
+2026-09-06, after its current preparation signature. A owns the new
+`src/codegen/registry/physical-imports.ts`, those two bodies and their
+import/re-export hunk in `registry/imports.ts`, and a dedicated A test. The
+functions need only the existing import allowlist helpers and `addFuncType`;
+source-free verification depends on B's paired registry/wrapper import cuts.
+A does not edit B's adapters, frame/scheduler work, or later numeric-carrier
+scope. B/C adopt the physical leaf through their own consumers after A's signed
+handoff. Preserve the PR5400/5063 fixup/iterator bodies and all claims. B will not
+edit A's registry hunk concurrently.
+
+All other physical steps below still require exact source-ownership review.
+They move existing implementations and their precise typed dependencies; they
+do not add a second CPS engine, ownership cache, or backend implementation.
+
+1. **Physical registries and value carriers.** Extract `addImport` and
+   `ensureExnTag` from `registry/imports.ts` into a pure physical registry leaf,
+   reexporting the same functions for source callers. Retain tag identity,
+   strict-host diagnostics, counts, and freeze discipline. Extract
+   `ensureAnyValueType` and the canonical undefined read/build helpers from
+   `any-helpers.ts` without pulling in native string selfhosting. Reserve every
+   required type/global/import before frame emission, including the shared-tag
+   case which the previous nine-import test did not cover.
+2. **Number and typed coercion materializers.** Extract the exact required
+   numeric bridge implementations reached through `registry/imports.ts`
+   (`addUnionImports`/`addUnionImportsAsNativeFuncs`) and `any-helpers.ts` into
+   directly callable accepted-provider materializers. Preserve the existing
+   `__typeof_number`/`__unbox_number` signatures and alias publication in
+   `native-promise-number-boundary.ts`. Extract the prepared carrier operations
+   used by `ir-async-frame.ts` from `type-coercion.ts`; the new engine cannot
+   depend on `shared` delegates, source bootstrap, or undeclared generic boxing.
+3. **Prepared frame mechanics.** Move the actual shared resume/step/entry
+   implementation from `async-frame.ts` to a dedicated physical engine leaf.
+   Split the common mechanics from the source planner at their input boundary;
+   existing source compilation and prepared IR must both use that one engine.
+   Keep AST statement/expression/type resolution in the source adapter. The
+   `async-cps.ts` prepared operand/CFG type guard (`isEmitOperand`) needs a pure
+   boundary or a directly typed replacement; merely wrapping its AST-dispatch
+   union is insufficient. Physical emission callbacks may exist below
+   acceptance, but never in `PreparedIrProgram` or serialized semantic data.
+   B owns only this async physical bridge; C supplies backend consumption.
+4. **Native scheduler closure.** Extract the existing typed Promise, queue,
+   settlement, reaction, and drive helper materializers from
+   `async-scheduler.ts`, retaining thenable assimilation and rejection tracking.
+   Resolve its real callback/thenable dependencies in `closed-method-dispatch`,
+   `object-runtime`, `registry/error-types`, and native-string helpers through
+   their actual typed runtime materializers. Source-authored helper bodies must
+   already be semantic prepared units; replay may not invoke `stdlib-selfhost`
+   or `from-ast` to regenerate them. Request each concrete subordinate
+   extraction before touching those owners. This is remaining implementation
+   work, not an assumption that the current broad helper modules are pure.
+5. **Authenticated bridge handoff.** Reconcile the complete extracted import
+   closure of `ir-async-frame.ts` and `ir-async-runtime-adapters.ts`, then run a
+   fresh-process import and actual frame/materializer execution with
+   `typescript`, `ts-api`, `from-ast`, async source planners, `codegen/index`, and
+   `compiler` blocked. Keep the existing plan/manifest/adapter authentication.
+   Regenerated runtime evidence is compared to decoded evidence before
+   reattachment; copied objects do not acquire authority by shape alone.
+
+Focused regressions must retain the B producer suite's numeric result 29,
+native Promise identity, exact two-tick trace, nine stable import identities,
+fully declared settle-only execution, and typed minimal-plan refusal before
+allocation. Also run `issue-4103-ir-async-runtime-providers`,
+`issue-4104-ir-async-plan-runtime-consumer`,
+`issue-3527-linear-suspension-preparation`,
+`issue-3527-linear-suspension-runtime`, `issue-3527-settled-owner-runtime`,
+`issue-3527-async-call-closure`, `async-frame-host-throw-rejects`,
+`issue-4167-async-rejection-identity`, `issue-3587-async-rejection-delivery`,
+`issue-2906-async-multiawait`, `issue-2895-async-frame`,
+`issue-2895-drain-hook`, and `issue-4574-standalone-native-async-family` as their
+respective engine/materializer paths change. Add a nonempty module-load trace,
+a deliberately rejected frontend import, and shared-exception-tag stability
+controls. Gate every heavy job on finite numeric `load1 < cores - 2`; retain
+normal hooks and report actual counts rather than proposed denominators.
+
+Fresh zero-await owner support, the shared frame's all-core host adapter
+requirement, and missing linear async providers remain explicit gaps. C/root
+own actual unchanged mixed-application emission and replay through both
+backends. Its source digest remains
+`236fa7d971bf9b86aafa778a9a441b2440bae2e2c2c0ae7fdab3f6e517c517fb`.
+Neither import tests nor the completed seven-original-unit preparation are
+evidence of seven emitted-once bodies, zero direct bodies, or cross-backend
+runtime success.
+
+#### Read-only ownership and PR census
+
+The remote assignment read succeeded (`ref_read: ok`) at
+`issue-assignments` tip `b125009976288361bf8d7bf7e59daf6b038a090b`, with
+2,068 records and 754 held claims, observed 2026-09-05 23:40 UTC
+(2026-09-06 local). An initial sandbox DNS failure was retried read-only;
+it was not interpreted as an empty ledger. No claims were changed.
+
+- B retains `3518:semantic-runtime-producers` as
+  `ttraenkler/astra-ir-producers-b-20260905`. A holds
+  `3518:authoritative-preparation`; external Claude Fable holds
+  `3518:backend-consumption-replay`; D holds `3518:application-evidence`;
+  root holds `3518:integration-consolidation`. Their distinct linked worktrees
+  are present. This follow-up does not transfer any of those surfaces.
+- Protected held claims include R1's `c31-closure-host-bridge` (and c30/c32/c33,
+  `w1g-implicit-ctor-param`), R2's `program-abi-session-seal` and
+  `scoped-prepared-abi-seal`, R3's `w1c-super-accessor`, and R4's `r4m1`/`w2b`.
+  A missing linked worktree for a historical claim is not permission to edit.
+- R7's `r7-b2-linear-suspension-liveness` and
+  `r7-b3-settled-nonthenable-owners` remain held by their Luna owners, with both
+  linked worktrees present. R6's a1/f3s1/f3s2/f3s3 claims remain held. This plan
+  preserves their immutable source planning and canonical provider evidence.
+- The fresh open-PR census returned 11 PRs. No listed PR changes `func-space.ts`,
+  `registry/types.ts`, or `closures/funcref-wrapper-types.ts`. This is only a
+  read-only snapshot; root still grants the exact source slices.
+- PR 5632 (`codex/3525-m2-p2a-luna-20260905`, head `5aec08c33b3381ddb55a33a152d05833bb9d7b78`)
+  changes `src/ir/integration.ts`; its `3525:m2-p2a-atomic-init-batch` claim and
+  linked worktree remain present. A owns reconciliation of its import hunk.
+- PR 5400 (head `0023f522023156ea63d973fab1fed932b2ccfa09`) changes
+  `registry/imports.ts` in `fixupModuleGlobalIndices` for NewTarget. PR 5063
+  (head `d070b5583e66be23903031e4bed0556559026d34`) changes that file in
+  `addIteratorImports` for yield-star throw. Read diffs confirm these are
+  separate functions from `addImport`/`ensureExnTag`; preserve them and request
+  only the two physical registration functions, never broad registry ownership.
+  The current 3371 claim is `ttraenkler/fable-es6`; the open PR does not itself
+  establish that claimant's identity or release another owner.
+- Broad transitive modules also overlap open work: `object-runtime.ts` in
+  PR 5397, `generators-native.ts` in PR 5063, and `codegen/index.ts` in
+  PRs 5640/5632/5400/5397. The proposed first slice edits none of them. Later
+  extraction requests must identify the exact shared functions and refreshed
+  owners, without taking C's emitter work or A's compiler wiring.
 
 ## Objective
 
@@ -972,3 +1327,397 @@ These are recorded gate/environment residuals, not B3 acceptance evidence.
 The scoped B3 source, tests, and measured record are committed in
 `7c60d5c5873d0b164f1aa99b85b2995897fe8233` on top of the signed current-main
 merge above.
+
+### B3 issuance-integrity repair — 2026-09-05 — Luna Max
+
+The post-ABI proof-loss follow-up keeps issuance evidence independent of the
+current identity maps. `settledOwnerIssued` is now keyed by compilation
+context and original `FunctionDeclaration`, retaining its original UnitId,
+SourceId, and source file. An issued declaration cannot mint a receipt under
+a rebound UnitId or rebuild one after its original cache entry is withdrawn;
+`forgetPreparedIrAsyncSettledOwner` also locates the original UnitId after
+current identity lookup fails. The source-suspend and prepared-await guards
+check issuance before source-shape admission, so a missing shape remains an
+Invariant instead of a quiet refusal or direct fallback.
+
+The three real identity controls all begin with a positive receipt and
+externref ABI projection, then mutate copied identity maps: declaration-to-unit
+deletion, terminal deletion, and declaration rebinding to the sibling UnitId.
+Each retains `WasIssued=true`, returns no current receipt, and raises the
+`selection-preparation-mismatch` proof-loss error from source suspend, await
+site, and ABI projection. A fourth control removes the current function body
+after issuance and raises the same error before either handoff can return.
+
+The end-to-end identity-loss control uses a narrow Map-read fault after the
+first receipt is issued. It returns `success=false` with one
+`selection-preparation-mismatch` invariant, `legacyBodyEmitted=false`,
+`irBodyEmitted=false`, zero direct/IR body counters, and no async state
+function. Thus the promised externref slot is not published with a raw f64
+body or a direct retry. Focused B3 runtime is **15/15**; B3 plus the adjacent
+linear preparation/runtime controls are **26/26**. `pnpm run typecheck`,
+Prettier checks, `node --import tsx scripts/check-ir-only.ts --json` (both
+single-host and standalone, 5/5 entries, 38 emitted, 0 Unsupported, 0
+Invariants, 0 legacy bodies), and `pnpm run check:ir-fallbacks` pass. The
+broader R7, Promise-valued operand, remaining caller-contract, and CI gates
+remain open as recorded above.
+
+## Implementation Plan — 2026-09-05 — Astra async integration repair
+
+The user now prioritizes consolidating the existing migration pieces before
+opening another feature slice. B2 and B3 must form a coherent validated async
+change; separate local successes do not satisfy their dependency relationship.
+Parent Astra owns this plan and review. The same Luna Max async owner implements
+the repair in the preserved B3 worktree, retaining signed checkpoint
+`44694026163cee6c38eea890a6df263234d93a62` before further source changes.
+
+### Concrete CI evidence and source boundary
+
+On published B2 head `df4b8b86ca2620607a6470428d509cba5aea61bb`, CI run
+`33976818803` finished with a failing quality job, equivalence shard 5, and its
+aggregate gate. The shard reports one new regression:
+`tests/equivalence/ir-slice10-promise.test.ts`, async-to-async cross-call.
+The source contains an async `inner` with no await, an `outer` with two awaits
+of `inner`, and a synchronous exported caller casting `outer(5)` to number.
+The existing C1 no-await declaration can retain numeric fulfillment ABI; an
+async TypeScript return annotation alone is not proof of a physical Promise.
+A generic B2 producer can encounter this boundary without issuing B3's
+all-settled receipt, so repairing only that receipt's callers is insufficient.
+
+The quality failure is separate evidence: the host-free control in
+`tests/issue-4106-ir-async-fetch-user.test.ts` reports a successful compilation
+whose binary fails `WebAssembly.validate`. Root is measuring both controls
+against freshly fetched main `b1537bbeca3858faf45fd89eff5506d21d1e230f`.
+Do not infer that the two failures share a cause, or declare the host-free
+failure harmless merely because it was seen on an earlier baseline.
+
+### Implementation order
+
+1. Trace the generic owner's actual ABI projection, selection, source proof,
+   await retention and final prepared admission. Enumerate all consumers of
+   the shared shape/capability helper before changing it. Preserve existing
+   single-await, timer, Promise provider and counted-loop behavior.
+2. Close outgoing source calls by exact declaration and UnitId against the
+   carrier their declaration will actually publish. A known C1 no-await async
+   callee with numeric ABI does not satisfy a Promise-carrier demand. Reuse
+   authoritative prepared/source ABI evidence; a name, `Promise` annotation,
+   or later numeric cast is insufficient. Unknown evidence must decline
+   before projection rather than silently accept an empty caller census.
+3. Close incoming source calls before promoting a generic owner. Distinguish
+   a proved Promise carrier or compatible prepared await from a raw numeric
+   consumer, unowned call site, function-value escape or unresolved target.
+   Retain complete source identities and exact call contracts. If multiple
+   candidate owners depend on each other, settle their component before ABI
+   publication; do not make correctness depend on declaration order or a
+   recursive predicate's optimistic partial result.
+4. Keep eligibility refusal before any Promise declaration or body-skip
+   promise. After issuance, loss or contradiction of the retained contract
+   must remain an invariant, using the identity-loss repair already committed.
+   Do not recover by rebuilding a different proof, restoring raw C1 output,
+   or disabling the whole generic producer to satisfy one fixture.
+5. Run the exact failing cross-call control with a real compatible Promise
+   chain as its positive control. Check compilation, binary validity, runtime
+   result/Promise behavior and terminal ownership, not only byte counts.
+   Preserve legacy behavior for a relation this increment explicitly declines;
+   no-await async semantic migration remains outside the current repair.
+   Include declaration-order and post-projection contradiction controls when
+   they exercise the changed join. Do not weaken equivalence or Test262 baselines.
+6. Diagnose the host-free validity failure independently using the fresh-main
+   observation and concrete validation error. If it is already fixed by the
+   fetched dependency, retain that source/byte evidence. Otherwise report the
+   smallest actual missing carrier/resource contract before touching another
+   subsystem. Do not skip or weaken the control merely to publish B2.
+7. Return a signed clean candidate with focused checks and updated evidence.
+   Root composes it with the repaired initializer and linear handoff candidates
+   and runs the larger public-compiler path. Preserve B2's public main merge
+   and B3's automatic public update. No force push, queued-head mutation, or
+   duplicate PR is authorized by this plan. Publication arrangement follows
+   the verified dependency graph and queue state after integrated validation.
+
+### Astra async integration repair — implementation record — 2026-09-05 — Luna Max
+
+The generic Promise-owner handoff now uses one source-qualified fixed point.
+`async-linear-planning.ts` builds an exact declaration/UnitId call closure,
+including incoming awaited callers, incoming Promise carriers and outgoing
+top-level async callees. `async-ir-planning.ts` retains that immutable owner
+population for declaration ABI preparation and still invokes the existing
+current-source proof unconditionally, so a later identity loss remains a
+fatal invariant. `ir-prepared-free-functions.ts` consumes the same population
+at final R3 selection while the broader source-shape population remains
+available to withdraw an incomplete component before runtime attachment.
+
+Before this repair, the settled-inner/raw-consumer matrix at B3 checkpoint
+`44694026163cee6c38eea890a6df263234d93a62` prepared both `inner` and `outer`
+(`direct=0`, `IR=1`) even though `run(): number` cast `outer()` to a raw C1
+value; `run` remained direct and body-shape-rejected. The candidate withdraws
+that component before Promise ABI publication: `inner` and `outer` are both
+`direct=1`, `IR=0`, with no emitted async state and a validated, byte-identical
+legacy control. The exact no-await `inner`/two-await `outer` CI shape also
+compiles and validates with the same direct fallback because the no-await
+callee never enters the Promise population.
+
+The positive reversed-declaration provider control uses
+`inner(): Promise<number> { return await Promise.resolve(x + 1); }`, two awaits
+in `outer`, and an exact synchronous `run(): Promise<number>` carrier. Both
+async owners are prepared (`direct=0`, `IR=1`), the exported call returns a
+native Promise, and it resolves to `13`. The new focused closure suite is
+`2/2`; the existing settled-owner, linear preparation/runtime and Promise
+equivalence controls are `15/15`, `4/4`, `7/7` and `11/11` respectively.
+Together the focused B2/B3 set is `39/39` after restoring the B3 proof-loss
+currentness check. `pnpm run typecheck` passes. The independent host-free
+`WebAssembly.validate` failure on #4106 remains outside this repair and is
+recorded under the separate integration lane; no baseline was weakened.
+
+The integration closure review found one supported existing shape that needed
+an explicit carrier contract: `fetchUser()` calls stored in a typed empty
+`Promise<number>[]` and consumed by the same owner's `await Promise.all`. The
+closure now authenticates the vector declaration, ambient `Promise` type,
+Promise-valued call, and exact lexical `Promise.all` consumer by declaration
+identity; only an active fixed-point Promise owner may satisfy that edge. This
+preserves the #4124/#1373b sequential, parallel, and final-main owners while
+continuing to reject arbitrary typed-array pushes, casts, shadowed Promise
+bindings, unknown targets, and raw C1 consumers. The focused family controls
+are `4/4` after this repair, and the complete scoped async run is `61/62`:
+the only red is the existing #4124 nested `pnpm exec tsx` probe blocked by the
+sandbox `listen EPERM` pipe. The #3527 closure, B3, linear, #1373b, #4124,
+and Promise equivalence controls all pass; typecheck remains green.
+
+### Astra generic Promise issuance repair — implementation contract — 2026-09-05
+
+Retain generic Promise ABI issuance independently by context and original
+declaration/UnitId. At every ABI reuse and R3/await handoff, authenticate the
+original declaration, reverse identity join, terminal, and exact closed
+call-contract population. Missing, rebound, or contradictory evidence after
+issuance is a located invariant, never raw f64, direct retry, silent cached
+success, or issuance of a replacement proof. Return an actually immutable
+owner collection; do not expose mutable `Set` authority. Keep preclaim refusal
+distinct and preserve the provider-backed reversed-order Promise13 control.
+Add all four independent post-projection mutation controls from the read-only
+probe, plus source-call contract contradiction where the retained proof can
+stale. Re-run the exact CI cross-call and focused B2/B3/currentness suites,
+remove debug logging, and return a clean signed repair candidate.
+
+### Astra generic Promise issuance repair — implementation record — 2026-09-05
+
+Codex GPT-6 Astra Max continued the existing dirty B3 worktree at signed
+checkpoint `44694026163cee6c38eea890a6df263234d93a62`, preserving the earlier
+plans, tests, branch and claim. No replacement checkout or history rewrite
+was used. The original seven-test issuance draft passed, but review found
+additional gaps at the exported source-suspension gate, cached population,
+caller/callee reverse joins and final allocated-slot check.
+
+Generic ABI issuance now has a context-owned declaration lookup and a separate
+original-UnitId registry. Each receipt retains the original terminal object,
+source identity, source fingerprint, closed owner population, exact incoming
+and outgoing call-contract fingerprint, and actual parameter/fulfillment ABI.
+Every ABI reuse, source/await handoff and R3 population read starts from those
+original receipts, including when the current selector has lost the owner or
+supplied a different declaration. A failed receipt stays invalid after the
+damaged map is restored. The final R3 slot check raises a located invariant
+for a missing or contradictory already-issued Promise slot, instead of
+silently declining it. The end-to-end identity and allocated-slot faults all
+stop with zero direct and IR bodies for the affected owner.
+
+The exposed owner population is a frozen read-only view over private storage.
+It has no `clear`, `add` or `delete` authority; borrowing those methods from
+`Set.prototype` also fails. Call-closure arrays and their records are frozen.
+Incoming and outgoing source calls authenticate forward, reverse, source and
+terminal joins. Asserted numeric await operands do not establish a Promise
+carrier. Source parameter inference checks the same native-annotation
+resolver as declaration collection, so `type i32 = number` cannot masquerade
+as an f64 parameter merely because TypeScript erases the alias. Actual ABI
+observations must agree with the predicted scalar/vector parameters and
+numeric/void fulfillment. A contradiction before any issuance withdraws the
+component; one after issuance is fatal.
+
+The additional oracle-ratchet allowance is scoped to
+`src/codegen/async-ir-planning.ts`. Its source-only preflight deliberately
+reads the declaration/checker parameter and Promise-fulfillment facts and the
+existing native-annotation resolver before any callable is published. These
+are temporary frontend proof inputs, not fields added to the AST-free async
+plan. No shared oracle baseline is changed; replacing this hybrid preflight
+belongs to the separately approved whole-program preparation follow-up.
+
+The expanded C1 controls were compared through the same public compiler API
+against a read-only export of exact main
+`b1537bbeca3858faf45fd89eff5506d21d1e230f`. Parent verified all 1,188 exported
+source/configuration blobs; this lane retained unchanged before/after hashes
+for its imported source controls. On JS-host GC, the original mixed fixture
+(`base` with a settled Promise.resolve await, `twice` awaiting `base`) returns
+`42` on both versions. Main IR-emits `base`; this repair withdraws both owners
+before promotion because raw C1 fulfillment does not close the generic
+Promise dependency. Its revised test retains the exact fixture and runtime
+assertion and additionally requires one direct body, zero IR bodies and no
+post-claim error for both owners. This is a change to pre-ABI component
+ownership, not a claim that all C1 async semantics have migrated.
+
+On WASI, main and candidate produce the same Node 24 validation failure at
+`__promise_thenable_job`: opcode `0x1f` requires
+`--experimental-wasm-exnref`. Both exact binaries validate with that feature
+enabled. The C1 test now sends its unchanged compiler bytes to a narrowly
+scoped Node child for validation and execution, and corrupts the magic byte
+as a firing negative control. The unrelated host-free test and global Vitest
+configuration are untouched. The final-async test's nested poison probe now
+uses `node --import tsx` instead of the tsx CLI, retaining its positive and
+negative assertions without the sandbox IPC dependency.
+
+The exact failing CI fixture still compiles to a validated byte-identical
+legacy control; its unsupported synchronous numeric cast also retains the
+legacy runtime result (`NaN`). The supported reversed-declaration provider
+chain prepares both async owners and returns a native Promise resolving to
+`13`. Canonical no-await async behavior, wider Promise contracts and full R7
+retirement remain open. Final validation results are recorded below before
+the signed local candidate is handed to integration; no public push, PR
+mutation, issue comment or queue action is part of this repair.
+
+Final candidate validation uses the unchanged source after the C1 test fix.
+The complete affected cohort passes **118/118 tests in 8/8 files**: generic
+call closure/currentness `32/32`, settled owners `15/15`, linear preparation
+`4/4`, linear runtime `7/7`, C1 async `26/26`, async plans `12/12`, final async
+`11/11`, and Promise equivalence `11/11`. Typecheck passes. Both IR-only policy
+lanes (single-host and standalone) pass with `5/5` expected entries, `41`
+terminal units, `38` IR-emitted units, `3` non-executable units and zero
+Unsupported, Invariant or legacy-body outcomes each. The six changed
+TypeScript files pass Biome and Prettier; `git diff --check` and the scoped
+oracle ratchet also pass. The final cohort and policy evidence is retained in
+this worktree's `.tmp/astra-async-final-cohort.log` and
+`.tmp/astra-async-ir-only-final.json`.
+The fallback telemetry gate passes with no unintended, post-claim or
+module-level increase against its committed baseline; the full issue-link
+and metadata audit also exits successfully without changing any issue file.
+
+The local signed commit runs all normal hook bodies with
+`CHANGED_ROOT_TESTS_BASE=44694026163cee6c38eea890a6df263234d93a62`.
+That changed-root run is repair-scoped validation, not a whole-branch result.
+The full `118/118` cohort above is separate. The parent integration lane owns
+the already-reviewed #4106 exnref validation fix and must pass that existing
+control and the normal combined hooks on the composed candidate before any
+publication is authorized.
+## Astra High lane B — prepared frame engine without AST reachability (2026-09-07)
+
+Continue `ttraenkler/astra-ir-producers-b-20260905`'s held
+`prepared-async-frame-engine` scope, branch
+`codex/3518-prepared-async-frame-reconciled-20260907`; liveness and latest
+commits must be recovered by the lead. Implementation model: **Astra Low**.
+The [epic continuation specification](3518-ir-only-default-and-direct-frontend-retirement.md)
+records all peer claims and package C's exclusive files. This plan is not a
+replacement dispatch and does not authorize rewriting C's consumer.
+
+### Why the current prepared input does not retire the direct graph
+
+At upstream `b3133d1d4da1151d82ef45b58db9566565097c57`,
+`src/codegen/ir-async-frame.ts` imports
+`emitPreparedAsyncFrameStateMachine` from `src/codegen/async-frame.ts`.
+`lowerPreparedIrAsyncFunction` verifies current runtime identity, builds a
+frame layout and passes a callback CFG to that shared engine. The wrapper
+calls `emitAsyncFrameEntry(..., null, cfg)`; the shared engine still imports
+AST expression/statement dispatch and the checker-backed CPS machinery.
+`AsyncCfgOperand` in `async-cps.ts` accepts either a `ts.Expression` or an
+emit callback. The runtime path's type surface therefore permits AST fallback,
+and its transitive import graph retains the direct walkers even when one
+particular function supplies only callbacks.
+
+`buildFrameInfo` also allocates types immediately, and the shared entry code
+recovers a resume index from `ctx.funcMap` by a sanitized function name. The
+next slice must separate pure physical requirements from allocation and
+preserve exact allocated object identity across index changes. Copying the
+AST-bearing union into a differently named file does not achieve this.
+
+### Ownership, design and invariants
+
+Write only `src/codegen/ir-async-frame.ts`, new/recovered
+`src/codegen/prepared-async-frame-engine.ts`, new
+`src/codegen/prepared-async-frame-types.ts`,
+`tests/issue-3527-prepared-frame-import-boundary.test.ts`, and
+`tests/issue-3527-prepared-frame-runtime.test.ts`. Reuse already implemented
+B extraction modules if recovery finds them. Treat `async-frame.ts`,
+`async-cps.ts`, A's program contracts, C's consumer/physical plan and the
+separate runtime host-adapter owner as read-only. If a required shared API is
+absent, report the exact contract change to its owner rather than silently
+widening this lock.
+
+1. Define prepared-only local emission types. State leads are emission
+   operations derived from validated IR, terminators reference typed value
+   IDs or local emission operations, and handler/finalizer state comes from
+   the semantic plan. No `ts.Node`, checker, AST-or-emit union, source text or
+   parser callback belongs to these types. Process-local emission callbacks
+   are permitted only **after** backend acceptance; they are never serialized
+   as part of `PreparedIrProgram` or its runtime projection.
+2. Move only the prepared entry/resume algorithm into the new engine. Consume
+   a complete preaccepted frame layout, spill mapping, Promise carrier,
+   callback adapters, type/function/global handles and exception contract.
+   Preflight proves all required resources and supported state/handler shapes
+   before allocation. Unknown materialization remains C's located Unsupported;
+   malformed plans are invariants. No lazy `ensure*` discovery in accepted
+   emission, and no emitter-internal frontend selection.
+3. Replace the import from `async-frame.ts` and the dependency on
+   `AsyncCfgPlan` from `async-cps.ts` in `ir-async-frame.ts`. Reuse physical
+   helpers only when their runtime import closure excludes AST/checker/direct
+   dispatch. Type-only imports are erased and should be distinguished by the
+   boundary test. Avoid the broad `shared.ts` barrel when it pulls legacy
+   dispatchers; name the actual primitive module for required coercion/locals.
+4. Bind entry/resume/callback references by existing symbolic binding IDs and
+   allocator objects, never `fn.name`, sanitized stems or suffix search.
+   Resolve the current physical index from that handle. Preserve import
+   shifting, DCE remapping and recurrence group rules; failing handle
+   resolution cannot fall back to a saved number or name lookup.
+5. Preserve the existing semantic graph and state order. Entry runs once to
+   the first suspension; continuation resumes the planned state; live values
+   survive repeated awaits; fulfillment/rejection/throw keep Promise identity
+   and microtask behavior. This extraction does not widen supported handlers:
+   upstream `preparedCfg` rejects nonempty handlers, so adding full finally
+   support requires separately validated lowering and is not an incidental
+   part of moving the engine.
+6. C adopts the new physical engine through its own acceptance/materialization
+   implementation after B supplies requirements and tests. B demonstrates a
+   real lowerer/runtime positive control; it does not patch C to make a missing
+   runtime provider appear available. Leave legacy AST engine deletion for the
+   final whole-program reachability cut, after all users have migrated.
+
+### Acceptance with load-bearing controls
+
+- Fresh-process runtime import census for the prepared engine and its actual
+  entry adapter must contain no `typescript`, `ts-api`, checker,
+  `codegen/expressions`, `codegen/statements`, `async-cps`, or `async-frame`
+  runtime module. Use actual loaded modules, not only an import-text grep.
+  Inject a forbidden import in a temporary fixture and prove the census fails;
+  absence of events/unsupported instrumentation fails rather than returning
+  an empty successful census.
+- Execute an input-dependent async function with two numeric awaits and a live
+  value carried across both; assert exact result, stable returned Promise and
+  callback/microtask ordering against JavaScript. Exercise host and supported
+  standalone native Promise runtime. C's linear runtime refusal is recorded
+  as a dependency until its owner supplies physical support.
+- Two same-named async functions in different sources must have distinct
+  frames/resume targets. Add a user export matching the old sanitized resume
+  name. Both results remain correct. Inject a late import/remap through an
+  approved allocator test seam and assert handle resolution selects the same
+  object; an unbound handle is fatal, never name-resolved.
+- A stale plan/current-runtime pair, foreign-owner projection, missing spill,
+  missing callback capability, unsupported handler, duplicate state, and wrong
+  Promise result carrier each fail before emission with the appropriate
+  invariant or supported capability classification. After acceptance, remove
+  a bound resource via a test seam: emission fails without publishing output
+  or retrying through AST. Keep a passing scalar control in the same harness.
+- Poison legacy AST body entry on a previously supported prepared async
+  fixture; prepared execution passes. Restore only the legacy-engine import
+  in an isolated removal control and require the module-boundary test to fail.
+  The original body must remain input-dependent so constant folding cannot
+  erase the evidence.
+
+Run the existing prepared async/currentness/frame suites identified in the
+recovered B branch, the two new tests, async equivalence, typecheck, IR
+layering/dialect/kind checks and resource/LOC/function ratchets. Compare base
+and candidate outputs on the same runtime configuration. Record final
+functions/imports/frame fields, executed values, phase and failure rows.
+Do not describe an AST-free parameter type or a mocked engine as completed
+AST-free backend emission.
+
+**Astra Low lane B prompt:** Resume the existing prepared-frame extraction
+with the exact ownership above, after the lead confirms its recovered head.
+You are not alone in the repository; preserve other edits, including C and the
+host-provider owner. Reproduce the actual prepared-to-legacy import path,
+then remove it by a prepared-only physical engine with no semantic AST
+fallback. Validate loaded-module census, two-await runtime behavior,
+source-qualified resume identity, tamper failures and the import removal
+control. Return the exact requirements C must materialize, without changing
+C's implementation or claiming its async acceptance has passed.

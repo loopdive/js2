@@ -2490,33 +2490,6 @@ function compileClassBodiesInner(
     };
     fctx.activationEntryBody = fctx.body;
 
-    // (#5377) Materialize this class's class-object singleton at the top of its
-    // constructor, so a compiled instance can answer `i.constructor` with the
-    // class object no matter what the program reads first.
-    //
-    // The singleton is otherwise created by whichever `C` identifier read runs
-    // first, and it is that init which registers `classObject → prototype
-    // carrier` with the host (`__register_class_ctor`). So the ordering decided
-    // whether the identity was answerable at all: measured on this branch
-    // before this line, `eq(readCtor(new P(1)), P)` — argument order puts the
-    // `constructor` read BEFORE the `P` read — answered 0, while the same
-    // module with `const c = P;` hoisted above it answered 1
-    // (`.tmp/dbg-struct.mts`, variants `twoStructClasses` vs `u`).
-    //
-    // Constructor entry is the right place because it is the once-per-class
-    // point that provably precedes the existence of any instance, and it is
-    // the exact counterpart of `emitSetSubclassProto`'s materialization on the
-    // externref-backed lane below. `emitLazyClassObjectGet` is itself guarded
-    // by a null check on the global, so the cost after the first `new` is one
-    // `global.get` + `ref.is_null`, and the singleton keeps ONE identity — a
-    // later `C` read reuses it rather than re-initialising.
-    //
-    // Host lane only: standalone has no class-object host registry to answer
-    // to, and the externref-backed lane is covered by `emitSetSubclassProto`.
-    if (!ctx.standalone && !ctx.wasi && !isExternrefBacked) {
-      if (emitLazyClassObjectGet(ctx, fctx, className)) fctx.body.push({ op: "drop" });
-    }
-
     // Re-resolve the constructor (and init) function types now that all class
     // struct types are registered. Constructor parameter types that reference
     // forward-declared classes may have resolved to externref during the
@@ -2537,6 +2510,35 @@ function compileClassBodiesInner(
           initFunc.typeIdx = updatedInitTypeIdx;
         }
       }
+    }
+
+    // (#5377) Materialize this class's class-object singleton at the top of its
+    // constructor, so a compiled instance can answer `i.constructor` with the
+    // class object no matter what the program reads first. This must happen
+    // AFTER the constructor signatures above are re-resolved: the singleton
+    // registration captures a constructor closure, and emitting it against the
+    // pre-resolution placeholder type creates a zero-argument trampoline for a
+    // constructor that later receives parameters (the Wasm validator then sees
+    // a call with too few stack arguments in large class-heavy packages such as
+    // hono).
+    //
+    // The singleton is otherwise created by whichever `C` identifier read runs
+    // first, and that init registers `classObject → prototype carrier` with the
+    // host (`__register_class_ctor`). Constructor entry remains the right
+    // once-per-class point: it provably precedes the existence of any instance,
+    // while the externref-backed lane is materialized by `emitSetSubclassProto`.
+    // Host lane only: standalone has no class-object host registry to answer
+    // to, and the externref-backed lane is covered by `emitSetSubclassProto`.
+    // Name-keyed class tables can expose a compatibility alias for the same
+    // source class expression (for example Hono's two module-local `Node`
+    // bindings).  A non-owner body shares the owner's constructor slot and
+    // class-object global; materializing through that alias would capture the
+    // owner's still-unresolved placeholder signature and mint a zero-argument
+    // trampoline before the canonical body fixes the type.  The scoped
+    // synthetic identity owns the real singleton for that declaration.
+    const classIdentityOwner = ctx.classDeclarationMap.get(className);
+    if (!ctx.standalone && !ctx.wasi && !isExternrefBacked && classIdentityOwner === decl) {
+      if (emitLazyClassObjectGet(ctx, fctx, className)) fctx.body.push({ op: "drop" });
     }
 
     for (let i = 0; i < fctxParams.length; i++) {

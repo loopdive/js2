@@ -15,6 +15,8 @@ import {
   type IrIntrinsicBackendOp,
   type IrIntrinsicBackendSequence,
 } from "./nodes.js";
+import { irRuntimeFuncRef } from "./callable-bindings.js";
+import { irRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
 import {
   ASYNC_OPTIONAL_RUNTIME_FEATURES,
   ASYNC_RUNTIME_FEATURES,
@@ -85,7 +87,8 @@ export type RuntimeFeature =
   | StringConcatManyRuntimeFeature
   | StringConstRuntimeFeature
   | HostCallbackWrapRuntimeFeature
-  | FunctionPrototypeCallRuntimeFeature;
+  | FunctionPrototypeCallRuntimeFeature
+  | ReferenceErrorRuntimeFeature;
 export type HostCapabilityId = RuntimeHostCapabilityId;
 
 export const RUNTIME_BACKEND_REQUIREMENTS = Object.freeze([
@@ -838,6 +841,14 @@ export const FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS = Object.freeze([
 ] as const);
 export type FunctionPrototypeCallRuntimeProviderId = (typeof FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS)[number];
 
+export const REFERENCE_ERROR_RUNTIME_FEATURES = Object.freeze(["error.reference.construct"] as const);
+export type ReferenceErrorRuntimeFeature = (typeof REFERENCE_ERROR_RUNTIME_FEATURES)[number];
+export const REFERENCE_ERROR_RUNTIME_PROVIDER_IDS = Object.freeze([
+  "host.error.reference.construct",
+  "native.error.reference.construct",
+] as const);
+export type ReferenceErrorRuntimeProviderId = (typeof REFERENCE_ERROR_RUNTIME_PROVIDER_IDS)[number];
+
 export type RuntimeProviderId =
   | MathRuntimeProviderId
   | NumericCoercionRuntimeProviderId
@@ -854,6 +865,7 @@ export type RuntimeProviderId =
   | StringConstRuntimeProviderId
   | HostCallbackWrapRuntimeProviderId
   | FunctionPrototypeCallRuntimeProviderId
+  | ReferenceErrorRuntimeProviderId
   | AsyncRuntimeProviderId;
 
 export type RuntimeProviderImplementation =
@@ -1138,6 +1150,9 @@ export class RuntimeManifestInvariantError extends Error {
   constructor(
     readonly code: RuntimeManifestInvariantCode,
     detail: string,
+    /** Failed graph node, plus the original semantic request that reached it. */
+    readonly feature?: RuntimeFeature,
+    readonly requestedFeature?: RuntimeFeature,
   ) {
     super(detail);
     this.name = "RuntimeManifestInvariantError";
@@ -1147,7 +1162,15 @@ export class RuntimeManifestInvariantError extends Error {
 const ALL_TARGETS = Object.freeze<readonly RuntimeTarget[]>(["host", "standalone", "strict-no-host", "wasi"]);
 const ALL_BACKENDS = Object.freeze<readonly RuntimeBackend[]>(["linear", "wasmgc"]);
 
+const REFERENCE_ERROR_DECLARATION = irRuntimeCallableDeclaration(irRuntimeFuncRef("__new_ReferenceError"))!;
+const REFERENCE_ERROR_SIGNATURE: IntrinsicSignature = Object.freeze({
+  version: 1,
+  params: REFERENCE_ERROR_DECLARATION.params,
+  result: REFERENCE_ERROR_DECLARATION.results[0]!,
+});
+
 export const RUNTIME_FEATURE_SIGNATURES: Readonly<Partial<Record<RuntimeFeature, IntrinsicSignature>>> = Object.freeze({
+  "error.reference.construct": REFERENCE_ERROR_SIGNATURE,
   "js.to_uint32": F64_TO_U32_INTRINSIC_SIGNATURE,
   "js.number.box": F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
   "js.number.unbox": EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
@@ -2105,6 +2128,32 @@ function isFunctionPrototypeCallFeature(feature: RuntimeFeature): feature is Fun
   return FUNCTION_PROTOTYPE_CALL_FEATURE_SET.has(feature);
 }
 
+/** TDZ constructor providers use target policy and the shared callable signature. */
+export const REFERENCE_ERROR_RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze([
+  Object.freeze({
+    id: "host.error.reference.construct",
+    feature: REFERENCE_ERROR_DECLARATION.feature,
+    signature: REFERENCE_ERROR_SIGNATURE,
+    dependencies: Object.freeze([]),
+    hostCapabilities: Object.freeze(["error.reference.construct"] as const),
+    supportedTargets: Object.freeze(["host"] as const),
+    supportedBackends: Object.freeze(["wasmgc"] as const),
+    implementation: Object.freeze({ kind: "host-callable", capability: "error.reference.construct" } as const),
+  }),
+  Object.freeze({
+    id: "native.error.reference.construct",
+    feature: REFERENCE_ERROR_DECLARATION.feature,
+    signature: REFERENCE_ERROR_SIGNATURE,
+    dependencies: Object.freeze([]),
+    hostCapabilities: Object.freeze([]),
+    supportedTargets: Object.freeze(["standalone", "wasi"] as const),
+    // The existing native constructor builds a WasmGC Error struct and
+    // converts it to externref. Its name does not establish a linear adapter.
+    supportedBackends: Object.freeze(["wasmgc"] as const),
+    implementation: Object.freeze({ kind: "runtime-callable", symbol: "__new_ReferenceError" } as const),
+  }),
+]);
+
 /** Closed, canonically ordered catalogue used by production manifest builders. */
 export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.freeze(
   [
@@ -2123,6 +2172,7 @@ export const RUNTIME_PROVIDERS: readonly RuntimeProviderDefinition[] = Object.fr
     ...STRING_CONST_RUNTIME_PROVIDERS,
     ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDERS,
     ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDERS,
+    ...REFERENCE_ERROR_RUNTIME_PROVIDERS,
     ...ASYNC_RUNTIME_PROVIDERS,
   ].sort((left, right) => left.id.localeCompare(right.id)),
 );
@@ -2142,6 +2192,7 @@ const FEATURE_SET: ReadonlySet<string> = new Set([
   ...STRING_CONST_RUNTIME_FEATURES,
   ...HOST_CALLBACK_WRAP_RUNTIME_FEATURES,
   ...FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
+  ...REFERENCE_ERROR_RUNTIME_FEATURES,
   ...PURE_MATH_RUNTIME_FEATURES,
   ...ASYNC_RUNTIME_FEATURES,
   ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
@@ -2161,6 +2212,7 @@ const PROVIDER_ID_SET: ReadonlySet<string> = new Set([
   ...STRING_CONST_RUNTIME_PROVIDER_IDS,
   ...HOST_CALLBACK_WRAP_RUNTIME_PROVIDER_IDS,
   ...FUNCTION_PROTOTYPE_CALL_RUNTIME_PROVIDER_IDS,
+  ...REFERENCE_ERROR_RUNTIME_PROVIDER_IDS,
   ...PURE_MATH_RUNTIME_PROVIDER_IDS,
   ...ASYNC_RUNTIME_PROVIDER_IDS,
 ]);
@@ -2499,6 +2551,7 @@ export class RuntimeManifestBuilder {
   resolveProvider(feature: IntrinsicRuntimeFeature): RuntimeProviderPlan;
   resolveProvider(feature: AsyncRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: GeneratorNumberBoxRuntimeFeature): RuntimeProviderDefinition;
+  resolveProvider(feature: ReferenceErrorRuntimeFeature): RuntimeProviderDefinition;
   resolveProvider(feature: RuntimeFeature): RuntimeProviderDefinition {
     this.#assertFrozen();
     const provider = this.#providerPlans.get(feature);
@@ -2543,14 +2596,25 @@ export class RuntimeManifestBuilder {
 
   #buildManifest(): FrozenRuntimeManifest {
     const providersByFeature = this.#indexProviders();
-    const pending = new Set<RuntimeFeature>(this.#requestedFeatures);
-    for (const use of this.#uses) pending.add(INTRINSIC_DEFINITIONS[use.id].feature);
+    const pending = new Map<RuntimeFeature, RuntimeFeature>();
+    for (const feature of this.#requestedFeatures) pending.set(feature, feature);
+    for (const use of this.#uses) {
+      const feature = INTRINSIC_DEFINITIONS[use.id].feature;
+      pending.set(feature, feature);
+    }
 
     while (pending.size > 0) {
-      const feature = [...pending].sort(compareStrings)[0]!;
+      const feature = [...pending.keys()].sort(compareStrings)[0]!;
+      const requestedFeature = pending.get(feature)!;
       pending.delete(feature);
       if (this.#providerPlans.has(feature)) continue;
-      const selected = this.#selectProvider(feature, providersByFeature);
+      let selected: RuntimeProviderDefinition;
+      try {
+        selected = this.#selectProvider(feature, providersByFeature);
+      } catch (error) {
+        if (!(error instanceof RuntimeManifestInvariantError)) throw error;
+        throw new RuntimeManifestInvariantError(error.code, error.message, feature, requestedFeature);
+      }
       const expectedSignature = RUNTIME_FEATURE_SIGNATURES[feature];
       if (
         expectedSignature !== undefined &&
@@ -2559,6 +2623,8 @@ export class RuntimeManifestBuilder {
         throw new RuntimeManifestInvariantError(
           "provider-signature-mismatch",
           `provider ${selected.id} does not implement the ${feature} signature`,
+          feature,
+          requestedFeature,
         );
       }
       const dependencies = new Set(selected.dependencies);
@@ -2568,7 +2634,9 @@ export class RuntimeManifestBuilder {
         dependencies: Object.freeze([...dependencies].sort(compareStrings)),
       });
       this.#providerPlans.set(feature, plan);
-      for (const dependency of plan.dependencies) pending.add(dependency);
+      for (const dependency of plan.dependencies) {
+        if (!pending.has(dependency)) pending.set(dependency, requestedFeature);
+      }
     }
 
     const features = Object.freeze([...this.#providerPlans.keys()].sort(compareStrings));

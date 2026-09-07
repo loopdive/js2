@@ -4,8 +4,13 @@ import type { AsyncCfgPlan } from "./async-cps.js";
 import { emitPreparedAsyncFrameStateMachine, type AsyncFrameInfo, type HostAsyncImports } from "./async-frame.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { ERROR_FIELD, MODE_FIELD, PARAM_FIELD_OFFSET, SENT_FIELD, sanitizeTypeName } from "./frame-core.js";
-import type { AsyncHostCapabilityId } from "../ir/async-runtime-providers.js";
-import { assertPreparedIrAsyncRuntimeCurrent, type CurrentPreparedIrAsyncRuntime } from "../ir/async-plan.js";
+import type { AsyncHostCapabilityId, PreparedAsyncHostCapabilityId } from "../ir/async-runtime-providers.js";
+import {
+  assertPreparedIrAsyncRuntimeCurrent,
+  preparedIrAsyncFrameCapabilityFailure,
+  type CurrentPreparedIrAsyncRuntime,
+} from "../ir/async-plan.js";
+import { IrUnsupportedError } from "../ir/outcomes.js";
 import { irTypeBindingKey } from "../ir/abi-bindings.js";
 import { asVal, type IrFuncRef, type IrFunction, type IrType } from "../ir/nodes.js";
 import type { FieldDef, ValType, WasmFunction } from "../ir/types.js";
@@ -23,7 +28,7 @@ function preparedHostImports(fn: IrFunction, resolver: PreparedIrAsyncFrameResol
   if (fn.asyncRuntime?.kind !== "host-wasmgc") {
     throw new Error(`IR async function ${fn.name} has no prepared host/WasmGC runtime`);
   }
-  const resolved = new Map<AsyncHostCapabilityId, number>();
+  const resolved = new Map<PreparedAsyncHostCapabilityId, number>();
   for (const adapter of fn.asyncRuntime.adapters) {
     if (resolved.has(adapter.capability)) {
       throw new Error(`IR async function ${fn.name} repeats adapter ${adapter.capability}`);
@@ -221,6 +226,15 @@ function preparedCfg(
     fctx.body.push({ op: "local.get", index: localOf(fctx, value) });
     return type;
   };
+  const numberAdapter = (capability: "number.box" | "number.unbox"): IrFuncRef | undefined => {
+    if (runtime.kind !== "host-wasmgc") return undefined;
+    return runtime.adapters.find((entry) => entry.capability === capability)?.target;
+  };
+  const emitToExtern = (fctx: FunctionContext, from: ValType): void => {
+    const box = from.kind === "f64" ? numberAdapter("number.box") : undefined;
+    if (box) fctx.body.push({ op: "call", funcIdx: resolver.resolveFunc(box) });
+    else coerceType(ctx, fctx, from, { kind: "externref" });
+  };
   const emitStateBody = (stateIndex: number, fctx: FunctionContext): void => {
     const semantic = plan.states[stateIndex]!;
     const state = runtime.states[stateIndex]!;
@@ -269,7 +283,7 @@ function preparedCfg(
         if (frameLocal === undefined) throw new Error(`IR async frame ${fn.name} lost its frame parameter`);
         fctx.body.push({ op: "local.get", index: frameLocal });
         const from = emitGet(fctx, Number(semantic.terminator.value));
-        coerceType(ctx, fctx, from, { kind: "externref" });
+        emitToExtern(fctx, from);
         fctx.body.push({ op: "struct.set", typeIdx: layout.info.stateTypeIdx, fieldIdx: SENT_FIELD });
       }
     }
@@ -288,7 +302,10 @@ function preparedCfg(
     fctx.body.push({ op: "local.get", index: frameLocal });
     fctx.body.push({ op: "struct.get", typeIdx: layout.info.stateTypeIdx, fieldIdx: SENT_FIELD });
     const targetType = preparedAsyncValueType(ctx, fn, state.resume.type);
-    const fromExtern = preparedAsyncFromExternFuncIdx(ctx, fn, state.resume.type, targetType, resolver);
+    const numberUnbox = targetType.kind === "f64" ? numberAdapter("number.unbox") : undefined;
+    const fromExtern = numberUnbox
+      ? resolver.resolveFunc(numberUnbox)
+      : preparedAsyncFromExternFuncIdx(ctx, fn, state.resume.type, targetType, resolver);
     if (fromExtern === null) coerceType(ctx, fctx, { kind: "externref" }, targetType);
     else fctx.body.push({ op: "call", funcIdx: fromExtern });
     fctx.body.push({ op: "local.set", index: localOf(fctx, Number(state.resume.value)) });
@@ -320,7 +337,14 @@ function preparedCfg(
                 return name ? [name] : [];
               }),
               awaited: {
-                emit: (_ctx: CodegenContext, fctx: FunctionContext): ValType => emitGet(fctx, Number(terminal.awaited)),
+                emit: (_ctx: CodegenContext, fctx: FunctionContext): ValType => {
+                  const type = emitGet(fctx, Number(terminal.awaited));
+                  if (type.kind === "f64" && numberAdapter("number.box")) {
+                    emitToExtern(fctx, type);
+                    return { kind: "externref" };
+                  }
+                  return type;
+                },
               },
             };
           case "goto":
@@ -367,6 +391,8 @@ export function lowerPreparedIrAsyncFunction(
   existing: WasmFunction,
 ): WasmFunction {
   const runtime = assertPreparedIrAsyncRuntimeCurrent(fn.unitId, fn.name, fn.asyncPlan, fn.asyncRuntime);
+  const capabilityFailure = preparedIrAsyncFrameCapabilityFailure(runtime);
+  if (capabilityFailure) throw new IrUnsupportedError("body-shape-rejected", "resolve", capabilityFailure);
   const signature = ctx.mod.types[existing.typeIdx];
   if (
     !signature ||

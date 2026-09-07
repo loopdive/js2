@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { createIrBindingId, type IrBindingId, type IrClassId, type IrSourceId, type IrUnitId } from "./identity.js";
+import { createIrBindingId } from "./identity-values.js";
+import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "./identity.js";
 import type { IrGlobalBinding, IrGlobalRef, IrTypeBinding, IrTypeRef } from "./nodes.js";
 
 type IrBindingOwnerId = IrSourceId | IrUnitId | IrClassId;

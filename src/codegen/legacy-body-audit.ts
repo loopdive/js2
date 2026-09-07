@@ -5,7 +5,13 @@ import type { IrClassId, IrClassRecord, IrSourceId, IrSourceRecord, IrUnitId, Ir
 import { nonExecutableOutcomeDefect, type IrObservedOutcome } from "../ir/outcomes.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import type { ProgramAbiDerivedUnitRecord } from "../ir/program-abi.js";
-import { IR_COMPILE_ROUTE_MANIFEST, type IrCompileRoute } from "../ir/standalone-route-manifest.js";
+import {
+  irCompileRouteManifestEntry,
+  type IrBodyRouteAuditPipeline,
+  type IrCodegenGenerator,
+  type IrCompileRoute,
+  type IrCompileRouteManifestEntry,
+} from "../ir/standalone-route-manifest.js";
 import type { CompileTargetProfile } from "../target-profile.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 
@@ -159,7 +165,7 @@ export interface IrBodyRouteAudit {
   readonly route: IrCompileRoute;
   readonly target: CompileTargetProfile["target"];
   readonly graph: "single" | "multi";
-  readonly generator: "generateModule" | "generateMultiModule";
+  readonly generator: IrCodegenGenerator;
   readonly sources: readonly IrBodyRouteSource[];
   readonly classes: readonly IrClassRecord[];
   readonly sourceCount: number;
@@ -210,29 +216,29 @@ export class IrBodyRouteAuditSession {
   readonly #identity: IrPlanningIdentityContext;
   readonly #target: CompileTargetProfile["target"];
   readonly #compileRoute: IrCompileRoute;
+  readonly #expectedRoute: IrCompileRouteManifestEntry;
   readonly #sourceById: ReadonlyMap<IrSourceId, IrBodyRouteSource>;
   readonly #seenFrames = new WeakSet<FunctionContext>();
   readonly #entries = new Map<string, IrLegacyBodyEntry>();
   readonly #directFunctionBodyReceiptsBySourceId = new Map<IrSourceId, MutableDirectFunctionBodyReceiptIndex>();
   #unattributedDirectFunctionBodyReceiptViolation?: IrDirectFunctionBodyReceiptViolation;
-  #route?: {
-    readonly graph: "single" | "multi";
-    readonly generator: "generateModule" | "generateMultiModule";
-  };
+  #route?: IrCompileRouteManifestEntry;
 
   constructor(
     identity: IrPlanningIdentityContext,
     target: CompileTargetProfile["target"],
     compileRoute: IrCompileRoute,
+    pipeline: IrBodyRouteAuditPipeline = "legacy",
   ) {
     this.#identity = identity;
     this.#target = target;
     this.#compileRoute = compileRoute;
+    this.#expectedRoute = irCompileRouteManifestEntry(compileRoute, pipeline);
     this.#sourceById = new Map(identity.inventory.sources.map((source) => [source.id, source]));
   }
 
-  registerGenerator(graph: "single" | "multi", generator: "generateModule" | "generateMultiModule"): void {
-    const expected = IR_COMPILE_ROUTE_MANIFEST[this.#compileRoute];
+  registerGenerator(graph: "single" | "multi", generator: IrCodegenGenerator): void {
+    const expected = this.#expectedRoute;
     if (expected.graph !== graph || expected.generator !== generator) {
       throw new Error(
         `IR body-route audit route ${this.#compileRoute} expected ${expected.graph}/${expected.generator}, ` +

@@ -9,25 +9,34 @@ import {
   IR_ASYNC_PROMISE_ALL_NATIVE_FN,
   IR_ASYNC_STRING_CONCAT_5_FN,
 } from "../ir/async-semantic-runtime.js";
-import { awaitIsStaticallyResolved, staticPromiseResolveSettledExpr } from "../ir/async-static.js";
-import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import type { IrFromAstResolver } from "../ir/from-ast.js";
-import type { IrUnitId } from "../ir/identity.js";
+import {
+  awaitIsStaticallyResolved,
+  staticPromiseResolveSettledExpr,
+  unwrapPromiseTypeNode,
+} from "../ir/async-static.js";
+import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef } from "../ir/callable-bindings.js";
 import { irVal, irVec } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
 import type { IrPromiseDelayResolver } from "../ir/promise-delay.js";
 import type { IrSelectionOptions } from "../ir/select.js";
 import type { ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
+import type { IrSourceId, IrTerminalUnitRecord, IrUnitId } from "../ir/identity.js";
 import { asyncEngineWouldActivate } from "./async-activation.js";
 import { analyzeAsyncBody, splitBodyAtAwait } from "./async-cps.js";
 import {
   type PreparedIrAsyncLinearSource,
   forgetPreparedIrAsyncSettledOwner,
   preparedIrAsyncLinearSource,
+  preparedIrAsyncPromiseCallClosure,
   preparedIrAsyncSettledOwner,
   preparedIrAsyncSettledOwnerWasIssued,
+  settledOwnerIdentity,
+  type PreparedIrAsyncPromiseCallClosure,
+  type SettledOwnerIdentity,
 } from "./async-linear-planning.js";
+import { nativeTypeOfDeclaration } from "./native-type-annotations.js";
 import type { CodegenContext } from "./context/types.js";
 import type { IrOverlayIdentityPlan } from "./ir-overlay-identity.js";
 
@@ -559,10 +568,20 @@ export function preparedIrAsyncSourceShape(
 }
 
 export function preparedIrAsyncSourceCanSuspend(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
+  assertPreparedIrAsyncPromiseOwnerCurrent(ctx, fn);
+  return sourceAsyncCanSuspend(ctx, fn);
+}
+
+/** Source facts only: receipt validation recomputes these without re-entering itself. */
+function sourceAsyncCanSuspend(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
+  // Check issuance before asking the current AST/identity maps for a shape.
+  // A withdrawn or rebound owner must remain fatal even when that lookup now
+  // returns no shape and would otherwise look like an ordinary refusal.
+  const settledOwnerWasIssued = preparedIrAsyncSettledOwnerWasIssued(ctx, fn);
   const shape = preparedIrAsyncSourceShape(ctx, fn);
   const linearPlan = shape?.kind === "linear" ? analyzeAsyncBody(ctx, fn) : undefined;
   const settledOwner = shape?.kind === "linear" ? preparedIrAsyncSettledOwner(ctx, fn) : null;
-  if (shape?.kind === "linear" && !settledOwner && preparedIrAsyncSettledOwnerWasIssued(ctx, fn)) {
+  if (settledOwnerWasIssued && !settledOwner) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "resolve",
@@ -744,9 +763,7 @@ function isExactStandaloneNativeAsyncFamilyOwner(
 }
 
 function preparedIrAsyncSourceCanSuspendOnTarget(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
-  return (
-    preparedIrAsyncSourceCanSuspend(ctx, fn) && (!ctx.standalone || isExactStandaloneNativeAsyncFamilyOwner(ctx, fn))
-  );
+  return sourceAsyncCanSuspend(ctx, fn) && (!ctx.standalone || isExactStandaloneNativeAsyncFamilyOwner(ctx, fn));
 }
 
 /** Exact awaited Promise.all node owned by the certified continuation shape. */
@@ -794,10 +811,25 @@ export function preparedIrAsyncAwaitSite(
 ): PreparedAsyncAwaitSite | null {
   const owner = enclosingFunctionDeclaration(expression);
   if (!owner) return null;
+  assertPreparedIrAsyncPromiseOwnerCurrent(ctx, owner);
+  // Do not let a lost current source shape turn an already-issued Promise ABI
+  // into a quiet unsupported result.  The declaration-keyed issuance receipt
+  // survives identity-map loss and makes this path fail before await lowering.
+  const settledOwnerWasIssued = preparedIrAsyncSettledOwnerWasIssued(ctx, owner);
   const shape = preparedIrAsyncSourceShape(ctx, owner);
-  if (shape?.kind !== "linear" || !shape.awaitSites.includes(expression)) return null;
+  if (shape?.kind !== "linear") {
+    if (settledOwnerWasIssued) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `settled async owner ${owner.name?.text ?? "<anonymous>"} lost its source proof before await lowering`,
+      );
+    }
+    return null;
+  }
+  if (!shape.awaitSites.includes(expression)) return null;
   const settledOwner = preparedIrAsyncSettledOwner(ctx, owner);
-  if (!settledOwner && preparedIrAsyncSettledOwnerWasIssued(ctx, owner)) {
+  if (!settledOwner && settledOwnerWasIssued) {
     throw new IrInvariantError(
       "selection-preparation-mismatch",
       "resolve",
@@ -930,6 +962,346 @@ function isPreparedAsyncThenableCall(ctx: CodegenContext, call: ts.CallExpressio
   );
 }
 
+interface PreparedIrAsyncPromiseOwnerCandidate {
+  readonly unitId: IrUnitId;
+  readonly declaration: ts.FunctionDeclaration;
+}
+
+interface PreparedIrAsyncPromiseOwnerIssuance {
+  readonly declaration: ts.FunctionDeclaration;
+  readonly unitId: IrUnitId;
+  readonly sourceId: IrSourceId;
+  readonly sourceFile: ts.SourceFile;
+  readonly terminal: IrTerminalUnitRecord;
+  readonly sourceFingerprint: string;
+  readonly ownerUnitIds: ReadonlySet<IrUnitId>;
+  readonly ownerUnitIdsFingerprint: string;
+  readonly closureFingerprint: string;
+  readonly abiFingerprint: string;
+}
+
+/**
+ * A frozen Set still exposes mutating methods whose internal slots remain
+ * writable. Keep the owner population behind a read-only view instead; the
+ * identity and ABI receipts can then safely retain the same collection.
+ */
+function immutableReadonlySet<T>(values: Iterable<T>): ReadonlySet<T> {
+  const snapshot = Object.freeze([...new Set(values)]);
+  const lookup = new Set(snapshot);
+  const view: ReadonlySet<T> = Object.freeze({
+    get size(): number {
+      return snapshot.length;
+    },
+    has(value: T): boolean {
+      return lookup.has(value);
+    },
+    forEach(callbackfn: (value: T, value2: T, set: ReadonlySet<T>) => void, thisArg?: unknown): void {
+      for (const value of snapshot) callbackfn.call(thisArg, value, value, view);
+    },
+    entries(): IterableIterator<[T, T]> {
+      return (function* (): IterableIterator<[T, T]> {
+        for (const value of snapshot) yield [value, value];
+      })();
+    },
+    keys(): IterableIterator<T> {
+      return snapshot[Symbol.iterator]();
+    },
+    values(): IterableIterator<T> {
+      return snapshot[Symbol.iterator]();
+    },
+    [Symbol.iterator](): IterableIterator<T> {
+      return snapshot[Symbol.iterator]();
+    },
+  }) as ReadonlySet<T>;
+  return view;
+}
+
+const preparedAsyncPromiseOwnerUnitIdsByContext = new WeakMap<CodegenContext, ReadonlySet<IrUnitId>>();
+const preparedAsyncPromiseOwnerIssuanceByContext = new WeakMap<
+  CodegenContext,
+  {
+    readonly byDeclaration: WeakMap<ts.FunctionDeclaration, PreparedIrAsyncPromiseOwnerIssuance>;
+    readonly byUnitId: Map<IrUnitId, PreparedIrAsyncPromiseOwnerIssuance>;
+    readonly invalid: Set<IrUnitId>;
+  }
+>();
+const preparedAsyncObservedAbiByContext = new WeakMap<CodegenContext, WeakMap<ts.FunctionDeclaration, boolean>>();
+
+/**
+ * The declaration pass can see a Promise annotation before it has seen every
+ * source callable's final Wasm slot.  Keep the early candidate population
+ * independent of declaration order, and use only source facts that the
+ * eventual `prepareAsyncCallableAbi` call can represent.
+ */
+function sourceAsyncParameterKind(
+  ctx: CodegenContext,
+  parameter: ts.ParameterDeclaration,
+): "f64" | "vec-f64" | undefined {
+  if (
+    parameter.questionToken !== undefined ||
+    parameter.dotDotDotToken !== undefined ||
+    parameter.initializer !== undefined ||
+    !ts.isIdentifier(parameter.name) ||
+    parameter.type === undefined ||
+    ts.getJSDocType(parameter) !== undefined ||
+    ts.getJSDocParameterTags(parameter).some((tag) => tag.isBracketed === true)
+  ) {
+    return undefined;
+  }
+  let type: ts.Type;
+  try {
+    type = ctx.checker.getTypeAtLocation(parameter);
+  } catch {
+    return undefined;
+  }
+  // Primitive aliases lose their name in checker types. The declaration
+  // collector still honors an explicit i32/f32 annotation, so use its same
+  // native-annotation resolver before claiming an f64 parameter.
+  const native = nativeTypeOfDeclaration(ctx.checker, parameter);
+  if (native !== null && native.kind !== "f64") return undefined;
+  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return "f64";
+  const symbol = type.getSymbol?.();
+  const symbolName = symbol?.name;
+  if (symbolName !== "Array" && symbolName !== "ReadonlyArray") return undefined;
+  const declarations = symbol?.declarations;
+  if (!declarations?.length || !declarations.every((declaration) => declaration.getSourceFile().isDeclarationFile)) {
+    return undefined;
+  }
+  const typeArguments = ctx.checker.getTypeArguments(type as ts.TypeReference);
+  return typeArguments.length === 1 && (typeArguments[0]!.flags & ts.TypeFlags.NumberLike) !== 0
+    ? "vec-f64"
+    : undefined;
+}
+
+/** Infer the fulfillment carrier that the async declaration pass can project. */
+function asyncPromiseFulfillmentKind(ctx: CodegenContext, fn: ts.FunctionDeclaration): "f64" | "void" | undefined {
+  let signature: ts.Signature | undefined;
+  try {
+    signature = ctx.checker.getSignatureFromDeclaration(fn) ?? undefined;
+  } catch {
+    return undefined;
+  }
+  if (!signature) return undefined;
+  // Match the selector's explicit Promise<T> admission contract. An async
+  // declaration's checker return type can otherwise look numeric even when a
+  // skipped diagnostic left an invalid/non-Promise annotation in place.
+  const fulfillmentNode = unwrapPromiseTypeNode(fn.type);
+  if (!fulfillmentNode || !fn.type || !ts.isTypeReferenceNode(fn.type)) return undefined;
+  if (!declarationsAreAmbient(ctx, fn.type.typeName)) return undefined;
+  let type: ts.Type;
+  try {
+    type = ctx.checker.getTypeAtLocation(fulfillmentNode);
+  } catch {
+    return undefined;
+  }
+  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return "f64";
+  if ((type.flags & ts.TypeFlags.VoidLike) !== 0) return "void";
+  return undefined;
+}
+
+function sourceAsyncPromiseOwnerCandidate(ctx: CodegenContext, declaration: ts.FunctionDeclaration): boolean {
+  if (
+    preparedAsyncObservedAbiByContext.get(ctx)?.get(declaration) === false ||
+    declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) !== true ||
+    declaration.asteriskToken !== undefined ||
+    declaration.typeParameters?.length ||
+    !declaration.body ||
+    declaration.parent === undefined ||
+    !ts.isSourceFile(declaration.parent) ||
+    declaration.parameters.some((parameter) => sourceAsyncParameterKind(ctx, parameter) === undefined)
+  ) {
+    return false;
+  }
+  const fulfillment = asyncPromiseFulfillmentKind(ctx, declaration);
+  if (fulfillment === undefined) return false;
+  const shape = preparedIrAsyncSourceShape(ctx, declaration);
+  return (
+    shape !== null &&
+    (fulfillment === "f64" || shape.kind === "final-main" || shape.kind === "linear") &&
+    preparedIrAsyncSourceCanSuspendOnTarget(ctx, declaration)
+  );
+}
+
+function sourceAsyncPromiseOwnerCandidates(ctx: CodegenContext): PreparedIrAsyncPromiseOwnerCandidate[] {
+  const identity = ctx.irPlanningIdentityContext;
+  if (!identity) return [];
+  const candidates: PreparedIrAsyncPromiseOwnerCandidate[] = [];
+  const sourceFiles = ctx.callableSourceFiles ?? [...identity.sourceFileBySourceId.values()];
+  for (const sourceFile of sourceFiles) {
+    for (const statement of sourceFile.statements) {
+      if (!ts.isFunctionDeclaration(statement)) continue;
+      const unitId = identity.unitIdByDeclaration.get(statement);
+      if (unitId === undefined || !sourceAsyncPromiseOwnerCandidate(ctx, statement)) continue;
+      candidates.push({ unitId, declaration: statement });
+    }
+  }
+  return candidates;
+}
+
+/**
+ * Compute the source-qualified fixed point for generic Promise owners.  An
+ * owner survives only when its incoming and outgoing source calls all have a
+ * matching Promise contract.  In particular, an async declaration with no
+ * real await is absent from this set and cannot satisfy an awaited Promise
+ * edge merely because TypeScript wrote `Promise<T>` in its return type.
+ */
+function promiseOwnerUnitIdsFingerprint(unitIds: Iterable<IrUnitId>): string {
+  return JSON.stringify([...unitIds].sort());
+}
+
+function computePreparedIrAsyncPromiseOwnerUnitIds(ctx: CodegenContext): ReadonlySet<IrUnitId> {
+  const candidates = sourceAsyncPromiseOwnerCandidates(ctx);
+  const active = new Set(candidates.map(({ unitId }) => unitId));
+  const ordered = [...candidates].sort((left, right) =>
+    left.unitId < right.unitId ? -1 : left.unitId > right.unitId ? 1 : 0,
+  );
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (const candidate of ordered) {
+      if (!active.has(candidate.unitId)) continue;
+      // The closure itself authenticates each call against the currently
+      // active fixed point. A failed owner is removed and all callers/callees
+      // that depended on it are reconsidered on the next pass.
+      if (!preparedIrAsyncPromiseCallClosure(ctx, candidate.declaration, active)) {
+        active.delete(candidate.unitId);
+        changed = true;
+      }
+    }
+  }
+  return immutableReadonlySet(active);
+}
+
+export function preparedIrAsyncPromiseOwnerUnitIds(ctx: CodegenContext): ReadonlySet<IrUnitId> {
+  assertPreparedIrAsyncPromiseOwnersCurrent(ctx);
+  const cached = preparedAsyncPromiseOwnerUnitIdsByContext.get(ctx);
+  if (cached) return cached;
+  const result = computePreparedIrAsyncPromiseOwnerUnitIds(ctx);
+  preparedAsyncPromiseOwnerUnitIdsByContext.set(ctx, result);
+  return result;
+}
+
+function issuedPreparedIrAsyncPromiseOwner(
+  ctx: CodegenContext,
+  fn: ts.FunctionDeclaration,
+): PreparedIrAsyncPromiseOwnerIssuance | undefined {
+  return preparedAsyncPromiseOwnerIssuanceByContext.get(ctx)?.byDeclaration.get(fn);
+}
+
+function promiseOwnerIdentityIsCurrent(ctx: CodegenContext, receipt: PreparedIrAsyncPromiseOwnerIssuance): boolean {
+  const identity = ctx.irPlanningIdentityContext;
+  if (!identity || !ts.isSourceFile(receipt.declaration.parent)) return false;
+  const currentUnitId = identity.unitIdByDeclaration.get(receipt.declaration);
+  const currentSourceId = identity.sourceIdBySourceFile.get(receipt.sourceFile);
+  const unit = identity.unitByUnitId.get(receipt.unitId);
+  const terminal = identity.terminalByUnitId.get(receipt.unitId);
+  return (
+    receipt.declaration.getSourceFile() === receipt.sourceFile &&
+    currentUnitId === receipt.unitId &&
+    currentSourceId === receipt.sourceId &&
+    identity.sourceFileBySourceId.get(receipt.sourceId) === receipt.sourceFile &&
+    identity.declarationByUnitId.get(receipt.unitId) === receipt.declaration &&
+    unit !== undefined &&
+    unit === receipt.terminal &&
+    unit.sourceId === receipt.sourceId &&
+    unit.kind === "top-level-function" &&
+    terminal !== undefined &&
+    terminal === unit &&
+    terminal.terminalOwnerId === receipt.unitId
+  );
+}
+
+function promiseOwnerSourceFingerprint(fn: ts.FunctionDeclaration): string {
+  return `${fn.pos}:${fn.end}:${fn.getText()}`;
+}
+
+function promiseOwnerIsCurrent(
+  ctx: CodegenContext,
+  receipt: PreparedIrAsyncPromiseOwnerIssuance,
+  currentOwnerUnitIds: ReadonlySet<IrUnitId>,
+): boolean {
+  if (!promiseOwnerIdentityIsCurrent(ctx, receipt)) return false;
+  if (promiseOwnerSourceFingerprint(receipt.declaration) !== receipt.sourceFingerprint) return false;
+  if (promiseOwnerUnitIdsFingerprint(currentOwnerUnitIds) !== receipt.ownerUnitIdsFingerprint) return false;
+  const closure = preparedIrAsyncPromiseCallClosure(ctx, receipt.declaration, receipt.ownerUnitIds);
+  return closure !== null && closure.fingerprint === receipt.closureFingerprint;
+}
+
+/** True after a generic Promise ABI receipt was issued for this declaration. */
+export function preparedIrAsyncPromiseOwnerWasIssued(ctx: CodegenContext, fn: ts.FunctionDeclaration): boolean {
+  return issuedPreparedIrAsyncPromiseOwner(ctx, fn) !== undefined;
+}
+
+/**
+ * Keep every post-issuance handoff on the original generic Promise receipt.
+ * A missing identity, terminal, source closure, or owner population is an
+ * invariant: the caller must never fall back to a raw numeric ABI.
+ */
+export function assertPreparedIrAsyncPromiseOwnerCurrent(ctx: CodegenContext, _fn: ts.FunctionDeclaration): void {
+  // Replacing the current declaration must not hide an original issuance.
+  // Validation therefore begins at the retained UnitId population, not at a
+  // possibly new declaration supplied by this handoff.
+  assertPreparedIrAsyncPromiseOwnersCurrent(ctx);
+}
+
+/** Validate original receipts even when a later selection has lost the declaration entirely. */
+function assertPreparedIrAsyncPromiseOwnersCurrent(ctx: CodegenContext): void {
+  const issued = preparedAsyncPromiseOwnerIssuanceByContext.get(ctx);
+  if (!issued) return;
+  let currentOwnerUnitIds: ReadonlySet<IrUnitId> | undefined;
+  for (const receipt of issued.byUnitId.values()) {
+    try {
+      if (!issued.invalid.has(receipt.unitId) && promiseOwnerIdentityIsCurrent(ctx, receipt)) {
+        currentOwnerUnitIds ??= computePreparedIrAsyncPromiseOwnerUnitIds(ctx);
+        if (promiseOwnerIsCurrent(ctx, receipt, currentOwnerUnitIds)) continue;
+      }
+    } catch (cause) {
+      issued.invalid.add(receipt.unitId);
+      throw genericPromiseOwnerInvariant(receipt, cause);
+    }
+    issued.invalid.add(receipt.unitId);
+    throw genericPromiseOwnerInvariant(receipt);
+  }
+}
+
+function genericPromiseOwnerInvariant(receipt: PreparedIrAsyncPromiseOwnerIssuance, cause?: unknown): IrInvariantError {
+  return new IrInvariantError(
+    "selection-preparation-mismatch",
+    "resolve",
+    `generic Promise owner ${receipt.declaration.name?.text ?? "<anonymous>"} (${receipt.unitId}) lost its source proof/ABI closure after issuance`,
+    cause,
+  );
+}
+
+function issuePreparedIrAsyncPromiseOwner(
+  ctx: CodegenContext,
+  fn: ts.FunctionDeclaration,
+  identity: SettledOwnerIdentity,
+  ownerUnitIds: ReadonlySet<IrUnitId>,
+  closure: PreparedIrAsyncPromiseCallClosure,
+  abiFingerprint: string,
+): void {
+  const issued = preparedAsyncPromiseOwnerIssuanceByContext.get(ctx) ?? {
+    byDeclaration: new WeakMap(),
+    byUnitId: new Map(),
+    invalid: new Set(),
+  };
+  const receipt: PreparedIrAsyncPromiseOwnerIssuance = Object.freeze({
+    declaration: fn,
+    unitId: identity.unitId,
+    sourceId: identity.sourceId,
+    sourceFile: identity.sourceFile,
+    terminal: ctx.irPlanningIdentityContext!.terminalByUnitId.get(identity.unitId)!,
+    sourceFingerprint: promiseOwnerSourceFingerprint(fn),
+    ownerUnitIds: immutableReadonlySet(ownerUnitIds),
+    ownerUnitIdsFingerprint: promiseOwnerUnitIdsFingerprint(ownerUnitIds),
+    closureFingerprint: closure.fingerprint,
+    abiFingerprint,
+  });
+  issued.byDeclaration.set(fn, receipt);
+  issued.byUnitId.set(identity.unitId, receipt);
+  preparedAsyncPromiseOwnerIssuanceByContext.set(ctx, issued);
+}
+
 /**
  * Freeze the canonical Promise-returning callable ABI before program-ABI
  * publication for the first top-level real-suspension owner. The direct async
@@ -943,11 +1315,52 @@ export function prepareAsyncCallableAbi(
   params: ValType[],
   fulfillmentResults: ValType[],
 ): [ValType[], ValType[]] {
+  const issued = issuedPreparedIrAsyncPromiseOwner(ctx, fn);
+  const abiFingerprint = JSON.stringify({ params, fulfillmentResults });
+  if (issued && issued.abiFingerprint !== abiFingerprint) {
+    preparedAsyncPromiseOwnerIssuanceByContext.get(ctx)!.invalid.add(issued.unitId);
+    throw genericPromiseOwnerInvariant(issued);
+  }
+  if (issued) assertPreparedIrAsyncPromiseOwnerCurrent(ctx, fn);
   const shape = preparedIrAsyncSourceShape(ctx, fn);
+  // Keep the post-issuance identity/currentness invariant independent of the
+  // generic Promise-owner cache. A stale identity map must fail closed even
+  // when this context already cached the owner's earlier fixed-point member.
+  const sourceCanSuspend = preparedIrAsyncSourceCanSuspendOnTarget(ctx, fn);
+  const ownerUnitId = ctx.irPlanningIdentityContext?.unitIdByDeclaration.get(fn);
+  const sourceFulfillment = shape === null ? undefined : asyncPromiseFulfillmentKind(ctx, fn);
   const supportedFulfillment =
-    (fulfillmentResults.length === 1 && fulfillmentResults[0]?.kind === "f64") ||
-    (shape?.kind === "final-main" && fulfillmentResults.length === 0) ||
-    (shape?.kind === "linear" && fulfillmentResults.length === 0);
+    (sourceFulfillment === "f64" && fulfillmentResults.length === 1 && fulfillmentResults[0]?.kind === "f64") ||
+    (sourceFulfillment === "void" &&
+      (shape?.kind === "final-main" || shape?.kind === "linear") &&
+      fulfillmentResults.length === 0);
+  const physicalAbiSupported =
+    params.length === fn.parameters.length &&
+    params.every((param, index) => {
+      const sourceKind = sourceAsyncParameterKind(ctx, fn.parameters[index]!);
+      return sourceKind === "f64"
+        ? param.kind === "f64"
+        : sourceKind === "vec-f64" && param.kind !== "f64" && preparedAsyncParamAbiIsStable(ctx, param);
+    }) &&
+    supportedFulfillment;
+  const observed = preparedAsyncObservedAbiByContext.get(ctx) ?? new WeakMap<ts.FunctionDeclaration, boolean>();
+  const previousAbiSupported = observed.get(fn);
+  observed.set(fn, physicalAbiSupported);
+  preparedAsyncObservedAbiByContext.set(ctx, observed);
+  // Source candidates are stable during declaration collection. Only a new
+  // contradictory physical observation invalidates the pre-issuance cache;
+  // recomputing a whole-source census for every synchronous declaration would
+  // make ordinary programs quadratic even when they have no async owners.
+  if (
+    !preparedAsyncPromiseOwnerIssuanceByContext.has(ctx) &&
+    ((!physicalAbiSupported &&
+      ownerUnitId !== undefined &&
+      preparedAsyncPromiseOwnerUnitIdsByContext.get(ctx)?.has(ownerUnitId)) ||
+      (previousAbiSupported === false && physicalAbiSupported))
+  ) {
+    preparedAsyncPromiseOwnerUnitIdsByContext.delete(ctx);
+  }
+  const promiseOwnerUnitIds = preparedIrAsyncPromiseOwnerUnitIds(ctx);
   const usesPromiseAbi =
     ctx.programAbiSession !== undefined &&
     !ctx.wasi &&
@@ -955,9 +1368,26 @@ export function prepareAsyncCallableAbi(
     !fn.typeParameters?.length &&
     ts.isSourceFile(fn.parent) &&
     shape !== null &&
-    preparedIrAsyncSourceCanSuspendOnTarget(ctx, fn) &&
-    params.every((param) => preparedAsyncParamAbiIsStable(ctx, param)) &&
-    supportedFulfillment;
+    sourceCanSuspend &&
+    ownerUnitId !== undefined &&
+    promiseOwnerUnitIds.has(ownerUnitId) &&
+    physicalAbiSupported;
+  if (issued && !usesPromiseAbi) {
+    preparedAsyncPromiseOwnerIssuanceByContext.get(ctx)!.invalid.add(issued.unitId);
+    throw genericPromiseOwnerInvariant(issued);
+  }
+  if (usesPromiseAbi && !issued) {
+    const ownerIdentity = settledOwnerIdentity(ctx, fn);
+    const closure = ownerIdentity ? preparedIrAsyncPromiseCallClosure(ctx, fn, promiseOwnerUnitIds) : null;
+    if (!ownerIdentity || !closure) {
+      throw new IrInvariantError(
+        "selection-preparation-mismatch",
+        "resolve",
+        `generic Promise owner ${fn.name?.text ?? "<anonymous>"} has no closed source ABI receipt`,
+      );
+    }
+    issuePreparedIrAsyncPromiseOwner(ctx, fn, ownerIdentity, promiseOwnerUnitIds, closure, abiFingerprint);
+  }
   return [params, usesPromiseAbi ? [{ kind: "externref" }] : fulfillmentResults];
 }
 
@@ -1046,10 +1476,13 @@ export function collectPreparedIrAsyncOwners(
   identityPlan: IrOverlayIdentityPlan,
   selectedFunctions: ReadonlySet<string>,
 ): ReadonlySet<IrUnitId> {
+  assertPreparedIrAsyncPromiseOwnersCurrent(ctx);
   const owners = new Set<IrUnitId>();
   if (ctx.wasi || (ctx.standalone && !ctx.nativeStrings)) return owners;
   for (const claim of identityPlan.functionClaims) {
-    if (selectedFunctions.has(claim.legacyName) && preparedIrAsyncSourceCanSuspendOnTarget(ctx, claim.declaration)) {
+    if (!selectedFunctions.has(claim.legacyName)) continue;
+    assertPreparedIrAsyncPromiseOwnerCurrent(ctx, claim.declaration);
+    if (preparedIrAsyncSourceCanSuspendOnTarget(ctx, claim.declaration)) {
       owners.add(claim.unitId);
     }
   }
