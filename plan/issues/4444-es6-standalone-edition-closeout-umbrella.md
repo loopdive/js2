@@ -18,6 +18,77 @@ related: [2860, 2864, 2865, 2867, 2906, 3032, 3178, 2161, 2175, 2158, 2159, 4445
 
 # #4444 — UMBRELLA: ES6 (ES2015) standalone edition close-out
 
+## Handover (2026-09-06, session claude/es6-test262-standalone-g10c7u, wave 5)
+
+ES2015 standalone stood at **10,188 / 11,704 (87.0 %)** after wave 4 (#5604)
+landed on 2026-09-05. Wave 5 ran six lanes from Fable-written plans (Opus
+medium, Opus high for the Proxy lane, Sonnet high for the mechanical lib.dom
+fix), each followed by an adversarial review (one reviewer, two skeptics per
+finding) and as many reviewed fix rounds as the reviewer kept finding real
+defects. PR-1 integrates five lanes; #5349 (species / byte-vec brand) is still
+in its round-3 audit and ships as PR-2.
+
+| lane | shipped | owned rows (base → lane) | control | review rounds |
+| --- | --- | --- | --- | --- |
+| #5316 Proxy r5 (Opus high) | integrity bag learns the instance carrier; gopd fold asks the native on a guard miss; `in` stops folding over a Proxy; §10.5 clauses restored; false PreventExtensions/SetPrototypeOf status; `Reflect.set` with receiver (§10.1.9.2), receiver-Proxy define route, target-Proxy set trap with receiver, non-Object TypeError | +16 (Proxy+Reflect 350 → 366) +1 (integrity) | 464 + 317 rows, 0 lost | review → fix round → clean |
+| #5350 super property r1 | class [[HomeObject]] read, base-before-key element read, `extends null` TypeError, uninitialised-`this` guard (lexical + runtime flag), object-literal `super.m()` incl. accessor bodies, `__proto__:` literal links its prototype, callable check | +8 on the 53-row super control (18 → 26; 2 of them main drift), 6 / 13 target rows | 53 rows, 0 lost; 1,089-row class/super control run on the integrated tree (see PR) | review + 5 fix rounds (rounds 3–5 on the loop guard; round 5 by Fable) |
+| #5318 class r4 round 2 | tri-state static-accessor gate with a hardened syntactic walker; object-literal evaluated-key accessors; later same-key members DEFINE; host `__proto__:` after a dynamic accessor; spread after a same-key accessor copies via define | +2 (`computed-property-names/object/accessor/{getter,setter}`) | 61 rows identical; 783-row class sweep 0 lost | review + 3 fix rounds |
+| #3371 Reflect.construct r2 | nested-function `new.target` stop, symbol-resolved binding count, dynamic in-file targets gated on their whole value set, JSDoc/annotation refusals, `neverConstructed` for named function expressions, destructuring-assignment writes | +10 (218-row control 156 → 166); fix rounds 0 net, ~14 wrong-answer admissions turned back into refusals | 218 + 24 rows, 0 lost; 89-file probe corpus 0 base drift | review + 3 fix rounds |
+| #5351 lib.dom shadow (Sonnet high) | a user top-level binding excludes the same-named lib.dom ambient from the import set, scoped per source file | +6 (24 leak rows: 24/24 import-free, 6 pass, 18 now fail on unrelated gaps) | 40-name sweep, 24 rows, byte identity | review → fix round (multi-file scoping) → clean |
+| #5349 species r5 (PR-2) | Array ctor null TypeError, defineProperty arming, `ArrayBuffer.prototype.slice` SpeciesConstructor; round 2 brands `$__vec_i8_byte` (`final`) vs the open `$__vec_i32_byte` so step 16 discriminates; round 3 audits every cast/test site that relied on the old identity | +19 measured on the lane (57-row target set 6 → 25), 3,147-row TA/AB/DV control 0 lost on round 2 | in round 3 (Opus high) | review + 2 fix rounds so far |
+
+Expected ES2015 delta from PR-1: roughly +43 owned rows plus collateral; take
+the real figure from the promoted baseline. Every number above was measured
+with `scripts/run-test262-paths.mts --isolate --standalone` against a
+`git archive` base tree with its own compiler bundle and quickjs adapter.
+
+**Residuals carried forward, each with its mechanism in the issue file.**
+#5350: a `super.x` read that is genuinely reached before a nested function's
+`super()` answers a value instead of throwing (only a flag the nested function
+could store would decide it; the r4/r5 records explain why the
+never-invent-a-throw direction was chosen); reads inside an arrow inside a
+loop (xa8); `super.missing?.()`; `Math.max` as a super member; the 7 rows
+blocked by the block-scoped-class captured-`var` write defect. #5318: standalone
+`__proto__:` after a dynamic accessor (1010 on every tree); `u: undefined`
+member after an accessor traps on every tree. #3371: three conservative
+refusals of shapes base also refused (g1h/g2h/g2i); `let T = (function(){…})`
+answers 4 on base too; x1/x2 plain-`new` new.target misreads. #5316: the
+TypedArray integer-index arm for `Reflect.set` (six rows), `with(proxy)`
+re-entrancy (2 rows), `instanceof` fold. #5351: hoisted `var` in a top-level
+block / destructuring still leaks (pre-existing). New issues filed: #5359
+(for-in + spread over a TypedArray emits invalid wasm).
+
+**Next, in order.** (1) Land PR-2 (#5349 round 3) — the brand split is
+architecturally right and unblocks `ArrayBuffer.isView` /
+`Object.prototype.toString` precision, but every `ref.cast`/`ref.test` on the
+two byte vecs must dispatch on both types; its 3,147-row control is the gate.
+(2) #5350's block-scoped-class captured-`var` defect (7 target rows) and the
+`u8.buffer` snapshot-copy family found by the #5349 probes (t1/t2/t11/t17). (3)
+The TypedArray cluster (187 non-pass rows) once #5349 lands. The sibling
+issues #2864 / #2867 / #2175 stay with the other team.
+
+**Lessons this wave added** (the wave-4 list below still holds):
+
+- **Static predicates over dynamic facts converge only by review.** #3371 took
+  three rounds and #5350 five because each rule admitted a shape the previous
+  reviewer had not probed; each round's reviewer found the next hole in under an
+  hour. Budget the review loop, not the first implementation.
+- **A representation identity is load-bearing wherever a `ref.cast` never
+  trapped.** Splitting `$__vec_i8_byte` from `$__vec_i32_byte` (#5349 round 2)
+  was one line and correct, and it exposed three emitters that cast a typed
+  array to a buffer "because it always worked". Grep every cast site before
+  changing a canonical type, not after the review.
+- **Compare a fix tree against the tree it was cut from, never against the
+  lane snapshot.** Integration-branch drift (a new import, a new module)
+  produces false host-byte positives; two reviewers lost time to it.
+- **Host-target probes need `importObject.__setInstance(instance)`.** Without
+  it the open-object model is dead and every host answer is wrong on base too;
+  one review round's host findings were re-measured after this was found.
+- **A finisher agent beats a rerun after a container restart.** Fix commits
+  survive; a finisher prompt that names them, resumes the chunked driver (skip
+  `.done`, delete the partial chunk) and writes the record saved ~5 h of
+  control runs.
+
 ## Handover (2026-09-05, session claude/es6-test262-standalone-g10c7u, wave 4)
 
 ES2015 standalone stood at **10,131 / 11,704 (86.6 %)** after #5576 landed
