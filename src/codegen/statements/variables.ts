@@ -7,6 +7,11 @@ import { isNullablePrimitiveType, isStringType, isVoidType } from "../../checker
 import type { Instr, ValType } from "../../ir/types.js";
 import { reportError } from "../context/errors.js";
 import { allocLocal, getLocalType } from "../context/locals.js";
+import {
+  flushRedirectedPatternBindings,
+  redirectBoxedPatternBindings,
+  reinstallPreHoistedLetConstBinding,
+} from "./eager-capture-box.js";
 import { redeclarationWidenedLocalSlotType } from "../declarations/redeclared-var-widening.js";
 import type { CodegenContext, FunctionContext, NullGuardFact, NullishExclusion } from "../context/types.js";
 import { emitCoercedLocalSet, noJsHost } from "../expressions/helpers.js";
@@ -1309,7 +1314,11 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
     }
 
     if (ts.isArrayBindingPattern(decl.name)) {
+      // (#5356) A capture-boxed binding lives in a cell; the element stores
+      // target a plain local, so redirect them and flush through the cell.
+      const redirected = redirectBoxedPatternBindings(fctx, decl.name);
       compileArrayDestructuring(ctx, fctx, decl);
+      flushRedirectedPatternBindings(fctx, redirected);
       continue;
     }
 
@@ -2103,11 +2112,8 @@ export function compileVariableStatement(ctx: CodegenContext, fctx: FunctionCont
         capturedByPlainFn = true;
       }
       if (capturedByPlainFn && !cpsCaptured && preHoisted !== undefined && preHoisted.valueSlot >= fctx.params.length) {
-        fctx.localMap.set(name, preHoisted.valueSlot);
-        if (preHoisted.flagSlot !== undefined) {
-          if (!fctx.tdzFlagLocals) fctx.tdzFlagLocals = new Map();
-          fctx.tdzFlagLocals.set(name, preHoisted.flagSlot);
-        }
+        // (#5356) …or its cell, so the declaration writes what the callee reads.
+        reinstallPreHoistedLetConstBinding(fctx, name, preHoisted);
       }
     }
 
