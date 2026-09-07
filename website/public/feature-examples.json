@@ -86356,7 +86356,7 @@
       "compileSuccess": false,
       "jsHtml": "<pre class=\"shiki material-theme-ocean\" style=\"background-color:#0F111A;color:#babed8\" tabindex=\"0\"><code><span class=\"line\"><span style=\"color:#C792EA\">const</span><span style=\"color:#BABED8\"> now </span><span style=\"color:#89DDFF\">=</span><span style=\"color:#BABED8\"> Temporal</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#BABED8\">Now</span><span style=\"color:#89DDFF\">.</span><span style=\"color:#82AAFF\">plainDateTimeISO</span><span style=\"color:#BABED8\">()</span><span style=\"color:#89DDFF\">;</span><span style=\"color:#464B5D;font-style:italic\"> // not supported</span></span></code></pre>",
       "testCategories": ["built-ins/Temporal"],
-      "passCount": 3139,
+      "passCount": 3159,
       "totalCount": 4603,
       "tests": [
         {
@@ -89364,7 +89364,7 @@
       "editionSpread": [
         {
           "edition": "ES2026",
-          "pass": 3139,
+          "pass": 3159,
           "total": 4603
         }
       ]

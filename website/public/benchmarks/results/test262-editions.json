@@ -3571,48 +3571,48 @@
   },
   {
     "edition": "ES2026",
-    "pass": 3313,
-    "fail": 1595,
+    "pass": 3333,
+    "fail": 1575,
     "ce": 13,
     "skip": 0,
     "total": 4921,
-    "pct": 67,
+    "pct": 68,
     "features": [
       {
         "name": "Temporal",
-        "pass": 3139,
-        "fail": 1459,
+        "pass": 3159,
+        "fail": 1439,
         "ce": 13,
         "skip": 0,
         "total": 4611,
-        "pct": 68
+        "pct": 69
       },
       {
         "name": "Symbol",
-        "pass": 276,
-        "fail": 118,
+        "pass": 279,
+        "fail": 115,
         "ce": 0,
         "skip": 0,
         "total": 394,
-        "pct": 70
+        "pct": 71
       },
       {
         "name": "BigInt",
-        "pass": 156,
-        "fail": 22,
+        "pass": 160,
+        "fail": 18,
         "ce": 1,
         "skip": 0,
         "total": 179,
-        "pct": 87
+        "pct": 89
       },
       {
         "name": "arrow-function",
-        "pass": 153,
-        "fail": 25,
+        "pass": 154,
+        "fail": 24,
         "ce": 0,
         "skip": 0,
         "total": 178,
-        "pct": 86
+        "pct": 87
       },
       {
         "name": "Reflect.construct",
