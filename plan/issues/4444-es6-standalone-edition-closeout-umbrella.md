@@ -999,6 +999,34 @@ required, with results owned by the generator residual issue. The immutable
 44-row input and provenance live in the base archive under
 `.tmp/protocol44-{paths.txt,provenance.json,baseline.log}`.
 
+### 2026-09-08 generator scope and boundary audit
+
+The four-directory generator/yield selection contains 653 rows, but it is not
+an edition-wide generator regression scope. Intersecting the frozen core list
+with the exact Test262 frontmatter feature `generators` yields 2,486 paths;
+all 653 are included, with 1,833 additional paths in GeneratorFunction, class
+and object methods, destructuring, for-of, and other consumers. Sorted paths
+without `test/`, with LF terminators, have SHA256
+`d108d2fa56c8a5aef6dc676a9126b26700b64f7733a8dcba9f414938bebd0cb7`.
+This metadata-defined set is a broader regression cohort; final acceptance
+still covers all 11,704 core paths, including paths without this feature tag.
+
+The fresh downloaded snapshot (`2a5d1620068563dc1f0c88fea47dbbaf5c85ae20d4d8974e1aad66edba1fbdfb`)
+contains all 2,486 unique selected rows, no omissions or duplicates: 2,122 pass,
+228 compile_error, and 136 fail. These are snapshot counts, not a candidate
+execution or a newly verified overall numerator. Selection and provenance are
+saved in the generator worktree's `.tmp/root-generator-expanded-*` artifacts.
+
+The unchanged nine original native-protocol bridge sources were also executed
+against the immutable base: 1/9 pass, matching the initial candidate outcomes.
+Five nested-function physical-ABI errors are therefore pre-existing, and remain
+work to complete. Review found that the sole passing invalid-receiver probe
+can pass when the extracted method is absent: its positive call used the direct
+method-call path instead of the same extracted value. It must gain a valid
+receiver control on that exact extracted method before supporting a receiver
+validation claim. Original sources and outcomes remain preserved; rewriting a
+probe does not retroactively strengthen old evidence.
+
 ## 2026-08-30 current integrated-head census implementation plan
 
 The numeric title no longer repeats the stale 2026-08-28 snapshot. Historical

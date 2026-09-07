@@ -1,3 +1,4 @@
+import { initializeNativeGeneratorFunctionValue } from "../generators-factory-prototype.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Method-ABI → closure-ABI trampoline machinery for js2wasm.
@@ -1325,5 +1326,12 @@ export function emitCachedFuncClosureAccess(
   );
   fctx.body.push({ op: "any.convert_extern" });
   fctx.body.push({ op: "ref.cast", typeIdx: structTypeIdx });
-  return { kind: "ref", typeIdx: structTypeIdx };
+  return initializeNativeGeneratorFunctionValue(
+    ctx,
+    fctx,
+    sourceFunctionDeclarationForHandle(ctx, funcIdx) ??
+      ctx.funcMapOwnerDecl.get(funcName) ??
+      ctx.topLevelFunctionDeclarations.get(funcName),
+    { kind: "ref", typeIdx: structTypeIdx },
+  );
 }

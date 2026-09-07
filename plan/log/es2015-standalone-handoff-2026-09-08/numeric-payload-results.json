@@ -1,0 +1,26 @@
+[
+  {
+    "name": "numeric suspended return preserves open object",
+    "expected": 1,
+    "success": true,
+    "errors": [],
+    "imports": [],
+    "actual": 0
+  },
+  {
+    "name": "numeric completed return preserves open object",
+    "expected": 1,
+    "success": true,
+    "errors": [],
+    "imports": [],
+    "actual": 0
+  },
+  {
+    "name": "numeric ignored next payload does not convert object",
+    "expected": 1,
+    "success": true,
+    "errors": [],
+    "imports": [],
+    "actual": 0
+  }
+]

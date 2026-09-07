@@ -20,6 +20,7 @@
  * `./generators-native.js` are unaffected. Behaviour-preserving move — emitted
  * bytes are byte-for-byte identical (proven via scripts/prove-emit-identity.mjs).
  */
+import { emitToBoolean } from "./coercion-engine.js";
 import { ts } from "../ts-api.js";
 import { mapTsTypeToWasm } from "../checker/type-mapper.js";
 import type { Instr, ValType } from "../ir/types.js";
@@ -32,12 +33,20 @@ import { UNDEF_F64_BITS } from "./value-tags.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js"; // (#2864 wave-2 S1)
 import { addUnionImports } from "./index.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
-import { addFuncType } from "./registry/types.js";
+import { getOrRegisterVecType, getArrTypeIdxFromVec, addFuncType } from "./registry/types.js";
 import { ensureExnTag } from "./registry/imports.js";
 import { ensureGetUndefined, flushLateImportShifts } from "./expressions/late-imports.js";
 import { buildStandardTryTable } from "../ir/try-table.js";
 import { buildThrowJsErrorInstrs } from "./js-errors.js";
+import { NATIVE_GENERATOR_PROTOCOL_GET } from "./generators-native-protocol.js";
+import { nativeStringLiteralInstrs } from "./native-strings.js";
+import { emitSetExtrasArgv, ensureExtrasArgvGlobal } from "./statements/nested-declarations.js";
 import { reserveAnyIterNext } from "./iterator-native.js";
+import {
+  ensureNativeDelegatedResultHelpers,
+  ensureNativeGeneratorNumericPayload,
+  nativeGeneratorExecutingCheck,
+} from "./generators-delegation-runtime.js";
 import {
   STATE_FIELD,
   ERROR_FIELD,
@@ -129,10 +138,11 @@ function compileDirectNativeGeneratorMethod(
       if (t && t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
       else if (!t) fctx.body.push({ op: "ref.null.extern" });
     } else {
-      fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
     }
     fctx.body.push({ op: "local.set", index: errorTmp });
     compileIgnoredArgs(ctx, fctx, args.slice(1));
+    fctx.body.push(...nativeGeneratorExecutingCheck(ctx, info, [{ op: "local.get", index: selfLocal }]));
 
     const tagIdx = ensureExnTag(ctx);
     // suspended = (state != START) && (state != doneState)
@@ -169,6 +179,7 @@ function compileDirectNativeGeneratorMethod(
   if (methodName === "next") {
     const sentTmp = emitCarrierValue(ctx, fctx, args[0], info);
     compileIgnoredArgs(ctx, fctx, args.slice(1));
+    fctx.body.push(...nativeGeneratorExecutingCheck(ctx, info, [{ op: "local.get", index: selfLocal }]));
     fctx.body.push(...setStateFieldFromLocal(info, selfLocal, info.sentFieldIdx, sentTmp));
     fctx.body.push(...setStateI32FromConst(info, selfLocal, info.modeFieldIdx, 0));
     fctx.body.push({ op: "local.get", index: selfLocal });
@@ -179,6 +190,7 @@ function compileDirectNativeGeneratorMethod(
   if (methodName === "return") {
     const valueTmp = emitCarrierValue(ctx, fctx, args[0], info);
     compileIgnoredArgs(ctx, fctx, args.slice(1));
+    fctx.body.push(...nativeGeneratorExecutingCheck(ctx, info, [{ op: "local.get", index: selfLocal }]));
     fctx.body.push({ op: "local.get", index: selfLocal });
     fctx.body.push({ op: "struct.get", typeIdx: info.stateTypeIdx, fieldIdx: STATE_FIELD });
     fctx.body.push({ op: "i32.const", value: 0 });
@@ -290,6 +302,38 @@ function readResultField(local: number, resultTypeIdx: number, fieldIdx: number)
   ];
 }
 
+/** Read a yielded delegation result through the iterator protocol again.
+ * `yield*` checked done before suspension, but its caller must perform its own
+ * observable Get(done), and only then Get(value). The -1 flag is transport
+ * metadata, never a JavaScript truth value.
+ */
+function readConsumerResultField(
+  ctx: CodegenContext,
+  info: NativeGeneratorInfo,
+  local: number,
+  fieldIdx: number,
+): Instr[] {
+  const ordinary = readResultField(local, info.resultTypeIdx, fieldIdx);
+  if (!info.nativeDelegates) return ordinary;
+  const isDone = fieldIdx === RESULT_DONE_FIELD;
+  const delegated: Instr[] = [
+    ...readResultField(local, info.resultTypeIdx, RESULT_VALUE_FIELD),
+    { op: "call", funcIdx: ctx.funcMap.get(isDone ? "__gen_delegate_get_done" : "__gen_delegate_get_value")! },
+  ];
+  if (isDone) emitToBoolean(ctx, { kind: "externref" }, delegated);
+  return [
+    ...readResultField(local, info.resultTypeIdx, RESULT_DONE_FIELD),
+    { op: "i32.const", value: -1 },
+    { op: "i32.eq" },
+    {
+      op: "if",
+      blockType: { kind: "val", type: isDone ? { kind: "i32" } : info.elemValType },
+      then: delegated,
+      else: ordinary,
+    },
+  ];
+}
+
 type NativeGeneratorResumeMethod = "next" | "return" | "throw";
 
 /**
@@ -323,7 +367,7 @@ function opaqueNativeGeneratorDispatchName(methodName: NativeGeneratorResumeMeth
  * pass 2 may replace a lifted generator function-expression's state type after
  * the consuming exported body has been compiled (#3591).
  */
-function reserveOpaqueNativeGeneratorDispatch(
+export function reserveOpaqueNativeGeneratorDispatch(
   ctx: CodegenContext,
   fctx: FunctionContext,
   methodName: NativeGeneratorResumeMethod,
@@ -360,6 +404,10 @@ function reserveOpaqueNativeGeneratorDispatch(
   // expression factory returns a native state through an opaque closure ABI.
   // The JS-host native declaration path keeps its historical eqref result.
   const externrefResultAbi = ctx.standalone || ctx.wasi;
+  if (externrefResultAbi) {
+    ensureNativeDelegatedResultHelpers(ctx);
+    if (methodName !== "throw") ensureNativeGeneratorNumericPayload(ctx);
+  }
   const params: ValType[] =
     methodName === "throw"
       ? [{ kind: "anyref" }, { kind: "externref" }]
@@ -650,6 +698,14 @@ function buildNativeGeneratorDispatch(
         },
       ];
     }
+    if ((ctx.standalone || ctx.wasi) && methodName !== "throw" && !carrierIsAny(info.elemValType)) {
+      thenBody.unshift(
+        { op: "local.get", index: valueAnyLocal! },
+        { op: "call", funcIdx: ctx.funcMap.get("__gen_numeric_payload")! },
+        { op: "local.set", index: valueLocal! },
+      );
+    }
+    thenBody.unshift(...nativeGeneratorExecutingCheck(ctx, info, loadCastState(anyLocal, info.stateTypeIdx)));
     return [
       { op: "local.get", index: anyLocal },
       { op: "ref.test", typeIdx: info.stateTypeIdx },
@@ -723,8 +779,100 @@ export function fillNativeGeneratorMethodDispatches(ctx: CodegenContext): void {
     // internal anyref. No-JS-host callers need the ordinary dynamic
     // IteratorResult representation after pass 2, so cross that helper ABI as
     // externref. Preserve the JS-host helper's historical eqref result path.
-    fn.body = ctx.standalone || ctx.wasi ? [...instrs, { op: "extern.convert_any" }] : instrs;
+    fn.body =
+      ctx.standalone || ctx.wasi
+        ? [...instrs, { op: "extern.convert_any" }, { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! }]
+        : instrs;
   }
+}
+
+/** Get the method before arguments; own replacements receive the complete argument list. */
+function compileNativeGeneratorProtocolCall(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  receiverType: ValType,
+  methodName: "next" | "return" | "throw",
+  args: readonly ts.Expression[],
+): ValType {
+  const er: ValType = { kind: "externref" };
+  ensureNativeDelegatedResultHelpers(ctx);
+  const dispatch = reserveOpaqueNativeGeneratorDispatch(ctx, fctx, methodName);
+  if (receiverType.kind !== "externref") coerceType(ctx, fctx, receiverType, er);
+  const self = allocLocal(fctx, "__gen_protocol_self", er);
+  const method = allocLocal(fctx, "__gen_protocol_method", er);
+  const handled = allocLocal(fctx, "__gen_protocol_handled", { kind: "i32" });
+  fctx.body.push(
+    { op: "local.set", index: self },
+    { op: "local.get", index: self },
+    ...nativeStringLiteralInstrs(ctx, methodName),
+    { op: "extern.convert_any" },
+    { op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_PROTOCOL_GET)! },
+    { op: "local.set", index: method },
+    { op: "local.set", index: handled },
+  );
+  const vec = getOrRegisterVecType(ctx, "externref", er);
+  const array = getArrTypeIdxFromVec(ctx, vec);
+  const argv = allocLocal(fctx, "__gen_protocol_argv", { kind: "ref_null", typeIdx: vec });
+  if (args.some((arg) => ts.isSpreadElement(arg))) {
+    const extras = ensureExtrasArgvGlobal(ctx);
+    const saved = allocLocal(fctx, "__gen_saved_extras", { kind: "ref_null", typeIdx: extras.vecTypeIdx });
+    fctx.body.push({ op: "global.get", index: extras.globalIdx }, { op: "local.set", index: saved });
+    emitSetExtrasArgv(ctx, fctx, [...args], 0);
+    fctx.body.push(
+      { op: "global.get", index: extras.globalIdx },
+      { op: "local.set", index: argv },
+      { op: "local.get", index: saved },
+      { op: "global.set", index: extras.globalIdx },
+    );
+  } else {
+    fctx.body.push({ op: "i32.const", value: args.length });
+    for (const arg of args) {
+      const type = compileExpression(ctx, fctx, arg, er);
+      if (!type) fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
+      else if (type.kind !== "externref") coerceType(ctx, fctx, type, er);
+    }
+    fctx.body.push(
+      { op: "array.new_fixed", typeIdx: array, length: args.length },
+      { op: "struct.new", typeIdx: vec },
+      { op: "local.set", index: argv },
+    );
+  }
+  const firstArg: Instr[] = [
+    { op: "local.get", index: argv },
+    { op: "ref.as_non_null" },
+    { op: "struct.get", typeIdx: vec, fieldIdx: 0 },
+    {
+      op: "if",
+      blockType: { kind: "val", type: er },
+      then: [
+        { op: "local.get", index: argv },
+        { op: "ref.as_non_null" },
+        { op: "struct.get", typeIdx: vec, fieldIdx: 1 },
+        { op: "i32.const", value: 0 },
+        { op: "array.get", typeIdx: array },
+      ],
+      else: canonicalUndefinedExternInstrs(ctx),
+    },
+  ];
+  const fallback: Instr[] = [{ op: "local.get", index: self }, { op: "any.convert_extern" }];
+  if (methodName !== "throw") fallback.push({ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" });
+  fallback.push(...firstArg, { op: "call", funcIdx: dispatch.funcIdx });
+  fctx.body.push(
+    { op: "local.get", index: handled },
+    {
+      op: "if",
+      blockType: { kind: "val", type: er },
+      then: [
+        { op: "local.get", index: method },
+        { op: "local.get", index: self },
+        { op: "local.get", index: argv },
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: ctx.funcMap.get("__apply_closure")! },
+      ],
+      else: fallback,
+    },
+  );
+  return er;
 }
 
 export function tryCompileNativeGeneratorMethodCall(
@@ -742,10 +890,21 @@ export function tryCompileNativeGeneratorMethodCall(
   if (ctx.nativeGenerators.size === 0) return undefined;
 
   const receiverType = compileExpression(ctx, fctx, receiverExpr);
+  if (receiverType && (ctx.standalone || ctx.wasi)) {
+    return compileNativeGeneratorProtocolCall(ctx, fctx, receiverType, methodName, args);
+  }
   if (receiverType && (receiverType.kind === "ref" || receiverType.kind === "ref_null")) {
     const info = nativeInfoForStateType(ctx, receiverType.typeIdx);
     if (info) {
-      return compileDirectNativeGeneratorMethod(ctx, fctx, info, receiverType, methodName, args);
+      if (info.nativeDelegates) ensureNativeDelegatedResultHelpers(ctx);
+      const resultType = compileDirectNativeGeneratorMethod(ctx, fctx, info, receiverType, methodName, args);
+      if (info.nativeDelegates && resultType) {
+        fctx.body.push({ op: "extern.convert_any" }, { op: "call", funcIdx: ctx.funcMap.get("__gen_result_unwrap")! });
+        // A delegated non-done result is the iterator's actual object; exposing
+        // a fixed native result type here would cast away identity/accessors.
+        return { kind: "externref" };
+      }
+      return resultType;
     }
   }
 
@@ -782,7 +941,7 @@ export function tryCompileNativeGeneratorMethodCall(
       if (t && t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
       else if (!t) fctx.body.push({ op: "ref.null.extern" });
     } else {
-      fctx.body.push({ op: "ref.null.extern" });
+      fctx.body.push(...canonicalUndefinedExternInstrs(ctx));
     }
     fctx.body.push({ op: "local.set", index: errorLocal });
     compileIgnoredArgs(ctx, fctx, args.slice(1));
@@ -791,8 +950,12 @@ export function tryCompileNativeGeneratorMethodCall(
       valueAnyLocal = emitOpenAnyArgValue(ctx, fctx, args[0]);
       compileIgnoredArgs(ctx, fctx, args.slice(1));
       valueLocal = allocLocal(fctx, `__gen_sent_f64_${fctx.locals.length}`, { kind: "f64" });
-      fctx.body.push({ op: "local.get", index: valueAnyLocal });
-      coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+      if (ctx.standalone || ctx.wasi) {
+        fctx.body.push({ op: "i64.const", value: UNDEF_F64_BITS }, { op: "f64.reinterpret_i64" });
+      } else {
+        fctx.body.push({ op: "local.get", index: valueAnyLocal });
+        coerceType(ctx, fctx, { kind: "externref" }, { kind: "f64" });
+      }
       fctx.body.push({ op: "local.set", index: valueLocal });
     } else {
       valueLocal = emitExpressionAsF64(ctx, fctx, args[0]);
@@ -844,6 +1007,23 @@ export function tryCompileNativeGeneratorResultProperty(
     // `assert_sameValue_bool(g.next().done, true)` failed on every native
     // generator (the residual "returned 2" of the #2938 no-yield relax).
     return propName === "value" ? valVT : { kind: "i32", boolean: true };
+  }
+
+  if (
+    (ctx.standalone || ctx.wasi) &&
+    Array.from(ctx.nativeGenerators.values()).some((info) => info.nativeDelegates) &&
+    resultType &&
+    ["externref", "anyref", "eqref"].includes(resultType.kind)
+  ) {
+    ensureNativeDelegatedResultHelpers(ctx);
+    if (resultType.kind !== "externref") fctx.body.push({ op: "extern.convert_any" });
+    fctx.body.push({
+      op: "call",
+      funcIdx: ctx.funcMap.get(propName === "done" ? "__gen_delegate_get_done" : "__gen_delegate_get_value")!,
+    });
+    // Property access returns the raw property, not ToBoolean(done). In
+    // particular, accessor results can be undefined, numbers, or objects.
+    return { kind: "externref" };
   }
 
   if (resultType?.kind === "externref") {
@@ -1217,6 +1397,7 @@ export function tryCompileNativeGeneratorForOf(
   if (subjectType.kind !== "ref" && subjectType.kind !== "ref_null") return false;
   const subjectTypeIdx = subjectType.typeIdx;
 
+  if (info.nativeDelegates) ensureNativeDelegatedResultHelpers(ctx);
   const resumeIdx = ensureNativeGeneratorResumeFunction(ctx, info);
   const resultRef: ValType = { kind: "ref", typeIdx: info.resultTypeIdx };
 
@@ -1293,6 +1474,11 @@ export function tryCompileNativeGeneratorForOf(
   fctx.breakStack.push(1);
   fctx.continueStack.push(0);
 
+  // IteratorStepValue failures (including the second done getter) do not
+  // perform IteratorClose. Only an abrupt loop body closes this iterator.
+  if (info.nativeDelegates) {
+    fctx.body.push({ op: "i32.const", value: 1 }, { op: "local.set", index: doneFlag });
+  }
   // res = resume(iter)
   fctx.body.push({ op: "local.get", index: iterLocal });
   if (subjectType.typeIdx !== info.stateTypeIdx) {
@@ -1302,7 +1488,7 @@ export function tryCompileNativeGeneratorForOf(
   fctx.body.push({ op: "local.set", index: resultLocal });
 
   // if (res.done) br block (depth 1: exit loop+block ⇒ depth to block is 1)
-  fctx.body.push(...readResultField(resultLocal, info.resultTypeIdx, RESULT_DONE_FIELD));
+  fctx.body.push(...readConsumerResultField(ctx, info, resultLocal, RESULT_DONE_FIELD));
   fctx.body.push({
     op: "if",
     blockType: { kind: "empty" },
@@ -1315,8 +1501,11 @@ export function tryCompileNativeGeneratorForOf(
   });
 
   // elem = res.value
-  fctx.body.push(...readResultField(resultLocal, info.resultTypeIdx, RESULT_VALUE_FIELD));
+  fctx.body.push(...readConsumerResultField(ctx, info, resultLocal, RESULT_VALUE_FIELD));
   fctx.body.push({ op: "local.set", index: elemLocal });
+  if (info.nativeDelegates) {
+    fctx.body.push({ op: "i32.const", value: 0 }, { op: "local.set", index: doneFlag });
+  }
 
   // body
   if (ts.isBlock(stmt.statement)) {
@@ -1469,6 +1658,7 @@ export function emitNativeGeneratorToVec(
   trimToLength = false,
   stepLimit?: number,
 ): void {
+  if (info.nativeDelegates) ensureNativeDelegatedResultHelpers(ctx);
   const resumeIdx = ensureNativeGeneratorResumeFunction(ctx, info);
   const resultRef: ValType = { kind: "ref", typeIdx: info.resultTypeIdx };
 
@@ -1540,7 +1730,7 @@ export function emitNativeGeneratorToVec(
     { op: "local.get", index: iterLocal },
     { op: "call", funcIdx: resumeIdx },
     { op: "local.set", index: resultLocal },
-    ...readResultField(resultLocal, info.resultTypeIdx, RESULT_DONE_FIELD),
+    ...readConsumerResultField(ctx, info, resultLocal, RESULT_DONE_FIELD),
     { op: "if", blockType: { kind: "empty" }, then: [{ op: "br", depth: 2 }], else: [] },
     // grow if full
     { op: "local.get", index: lenLocal },
@@ -1550,7 +1740,7 @@ export function emitNativeGeneratorToVec(
     // data[len] = res.value
     { op: "local.get", index: dataLocal },
     { op: "local.get", index: lenLocal },
-    ...readResultField(resultLocal, info.resultTypeIdx, RESULT_VALUE_FIELD),
+    ...readConsumerResultField(ctx, info, resultLocal, RESULT_VALUE_FIELD),
     { op: "array.set", typeIdx: arrTypeIdx },
     // len++
     { op: "local.get", index: lenLocal },

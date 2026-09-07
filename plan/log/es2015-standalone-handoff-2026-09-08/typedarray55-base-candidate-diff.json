@@ -1,0 +1,49 @@
+{
+  "denominator": 55,
+  "base": {
+    "pass": 44,
+    "fail": 11
+  },
+  "candidate": {
+    "pass": 48,
+    "fail": 7
+  },
+  "pass_gains": [
+    "built-ins/TypedArray/prototype/filter/speciesctor-get-ctor-inherited.js",
+    "built-ins/TypedArray/prototype/map/speciesctor-get-ctor-inherited.js",
+    "built-ins/TypedArray/prototype/slice/speciesctor-get-ctor-inherited.js",
+    "built-ins/TypedArray/prototype/subarray/speciesctor-get-ctor-inherited.js"
+  ],
+  "new_nonpass": [],
+  "remaining": {
+    "built-ins/TypedArray/prototype/filter/speciesctor-get-species-custom-ctor-invocation.js": {
+      "status": "fail",
+      "error": "Test262Error: `this` value in the @@species fn is an instance of the function itself (Testing with Float64Array and makeArray.) | at L52: assert.sameValue(resul"
+    },
+    "built-ins/TypedArray/prototype/map/speciesctor-get-species-custom-ctor-invocation.js": {
+      "status": "fail",
+      "error": "Test262Error: `this` value in the @@species fn is an instance of the function itself (Testing with Float64Array and makeArray.) | at L52: assert.sameValue(resul"
+    },
+    "built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-invocation.js": {
+      "status": "fail",
+      "error": "Test262Error: `this` value in the @@species fn is an instance of the function itself (Testing with Float64Array and makeArray.) | at L52: assert.sameValue(resul"
+    },
+    "built-ins/TypedArray/prototype/slice/speciesctor-get-species-custom-ctor-returns-another-instance.js": {
+      "status": "fail",
+      "error": "TypeError: TypedArray species constructor returned a non-TypedArray | at L51: assert.sameValue(result, other, \"returned another typedarray\");"
+    },
+    "built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js": {
+      "status": "fail",
+      "error": "Test262Error: Actual [20, 30, 40] and expected [20, 20, 20, 60] should have the same contents.  (Testing with Float64Array and makeArray.) | at L42: assert.comp"
+    },
+    "built-ins/TypedArray/prototype/subarray/speciesctor-get-species-custom-ctor-invocation.js": {
+      "status": "fail",
+      "error": "Test262Error: `this` value in the @@species fn is an instance of the function itself (Testing with Float64Array and makeArray.) | at L60: assert.compareArray(re"
+    },
+    "built-ins/TypedArray/prototype/subarray/speciesctor-get-species-custom-ctor-returns-another-instance.js": {
+      "status": "fail",
+      "error": "TypeError: TypedArray species constructor returned a non-TypedArray | at L50: assert.sameValue(result, other, \"returned another typedarray\");"
+    }
+  },
+  "remaining_error_changes": {}
+}

@@ -1,3 +1,4 @@
+import { initializeNativeGeneratorFunctionValue } from "../generators-factory-prototype.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Funcref-as-closure wrapping for js2wasm.
@@ -487,7 +488,10 @@ export function emitFuncRefAsClosure(
           // double-remaps on a late-import shift.
           metaSlotOf()?.init,
         );
-        return { kind: "ref", typeIdx: cachedArtifacts.structTypeIdx };
+        return initializeNativeGeneratorFunctionValue(ctx, fctx, metaDecl, {
+          kind: "ref",
+          typeIdx: cachedArtifacts.structTypeIdx,
+        });
       }
     }
 
@@ -632,7 +636,7 @@ export function emitFuncRefAsClosure(
       userParams.length,
       metaSlot?.init,
     );
-    return { kind: "ref", typeIdx: structTypeIdx };
+    return initializeNativeGeneratorFunctionValue(ctx, fctx, metaDecl, { kind: "ref", typeIdx: structTypeIdx });
   }
 
   const userParams = explicitThisParam ? sig.params.slice(1) : sig.params;
@@ -688,7 +692,7 @@ export function emitFuncRefAsClosure(
   if (metaTypeIdx !== undefined && metaSlot) for (const instr of metaSlot.init) fctx.body.push(instr);
   fctx.body.push({ op: "struct.new", typeIdx: allocTypeIdx });
 
-  return { kind: "ref", typeIdx: allocTypeIdx };
+  return initializeNativeGeneratorFunctionValue(ctx, fctx, metaDecl, { kind: "ref", typeIdx: allocTypeIdx });
 }
 
 /**

@@ -1,3 +1,5 @@
+import { ensureNativeDelegatedResultHelpers } from "./generators-delegation-runtime.js";
+import { NATIVE_GENERATOR_FACTORY_PROTO } from "./generators-native-protocol.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Property-access dispatch helpers (#3276, Wave B decomposition of #3182).
@@ -2057,8 +2059,13 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // native `%GeneratorPrototype%` singleton (host-free) instead of leaking
       // `__get_generator_prototype`. Async generators keep the host import.
       if (!isAsyncGen && (ctx.standalone || ctx.wasi)) {
-        const t = emitGeneratorPrototypeSingleton(ctx, fctx);
-        if (t) return t;
+        ensureNativeDelegatedResultHelpers(ctx);
+        const t = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+        if (t) {
+          if (t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_FACTORY_PROTO)! });
+          return { kind: "externref" };
+        }
       }
       const helperName = isAsyncGen ? "__get_async_generator_prototype" : "__get_generator_prototype";
       const helperIdx = ensureLateImport(ctx, helperName, [], [{ kind: "externref" }]);
@@ -2183,8 +2190,13 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
       // native `%GeneratorPrototype%` singleton (host-free) instead of leaking
       // `__get_generator_prototype`. Async generators keep the host import.
       if (!isAsyncGen && (ctx.standalone || ctx.wasi)) {
-        const t = emitGeneratorPrototypeSingleton(ctx, fctx);
-        if (t) return t;
+        ensureNativeDelegatedResultHelpers(ctx);
+        const t = compileExpression(ctx, fctx, expr.expression, { kind: "externref" });
+        if (t) {
+          if (t.kind !== "externref") coerceType(ctx, fctx, t, { kind: "externref" });
+          fctx.body.push({ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_FACTORY_PROTO)! });
+          return { kind: "externref" };
+        }
       }
       const helperName = isAsyncGen ? "__get_async_generator_prototype" : "__get_generator_prototype";
       const helperIdx = ensureLateImport(ctx, helperName, [], [{ kind: "externref" }]);

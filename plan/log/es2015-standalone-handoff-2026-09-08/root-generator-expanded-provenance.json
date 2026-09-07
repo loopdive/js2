@@ -1,0 +1,8 @@
+{
+  "directory_cohort": 653,
+  "feature_generators": 2486,
+  "additional_feature_paths": 1833,
+  "union": 2486,
+  "sha256": "d108d2fa56c8a5aef6dc676a9126b26700b64f7733a8dcba9f414938bebd0cb7",
+  "rule": "frozen core ES2015 intersect (prior four generator/yield directories union exact frontmatter feature generators)"
+}

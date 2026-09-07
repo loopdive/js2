@@ -18,6 +18,7 @@
  * `ObjectPrototypeHelperState` so the `registerNative` call ORDER (and the
  * minted func-index sequence) is preserved exactly.
  */
+import { NATIVE_GENERATOR_PROTO_VIEW } from "./generators-native-protocol.js";
 import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { FUNCTION_FROM_PROTO, PROTO_FROM_FUNCTION } from "./proto-function-value.js"; // (#4637 A1)
@@ -440,6 +441,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     };
     const body: Instr[] = [
       { op: "local.get", index: 0 },
+      ...(ctx.funcMap.has(NATIVE_GENERATOR_PROTO_VIEW)
+        ? [{ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_PROTO_VIEW)! } as Instr]
+        : []),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 1 },
       { op: "ref.test", typeIdx: objectTypeIdx },
@@ -557,6 +561,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     const body: Instr[] = [
       // o = (obj is $Object ? cast : null); if not an $Object → return obj as-is
       { op: "local.get", index: 0 },
+      ...(ctx.funcMap.has(NATIVE_GENERATOR_PROTO_VIEW)
+        ? [{ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_PROTO_VIEW)! } as Instr]
+        : []),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 5 },
       { op: "ref.test", typeIdx: objectTypeIdx },
@@ -709,6 +716,9 @@ export function buildObjectPrototypeHelpers(ctx: CodegenContext, s: ObjectProtot
     const body: Instr[] = [
       // Not an ordinary `$Object` receiver → not this native's business → 1.
       { op: "local.get", index: 0 },
+      ...(ctx.funcMap.has(NATIVE_GENERATOR_PROTO_VIEW)
+        ? [{ op: "call", funcIdx: ctx.funcMap.get(NATIVE_GENERATOR_PROTO_VIEW)! } as Instr]
+        : []),
       { op: "any.convert_extern" },
       { op: "local.tee", index: 5 },
       { op: "ref.test", typeIdx: objectTypeIdx },

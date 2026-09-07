@@ -4,7 +4,7 @@ title: "ES2015 standalone typedarray — r4: species protocol, coercion order, s
 status: in-progress
 sprint: current
 created: 2026-09-04
-updated: 2026-09-04
+updated: 2026-09-08
 priority: high
 horizon: xl
 feasibility: hard
@@ -18,6 +18,9 @@ goal: standalone-mode
 requested_by: claude.ai@loopdive.com/fable-es6
 related: [5194, 5561, 3371, 2175, 4444]
 loc-budget-allow:
+  # 2026-09-08 constructor lookup: reserve prototype storage from semantic
+  # dynamic-TypedArray demand before object-runtime call indices are baked.
+  - src/codegen/proto-index-store.ts
   # 2026-09-04 r4 plan: species-constructor validation, element-coercion
   # ordering and the integer-indexed [[DefineOwnProperty]]/[[OwnPropertyKeys]]
   # arms are new emitted natives; existing files grow by dispatch wiring.
@@ -821,3 +824,161 @@ on `join/invoked-as-method.js` (a `TypedArrayPrototype` reflection row, the
 **neither run confirms them**, and the "zero rows lost" claim for the two
 corpora therefore still rests on the lane's own earlier measurement, not on a
 repeat under review. It should be re-run when the box is quiet (≤2 lanes).
+
+## 2026-09-08 follow-up plan: inherited TypedArray constructor protocol (Codex)
+
+Base `95186a4835a1fe`; isolated `codex/5317-typedarray-species-resume`.
+Fresh downloaded honest standalone JSONL (48,735 rows, SHA256
+`2a5d1620068563dc1f0c88fea47dbbaf5c85ae20d4d8974e1aad66edba1fbdfb`),
+intersected with the frozen 11,704-row ES2015 core, yields exactly 55
+TypedArray prototype species rows: snapshot 44 pass /11 fail. Original-harness
+isolated runtime remeasurement is running before source changes. The raw JSONL
+and subset are preserved under `.tmp/typedarray-species/`, outside cache.
+
+Current inherited-constructor failures differ from the old issue5349 diagnosis:
+the getter runs, but `result.constructor` changes its returned undefined to the
+intrinsic constructor. `fillTaDynViewMopArms`' constructorLookup contains that
+exact value-based fallback. The native prototype companion now seeds concrete
+TypedArray constructor properties (`hasBuiltinProtoConstructorCarrier` includes
+the typed family), so rederive whether the fallback is obsolete using default
+constructor identity controls; do not add an admission gate.
+
+Implementation sequence:
+1. Preserve ordinary Get results, including explicit undefined and null, when
+   walking the actual prototype. A null prototype means no property, not an
+   intrinsic constructor. SpeciesConstructor itself owns the default selection
+   for undefined; plain property reads must not perform that selection.
+2. Verify original receiver and exactly-once getter invocation for own and
+   inherited constructor accessors; preserve abrupt completion and custom
+   constructor values. Use the existing receiver-aware MOP lookup if own
+   expando access currently loses its receiver.
+3. Tests: all nine numeric default constructor identities, inherited undefined
+   data/accessor results, explicit null, own overrides and receiver, alternate
+   and null prototype chains, descriptor deletion, and the four original
+   inherited-constructor rows. Rebuild bundles/provider after source edits;
+   final 55-row comparison plus neighbouring typedarray/species pins, one worker
+   and `VITEST_MAX_FORKS=1`, imports=[] and real execution.
+4. Reassess remaining custom-constructor failures separately. Issue5349 records
+   the custom-this defect in native-construct closure prototype identity, and
+   static-lane species result validation requires both preserving identity and
+   performing writes into that representation. Neither is solved by widening
+   an acceptance check. No changes to instance-props.ts or integration files.
+
+Spec algorithms fetched: ECMA-262 OrdinaryGet (prototype recursion keeps Receiver
+and returns the actual accessor result) and SpeciesConstructor (default only
+when the ordinary constructor read is undefined).
+
+### Current implementation and handoff (2026-09-08, scope frozen for PR)
+
+The implemented increment changes three source files:
+- `ta-dyn-mop.ts`: ordinary constructor Get preserves inherited undefined;
+  own expando getters use the same receiver-aware lookup as inherited getters,
+  including an already active explicit Reflect.get receiver. Missing actual
+  prototype returns absence instead of inventing an intrinsic property.
+- `native-proto.ts`: materialized concrete TypedArray prototype glues seed
+  their real constructor and BYTES_PER_ELEMENT properties even without the
+  reflection/mutation pre-scan. They retain canonical constructor identities,
+  descriptor flags, lazy singleton initialization, and exactly-once companion
+  creation. Other brands retain the existing member-dirty requirement.
+- `proto-index-store.ts`: the already established `moduleUsesDynTaView` semantic
+  demand reserves prototype storage before ordinary runtime helper bodies bake
+  call indices. No global prototype-mutation flags are changed.
+
+The seed repair is required correctness work: an intermediate candidate that
+merely removed the undefined fallback regressed all nine default constructor
+identities from 9/9 to 0/9 in a module without reflection. Targeted constructor
+seeding plus early companion reservation restored 9/9; the intermediate result
+is preserved in `pins-candidate1.log` through `pins-candidate3.log`. This is not
+an admission gate or a new undefined-value heuristic. Dynamic TypedArray
+modules may emit additional prototype storage; no size/performance claim has
+been measured. The infrastructure demand applies before the dynamic view heap
+type is lazily registered, using the existing pre-scan in both single-file and
+multi-file compilation.
+
+`tests/issue-5317-r4-constructor-lookup.test.ts` contains 10 standalone runtime
+controls, all asserting imports=[]: nine default constructor identities in one
+module without reflection; inherited undefined/null/73 data values; own and
+inherited accessor receiver and exactly-once invocation; explicit Reflect.get
+receiver; constructor descriptor flags, deletion, inherited fallback, and no
+reseed after replacement; Reflect.construct's chosen alternate prototype; and
+exact abrupt completion before a map callback. The existing five
+issue-4449-species-controls tests cover additional own constructor and species
+lookup behavior. The final combined rerun completed **15/15 pass** (10 owned
+controls plus 5 existing neighbors), one Vitest fork, in `pins-final.log`.
+
+Probe limitations must remain visible. Initial untyped snippets, dynamic
+`C.prototype` writes, and untyped aliased getOwnPropertyDescriptor probes had
+additional compiler failures; they were not accepted as evidence for this
+mechanism. The final pins use typed dynamic-view inputs and concrete prototype
+patterns from existing passing controls. All original upstream test262 files
+and harnesses remain unchanged; their final 55-row run is the conformance
+measurement. Plain `Object.setPrototypeOf(view, null)` and an alternate ordinary
+prototype both fail on the base and candidate; they are preserved in
+`.tmp/typedarray-species/constructor-controls-with-mutation-residuals.ts` and
+associated baseline/candidate logs, outside the passing permanent pin suite.
+The supported Reflect.construct-selected prototype control passes. No claim
+that general TypedArray prototype mutation is fixed is made.
+
+Baseline evidence (base `95186a4835a1fe`, fresh original harness, one worker):
+`species55-baseline.log` is **44 pass /11 fail**, matching the downloaded raw
+snapshot exactly. The 11 paths and first error lines are preserved in that log.
+The final candidate measurement is **48 pass /7 fail** in
+`species55-candidate-final.log`: exactly four gains, zero new nonpasses, and
+identical first-error text for every remaining failure. `species55-diff.json`
+asserts the exact 55-row universe and records the full comparison. Gains:
+- `built-ins/TypedArray/prototype/filter/speciesctor-get-ctor-inherited.js`
+- `built-ins/TypedArray/prototype/map/speciesctor-get-ctor-inherited.js`
+- `built-ins/TypedArray/prototype/slice/speciesctor-get-ctor-inherited.js`
+- `built-ins/TypedArray/prototype/subarray/speciesctor-get-ctor-inherited.js`
+
+These are unchanged original upstream files under the current original
+harness, not rewritten control bodies. The seven residual paths and error
+lines are enumerated in the comparison artifact.
+
+Validation and reproduction, working directory
+`/workspace/.tmp/es2015-typedarray-species`:
+
+```sh
+COMPILER_POOL_SIZE=1 node --import tsx scripts/run-test262-paths.mts --isolate .tmp/typedarray-species/species-core-paths.txt --standalone
+VITEST_MAX_FORKS=1 COMPILER_POOL_SIZE=1 NODE_OPTIONS=--max-old-space-size=4096 node node_modules/vitest/vitest.mjs run tests/issue-5317-r4-constructor-lookup.test.ts tests/issue-4449-species-controls.test.ts
+GOMAXPROCS=2 node /tmp/js2-es2015-typescript7/package/lib/tsc.js --noEmit -p tsconfig.ts7.json
+```
+
+Both bundles and the QuickJS adapter were rebuilt after the last source edit.
+Compiler bundle SHA256:
+`902e01a519b5a9ecc25b16170a4717ae86eaca53c66676c1a0926d941e170792`.
+Adapter key `a27f41c1fc07d63b`, binary SHA256
+`86f99bb7c76eff6beccce9077a34bd0b450facbee913cac6a8aac2e691c5fed5`;
+portable artifact `/workspace/.tmp/es2015-toolchain/artifact`, adapter canary
+verified. `final-sha256.txt` records all three source files, test, both bundles
+and adapter hashes. Exact TypeScript 7.0.2, Biome lint, and function budget
+passed; LOC allowance for the +6-line early demand wiring is recorded in this
+issue and the LOC gate passed. Final diff and gate logs are under
+`.tmp/typedarray-species/`. All final runtime processes terminated successfully;
+no full-core census was rerun for this increment.
+
+Next work is explicitly separate and not implemented in this PR increment:
+1. Four custom-species invocation failures: anonymous ordinary constructor
+   closure needs its canonical default prototype shared by Construct and
+   instanceof. Current native-construct reads callee.prototype, while named
+   closure-prototype-edge metadata omits the anonymous/capturing shape used by
+   these tests. Measure anonymous/named and implicit/explicit prototype shapes
+   and an Array species counterpart before editing. Do not fabricate a private
+   prototype in the construct driver; it would split identity. Consider the
+   existing per-closure property bag and ordinary closure instantiation, with
+   controls for explicit undefined, overrides, preventExtensions, bound
+   functions (constructible without own prototype), and generators (own
+   prototype but not constructible).
+2. Two slice/subarray custom-species returned-instance failures: existing
+   validation accepts only the dynamic TypedArray representation. Supporting a
+   static returned view must preserve identity and perform subsequent writes
+   in that representation; widening a type test alone is incorrect.
+3. One same-buffer-with-offset slice failure: observable overlapping copies
+   require the specified read/write order; independent of constructor lookup.
+4. General Object.setPrototypeOf dynamic-view mutation and the untyped probe
+   shapes above remain residuals. Do not infer population counts from them.
+
+The frozen core denominator remains 11,704. This bounded species cohort does
+not establish a new whole-core percentage or goal completion. Integration,
+commit, push, handoff and PR creation belong to the root agent; this worker has
+not committed or pushed.

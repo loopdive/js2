@@ -43,6 +43,7 @@
  * Spec: ECMA-262 §7.4 (GetIterator / IteratorStep / IteratorValue /
  * IteratorClose). See plan/issues/2038-standalone-iterator-next-illegal-cast-async-dstr.md.
  */
+import { fillNativeDelegationRuntime } from "./generators-delegation-runtime.js";
 import type { Instr, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
@@ -243,6 +244,7 @@ interface SyncGenCarrierDeps {
   producers: {
     stateTypeIdx: number;
     resumeIdx: number;
+    nativeDelegates?: boolean;
     resultTypeIdx: number;
     elemValType: ValType;
     /** Terminal state id — IteratorClose writes it into the frame's `state`. */
@@ -253,6 +255,7 @@ interface SyncGenCarrierDeps {
   /** Index of the f64 scratch local appended to `__iterator_next` at fill
    *  time (sentinel-aware f64 boxing needs one). */
   f64TmpIdx: number;
+  delegatedResultIdx?: number;
 }
 
 /** (#3164) `$GenState_*` field layout (generators-native.ts frame ABI):
@@ -1652,7 +1655,7 @@ export function reserveAnyIterNext(ctx: CodegenContext): number | undefined {
   ensureNativeIteratorRuntime(ctx);
   if (ensureNativeIterResultObject(ctx) === undefined) return undefined;
   if (ctx.funcMap.get("__iterator_next") === undefined) return undefined;
-  const genNextIdxAtReserve = ctx.funcMap.get("__gen_next");
+  const genNextIdxAtReserve = ctx.legacyGenBufferEmitted === true ? ctx.funcMap.get("__gen_next") : undefined;
   const typeIdx = addFuncType(ctx, [{ kind: "externref" }], [{ kind: "externref" }]);
   const funcIdx = mintDefinedFunc(ctx);
   ctx.funcMap.set("__any_iter_next", funcIdx);
@@ -1670,7 +1673,7 @@ export function reserveAnyIterNext(ctx: CodegenContext): number | undefined {
     // old answer instead of trapping.
     body:
       genNextIdxAtReserve === undefined
-        ? [{ op: "ref.null.extern" }]
+        ? (nonIterableThrowInstrs(ctx) ?? [{ op: "unreachable" }])
         : [
             { op: "local.get", index: 0 },
             { op: "call", funcIdx: genNextIdxAtReserve },
@@ -1727,7 +1730,7 @@ export function fillAnyIterNext(ctx: CodegenContext): void {
   if (!fn) return;
   const iterRecTypeIdx = ctx.structMap.get("__IterRec");
   const lazyTypeIdx = ctx.structMap.get("$LazyIterHelper");
-  const genNextIdx = ctx.funcMap.get("__gen_next");
+  const genNextIdx = ctx.legacyGenBufferEmitted === true ? ctx.funcMap.get("__gen_next") : undefined;
 
   // recognized = ref.test $IterRec ∨ ref.test $LazyIterHelper
   const recognized: Instr[] = [];
@@ -1740,7 +1743,7 @@ export function fillAnyIterNext(ctx: CodegenContext): void {
     // Nothing native to recognize — behave exactly like the legacy route.
     fn.body =
       genNextIdx === undefined
-        ? [{ op: "ref.null.extern" }]
+        ? (nonIterableThrowInstrs(ctx) ?? [{ op: "unreachable" }])
         : [
             { op: "local.get", index: 0 },
             { op: "call", funcIdx: genNextIdx },
@@ -1768,7 +1771,7 @@ export function fillAnyIterNext(ctx: CodegenContext): void {
       ],
     },
     ...(genNextIdx === undefined
-      ? ([{ op: "ref.null.extern" }] satisfies Instr[])
+      ? (nonIterableThrowInstrs(ctx) ?? ([{ op: "unreachable" }] satisfies Instr[]))
       : ([
           { op: "local.get", index: 0 },
           { op: "call", funcIdx: genNextIdx },
@@ -2573,6 +2576,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       sgProducers.push({
         stateTypeIdx: info.stateTypeIdx,
         resumeIdx: info.resumeFuncIdx,
+        nativeDelegates: info.nativeDelegates,
         resultTypeIdx: info.resultTypeIdx,
         elemValType: info.elemValType,
         doneState: info.doneState,
@@ -2580,7 +2584,12 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
     }
     sgProducers.sort((a, b) => a.stateTypeIdx - b.stateTypeIdx);
     if (sgProducers.length > 0) {
-      sgDeps = { producers: sgProducers, boxNumIdx: ctx.funcMap.get("__box_number"), f64TmpIdx: 7 };
+      sgDeps = {
+        producers: sgProducers,
+        delegatedResultIdx: ctx.funcMap.get("__gen_delegate_iter_result"),
+        boxNumIdx: ctx.funcMap.get("__box_number"),
+        f64TmpIdx: 7,
+      };
     }
   }
 
@@ -2934,6 +2943,7 @@ export function fillNativeIteratorLateArms(ctx: CodegenContext): void {
       }
     }
   }
+  fillNativeDelegationRuntime(ctx);
 }
 
 /** (#5268 r3) funcMap key of the `HasIteratorMethod` predicate. */
@@ -5240,6 +5250,22 @@ function buildIteratorNextBody(
                   op: "if",
                   blockType: { kind: "empty" },
                   then: [
+                    ...(p.nativeDelegates
+                      ? ([
+                          { op: "local.get", index: 6 },
+                          { op: "any.convert_extern" },
+                          { op: "ref.cast", typeIdx: p.stateTypeIdx },
+                          { op: "call", funcIdx: p.resumeIdx },
+                          { op: "extern.convert_any" },
+                          {
+                            op: "call",
+                            funcIdx: strictCtx?.funcMap.get("__gen_delegate_iter_result") ?? sgDeps.delegatedResultIdx!,
+                          },
+                          { op: "local.set", index: 5 },
+                          { op: "local.set", index: 4 },
+                          { op: "br", depth: 1 },
+                        ] as Instr[])
+                      : []),
                     // res := extern(resume(cast(frame)))  — the {value, done} result
                     { op: "local.get", index: 6 },
                     { op: "any.convert_extern" },
