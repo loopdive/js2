@@ -155,12 +155,8 @@ function harness() {
           id: 1,
           restore: [1],
           resume(e) {
-            e.body.push(
-              { op: "local.get", index: 0 },
-              { op: "struct.get", typeIdx: frameIndex, fieldIdx: 1 },
-              e.call(unbox),
-              { op: "local.set", index: e.local(2) },
-            );
+            e.resumeValue();
+            e.body.push(e.call(unbox), { op: "local.set", index: e.local(2) });
           },
           body() {},
           terminator: {
@@ -181,12 +177,8 @@ function harness() {
           id: 2,
           restore: [1, 2],
           resume(e) {
-            e.body.push(
-              { op: "local.get", index: 0 },
-              { op: "struct.get", typeIdx: frameIndex, fieldIdx: 1 },
-              e.call(unbox),
-              { op: "local.set", index: e.local(3) },
-            );
+            e.resumeValue();
+            e.body.push(e.call(unbox), { op: "local.set", index: e.local(3) });
           },
           body() {},
           terminator: {
@@ -309,6 +301,19 @@ describe("prepared physical frame engine", () => {
     expect(await p).toBe(await oracle);
     expect(events).toEqual(oracleEvents);
     expect(await (exports.run as CallableFunction)(11)).toBe(36);
+  });
+  it("reads delivered values through the resume seam rather than reusing awaited locals", async () => {
+    const h = harness();
+    const item = h.make("source:delivered/same", 0);
+    h.publish(item, "run");
+    let calls = 0;
+    const { exports } = await h.run((value) => {
+      // Transform only the two awaited results; final settlement stays intact.
+      return ++calls <= 2 ? Promise.resolve(value + 10) : value;
+    });
+    // live=8, first=17, second=29. Reading the original operand yields 24.
+    expect(await (exports.run as CallableFunction)(7)).toBe(54);
+    expect(calls).toBe(3);
   });
   it("keeps same-named functions distinct after a late import and function remap", async () => {
     const h = harness();

@@ -22,6 +22,8 @@ export interface PreparedFrameEmission {
   call(target: PreparedFrameFunction): Instr;
   convert(from: ValType, to: ValType): void;
   undefinedValue(): void;
+  /** Push the delivered externref from this frame; conversion remains explicit. */
+  resumeValue(): void;
 }
 
 export interface PreparedFrameConversion {

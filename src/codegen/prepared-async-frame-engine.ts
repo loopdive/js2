@@ -182,6 +182,9 @@ export function emitPreparedFrame(plan: PreparedFramePlan, r: PreparedFrameResou
     body,
     local,
     call: operationCall,
+    resumeValue() {
+      body.push(get(0), field(1));
+    },
     convert(from, to) {
       const conversion = r.conversions.find((c) => sameType(c.from, from) && sameType(c.to, to));
       if (!conversion) throw new Error("prepared frame has no accepted value conversion");

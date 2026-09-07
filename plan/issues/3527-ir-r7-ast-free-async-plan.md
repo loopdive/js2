@@ -1862,3 +1862,20 @@ PR 5716 remains held. The previously recorded eight dead exports still denote
 missing authentic production integration; this refresh adds no callers, gate
 changes or baseline exceptions. No separate async integration draft was
 accessed and no new async implementation was attempted.
+
+### B resume-value seam checkpoint
+
+The agreed `PreparedFrameEmission.resumeValue()` operation now pushes the
+actual delivered externref through the engine's bound frame type, local zero
+and SENT field. Both two-await test continuations use that operation rather
+than embedding a captured frame index. A new runtime control transforms each
+awaited fulfillment by ten and checks 54, distinguishing delivered values
+from the original operands (24). Validation: 11/11 engine runtime controls
+and 6/6 loaded-module boundary controls, serial one-fork execution; scoped
+formatting and lint also pass. This remains isolated-engine evidence.
+
+The source-free IR adapter is still pending explicit C resource mappings for
+semantic value IDs to physical types/parameter/spill fields and canonical
+callable bindings to reserved handles/physical signatures. The existing
+operations membership list does not encode those maps. No consumer, native
+provider, public adapter or gate was changed; hold remains necessary.
