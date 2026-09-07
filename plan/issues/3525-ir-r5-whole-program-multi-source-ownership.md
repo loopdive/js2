@@ -2895,3 +2895,126 @@ P2B still owns mixed callable/init graphs, imported-global and re-export
 storage proofs, and noncommuting initializer-to-callable effects. Full R5
 acceptance and merge-group CI remain open; no full local Test262 run is claimed
 by this landing.
+
+## Astra High lane A — public prepared-program driver (2026-09-07)
+
+This is an **owner continuation**, under the ownership and pinned-source
+snapshot in [the epic's September 7 specification](3518-ir-only-default-and-direct-frontend-retirement.md).
+The recorded A owner is `ttraenkler/astra-ir-program-a-20260905`; its liveness
+and newest output-split commits remain unverified. Resume that work or obtain
+a scope handoff. Implementation model: **Astra Low**. Do not rebuild the
+preparation driver already carried by package C's stack.
+
+### Verified trigger and desired behavior
+
+On upstream `b3133d1d4da1151d82ef45b58db9566565097c57`,
+`src/compiler.ts::runPipeline` chooses legacy generators at `:1089–1104`.
+`src/compiler/output.ts::compileToObjectSource` separately calls
+`generateModule(ast)` at `:355`. A normal source compile and an object compile
+can therefore select different frontend policy even for identical options.
+The public `compileToObject` wrapper in `src/index.ts:1289` reaches that second
+root. A switch in only `runPipeline` cannot complete the migration.
+
+Desired production sequence: input normalization and source validation → one
+whole-program preparation → backend acceptance → one emission → shared output
+finalization. Keep parsing and original-source diagnostics on the frontend
+side. No backend is allowed to discover missing source bodies by calling the
+legacy generator, and no failure path retries through direct compilation.
+
+### Exclusive file ownership and API design
+
+A owns `src/compiler.ts`, `src/compiler/output.ts`, `src/index.ts`, new or
+recovered `src/compiler/ir-program-driver.ts`, new or recovered
+`src/compiler/ir-program-result.ts`, and new
+`tests/issue-3525-public-prepared-driver.test.ts`. If the recovered owner
+already split finalization/presentation into other files, use those files and
+record the exact substitution before editing; do not create duplicate output
+implementations. B's async engine, C's codec/consumer, host export marshalling,
+linker emission, and source-preparation producers are read-only in this slice.
+
+1. Define one internal synchronous driver over the complete analyzed source
+   graph, canonical entry source, checker/oracle, normalized target profile,
+   and output policy. Async APIs may await resolution/optimization, but
+   synchronous compile and object output cannot acquire an async-only semantic
+   preparation dependency. Reuse A's existing `prepareWholeIrProgram` from
+   `src/ir/program-preparation.ts` once the dependency is available.
+2. The driver returns an explicit discriminated result: emitted module with
+   authentic ownership/diagnostic evidence, or a located preparation/acceptance
+   refusal. Invariant exceptions remain fatal. No result variant contains a
+   retry callback, direct candidate or AST-taking backend closure. Catching an
+   arbitrary exception must not convert it to preclaim Unsupported.
+3. Call C's `acceptPreparedIrProgram` and `emitAcceptedIrProgram` exactly as
+   their recovered definitions require. Freeze target/runtime options before
+   acceptance. Do not manufacture acceptance receipts or plan materialization
+   in the wrapper. `emitAcceptedIrProgram` receives only C's accepted token.
+4. Separate module generation from binary/WAT/object/presentation finalization.
+   Feed the emitted module to the same established binary optimizer,
+   source-map, import helper, DTS, string-pool, export metadata and linker
+   paths that consume it today. Inventory every `mod` field read below
+   `runPipeline`'s generation block and by `compileToObjectSource` before
+   moving code; missing metadata must be a named contract gap, never silently
+   filled with an empty object. Preserve diagnostics and target options.
+5. Use the same driver for single, multi, files and object outputs; preserve
+   module evaluation order from the prepared startup plan. Sync/async API
+   wrappers may differ in I/O, not in source identity or semantic ownership.
+   Source IDs are minted once for the graph and remain unchanged through
+   finalization. Export names remain labels over binding IDs.
+6. Integrate the production call-site replacement only when coverage and
+   runtime dependencies pass the epic's final bar. Before that, publish
+   internal driver/finalizer checkpoints with explicit incomplete status;
+   do not add an optional `wholeProgramIR` mode or catch-and-direct fallback.
+   The eventual cutover removes direct imports from compiler orchestration
+   and routes all target profiles through preparation. Flag retirement in
+   #4522 remains owner-coordinated; disabling an optimization must never
+   select another frontend.
+
+### Required acceptance and negative controls
+
+Run the following cases through public `compile`, `compileFiles`,
+`compileMulti`, `compileToObject`, `compileToWat` and `compileProject` wrappers
+in `src/index.ts`, using each real signature. Also exercise the synchronous
+`compileSourceSync` entry in `src/compiler.ts` used by runtime eval; there is
+no public `compileSync` export. Never substitute a private generator for a
+public-route test. Include CLI/selfhost wrappers in the final closure audit.
+
+- One numeric function returns a nonconstant result; two sources with aliased
+  calls and equal helper names preserve distinct results; an exported live
+  global updates after startup; type-only/ambient sources preserve the census
+  without invented executable bodies. Ordinary and `fast: true` use the same
+  semantic ownership on gc and standalone. Linear/WASI report exact current
+  capability rather than producing a reduced module.
+- Object output is linked and executed, not merely nonempty. Check public
+  function/global export binding and startup behavior, and preserve relocation
+  index spaces. Missing C object/WASI capability is a dependency, not permission
+  to route object output through `generateModule` again.
+- Poison the four legacy generators before calling each public entry on the
+  candidate. Accepted cases still execute. The same test on the captured base
+  must hit poison for at least the direct namespace/object control; otherwise
+  it has not proved the detector is attached.
+- Inject a preparation Unsupported, a producer invariant, acceptance failure,
+  and emission failure independently. Each gives no artifact/exports; only
+  the actual Unsupported keeps that classification; none enters a direct
+  generator. A late failure cannot publish a partially filled module.
+- Same-name modules and a source function named `__module_init` cannot receive
+  each other's diagnostics, startup slot or exports. Reordering input map
+  insertion alone must not alter module dependency order or unit ownership.
+- Preserve target-specific result metadata and source-map locations on the
+  ordinary positive control. Remove the shared-driver call from object output
+  only: its poison test must fail again. Restore it and rerun the focused test.
+
+Use C's existing scalar two-source fixture as an initial dependency control;
+add the D application graph when runtime materialization becomes available.
+Run focused tests, typecheck, IR layering/dialect/kind checks, equivalence and
+required output/linker tests. Record exact base/candidate source hashes and
+per-entry phase/ownership evidence. Do not report full migration from scalar
+success while C still refuses async, reference layouts, linear plans or WASI.
+
+**Astra Low lane A prompt:** Continue A's recovered public driver/output work
+in its isolated worktree after ownership confirmation. You are not alone in
+the repository: preserve all peer changes and use only the file set above.
+First capture existing public-route results and metadata, then implement the
+shared driver and finalizers against the real A preparation and C consumer.
+Publish a non-draft checkpoint with exact moved call sites and poison/runtime
+controls. Do not add a public alternative compiler mode, edit package C, or
+silently narrow supported behavior. Hand back any missing provider/layout or
+source producer as a located failing fixture to its existing owner.
