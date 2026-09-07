@@ -2,12 +2,24 @@
 agent: tech-lead
 session_end: 2026-09-07
 next_session_entry_point: >
-  ES2015 standalone lane: read plan/agent-context/es2015-standalone-handover-2026-09-07.md,
-  then the "### Wave-5 close (2026-09-07)" section of
-  plan/issues/4444-es6-standalone-edition-closeout-umbrella.md. Nothing is in
-  flight on that lane (no open PR, no running lane, no claim held).
-last_handoff_reason: "ES2015 standalone wave 5 closed at 87.4 %; session wound down on stakeholder request."
+  Temporal → STANDALONE lane: read
+  plan/agent-context/temporal-standalone-handover-2026-09-07.md, then
+  plan/issues/5383-standalone-temporal-provider.md. In flight: PR #5723
+  (#5384 + #5383 S2), #5712 (#5380), #5704 (#5379 draft). No lane running.
+  ES2015 standalone lane: plan/agent-context/es2015-standalone-handover-2026-09-07.md.
+last_handoff_reason: "Owner re-targeted Temporal to standalone only; S1 landed (#5721), S2 half-done (#5723); session wound down on owner request."
 ---
+
+## CURRENT STATE (as of 2026-09-07 18:00, Temporal → standalone lane)
+
+- Host-lane whole corpus **38,343 / 48,735** (baselines jsonl 17:33 UTC);
+  Temporal host 2,925 / 4,611. **Standalone Temporal 170 / 4,603 — the goal.**
+- Landed today (this lane): #5678 #5682 #5685 #5691 #5699 #5706 #5709 (host)
+  and **#5721 (#5383 S1: the polyfill validates under standalone, import-free)**.
+- Open: #5723 (#5384 exn-render exports + S2 R3/R4/R5), #5712 (#5380), #5704.
+- Next: #5383 S2b (jsbi `subtract(null)` init throw — suspect a property write on
+  a `class extends Array` instance), then S3–S5. Details in the handover file.
+
 
 ## CURRENT STATE (as of 2026-09-07, ES2015 standalone lane)
 
