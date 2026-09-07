@@ -7408,6 +7408,48 @@ function supportsHostClassBridgeParam(type: ValType): boolean {
   return type.kind === "externref" || type.kind === "ref_extern" || type.kind === "f64";
 }
 
+/**
+ * (#5380) One host-class-bridge argument, with an explicit host `undefined`
+ * preserved as the callee's omitted-argument sentinel.
+ *
+ * The bridge ABI is `(externref, …externref) -> externref`, and the host side
+ * (`src/runtime/class-method-host-bridge.ts`) pads an under-applied call with
+ * real JS `undefined` values. Unboxing those to `f64` yields a plain quiet NaN,
+ * which the callee's parameter prologue cannot tell apart from a deliberately
+ * passed `NaN` — so a formal with a default kept the NaN and the default never
+ * ran. `x.toString()` on the compiled `@js-temporal/polyfill`'s JSBI reached
+ * `__toStringBasePowerOfTwo` with radix NaN, whose `u >>>= n` shift became
+ * `u >>>= 0` and never terminated (#5380: `ZonedDateTime.hoursInDay` hung).
+ *
+ * Both lanes of the fix are the SAME sentinel the closure bridges already use
+ * (`externToClosureF64` in `closure-exports.ts`) and that
+ * `closed-method-dispatch.ts` pushes for a statically-omitted argument. Applied
+ * ONLY to a formal the callee marked optional/defaulted, so every other bridge
+ * argument keeps its previous bytes.
+ *
+ * Returns `undefined` when the guard cannot be built (no `__extern_is_undefined`
+ * import in this module), leaving the caller on its existing path.
+ */
+function undefinedAwareF64BridgeArg(ctx: CodegenContext, argLocalIdx: number, coercion: Instr[]): Instr[] | undefined {
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
+  if (isUndefinedIdx === undefined) return undefined;
+  return [
+    { op: "local.get", index: argLocalIdx },
+    { op: "call", funcIdx: isUndefinedIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "f64" } },
+      then: [{ op: "i64.const", value: 0x7ff00000deadc0den }, { op: "f64.reinterpret_i64" }],
+      else: [{ op: "local.get", index: argLocalIdx }, ...coercion],
+    },
+  ];
+}
+
+/** Whether formal `index` of `fullName` carries a default / `?` marker. */
+function hostClassBridgeFormalIsOptional(ctx: CodegenContext, fullName: string, index: number): boolean {
+  return (ctx.funcOptionalParams.get(fullName) ?? []).some((info) => info.index === index);
+}
+
 /** Instructions converting one incoming bridge externref into `param`. */
 function hostClassBridgeParamCoercion(ctx: CodegenContext, param: ValType): Instr[] | undefined {
   if (param.kind === "externref" || param.kind === "ref_extern") return [];
@@ -8005,7 +8047,17 @@ function emitIteratorMethodExport(ctx: CodegenContext): void {
             // remains the semantic path.
             testAndCall.push({ op: "i32.const", value: 0 });
           } else {
-            testAndCall.push({ op: "local.get", index: arg + 1 }, ...coercion);
+            // (#5380) Same undefined-preserving arm as the externref-backed
+            // bridge: the host pads an under-applied call with real `undefined`,
+            // which must reach a DEFAULTED f64 formal as the omitted-argument
+            // sentinel, not as a plain NaN.
+            const guarded =
+              expected.kind === "f64" &&
+              hostClassBridgeFormalIsOptional(ctx, `${entry.structName}_${methodSuffix}`, arg)
+                ? undefinedAwareF64BridgeArg(ctx, arg + 1, coercion)
+                : undefined;
+            if (guarded !== undefined) testAndCall.push(...guarded);
+            else testAndCall.push({ op: "local.get", index: arg + 1 }, ...coercion);
           }
         }
       } else {
@@ -8236,7 +8288,13 @@ function emitExternrefClassMethodDispatch(ctx: CodegenContext, className: string
   const body: Instr[] = [];
   body.push({ op: "local.get", index: 0 });
   for (let index = 0; index < params.length; index++) {
-    body.push({ op: "local.get", index: index + 1 }, ...coercions[index]!);
+    // (#5380) A defaulted numeric formal takes the undefined-preserving arm.
+    const guarded =
+      params[index]!.kind === "f64" && hostClassBridgeFormalIsOptional(ctx, fullName, index)
+        ? undefinedAwareF64BridgeArg(ctx, index + 1, coercions[index]!)
+        : undefined;
+    if (guarded !== undefined) body.push(...guarded);
+    else body.push({ op: "local.get", index: index + 1 }, ...coercions[index]!);
   }
   body.push({ op: "call", funcIdx: methodIdx });
   const resultType = methodType.results.length > 0 ? methodType.results[0] : undefined;
