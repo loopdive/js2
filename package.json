@@ -118,6 +118,8 @@
     "check:ir-kind-neutrality": "node scripts/check-ir-kind-neutrality.mjs",
     "check:jstag-seam": "node scripts/check-jstag-seam.mjs",
     "check:ir-layering": "node scripts/check-ir-layering.mjs",
+    "check:compiler-boundaries": "node scripts/check-compiler-boundaries.mjs",
+    "check:compiler-boundaries:inventory": "node scripts/check-compiler-boundaries.mjs --mode inventory",
     "check:edition-ratchet": "npx tsx scripts/test262-edition-ratchet.ts",
     "check:edition-ratchet:update": "npx tsx scripts/test262-edition-ratchet.ts --update",
     "check:ir-fallbacks": "npx tsx scripts/check-ir-fallbacks.ts",

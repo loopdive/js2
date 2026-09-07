@@ -9,9 +9,12 @@ Host/linear implementation stays deferred; P/C dirty work stays in place.
 Dispatch update: the coordinator approved D0 and assigned the existing worker
 task `01a07c8d-fecf-76e1-80c9-a811c6227419` as Astra Low in a new isolated
 worktree at the pinned base, with the three-file scope and a distinct slice
-claim. F0 is not dispatched; it waits for accepted D0 evidence and ownership
-reconciliation. This records the coordinator's dispatch, not a new assignment
-or claim mutation by the architect.
+claim. The coordinator subsequently approved parallel F0 implementation and
+assigned P its exact nine-file extraction in a new isolated checkout at the
+same pinned base, under a new F0-only slice. The historical related claims
+were explicitly reconciled and retained, as recorded below. Publication still
+requires composition onto accepted D0 and validation. This records the
+coordinator's dispatch, not a new assignment or claim mutation by the architect.
 
 ## Common base and excluded work
 
@@ -24,19 +27,23 @@ Do not silently use the ambient checkout or a moving branch name as evidence.
 Verified locally: queue commit `f735ed9720c0b1dd22d717655ebd441f53613899`
 has exactly `6037ac8bcf` as its parent. The shared upstream/main ref inspected
 at `07c19331dc6df77cd9669d23d8f7a4aa27d002df` has merge-base `6037ac8bcf`
-with it; that read does not prove N landed. The coordinator now reports
-PR 5727's final host gate failed on BigIntTypedArray `ctorlengthreturns-object.js`
-(expected 4, got 0), with read-only attribution assigned. Keep N outside the
-common base until that evidence is resolved; no host backend repair is
-prescribed here.
+with it; that earlier read did not prove N landed. The coordinator subsequently
+verified PR 5727 merged at `396e690a85a9103d3f3d125b0f478c4cc99bf0c8`
+on 2026-09-07 at 20:16:12Z. Its earlier host Test262 diagnostic for
+BigIntTypedArray `ctorlengthreturns-object.js` (expected 4, got 0) remains
+historical red evidence, not a current merge blocker. Neither the merge nor
+this update proves the original failure's cause. D0/F0 keep their pinned base;
+later native extraction must be re-grounded on verified main. No host backend
+repair is prescribed here.
 
 Also exclude B's held `0b513df...`, P/C dirty snapshots and the composed CPB
 tree from D's source baseline. Keep those checkpoints and hashes available,
 not discarded or copied wholesale into the gate branch. D's new test fixtures
 must not pretend the held implementations have landed.
 
-After D, the coordinator records its accepted commit as the common boundary
-baseline. The identity foundation change is based on that commit. P's existing
+F0 implementation may proceed concurrently with D0 from the same pinned source
+base. After D0, the coordinator records its accepted commit as the common
+boundary baseline and composes F0 onto it before publication. P's existing
 dirty branch is preserved; integrate approved generic P work and the boundary
 baseline by reviewed forward changes, never by resetting the dirty checkout.
 
@@ -157,15 +164,16 @@ than promising all source edges resolved from a summary. The coordinator
 schedules broader checks and CI integration. D0's successful delivery is a
 working detector and honest inventory, not a separated compiler.
 
-## Dispatch F0: exact first source extraction, after D0 and reconciliation
+## Dispatch F0: parallel extraction, publication after accepted D0
 
-P is the proposed owner because its pending work consumes these identity
-contracts. The coordinator must reconcile existing identity/source claims
-before assigning it. Do not relocate any of P's twelve dirty files or C's five
-files. No changes to their pending program-source/schema/consumer are needed
-to land this foundation: existing old import paths remain compatible.
+P is the assigned owner because its pending work consumes these identity
+contracts. The coordinator reports that ownership reconciliation is complete
+and P received the F0-only assignment in a new isolated checkout at the pinned
+base. Do not relocate any of P's twelve dirty files or C's five files. No changes
+to their pending program-source/schema/consumer are needed to land this
+foundation: existing old import paths remain compatible.
 
-Exactly nine implementation/test files are proposed:
+Exactly nine implementation/test files are authorized by that dispatch:
 
 1. New `src/shared/contracts/source-origin.ts`: move
    CompilerSourceProducer, CompilerSourceOrigin and CompilerSourceOriginSpan
@@ -216,6 +224,82 @@ back to identity.ts that the boundary checker rejects. Run affected tests and
 typecheck in the coordinator's scheduled slot. Do not claim P/C is fully
 source-free from this small extraction; their other edges remain listed debt.
 
+### Coordinator-confirmed sequencing and claim reconciliation
+
+On 2026-09-07, the coordinator confirmed approval of the architect's parallel
+implementation decision and explicit reconciliation of these historical
+same-owner scopes, both assigned to
+`ttraenkler/astra-ir-program-a-20260905`:
+
+- `3518/ir-source-positions`, branch `codex/44-ir-source-positions-20260906`:
+  F0 owns only the specified source-origin type extraction and compatibility
+  imports in position-map; its runtime mapping behavior stays intact.
+- `3518/authoritative-preparation`, branch
+  `codex/3518-whole-program-a-20260905`: F0's identity foundation extraction
+  is separate from the paused producer/ABI edits; existing import paths,
+  unique brands and serialized IDs stay compatible.
+
+Both historical claims remain held; reconciliation does not force-release,
+overwrite or transfer them. The coordinator verified that F0's five existing
+files were clean in the shared root, P and C checkouts, then assigned the new
+F0-only slice to P. This is coordinator-reported dispatch evidence; this
+document does not claim a fresh ledger read or invent a new slice identifier.
+The earlier upstream-only ledger snapshot at
+`a3030e440c771ce34d494af09f2c6184e4c0af7c` predates this assignment.
+
+Only implementation overlaps D0. F0 leaves D0's three files untouched and
+preserves every P/C draft in its existing checkout. Before publication, compose
+F0 onto accepted D0, have D0/coordinator activate the three real foundation
+modules in the policy, and pass boundary checks, affected tests and typecheck
+in the coordinator's scheduled validation slot. The documentation update runs
+no commit hooks while D0 holds that slot. These sequencing changes authorize
+no host or linear backend implementation.
+
+## Published-state and independent cloud-evidence handoff
+
+PR 5730 published the initial map at
+`d2a695a0fdf37676e874dcda0f214c0acfc7990e` and merged as
+`9b0358ec7d373034de6ff524eae286a50aaf2a4e` on 2026-09-07 at 20:48:24Z.
+The approved parallel-sequencing and cloud-evidence refinements below follow
+that published head in the implementation checkpoint. The coordinator retained
+the original drafts and composed D0 on verified upstream main
+`95186a4835a1fe7a024172a61be94781c7995670`. Accepted detector commit
+`57aa0d73025526812d06a3863d63552929618288` includes the independently resolved
+comparison base and inherited-Git-state controls. Its 42/42 detector tests and
+typecheck passed in the composed checkout with normal commit hooks; these
+results establish the detector checkpoint, not IR-only compiler completion.
+
+The independent cloud audit reports successful repository access and an
+unchanged audit checkout at main
+`f6e9075d5d12f3d4e3a4f674211190de87af06e6`. It separately inspected the plan
+at `61b738d342b75195f658c0ecc4089b76574e0b79`, an earlier PR 5730 head;
+its findings are evidence at those revisions, not a review of the later exact
+F0 dispatch map or unpublished P/C contents. The architect records the
+coordinator's relay here, without claiming an independent local reproduction.
+
+The audit supports keeping the extraction narrow: identity.ts mixes brands
+with ts-api/AST helpers, identity-values.ts has a type-only dependency on that
+mixed module, and source-origin records share position-map with runtime code.
+IrTerminalUnitRecord reaches frontend selector/checker types through
+IrPreparationFailure/outcomes; PreparedIrProgram still reaches LinearOptions,
+ts-api-dependent module initialization, WasmModule and colocated runtime
+validation/transaction behavior. Those inventories and program contracts
+remain later splits. The reported 90-line/16-file layering ratchet passes
+while excluding six linear edges; it remains debt telemetry, not proof of
+complete separation.
+
+The cloud's alternative move/import/test suggestions do not amend F0's nine
+files: SourceEdit stays in position-map, identity-values keeps its separately
+specified new module, and source-location/program extraction and broader
+import/test rewrites are deferred. D0 retains checker/policy ownership.
+Cloud-reported main also differs from the inspected plan tree in
+`src/codegen/async-scheduler.ts`, adds
+`src/codegen/prepared-native-async-runtime.ts`, and changes
+`src/runtime/cross-module-struct-owners.ts`. Re-ground the next native map on
+actual latest main before dispatch; do not infer that those changes caused or
+fixed the historical Test262 failure. No new writer assignment is made here,
+and source implementation remains standalone WasmGC only.
+
 ## Evidence cannot disappear at the next moves
 
 The coordinator's B CI evidence is ten unresolved functions at held commit
@@ -243,7 +327,8 @@ test-only import settles the finding.
 ## Dispatch boundary
 
 D0 has been dispatched with the three-file scope and pinned base as recorded
-above. F0 follows the accepted D0 commit and ownership
-reconciliation. P/C host implementation, whole backend relocation, N's next
+above. F0 has been assigned for parallel implementation after ownership
+reconciliation; its publication follows composition onto accepted D0 and the
+required validation. P/C host implementation, whole backend relocation, N's next
 source implementation and all linear work remain paused until their explicit
 subsequent move/implementation maps. No source change has been made here.
