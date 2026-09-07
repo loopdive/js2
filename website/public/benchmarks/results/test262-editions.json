@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9930,
-    "fail": 1715,
+    "pass": 9932,
+    "fail": 1713,
     "ce": 59,
     "skip": 0,
     "total": 11704,
@@ -84,12 +84,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 876,
-        "fail": 174,
+        "pass": 878,
+        "fail": 172,
         "ce": 0,
         "skip": 0,
         "total": 1050,
-        "pct": 83
+        "pct": 84
       },
       {
         "name": "Symbol.iterator",
@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1368,
-    "fail": 637,
+    "pass": 1371,
+    "fail": 634,
     "ce": 12,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 839,
-        "fail": 208,
+        "pass": 842,
+        "fail": 205,
         "ce": 1,
         "skip": 0,
         "total": 1048,
@@ -1525,12 +1525,12 @@
       },
       {
         "name": "TypedArray",
-        "pass": 555,
-        "fail": 153,
+        "pass": 558,
+        "fail": 150,
         "ce": 0,
         "skip": 0,
         "total": 708,
-        "pct": 78
+        "pct": 79
       },
       {
         "name": "dynamic-import",
@@ -1633,12 +1633,12 @@
       },
       {
         "name": "Symbol.species",
-        "pass": 40,
-        "fail": 13,
+        "pass": 41,
+        "fail": 12,
         "ce": 0,
         "skip": 0,
         "total": 53,
-        "pct": 75
+        "pct": 77
       },
       {
         "name": "optional-chaining",
@@ -2856,8 +2856,8 @@
   },
   {
     "edition": "ES2024",
-    "pass": 361,
-    "fail": 195,
+    "pass": 362,
+    "fail": 194,
     "ce": 0,
     "skip": 0,
     "total": 556,
@@ -2865,8 +2865,8 @@
     "features": [
       {
         "name": "TypedArray",
-        "pass": 98,
-        "fail": 149,
+        "pass": 99,
+        "fail": 148,
         "ce": 0,
         "skip": 0,
         "total": 247,
@@ -2883,12 +2883,12 @@
       },
       {
         "name": "align-detached-buffer-semantics-with-web-reality",
-        "pass": 89,
-        "fail": 69,
+        "pass": 90,
+        "fail": 68,
         "ce": 0,
         "skip": 0,
         "total": 158,
-        "pct": 56
+        "pct": 57
       },
       {
         "name": "BigInt",
@@ -3571,26 +3571,26 @@
   },
   {
     "edition": "ES2026",
-    "pass": 2721,
-    "fail": 2187,
+    "pass": 2777,
+    "fail": 2131,
     "ce": 13,
     "skip": 0,
     "total": 4921,
-    "pct": 55,
+    "pct": 56,
     "features": [
       {
         "name": "Temporal",
-        "pass": 2560,
-        "fail": 2038,
+        "pass": 2616,
+        "fail": 1982,
         "ce": 13,
         "skip": 0,
         "total": 4611,
-        "pct": 56
+        "pct": 57
       },
       {
         "name": "Symbol",
-        "pass": 270,
-        "fail": 124,
+        "pass": 273,
+        "fail": 121,
         "ce": 0,
         "skip": 0,
         "total": 394,
@@ -3598,12 +3598,12 @@
       },
       {
         "name": "BigInt",
-        "pass": 134,
-        "fail": 44,
+        "pass": 136,
+        "fail": 42,
         "ce": 1,
         "skip": 0,
         "total": 179,
-        "pct": 75
+        "pct": 76
       },
       {
         "name": "arrow-function",
@@ -4304,8 +4304,8 @@
   },
   {
     "edition": "Unclassified (untagged)",
-    "pass": 4402,
-    "fail": 897,
+    "pass": 4403,
+    "fail": 896,
     "ce": 146,
     "skip": 0,
     "total": 5445,
