@@ -1507,8 +1507,8 @@
   },
   {
     "edition": "ES2020",
-    "pass": 1371,
-    "fail": 634,
+    "pass": 1372,
+    "fail": 633,
     "ce": 12,
     "skip": 18,
     "total": 2035,
@@ -1516,8 +1516,8 @@
     "features": [
       {
         "name": "BigInt",
-        "pass": 842,
-        "fail": 205,
+        "pass": 843,
+        "fail": 204,
         "ce": 1,
         "skip": 0,
         "total": 1048,
@@ -1525,8 +1525,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 558,
-        "fail": 150,
+        "pass": 559,
+        "fail": 149,
         "ce": 0,
         "skip": 0,
         "total": 708,
@@ -2856,8 +2856,8 @@
   },
   {
     "edition": "ES2024",
-    "pass": 361,
-    "fail": 195,
+    "pass": 362,
+    "fail": 194,
     "ce": 0,
     "skip": 0,
     "total": 556,
@@ -2865,8 +2865,8 @@
     "features": [
       {
         "name": "TypedArray",
-        "pass": 98,
-        "fail": 149,
+        "pass": 99,
+        "fail": 148,
         "ce": 0,
         "skip": 0,
         "total": 247,
@@ -2883,12 +2883,12 @@
       },
       {
         "name": "align-detached-buffer-semantics-with-web-reality",
-        "pass": 89,
-        "fail": 69,
+        "pass": 90,
+        "fail": 68,
         "ce": 0,
         "skip": 0,
         "total": 158,
-        "pct": 56
+        "pct": 57
       },
       {
         "name": "BigInt",

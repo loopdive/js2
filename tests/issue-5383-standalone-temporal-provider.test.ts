@@ -32,8 +32,14 @@
 // The whole polyfill is not compiled here (~60 s, 2.9 MB): `.tmp/sa-temporal/`
 // carries that probe. These are the reductions.
 
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { compile, compileMulti, compileProject, instantiateLinkedProject } from "../src/index.js";
+import { standaloneIntlShimSource } from "../src/temporal-intl-shim.js";
+import { temporalProviderCacheKey } from "../src/temporal-provider.js";
 
 interface StandaloneModule {
   binary: Uint8Array;
@@ -67,6 +73,16 @@ async function compileStandalone(source: string): Promise<StandaloneModule> {
 
 function callExport(mod: StandaloneModule, name = "test"): unknown {
   return (mod.instance.exports as Record<string, () => unknown>)[name]!();
+}
+
+/**
+ * (#5383 S2c) Compile with the standalone provider's `Intl` shim ahead of the
+ * source — the exact text `buildTemporalProvider` prepends for
+ * `target: "standalone" | "wasi"`, so these cases exercise the shipped shim
+ * rather than a copy of it.
+ */
+function withIntlShim(source: string): string {
+  return `${standaloneIntlShimSource()}\n${source}`;
 }
 
 describe("#5383 S1 R1 — ToBoolean of an anyref (WeakMap/Map `get` as a condition)", () => {
@@ -275,5 +291,407 @@ describe("#5383 S2 R4 — `Math.<fn>` read as a VALUE, host-free", () => {
     `);
     // If the alias fold had been taken despite the write, this would answer 1.
     expect(callExport(mod)).toBe(101.5);
+  });
+});
+
+// ── S2b ──────────────────────────────────────────────────────────────────────
+//
+// Two defects in the EXTERNREF-BACKED subclass family (`class B extends Array`
+// — jsbi's `class JSBI extends Array`), both reduced from the standalone
+// polyfill's `__module_init` throw and both invisible in the JS-host lane,
+// where the real host prototype does this work.
+//
+//  R6  An own-field WRITE inside the constructor (`this.sign = s`). The
+//      constructor's own assignment flow-grows a `sign` slot onto the vestigial
+//      `$B` struct, and the write then took the struct.set path — but the
+//      instance is the parent's native carrier, never a `$B`, so the receiver
+//      narrowed to `ref.null $B` and the #2084 guard threw
+//      `TypeError: Cannot access property on null or undefined`. The same write
+//      from OUTSIDE the class always worked (no slot ⇒ the #4149 dynamic-store
+//      arm), so the class's own constructor was the one place it failed.
+//
+//  R7  A method call through a DYNAMIC receiver. Nothing on the carrier says
+//      "B", so the dynamic terminals (`__extern_method_call` /
+//      `__call_m_<name>`, which resolve by `ref.test`ing instance identity)
+//      missed and answered `null` — SILENTLY, which is why it survived. The
+//      host lane's answer, `__set_subclass_proto`, is a JS host import, so
+//      `emitSetSubclassProto` is a no-op standalone. Methods are now installed
+//      on the instance at §17 attributes, and the method trampoline binds
+//      `__current_this` as the carrier instead of `ref.null $B`.
+//
+// This is what stopped the compiled @js-temporal/polyfill: jsbi statics call
+// methods on their PARAMETERS (`static toNumber(i) { … i.__unsignedDigit(0) … }`),
+// every such call answered null, and the null surfaced five frames later as
+// `JSBI.subtract(null, …)`.
+
+describe("#5383 S2b R6 — own-field write/read on an externref-backed subclass instance", () => {
+  it("`this.<field> = v` in the constructor of a `class … extends Array`", async () => {
+    const mod = await compileStandalone(`
+      class B extends Array { constructor(n, s) { super(n); this.sign = s; } }
+      export function test() { var b = new B(2, true); return b.sign === true ? 1 : 0; }
+    `);
+    expect(callExport(mod)).toBe(1);
+  });
+
+  it("the jsbi shape — an instance minted by one static, read by another", async () => {
+    // `JSBI.subtract(i, _) { const t = i.sign; … }` with `i` from `JSBI.BigInt`.
+    const mod = await compileStandalone(`
+      class B extends Array {
+        constructor(n, s) { super(n); this.sign = s; }
+        static make(s) { return new B(2, s); }
+        static subtract(i, _) { const t = i.sign; return t === true ? 7 : 8; }
+      }
+      export function test() { return B.subtract(B.make(true), B.make(false)); }
+    `);
+    expect(callExport(mod)).toBe(7);
+  });
+
+  it("the element/length surface of the Array carrier is untouched", async () => {
+    // The write must land in the expando side table, never over the vec's own
+    // element storage or its length.
+    const mod = await compileStandalone(`
+      class B extends Array { constructor(n, s) { super(n); this.sign = s; } }
+      export function test() {
+        var b = new B(3, true);
+        b[0] = 9;
+        return b.length * 10 + b[0] + (b.sign === true ? 100 : 0);
+      }
+    `);
+    expect(callExport(mod)).toBe(139);
+  });
+
+  it("a plain class and an `extends Error` subclass are unaffected", async () => {
+    const mod = await compileStandalone(`
+      class P { constructor(n, s) { this.length = n; this.sign = s; } }
+      class E extends Error { constructor(m) { super(m); this.sign = true; } }
+      export function test() {
+        return (new P(2, true).sign === true ? 1 : 0) + (new E("m").sign === true ? 2 : 0);
+      }
+    `);
+    expect(callExport(mod)).toBe(3);
+  });
+});
+
+describe("#5383 S2b R7 — dynamic method dispatch on an externref-backed subclass instance", () => {
+  it("a method called through an untyped parameter runs, with `this` bound", async () => {
+    const mod = await compileStandalone(`
+      class B extends Array {
+        constructor(n, s) { super(n); this.sign = s; }
+        d(i) { return this[i]; }
+        static mk(n) { var b = new B(1, false); b[0] = n; return b; }
+      }
+      function callD(o) { return o.d(0); }
+      export function test() { return callD(B.mk(5)); }
+    `);
+    // Pre-fix: `null` — the dispatch missed entirely and nothing reported it.
+    expect(callExport(mod)).toBe(5);
+  });
+
+  it("`this` reaches elements, an own field, `.length` and a sibling method", async () => {
+    // Each is a separate `this` consumer inside the method body; the trampoline
+    // used to hand all four a null receiver (`ref.null $B`), so the element read
+    // threw and the field read answered null.
+    const mod = await compileStandalone(`
+      class B extends Array {
+        constructor(n, s) { super(n); this[0] = 4; this.sign = s; }
+        elem() { return this[0]; }
+        field() { return this.sign; }
+        len() { return this.length; }
+        sib() { return this.elem(); }
+      }
+      function call(o, which) {
+        return which === 0 ? o.elem() : which === 1 ? o.field() : which === 2 ? o.len() : o.sib();
+      }
+      export function test() {
+        var b = new B(2, 3);
+        return call(b, 0) + call(b, 1) + call(b, 2) + call(b, 3);
+      }
+    `);
+    // 4 + 3 + 2 + 4
+    expect(callExport(mod)).toBe(13);
+  });
+
+  it("the installed methods are NOT enumerable — `Object.keys` still sees only the elements", async () => {
+    // The install uses §17 method attributes (`{writable, !enumerable,
+    // configurable}`), the same flags `C.prototype` gets, so the method name
+    // must not appear in the enumerable own-key surface. Asserted as ABSENCE of
+    // the key rather than as a key COUNT: a standalone Array-subclass carrier
+    // answers `Object.keys(b).length === 0` for its elements too (measured on
+    // `origin/main`, unchanged by this PR and out of scope here), so a count
+    // would be asserting that unrelated gap rather than this property.
+    const mod = await compileStandalone(`
+      class B extends Array { constructor(n) { super(n); this[0] = 1; this[1] = 2; } d() { return 7; } }
+      function call(o) { return o.d(); }
+      export function test() {
+        var b = new B(2);
+        var keys = Object.keys(b);
+        var sawMethod = 0;
+        for (var i = 0; i < keys.length; i++) if (keys[i] === "d") sawMethod = 1;
+        return call(b) + 100 * sawMethod;
+      }
+    `);
+    expect(callExport(mod)).toBe(7);
+  });
+
+  it("a plain class's dynamic dispatch keeps working (the struct arm is untouched)", async () => {
+    const mod = await compileStandalone(`
+      class P { constructor(v) { this.v = v; } d() { return this.v; } }
+      function callD(o) { return o.d(); }
+      export function test() { return callD(new P(5)); }
+    `);
+    expect(callExport(mod)).toBe(5);
+  });
+
+  it("an extracted method still sees an absent receiver — the #2025 TypeError is preserved", async () => {
+    const mod = await compileStandalone(`
+      class B extends Array { constructor(n) { super(n); this[0] = 4; } d() { return this[0]; } }
+      export function test() {
+        var b = new B(1);
+        var f = b.d;
+        try { f(); } catch (e) { return e instanceof TypeError ? 1 : 2; }
+        return 0;
+      }
+    `);
+    // 1 = calling the extracted method with no receiver threw a CATCHABLE
+    // TypeError rather than trapping or silently answering.
+    expect(callExport(mod)).toBe(1);
+  });
+});
+
+// ── S2c ──────────────────────────────────────────────────────────────────────
+//
+// With S2b's subclass family fixed, the standalone `__module_init` stopped in
+// the polyfill's `Intl` section: standalone deliberately leaves the `Intl`
+// IDENTIFIER null (#5206 — there is no ICU in pure Wasm), and the polyfill
+// reads that namespace at MODULE TOP LEVEL, so init threw at
+// `"formatToParts" in ai.prototype` before any Temporal object existed.
+//
+// The fix is provider-local and lexical, not a codegen change: the #5383 S2c
+// shim (`src/temporal-intl-shim.ts`) is prepended to the polyfill SOURCE for
+// the standalone / WASI provider builds only. An `Intl.<member>` → `undefined`
+// codegen arm was written and REVERTED in S2b — it moved the failure to the
+// next line and changed what every standalone program sees.
+//
+// These cases pin the contract the shim has to meet, which is dictated by the
+// polyfill's own eager uses:
+//   * every EAGER use evaluates without throwing (init must RETURN), and
+//   * every LAZY use throws a RangeError that NAMES the target.
+//
+// Measured with the shim in place (whole linked bundle, `--target standalone`,
+// `hostBridge: "off"`, 2026-09-08): compiles in 44 s to 2.96 MB with ZERO
+// imports, and `__module_init` RETURNS. Where it stops next is recorded in the
+// issue file (S2c findings) — the `Temporal` namespace does not survive the
+// linked-provider getter boundary, so the S2 smoke test is still not written.
+
+describe("#5383 S2c — the standalone provider's `Intl` refusal shim", () => {
+  it("every EAGER use the polyfill makes at module top level evaluates", async () => {
+    // The shapes, verbatim in structure from the bundle:
+    //   ct = Intl.DateTimeFormat                                  (cache)
+    //   const ai = Intl.DateTimeFormat
+    //   "formatToParts" in ai.prototype || delete Impl.prototype.formatToParts
+    //   di.supportedLocalesOf = ai.supportedLocalesOf
+    //   const {format,formatToParts} = Intl.DurationFormat?.prototype ?? {}
+    const mod = await compileStandalone(
+      withIntlShim(`
+        const ct = Intl.DateTimeFormat;
+        const ai = Intl.DateTimeFormat;
+        class DateTimeFormatImpl { formatToParts() { return 1; } }
+        "formatToParts" in ai.prototype || delete DateTimeFormatImpl.prototype.formatToParts;
+        const di = {};
+        di.supportedLocalesOf = ai.supportedLocalesOf;
+        const durationProto = Intl.DurationFormat?.prototype;
+        const tz = Intl.supportedValuesOf?.("timeZone");
+        export function test() {
+          var bits = 0;
+          if (typeof ct === "function") bits += 1;
+          // TRUE keeps the polyfill's own formatToParts — the delete branch
+          // must not run, or its DateTimeFormat surface loses a method.
+          if ("formatToParts" in ai.prototype) bits += 2;
+          if (durationProto === undefined) bits += 4;
+          if (tz === undefined) bits += 8;
+          if (new DateTimeFormatImpl().formatToParts() === 1) bits += 16;
+          return bits;
+        }
+      `),
+    );
+    expect(callExport(mod)).toBe(31);
+  });
+
+  it("a LAZY use throws a catchable RangeError that names the target", async () => {
+    // `Temporal.Now.timeZoneId()` is `(new Intl.DateTimeFormat).resolvedOptions().timeZone`
+    // in the bundle. The refusal has to be nameable — not a trap, not a wrong
+    // answer. The 66 Intl-dependent Temporal rows are out of scope for #5383
+    // and this is what they will report.
+    const mod = await compileStandalone(
+      withIntlShim(`
+        export function test() {
+          try {
+            const f = new Intl.DateTimeFormat("en-US-u-ca-gregory", { day: "numeric" });
+            return 0;
+          } catch (e) {
+            if (!(e instanceof RangeError)) return 1;
+            return e.message.indexOf("--target standalone") >= 0 ? 2 : 3;
+          }
+        }
+      `),
+    );
+    expect(callExport(mod)).toBe(2);
+  });
+
+  it("a method on the refusal class throws the same way, so `in`-probing it is safe", async () => {
+    const mod = await compileStandalone(
+      withIntlShim(`
+        const ai = Intl.DateTimeFormat;
+        export function test() {
+          const proto = ai.prototype;
+          try { proto.formatToParts(); } catch (e) { return e instanceof RangeError ? 1 : 2; }
+          return 0;
+        }
+      `),
+    );
+    expect(callExport(mod)).toBe(1);
+  });
+});
+
+describe("#5383 S2c — the shim re-keys the standalone provider and leaves the host lane alone", () => {
+  const polyfillSource = "export const Temporal = { PlainDate: 1 };\n";
+
+  it("the `gc` key is the fingerprint of the BUNDLE — the host provider is unaffected", () => {
+    // The same two-part fingerprint `temporalProviderCacheKey` computes, with
+    // the source NOT wrapped. If a future edit ever prepends anything on the
+    // host lane this is what fails, and the host artifact sha would move with
+    // it (measured identical across S2c: key 372a41be…, sha baff93a9…).
+    const optionFingerprint = JSON.stringify({
+      target: "gc",
+      fast: false,
+      nativeStrings: false,
+      utf8Storage: false,
+      semanticProviders: "auto",
+      hostBridge: "auto",
+      platform: "web",
+    });
+    const hash = createHash("sha256");
+    for (const part of [polyfillSource, optionFingerprint]) {
+      hash.update(String(part.length));
+      hash.update(":");
+      hash.update(part);
+      hash.update("\n");
+    }
+    expect(temporalProviderCacheKey({ polyfillSource })).toBe(hash.digest("hex"));
+  });
+
+  it("standalone and wasi keys differ from `gc` and from each other", () => {
+    const gc = temporalProviderCacheKey({ polyfillSource });
+    const standalone = temporalProviderCacheKey({ polyfillSource, compileOptions: { target: "standalone" } as never });
+    const wasi = temporalProviderCacheKey({ polyfillSource, compileOptions: { target: "wasi" } as never });
+    expect(new Set([gc, standalone, wasi]).size).toBe(3);
+  });
+
+  it("the shim declares `Intl` once and prefixes its own binding", () => {
+    const shim = standaloneIntlShimSource();
+    expect(shim.match(/\bconst Intl\b/g)).toHaveLength(1);
+    // Collision safety against the bundle's 340 top-level bindings.
+    expect(shim).toContain("__js2wasm_IntlDateTimeFormat");
+    expect(shim).toContain("--target standalone");
+  });
+});
+
+// ── S2d — the standalone cross-module OBJECT boundary ───────────────────────
+//
+// The stop S2c measured: a value the provider mints reaches the consumer with
+// ZERO own keys and every read `undefined`, while the SAME read inside the
+// provider answers correctly. Two causes, both fixed here and both asserted
+// below on a throwaway package (nothing Temporal-specific about either):
+//
+//   1. the linker replaced the boundary value with a JS host MIRROR even for a
+//      provider compiled for a non-JavaScript environment — a mirror bound to
+//      `__struct_field_names` / `__sget_*` exports that a standalone binary does
+//      not have, handed to a consumer that is wasm and cannot read a JS proxy;
+//   2. with the raw struct passing through, the consumer's dynamic terminals
+//      are module-local `ref.test` ladders over the struct types THAT module
+//      declared, so a provider-minted struct misses every arm. The provider now
+//      publishes its own terminals (`standalone-link-boundary.ts`) and the
+//      consumer asks them on the paths where its own ladder has already missed.
+//
+// Base measurements for the assertions (this branch's merge base, host-free
+// standalone, `.tmp/s2d/probe3`): keys 0 / read `undefined` for ALL THREE
+// carrier shapes below. The `gc` control answered the post-fix values on base
+// already — that is what makes this standalone-specific.
+describe("#5383 S2d — a provider-minted object survives the standalone getter boundary", () => {
+  /** Three ways to build the same three-property object, three carriers. */
+  const CARRIERS: Record<string, string> = {
+    literal: `export const NS = { a: 1, b: 2, c: 3 };`,
+    "assigned own props": `const o = {}; o.a = 1; o.b = 2; o.c = 3; export const NS = o;`,
+    defineProperty: `const o = {};
+      Object.defineProperty(o, "a", { value: 1, enumerable: true, writable: true, configurable: true });
+      o.b = 2; o.c = 3; export const NS = o;`,
+  };
+
+  const CONSUMER = `
+    export function keysHere() { return Object.keys(NS).length; }
+    export function readA() { return NS.a === 1 ? 1 : (NS.a === undefined ? -1 : -2); }
+    export function readMissing() { return NS.zzz === undefined ? 1 : 0; }
+  `;
+
+  async function linkAndRun(providerSource: string, target: "standalone" | "gc") {
+    const root = mkdtempSync(join(tmpdir(), "issue-5383-s2d-"));
+    const packageRoot = join(root, "node_modules", "ns5383");
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "ns5383", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(join(packageRoot, "index.js"), providerSource);
+    const entry = join(root, "entry.js");
+    writeFileSync(entry, `import { NS } from "ns5383";\nexport function __probe() { return typeof NS; }\n`);
+    const standalone = target === "standalone" ? { target: "standalone" as const, hostBridge: "off" as const } : {};
+    const built = await compileProject(entry, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      packageCacheDir: join(root, "providers"),
+      ...standalone,
+    });
+    expect(built.success).toBe(true);
+    // Load-bearing: a `bundled` plan would inline the package and test nothing.
+    expect(built.linkPlan?.mode).toBe("separate");
+    const artifact = (built.linkedModules ?? []).find((entry) => entry.packageName === "ns5383")!;
+    const boundary = artifact.exportBoundaries?.NS;
+    expect(boundary?.kind).toBe("getter");
+    const field = boundary!.field;
+    const stub = "/__ns_stub.ts";
+    const consumerEntry = "/__main.js";
+    const result = await compileMulti(
+      {
+        [stub]: `export declare function ${field}(): any;\n`,
+        [consumerEntry]: `import { ${field} } from "/__ns_stub";\nconst NS = ${field}();\n${CONSUMER}`,
+      },
+      consumerEntry,
+      {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        canonicalRuntimeTypes: true,
+        sharedExceptionTag: true,
+        link: [artifact.namespace],
+        linkedPackageBindings: new Map([[field, { module: artifact.namespace, field }]]),
+        ...standalone,
+      },
+    );
+    (result as { linkedModules?: unknown[] }).linkedModules = [artifact];
+    expect(result.success).toBe(true);
+    // The EMPTY import object is the host-free contract: nothing below may
+    // depend on a JS host being present.
+    const { instance } = await instantiateLinkedProject(result, target === "standalone" ? {} : undefined);
+    const exports = instance.exports as unknown as Record<string, () => unknown>;
+    return { keysHere: exports.keysHere(), readA: exports.readA(), readMissing: exports.readMissing() };
+  }
+
+  for (const [name, source] of Object.entries(CARRIERS)) {
+    it(`host-free standalone: a ${name} carrier keeps its keys and values`, { timeout: 300_000 }, async () => {
+      expect(await linkAndRun(source, "standalone")).toEqual({ keysHere: 3, readA: 1, readMissing: 1 });
+    });
+  }
+
+  it("the gc control answers identically — the host mirror path is untouched", { timeout: 300_000 }, async () => {
+    expect(await linkAndRun(CARRIERS.literal, "gc")).toEqual({ keysHere: 3, readA: 1, readMissing: 1 });
   });
 });
