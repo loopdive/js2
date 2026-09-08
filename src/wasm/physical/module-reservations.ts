@@ -422,6 +422,13 @@ export class PhysicalModuleReservations {
     return this.#register({ kind: "type", key, object: definition, typeIndex }, typeIndex);
   }
 
+  /** Authenticate a prerequisite before allocating dependents; exposes no final index. */
+  assertTypeReservation(token: TypeReservation): void {
+    this.#require("reserving");
+    this.#owned(token);
+    if (token.kind !== "type") this.#fail("expected type reservation token");
+  }
+
   /** Reserve the emitter-affecting descriptor before freeze, including future members. */
   reserveCanonicalRuntimeRecGroup(
     key: PhysicalResourceKey,

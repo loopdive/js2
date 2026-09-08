@@ -6474,3 +6474,40 @@ Reservation-phase producer authentication is separate from completed-fill
 attestation: reserve-all-before-freeze cannot require completed dependencies.
 Neither accessor establishes whole-program execution. Actual scanner,
 flattening, resource-chain execution, replay and retirement remain open.
+
+## Native argument-vector checkpoint — 2026-09-08
+
+Parent integrated the independently reviewed six-file argument-vector slice
+on published string-authentication base bfe31c8bd96d748e867562e3e9b78343b72d1877
+(#5775). Canonical array/carrier descriptors and new/push builders retain
+legacy callers; the backend reserves and fills through the existing physical
+ledger. Dependencies are authenticated before allocation, including an early
+argument-array token when supplied. Foreign/copied matching-index tokens do
+not gain ownership from structural equality.
+
+The ledger's new reservation-phase assertTypeReservation has six new controls;
+the earlier ledger-only validation passed TS7 and154/154 tests. Independent
+High review approved the repaired canonical source and exact complete-donor
+reconstruction controls. Parent composed TS7 session33890 exited0. Full
+boundary suite76281 exited0:213/213 tests,139.31s. The two added modules give
+88 modules and319 edges (206 type-only,113 runtime), with historical
+activation records and allowed edges preserved.
+
+Runtime validation is still pending: the worker's malformed test launcher
+started no tests and remains alive; no stop or replacement was authorized.
+Consequently this checkpoint is not yet declared ready for publication.
+See agent-context/3518-native-argument-vector-integration-2026-09-08.md for
+exact hashes and test provenance. Closure-root/metadata static implementation
+is dispatched independently; it must not duplicate Promise capture ownership.
+Full object/callable dispatch, real whole-family execution, replay, public
+IR-only cutover and strict direct-codegen retirement remain open.
+
+Subsequent independent parent-checkout runtime validation55631 exited0:
+38/38 passed (32 argument-vector and6 reservation-auth),0.859s. This did not
+terminate or restart the original worker launcher. Initial36/38 exposed two
+test-instrument expectations, repaired with High approval: boolean identity
+comparison avoids opaque Wasm inspection; a positive-first field-mutability
+negative matches the ledger's content contract and proves rejection before
+either function fills. No production semantics or identity gates were relaxed.
+The focused runtime,213 boundary tests and composed TS7 now pass; publication
+checks remain next. Full migration acceptance above remains open.
