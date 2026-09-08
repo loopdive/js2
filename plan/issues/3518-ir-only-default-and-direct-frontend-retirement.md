@@ -5050,3 +5050,62 @@ Promise construction, and the complete async family at the array-returning
 signature. Existing public-route success does not remove either gap. Preserve
 the exact closure inventory while wiring certification; logical vector/await
 typing and all runtime/physical/public-cutover requirements remain in scope.
+
+### Native settlement implementation integrated (2026-09-08)
+
+The settlement checkpoint moves six executable builders and seven constants
+into `src/runtime/wasmgc/promise/settlement-bodies.ts`. Four existing scheduler
+registrations call the canonical builders. Context-bearing hook and unhandled
+rejection adapters retain their signatures and allocation order. Identity
+fulfillment still targets resolve/adoption, not direct fulfillment. Original
+13-declaration receipt and all 88 retained donor declarations remain checked.
+
+High review found no production regression, but identified three test-control
+gaps: reconstructed headers could hide signature/modifier changes; forwarding
+checks missed type-only clauses and aliases; source receipts did not independently
+pin compile recipes/counts. Revision 2 repairs these without changing the three
+production blobs or reseeding original receipts. The composed branch passes
+148/148 focused controls (129 ownership and 19 source). Revision 1 and its reports
+remain preserved rather than relabelled.
+
+Final composed regression measurement passes 45/45 across the existing delay,
+native async-family, hook, adoption and rejection-tracking suites. TS7 typecheck
+also exits zero. These are measured on the integrated physical/settlement source,
+not inferred from the earlier standalone worker results.
+
+Boundary activation now requires 60 canonical modules, adding exactly settlement
+to the prior 59. All 23 previous activation records and allowed edges remain
+unchanged. The complete selected closure measures 203 resolved edges (145
+type-only, 58 runtime), and all 101 boundary controls pass. This selected closure
+is not the full compiler graph or a retirement certificate.
+
+The full inventory check exits zero with `inventoryValid: true` but
+`architectureComplete: false`: 1,305 modules (60 clean, five compatibility
+adapters, 1,240 unmigrated), zero classification errors and zero unresolved
+imports. Four unknown dynamic-import edges remain: two in the Porffor loader,
+one in optimize, and one in the platform-capability adapter. Inventory validity
+must not be reported as static graph closure.
+
+The revision-2 historical pair compares an independently clean exact-e3de root
+with the composed settlement branch based on published `1731cf377a`. All eight
+pairs match with no pending rows; both children exit zero with no signal/error.
+Serialized-report SHA256s are
+`aa2915cb82b0322e223f99c3eb1eb60d2adeb4cf68dea4ec2f6c9406dcb7b721`
+(baseline) and `bee9a2f9e1429193b97dbc18581f1b7f71e415f6f4e69755087cbf31a991aa3a`
+(candidate), retained under `.tmp/native-promise-settlement-historical-r2` in
+the settlement integration worktree. Four standalone rows and four legacy WASI
+rows remain separately labelled. Acceptance is limited to these public-route
+fixtures, not whole-program source admission, physical async acceptance, ABI30,
+public cutover or retirement.
+
+The exact source-admission API and seven-file implementation contract are now
+in `plan/agent-context/3518-certified-delay-source-api-contract-2026-09-08.md`.
+The explicit default-off frontend request does not imply provider availability;
+the next missing runtime declaration must remain a located refusal. Full-family
+logical vector/await typing remains mandatory and independent.
+
+The frame worker's scoped claim was independently verified upstream with owner
+`ttraenkler/codex-astra-native-async-frame-bodies-20260908`, write ID
+`67945-bzg89dfn`, claim commit `178447ad6adedc33d882ab35f412f7c5b495caa6`.
+Its hook process completed and released the serialized test slot; static
+implementation proceeds separately. No frame implementation is implied here.

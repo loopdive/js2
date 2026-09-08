@@ -50,6 +50,32 @@ import { ensureUnhandledRejectionTracking, buildNoteUnhandledRejection } from ".
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 import {
+  PROMISE_STATE_PENDING,
+  PROMISE_STATE_FULFILLED,
+  PROMISE_STATE_REJECTED,
+  DENO_PROMISE_HOOK_INIT,
+  DENO_PROMISE_HOOK_BEFORE,
+  DENO_PROMISE_HOOK_AFTER,
+  DENO_PROMISE_HOOK_RESOLVE,
+  buildPromiseSettleLocals,
+  buildPromiseSettleBody,
+  buildIdentityWrapperLocals,
+  buildIdentityWrapperBody,
+  buildDenoPromiseHookCall as buildPromiseHookInstructions,
+  type PromiseHookResources,
+  type PromiseSettleResources,
+  type IdentityReactionResources,
+} from "../runtime/wasmgc/promise/settlement-bodies.js";
+export {
+  PROMISE_STATE_PENDING,
+  PROMISE_STATE_FULFILLED,
+  PROMISE_STATE_REJECTED,
+  DENO_PROMISE_HOOK_INIT,
+  DENO_PROMISE_HOOK_BEFORE,
+  DENO_PROMISE_HOOK_AFTER,
+  DENO_PROMISE_HOOK_RESOLVE,
+} from "../runtime/wasmgc/promise/settlement-bodies.js";
+import {
   buildGrowLocals,
   buildGrowBody,
   buildEnqueueBody,
@@ -58,23 +84,7 @@ import {
   type PreparedNativeMicrotaskReservations,
 } from "../runtime/wasmgc/async/microtask-queue-bodies.js";
 
-/**
- * #1326 — Sentinel state values for `$Promise.state`. Match the JS spec
- * tri-state: pending → fulfilled (final), or pending → rejected (final).
- * State transitions other than from pending are illegal per spec and
- * silently ignored by Phase 1B's resolve/reject emit code.
- */
-export const PROMISE_STATE_PENDING = 0;
-export const PROMISE_STATE_FULFILLED = 1;
-export const PROMISE_STATE_REJECTED = 2;
-
 const DENO_PROMISE_HOOK_DISPATCH = "__v8x_dispatch_promise_hook";
-
-/** v8::PromiseHookType values used by the private Deno graph dispatcher. */
-export const DENO_PROMISE_HOOK_INIT = 0;
-export const DENO_PROMISE_HOOK_BEFORE = 1;
-export const DENO_PROMISE_HOOK_AFTER = 2;
-export const DENO_PROMISE_HOOK_RESOLVE = 3;
 
 /**
  * Build a direct, same-module Promise-hook dispatch for an app-owned
@@ -94,17 +104,52 @@ export function buildDenoPromiseHookCall(
   promiseInstrs: Instr[],
   parentInstrs?: Instr[],
 ): Instr[] {
+  return buildPromiseHookInstructions(bindPromiseHookResources(ctx, parentInstrs), kind, promiseInstrs);
+}
+
+/** Bind at the original hook construction point: undefined can reserve resources. */
+function bindPromiseHookResources(ctx: CodegenContext, parentInstrs?: Instr[]): PromiseHookResources {
   const dispatchFuncIdx = ctx.funcMap.get(DENO_PROMISE_HOOK_DISPATCH);
-  if (dispatchFuncIdx === undefined) return [];
-  return [
-    { op: "f64.const", value: kind },
-    ...promiseInstrs,
-    { op: "extern.convert_any" },
-    ...(parentInstrs === undefined
-      ? canonicalUndefinedExternInstrs(ctx)
-      : [...parentInstrs, { op: "extern.convert_any" } satisfies Instr]),
-    { op: "call", funcIdx: dispatchFuncIdx },
-  ];
+  if (dispatchFuncIdx === undefined) return undefined;
+  return {
+    dispatchFuncIdx,
+    parentExternInstrs:
+      parentInstrs === undefined
+        ? canonicalUndefinedExternInstrs(ctx)
+        : [...parentInstrs, { op: "extern.convert_any" } satisfies Instr],
+  };
+}
+
+/** Snapshot mutable scheduler indices only after the resolve-hook preparation. */
+function bindPromiseSettleResources(
+  ctx: CodegenContext,
+  state: AsyncSchedulerState,
+  promiseTypeIdx: number,
+  callbackTypeIdx: number,
+): PromiseSettleResources {
+  const resolveHook = bindPromiseHookResources(ctx);
+  return {
+    promiseTypeIdx,
+    callbackTypeIdx,
+    resolveHook,
+    unhandledHeadGlobalIdx: state.unhandledHeadGlobalIdx,
+    unhandledNodeTypeIdx: state.unhandledNodeTypeIdx,
+    enqueueFuncIdx: state.enqueueFuncIdx,
+  };
+}
+
+/** Arguments capture the identity target before either independently prepared hook. */
+function bindIdentityReactionResources(
+  ctx: CodegenContext,
+  capsTypeIdx: number,
+  settleFuncIdx: number,
+): IdentityReactionResources {
+  return {
+    capsTypeIdx,
+    settleFuncIdx,
+    beforeHook: bindPromiseHookResources(ctx),
+    afterHook: bindPromiseHookResources(ctx),
+  };
 }
 
 /**
@@ -626,7 +671,10 @@ export function ensurePromiseSettleFunctions(ctx: CodegenContext): void {
     name: "__promise_fulfill",
     typeIdx: settleTypeIdx,
     locals: buildPromiseSettleLocals(callbackTypeIdx),
-    body: buildPromiseSettleBody(ctx, state, promiseTypeIdx, callbackTypeIdx, PROMISE_STATE_FULFILLED),
+    body: buildPromiseSettleBody(
+      bindPromiseSettleResources(ctx, state, promiseTypeIdx, callbackTypeIdx),
+      PROMISE_STATE_FULFILLED,
+    ),
     exported: false,
   });
   ctx.funcMap.set("__promise_fulfill", state.promiseFulfillFuncIdx);
@@ -635,7 +683,10 @@ export function ensurePromiseSettleFunctions(ctx: CodegenContext): void {
     name: "__promise_reject",
     typeIdx: settleTypeIdx,
     locals: buildPromiseSettleLocals(callbackTypeIdx),
-    body: buildPromiseSettleBody(ctx, state, promiseTypeIdx, callbackTypeIdx, PROMISE_STATE_REJECTED),
+    body: buildPromiseSettleBody(
+      bindPromiseSettleResources(ctx, state, promiseTypeIdx, callbackTypeIdx),
+      PROMISE_STATE_REJECTED,
+    ),
     exported: false,
   });
   ctx.funcMap.set("__promise_reject", state.promiseRejectFuncIdx);
@@ -650,7 +701,7 @@ export function ensurePromiseSettleFunctions(ctx: CodegenContext): void {
     name: "__then_identity_fulfill",
     typeIdx: state.microtaskFuncTypeIdx,
     locals: buildIdentityWrapperLocals(capsTypeIdx),
-    body: buildIdentityWrapperBody(ctx, capsTypeIdx, state.promiseResolveValueFuncIdx),
+    body: buildIdentityWrapperBody(bindIdentityReactionResources(ctx, capsTypeIdx, state.promiseResolveValueFuncIdx)),
     exported: false,
   });
   ctx.funcMap.set("__then_identity_fulfill", state.identityFulfillWrapperFuncIdx);
@@ -659,7 +710,7 @@ export function ensurePromiseSettleFunctions(ctx: CodegenContext): void {
     name: "__then_identity_reject",
     typeIdx: state.microtaskFuncTypeIdx,
     locals: buildIdentityWrapperLocals(capsTypeIdx),
-    body: buildIdentityWrapperBody(ctx, capsTypeIdx, state.promiseRejectFuncIdx),
+    body: buildIdentityWrapperBody(bindIdentityReactionResources(ctx, capsTypeIdx, state.promiseRejectFuncIdx)),
     exported: false,
   });
   ctx.funcMap.set("__then_identity_reject", state.identityRejectWrapperFuncIdx);
@@ -1101,150 +1152,6 @@ function ensurePromiseThenableSubstrate(
   };
   cache.__promiseThenableSubstrate = result;
   return result;
-}
-
-function buildPromiseSettleLocals(callbackTypeIdx: number): LocalDef[] {
-  // Params 0/1: (promise, value). Locals start at 2.
-  return [
-    { name: "$callbacks", type: { kind: "externref" } },
-    { name: "$callback", type: { kind: "ref", typeIdx: callbackTypeIdx } },
-  ];
-}
-
-function buildPromiseSettleBody(
-  ctx: CodegenContext,
-  state: AsyncSchedulerState,
-  promiseTypeIdx: number,
-  callbackTypeIdx: number,
-  settledState: typeof PROMISE_STATE_FULFILLED | typeof PROMISE_STATE_REJECTED,
-): Instr[] {
-  const promiseLocal = 0;
-  const valueLocal = 1;
-  const callbacksLocal = 2;
-  const callbackLocal = 3;
-  const fnFieldIdx = settledState === PROMISE_STATE_FULFILLED ? 0 : 2;
-  const capsFieldIdx = settledState === PROMISE_STATE_FULFILLED ? 1 : 3;
-
-  return [
-    // V8 reports the resolving-function invocation even when the promise has
-    // already settled.  Keep this before the one-shot guard for the same
-    // duplicate-resolution behavior.
-    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_RESOLVE, [{ op: "local.get", index: promiseLocal }]),
-    // Promise settlement is one-shot. If a user callback tries to resolve the
-    // same chained promise again, return the attempted value and leave the
-    // original state/value intact.
-    { op: "local.get", index: promiseLocal },
-    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 0 },
-    { op: "i32.const", value: PROMISE_STATE_PENDING },
-    { op: "i32.ne" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [{ op: "local.get", index: valueLocal }, { op: "return" }],
-    },
-
-    // promise.state = fulfilled/rejected; promise.value = value
-    { op: "local.get", index: promiseLocal },
-    { op: "i32.const", value: settledState },
-    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 0 },
-    { op: "local.get", index: promiseLocal },
-    { op: "local.get", index: valueLocal },
-    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 1 },
-
-    // Detach callbacks before enqueueing so re-entrant `.then` calls append to
-    // the settled promise's normal immediate-enqueue path.
-    { op: "local.get", index: promiseLocal },
-    { op: "struct.get", typeIdx: promiseTypeIdx, fieldIdx: 2 },
-    { op: "local.set", index: callbacksLocal },
-    { op: "local.get", index: promiseLocal },
-    { op: "ref.null.extern" },
-    { op: "struct.set", typeIdx: promiseTypeIdx, fieldIdx: 2 },
-
-    // (#2958) A REJECTED settle with NO detached callbacks means no reaction was
-    // attached before the promise rejected — record it as (so-far) unhandled so
-    // the exit-time reporter can surface it. A later `.then/.catch` marks it
-    // handled. Skipped for FULFILLED and when tracking is inactive (non-wasi).
-    // The drain loop below is a no-op when callbacks is null, so ordering is safe.
-    ...(settledState === PROMISE_STATE_REJECTED && state.unhandledHeadGlobalIdx >= 0
-      ? ([
-          { op: "local.get", index: callbacksLocal },
-          { op: "ref.is_null" },
-          {
-            op: "if",
-            blockType: { kind: "empty" },
-            then: buildNoteUnhandledRejection(state, [{ op: "local.get", index: promiseLocal }]),
-          },
-        ] satisfies Instr[])
-      : []),
-
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: callbacksLocal },
-            { op: "ref.is_null" },
-            { op: "br_if", depth: 1 },
-
-            { op: "local.get", index: callbacksLocal },
-            { op: "any.convert_extern" },
-            { op: "ref.cast", typeIdx: callbackTypeIdx },
-            { op: "local.set", index: callbackLocal },
-
-            { op: "local.get", index: callbackLocal },
-            { op: "struct.get", typeIdx: callbackTypeIdx, fieldIdx: fnFieldIdx },
-            { op: "local.get", index: callbackLocal },
-            { op: "struct.get", typeIdx: callbackTypeIdx, fieldIdx: capsFieldIdx },
-            { op: "local.get", index: valueLocal },
-            { op: "call", funcIdx: state.enqueueFuncIdx },
-
-            { op: "local.get", index: callbackLocal },
-            { op: "struct.get", typeIdx: callbackTypeIdx, fieldIdx: 4 },
-            { op: "local.set", index: callbacksLocal },
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-
-    { op: "local.get", index: valueLocal },
-  ];
-}
-
-function buildIdentityWrapperLocals(capsTypeIdx: number): LocalDef[] {
-  // Params 0/1: (caps, value). Locals 2/3 are decoded caps + settle result.
-  return [
-    { name: "$caps", type: { kind: "ref", typeIdx: capsTypeIdx } },
-    { name: "$result", type: { kind: "externref" } },
-  ];
-}
-
-function buildIdentityWrapperBody(ctx: CodegenContext, capsTypeIdx: number, settleFuncIdx: number): Instr[] {
-  const rawCapsLocal = 0;
-  const valueLocal = 1;
-  const capsLocal = 2;
-  const resultLocal = 3;
-  const chainedPromise = (): Instr[] => [
-    { op: "local.get", index: capsLocal },
-    { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
-  ];
-  return [
-    { op: "local.get", index: rawCapsLocal },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: capsTypeIdx },
-    { op: "local.set", index: capsLocal },
-    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_BEFORE, chainedPromise()),
-    { op: "local.get", index: capsLocal },
-    { op: "struct.get", typeIdx: capsTypeIdx, fieldIdx: 1 },
-    { op: "local.get", index: valueLocal },
-    { op: "call", funcIdx: settleFuncIdx },
-    { op: "local.set", index: resultLocal },
-    ...buildDenoPromiseHookCall(ctx, DENO_PROMISE_HOOK_AFTER, chainedPromise()),
-    { op: "local.get", index: resultLocal },
-  ];
 }
 
 function buildPromiseResolveValueLocals(promiseTypeIdx: number): LocalDef[] {
