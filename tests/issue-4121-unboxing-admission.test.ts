@@ -66,8 +66,9 @@ async function run(source: string, env?: Record<string, string>): Promise<unknow
  * so the old gate never collected it. `s.next()` is genuinely cross-domain —
  * string from one receiver, number from the other — so the mixed-assignment
  * carrier widens the slot to `externref` and the #3765 definition-site fixpoint
- * cannot ground it either. Every USE of `acc` is ToNumber-invariant, so route 1
- * (#684) proves the f64 slot — once admission lets it look.
+ * cannot ground it either. Numeric uses alone do not prove that moving
+ * coercion to the write is safe: an unresolved next() may return an object.
+ * Keep the boxed carrier until the source primitive type is proven.
  */
 const WIDENED_ACCUMULATOR = `
 function A(){} A.prototype.next = function(){ return "7"; };
@@ -82,9 +83,9 @@ export function main(){ return f(new A()) * 1000 + f(new B()); }
 `;
 
 describe("#4121 — admission keys on the emitted representation, not the declared type", () => {
-  it("unboxes a declared-`number` binding whose slot codegen widens", async () => {
+  it("keeps an unresolved method result boxed despite numeric uses", async () => {
     const { wat } = await build(WIDENED_ACCUMULATOR);
-    expect(localType(bodyOf(wat!, "f"), "acc")).toBe("f64");
+    expect(localType(bodyOf(wat!, "f"), "acc")).toBe("externref");
   });
 
   it("is off under the kill switch, restoring the boxed carrier exactly", async () => {

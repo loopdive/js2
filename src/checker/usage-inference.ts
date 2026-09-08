@@ -11,10 +11,11 @@
  *
  * ## Soundness argument
  *
- * `__unbox_number` is exactly JS `Number()` (ToNumber). So storing the local
- * as f64 means every write coerces its source via `Number(source)`. This is
- * observationally equivalent to keeping the original value **iff every USE of
- * the variable already applies ToNumber to it** — i.e. the use is
+ * Numeric unboxing may perform JavaScript ToNumber. Storing the local
+ * as f64 means every write coerces its source via ToNumber. This is
+ * safe only when every source has proven non-throwing, side-effect-free
+ * primitive conversion (or every definition is already numeric), and every USE of
+ * the variable already applies ToNumber to it — i.e. the use is
  * *ToNumber-invariant*:
  *
  *   - operand of a strictly-numeric operator (`* / % - ** << >> >>> & | ^`,
@@ -260,6 +261,9 @@ function analyzeFunctionBody(
     // bigint operand traps. `let x: any = 5n; -x` (unary, no sibling to inspect)
     // is only caught here.
     if (decl.initializer && isStaticallyBigInt(checker, decl.initializer)) state.poisoned = true;
+    // Numeric uses do not prove that moving ToNumber to a write is safe.
+    // Objects may throw, mutate state, or return a different value per use.
+    if (decl.initializer && !hasPureNumericCoercion(checker, decl.initializer)) state.bailed = true;
     candidates.set(sym, state);
   };
 
@@ -408,7 +412,7 @@ function classifyUse(checker: ts.TypeChecker, id: ts.Identifier): UseClass {
       // Plain assignment: safe ONLY as the write target (`x = …`); as a source
       // (`y = x`) the value escapes → bail. A bigint RHS poisons the slot.
       case ts.SyntaxKind.EqualsToken:
-        return isLeft ? (isStaticallyBigInt(checker, other) ? "bail" : "safe") : "bail";
+        return isLeft && hasPureNumericCoercion(checker, other) ? "safe" : "bail";
       default:
         return "bail"; // ===, ==, &&, ||, ??, in, instanceof, comma, …
     }
@@ -462,6 +466,27 @@ function isStaticallyBigInt(checker: ts.TypeChecker, expr: ts.Expression): boole
   }
   if (!t) return false;
   return (t.flags & (ts.TypeFlags.BigInt | ts.TypeFlags.BigIntLiteral)) !== 0;
+}
+
+/** Only these primitive types have non-throwing, side-effect-free ToNumber. */
+function hasPureNumericCoercion(checker: ts.TypeChecker, expression: ts.Expression): boolean {
+  while (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isSatisfiesExpression(expression)
+  )
+    expression = expression.expression;
+  const safe =
+    ts.TypeFlags.NumberLike |
+    ts.TypeFlags.StringLike |
+    ts.TypeFlags.BooleanLike |
+    ts.TypeFlags.Null |
+    ts.TypeFlags.Undefined;
+  const type = checker.getTypeAtLocation(expression);
+  const parts = type.isUnion() ? type.types : [type];
+  return parts.length > 0 && parts.every((part) => (part.flags & safe) !== 0);
 }
 
 function isFunctionLike(node: ts.Node): node is FunctionLikeWithBody {
