@@ -159,9 +159,10 @@
         "src/ir/program/prepared-contracts.ts",
         "src/ir/program/errors.ts",
         "src/ir/program/data.ts",
-        "src/ir/program/input.ts"
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts"
       ],
-      "minModules": 12
+      "minModules": 13
     },
     {
       "id": "runtime-contracts",
@@ -178,10 +179,10 @@
     },
     {
       "id": "backend-wasmgc",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/backend/wasmgc"],
       "required": true,
-      "entries": ["src/backend/wasmgc/program/index.ts"],
+      "entries": ["src/backend/wasmgc/resources/native-vectors.ts"],
       "minModules": 1
     },
     {
@@ -195,9 +196,10 @@
         "src/runtime/wasmgc/async/frame-engine.ts",
         "src/runtime/wasmgc/async/native-await.ts",
         "src/runtime/wasmgc/promise/delay-bodies.ts",
-        "src/runtime/wasmgc/promise/combinator-bodies.ts"
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts"
       ],
-      "minModules": 6
+      "minModules": 7
     },
     {
       "id": "standalone-platform",
@@ -436,6 +438,43 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts"
+      ],
+      "minModules": 13
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts"
+      ],
+      "minModules": 7
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-vectors.ts"],
+      "minModules": 1
+    },
     {
       "layer": "ir-core",
       "entries": [
@@ -868,6 +907,9 @@
     }
   ],
   "files": [
+    { "path": "src/ir/program/native-vector-resources.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/backend/wasmgc/resources/native-vectors.ts", "state": "clean", "layer": "backend-wasmgc" },
+    { "path": "src/runtime/wasmgc/values/vector-grow-store.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/shared/contracts/ir-preparation-failure.ts", "state": "clean", "layer": "foundation" },
     { "path": "src/shared/contracts/ir-unit-inventory.ts", "state": "clean", "layer": "foundation" },
     { "path": "src/ir/analysis/contracts/allocations.ts", "state": "clean", "layer": "ir-analysis" },
