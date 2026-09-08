@@ -18,6 +18,23 @@ function diagnose(source: string): string[] {
   );
 }
 
+describe("#5388 CI — unclassified computations are not proved mismatches", () => {
+  it.each([
+    `function f(obj:any,key:any):number { obj[key] += 5; return obj[key] as number; }`,
+    `function f(arr:number[]):number { return arr.at(0) as number; }`,
+    `function assertTruthy(value:number):void {if(!value)throw 0;} assertTruthy(true);`,
+    `function f():number {const p=new Promise<number>(resolve=>resolve(42));return p as any as number;}`,
+    `const double=async(x:number):Promise<number>=>x*2; function f():number{return double(21) as any as number;}`,
+  ])("does not classify an unresolved result as incompatible: %s", (source) => {
+    expect(diagnose(source)).toEqual([]);
+  });
+  it("retains a concrete mismatch next to an unclassified branch", () => {
+    expect(diagnose(`declare const unknownValue:any; const n:number = true ? 'x' : unknownValue;`)).toContain(
+      "JS2WASM_UNSOUND_PRIMITIVE_FLOW",
+    );
+  });
+});
+
 describe("#5388 — primitive origins respect actual use points", () => {
   it.each([
     `let value:unknown='old'; value=2; if(typeof value==='number'){const n:number=value;}`,
@@ -39,6 +56,9 @@ describe("#5388 — primitive origins respect actual use points", () => {
   it.each([
     `function add(x:number){return x+1;} const value:any='x'; console.log(add(value));`,
     `const value:any='x'; const n:number=value;`,
+    `function f(value:number){return typeof value;} f(true);`,
+    `function f(value:number){if(!value)throw 0;} f('x' as any);`,
+    `const n = {} as unknown as number;`,
     `const n='x' as unknown as number;`,
     `const n='hello' as unknown as boolean;`,
     `function identity<T>(value:T):T{return value;} const n:number=identity('x' as unknown as number);`,

@@ -10114,6 +10114,54 @@
       "destination": "compiler",
       "owner": "3518-coordinator",
       "nextBoundary": "Review the frontend, orchestration, runtime and shared-contract split before migration."
+    },
+    {
+      "path": "src/codegen/declarations/widened-property-return.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "5386-alias-property-writes",
+      "nextBoundary": "Separate AST-based alias evidence from physical return-carrier selection."
+    },
+    {
+      "path": "src/compiler/lookup-semantic-safety.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "5387-semantic-safety",
+      "nextBoundary": "Move source-based semantic diagnostics behind the frontend boundary; TypeScript nodes and checker facts remain frontend-owned."
+    },
+    {
+      "path": "src/compiler/primitive-semantic-safety.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "5387-semantic-safety",
+      "nextBoundary": "Move source-based semantic diagnostics behind the frontend boundary; TypeScript nodes and checker facts remain frontend-owned."
+    },
+    {
+      "path": "src/compiler/semantic-safety-types.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "5387-semantic-safety",
+      "nextBoundary": "Move source-based semantic diagnostics behind the frontend boundary; TypeScript nodes and checker facts remain frontend-owned."
+    },
+    {
+      "path": "src/compiler/semantic-safety.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "5387-semantic-safety",
+      "nextBoundary": "Move source-based semantic diagnostics behind the frontend boundary; TypeScript nodes and checker facts remain frontend-owned."
+    },
+    {
+      "path": "src/compiler/structural-semantic-safety.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "frontend-ts",
+      "owner": "5387-semantic-safety",
+      "nextBoundary": "Move source-based semantic diagnostics behind the frontend boundary; TypeScript nodes and checker facts remain frontend-owned."
     }
   ]
 }

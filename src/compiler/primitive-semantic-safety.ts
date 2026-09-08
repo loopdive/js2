@@ -156,20 +156,21 @@ function variableKindsAtUse(
   return values;
 }
 
-/** A direct, unmodified generic parameter returns the argument's runtime value. */
+/** Direct generic returns retain visible argument and assignment origins. */
 function returnedGenericArgument(
   checker: ts.TypeChecker,
   expression: ts.Expression,
   implementation: ts.FunctionDeclaration,
   call: ts.CallExpression,
-): ts.Expression | undefined {
+): ts.Expression[] | undefined {
   const value = unwrap(expression);
   if (!ts.isIdentifier(value) || (checker.getTypeAtLocation(value).flags & ts.TypeFlags.TypeParameter) === 0)
     return undefined;
   const declaration = declarationOf(checker, value);
   if (!declaration || !ts.isParameter(declaration) || declaration.parent !== implementation) return undefined;
   const parameterSymbol = checker.getSymbolAtLocation(value);
-  let modified = false;
+  const argument = call.arguments[implementation.parameters.indexOf(declaration)] ?? declaration.initializer;
+  const origins = argument ? [argument] : [];
   const visit = (node: ts.Node): void => {
     if (
       ts.isBinaryExpression(node) &&
@@ -177,20 +178,49 @@ function returnedGenericArgument(
       node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
       ts.isIdentifier(node.left) &&
       checker.getSymbolAtLocation(node.left) === parameterSymbol
-    )
-      modified = true;
+    ) {
+      origins.push(node.operatorToken.kind === ts.SyntaxKind.EqualsToken ? node.right : node);
+    }
     if (
       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
       [ts.SyntaxKind.PlusPlusToken, ts.SyntaxKind.MinusMinusToken].includes(node.operator) &&
       ts.isIdentifier(node.operand) &&
       checker.getSymbolAtLocation(node.operand) === parameterSymbol
     )
-      modified = true;
+      origins.push(node);
     ts.forEachChild(node, visit);
   };
   visit(implementation.body!);
-  if (modified) return undefined;
-  return call.arguments[implementation.parameters.indexOf(declaration)] ?? declaration.initializer;
+  return origins.length ? origins : undefined;
+}
+
+/** Numeric and boolean carriers agree when a parameter is only tested for truthiness. */
+function truthinessOnlyParameter(checker: ts.TypeChecker, parameter: ts.ParameterDeclaration): boolean {
+  if (!ts.isIdentifier(parameter.name)) return false;
+  const fn = parameter.parent;
+  if (!(ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn) || ts.isArrowFunction(fn)) || !fn.body)
+    return false;
+  const binding = checker.getSymbolAtLocation(parameter.name);
+  let reads = 0;
+  let otherUse = false;
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && checker.getSymbolAtLocation(node) === binding) {
+      reads++;
+      let value: ts.Node = node;
+      while (ts.isParenthesizedExpression(value.parent)) value = value.parent;
+      const parent = value.parent;
+      if (
+        !(ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken) &&
+        !(ts.isIfStatement(parent) && parent.expression === value) &&
+        !(ts.isConditionalExpression(parent) && parent.condition === value) &&
+        !(ts.isWhileStatement(parent) && parent.expression === value)
+      )
+        otherUse = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return reads > 0 && !otherUse;
 }
 
 /** Actual visible value origins, never the target type of an assertion. */
@@ -204,6 +234,17 @@ function runtimeKinds(checker: ts.TypeChecker, expression: ts.Expression, seen =
   if (expr.kind === ts.SyntaxKind.TrueKeyword || expr.kind === ts.SyntaxKind.FalseKeyword) return new Set(["boolean"]);
   if (expr.kind === ts.SyntaxKind.NullKeyword) return new Set(["null"]);
   if (ts.isVoidExpression(expr)) return new Set(["undefined"]);
+  if (
+    ts.isNewExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Promise" &&
+    declarationOf(checker, expr.expression)?.getSourceFile().isDeclarationFile
+  ) {
+    // Promise result adaptation is handled by the async/host boundary, which
+    // this source-level primitive checker does not model. Do not classify its
+    // supported erased return-annotation idiom as a proved value mismatch.
+    return new Set(["unknown"]);
+  }
   if (ts.isObjectLiteralExpression(expr) || ts.isArrayLiteralExpression(expr) || ts.isNewExpression(expr))
     return new Set(["object"]);
   if (ts.isPrefixUnaryExpression(expr)) {
@@ -243,11 +284,9 @@ function runtimeKinds(checker: ts.TypeChecker, expression: ts.Expression, seen =
             if (ts.isFunctionLike(node)) return;
             if (ts.isReturnStatement(node)) {
               for (const kind of node.expression
-                ? runtimeKinds(
-                    checker,
-                    returnedGenericArgument(checker, node.expression, implementation, expr) ?? node.expression,
-                    nested,
-                  )
+                ? (
+                    returnedGenericArgument(checker, node.expression, implementation, expr) ?? [node.expression]
+                  ).flatMap((origin) => [...runtimeKinds(checker, origin, nested)])
                 : ["undefined" as const])
                 values.add(kind);
             }
@@ -277,7 +316,10 @@ export function collectUnsafePrimitiveFlows(
     const expected = scalarKind(target);
     if (!expected || seen.has(node)) return;
     const actual = runtimeKinds(checker, value);
-    if (actual.size === 1 && actual.has(expected)) return;
+    // This pass diagnoses observed incompatible origins; it is not a complete
+    // verifier for every dynamic computation or external value. "unknown" is
+    // explicitly unclassified, not evidence of an incompatible runtime value.
+    if (![...actual].some((kind) => kind !== "unknown" && kind !== expected)) return;
     seen.add(node);
     findings.push({
       node,
@@ -307,6 +349,13 @@ export function collectUnsafePrimitiveFlows(
             !parameter.dotDotDotToken &&
             !parameter.getSourceFile().isDeclarationFile
           ) {
+            if (
+              scalarKind(checker.getTypeFromTypeNode(parameter.type)) === "number" &&
+              truthinessOnlyParameter(checker, parameter)
+            ) {
+              const kinds = runtimeKinds(checker, node.arguments[i]);
+              if (kinds.size === 1 && kinds.has("boolean")) continue;
+            }
             check(
               node.arguments[i],
               node.arguments[i],

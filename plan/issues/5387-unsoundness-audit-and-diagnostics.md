@@ -60,3 +60,9 @@ See the committed [audit report](../audit/type-unsoundness-2026-09-08/README.md)
 The shared pipeline invokes three small static analyses before emission, preserving source locations and keeping the checks independent of TypeScript diagnostic suppression. Regression tests exercise synchronous, single-source, multi-source, and preprocessed source locations.
 
 The scope remains bounded to visible origins and supported structural proofs; this does not certify arbitrary JavaScript programs.
+
+## CI follow-up, 2026-09-08
+
+PR 5748 failed its compiler inventory because six introduced modules had no classification. Register their actual unmigrated boundaries, without weakening activated closures. The eight equivalence shards also found supported programs rejected by the primitive pass; reproduce and fix these against the exact previous compiler before extending the audit. Run the complete equivalence suite and the downstream quality checks before pushing this repair.
+
+CI repair validation: all eight equivalence shards pass their unchanged regression baseline (1,720 passing tests; 22 known failures). The required guard suite passes 255/255 with the local Node Wasm exception feature enabled. All six gated dogfood packages compile and their binaries validate. The 26-program type audit remains 19 matches and 33 explicit refusals. Evidence: [CI repair validation](../audit/type-unsoundness-2026-09-08/ci-repair-validation.json).

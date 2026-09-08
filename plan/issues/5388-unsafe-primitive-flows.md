@@ -66,7 +66,7 @@ function value(): number; function value(): any { return 'x'; } console.log(valu
 
 ## Implementation
 
-`src/compiler/primitive-semantic-safety.ts` follows visible origins at the actual use point, including real guards and local implementations. It emits `JS2WASM_UNSOUND_ASSERTION`, `JS2WASM_UNSOUND_PRIMITIVE_FLOW`, or `JS2WASM_UNSOUND_OVERLOAD`. Future writes and uncalled nested functions do not invalidate an earlier value. Dynamic origins without adequate evidence may be conservatively refused; this is not a whole-program contract verifier.
+`src/compiler/primitive-semantic-safety.ts` follows visible origins at the actual use point, including real guards and local implementations. It emits `JS2WASM_UNSOUND_ASSERTION`, `JS2WASM_UNSOUND_PRIMITIVE_FLOW`, or `JS2WASM_UNSOUND_OVERLOAD`. Future writes and uncalled nested functions do not invalidate an earlier value. Dynamic origins without adequate evidence remain unclassified rather than being treated as proved mismatches; this is not a whole-program contract verifier.
 
 ## Validation
 

@@ -49,8 +49,8 @@ choose whether to issue a diagnostic.
 - [cases.json](cases.json): exact inputs and expected outcomes per target.
 - [baseline.jsonl](baseline.jsonl): measurements at immutable commit
   `3bb59a816bbaf7583df477af23aa82f780dfa379` (the preceding alias fix).
-- [candidate.jsonl](candidate.jsonl): working-tree measurements based on that
-  commit. `dirty: true` explicitly distinguishes the candidate from the
+- [candidate.jsonl](candidate.jsonl): working-tree measurements at the recorded `compilerCommit`, including
+  the CI repair to the diagnostic classifier. `dirty: true` explicitly distinguishes the candidate from the
   baseline. `sourceTreeSha256` hashes sorted source paths, NUL, file bytes, NUL;
   `specimensSha256` hashes the specimen file. The runner rejects source changes
   during execution.
@@ -82,8 +82,8 @@ compatible mutations, and the preceding conditional-alias repair.
 This is a finite audit, not a proof of JavaScript equivalence. Unresolved
 higher-order calls, opaque library contracts, dynamic/prototype-dependent
 lookups, and arbitrary alias graphs remain outside the proofs in these passes.
-Primitive flows without sufficient value-origin evidence may be conservatively
-refused. Lack of a finding outside the covered forms does not certify safety.
+Primitive flows without sufficient value-origin evidence remain unclassified;
+unknown is not evidence of a mismatch or a certificate of safety. Lack of a finding outside the covered forms does not certify safety.
 No test262 population improvement is claimed.
 
 The final focused run passes 117/117 tests across nine files: public-API/source-map diagnostics, safe-flow controls, structural and lookup classifiers, standalone output, and the preceding alias and mixed-primitive regressions. A separate adjacent run passes 37/37 tests in four files (before the final narrow generic-identity refinement); the final focused run includes the new identity regression and three unsafe generic controls. Type checking, lint, source-size/function-size,
@@ -91,3 +91,7 @@ coercion, and oracle checks are recorded with the pull request. The existing
 moved-runtime checker still reports an open graph at nonliteral imports in
 `optimize.ts` and `platform-capability-adapter.ts`; its preservation witnesses
 pass 6/6, but it does not certify closure or deletion.
+
+## CI repair
+
+The initial PR missed compiler-inventory entries and over-rejected dynamic computations. The repair registers six introduced modules without weakening activated boundaries and distinguishes unknown value origins from established incompatible origins. Boolean-to-number calls are accepted when the parameter is proven to be used only for truthiness. Promise results remain outside this pass's async ABI model. All 17 equivalence files named by CI pass 217/217 tests, matching the preceding compiler; the updated primitive/source-location suites add 42 passing checks. The original 26-program matrix still gives 19 matching Wasm runs and 33 source-located refusals.
