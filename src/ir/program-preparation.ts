@@ -5,7 +5,9 @@ import { resolveIrPreparationControlsFromEnv } from "./program-middleend.js";
 import { createGvnCounters } from "./passes/gvn-core.js";
 import { recordLegacyGvnCountersOnce } from "./passes/gvn.js";
 import { prepareTypedIrProgram } from "./program-prepare-ir.js";
-import { preparedIrDataMismatch, PreparedIrProgramInvariantError, type IrProgramPreparationResult } from "./program.js";
+import { preparedIrDataMismatch } from "./program/data.js";
+import { PreparedIrProgramInvariantError } from "./program/errors.js";
+import type { IrProgramPreparationResult } from "./program/prepared-contracts.js";
 import { observePreparedIrProgram } from "./program-observation.js";
 import type { RuntimeManifestPolicy } from "./runtime-manifest.js";
 

@@ -4,7 +4,7 @@ import { ts } from "../ts-api.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import type { TypedIrProgramInput } from "./program/input-contracts.js";
 import type { TypeOracle } from "../checker/oracle.js";
-import { AllocSiteRegistry } from "./alloc-registry.js";
+import { AllocSiteRegistry } from "./analysis/alloc-registry.js";
 import { irSourceGlobalRef } from "./abi-bindings.js";
 import { irUnitFuncRef, irUnitCallableBindingId } from "./callable-bindings.js";
 import { lowerFunctionAstToIr, typeNodeToIr, type IrFromAstResolver } from "./from-ast.js";
@@ -24,7 +24,8 @@ import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } f
 import type { IrType } from "./core/types.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
-import { preparedIrProgramOwner, PreparedIrProgramInvariantError } from "./program.js";
+import { preparedIrProgramOwner } from "./program.js";
+import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
 import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import { unwrapPromiseTypeNode } from "./async-static.js";

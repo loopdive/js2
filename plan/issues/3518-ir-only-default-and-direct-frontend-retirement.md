@@ -4465,3 +4465,96 @@ table still contains 58 kind rows and 35 buckets. Five focused controls pass,
 covering the real report and absent/empty/added/removed canonical reasons even
 when the old location contains a valid union. The exact freshness command now
 passes locally; new-head CI must still verify the correction.
+
+### Executable ownership integration in progress (2026-09-08)
+
+The isolated next-checkpoint integration starts at `f757e0201af643f396e26997a306913f4d384a66`.
+Allocation slice A is integrated from its three frozen blobs: old facade
+`7a1ec715e42dcd80d54bce0686acf931cd5ef248`, canonical registry
+`de20b852157f7db39bcf7fc4cf6f5f1936ad2673`, and seam tests
+`01e68b057730d5df2f9cff5781e7165ce39ffa23`. Its 24 new tests and 29 existing
+allocation replay tests passed 53/53. The historical program-data receipt now
+reads all five allocation statements from the canonical implementation in their
+original order; its hashes/counts are unchanged. Twenty selected preservation
+tests passed, with the other eighteen tests not run in that focused invocation.
+
+A preserves five declarations and all 19 class members (15 methods, one getter,
+three fields). Static production caller anchors exist for capture/restoration
+and mutation paths, but `captureSnapshot`, `fromSnapshot`, `liveSites` and `size`
+have no verified external production caller in the bounded scan. Unit-test calls
+do not close those obligations. Independent source review remains pending.
+
+The parent drafted a separate admission-only fresh-process mode and retained the
+full preparation mode. Its actual source fixture produces two source records,
+three terminal units/bodies, two globals and one live object allocation. An
+initial explicitly annotated vector fixture was refused during source projection;
+that is not a passing admission case. The replacement uses a real inferred record
+allocation, not fabricated IR. Admission-only execution remains unrun until B's
+canonical program ownership implementation is integrated. B, four consumer
+redirects, full boundary activation, combined tests and PR publication remain
+pending; none is implied by A's focused receipt.
+
+Both frozen slices are now composed. B's six files were independently hash-checked
+against its manifest before copying. It preserves 22 moved statements, 14
+functions, three classes/22 members, four moved initialization statements and
+all 37 retained old-program statements. The single `invalidPreparedData` helper
+needs a canonical export for the unchanged legacy candidate caller; it is not
+reexported from old `program.ts`. A received independent source-review approval;
+B and the parent proof additions are under independent review.
+
+The combined B seam, eight execution replays and fresh-process suite passed
+31/31 (18 + 8 + 5). Both new admission-only positive/forbidden-load controls
+passed on the nonempty source-produced record fixture. Input and option transport,
+registry sharing/detachment and next allocation identity were checked without
+loading full preparation or codec; their existing separate controls still pass.
+All four production consumer rewires retain identical emitted non-import ASTs.
+
+Complete inventory validation accounts for 1,288 modules: 44 clean, 1,239
+unmigrated and five adapters, with zero inventory errors and architecture still
+incomplete. The clean closure is exactly 119 edges: 102 type-only and 17 runtime;
+98 imports, 20 reexports and one import-type. No additional allowed edge changed.
+The historical 40-module/109-edge fixture remains intact and passed all 93
+historical controls. The twelve added runtime-boundary controls passed in a
+separate focused run, alongside policy preservation and twenty reconstructed
+statement-receipt checks (33 passed; 110 other cases not run in that invocation).
+The unchanged historical denominator remains 560 statements / 374 functions;
+canonical runtime text is reconstructed in its original positions. Five new
+mutation controls and a complete compiled-seam/boundary run are now pending.
+
+The prior published PR5747 at `f757e0201a` has completed CI successfully (27
+successful checks, fourteen skipped checks and a separate legacy context), with
+fresh MERGEABLE/CLEAN state and no auto-merge. Its hold remains. Skipped Test262
+execution is not original-population evidence or resolution of the inherited
+regression. This next implementation checkpoint is not yet published.
+
+### Ownership checkpoint verification follow-up (2026-09-08)
+
+Both frozen implementation slices received independent source approval. The
+complete boundary/compiled-seam run passed 147/148: all 105 boundary cases and
+the actual old/new type compilation passed, but a new reordered-freeze negative
+control made no change because its literal omitted an intervening blank line.
+The corrected control and eight additional canonical receipt mutations now pass;
+the selected rerun passed 10/10 including explicit historical analysis 1/program
+9 population assertions. No historical receipt hash or denominator was reseeded.
+
+The fresh-process guard normalizes file URLs before matching forbidden paths;
+bare, query-suffixed and fragment-suffixed old-facade controls all fail closed.
+Admission checks object-graph detachment (including symbol-keyed descriptors)
+and rejects a shallow-copy control while preserving registry sharing. Combined
+typed preparation, codec, standalone replay and fresh-process tests passed 72/72
+(30 + 27 + 8 + 7). Existing prepared-program tests passed 19/19, and the full
+TypeScript 7 no-emit check passed. Independent parent-proof review is pending.
+
+Upstream main advanced to `ad9ea951a51c9bc7c9e6c2827c3bd38c62c2bd67` via
+PR5746's conditional-alias property-write fix. Its changes include an additional
+mixed-module inventory entry; integration and post-sync inventory validation are
+pending. These tests predate that sync. They do not establish the inherited
+regression's resolution or authorize removal of any existing merge hold.
+
+Final guard review required exact query/fragment URLs in the rejection and
+census. That stronger assertion exposed tsx stripping the query before the
+guard observed it; several diagnostic reruns passed 6/7, not 7/7. The final
+controls run the identical registered loader in plain Node for those two suffix
+cases, separately from successful real-source admission and its in-process bare
+forbidden-facade control. All seven tests now pass with exact URL assertions.
+This is a loader-normalization control, not a claim that tsx preserves queries.

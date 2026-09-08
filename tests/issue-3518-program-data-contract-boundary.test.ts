@@ -57,6 +57,22 @@ const groups = {
   ),
 };
 const clean = Object.values(groups).flat();
+const ownershipModules = [
+  "src/ir/analysis/alloc-registry.ts",
+  "src/ir/program/errors.ts",
+  "src/ir/program/data.ts",
+  "src/ir/program/input.ts",
+];
+const currentGroups = {
+  ...groups,
+  "ir-analysis": [...groups["ir-analysis"], "src/ir/analysis/alloc-registry.ts"],
+  "ir-program": [
+    ...groups["ir-program"],
+    "src/ir/program/errors.ts",
+    "src/ir/program/data.ts",
+    "src/ir/program/input.ts",
+  ],
+};
 const allocation = groups["ir-analysis"][0]!;
 const newModules = [
   ...groups.foundation.slice(4),
@@ -87,6 +103,8 @@ function fixture() {
       ? { ...layer, status: "active", required: true, entries, minModules: entries.length }
       : { id: layer.id, roots: layer.roots, status: "debt" };
   });
+  // This fixture is the historical forty-module contract checkpoint.
+  p.layers.find((layer: { id: string }) => layer.id === "ir-analysis").roots = ["src/ir/analysis/contracts"];
   p.files = Object.entries(groups).flatMap(([layer, paths]) => paths.map((path) => ({ path, layer, state: "clean" })));
   p.activationHistory = Object.entries(groups).map(([layer, entries]) => ({
     layer,
@@ -139,6 +157,94 @@ function fixture() {
   return { root, p, put, run, append, forbidden };
 }
 
+function ownershipFixture() {
+  const f = fixture();
+  for (const path of ownershipModules) {
+    f.put(path, readFileSync(resolve(repository, path), "utf8"));
+    const layer = path.startsWith("src/ir/analysis/") ? "ir-analysis" : "ir-program";
+    f.p.files.push({ path, layer, state: "clean" });
+  }
+  for (const id of ["ir-analysis", "ir-program"] as const) {
+    const entries = currentGroups[id];
+    const layer = f.p.layers.find((row: { id: string }) => row.id === id);
+    layer.entries = entries;
+    layer.minModules = entries.length;
+    if (id === "ir-analysis") layer.roots = ["src/ir/analysis/contracts", "src/ir/analysis/alloc-registry.ts"];
+    f.p.activationHistory.push({ layer: id, entries, minModules: entries.length });
+  }
+  return f;
+}
+
+describe("canonical executable ownership boundary", () => {
+  it("pins the exact four additions independently of discovered imports", () => {
+    const current = Object.values(currentGroups).flat();
+    const added = current.filter((path) => !clean.includes(path));
+    expect(added.sort()).toEqual([...ownershipModules].sort());
+    expect(added.sort()).toEqual([
+      "src/ir/analysis/alloc-registry.ts",
+      "src/ir/program/data.ts",
+      "src/ir/program/errors.ts",
+      "src/ir/program/input.ts",
+    ]);
+  });
+
+  it("checks all forty-four actual modules without changing earlier policy edges", () => {
+    const r = ownershipFixture().run();
+    expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
+    expect(r.report.counts.total).toBe(44);
+    expect(r.report.resolvedEdgeCount).toBe(119);
+    expect(r.report.counts.edgesBySyntax).toEqual({ import: 98, "export-from": 20, "import-type": 1 });
+    expect(r.report.counts.resolvedEdgesBySyntax).toEqual({ import: 98, "export-from": 20, "import-type": 1 });
+    expect(r.report.counts.edgesByType).toEqual({ typeOnly: 102, runtime: 17 });
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 102, runtime: 17 });
+    expect(r.report.unknownEdges).toEqual([]);
+    expect(r.report.unresolvedEdges).toEqual([]);
+    expect(r.report.forbiddenEdges).toEqual([]);
+    expect(r.report.transitiveViolations).toEqual([]);
+    for (const [path, count] of [
+      ["src/ir/analysis/alloc-registry.ts", 4],
+      ["src/ir/program/errors.ts", 0],
+      ["src/ir/program/data.ts", 2],
+      ["src/ir/program/input.ts", 4],
+    ] as const)
+      expect(r.report.edges.filter((edge: { from: string }) => edge.from === path)).toHaveLength(count);
+  });
+
+  it.each(ownershipModules)("rejects removal of runtime owner %s and its classification", (path) => {
+    const f = ownershipFixture();
+    rmSync(resolve(f.root, path));
+    f.p.files = f.p.files.filter((row: { path: string }) => row.path !== path);
+    for (const mode of ["inventory", "complete"]) {
+      const r = f.run(mode);
+      expect(r.status).not.toBe(0);
+      expect(r.report.errors.map((e: { code: string }) => e.code)).toContain("missing-activated-root");
+    }
+  });
+
+  it.each(ownershipModules)("rejects forbidden dependencies in runtime owner %s", (path) => {
+    const f = ownershipFixture();
+    f.forbidden("frontend-ts");
+    f.append(path, 'export type { Hidden } from "@forbidden";');
+    const r = f.run();
+    expect(r.status).toBe(1);
+    expect(r.report.forbiddenEdges).toContainEqual(
+      expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
+    );
+  });
+
+  it.each([
+    ["import(globalThis.toString());", "unknownEdges"],
+    ['export * from "./missing-owner.js";', "unresolvedEdges"],
+  ])("rejects unprovable executable owner dependency %s", (source, field) => {
+    const f = ownershipFixture();
+    const path = "src/ir/program/input.ts";
+    f.append(path, source);
+    const r = f.run();
+    expect(r.status).toBe(1);
+    expect(r.report[field].some((edge: { from: string }) => edge.from === path)).toBe(true);
+  });
+});
+
 describe("complete canonical program-data dependency boundary", () => {
   it("preserves every earlier policy edge and historical activation receipt", () => {
     const p = policy();
@@ -167,6 +273,17 @@ describe("complete canonical program-data dependency boundary", () => {
       return matches[0];
     });
     expect(digest(historical)).toBe("820a39c3d3b05a1a20d030ae10b1e19621802cfed5cf9a29ccb5dccb80b3d6ee");
+    for (const [layer, minModules] of [
+      ["ir-analysis", 1],
+      ["ir-program", 9],
+    ] as const) {
+      const matches = p.activationHistory.filter(
+        (row: { layer: string; minModules: number }) => row.layer === layer && row.minModules === minModules,
+      );
+      expect(matches).toHaveLength(1);
+      expect([...matches[0].entries].sort()).toEqual([...groups[layer]].sort());
+      expect(matches[0].entries).toHaveLength(minModules);
+    }
     for (const [path, destination] of [
       ["src/ir/analysis/dominance.ts", "ir-analysis"],
       ["src/ir/passes/constant-fold.ts", "ir-passes"],
@@ -207,7 +324,11 @@ describe("complete canonical program-data dependency boundary", () => {
       ].sort(),
     );
     const p = policy();
-    for (const [id, entries] of Object.entries(groups)) {
+    expect(Object.values(currentGroups).flat()).toHaveLength(44);
+    expect(new Set(Object.values(currentGroups).flat()).size).toBe(44);
+    expect(ownershipModules).toHaveLength(4);
+    expect(new Set(ownershipModules).size).toBe(4);
+    for (const [id, entries] of Object.entries(currentGroups)) {
       const layer = p.layers.find((x: { id: string }) => x.id === id);
       expect(layer).toMatchObject({ status: "active", required: true, minModules: entries.length });
       expect([...layer.entries].sort()).toEqual([...entries].sort());
@@ -217,7 +338,10 @@ describe("complete canonical program-data dependency boundary", () => {
       for (const path of entries)
         expect(p.files.filter((x: { path: string }) => x.path === path)).toEqual([{ path, layer: id, state: "clean" }]);
     }
-    expect(p.layers.find((x: { id: string }) => x.id === "ir-analysis").roots).toEqual(["src/ir/analysis/contracts"]);
+    expect(p.layers.find((x: { id: string }) => x.id === "ir-analysis").roots).toEqual([
+      "src/ir/analysis/contracts",
+      "src/ir/analysis/alloc-registry.ts",
+    ]);
     expect(p.layers.find((x: { id: string }) => x.id === "ir-passes").roots).toEqual(["src/ir/passes/contracts"]);
   });
 

@@ -85,10 +85,10 @@
     {
       "id": "ir-analysis",
       "status": "active",
-      "roots": ["src/ir/analysis/contracts"],
+      "roots": ["src/ir/analysis/contracts", "src/ir/analysis/alloc-registry.ts"],
       "required": true,
-      "entries": ["src/ir/analysis/contracts/allocations.ts"],
-      "minModules": 1
+      "entries": ["src/ir/analysis/contracts/allocations.ts", "src/ir/analysis/alloc-registry.ts"],
+      "minModules": 2
     },
     {
       "id": "ir-passes",
@@ -125,9 +125,12 @@
         "src/ir/program/controls.ts",
         "src/ir/program/index.ts",
         "src/ir/program/input-contracts.ts",
-        "src/ir/program/prepared-contracts.ts"
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts"
       ],
-      "minModules": 9
+      "minModules": 12
     },
     {
       "id": "runtime-contracts",
@@ -396,6 +399,29 @@
   ],
   "activationHistory": [
     {
+      "layer": "ir-analysis",
+      "entries": ["src/ir/analysis/contracts/allocations.ts", "src/ir/analysis/alloc-registry.ts"],
+      "minModules": 2
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts"
+      ],
+      "minModules": 12
+    },
+    {
       "layer": "ir-core",
       "entries": [
         "src/ir/core/types.ts",
@@ -614,6 +640,7 @@
     { "path": "src/shared/contracts/ir-preparation-failure.ts", "state": "clean", "layer": "foundation" },
     { "path": "src/shared/contracts/ir-unit-inventory.ts", "state": "clean", "layer": "foundation" },
     { "path": "src/ir/analysis/contracts/allocations.ts", "state": "clean", "layer": "ir-analysis" },
+    { "path": "src/ir/analysis/alloc-registry.ts", "state": "clean", "layer": "ir-analysis" },
     { "path": "src/ir/passes/contracts/gvn.ts", "state": "clean", "layer": "ir-passes" },
     { "path": "src/ir/runtime/index.ts", "state": "clean", "layer": "ir-runtime" },
     { "path": "src/ir/runtime/contracts/intrinsics.ts", "state": "clean", "layer": "ir-runtime" },
@@ -625,6 +652,9 @@
     { "path": "src/ir/program/index.ts", "state": "clean", "layer": "ir-program" },
     { "path": "src/ir/program/input-contracts.ts", "state": "clean", "layer": "ir-program" },
     { "path": "src/ir/program/prepared-contracts.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/errors.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/data.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/input.ts", "state": "clean", "layer": "ir-program" },
     { "path": "src/runtime/contracts/async-provider-schema.ts", "state": "clean", "layer": "runtime-contracts" },
     { "path": "src/runtime/contracts/provider-policy.ts", "state": "clean", "layer": "runtime-contracts" },
     { "path": "src/runtime/contracts/index.ts", "state": "clean", "layer": "runtime-contracts" },

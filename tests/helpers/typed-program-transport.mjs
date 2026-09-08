@@ -2,7 +2,7 @@
 
 // Test-only graph transport, NOT a prepared-program codec or authority token.
 import { IR_CLASS_SHAPE_CELL } from "../../src/ir/core/types.ts";
-import { copyIrPreparationData } from "../../src/ir/alloc-registry.ts";
+import { copyIrPreparationData } from "../../src/ir/analysis/alloc-registry.ts";
 
 export function encodeTypedPacket(value) {
   const data = copyIrPreparationData(value); // descriptor admission before any normalization

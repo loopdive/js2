@@ -358,12 +358,50 @@ function verifyDestination(path: string, text = read(path)) {
   return file;
 }
 
-function verifyRetained(row: (typeof receipts)[number], text = read(row.old)) {
+function verifyRetained(row: (typeof receipts)[number], text = read(row.old), overrides: Record<string, string> = {}) {
+  const statements = (path: string) =>
+    parse(path, overrides[path] ?? read(path)).statements.filter(
+      (node) => !ts.isImportDeclaration(node) && !ts.isExportDeclaration(node),
+    );
   const file = parse(row.old, text);
-  const retained = file.statements.filter((node) => !ts.isImportDeclaration(node) && !ts.isExportDeclaration(node));
+  let retained = file.statements.filter((node) => !ts.isImportDeclaration(node) && !ts.isExportDeclaration(node));
+  if (row.old === "src/ir/alloc-registry.ts") {
+    expect(retained).toHaveLength(0);
+    retained = statements("src/ir/analysis/alloc-registry.ts");
+  } else if (row.old === "src/ir/program-input.ts") {
+    expect(retained).toHaveLength(0);
+    retained = statements("src/ir/program/input.ts");
+  } else if (row.old === "src/ir/program.ts") {
+    const errors = statements("src/ir/program/errors.ts");
+    const data = statements("src/ir/program/data.ts");
+    expect(retained).toHaveLength(37);
+    expect(errors).toHaveLength(2);
+    expect(data).toHaveLength(14);
+    // Fixed original ordinals: errors 9–10; data 30–43, including all
+    // four initialization statements. Never recover missing source from Git.
+    retained = [...retained.slice(0, 9), ...errors, ...retained.slice(9, 28), ...data, ...retained.slice(28)];
+  }
   expect(retained, row.old).toHaveLength(row.retainedCount);
   expect(retained.filter(ts.isFunctionDeclaration), row.old).toHaveLength(row.retainedFunctions);
-  expect(digest(JSON.stringify(retained.map((node) => node.getFullText().trim()))), row.old).toBe(row.retainedSha256);
+  const originalText = retained.map((node) => {
+    let text = node.getFullText().trim();
+    // The import-free error module adds only this standard file header.
+    if (node.getSourceFile().fileName === "src/ir/program/errors.ts")
+      text = text.replace(
+        /^\/\/ Copyright \(c\) 2026 Loopdive GmbH\. Licensed under Apache-2\.0 WITH LLVM-exception\.\s*/,
+        "",
+      );
+    // The unchanged legacy candidate helper still calls this formerly local
+    // function. Its sole new export modifier is necessary for that import.
+    if (
+      node.getSourceFile().fileName === "src/ir/program/data.ts" &&
+      ts.isFunctionDeclaration(node) &&
+      node.name?.text === "invalidPreparedData"
+    )
+      text = text.replace(/^export function invalidPreparedData/, "function invalidPreparedData");
+    return text;
+  });
+  expect(digest(JSON.stringify(originalText)), row.old).toBe(row.retainedSha256);
 }
 
 const inputExports = ["TypedIrProgramGlobal", "TypedIrProgramInput", "TypedIrProgramOptions"];
@@ -705,4 +743,41 @@ describe("connected program-data declaration seam", () => {
   it("actually compiles old/new identities, attachment joins and positive/negative type controls", async () => {
     await compiledControls();
   }, 180_000);
+
+  it.each([
+    ["missing freeze", (text: string) => text.replace("Object.freeze(FrozenMap.prototype);", "")],
+    ["duplicate freeze", (text: string) => text + "\nObject.freeze(FrozenMap);\n"],
+    ["renamed function", (text: string) => text.replace("function preparedIrReadonlyMap", "function renamedMap")],
+    ["changed body", (text: string) => text.replace("return new FrozenMap(entries);", "return new Map(entries);")],
+    [
+      "reordered freezes",
+      (text: string) =>
+        text.replace(
+          "Object.freeze(FrozenMap.prototype);\n\nObject.freeze(FrozenMap);",
+          "Object.freeze(FrozenMap);\n\nObject.freeze(FrozenMap.prototype);",
+        ),
+    ],
+    ["changed method", (text: string) => text.replace("return this.#map.has(key);", "return false;")],
+    ["changed getter", (text: string) => text.replace("return this.#map.size;", "return 0;")],
+    [
+      "changed private initialization",
+      (text: string) => text.replace("this.#map = new Map(entries);", "this.#map = new Map();"),
+    ],
+    [
+      "missing moved declaration",
+      (text: string) =>
+        text.replace(
+          "export function preparedIrReadonlyMap<K, V>(entries: Iterable<readonly [K, V]>): ReadonlyMap<K, V> {\n  return new FrozenMap(entries);\n}",
+          "",
+        ),
+    ],
+  ] as const)("rejects %s while reconstructing the original runtime receipt", (_label, change) => {
+    const row = receipts.find((entry) => entry.old === "src/ir/program.ts")!;
+    verifyRetained(row);
+    const path = "src/ir/program/data.ts";
+    const original = read(path);
+    const changed = change(original);
+    expect(changed).not.toBe(original);
+    expect(() => verifyRetained(row, read(row.old), { [path]: changed })).toThrow();
+  });
 });

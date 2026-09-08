@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { ownTypedIrProgramInput, ownTypedIrProgramOptions } from "./program-input.js";
+import { ownTypedIrProgramInput, ownTypedIrProgramOptions } from "./program/input.js";
 import type { TypedIrProgramInput, TypedIrProgramOptions } from "./program/input-contracts.js";
 import { createGvnCounters, type GvnCounters } from "./passes/gvn-core.js";
 import { optimizePreparedIrProgramIr } from "./program-middleend-ir.js";
@@ -10,12 +10,8 @@ import { prepareIrProgramRuntimeCallables } from "./program-runtime-abi.js";
 import { prepareWholeProgramAsyncFunctions, prepareWholeProgramRuntimeManifest } from "./runtime-program-producers.js";
 import { irProgramRuntimeDemands } from "./program-runtime-demands.js";
 import { assertPreparedIrProgram } from "./program-validation.js";
-import {
-  freezePreparedIrValue,
-  freezePreparedIrRuntimeValue,
-  preparedIrReadonlyMap,
-  PreparedIrProgramInvariantError,
-} from "./program.js";
+import { freezePreparedIrValue, freezePreparedIrRuntimeValue, preparedIrReadonlyMap } from "./program/data.js";
+import { PreparedIrProgramInvariantError } from "./program/errors.js";
 import type {
   IrProgramPreparationResult,
   PreparedIrProgram,
