@@ -13,6 +13,9 @@ export function preserveOptionalDeclarationParameter(
   const jsdocType = ts.getJSDocType(parameter);
   const optional =
     parameter.questionToken !== undefined ||
+    (parameter.type !== undefined &&
+      ts.isUnionTypeNode(parameter.type) &&
+      parameter.type.types.some((type) => type.kind === ts.SyntaxKind.UndefinedKeyword)) ||
     (jsdocType !== undefined && ts.isJSDocOptionalType(jsdocType)) ||
     ts.getJSDocParameterTags(parameter).some((tag) => tag.isBracketed === true);
   return parameter.initializer === undefined &&

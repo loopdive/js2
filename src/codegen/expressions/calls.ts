@@ -4,6 +4,7 @@
  * property method calls, IIFEs, and conditional callees.
  */
 import { ts, forEachChild } from "../../ts-api.js";
+import { isNamespaceQualifier } from "../static-enum-receiver.js";
 import { profilePhase } from "../../compile-profile.js";
 import {
   isBigIntType,
@@ -3465,7 +3466,8 @@ export function functionExprBodyReferencesOwnName(fn: ts.FunctionExpression): bo
   return found;
 }
 
-function isRuntimeNamespaceReceiver(ctx: CodegenContext, identifier: ts.Identifier): boolean {
+function isRuntimeNamespaceReceiver(ctx: CodegenContext, identifier: ts.Expression): boolean {
+  if (!ts.isIdentifier(identifier)) return isNamespaceQualifier(ctx, identifier);
   const declaration = ctx.oracle.valueDeclarationOf(identifier);
   if (declaration !== undefined && (ts.isNamespaceImport(declaration) || ts.isModuleDeclaration(declaration))) {
     return true;
@@ -3522,7 +3524,7 @@ function tryRuntimeNamespaceMemberCall(
 ): InnerResult | undefined {
   if (!ts.isPropertyAccessExpression(expr.expression)) return undefined;
   const access = expr.expression;
-  if (!ts.isIdentifier(access.expression) || ts.isPrivateIdentifier(access.name)) return undefined;
+  if (ts.isPrivateIdentifier(access.name)) return undefined;
   if (!isRuntimeNamespaceReceiver(ctx, access.expression)) return undefined;
   // TypeScript nominates the first signature as valueDeclaration for an
   // overloaded exported function. Resolve the one body-bearing declaration;

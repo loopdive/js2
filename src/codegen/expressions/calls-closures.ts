@@ -8,6 +8,7 @@
  * - tryExternClassMethodOnAny — resolve method call on any-typed receiver via extern classes
  */
 import { ts } from "../../ts-api.js";
+import { preserveOptionalDeclarationParameter } from "../optional-declaration-parameter.js";
 import { isVoidType, isPromiseType } from "../../checker/type-mapper.js";
 import type { Instr, ValType } from "../../ir/types.js";
 import { callablePropertyIsExtractedHostBuiltin } from "./callable-property-host-value.js"; // (#5342)
@@ -1587,7 +1588,11 @@ export function compileCallablePropertyCall(
   const sigParamWasmTypes: ValType[] = [];
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sigParameters[i]!);
-    sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+    const declaration = sigParameters[i]!.valueDeclaration;
+    const type = resolveWasmType(ctx, paramType);
+    sigParamWasmTypes.push(
+      declaration && ts.isParameter(declaration) ? preserveOptionalDeclarationParameter(ctx, declaration, type) : type,
+    );
   }
   const pushMissingCallablePropertyArgument = (index: number, type: ValType): void => {
     const declaration = sigParameters[index]?.valueDeclaration;
@@ -2187,7 +2192,11 @@ export function compileCallableElementAccessCall(
   const sigParamWasmTypes: ValType[] = [];
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sig.parameters[i]!);
-    sigParamWasmTypes.push(resolveWasmType(ctx, paramType));
+    const declaration = sig.parameters[i]!.valueDeclaration;
+    const type = resolveWasmType(ctx, paramType);
+    sigParamWasmTypes.push(
+      declaration && ts.isParameter(declaration) ? preserveOptionalDeclarationParameter(ctx, declaration, type) : type,
+    );
   }
 
   // 2. Eagerly create / find the wrapper struct (signature-keyed cache)

@@ -2,7 +2,7 @@
 import { ts } from "../ts-api.js";
 import type { CodegenContext } from "./context/types.js";
 
-function isNamespaceQualifier(ctx: CodegenContext, expression: ts.Expression): boolean {
+export function isNamespaceQualifier(ctx: CodegenContext, expression: ts.Expression): boolean {
   if (!ts.isIdentifier(expression) && !ts.isPropertyAccessExpression(expression)) return false;
   const name = ts.isIdentifier(expression) ? expression : expression.name;
   const direct = ctx.oracle.valueDeclarationOf(name);

@@ -348,6 +348,123 @@ All handles from this turn are terminal. No additional upstream passes claimed;
 the established projected suite remains the previously verified 25/25, with the
 remaining full 256-file requirement and self-hosting goal still open.
 
+### Qualified namespace and parenthesizer triage (2026-09-08, uncommitted)
+
+Qualified runtime namespace reads/calls now use the static namespace proof for
+`ts.Debug.format`, mutable `ts.Debug.enabled`, and direct calls. Direct/barrel
+regressions improved from 0/2 to 2/2; focused namespace controls pass 21/21
+(`.tmp/ts5-qualified-runtime-final.log`). Typecheck completed successfully
+(`.tmp/ts5-qualified-runtime-typecheck.log`). Full factory remains 0/3 Wasm
+versus 3/3 native, but the third failure advances into debug.ts:445, which
+reflects `(ts as any).SyntaxKind`; runtime enum objects remain unsupported.
+The zero-import factory module validates (63,605,817 bytes).
+
+Full-source parser-parent triage passes 3/3: statement existence, parent
+identity, and `getSourceFileOfNode` identity (83,351,219-byte valid zero-import
+module; `.tmp/ts5-source-node-parent.log`). This rules out a universally broken
+parent chain, not the full diagnostic unit's argument transport.
+
+The shorter-arity parenthesizer fixture fails in both GC and standalone.
+Standalone inspection independently gives realRules failure / nullRules=421;
+disabling experimental IR retains the same result. Staged instrumentation
+shows the memoizer callback returns, but the real parenthesizer method is never
+entered. Generated Wasm proves the caller dispatch expects `(Node, i32)`, while
+the named callback wrapper has `(Node, externref)`. The optional-declaration
+parameter policy widens the implementation boolean, whereas
+`compileCallablePropertyCall` resolves its interface parameter directly to i32.
+The reference-only candidate bridge rejects that scalar/externref mismatch.
+
+Diagnostic A/B on the current working tree, standalone raw Wasm, same extracted
+fixture and compiler: changing only `optionalChain?: boolean` to required
+`optionalChain: boolean` makes realRules=421 and nullRules=421 (2/2).
+Logs: `.tmp/ts5-parenthesizer-no-ir.log`, `.tmp/ts5-parenthesizer-stage2.log`,
+`.tmp/ts5-parenthesizer-required.log`; inspector
+`.tmp/ts5-inspect-parenthesizer.mts`. This is diagnostic evidence, NOT a source
+workaround or an upstream pass. Preserve optionality in the actual fix and cover
+named/arrow callbacks, boolean/number values, missing arguments, and side effects.
+Do not assume this optional-boolean defect explains every full factory failure.
+All processes started during this triage are terminal. Full upstream unit-suite
+acceptance and self-hosting remain unfinished.
+
+### Optional callable ABI implementation (2026-09-08, uncommitted)
+
+Callable property and element signature lowering now applies the same optional
+scalar policy as named declaration wrappers. Arrow/function-expression wrappers
+also apply that policy, and explicit scalar `T | undefined` syntax retains the
+dynamic carrier just like `T?`. The latter is required by TypeScript's scanner:
+its interface uses optional parameters while its implementation uses explicit
+undefined unions. Native annotations and parameters with defaults keep the
+existing policy. No runtime dispatch fallback or upstream source workaround was
+added.
+
+The original real/null parenthesizer regression passes in GC and standalone
+(2/2). New optional-property tests exercise named and arrow boolean/number
+callbacks, omission, explicit undefined, false/true/zero, and side-effect count;
+they pass in both lanes. Array-held optional callbacks also pass (2/2 updated
+tests, `.tmp/ts5-optional-elements.log`). Broader controls pass 27/27 across
+eight files (`.tmp/ts5-optional-abi-final-controls.log`), plus optional direct
+closure calls 2/2. An intermediate arrow-only NaN result and scanner-padding
+failure drove the uniform ABI policy; both now pass.
+
+An additional legacy `tests/optional-params.test.ts` run fails 3/3 during host
+instantiation because it supplies only hand-written console imports and omits
+the generated `string_constants` imports. Its first expected value also treats
+`10 + undefined` as 10 rather than NaN. It was not changed or counted as passing;
+baseline attribution has not been measured. Final post-element-edit scoped lint,
+typecheck, diff whitespace check, and LOC/function gates pass (logs
+`.tmp/ts5-optional-abi-complete-{typecheck,loc,func}.log`).
+
+The first full-source factory retry, launched before the arrow/union alignment,
+compiled a valid zero-import 63,092,533-byte module but remains 0/3 Wasm versus
+3/3 native (`.tmp/ts5-source-factory-optional-abi.log`, 163,987 ms). Same three
+runtime boundaries remain, so the reduced fix is not evidence that the full
+factory failures are resolved. The aligned retry completed: valid zero-import
+62,956,028-byte module, 155,404 ms, still 0/3 Wasm versus 3/3 native, with the
+same null-pointer, arrow-body cast, and debug enum-reflection failures. Log:
+`.tmp/ts5-source-factory-optional-abi-final.log`; it started before the final
+element-access alignment. All processes from this implementation turn are now
+terminal. Next isolate the actual full-source factory node/callback carrier,
+not the already-fixed reduced optional-parameter mismatch.
+
+### Actual-source parenthesizer boundary probe (2026-09-08)
+
+Added `typescript-source-factory-parenthesizer-workload.ts` with six independent
+numeric oracles against the pinned real compiler source: object/class creation,
+direct concise-body/export parenthesizer calls, and arrow/export factory calls.
+This avoids depending on debug enum formatting during triage without modifying
+or accepting any upstream assertion. The initial probe completed: 2/6, valid
+59,974,784-byte zero-import module, 162,709 ms compile. Object/class creation
+pass; both direct parenthesizer calls fail just like the enclosing arrow/export
+factory calls (concise body illegal cast; export parenthesizer null pointer).
+Log `.tmp/ts5-factory-parenthesizer-source.log`. Thus neither upstream assertion
+formatting nor its test callback harness is necessary for these failures.
+Expanded the same fixture to ten cases: direct parenthesized node construction,
+getLeftmostExpression identity, skipPartiallyEmittedExpressions identity, and
+the no-parentheses-needed identifier path. Session 59274 is running, log
+`.tmp/ts5-factory-parenthesizer-source-expanded.log`.
+
+Fresh namespace controls pass 21/21. The selected upstream adapter was first
+run in its default GC lane: 14/25 (compilerCore 5/11, convertToBase64 0/5;
+other files 9/9). This is not the standalone goal lane and has no measured
+same-lane baseline in this turn. The explicit standalone recheck completed:
+25/25 native and Wasm, 5/5 compiled modules, actual target standalone, zero
+imports, 251/256 upstream files deferred. Log
+`.tmp/ts5-projected-standalone-after-optional.log`. No full-source upstream
+unit pass is inferred from this projected selection.
+
+Main-sync verification (2026-09-08): fetched `https://github.com/loopdive/js2.git`
+and independently checked live `refs/heads/main` at
+`04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0`. That commit is already an ancestor
+of `codex/1058-typescript-standalone` HEAD `ac266354848de0`; zero incoming
+commits, so no merge was needed. All pending implementation and test changes
+were preserved; no tests rerun for this no-op synchronization.
+
+Signed checkpoint: `ac266354848de0`. Post-checkpoint projected-suite regression
+run completed with **25/25 native and Wasm**, **5/5 modules compiled/validated**,
+**zero imports** (`.tmp/ts5-projected-after-enum-stack.log`, exit 0). This confirms
+the existing slice remains intact; its inventory still explicitly defers 251
+of 256 files. No live process remains from this turn.
+
 ### Source-defined collection carrier investigation (resumed)
 
 Generator-method follow-up after `085c67795aad5e`: WAT for the real `*entries()`

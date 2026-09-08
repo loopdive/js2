@@ -8,6 +8,7 @@
  */
 
 import { ts } from "../ts-api.js";
+import { isNamespaceQualifier } from "./static-enum-receiver.js";
 import { carrierNameForAccess } from "./carrier-name-fallback.js"; // (#5187)
 import { isAccessorReceiver } from "./accessor-object-literal.js";
 import {
@@ -3774,8 +3775,9 @@ interface RuntimeNamespaceFunctionValueReceiver {
 
 function runtimeNamespaceFunctionValueReceiver(
   ctx: CodegenContext,
-  identifier: ts.Identifier,
+  identifier: ts.Expression,
 ): RuntimeNamespaceFunctionValueReceiver | undefined {
+  if (!ts.isIdentifier(identifier) && !isNamespaceQualifier(ctx, identifier)) return undefined;
   const directDeclaration = ctx.oracle.valueDeclarationOf(identifier);
   if (directDeclaration !== undefined && ts.isNamespaceImport(directDeclaration)) {
     return { sourceModule: true, moduleBlocks: new Set() };
@@ -3816,7 +3818,7 @@ function tryEmitRuntimeNamespaceFunctionValue(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ts.isIdentifier(expr.expression) || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (ts.isPrivateIdentifier(expr.name)) return undefined;
   const receiver = runtimeNamespaceFunctionValueReceiver(ctx, expr.expression);
   if (receiver === undefined) return undefined;
   const declaration = ctx.oracle.valueDeclarationOf(expr.name);
@@ -3874,7 +3876,7 @@ function tryEmitRuntimeNamespaceVariableValue(
   fctx: FunctionContext,
   expr: ts.PropertyAccessExpression,
 ): ValType | undefined {
-  if (!ts.isIdentifier(expr.expression) || ts.isPrivateIdentifier(expr.name)) return undefined;
+  if (ts.isPrivateIdentifier(expr.name)) return undefined;
   const receiver = runtimeNamespaceFunctionValueReceiver(ctx, expr.expression);
   if (receiver === undefined) return undefined;
 

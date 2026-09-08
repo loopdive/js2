@@ -2049,7 +2049,7 @@ export function computeClosureWrapperSig(
         : !ts.isFunctionDeclaration(arrow) && setAccessorParamIsDynamic(arrow)
           ? EXTERNREF_PARAM
           : resolveWasmType(ctx, paramType);
-    if (ts.isFunctionDeclaration(arrow)) wasmType = preserveOptionalDeclarationParameter(ctx, p, wasmType);
+    wasmType = preserveOptionalDeclarationParameter(ctx, p, wasmType);
     if (sourceCollectionCallbackParameterIsErased(ctx, arrow, runtimeIndex)) wasmType = EXTERNREF_PARAM;
     // JSDoc optional parameters (for example `@param {number=} size`) are
     // commonly exported from JavaScript modules and called from a different
