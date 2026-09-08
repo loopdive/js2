@@ -4822,3 +4822,126 @@ refusals establish preservation only, never physical acceptance or retirement.
 
 No direct-codegen retirement, public IR-only default, ABI30 getter witness, or
 native async materialization completion is claimed by these checkpoints.
+
+### Physical consumer implementation in progress (2026-09-08)
+
+The physical checkpoint is isolated on
+`codex/3518-physical-module-completion-20260908` from `e3de0f3ff7`, so its
+production changes do not alter PR5751's preservation candidate. Nine new
+source-driven integration controls were run against the unchanged implementation:
+eight stop at the intended missing stable-ordinal registration (zero entries
+for two alias functions or four startup functions); the listener-failure
+single-use control passes. Later instantiation/value assertions in those eight
+tests were not reached and are not claimed as measured.
+
+The program consumer draft now uses the physical reservation API, preserves
+separate instruction handles and final ABI/export/start indices, removes its
+fabricated `CodegenContext`, fills actual reserved objects and seals before
+publishing emission. Its integration is not yet validated because the worker's
+kernel is still under implementation and has not been adopted. The kernel claim
+is independently verified on the remote assignment branch, write
+`19409-8ue0poec`, assignee
+`ttraenkler/codex-astra-physical-module-completion-20260908`.
+
+Draft review identified that plain JSON snapshots would conflate `-0` with zero
+and non-finite instruction constants with null. The worker is assigned exact
+numeric/presence-preserving snapshots and mutation controls before freeze.
+Neither the existing native async refusal nor physical capability selection
+has been changed. Native scheduler/Promise/frame materialization remains open.
+
+High review tightened the source controls to require the exact selected unit
+sequence, fixture-declared two/three-unit populations and explicit startup
+presence, plus listener-error object identity. The consumer also checks actual
+module ownership order against its reserved projection. These revisions remain
+unmeasured until composition with the frozen physical kernel.
+
+Boundary activation now requires all original 56 canonical modules plus the
+three new physical owners. The prior allowed-edge policy and complete prior
+activation history were independently compared to `e3de0f3ff7` and are unchanged;
+the two new layer activations are additive. Deletion, frontend-alias and
+unresolved-edge controls include the new owners. The old 193-edge fixture
+assertions have deliberately not been replaced by guessed counts: run the
+composed checker and pin its actual type/runtime edge census before publication.
+
+The frozen nine-file kernel is now adopted with all nine Git blobs verified
+against the worker manifest. The composed kernel and real-source consumer pass
+83/83 controls (74 kernel, nine consumer), and TypeScript 7 completes with exit
+zero. An initial transfer inserted a truncation marker and duplicate text in
+the registry file; that agent-created insertion was repaired and the original
+frozen blob verified before the clean run. No failed-load test run is counted.
+
+The expanded boundary suite measured 96/97: only the intentionally stale
+edge-census assertion failed. A focused run measured 202 edges, comprising 144
+type-only and 58 runtime edges, across 59 required modules. Those measured
+counts now replace the old literals; the complete rerun passes 97/97 with a
+clean terminal exit. Allowed edges and prior activation history stay unchanged.
+
+High review blocks physical publication on five uncovered kernel defects:
+sparse publication array holes, distinct NaN payloads, flattened recursive
+type indices, omitted canonicalRuntimeRecGroup snapshots, and body-only
+ref.func declaration completeness. The existing Low implementation worker is
+repairing these with source-grounded controls; the parent owns serialized
+execution. The 83 passing controls do not resolve these counterexamples.
+No additional consumer-wiring defect was found. Native async acceptance and
+direct-codegen retirement remain unproven.
+
+Historical physical-consumer source parity is now measured in separate explicit
+baseline/candidate processes. The baseline is PR5751 source at e3de0f3ff7
+(head 9c60a92f4d changes tests/docs only, with no source diff or untracked source);
+the candidate is this physical worktree. Complete before/after source snapshots
+cover 1,303 and 1,306 files respectively and remain unchanged during each run.
+The initial eight alias/startup cases produce 32 original/replay execution
+records and sixteen exact cross-root pairs. Three additive source cases cover
+exported global 42 and local/shared throw-null tags. The supplemented eleven
+cases yield 44 emission/execution records and 22 exact cross-root pairs, with
+identical bytes, WAT, resource order, wire data and checked results. Descriptor
+receipts preserve optional presence, array holes, bytes and floating-point bits.
+These are the initial frozen kernel's measurements, not proof of its five
+pending repairs. Nonzero function-import offsets and full native async physical
+materialization remain separate obligations; a tag import is not a function
+import. The lexical-TDZ source refusal is not replaced by the var startup case.
+
+The next real runtime body move is specified in
+[the native Promise settlement plan](../agent-context/3518-native-promise-settlement-plan-2026-09-08.md).
+It retains the full resolve/adoption, object/closure inventory and frame/runtime
+resource obligations; moving six reusable body builders does not retire them.
+
+The five review repairs are adopted from the exact two-file frozen handoff:
+kernel `e930d15be902059c960fd6a9c675fb9a11a11110`, controls
+`d652f915bae2015a743ccfaa3fa479fc30dc5427`. The original 74 controls are retained;
+43 additive controls cover sparse arrays, numeric bits, recursive indices,
+canonical runtime group ownership and all existing declaration routes. The
+repaired kernel plus consumer passes 126/126 (117 + nine). Before these repairs,
+the existing native async and symbolic-reference suites passed 28/28. Those
+28 and the historical byte comparison must not be attributed to the repaired
+source until rerun. Final High review and the emitter's explicit-rec forward
+reference behavior remain unresolved; no publication or retirement is claimed.
+
+Final High review resolves four original findings. Flattened type allocation
+is repaired, but the shared emitter still interprets some explicit-rec physical
+references as outer-record positions and can form an invalid nested group.
+Because the new kernel admits those layouts, publication requires a fail-closed
+compatibility guard. The worker is adding that guard and controls without
+editing the shared emitter or weakening the existing 117 cases. Reference-free
+explicit groups and references solely to an earlier flat prefix remain
+supported. Reference-bearing explicit groups that cross this limitation remain
+unsupported, not silently re-encoded. Correcting shared-emitter grouping stays
+required when those groups are consumed by the full native IR path; this
+temporary guard does not reduce the migration's final scope.
+
+The final guard is adopted exactly: kernel
+`5a7d3c470e7b8ad7ee5978c02909c8a81a1560ee`, controls
+`03098a1f122ab8325957a66b658df3e837a6362d`. Final composed execution passes
+185/185 (148 kernel, nine real consumer, fourteen native async, fourteen
+symbolic-reference). TypeScript 7 passes. The eleven-case final candidate
+comparison again yields 22 exact baseline/candidate pairs, including both
+original and replayed programs; bytes, WAT, resource order and actual results
+match. Final candidate source census hash is
+`5670027d6b5815133f5058ef785a55f7522d82d1058676de532cbe933ab210b0`.
+The baseline source census hash is
+`121296da14cad893a94f9a97501880631beae38416ca6e5b09374579753b07c2`.
+Neither result covers nonzero function-import offsets or certifies full native
+physical materialization. The final boundary rerun passes 97/97. High source
+review approves the exact final guard blobs and finds no remaining blocker
+from the five original findings. Publication is a bounded physical reservation
+checkpoint, not acceptance of the still-unsupported native resources.
