@@ -695,3 +695,57 @@ describe("#5383 S2d — a provider-minted object survives the standalone getter 
     expect(await linkAndRun(CARRIERS.literal, "gc")).toEqual({ keysHere: 3, readA: 1, readMissing: 1 });
   });
 });
+
+// ── S2e — a `defineProperty` sidecar key must not cross scopes ───────────────
+//
+// `ctx.sidecarDefinedPropertyKeys` is keyed by `"<identifierTEXT>:<prop>"`, so
+// ONE `Object.defineProperty(e, "length", …)` anywhere routed EVERY `e.length`
+// in the module through the runtime descriptor read — including one whose `e`
+// is an unrelated local string, which the sidecar has no descriptor for, so the
+// read answered `undefined`.
+//
+// In the compiled polyfill that local is the parameter of the ASCII-lowercase
+// helper `function Ao(e){let t="";for(let n=0;n<e.length;n++)…}`: `e.length`
+// read `undefined`, the loop never ran, `Ao("iso8601")` answered `""`, and
+// `new Temporal.PlainDate(2024,1,1)` threw `RangeError: invalid calendar
+// identifier `. Measured 2026-09-08 on the real bundle: renaming that one local
+// to `zqx` — nothing else — made the same function correct, which is what
+// identifies the KEY rather than the lowering. See sidecar-owner-scope.ts.
+describe("#5383 S2e R10 — a defineProperty sidecar key is scoped to its own binding", () => {
+  it("a local string named like a defineProperty receiver still reads `.length`", async () => {
+    const mod = await compileStandalone(`
+      const e = {};
+      Object.defineProperty(e, "length", { value: 3, configurable: true, writable: true });
+      export function outer() { const v = e.length; return typeof v === "number" ? v : -1; }
+      export function test() {
+        const e = "iso8601";
+        let t = "";
+        for (let n = 0; n < e.length; n++) { t += e.charCodeAt(n); }
+        return t.length;
+      }
+    `);
+    // The seven char codes of "iso8601" concatenated — 17 characters. Base
+    // (before this fix) answered 0: the loop bound read `undefined`.
+    expect(callExport(mod)).toBe(17);
+    // The defineProperty receiver itself still reads through the sidecar.
+    expect(callExport(mod, "outer")).toBe(3);
+  });
+
+  it("the same helper, driven the way the polyfill drives it", async () => {
+    const mod = await compileStandalone(`
+      const e = {};
+      Object.defineProperty(e, "length", { value: 1, configurable: true, writable: true });
+      function Ao(e) {
+        let t = "";
+        for (let n = 0; n < e.length; n++) {
+          const r = e.charCodeAt(n);
+          t += r >= 65 && r <= 90 ? String.fromCharCode(r + 32) : String.fromCharCode(r);
+        }
+        return t;
+      }
+      const CALENDARS = ["iso8601", "hebrew", "gregory"];
+      export function test() { return CALENDARS.includes(Ao("ISO8601")) ? 1 : 0; }
+    `);
+    expect(callExport(mod)).toBe(1);
+  });
+});
