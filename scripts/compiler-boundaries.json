@@ -2669,6 +2669,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/error-prototype.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "4376-deno",
+      "nextBoundary": "Separate canonical Error identity from backend carrier dispatch."
+    },
+    {
       "path": "src/codegen/error-stack-accessor.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

@@ -310,6 +310,7 @@ function emitErrorStructConstructor(
     // $props — (#2101a R5) own-field backing store; null until the subclass's
     // first own-field write lazily allocates an `$Object` here.
     { op: "ref.null.extern" },
+    { op: "i32.const", value: displayName === "Test262Error" ? -1 : tagValue },
     { op: "struct.new", typeIdx: structIdx },
     { op: "extern.convert_any" },
   ];
@@ -458,6 +459,7 @@ export function ensureNativeSuppressedErrorCtor(ctx: CodegenContext): number | u
     { op: "i32.const", value: -1 },
     // $props
     { op: "local.get", index: L_PROPS },
+    { op: "i32.const", value: BUILTIN_TYPE_TAGS.SuppressedError },
     { op: "struct.new", typeIdx: structIdx },
     { op: "extern.convert_any" },
   ];

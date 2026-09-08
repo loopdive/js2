@@ -22,6 +22,7 @@ import type { Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { FUNCTION_FROM_PROTO, PROTO_FROM_FUNCTION } from "./proto-function-value.js"; // (#4637 A1)
 import { BUILTIN_BRAND_TABLE } from "./builtin-brands.js"; // (#5270 step 2)
+import { fillErrorPrototypeArms } from "./error-prototype.js";
 import { buildLazyNativeProtoGetInstrs } from "./native-proto.js"; // (#5270 step 2)
 
 /**
@@ -49,6 +50,7 @@ export const OBJECT_PROTO_SINGLETON = "__object_proto_singleton";
  * `fillObjectProtoSingleton`.
  */
 export function fillObjectProtoSingleton(ctx: CodegenContext): void {
+  fillErrorPrototypeArms(ctx);
   if (!ctx.standalone && !ctx.wasi) return;
   const fn = ctx.mod.functions.find((f) => f.name === OBJECT_PROTO_SINGLETON);
   if (!fn) return;

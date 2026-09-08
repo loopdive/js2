@@ -17,6 +17,11 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-09-08: immutable native Error construction identity and generic prototype hook.
+  - src/codegen/registry/types.ts
+  - src/codegen/registry/error-types.ts
+  - src/codegen/disposable-runtime.ts
+  - src/codegen/object-runtime-prototype.ts
   # 2026-09-08: delegate linked publication literal construction to shared-carrier proof.
   - src/codegen/literals.ts
   # 2026-09-08: delegate ordinary new.target reads to the per-frame value.
@@ -80,6 +85,11 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # 2026-09-08: initialize the appended immutable Error identity field.
+  - src/codegen/registry/types.ts::getOrRegisterErrorStructType
+  - src/codegen/registry/error-types.ts::emitErrorStructConstructor
+  - src/codegen/registry/error-types.ts::ensureNativeSuppressedErrorCtor
+  - src/codegen/promise-combinators.ts::buildAnyRejectBody
   # 2026-09-08: publication construction/signature hooks; proof lives in linked-realm-literal.ts.
   - src/codegen/literals.ts::compileObjectLiteral
   - src/codegen/index.ts::resolveWasmType
@@ -1136,3 +1146,15 @@ Compiler-free hello_world replay10810 exits0 with the expected sum6 and caught s
 Unchanged disable_ops replay35683 exits101 in libs/core/error.rs:1294 while formatting the intentionally thrown op-is-disabled Error. Deno bindings and its existing disabled-op test confirm throwing is intended; the example comment about a no-op is stale. No Deno sources changed. Runtime native Error adoption candidate preserves constructor, message and original native identity, but test93639 still fails prototype.is_object. Baseline23815 failed constructor first. Generic compiled Object.getPrototypeOf currently lacks an Error carrier arm; implementation and broad validation remain open. Runtime candidate is uncommitted, not a completed fix.
 
 User requested another main sync. Fetched loopdive/js2 main at01bd10472f143f2e6b5454f666d3470fef3903cb. Preserving this handover in a signed checkpoint before merging, without stashing. Primary user checkout and unrelated changes remain untouched.
+
+
+Main sync completed in signed merge1bfe7c0959bc530928ac0af562264fe0538b4015; fetched01bd10472f143f2e6b5454f666d3470fef3903cb is an ancestor. No conflicts. Post-merge TypeScript7 typecheck passes. Five focused suites67194 report57/57:56 ordinary passing cases plus the existing explicitly expected shadowed-globalThis failure. Suites: linked-realm-publication, error-constructor-value, function-proto-call, realm-structural-carrier, and upstream standalone-temporal-provider. No broad test262 claim.
+
+Post-merge compiler-only reduction61195 confirms the native Error prototype defect independently of Rust: direct Object.getPrototypeOf(new TypeError()) equals TypeError.prototype; an exported proto(value:any) called with the exported make() Error returns null instead. An ordinary object through the same erased helper equals Object.prototype (positive control). Renaming the public error.name does not repair it. The fix must dispatch on internal Error brand and retain canonical prototype identity, not mutable constructor/name properties. Error prototype parent links and user subclasses require explicit handling; no speculative compiler fix applied. Runtime adoption candidate remains uncommitted and its prototype test remains failing.
+
+
+### Generic native Error prototype candidate
+
+Baseline merged1bfe7c prototype suite39657 fails8/9 with the ordinary/null-object control passing. Candidate99560 passes9/9. Eight-suite43963 reports62/62:61 ordinary cases plus the existing expected shadow failure. Typecheck43199 passes. New immutable intrinsicTag field6 separates construction identity from mutable name and preserves Test262Error as -1 rather than confusing its shared Error instanceof tag. All four identified Error construction sites initialize the field, including Promise.any AggregateError and both SuppressedError constructors. Existing instance field indices remain stable, but Wasm structural ABI changes, so old artifacts must be rebuilt.
+
+New fillErrorPrototypeArms dispatches native builtins through canonical prototypes and walks native Error prototype parents. User-subclass defaults, prototype overrides, AggregateError/SuppressedError reflection and full shared-realm subtype behavior are still open and must not be reported as complete. No Deno edits. New fixture generation31068 passes; Rust test54706 passes1/1 for native Error constructor/message/identity/stable prototype with context-error-prototypes.wasm. The configured older provider was not used to create or round-trip that Error, so this focused test is not cross-version artifact compatibility evidence. Full core/provider recompilation and native replay remain pending.

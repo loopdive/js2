@@ -584,6 +584,7 @@ export function fillDisposableStackDisposeDriver(ctx: CodegenContext): void {
         { op: "ref.null.extern" },
         { op: "i32.const", value: -1 },
         { op: "local.get", index: PROPS },
+        { op: "i32.const", value: BUILTIN_TYPE_TAGS.SuppressedError },
         { op: "struct.new", typeIdx: errStructIdx },
         { op: "extern.convert_any" },
         { op: "local.set", index: PENDING },
