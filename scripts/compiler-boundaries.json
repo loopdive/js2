@@ -1,6 +1,6 @@
 {
   "schema": "compiler-boundaries-v1",
-  "description": "Exact compiler inventory with shared contracts and the bounded Wasm instruction, handle-primitive and native queue modules activated. Remaining model, allocator, runtime-value and compiler concerns stay migration debt.",
+  "description": "Exact compiler inventory with shared contracts, five pure IR type modules and bounded Wasm instruction, handle-primitive and native queue modules activated. Full IR nodes, remaining model, allocator, runtime-value and compiler concerns stay migration debt.",
   "sourceRoot": "src",
   "tsconfig": "tsconfig.json",
   "requireGitProvenance": true,
@@ -60,11 +60,17 @@
     },
     {
       "id": "ir-core",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/ir/core"],
       "required": true,
-      "entries": ["src/ir/core/nodes.ts"],
-      "minModules": 1
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts"
+      ],
+      "minModules": 5
     },
     {
       "id": "ir-analysis",
@@ -192,7 +198,7 @@
       "runtime-contracts",
       "wasm-model"
     ],
-    "ir-core": ["ir-core", "foundation"],
+    "ir-core": ["ir-core", "foundation", "wasm-model"],
     "ir-analysis": ["ir-analysis", "foundation", "ir-core"],
     "ir-passes": ["ir-passes", "foundation", "ir-core", "ir-analysis"],
     "ir-runtime": [
@@ -360,6 +366,17 @@
   ],
   "activationHistory": [
     {
+      "layer": "ir-core",
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts"
+      ],
+      "minModules": 5
+    },
+    {
       "layer": "foundation",
       "entries": [
         "src/shared/contracts/source-origin.ts",
@@ -460,6 +477,11 @@
     }
   ],
   "files": [
+    { "path": "src/ir/core/types.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/fnctor-shapes.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/value-references.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/capability-provenance.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/tag-refinement.ts", "state": "clean", "layer": "ir-core" },
     {
       "path": "src/adapter-manifest.ts",
       "state": "unmigrated",
@@ -8302,11 +8324,11 @@
     },
     {
       "path": "src/ir/capability-provenance.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "The three unchanged declarations live in core/capability-provenance.ts with canonical F0 identity types. Retain this one-way compatibility export until consumers migrate."
     },
     {
       "path": "src/ir/capability.ts",
@@ -8882,7 +8904,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "F0 redirects only the specified shared identity imports; later split semantic async attachment data from provider-selection implementation. This import change alone does not prove a clean core."
+      "nextBoundary": "Core type construction and equality live in the five activated core modules. The full src/ir/core/nodes.ts destination remains unfinished: split semantic async attachment data, provider-selection dependencies and dialect contracts before moving instructions/functions. irValSigned and isDynamic remain here with unresolved production-caller obligations."
     },
     {
       "path": "src/ir/number-to-string-provider.ts",
@@ -9534,11 +9556,11 @@
     },
     {
       "path": "src/ir/value-references.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "F0 redirects the existing IrBindingId/IrUnitId type imports to the canonical shared identity module; verify remaining dependency closure separately before marking the module clean."
+      "nextBoundary": "The four unchanged declarations live in core/value-references.ts. Retain this one-way compatibility export; it is not a second declaration or proof that instructions/async attachments have migrated."
     },
     {
       "path": "src/ir/vec-layout.ts",

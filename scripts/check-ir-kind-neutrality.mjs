@@ -30,7 +30,9 @@
 //
 // Arms are resolved to their DECLARING interface, which may live in
 // `src/ir/nodes.ts` or in `src/ir/dialect/*.ts`. The three deliberately
-// excluded symbolic references may also live in `src/ir/value-references.ts`.
+// excluded symbolic references live in `src/ir/core/types.ts` (IrTypeRef) and
+// `src/ir/core/value-references.ts` (IrFuncRef / IrGlobalRef). Both old facades
+// remain in the scan so a duplicate or new kind cannot hide behind relocation.
 // Where a declaration lives is the thing being decided, so it cannot also be
 // the thing that defines the population.
 //
@@ -172,6 +174,8 @@ import path from "node:path";
 
 const NODES = "src/ir/nodes.ts";
 const VALUE_REFERENCES = "src/ir/value-references.ts";
+const CORE_TYPES = "src/ir/core/types.ts";
+const CORE_VALUE_REFERENCES = "src/ir/core/value-references.ts";
 const DIALECT_DIR = path.join("src", "ir", "dialect");
 const IR_DIR = path.join("src", "ir");
 const BASELINE = "scripts/ir-kind-neutrality-baseline.json";
@@ -186,6 +190,12 @@ const OUT_OF_SCOPE = {
   IrFuncRef: "func",
   IrGlobalRef: "global",
   IrTypeRef: "type",
+};
+
+const CANONICAL_REFERENCES = {
+  IrFuncRef: CORE_VALUE_REFERENCES,
+  IrGlobalRef: CORE_VALUE_REFERENCES,
+  IrTypeRef: CORE_TYPES,
 };
 
 // ---------------------------------------------------------------------------
@@ -419,7 +429,7 @@ const VERDICTS = {
     verdict: "neutral",
     why: "Constructs a record from a declared field layout. No prototype, no descriptors, no insertion order semantics.",
     evidence: [
-      { file: NODES, quote: "export interface IrObjectShape {" },
+      { file: CORE_TYPES, quote: "export interface IrObjectShape {" },
       { file: NODES, quote: "readonly shape: IrObjectShape;" },
     ],
   },
@@ -505,7 +515,7 @@ const VERDICTS = {
     verdict: "neutral",
     why: "Allocates a nominal class instance through the class-owned constructor wrapper. No `new.target`, no constructor-returns-object override.",
     evidence: [
-      { file: NODES, quote: "export interface IrClassShape {" },
+      { file: CORE_TYPES, quote: "export interface IrClassShape {" },
       { file: NODES, quote: "Construct a class instance through the class-owned AST-free" },
     ],
   },
@@ -966,16 +976,25 @@ const dialectFiles = (() => {
     return [];
   }
 })();
-const sourceFiles = [NODES, VALUE_REFERENCES, ...dialectFiles];
+// Canonical sources are mandatory, not optional fallbacks to the facades.
+const sourceFiles = [NODES, VALUE_REFERENCES, CORE_TYPES, CORE_VALUE_REFERENCES, ...dialectFiles];
 
 const declared = new Map(); // interface name -> {kind, file, line}
 for (const file of sourceFiles) {
-  for (const [name, info] of kindBearingInterfaces(file)) {
+  let interfaces;
+  try {
+    interfaces = kindBearingInterfaces(file);
+  } catch {
+    fail(`${file}: required kind-population source is missing or unreadable.`);
+    continue;
+  }
+  for (const [name, info] of interfaces) {
     if (declared.has(name))
       fail(`duplicate kind-bearing interface \`${name}\` in ${file} and ${declared.get(name).file}`);
     declared.set(name, info);
   }
 }
+if (failures.length > 0) die();
 
 const instrArms = unionArms(NODES, "IrInstr");
 const termArms = unionArms(NODES, "IrTerminator");
@@ -1024,10 +1043,17 @@ for (const [name, info] of excluded) {
   }
 }
 for (const name of Object.keys(OUT_OF_SCOPE)) {
-  if (!declared.has(name)) {
+  const info = declared.get(name);
+  const canonicalFile = CANONICAL_REFERENCES[name];
+  if (!info) {
     fail(
-      `${NODES}/${VALUE_REFERENCES}: the population rule excludes \`${name}\`, which no longer exists. Update the rule in ` +
+      `${canonicalFile}: the population rule excludes \`${name}\`, which no longer exists. Update the rule in ` +
         "this script's header so the reconciliation keeps describing reality.",
+    );
+  } else if (info.file !== canonicalFile) {
+    fail(
+      `\`${name}\` must be declared in ${canonicalFile}, not ${info.file}. ` +
+        "A compatibility declaration cannot replace the canonical symbolic reference.",
     );
   }
 }

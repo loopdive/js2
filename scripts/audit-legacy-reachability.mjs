@@ -39,11 +39,15 @@ import { isBuiltin } from "node:module";
 import { createHash } from "node:crypto";
 
 let movedReferenceContract = "strict";
+let requireCoreTypes = false;
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
   if (["--root", "--json", "--why"].includes(arg)) {
     if (!process.argv[i + 1] || process.argv[i + 1].startsWith("--")) throw new Error(`${arg} requires a value`);
     i++;
+  } else if (arg === "--require-core-types") {
+    if (requireCoreTypes) throw new Error("duplicate --require-core-types");
+    requireCoreTypes = true;
   } else if (arg.startsWith("--moved-reference-contract=")) {
     if (movedReferenceContract !== "strict" || arg !== "--moved-reference-contract=preservation-v1") {
       throw new Error(`unsupported/duplicate moved-reference contract: ${arg}`);
@@ -315,6 +319,31 @@ const MOVED_FUNCTIONS = [
   },
 ];
 
+// Additive checkpoint contract. Activation is explicit in check:dead-exports,
+// never inferred from which destination files happen to survive. N1's six
+// targets and fixture contract are unchanged. These ten require class-free
+// production references in BOTH graphs; no declarations are their own roots.
+const CORE_TYPE_FUNCTIONS = [
+  ...[
+    "irVal",
+    "irVec",
+    "irFnctor",
+    "asVal",
+    "irDynamic",
+    "irTypeEquals",
+    "classShapeEquals",
+    "closureSignatureEquals",
+    "objectShapeEquals",
+  ].map((name) => ({
+    original: `src/ir/nodes.ts#${name}`,
+    canonical: `src/ir/core/types.ts#${name}`,
+  })),
+  {
+    original: "src/ir/tag-domain.ts#tagRefinementEquals",
+    canonical: "src/ir/core/tag-refinement.ts#tagRefinementEquals",
+  },
+];
+
 // These two AST contracts identify reviewed OPEN sites. They never contribute
 // targets, graph edges or roots, and never exempt a strict failure.
 const BOUNDARY_SHAPES = [
@@ -531,6 +560,9 @@ function movedRuntimeReport() {
   });
   const checker = program.getTypeChecker();
   const graph = new Map();
+  const coreGraph = new Map();
+  const classOwners = new Set();
+  const deferredCoreCallables = new Set();
   const owners = new Map();
   const callables = new Set();
   const diagnostics = [];
@@ -545,12 +577,26 @@ function movedRuntimeReport() {
       diagnosticIds.add(diagnosticId);
     }
   };
-  const edge = (from, to) => graph.get(from).add(to);
+  const edge = (from, to, site = null, coreEligible = true) => {
+    graph.get(from).add(to);
+    // Keep the existing graph unchanged. The core contract must not gain a
+    // witness from visiting an unused class method, including nested classes
+    // and class expressions under a function/variable owner.
+    if (!coreEligible || classOwners.has(from)) return;
+    for (let node = site; node && !ts.isSourceFile(node); node = node.parent) {
+      if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) return;
+    }
+    coreGraph.get(from).add(to);
+  };
   const register = (id, node, callable = false) => {
     if (graph.has(id)) {
       // Overload signatures have no body; the implementation owns the node.
       if (!node.body) return;
-    } else graph.set(id, new Set());
+    } else {
+      graph.set(id, new Set());
+      coreGraph.set(id, new Set());
+    }
+    if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) classOwners.add(id);
     owners.set(node, id);
     if (callable) callables.add(id);
   };
@@ -583,6 +629,21 @@ function movedRuntimeReport() {
       else if (ts.isVariableStatement(stmt)) {
         for (const decl of stmt.declarationList.declarations) {
           if (!ts.isIdentifier(decl.name)) continue;
+          // Parentheses and type-only wrappers do not execute a deferred
+          // function body. Retain N1's historical classification, but never
+          // let module initialization root these callables for the core proof.
+          let initializer = decl.initializer;
+          while (
+            initializer &&
+            (ts.isParenthesizedExpression(initializer) ||
+              ts.isAsExpression(initializer) ||
+              ts.isTypeAssertionExpression(initializer) ||
+              ts.isSatisfiesExpression(initializer) ||
+              ts.isNonNullExpression(initializer))
+          )
+            initializer = initializer.expression;
+          if (initializer && (ts.isArrowFunction(initializer) || ts.isFunctionExpression(initializer)))
+            deferredCoreCallables.add(`${file}#${decl.name.text}`);
           register(
             `${file}#${decl.name.text}`,
             decl,
@@ -657,7 +718,7 @@ function movedRuntimeReport() {
     record.target = target;
     if (graph.has(target)) {
       record.status = "resolved-production";
-      edge(id, target);
+      edge(id, target, node);
     } else if (resolved.isExternalLibraryImport) {
       record.status = "resolved-external";
     } else {
@@ -704,7 +765,7 @@ function movedRuntimeReport() {
       const target = declarationTarget(decl);
       if (target) {
         resolved = true;
-        if (target !== id) edge(id, target);
+        if (target !== id) edge(id, target, node);
       } else if (program.isSourceFileFromExternalLibrary(decl.getSourceFile())) {
         // A resolved external declaration (e.g. ts-api's TypeScript export)
         // is a package boundary, never a source-function root or a fallback
@@ -720,7 +781,7 @@ function movedRuntimeReport() {
       });
     if (imported && resolved) {
       const module = resolveModule(node.getSourceFile().fileName, imported);
-      if (module && graph.has(`${rel(module)}#<module>`)) edge(id, `${rel(module)}#<module>`);
+      if (module && graph.has(`${rel(module)}#<module>`)) edge(id, `${rel(module)}#<module>`, node);
     }
   };
   const visit = (id, node) => {
@@ -811,7 +872,7 @@ function movedRuntimeReport() {
         if (ts.isVariableStatement(stmt)) {
           for (const decl of stmt.declarationList.declarations) {
             const target = owners.get(decl);
-            if (target && !callables.has(target)) edge(id, target);
+            if (target && !callables.has(target)) edge(id, target, null, !deferredCoreCallables.has(target));
             else if (!target) visit(id, decl);
           }
         } else visit(id, stmt);
@@ -821,7 +882,7 @@ function movedRuntimeReport() {
       visit(id, node);
     }
   }
-  const pathsFromRoots = (cut) => {
+  const pathsFromRoots = (cut, referenceGraph = graph) => {
     const parent = new Map();
     const queue = [];
     for (const root of PRODUCTION_ROOTS) {
@@ -831,7 +892,7 @@ function movedRuntimeReport() {
       }
     }
     for (let i = 0; i < queue.length; i++) {
-      for (const target of graph.get(queue[i]) ?? []) {
+      for (const target of referenceGraph.get(queue[i]) ?? []) {
         if (!graph.has(target))
           error(queue[i], "unresolved-graph-edge", `unresolved graph edge ${target}`, { subject: target });
         else if (!cut.has(target) && !parent.has(target)) {
@@ -886,6 +947,36 @@ function movedRuntimeReport() {
     };
   });
   if (full.size === 0 || functions.length !== 6) structuralFailures.push("empty/incomplete moved-runtime report");
+  const coreTypes = {
+    required: requireCoreTypes,
+    assessed: requireCoreTypes,
+    expectedSymbols: 10,
+    scope: "class-free static production references; not execution or retirement proof",
+    functions: [],
+    fullWitnessCount: null,
+    cutWitnessCount: null,
+    failures: [],
+    ok: null,
+  };
+  if (requireCoreTypes) {
+    const coreFull = pathsFromRoots(classOwners, coreGraph);
+    const coreCut = pathsFromRoots(new Set([...CUT, ...classOwners]), coreGraph);
+    coreTypes.functions = CORE_TYPE_FUNCTIONS.map(({ original, canonical }) => {
+      if (!callables.has(canonical)) coreTypes.failures.push(`missing canonical core function ${canonical}`);
+      if (callables.has(original)) coreTypes.failures.push(`duplicate core implementation ${original}`);
+      const fullProductionPath = pathTo(coreFull, canonical);
+      const legacyDispatchCutPath = pathTo(coreCut, canonical);
+      if (!fullProductionPath) coreTypes.failures.push(`no class-free production reference path to ${canonical}`);
+      if (!legacyDispatchCutPath) coreTypes.failures.push(`no class-free dispatch-cut reference path to ${canonical}`);
+      return { original, canonical, target: canonical, fullProductionPath, legacyDispatchCutPath };
+    });
+    coreTypes.fullWitnessCount = coreTypes.functions.filter((fn) => fn.fullProductionPath).length;
+    coreTypes.cutWitnessCount = coreTypes.functions.filter((fn) => fn.legacyDispatchCutPath).length;
+    if (CORE_TYPE_FUNCTIONS.length !== 10 || coreTypes.fullWitnessCount !== 10 || coreTypes.cutWitnessCount !== 10)
+      coreTypes.failures.push("core types require 10/10 full and dispatch-cut class-free witnesses");
+    coreTypes.ok = coreTypes.failures.length === 0;
+  }
+  const coreTypesOK = !requireCoreTypes || coreTypes.ok;
   const reachableDiagnostics = diagnostics.filter(({ owner }) => full.has(owner));
   // Human output keeps its historical grouping. Admission uses the structured
   // diagnostic IDs below; formatting/deduplication cannot change a verdict.
@@ -897,11 +988,12 @@ function movedRuntimeReport() {
     }
     return [...byOwner].flatMap(([owner, messages]) => [...messages].map((message) => `${owner}: ${message}`));
   };
-  const failures = [...structuralFailures, ...diagnosticMessages(reachableDiagnostics)];
+  const failures = [...structuralFailures, ...coreTypes.failures, ...diagnosticMessages(reachableDiagnostics)];
   const provenance = extensionReceipts({ checker, sourceFiles, moduleLoads, diagnostics, full, cut });
   const recordedDiagnostics = new Set(provenance.receipts.map((receipt) => receipt.diagnosticId));
   const unrecordedDiagnostics = reachableDiagnostics.filter((diagnostic) => !recordedDiagnostics.has(diagnostic.id));
   const preservationFailures = [
+    ...coreTypes.failures,
     ...provenance.failures,
     ...structuralFailures,
     ...diagnosticMessages(unrecordedDiagnostics),
@@ -912,8 +1004,9 @@ function movedRuntimeReport() {
     preservationFailures.push("preservation requires 6/6 full source witnesses");
   if (cutWitnessCount !== 6 || cut.size === 0)
     preservationFailures.push("preservation requires 6/6 dispatch-cut source witnesses");
-  const strictOK = structuralFailures.length === 0 && reachableDiagnostics.length === 0;
+  const strictOK = coreTypesOK && structuralFailures.length === 0 && reachableDiagnostics.length === 0;
   const preservationSourceIntegrityOK =
+    coreTypesOK &&
     provenance.failures.length === 0 &&
     structuralFailures.length === 0 &&
     unrecordedDiagnostics.length === 0 &&
@@ -923,6 +1016,7 @@ function movedRuntimeReport() {
     cut.size > 0;
   return {
     roots: PRODUCTION_ROOTS,
+    coreTypes,
     evidence: "static production references; not execution or standalone/IR-only completion",
     fullProduction: { reachableNodes: full.size, witnessCount: fullWitnessCount },
     legacyDispatchCut: {
@@ -1176,6 +1270,12 @@ if (process.argv.includes("--update")) {
   process.exit(0);
 }
 if (process.argv.includes("--check")) {
+  const coreTypes = movedRuntime.coreTypes;
+  console.log(
+    coreTypes.required
+      ? `core-type gate: ${coreTypes.ok ? "PASS" : "FAIL"} (${coreTypes.fullWitnessCount}/10 full, ${coreTypes.cutWitnessCount}/10 dispatch-cut class-free references)`
+      : "core-type group: not required / not assessed (use --require-core-types)",
+  );
   if (!movedRuntime.ok) {
     console.error("moved-runtime gate: FAIL (production-rooted evidence incomplete)");
     for (const failure of movedRuntime.failures) console.error(`  ${failure}`);

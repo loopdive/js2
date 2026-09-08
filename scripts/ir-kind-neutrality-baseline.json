@@ -107,7 +107,7 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts#IrInstrClassNew",
       "why": "Allocates a nominal class instance through the class-owned constructor wrapper. No `new.target`, no constructor-returns-object override.",
-      "evidence": ["src/ir/nodes.ts#e0a49156ba51", "src/ir/nodes.ts#e85fb3d26cf9"]
+      "evidence": ["src/ir/core/types.ts#e0a49156ba51", "src/ir/nodes.ts#e85fb3d26cf9"]
     },
     "class.set": {
       "verdict": "neutral",
@@ -411,7 +411,7 @@
       "where": "core",
       "declaredAt": "src/ir/nodes.ts#IrInstrObjectNew",
       "why": "Constructs a record from a declared field layout. No prototype, no descriptors, no insertion order semantics.",
-      "evidence": ["src/ir/nodes.ts#3044daed9a17", "src/ir/nodes.ts#1fe0d30bbe28"]
+      "evidence": ["src/ir/core/types.ts#3044daed9a17", "src/ir/nodes.ts#1fe0d30bbe28"]
     },
     "object.set": {
       "verdict": "neutral",

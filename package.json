@@ -140,7 +140,7 @@
     "check:dogfood-validation": "node scripts/check-dogfood-validation.mjs",
     "survey:dogfood-validation": "node scripts/check-dogfood-validation.mjs --survey",
     "inventory:test262-linked-harness": "npx tsx scripts/test262-linked-harness-inventory.ts",
-    "check:dead-exports": "node scripts/audit-legacy-reachability.mjs --check --moved-reference-contract=preservation-v1",
+    "check:dead-exports": "node scripts/audit-legacy-reachability.mjs --check --moved-reference-contract=preservation-v1 --require-core-types",
     "check:godfiles": "node scripts/profile-godfiles.mjs --check",
     "profile:godfiles": "node scripts/profile-godfiles.mjs",
     "gen:ir-adoption": "node scripts/gen-ir-adoption.mjs",

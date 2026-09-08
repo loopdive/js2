@@ -121,6 +121,94 @@ draft has 59/59 tests and typecheck passing, with parent composition and artifac
 parity still pending. The [lowering-cycle proposal](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
 is the next bounded plan, not a competing dispatch or completed dependency split.
 
+### Core type construction checkpoint — 2026-09-08
+
+The [Astra High core checkpoint contract](../agent-context/3518-core-types-checkpoint-plan-2026-09-08.md)
+implements the next-core proposal published in PR 5741. Five canonical core
+modules extract type construction/equality, shape contracts, symbolic references,
+capability provenance and tag refinements. Old exports retain object/brand
+identity. Instructions, functions, async/provider contracts and the full
+`src/ir/core/nodes.ts` destination remain unfinished; `irValSigned` and
+`isDynamic` remain unmoved with unproved production-caller obligations.
+
+This independent checkpoint starts at upstream/main
+`25b9a41c3828dfb403797003dc6b66c72a2547ba`. It does not silently incorporate
+the held lowering PR 5738, ABI PR 5739 or startup PR 5741. Their source maps
+are disjoint, but shared policy/issue changes require deliberate composition.
+PR 5741's PR-head checks are now green and it is conflict-free; this does not
+clear the inherited N1 host regression or authorize queue admission.
+
+The added caller contract requires ten fixed canonical targets with class-free
+full and dispatch-cut paths. N1 retains its independent six-target check, both
+open-import receipts, unchanged dead-export baseline and strict closure failure.
+Unused class methods, including nested classes and class expressions, cannot
+become preservation evidence. The kind-neutrality record changes only the two
+reviewed shape-citation file prefixes; all counters and verdicts stay fixed.
+
+Publication remains non-draft on `loopdive/js2` with `hold`. The previous
+N1 merge-group failure and cumulative queue-check safety decision remain open.
+The separate ABI getter compatibility decision is also unanswered. No CI
+workflow/ruleset changes, direct-main push, force push, public cutover or
+retirement approval is part of this checkpoint. Focused validation receipts
+are recorded below before publication.
+
+Validation of the frozen source and composed gates:
+
+- Astra Low: 77/77 focused tests (25 seam, 7 fnctor ABI, 6 class identity,
+  4 class-type identity, 16 tag-domain, 19 dynamic-type); typecheck exit 0.
+- Parent: 134/134 caller controls (29 additive core, all 39 original rooted
+  audit and 66 approved-open-site controls), then 120/120 composed checks
+  (25 seam, 15 boundary, 33 kind evidence, 5 existing stable-evidence,
+  42 existing compiler-boundary controls). These cover 306 distinct tests
+  across worker and parent, not 331 independent tests: the 25 seam cases repeat.
+- Independent AST comparison: all 37 moved and 120 retained declarations are
+  text-identical, with moved documentation preserved. All ten source blobs
+  match the frozen worker. The normal commit hook rejected the test-only local
+  name `constructor`; integration renamed it to `constructorIdentity` without
+  changing its assertions or production source. Source delta is +61 LOC; largest moved function
+  is 71 lines. No LOC/function allowance or budget-baseline edit was needed.
+- Actual package preservation check: ten of ten full AND dispatch-cut core
+  witnesses, excluding class-body visitation; N1 six of six in both graphs.
+  Historical dead-export ratchet remains 25/25, with zero additions/removals.
+  Two nonliteral imports remain unknown. Strict command exits 1;
+  preservation exits 0; retirement/deletion remains uncertified.
+- The actual dependency inventory has 1,249 modules: 11 clean, 1,234 unmigrated,
+  four compatibility adapters. It resolves 9,765 edges (2,499 type-only,
+  7,266 runtime), records four unknown edges and zero checker errors.
+  Inventory exits 0; full completion exits 1 with architectureComplete=false.
+  The canonical closure alone contains eight modules, twelve resolved edges,
+  and only the tag-refinement equality import is a runtime edge.
+- Kind evidence retains 85 instructions/terminators, three excluded references
+  (88 anchored kind declarations), 55 neutral / 27 JS / three unresolved
+  verdicts. Reversing exactly two citation prefixes recovers the original
+  whole baseline blob; no count/verdict/evidence quote changes are accepted.
+
+Standalone preservation uses the real public `compile` API, unoptimized WasmGC,
+`experimentalIR:true`, `trackIrOutcomes:true`, Node v22.23.2. The clean comparison
+checkout is `36ea5ce9f54190c1f2c7af0466cf768afb453394`, independently verified
+source-identical to both original main `25b9a41c3828dfb403797003dc6b66c72a2547ba`
+and the incorporated metadata-only refresh
+`16498efb481cb022ee5c4dcc9bb137b6d4c91a50`. The candidate uses the ten frozen
+source files. Five original scalar/vector/record/class/closure programs produce
+identical complete binary bytes, WAT, imports, export order, string pools,
+IR outcomes and repeated runtime values on both sides. All validate and have
+zero Wasm imports. This is preservation evidence, not IR-only coverage proof.
+
+Matched binary receipts (bytes; SHA-256):
+
+- scalar: 22,604; `b1e14e671d61c47b1123965592c9ad09469849b320cd3bc4b892dd382989c7ee`
+- vector: 50,209; `7111975b8af803999fc2b52af8c7be06d4463d26b15b37c151fbdf65a52ede33`
+- record: 22,852; `a0191bb20c6065d57c2af104a1f060b73fde18727918da6b86f800e3699d1c1c`
+- class: 22,903; `88562dac074b1f3df4689cea57cab1774a4dea21b06bfe97784e79941d304206`
+- closure: 32,977; `468b0fc913eb7192725f91225476eafe2ee148279c06932ece3e61bd76240ed9`
+
+Reproduction receipts remain in the integration worktree
+`/private/tmp/js2-3518-core-types-checkpoint-20260908/.tmp/`: `core-extraction.mjs`
+and JSON, `core-caller-tests.json`, `core-composed-tests.json`,
+`core-reachability.json`, `core-strict.json`, `core-inventory.json`,
+`core-complete.json`, `core-paired.mjs` and paired base/candidate JSON. None
+replaces the committed executable controls. No local Test262 campaign ran.
+
 ## Historical execution plan — whole-program cutover (2026-09-05)
 
 The user approved replacing continued hybrid feature-by-feature expansion with
