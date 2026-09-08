@@ -153,6 +153,7 @@ import {
 } from "./array-object-proto.js";
 import { isBuiltinSubtype, isBuiltinTypeName } from "./builtin-tags.js";
 import {
+  type ExternrefBackedOwnFieldBacking,
   externrefBackedOwnFieldBacking,
   getOrRegisterErrorStructType,
   isWasiErrorName,
@@ -2052,8 +2053,10 @@ export function emitExternrefBackedOwnFieldRead(
   expr: ts.PropertyAccessExpression,
   propName: string,
   className?: string,
+  backingOverride?: ExternrefBackedOwnFieldBacking,
 ): ValType | null | undefined {
-  const backing = className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className);
+  const backing =
+    backingOverride ?? (className === undefined ? "error-struct" : externrefBackedOwnFieldBacking(ctx, className));
   if (backing === undefined) return undefined;
   ensureObjectRuntime(ctx);
   const externGetIdx = ensureLateImport(

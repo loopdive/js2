@@ -76,6 +76,7 @@ import { compileStringLiteral } from "./string-ops.js";
 import { emitUndefined } from "./expressions/late-imports.js";
 import { emitLazyClassObjectGet } from "./expressions/extern.js"; // (#5377)
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
+import { emitStandaloneSubclassMethodInstall } from "./standalone-subclass-method-install.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
 import { emitWasiErrorConstructor, getOrRegisterErrorStructType, isWasiErrorName } from "./registry/error-types.js";
@@ -604,6 +605,13 @@ function emitSetSubclassProto(
   subName: string,
   parentName: string,
 ): void {
+  // (#5383 S2b) Standalone/WASI has no `__set_subclass_proto` host import, so
+  // this function is a documented no-op there — and a method on an
+  // externref-backed subclass is consequently unreachable through any dynamic
+  // receiver. Install the methods on the instance instead; the helper emits
+  // nothing for every other shape. Runs BEFORE the host path below so the two
+  // lanes stay independent (the helper is standalone/WASI-gated).
+  emitStandaloneSubclassMethodInstall(ctx, fctx, selfLocal, subName);
   const setProtoIdx = ensureLateImport(
     ctx,
     "__set_subclass_proto",

@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9944,
-    "fail": 1701,
+    "pass": 9943,
+    "fail": 1702,
     "ce": 59,
     "skip": 0,
     "total": 11704,
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 889,
-        "fail": 161,
+        "pass": 888,
+        "fail": 162,
         "ce": 0,
         "skip": 0,
         "total": 1050,
@@ -2856,8 +2856,8 @@
   },
   {
     "edition": "ES2024",
-    "pass": 361,
-    "fail": 195,
+    "pass": 362,
+    "fail": 194,
     "ce": 0,
     "skip": 0,
     "total": 556,
@@ -2865,8 +2865,8 @@
     "features": [
       {
         "name": "TypedArray",
-        "pass": 98,
-        "fail": 149,
+        "pass": 99,
+        "fail": 148,
         "ce": 0,
         "skip": 0,
         "total": 247,
@@ -2883,12 +2883,12 @@
       },
       {
         "name": "align-detached-buffer-semantics-with-web-reality",
-        "pass": 89,
-        "fail": 69,
+        "pass": 90,
+        "fail": 68,
         "ce": 0,
         "skip": 0,
         "total": 158,
-        "pct": 56
+        "pct": 57
       },
       {
         "name": "BigInt",
