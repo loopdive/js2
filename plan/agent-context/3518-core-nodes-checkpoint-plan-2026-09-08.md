@@ -1,7 +1,10 @@
 # Complete semantic nodes checkpoint — Astra High implementation contract
 
-Status: structural extraction and preservation measured; the additive node
-execution gate is still being hardened. This is not complete acceptance.
+Status: structural extraction and preservation published in non-draft held
+PR 5744 at `8429806b2abb6a9f04160471170a0659c94bd335`. The additive node
+execution follow-up is implemented, measured and independently approved for
+bounded caller preservation by Astra High.
+This is not complete migration or retirement acceptance.
 Stack base: PR 5742, `acfd3e37b8765c4c4788c1fa94718d62c60e473c`.
 Upstream main was independently read as
 `16498efb481cb022ee5c4dcc9bb137b6d4c91a50` before dispatch.
@@ -137,13 +140,12 @@ retains an observed real compiler consumer, not that all historical callers are
 preserved or that legacy dispatch did not execute. Aggregate coverage entries
 omitted by V8 cannot certify zero calls and are not the chosen evidence method.
 
-The prototype observes all twelve actual objects during public compilation of
-the vector program, with a real public compile frame in each stack. A separate
-calibration distinguishes class evaluation from construction, method calls and
-getter reads. These scratch experiments are not yet a committed acceptance
-gate. The structural checkpoint may be published with this remaining work
-explicitly open; a follow-up must add the hardened helper, negative controls,
-explicit auditor/package requirement and independent High review to the same PR.
+The initial prototype observed all twelve actual objects during public
+compilation of the vector program, with a real public compile frame in each
+stack. At structural publication these scratch experiments were not a committed
+acceptance gate. The follow-up below adds the hardened helper, explicit
+auditor/package requirement and calibration of both explicit and implicit
+constructors; the positive execution and strict-retirement verdicts stay separate.
 
 ## Parent-owned gates and acceptance
 
@@ -234,3 +236,80 @@ Full receipts remain under the integration worktree's `.tmp/` in
 `core-nodes-counted-base-tests.json`, paired base/candidate JSON, inventory and
 complete JSON, and preservation-v1/strict JSON. Scratch receipts supplement,
 not replace, committed executable controls. No local Test262 campaign ran.
+
+## Additive execution-gate follow-up
+
+The follow-up adds `--require-core-nodes` to the existing package check beside
+`--require-core-types` and the approved preservation contract. Without the new
+flag, the group explicitly reports not-required/not-assessed with no success
+verdict. With it, the auditor runs a fresh isolated child before constructing
+either existing static graph. Missing sources, binding failures, observer errors,
+failed compilation/execution, stale receipts or an incomplete denominator fail
+both requested verdicts. A passing child cannot promote an older failed verdict.
+
+The child binds actual function objects, records acknowledged breakpoint IDs and
+their matching pause events, validates the exact target and public-compile
+frames, and drains observer callbacks before reporting. It authenticates current
+source content, generated script/ranges, old/new export identity, the Node
+executable, loader/parser/helper implementations and the planned launch. Parent
+admission supplies independent before/after source and runtime expectations.
+`NODE_V8_COVERAGE` is scoped to the isolated child and a unique private `.tmp`
+directory so tsx embeds original source content; coverage output is never read
+as caller evidence, a zero-call inference or a dispatch-cut result.
+
+Final measured integration and review:
+
+- 82/82 focused tests pass: 43 live calibration/receipt controls, 28 additive
+  admission/deadline/environment controls and 11 child-adapter controls. The
+  adapter tests use explicitly synthetic inputs, not fabricated compiler
+  evidence. They preserve older graph populations, receipts, failure reasons
+  and verdicts while rejecting incomplete or failed new groups.
+- All 134 earlier caller/open-import tests pass. Only the old package-command
+  expectation gains the explicit new flag; no previous caller assertion changes.
+  Integrated typecheck exits 0. The repository linter rejected a static `delete`
+  spelling in one new test; `Reflect.deleteProperty` plus an own-property absence
+  assertion preserves that actual-deletion negative control.
+- Actual composed preservation mode exits 0 with 12/12 observed implementations
+  across six successful public compiler programs. Per-program distinct first-hit
+  counts are 11, 12, 12, 12, 12, 11; these are not total invocation counts.
+  Every binary validates, has zero imports and returns the expected value twice;
+  every `run` outcome is emitted IR1/direct0. The source census is
+  `208c8c063fa90806abdfd7451aeabc460f325a06318519cb3c46469e12f336e4`.
+- Remove only the new `movedRuntime.coreNodes` report field and the entire
+  integrated legacy report is deep-equal to the prior structural checkpoint's
+  report: all graphs, edges, ten core and six N1 obligations, two unresolved
+  imports, 25 dead-export baseline rows and verdicts are unchanged.
+- No production source file changes in this follow-up. Dispatch-cut stays
+  `unknown`, `cutAssessed:false`, `cutWitnessCount:null`; closure and retirement
+  flags stay false. The final strict command exits 1, despite all twelve new and
+  ten prior core obligations passing, on the same two unresolved imports.
+
+Four review follow-ups are implemented and measured: the child removes inherited
+`ESBUILD_BINARY_PATH`, pins `TSX_TSCONFIG_PATH` to the authenticated root config,
+and disables/records the loader cache. Missing or changed override receipts fail.
+A fixed 120-second deadline fails only the newly launched owned child, never an
+unrelated running test. Controls cover timeout even with a passing-looking
+receipt, nonzero/signal exits, missing/malformed receipts, changed source/runtime
+identities and disagreeing validator/report verdicts. A constructor-less class
+with an instance field separately proves evaluation, construction, method and
+getter behavior. Astra High independently verified the final hashes, 82/82
+receipt, six-program/12-target proof and exact old-report equality. All four
+findings are resolved; no concrete review findings remain. Approval is limited
+to execution preservation, not a dispatch cut, retirement or merge clearance.
+
+The structural head `8429806b2abb6a9f04160471170a0659c94bd335` completed CI with
+29 successful and 13 skipped checks, and is non-draft, conflict-free and held.
+That status is not the follow-up's CI result or merge clearance.
+
+Integrated receipts: `.tmp/core-node-integrated-tests.json`,
+`.tmp/core-node-old-caller-integration-tests.json`,
+`.tmp/core-node-loader-implicit-integrated-tests.json` (final 82 tests),
+`.tmp/core-node-integrated-preservation.json` (initial composition),
+`.tmp/core-node-final-strict.json` (final strict result), and
+`.tmp/legacy-reachability.json` (final package result). The final package child
+receipt is `.tmp/core-node-execution-dtC6oY/execution.json`, with helper SHA-256
+`003707e595015dd3987afe3b9f1d32abc7a4bd11ad6e806cdef4265d53a29814`.
+Worker calibration and
+independent pre/post-launch receipts remain in the node worker's `.tmp`, with
+the detailed API handoff in `core-node-execution-handoff.md`. Those worker-only
+measurements are not substituted for the composed parent run.

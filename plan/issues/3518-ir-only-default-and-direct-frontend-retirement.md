@@ -123,6 +123,11 @@ is the next bounded plan, not a competing dispatch or completed dependency split
 
 ### Complete semantic nodes checkpoint — structural checkpoint, 2026-09-08
 
+Published non-draft held PR 5744 at
+`8429806b2abb6a9f04160471170a0659c94bd335`. The next push adds the measured
+caller-execution requirement; neither checkpoint authorizes retirement or clears
+the existing merge hold.
+
 The [Astra High full-node implementation contract and measured receipts](../agent-context/3518-core-nodes-checkpoint-plan-2026-09-08.md)
 retains PR 5742 ancestry at `acfd3e37b8765c4c4788c1fa94718d62c60e473c`.
 The non-draft held PR targets main to run the existing main-only PR CI; its
@@ -171,12 +176,25 @@ N1's six and the prior ten core caller obligations still pass both full and
 dispatch-cut paths; the dead-export ratchet remains exactly 25/25 and strict
 closure still fails on the same two dynamic imports. All 134 existing caller and
 open-extension controls pass unchanged. The new twelve-obligation
-node execution gate remains pending. Astra High approved actual function-object
+node execution gate is now implemented and independently approved for bounded
+caller preservation. Astra High approved actual function-object
 observations during public compilation instead of extending the incomplete
 static class interpreter. Its dispatch-cut result must remain explicitly unknown
-and its closure/retirement flags false. A prototype observes all twelve targets;
-the hardened gate, negative controls, explicit package requirement and review
-must land in a follow-up on the same held PR. No complete acceptance is claimed.
+and its closure/retirement flags false. The composed gate observes all twelve
+targets across six successful public compiler programs and passes preservation;
+its older report is exactly unchanged after removing the one additive report
+field. New calibration/admission tests pass 56/56, old caller controls pass
+134/134, and typecheck exits 0. The reviewed follow-ups expand the new controls
+to 82/82 passing: loader overrides, an owned-child deadline, implicit constructor
+behavior and child-admission failures. The final package check passes, while the
+final strict command still exits 1 on the same two imports. The explicit package
+requirement and controls will be pushed to the same held PR. Astra High verified
+the final hashes, receipts and unchanged older report, with no findings remaining;
+no complete migration or retirement acceptance is claimed.
+
+Structural head `8429806b2abb6a9f04160471170a0659c94bd335` completed 29 successful
+and 13 skipped CI checks and is conflict-free. This does not clear the inherited
+merge hold or substitute for the follow-up's CI.
 
 PR 5743 independently finished green at `c2d900d4fa9811f3359c308369bfb2b4184e90a9`
 with 29 successful and 13 skipped checks, no unresolved review threads and no

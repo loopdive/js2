@@ -163,7 +163,7 @@ describe("#3518 additive core caller preservation contract", () => {
   it("requires the fixed group in the actual package command", () => {
     const command = JSON.parse(readFileSync(resolve(repository, "package.json"), "utf8")).scripts["check:dead-exports"];
     expect(command).toBe(
-      "node scripts/audit-legacy-reachability.mjs --check --moved-reference-contract=preservation-v1 --require-core-types",
+      "node scripts/audit-legacy-reachability.mjs --check --moved-reference-contract=preservation-v1 --require-core-types --require-core-nodes",
     );
   });
   it("keeps six N1 targets and ten distinct canonical class-free witnesses", () => {

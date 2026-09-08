@@ -37,9 +37,11 @@ import path from "path";
 import { fileURLToPath } from "node:url";
 import { isBuiltin } from "node:module";
 import { createHash } from "node:crypto";
+import { assessCoreNodeExecution, conjoinCoreNodeExecution } from "./lib/core-node-execution-gate.mjs";
 
 let movedReferenceContract = "strict";
 let requireCoreTypes = false;
+let requireCoreNodes = false;
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
   if (["--root", "--json", "--why"].includes(arg)) {
@@ -48,6 +50,9 @@ for (let i = 2; i < process.argv.length; i++) {
   } else if (arg === "--require-core-types") {
     if (requireCoreTypes) throw new Error("duplicate --require-core-types");
     requireCoreTypes = true;
+  } else if (arg === "--require-core-nodes") {
+    if (requireCoreNodes) throw new Error("duplicate --require-core-nodes");
+    requireCoreNodes = true;
   } else if (arg.startsWith("--moved-reference-contract=")) {
     if (movedReferenceContract !== "strict" || arg !== "--moved-reference-contract=preservation-v1") {
       throw new Error(`unsupported/duplicate moved-reference contract: ${arg}`);
@@ -57,6 +62,9 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 if (movedReferenceContract !== "strict" && !process.argv.includes("--check")) {
   throw new Error("the preservation contract requires --check");
+}
+if (requireCoreNodes && !process.argv.includes("--check")) {
+  throw new Error("the node execution requirement requires --check");
 }
 
 const rootIdx = process.argv.indexOf("--root");
@@ -71,6 +79,10 @@ const SRC = path.join(ROOT, "src");
 if (process.argv.includes("--check") && process.argv.includes("--update")) {
   throw new Error("--check and --update are mutually exclusive");
 }
+
+// Run the isolated observation child before materializing either static graph.
+// Default invocation is explicitly unassessed, never an existence-based pass.
+const coreNodes = await assessCoreNodeExecution({ root: ROOT, required: requireCoreNodes });
 
 // The legacy front-end body-dispatch pair — the cut set.
 const CUT = new Set(["src/codegen/statements.ts#compileStatement", "src/codegen/expressions.ts#compileExpression"]);
@@ -1054,7 +1066,7 @@ function movedRuntimeReport() {
     ok: strictOK,
   };
 }
-const movedRuntime = movedRuntimeReport();
+const movedRuntime = conjoinCoreNodeExecution(movedRuntimeReport(), coreNodes);
 
 // --why <substr>: print a shortest survivor-path to each matching node.
 const whyIdx = process.argv.indexOf("--why");
@@ -1270,6 +1282,11 @@ if (process.argv.includes("--update")) {
   process.exit(0);
 }
 if (process.argv.includes("--check")) {
+  console.log(
+    coreNodes.required
+      ? `core-node execution gate: ${coreNodes.ok ? "PASS" : "FAIL"} (${coreNodes.fullWitnessCount ?? "unknown"}/12 observed callers; dispatch-cut UNKNOWN)`
+      : "core-node execution group: not required / not assessed (use --require-core-nodes)",
+  );
   const coreTypes = movedRuntime.coreTypes;
   console.log(
     coreTypes.required
