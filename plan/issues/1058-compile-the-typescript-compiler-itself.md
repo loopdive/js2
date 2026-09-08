@@ -210,6 +210,33 @@ oracle-ratchet-allow:
 
 ## Main synchronization check — 2026-09-08
 
+### Full-source upstream unit expansion
+
+After the main sync, add a separate source-module runner for the unmodified
+upstream `factory.ts` (three callbacks) and `diagnosticCollection.ts` (five).
+These import the real compiler namespace with consumer-driven barrel resolution,
+not the utility projection. The established 25-test gate is unchanged; these
+new files are exploratory until native and zero-import Wasm results agree.
+Command: `node --import tsx tests/dogfood/typescript-source-unit-suite.mjs factory`.
+The runner retains every original assertion and has an explicit callback floor.
+
+Native source reference is bundled with esbuild (including Node globals needed
+by upstream `sys` initialization); the Wasm input remains the source graph.
+Direct native execution passes **3/3 factory** and **5/5 diagnostic collection**
+callbacks. The new verdict rejects partial callbacks, wrong target, failed
+validation, and entry or linked-module imports. Harness controls pass **24/24**
+(`.tmp/ts5-source-suite-controls.log`); the final verdict-only rerun passes 3/3.
+
+Full-source Wasm runs are still live, not accepted: factory session **84142**
+(`.tmp/ts5-source-factory.log`) and diagnostics session **68213**
+(`.tmp/ts5-source-diagnostics.log`). Last process check confirmed both workers
+CPU-active at roughly five and three minutes respectively. Typecheck passed
+(`.tmp/ts5-source-suite-typecheck.log`, session **91783**, exit 0). Re-poll the
+compile handles rather than duplicating the runs. The running drivers predate the final
+CLI report-writing/fail-closed-exit additions, but use the final source input and
+zero-import verdict. Reports from these runs are in their stdout logs; subsequent
+runs also persist `report/typescript-source-unit-<name>.json`.
+
 ### Source-defined collection carrier investigation (resumed)
 
 Generator-method follow-up after `085c67795aad5e`: WAT for the real `*entries()`

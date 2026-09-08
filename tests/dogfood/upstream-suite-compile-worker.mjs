@@ -257,6 +257,7 @@ async function main() {
         ? { allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1" }
         : {}),
       experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
+      ...(process.env.DOGFOOD_CONSUMER_DRIVEN_BARRELS === "1" ? { resolve: { consumerDrivenBarrels: true } } : {}),
       // The upstream compatibility lane only needs the binary. WAT is a
       // diagnostic artifact and can become quadratic for large generated
       // closed-dispatch functions, turning a valid compile into a watchdog

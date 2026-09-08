@@ -31,7 +31,7 @@ export function typescriptUpstreamTarget(value) {
 // ceasing to be standalone. Its selected TypeScript callbacks are synchronous,
 // so expose exactly one numeric-index/numeric-result entrypoint that raw Wasm
 // exports can execute without an import object or value marshalling.
-const TYPESCRIPT_STANDALONE_TEST_EXPORTS = String.raw`
+export const TYPESCRIPT_STANDALONE_TEST_EXPORTS = String.raw`
 export function runStandaloneUpstreamTest(index: number): number {
   __upstreamAssertion = 0;
   __upstreamCurrentTestName = __upstreamTests[index].name;
