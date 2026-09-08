@@ -146,6 +146,15 @@ function canonicalClosureSupportIrType(type: IrType, active: Set<object>): unkno
   try {
     switch (type.kind) {
       case "val":
+        if (type.typeRef) {
+          if (type.val.kind !== "ref" && type.val.kind !== "ref_null") {
+            throw new ProgramAbiInvariantError(
+              "type-remap-mismatch",
+              "symbolic physical type ref is attached to a scalar",
+            );
+          }
+          return { kind: type.kind, value: { kind: type.val.kind, typeRef: irTypeBindingKey(type.typeRef.binding) } };
+        }
         if (type.val.kind === "ref" || type.val.kind === "ref_null") {
           throw new ProgramAbiInvariantError(
             "unknown-order-anchor",

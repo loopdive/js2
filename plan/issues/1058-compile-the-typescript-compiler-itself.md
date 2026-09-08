@@ -1128,6 +1128,131 @@ the now-verified `Expression` annotation is not the remaining implementation.
 Local Map adapters are still needed, and the full standalone TypeScript goal
 remains incomplete.
 
+IR symbolic carrier implementation (2026-09-08, in progress): reuse existing
+`IrType.val.typeRef` and its Program ABI type-cell relocation rather than add
+a second recursive object representation. Closure support preparation must
+resolve the exact owned binding, preserve nullability, and refuse raw indices
+or scalar attachments. Allocation-cache keys opt into symbolic identities;
+ordinary semantic keys retain their existing contract. Kernel tests are next;
+this does not yet admit the original factory or implement local Map support.
+
+Verified checkpoint: `lowerPreparedClosureSupportType` now resolves an owned
+symbolic physical reference through its current Program ABI type cell, and
+canonical closure/ref-cell keys accept symbolic references while still
+rejecting unbound physical indices. `irPhysicalTypeKey` is used only by the
+closure allocation registry; `irTypeKey` and prepared-callable semantic
+fingerprints retain their previous behavior. No direct AST emitter changes.
+
+The new six-case `issue-1058-ir-symbolic-closure-carrier.test.ts` proves key
+identity/nullability, whole-layout relocation, cache reuse, refusal of an
+unowned same-index carrier (including after cache population), and rejection
+of scalar attachments/raw indices. Two real zero-import Wasm runtime cases
+pass a recursive Node-shaped struct through a closure argument/result and a
+capture/result, checking reference identity with distinct parent/child nodes
+in both orders. These are hand-built IR kernel proofs, NOT original factory
+admission or TypeScript unit-suite completion.
+
+Verification: **42/42 across six files** in
+`.tmp/ts5-symbolic-closure-verified.log`; after adding the cache-refusal control,
+**19/19 across two files** (six carrier cases plus thirteen prepared-callable
+boundary controls) in `.tmp/ts5-symbolic-closure-boundary.log`. Typecheck,
+targeted lint/format, LOC/function budgets and diff checks pass. Initial
+failures were fixture defects: the layout omitted context-created types, then
+the runtime module omitted the lifted function's declarative `ref.func` entry;
+both are corrected and rerun. No allowance/baseline updates.
+
+Next: attach exact source-owned carrier
+references using the measured top-level slot witnesses, then provide one
+shared inferred-signature plan to selection and both nested-function lowering
+routes. Do not use raw positional matches for hidden-capture signatures, and
+do not treat opaque reference transport as support for Node field access or
+local Map operations. Full factory results have NOT been rerun for this kernel
+change; the last original-source measurement remains 0/3 Wasm versus 3/3 native.
+
+Integration trace: `select.ts::isPhase1NestedFunc` rejects missing returns,
+and `isPhase1ClosureLiteral` separately requires annotated returns/parameters.
+`from-ast.ts::lowerNestedFunctionDeclaration` (direct-call capture parameters)
+and `lowerClosureExpression` (address-taken closure objects) independently
+reconstruct signatures. The shared plan must reach all four sites, not merely
+relax selection. Production selection gets evidence through `IrSelectionOptions`
+in `planIrOverlay`; nested lowering already receives `oracle` and exact
+`identityContext` through `LowerCtx`. Existing top-level `overrideMapByUnitId`
+does not automatically supply nested positions. Keep source-to-physical slot
+witnessing separate from closure allocation; a `val.typeRef` can transport a
+Node but does not supply field-layout metadata for object operations.
+
+Recursive Node carrier investigation (2026-09-08, in progress): verify whether
+already-allocated exact source callable parameter slots provide consistent
+physical evidence for the inferred callback's `Expression` type. A match by
+opaque source type identity may reuse an existing recursive layout without
+expanding it, but mismatching carriers or hidden-parameter offsets must not be
+silently accepted. Instrument the actual original factory graph read-only at
+IR planning, then remove the temporary instrumentation before publication.
+
+Measured result: the original graph has **8/8 matching top-level parameter
+slots** with identical physical carrier, a `ref` to the same ten-field
+recursive struct (index 216 in this particular pre-lowering snapshot; **never
+hardcode that index**). Source and physical arities match in all eight:
+`isCommaExpression`, `isCommaSequence`, `getRightMostAssignedExpression`,
+`getExpressionAssociativity`, `getExpressionPrecedence`, `getOperator`,
+`getLeftmostExpression`, and `addDefaultValueAssignmentForInitializer`.
+The match used `signaturePositionOf(helper, ["return", 0]).typeKey`, queried
+each source parameter through the same oracle, joined declarations/units
+bidirectionally through the planning inventory, and read the exact allocated
+source function through `programAbiSourceCallables.functionForUnit`.
+
+The layout has numeric `pos`, `end`, `kind`, `flags`, `modifierFlagsCache`,
+`transformFlags`; externref `id`; self-referential `parent` and `original`;
+and a reference to `emitNode` storage. Thus an already-allocated recursive
+carrier exists; the next implementation need not invent a recursive expansion
+of `IrObjectShape`. Treat these as planning-time observations, not immutable
+final indexes or field-nullability contracts: type relocation, field storage
+normalization and prepared-scope ownership still have to be respected.
+
+The complete raw scan has **160 matching source positions**, but only the
+eight top-level slots above are valid same-index carrier evidence. Nested
+parenthesizer functions have one extra physical capture parameter (e.g.
+`parenthesizeLeftSideOfBinary` has source arity 2 versus physical arity 3).
+Reading their same-numbered slots reports unrelated `f64` or capture-struct
+carriers. That is a diagnostic indexing error, **not** proof of conflicting
+`Expression` layouts. A production adapter needs an exact source-to-physical
+slot map before it can include those witnesses; arity guesses are insufficient.
+
+Probe provenance and controls:
+
+- The first probe incorrectly attempted to iterate
+  `sourceFunctionHandleByDeclaration`, which is a WeakMap. Its compile failure
+  (`.tmp/ts5-source-carrier-probe.log`) is instrumentation-only and supplies no
+  carrier evidence. The corrected walk enumerates `declarationByUnitId` and
+  uses the weak map only for lookup.
+- The normal suite discards worker stderr on successful compilation, so its
+  corrected run is only a regression result: **0/3 Wasm vs 3/3 native**, valid
+  zero-import 62,956,028 bytes, 158,108 ms
+  (`.tmp/ts5-source-carrier-probe-fixed.log`).
+- Direct worker capture preserves the actual diagnostic rows:
+  `.tmp/ts5-source-carrier-direct.log` contains **1/1 probe event**, target
+  found, the 160 raw rows and 8 top-level witnesses. The same original
+  generated factory entry compiled to the same valid zero-import byte size
+  in 154,102 ms and executed **0/3** successfully. It does not run the native
+  reference; the native denominator above belongs to the normal-suite run.
+- Temporary instrumentation was removed with an exact patch; `git diff --
+  src/codegen/index.ts` is empty. Both worker processes are terminal. Upstream
+  main was rechecked and remains `04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0`.
+
+Next implementation direction, now backed by original-source evidence:
+introduce exact prepared-carrier reuse for an IR object boundary, analogous
+to existing string/vec carrier references. Preserve the original type cell
+and physical field order instead of minting a structural duplicate. Cover
+`lowerPreparedClosureSupportType`, `ObjectStructRegistry`, object-shape
+identity/equality and prepared type dependency collection together. Current
+closure preparation rejects raw `val(ref)` leaves and the object registry
+hashes/reallocates structural shapes, so merely passing physical type indexes
+would not be a sound bridge. Test relocation, scope abort, stale/mismatched
+field layout and self-referential storage, then connect the proven source
+signature positions to this carrier route in selector and both nested
+lowering paths. This remains IR work, not a legacy emitter fix; the full
+factory and overall standalone TypeScript goal are not yet passing.
+
 Final publication-query migration in progress: indexed record element facts now
 come from TypeOracle (property names, scalar/union facts and optionality; no
 checker types or Wasm indexes escape). JSON preflight uses source facts, then

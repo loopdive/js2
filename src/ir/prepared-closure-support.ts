@@ -86,6 +86,25 @@ export function lowerPreparedClosureSupportType(
   refCells?: PreparedRefCellRegistry,
   closures?: PreparedClosureRegistry,
 ): ValType {
+  if (type.kind === "val" && type.typeRef) {
+    if (type.val.kind !== "ref" && type.val.kind !== "ref_null") {
+      throw new Error("prepared closure symbolic physical type ref is attached to a scalar");
+    }
+    const ref = type.typeRef;
+    const session = ctx.programAbiSession;
+    const draft = session?.getDraft(ref.binding.bindingId);
+    if (
+      draft?.intent.kind !== "type" ||
+      draft.slotPolicy === "none" ||
+      draft.structuralReferenceKey !== irTypeBindingKey(ref.binding)
+    ) {
+      throw new Error("prepared closure physical carrier has no exact Program ABI type plan");
+    }
+    return {
+      kind: type.val.kind,
+      typeIdx: session!.resolveCurrentIndex(ref.binding.bindingId, "type", irTypeBindingKey(ref.binding)),
+    };
+  }
   if (type.kind === "val" && type.val.kind !== "ref" && type.val.kind !== "ref_null") return type.val;
   if (type.kind === "dynamic") return resolveIrDynamicCarrierType(ctx);
   if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };

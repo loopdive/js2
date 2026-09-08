@@ -3,6 +3,7 @@
 import type { IrFnctorShape } from "./fnctor-abi.js";
 import type { IrType } from "./nodes.js";
 import { orderedObjectFields } from "./object-layout.js";
+import { irTypeBindingKey } from "./abi-bindings.js";
 
 /** Canonical semantic key for one nominal fnctor shape. */
 export function irFnctorShapeKey(shape: IrFnctorShape): string {
@@ -11,9 +12,24 @@ export function irFnctorShapeKey(shape: IrFnctorShape): string {
 
 /** Canonical recursive key for an IR type. */
 export function irTypeKey(type: IrType): string {
+  return typeKey(type, false);
+}
+
+/** Allocation-cache key: symbolic carriers supersede provisional physical indices. */
+export function irPhysicalTypeKey(type: IrType): string {
+  return typeKey(type, true);
+}
+
+function typeKey(type: IrType, symbolicPhysicalRefs: boolean): string {
   const active = new Set<object>();
   const key = (current: IrType): string => {
     if (current.kind === "val") {
+      if (symbolicPhysicalRefs && current.typeRef) {
+        if (current.val.kind !== "ref" && current.val.kind !== "ref_null") {
+          throw new Error("IR type key has a symbolic physical ref attached to a scalar");
+        }
+        return `${current.val.kind}@${irTypeBindingKey(current.typeRef.binding)}`;
+      }
       if (current.val.kind === "ref" || current.val.kind === "ref_null")
         return `${current.val.kind}:${current.val.typeIdx}`;
       return current.val.kind;
