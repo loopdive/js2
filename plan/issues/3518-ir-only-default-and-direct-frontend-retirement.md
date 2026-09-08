@@ -5757,3 +5757,102 @@ checks without errors. Parent read both rev2 paired terminal receipts (candidate
 non-draft, MERGEABLE/CLEAN with reported checks successful and auto-merge null.
 The recursive emitter's precise diagnostic assertion repair independently passed
 29/29 focused tests; its production review and composition remain separate work.
+
+### Recursive-type integration handoff — 2026-09-08
+
+Delay/combinator checkpoint committed as de2f1072ebb32771272d24a58407814f9d2a5d38
+and pushed to upstream with all normal hooks. First commit attempt was refused
+only for a missing Model trailer; the retry included the required Default
+attribution and passed hooks. No bypass was used. High cleared B rev2 and the
+recursive-type production patch without a remaining concrete blocker.
+
+This isolated worktree, `/private/tmp/js2-3518-explicit-rec-integration-20260908`,
+branch `codex/3518-explicit-rec-integration-20260908`, starts at de2f1072 and now
+contains all eight reviewed recursive-type files. Seven hashes match the
+original frozen manifest; the repaired explicit-rec test hash is
+7a136f2558f6162a55c1964f076cc0e520399438377f3499af0e7b273929dfe6,
+with its focused 29/29 result measured after repair. All eight composed hashes
+were independently verified. Root dependencies are symlinked, not installed.
+Initial Git status/diff checks hit sandboxed LFS temporary-file permissions;
+these are access failures, not evidence of LFS corruption.
+
+Next: activate the new physical type-layout owner and additive boundary controls,
+validate composed types/tests and historical paired preservation, then publish
+this separate non-draft checkpoint. Do not alter the historical paired outputs
+or remove their failing controls merely to obtain green. Three old failures
+remain independently reproduced on baseline as documented above.
+
+Published delay/combinator checkpoint: https://github.com/loopdive/js2/pull/5759,
+non-draft creation on base #5758 with hold label. Remote branch independently
+matches de2f1072ebb32771272d24a58407814f9d2a5d38. This integration builds on
+that published checkpoint; it must receive its own PR after validation.
+
+### Composed recursive-type validation — 2026-09-08
+
+Mandatory physical type-layout activation passed session 9063: 125/125 controls,
+66 clean closure modules and 214 resolved edges (152 type-only, 62 runtime).
+Four new deletion/forbidden-type/unknown/unresolved import controls cover the
+new owner. All 27 previous activation records and all allowed edges were
+independently compared against HEAD and remain unchanged; one record was added.
+
+Session 68973 passed canonical TS7 followed by eight suites, 258/258. Parent
+also repaired three independently baseline-reproduced stale assertions: the
+issue-2043 regex now names the actual local.get guard, and the foundation test
+requires the exact two canonical type-only imports plus four allocator names
+moved in an earlier checkpoint. Runtime behavior, historical output receipts
+and production code were not changed to make these tests pass. High was sent
+the parent boundary and test delta for review.
+
+PR 5759 watch session 51627 exited 0, including the real-Wasmtime smoke check.
+Fresh remote read confirms MERGEABLE/CLEAN, all reported checks successful,
+non-draft, head de2f1072 and no auto-merge. Complete IR migration remains open.
+
+Initial rec paired-preservation session 43200 exited 1 (125/126): candidate
+completed, but parent incorrectly supplied de2f1072 as baseline. The unchanged
+recorder explicitly pins baseline source to 1cb0f5c7 and rejected that mismatch
+before running it. This is not a compiler regression or a passing pair. Evidence
+remains under `.tmp/delay-combinator-preservation-xTJKNb/`; rerun uses the original
+clean 1cb0f5c7 worktree without changing/reseeding the historical guard.
+
+Corrected paired session 55354 exited 0: 126/126, 11 artifacts and 19 executions
+per compiler, complete bytes/WAT/resources/outcomes equal. Evidence remains at
+`.tmp/delay-combinator-preservation-cceiUu/`. High approved the parent test and
+boundary delta without weakening or production-change concerns. This validates
+preservation through the composed emitter, not complete prepared async execution.
+
+Full inventory session 75347 exited 0: 1,314 modules (66 clean, five adapters,
+1,243 unmigrated), no errors, and the same four unknown dynamic-import sites.
+The first compact-report wrapper incorrectly read the outer result instead of
+its report field; it failed locally and was corrected, not counted as evidence.
+Strict architecture completion remains false.
+
+The existing semantic-provider historical instrument is additionally running
+against clean b4c116639a ownership-integration source, to retain synchronous
+prepared source/bytes/WAT/resources/value comparisons across both GVN modes.
+Outputs remain under `.tmp/explicit-rec-semantic-pair-20260908/`; no outcome
+is claimed until its exact running handle reaches terminal completion.
+
+Semantic historical pair session 56110 exited 1: raw preservation is false,
+with four differing rows per GVN mode (alias/startup, original/reversed order).
+Parent recursively inspected every differing field: only original/replayed
+physical modules' funcOrdinalToPosition entries and startup call handles differ
+(0/2 versus stable 2097152/2097154). Complete bytes, WAT, outcomes, canonical
+prepared data and all other row fields match. Do not normalize this raw result
+into a historical pass. The same instrument now runs with published de2f1072
+as its candidate in `.tmp/explicit-rec-parent-semantic-pair-20260908/` so the
+new emitter's delta can be compared directly to the actual PR base and the
+stable-handle attribution verified, rather than assumed.
+
+Parent-control session 52106 exited 1 with the same raw older-baseline differences.
+Independent deep comparisons then proved all 15 complete candidate rows per GVN
+mode (30 total) exactly equal between published de2f1072 and this emitter patch,
+without normalizing any field. Both full comparison reports are also identical,
+including all eight stable-handle differences. Thus this checkpoint preserves
+the published source/physical outputs, while the b4 historical report remains
+honestly different. Only eight of those 30 rows execute prepared physical code;
+the other rows retain their documented preparation/provider refusals or public
+controls. Neither report is full native-async physical acceptance.
+
+All scoped formatting checks pass. High approved the production and parent
+integration delta. The next action is normal-hook commit and a non-draft PR on
+base #5759, with hold retained and no new merge authority.

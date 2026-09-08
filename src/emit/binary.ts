@@ -12,6 +12,7 @@ import type {
   WasmFunction,
   WasmModule,
 } from "../ir/types.js";
+import { indexPhysicalTypes, planPhysicalTypeSection } from "../wasm/physical/type-layout.js";
 import { writeFileSync } from "node:fs";
 import { emitWat } from "./wat.js";
 import { WasmEncoder } from "./encoder.js";
@@ -30,72 +31,12 @@ export interface EmitResult {
   sourceMapEntries: SourceMapEntry[];
 }
 
-/**
- * Collect WASM type indices referenced by a value type.
- * Recursively descends into rec/sub wrappers via the caller (walkTypeDefRefs).
- */
-function collectValTypeRefs(t: ValType, refs: Set<number>): void {
-  if (t.kind === "ref" || t.kind === "ref_null") refs.add(t.typeIdx);
-}
-
-/** Collect all type indices that a TypeDef references (excluding itself). */
-function collectTypeDefRefs(t: TypeDef, refs: Set<number>): void {
-  switch (t.kind) {
-    case "func":
-      for (const p of t.params) collectValTypeRefs(p, refs);
-      for (const r of t.results) collectValTypeRefs(r, refs);
-      break;
-    case "struct":
-      if (t.superTypeIdx !== undefined && t.superTypeIdx >= 0) refs.add(t.superTypeIdx);
-      for (const f of t.fields) collectValTypeRefs(f.type, refs);
-      break;
-    case "array":
-      collectValTypeRefs(t.element, refs);
-      break;
-    case "rec":
-      for (const inner of t.types) collectTypeDefRefs(inner, refs);
-      break;
-    case "sub":
-      if (t.superType !== null) refs.add(t.superType);
-      collectTypeDefRefs(t.type, refs);
-      break;
-  }
-}
-
-/**
- * Compute rec-group boundaries for the type section. Each returned [start, end]
- * (inclusive) tuple identifies a contiguous run of type definitions that must
- * be encoded inside a single WasmGC rec group so that forward references between
- * them validate. Singleton groups (start === end) are emitted without a rec
- * wrapper, preserving canonical type identity for non-recursive entries.
- */
+/** Return flattened inclusive group ranges; ordinary flat inputs retain historical grouping. */
 export function computeRecGroups(
   types: TypeDef[],
   forcedGroups: ReadonlyArray<readonly [number, number]> = [],
 ): Array<[number, number]> {
-  const groups: Array<[number, number]> = [];
-  let i = 0;
-  while (i < types.length) {
-    let end = i;
-    for (const [forcedStart, forcedEnd] of forcedGroups) {
-      if (forcedStart <= i && i <= forcedEnd) end = Math.max(end, forcedEnd);
-    }
-    let scan = i;
-    while (scan <= end) {
-      const refs = new Set<number>();
-      collectTypeDefRefs(types[scan]!, refs);
-      for (const r of refs) {
-        if (r > end && r < types.length) end = r;
-      }
-      for (const [forcedStart, forcedEnd] of forcedGroups) {
-        if (forcedStart <= end && forcedEnd >= i) end = Math.max(end, forcedEnd);
-      }
-      scan++;
-    }
-    groups.push([i, end]);
-    i = end + 1;
-  }
-  return groups;
+  return planPhysicalTypeSection(indexPhysicalTypes(types), forcedGroups).groups.map(({ start, end }) => [start, end]);
 }
 
 /**
@@ -148,15 +89,8 @@ interface EmitValidationCtx {
   numTags: number;
   numTables: number;
   numMemories: number;
-  /**
-   * Flat type list for struct-field / signature resolution. Wasm type
-   * indices equal `mod.types` array positions only while the array is flat
-   * (no "rec" wrapper entries — codegen never pushes them today). If rec
-   * wrappers appear, this is null and the resolution-dependent checks
-   * (struct field bounds, local param counts) are skipped; the pure bound
-   * checks stay valid because `numTypes` counts nested entries.
-   */
-  flatTypes: TypeDef[] | null;
+  /** Definitions in flattened Wasm type-index space, including explicit members. */
+  flatTypes: TypeDef[];
   /** Human label for the structure currently being encoded. */
   where: string;
   /** params+locals of the function being encoded; -1 = unknown/const-expr context (skip local checks). */
@@ -224,23 +158,10 @@ function makeValidationCtx(mod: WasmModule): EmitValidationCtx {
     else if (imp.desc.kind === "table") numImportTables++;
     else if (imp.desc.kind === "memory") numImportMemories++;
   }
-  let typesAreFlat = true;
-  let numTypes = 0;
-  for (const t of mod.types) {
-    if (t.kind === "rec") {
-      typesAreFlat = false;
-      numTypes += t.types.length;
-    } else {
-      numTypes += 1;
-    }
-  }
+  const flatTypes = indexPhysicalTypes(mod.types).entries.map((entry) => entry.definition);
+  const numTypes = flatTypes.length;
   if (process.env.JS2WASM_DUMP_TYPES) {
-    const flat: typeof mod.types = [];
-    for (const t of mod.types) {
-      if (t.kind === "rec") flat.push(...t.types);
-      else flat.push(t);
-    }
-    const lines = flat.map((t, i) => {
+    const lines = flatTypes.map((t, i) => {
       const inner = t.kind === "sub" ? t.type : t;
       const name = (inner as { name?: string }).name ?? "";
       const detail = inner.kind === "struct" ? JSON.stringify(inner.fields.slice(0, 8)) : inner.kind;
@@ -261,7 +182,7 @@ function makeValidationCtx(mod: WasmModule): EmitValidationCtx {
     numTags: numImportTags + mod.tags.length,
     numTables: numImportTables + mod.tables.length,
     numMemories: numImportMemories + (mod.memories ? mod.memories.length : 0),
-    flatTypes: typesAreFlat ? mod.types : null,
+    flatTypes,
     where: "module",
     maxLocals: -1,
   };
@@ -312,6 +233,13 @@ function resolveTypeDefAt(typeIdx: number): TypeDef | undefined {
 function resolveParamCount(typeIdx: number): number {
   const sig = resolveTypeDefAt(typeIdx);
   return sig && sig.kind === "func" ? sig.params.length : -1;
+}
+
+/** A bounded index is not necessarily a function signature. */
+function vSignature(typeIdx: number): void {
+  vIdx("type", typeIdx, (valCtx as EmitValidationCtx).numTypes);
+  const type = resolveTypeDefAt(typeIdx);
+  if (!type || type.kind !== "func") throw new Error(`type ${typeIdx} is not a function signature`);
 }
 
 /** struct.get/struct.set: type bound check + field bound check when the struct resolves. */
@@ -384,30 +312,18 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule, collectSourceMap: boo
     const forcedGroups = mod.canonicalRuntimeRecGroup
       ? [[mod.canonicalRuntimeRecGroup.start, mod.canonicalRuntimeRecGroup.end] as const]
       : [];
-    const recGroups = computeRecGroups(mod.types, forcedGroups);
-    if (mod.canonicalRuntimeRecGroup) {
-      const { start, end } = mod.canonicalRuntimeRecGroup;
-      const encodedGroup = recGroups.find(([groupStart, groupEnd]) => groupStart === start);
-      if (!encodedGroup || encodedGroup[1] !== end) {
-        throw new Error(
-          `canonical runtime rec-group was merged with an adjacent type ` +
-            `(expected ${start}..${end}, emitted ${encodedGroup ? `${encodedGroup[0]}..${encodedGroup[1]}` : "missing"})`,
-        );
-      }
-    }
+    const table = indexPhysicalTypes(mod.types);
+    const { groups } = planPhysicalTypeSection(table, forcedGroups);
     enc.section(SECTION.type, (s) => {
-      s.u32(recGroups.length);
-      for (const [start, end] of recGroups) {
-        if (start === end) {
-          if (valCtx) valCtx.where = `type definition #${start}`;
-          encodeTypeDef(mod.types[start]!, s);
-        } else {
+      s.u32(groups.length);
+      for (const { start, end, recursive } of groups) {
+        if (recursive) {
           s.byte(TYPE.rec);
           s.u32(end - start + 1);
-          for (let i = start; i <= end; i++) {
-            if (valCtx) valCtx.where = `type definition #${i}`;
-            encodeTypeDef(mod.types[i]!, s);
-          }
+        }
+        for (let i = start; i <= end; i++) {
+          if (valCtx) valCtx.where = `type definition #${i}`;
+          encodeTypeDef(table.entries[i]!.definition, s);
         }
       }
     });
@@ -429,7 +345,7 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule, collectSourceMap: boo
       s.vector(mod.functions, (f, e) => {
         if (valCtx) {
           valCtx.where = `function '${f.name || "?"}' signature`;
-          vIdx("type", f.typeIdx, valCtx.numTypes);
+          vSignature(f.typeIdx);
         }
         e.u32(f.typeIdx);
       });
@@ -476,7 +392,7 @@ function emitBinaryWithSourceMapUnguarded(mod: WasmModule, collectSourceMap: boo
       s.vector(mod.tags, (tag, e) => {
         if (valCtx) {
           valCtx.where = `tag '${tag.name}'`;
-          vIdx("type", tag.typeIdx, valCtx.numTypes);
+          vSignature(tag.typeIdx);
         }
         e.byte(0x00); // attribute: exception (0)
         e.u32(tag.typeIdx);
@@ -980,7 +896,7 @@ export function encodeImport(imp: Import, enc: WasmEncoder): void {
   enc.name(imp.name);
   switch (imp.desc.kind) {
     case "func":
-      if (valCtx) vIdx("type", imp.desc.typeIdx, valCtx.numTypes);
+      if (valCtx) vSignature(imp.desc.typeIdx);
       enc.byte(0x00);
       enc.u32(imp.desc.typeIdx);
       break;
@@ -1014,7 +930,7 @@ export function encodeImport(imp: Import, enc: WasmEncoder): void {
       enc.byte(imp.desc.mutable ? 0x01 : 0x00);
       break;
     case "tag":
-      if (valCtx) vIdx("type", imp.desc.typeIdx, valCtx.numTypes);
+      if (valCtx) vSignature(imp.desc.typeIdx);
       enc.byte(0x04); // import kind: tag
       enc.byte(0x00); // attribute: exception
       enc.u32(imp.desc.typeIdx);
@@ -1091,7 +1007,10 @@ export function encodeBlockType(bt: BlockType, enc: WasmEncoder): void {
       encodeValType(bt.type, enc);
       break;
     case "type":
-      if (valCtx) vIdx("block type", bt.typeIdx, valCtx.numTypes);
+      if (valCtx) {
+        vIdx("block type", bt.typeIdx, valCtx.numTypes);
+        vSignature(bt.typeIdx);
+      }
       enc.i32(bt.typeIdx);
       break;
   }
@@ -1254,7 +1173,7 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
     }
     case "call_indirect":
       if (valCtx) {
-        vIdx("type", instr.typeIdx, valCtx.numTypes);
+        vSignature(instr.typeIdx);
         vIdx("table", instr.tableIdx, valCtx.numTables);
       }
       enc.byte(OP.call_indirect);
@@ -1708,12 +1627,12 @@ export function encodeInstr(instr: Instr, enc: WasmEncoder): void {
       break;
     }
     case "call_ref":
-      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
+      if (valCtx) vSignature(instr.typeIdx);
       enc.byte(OP.call_ref);
       enc.u32(instr.typeIdx);
       break;
     case "return_call_ref":
-      if (valCtx) vIdx("type", instr.typeIdx, valCtx.numTypes);
+      if (valCtx) vSignature(instr.typeIdx);
       enc.byte(OP.return_call_ref);
       enc.u32(instr.typeIdx);
       break;

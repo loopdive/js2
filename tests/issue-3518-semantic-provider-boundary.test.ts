@@ -25,6 +25,7 @@ const groups = {
     "src/wasm/physical/function-types.ts",
     "src/wasm/physical/module-reservations.ts",
     "src/wasm/physical/exception-control.ts",
+    "src/wasm/physical/type-layout.ts",
   ],
   "native-runtime": [
     "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
@@ -86,6 +87,7 @@ const groups = {
   ),
 };
 const required = Object.values(groups).flat();
+const typeLayoutAdditions = ["src/wasm/physical/type-layout.ts"];
 const delayCombinatorAdditions = [
   "src/runtime/wasmgc/promise/delay-bodies.ts",
   "src/runtime/wasmgc/promise/combinator-bodies.ts",
@@ -118,21 +120,26 @@ const additions = [
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
-  expect(history[0]).toEqual({ layer: "native-runtime", entries: groups["native-runtime"], minModules: 6 });
-  expect(history.slice(1, 3)).toEqual(
+  expect(history[0]).toEqual({ layer: "wasm-physical", entries: groups["wasm-physical"], minModules: 5 });
+  expect(history[1]).toEqual({ layer: "native-runtime", entries: groups["native-runtime"], minModules: 6 });
+  expect(history.slice(2, 4)).toEqual(
     (["native-runtime", "wasm-physical"] as const).map((layer) => ({
       layer,
-      entries: groups[layer].filter((path) => !delayCombinatorAdditions.includes(path)),
-      minModules: groups[layer].filter((path) => !delayCombinatorAdditions.includes(path)).length,
+      entries: groups[layer].filter((path) => ![...delayCombinatorAdditions, ...typeLayoutAdditions].includes(path)),
+      minModules: groups[layer].filter((path) => ![...delayCombinatorAdditions, ...typeLayoutAdditions].includes(path))
+        .length,
     })),
   );
-  expect(history.slice(3, 9)).toEqual(
+  expect(history.slice(4, 10)).toEqual(
     (["native-runtime", "wasm-model", "wasm-physical", "ir-core", "ir-analysis", "ir-runtime"] as const).map(
       (layer) => ({
         layer,
-        entries: groups[layer].filter((path) => ![...frameAdditions, ...delayCombinatorAdditions].includes(path)),
-        minModules: groups[layer].filter((path) => ![...frameAdditions, ...delayCombinatorAdditions].includes(path))
-          .length,
+        entries: groups[layer].filter(
+          (path) => ![...frameAdditions, ...delayCombinatorAdditions, ...typeLayoutAdditions].includes(path),
+        ),
+        minModules: groups[layer].filter(
+          (path) => ![...frameAdditions, ...delayCombinatorAdditions, ...typeLayoutAdditions].includes(path),
+        ).length,
       }),
     ),
   );
@@ -209,9 +216,10 @@ function fixture() {
 }
 
 describe("semantic verification and provider ownership boundary", () => {
-  it("pins the original 63 modules plus two delay/combinator owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(65);
-    expect(new Set(required).size).toBe(65);
+  it("pins the original 65 modules plus the physical type-layout owner without relaxing historical policy", () => {
+    expect(required).toHaveLength(66);
+    expect(new Set(required).size).toBe(66);
+    expect(typeLayoutAdditions).toHaveLength(1);
     expect(delayCombinatorAdditions).toHaveLength(2);
     expect(frameAdditions).toHaveLength(3);
     expect(physicalAdditions).toHaveLength(3);
@@ -219,9 +227,13 @@ describe("semantic verification and provider ownership boundary", () => {
     expect(
       required.filter(
         (path) =>
-          ![...physicalAdditions, ...settlementAdditions, ...frameAdditions, ...delayCombinatorAdditions].includes(
-            path,
-          ),
+          ![
+            ...physicalAdditions,
+            ...settlementAdditions,
+            ...frameAdditions,
+            ...delayCombinatorAdditions,
+            ...typeLayoutAdditions,
+          ].includes(path),
       ),
     ).toHaveLength(56);
     expect(additions).toHaveLength(12);
@@ -232,17 +244,18 @@ describe("semantic verification and provider ownership boundary", () => {
       ...settlementAdditions,
       ...frameAdditions,
       ...delayCombinatorAdditions,
+      ...typeLayoutAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(27);
-    expect(digest(p.activationHistory.slice(3))).toBe(
+    expect(p.activationHistory).toHaveLength(28);
+    expect(digest(p.activationHistory.slice(4))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(9))).toBe(
+    expect(digest(p.activationHistory.slice(10))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -259,12 +272,12 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(65);
+    expect(r.report.counts.total).toBe(66);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(211);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 150, runtime: 61 });
+    expect(r.report.resolvedEdgeCount).toBe(214);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 152, runtime: 62 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
@@ -280,34 +293,42 @@ describe("semantic verification and provider ownership boundary", () => {
     },
   );
 
-  it.each([...additions, ...physicalAdditions, ...settlementAdditions, ...frameAdditions, ...delayCombinatorAdditions])(
-    "rejects deleting %s and its classification",
-    (path) => {
-      const f = fixture();
-      rmSync(resolve(f.root, path));
-      f.p.files = f.p.files.filter((row: { path: string }) => row.path !== path);
-      for (const mode of ["inventory", "complete"]) {
-        const r = f.run(mode);
-        expect(r.status).not.toBe(0);
-        expect(r.report.errors.map((e: { code: string }) => e.code)).toContain("missing-activated-root");
-      }
-    },
-  );
+  it.each([
+    ...additions,
+    ...physicalAdditions,
+    ...settlementAdditions,
+    ...frameAdditions,
+    ...delayCombinatorAdditions,
+    ...typeLayoutAdditions,
+  ])("rejects deleting %s and its classification", (path) => {
+    const f = fixture();
+    rmSync(resolve(f.root, path));
+    f.p.files = f.p.files.filter((row: { path: string }) => row.path !== path);
+    for (const mode of ["inventory", "complete"]) {
+      const r = f.run(mode);
+      expect(r.status).not.toBe(0);
+      expect(r.report.errors.map((e: { code: string }) => e.code)).toContain("missing-activated-root");
+    }
+  });
 
-  it.each([...additions, ...physicalAdditions, ...settlementAdditions, ...frameAdditions, ...delayCombinatorAdditions])(
-    "rejects an aliased frontend type dependency from %s",
-    (path) => {
-      const f = fixture();
-      f.put("src/forbidden.ts", "export interface Hidden { value: number }");
-      f.p.files.push({ path: "src/forbidden.ts", layer: "frontend-ts", state: "unmigrated" });
-      f.append(path, 'export type { Hidden } from "@forbidden";');
-      const r = f.run();
-      expect(r.status).toBe(1);
-      expect(r.report.forbiddenEdges).toContainEqual(
-        expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
-      );
-    },
-  );
+  it.each([
+    ...additions,
+    ...physicalAdditions,
+    ...settlementAdditions,
+    ...frameAdditions,
+    ...delayCombinatorAdditions,
+    ...typeLayoutAdditions,
+  ])("rejects an aliased frontend type dependency from %s", (path) => {
+    const f = fixture();
+    f.put("src/forbidden.ts", "export interface Hidden { value: number }");
+    f.p.files.push({ path: "src/forbidden.ts", layer: "frontend-ts", state: "unmigrated" });
+    f.append(path, 'export type { Hidden } from "@forbidden";');
+    const r = f.run();
+    expect(r.status).toBe(1);
+    expect(r.report.forbiddenEdges).toContainEqual(
+      expect.objectContaining({ from: path, to: "src/forbidden.ts", typeOnly: true }),
+    );
+  });
 
   for (const [source, field] of [
     ["const target = globalThis.toString(); import(target);", "unknownEdges"],
@@ -319,6 +340,7 @@ describe("semantic verification and provider ownership boundary", () => {
       ...settlementAdditions,
       ...frameAdditions,
       ...delayCombinatorAdditions,
+      ...typeLayoutAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);

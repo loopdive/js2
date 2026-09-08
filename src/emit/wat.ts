@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { indexPhysicalTypes, planPhysicalTypeSection } from "../wasm/physical/type-layout.js";
 import { walkInstructions } from "../codegen/walk-instructions.js";
 import type {
   BlockType,
@@ -120,16 +121,31 @@ export function escapeWatString(s: string): string {
 export function emitWat(mod: WasmModule, opts?: { onlyFunctions?: Set<string> }): string {
   const lines: string[] = [];
   const indent = (depth: number) => "  ".repeat(depth);
-  const inlineableTypes = computeInlineableTypes(mod);
+  const explicit = mod.types.some((type) => type.kind === "rec");
+  const physicalTable = explicit ? indexPhysicalTypes(mod.types) : undefined;
+  const typeDefinitions = physicalTable?.entries.map((entry) => entry.definition) ?? mod.types;
+  const inlineableTypes = explicit ? new Set<number>() : computeInlineableTypes(mod);
   watLayout = resolveLayout(mod); // (#1916 S3) resolve stable func handles for debug WAT
 
   lines.push("(module");
 
-  // Types — skip single-use func types that will be inlined on their function
-  for (let i = 0; i < mod.types.length; i++) {
-    if (inlineableTypes.has(i)) continue;
-    const t = mod.types[i]!;
-    lines.push(`${indent(1)}${formatTypeDef(t, i)}`);
+  // Explicit groups keep every declaration, so numeric references cannot shift.
+  if (physicalTable) {
+    const forced = mod.canonicalRuntimeRecGroup
+      ? [[mod.canonicalRuntimeRecGroup.start, mod.canonicalRuntimeRecGroup.end] as const]
+      : [];
+    for (const { start, end, recursive } of planPhysicalTypeSection(physicalTable, forced).groups) {
+      if (recursive) lines.push("  (rec");
+      for (let i = start; i <= end; i++) {
+        lines.push(`${indent(recursive ? 2 : 1)}${formatTypeDef(typeDefinitions[i]!, i, true)}`);
+      }
+      if (recursive) lines.push("  )");
+    }
+  } else {
+    for (let i = 0; i < mod.types.length; i++) {
+      if (inlineableTypes.has(i)) continue;
+      lines.push(`${indent(1)}${formatTypeDef(mod.types[i]!, i)}`);
+    }
   }
 
   // Imports
@@ -199,7 +215,12 @@ export function emitWat(mod: WasmModule, opts?: { onlyFunctions?: Set<string> })
   for (let i = 0; i < mod.functions.length; i++) {
     const f = mod.functions[i]!;
     if (opts?.onlyFunctions && !opts.onlyFunctions.has(f.name)) continue;
-    lines.push(formatFunction(f, i + numImportFuncs, mod, inlineableTypes));
+    if (physicalTable) {
+      const definition = typeDefinitions[f.typeIdx];
+      const signature = definition?.kind === "sub" ? definition.type : definition;
+      if (signature?.kind !== "func") throw new Error(`type ${f.typeIdx} is not a function signature`);
+    }
+    lines.push(formatFunction(f, i + numImportFuncs, typeDefinitions, inlineableTypes));
   }
 
   // Exports
@@ -230,7 +251,7 @@ export function emitWat(mod: WasmModule, opts?: { onlyFunctions?: Set<string> })
   return lines.join("\n");
 }
 
-function formatTypeDef(t: TypeDef, idx: number): string {
+function formatTypeDef(t: TypeDef, idx: number, physical = false): string {
   switch (t.kind) {
     case "func": {
       const params = t.params.map((p) => formatValType(p)).join(" ");
@@ -241,7 +262,7 @@ function formatTypeDef(t: TypeDef, idx: number): string {
       const fields = t.fields.map((f) => formatFieldDef(f)).join(" ");
       if (t.superTypeIdx !== undefined) {
         const finalStr = t.final ? " final" : "";
-        const superStr = t.superTypeIdx >= 0 ? ` $type${t.superTypeIdx}` : "";
+        const superStr = t.superTypeIdx >= 0 ? (physical ? ` ${t.superTypeIdx}` : ` $type${t.superTypeIdx}`) : "";
         return `(type $${t.name} (sub${finalStr}${superStr} (struct ${fields})))`;
       }
       return `(type $${t.name} (struct ${fields}))`;
@@ -253,9 +274,10 @@ function formatTypeDef(t: TypeDef, idx: number): string {
       return `(rec\n${inner}\n  )`;
     }
     case "sub": {
-      const superStr = t.superType !== null ? ` $type${t.superType}` : "";
-      const innerType = formatTypeDef(t.type, idx);
-      return `(type $${t.name} (sub${superStr} ${innerType.replace(/^\(type \$\S+ /, "").replace(/\)$/, "")}))`;
+      const superStr = t.superType !== null ? (physical ? ` ${t.superType}` : ` $type${t.superType}`) : "";
+      const innerType = formatTypeDef(t.type, idx, physical);
+      const finalStr = physical && t.final ? " final" : "";
+      return `(type $${t.name} (sub${finalStr}${superStr} ${innerType.replace(/^\(type \$\S+ /, "").replace(/\)$/, "")}))`;
     }
   }
 }
@@ -304,13 +326,18 @@ function formatValType(t: ValType): string {
   }
 }
 
-function formatFunction(f: WasmFunction, _globalIdx: number, mod: WasmModule, inlineableTypes: Set<number>): string {
+function formatFunction(
+  f: WasmFunction,
+  _globalIdx: number,
+  types: readonly TypeDef[],
+  inlineableTypes: Set<number>,
+): string {
   const lines: string[] = [];
 
   // If the function's type is single-use, inline the signature instead of referencing the type
   let sigStr: string;
   if (inlineableTypes.has(f.typeIdx)) {
-    const t = mod.types[f.typeIdx] as FuncTypeDef;
+    const t = types[f.typeIdx] as FuncTypeDef;
     const params = t.params.map((p) => formatValType(p)).join(" ");
     const results = t.results.map((r) => formatValType(r)).join(" ");
     sigStr = `${params ? ` (param ${params})` : ""}${results ? ` (result ${results})` : ""}`;

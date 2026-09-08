@@ -46,9 +46,10 @@
         "src/wasm/physical/function-handles.ts",
         "src/wasm/physical/function-types.ts",
         "src/wasm/physical/module-reservations.ts",
-        "src/wasm/physical/exception-control.ts"
+        "src/wasm/physical/exception-control.ts",
+        "src/wasm/physical/type-layout.ts"
       ],
-      "minModules": 4
+      "minModules": 5
     },
     {
       "id": "wasm-emit",
@@ -431,6 +432,17 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "wasm-physical",
+      "entries": [
+        "src/wasm/physical/function-handles.ts",
+        "src/wasm/physical/function-types.ts",
+        "src/wasm/physical/module-reservations.ts",
+        "src/wasm/physical/exception-control.ts",
+        "src/wasm/physical/type-layout.ts"
+      ],
+      "minModules": 5
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -10570,6 +10582,11 @@
       "path": "src/wasm/model/module-records.ts",
       "state": "clean",
       "layer": "wasm-model"
+    },
+    {
+      "path": "src/wasm/physical/type-layout.ts",
+      "state": "clean",
+      "layer": "wasm-physical"
     },
     {
       "path": "src/wasm/physical/exception-control.ts",

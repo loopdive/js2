@@ -36,6 +36,7 @@
 // codegen side records one contiguous group for native-string modules, and the
 // shared runtime provider exports the first helper family that consumes it.
 
+import { indexPhysicalTypes } from "../wasm/physical/type-layout.js";
 import type {
   ArrayTypeDef,
   FieldDef,
@@ -234,16 +235,11 @@ export interface RuntimeGroupMember {
  * {@link RUNTIME_RECGROUP_TYPE_NAMES} are returned (a module that doesn't use
  * strings/vecs simply yields a subset, or none).
  *
- * Requires a *flat* type table (no nested `rec` wrappers), which is the shape
- * codegen produces today (`computeRecGroups` derives groups at emit time, the
- * `mod.types` array itself is flat).
+ * Explicit recursive members retain their original definitions and flattened indices.
  */
 export function extractRuntimeGroup(mod: WasmModule): RuntimeGroupMember[] {
   const out: RuntimeGroupMember[] = [];
-  const types = mod.types;
-  for (let i = 0; i < types.length; i++) {
-    const t = types[i]!;
-    if (t.kind === "rec") continue; // not expected in the flat table; skip defensively
+  for (const { definition: t, typeIndex: i } of indexPhysicalTypes(mod.types).entries) {
     const name = typeDefName(t);
     if (name !== undefined && RUNTIME_NAME_SET.has(name)) {
       out.push({ name, absIndex: i, def: t });

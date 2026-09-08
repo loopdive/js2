@@ -14,6 +14,7 @@ import type {
   WasmExport,
 } from "../model/module-records.js";
 import { appendDefinedFunc, commitDefinedFuncOrdinal, mintDefinedFunc, STABLE_FUNC_BASE } from "./function-handles.js";
+import { indexPhysicalTypes, planPhysicalTypeSection } from "./type-layout.js";
 import { funcTypeKey, internFunctionType, sameValTypes } from "./function-types.js";
 
 /** The physical fields of the SAME module ultimately passed to the emitter. */
@@ -198,7 +199,7 @@ export class PhysicalModuleReservations {
   readonly #objects = new Set<object>();
   readonly #positions = new Map<PhysicalReservation, number>();
   readonly #records = new Map<PhysicalReservation, string>();
-  readonly #typeRecords = new Map<TypeDef, string>();
+  readonly #typeRecords = new Map<TypeDef, { text: string; members: readonly TypeDef[] }>();
   readonly #arrays: { [K in PopulationKey]: PhysicalModuleStorage[K] };
   readonly #expected: { [K in PopulationKey]: PhysicalModuleStorage[K] };
   readonly #filledFunctions = new Map<FunctionReservation, { locals: LocalDef[]; body: Instr[]; text: string }>();
@@ -343,8 +344,11 @@ export class PhysicalModuleReservations {
     for (const [token, text] of this.#records) {
       if (this.#recordText(token) !== text) this.#fail(`altered ${token.kind} descriptor ${token.key}`);
     }
-    for (const [type, text] of this.#typeRecords) {
+    for (const [type, { text, members }] of this.#typeRecords) {
       if (this.#snapshot(type) !== text) this.#fail("altered reserved type definition/signature");
+      const current = this.#typeMembers(type);
+      if (current.length !== members.length || current.some((member, index) => member !== members[index]))
+        this.#fail("substituted reserved type member/payload");
     }
     for (const [token, fill] of this.#filledFunctions) {
       if (
@@ -402,7 +406,7 @@ export class PhysicalModuleReservations {
     const type = this.#module.types[recordIndex]!;
     this.#cache.set(key, index);
     this.#expected.types.push(type);
-    this.#typeRecords.set(type, this.#snapshot(type));
+    this.#typeRecords.set(type, { text: this.#snapshot(type), members: this.#typeMembers(type) });
     return index;
   }
 
@@ -413,8 +417,8 @@ export class PhysicalModuleReservations {
     const typeIndex = this.#flatTypes().length;
     this.#module.types.push(definition);
     this.#expected.types.push(definition);
-    this.#typeRecords.set(definition, this.#snapshot(definition));
     this.#flatTypes();
+    this.#typeRecords.set(definition, { text: this.#snapshot(definition), members: this.#typeMembers(definition) });
     return this.#register({ kind: "type", key, object: definition, typeIndex }, typeIndex);
   }
 
@@ -728,23 +732,19 @@ export class PhysicalModuleReservations {
     if (!Number.isInteger(index) || index < 0 || index >= count) this.#fail(`unresolved ${kind} index ${index}`);
   }
 
+  /** Retain exact nested type objects alongside the existing content snapshot. */
+  #typeMembers(type: TypeDef): TypeDef[] {
+    if (type.kind === "rec") return type.types.flatMap((member) => [member, ...this.#typeMembers(member)]);
+    return type.kind === "sub" ? [type.type] : [];
+  }
+
   /** Wasm rec wrappers occupy no index; each subtype/member occupies one. */
   #flatTypes(): Exclude<TypeDef, { kind: "rec" }>[] {
-    const flat: Exclude<TypeDef, { kind: "rec" }>[] = [];
-    for (const record of this.#module.types) {
-      if (record.kind !== "rec") {
-        flat.push(record);
-        continue;
-      }
-      if (record.types.length === 0) this.#fail("empty recursive type reservation has no physical member");
-      for (let index = 0; index < record.types.length; index++) {
-        if (!Object.hasOwn(record.types, index)) this.#fail("missing recursive type member");
-        const member = record.types[index]!;
-        if (member.kind === "rec") this.#fail("nested rec wrappers are not Wasm subtype members");
-        flat.push(member);
-      }
+    try {
+      return indexPhysicalTypes(this.#module.types).entries.map((entry) => entry.definition);
+    } catch (error) {
+      this.#fail(error instanceof Error ? error.message : String(error));
     }
-    return flat;
   }
 
   #type(index: number): Exclude<TypeDef, { kind: "rec" } | { kind: "sub" }> {
@@ -760,30 +760,18 @@ export class PhysicalModuleReservations {
     return type;
   }
 
-  #checkExplicitRecGroupingReference(index: number, firstExplicitRec: number | undefined): void {
-    if (firstExplicitRec !== undefined && index >= firstExplicitRec) {
-      this.#fail(
-        `unsupported explicit-rec type-definition grouping: target ${index} is at/after first explicit rec member ${firstExplicitRec}; ` +
-          "the shared emitter requires a physical-index grouping fix",
-      );
-    }
-  }
-
-  #validateValue(value: ValType, firstExplicitRec?: number): void {
+  #validateValue(value: ValType): void {
     if (value.kind === "ref" || value.kind === "ref_null") {
-      this.#checkExplicitRecGroupingReference(value.typeIdx, firstExplicitRec);
       this.#type(value.typeIdx);
     }
   }
 
-  #validateType(type: TypeDef, firstExplicitRec?: number): void {
+  #validateType(type: TypeDef): void {
     switch (type.kind) {
       case "func":
-        for (const value of [...type.params, ...type.results]) this.#validateValue(value, firstExplicitRec);
+        for (const value of [...type.params, ...type.results]) this.#validateValue(value);
         break;
       case "struct":
-        if (type.superTypeIdx !== undefined)
-          this.#checkExplicitRecGroupingReference(type.superTypeIdx, firstExplicitRec);
         if (
           type.superTypeIdx !== undefined &&
           type.superTypeIdx !== -1 &&
@@ -791,20 +779,19 @@ export class PhysicalModuleReservations {
         ) {
           this.#fail("struct parent is not a struct");
         }
-        for (const field of type.fields) this.#validateValue(field.type, firstExplicitRec);
+        for (const field of type.fields) this.#validateValue(field.type);
         break;
       case "array":
-        this.#validateValue(type.element, firstExplicitRec);
+        this.#validateValue(type.element);
         break;
       case "rec":
-        for (const member of type.types) this.#validateType(member, firstExplicitRec);
+        for (const member of type.types) this.#validateType(member);
         break;
       case "sub":
         if (type.superType !== null) {
-          this.#checkExplicitRecGroupingReference(type.superType, firstExplicitRec);
           this.#type(type.superType);
         }
-        this.#validateType(type.type, firstExplicitRec);
+        this.#validateType(type.type);
         break;
     }
   }
@@ -818,67 +805,15 @@ export class PhysicalModuleReservations {
     if (group.end < group.start || !Number.isInteger(group.abiVersion) || group.abiVersion < 1) {
       this.#fail("invalid canonical runtime rec-group descriptor");
     }
-    // The existing forced-group emitter consumes a flat interval of OUTER
-    // records. Explicit rec wrappers elsewhere remain supported, but cannot
-    // change the coordinates or become nested members of this forced group.
-    let physical = 0;
-    for (let outer = 0; outer <= group.end && outer < this.#module.types.length; outer++) {
-      const record = this.#module.types[outer]!;
-      if (outer >= group.start && (physical !== outer || record.kind === "rec")) {
-        this.#fail(
-          "canonical rec-group cannot match emitter outer/physical coordinates across an explicit rec wrapper",
-        );
-      }
-      physical += record.kind === "rec" ? record.types.length : 1;
-    }
-    if (group.end >= this.#module.types.length) this.#fail("canonical rec-group exceeds emitter record interval");
+    this.#planTypes([[group.start, group.end]]);
+  }
 
-    // Match computeRecGroups' forward-reference closure and its exact-range
-    // refusal without importing the backend emitter into the physical kernel.
-    const refs = (record: TypeDef, out: Set<number>): void => {
-      const value = (type: ValType): void => {
-        if (type.kind === "ref" || type.kind === "ref_null") out.add(type.typeIdx);
-      };
-      switch (record.kind) {
-        case "func":
-          record.params.forEach(value);
-          record.results.forEach(value);
-          break;
-        case "struct":
-          if (record.superTypeIdx !== undefined && record.superTypeIdx >= 0) out.add(record.superTypeIdx);
-          for (const field of record.fields) value(field.type);
-          break;
-        case "array":
-          value(record.element);
-          break;
-        case "rec":
-          for (const member of record.types) refs(member, out);
-          break;
-        case "sub":
-          if (record.superType !== null) out.add(record.superType);
-          refs(record.type, out);
-          break;
-      }
-    };
-    for (let start = 0; start <= group.start; ) {
-      let end = start;
-      if (group.start <= start && start <= group.end) end = Math.max(end, group.end);
-      for (let scan = start; scan <= end; scan++) {
-        const referenced = new Set<number>();
-        refs(this.#module.types[scan]!, referenced);
-        for (const target of referenced) {
-          if (target > end && target < this.#module.types.length) end = target;
-        }
-        if (group.start <= end && group.end >= start) end = Math.max(end, group.end);
-      }
-      if (start <= group.start && group.start <= end) {
-        if (start !== group.start || end !== group.end)
-          this.#fail("canonical runtime rec-group merged with an adjacent type");
-        return;
-      }
-      start = end + 1;
+  #planTypes(forced: ReadonlyArray<readonly [number, number]> = []): void {
+    try {
+      planPhysicalTypeSection(indexPhysicalTypes(this.#module.types), forced);
+    } catch (error) {
+      this.#fail(error instanceof Error ? error.message : String(error));
     }
-    this.#fail("canonical runtime rec-group not emitted");
   }
 
   #functionIndex(handle: FuncHandle): number {
@@ -917,23 +852,8 @@ export class PhysicalModuleReservations {
   #validateResources(): void {
     const m = this.#module;
     this.#validateCanonicalGroup();
-    // Temporary admission boundary, not a permanent loss of native capability.
-    // computeRecGroups still interprets type-definition refs as outer record
-    // positions. Before the FIRST explicit rec every record contributes one
-    // physical index; references into/beyond that rec cannot be admitted until
-    // the shared emitter understands flattened coordinates and group identity.
-    let firstExplicitRec: number | undefined;
-    let physical = 0;
-    for (const type of m.types) {
-      if (type.kind === "rec") {
-        firstExplicitRec = physical;
-        break;
-      }
-      physical++;
-    }
-    // Include definitions preceding the rec, not just its members or suffix.
-    // Instruction/local/global references keep their existing flattened lookup.
-    for (const type of m.types) this.#validateType(type, firstExplicitRec);
+    for (const type of m.types) this.#validateType(type);
+    this.#planTypes();
     for (const imp of m.imports) {
       if (imp.desc.kind === "func" || imp.desc.kind === "tag") {
         const signature = this.#functionType(imp.desc.typeIdx);
