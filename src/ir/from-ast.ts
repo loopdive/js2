@@ -1988,6 +1988,17 @@ function lowerDiscardedExpression(expr: ts.Expression, cx: LowerCtx): void {
       return;
     }
   }
+  // A checker-proven global undefined read has neither a value consumer nor
+  // effects here. Keep shadowed and unchecked identifiers on the normal path.
+  if (ts.isIdentifier(expr) && expr.text === "undefined" && !cx.scope.has(expr.text) && cx.checker) {
+    const ambient = cx.checker.resolveName("undefined", undefined, ts.SymbolFlags.Value, false);
+    if (
+      ambient &&
+      cx.checker.getSymbolAtLocation(expr) === ambient &&
+      (cx.checker.getTypeAtLocation(expr).flags & ts.TypeFlags.Undefined) !== 0
+    )
+      return;
+  }
   void lowerExpr(expr, cx, irVal({ kind: "externref" }));
 }
 
