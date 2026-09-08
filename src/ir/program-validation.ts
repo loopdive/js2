@@ -5,6 +5,7 @@ import { irGlobalBindingKey, irTypeBindingKey } from "./abi-bindings.js";
 import { irBindingKey } from "./declared-types.js";
 import { forEachInstrDeep, type IrDeclaredSignature, type IrType } from "./nodes.js";
 import { ProgramAbiMap } from "./program-abi.js";
+import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import {
   preparedIrCallableSignature,
   preparedIrClassLayoutKey,
@@ -23,7 +24,7 @@ import {
   preparedIrRuntimeAbiAnchor,
   preparedIrRuntimeCallableBindingId,
 } from "./program-runtime-abi.js";
-import { verifyIrFunction } from "./verify.js";
+import { verifyIrFunction, type IrVerificationOptions } from "./verify.js";
 import { assertPreparedIrClassLayouts } from "./program-class-layouts.js";
 import { assertPreparedIrProgramAllocations } from "./program-allocations.js";
 import {
@@ -177,7 +178,7 @@ function validateRuntimeCallables(program: PreparedIrProgram): void {
 }
 
 /** Complete source-free validation precedes lookup reconstruction, backend acceptance and replay. */
-export function assertPreparedIrProgram(program: PreparedIrProgram): void {
+export function assertPreparedIrProgram(program: PreparedIrProgram, options?: IrVerificationOptions): void {
   if (program.schema !== "prepared-ir-program-v1" || program.reconciliation !== "complete" || program.sealed !== true)
     invalid("program is not a complete prepared program");
   assertPreparedIrProgramPopulation(program);
@@ -237,7 +238,7 @@ export function assertPreparedIrProgram(program: PreparedIrProgram): void {
         preparedIrCallableSignature(own.contract.params, own.contract.results),
         preparedIrCallableSignature(
           fn.params.map((param) => param.type),
-          fn.resultTypes,
+          preparedIrProgramCallableResults(fn),
         ),
       )
     )
@@ -266,7 +267,7 @@ export function assertPreparedIrProgram(program: PreparedIrProgram): void {
           )
             invalid(`body ${fn.unitId} references undeclared global ${instruction.target.binding.bindingId}`);
         });
-    const errors = verifyIrFunction(fn, undefined, { declaredSignatures, declaredGlobals });
+    const errors = verifyIrFunction(fn, undefined, { declaredSignatures, declaredGlobals }, options);
     if (errors.length) invalid(`body ${fn.unitId}: ${errors.map((error) => error.message).join("; ")}`);
   }
   if (program.startup.length !== program.inventory.sources.length) invalid("startup omits or duplicates a source");

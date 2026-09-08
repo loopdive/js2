@@ -9220,6 +9220,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/program-callable-contract.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Place the callable/body-result contract in ir-program only after complete program ABI contract type-closure separation; preserve canonical core types and the async callable-versus-fulfillment distinction."
+    },
+    {
       "path": "src/ir/program-callable-selection.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -9250,6 +9258,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Split standalone WasmGC acceptance/emission into backend/wasmgc/program; replace legacy CodegenContext/physical-registry dependencies with the approved Wasm physical reservation boundary. Preserve deferred host/linear routes outside that clean transaction."
+    },
+    {
+      "path": "src/ir/program-input.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the complete type closure of detached program input, source inventory, startup, callable/provenance, allocation and runtime-policy contracts before placement in ir-program."
     },
     {
       "path": "src/ir/program-middleend-ir.ts",
@@ -9298,6 +9314,14 @@
       "destination": "frontend-ts",
       "owner": "3518-coordinator",
       "nextBoundary": "Split prepareWholeIrProgram into frontend source preparation and pure typed-IR preparation under ir/program. The latter accepts no AST or checker input; keep source orchestration outside the pure program boundary."
+    },
+    {
+      "path": "src/ir/program-prepare-ir.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the complete type closure of typed preparation, program ABI/population, validation and authenticated runtime projections before placement in ir-program; preserve explicit controls and transaction-owned allocations."
     },
     {
       "path": "src/ir/program-runtime-abi.ts",

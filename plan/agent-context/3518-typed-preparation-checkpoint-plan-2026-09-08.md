@@ -186,7 +186,7 @@ differ because local worktrees share `node_modules`, not because source moved.
 All **42/42** existing boundary-detector controls pass, zero skipped, receipt
 `.tmp/typed-B-boundary-controls.json`. No detector test or enforcement code changed.
 
-A remains a separate uncommitted worker checkpoint at
+A's frozen worker checkpoint remains at
 `/private/tmp/js2-3518-typed-preparation-source-20260908`, base `6ff05f6b` plus
 the exact ten B production files. Its current frozen manifest is
 `.tmp/typed-preparation-A-frozen-manifest-20260908.json` (eight production paths,
@@ -195,16 +195,130 @@ joins, pre-admission getter reads and prototype-erased Date data loss. The
 repaired files pass **66/66** focused tests, **26/26** legacy compatibility tests
 and typecheck; High rechecked all 15 blobs and found no remaining concrete
 blocker within that repaired scope. The original lexical/TDZ and native async
-refusals remain counted. No independent historical artifact comparison or
-coordinator integration has yet accepted A.
+refusals remain counted. The coordinator has copied all 15 exact frozen blobs
+into integration; this copy alone is not acceptance. Independent historical
+preparation comparison and integrated validation remain pending.
 
-High approval is explicitly conditional on the pending input-contract decision:
-trusted compiler/decoder-produced data, or a broader authenticated-object
-construction design. Portable reflection is not universal hidden-state/Proxy
+High's repair approval was conditional on the input-contract decision, now
+resolved below. Portable reflection is not universal hidden-state/Proxy
 authentication. The concrete Date rejection is not a claim that a finite
 blacklist establishes such authentication. No Node-specific classifier was added.
-After that decision, reconcile A's three new inventory records, independently
-compare historical artifacts, run integrated gates and publish a new checkpoint.
+Reconcile A's three new inventory records, independently compare historical
+artifacts, run integrated gates and publish the next source checkpoint.
+
+### User input contract and current integration evidence
+
+The user's explicit decision was relayed from the side conversation on
+2026-09-08: **"the position should be to make a robust compiler, but only expect
+ir to be fed by js source, not intentionally crafted objects"**.
+
+The typed entry consumes internal compiler data derived from JavaScript source,
+including that data's internal lossless transport/replay. It is not a public
+security boundary accepting arbitrary live JavaScript objects. Deliberately
+injected Proxies, getters or fabricated-object authentication do not block this
+migration. This does not relax handling of invalid/adversarial JavaScript source,
+IR invariants, complete population, explicit unsupported-construct errors,
+lossless supported data, or preservation of program semantics. Existing concrete
+capture and malformed-data controls remain; no test is deleted or waived.
+
+The coordinator independently compared A's public compilation receipts against
+the pre-split source baseline: **12/12 complete pairs**, six programs each under
+GVN off/on, with identical full binary bytes, WAT, import/export order, string
+pools, IR emission/outcome records and returned values. Candidate reports
+`.tmp/typed-public-A-off.json` and `.tmp/typed-public-A-on.json` in A's worktree
+cover all **1,262** source files, SHA-256
+`50a5faf25558ed373002c23d4c1656b90813f992171d97b111fc8863e43f4cdf`.
+The baseline reports above cover 1,256 source files at unchanged pre-split source
+on planning commit `c4cfdfdffd5270776babfb82e32e041f28446a31`; A is uncommitted
+on `6ff05f6b5a197f8d0423036f7d171888ff99bd40`, so its census and frozen 15-file
+manifest, not HEAD alone, identify the measured candidate. Runtime, locale,
+harness and all explicit control fields agree. This is public-route preservation,
+not evidence that the new whole-program typed preparation entry executed.
+
+Native Astra Low owns the separate old-versus-new whole-program preparation
+comparison in isolated children with root-bound imports. Astra High requires
+exact canonical prepared serialization and each arm's codec replay, the actual
+instantiated bytes/WAT/values, nonempty live allocation and GVN-merge controls,
+source-order reversal, retained TDZ/native-async refusals and comparator negative
+controls. The denominator and failures must remain visible. A second Astra Low
+agent prepares the three inventory records without changing enforcement.
+
+Published B inventory checkpoint `247f5d011049fe7b70143dbaa8bc1d74ca6c63ae`
+has completed CI: **29 passed, 14 skipped, zero failed**, with no unresolved
+review threads and a mergeable, non-draft held PR #5745. Quality job
+`101944686852` in run `34189575594` passed; its retained inventory artifact
+confirms 1,259 modules, 18 clean, five adapters, 1,236 debt, four unknowns and
+zero inventory errors. These results apply to B's published head, not the newly
+copied A files. The input decision and green PR CI do not remove the merge hold,
+resolve the N1 host/queue incident, or authorize direct-codegen retirement.
+
+### A composed implementation: measured preservation and retained gaps
+
+Integration contains the eight production paths, four suites and three helpers
+from A's frozen manifest. Twelve blobs remain exact; the only differences in
+the other three files are the High-approved input-contract JSDoc clarifications.
+The coordinator compared comment-free TypeScript syntax for those three files.
+No implementation, negative control or diagnostic rule changed during composition.
+The three new inventory records match proposed blob
+`9b205989faf41c12fee70f92bd96f6c33ffd1816`; removing them restores all prior policy.
+
+Composed validation passes **169/169 tests in 12 files**, zero failures/skips:
+A's 66, B's 77 and the 26 unchanged source/population/projection/validation and
+registry compatibility controls. Report: `.tmp/typed-A-integration-focused.json`.
+Typecheck exits 0. The actual inventory check passes with **1,262 modules, 18
+clean, five adapters, 1,239 debt, 9,835 resolved edges and four unchanged unknowns**;
+complete mode still exits 1. Reports: `.tmp/typed-A-boundary-inventory.json` and
+`.tmp/typed-A-boundary-complete.json`. The package-equivalent caller-preservation
+gate exits 0 (`.tmp/typed-A-preservation.json`): N1 6/6 full/cut, core types 10/10
+full/cut, core nodes 12/12 observed callers. The old dead-export population is
+unchanged at 25/25. Node dispatch-cut remains UNKNOWN and strict modeled closure
+still fails at the same two nonliteral imports; no retirement proof is granted.
+
+The independent historical harness in A's `.tmp/whole-preparation-ab.mjs` calls
+the actual old and new `prepareWholeIrProgram`, with every compiler import bound
+to the selected checkout in separate children. Nine real source fixtures plus
+five reversed multi-source variants run under GVN off/on: **28 historical pairs,
+56 arm rows**, not 56 pairs or 28 successful executions. The four r2 reports
+(`whole-preparation-base-r2-{off,on}.json` and
+`whole-preparation-candidate-r2-{off,on}.json`) have clean terminal receipts,
+unchanged source/test censuses and pinned controls/runtime provenance.
+
+Both coordinator and High independently inspected the retained rows: **16/16
+prepared canonical-serialization pairs and 10/10 executable artifact pairs
+match**, including each program's own decoded replay, actual instantiated Wasm
+bytes, WAT and returned values. GVN genuinely removes one of three duplicate
+adds in both arms. **26/28 raw rows are identical**; the other two are the
+live-record backend failure, with only absolute checkout prefixes differing in
+the retained stacks. Exact error text, code, stage and source ownership agree.
+The independent census includes two README files excluded by the public-compiler
+module census (1,258/1,264 versus 1,256/1,262); every common module hash agrees.
+
+The record fixture prepares and round-trips one live allocation, but backend
+emission fails to lower `object<left:f64,right:f64>` after acceptance. The vector
+fixture refuses source preparation because it cannot register the `number[]`
+annotation. Original TDZ and native async refusals also remain. None is omitted,
+waived or counted as execution. **Executed live-allocation preservation remains
+unproved**; it is an outstanding migration/backend obligation, not a newly
+invented prerequisite for publishing this reviewed preservation checkpoint.
+
+B independently inspected the unchanged source/consumer/lowering paths and
+existing codec execution controls. It found no defensible alternative executed
+allocation fixture: the consumer supplies no object/vector/closure/boxed/string
+materialization, string emission needs absent callbacks, and runtime-backed
+alternatives need missing function materialization. Nine relevant files match
+the baseline byte-for-byte. No extra speculative compilation or weaker fixture
+was used to manufacture a passing allocation witness.
+
+High approved held, non-draft publication of the bounded implementation and found
+no A-induced regression in these measured rows. Full checkpoint/backend
+acceptance remains open. Its review also found gaps in the temporary comparator:
+arm-specific provenance, terminal-receipt admission and nonzero acceptance on
+unequal outcomes. That comparator is being repaired with negative controls;
+its earlier exit 0 is not accepted as a blanket equality verdict. The reported
+pair counts above come from independent row/artifact inspection, not that exit
+status. No source-free closure, public cutover or direct-codegen deletion is
+claimed. Normal publication hooks and fresh CI on the eventual A head are still
+required; the old B CI result does not cover these new source files.
 
 Freeze the A/B contract below. The optional third counter argument is intentional: it preserves partial diagnostics when the **original exception escapes unchanged**, without callbacks or global effects in typed preparation.
 

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { createIrBindingId } from "./identity-values.js";
+import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import type { IrBindingId, IrSourceId, IrUnitId, IrUnitInventory } from "./identity.js";
 import { irCallableBindingKey, irUnitCallableBindingId, irUnitFuncRef } from "./callable-bindings.js";
 import { irGlobalBindingKey } from "./abi-bindings.js";
@@ -10,7 +11,7 @@ import type { IrModuleInitPlan } from "./module-init-plan.js";
 import type { ProgramAbiCallableSignature, ProgramAbiDerivedUnitRecord } from "./program-abi.js";
 import type { PreparedComponentAbiLookup } from "./prepared-component-dependencies.js";
 import { PreparedIrProgramInvariantError, type PreparedIrAbiEntry } from "./program.js";
-import type { IrProgramSourcePreparation } from "./program-source.js";
+import type { TypedIrProgramGlobal } from "./program-input.js";
 import type { IrProgramCallableBindingRecord } from "./program-callable-bindings.js";
 import type { IrRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
 import {
@@ -80,7 +81,7 @@ export interface PrepareIrProgramAbiInput {
   readonly inventory: IrUnitInventory;
   readonly ir: IrModule;
   readonly derivedUnits: readonly ProgramAbiDerivedUnitRecord[];
-  readonly globals: IrProgramSourcePreparation["globals"];
+  readonly globals: readonly TypedIrProgramGlobal[];
   readonly startup: readonly IrModuleInitPlan[];
   readonly callables: readonly IrProgramCallableBindingRecord[];
 }
@@ -118,6 +119,7 @@ export function prepareIrProgramAbiEntries(
   for (const fn of input.ir.functions) {
     const ref = irUnitFuncRef(fn);
     const params = fn.params.map((param) => param.type);
+    const results = preparedIrProgramCallableResults(fn);
     entries.push({
       plan: {
         id: irUnitCallableBindingId(fn.unitId),
@@ -130,14 +132,14 @@ export function prepareIrProgramAbiEntries(
           kind: "callable",
           origin: "source",
           unitId: fn.unitId,
-          signature: preparedIrCallableSignature(params, fn.resultTypes),
+          signature: preparedIrCallableSignature(params, results),
         },
       },
       contract: {
         kind: "callable",
         ref,
         params,
-        results: fn.resultTypes,
+        results,
         ...(fn.asyncPlan ? { promise: fn.asyncPlan.abi } : {}),
       },
     });

@@ -156,9 +156,25 @@ The B code checkpoint is `f10ce7aeef`. Its CI found three missing exact-inventor
 records; the follow-up records them as unmigrated debt, preserving every prior
 policy entry and gate. Inventory mode passes with all 1,259 modules counted;
 complete mode still fails. A's admission repairs now pass 66/66 focused and
-26/26 legacy controls with conditional High approval. Publication awaits the
-trusted-data versus authenticated-object contract decision and independent
-integration/artifact evidence; the linked plan records the exact frozen handoff.
+26/26 legacy controls with conditional High approval. The user has now resolved
+the input contract: robust compiler handling of JavaScript source, with IR as
+internal compiler-produced data rather than intentionally fabricated live
+objects. All source robustness, invariant, losslessness and semantics checks
+remain required. The coordinator copied the 15 frozen A files and independently
+verified 12/12 public compilation artifact pairs. Composed validation now passes
+169/169 tests and typecheck. The separate historical whole-program comparison
+retains 28 pairs: all 16 prepared serializations and 10 executable artifact pairs
+match; two raw error-stack differences are checkout prefixes only. Record
+allocation still fails backend emission and vector preparation still refuses
+on both versions; executed-allocation proof remains open. No failures are
+waived. High approved held publication of the bounded implementation, not full
+checkpoint/backend acceptance. Temporary comparison-checker hardening is still
+pending and its earlier exit 0 is not treated as a blanket equality verdict.
+The linked plan records exact source censuses, the relayed decision, integrated
+inventory/caller evidence and the frozen handoff. Complete architecture still
+fails, and the two strict nonliteral imports remain unresolved.
+Published B inventory checkpoint `247f5d0110` has 29 passing and 14 skipped CI
+checks, no failures or unresolved reviews. The existing merge hold remains.
 
 ### Complete semantic nodes checkpoint — structural checkpoint, 2026-09-08
 

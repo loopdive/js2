@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import { ts } from "../ts-api.js";
+import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
+import type { TypedIrProgramInput } from "./program-input.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { AllocSiteRegistry } from "./alloc-registry.js";
 import { irSourceGlobalRef } from "./abi-bindings.js";
@@ -53,6 +55,68 @@ export interface IrProgramSourcePreparation {
   readonly allocations: AllocSiteRegistry;
 }
 
+/** Read only an explicitly selected own data field; never evaluate a getter. */
+function sourceDataField<T extends object, K extends keyof T>(object: T, key: K): T[K] {
+  const descriptor = Object.getOwnPropertyDescriptor(object, key);
+  if (!descriptor || !("value" in descriptor))
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      `source capture requires own data field ${String(key)}`,
+    );
+  return descriptor.value;
+}
+
+/** Explicit frontend projection; capture all semantic fields jointly with allocations. */
+export function captureTypedIrProgramInput(source: IrProgramSourcePreparation): TypedIrProgramInput {
+  const allocations = sourceDataField(source, "allocations");
+  const inventory = sourceDataField(source, "inventory");
+  const ir = sourceDataField(source, "ir");
+  const derivedUnits = sourceDataField(source, "derivedUnits");
+  const startup = sourceDataField(source, "startup");
+  const callables = sourceDataField(source, "callables");
+  const sourceGlobals = sourceDataField(source, "globals");
+  if (!Array.isArray(sourceGlobals) || Object.getPrototypeOf(sourceGlobals) !== Array.prototype)
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "source capture requires an ordinary globals array",
+    );
+  const length = sourceDataField(sourceGlobals, "length");
+  for (const key of Reflect.ownKeys(sourceGlobals)) {
+    if (key !== "length" && (typeof key !== "string" || !/^(0|[1-9]\d*)$/.test(key) || Number(key) >= length))
+      throw new PreparedIrProgramInvariantError(
+        "invalid-prepared-data",
+        "source capture cannot omit extra globals array properties",
+      );
+  }
+  const globals: TypedIrProgramInput["globals"][number][] = [];
+  for (let index = 0; index < length; index++) {
+    const entry = sourceDataField(sourceGlobals, index);
+    const binding = sourceDataField(entry, "binding");
+    const identity = sourceDataField(entry, "identity");
+    globals.push({
+      binding: {
+        globalRef: sourceDataField(binding, "globalRef"),
+        tdzGlobalRef: sourceDataField(binding, "tdzGlobalRef"),
+        type: sourceDataField(binding, "type"),
+      },
+      identity: {
+        sourceId: sourceDataField(identity, "sourceId"),
+        storageOwnerUnitId: sourceDataField(identity, "storageOwnerUnitId"),
+      },
+    });
+  }
+  const captured = allocations.capturePreparationData({ inventory, ir, derivedUnits, startup, callables, globals });
+  return {
+    inventory: captured.data.inventory,
+    ir: captured.data.ir,
+    derivedUnits: captured.data.derivedUnits,
+    startup: captured.data.startup,
+    callables: captured.data.callables,
+    globals: captured.data.globals,
+    allocations: captured.allocations,
+  };
+}
+
 function unsupported(detail: string): never {
   throw new IrUnsupportedError("type-resolution-unsupported", "build", detail);
 }
@@ -99,6 +163,7 @@ export function prepareIrProgramSources(
   const globals: IrProgramSourcePreparation["globals"][number][] = [];
   const globalByDeclaration = new Map<ts.Declaration, IrProgramSourcePreparation["globals"][number]>();
   const signatures = new Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>();
+  const bodyResults = new Map<IrUnitId, IrType | null>();
   let active: IrUnitId | undefined;
   try {
     const types = buildIrUnitTypeMap(sourceFiles, input.checker, identity);
@@ -161,16 +226,28 @@ export function prepareIrProgramSources(
       );
       if (params.some((type) => !type))
         unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
-      const returnNode = declaration.type ? unwrapPromiseTypeNode(declaration.type) : undefined;
-      const result =
+      const isAsync = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
+      const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
+      const result: IrType | null =
         returnNode?.kind === ts.SyntaxKind.VoidKeyword
           ? null
-          : returnNode
-            ? typeNodeToIr(returnNode, unit.displayName)
-            : propagated
-              ? lowerTypeToIrType(propagated.returnType)
-              : null;
-      signatures.set(unit.id, { params: params as IrType[], returnType: result });
+          : !isAsync &&
+              returnNode &&
+              ts.isTypeReferenceNode(returnNode) &&
+              ts.isIdentifier(returnNode.typeName) &&
+              returnNode.typeName.text === "Promise"
+            ? { kind: "val", val: { kind: "externref" } }
+            : returnNode
+              ? typeNodeToIr(returnNode, unit.displayName)
+              : propagated
+                ? lowerTypeToIrType(propagated.returnType)
+                : null;
+      bodyResults.set(unit.id, result);
+      const callableResults = preparedIrProgramCallableResults({
+        funcKind: isAsync ? "async" : "regular",
+        resultTypes: result ? [result] : [],
+      });
+      signatures.set(unit.id, { params: params as IrType[], returnType: callableResults[0] ?? null });
     }
     for (const source of sourceFiles) {
       for (const statement of source.statements) {
@@ -296,7 +373,7 @@ export function prepareIrProgramSources(
                   .map((global) => [global.binding.globalName, { ...global.binding, ownerUnitId: unit.id }]),
               ),
             }
-          : { paramTypeOverrides: signature!.params, returnTypeOverride: signature!.returnType }),
+          : { paramTypeOverrides: signature!.params, returnTypeOverride: bodyResults.get(unit.id)! }),
         numericLocalScalarForDecl: (declaration) =>
           checkerScalar(input.checker, declaration)?.kind === "val" &&
           (input.checker.getTypeAtLocation(declaration).flags & ts.TypeFlags.NumberLike) !== 0
