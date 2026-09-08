@@ -5620,3 +5620,140 @@ approved the exact final source/test hashes and closed all four review
 findings; its final-test condition is now satisfied. Normal publication
 hooks remain required. No tests, budget policies, CI rules or historical
 expected runtime outputs were weakened.
+
+### Published full-family source checkpoint and next integration — 2026-09-08
+
+Non-draft PR #5758 publishes the full-family source checkpoint at
+`37e169c4903c29ab46fe99de0910634723a19dac`, stacked on #5757. Normal commit
+session 32379 and push session 4237 both exited 0. All seven source/test blobs
+were unchanged after commit hooks. Push additionally passed typecheck, lint,
+formatting, oracle/coercion ratchets, 18/18 numeric-local regressions and issue
+integrity. The remote branch was independently read at the exact commit.
+No merge or auto-merge was requested; the checkpoint retains hold.
+
+The next isolated integration starts at that published source commit:
+`/private/tmp/js2-3518-delay-combinator-integration-20260908`, branch
+`codex/3518-delay-combinator-integration-20260908`. Worktree creation session
+58006 exited 0; HEAD and clean status were verified, with existing dependencies
+linked rather than installed. Low B's eight-file delay/combinator manifest
+was read completely at
+`/private/tmp/js2-3518-native-delay-combinator-bodies-20260908/.tmp/native-delay-combinator-frozen-20260908.json`.
+Its 76 authored tests, 13 donor receipts, 11 source artifacts and 19 executions
+per root remain unmeasured by the parent; no correctness or physical
+acceptance is inferred from its static receipt. High is reviewing the frozen
+slice before composition. Low A has a separate canonical-declaration/manifest
+assignment; its next claim hook may proceed now that the parent push finished.
+
+### Delay/combinator first composed measurement — 2026-09-08
+
+All eight files were independently checked against the frozen Git blobs and
+composed onto `37e169c4903c29ab46fe99de0910634723a19dac`. Canonical
+TypeScript 7 passed in session 28403. The initial patch transfer exceeded
+tool output limits; it was reapplied in bounded files/hunks and all eight
+final blobs were then verified, not assumed from partial tool success.
+
+Session 94422 exited 1: 75/76, comprising 32/33 ownership controls and 43/43
+preservation controls. The failed ownership fixture constructs a bare context
+without the real timer dependency, so it never reaches its callback-order
+assertions. Low B is repairing only the fixture, not weakening the provider's
+missing-dependency guard or fabricating a handle.
+
+The paired public-source run completed both child processes with exit 0,
+no signal. Candidate root is this integration; baseline is the independently
+verified clean source at `1cb0f5c7f36be14d7be7eb4592973aea84a8c4e5` in
+`/private/tmp/js2-3518-logical-vector-integration-20260908`. Eleven artifacts
+and nineteen executions per root have identical complete rows: bytes, WAT,
+compiler results, resource ordering, actual values and instantiated binaries.
+Both preserve 70, 3e9, sequential/reverse-parallel completion, empty timing,
+both rejection cases, and main's undefined result/stdout under repeated timer
+delivery. Delay concurrency and registration rejection, race, allSettled,
+any, invalid-before-empty, grown vectors, thenables and poisoned thenables
+also executed with their expected values.
+
+Receipts remain under `.tmp/delay-combinator-preservation-EK9dYV/`.
+SHA256 of JSON.stringify(parsed report): candidate
+`3aafe0b6b74d9be705e3a4e4ac6ff234d2f6e5a9e4941cb3f1f5f7ac128958f4`,
+baseline `dee09c362cba469ded3e0134cfc2a59e291b75c244c8aa4c893aa5be839ced27`.
+Their complete fixture and row populations were independently compared after
+reading the actual rows. This remains preservation evidence, not standalone
+prepared-path physical acceptance or retirement.
+
+High found no production defect but two additional receipt defects: child-only
+AST serialization misses unary operators/declaration kinds, and the claimed
+20 combinator plus four delay retained declarations lack a donor-derived
+ledger enforced by tests. Low B must supplement, not reseed, the existing
+13 donor hashes with semantic-field and fixed original-declaration controls.
+The five candidate whole-file glue hashes do not substitute for either proof.
+No publication occurs until these repairs and the fixture pass validation.
+
+Boundary activation session 28649 exited 0: 121/121 controls. Both new runtime
+owners are mandatory; eight additional deletion/forbidden-type/unknown-import/
+unresolved-import controls were added to the previous 113. The selected clean
+closure is exactly 65 modules and 211 edges (150 type-only, 61 runtime).
+All 26 previous activation records and the complete allowed-edge policy were
+independently compared with HEAD and are unchanged; one new activation record
+is prepended. No historical digest was reseeded.
+
+Full inventory session 1674 exited 0 with zero inventory errors: 1,313 modules,
+65 clean, five compatibility adapters, 1,243 unmigrated. The same four unknown
+dynamic imports remain (two Porffor loader sites, optimize, platform adapter),
+so architectureComplete remains false. This strengthens local runtime ownership
+without claiming complete compiler closure.
+
+Historical regression session 44597 exited 0: seven suites, 77/77 tests.
+This includes 4573 native delay (12), 4574 native async family (14),
+2867 all/race (25), 3137 allSettled (10), 3125 assimilation (8),
+3125 widened poisoned-then controls (4), and 2918 late function-index shifts
+(4). Both parent and fork heap budgets were explicitly 2 GiB, single fork.
+The earlier observation was lost; a live process inspection confirmed no
+remaining Vitest process before this measured run. No test was killed.
+These unchanged historical suites pass on the five frozen production files;
+the separate ownership-fixture and supplemental receipt repairs remain pending.
+
+### Recursive-type emitter parallel validation — 2026-09-08
+
+Hilbert's eight-file static manifest in
+`/private/tmp/js2-3518-explicit-rec-emission-20260908/.tmp/explicit-rec-emission-frozen-manifest.json`
+was fully read and all eight SHA-256 hashes independently verified. Canonical
+TS7 session 61467 exited 0. Eight-suite session 94227 exited 1: 253/258.
+All 25 layout and 148 reservation controls passed; actual recursive access
+returned 42, subtype casts and cross-module canonical value exchange passed.
+Two new tests expected `local index` while the actual guard reports
+`local (local.get) index out of range`; Hilbert owns only those assertion repairs.
+High independently reviews the frozen production changes.
+
+The other three failures reproduce on unchanged base 1cb0f5c7 in session
+30017 (20/23, exit 1): issue-2043's old local-error regex, and two foundation
+tests pinning obsolete import/name populations. These are not attributed to
+the recursive-type patch. No historical expectation has been reseeded.
+The emitter patch is not yet composed or published; boundary activation,
+paired preservation, High review and repaired focused tests remain required.
+
+### Delay/combinator rev2 composition — 2026-09-08
+
+The worker's full rev2 manifest was read, and only its three test/helper files
+were composed. Git blobs independently match: ownership
+`442ee5d2a78bd1489d038629bec8a5f98fac06f0`, preservation
+`848e6b843f5ee3b6a7f3841be9614b1b32274af9`, helper
+`b11067d35989b8a8fae5a77fd44e8e44bd97785f`.
+Parent independently recalculated both hashes for every retained declaration
+from original commit e3a01efa: all 24 original and semantic hashes match.
+The repaired real-timer ownership suite passes 33/33 within ongoing session
+87873; its expanded preservation suite and explicit historical pair must
+reach terminal completion before claiming the authored 159-test total.
+Receipts are under `.tmp/delay-combinator-preservation-xBNfCl/`.
+High has been sent the rev2 manifest to review both earlier receipt blockers.
+
+Session 87873 subsequently exited 0: 159/159, comprising 33 ownership and
+126 preservation controls. The explicit historical pair passed again with
+11 artifacts and 19 executions per root. This is preservation-only evidence;
+full prepared native physical acceptance remains uncertified. High review,
+normal commit hooks and non-draft PR publication are the next checkpoint steps.
+
+Final publication preparation: session 98446 completed TS7 and scoped Prettier
+checks without errors. Parent read both rev2 paired terminal receipts (candidate
+87331, baseline 87387: exit 0, no signal) and independently compared the complete
+11 fixture/row populations again. Upstream main remains 04c8e721; PR 5758 remains
+non-draft, MERGEABLE/CLEAN with reported checks successful and auto-merge null.
+The recursive emitter's precise diagnostic assertion repair independently passed
+29/29 focused tests; its production review and composition remain separate work.

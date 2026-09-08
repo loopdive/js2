@@ -50,6 +50,17 @@
 // (#2867 string-combinator slice): `__combinator_to_vec` now has a native
 // code-point string arm (see `buildToVecStringArm`).
 
+import {
+  buildSubscribeLocals,
+  buildSubscribeBody as buildResolvedSubscribeBody,
+  buildSubscribeDispatchBody,
+  buildAllFulfillLocals,
+  buildAllFulfillBody,
+  buildSettleWrapperLocals,
+  buildRaceFulfillBody,
+  buildRejectBody,
+  buildNativePromiseCombinatorVectorBody,
+} from "../runtime/wasmgc/promise/combinator-bodies.js";
 import type { ClosureInfo, CodegenContext, FunctionContext } from "./context/types.js";
 import type { FieldDef, Instr, LocalDef, ValType } from "../ir/types.js";
 import { ensureBuiltinFnMetaType } from "./builtin-fn-meta.js";
@@ -617,7 +628,13 @@ export function ensureCombinatorFunctions(ctx: CodegenContext): CombinatorRuntim
     name: "__combinator_all_fulfill",
     typeIdx: wrapperTypeIdx,
     locals: buildAllFulfillLocals(ids),
-    body: buildAllFulfillBody(ids, rt),
+    body: buildAllFulfillBody({
+      elemCapsTypeIdx: ids.elemCapsTypeIdx,
+      stateTypeIdx: ids.stateTypeIdx,
+      arrTypeIdx: ids.arrTypeIdx,
+      vecTypeIdx: ids.vecTypeIdx,
+      fulfillFuncIdx: rt.fulfillFuncIdx,
+    }),
     exported: false,
   });
   ctx.funcMap.set("__combinator_all_fulfill", allFulfillFuncIdx);
@@ -626,7 +643,7 @@ export function ensureCombinatorFunctions(ctx: CodegenContext): CombinatorRuntim
     name: "__combinator_race_fulfill",
     typeIdx: wrapperTypeIdx,
     locals: buildSettleWrapperLocals(ids),
-    body: buildRaceFulfillBody(ids, rt),
+    body: buildRaceFulfillBody(ids, rt.fulfillFuncIdx),
     exported: false,
   });
   ctx.funcMap.set("__combinator_race_fulfill", raceFulfillFuncIdx);
@@ -635,7 +652,7 @@ export function ensureCombinatorFunctions(ctx: CodegenContext): CombinatorRuntim
     name: "__combinator_reject",
     typeIdx: wrapperTypeIdx,
     locals: buildSettleWrapperLocals(ids),
-    body: buildRejectBody(ids, rt),
+    body: buildRejectBody(ids, rt.rejectFuncIdx),
     exported: false,
   });
   ctx.funcMap.set("__combinator_reject", rejectFuncIdx);
@@ -785,22 +802,21 @@ function combinatorReactionFns(
 // params: 0 input externref, 1 state externref, 2 index i32, 3 fulfillFn funcref,
 //         4 rejectFn funcref. locals: 5 p (ref $Promise), 6 caps externref.
 
-function buildSubscribeLocals(promiseTypeIdx: number): LocalDef[] {
-  return [
-    { name: "$p", type: { kind: "ref", typeIdx: promiseTypeIdx } },
-    { name: "$caps", type: EXTERNREF },
-  ];
-}
-
+/** Normalize legacy resources without introducing a fallback into the canonical API. */
 function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT, resolveValueFuncIdx: number): Instr[] {
+  const dispatch = {
+    elemCapsTypeIdx: ids.elemCapsTypeIdx,
+    stateTypeIdx: ids.stateTypeIdx,
+    promiseTypeIdx: ids.promiseTypeIdx,
+    callbackTypeIdx: rt.callbackTypeIdx,
+    enqueueFuncIdx: rt.enqueueFuncIdx,
+    markRejectionHandledFuncIdx: rt.markRejectionHandledFuncIdx >= 0 ? rt.markRejectionHandledFuncIdx : undefined,
+  };
+  if (resolveValueFuncIdx >= 0) {
+    return buildResolvedSubscribeBody({ ...dispatch, resolveValueFuncIdx, bagInit: combinatorBagInit() });
+  }
   const INPUT = 0;
-  const STATE = 1;
-  const INDEX = 2;
-  const FULFILL_FN = 3;
-  const REJECT_FN = 4;
   const P = 5;
-  const CAPS = 6;
-  const cbTypeIdx = rt.callbackTypeIdx;
   return [
     // Normalize `input` to a `$Promise`. A native `$Promise` passes through; any
     // other value is wrapped in a synchronously-FULFILLED `$Promise` so the
@@ -817,219 +833,25 @@ function buildSubscribeBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT, reso
         { op: "ref.cast", typeIdx: ids.promiseTypeIdx },
         { op: "local.set", index: P },
       ],
-      else:
-        resolveValueFuncIdx >= 0
-          ? // (#5143 Step 1a) Spec PromiseResolve(C, x): allocate a fresh
-            // PENDING `$Promise` and drive it through
-            // `__promise_resolve_value`, which implements §27.2.1.3.2 in full
-            // — a user THENABLE element gets a PromiseResolveThenableJob on
-            // the microtask ring (its `then` is actually invoked), a poisoned
-            // `then` getter rejects, and a plain value still fulfils
-            // synchronously (same observable result as the old sync-FULFILLED
-            // wrap, one extra struct + call).
-            ([
-              { op: "i32.const", value: PROMISE_STATE_PENDING },
-              { op: "ref.null.extern" },
-              { op: "ref.null.extern" },
-              closureBagInitInstr(),
-              { op: "struct.new", typeIdx: ids.promiseTypeIdx },
-              { op: "local.set", index: P },
-              { op: "local.get", index: P },
-              { op: "local.get", index: INPUT },
-              { op: "call", funcIdx: resolveValueFuncIdx },
-              { op: "drop" },
-            ] satisfies Instr[])
-          : ([
-              { op: "i32.const", value: PROMISE_STATE_FULFILLED },
-              { op: "local.get", index: INPUT },
-              { op: "ref.null.extern" },
-              closureBagInitInstr(),
-              { op: "struct.new", typeIdx: ids.promiseTypeIdx },
-              { op: "local.set", index: P },
-            ] satisfies Instr[]),
-    },
-
-    // caps = $CombinatorElemCaps{ state, index } (boxed to externref).
-    { op: "local.get", index: STATE },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: ids.stateTypeIdx },
-    { op: "local.get", index: INDEX },
-    { op: "struct.new", typeIdx: ids.elemCapsTypeIdx },
-    { op: "extern.convert_any" },
-    { op: "local.set", index: CAPS },
-
-    // (#2958) Subscribing to this input attaches a reaction — the combinator is
-    // now handling its (possible) rejection, so clear its unhandled flag. Covers
-    // an inlined `Promise.reject(x)` element that would otherwise be reported as
-    // unhandled even though the combinator consumes it. No-op when inactive.
-    ...(rt.markRejectionHandledFuncIdx >= 0
-      ? ([
-          { op: "local.get", index: P },
-          { op: "call", funcIdx: rt.markRejectionHandledFuncIdx },
-        ] satisfies Instr[])
-      : []),
-
-    // Dispatch on the (possibly already-settled) promise state.
-    { op: "local.get", index: P },
-    { op: "struct.get", typeIdx: ids.promiseTypeIdx, fieldIdx: 0 },
-    { op: "i32.const", value: PROMISE_STATE_FULFILLED },
-    { op: "i32.eq" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        // enqueue(fulfillFn, caps, p.value)
-        { op: "local.get", index: FULFILL_FN },
-        { op: "local.get", index: CAPS },
-        { op: "local.get", index: P },
-        { op: "struct.get", typeIdx: ids.promiseTypeIdx, fieldIdx: 1 },
-        { op: "call", funcIdx: rt.enqueueFuncIdx },
-      ],
       else: [
-        { op: "local.get", index: P },
-        { op: "struct.get", typeIdx: ids.promiseTypeIdx, fieldIdx: 0 },
-        { op: "i32.const", value: PROMISE_STATE_REJECTED },
-        { op: "i32.eq" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [
-            // enqueue(rejectFn, caps, p.value)
-            { op: "local.get", index: REJECT_FN },
-            { op: "local.get", index: CAPS },
-            { op: "local.get", index: P },
-            { op: "struct.get", typeIdx: ids.promiseTypeIdx, fieldIdx: 1 },
-            { op: "call", funcIdx: rt.enqueueFuncIdx },
-          ],
-          else: [
-            // pending: prepend a reaction node onto p.callbacks.
-            { op: "local.get", index: P },
-            { op: "local.get", index: FULFILL_FN },
-            { op: "local.get", index: CAPS },
-            { op: "local.get", index: REJECT_FN },
-            { op: "local.get", index: CAPS },
-            { op: "local.get", index: P },
-            { op: "struct.get", typeIdx: ids.promiseTypeIdx, fieldIdx: 2 },
-            { op: "struct.new", typeIdx: cbTypeIdx },
-            { op: "extern.convert_any" },
-            { op: "struct.set", typeIdx: ids.promiseTypeIdx, fieldIdx: 2 },
-          ],
-        },
-      ],
-    },
-  ];
-}
-
-// ── __combinator_all_fulfill ─────────────────────────────────────────────────
-// params: 0 caps externref, 1 value externref.
-// locals: 2 c (ref $CombinatorElemCaps), 3 st (ref $CombinatorState), 4 rem i32.
-
-function buildAllFulfillLocals(ids: CombinatorRuntime): LocalDef[] {
-  return [
-    { name: "$c", type: { kind: "ref", typeIdx: ids.elemCapsTypeIdx } },
-    { name: "$st", type: { kind: "ref", typeIdx: ids.stateTypeIdx } },
-    { name: "$rem", type: { kind: "i32" } },
-  ];
-}
-
-function buildAllFulfillBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT): Instr[] {
-  const CAPS = 0;
-  const VALUE = 1;
-  const C = 2;
-  const ST = 3;
-  const REM = 4;
-  return [
-    { op: "local.get", index: CAPS },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: ids.elemCapsTypeIdx },
-    { op: "local.set", index: C },
-    { op: "local.get", index: C },
-    { op: "struct.get", typeIdx: ids.elemCapsTypeIdx, fieldIdx: 0 },
-    { op: "local.set", index: ST },
-
-    // results[index] = value
-    { op: "local.get", index: ST },
-    { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 1 },
-    { op: "local.get", index: C },
-    { op: "struct.get", typeIdx: ids.elemCapsTypeIdx, fieldIdx: 1 },
-    { op: "local.get", index: VALUE },
-    { op: "array.set", typeIdx: ids.arrTypeIdx },
-
-    // remaining -= 1
-    { op: "local.get", index: ST },
-    { op: "local.get", index: ST },
-    { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },
-    { op: "i32.const", value: 1 },
-    { op: "i32.sub" },
-    { op: "local.tee", index: REM },
-    { op: "struct.set", typeIdx: ids.stateTypeIdx, fieldIdx: 3 },
-
-    // if remaining == 0: fulfill the result promise with the results vec.
-    { op: "local.get", index: REM },
-    { op: "i32.eqz" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: ST },
-        { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 0 },
-        // vec = struct.new $vec(length, resultsArr)
-        { op: "local.get", index: ST },
-        { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 2 },
-        { op: "local.get", index: ST },
-        { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 1 },
-        { op: "struct.new", typeIdx: ids.vecTypeIdx },
-        { op: "extern.convert_any" },
-        { op: "call", funcIdx: rt.fulfillFuncIdx },
-        { op: "drop" },
-      ],
+        { op: "i32.const", value: PROMISE_STATE_FULFILLED },
+        { op: "local.get", index: INPUT },
+        { op: "ref.null.extern" },
+        closureBagInitInstr(),
+        { op: "struct.new", typeIdx: ids.promiseTypeIdx },
+        { op: "local.set", index: P },
+      ] satisfies Instr[],
     },
 
-    { op: "local.get", index: VALUE },
+    ...buildSubscribeDispatchBody(dispatch),
   ];
 }
 
-// ── __combinator_race_fulfill / __combinator_reject ──────────────────────────
-// params: 0 caps externref, 1 value externref. locals: 2 c, 3 st.
-
-function buildSettleWrapperLocals(ids: CombinatorRuntime): LocalDef[] {
-  return [
-    { name: "$c", type: { kind: "ref", typeIdx: ids.elemCapsTypeIdx } },
-    { name: "$st", type: { kind: "ref", typeIdx: ids.stateTypeIdx } },
-  ];
-}
-
-function buildSettleResultBody(ids: CombinatorRuntime, settleFuncIdx: number): Instr[] {
-  const CAPS = 0;
-  const VALUE = 1;
-  const C = 2;
-  const ST = 3;
-  // Settle (fulfill for race, reject for both all & race) the shared result
-  // promise with `value`. Settlement is one-shot, so a second settle no-ops —
-  // exactly the "first wins" (race) / "first rejection wins" (all) semantics.
-  return [
-    { op: "local.get", index: CAPS },
-    { op: "any.convert_extern" },
-    { op: "ref.cast", typeIdx: ids.elemCapsTypeIdx },
-    { op: "local.set", index: C },
-    { op: "local.get", index: C },
-    { op: "struct.get", typeIdx: ids.elemCapsTypeIdx, fieldIdx: 0 },
-    { op: "local.set", index: ST },
-    { op: "local.get", index: ST },
-    { op: "struct.get", typeIdx: ids.stateTypeIdx, fieldIdx: 0 },
-    { op: "local.get", index: VALUE },
-    { op: "call", funcIdx: settleFuncIdx },
-    // __promise_fulfill/__promise_reject return the settled value — that is the
-    // wrapper's externref result, so leave it on the stack.
-  ];
-}
-
-function buildRaceFulfillBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT): Instr[] {
-  return buildSettleResultBody(ids, rt.fulfillFuncIdx);
-}
-
-function buildRejectBody(ids: CombinatorRuntime, rt: AsyncDriveRuntimeT): Instr[] {
-  return buildSettleResultBody(ids, rt.rejectFuncIdx);
+/** Project the existing closure-header factory's operand, never a new registry. */
+function combinatorBagInit(): { readonly op: "ref.null.extern" } {
+  const bagInit = closureBagInitInstr();
+  if (bagInit.op !== "ref.null.extern") throw new Error("native combinator requires the closure bag null initializer");
+  return bagInit;
 }
 
 // ── (#3137) __combinator_allsettled_fulfill / _reject ────────────────────────
@@ -1418,140 +1240,31 @@ export function emitStandalonePromiseCombinatorRuntime(
   const nLocal = allocLocal(fctx, `__comb_n_${fctx.locals.length}`, { kind: "i32" });
   const iLocal = allocLocal(fctx, `__comb_i_${fctx.locals.length}`, { kind: "i32" });
 
-  // n = argVec.length — the vec's LOGICAL length (field 0), not the backing
-  // array's capacity (`array.len` over-reports after push growth).
-  fctx.body.push({ op: "local.get", index: argVecLocal });
-  fctx.body.push({ op: "ref.as_non_null" });
-  fctx.body.push({ op: "struct.get", typeIdx: argVecTypeIdx, fieldIdx: 0 });
-  fctx.body.push({ op: "local.set", index: nLocal });
-
-  // Pending result promise.
-  fctx.body.push({ op: "i32.const", value: PROMISE_STATE_PENDING });
-  fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push({ op: "ref.null.extern" });
-  fctx.body.push(closureBagInitInstr());
-  fctx.body.push({ op: "struct.new", typeIdx: ids.promiseTypeIdx });
-  fctx.body.push({ op: "local.set", index: resultLocal });
-
-  // Backing results array sized n (only meaningful for `all`; `race` ignores it).
-  fctx.body.push({ op: "local.get", index: nLocal });
-  fctx.body.push({ op: "array.new_default", typeIdx: ids.arrTypeIdx });
-  fctx.body.push({ op: "local.set", index: arrLocal });
-
-  // $CombinatorState{ resultPromise, resultsArr, length=n, remaining=n }.
-  fctx.body.push({ op: "local.get", index: resultLocal });
-  fctx.body.push({ op: "local.get", index: arrLocal });
-  fctx.body.push({ op: "local.get", index: nLocal });
-  fctx.body.push({ op: "local.get", index: nLocal });
-  fctx.body.push({ op: "struct.new", typeIdx: ids.stateTypeIdx });
-  fctx.body.push({ op: "local.set", index: stateLocal });
-
-  // (#2922) Dynamic-argument mode: a not-iterable argument settles the result
-  // promise REJECTED with a TypeError (§27.2.4.1 step 3 / IfAbruptRejectPromise).
-  // Emitted BEFORE the `all` empty-vec fulfill so the one-shot settle makes the
-  // fulfill a no-op (argVecLocal holds an empty vec in this case, so n == 0).
-  if (opts) {
-    fctx.body.push({ op: "local.get", index: opts.notIterLocal });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: resultLocal },
-        ...opts.rejectReason,
-        { op: "call", funcIdx: rt.rejectFuncIdx },
-        { op: "drop" },
-      ],
-    });
-  }
-
-  // `Promise.all(<empty>)` / `Promise.allSettled(<empty>)` fulfill immediately
-  // with the empty results vec; `Promise.any(<empty>)` rejects immediately with
-  // an empty-`.errors` AggregateError (one-shot settle keeps the opts
-  // not-iterable TypeError reject above authoritative when both fire);
-  // `Promise.race(<empty>)` stays pending forever (spec). The subscribe loop
-  // below runs zero iterations either way.
-  if (method === "all" || method === "allSettled") {
-    fctx.body.push({ op: "local.get", index: nLocal });
-    fctx.body.push({ op: "i32.eqz" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: resultLocal },
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: arrLocal },
-        { op: "struct.new", typeIdx: ids.vecTypeIdx },
-        { op: "extern.convert_any" },
-        { op: "call", funcIdx: rt.fulfillFuncIdx },
-        { op: "drop" },
-      ],
-    });
-  } else if (method === "any") {
-    fctx.body.push({ op: "local.get", index: nLocal });
-    fctx.body.push({ op: "i32.eqz" });
-    fctx.body.push({
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        { op: "local.get", index: resultLocal },
-        { op: "i32.const", value: 0 },
-        { op: "local.get", index: arrLocal },
-        { op: "struct.new", typeIdx: ids.vecTypeIdx },
-        { op: "extern.convert_any" },
-        { op: "call", funcIdx: ids.aggErrNewFuncIdx! },
-        { op: "call", funcIdx: rt.rejectFuncIdx },
-        { op: "drop" },
-      ],
-    });
-  }
-
-  // for (i = 0; i < n; i++) __combinator_subscribe(argVec.data[i], state, i,
-  //                                                fulfillFn, rejectFn)
-  // Subscribe never settles synchronously (already-settled inputs only ENQUEUE),
-  // so `remaining` stays == n through the whole loop — no mid-loop settle race.
-  fctx.body.push({ op: "i32.const", value: 0 });
-  fctx.body.push({ op: "local.set", index: iLocal });
-  fctx.body.push({
-    op: "block",
-    blockType: { kind: "empty" },
-    body: [
-      {
-        op: "loop",
-        blockType: { kind: "empty" },
-        body: [
-          { op: "local.get", index: iLocal },
-          { op: "local.get", index: nLocal },
-          { op: "i32.ge_s" },
-          // depth 1: exit the enclosing block (skip the loop label).
-          { op: "br_if", depth: 1 },
-
-          // element: argVec.data[i] — externref, subscribe's input directly.
-          { op: "local.get", index: argVecLocal },
-          { op: "ref.as_non_null" },
-          { op: "struct.get", typeIdx: argVecTypeIdx, fieldIdx: 1 },
-          { op: "local.get", index: iLocal },
-          { op: "array.get", typeIdx: argArrTypeIdx },
-          { op: "local.get", index: stateLocal },
-          { op: "extern.convert_any" },
-          { op: "local.get", index: iLocal },
-          { op: "ref.func", funcIdx: reaction.fulfillIdx },
-          { op: "ref.func", funcIdx: reaction.rejectIdx },
-          { op: "call", funcIdx: ids.subscribeFuncIdx },
-
-          // i++
-          { op: "local.get", index: iLocal },
-          { op: "i32.const", value: 1 },
-          { op: "i32.add" },
-          { op: "local.set", index: iLocal },
-          // depth 0: re-enter the loop label.
-          { op: "br", depth: 0 },
-        ],
-      },
-    ],
-  });
-
-  fctx.body.push({ op: "local.get", index: resultLocal });
-  fctx.body.push({ op: "extern.convert_any" });
+  const body = buildNativePromiseCombinatorVectorBody(
+    {
+      promiseTypeIdx: ids.promiseTypeIdx,
+      stateTypeIdx: ids.stateTypeIdx,
+      arrTypeIdx: ids.arrTypeIdx,
+      vecTypeIdx: ids.vecTypeIdx,
+      argVecTypeIdx,
+      argArrTypeIdx,
+      subscribeFuncIdx: ids.subscribeFuncIdx,
+      fulfillReactionFuncIdx: reaction.fulfillIdx,
+      rejectReactionFuncIdx: reaction.rejectIdx,
+      fulfillFuncIdx: rt.fulfillFuncIdx,
+      rejectFuncIdx: rt.rejectFuncIdx,
+      bagInit: combinatorBagInit(),
+      emptyResult:
+        method === "all" || method === "allSettled"
+          ? { kind: "fulfill-vector" }
+          : method === "any"
+            ? { kind: "reject-aggregate", aggregateErrorFuncIdx: ids.aggErrNewFuncIdx! }
+            : { kind: "pending" },
+    },
+    { argVecLocal, resultLocal, arrLocal, stateLocal, nLocal, iLocal },
+    opts,
+  );
+  fctx.body.push(...body);
   return EXTERNREF;
 }
 

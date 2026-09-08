@@ -188,9 +188,11 @@
         "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
         "src/runtime/wasmgc/promise/settlement-bodies.ts",
         "src/runtime/wasmgc/async/frame-engine.ts",
-        "src/runtime/wasmgc/async/native-await.ts"
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts"
       ],
-      "minModules": 4
+      "minModules": 6
     },
     {
       "id": "standalone-platform",
@@ -429,6 +431,18 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts"
+      ],
+      "minModules": 6
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -10416,6 +10430,16 @@
     },
     {
       "path": "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/delay-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/promise/combinator-bodies.ts",
       "state": "clean",
       "layer": "native-runtime"
     },
