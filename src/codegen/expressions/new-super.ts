@@ -1,3 +1,4 @@
+import { isConstFactoryConstructor } from "../factory-constructor-value.js";
 import type { FieldDef, Instr, ValType } from "../../ir/types.js";
 import { materializeFnctorTwinCaptures } from "../fnctor-twin-captures.js";
 import { emitLayoutSelectingStructNew, maybeEmitLayoutHint } from "../fnctor-layout-emit.js"; // (#3927) per-type layouts
@@ -514,6 +515,7 @@ function resolvesToConstructableFunctionValue(ctx: CodegenContext, calleeExpr: t
   // class paths; here we target the ordinary-function-value cluster.
   const callSigs = t.getCallSignatures();
   if (callSigs.length === 0) {
+    if (ts.isIdentifier(calleeExpr) && isConstFactoryConstructor(ctx, calleeExpr)) return true;
     // (#3087 standalone twin) An UNTYPED parameter that receives a constructor
     // at runtime (`function mk(c) { return new c(); }` — the test262 harness
     // wrapper shape). The checker offers no signature to discriminate, but the

@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { compile } from "../src/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -49,64 +50,102 @@ describe("v8x js2wasm module-backend spike", () => {
 
     const evaluated = spawnSync(
       wasmtime,
-      ["run", "-W", "gc=y,function-references=y,tail-call=y,exceptions=y", wasmPath],
+      ["run", "-W", "gc=y,function-references=y,tail-call=y,exceptions=y", "--invoke", "__module_init", wasmPath],
       { encoding: "utf8" },
     );
     if (evaluated.error && "code" in evaluated.error && evaluated.error.code === "ENOENT") return;
     expect(evaluated.status, evaluated.stderr).toBe(0);
   }, 30_000);
 
-  it("compiles an untouched multi-file TypeScript graph and evaluates it in Wasmtime", () => {
-    const dir = mkdtempSync(join(tmpdir(), "v8x-js2wasm-"));
-    const mainPath = join(dir, "main.ts");
-    const mathPath = join(dir, "math.ts");
-    const bootstrapPath = join(dir, "bootstrap.js");
-    const manifestPath = join(dir, "modules.tsv");
-    const wasmPath = join(dir, "module.wasm");
+  it.each([42, 43])(
+    "executes a linked TypeScript graph with a shared context and expected answer %s",
+    async (expectedAnswer) => {
+      const dir = mkdtempSync(join(tmpdir(), "v8x-js2wasm-"));
+      const mainPath = join(dir, "main.ts");
+      const mathPath = join(dir, "math.ts");
+      const bootstrapPath = join(dir, "bootstrap.js");
+      const manifestPath = join(dir, "modules.tsv");
+      const wasmPath = join(dir, "module.wasm");
+      const contextPath = join(dir, "context.wasm");
+      const context = await compile(
+        `
+      const realm: any = globalThis;
+      export function __v8x_context_global_this(): any { return realm; }
+      export function __v8x_context_call(callable: any, receiver: any, args: any): any {
+        if (args.length === 0) return callable.call(receiver);
+        if (args.length === 1) return callable.call(receiver, args[0]);
+        throw new RangeError("test context supports at most one argument");
+      }
+    `,
+        { target: "standalone", hostBridge: "always" },
+      );
+      expect(context.success, context.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.Module.imports(new WebAssembly.Module(context.binary))).toEqual([]);
+      writeFileSync(contextPath, context.binary);
 
-    writeFileSync(mathPath, `export function add(left: number, right: number): number { return left + right; }\n`);
-    writeFileSync(bootstrapPath, `globalThis.__v8xBootstrapValue = 21;\n`);
-    writeFileSync(
-      mainPath,
-      `import "./bootstrap.js";\n` +
-        `import { add } from "./math.ts";\n` +
-        `const answer: number = add((globalThis as any).__v8xBootstrapValue, 21);\n` +
-        `if (answer !== 42) throw new Error("wrong result");\n`,
-    );
-    writeFileSync(
-      manifestPath,
-      `${pathToFileURL(mainPath)}\t${mainPath}\n` +
-        `${pathToFileURL(mathPath)}\t${mathPath}\n` +
-        `${pathToFileURL(bootstrapPath)}\t${bootstrapPath}\n`,
-    );
+      // compile-graph defers source execution to __module_init and imports the
+      // context owned by v8x. Supply the same Wasm context ABI to the CLI and
+      // explicitly invoke initialization. The 43 case proves the assertion ran.
 
-    const compiled = spawnSync(
-      process.execPath,
-      [
-        "--import",
-        "tsx",
-        compiler,
-        "--manifest",
+      writeFileSync(mathPath, `export function add(left: number, right: number): number { return left + right; }\n`);
+      writeFileSync(bootstrapPath, `globalThis.__v8xBootstrapValue = 21;\n`);
+      writeFileSync(
+        mainPath,
+        `import "./bootstrap.js";\n` +
+          `import { add } from "./math.ts";\n` +
+          `const answer: number = add((globalThis as any).__v8xBootstrapValue, 21);\n` +
+          `if (answer !== ${expectedAnswer}) throw new Error("wrong result");\n`,
+      );
+      writeFileSync(
         manifestPath,
-        "--entry",
-        pathToFileURL(mainPath).href,
-        "--output",
-        wasmPath,
-      ],
-      { cwd: root, encoding: "utf8" },
-    );
-    expect(compiled.status, compiled.stderr).toBe(0);
-    expect(JSON.parse(compiled.stdout)).toMatchObject({ modules: 3 });
-    expect(readFileSync(wasmPath).byteLength).toBeGreaterThan(8);
+        `${pathToFileURL(mainPath)}\t${mainPath}\n` +
+          `${pathToFileURL(mathPath)}\t${mathPath}\n` +
+          `${pathToFileURL(bootstrapPath)}\t${bootstrapPath}\n`,
+      );
 
-    const evaluated = spawnSync(
-      wasmtime,
-      ["run", "-W", "gc=y,function-references=y,tail-call=y,exceptions=y", wasmPath],
-      { encoding: "utf8" },
-    );
-    if (evaluated.error && "code" in evaluated.error && evaluated.error.code === "ENOENT") return;
-    expect(evaluated.status, evaluated.stderr).toBe(0);
-  }, 30_000);
+      const compiled = spawnSync(
+        process.execPath,
+        [
+          "--import",
+          "tsx",
+          compiler,
+          "--manifest",
+          manifestPath,
+          "--entry",
+          pathToFileURL(mainPath).href,
+          "--output",
+          wasmPath,
+        ],
+        { cwd: root, encoding: "utf8" },
+      );
+      expect(compiled.status, compiled.stderr).toBe(0);
+      expect(JSON.parse(compiled.stdout)).toMatchObject({ modules: 3 });
+      expect(readFileSync(wasmPath).byteLength).toBeGreaterThan(8);
+
+      const evaluated = spawnSync(
+        wasmtime,
+        [
+          "run",
+          "-W",
+          "gc=y,function-references=y,tail-call=y,exceptions=y",
+          "--preload",
+          `v8x:context=${contextPath}`,
+          "--invoke",
+          "__module_init",
+          wasmPath,
+        ],
+        { encoding: "utf8" },
+      );
+      if (evaluated.error && "code" in evaluated.error && evaluated.error.code === "ENOENT") return;
+      if (expectedAnswer === 42) expect(evaluated.status, evaluated.stderr).toBe(0);
+      else {
+        expect(evaluated.status, evaluated.stderr).toBe(1);
+        expect(evaluated.stderr).toContain("failed to invoke `__module_init`");
+        expect(evaluated.stderr).toContain("thrown Wasm exception");
+      }
+    },
+    30_000,
+  );
 
   it("compiles Deno.cwd() to the explicit typed host-op seam", () => {
     const dir = mkdtempSync(join(tmpdir(), "v8x-js2wasm-deno-"));

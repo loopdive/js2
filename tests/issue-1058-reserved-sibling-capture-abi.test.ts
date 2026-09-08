@@ -144,9 +144,11 @@ describe("#1058 reserved sibling capture ABI", () => {
     expect((instance.exports.reproLocalInterface as (seed: number) => number)(1)).toBe(103);
   });
 
-  it("stabilizes an optional local-interface parameter before its return type registers the struct", async () => {
-    const result = await compile(
-      `
+  it.each([undefined, "deno"] as const)(
+    "stabilizes an optional local-interface parameter on platform %s",
+    async (platform) => {
+      const result = await compile(
+        `
         export function reproOptionalLocalInterface(value: number): number {
           interface WorkArea {
             value: number;
@@ -163,15 +165,16 @@ describe("#1058 reserved sibling capture ABI", () => {
           return onEnter(2, undefined).value;
         }
       `,
-      { target: "standalone", fileName: "issue-1058-reserved-optional-local-interface-signature.ts" },
-    );
+        { target: "standalone", platform, fileName: "issue-1058-reserved-optional-local-interface-signature.ts" },
+      );
 
-    expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
-    expect(WebAssembly.validate(result.binary)).toBe(true);
+      expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
+      expect(WebAssembly.validate(result.binary)).toBe(true);
 
-    const { instance } = await WebAssembly.instantiate(result.binary, {});
-    expect((instance.exports.reproOptionalLocalInterface as (value: number) => number)(3)).toBe(5);
-  });
+      const { instance } = await WebAssembly.instantiate(result.binary, {});
+      expect((instance.exports.reproOptionalLocalInterface as (value: number) => number)(3)).toBe(5);
+    },
+  );
 
   it("threads a capturing sibling used only by a nested declaration parameter default", async () => {
     const result = await compile(

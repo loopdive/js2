@@ -8770,6 +8770,11 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
   // `idxMiss()` an out-of-bounds index already uses, so `[0, , 2]` with
   // `Array.prototype[1] = 1` reads `1` at the hole (§10.1.8.1 OrdinaryGet).
   const f64HoleUndef = f64HolesActive(ctx) ? idxMiss() : undefined;
+  let externHoleScratch = -1;
+  if (ctx.usesArrayHoles) {
+    externHoleScratch = 2 + fn.locals.length;
+    fn.locals.push({ name: "__externhole_get_v", type: { kind: "externref" } });
+  }
   let f64HoleScratch = -1;
   if (f64HoleUndef !== undefined) {
     f64HoleScratch = 2 + fn.locals.length;
@@ -8792,7 +8797,18 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
               else: [{ op: "local.get", index: f64HoleScratch }, ...readBox.boxOps],
             },
           ] satisfies Instr[])
-        : readBox.boxOps;
+        : externHoleScratch >= 0 && elemType.kind === "externref"
+          ? ([
+              { op: "local.tee", index: externHoleScratch },
+              ...holeTestInstrs(ctx),
+              {
+                op: "if",
+                blockType: { kind: "val", type: { kind: "externref" } },
+                then: idxMiss(),
+                else: [{ op: "local.get", index: externHoleScratch }],
+              },
+            ] satisfies Instr[])
+          : readBox.boxOps;
     vecArms.push(
       { op: "local.get", index: 2 },
       { op: "ref.test", typeIdx },
@@ -8897,7 +8913,8 @@ export function fillExternGetIdxVecArms(ctx: CodegenContext): void {
  * output byte-neutral.
  */
 export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
-  if (!ctx.standalone || !ctx.usesNativeConcatHoleSubstrate || ctx.holeGlobalIdx === undefined) return;
+  if (!ctx.standalone || (!ctx.usesNativeConcatHoleSubstrate && !ctx.usesArrayHoles) || ctx.holeGlobalIdx === undefined)
+    return;
   const types = ctx.objectRuntimeTypes;
   if (!types) return;
 
@@ -9056,7 +9073,10 @@ export function fillConcatNativeHoleArms(ctx: CodegenContext): void {
                 {
                   op: "if",
                   blockType: { kind: "empty" },
-                  then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+                  then: [
+                    ...(protoIndexHasIdxInstrs(ctx, 1, 1) ?? [{ op: "i32.const", value: 0 } as Instr]),
+                    { op: "return" },
+                  ],
                 },
               ],
             },
@@ -10990,7 +11010,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
   // the helper here when the module's own-key demand gate is active.
   reserveVecIndexEnumerable(ctx);
   /** `__objvec_push(out, ToString(i))`, presence-gated under the overlay route. */
-  const pushKeyI = (outLocal: number, iLocal: number): Instr[] =>
+  const pushKeyI = (outLocal: number, iLocal: number, ownOnly: boolean): Instr[] =>
     buildVecIndexKeyPush(ctx, {
       objLocal: 0,
       outLocal,
@@ -10999,6 +11019,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
       objVecPushIdx: objVecPushIdx as number,
       externHasIdxIdx,
       gatePresence: gateKeysOnPresence,
+      ownPresenceIdx: ownOnly ? ctx.funcMap.get("__hasOwnProperty") : undefined,
     });
   for (const keysFn of [findFn("__object_keys_forin"), findFn("__object_keys")]) {
     if (!(keysFn && numToStringIdx !== undefined && objVecNewIdx !== undefined && objVecPushIdx !== undefined))
@@ -11045,7 +11066,7 @@ export function fillDynamicForinVecArms(ctx: CodegenContext): void {
                   { op: "br_if", depth: 1 },
                   // __objvec_push(vec, number_toString(f64(i))), presence-gated
                   // under the overlay route — see `pushKeyI`.
-                  ...pushKeyI(kVec, kI),
+                  ...pushKeyI(kVec, kI, keysFn.name === "__object_keys"),
                   { op: "local.get", index: kI },
                   { op: "i32.const", value: 1 },
                   { op: "i32.add" },

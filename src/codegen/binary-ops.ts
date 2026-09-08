@@ -3812,6 +3812,7 @@ function compileNewTargetClassComparison(
   expr: ts.BinaryExpression,
   op: ts.SyntaxKind,
 ): InnerResult | null {
+  if (fctx.ordinaryNewTargetLocal !== undefined) return null;
   const unwrap = (e: ts.Expression): ts.Expression => {
     let cur = e;
     while (ts.isParenthesizedExpression(cur) || ts.isAsExpression(cur) || ts.isNonNullExpression(cur)) {

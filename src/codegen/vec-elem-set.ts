@@ -168,7 +168,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   const elem = arrDef.element;
   if (elem.kind === "i8" || elem.kind === "i16") return null;
 
-  const holeyCarrier = isHoleyArrayType(ctx, vecTypeIdx) && elem.kind === "externref";
+  const holeyCarrier = elem.kind === "externref" && (isHoleyArrayType(ctx, vecTypeIdx) || ctx.usesArrayHoles === true);
   // Standalone f64 vectors use the same absence marker as sparse literals.
   // Without this, an indexed write past capacity grows the backing array with
   // f64 zeroes, materializing every intervening index as an own property.
@@ -194,7 +194,7 @@ export function ensureVecElemSet(ctx: CodegenContext, vecTypeIdx: number): numbe
   // needed in either direction. Same idiom as the #4426 `.length=` receiver
   // fix — type the receiver at the level that owns the fields being written.
   const parentTypeIdx = vecDef.superTypeIdx;
-  const carrierTypeIdx = holeyCarrier && parentTypeIdx !== undefined ? parentTypeIdx : vecTypeIdx;
+  const carrierTypeIdx = isHoleyArrayType(ctx, vecTypeIdx) && parentTypeIdx !== undefined ? parentTypeIdx : vecTypeIdx;
 
   const tagIdx = ensureExnTag(ctx);
   const vecParam: ValType = { kind: "ref_null", typeIdx: carrierTypeIdx };

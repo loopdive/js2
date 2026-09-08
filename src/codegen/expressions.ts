@@ -1622,6 +1622,10 @@ function compileExpressionInner(
   }
 
   if (ts.isMetaProperty(expr) && expr.keywordToken === ts.SyntaxKind.NewKeyword && expr.name.text === "target") {
+    if (fctx.ordinaryNewTargetLocal !== undefined) {
+      fctx.body.push({ op: "local.get", index: fctx.ordinaryNewTargetLocal });
+      return { kind: "externref" };
+    }
     if (fctx.isConstructor) {
       // (#2023) Read the live new.target class-id (set at the outermost `new`
       // site, preserved through super()). Non-zero inside a construction, so

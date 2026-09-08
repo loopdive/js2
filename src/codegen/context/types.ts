@@ -867,6 +867,7 @@ export interface FunctionContext {
   materializingHoistedFunctionValueBindings?: Set<string>;
   /** Whether this function is a class constructor (for new.target support) */
   isConstructor?: boolean;
+  ordinaryNewTargetLocal?: number;
   /**
    * (#4464) This is a synthesized `new F()` body for a plain FUNCTION
    * constructor ("fnctor"), not a `class` constructor.
@@ -1735,6 +1736,7 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    */
   usesNewTarget: boolean;
   newTargetGlobalIdx: number | undefined;
+  ordinaryNewTargetGlobalIdx?: number;
   classNewTargetIds: Map<string, number>;
   /**
    * (#802) Dynamic prototype support. Set by the `scanForDynamicProto` pre-scan

@@ -1,3 +1,4 @@
+import { initializeOrdinaryNewTarget } from "./ordinary-new-target.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
  * Closure and arrow-function compilation for js2wasm.
@@ -2724,6 +2725,7 @@ export function compileLiftedClosureBody(
   // Track the body before capture/TDZ prologues so late imports can shift
   // their call indices before the saved-function swap exposes it (#1384).
   ctx.liveBodies.add(liftedFctx.body);
+  initializeOrdinaryNewTarget(ctx, liftedFctx, arrow);
 
   for (let i = 0; i < liftedFctx.params.length; i++) {
     liftedFctx.localMap.set(liftedFctx.params[i]!.name, i);

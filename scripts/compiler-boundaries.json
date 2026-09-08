@@ -461,6 +461,22 @@
   ],
   "files": [
     {
+      "path": "src/codegen/factory-constructor-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "4376-deno-runtime",
+      "nextBoundary": "Separate AST factory evidence from constructor dispatch eligibility."
+    },
+    {
+      "path": "src/codegen/ordinary-new-target.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "4376-deno-runtime",
+      "nextBoundary": "Separate AST frame classification from physical NewTarget state and exception emission."
+    },
+    {
       "path": "src/adapter-manifest.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

@@ -1754,7 +1754,8 @@ export function compileTypeofExpression(
   if (
     ts.isMetaProperty(operand) &&
     operand.keywordToken === ts.SyntaxKind.NewKeyword &&
-    operand.name.text === "target"
+    operand.name.text === "target" &&
+    fctx.ordinaryNewTargetLocal === undefined
   ) {
     if (fctx.isConstructor) {
       return compileStringLiteral(ctx, fctx, "function");
