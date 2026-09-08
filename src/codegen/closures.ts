@@ -2182,6 +2182,17 @@ export function computeClosureWrapperSig(
     if (!isAsync && isStandalonePromiseActive(ctx) && isPromiseType(retType)) {
       closureReturnType = { kind: "externref" };
     }
+    // A value-returning closure inferred as undefined still has a value ABI.
+    // In particular, a getter can read a cell subsequently written by a sibling
+    // closure; erasing the result drops that live value at the return boundary.
+    if (
+      closureReturnType === null &&
+      retType.flags & ts.TypeFlags.Undefined &&
+      !ts.isFunctionDeclaration(arrow) &&
+      inferExplicitClosureReturnType(ctx, arrow) !== null
+    ) {
+      closureReturnType = { kind: "externref" };
+    }
     if (closureReturnType === null && !isVoidType(retType) && !(retType.flags & ts.TypeFlags.Never)) {
       // (#3051 Slice 3) accessor-bearing object-literal return types lower to
       // externref — the runtime value is a HOST plain object; a struct-typed
@@ -2223,7 +2234,11 @@ export function computeClosureWrapperSig(
       const ctxCallSigs = ctxType.getCallSignatures?.();
       if (ctxCallSigs && ctxCallSigs.length > 0) {
         const ctxRetType = ctx.checker.getReturnTypeOfSignature(ctxCallSigs[0]!);
-        if (isVoidType(ctxRetType) && !isAssignedToSymbolIterator(arrow)) {
+        if (
+          isVoidType(ctxRetType) &&
+          !(ctxRetType.flags & ts.TypeFlags.Undefined) &&
+          !isAssignedToSymbolIterator(arrow)
+        ) {
           closureReturnType = null;
         }
       }

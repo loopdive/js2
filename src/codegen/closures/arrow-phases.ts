@@ -211,6 +211,10 @@ function canBoxBindingInDominatingParent(
   let owner: ts.Node | undefined = closure.parent;
   while (owner && !ts.isFunctionLike(owner)) owner = owner.parent;
   if (!owner || ts.isSourceFile(owner)) return false;
+  // An inlined IIFE shares its caller's Wasm frame, but its preceding
+  // statements are still inside the detached inline block. They do not
+  // dominate an allocation appended to the caller's activation buffer.
+  if (fctx.sourceFunction !== owner) return false;
   const ownerBody = (owner as ts.FunctionLikeDeclarationBase).body;
   if (!ownerBody || !ts.isBlock(ownerBody)) return false;
   let region: ts.Node = closure;
