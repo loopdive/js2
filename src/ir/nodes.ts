@@ -196,9 +196,16 @@ export interface IrVecLayoutRef {
  * representation; incompatible layouts must not compare equal at a boundary.
  */
 export interface IrObjectShape {
-  readonly fields: readonly { readonly name: string; readonly type: IrType }[];
+  readonly fields: readonly {
+    readonly name: string;
+    readonly type: IrType;
+    /** Explicit source callable signature used by the source struct allocation key. */
+    readonly sourceMethodSignature?: string;
+  }[];
   /** Exact declared data-layout order; absent means canonical field order. */
   readonly fieldOrder?: readonly string[];
+  /** Declared interface/type-alias layouts use the published data key, not anonymous method suffixes. */
+  readonly allocationKind?: "declared";
 }
 
 /**
@@ -687,6 +694,7 @@ export function closureSignatureEquals(a: IrClosureSignature, b: IrClosureSignat
  * via `irTypeEquals` lets nested object fields compare correctly.
  */
 export function objectShapeEquals(a: IrObjectShape, b: IrObjectShape): boolean {
+  if (a.allocationKind !== b.allocationKind) return false;
   if (a.fields.length !== b.fields.length) return false;
   const aFields = orderedObjectFields(a);
   const bFields = orderedObjectFields(b);
@@ -694,6 +702,7 @@ export function objectShapeEquals(a: IrObjectShape, b: IrObjectShape): boolean {
     const fa = aFields[i]!;
     const fb = bFields[i]!;
     if (fa.name !== fb.name) return false;
+    if (fa.sourceMethodSignature !== fb.sourceMethodSignature) return false;
     if (!irTypeEquals(fa.type, fb.type)) return false;
   }
   return true;

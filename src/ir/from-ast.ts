@@ -5639,6 +5639,19 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint
       `ir/from-ast: object literal element ${ts.SyntaxKind[prop.kind]} not in slice 2 (${cx.funcName})`,
     );
   }
+  if (hint?.kind === "object") {
+    for (const field of built) {
+      const expected = hint.shape.fields.find((candidate) => candidate.name === field.name)?.type;
+      if (
+        field.type.kind === "closure" &&
+        expected?.kind === "callable" &&
+        closureSignatureEquals(field.type.signature, expected.signature)
+      ) {
+        field.value = cx.builder.emitCallablePack(field.value, expected.signature);
+        field.type = expected;
+      }
+    }
+  }
   built.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   const inferredShape: IrObjectShape = {
     fields: built.map((b) => ({ name: b.name, type: b.type })),

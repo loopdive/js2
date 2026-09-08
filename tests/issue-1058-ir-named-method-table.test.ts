@@ -28,6 +28,10 @@ it("preserves returned tables of captured named functions", async () => {
   const module = new WebAssembly.Module(result.binary);
   expect(WebAssembly.Module.imports(module)).toEqual([]);
   expect(await run(result, 40)).toBe(42);
+  expect(
+    result.irOutcomes?.find((row) => row.displayName === "make"),
+    JSON.stringify(result.irOutcomes),
+  ).toMatchObject({ irBodyEmitted: true });
 });
 
 it.each(["gc", "standalone"] as const)("returns a captured named function through prepared IR (%s)", async (target) => {
@@ -109,4 +113,49 @@ it.each(["gc", "standalone"] as const)("preserves source field order and shared 
   expect(result.success, JSON.stringify(result.errors)).toBe(true);
   if (target === "standalone") expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
   expect(await run(result, 2)).toBe(507);
+  expect(
+    result.irOutcomes?.find((row) => row.displayName === "make"),
+    JSON.stringify(result.irOutcomes),
+  ).toMatchObject({ irBodyEmitted: true });
+});
+
+it("returns a primitive method-signature table through IR", async () => {
+  const result = await compile(
+    `
+    function make(offset: number): { add(value: number): number } {
+      return { add };
+      function add(value: number): number { return offset + value; }
+    }
+    export function run(value: number): number { return make(2).add(value); }
+  `,
+    { target: "standalone", experimentalIR: true, trackIrOutcomes: true },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+  expect(await run(result, 40)).toBe(42);
+  expect(
+    result.irOutcomes?.find((row) => row.displayName === "make"),
+    JSON.stringify(result.irOutcomes),
+  ).toMatchObject({ irBodyEmitted: true });
+});
+
+it("returns a named method-table interface through IR", async () => {
+  const result = await compile(
+    `
+    interface Rules { add(value: number): number; }
+    function make(offset: number): Rules {
+      return { add };
+      function add(value: number): number { return offset + value; }
+    }
+    export function run(value: number): number { return make(2).add(value); }
+  `,
+    { target: "standalone", experimentalIR: true, trackIrOutcomes: true },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+  expect(await run(result, 40)).toBe(42);
+  expect(
+    result.irOutcomes?.find((row) => row.displayName === "make"),
+    JSON.stringify(result.irOutcomes),
+  ).toMatchObject({ irBodyEmitted: true });
 });

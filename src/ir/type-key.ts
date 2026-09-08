@@ -24,8 +24,13 @@ export function irTypeKey(type: IrType): string {
     try {
       if (current.kind === "vec") return `vec<${key(current.elementType)}>${current.nullable ? "?" : ""}`;
       if (current.kind === "object") {
-        return `object{${orderedObjectFields(current.shape)
-          .map((field) => `${field.name}:${key(field.type)}`)
+        return `object${current.shape.allocationKind === "declared" ? "@declared" : ""}{${orderedObjectFields(
+          current.shape,
+        )
+          .map(
+            (field) =>
+              `${field.name}:${key(field.type)}${field.sourceMethodSignature === undefined ? "" : `#${field.sourceMethodSignature}`}`,
+          )
           .join(",")}}`;
       }
       if (current.kind === "closure" || current.kind === "callable") {

@@ -10,7 +10,7 @@ import type {
   ProgramAbiRefCellSupportRequest,
 } from "../codegen/program-abi-type-planning.js";
 import { addFuncType } from "../codegen/registry/types.js";
-import { dataFieldsHashKey } from "../codegen/registry/data-fields-key.js";
+import { objectFieldsHashKey } from "./object-method-key.js";
 import { irTypeBindingKey } from "./abi-bindings.js";
 import { orderedObjectFields } from "./object-layout.js";
 import type { IrUnitId } from "./identity.js";
@@ -58,7 +58,7 @@ function prepareClosureObjectType(
     const physical = lowerPreparedClosureSupportType(ctx, field.type, refCells, closures);
     return { name: field.name, type: physical, mutable: true };
   });
-  const key = dataFieldsHashKey(fields);
+  const key = objectFieldsHashKey(type.shape, fields);
   const existingName = ctx.anonStructHash.get(key);
   if (existingName !== undefined) {
     const existingIdx = ctx.structMap.get(existingName);

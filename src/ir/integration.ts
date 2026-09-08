@@ -86,7 +86,7 @@ import {
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
 import { orderedObjectFields } from "./object-layout.js";
-import { dataFieldsHashKey } from "../codegen/registry/data-fields-key.js";
+import { objectFieldsHashKey } from "./object-method-key.js";
 import { canonicalProgramAbiObjectShapeKey } from "../codegen/program-abi-type-planning.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import {
@@ -9725,7 +9725,7 @@ class ObjectStructRegistry {
 
     // Reuse an existing anonymous struct with the same legacy hash key
     // if one was already registered (legacy↔IR convergence).
-    const legacyKey = dataFieldsHashKey(fields);
+    const legacyKey = objectFieldsHashKey(shape, fields);
     let structName = this.ctx.anonStructHash.get(legacyKey);
     let typeIdx: number;
     if (structName !== undefined) {

@@ -13,8 +13,8 @@ sprint: Backlog
 depends_on: [1042, 1044, 1046]
 required_by: [1059, 1066, 1165, 1584]
 loc-budget-allow:
-  # 2026-09-08: +5 lines declare source object field order and route shape
-  # equality through its shared validator; allocation logic remains in leaf modules.
+  # 2026-09-08: +14 lines declare source object field order, callable-field
+  # allocation metadata and equality; allocation logic remains in leaf modules.
   - src/ir/nodes.ts
   # 2026-09-08: +2 lines each to import/call the shared declaration-only
   # return-suffix normalizer. Implementation stays in its own small IR module.
@@ -657,6 +657,35 @@ null access. Next: typed callable fields in returned method tables, exact
 callable packing/signature keys, then renewed real factory ownership/runtime
 measurement. Inferred object-return selection and unannotated arrow admission
 remain separate gaps; do not blanket-admit them or mark this issue complete.
+
+Callable-field continuation (2026-09-08): the actual
+`ParenthesizerRules` interface uses method signatures, overloads, recursive
+node types, optional parameters and higher-order returns. Primitive method
+tables alone therefore cannot establish real-factory coverage. First make the
+existing named-table witness require IR execution, then connect explicit
+function/method signatures, canonical callable packing, and the source
+method-signature hash suffix. Keep unsupported overload/recursive signatures
+explicit; do not make an erased externref field masquerade as an exact closure.
+
+Primitive callable-field checkpoint implemented on the **IR path**: explicit
+function-property and method signatures map to exact IR callables; returned
+named closures are packed at the declared object boundary. Source-order method
+hashes and declared-interface allocation metadata preserve the existing source
+layout contract. The `src/codegen/index.ts` changes are the source-to-IR bridge,
+not a new legacy direct-emission implementation.
+
+Validation: **28/28 tests across four files** pass, including actual IR owner
+execution for anonymous and named-interface tables, shared captured state,
+layout/withdrawal controls, and unsupported-signature/key checks
+(`.tmp/ts5-ir-callable-field-validated.log`). Source typecheck, scoped formatting
+and lint, LOC/function budgets, oracle and coercion ratchets pass. The selected
+standalone upstream adapter remains **25/25**, with **251 upstream files
+explicitly deferred** (`.tmp/ts5-ir-callable-projected.log`). The full-source
+factory has **not** been remeasured for this checkpoint; its previous 0/3 Wasm
+result above remains the last measurement. Next: receiver-sensitive negative
+runtime controls, richer callable signatures/recursive source carriers, then
+real factory ownership and original-assertion validation. Do not infer full
+TypeScript factory support from these primitive table witnesses.
 
 Final publication-query migration in progress: indexed record element facts now
 come from TypeOracle (property names, scalar/union facts and optionality; no

@@ -510,8 +510,11 @@ function irTypeKey(t: IrType): string {
   if (t.kind === "string") return "s";
   if (t.kind === "vec") return `vec:${irTypeKey(t.elementType)}${t.nullable ? "?" : ""}`;
   if (t.kind === "object") {
-    return `o:{${orderedObjectFields(t.shape)
-      .map((f) => `${f.name}:${irTypeKey(f.type)}`)
+    return `o:${t.shape.allocationKind === "declared" ? "@declared" : ""}{${orderedObjectFields(t.shape)
+      .map(
+        (f) =>
+          `${f.name}:${irTypeKey(f.type)}${f.sourceMethodSignature === undefined ? "" : `#${f.sourceMethodSignature}`}`,
+      )
       .join(",")}}`;
   }
   if (t.kind === "closure") {

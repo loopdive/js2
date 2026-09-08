@@ -166,9 +166,11 @@ function canonicalClosureSupportIrType(type: IrType, active: Set<object>): unkno
       case "object":
         return {
           kind: type.kind,
+          allocationKind: type.shape.allocationKind,
           fields: orderedObjectFields(type.shape).map((field) => ({
             name: field.name,
             type: canonicalClosureSupportIrType(field.type, active),
+            sourceMethodSignature: field.sourceMethodSignature,
           })),
         };
       case "closure":

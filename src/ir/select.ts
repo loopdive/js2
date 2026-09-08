@@ -2237,11 +2237,15 @@ function primitiveClosureTypeFromTypeNode(node: ts.TypeNode | undefined): IrType
   return null;
 }
 
-export function irClosureSignatureFromFunctionTypeNode(node: ts.FunctionTypeNode): IrClosureSignature | null {
+export function irClosureSignatureFromFunctionTypeNode(
+  node: ts.FunctionTypeNode | ts.MethodSignature,
+): IrClosureSignature | null {
+  if (!node.type) return null;
   if (node.typeParameters && node.typeParameters.length > 0) return null;
   const params: IrType[] = [];
   for (const p of node.parameters) {
-    if (p.questionToken || p.dotDotDotToken || p.initializer) return null;
+    if (p.questionToken || p.dotDotDotToken || p.initializer || (ts.isIdentifier(p.name) && p.name.text === "this"))
+      return null;
     const ir = primitiveClosureTypeFromTypeNode(p.type);
     if (!ir) return null;
     params.push(ir);

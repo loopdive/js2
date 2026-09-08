@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
 import { dataFieldsHashKey } from "./registry/data-fields-key.js";
+import { primitiveSourceMethodSignature } from "../ir/object-method-key.js";
 import { objectLiteralHasIndexedSpread } from "./indexed-object-spread.js";
 import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
@@ -1467,7 +1468,7 @@ function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type, onPath?: S
   const props = tsType.getProperties();
   if (props.length === 0) return null; // empty object — defer to a future slice
 
-  const fields: { name: string; type: IrType }[] = [];
+  const fields: { name: string; type: IrType; sourceMethodSignature?: string }[] = [];
   path.add(tsType);
   try {
     for (const prop of props) {
@@ -1481,14 +1482,31 @@ function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type, onPath?: S
       const propType = ctx.checker.getTypeOfSymbol(prop);
       const fieldIr = tsTypeToFieldIr(ctx, propType, path);
       if (!fieldIr) return null;
-      fields.push({ name: prop.name, type: fieldIr });
+      fields.push({
+        name: prop.name,
+        type: fieldIr,
+        ...(fieldIr.kind === "callable"
+          ? { sourceMethodSignature: primitiveSourceMethodSignature(fieldIr.signature) }
+          : {}),
+      });
     }
   } finally {
     path.delete(tsType);
   }
   const fieldOrder = fields.map((field) => field.name);
   fields.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { kind: "object", shape: { fields, fieldOrder } };
+  const symbol = tsType.aliasSymbol ?? tsType.getSymbol();
+  const declared =
+    fields.some((field) => field.sourceMethodSignature !== undefined) &&
+    symbol &&
+    ctx.structMap.has(symbol.name) &&
+    symbol.declarations?.some(
+      (declaration) => ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration),
+    );
+  return {
+    kind: "object",
+    shape: { fields, fieldOrder, ...(declared ? { allocationKind: "declared" as const } : {}) },
+  };
 }
 
 /**
@@ -1501,6 +1519,14 @@ function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type, onPath?: Set<ts.Type>)
   if (t.flags & ts.TypeFlags.NumberLike) return irVal({ kind: "f64" });
   if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32", boolean: true });
   if (t.flags & ts.TypeFlags.StringLike) return { kind: "string" };
+  const signatures = t.getCallSignatures();
+  if (signatures.length === 1) {
+    const declaration = signatures[0]!.getDeclaration();
+    if (declaration && (ts.isFunctionTypeNode(declaration) || ts.isMethodSignature(declaration))) {
+      const signature = irClosureSignatureFromFunctionTypeNode(declaration);
+      if (signature) return { kind: "callable", signature };
+    }
+  }
   // (#4019) thread the in-progress descent so a self-referential shape is
   // rejected instead of recursing until the stack dies.
   if (t.flags & ts.TypeFlags.Object) return objectIrTypeFromTsType(ctx, t, onPath);
