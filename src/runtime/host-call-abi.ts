@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Fixed-arity imports for erased Wasm-to-host function calls. */
-import { reconcileVecMirrors, snapshotVecMirrors } from "./vec-mirror-writeback.js";
+import { applyWithVecMirrorWriteback } from "./vec-mirror-writeback.js";
 
 type CallbackState = { getExports: () => Record<string, Function> | undefined } | undefined;
 type HostCallAdapters = {
@@ -40,9 +40,7 @@ export function createHostCallImport(name: string, callbackState: CallbackState,
       if (wrappedArgs === args) wrappedArgs = args.slice();
       wrappedArgs[i] = wrapped;
     }
-    const mirrorSnaps = snapshotVecMirrors(wrappedThis, wrappedArgs, exports);
-    const result = Reflect.apply(fn, wrappedThis, wrappedArgs);
-    reconcileVecMirrors(mirrorSnaps, exports, adapters.unwrapForHost);
+    const result = applyWithVecMirrorWriteback(fn, wrappedThis, wrappedArgs, exports, adapters.unwrapForHost);
     return adapters.unwrapForHost(result);
   };
 

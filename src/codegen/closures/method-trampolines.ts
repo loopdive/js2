@@ -27,6 +27,7 @@ import {
 } from "../shared.js";
 import {
   closureBagInitInstr,
+  ensureRestFnWrapSubtype,
   getFuncSignature,
   getOrCreateConstructibleFuncRefWrapperTypes,
   getOrCreateFuncRefWrapperTypes,
@@ -143,6 +144,23 @@ function methodBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolea
     return false;
   };
   return walk(fn.body);
+}
+
+/**
+ * (#5318 r4 review) The same question {@link methodBodyReadsThis} answers, but
+ * TRI-STATE: `undefined` when the body is not compiled yet, so a caller that
+ * needs "provably does not read the receiver" can tell "no" from "don't know".
+ * The trampoline itself keeps its own conservative not-yet-compiled ⇒ `true`
+ * default; a caller that must DECLINE on doubt (the static sidecar) treats both
+ * `true` and `undefined` as a refusal.
+ */
+export function compiledBodyReadsThis(ctx: CodegenContext, methodFuncIdx: number): boolean | undefined {
+  const fn = definedFuncAt(ctx, methodFuncIdx);
+  // An EMPTY body is "not compiled yet", not "reads nothing" — a minted-but-
+  // unfilled function would otherwise read as receiver-free, which is exactly
+  // the wrong answer a caller gating an install on this must not be given.
+  if (!fn || !Array.isArray(fn.body) || fn.body.length === 0) return undefined;
+  return methodBodyReadsThis(ctx, methodFuncIdx);
 }
 
 function buildTrampolineThisSlot(
@@ -1210,30 +1228,6 @@ export function ensureFuncClosureSingleton(
     closureStructTypeIdx: structTypeIdx,
     ...(allocStructTypeIdx !== undefined ? { allocStructTypeIdx, metaInit: allocInit } : {}),
   };
-}
-
-/**
- * (#4616) Get-or-create the rest-marker subtype of a funcref-wrapper struct:
- * the base wrapper's fields plus one immutable f64 marker. The f64 (vs the
- * constructible subtype's i32 marker) keeps the canonical shape distinct, so
- * `ref.test` can discriminate rest-param singleton closures at dispatch time.
- */
-function ensureRestFnWrapSubtype(ctx: CodegenContext, baseStructTypeIdx: number): number {
-  const holder = ctx as unknown as { __restFnWrapSubtypeByBase?: Map<number, number> };
-  const cache = (holder.__restFnWrapSubtypeByBase ??= new Map());
-  const hit = cache.get(baseStructTypeIdx);
-  if (hit !== undefined) return hit;
-  const baseDef = ctx.mod.types[baseStructTypeIdx];
-  const baseFields = baseDef?.kind === "struct" ? baseDef.fields : [];
-  const idx = ctx.mod.types.length;
-  ctx.mod.types.push({
-    kind: "struct",
-    name: `__rest_fn_wrap_${ctx.closureCounter++}_struct`,
-    fields: [...baseFields, { name: "__rest_marker", type: { kind: "f64" as const }, mutable: false }],
-    superTypeIdx: baseStructTypeIdx,
-  });
-  cache.set(baseStructTypeIdx, idx);
-  return idx;
 }
 
 /**

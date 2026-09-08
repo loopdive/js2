@@ -29,7 +29,13 @@ import { withSelectedTopLevelAccessorUnitIds } from "../ir/module-bindings.js";
 import { resolveIrDynamicCarrierType } from "./any-helpers.js";
 import type { CodegenContext } from "./context/types.js";
 import { installAstFreeClassConstructorNewWrapper } from "./class-constructor-wrapper.js";
-import { preparedIrAsyncSourceCanSuspend, preparedIrAsyncSourceShape } from "./async-ir-planning.js";
+import {
+  assertPreparedIrAsyncPromiseOwnerCurrent,
+  preparedIrAsyncPromiseOwnerUnitIds,
+  preparedIrAsyncPromiseOwnerWasIssued,
+  preparedIrAsyncSourceCanSuspend,
+  preparedIrAsyncSourceShape,
+} from "./async-ir-planning.js";
 import { addFuncType, getOrRegisterVecType } from "./registry/types.js";
 import { collectLocalCallEdgesByIdentity } from "./ir-first-gate.js";
 import * as irOverlayIdentity from "./ir-overlay-identity.js";
@@ -46,6 +52,7 @@ import {
 } from "./ir-overlay-safety.js";
 import { containsUnplannedNestedExecutableSyntax } from "./ir-prepared-nested-executable-syntax.js";
 import { prepareImplicitConstructorSupports } from "./ir-plain-implicit-constructors.js";
+import type { PreparedCallableBoundaryCandidate } from "../ir/prepared-callable-boundary.js";
 
 /** Preserve the inherited compile-once allowlist for owners not prepared early. */
 export function computePreparedInheritedIrFirstSkipUnitIds(input: {
@@ -1035,6 +1042,13 @@ function r2CertifiedAgainstOutsideCallers(
   return r2SignatureMatchesAllocatedSlot(ctx, unitId, override);
 }
 
+function hasPositiveCallableBoundary(override: {
+  readonly params: readonly IrType[];
+  readonly returnType: IrType | null;
+}): boolean {
+  return override.params.some((type) => type.kind === "callable") || override.returnType?.kind === "callable";
+}
+
 /**
  * (#4514) Names a NON-top-level function declaration also declares.
  *
@@ -1217,6 +1231,12 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
   const functionValueTargets = collectTopLevelFunctionValueTargets(input.ctx, input.sourceFile, functionUnitsByName);
   const callEdges = collectLocalCallEdgesByIdentity(input.sourceFile, input.identityPlan.identityContext);
+  // `suspendingAsyncUnitIds` is the source-shape population used to close an
+  // unsafe component before integration.  This second, exact receipt gate is
+  // the ABI publication authority: an owner may enter R3 only when its
+  // incoming/outgoing Promise contracts were closed against the same fixed
+  // point that declaration preparation used.
+  const promiseOwnerUnitIds = preparedIrAsyncPromiseOwnerUnitIds(input.ctx);
   const selected = new Set<string>();
   const prepared = new Set(input.preparedDependencyLegacyNames);
   for (let changed = true; changed; ) {
@@ -1235,8 +1255,10 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
     for (const legacyName of input.selectedLegacyNames) {
       if (selected.has(legacyName)) continue;
       const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
-      if (!input.suspendingAsyncUnitIds.has(unitId)) continue;
       const claim = input.claimsByUnitId.get(unitId);
+      if (claim) assertPreparedIrAsyncPromiseOwnerCurrent(input.ctx, claim.declaration);
+      if (!input.suspendingAsyncUnitIds.has(unitId)) continue;
+      if (!promiseOwnerUnitIds.has(unitId)) continue;
       const override = input.overridesByUnitId.get(unitId);
       if (!claim || !override) {
         throw new IrInvariantError(
@@ -1246,11 +1268,24 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
         );
       }
       const sourceShape = preparedIrAsyncSourceShape(input.ctx, claim.declaration);
+      const signatureMatches = r3SuspendingAsyncSignatureMatchesAllocatedSlot(
+        input.ctx,
+        unitId,
+        override,
+        sourceShape?.kind === "final-main" || sourceShape?.kind === "linear",
+      );
+      if (!signatureMatches && preparedIrAsyncPromiseOwnerWasIssued(input.ctx, claim.declaration)) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `R3 generic Promise owner ${unitId} / ${legacyName} lost its issued allocated ABI`,
+        );
+      }
       if (
         containsNestedExecutableSyntax(claim.declaration) ||
         functionValueTargets.has(unitId) ||
         containsTopLevelFunctionValueReference(input.ctx, claim.declaration, functionUnitsByName) ||
-        !r3SuspendingAsyncSignatureMatchesAllocatedSlot(input.ctx, unitId, override, sourceShape?.kind === "final-main")
+        !signatureMatches
       ) {
         continue;
       }
@@ -1280,7 +1315,7 @@ export function selectR3PreparedSuspendingAsyncFunctions(input: {
         ) {
           continue;
         }
-      } else if (unitCalls.length === 0) {
+      } else if (unitCalls.length === 0 && sourceShape.kind !== "linear") {
         continue;
       }
       additions.push(legacyName);
@@ -1309,6 +1344,7 @@ export function finalizeR3PreparedOwnerPopulation(input: {
   readonly selection: IrSelection;
   readonly preliminaryClassMemberUnitIds: ReadonlySet<IrUnitId>;
   readonly preliminaryR2Names: ReadonlySet<string>;
+  readonly preliminaryCallableBoundaryCandidates?: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
   readonly promiseDelayNames: ReadonlySet<string>;
   readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
 }): {
@@ -1316,6 +1352,7 @@ export function finalizeR3PreparedOwnerPopulation(input: {
   readonly classMemberNames: ReadonlySet<string>;
   readonly classMemberUnitIds: ReadonlySet<IrUnitId>;
   readonly freeFunctionNames: ReadonlySet<string>;
+  readonly callableBoundaryCandidates: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
 } {
   let selection = input.selection;
   const selectClassMemberPopulation = (): {
@@ -1385,17 +1422,24 @@ export function finalizeR3PreparedOwnerPopulation(input: {
         selection.funcs.has(name),
       ),
     ),
+    callableBoundaryCandidates: new Map(
+      [...(input.preliminaryCallableBoundaryCandidates ?? [])].filter(([unitId]) => {
+        const claim = input.plan.functionClaimsByUnitId.get(unitId);
+        return claim !== undefined && selection.funcs.has(claim.legacyName);
+      }),
+    ),
   };
 }
 
 /**
  * R2/R3 prepare only components whose free-function and class-member contracts
  * have one backend-stable Program ABI projection: scalars, strings, selected
- * vectors, and opaque JS-host externrefs. Other reference-shaped contracts,
- * unproven fast-mode signatures, and async/generator frames still require
- * direct discovery and remain on the post-direct overlay. Nested callable
- * syntax inside an otherwise admitted owner does not by itself block that
- * owner.
+ * vectors, opaque JS-host externrefs, and callable boundaries that carry an
+ * authenticated source ABI/support contract. Other reference-shaped
+ * contracts, unproven fast-mode signatures, and async/generator frames still
+ * require direct discovery and remain on the post-direct overlay. Nested
+ * callable syntax inside an otherwise admitted owner does not by itself block
+ * that owner.
  */
 export function selectR2PreparedOwnerComponents(input: {
   readonly ctx: CodegenContext;
@@ -1429,6 +1473,8 @@ export function selectR2PreparedOwnerComponents(input: {
    * member accounting.
    */
   readonly withdrawals: ReadonlyMap<IrUnitId, IrR2Withdrawal>;
+  /** Source-qualified callable boundaries pending final IR/support certification. */
+  readonly pendingCallableBoundaryCandidates: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
 } {
   const withdrawals = new Map<IrUnitId, IrR2Withdrawal>();
   // First-wins: the reason that actually removed the unit is the first one
@@ -1437,6 +1483,7 @@ export function selectR2PreparedOwnerComponents(input: {
     if (!withdrawals.has(unitId)) withdrawals.set(unitId, { stage, reason });
   };
   const freeFunctionCandidates = new Set<IrUnitId>();
+  const pendingCallableBoundaryCandidates = new Map<IrUnitId, PreparedCallableBoundaryCandidate>();
   const baseline = new Set<IrUnitId>();
   const functionUnitsByName = topLevelFunctionUnitsByName(input.sourceFile, input.identityPlan);
   const directCallerActivationTargets = collectDirectCallerActivationTargetUnitIds(
@@ -1447,6 +1494,7 @@ export function selectR2PreparedOwnerComponents(input: {
   for (const legacyName of input.baselineLegacyNames) {
     baseline.add(irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName));
   }
+
   for (const legacyName of input.selectedLegacyNames) {
     const unitId = irOverlayIdentity.requireIrOverlayFunctionUnitId(input.identityPlan, legacyName);
     const claim = input.claimsByUnitId.get(unitId);
@@ -1536,11 +1584,6 @@ export function selectR2PreparedOwnerComponents(input: {
     freeFunctionCandidates.add(unitId);
   }
 
-  // Close free functions and class members together. A class-to-free edge is
-  // safe only when both endpoints survive the same bidirectional ownership
-  // fixed point; preparing either family in isolation would leave an exact
-  // source call without a callable plan or retain a legacy caller.
-  const candidates = new Set<IrUnitId>([...freeFunctionCandidates, ...input.classMemberUnitIds]);
   const callEdges = collectLocalCallEdgesByIdentity(input.sourceFile, input.identityPlan.identityContext);
   const callers = new Map<IrUnitId, Set<IrUnitId>>();
   for (const [callerUnitId, calleeUnitIds] of callEdges.callees) {
@@ -1550,6 +1593,35 @@ export function selectR2PreparedOwnerComponents(input: {
       callers.set(calleeUnitId, owners);
     }
   }
+
+  // Issue callable-boundary candidates only after the ordinary admission
+  // predicates have accepted the owner.  The registry binds each candidate to
+  // the exact source allocator and targeted Program ABI draft; a missing
+  // registry/observation provides no positive evidence and therefore leaves
+  // the existing outside-caller withdrawal in place.  An owner whose known
+  // callers are all in this same candidate population has no outside-caller
+  // boundary to certify, so avoid opening a deferred ABI transaction for its
+  // ordinary callable support.
+  for (const unitId of freeFunctionCandidates) {
+    // Compiler-owned timer shims have their own exact late-seal transaction.
+    // Keep them on that route; their deferred component does not exist yet at
+    // this generic callable-boundary certification point.
+    if (input.timerShimUnitIds?.has(unitId)) continue;
+    const override = input.overridesByUnitId.get(unitId);
+    if (!override || !hasPositiveCallableBoundary(override)) continue;
+    const hasPotentialOutsideCaller = [...(callers.get(unitId) ?? [])].some(
+      (callerUnitId) => !freeFunctionCandidates.has(callerUnitId) && !input.classMemberUnitIds.has(callerUnitId),
+    );
+    if (!hasPotentialOutsideCaller) continue;
+    const candidate = input.ctx.programAbiSourceCallables?.issuePreparedCallableBoundary(unitId, override);
+    if (candidate) pendingCallableBoundaryCandidates.set(unitId, candidate);
+  }
+
+  // Close free functions and class members together. A class-to-free edge is
+  // safe only when both endpoints survive the same bidirectional ownership
+  // fixed point; preparing either family in isolation would leave an exact
+  // source call without a callable plan or retain a legacy caller.
+  const candidates = new Set<IrUnitId>([...freeFunctionCandidates, ...input.classMemberUnitIds]);
   // (#4514) Free-function owners whose ABI an outside caller provably cannot
   // observe changing. Computed once, before the fixed point: the inputs are the
   // admission-time override and the already-allocated slot, neither of which
@@ -1565,6 +1637,7 @@ export function selectR2PreparedOwnerComponents(input: {
       // signature proof covers; annexB block-function hoisting is that shape.
       if (claim.declaration.name && nestedFunctionDeclarationNames.has(claim.declaration.name.text)) return false;
       if (timerShimOutsideCaller(input, unitId, override, r2SignatureMatchesAllocatedSlot)) return true;
+      if (pendingCallableBoundaryCandidates.has(unitId)) return true;
       return r2CertifiedAgainstOutsideCallers(input.ctx, unitId, override);
     }),
   );
@@ -1620,7 +1693,9 @@ export function selectR2PreparedOwnerComponents(input: {
         // caller is a SIGNATURE hazard: its `call` is emitted against this
         // unit's allocated Program ABI slot, so preparation must not re-plan
         // that slot. `outsideCallerCertifiedUnitIds` proves it cannot for the
-        // declaration-fixed carrier family; every other unit still withdraws.
+        // declaration-fixed carrier family, while an authenticated callable
+        // boundary candidate supplies the same proof after final support
+        // preparation; every other unit still withdraws.
         // Without this refinement one withdrawn caller drags its whole callee
         // fan-out out of the component — #4508's enlarged `algorithms.ts`
         // component lost compile-once for `fibIter`, `binarySearch`,
@@ -1681,6 +1756,9 @@ export function selectR2PreparedOwnerComponents(input: {
     freeFunctionNames,
     classMemberUnitIds: new Set([...input.classMemberUnitIds].filter((unitId) => candidates.has(unitId))),
     withdrawals,
+    pendingCallableBoundaryCandidates: new Map(
+      [...pendingCallableBoundaryCandidates].filter(([unitId]) => candidates.has(unitId)),
+    ),
   };
 }
 
@@ -1940,6 +2018,7 @@ export function prepareIrBodies(input: {
   readonly classShapes: ReadonlyMap<string, IrClassShape>;
   readonly classShapesById: ReadonlyMap<IrClassId, IrClassShape>;
   readonly projectLoweringPlans: (selection: IrSelection) => IrIntegrationLoweringPlans;
+  readonly callableBoundaryCandidates?: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
 }): PreparedIrBodies {
   const freeFunctionNames = new Set(input.selection.funcs);
   const freeFunctionClaimsByUnitId = new Map<IrUnitId, IrExactFunctionClaim>();
@@ -2042,6 +2121,9 @@ export function prepareIrBodies(input: {
             input.projectLoweringPlans(selection),
             {
               sealPreparedComponents: true,
+              ...(input.callableBoundaryCandidates && input.callableBoundaryCandidates.size > 0
+                ? { preparedCallableBoundaryCandidates: input.callableBoundaryCandidates }
+                : {}),
               // (#3523 R4 gap 3) Only this call constructs the Prepared
               // module-init body, so only this call may plant the reserved WASI
               // `__init_done` guard into it. A no-op unless the reservation

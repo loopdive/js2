@@ -36,6 +36,7 @@ import { setProgramAbiInheritedClassCallableAlias } from "./program-abi-class-ca
 import { absoluteFuncIndex } from "../emit/resolve-layout.js"; // (#1916 S3b) resolve handles for order-stable declaredFuncRefs sort
 import { definedFuncAt } from "./func-space.js";
 import { getOrAssignClassNewTargetId } from "./new-target.js"; // (#2023)
+import { emitSuperInitializedFlagStore, ensureSuperInitializedFlagLocal } from "./expressions/new-super.js"; // (#5350 r3) runtime this-initialised flag
 import { popBody, pushBody } from "./context/bodies.js";
 import { reportError } from "./context/errors.js";
 import { allocLocal, deduplicateLocals } from "./context/locals.js";
@@ -73,6 +74,7 @@ import { detectStringBuilders } from "./string-builder.js"; // (#2641/#1210) str
 import type { StringBuilderPresizeInfo } from "./string-builder.js";
 import { compileStringLiteral } from "./string-ops.js";
 import { emitUndefined } from "./expressions/late-imports.js";
+import { emitLazyClassObjectGet } from "./expressions/extern.js"; // (#5377)
 import { addStringConstantGlobal, ensureExnTag, nextModuleGlobalIdx } from "./registry/imports.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { UNDEF_F64_BITS } from "./value-tags.js";
@@ -605,7 +607,7 @@ function emitSetSubclassProto(
   const setProtoIdx = ensureLateImport(
     ctx,
     "__set_subclass_proto",
-    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }, { kind: "externref" }, { kind: "externref" }, { kind: "externref" }],
     [{ kind: "externref" }],
   );
   flushLateImportShifts(ctx, fctx);
@@ -633,6 +635,42 @@ function emitSetSubclassProto(
     // String pool not available, or the standalone `-1` sentinel — skip silently.
     return;
   }
+  // (#5377) Fourth argument: this class's class-object singleton, so the host
+  // import can record instance → class object and `i.constructor === C` holds
+  // through an any-typed receiver.
+  //
+  // Emitted straight into `fctx.body` and carried to the call site in a LOCAL,
+  // NOT built into a detached array and spliced into the `else` arm below. That
+  // was the first shape and it is MEASURED wrong: `emitLazyClassObjectGet`
+  // bakes `global.set/get __class_<C>`, an interned string constant is an
+  // IMPORTED global whose insertion shifts the whole global index space, and
+  // the shift repair only reaches bodies that are live at the time — a detached
+  // array spliced and then dropped is repaired by nothing. On the Temporal
+  // polyfill that stale index made the constructor initialise a DIFFERENT
+  // global, so the module ended up with TWO class-object singletons both
+  // registered as `JSBI`: `i.constructor` answered the second while the
+  // compiled `JSBI` identifier read the first, and `===` stayed false with the
+  // instance→class-object link hitting on every read (`.tmp/dbg4.log`:
+  // `a=…/id=JSBI#2 b=…/id=JSBI#1 same=false`). A local index cannot shift.
+  const classObjectLocal = allocLocal(fctx, `__class_obj_${subName}_${fctx.locals.length}`, { kind: "externref" });
+  if (!emitLazyClassObjectGet(ctx, fctx, subName)) {
+    // No class-object singleton for this name — pass null; the host import
+    // keeps its pre-#5377 behaviour exactly.
+    fctx.body.push({ op: "ref.null.extern" });
+  }
+  fctx.body.push({ op: "local.set", index: classObjectLocal });
+  // Re-read the two name globals AFTER the materializer: it interns string
+  // constants, and each intern shifts the global index space.
+  const subNameGlobalNow = ctx.stringGlobalMap.get(subName);
+  const parentNameGlobalNow = ctx.stringGlobalMap.get(parentLookupName);
+  if (
+    subNameGlobalNow === undefined ||
+    parentNameGlobalNow === undefined ||
+    subNameGlobalNow < 0 ||
+    parentNameGlobalNow < 0
+  ) {
+    return;
+  }
   // Skip when the instance is null (e.g. standalone `__new_<Parent>` fallback);
   // calling Object.setPrototypeOf on null/undefined throws in JS, which we
   // do not want here. Use ref.is_null + if/else (avoids leaving stack imbalanced).
@@ -644,8 +682,9 @@ function emitSetSubclassProto(
     then: [],
     else: [
       { op: "local.get", index: selfLocal },
-      { op: "global.get", index: subNameGlobal },
-      { op: "global.get", index: parentNameGlobal },
+      { op: "global.get", index: subNameGlobalNow },
+      { op: "global.get", index: parentNameGlobalNow },
+      { op: "local.get", index: classObjectLocal },
       { op: "call", funcIdx: setProtoIdx },
       { op: "local.set", index: selfLocal },
     ],
@@ -2473,6 +2512,35 @@ function compileClassBodiesInner(
       }
     }
 
+    // (#5377) Materialize this class's class-object singleton at the top of its
+    // constructor, so a compiled instance can answer `i.constructor` with the
+    // class object no matter what the program reads first. This must happen
+    // AFTER the constructor signatures above are re-resolved: the singleton
+    // registration captures a constructor closure, and emitting it against the
+    // pre-resolution placeholder type creates a zero-argument trampoline for a
+    // constructor that later receives parameters (the Wasm validator then sees
+    // a call with too few stack arguments in large class-heavy packages such as
+    // hono).
+    //
+    // The singleton is otherwise created by whichever `C` identifier read runs
+    // first, and that init registers `classObject → prototype carrier` with the
+    // host (`__register_class_ctor`). Constructor entry remains the right
+    // once-per-class point: it provably precedes the existence of any instance,
+    // while the externref-backed lane is materialized by `emitSetSubclassProto`.
+    // Host lane only: standalone has no class-object host registry to answer
+    // to, and the externref-backed lane is covered by `emitSetSubclassProto`.
+    // Name-keyed class tables can expose a compatibility alias for the same
+    // source class expression (for example Hono's two module-local `Node`
+    // bindings).  A non-owner body shares the owner's constructor slot and
+    // class-object global; materializing through that alias would capture the
+    // owner's still-unresolved placeholder signature and mint a zero-argument
+    // trampoline before the canonical body fixes the type.  The scoped
+    // synthetic identity owns the real singleton for that declaration.
+    const classIdentityOwner = ctx.classDeclarationMap.get(className);
+    if (!ctx.standalone && !ctx.wasi && !isExternrefBacked && classIdentityOwner === decl) {
+      if (emitLazyClassObjectGet(ctx, fctx, className)) fctx.body.push({ op: "drop" });
+    }
+
     for (let i = 0; i < fctxParams.length; i++) {
       fctx.localMap.set(fctxParams[i]!.name, i);
     }
@@ -2842,6 +2910,10 @@ function compileClassBodiesInner(
       }
       hoistVarDeclarations(ctx, fctx, ctor.body.statements);
       hoistLetConstWithTdz(ctx, fctx, ctor.body.statements);
+      // (#5350 r3 review, S1) Before ANY statement is compiled: a `super(...)`
+      // is routinely lowered before the read whose classification motivates the
+      // flag, so the local must already exist when the store is emitted.
+      ensureSuperInitializedFlagLocal(ctx, fctx, ctor);
       for (const stmt of ctor.body.statements) {
         // Handle super(args) calls: inline parent constructor field initialization
         if (
@@ -2850,6 +2922,7 @@ function compileClassBodiesInner(
           stmt.expression.expression.kind === ts.SyntaxKind.SuperKeyword
         ) {
           compileSuperCall(ctx, fctx, className, selfLocal, stmt.expression, fields);
+          emitSuperInitializedFlagStore(fctx); // (#5350 r3) `this` is initialised from here on
           if (isDerivedClass) {
             emitOwnInstanceFieldInitializers();
           }
@@ -3175,7 +3248,18 @@ function compileClassBodiesInner(
         // Pre-ensure `__extern_is_undefined` before compiling the initializer so
         // any late-import shift happens while `fctx.body` is authoritative. See
         // constructor site above for the full rationale.
-        if (paramType.kind === "externref") {
+        //
+        // (#5380) An `f64` formal with a default needs the SAME import, for the
+        // host class bridges rather than for this prologue. Those bridges have an
+        // `(externref, …externref) -> externref` ABI, so a host caller that omits
+        // the argument (`x.toString()` through the dynamic path) hands the bridge
+        // a real JS `undefined`, which unboxes to a plain NaN — indistinguishable
+        // from a passed `NaN`, so the prologue's sentinel check below never fires
+        // and the default never runs. The bridges convert that `undefined` into
+        // the omitted-argument sentinel instead, which needs this predicate; and
+        // an import can only be added HERE, while a body swap can still absorb
+        // the funcidx shift, not in the finalize pass that emits the bridge.
+        if (paramType.kind === "externref" || (paramType.kind === "f64" && !ctx.standalone && !ctx.wasi)) {
           ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
           flushLateImportShifts(ctx, fctx);
         }
@@ -3899,6 +3983,7 @@ function emitPromiseSubclassOnHostCtor(
         stmt.expression.expression.kind === ts.SyntaxKind.SuperKeyword
       ) {
         compileSuperCall(ctx, fctx, className, selfLocal, stmt.expression, [], /* onHost */ true);
+        emitSuperInitializedFlagStore(fctx); // (#5350 r3) `this` is initialised from here on
         continue;
       }
       compileStatement(ctx, fctx, stmt);

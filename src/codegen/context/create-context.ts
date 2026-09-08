@@ -220,6 +220,7 @@ export function createCodegenContext(
     closureMinimumArgumentCountByFuncTypeIdx: new Map(),
     hostDynamicClassMethodNames: new Set(),
     hostDynamicClassAccessorReads: new Set(),
+    runtimeKeyClassMethodNames: new Set(),
     genericResolved: new Map(),
     funcRestParams: new Map(),
     funcUsesArguments: new Set(),
@@ -240,6 +241,8 @@ export function createCodegenContext(
     // bytes. Only the package linker sets the option.
     sharedExnTag:
       options?.sharedExceptionTag === true && targetProfile.target !== "wasi" && targetProfile.target !== "standalone",
+    // (#5247) Provider builds only — their exports are wasm→wasm call targets.
+    exportsConsumedByWasm: options?.exportsConsumedByWasm === true,
     hasUnionImports: false,
     asyncFunctions: new Set(),
     generatorFunctions: new Set(),
@@ -288,6 +291,7 @@ export function createCodegenContext(
     nativeStrLiteralGlobals: new Map(),
     usesStandaloneConsoleSink: false,
     stdoutAccGlobalIdx: -1,
+    usesSourceThrowStatement: false,
     symbolTypeIdx: -1,
     utf8StrDataTypeIdx: -1,
     utf8StrTypeIdx: -1,

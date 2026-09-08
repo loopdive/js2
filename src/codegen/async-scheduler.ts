@@ -25,13 +25,10 @@ import { addUnionImportsViaRegistry, ensureLateImport, flushLateImportShifts } f
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3) stable-regime minting
 import { addStringConstantGlobal, ensureExnTag } from "./registry/imports.js";
 import { inLiveShiftRange } from "../emit/resolve-layout.js"; // (#1916 S3) stable handles never shift
-// (#3125) Thenable-assimilation substrate deps. `closures.js` ← here is an
-// eval-time-SAFE cycle (closures.ts imports `isStandalonePromiseActive` from
-// this module; both bindings are only dereferenced inside function bodies,
-// never at module evaluation). The other three are cycle-free leaves relative
-// to this module.
-import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures.js";
-import { closureBagField, closureBagInitInstr } from "./closures/funcref-wrapper-types.js";
+// (#3125) Thenable-assimilation helpers use the physical wrapper registry and
+// header leaf directly, avoiding the closure-dispatch barrel and its scheduler cycle.
+import { getClosureFuncSelfTypeIdx, getOrCreateFuncRefWrapperTypes } from "./closures/funcref-wrapper-types.js";
+import { closureBagField, closureBagInitInstr } from "./closures/closure-header-layout.js";
 // (#5197 Slice B) The settle closures escape to user code as real function
 // objects, so they carry the standard builtin-function metadata subtype rather
 // than a Promise-local imitation. Cycle-free: builtin-fn-meta.ts imports only
@@ -52,6 +49,14 @@ import { CARRIER_BAG_HAS } from "./carrier-bag-visibility.js";
 import { ensureUnhandledRejectionTracking, buildNoteUnhandledRejection } from "./unhandled-rejection.js";
 import { buildTargetTaggedTry } from "../ir/try-table.js";
 import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
+import {
+  buildGrowLocals,
+  buildGrowBody,
+  buildEnqueueBody,
+  buildDrainLocals,
+  buildDrainBody,
+  type PreparedNativeMicrotaskReservations,
+} from "../runtime/wasmgc/async/microtask-queue-bodies.js";
 
 /**
  * #1326 — Sentinel state values for `$Promise.state`. Match the JS spec
@@ -531,11 +536,28 @@ export function ensureMicrotaskQueue(ctx: CodegenContext): void {
   //    the order grow → enqueue → drain so each later body can reference
   //    the prior ones.
   state.growFuncIdx = mintDefinedFunc(ctx);
+  const queueResources: PreparedNativeMicrotaskReservations = Object.freeze({
+    types: Object.freeze({
+      functions: Object.freeze({ kind: "type", index: funcArrIdx }),
+      arguments: Object.freeze({ kind: "type", index: argsArrIdx }),
+      callback: Object.freeze({ kind: "type", index: state.microtaskFuncTypeIdx }),
+    }),
+    globals: Object.freeze({
+      head: Object.freeze({ kind: "global", index: state.microtaskHeadGlobalIdx }),
+      tail: Object.freeze({ kind: "global", index: state.microtaskTailGlobalIdx }),
+      capacity: Object.freeze({ kind: "global", index: state.microtaskCapGlobalIdx }),
+      functions: Object.freeze({ kind: "global", index: state.microtaskFuncsGlobalIdx }),
+      captures: Object.freeze({ kind: "global", index: state.microtaskCapsGlobalIdx }),
+      arguments: Object.freeze({ kind: "global", index: state.microtaskArgsGlobalIdx }),
+    }),
+    grow: Object.freeze({ kind: "function", index: state.growFuncIdx }),
+    initialCapacity: MICROTASK_QUEUE_INITIAL_SLOTS,
+  });
   pushDefinedFunc(ctx, state.growFuncIdx, {
     name: "__microtask_grow",
     typeIdx: addFuncType(ctx, [{ kind: "i32" }], [], "$__mt_grow_type"),
-    locals: buildGrowLocals(funcArrIdx, argsArrIdx),
-    body: buildGrowBody(state, funcArrIdx, argsArrIdx),
+    locals: buildGrowLocals(queueResources),
+    body: buildGrowBody(queueResources),
     exported: false,
   });
   ctx.funcMap.set("__microtask_grow", state.growFuncIdx);
@@ -550,7 +572,7 @@ export function ensureMicrotaskQueue(ctx: CodegenContext): void {
       "$__mt_enqueue_type",
     ),
     locals: [],
-    body: buildEnqueueBody(state, funcArrIdx, argsArrIdx),
+    body: buildEnqueueBody(queueResources),
     exported: false,
   });
   ctx.funcMap.set("__microtask_enqueue", state.enqueueFuncIdx);
@@ -560,297 +582,10 @@ export function ensureMicrotaskQueue(ctx: CodegenContext): void {
     name: "__drain_microtasks",
     typeIdx: addFuncType(ctx, [], [], "$__mt_drain_type"),
     locals: buildDrainLocals(),
-    body: buildDrainBody(state, funcArrIdx, argsArrIdx),
+    body: buildDrainBody(queueResources),
     exported: false,
   });
   ctx.funcMap.set("__drain_microtasks", state.drainFuncIdx);
-}
-
-function buildGrowLocals(funcArrIdx: number, argsArrIdx: number): import("../ir/types.js").LocalDef[] {
-  // Param 0: $newCap (i32). Local slots start at 1.
-  return [
-    { name: "$oldFuncs", type: { kind: "ref_null", typeIdx: funcArrIdx } },
-    { name: "$oldCaps", type: { kind: "ref_null", typeIdx: argsArrIdx } },
-    { name: "$oldArgs", type: { kind: "ref_null", typeIdx: argsArrIdx } },
-    { name: "$oldHead", type: { kind: "i32" } },
-    { name: "$oldTail", type: { kind: "i32" } },
-    { name: "$i", type: { kind: "i32" } },
-    { name: "$dst", type: { kind: "i32" } },
-  ];
-}
-
-function buildGrowBody(state: AsyncSchedulerState, funcArrIdx: number, argsArrIdx: number): Instr[] {
-  const newCapLocal = 0;
-  const oldFuncs = 1;
-  const oldCaps = 2;
-  const oldArgs = 3;
-  const oldHead = 4;
-  const oldTail = 5;
-  const i = 6;
-  const dst = 7;
-
-  return [
-    // Snapshot the old state.
-    { op: "global.get", index: state.microtaskFuncsGlobalIdx },
-    { op: "local.set", index: oldFuncs },
-    { op: "global.get", index: state.microtaskCapsGlobalIdx },
-    { op: "local.set", index: oldCaps },
-    { op: "global.get", index: state.microtaskArgsGlobalIdx },
-    { op: "local.set", index: oldArgs },
-    { op: "global.get", index: state.microtaskHeadGlobalIdx },
-    { op: "local.set", index: oldHead },
-    { op: "global.get", index: state.microtaskTailGlobalIdx },
-    { op: "local.set", index: oldTail },
-
-    // Allocate the new arrays with init = ref.null.
-    // funcs: array.new (default=null funcref) of $newCap.
-    { op: "ref.null.func" },
-    { op: "local.get", index: newCapLocal },
-    { op: "array.new", typeIdx: funcArrIdx },
-    { op: "global.set", index: state.microtaskFuncsGlobalIdx },
-
-    { op: "ref.null.extern" },
-    { op: "local.get", index: newCapLocal },
-    { op: "array.new", typeIdx: argsArrIdx },
-    { op: "global.set", index: state.microtaskCapsGlobalIdx },
-
-    { op: "ref.null.extern" },
-    { op: "local.get", index: newCapLocal },
-    { op: "array.new", typeIdx: argsArrIdx },
-    { op: "global.set", index: state.microtaskArgsGlobalIdx },
-
-    // If oldFuncs is null, no live entries to copy. Just reset head/tail
-    // pointers and capacity, then return.
-    { op: "local.get", index: oldFuncs },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" } as any,
-      then: [
-        { op: "i32.const", value: 0 },
-        { op: "global.set", index: state.microtaskHeadGlobalIdx },
-        { op: "i32.const", value: 0 },
-        { op: "global.set", index: state.microtaskTailGlobalIdx },
-        { op: "local.get", index: newCapLocal },
-        { op: "global.set", index: state.microtaskCapGlobalIdx },
-        { op: "return" },
-      ],
-    },
-
-    // Copy live slice [oldHead, oldTail) into the new arrays starting at 0.
-    { op: "local.get", index: oldHead },
-    { op: "local.set", index: i },
-    { op: "i32.const", value: 0 },
-    { op: "local.set", index: dst },
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            { op: "local.get", index: i },
-            { op: "local.get", index: oldTail },
-            { op: "i32.eq" },
-            // depth 1: exit the enclosing block (skip the loop label).
-            { op: "br_if", depth: 1 },
-
-            // funcs[dst] = oldFuncs[i]
-            { op: "global.get", index: state.microtaskFuncsGlobalIdx },
-            { op: "local.get", index: dst },
-            { op: "local.get", index: oldFuncs },
-            { op: "ref.as_non_null" },
-            { op: "local.get", index: i },
-            { op: "array.get", typeIdx: funcArrIdx },
-            { op: "array.set", typeIdx: funcArrIdx },
-
-            // caps[dst] = oldCaps[i]
-            { op: "global.get", index: state.microtaskCapsGlobalIdx },
-            { op: "local.get", index: dst },
-            { op: "local.get", index: oldCaps },
-            { op: "ref.as_non_null" },
-            { op: "local.get", index: i },
-            { op: "array.get", typeIdx: argsArrIdx },
-            { op: "array.set", typeIdx: argsArrIdx },
-
-            // args[dst] = oldArgs[i]
-            { op: "global.get", index: state.microtaskArgsGlobalIdx },
-            { op: "local.get", index: dst },
-            { op: "local.get", index: oldArgs },
-            { op: "ref.as_non_null" },
-            { op: "local.get", index: i },
-            { op: "array.get", typeIdx: argsArrIdx },
-            { op: "array.set", typeIdx: argsArrIdx },
-
-            // i++, dst++
-            { op: "local.get", index: i },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: i },
-            { op: "local.get", index: dst },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "local.set", index: dst },
-            // depth 0: re-enter the loop label.
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-
-    // Finalise head/tail/cap.
-    { op: "i32.const", value: 0 },
-    { op: "global.set", index: state.microtaskHeadGlobalIdx },
-    { op: "local.get", index: dst },
-    { op: "global.set", index: state.microtaskTailGlobalIdx },
-    { op: "local.get", index: newCapLocal },
-    { op: "global.set", index: state.microtaskCapGlobalIdx },
-  ];
-}
-
-function buildEnqueueBody(state: AsyncSchedulerState, funcArrIdx: number, argsArrIdx: number): Instr[] {
-  const fnLocal = 0;
-  const capsLocal = 1;
-  const argLocal = 2;
-
-  return [
-    // Lazy first-allocate. Test `funcs` against null.
-    { op: "global.get", index: state.microtaskFuncsGlobalIdx },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" } as any,
-      then: [
-        { op: "i32.const", value: MICROTASK_QUEUE_INITIAL_SLOTS },
-        { op: "call", funcIdx: state.growFuncIdx },
-      ],
-    },
-
-    // If tail == cap, double the queue.
-    { op: "global.get", index: state.microtaskTailGlobalIdx },
-    { op: "global.get", index: state.microtaskCapGlobalIdx },
-    { op: "i32.eq" },
-    {
-      op: "if",
-      blockType: { kind: "empty" } as any,
-      then: [
-        { op: "global.get", index: state.microtaskCapGlobalIdx },
-        { op: "i32.const", value: 1 },
-        { op: "i32.shl" },
-        { op: "call", funcIdx: state.growFuncIdx },
-      ],
-    },
-
-    // Store fn, caps, arg at index `tail`.
-    { op: "global.get", index: state.microtaskFuncsGlobalIdx },
-    { op: "ref.as_non_null" },
-    { op: "global.get", index: state.microtaskTailGlobalIdx },
-    { op: "local.get", index: fnLocal },
-    { op: "array.set", typeIdx: funcArrIdx },
-
-    { op: "global.get", index: state.microtaskCapsGlobalIdx },
-    { op: "ref.as_non_null" },
-    { op: "global.get", index: state.microtaskTailGlobalIdx },
-    { op: "local.get", index: capsLocal },
-    { op: "array.set", typeIdx: argsArrIdx },
-
-    { op: "global.get", index: state.microtaskArgsGlobalIdx },
-    { op: "ref.as_non_null" },
-    { op: "global.get", index: state.microtaskTailGlobalIdx },
-    { op: "local.get", index: argLocal },
-    { op: "array.set", typeIdx: argsArrIdx },
-
-    // tail++
-    { op: "global.get", index: state.microtaskTailGlobalIdx },
-    { op: "i32.const", value: 1 },
-    { op: "i32.add" },
-    { op: "global.set", index: state.microtaskTailGlobalIdx },
-  ];
-}
-
-function buildDrainLocals(): import("../ir/types.js").LocalDef[] {
-  return [
-    { name: "$fn", type: { kind: "funcref" } as ValType },
-    { name: "$caps", type: { kind: "externref" } },
-    { name: "$arg", type: { kind: "externref" } },
-  ];
-}
-
-function buildDrainBody(state: AsyncSchedulerState, funcArrIdx: number, argsArrIdx: number): Instr[] {
-  const fnLocal = 0;
-  const capsLocal = 1;
-  const argLocal = 2;
-
-  return [
-    // If the queue was never used (`funcs` global null), there's nothing
-    // to drain. Early-return to avoid `ref.as_non_null` on a null ref.
-    { op: "global.get", index: state.microtaskFuncsGlobalIdx },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" } as any,
-      then: [{ op: "return" }],
-    },
-
-    {
-      op: "block",
-      blockType: { kind: "empty" },
-      body: [
-        {
-          op: "loop",
-          blockType: { kind: "empty" },
-          body: [
-            // Done when head == tail.
-            { op: "global.get", index: state.microtaskHeadGlobalIdx },
-            { op: "global.get", index: state.microtaskTailGlobalIdx },
-            { op: "i32.eq" },
-            // depth 1: exit the enclosing block (skip the loop label).
-            { op: "br_if", depth: 1 },
-
-            // Read fn, caps, arg at head.
-            { op: "global.get", index: state.microtaskFuncsGlobalIdx },
-            { op: "ref.as_non_null" },
-            { op: "global.get", index: state.microtaskHeadGlobalIdx },
-            { op: "array.get", typeIdx: funcArrIdx },
-            { op: "local.set", index: fnLocal },
-
-            { op: "global.get", index: state.microtaskCapsGlobalIdx },
-            { op: "ref.as_non_null" },
-            { op: "global.get", index: state.microtaskHeadGlobalIdx },
-            { op: "array.get", typeIdx: argsArrIdx },
-            { op: "local.set", index: capsLocal },
-
-            { op: "global.get", index: state.microtaskArgsGlobalIdx },
-            { op: "ref.as_non_null" },
-            { op: "global.get", index: state.microtaskHeadGlobalIdx },
-            { op: "array.get", typeIdx: argsArrIdx },
-            { op: "local.set", index: argLocal },
-
-            // head++ (advance BEFORE the call so a callback that enqueues
-            // more entries doesn't have to worry about an unconsumed slot).
-            { op: "global.get", index: state.microtaskHeadGlobalIdx },
-            { op: "i32.const", value: 1 },
-            { op: "i32.add" },
-            { op: "global.set", index: state.microtaskHeadGlobalIdx },
-
-            // call_ref fn(caps, arg) — push args then the funcref, then
-            // ref.cast to a non-null `(ref $__mt_func_type)` because
-            // call_ref requires a typed non-null funcref.
-            { op: "local.get", index: capsLocal },
-            { op: "local.get", index: argLocal },
-            { op: "local.get", index: fnLocal },
-            { op: "ref.cast", typeIdx: state.microtaskFuncTypeIdx },
-            { op: "call_ref", typeIdx: state.microtaskFuncTypeIdx },
-            { op: "drop" },
-
-            // depth 0: re-enter the loop label.
-            { op: "br", depth: 0 },
-          ],
-        },
-      ],
-    },
-  ];
 }
 
 export function ensurePromiseSettleFunctions(ctx: CodegenContext): void {

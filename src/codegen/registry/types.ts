@@ -8,7 +8,7 @@
 import type { ArrayTypeDef, FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { getArgumentsVecTypeIdx } from "../arguments-carrier-brand.js";
-import { closureBagField } from "../closures/funcref-wrapper-types.js"; // (#4241)
+import { closureBagField } from "../closures/closure-header-layout.js"; // (#4241)
 
 /**
  * (#3268) Register a WasmGC struct type: append it to `ctx.mod.types` and wire
@@ -240,6 +240,19 @@ export function getOrRegisterVecType(ctx: CodegenContext, elemKind: string, elem
     kind: "struct",
     name: `__vec_${cacheKey}`,
     superTypeIdx: vecBaseIdx,
+    // (#5349) Brand the packed-byte TypedArray carrier. `$__vec_i8_byte` and
+    // the ArrayBuffer's `$__vec_i32_byte` declare the same two fields over
+    // structurally identical `(array (mut i8))` data, so once BOTH are marked
+    // `final` by `markLeafStructsFinal` Wasm GC canonicalizes them to ONE
+    // runtime type and no `ref.test` can separate a `Uint8Array` from an
+    // ArrayBuffer (the §25.1.5.3 step-16 slot check). Declaring `final` here,
+    // while `finalizeLeafStructTypes` keeps `i32_byte` open, makes the two
+    // distinct canonical types. Sound because the packed-byte vec has no
+    // subtype anywhere: every `superTypeIdx` in `src/codegen` names
+    // `$__vec_base`, the externref vec, `$__vec_i32_byte` (`$__resizable_ab`)
+    // or a class/brand struct. Declared, not post-seal mutated, so
+    // `programAbiSession.recordLeafTypeFinalization` is not involved.
+    ...(cacheKey === "i8_byte" ? { final: true } : {}),
     fields: [
       { name: "length", type: { kind: "i32" }, mutable: true },
       {

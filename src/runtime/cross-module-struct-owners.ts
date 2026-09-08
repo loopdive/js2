@@ -74,7 +74,16 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
     decoderFor(obj: unknown, local: Record<string, Function> | undefined): Record<string, Function> | undefined {
       if (!enabled || !canBeWeakKey(obj)) return undefined;
       const cached = owners.get(obj as object);
-      if (cached !== undefined) return cached === local || cached === NONE ? undefined : cached;
+      // (#5379) A cache entry naming a RETIRED module outranks nothing: re-probe
+      // the live project and prefer whatever it answers. The entry is kept as
+      // the fallback rather than dropped, because a module that is gone from
+      // `modules` can still DECODE the struct it minted — its Wasm instance is
+      // alive as long as the struct is — so discarding it would turn a working
+      // read of a surviving cross-project value into the `ref.test`-miss default.
+      // Only the ORDER changes: live before retired, never retired before live.
+      if (cached !== undefined && (cached === NONE || modules.has(cached))) {
+        return cached === local || cached === NONE ? undefined : cached;
+      }
       if (local !== undefined && decodes(local, obj as object)) {
         owners.set(obj as object, local);
         return undefined;
@@ -86,8 +95,44 @@ export function createCrossModuleStructOwners(canBeWeakKey: (value: unknown) => 
           return peer;
         }
       }
+      if (cached !== undefined) return cached === local ? undefined : cached;
       owners.set(obj as object, NONE);
       return undefined;
+    },
+
+    /**
+     * (#5364) Forget every module of the project that just finished.
+     *
+     * The registry is MODULE-LEVEL state, so a process that instantiates a
+     * second linked project against the SAME provider binary (the compile-once
+     * Temporal provider, re-instantiated once per test262 row in a long-lived
+     * fork) would otherwise still hold project 1's exports. Those exports share
+     * canonical WasmGC types with project 2's, so `decodes` answers TRUE for a
+     * struct project 1 never minted and `decoderFor` hands back the wrong
+     * module — a complete, internally consistent, WRONG mirror.
+     *
+     * `owners` and `states` are deliberately NOT cleared, but NOT for the reason
+     * this comment used to give. The old wording said both WeakMaps "become
+     * unreachable with" the retiring project, which is only true when nothing
+     * outlives it — and plenty does: `classStaticParent`'s `classParentsByName`
+     * is a process-global STRONG map of class objects keyed by class NAME, and
+     * a host mirror handed to the embedder keeps its struct alive too. So an
+     * `owners` entry naming a retired module can and does survive a reset.
+     *
+     * (#5379) What makes that safe is the retired-entry arm in `decoderFor`, not
+     * unreachability: a cached module that is no longer in `modules` never wins
+     * over a live one — the entry is re-probed against the live project first
+     * and only used as the fallback. Keeping the entry rather than dropping it
+     * preserves the one thing a retired module is still good for, decoding the
+     * struct it minted.
+     *
+     * Clearing `modules` is what actually retires the project, and dropping
+     * `enabled` back to false restores the single-module fast path
+     * byte-for-byte until the next project registers two modules.
+     */
+    reset(): void {
+      modules.clear();
+      enabled = false;
     },
 
     /**

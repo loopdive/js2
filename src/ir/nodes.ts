@@ -46,7 +46,7 @@ import type {
   IrInstrStringCharCodeAt,
   IrInstrStringRepeat,
 } from "./dialect/js.js";
-import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "./identity.js";
+import type { IrBindingId, IrClassId, IrFunctionIdentity, IrUnitId } from "../shared/contracts/ir-identity.js";
 import type { IntrinsicId, IntrinsicSignatureVersion } from "./intrinsics.js";
 // #3954 phase 3 (W4) — `js-tag.ts` is no longer imported here at all. The last
 // two references were `unbox.jsTag` / `tag.test.jsTag`; both now carry the

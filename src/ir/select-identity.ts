@@ -24,7 +24,7 @@ import {
   type IrUnitId,
   type IrUnitRecord,
 } from "./identity.js";
-import { collectModuleInitPopulation } from "./module-init.js";
+import { sourceOwnsModuleInitUnit } from "./module-init.js";
 import {
   IrPlanningIdentityInvariantError,
   requireIrPlanningSourceId,
@@ -809,7 +809,7 @@ function fallbackFor(unit: IrIdentitySelectionUnit, reason: IrFallbackReason, de
 }
 
 function sourceHasModuleInitUnit(sourceFile: ts.SourceFile): boolean {
-  if (collectModuleInitPopulation(sourceFile).length !== 0) return true;
+  if (sourceOwnsModuleInitUnit(sourceFile)) return true;
   return sourceFile.statements.some(
     (statement) =>
       ts.isClassDeclaration(statement) &&

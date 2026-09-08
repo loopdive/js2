@@ -162,6 +162,9 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
    * consumer's `catch` never matches, and the payload is lost in `catch_all`.
    */
   sharedExceptionTag?: boolean;
+  /** (#5247) Provider build — exports are wasm→wasm call targets, so the
+   *  export-boundary throw unwrapping stays off (export-throw-boundary.ts). */
+  exportsConsumedByWasm?: boolean;
   /** Standalone target (#1470): pure WasmGC, no JS host imports and no WASI
    *  runtime. Implies `nativeStrings: true` and refuses to emit any
    *  `wasm:js-string` namespace or `env::__concat_*` / `__extern_toString` /
@@ -893,6 +896,16 @@ export interface FunctionContext {
    * step 13c requires a derived constructor that returns a non-object, non-undefined
    * value to throw TypeError instead of silently coercing and null-dereffing. */
   isDerivedConstructor?: boolean;
+  /**
+   * (#5350 r3) i32 local of a DERIVED constructor, 0 at entry and set to 1
+   * immediately after every `super(...)` in this constructor returns — the
+   * point where `this` becomes initialised. Allocated only when the body has a
+   * `super.<x>` read inside a loop that also contains a `super(...)`, where a
+   * lexical rule cannot decide: the SAME textual read throws on iteration 1
+   * and succeeds on iteration 2. Per constructor FUNCTION, so a nested class's
+   * own `super()` never sets it.
+   */
+  superInitializedFlagLocal?: number;
   /** Whether this function is a generator (function*) */
   isGenerator?: boolean;
   /**
@@ -1474,6 +1487,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   programAbiFnctors?: import("../program-abi-fnctor-planning.js").ProgramAbiFnctorRegistry;
   programAbiCallables?: import("../program-abi-callable-planning.js").ProgramAbiCallableRegistry;
   programAbiGlobals?: import("../program-abi-global-planning.js").ProgramAbiGlobalRegistry;
+  /** Source-qualified storage gaps observed before an atomic initializer batch reservation. */
+  irProgramPreparedModuleInitBatchPreclaimGaps?: ReadonlyMap<ts.SourceFile, readonly string[]>;
+  /** Test-only receipt cleanup evidence for an aborted aggregate initializer batch. */
+  irPreparedModuleInitBatchAbortAudit?: {
+    readonly attempted: number;
+    readonly aborted: number;
+  };
   programAbiExports?: import("../program-abi-export-planning.js").ProgramAbiExportRegistry;
   programAbiTypes?: import("../program-abi-type-planning.js").ProgramAbiTypeRegistry;
   irPlanningIdentityContext?: import("../../ir/planning-identity.js").IrPlanningIdentityContext;
@@ -2660,6 +2680,13 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * as an accessor emits nothing at all.
    */
   hostDynamicClassAccessorReads: Set<string>;
+  /**
+   * (#5358) Member names a RUNTIME-key read on a class instance may need. Kept
+   * separate from the method set: only the bridge emitters consume the union
+   * (`hostBridgeMethodKeys`), so closed-method-dispatch's named-call arity
+   * relaxation never moves. See runtime-key-class-methods.ts.
+   */
+  runtimeKeyClassMethodNames: Set<string>;
   /** Resolved concrete types for generic functions (from call-site analysis) */
   genericResolved: Map<string, { params: ValType[]; results: ValType[] }>;
   /** Rest parameter info per function (functions with ...rest syntax) */
@@ -2769,6 +2796,9 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
    * either way (imported tags occupy the low indices).
    */
   sharedExnTag: boolean;
+  /** (#5247) True for a linked provider: its exports are called by another WASM
+   *  module, so the export-boundary throw unwrapping is suppressed. */
+  exportsConsumedByWasm: boolean;
   /** Whether union type helper imports have been registered */
   hasUnionImports: boolean;
   /**
@@ -3260,6 +3290,26 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   usesStandaloneConsoleSink: boolean;
   /** (#3469) Global index of the `__stdout_acc` accumulator, -1 until minted. */
   stdoutAccGlobalIdx: number;
+  /**
+   * (#5384) The compiled source contains a `throw` STATEMENT — i.e. this module
+   * can deliver a payload of its own choosing to whoever catches `__exn_tag`.
+   * Set by `unifiedVisitNode` (path-independent: the unified collector runs for
+   * both the legacy and the IR front-end), read by `stripHostBridgeExports` to
+   * decide whether the host-free `__exn_render_*` readout survives the
+   * `hostBridge: "off"` policy.
+   *
+   * Why not `ctx.exnTagIdx >= 0`: the tag is registered for essentially EVERY
+   * standalone module — `recordExportSignature` → `ensureNativeDynamicBoundaryBridge`
+   * → `addUnionImports` → `throwNativeError` arms the boundary's own TypeError
+   * before any user code is looked at. Gating the export on the tag therefore
+   * pins `__any_to_string` → `number_toString` → the Ryu tables in modules that
+   * never throw anything of their own: measured 2026-09-07, an arith-only
+   * `export function run(n){return n}` goes 6,076 → 49,032 B (`-O3`,
+   * `target: standalone`). That is #4034's cascade exactly. A source `throw` is
+   * the signal that separates the two: for a module that has one, the ToString
+   * chain is already live, so publishing the renderer costs ~150 B.
+   */
+  usesSourceThrowStatement: boolean;
   /**
    * (#2866) Type index of the native `$Symbol` carrier struct
    * `(struct (field $id i32) (field $desc (ref null $AnyString)))`, used in

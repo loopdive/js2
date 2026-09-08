@@ -141,7 +141,7 @@ import { execSync } from "child_process";
 try {
   const root = join(import.meta.dirname ?? ".", "..");
   execSync(
-    "npx esbuild src/index.ts --bundle --platform=node --format=esm --outfile=scripts/compiler-bundle.mjs --external:typescript",
+    "npx esbuild scripts/compiler-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/compiler-bundle.mjs --external:typescript",
     { cwd: root, stdio: "pipe", timeout: 30000 },
   );
 } catch {
@@ -152,7 +152,7 @@ try {
 try {
   const root = join(import.meta.dirname ?? ".", "..");
   execSync(
-    "npx esbuild src/runtime.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript",
+    "npx esbuild scripts/runtime-bundle-entry.ts --bundle --platform=node --format=esm --outfile=scripts/runtime-bundle.mjs --external:typescript",
     { cwd: root, stdio: "pipe", timeout: 30000 },
   );
 } catch {

@@ -61,6 +61,29 @@ type Provenance =
   /** This allocation was proven dead and removed. */
   | { state: "retired" };
 
+/** A detached, read-only projection of one registry slot. */
+export type AllocRegistryProvenanceSnapshot =
+  | { readonly state: "live"; readonly site: AllocSite }
+  | { readonly state: "aliased"; readonly to: AllocSiteId }
+  | { readonly state: "retired" };
+
+/** A metadata row retains an explicit `undefined` value when it was written. */
+export interface AllocRegistryMetadataSnapshot {
+  readonly id: AllocSiteId;
+  readonly entries: readonly (readonly [namespace: string, value: unknown])[];
+}
+
+/**
+ * Complete allocation-registry evidence for an immutable preparation batch.
+ * Missing metadata rows and present rows whose value is `undefined` are
+ * intentionally represented differently.
+ */
+export interface AllocRegistrySnapshot {
+  readonly size: number;
+  readonly entries: readonly AllocRegistryProvenanceSnapshot[];
+  readonly metadata: readonly AllocRegistryMetadataSnapshot[];
+}
+
 /**
  * Module-global allocation-site registry. One per `IrModule` compile, threaded
  * through every pass invocation (see integration.ts). Not a per-function
@@ -195,5 +218,33 @@ export class AllocSiteRegistry {
       if (p && p.state === "live") out.push(p.site);
     }
     return out;
+  }
+
+  /**
+   * Return all minted provenance and metadata without retaining this registry.
+   * Callers that publish the snapshot must defensively own it before exposing
+   * it across a backend boundary.
+   */
+  snapshot(): AllocRegistrySnapshot {
+    const entries = this.sites.map((provenance): AllocRegistryProvenanceSnapshot => {
+      if (provenance.state === "live") {
+        return {
+          state: "live",
+          site: { ...provenance.site },
+        };
+      }
+      if (provenance.state === "aliased") return { state: "aliased", to: provenance.to };
+      return { state: "retired" };
+    });
+    const metadata: AllocRegistryMetadataSnapshot[] = [];
+    for (let index = 0; index < this.meta.length; index++) {
+      const row = this.meta[index];
+      if (!row) continue;
+      metadata.push({
+        id: asAllocSiteId(index),
+        entries: [...row.entries()].map(([namespace, value]) => [namespace, value] as const),
+      });
+    }
+    return { size: this.sites.length, entries, metadata };
   }
 }

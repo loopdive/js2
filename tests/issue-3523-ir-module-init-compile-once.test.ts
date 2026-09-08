@@ -153,9 +153,21 @@ describe("#3523 source-ordered module-init planning", () => {
     ]);
     expect(destructuring.evaluations).toHaveLength(1);
 
+    // (#5332) This rung used to pin `missing-module-init-unit` here. That gap
+    // was not a capability limit of the PLAN — it was identity failing to mint
+    // a module-init terminal for a source whose only top-level statement is an
+    // export assignment, while this plan (correctly, matching the direct
+    // front-end queue) counts one as an evaluation. #3525's census turned that
+    // disagreement into a hard `terminal-join` error, so
+    // `export default <anything>;` in a multi-file project stopped compiling
+    // outright. Identity now owns the terminal, so the join succeeds and the
+    // gap is gone. `missing-module-init-unit` stays in the plan as a
+    // fail-closed guard; no ordinary source shape reaches it any more.
     const exportAssignment = buildPlan(`export default sideEffect();`).plan;
     expect(exportAssignment.evaluations.map((entry) => entry.kind)).toEqual(["export-assignment"]);
-    expect(exportAssignment.gaps).toEqual([expect.objectContaining({ code: "missing-module-init-unit" })]);
+    expect(exportAssignment.executable).toBe(true);
+    expect(exportAssignment.unitId).not.toBeNull();
+    expect(exportAssignment.gaps).toEqual([]);
 
     const forwardExport = buildPlan(`export { later }; function later(): number { return 1; }`).plan;
     expect(forwardExport.exports).toEqual([

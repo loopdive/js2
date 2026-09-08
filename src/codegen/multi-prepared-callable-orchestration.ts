@@ -5,7 +5,6 @@ import type { TypeFact } from "../checker/oracle.js";
 import type { IrImportedCallLoweringPlan, IrIntegrationLoweringPlans } from "../ir/ast-lowering-plans.js";
 import { irUnitFuncRef } from "../ir/callable-bindings.js";
 import type { IrBindingId, IrSourceId, IrUnitId } from "../ir/identity.js";
-import { collectModuleInitPopulation } from "../ir/module-init.js";
 import type { IrIntegrationError } from "../ir/integration.js";
 import type { IrFuncRef } from "../ir/nodes.js";
 import { IrInvariantError } from "../ir/outcomes.js";
@@ -13,6 +12,8 @@ import {
   planMultiPreparedModuleInit,
   type MultiPreparedModuleInitPlanningInput,
 } from "./multi-prepared-module-init.js";
+import { planMultiPreparedModuleInitBatch } from "./multi-prepared-module-init-batch.js";
+import { reconcileMultiPreparedModuleInitCensus } from "./multi-prepared-module-init-census.js";
 import {
   createMultiPreparedProgramOwner,
   type MultiPreparedProgramCallableComponent,
@@ -1227,6 +1228,7 @@ export interface MultiPreparedProgramRoutePlanningInput {
     | "ctx"
     | "multiAst"
     | "identityContext"
+    | "census"
     | "options"
     | "planSource"
     | "planResolvedSource"
@@ -1240,6 +1242,12 @@ export interface MultiPreparedProgramRoutePlanningInput {
 }
 
 export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramRoutePlanningInput): void {
+  // The owner builds the semantic census at construction time, before any
+  // route can prepare a body.  Queue parity is observed exactly once here,
+  // after the declaration collection pass has populated all legacy queues.
+  const semanticCensus = input.owner.moduleInitCensus;
+  const observedCensus = reconcileMultiPreparedModuleInitCensus(semanticCensus, { ctx: input.ctx });
+  input.owner.reconcileModuleInitCensus(observedCensus);
   const plans = new Map<ts.SourceFile, IrOverlayPlan>();
   const stringProofContext = { checker: input.multiAst.checker, oracle: input.ctx.oracle };
   const stringShapes = input.explicitlyDisabled(process.env.JS2WASM_IR_STRING_BUILDER)
@@ -1266,9 +1274,27 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     !input.ctx.wasi &&
     !input.ctx.fast &&
     input.multiAst.sourceFiles.length > 1;
-  if (input.multiAst.sourceFiles.some((sourceFile) => collectModuleInitPopulation(sourceFile).length > 0)) {
+  if (semanticCensus.sourcePlans.some((sourcePlan) => sourcePlan.executable)) {
     input.ctx.irProgramCallableCutoverEnabled = false;
   }
+  // P2A freezes and prepares the complete initializer population before any
+  // other early route can reserve a body. A typed decline leaves the existing
+  // singleton/callable route decisions untouched and publishes no prefix.
+  const preparedModuleInitBatch = input.moduleInit
+    ? planMultiPreparedModuleInitBatch({
+        ...input.moduleInit,
+        ctx: input.ctx,
+        multiAst: input.multiAst,
+        identityContext: input.identityContext,
+        ...(input.options ? { options: input.options } : {}),
+        census: input.owner.moduleInitCensus,
+        planSource,
+        planResolvedSource: input.planResolvedModuleInitSource,
+        safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
+        projectLoweringPlans: input.projectLoweringPlans,
+      })
+    : undefined;
+  if (preparedModuleInitBatch) input.owner.registerPreparedModuleInitBatch(preparedModuleInitBatch);
   input.owner.planExistingRoutes({
     active,
     scalarCutoverEnabled: !input.explicitlyDisabled(process.env.JS2WASM_MULTI_PREPARED_SCALAR_LEAF_CUTOVER),
@@ -1289,21 +1315,23 @@ export function planMultiPreparedProgramEarlyRoutes(input: MultiPreparedProgramR
     projectLoweringPlans: input.projectLoweringPlans,
     stringShapes,
   });
-  const preparedModuleInit = input.moduleInit
-    ? planMultiPreparedModuleInit({
-        ...input.moduleInit,
-        ctx: input.ctx,
-        multiAst: input.multiAst,
-        identityContext: input.identityContext,
-        ...(input.options ? { options: input.options } : {}),
-        planSource,
-        planResolvedSource: input.planResolvedModuleInitSource,
-        safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
-        projectLoweringPlans: input.projectLoweringPlans,
-      })
-    : undefined;
+  const preparedModuleInit =
+    input.moduleInit && !preparedModuleInitBatch
+      ? planMultiPreparedModuleInit({
+          ...input.moduleInit,
+          ctx: input.ctx,
+          multiAst: input.multiAst,
+          identityContext: input.identityContext,
+          ...(input.options ? { options: input.options } : {}),
+          census: input.owner.moduleInitCensus,
+          planSource,
+          planResolvedSource: input.planResolvedModuleInitSource,
+          safeSelection: (plan, sourceFile) => input.safeSelection(plan, sourceFile, safety()),
+          projectLoweringPlans: input.projectLoweringPlans,
+        })
+      : undefined;
   if (preparedModuleInit) input.owner.registerPreparedModuleInit(preparedModuleInit);
-  if (input.ctx.irProgramCallableCutoverEnabled && !preparedModuleInit) {
+  if (input.ctx.irProgramCallableCutoverEnabled && !preparedModuleInit && !preparedModuleInitBatch) {
     planMultiPreparedCallableComponents({
       owner: input.owner,
       multiAst: input.multiAst,

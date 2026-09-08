@@ -210,9 +210,18 @@ oracle-ratchet-allow:
 
 ## PR handoff — 2026-09-06
 
-2026-09-08: syncing this work branch with fetched `loopdive/js2` main
+2026-09-08: merging this work branch with fetched `loopdive/js2` main
 `16498efb481cb022ee5c4dcc9bb137b6d4c91a50` (680 incoming commits).
 The pre-sync measurements below are not validation of the merged candidate.
+Resolved three textual conflicts, retaining both source-function shadowing and
+main's WASI ArrayBuffer identity, both candidate snapshot and rest dispatch
+support, and both object-spread/accessor imports. Removed a duplicate import
+and an overlapping abstract-reference truthiness arm exposed by typecheck.
+Focused merged-candidate check: 102/104 tests pass across six files. The two
+optional-vector factory preregistration cases (GC and standalone) return 7
+instead of 17; their origin has not been established by a baseline comparison.
+Main's dynamic-result/rest-callable/ArrayBuffer tests and the branch's builtin
+shadowing/module-function-identity controls pass. No full parser/binder rerun.
 
 This is an incomplete checkpoint, not completion of the TypeScript 5 unit-suite
 or self-hosting goal. Work is paused at the user's request. This summary

@@ -29,5 +29,19 @@ describe("moment 2.30.1 upstream suite", () => {
     expect(report.extraction.testsRegistered).toBe(10);
     expect(report.extraction.nativePassed).toBe(10);
     expect(report.results.passed + report.results.failed + report.results.runtimeFailed).toBe(report.results.scored);
+    // (#5336) Every module this suite CODEGENS must also load. #5390 broke that
+    // for all six and the arm still passed, because it only ever asserted the
+    // native oracle and the scored/passed bookkeeping — both of which stay
+    // internally consistent when Wasm produces nothing. The cheap, always-run
+    // twin of this line is `pnpm run check:dogfood-validation`; this one keeps
+    // the heavy arm honest about the modules it actually built.
+    const invalid = (report.compile.details ?? []).filter(
+      (detail: { validates: boolean }) => !detail.validates,
+    ) as Array<{ file: string; validationError?: string }>;
+    expect(
+      invalid.map((detail) => `${detail.file}: ${detail.validationError ?? "did not validate"}`),
+      "modules compiled but rejected by WebAssembly validation",
+    ).toEqual([]);
+    expect(report.compile.validated).toBe(report.compile.succeeded);
   });
 });

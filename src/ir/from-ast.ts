@@ -35,6 +35,7 @@
 //     call's return type comes from `callReturnTypes` (same TypeMap),
 //     with arg types validated against the propagated callee param types.
 
+import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 
@@ -137,6 +138,7 @@ export type {
 import { irDateSnapshotGetterSymbol } from "./date-runtime.js";
 import type { AllocSiteRegistry } from "./alloc-registry.js";
 import { classifyLiteral, joinEncoding, type Encoding } from "./analysis/encoding.js";
+import { inferEncoding } from "./analysis/encoding-inference.js";
 import { proveTypedStringAppend, proveTypedStringMethod, type TypedValueEvidence } from "./analysis/string-evidence.js";
 import {
   EmptyArrayElementInference,
@@ -156,6 +158,7 @@ import {
   tryLowerVecPush,
 } from "./array-element-lowering.js";
 import {
+  emitPreparedAsyncAwait,
   preparedAsyncAwaitResultType,
   tryLowerPreparedAsyncPromiseAll,
   type PreparedAsyncFromAstResolver,
@@ -2542,7 +2545,7 @@ function inferStringEncoding(expr: ts.Expression, cx: LowerCtx): Encoding | unde
     const receiver = inferStringEncoding(expr.expression.expression, cx);
     return receiver === "ascii" ? "ascii" : receiver ? "wtf16" : undefined;
   }
-  return undefined;
+  return inferEncoding(expr, (e) => [inferStringEncoding(e, cx), checkerOperandFamily(e, cx)]);
 }
 
 type StringEncodingScopeBinding = Exclude<ScopeBinding, { kind: "nestedFunc" }>;
@@ -4044,6 +4047,50 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
   if (ts.isAwaitExpression(expr)) {
     if (cx.funcKind !== "async") {
       demoteToLegacy("body-shape-rejected", `ir/from-ast: await outside an async function (${cx.funcName})`);
+    }
+    // B2/B3: an exact prepared owner must retain every source await before the
+    // historical C-1 static-elision arm.  The operand is evaluated once and
+    // crosses the existing Promise carrier boundary; the frame engine owns
+    // PromiseResolve/adoption and the subsequent reaction.
+    const preparedAwait = cx.resolver?.preparedAsyncAwaitSite?.(expr);
+    if (preparedAwait) {
+      if (preparedAwait.operandType) {
+        const operand = lowerExpr(expr.expression, cx, preparedAwait.operandType);
+        return emitPreparedAsyncAwait(cx.builder, operand, preparedAwait);
+      }
+      if (
+        preparedAwait.settledNonThenable === true &&
+        (!preparedAwait.settledOwnerUnitId || !preparedAwait.settledOwnerProofKey)
+      ) {
+        throw new IrInvariantError(
+          "selection-preparation-mismatch",
+          "resolve",
+          `prepared settled await in ${cx.funcName} has no source-owned proof receipt`,
+        );
+      }
+      // Keep the explicit await edge. B3's settled proof retains the original
+      // numeric operand; existing B2 owners may still use the established
+      // Promise.resolve substitution. In either case the frame's
+      // PromiseResolve supplies the carrier and microtask boundary.
+      const settled = staticPromiseResolveSettledExpr(expr.expression);
+      const operandExpression =
+        preparedAwait.settledNonThenable === true
+          ? expr.expression
+          : settled !== null && settled !== "undefined"
+            ? settled
+            : expr.expression;
+      const operand = lowerExpr(operandExpression, cx, hint);
+      const operandType = cx.builder.valueType(operand);
+      const operandVal = operandType !== undefined ? asVal(operandType) : undefined;
+      const externShaped =
+        (operandVal !== undefined && operandVal !== null && operandVal.kind === "externref") ||
+        operandType?.kind === "extern";
+      const carrier = externShaped
+        ? operand
+        : operandType?.kind === "dynamic"
+          ? coerceIrValueToExternref(cx.builder, operand)
+          : coerceToExpectedExtern(operand, { kind: "externref" }, cx, "prepared await operand");
+      return cx.builder.emitAwait(carrier, preparedAwait.resultType);
     }
     const settled = staticPromiseResolveSettledExpr(expr.expression);
     if (settled === "undefined") {
@@ -8523,7 +8570,7 @@ function lowerMethodCall(expr: ts.CallExpression, cx: LowerCtx, statementPositio
  * mode decision in `resolveFunc` (not from-ast) mirrors the #3156 charCodeAt
  * sentinel pattern, so from-ast reads no `nativeStrings`.
  */
-export const IR_STRING_COMPARE_FN = "__ir_str_compare";
+export { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 
 /**
  * (#3167) Emit a both-string relational `<`/`>`/`<=`/`>=`. Calls the mode-

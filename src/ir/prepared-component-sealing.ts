@@ -24,7 +24,7 @@ import {
 } from "./prepared-dynamic-support.js";
 import { ProgramAbiInvariantError } from "./program-abi.js";
 import type { ProgramAbiDerivedUnitRecord, ProgramAbiSlotSpace } from "./program-abi.js";
-import type { Import, WasmFunction } from "./types.js";
+import type { Import, ValType, WasmFunction } from "./types.js";
 
 type PreparedProgramAbiScopeTransaction = ReturnType<
   NonNullable<CodegenContext["programAbiSession"]>["beginPreparedComponentScope"]
@@ -49,8 +49,8 @@ export interface PreparedComponentScopeLookup {
 
 /** Opaque structural callable contract exposed only for validation seams. */
 export interface PreparedComponentCallableContract {
-  readonly params: readonly unknown[];
-  readonly results: readonly unknown[];
+  readonly params: readonly ValType[];
+  readonly results: readonly ValType[];
 }
 
 export interface PreparedComponentOpenScope {
@@ -74,6 +74,7 @@ function assertPreparedComponentScopeLookup(lookup: PreparedComponentScopeLookup
     "resolveCurrentIndex",
     "currentCallableSignature",
     "locatorObject",
+    "locatorObjectForBinding",
   ] as const) {
     if (typeof lookup[operation] !== "function") {
       throw new IrInvariantError(
@@ -83,6 +84,36 @@ function assertPreparedComponentScopeLookup(lookup: PreparedComponentScopeLookup
       );
     }
   }
+}
+
+/**
+ * Validate the exact source-callable boundary against one component-local
+ * lookup.  This keeps scoped ABI resolution at the sealing seam; callers must
+ * never borrow the first component's live session view for another component.
+ */
+export function assertPreparedComponentCallableBoundaryLookup(input: {
+  readonly lookup: PreparedComponentScopeLookup;
+  readonly componentId: string;
+  readonly bindingId: IrBindingId;
+  readonly allocator: object;
+  readonly structuralReferenceKey: string;
+}): void {
+  assertPreparedComponentScopeLookup(input.lookup, input.componentId);
+  if (input.lookup.locatorObject(input.bindingId) !== input.allocator) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      `prepared component ${input.componentId} lost the exact callable allocator for ${input.bindingId}`,
+    );
+  }
+  if (input.lookup.currentCallableContract(input.bindingId) === undefined) {
+    throw new IrInvariantError(
+      "selection-preparation-mismatch",
+      "resolve",
+      `prepared component ${input.componentId} has no callable contract for ${input.bindingId}`,
+    );
+  }
+  input.lookup.resolveCurrentIndex(input.bindingId, "function", input.structuralReferenceKey);
 }
 
 export interface PreparedComponentArtifactEntry {

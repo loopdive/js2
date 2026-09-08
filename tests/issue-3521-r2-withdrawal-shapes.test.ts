@@ -8,16 +8,18 @@
 // vitest fork's 512 MB heap (`vitest.config.ts:5`) cannot hold both halves'
 // compiles, and every case here passes in isolation.
 //
-// Each case asserts the FULL triple, the reason, and `preparedComponentId ===
+// Withdrawal cases assert the FULL triple and `preparedComponentId ===
 // undefined`. Asserting the triple matters: a reason attached to a row that
 // actually prepared, or to one that never emitted an IR body, is invented
 // evidence, and that is exactly what the row rule in `check-ir-only.ts`
-// rejects. The reasons with no claimable shape on this base are listed, with
-// the measurement that establishes it, in the (d) block of the sibling file.
+// rejects. The callable outside-caller row below is a positive control for the
+// R2-B1 boundary contract; its former withdrawal is retained in the issue
+// measurements as the before-state.
 import { afterEach, describe, expect, it } from "vitest";
 
 import { compile, type CompileOptions, type CompileResult, type IrObservedOutcome } from "../src/index.js";
 import { r2WithdrawalOf, type IrR2Withdrawal } from "../src/ir/r2-withdrawal.js";
+import { buildImports } from "../src/runtime.js";
 
 // Register the low-level codegen delegates used by the compile paths below.
 import "../src/codegen/expressions.js";
@@ -40,6 +42,22 @@ async function tracked(source: string, fileName: string, options: CompileOptions
   const result = await compile(source, { fileName, trackIrOutcomes: true, ...options });
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   return result;
+}
+
+async function trackedWithDirectBodyPoison(
+  source: string,
+  fileName: string,
+  poisonedNames: string,
+  options: CompileOptions = {},
+): Promise<CompileResult> {
+  const previous = process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY;
+  process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = poisonedNames;
+  try {
+    return await tracked(source, fileName, options);
+  } finally {
+    if (previous === undefined) Reflect.deleteProperty(process.env, "JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY");
+    else process.env.JS2WASM_TEST_POISON_DIRECT_FUNCTION_BODY = previous;
+  }
 }
 
 /** Assert one row's full triple, its reason, and that it sealed no component. */
@@ -162,15 +180,42 @@ describe("#3521 R2 withdrawal telemetry — (b) one shape per reachable reason",
     expectWithdrawn(result, "readConst", { stage: "fixed-point", reason: "storage-terminal-unprepared" });
   });
 
-  it("fixed-point:outside-caller-uncertified", async () => {
-    // #4514's edge and R2-E1's whole population: the signature proof admits the
-    // callable parameter, the declaration-fixed carrier certification refuses
-    // it, and the module-init caller then withdraws it.
-    const result = await tracked(
-      "export function apply(f: (v: number) => number, v: number): number { return f(v); }\nexport const seed = apply((v) => v + 1, 1);",
-      "r2-outside-caller.ts",
+  it.each(["gc", "standalone"] as const)("certifies callable outside-caller boundary in %s", async (target) => {
+    // Before R2-B1 this exact module-init caller withdrew `apply` at the
+    // outside-caller fixed point. The source-qualified contract now proves the
+    // allocated externref boundary and prepared closure support before the
+    // direct body can emit.
+    const result = await trackedWithDirectBodyPoison(
+      "export function apply(f: (v: number) => number, v: number): number { return f(v); }\nexport const seed = apply((v) => v + 1, 1);\nexport function main(): number { return seed; }",
+      `r2-outside-caller-${target}.ts`,
+      "apply",
+      { target },
     );
-    expectWithdrawn(result, "apply", { stage: "fixed-point", reason: "outside-caller-uncertified" });
+    const applyRow = outcome(result, "apply");
+    expect(applyRow).toMatchObject({
+      kind: "emitted",
+      prepareAttempts: 1,
+      directBodyEmissions: 0,
+      irBodyEmissions: 1,
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+      preparedComponentId: expect.stringMatching(/^prepared-component:/),
+    });
+    expect(r2WithdrawalOf(applyRow)).toBeUndefined();
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports);
+    imports.setExports?.(instance.exports);
+    expect((instance.exports.main as () => number)()).toBe(2);
+
+    const fallback = await tracked(
+      "export function apply(f: (v: number) => number, v: number): number { return f(v); }\nexport const seed = apply((v) => v + 1, 1);\nexport function main(): number { return seed; }",
+      `r2-outside-caller-${target}-fallback.ts`,
+      { target, experimentalIR: false },
+    );
+    const fallbackImports = buildImports(fallback.imports, undefined, fallback.stringPool);
+    const { instance: fallbackInstance } = await WebAssembly.instantiate(fallback.binary, fallbackImports);
+    fallbackImports.setExports?.(fallbackInstance.exports);
+    expect((fallbackInstance.exports.main as () => number)()).toBe(2);
   });
 
   it("fixed-point:callee-outside-component", async () => {

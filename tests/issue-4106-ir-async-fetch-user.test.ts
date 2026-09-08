@@ -1,11 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** #4106 — first genuinely-suspending source function prepared and emitted through IR. */
+import { spawnSync } from "node:child_process";
+
 import { describe, expect, it } from "vitest";
 
-import { compile, type CompileResult } from "../src/index.js";
-import { buildImports } from "../src/runtime.js";
-import { ASYNC_HOST_ADAPTERS } from "../src/ir/async-runtime-providers.js";
+import { type CompileResult, compile } from "../src/index.js";
 import { isSingleAwaitReturnAsyncCandidate } from "../src/ir/async-prepare.js";
+import { ASYNC_HOST_ADAPTERS } from "../src/ir/async-runtime-providers.js";
+import { buildImports } from "../src/runtime.js";
 import { ts } from "../src/ts-api.js";
 
 const EXACT_SOURCE = `
@@ -21,10 +23,68 @@ const EXACT_SOURCE = `
   }
 `;
 
-function expectSuccess(result: CompileResult): void {
+const VOID_SOURCE = `
+  function delay(ms: number, value: number): Promise<number> {
+    return new Promise<number>((resolve) => {
+      setTimeout(() => resolve(value), ms);
+    });
+  }
+
+  export async function linearVoid(seed: number): Promise<void> {
+    const resumed = await delay(0, seed);
+    await Promise.resolve(resumed + 1);
+    return;
+  }
+`;
+
+function expectCompileSuccess(result: CompileResult): void {
   expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
   expect(result.irPostClaimErrors ?? []).toEqual([]);
+}
+
+function expectSuccess(result: CompileResult): void {
+  expectCompileSuccess(result);
   expect(WebAssembly.validate(result.binary)).toBe(true);
+}
+
+const HOST_FREE_VALIDATE_RUNNER = `
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  const binary = Buffer.concat(chunks);
+  process.stdout.write(WebAssembly.validate(binary) ? "true" : "false");
+`;
+
+/** Validate the exact compiled bytes in a Node process with Wasm exnref enabled. */
+function validateHostFreeBinary(binary: Uint8Array): boolean {
+  const child = spawnSync(
+    process.execPath,
+    ["--experimental-wasm-exnref", "--input-type=module", "--eval", HOST_FREE_VALIDATE_RUNNER],
+    {
+      input: binary,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  const diagnostic = [
+    child.error?.message,
+    child.signal ? `signal: ${child.signal}` : undefined,
+    child.stderr,
+    child.stdout,
+  ]
+    .filter((part) => part !== undefined && part.length > 0)
+    .join("\n");
+  expect(child.error, diagnostic).toBeUndefined();
+  expect(child.signal, diagnostic).toBeNull();
+  expect(child.status, diagnostic).toBe(0);
+
+  const output = child.stdout.trim();
+  expect(output, diagnostic).toMatch(/^(true|false)$/);
+  return output === "true";
+}
+
+function expectHostFreeSuccess(result: CompileResult): void {
+  expectCompileSuccess(result);
+  expect(validateHostFreeBinary(result.binary)).toBe(true);
 }
 
 function parseFunction(body: string): ts.FunctionDeclaration {
@@ -150,7 +210,7 @@ describe("#4106 IR single-await async producer", () => {
     await expect(settled(fetchUser(7))).resolves.toBe(70);
   });
 
-  it("leaves a non-identity post-await tail on the direct route", async () => {
+  it("IR-emits a straight-line post-await tail through the generic producer", async () => {
     const result = await compile(
       EXACT_SOURCE.replace(
         "return value;",
@@ -165,14 +225,40 @@ describe("#4106 IR single-await async producer", () => {
     );
     expectSuccess(result);
 
-    expect(result.irCompiledFuncs ?? []).not.toContain("fetchUser");
+    expect(result.irFirstSkipped ?? []).toContain("fetchUser");
+    expect(result.irCompiledFuncs ?? []).toEqual(
+      expect.arrayContaining(["fetchUser", "fetchUser__ir_async_state_0", "fetchUser__ir_async_state_1"]),
+    );
     expect((result.irOutcomes ?? []).find((candidate) => candidate.displayName === "fetchUser")).toMatchObject({
-      kind: "unsupported",
-      stage: "select",
-      code: "async-function",
-      legacyBodyEmitted: true,
-      irBodyEmitted: false,
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
     });
+  });
+
+  it("IR-emits a linear final-void owner with the canonical void ABI", async () => {
+    const result = await compile(VOID_SOURCE, {
+      fileName: "issue-4106-linear-void.ts",
+      target: "gc",
+      trackIrOutcomes: true,
+    });
+    expectSuccess(result);
+
+    expect(result.irFirstSkipped ?? []).toContain("linearVoid");
+    expect(result.irCompiledFuncs ?? []).toEqual(
+      expect.arrayContaining(["linearVoid", "linearVoid__ir_async_state_0", "linearVoid__ir_async_state_1"]),
+    );
+    expect((result.irOutcomes ?? []).find((candidate) => candidate.displayName === "linearVoid")).toMatchObject({
+      kind: "emitted",
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
+
+    const imports = buildImports(result.imports, undefined, result.stringPool);
+    const { instance } = await WebAssembly.instantiate(result.binary, imports as WebAssembly.Imports);
+    imports.setExports?.(instance.exports as Record<string, Function>);
+    const linearVoid = instance.exports.linearVoid as (seed: number) => Promise<void>;
+    await expect(settled(linearVoid(7))).resolves.toBeUndefined();
   });
 
   it("keeps an await of a non-prepared async callee on the direct route", async () => {
@@ -210,7 +296,10 @@ describe("#4106 IR single-await async producer", () => {
       target: "standalone",
       trackIrOutcomes: true,
     });
-    expectSuccess(hostFree);
+    expectHostFreeSuccess(hostFree);
+    const corruptBinary = hostFree.binary.slice();
+    corruptBinary[0] ^= 0xff;
+    expect(validateHostFreeBinary(corruptBinary)).toBe(false);
     expect(hostFree.irFirstSkipped ?? []).not.toContain("fetchUser");
     expect((hostFree.irOutcomes ?? []).find((candidate) => candidate.displayName === "fetchUser")).toMatchObject({
       legacyBodyEmitted: true,

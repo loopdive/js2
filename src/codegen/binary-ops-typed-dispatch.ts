@@ -32,6 +32,7 @@ import {
   compileNumericBinaryOp,
 } from "./binary-ops.js";
 import { equalityOperandHasStaleStaticType } from "./strict-eq-stale-type.js";
+import { emitLooseScalarVsReferenceEquality, emitReferenceEqualityFromStack } from "./strict-eq-reference-arm.js";
 
 /**
  * Type-directed dispatch for a binary expression whose operands have already
@@ -1183,25 +1184,8 @@ export function compileTypedBinaryDispatch(
     const leftIsWrapper = isWrapperObjectType(leftTsType);
     const rightIsWrapper = isWrapperObjectType(rightTsType);
     if (leftIsWrapper || rightIsWrapper) {
-      // Coerce operands to externref (right is on top of stack).
-      if (rightType.kind !== "externref") {
-        coerceType(ctx, fctx, rightType, { kind: "externref" });
-      }
-      if (leftType.kind !== "externref") {
-        const tmpR = allocTempLocal(fctx, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: tmpR });
-        coerceType(ctx, fctx, leftType, { kind: "externref" });
-        fctx.body.push({ op: "local.get", index: tmpR });
-        releaseTempLocal(fctx, tmpR);
-      }
-      const hostFn = isStrict ? "__host_eq" : "__host_loose_eq";
-      const hostIdx = ensureLateImport(ctx, hostFn, [{ kind: "externref" }, { kind: "externref" }], [{ kind: "i32" }]);
-      flushLateImportShifts(ctx, fctx);
-      const finalHostIdx = ctx.funcMap.get(hostFn) ?? hostIdx;
-      if (finalHostIdx === undefined) throw new Error(`Missing import after ensureLateImport: ${hostFn}`);
-      fctx.body.push({ op: "call", funcIdx: finalHostIdx });
-      if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
-      return { kind: "i32" };
+      // (#5357) The lane-aware reference arm; a scalar side is boxed by brand.
+      return emitReferenceEqualityFromStack(ctx, fctx, leftType, rightType, leftTsType, rightTsType, isStrict, isNeqOp);
     }
 
     // Strict equality: different JS types → always false (===) or true (!==)
@@ -1226,44 +1210,15 @@ export function compileTypedBinaryDispatch(
     // exactly right, including +0 === -0 (true) and NaN !== NaN. JS-host only; the
     // native-first path is handled above by the tag-dispatch block.
     // Strings keep their dedicated `wasm:js-string equals` path below. A
-    // boolean-typed side is also excluded: `coerceType(i32 → externref)` boxes
-    // it as a JS *number* (`__box_number`), so `__host_eq(true, 1)` would be
-    // false — boolean operands keep the existing (correct) lowering, and a
-    // boolean `any` compared to a boolean falls through to it.
+    // boolean-typed side is routed by the #5357 arm at the tail instead (it
+    // used to be excluded here because the brand-blind `coerceType` boxed a
+    // Boolean as a JS number; the reference arm now boxes by brand).
+    // (#3154 / task #90) A statically-SYMBOL i32 operand is branded so the box
+    // preserves the JS tag (`__box_symbol`, identity-stable) — the brand-blind
+    // fallthrough boxed the HANDLE via `__box_number`, so
+    // `anyElem === moduleScopedSymbol` was always false.
     if (isStrict && !nativeEqualityProvider && !leftIsString && !rightIsString && !leftIsBool && !rightIsBool) {
-      // (#3154 / task #90) Brand a statically-SYMBOL i32 operand so the
-      // externref box preserves the JS tag: the brand-blind
-      // `coerceType(i32 → externref)` fallthrough boxed a symbol HANDLE via
-      // `__box_number`, so the host strict-eq compared a real symbol against a
-      // boxed number id and was always false (`anyElem === moduleScopedSymbol`
-      // failed). With the brand, `coerceType` routes through `__box_symbol`
-      // (host symbol cache → identity-stable JS symbol), and JS `===` answers
-      // symbol identity.
-      const brandSymbolIfStatic = (t: ValType, tsType: ts.Type): ValType =>
-        t.kind === "i32" && (tsType.flags & ts.TypeFlags.ESSymbolLike) !== 0 ? { kind: "i32", symbol: true } : t;
-      if (rightType.kind !== "externref") {
-        coerceType(ctx, fctx, brandSymbolIfStatic(rightType, rightTsType), { kind: "externref" });
-      }
-      if (leftType.kind !== "externref") {
-        const tmpR = allocTempLocal(fctx, { kind: "externref" });
-        fctx.body.push({ op: "local.set", index: tmpR });
-        coerceType(ctx, fctx, brandSymbolIfStatic(leftType, leftTsType), { kind: "externref" });
-        fctx.body.push({ op: "local.get", index: tmpR });
-        releaseTempLocal(fctx, tmpR);
-      }
-      const hostIdx = ensureLateImport(
-        ctx,
-        "__host_eq",
-        [{ kind: "externref" }, { kind: "externref" }],
-        [{ kind: "i32" }],
-      );
-      flushLateImportShifts(ctx, fctx);
-      const finalHostIdx = ctx.funcMap.get("__host_eq") ?? hostIdx;
-      if (finalHostIdx !== undefined) {
-        fctx.body.push({ op: "call", funcIdx: finalHostIdx });
-        if (isNeqOp) fctx.body.push({ op: "i32.eqz" });
-        return { kind: "i32" };
-      }
+      return emitReferenceEqualityFromStack(ctx, fctx, leftType, rightType, leftTsType, rightTsType, true, isNeqOp);
     }
 
     const eitherIsString = leftIsString || rightIsString;
@@ -1540,8 +1495,36 @@ export function compileTypedBinaryDispatch(
       return { kind: "i32" };
     }
 
+    // (#5357) Every STRICT pair that reaches this point has a statically-Boolean
+    // side — number / string / `any` pairs were routed above — and the ToNumber
+    // collapse below cannot decide §7.2.16 step 1 for it: it answered
+    // `Number(null) === Number(false)` (true) for a nullish reference and
+    // `Number(1) === Number(true)` (true) for a reference holding `1`. Box the
+    // Boolean by brand and compare in the lane's reference arm. A reference
+    // that is statically numeric never gets here with a Boolean side (the
+    // Type()-disjoint fold above answers it), so the numeric fast path below
+    // is untouched for the number-typed references it exists for.
+    if (isStrict && (leftIsBool || rightIsBool)) {
+      return emitReferenceEqualityFromStack(ctx, fctx, leftType, rightType, leftTsType, rightTsType, true, isNeqOp);
+    }
+
     addUnionImports(ctx);
     const unboxIdx = ctx.funcMap.get("__unbox_number")!;
+    // (#5357) LOOSE, one scalar against a reference that is not statically
+    // numeric: `null` / `undefined` loosely equal only each other (§7.2.15
+    // steps 2-3), but the collapse read `Number(null)` as `0`, so `null == 0`
+    // and `null == false` answered `true`. Decide the nullish case first; a
+    // non-nullish reference keeps the ToNumber comparison, which IS steps 5-10.
+    const scalarSide = leftType.kind === "externref" ? rightType : leftType;
+    const referenceIsStaticNumber = leftType.kind === "externref" ? leftIsNumber : rightIsNumber;
+    if (
+      !isStrict &&
+      (leftType.kind === "externref") !== (rightType.kind === "externref") &&
+      (scalarSide.kind === "f64" || scalarSide.kind === "i32") &&
+      !referenceIsStaticNumber
+    ) {
+      return emitLooseScalarVsReferenceEquality(fctx, leftType, rightType, unboxIdx, isNeqOp);
+    }
     // Coerce/unbox right side (top of stack) to f64
     if (rightType.kind === "externref") {
       fctx.body.push({ op: "call", funcIdx: unboxIdx });

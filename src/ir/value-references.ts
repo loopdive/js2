@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IrBindingId, IrUnitId } from "./identity.js";
+import type { IrBindingId, IrUnitId } from "../shared/contracts/ir-identity.js";
 import type { IrCallableCapabilityProvenance, IrSourceGlobalCapabilityProvenance } from "./capability-provenance.js";
 
 /** Closed structural identity for every direct-callable IR target. */

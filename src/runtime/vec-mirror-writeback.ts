@@ -72,11 +72,37 @@
 const _apply = Reflect.apply;
 const _wmGet = WeakMap.prototype.get;
 const _wmSet = WeakMap.prototype.set;
+const _wsAdd = WeakSet.prototype.add;
+const _wsHas = WeakSet.prototype.has;
 const _objectIs = Object.is;
+const _arrayBufferIsView = ArrayBuffer.isView;
+const _DataView = DataView;
+const _typedArrayBufferGetter = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype),
+  "buffer",
+)?.get;
+
+/**
+ * A detached TypedArray mirror is not an array whose host code truncated its
+ * length. Constructing even a zero-length DataView over its backing buffer
+ * performs the native IsDetachedBuffer check without confusing an attached
+ * zero-length buffer with a detached one.
+ */
+function detachedViewMirror(mirror: unknown[]): boolean {
+  if (!_arrayBufferIsView(mirror) || _typedArrayBufferGetter === undefined) return false;
+  try {
+    const buffer = _apply(_typedArrayBufferGetter, mirror, []) as ArrayBuffer;
+    new _DataView(buffer, 0, 0);
+    return false;
+  } catch {
+    return true;
+  }
+}
 
 /** mirror JS array → the WasmGC vec struct it was materialised from. */
 const _vecMirrorSource = new WeakMap<object, unknown>();
 const _vecMirrorElements = new WeakMap<object, unknown[]>();
+const _detachedViewSources = new WeakSet<object>();
 
 /** `map.get(key)` that cannot be broken by a test deleting `WeakMap.prototype.get`. */
 function _mirrorGet(key: object): unknown {
@@ -120,6 +146,15 @@ export function registerVecMirror(mirror: unknown[], vec: unknown): void {
 export function vecForMirror(v: unknown): unknown {
   if (v == null || typeof v !== "object") return undefined;
   return _mirrorGet(v as object);
+}
+
+/** Whether a registered TypedArray mirror detached its compiled vec source. */
+export function isDetachedVecMirrorSource(v: unknown): boolean {
+  return (
+    v != null &&
+    (typeof v === "object" || typeof v === "function") &&
+    (_apply(_wsHas, _detachedViewSources, [v as object]) as boolean)
+  );
 }
 
 /** Save the mirror contents last known to match its Wasm vec. */
@@ -196,6 +231,22 @@ export function snapshotVecMirrors(
   return snaps ?? NO_MIRRORS;
 }
 
+/** Invoke a host callable and reconcile committed mirror state on every exit. */
+export function applyWithVecMirrorWriteback(
+  fn: unknown,
+  receiver: unknown,
+  args: unknown[],
+  exports: Exports,
+  unwrap: (v: unknown) => unknown,
+): unknown {
+  const snaps = snapshotVecMirrors(receiver, args, exports);
+  try {
+    return _apply(fn as (...values: unknown[]) => unknown, receiver, args);
+  } finally {
+    reconcileVecMirrors(snaps, exports, unwrap);
+  }
+}
+
 /**
  * Replay host mutations of the snapshotted mirrors back onto their vecs,
  * AFTER the host call returns.
@@ -214,10 +265,43 @@ export function reconcileVecMirrors(
   const pushFn = exports.__vec_push as ((v: unknown, x: unknown) => number) | undefined;
   const popFn = exports.__vec_pop as ((v: unknown) => unknown) | undefined;
   const setFn = exports.__vec_set_elem as ((v: unknown, i: number, x: unknown) => number) | undefined;
+  const setLenFn = exports.__vec_set_len as ((v: unknown, n: number) => number) | undefined;
   const mutSupFn = exports.__vec_mut_supported as ((v: unknown) => number) | undefined;
   if (typeof lenFn !== "function" || typeof getFn !== "function") return;
   for (const snap of snaps) {
     const { mirror, vec, mirrorLen, vecLen, mirrorElements } = snap;
+    // A host transfer makes every TypedArray length-like accessor read zero,
+    // but it is not a mutable-array length write. Let the owner propagate the
+    // detach marker and never pop the vec's backing as generic reconciliation.
+    if (detachedViewMirror(mirror)) {
+      if (vec != null && (typeof vec === "object" || typeof vec === "function")) {
+        _apply(_wsAdd, _detachedViewSources, [vec as object]);
+      }
+      // Detached length/index reads observe zero, but retain the backing data:
+      // the marker above makes later validating prototype methods throw.
+      let lengthUpdated = false;
+      if (typeof setLenFn === "function") {
+        try {
+          lengthUpdated = setLenFn(vec, 0) === 1;
+        } catch {
+          // The host call already completed; propagation stays best-effort.
+        }
+      }
+      // Older/minimal modules can expose pop without the newer direct length
+      // writer. Pop only decrements field 0; it does not clear backing slots.
+      if (!lengthUpdated && typeof popFn === "function") {
+        try {
+          let remaining = lenFn(vec);
+          while (remaining > 0) {
+            popFn(vec);
+            remaining--;
+          }
+        } catch {
+          // The detach marker still prevents validating method use.
+        }
+      }
+      continue;
+    }
     const lengthChanged = mirror.length !== mirrorLen;
     let elementsChanged = lengthChanged;
     if (!elementsChanged && mirrorElements !== undefined && mirror.length === mirrorElements.length) {

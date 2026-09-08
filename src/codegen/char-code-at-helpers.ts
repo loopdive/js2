@@ -38,17 +38,18 @@
  * them for any string usage); returns `null` otherwise so the caller can
  * demote with a clear message.
  */
+import { JSSTR_CHARCODEAT_FN, NATIVE_CHARCODEAT_FN } from "../ir/runtime-symbols.js";
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import type { CodegenContext } from "./context/types.js";
 import { addFuncType } from "./registry/types.js";
 
 /** Reserved name for the host-mode guarded charCodeAt helper. */
-export const JSSTR_CHARCODEAT_FN = "__jsstr_charCodeAt";
+export { JSSTR_CHARCODEAT_FN } from "../ir/runtime-symbols.js";
 /** Reserved name for the host-mode spec-compatible substring helper. */
 export const JSSTR_SUBSTRING_FN = "__jsstr_substring";
 /** Reserved name for the native-mode guarded charCodeAt helper. */
-export const NATIVE_CHARCODEAT_FN = "__str_charCodeAt";
+export { NATIVE_CHARCODEAT_FN } from "../ir/runtime-symbols.js";
 
 // --- (#3931) canonical char-read-loop hoist helpers ------------------------
 //

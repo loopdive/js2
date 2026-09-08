@@ -97,6 +97,13 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
     __throw_type_error: (msg: any) => {
       throw new TypeError(String(msg ?? ""));
     },
+    // (#5247) The export-boundary rethrow. Raises the unwrapped payload from a
+    // JS frame so an uncaught compiled throw reaches the caller as the Error
+    // itself; deliberately uncoerced, since a non-Error throw must cross
+    // unchanged.
+    __rethrow_host_exception: (payload: any) => {
+      throw payload;
+    },
     __extern_slice: (arr: any, start: number) => (Array.isArray(arr) ? arr.slice(start) : []),
     JSON_stringify: (v: any) => JSON.stringify(v),
     JSON_parse: (s: any) => JSON.parse(s),
@@ -272,6 +279,26 @@ export function buildImports(result: CompileResult): WebAssembly.Imports {
   );
   if (initRegisterImports.length > 0) {
     Object.assign(env, buildRuntimeImports(initRegisterImports, undefined, result.stringPool).env);
+  }
+
+  // (#5377) Same shape a fourth time. The class-object singleton is now
+  // materialized at CONSTRUCTOR ENTRY (so `i.constructor === C` can be answered
+  // whatever the program reads first), which means a plain host-lane module
+  // with any class — `class Foo { bar({x, y}) {} }` in
+  // `binding-null-guard.test.ts` is the measured case — now imports the
+  // class-object registry family it previously only imported when some site
+  // read the class as a value. Without this overlay such a module fails to
+  // LINK: `Import #4 module="env" function="__register_prototype": function
+  // import requires a callable`. Provided via the production resolver, like the
+  // three overlays above.
+  const classRegistryImports = result.imports.filter(
+    (descriptor) =>
+      descriptor.module === "env" &&
+      descriptor.kind === "func" &&
+      /^__register_(prototype|class_object|class_ctor|class_parent|class_static_method)$/.test(descriptor.name),
+  );
+  if (classRegistryImports.length > 0) {
+    Object.assign(env, buildRuntimeImports(classRegistryImports, undefined, result.stringPool).env);
   }
 
   return {

@@ -66,6 +66,7 @@ import { ensureReflectIsConstructor } from "./reflect-construct-native.js"; // (
 import { reserveNativeConstructDriver } from "./native-construct.js"; // (#4449) custom species constructors
 import { ensureSymbolCarrier } from "./symbol-native.js"; // (#4449) Symbol.species key
 import { ensureNativeArrayFromIterN } from "./iterator-native.js"; // (#5138 A1) iterable ctor arg
+import { reserveBuiltinConstructorIdentityGlobal } from "./builtin-static-globals.js"; // (#5349 r4) %ArrayBuffer% identity
 
 /** DataView accessor descriptor parsed from a method name like "getUint32". */
 interface DvAccessor {
@@ -428,6 +429,111 @@ export function nullishOrUndefinedExternTestInstrs(ctx: CodegenContext, externId
  * matching that here keeps `new Uint8Array(sliced)` working without
  * additional coercion).
  */
+/**
+ * (#5349 r4) R2 — decide, at runtime, whether `ab.slice`'s receiver is really a
+ * PACKED-BYTE TypedArray rather than an ArrayBuffer, leaving the receiver value
+ * back on the stack for the recover step.
+ *
+ * `var b = new ArrayBuffer(8); b = new Uint8Array(8)` routes to
+ * `emitArrayBufferSlice` on the STATIC "ArrayBuffer" answer, which survives the
+ * reassignment. Round 3's guarded recover answers the right BYTES for that
+ * receiver but wraps them in a `$__vec_i32_byte` byte buffer, and every
+ * downstream indexed read/write/`indexOf`/`map` dispatch tests
+ * `$__vec_i8_byte` — so each one MISSED and `b.slice(0)[0]` read `undefined`
+ * where node and main read 5.
+ *
+ * Node runs %TypedArray%.prototype.slice for that receiver and returns a
+ * Uint8Array. The byte pipeline in `emitArrayBufferSlice` already IS that: the
+ * recover copies at `bytes: 1`, so `srcLen` is the element count and the
+ * begin/end coercion, the clamp and the copy loop are the same operations
+ * %TypedArray%.prototype.slice performs. Only the carrier the result is wrapped
+ * in differed, so recording the brand here is enough to re-wrap at the end.
+ *
+ * Returns `isPackedLocal < 0` when no dispatch is needed — a statically
+ * `$__vec_i32_byte`-typed receiver, or the JS-host lane, which never registers
+ * the packed-byte carrier at all and therefore stays byte-identical.
+ *
+ * Stack: `[receiver] → [receiver]`.
+ */
+function probePackedByteSliceReceiver(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  guarded: boolean,
+): { isPackedLocal: number; i8VecIdx: number; i8ArrIdx: number } {
+  if (!guarded || !noJsHost(ctx)) return { isPackedLocal: -1, i8VecIdx: -1, i8ArrIdx: -1 };
+  const i8VecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
+  const i8ArrIdx = getArrTypeIdxFromVec(ctx, i8VecIdx);
+  if (i8ArrIdx < 0) return { isPackedLocal: -1, i8VecIdx: -1, i8ArrIdx: -1 };
+  const recvAnyLocal = allocLocal(fctx, `__abs_recv_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  const isPackedLocal = allocLocal(fctx, `__abs_packed_${fctx.locals.length}`, { kind: "i32" });
+  fctx.body.push({ op: "local.tee", index: recvAnyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: i8VecIdx });
+  fctx.body.push({ op: "local.set", index: isPackedLocal });
+  fctx.body.push({ op: "local.get", index: recvAnyLocal });
+  return { isPackedLocal, i8VecIdx, i8ArrIdx };
+}
+
+/**
+ * (#5349 r4) Run §25.1.5.3's SpeciesConstructor steps only on the ArrayBuffer
+ * arm. A packed-byte receiver is a TypedArray, whose slice consults
+ * %TypedArray%'s species, not %ArrayBuffer%'s, so the ladder is emitted into a
+ * detached body and executed only when the brand test said "buffer".
+ *
+ * (#5349 r5) The ladder's own two default-lane resets are hoisted OUT of that
+ * detached body and emitted ahead of the gate, so they run on every execution
+ * of this slice site. A Wasm local keeps its value for the whole invocation, so
+ * leaving them inside the gate only zeroed the species result on the executions
+ * that ran the ladder: a site executed twice — buffer receiver first, packed
+ * receiver second — read the FIRST execution's species-constructed buffer on
+ * the second, copied the new slice into it and returned a `$__vec_i8_byte`
+ * aliasing it (trapping outright when the new slice was longer). The Wasm
+ * default of an externref local is null, so the first execution was always
+ * correct and the round-4 pins, which execute each site once, could not see it.
+ *
+ * `isPackedLocal < 0` means no brand dispatch is in play, and the ladder is
+ * emitted inline exactly as before — resets included, in place.
+ */
+function emitArrayBufferSliceSpeciesUnlessPacked(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  srcVecLocal: number,
+  sliceLenLocal: number,
+  vecTypeIdx: number,
+  isPackedLocal: number,
+): number | null {
+  if (isPackedLocal < 0) return emitArrayBufferSliceSpecies(ctx, fctx, srcVecLocal, sliceLenLocal, vecTypeIdx);
+  const speciesArm: Instr[] = [];
+  const defaultLaneResets: Instr[] = [];
+  const savedBody = fctx.body;
+  const releaseSaved = retainLiveBody(ctx, savedBody);
+  const releaseArm = retainLiveBody(ctx, speciesArm);
+  fctx.body = speciesArm;
+  let speciesResultLocal: number | null;
+  try {
+    speciesResultLocal = emitArrayBufferSliceSpecies(
+      ctx,
+      fctx,
+      srcVecLocal,
+      sliceLenLocal,
+      vecTypeIdx,
+      defaultLaneResets,
+    );
+  } finally {
+    fctx.body = savedBody;
+    releaseArm();
+    releaseSaved();
+  }
+  // Unconditional first — see the r5 note above. The ladder that follows sets
+  // both locals itself, so re-null-ing them here is redundant on the buffer arm
+  // and load-bearing on every other execution of the site.
+  fctx.body.push(...defaultLaneResets);
+  if (speciesArm.length > 0) {
+    fctx.body.push({ op: "local.get", index: isPackedLocal }, { op: "i32.eqz" });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: speciesArm, else: [] });
+  }
+  return speciesResultLocal;
+}
+
 export function emitArrayBufferSlice(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -450,17 +556,29 @@ export function emitArrayBufferSlice(
     typeIdx: vecTypeIdx,
   });
   const recvType = compileExpr(receiver);
+  // (#5349 r3) Same brand guard as `emitTaViewConstruct`: the receiver was routed
+  // here by a STATIC "ArrayBuffer" answer, which survives a later
+  // `b = new Uint8Array(8)`. The unguarded cast used to succeed on that value by
+  // canonicalization (`b.slice(0,4).length` → 4 on main); with round 2's brand it
+  // TRAPS. Recover a packed-byte receiver as a fresh byte buffer of its own
+  // bytes (`bytes: 1` — no re-encode), which reproduces main's answer without
+  // the trap. Node runs `%TypedArray%.prototype.slice` for that receiver and
+  // returns a Uint8Array, which this emitter cannot produce; the shape mismatch
+  // is a separate, pre-existing gap recorded in #5349.
+  let guarded = false;
   if (recvType && recvType.kind === "externref") {
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    guarded = true;
   } else if (recvType && (recvType.kind === "ref" || recvType.kind === "ref_null")) {
     if ("typeIdx" in recvType && recvType.typeIdx !== vecTypeIdx) {
-      fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+      guarded = true;
     }
   } else {
     return null;
   }
-  fctx.body.push({ op: "local.set", index: srcVecLocal });
+  const { isPackedLocal, i8VecIdx, i8ArrIdx } = probePackedByteSliceReceiver(ctx, fctx, guarded);
+  if (guarded) emitRecoverBufferVecGuarded(ctx, fctx, srcVecLocal, { bytes: 1, signed: false, float: false });
+  else fctx.body.push({ op: "local.set", index: srcVecLocal });
 
   // srcLen = src.length (field 0); srcArr = src.data (field 1).
   const srcLenLocal = allocLocal(fctx, `__abs_srclen_${fctx.locals.length}`, { kind: "i32" });
@@ -555,14 +673,47 @@ export function emitArrayBufferSlice(
     else: [],
   });
 
-  // dstArr = new i32[sliceLen]
+  // (#5349 step 5) §25.1.5.3 steps 13-20 — SpeciesConstructor, Construct and the
+  // four refusals — run HERE: after `newLen` (step 11) and before any byte is
+  // copied (step 25), which is what `species-returns-*.js` observe.
+  const speciesResultLocal = emitArrayBufferSliceSpeciesUnlessPacked(
+    ctx,
+    fctx,
+    srcVecLocal,
+    sliceLenLocal,
+    vecTypeIdx,
+    isPackedLocal,
+  );
+
+  // dstArr = new i32[sliceLen] — or, on the species lane, the CONSTRUCTED
+  // buffer's own data array, so the copy loop below fills it in place.
   const dstArrLocal = allocLocal(fctx, `__abs_dstarr_${fctx.locals.length}`, {
     kind: "ref",
     typeIdx: arrTypeIdx,
   });
-  fctx.body.push({ op: "local.get", index: sliceLenLocal });
-  fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
-  fctx.body.push({ op: "local.set", index: dstArrLocal });
+  if (speciesResultLocal === null) {
+    fctx.body.push({ op: "local.get", index: sliceLenLocal });
+    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+    fctx.body.push({ op: "local.set", index: dstArrLocal });
+  } else {
+    fctx.body.push({ op: "local.get", index: speciesResultLocal }, { op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: sliceLenLocal },
+        { op: "array.new_default", typeIdx: arrTypeIdx },
+        { op: "local.set", index: dstArrLocal },
+      ],
+      else: [
+        { op: "local.get", index: speciesResultLocal },
+        { op: "any.convert_extern" },
+        { op: "ref.cast", typeIdx: vecTypeIdx },
+        { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 1 },
+        { op: "local.set", index: dstArrLocal },
+      ],
+    });
+  }
 
   // for (i = 0; i < sliceLen; i++) dstArr[i] = srcArr[begin + i]
   const iLocal = allocLocal(fctx, `__abs_i_${fctx.locals.length}`, { kind: "i32" });
@@ -596,10 +747,58 @@ export function emitArrayBufferSlice(
 
   // struct.new vec(sliceLen, dstArr); return as externref (matches the
   // externref local that user code declares for the slice() result).
-  fctx.body.push({ op: "local.get", index: sliceLenLocal });
-  fctx.body.push({ op: "local.get", index: dstArrLocal });
-  fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "extern.convert_any" });
+  // On the species lane the constructed buffer IS the result (§25.1.5.3 step
+  // 26) — `species.js` asserts `result === resultBuffer` by identity — so the
+  // branch returns it untouched rather than re-wrapping its data array.
+  const bufferResultArm: Instr[] =
+    speciesResultLocal !== null
+      ? [
+          { op: "local.get", index: speciesResultLocal },
+          { op: "ref.is_null" },
+          {
+            op: "if",
+            blockType: { kind: "val", type: { kind: "externref" } },
+            then: [
+              { op: "local.get", index: sliceLenLocal },
+              { op: "local.get", index: dstArrLocal },
+              { op: "struct.new", typeIdx: vecTypeIdx },
+              { op: "extern.convert_any" },
+            ],
+            else: [{ op: "local.get", index: speciesResultLocal }],
+          },
+        ]
+      : [
+          { op: "local.get", index: sliceLenLocal },
+          { op: "local.get", index: dstArrLocal },
+          { op: "struct.new", typeIdx: vecTypeIdx },
+          { op: "extern.convert_any" },
+        ];
+
+  // (#5349 r4) R2 — re-wrap the copied bytes in the PACKED-BYTE carrier when the
+  // receiver was a TypedArray, so `b.slice(0)[0]`, `s[0] = 9`, `.length`,
+  // `.indexOf` and `.map` on the result all hit the `$__vec_i8_byte` arm of
+  // their dynamic dispatch instead of falling through it. The `ref.cast` to the
+  // packed array type is a no-op wherever the two `(array (mut i8))`
+  // declarations canonicalize (they do — that canonicalization is what made the
+  // pre-brand byte copy work at all); it is spelled out so a future divergence
+  // fails loudly at this site instead of silently mis-typing the result.
+  if (isPackedLocal >= 0) {
+    fctx.body.push({ op: "local.get", index: isPackedLocal });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "val", type: { kind: "externref" } },
+      then: [
+        { op: "local.get", index: sliceLenLocal },
+        { op: "local.get", index: dstArrLocal },
+        { op: "ref.cast", typeIdx: i8ArrIdx },
+        { op: "struct.new", typeIdx: i8VecIdx },
+        { op: "extern.convert_any" },
+      ],
+      else: bufferResultArm,
+    });
+    return { kind: "externref" };
+  }
+  fctx.body.push(...bufferResultArm);
   return { kind: "externref" };
 }
 
@@ -2919,6 +3118,183 @@ export function pushTaViewEffectiveLen(
 }
 
 /**
+ * (#5349 round 3) Recover the `$__vec_i32_byte` buffer struct for a TypedArray /
+ * DataView constructor argument whose STATIC provenance claimed "ArrayBuffer",
+ * when that claim is not verifiable at compile time.
+ *
+ * `nativeBufferBuiltinOf` answers from a binding's SINGLE declaration
+ * initializer (and from the checker's declared element type for `xs[0]`), so a
+ * later `b = new Uint8Array(4)` — or an array element rewritten after its
+ * literal — leaves the answer "ArrayBuffer" while the runtime value is the
+ * packed-byte view carrier `$__vec_i8_byte`. Before #5349 round 2 the two vec
+ * structs canonicalized to ONE runtime type and the unguarded `ref.cast` simply
+ * succeeded (aliasing the view's bytes as a buffer — wrong, but silent). The
+ * round-2 brand makes them distinct, so the same cast now TRAPS.
+ *
+ * This replaces the unguarded cast with a three-way runtime dispatch:
+ *   - `$__vec_i32_byte`  → the buffer itself (the previous fast path, unchanged)
+ *   - `$__vec_i8_byte`   → §23.2.5.1.2 InitializeTypedArrayFromTypedArray: a
+ *                          FRESH byte buffer holding the element-wise COPY of the
+ *                          source, converted to `desc`'s width/encoding. Node
+ *                          copies here — the old aliasing was a masked bug.
+ *   - anything else      → a zero-length buffer (no trap; the static provenance
+ *                          was simply wrong and there is no buffer to view).
+ *
+ * The i8 source is read UNSIGNED. `Int8Array`, `Uint8Array` and
+ * `Uint8ClampedArray` share one packed carrier and the view's signedness is a
+ * static property of the TS name, so an erased `Int8Array` source widening into
+ * a >1-byte view reads 255 where node reads −1. Recorded as a representation
+ * residual in #5349; a byte-width-preserving destination (the dominant
+ * `new Uint8Array(src)` case) is unaffected because the stored byte is identical
+ * either way.
+ *
+ * Emitted ONLY where a cast would have been emitted anyway (an externref or
+ * foreign-ref operand). A statically `$__vec_i32_byte`-typed operand keeps its
+ * bare `local.set` and stays byte-identical.
+ */
+function emitRecoverBufferVecGuarded(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  bufLocal: number,
+  desc: { bytes: number; signed: boolean; float: boolean },
+): void {
+  const { vecTypeIdx, arrTypeIdx } = i32ByteVec(ctx);
+  // The JS-host lane never registers `$__vec_i8_byte` (`TYPED_ARRAY_PACKED_STORAGE`
+  // is gated on `wasi || standalone`), so no packed-byte value can reach this
+  // cast there and the guard would only add a type and change bytes. Keep the
+  // bare cast — byte-identical to main on host.
+  if (!noJsHost(ctx)) {
+    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    fctx.body.push({ op: "local.set", index: bufLocal });
+    return;
+  }
+  // Register the packed-byte carrier unconditionally on the host-free lanes: a
+  // module can construct one in a function compiled AFTER this site, so "not
+  // registered yet" is not proof that no packed-byte value can reach here.
+  const i8VecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
+  const i8ArrIdx = getArrTypeIdxFromVec(ctx, i8VecIdx);
+
+  const srcAnyLocal = allocLocal(fctx, `__tav_src_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  fctx.body.push({ op: "local.set", index: srcAnyLocal });
+
+  const bufferArm: Instr[] = [
+    { op: "local.get", index: srcAnyLocal },
+    { op: "ref.cast", typeIdx: vecTypeIdx },
+    { op: "local.set", index: bufLocal },
+  ];
+  const emptyArm: Instr[] = [
+    { op: "i32.const", value: 0 },
+    { op: "i32.const", value: 0 },
+    { op: "array.new_default", typeIdx: arrTypeIdx },
+    { op: "struct.new", typeIdx: vecTypeIdx },
+    { op: "local.set", index: bufLocal },
+  ];
+
+  if (i8ArrIdx < 0) {
+    fctx.body.push({ op: "local.get", index: srcAnyLocal });
+    fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
+    fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: bufferArm, else: emptyArm });
+    return;
+  }
+
+  // §23.2.5.1.2 copy arm — built detached so the byte-encode helper's locals and
+  // instructions land inside the `else` branch, not before the type test.
+  const copyArm: Instr[] = [];
+  const savedBody = fctx.body;
+  const releaseSaved = retainLiveBody(ctx, savedBody);
+  const releaseCopy = retainLiveBody(ctx, copyArm);
+  fctx.body = copyArm;
+  try {
+    const srcVecLocal = allocLocal(fctx, `__tav_csrc_${fctx.locals.length}`, { kind: "ref", typeIdx: i8VecIdx });
+    const srcDataLocal = allocLocal(fctx, `__tav_cdat_${fctx.locals.length}`, { kind: "ref", typeIdx: i8ArrIdx });
+    const nLocal = allocLocal(fctx, `__tav_cn_${fctx.locals.length}`, { kind: "i32" });
+    const blLocal = allocLocal(fctx, `__tav_cbl_${fctx.locals.length}`, { kind: "i32" });
+    const dstArrLocal = allocLocal(fctx, `__tav_cdst_${fctx.locals.length}`, { kind: "ref", typeIdx: arrTypeIdx });
+    const iLocal = allocLocal(fctx, `__tav_ci_${fctx.locals.length}`, { kind: "i32" });
+    const offLocal = allocLocal(fctx, `__tav_coff_${fctx.locals.length}`, { kind: "i32" });
+    const valLocal = allocLocal(fctx, `__tav_cval_${fctx.locals.length}`, { kind: "f64" });
+    const leLocal = allocLocal(fctx, `__tav_cle_${fctx.locals.length}`, { kind: "i32" });
+    fctx.body.push({ op: "local.get", index: srcAnyLocal });
+    fctx.body.push({ op: "ref.cast", typeIdx: i8VecIdx });
+    fctx.body.push({ op: "local.tee", index: srcVecLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: i8VecIdx, fieldIdx: 0 });
+    fctx.body.push({ op: "local.set", index: nLocal });
+    fctx.body.push({ op: "local.get", index: srcVecLocal });
+    fctx.body.push({ op: "struct.get", typeIdx: i8VecIdx, fieldIdx: 1 });
+    fctx.body.push({ op: "ref.as_non_null" });
+    fctx.body.push({ op: "local.set", index: srcDataLocal });
+    fctx.body.push({ op: "local.get", index: nLocal });
+    if (desc.bytes !== 1) {
+      fctx.body.push({ op: "i32.const", value: desc.bytes });
+      fctx.body.push({ op: "i32.mul" });
+    }
+    fctx.body.push({ op: "local.tee", index: blLocal });
+    fctx.body.push({ op: "array.new_default", typeIdx: arrTypeIdx });
+    fctx.body.push({ op: "local.set", index: dstArrLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "local.set", index: leLocal });
+    fctx.body.push({ op: "i32.const", value: 0 });
+    fctx.body.push({ op: "local.set", index: iLocal });
+    const loopBody: Instr[] = [];
+    const savedLoop = fctx.body;
+    fctx.body = loopBody;
+    fctx.body.push({ op: "local.get", index: iLocal });
+    fctx.body.push({ op: "local.get", index: nLocal });
+    fctx.body.push({ op: "i32.ge_s" });
+    fctx.body.push({ op: "br_if", depth: 1 });
+    fctx.body.push({ op: "local.get", index: srcDataLocal });
+    fctx.body.push({ op: "local.get", index: iLocal });
+    fctx.body.push({ op: "array.get_u", typeIdx: i8ArrIdx });
+    fctx.body.push({ op: "f64.convert_i32_u" });
+    fctx.body.push({ op: "local.set", index: valLocal });
+    fctx.body.push({ op: "local.get", index: iLocal });
+    if (desc.bytes !== 1) {
+      fctx.body.push({ op: "i32.const", value: desc.bytes });
+      fctx.body.push({ op: "i32.mul" });
+    }
+    fctx.body.push({ op: "local.set", index: offLocal });
+    emitWriteBytes(
+      ctx,
+      fctx,
+      { kind: "set", bytes: desc.bytes, signed: desc.signed, float: desc.float },
+      dstArrLocal,
+      offLocal,
+      valLocal,
+      leLocal,
+      arrTypeIdx,
+    );
+    fctx.body.push({ op: "local.get", index: iLocal });
+    fctx.body.push({ op: "i32.const", value: 1 });
+    fctx.body.push({ op: "i32.add" });
+    fctx.body.push({ op: "local.set", index: iLocal });
+    fctx.body.push({ op: "br", depth: 0 });
+    fctx.body = savedLoop;
+    fctx.body.push({
+      op: "block",
+      blockType: { kind: "empty" },
+      body: [{ op: "loop", blockType: { kind: "empty" }, body: loopBody }],
+    });
+    fctx.body.push({ op: "local.get", index: blLocal });
+    fctx.body.push({ op: "local.get", index: dstArrLocal });
+    fctx.body.push({ op: "struct.new", typeIdx: vecTypeIdx });
+    fctx.body.push({ op: "local.set", index: bufLocal });
+  } finally {
+    fctx.body = savedBody;
+    releaseCopy();
+    releaseSaved();
+  }
+
+  const nonBufferArm: Instr[] = [
+    { op: "local.get", index: srcAnyLocal },
+    { op: "ref.test", typeIdx: i8VecIdx },
+    { op: "if", blockType: { kind: "empty" }, then: copyArm, else: emptyArm },
+  ];
+  fctx.body.push({ op: "local.get", index: srcAnyLocal });
+  fctx.body.push({ op: "ref.test", typeIdx: vecTypeIdx });
+  fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: bufferArm, else: nonBufferArm });
+}
+
+/**
  * (#3054 B1) `new <TA>(arrayBuffer)` → a shared-backing `$__ta_view_<name>` that
  * REFS the buffer's `$__vec_i32_byte` struct instead of COPYING its bytes into a
  * fresh backing array (the verified copy bug: sibling views / DataViews over the
@@ -2927,6 +3303,9 @@ export function pushTaViewEffectiveLen(
  * `compileExpr` compiles the buffer arg expression. Returns the view ValType, or
  * null (leaving the stack balanced) when the buffer can't be recovered as a
  * native vec — the caller then falls back to the numeric-length ctor path.
+ *
+ * (#5349 r3) The recover step is GUARDED — see {@link emitRecoverBufferVecGuarded}
+ * for why an unguarded `ref.cast $__vec_i32_byte` is an uncatchable trap here.
  */
 export function emitTaViewConstruct(
   ctx: CodegenContext,
@@ -2943,19 +3322,23 @@ export function emitTaViewConstruct(
   // Compile the buffer expression and recover the shared i32_byte vec struct.
   const bufType = compileExpr(bufExpr);
   if (!bufType) return null;
+  // (#5349 r3) `guarded` marks every operand whose provenance was STATIC-only —
+  // exactly the operands that used to take an unguarded `ref.cast`.
+  let guarded = false;
   if (bufType.kind === "externref") {
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    guarded = true;
   } else if (bufType.kind === "ref" || bufType.kind === "ref_null") {
     if ("typeIdx" in bufType && (bufType as { typeIdx: number }).typeIdx !== vecTypeIdx) {
-      fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+      guarded = true;
     }
   } else {
     fctx.body.push({ op: "drop" });
     return null;
   }
   const bufLocal = allocLocal(fctx, `__tav_buf_${fctx.locals.length}`, { kind: "ref", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "local.set", index: bufLocal });
+  if (guarded) emitRecoverBufferVecGuarded(ctx, fctx, bufLocal, desc);
+  else fctx.body.push({ op: "local.set", index: bufLocal });
 
   // struct.new order = [length, buf, byteOffset, kind]. length field = fixed element
   // count `buf.length / elementSize` (B1/B2). (#3054 C) When the MODULE contains a
@@ -3076,13 +3459,67 @@ export function emitDynamicUint8ArrayBufferAlias(
   );
   fctx.body = savedBody;
 
+  // (#5349 r3) §23.2.5.1.2 InitializeTypedArrayFromTypedArray — a packed-byte
+  // TypedArray source is a COPY, not an alias.
+  //
+  // The #5194 doc block above states a premise that round 2 falsified: "both
+  // backing arrays are packed array(mut i8) … build the normal __vec_i8_byte
+  // carrier over the SAME array". Before the brand a Uint8Array source PASSED
+  // the `ref.test $__vec_i32_byte` above and took the buffer arm — which
+  // ALIASED it, so `new Uint8Array(u)[0] = 9` was visible in `u` (node: it is
+  // not). With the brand that test answers false and control fell through to the
+  // numeric arm: ToNumber of a boxed vec is NaN, so `new Uint8Array(u).length`
+  // became 0 (probes p6/h01, p6/h02, pb/r2, p5/g02).
+  //
+  // This arm restores the length AND fixes the aliasing: a fresh backing array
+  // of the same byte width, `array.copy`, a fresh carrier. Byte width is equal
+  // on both sides, so no per-element conversion is needed and the copy is right
+  // for an `Int8Array`/`Uint8ClampedArray` source too (§23.2.5.1.2 stores
+  // ToUint8 of the source element, whose byte image is identical).
+  const viewCopyArm: Instr[] = [];
+  {
+    const srcLocal = allocLocal(fctx, `__dyn_u8_src_${fctx.locals.length}`, { kind: "ref", typeIdx: uintVecIdx });
+    const dstArrLocal = allocLocal(fctx, `__dyn_u8_dst_${fctx.locals.length}`, { kind: "ref", typeIdx: uintArrIdx });
+    viewCopyArm.push(
+      { op: "local.get", index: argAnyLocal },
+      { op: "ref.cast", typeIdx: uintVecIdx },
+      { op: "local.set", index: srcLocal },
+      { op: "local.get", index: srcLocal },
+      { op: "struct.get", typeIdx: uintVecIdx, fieldIdx: 0 },
+      { op: "local.set", index: countLocal },
+      { op: "local.get", index: countLocal },
+      { op: "array.new_default", typeIdx: uintArrIdx },
+      { op: "local.set", index: dstArrLocal },
+      { op: "local.get", index: dstArrLocal },
+      { op: "i32.const", value: 0 },
+      { op: "local.get", index: srcLocal },
+      { op: "struct.get", typeIdx: uintVecIdx, fieldIdx: 1 },
+      { op: "ref.as_non_null" },
+      { op: "i32.const", value: 0 },
+      { op: "local.get", index: countLocal },
+      { op: "array.copy", dstTypeIdx: uintArrIdx, srcTypeIdx: uintArrIdx },
+      { op: "local.get", index: countLocal },
+      { op: "local.get", index: dstArrLocal },
+      { op: "struct.new", typeIdx: uintVecIdx },
+    );
+  }
+
   fctx.body.push({ op: "local.get", index: argAnyLocal });
   fctx.body.push({ op: "ref.test", typeIdx: byteVecIdx });
   fctx.body.push({
     op: "if",
     blockType: { kind: "val", type: { kind: "ref_null", typeIdx: uintVecIdx } },
     then: bufferArm,
-    else: numericArm,
+    else: [
+      { op: "local.get", index: argAnyLocal },
+      { op: "ref.test", typeIdx: uintVecIdx },
+      {
+        op: "if",
+        blockType: { kind: "val", type: { kind: "ref_null", typeIdx: uintVecIdx } },
+        then: viewCopyArm,
+        else: numericArm,
+      },
+    ],
   });
   return { kind: "ref_null", typeIdx: uintVecIdx };
 }
@@ -4075,6 +4512,19 @@ function emitTaPlainVecElementToF64(
       fctx.body.push({ op: "local.get", index: iLocal });
       fctx.body.push({ op: "array.get", typeIdx: srcArrIdx });
     });
+  } else if (elemType.kind === "i8" || elemType.kind === "i16") {
+    // (#5349 r3) A PACKED source element needs `array.get_u`/`_s`; plain
+    // `array.get` does not validate on a packed array. Read UNSIGNED: the three
+    // byte views (`Int8Array`, `Uint8Array`, `Uint8ClampedArray`) share ONE
+    // `$__vec_i8_byte` carrier and signedness is a static property of the TS
+    // name, so an erased `Int8Array` source widening into a >1-byte destination
+    // reads 255 where node reads −1. Recorded as a representation residual in
+    // #5349; a byte-width destination is unaffected (the stored byte is the
+    // same either way).
+    fctx.body.push({ op: "local.get", index: srcDataLocal });
+    fctx.body.push({ op: "local.get", index: iLocal });
+    fctx.body.push({ op: "array.get_u", typeIdx: srcArrIdx });
+    fctx.body.push({ op: "f64.convert_i32_u" });
   } else {
     fctx.body.push({ op: "local.get", index: srcDataLocal });
     fctx.body.push({ op: "local.get", index: iLocal });
@@ -4297,19 +4747,26 @@ export function emitTaViewConstructWindowed(
   // Recover the shared buffer vec struct (mirror emitTaViewConstruct exactly).
   const bufType = compileExpr(bufExpr);
   if (!bufType) return null;
+  let guarded = false;
   if (bufType.kind === "externref") {
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    guarded = true;
   } else if (bufType.kind === "ref" || bufType.kind === "ref_null") {
     if ("typeIdx" in bufType && (bufType as { typeIdx: number }).typeIdx !== vecTypeIdx) {
-      fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+      guarded = true;
     }
   } else {
     fctx.body.push({ op: "drop" });
     return null;
   }
   const bufLocal = allocLocal(fctx, `__tavw_buf_${fctx.locals.length}`, { kind: "ref", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "local.set", index: bufLocal });
+  // (#5349 r3) Same brand guard as the offset-0 form. A packed-byte source
+  // materializes the §23.2.5.1.2 COPY and the offset/length protocol below then
+  // runs against that copy — a deviation from spec (which IGNORES byteOffset and
+  // length when the first argument is a TypedArray), but a bounded wrong answer
+  // in place of the uncatchable trap the bare cast produces. Recorded in #5349.
+  if (guarded) emitRecoverBufferVecGuarded(ctx, fctx, bufLocal, desc);
+  else fctx.body.push({ op: "local.set", index: bufLocal });
 
   // bufByteLen = buf.length (field0 = byte count for an ArrayBuffer vec).
   const bufByteLenLocal = allocLocal(fctx, `__tavw_blen_${fctx.locals.length}`, { kind: "i32" });
@@ -5107,19 +5564,25 @@ export function emitDynamicTaViewConstruct(
   // Recover the shared buffer vec struct (mirror emitTaViewConstruct).
   const bufType = compileExpr(bufExpr);
   if (!bufType) return null;
+  let guarded = false;
   if (bufType.kind === "externref") {
     fctx.body.push({ op: "any.convert_extern" });
-    fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+    guarded = true;
   } else if (bufType.kind === "ref" || bufType.kind === "ref_null") {
     if ("typeIdx" in bufType && (bufType as { typeIdx: number }).typeIdx !== vecTypeIdx) {
-      fctx.body.push({ op: "ref.cast", typeIdx: vecTypeIdx });
+      guarded = true;
     }
   } else {
     fctx.body.push({ op: "drop" });
     return null;
   }
   const bufLocal = allocLocal(fctx, `__dtav_buf_${fctx.locals.length}`, { kind: "ref", typeIdx: vecTypeIdx });
-  fctx.body.push({ op: "local.set", index: bufLocal });
+  // (#5349 r3) The constructor kind is only known at RUNTIME here, so there is no
+  // static element width to re-encode a packed-byte source into: recover it as a
+  // raw BYTE copy (`bytes: 1`). That is right for the byte-width kinds and a
+  // bounded wrong length for the wider ones — the alternative was the trap.
+  if (guarded) emitRecoverBufferVecGuarded(ctx, fctx, bufLocal, { bytes: 1, signed: false, float: false });
+  else fctx.body.push({ op: "local.set", index: bufLocal });
 
   // byteOffset = ToIndex(offsetExpr) (0 when omitted). Element-count length arg is
   // kind-independent, so compute it ONCE (shared across all arms).
@@ -5772,8 +6235,25 @@ export function emitTaDynCtorConstructFromLocals(
     // ── Plain-vec copy arms: one per registered numeric-capable carrier.
     // Skip `i32_byte` (the ArrayBuffer arm below owns it) and non-numeric
     // carriers (`ref_*` struct-elem vecs).
+    //
+    // (#5349 r3) `i8_byte` — the packed-byte TypedArray carrier — belongs HERE,
+    // as a typed-array SOURCE read element-wise, not in the ArrayBuffer arm.
+    // Until round 2 branded it, `ref.test $__vec_i32_byte` answered TRUE for it
+    // and the buffer arm reinterpreted a `Uint8Array` as a byte BUFFER: the
+    // harness idiom `testWithTypedArrayConstructors(TA => new TA(sample))` got a
+    // view over the sample's bytes rather than the §23.2.5.1.2 element copy.
+    // With the brand that test answers false and the value fell all the way to
+    // the count form — ToIndex of a boxed vec is 0, so `new TA(u8).length`
+    // became 0 (probes p8/m01, p5/g04). Reading it as a typed-array source is
+    // both the fix and the spec-correct behaviour.
     for (const [carrierKey, vIdx] of Array.from(ctx.vecTypeMap.entries())) {
-      if (carrierKey !== "f64" && carrierKey !== "i32" && carrierKey !== "i32_elem" && carrierKey !== "externref")
+      if (
+        carrierKey !== "f64" &&
+        carrierKey !== "i32" &&
+        carrierKey !== "i32_elem" &&
+        carrierKey !== "externref" &&
+        carrierKey !== "i8_byte"
+      )
         continue;
       const srcArrIdx = getArrTypeIdxFromVec(ctx, vIdx);
       if (srcArrIdx < 0) continue;
@@ -5794,6 +6274,24 @@ export function emitTaDynCtorConstructFromLocals(
       fctx.body.push({ op: "local.get", index: srcVecLocal });
       fctx.body.push({ op: "struct.get", typeIdx: vIdx, fieldIdx: 1 });
       fctx.body.push({ op: "local.set", index: srcDataLocal });
+      if (carrierKey === "i8_byte") {
+        // (#5349 r3) §23.2.5.1.2 step 5: a content-type mismatch between the
+        // source TypedArray and the destination is a TypeError. This carrier is
+        // ALWAYS a non-BigInt typed array, so a BigInt destination (kinds 9/10 —
+        // `BigInt64Array` / `BigUint64Array`) must throw rather than store the
+        // numeric bits. Restricted to this arm: a plain `f64`/`i32` vec is an
+        // ARRAY-like source, where §23.2.5.1.3 applies ToBigInt per element.
+        const bigIntThrow = buildThrowJsErrorInstrs(
+          ctx,
+          "TypeError",
+          "TypeError: Cannot mix BigInt and other types in a TypedArray constructor",
+          { flush: fctx },
+        );
+        fctx.body.push({ op: "local.get", index: kindLocal });
+        fctx.body.push({ op: "i32.const", value: taCtorKindOf("BigInt64Array") });
+        fctx.body.push({ op: "i32.ge_s" });
+        fctx.body.push({ op: "if", blockType: { kind: "empty" }, then: bigIntThrow, else: [] });
+      }
       emitAllocViewFromN();
       emitCopyLoop((iLocal) => {
         emitTaPlainVecElementToF64(ctx, fctx, elemType, srcDataLocal, iLocal, srcArrIdx);
@@ -5994,6 +6492,378 @@ export function emitTaDynCtorConstructFromLocals(
  * check; subarray deliberately omits it because its constructor receives the
  * buffer tuple rather than a requested result length.
  */
+/**
+ * (#5349 step 5) §7.3.22 SpeciesConstructor's constructor-VALUE ladder, shared
+ * by the TypedArray path (`emitTaDynSpeciesCreate`, #4449) and by
+ * `ArrayBuffer.prototype.slice` (§25.1.5.3 step 13).
+ *
+ * `selectedLocal` must already hold the DEFAULT constructor — the intrinsic the
+ * spec passes as `defaultConstructor` — and the ladder overwrites it only when
+ * the receiver names a live species. Steps, in order:
+ *
+ *   1. `C = ? Get(O, "constructor")`; undefined ⇒ keep the default.
+ *   2. `C` null, or Type(C) not Object ⇒ TypeError (`notObjectArm`).
+ *   3. `S = ? Get(C, @@species)`; null or undefined ⇒ keep the default.
+ *   4. otherwise `selectedLocal = S`.
+ *
+ * The `IsConstructor(S)` refusal is NOT here: the two callers throw different
+ * messages and validate the constructed value differently, so each keeps its
+ * own. `notObjectArm` is a FACTORY, called once per arm, because the finalize
+ * walks remap every Instr object they reach and one array spliced into two body
+ * positions would be remapped twice.
+ */
+/**
+ * (#5349 step 5) §25.1.5.3 steps 13-20 for `ArrayBuffer.prototype.slice` in the
+ * no-JS-host lane: `ctor = SpeciesConstructor(O, %ArrayBuffer%)`,
+ * `new = ? Construct(ctor, «newLen»)`, then the four refusals of steps 17-20.
+ *
+ * The step was simply ABSENT — `emitArrayBufferSlice` went from the byte copy
+ * straight to `struct.new $vec_i32_byte`, so a species constructor was never
+ * invoked and every one of the twelve
+ * `built-ins/ArrayBuffer/prototype/slice/species*.js` rows failed.
+ *
+ * Returns an externref local holding the CONSTRUCTED buffer, or **null** for
+ * the default lane — the same null-sentinel shape `emitArraySpeciesCreate`
+ * uses, so the caller keeps its existing `array.new_default` + `struct.new`
+ * path byte-for-byte whenever no species is in play. Returns `null` (the
+ * TypeScript value) when the module cannot observe species at all, and then not
+ * one instruction is emitted.
+ *
+ * `newLenLocal` is the i32 `newLen` the clamp already computed. The receiver is
+ * read from `srcVecLocal`, which the caller has already detach-checked.
+ */
+export function emitArrayBufferSliceSpecies(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  srcVecLocal: number,
+  newLenLocal: number,
+  vecTypeIdx: number,
+  resetSink?: Instr[],
+): number | null {
+  if (!noJsHost(ctx) || !ctx.arraySpeciesDirty) return null;
+  // (#5349) Step 16 ("if new does not have an [[ArrayBufferData]] slot, throw a
+  // TypeError") is decided below by `ref.test $__vec_i32_byte`. That is a
+  // REPRESENTATION test, and it is decidable because the packed-byte TypedArray
+  // carrier is BRANDED: `$__vec_i8_byte` is declared `final` while
+  // `$__vec_i32_byte` is kept open (see `getOrRegisterVecType` and
+  // `finalizeLeafStructTypes`). Without that brand the two structs — same two
+  // fields over the same `(array (mut i8))` since #2835 — canonicalize to one
+  // runtime type and the test accepts a `new Uint8Array(n)`.
+  ensureObjectRuntime(ctx);
+  ensureSymbolCarrier(ctx);
+  const externGetIdx = ensureLateImport(
+    ctx,
+    "__extern_get",
+    [{ kind: "externref" }, { kind: "externref" }],
+    [{ kind: "externref" }],
+  );
+  const isUndefinedIdx = ensureLateImport(ctx, "__extern_is_undefined", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const typeofObjectIdx = ensureLateImport(ctx, "__typeof_object", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const typeofFunctionIdx = ensureLateImport(ctx, "__typeof_function", [{ kind: "externref" }], [{ kind: "i32" }]);
+  const boxNumberIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  addStringConstantGlobal(ctx, "constructor");
+  const isConstructorIdx = ensureReflectIsConstructor(ctx);
+  const driverIdx = reserveNativeConstructDriver(ctx, 1, stringConstantExternrefInstrs(ctx, "prototype"));
+  flushLateImportShifts(ctx, fctx);
+  const symbolBoxIdx = ctx.funcMap.get("__box_symbol");
+  const construct1Idx = ctx.funcMap.get("__native_construct_1");
+  if (
+    externGetIdx === undefined ||
+    isUndefinedIdx === undefined ||
+    typeofObjectIdx === undefined ||
+    typeofFunctionIdx === undefined ||
+    boxNumberIdx === undefined ||
+    symbolBoxIdx === undefined ||
+    isConstructorIdx === undefined ||
+    driverIdx === undefined ||
+    construct1Idx === undefined
+  ) {
+    // Substrate missing ⇒ keep today's emission exactly.
+    return null;
+  }
+
+  const selectedLocal = allocLocal(fctx, `__abs_sel_${fctx.locals.length}`, { kind: "externref" });
+  const ctorLocal = allocLocal(fctx, `__abs_ctor_${fctx.locals.length}`, { kind: "externref" });
+  const speciesLocal = allocLocal(fctx, `__abs_spc_${fctx.locals.length}`, { kind: "externref" });
+  const resultLocal = allocLocal(fctx, `__abs_new_${fctx.locals.length}`, { kind: "externref" });
+  const resultAnyLocal = allocLocal(fctx, `__abs_newany_${fctx.locals.length}`, { kind: "anyref" });
+  const resultVecLocal = allocLocal(fctx, `__abs_newvec_${fctx.locals.length}`, { kind: "ref", typeIdx: vecTypeIdx });
+
+  const typeErrorArm = (message: string): Instr[] => {
+    const saved = fctx.body;
+    const body: Instr[] = [];
+    fctx.body = body;
+    emitThrowTypeError(ctx, fctx, message);
+    fctx.body = saved;
+    return body;
+  };
+
+  // The DEFAULT lane is the null sentinel: %ArrayBuffer% is not reified as a
+  // callable carrier here, and constructing it would be observationally
+  // identical to the `struct.new` the caller already emits.
+  //
+  // (#5349 r5) `resultLocal` is RETURNED to the caller, so its reset must run on
+  // EVERY execution of the slice site — including the executions on which this
+  // ladder does not run at all. Wasm locals live for the whole invocation, so
+  // when the caller gates the ladder behind a runtime brand test
+  // (`emitArrayBufferSliceSpeciesUnlessPacked`) and the arm that SKIPS the
+  // ladder is taken, `resultLocal` would otherwise still hold the buffer an
+  // EARLIER execution's species constructor produced — and the caller's
+  // destination-array selection reads it, writing the copy into that buffer and
+  // returning a carrier that aliases it (a longer new slice then `array.set`s
+  // past the old length and traps uncatchably). So a gating caller passes
+  // `resetSink` and emits these instructions ahead of its own gate; the ungated
+  // path passes nothing and keeps them inline, byte-for-byte where they were.
+  //
+  // `selectedLocal` never escapes this function, so only `resultLocal` is
+  // load-bearing here; the pair is hoisted together because it is ONE
+  // initialisation of the default lane and splitting it would leave the next
+  // reader to re-derive which half mattered.
+  const defaultLaneResets: Instr[] = [
+    { op: "ref.null.extern" },
+    { op: "local.set", index: selectedLocal },
+    { op: "ref.null.extern" },
+    { op: "local.set", index: resultLocal },
+  ];
+  if (resetSink) resetSink.push(...defaultLaneResets);
+  else fctx.body.push(...defaultLaneResets);
+
+  emitSpeciesConstructorLadder(ctx, fctx, {
+    receiverInstrs: [{ op: "local.get", index: srcVecLocal }, { op: "extern.convert_any" }],
+    selectedLocal,
+    constructorLocal: ctorLocal,
+    speciesLocal,
+    notObjectArm: () => typeErrorArm("ArrayBuffer.prototype.slice: constructor is not an object"),
+    deps: { externGetIdx, isUndefinedIdx, typeofObjectIdx, typeofFunctionIdx, symbolBoxIdx },
+  });
+
+  // (#5349 r4) R1 — §25.1.5.3 step 14 with C = %ArrayBuffer% IS the default
+  // ArrayCreate lane, so it must not reach the IsConstructor refusal below.
+  //
+  // `ab.constructor = ArrayBuffer` (and `ab.constructor = { [Symbol.species]:
+  // ArrayBuffer }`) resolves C to the reified `%ArrayBuffer%` carrier — a real
+  // `$Object` whose own `@@species` getter returns the receiver, so the ladder
+  // above selects it. That carrier has no [[Construct]] the generic
+  // `Reflect.isConstructor` helper can see, so step 14 threw a TypeError where
+  // node returns an ordinary buffer (`ab.slice(0, 4).byteLength` → node 4, main
+  // 4, rounds 1-3 TypeError).
+  //
+  // The cheap spec-equivalent route is IDENTITY with the intrinsic, not a wider
+  // IsConstructor: Construct(%ArrayBuffer%, «newLen») is observationally the
+  // `struct.new` + %ArrayBuffer.prototype% result the default lane already
+  // emits, so clearing `selectedLocal` back to null takes exactly that lane.
+  // Deliberately NOT a general "teach IsConstructor about builtins" change —
+  // every other constructor value still goes through the refusal.
+  const abCtorGlobalIdx = reserveBuiltinConstructorIdentityGlobal(ctx, "ArrayBuffer");
+  const selAnyLocal = allocLocal(fctx, `__abs_selany_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  const intrAnyLocal = allocLocal(fctx, `__abs_intrany_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+  const EQ_HEAP_TYPE = -19; // WasmGC `eq` abstract heap type
+  fctx.body.push(
+    { op: "local.get", index: selectedLocal },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "global.get", index: abCtorGlobalIdx },
+    { op: "ref.is_null" },
+    { op: "i32.eqz" },
+    { op: "i32.and" },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [
+        { op: "local.get", index: selectedLocal },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: selAnyLocal },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        { op: "global.get", index: abCtorGlobalIdx },
+        { op: "any.convert_extern" },
+        { op: "local.tee", index: intrAnyLocal },
+        { op: "ref.test", typeIdx: EQ_HEAP_TYPE },
+        { op: "i32.and" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [
+            { op: "local.get", index: selAnyLocal },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "local.get", index: intrAnyLocal },
+            { op: "ref.cast", typeIdx: EQ_HEAP_TYPE },
+            { op: "ref.eq" },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "ref.null.extern" }, { op: "local.set", index: selectedLocal }],
+              else: [],
+            },
+          ],
+          else: [],
+        },
+      ],
+      else: [],
+    },
+  );
+
+  fctx.body.push({ op: "local.get", index: selectedLocal }, { op: "ref.is_null" }, { op: "i32.eqz" });
+  fctx.body.push({
+    op: "if",
+    blockType: { kind: "empty" },
+    then: [
+      // step 14 — IsConstructor(ctor) is false ⇒ TypeError.
+      { op: "local.get", index: selectedLocal },
+      { op: "call", funcIdx: isConstructorIdx },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("ArrayBuffer.prototype.slice: species is not a constructor"),
+        else: [],
+      },
+      // step 15 — new = ? Construct(ctor, «newLen»).
+      { op: "local.get", index: selectedLocal },
+      { op: "ref.null.extern" },
+      { op: "local.get", index: newLenLocal },
+      { op: "f64.convert_i32_s" },
+      { op: "call", funcIdx: boxNumberIdx },
+      { op: "call", funcIdx: construct1Idx },
+      { op: "local.set", index: resultLocal },
+      // step 16 — the result must BE an ArrayBuffer. Anything else (a plain
+      // object, a TypedArray, null) is the §25.1.5.3 step 16 TypeError; without
+      // this the `ref.cast` below would trap uncatchably instead.
+      { op: "local.get", index: resultLocal },
+      { op: "any.convert_extern" },
+      { op: "local.tee", index: resultAnyLocal },
+      { op: "ref.test", typeIdx: vecTypeIdx },
+      { op: "i32.eqz" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("ArrayBuffer.prototype.slice: species constructor returned a non-ArrayBuffer"),
+        else: [],
+      },
+      { op: "local.get", index: resultAnyLocal },
+      { op: "ref.cast", typeIdx: vecTypeIdx },
+      { op: "local.set", index: resultVecLocal },
+      // step 17 — IsDetachedBuffer(new). The native detached marker is the
+      // shared vec's negative length.
+      { op: "local.get", index: resultVecLocal },
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+      { op: "i32.const", value: 0 },
+      { op: "i32.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("ArrayBuffer.prototype.slice: species constructor returned a detached buffer"),
+        else: [],
+      },
+      // step 18 — SameValue(new, O) ⇒ TypeError. Struct identity, not contents.
+      { op: "local.get", index: resultVecLocal },
+      { op: "local.get", index: srcVecLocal },
+      { op: "ref.eq" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("ArrayBuffer.prototype.slice: species constructor returned the same buffer"),
+        else: [],
+      },
+      // step 20 — byteLength < newLen ⇒ TypeError. LARGER is legal and is
+      // returned as-is (`species-returns-larger-arraybuffer.js` asserts
+      // `result.byteLength === 10` for a newLen of 8).
+      { op: "local.get", index: resultVecLocal },
+      { op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 },
+      { op: "local.get", index: newLenLocal },
+      { op: "i32.lt_s" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: typeErrorArm("ArrayBuffer.prototype.slice: species constructor returned too small a buffer"),
+        else: [],
+      },
+    ],
+  });
+  return resultLocal;
+}
+
+export interface SpeciesConstructorLadderDeps {
+  externGetIdx: number;
+  isUndefinedIdx: number;
+  typeofObjectIdx: number;
+  typeofFunctionIdx: number;
+  symbolBoxIdx: number;
+}
+
+export function emitSpeciesConstructorLadder(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  options: {
+    /** Pushes the receiver as an EXTERNREF. */
+    receiverInstrs: readonly Instr[];
+    selectedLocal: number;
+    constructorLocal: number;
+    speciesLocal: number;
+    notObjectArm: () => Instr[];
+    deps: SpeciesConstructorLadderDeps;
+  },
+): void {
+  const { externGetIdx, isUndefinedIdx, typeofObjectIdx, typeofFunctionIdx, symbolBoxIdx } = options.deps;
+  const { selectedLocal, constructorLocal, speciesLocal } = options;
+  fctx.body.push(
+    ...options.receiverInstrs,
+    ...stringConstantExternrefInstrs(ctx, "constructor"),
+    { op: "call", funcIdx: externGetIdx },
+    { op: "local.set", index: constructorLocal },
+    { op: "local.get", index: constructorLocal },
+    { op: "call", funcIdx: isUndefinedIdx },
+    {
+      op: "if",
+      blockType: { kind: "empty" },
+      then: [], // undefined C keeps the intrinsic default in selectedLocal
+      else: [
+        // null is not a constructor object. Keep it separate from the
+        // Type(Object(null)) classifier, whose null policy is intentionally
+        // different for ordinary dynamic reads.
+        { op: "local.get", index: constructorLocal },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: options.notObjectArm(),
+          else: [],
+        },
+        { op: "local.get", index: constructorLocal },
+        { op: "call", funcIdx: typeofObjectIdx },
+        { op: "local.get", index: constructorLocal },
+        { op: "call", funcIdx: typeofFunctionIdx },
+        { op: "i32.or" },
+        { op: "i32.eqz" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: options.notObjectArm(),
+          else: [],
+        },
+        { op: "local.get", index: constructorLocal },
+        { op: "i32.const", value: 5 },
+        { op: "call", funcIdx: symbolBoxIdx },
+        { op: "call", funcIdx: externGetIdx },
+        { op: "local.set", index: speciesLocal },
+        { op: "local.get", index: speciesLocal },
+        { op: "ref.is_null" },
+        { op: "local.get", index: speciesLocal },
+        { op: "call", funcIdx: isUndefinedIdx },
+        { op: "i32.or" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [], // null/undefined species keeps the intrinsic default
+          else: [
+            { op: "local.get", index: speciesLocal },
+            { op: "local.set", index: selectedLocal },
+          ],
+        },
+      ],
+    },
+  );
+}
+
 export interface TaDynSpeciesCreateOptions {
   dvLocal: number;
   argLocals: readonly number[];
@@ -6100,64 +6970,14 @@ export function emitTaDynSpeciesCreate(
   // C = ? Get(exemplar, "constructor"). The dynamic MOP has already handled
   // own expandos and inherited prototype accessors, so this call preserves
   // their exact abrupt completion and lookup order.
-  fctx.body.push(
-    { op: "local.get", index: options.dvLocal },
-    { op: "extern.convert_any" },
-    ...stringConstantExternrefInstrs(ctx, "constructor"),
-    { op: "call", funcIdx: externGetIdx },
-    { op: "local.set", index: constructorLocal },
-    { op: "local.get", index: constructorLocal },
-    { op: "call", funcIdx: isUndefinedIdx },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [], // undefined C keeps the intrinsic default in selectedLocal
-      else: [
-        // null is not a constructor object. Keep it separate from the
-        // Type(Object(null)) classifier, whose null policy is intentionally
-        // different for ordinary dynamic reads.
-        { op: "local.get", index: constructorLocal },
-        { op: "ref.is_null" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: typeErrorArm("TypedArray constructor is not an object"),
-          else: [],
-        },
-        { op: "local.get", index: constructorLocal },
-        { op: "call", funcIdx: typeofObjectIdx },
-        { op: "local.get", index: constructorLocal },
-        { op: "call", funcIdx: typeofFunctionIdx },
-        { op: "i32.or" },
-        { op: "i32.eqz" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: typeErrorArm("TypedArray constructor is not an object"),
-          else: [],
-        },
-        { op: "local.get", index: constructorLocal },
-        { op: "i32.const", value: 5 },
-        { op: "call", funcIdx: symbolBoxIdx },
-        { op: "call", funcIdx: externGetIdx },
-        { op: "local.set", index: speciesLocal },
-        { op: "local.get", index: speciesLocal },
-        { op: "ref.is_null" },
-        { op: "local.get", index: speciesLocal },
-        { op: "call", funcIdx: isUndefinedIdx },
-        { op: "i32.or" },
-        {
-          op: "if",
-          blockType: { kind: "empty" },
-          then: [], // null/undefined species keeps the intrinsic default
-          else: [
-            { op: "local.get", index: speciesLocal },
-            { op: "local.set", index: selectedLocal },
-          ],
-        },
-      ],
-    },
-  );
+  emitSpeciesConstructorLadder(ctx, fctx, {
+    receiverInstrs: [{ op: "local.get", index: options.dvLocal }, { op: "extern.convert_any" }],
+    selectedLocal,
+    constructorLocal,
+    speciesLocal,
+    notObjectArm: () => typeErrorArm("TypedArray constructor is not an object"),
+    deps: { externGetIdx, isUndefinedIdx, typeofObjectIdx, typeofFunctionIdx, symbolBoxIdx },
+  });
 
   // SpeciesConstructor requires an actual constructor before Construct.  The
   // classifier is finalized after closure registration and understands both
@@ -6552,6 +7372,12 @@ export function ensureTaDynFillHelper(ctx: CodegenContext): number | undefined {
   const dynIdx = getOrRegisterTaDynViewType(ctx);
   const { vecTypeIdx: byteVecIdx, arrTypeIdx: byteArrIdx } = i32ByteVec(ctx);
   const nullishToNullIdx = ctx.funcMap.get("__nullish_to_null");
+  // (#5317 r4 step 2) `undefined` and `null` are DIFFERENT `end` arguments:
+  // only `undefined` means "absent ⇒ len"; `null` is ToIntegerOrInfinity'd to 0
+  // (`fill/coerced-indexes.js`: `fill(1, 0, null)` fills NOTHING). The
+  // `__nullish_to_null` + `ref.is_null` test below collapses the two, so prefer
+  // the real §7.1 "is undefined" predicate when the runtime has one.
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
 
   const params: ValType[] = [
     { kind: "externref" }, // recv (guaranteed $__ta_dyn_view by the caller's ref.test)
@@ -6698,10 +7524,15 @@ export function ensureTaDynFillHelper(ctx: CodegenContext): number | undefined {
   fctx.body.push({ op: "i32.const", value: 3 });
   fctx.body.push({ op: "i32.ge_s" });
   fctx.body.push({ op: "local.get", index: 3 });
-  if (nullishToNullIdx !== undefined) {
-    fctx.body.push({ op: "call", funcIdx: nullishToNullIdx });
+  if (isUndefinedIdx !== undefined) {
+    // (#5317 r4) `undefined` ⇒ absent; a genuine `null` is NOT absent.
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+  } else {
+    if (nullishToNullIdx !== undefined) {
+      fctx.body.push({ op: "call", funcIdx: nullishToNullIdx });
+    }
+    fctx.body.push({ op: "ref.is_null" });
   }
-  fctx.body.push({ op: "ref.is_null" });
   fctx.body.push({ op: "i32.eqz" });
   fctx.body.push({ op: "i32.and" });
   {
@@ -7475,6 +8306,8 @@ export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undef
   const arrLocal = allocLocal(fctx, "arr", { kind: "ref", typeIdx: byteArrIdx });
   const boLocal = allocLocal(fctx, "bo", { kind: "i32" });
   const nullishToNullIdx = ctx.funcMap.get("__nullish_to_null");
+  // (#5317 r4 step 2) see `ensureTaDynFillHelper` — only `undefined` is absent.
+  const isUndefinedIdx = ctx.funcMap.get("__extern_is_undefined");
 
   pushTaDynMethodPreamble(ctx, fctx, dynIdx, dvLocal, kindLocal, esLocal, lenLocal);
   fctx.body.push({ op: "local.get", index: lenLocal });
@@ -7521,13 +8354,19 @@ export function ensureTaDynCopyWithinHelper(ctx: CodegenContext): number | undef
       ],
     });
   }
-  // final = (argc >= 3 && end not undefined/null) ? relative(end) : len.
+  // final = (argc >= 3 && end is not undefined) ? relative(end) : len.
+  // (#5317 r4 step 2) `null` is NOT `undefined` here either — §23.2.3.6 step 8
+  // ToIntegerOrInfinity's it to 0, so `copyWithin(0, 0, null)` copies nothing.
   fctx.body.push({ op: "local.get", index: 4 });
   fctx.body.push({ op: "i32.const", value: 3 });
   fctx.body.push({ op: "i32.ge_s" });
   fctx.body.push({ op: "local.get", index: 3 });
-  if (nullishToNullIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nullishToNullIdx });
-  fctx.body.push({ op: "ref.is_null" });
+  if (isUndefinedIdx !== undefined) {
+    fctx.body.push({ op: "call", funcIdx: isUndefinedIdx });
+  } else {
+    if (nullishToNullIdx !== undefined) fctx.body.push({ op: "call", funcIdx: nullishToNullIdx });
+    fctx.body.push({ op: "ref.is_null" });
+  }
   fctx.body.push({ op: "i32.eqz" });
   fctx.body.push({ op: "i32.and" });
   {

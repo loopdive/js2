@@ -96,10 +96,11 @@ export const OBJECT_INTEGRITY_OBJ_PREDICATES: readonly string[] = [
 
 /**
  * Register `__integrity_bag(externref v) -> externref`:
- *   vec carrier     → `__vec_bag_ensure(v)`
- *   closure carrier → `__closure_bag_ensure(v)`
- *   Error carrier   → `__error_prop_bag_ensure(v)`
- *   otherwise       → `ref.null.extern`
+ *   vec carrier      → `__vec_bag_ensure(v)`
+ *   closure carrier  → `__closure_bag_ensure(v)`
+ *   Error carrier    → `__error_prop_bag_ensure(v)`
+ *   instance carrier → `__closure_bag_ensure(v)`   (#5316)
+ *   otherwise        → `ref.null.extern`
  *
  * Returns `undefined` when the bag substrates are absent (host mode), which is
  * the signal for callers to emit their pre-#4032 bodies unchanged.
@@ -111,6 +112,15 @@ export function registerIntegrityBagResolver(ctx: CodegenContext, registerNative
   const closureBagEnsureIdx = ctx.funcMap.get("__closure_bag_ensure");
   const isErrorCarrierIdx = ctx.funcMap.get("__is_error_prop_carrier");
   const errorBagEnsureIdx = ctx.funcMap.get("__error_prop_bag_ensure");
+  // (#5316) The #4194 per-instance expando carrier — every `isUserDeclaredStruct`
+  // shape: class instances, `__fnctor_` structs, and the `__anon_*` struct an
+  // object LITERAL lowers to. Those are the ordinary objects the integrity
+  // predicates are asked about most, and without this arm every one of them fell
+  // through to the terminal: a pristine `class C{}` instance answered
+  // `isExtensible=false, isFrozen=true, isSealed=true` (probe `x1`, node `1` /
+  // base `6`), and `Object.preventExtensions`/`seal`/`freeze` on it were silent
+  // no-ops because there was nowhere to record the bits.
+  const isInstanceCarrierIdx = ctx.funcMap.get("__is_instance_expando_carrier");
   if (
     isVecCarrierIdx === undefined ||
     vecBagEnsureIdx === undefined ||
@@ -148,6 +158,32 @@ export function registerIntegrityBagResolver(ctx: CodegenContext, registerNative
               op: "if",
               blockType: { kind: "empty" },
               then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: errorBagEnsureIdx }, { op: "return" }],
+            },
+          ] satisfies Instr[])),
+      // LAST of the four arms on purpose: a vec / closure / Error carrier has its
+      // own bag substrate, and `isUserDeclaredStruct` is a whitelist that does not
+      // admit them, so the order is documentation rather than arbitration.
+      //
+      // ENSURE, not lookup — same as the three arms above. A freshly minted bag
+      // has `flags == 0`, which decodes to exactly the pristine-ordinary-object
+      // answer, so one path serves "never mutated" and "mutated" alike and there
+      // is no second state to keep consistent. (`carrier-bag-visibility.ts:58-62`
+      // states the opposite rule for the VISIBILITY resolver, and that is not a
+      // contradiction: an enumeration/`gopd` query must not conjure a bag,
+      // because an empty bag there is indistinguishable from a bag that was
+      // never wanted and would make `__carrier_bag_gopd` claim the receiver. Here
+      // the bag is the only place `[[Extensible]]` can live, so refusing to mint
+      // it is refusing to answer.) The allocation happens only on an integrity
+      // operation against a non-`$Object` receiver.
+      ...(isInstanceCarrierIdx === undefined
+        ? []
+        : ([
+            { op: "local.get", index: 0 },
+            { op: "call", funcIdx: isInstanceCarrierIdx },
+            {
+              op: "if",
+              blockType: { kind: "empty" },
+              then: [{ op: "local.get", index: 0 }, { op: "call", funcIdx: closureBagEnsureIdx }, { op: "return" }],
             },
           ] satisfies Instr[])),
       { op: "ref.null.extern" },

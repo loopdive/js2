@@ -36,6 +36,11 @@ import { runTest262File } from "../tests/test262-runner.js";
 
 // Child mode for --isolate: measure exactly one row and print a parseable line.
 const oneRow = process.env.JS2WASM_ROW_ONE;
+// Per-row budget. The runner's own default (15 s) is a CI-shard number; on a
+// shared box (several lanes on four cores) it turns rows that compile fine into
+// "compilation timeout" verdicts — 93 of 169 rows in the #5317 r4 base sweep on
+// 2026-09-04. 120 s matches the pin tests; override with JS2WASM_ROW_TIMEOUT_MS.
+const ROW_TIMEOUT_MS = Number(process.env.JS2WASM_ROW_TIMEOUT_MS ?? 120_000);
 const target =
   process.argv.includes("--standalone") || process.env.JS2WASM_ROW_TARGET === "standalone" ? "standalone" : undefined;
 if (oneRow) {
@@ -45,7 +50,7 @@ if (oneRow) {
     const r = await runTest262File(
       resolve("test262/test", oneRow),
       oneRow.split("/").slice(0, 2).join("/"),
-      undefined,
+      ROW_TIMEOUT_MS,
       target,
     );
     st = r.status;
@@ -91,7 +96,7 @@ for (let pi = 0; pi < paths.length; pi++) {
       const out = execFileSync(process.execPath, ["--import", "tsx", process.argv[1]!, "-"], {
         input: rel,
         encoding: "utf-8",
-        timeout: 120_000,
+        timeout: ROW_TIMEOUT_MS + 15_000,
         env: { ...process.env, JS2WASM_ROW_ONE: rel, ...(target ? { JS2WASM_ROW_TARGET: target } : {}) },
       });
       const m = /^ROW (\S+) (.*)$/m.exec(out);
@@ -106,7 +111,7 @@ for (let pi = 0; pi < paths.length; pi++) {
     continue;
   }
   try {
-    const r = await runTest262File(abs, category, undefined, target);
+    const r = await runTest262File(abs, category, ROW_TIMEOUT_MS, target);
     status = r.status;
     reason = (r as { reason?: string; error?: string }).reason ?? (r as { error?: string }).error ?? "";
   } catch (e) {

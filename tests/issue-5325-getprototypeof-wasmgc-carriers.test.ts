@@ -25,12 +25,11 @@
 // fallback, but untyped multi-source is the shape real packages present, and it
 // keeps the test honest about which arm it exercises.
 //
-// TWO DOCUMENTED RESIDUALS, asserted below so neither moves silently:
+// ONE DOCUMENTED RESIDUAL, asserted below so it cannot move silently. (The
+// second one this file shipped with — a compiled CLASS INSTANCE answering
+// `%Object.prototype%` — was closed by #5347's `__class_instance_proto`
+// discriminator, and its two assertions now read the other way.)
 //
-//  - a compiled CLASS INSTANCE still answers `%Object.prototype%`. It is a named
-//    data struct and so is the class's own prototype singleton, and no export the
-//    module publishes tells them apart — the class arm needs a new codegen-side
-//    discriminator, deliberately not in this change.
 //  - `Object.setPrototypeOf` on an ARRAY literal never reaches
 //    `__host_set_struct_proto`, so no explicit link is recorded for the vec and
 //    the new vec arm answers `Array.prototype`. That is not the assigned
@@ -144,9 +143,11 @@ export function setPrototypeOfOnArrayIsArrayProto() {
   return Object.getPrototypeOf(identity(a)) === Array.prototype ? 1 : 0;
 }
 
-// Residual (see the file header): a compiled class instance still reports
-// %Object.prototype%.
-export function classInstanceProtoIsObjectProto() { return protoIsObjectPrototype(new Action()) ? 1 : 0; }
+// (#5347) The class-instance residual this file used to pin. It answers
+// Action.prototype since the __class_instance_proto discriminator landed;
+// kept here as the no-regression control for the #5325 carriers next to it.
+export function classInstanceProtoIsObjectProto() { return protoIsObjectPrototype(identity(new Action())) ? 1 : 0; }
+export function classInstanceProtoIsClassProto() { return Object.getPrototypeOf(identity(new Action())) === Action.prototype ? 1 : 0; }
 `;
 
 describe("#5325 Object.getPrototypeOf on a WasmGC carrier receiver", () => {
@@ -194,9 +195,11 @@ describe("#5325 Object.getPrototypeOf on a WasmGC carrier receiver", () => {
     expect(call("setPrototypeOfOnArrayIsArrayProto")).toBe(1);
   });
 
-  it("records the compiled-class-instance residual", () => {
-    // NOT a desired answer — the spec answer is `Action.prototype`. Asserted so
-    // the day a class discriminator lands, this line has to change with it.
-    expect(call("classInstanceProtoIsObjectProto")).toBe(1);
+  it("answers the class prototype for a compiled class instance (#5347)", () => {
+    // Was the last residual of this change: both lines read the other way until
+    // `__class_instance_proto` landed. The full matrix lives in
+    // tests/issue-5347-getprototypeof-compiled-class-instance.test.ts.
+    expect(call("classInstanceProtoIsObjectProto")).toBe(0);
+    expect(call("classInstanceProtoIsClassProto")).toBe(1);
   });
 });

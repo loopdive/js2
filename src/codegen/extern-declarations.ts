@@ -304,6 +304,42 @@ export function registerBuiltinExternClasses(ctx: CodegenContext): void {
     });
   }
 
+  // (#5355) Intl.DateTimeFormat — the host-mirror bridge. #5206 made the `Intl`
+  // NAMESPACE resolve to the host global, which fixed the fully dynamic (`any`)
+  // spelling. The TYPED spelling (`new Intl.DateTimeFormat(...)`, the one the
+  // `@js-temporal/polyfill` bundle and ordinary TS both emit) still resolved its
+  // class name from the checker to "DateTimeFormat", found no extern class here,
+  // fell through every arm of `compileNewExpression` and yielded `undefined` —
+  // while `typeof` was constant-folded from the declared TS type to "object".
+  // Registering it alongside its siblings gives the receiver an opaque host
+  // externref and routes every method to the real ICU-backed host object, which
+  // is the #679/#682 dual-backend shape: host fast path now, standalone declared
+  // out of scope with its bound (there is no ICU in pure Wasm, so a compiled
+  // shim would have to reimplement calendar + time-zone data).
+  //
+  // Unlike ListFormat/NumberFormat above this is gated on the JS-host lane. Those
+  // two predate the #2961 no-leak ratchet and still emit `Intl_*_new` into a
+  // `--target standalone` binary with a host-import-leak warning; a NEW host
+  // import must not add to that. Standalone/WASI instead get a catchable
+  // `TypeError` from `tryCompileIntlHostOnlyNew` (new-intl-host-bridge.ts) —
+  // never a trap, never an unsatisfiable import.
+  if (!ctx.externClasses.has("DateTimeFormat") && !ctx.standalone && !ctx.wasi && !ctx.nativeStrings) {
+    const methods = new Map<string, { params: ValType[]; results: ValType[]; requiredParams: number }>();
+    methods.set("format", externMethod(1)); // format(date?) → string (externref)
+    methods.set("formatToParts", externMethod(1)); // formatToParts(date?) → array (externref)
+    methods.set("resolvedOptions", externMethod(0)); // resolvedOptions() → object (externref)
+    methods.set("formatRange", externMethod(2)); // formatRange(start, end) → string
+    methods.set("formatRangeToParts", externMethod(2)); // formatRangeToParts(start, end) → array
+    ctx.externClasses.set("DateTimeFormat", {
+      importPrefix: "Intl_DateTimeFormat",
+      namespacePath: ["Intl"],
+      className: "DateTimeFormat",
+      constructorParams: [{ kind: "externref" }, { kind: "externref" }], // locales?, options?
+      methods,
+      properties: new Map(),
+    });
+  }
+
   // (#1792) node:url — `URL` / `URLSearchParams` as host constructors. Both are
   // WHATWG globals present in Node 18+ and every browser, so the JS-host path
   // binds them via `builtinCtors` (runtime.ts) exactly like Set/Map. `new
@@ -644,9 +680,45 @@ export function collectReferencedGlobalNames(
     const p = id.parent;
     return (ts.isPropertyAccessExpression(p) && p.name === id) || (ts.isQualifiedName(p) && p.right === id);
   };
+  // #5351 — a lib.dom ambient `declare function` (e.g. `toString`, `blur`,
+  // `focus`) shadows a same-named binding the script itself creates at top
+  // level (`var toString = Object.prototype.toString;`). TypeScript does not
+  // merge the script's `var` with the ambient declaration, so a USE of that
+  // name still resolves to the lib declaration — `isAmbientGlobalDecl` above
+  // sees only the lib decl and never the user's own. Fix is therefore by
+  // NAME, not by re-resolving the use-site symbol: collect every name the
+  // user's own top-level statements bind, and never register one of those
+  // names as lib-referenced even though its uses resolve to the ambient decl.
+  //
+  // The exclusion is PER SOURCE FILE, and that scoping is load-bearing under
+  // `compileMulti` (review round 1). A top-level binding in a module is local
+  // to that module: `/helper.ts` doing `var queueMicrotask = 1` must not strip
+  // `/main.ts`'s genuine `queueMicrotask(...)` global. With one flat set across
+  // every user file it did — main's host import vanished and the call trapped
+  // on `unreachable`. All multi-file inputs are modules, so no cross-file
+  // script-global sharing has to be modelled: a file's own top-level
+  // `var`/`function`/`class`/`let`/`const` shadows the ambient global for
+  // references in THAT file and nowhere else.
+  const topLevelBindings = (sf: ts.SourceFile): Set<string> => {
+    const bound = new Set<string>();
+    for (const stmt of sf.statements) {
+      if (ts.isVariableStatement(stmt)) {
+        for (const decl of stmt.declarationList.declarations) {
+          if (ts.isIdentifier(decl.name)) bound.add(decl.name.text);
+        }
+      } else if (ts.isFunctionDeclaration(stmt) && stmt.name && !hasDeclareModifier(stmt)) {
+        bound.add(stmt.name.text);
+      } else if (ts.isClassDeclaration(stmt) && stmt.name && !hasDeclareModifier(stmt)) {
+        bound.add(stmt.name.text);
+      }
+    }
+    return bound;
+  };
   const names = new Set<string>();
+  // Reassigned per file below; `visit` never escapes its file's walk.
+  let userBound = new Set<string>();
   const visit = (node: ts.Node): void => {
-    if (ts.isIdentifier(node) && !isPropertyNamePosition(node)) {
+    if (ts.isIdentifier(node) && !isPropertyNamePosition(node) && !userBound.has(node.text)) {
       const decls = checker.getSymbolAtLocation(node)?.getDeclarations();
       if (decls && decls.some(isAmbientGlobalDecl)) {
         names.add(node.text);
@@ -655,6 +727,7 @@ export function collectReferencedGlobalNames(
     forEachChild(node, visit);
   };
   for (const sf of userFiles) {
+    userBound = topLevelBindings(sf);
     for (const stmt of sf.statements) forEachChild(stmt, visit);
   }
   return names;

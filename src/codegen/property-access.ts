@@ -30,6 +30,7 @@ import { popBody, pushBody } from "./context/bodies.js";
 import { resolveWidenedVarKey, integrityVarKey } from "./widened-var-key.js";
 import { reportError, reportErrorNoNode } from "./context/errors.js";
 import { allocLocal, allocTempLocal, getLocalType, releaseTempLocal } from "./context/locals.js";
+import { recordRuntimeKeyClassMethodRead } from "./runtime-key-class-methods.js"; // (#5358)
 import { emitOverlayRoutedElementGet, overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4159 S3)
 import { snapshotSpeculative, rollbackSpeculative } from "./context/speculative.js";
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js"; // (#2580 M2 slice 1) (#2984)
@@ -164,7 +165,7 @@ import {
   recordInModuleInitFlagRead,
 } from "./registry/imports.js";
 import { tryCompileArrayMethodValue } from "./array-method-value.js";
-import { receiverIsRealmGlobalObject } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver
+import { realmGlobalModuleGlobalReadApplies } from "./helpers/sloppy-this-global.js"; // (#4500 Slice A) realm-global receiver; (#5342) self-referential probe
 import { dvDetachedThrowInstrs, getOrRegisterDvWindowType } from "./dataview-native.js"; // (#2159/#38) DataView windowing; (#3173) detached TypeError
 import {
   getArrTypeIdxFromVec,
@@ -3702,7 +3703,7 @@ function tryEmitRealmGlobalModuleGlobalRead(
 ): ValType | undefined {
   const globalIdx = ctx.moduleGlobals.get(propName);
   if (globalIdx === undefined) return undefined;
-  if (!receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) return undefined;
+  if (!realmGlobalModuleGlobalReadApplies(ctx, fctx, expr, propName)) return undefined;
   fctx.body.push({ op: "global.get", index: globalIdx });
   return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
 }
@@ -3728,11 +3729,11 @@ function tryEmitRealmGlobalModuleGlobalElementRead(
   fctx: FunctionContext,
   expr: ts.ElementAccessExpression,
 ): ValType | undefined {
-  if (!receiverIsRealmGlobalObject(ctx, fctx, expr.expression)) return undefined;
   const key = resolveComputedKeyExpression(ctx, expr.argumentExpression);
   if (key === undefined) return undefined;
   const globalIdx = ctx.moduleGlobals.get(key);
   if (globalIdx === undefined) return undefined;
+  if (!realmGlobalModuleGlobalReadApplies(ctx, fctx, expr, key)) return undefined;
   fctx.body.push({ op: "global.get", index: globalIdx });
   return ctx.mod.globals[localGlobalIdx(ctx, globalIdx)]?.type ?? { kind: "externref" };
 }
@@ -4671,6 +4672,9 @@ function emitTypedArrayUndefinedOobGet(
   // View-name-driven signedness (`"s"` Int*, `"u"` Uint*); undefined for float
   // views. Drives both the bounded read's extension AND the i32→f64 conversion.
   signedness: "s" | "u" | undefined,
+  // Host-lane compiled TypedArrays can become detached while retaining their
+  // fixed-capacity Wasm backing. In that case field 0 is the observable bound.
+  lengthBoundInstrs?: readonly Instr[],
 ): void {
   // Save index + array ref (consumed by the bounds test AND the bounded read).
   const idxLocal = allocLocal(fctx, `__taoob_idx_${fctx.locals.length}`, { kind: "i32" });
@@ -4682,8 +4686,12 @@ function emitTypedArrayUndefinedOobGet(
   // unsigned value > any length, so it falls into the OOB (undefined) arm.
   const inBoundsLocal = allocLocal(fctx, `__taoob_in_${fctx.locals.length}`, { kind: "i32" });
   fctx.body.push({ op: "local.get", index: idxLocal });
-  fctx.body.push({ op: "local.get", index: arrLocal });
-  fctx.body.push({ op: "array.len" });
+  if (lengthBoundInstrs) {
+    fctx.body.push(...lengthBoundInstrs.map((instr) => ({ ...instr })));
+  } else {
+    fctx.body.push({ op: "local.get", index: arrLocal });
+    fctx.body.push({ op: "array.len" });
+  }
   fctx.body.push({ op: "i32.lt_u" });
   fctx.body.push({ op: "local.set", index: inBoundsLocal });
 
@@ -5468,6 +5476,13 @@ export function compileElementAccessBody(
     // no compile-time name and registers nothing.
     if (ts.isStringLiteral(expr.argumentExpression)) {
       recordDynamicClassAccessorRead(ctx, objType, expr.argumentExpression.text);
+    } else if (
+      !ts.isNumericLiteral(expr.argumentExpression) &&
+      !isNumericIndexExpression(ctx, expr.argumentExpression, fctx)
+    ) {
+      // (#5358) A non-numeric runtime key may name a prototype method of
+      // whichever class instance the `any` holds: publish every class's bridges.
+      recordRuntimeKeyClassMethodRead(ctx, undefined);
     }
     // (#2784 S3) Native-vec-aware element read. A numeric `recv[i]` on an
     // `any`/externref receiver that is actually a NATIVE vec (a reconstructed-
@@ -6223,6 +6238,11 @@ export function compileElementAccessBody(
         }
       }
       // Non-vec, non-tuple struct: fallback to externref conversion + __extern_get
+      // (#5358) A non-numeric key: publish the receiver class family's method
+      // bridges the host resolver needs (runtime-key-class-methods.ts).
+      if (!isNumericIndexExpression(ctx, expr.argumentExpression, fctx)) {
+        recordRuntimeKeyClassMethodRead(ctx, typeIdx, fieldName);
+      }
       // Convert struct ref (already on stack) to externref
       fctx.body.push({ op: "extern.convert_any" });
       // Compile the key as externref
@@ -6412,9 +6432,11 @@ export function compileElementAccessBody(
     // popped slot instead of being OOB. That broke the test262 HOF "-c-ii-5"
     // family on iteration 2+ (`kIndex[1]` after `kIndex[0]=1` grew capacity to 4).
     // Tee the vec ref so the length field is available to the bounded-read arms
-    // below; skipped on the proven fast path and the TA arm (a typed-array view
-    // is fixed-length — capacity === length — so its bytes stay identical).
-    const useLenBound = !isSafeBoundsEliminated(fctx, expr) && !oobUndefinedTypedArray;
+    // below. Host-lane TypedArrays deliberately retain their Wasm backing after
+    // transfer, so their logical length must remain the bound even when a loop
+    // had proved an index in range before an intervening host call detached it.
+    const boundsEliminated = isSafeBoundsEliminated(fctx, expr) && (taClass === "other" || noJsHost(ctx));
+    const useLenBound = !boundsEliminated;
     let vecLenBoundInstrs: Instr[] | undefined;
     if (useLenBound) {
       const vecRefLocal = allocLocal(fctx, `__vecref_${fctx.locals.length}`, { kind: "ref_null", typeIdx });
@@ -6432,7 +6454,7 @@ export function compileElementAccessBody(
     compileElementIndexI32(ctx, fctx, expr.argumentExpression);
     const valueType: ValType =
       arrDef.element.kind === "i8" || arrDef.element.kind === "i16" ? { kind: "i32" } : arrDef.element;
-    if (isSafeBoundsEliminated(fctx, expr)) {
+    if (boundsEliminated) {
       // Bounds check elided: loop guard guarantees index < array.length
       const getOp =
         arrDef.element.kind === "i8" || arrDef.element.kind === "i16"
@@ -6488,7 +6510,7 @@ export function compileElementAccessBody(
       // threads the view-name signedness (so `Int8Array`/`Uint16Array`/
       // `Uint32Array` read with the right extension) and boxes as a number —
       // dedicated, so the shared helper / plain-array helper are untouched.
-      emitTypedArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, taSignedness);
+      emitTypedArrayUndefinedOobGet(ctx, fctx, arrTypeIdx, arrDef.element, taSignedness, vecLenBoundInstrs);
       return { kind: "externref" };
     } else {
       // (#2001 S1) Pass `ctx` so the in-bounds `$Hole → undefined` read-boundary

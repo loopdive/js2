@@ -1,118 +1,182 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /** Import/global registration and late index-space fixups. */
-import type { Import, Instr, TagDef, ValType } from "../../ir/types.js";
+import type { Import, Instr, ValType } from "../../ir/types.js";
 import type { CodegenContext, ExternClassInfo } from "../context/types.js";
-import { buildStrictHostImportError, isHostImportAllowed } from "../host-import-allowlist.js";
 import { resolveWidenedVarKey } from "../widened-var-key.js";
 import { hasLoneSurrogate, hexCodeUnits, STRING_CONSTANTS16_NS } from "../../string-surrogate.js";
 import { addFuncType } from "./types.js";
+import { addImport, ensureExnTag } from "./physical-imports.js";
+export { addImport, ensureExnTag } from "./physical-imports.js";
 // #808 — dependencies of the import-collection/registration functions moved
 // here from index.ts (relative paths rebased for src/codegen/registry/).
 import { ts, forEachChild } from "../../ts-api.js";
 import { ensureLateImport, flushLateImportShifts } from "../shared.js";
-import { stringConstantExternrefInstrs } from "../native-strings.js";
+import { nativeStringLiteralInstrs } from "../native-string-literals.js";
 import { shiftAsyncSideChannelFuncIdxs } from "../async-scheduler.js";
 import { shiftFnShadowSlots } from "../fn-global-shadow.js"; // (#4648)
 import { buildIsUndefinedExternBody, undefinedSingletonActive, ensureAnyValueType } from "../any-helpers.js";
-import { createUnifiedCollectorState, unifiedVisitNode, finalizeUnifiedCollector } from "../declarations.js";
+import {
+  createUnifiedCollectorState,
+  finalizeUnifiedCollector,
+  unifiedVisitNode,
+} from "./import-collector-delegates.js";
 import { mapTsTypeToWasm } from "../../checker/type-mapper.js";
 import { inLiveShiftRange } from "../../emit/resolve-layout.js";
 import { UNDEF_F64_BITS } from "../value-tags.js";
 import { STANDALONE_REGEXP_REFLECTION_PROPS } from "../regexp-standalone.js";
 import { reconcileNativeStrFinalizeShift } from "../expressions/late-imports.js";
-import { emitWasiErrorConstructor } from "./error-types.js";
-import { emitNativeParseNumber } from "../parse-number-native.js";
+import { emitWasiErrorConstructor } from "./error-constructor-delegates.js";
+import { emitNativeParseNumber } from "./parse-number-delegates.js";
 import { boxBooleanBody } from "../interned-boolean-boxes.js"; // (#3780) interned true/false carriers
-import { hostMapCarrierClassName, isTupleType, isStandaloneRegExpMatchArrayValue } from "../index.js";
 import { planProgramAbiStringConstantImport } from "../program-abi-import-planning.js";
 import { shiftModuleGlobalExportIndices } from "../global-export-fixup.js";
 
-/**
- * Register an import (`module.name`) on the current module.
- *
- * Under `ctx.strictNoHostImports` (auto-on for `--target wasi`, controllable
- * via `--no-host-imports` / `--allow-host-imports` on the CLI; see #1524),
- * any `env`-module import that is not on the dual-mode allowlist
- * (`src/codegen/host-import-allowlist.ts`) is rejected with a structured
- * compile error referencing the tracking issue. The error is pushed onto
- * `ctx.errors`; the import itself is silently dropped to avoid producing a
- * module that references a nonexistent function index. Downstream code that
- * attempts to `call` the dropped function will fail validation if the
- * caller did not check `result.success` before consuming the binary.
- *
- * `wasi_snapshot_preview1` imports are always allowed; they are the canonical
- * WASI ABI, not JS-host bindings.
- *
- * `wasm:js-string` / `string_constants` are JS-host bindings but are usually
- * not requested under strict mode because `nativeStrings` is auto-enabled.
- * If they ARE requested under strict mode, the gate rejects them with a
- * dedicated error pointing the user at the nativeStrings option.
- */
-export function addImport(ctx: CodegenContext, module: string, name: string, desc: Import["desc"]): Import | undefined {
-  // #1984 — freeze-point discipline. Once the module's index spaces are
-  // declared final (set right before `stackBalance` in generateModule/
-  // generateMultiModule), any further import mutation is a producer bug:
-  // it shifts indices that downstream code already emitted as final, the
-  // #2043-class poisoning. Throw HERE so the offending producer self-identifies
-  // with its own stack, instead of #2043's emit-time validation only naming the
-  // downstream symptom. The throw is caught by the generate* try/catch and
-  // surfaced as a `Codegen error:` (the compile fails loudly, never ships a
-  // poisoned binary).
-  if (ctx.indexSpaceFrozen) {
-    throw new Error(
-      `import space frozen (#1984): '${module}.${name}' added after finalize — ` +
-        `this producer must register its import before the freeze point or refuse loudly`,
-    );
+function stringConstantExternrefInstrs(ctx: CodegenContext, value: string): Instr[] {
+  if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
+    return [...nativeStringLiteralInstrs(ctx, value), { op: "extern.convert_any" }];
   }
-  if (ctx.strictNoHostImports) {
-    // #2783 — pass `ctx.linkedNamespaces` so an arbitrary `--link`'d namespace's
-    // import is actually REGISTERED (left as a link-time import for a preloaded
-    // provider) rather than dropped-and-degraded here. Dropping it would leave a
-    // stale funcMap index and the program could never satisfy the linked symbol.
-    const decision = isHostImportAllowed(module, name, ctx.linkedNamespaces);
-    if (!decision.allowed) {
-      const message = buildStrictHostImportError(module, name);
-      // #1921 — this per-call gate *drops* the import and lets codegen
-      // continue, so the diagnostic is a deliberate `"degrade"`, not a hard
-      // error: the binary is still produced (dropped imports degrade to no-op
-      // / stale-index sites). The authoritative fatal backstop is the
-      // emit-time import-section scan (`assertNoLeakedHostImports` →
-      // `buildLeakedHostImportError`, severity "error"), which fires only if
-      // an unsupported host import actually *survived* into the finished
-      // binary. Classifying this as "error" instead would fail builds that
-      // legitimately drop-and-degrade unsupported host APIs under WASI (e.g.
-      // examples/native-messaging/nm_js2wasm.ts: setTimeout/fetch/…).
-      ctx.errors.push({ message, line: 0, column: 0, severity: "degrade" });
-      // (#3009) Record the dropped host import on the MODULE so finalize-time
-      // handle resolution can name it. When a producer bakes this dropped
-      // import's (now `undefined`) function index into a helper body coupled to
-      // a stable handle — e.g. console.log's native-string extern bridge
-      // `__str_to_extern` calling the dropped `__str_from_mem`/`__str_to_mem`/
-      // `__str_extern_len` — `absoluteFuncIndex` would otherwise crash with an
-      // opaque "stable handle undefined (ordinal NaN)". With the coupling
-      // recorded, that resolution point surfaces a clean, actionable leak
-      // diagnostic naming these imports instead of an internal-error stack.
-      if (desc.kind === "func") {
-        const recorded = (ctx.mod.strictDroppedHostImports ??= []);
-        if (!recorded.some((d) => d.module === module && d.name === name)) {
-          recorded.push({ module, name });
-        }
-      }
-      // Skip registration. The caller may record a stale funcMap index if it
-      // looks the import up by name; if that index is ever emitted into the
-      // binary the emit-time leak scan / link step catches it.
-      return undefined;
+  const strIdx = ctx.stringGlobalMap.get(value);
+  return strIdx === undefined || strIdx < 0 ? [{ op: "ref.null.extern" }] : [{ op: "global.get", index: strIdx }];
+}
+
+/** Keep registry import collection independent of the codegen barrel. */
+function isTupleType(type: ts.Type): boolean {
+  if (!(type.flags & ts.TypeFlags.Object)) return false;
+  const object = type as ts.ObjectType;
+  if ((object.objectFlags & ts.ObjectFlags.Tuple) !== 0) return true;
+  if ((object.objectFlags & ts.ObjectFlags.Reference) !== 0) {
+    const target = (type as ts.TypeReference).target;
+    if (target && (target.objectFlags & ts.ObjectFlags.Tuple) !== 0) return true;
+  }
+  return false;
+}
+
+const inheritedMapCarrierCache = new WeakMap<ts.TypeChecker, WeakMap<ts.Type, boolean>>();
+
+function isAmbientLibraryMapSymbol(symbol: ts.Symbol | undefined): boolean {
+  if (symbol?.name !== "Map" && symbol?.name !== "ReadonlyMap") return false;
+  const declarations = symbol.declarations;
+  if (!declarations || declarations.length === 0) return false;
+  return declarations.every((declaration) => {
+    const sourceFile = declaration.getSourceFile();
+    const baseName = sourceFile.fileName.split(/[\\/]/).pop() ?? sourceFile.fileName;
+    return sourceFile.isDeclarationFile && (sourceFile.hasNoDefaultLib || /^lib\\..*\\.d\\.ts$/i.test(baseName));
+  });
+}
+
+function inheritsMapCarrier(checker: ts.TypeChecker, type: ts.Type | undefined, seen?: Set<ts.Type>): boolean {
+  if (type === undefined) return false;
+  if (seen === undefined) {
+    let byType = inheritedMapCarrierCache.get(checker);
+    if (!byType) {
+      byType = new WeakMap();
+      inheritedMapCarrierCache.set(checker, byType);
     }
+    const cached = byType.get(type);
+    if (cached !== undefined) return cached;
+    const result = inheritsMapCarrier(checker, type, new Set());
+    byType.set(type, result);
+    return result;
   }
-  ctx.mod.imports.push({ module, name, desc });
-  if (desc.kind === "func") {
-    ctx.funcMap.set(name, ctx.numImportFuncs);
-    ctx.numImportFuncs++;
+  if (seen.has(type) || !(type.flags & ts.TypeFlags.Object)) return false;
+  seen.add(type);
+  const object = type as ts.InterfaceType;
+  const symbol = object.symbol ?? type.symbol;
+  if (object.objectFlags & ts.ObjectFlags.Class) return false;
+  if (isAmbientLibraryMapSymbol(symbol)) return true;
+  const target =
+    object.objectFlags & ts.ObjectFlags.Reference ? (object as unknown as ts.TypeReference).target : undefined;
+  const interfaceType =
+    object.objectFlags & ts.ObjectFlags.Interface
+      ? object
+      : ((target?.objectFlags ?? 0) & ts.ObjectFlags.Interface) !== 0
+        ? target
+        : undefined;
+  if (interfaceType === undefined) return false;
+  try {
+    return (checker.getBaseTypes(interfaceType) ?? []).some((base) => inheritsMapCarrier(checker, base, seen));
+  } catch {
+    return false;
   }
-  if (desc.kind === "global") {
-    ctx.numImportGlobals++;
+}
+
+function hostMapCarrierClassName(ctx: CodegenContext, type: ts.Type): "Map" | undefined {
+  return !ctx.nativeStrings && inheritsMapCarrier(ctx.checker, type) ? "Map" : undefined;
+}
+
+function stripRegExpInferenceWrapper(expr: ts.Expression): ts.Expression {
+  while (
+    ts.isParenthesizedExpression(expr) ||
+    ts.isAsExpression(expr) ||
+    ts.isTypeAssertionExpression(expr) ||
+    ts.isSatisfiesExpression(expr) ||
+    ts.isNonNullExpression(expr)
+  ) {
+    expr = (
+      expr as
+        | ts.ParenthesizedExpression
+        | ts.AsExpression
+        | ts.TypeAssertion
+        | ts.SatisfiesExpression
+        | ts.NonNullExpression
+    ).expression;
   }
-  return ctx.mod.imports[ctx.mod.imports.length - 1]!;
+  return expr;
+}
+
+function isStaticRegExpExpressionForInference(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const unwrapped = stripRegExpInferenceWrapper(expr);
+  if (unwrapped.kind === ts.SyntaxKind.RegularExpressionLiteral) return true;
+  if (ts.isNewExpression(unwrapped) || (ts.isCallExpression(unwrapped) && !unwrapped.questionDotToken)) {
+    const callee = stripRegExpInferenceWrapper(unwrapped.expression);
+    return ts.isIdentifier(callee) && callee.text === "RegExp";
+  }
+  if (ts.isIdentifier(unwrapped)) {
+    const sym = ctx.checker.getSymbolAtLocation(unwrapped);
+    const declaration = sym?.getDeclarations()?.find((node) => ts.isVariableDeclaration(node)) as
+      | ts.VariableDeclaration
+      | undefined;
+    return declaration?.initializer !== undefined && isStaticRegExpExpressionForInference(ctx, declaration.initializer);
+  }
+  return false;
+}
+
+function isSymbolMatchKeyForInference(arg: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(arg) &&
+    ts.isIdentifier(arg.expression) &&
+    arg.expression.text === "Symbol" &&
+    arg.name.text === "match"
+  );
+}
+
+function isStaticRegExpMatchArrayCallForImportScan(ctx: CodegenContext, call: ts.CallExpression): boolean {
+  const callee = stripRegExpInferenceWrapper(call.expression);
+  if (ts.isPropertyAccessExpression(callee)) {
+    const method = callee.name.text;
+    if (method === "exec") return isStaticRegExpExpressionForInference(ctx, callee.expression);
+    if (method === "match" && call.arguments.length === 1)
+      return isStaticRegExpExpressionForInference(ctx, call.arguments[0]!);
+    return false;
+  }
+  if (ts.isElementAccessExpression(callee) && isSymbolMatchKeyForInference(callee.argumentExpression)) {
+    return call.arguments.length === 1 && isStaticRegExpExpressionForInference(ctx, callee.expression);
+  }
+  return false;
+}
+
+function isStandaloneRegExpMatchArrayValue(ctx: CodegenContext, expr: ts.Expression): boolean {
+  const unwrapped = stripRegExpInferenceWrapper(expr);
+  if (ts.isCallExpression(unwrapped)) return isStaticRegExpMatchArrayCallForImportScan(ctx, unwrapped);
+  if (!ts.isIdentifier(unwrapped)) return false;
+  const sym = ctx.checker.getSymbolAtLocation(unwrapped);
+  const declaration = sym?.getDeclarations()?.find((node) => ts.isVariableDeclaration(node)) as
+    | ts.VariableDeclaration
+    | undefined;
+  const initializer = declaration?.initializer ? stripRegExpInferenceWrapper(declaration.initializer) : undefined;
+  return initializer !== undefined && ts.isCallExpression(initializer)
+    ? isStaticRegExpMatchArrayCallForImportScan(ctx, initializer)
+    : false;
 }
 
 /**
@@ -272,33 +336,6 @@ export function recordInModuleInitFlagRead(ctx: CodegenContext): Instr {
 /** Convert an absolute Wasm global index to a local module-globals array index. */
 export function localGlobalIdx(ctx: CodegenContext, absIdx: number): number {
   return absIdx - ctx.numImportGlobals;
-}
-
-/**
- * Lazily register the exception tag used by throw/try-catch.
- * The tag has signature (externref) — all thrown values are externref.
- */
-export function ensureExnTag(ctx: CodegenContext): number {
-  if (ctx.exnTagIdx >= 0) return ctx.exnTagIdx;
-  const typeIdx = addFuncType(ctx, [{ kind: "externref" }], []);
-  // (#5226) A separately-linked graph shares ONE host-owned tag. Wasm matches a
-  // `catch` clause by tag IDENTITY, so a module-local tag per module means a
-  // provider's `throw` can never be caught by its consumer's `catch` — it lands
-  // in `catch_all`, whose `__get_caught_exception()` never saw a host frame and
-  // answers `undefined`. Importing the tag makes the crossing lossless: the
-  // externref payload (the host-native `RangeError`) is delivered unchanged, so
-  // `instanceof`, `name`, `message` and any own props all survive by identity.
-  if (ctx.sharedExnTag) {
-    // Imported tags occupy the low indices, and this is the only tag import we
-    // ever register — so index 0. `exnTagIdx` is ABSOLUTE in both regimes.
-    ctx.exnTagIdx = ctx.mod.imports.filter((imp) => imp.desc.kind === "tag").length;
-    addImport(ctx, "env", "__exn", { kind: "tag", typeIdx });
-    return ctx.exnTagIdx;
-  }
-  const tagDef: TagDef = { name: "__exn", typeIdx };
-  ctx.exnTagIdx = ctx.mod.tags.length;
-  ctx.mod.tags.push(tagDef);
-  return ctx.exnTagIdx;
 }
 
 /**
@@ -519,14 +556,13 @@ function fixupModuleGlobalIndices(ctx: CodegenContext, threshold: number, delta:
   }
   shiftMap(ctx.staticProps);
   shiftMap(ctx.protoGlobals);
-  if (ctx.nativeProtoGlobals !== undefined) {
-    for (const [brand, idx] of ctx.nativeProtoGlobals) {
-      if (idx >= threshold) ctx.nativeProtoGlobals.set(brand, idx + delta);
-    }
-  }
+  shiftMap(ctx.nativeProtoGlobals);
   shiftMap(ctx.classObjectGlobals); // (#1395) — same shift discipline as protoGlobals
   shiftMap(ctx.methodClosureGlobals); // (#1394) — cached per-method closure globals
   shiftMap(ctx.funcClosureGlobals); // (#1340) — cached per-function closure globals
+  // (#4617) Prepared metadata and native names retain absolute global slots.
+  shiftMap(ctx.fnInstanceMetaGlobalByKey);
+  shiftMap(ctx.nativeStrLiteralGlobals);
   shiftMap(ctx.tdzGlobals);
   shiftMap(ctx.modulePatternTdzGlobals);
   shiftMap(ctx.builtinFnSingletonGlobalByTypeIdx);

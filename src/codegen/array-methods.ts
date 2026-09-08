@@ -105,11 +105,14 @@ import { staticIntegerRange } from "../ir/analysis/static-numeric-range.js";
 import { tryEmitStaticI32Expression } from "./i32-static-range-expr.js";
 import { countedPushIndexOfUnroll, emitArrayIndexOfScan } from "./array-indexof-scan.js";
 import { compileArrayConcatExternHost, compileArrayMethodExtern } from "./array-method-host.js";
+import { isHostTypedArrayCarrierExpression } from "./expressions/typed-array-host-carrier.js";
 // (#4446) The §23.1.3.1 host-free concat loop for dynamic operands.
 import { compileArrayConcatNativeSpec } from "./array-concat-spec.js";
 // (#4655) Shared concat carrier/dispatch predicate — see array-concat-carrier.ts.
 import { concatMustConsultPrototypeChain } from "./array-concat-carrier.js";
 import { ensureJoinProtoHoleLocal, joinProtoHoleFallbackInstrs } from "./array-join-proto-hole.js";
+// (#5317 r4) join/toLocaleString separator coercion (§23.1.3.15 step 3).
+import { buildJoinSeparatorToString } from "./join-separator.js";
 // (#4655) `Array.prototype.toLocaleString`'s element Invoke (§23.1.3.32 6.c.i).
 import * as tls from "./array-tolocalestring.js";
 const {
@@ -558,17 +561,42 @@ export function emitReceiverNullGuard(
   localIdx: number,
   receiverExpr?: ts.Expression,
 ): void {
-  // Skip null guard if receiver is provably non-null (e.g. const initialized from array literal)
-  if (receiverExpr && isReceiverNonNull(receiverExpr, ctx.checker)) return;
-  // Check if the value in the local is null
-  fctx.body.push({ op: "local.get", index: localIdx });
-  fctx.body.push({ op: "ref.is_null" });
-  fctx.body.push({
-    op: "if",
-    blockType: { kind: "empty" },
-    then: buildThrowJsErrorInstrs(ctx, "TypeError", "Array method called on null or undefined", { flush: fctx }),
-    else: [],
-  });
+  // Skip only the null test when the receiver is provably non-null. Other
+  // receiver validation below can still observe state changed after creation.
+  if (!(receiverExpr && isReceiverNonNull(receiverExpr, ctx.checker))) {
+    fctx.body.push({ op: "local.get", index: localIdx });
+    fctx.body.push({ op: "ref.is_null" });
+    fctx.body.push({
+      op: "if",
+      blockType: { kind: "empty" },
+      then: buildThrowJsErrorInstrs(ctx, "TypeError", "Array method called on null or undefined", { flush: fctx }),
+      else: [],
+    });
+  }
+
+  // A branded host-lane TypedArray can be detached when its concrete mirror
+  // crosses a host transfer. The carrier still shares the ordinary vec shape,
+  // so consult its host marker before native lowering reads length or coerces
+  // method arguments. Loading the tee'd local avoids re-evaluating the receiver.
+  if (!noJsHost(ctx) && receiverExpr && isHostTypedArrayCarrierExpression(ctx, receiverExpr)) {
+    ensureLateImport(ctx, "__is_detached_buffer", [{ kind: "externref" }], [{ kind: "i32" }]);
+    const detachedThrow = buildThrowJsErrorInstrs(
+      ctx,
+      "TypeError",
+      "Cannot perform operation on a detached TypedArray",
+      { flush: fctx },
+    );
+    flushLateImportShifts(ctx, fctx);
+    const checkIdx = ctx.funcMap.get("__is_detached_buffer");
+    if (checkIdx !== undefined) {
+      fctx.body.push(
+        { op: "local.get", index: localIdx },
+        { op: "extern.convert_any" },
+        { op: "call", funcIdx: checkIdx },
+        { op: "if", blockType: { kind: "empty" }, then: detachedThrow, else: [] },
+      );
+    }
+  }
 }
 
 /** Check if an expression is provably non-null (e.g. const initialized from array literal). */
@@ -2674,7 +2702,7 @@ function compileArrayToReversed(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Extract length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -2782,7 +2810,7 @@ function compileArrayToSorted(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Extract length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -2846,7 +2874,7 @@ function compileArrayToSpliced(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Get length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -2986,7 +3014,7 @@ function compileArrayWith(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Extract length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -3051,8 +3079,18 @@ function compileArrayIteratorMethod(
   const funcIdx = ctx.funcMap.get(importName);
   if (funcIdx === undefined) return null;
 
-  // Compile receiver and convert to externref for the host import
-  compileExpression(ctx, fctx, propAccess.expression);
+  // Compile receiver and validate a branded TypedArray before the host iterator
+  // adapter observes its logical length. Native %TypedArray% iterator methods
+  // throw at call time when the receiver is detached.
+  const receiverType = compileExpression(ctx, fctx, propAccess.expression);
+  if (
+    receiverType &&
+    (receiverType.kind === "ref" || receiverType.kind === "ref_null" || receiverType.kind === "anyref")
+  ) {
+    const receiverLocal = allocLocal(fctx, `__arr_${methodName}_recv_${fctx.locals.length}`, receiverType);
+    fctx.body.push({ op: "local.tee", index: receiverLocal });
+    emitReceiverNullGuard(ctx, fctx, receiverLocal, propAccess.expression);
+  }
   fctx.body.push({ op: "extern.convert_any" });
 
   // Call the host import: (externref) → externref
@@ -3311,7 +3349,7 @@ function compileArrayAt(
   // Compile receiver
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.set", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Get length
   fctx.body.push({ op: "local.get", index: vecTmp });
@@ -3425,7 +3463,7 @@ function compileArrayIndexOf(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Extract length from vec struct field 0
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -3651,7 +3689,7 @@ function compileArrayIncludes(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Extract length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -3891,7 +3929,7 @@ function compileArrayReverse(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Extract length from vec, then j = length - 1
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -4885,7 +4923,7 @@ function compileArraySlice(
   // Compile receiver -> vec ref, stash in vecTmp, null-guard, drop the tee leftover.
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
   fctx.body.push({ op: "drop" });
 
   // start arg (f64→i32) into a local; default 0.
@@ -5457,9 +5495,16 @@ function compileArrayJoinExternNative(
   // never a separator, so `localized` keeps the default and does not compile
   // them at all.
   if (!localized && callExpr.arguments.length >= 1) {
-    const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "externref" });
+    const sepArg = callExpr.arguments[0]!;
+    // (#5317 r4) A string LITERAL keeps the byte-identical cast; every other
+    // separator takes the §23.1.3.15-step-3 coercion (undefined ⇒ ",", Symbol ⇒
+    // TypeError, else ToString) instead of trapping on `ref.cast $AnyString`.
+    const coerce = ts.isStringLiteral(sepArg) ? null : buildJoinSeparatorToString(ctx, fctx, anyStrTypeIdx);
+    const argType = compileExpression(ctx, fctx, sepArg, { kind: "externref" });
     if (argType === null) {
       fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
+    } else if (coerce !== null) {
+      fctx.body.push(...coerce);
     } else {
       fctx.body.push({ op: "any.convert_extern" });
       fctx.body.push({ op: "ref.cast", typeIdx: anyStrTypeIdx });
@@ -5653,7 +5698,7 @@ function compileArrayJoinNative(
   // Receiver vec → length + data array.
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: lenTmp });
   fctx.body.push({ op: "local.get", index: vecTmp });
@@ -5664,10 +5709,16 @@ function compileArrayJoinNative(
   // ",". (#4655) `toLocaleString`'s arguments are locales/options, not a
   // separator — see the module header of array-tolocalestring.ts.
   if (localizedArm === undefined && callExpr.arguments.length >= 1) {
-    const argType = compileExpression(ctx, fctx, callExpr.arguments[0]!, { kind: "externref" });
+    const sepArg = callExpr.arguments[0]!;
+    // (#5317 r4) See the extern lane above — same three spec arms, same
+    // literal-argument byte-identity carve-out.
+    const coerce = ts.isStringLiteral(sepArg) ? null : buildJoinSeparatorToString(ctx, fctx, anyStrTypeIdx);
+    const argType = compileExpression(ctx, fctx, sepArg, { kind: "externref" });
     if (argType === null) {
       // void/undefined arg → default ","
       fctx.body.push(...nativeStringLiteralInstrs(ctx, ","));
+    } else if (coerce !== null) {
+      fctx.body.push(...coerce);
     } else {
       // The native string value arrives as externref; convert to ref $AnyString.
       fctx.body.push({ op: "any.convert_extern" });
@@ -5894,7 +5945,7 @@ function compileArrayJoin(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Get length from vec
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -6685,7 +6736,7 @@ function setupArrayLoop(
   const iTmp = allocLocal(fctx, `__arr_${tag}_i_${fctx.locals.length}`, { kind: "i32" });
 
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: lenTmp });
   fctx.body.push({ op: "local.get", index: vecTmp });
@@ -7875,7 +7926,7 @@ function compileArrayReduceRight(
     fctx.body.push(...buildVecFromExternref(ctx, fctx, externTmp, vecTypeIdx, { arrTypeIdx, elemType }));
   }
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: lenTmp });
   fctx.body.push({ op: "local.get", index: vecTmp });
@@ -8745,7 +8796,7 @@ function compileArraySort(
     });
     compileExpression(ctx, fctx, propAccess.expression);
     fctx.body.push({ op: "local.tee", index: vecTmp0 });
-    emitReceiverNullGuard(ctx, fctx, vecTmp0);
+    emitReceiverNullGuard(ctx, fctx, vecTmp0, propAccess.expression);
     fctx.body.push({ op: "local.get", index: vecTmp0 });
     fctx.body.push({ op: "ref.as_non_null" });
     return { kind: "ref_null", typeIdx: vecTypeIdx };
@@ -8759,7 +8810,7 @@ function compileArraySort(
   // Compile receiver, save a copy for return value
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Call timsort(vec)
   fctx.body.push({ op: "call", funcIdx: timsortIdx });
@@ -8924,7 +8975,7 @@ function compileArrayDefaultToStringSort(
 
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: lenTmp });
   fctx.body.push({ op: "local.get", index: vecTmp });
@@ -9068,7 +9119,7 @@ function tryCompileComparatorSort(
 
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
   // len = vec.length, data = vec.data
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: lenTmp });
@@ -9203,7 +9254,7 @@ function compileArrayFill(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Extract length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -9385,7 +9436,7 @@ function compileTypedArraySet(
     compileExpression(ctx, fctx, propAccess.expression);
   }
   fctx.body.push({ op: "local.tee", index: dstVec });
-  emitReceiverNullGuard(ctx, fctx, dstVec);
+  emitReceiverNullGuard(ctx, fctx, dstVec, propAccess.expression);
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
   fctx.body.push({ op: "local.set", index: dstLen });
   fctx.body.push({ op: "local.get", index: dstVec });
@@ -9792,7 +9843,7 @@ function compileArrayCopyWithin(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Extract length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });
@@ -9907,7 +9958,7 @@ function compileArrayLastIndexOf(
   // Compile receiver -> vec ref
   compileExpression(ctx, fctx, propAccess.expression);
   fctx.body.push({ op: "local.tee", index: vecTmp });
-  emitReceiverNullGuard(ctx, fctx, vecTmp);
+  emitReceiverNullGuard(ctx, fctx, vecTmp, propAccess.expression);
 
   // Extract length
   fctx.body.push({ op: "struct.get", typeIdx: vecTypeIdx, fieldIdx: 0 });

@@ -125,6 +125,68 @@ export function tryCompileNodeProcessCall(
   const argType = compileExpression(ctx, fctx, argExpr);
   flushLateImportShifts(ctx, fctx);
 
+  // (#5349 r3) An ERASED argument (`externref`) carries no proof of which byte
+  // carrier it is, and `argSymName` above answered from the checker symbol of a
+  // binding that may have been reassigned:
+  //
+  //   var b = new ArrayBuffer(3); b = new Uint8Array(3); process.stdout.write(b)
+  //
+  // reads "ArrayBuffer", picks `i32_byte`, and the call boundary coerces the
+  // externref with a `ref.cast $__vec_i32_byte`. Until #5349 round 2 the two
+  // packed-byte vec structs canonicalized to ONE runtime type and that cast
+  // silently succeeded; with the brand it TRAPS before fd_write ever runs.
+  //
+  // Both carriers share the same `{length, data:(array (mut i8))}` layout and a
+  // per-carrier write helper already exists, so dispatch on the runtime brand
+  // instead of casting to a statically guessed one. A statically vec-typed
+  // argument keeps the fast path below unchanged (byte-identical).
+  // The same dispatch also covers `elemKey === "f64"` (an `any`-typed argument
+  // whose checker symbol is missing entirely). Under wasi/standalone the f64
+  // carrier is never a Uint8Array, so an erased argument that is neither byte
+  // vec writes nothing instead of trapping — a pre-existing trap on main, not a
+  // regression of the brand, but the same defect and free to close here.
+  if (noJsHost(ctx) && argType?.kind === "externref") {
+    const i8VecIdx = getOrRegisterVecType(ctx, "i8_byte", { kind: "i8" });
+    const i32VecIdx = getOrRegisterVecType(ctx, "i32_byte", { kind: "i8" });
+    // Mint BOTH helpers before either funcIdx is baked into an instruction.
+    const u8WriteIdx = ensureWasiWriteUint8ArrayHelper(ctx, i8VecIdx, useStderr);
+    const abWriteIdx = ensureWasiWriteArrayBufferHelper(ctx, i32VecIdx, useStderr);
+    if (u8WriteIdx >= 0 && abWriteIdx >= 0) {
+      const anyLocal = allocLocal(fctx, `__nodefs_wany_${fctx.locals.length}`, { kind: "anyref" } as ValType);
+      fctx.body.push({ op: "any.convert_extern" });
+      fctx.body.push({ op: "local.set", index: anyLocal });
+      fctx.body.push({ op: "local.get", index: anyLocal });
+      fctx.body.push({ op: "ref.test", typeIdx: i8VecIdx });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          { op: "local.get", index: anyLocal },
+          { op: "ref.cast", typeIdx: i8VecIdx },
+          { op: "call", funcIdx: u8WriteIdx },
+        ],
+        else: [
+          { op: "local.get", index: anyLocal },
+          { op: "ref.test", typeIdx: i32VecIdx },
+          {
+            op: "if",
+            blockType: { kind: "empty" },
+            // Neither carrier: write nothing rather than trap (the previous
+            // outcome for a genuinely non-buffer value was the same cast trap).
+            then: [
+              { op: "local.get", index: anyLocal },
+              { op: "ref.cast", typeIdx: i32VecIdx },
+              { op: "call", funcIdx: abWriteIdx },
+            ],
+            else: [],
+          },
+        ],
+      });
+      fctx.body.push({ op: "i32.const", value: 1 });
+      return { kind: "i32" };
+    }
+  }
+
   if (argType) {
     if (argType.kind === "ref_null") {
       if ("typeIdx" in argType && argType.typeIdx !== vecTypeIdx) {

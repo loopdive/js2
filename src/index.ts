@@ -965,6 +965,14 @@ export interface CompileOptions {
   /** Internal package-linker switch (#5226): one imported `env.__exn` tag for the whole linked graph. */
   sharedExceptionTag?: boolean;
   /**
+   * Internal package-linker switch (#5247): this module's exports are called by
+   * ANOTHER WASM MODULE, not the JS host, so the export-boundary throw
+   * unwrapping stays off — unwrapping a provider's throw into a JS one would
+   * stop the consumer's `catch $__exn` matching it, undoing #5226. Provider
+   * builds only; the consumer half is host-facing and stays wrapped.
+   */
+  exportsConsumedByWasm?: boolean;
+  /**
    * Node API emulation (#2603). Opt-in via `--emulate node`. When set, the
    * checker is given an ambient `process` declaration so Node globals js2wasm
    * lowers (process.std{in,out,err}, argv, env, exit) type-check without

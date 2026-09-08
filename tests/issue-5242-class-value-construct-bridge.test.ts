@@ -235,12 +235,17 @@ describe("#5242 — constructing a compiled class reached as a value", () => {
     // struct crossing the seam is no longer worse off than the mirrored one.
     //   directGetter  "undefined"                      → "21"
     //   directLabel   "THREW: label is not a function" → "K1|2|3|4|5|6"
-    // `directToString` still answers "[object Object]" — that is the
-    // `Symbol.toStringTag` wiring gap (#5223's `instanceToStringTag`), which
-    // reproduces on a plain user class in ONE module and is not a seam defect.
-    expect(readAll(instance.exports as unknown as Record<string, unknown>)).toEqual({
-      ...EXPECTED,
-      directToString: "[object Object]",
-    });
+    // (#5374) AND NOW THE THIRD, by the same mechanism one step further in:
+    //   directToString  "[object Object]" → "T1"
+    // The pin above read this row as the `Symbol.toStringTag` wiring gap
+    // (#5223), but "[object Object]" is also what the ToPrimitive walker
+    // returns when it finds NO coercion method at all — and that is what was
+    // happening: `String(instance)` ran inside the provider, resolved
+    // `__sget_toString` / `__call_fn_method_0` from the READER's exports, and
+    // those cannot name a struct the other module minted. #5374 routes both
+    // ToPrimitive walkers through the #5225 owner registry, so the class's own
+    // `toString` is found and the row now matches the single-module control.
+    // No pinned rows remain: the linked lane answers EXPECTED exactly.
+    expect(readAll(instance.exports as unknown as Record<string, unknown>)).toEqual(EXPECTED);
   });
 });

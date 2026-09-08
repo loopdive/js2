@@ -84,7 +84,7 @@ describe("#3525 M2 prepared multi-source module-init", () => {
     expect(
       result.irBodyRouteAudit?.legacyEntries.filter((entry) => entry.entryPoint === "compileModuleInitBody"),
     ).toEqual([]);
-    expect(moduleInitOutcomes(result)).toEqual([
+    expect(moduleInitOutcomes(result).filter((outcome) => outcome.kind === "emitted")).toEqual([
       expect.objectContaining({
         unitId: audit?.contributorUnitId,
         sourceId: audit?.contributorSourceId,
@@ -116,7 +116,7 @@ describe("#3525 M2 prepared multi-source module-init", () => {
     expect(entry?.moduleInit?.directCompileModuleInitBodyRoots).toBe(0);
   }, 120_000);
 
-  it("rejects all-empty, two-contributor, and cross-source-read graphs before reservation", async () => {
+  it("rejects all-empty and cross-source-read graphs before reservation", async () => {
     vi.stubEnv("JS2WASM_MULTI_PREPARED_MODULE_INIT_CUTOVER", "1");
     vi.stubEnv("JS2WASM_TEST_POISON_DIRECT_MODULE_INIT_BODY", "1");
 
@@ -130,14 +130,14 @@ describe("#3525 M2 prepared multi-source module-init", () => {
 
     const two = await compileMulti(
       {
-        "./dep.ts": `export let left: number = 1;`,
-        "./entry.ts": `export let right: number = 2;`,
+        "./dep.ts": `let left: number = 1; left = left + 1; export { left };`,
+        "./entry.ts": `let right: number = 2; right = right + 2; export { right };`,
       },
       "./entry.ts",
       OPTIONS,
     );
-    expect(two.success).toBe(false);
-    expect(two.errors.map((error) => error.message).join("\n")).toContain("injected direct module-init body poison");
+    expect(two.success, two.errors.map((error) => error.message).join("\n")).toBe(true);
+    expect(moduleInitOutcomes(two).filter((outcome) => outcome.kind === "emitted")).toHaveLength(2);
 
     const crossSourceRead = await compileMulti(
       {
@@ -184,8 +184,11 @@ describe("#3525 M2 prepared multi-source module-init", () => {
     const result = await compileMulti(DEFERRED_ENTRY_TDZ, "./entry.ts", options);
     expect(result.success, result.errors.map((error) => error.message).join("\n")).toBe(true);
     const outcomes = moduleInitOutcomes(result);
-    expect(outcomes).toHaveLength(1);
-    expect(outcomes[0]).toMatchObject({ legacyBodyEmitted: false, irBodyEmitted: true });
+    expect(outcomes.filter((outcome) => outcome.kind === "emitted")).toHaveLength(1);
+    expect(outcomes.find((outcome) => outcome.kind === "emitted")).toMatchObject({
+      legacyBodyEmitted: false,
+      irBodyEmitted: true,
+    });
     const exports = await instantiateDeferred(result);
     expect(typeof exports.__module_init).toBe("function");
     expect(() => (exports.read as () => number)()).toThrow();

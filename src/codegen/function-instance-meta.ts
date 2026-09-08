@@ -65,7 +65,7 @@
  * reflective property path, so the extra field would be pure cost; every entry
  * point here is a no-op unless `ctx.standalone`.
  */
-import type { FieldDef, Instr, ValType } from "../ir/types.js";
+import type { FieldDef, GlobalDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { ts } from "../ts-api.js";
 import { expectedArgumentCountOfParams } from "./function-expected-argument-count.js";
@@ -84,6 +84,29 @@ export const FN_META_LENGTH_FIELD_IDX = 1;
 export interface FnInstanceMeta {
   readonly name: string;
   readonly length: number;
+}
+
+/**
+ * Allocation-only recipe for one `$fnmeta` slot.
+ *
+ * D1a's certified function-value path prepares the structural field and its
+ * singleton global during the early support phase, then materializes a fresh
+ * initializer only when the one direct consumer takes its receipt.  Retaining
+ * the `GlobalDef` object instead of an absolute index is deliberate: late
+ * imported globals shift every module-global index, while this object remains
+ * the exact physical allocation the recipe certified.
+ */
+export interface PreparedFnMetaSlot {
+  readonly kind: "prepared-fn-meta-slot";
+  readonly field: FieldDef;
+  readonly meta: FnInstanceMeta;
+  readonly key: string;
+  readonly structTypeIdx: number;
+  readonly global: GlobalDef;
+}
+
+function moduleGlobalAt(ctx: CodegenContext, absIdx: number): GlobalDef | undefined {
+  return ctx.mod.globals[absIdx - ctx.numImportGlobals];
 }
 
 /**
@@ -135,40 +158,108 @@ export function fnMetaField(ctx: CodegenContext): FieldDef {
  * function bodies, never `ctx.mod.globals[].init`. Keeping the sequence in a
  * shift-covered array makes the choice of materialization irrelevant here.
  */
-function pushFnInstanceMetaValueInstrs(ctx: CodegenContext, meta: FnInstanceMeta): Instr[] {
-  const structTypeIdx = ensureFnInstanceMetaStructType(ctx);
+function fnInstanceMetaKey(meta: FnInstanceMeta): string {
   // `<length>:<name>` — unambiguous for ANY name, because `length` is
   // digits-only, so the first `:` is always the separator even when the name
   // itself contains one (a computed key like `{ "a:b": function () {} }`).
-  const key = `${meta.length}:${meta.name}`;
+  return `${meta.length}:${meta.name}`;
+}
+
+/**
+ * Prepare the physical `$fnmeta` field and singleton global without emitting
+ * the lazy value initializer.  This is intentionally allocation-only.
+ */
+export function prepareFnMetaSlotOfMeta(ctx: CodegenContext, meta: FnInstanceMeta): PreparedFnMetaSlot {
+  if (typeof meta.name !== "string" || !Number.isSafeInteger(meta.length) || meta.length < 0) {
+    throw new Error("invalid fn metadata recipe");
+  }
+  const canonicalMeta = Object.freeze({ name: meta.name, length: meta.length });
+  const structTypeIdx = ensureFnInstanceMetaStructType(ctx);
+  const field = fnMetaField(ctx);
+  const key = fnInstanceMetaKey(canonicalMeta);
   const cache = (ctx.fnInstanceMetaGlobalByKey ??= new Map<string, number>());
   let globalIdx = cache.get(key);
+  let global: GlobalDef | undefined;
   if (globalIdx === undefined) {
     globalIdx = ctx.numImportGlobals + ctx.mod.globals.length;
-    ctx.mod.globals.push({
+    global = {
       name: `__fn_instance_meta_${cache.size}`,
       type: { kind: "ref_null", typeIdx: structTypeIdx },
       mutable: true,
       init: [{ op: "ref.null", typeIdx: structTypeIdx }],
-    });
+    };
+    ctx.mod.globals.push(global);
     cache.set(key, globalIdx);
+  } else {
+    global = moduleGlobalAt(ctx, globalIdx);
   }
-  return [
-    { op: "global.get", index: globalIdx },
-    { op: "ref.is_null" },
-    {
-      op: "if",
-      blockType: { kind: "empty" },
-      then: [
-        ...nativeStringLiteralInstrs(ctx, meta.name),
-        { op: "extern.convert_any" },
-        { op: "i32.const", value: meta.length },
-        { op: "struct.new", typeIdx: structTypeIdx },
-        { op: "global.set", index: globalIdx },
-      ],
-    },
-    { op: "global.get", index: globalIdx },
-  ];
+  if (
+    global === undefined ||
+    global.type.kind !== "ref_null" ||
+    global.type.typeIdx !== structTypeIdx ||
+    !global.mutable
+  ) {
+    throw new Error(`prepared fn metadata global '${key}' no longer has its certified layout`);
+  }
+
+  return Object.freeze({
+    kind: "prepared-fn-meta-slot" as const,
+    field,
+    meta: canonicalMeta,
+    key,
+    structTypeIdx,
+    global,
+  });
+}
+
+/**
+ * Materialize fresh lazy-initializer instructions for a prepared metadata
+ * recipe.  The current map value is re-read after all import shifts and then
+ * proven to name the exact global object prepared above.
+ */
+export function materializePreparedFnMetaSlot(
+  ctx: CodegenContext,
+  prepared: PreparedFnMetaSlot,
+): { field: FieldDef; init: Instr[]; meta: FnInstanceMeta } {
+  if (prepared.kind !== "prepared-fn-meta-slot") {
+    throw new Error("invalid prepared fn metadata slot");
+  }
+  // Native string materialization may add an imported global and shift every
+  // module-global absolute index.  It therefore has to happen before reading
+  // the metadata side-table; the map shift below is the authoritative current
+  // location of the retained `GlobalDef` object.
+  const nameInit = nativeStringLiteralInstrs(ctx, prepared.meta.name);
+  const globalIdx = ctx.fnInstanceMetaGlobalByKey?.get(prepared.key);
+  if (globalIdx === undefined || moduleGlobalAt(ctx, globalIdx) !== prepared.global) {
+    throw new Error(`prepared fn metadata global '${prepared.key}' is no longer current`);
+  }
+  if (
+    prepared.global.type.kind !== "ref_null" ||
+    prepared.global.type.typeIdx !== prepared.structTypeIdx ||
+    !prepared.global.mutable
+  ) {
+    throw new Error(`prepared fn metadata global '${prepared.key}' no longer has its certified layout`);
+  }
+  return {
+    field: prepared.field,
+    meta: prepared.meta,
+    init: [
+      { op: "global.get", index: globalIdx },
+      { op: "ref.is_null" },
+      {
+        op: "if",
+        blockType: { kind: "empty" },
+        then: [
+          ...nameInit,
+          { op: "extern.convert_any" },
+          { op: "i32.const", value: prepared.meta.length },
+          { op: "struct.new", typeIdx: prepared.structTypeIdx },
+          { op: "global.set", index: globalIdx },
+        ],
+      },
+      { op: "global.get", index: globalIdx },
+    ],
+  };
 }
 
 /**
@@ -457,9 +548,5 @@ export function fnMetaSlotOfMeta(
   ctx: CodegenContext,
   meta: FnInstanceMeta,
 ): { field: FieldDef; init: Instr[]; meta: FnInstanceMeta } {
-  return {
-    field: fnMetaField(ctx),
-    init: pushFnInstanceMetaValueInstrs(ctx, meta),
-    meta,
-  };
+  return materializePreparedFnMetaSlot(ctx, prepareFnMetaSlotOfMeta(ctx, meta));
 }

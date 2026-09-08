@@ -15,6 +15,17 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createContext, runInContext } from "node:vm";
 import { compile, compileMulti, createIncrementalCompiler } from "./compiler-bundle.mjs";
+// (#5353) NAMESPACE imports, deliberately, for the two symbol sets this worker
+// FEATURE-DETECTS rather than requires. `buildTemporalProvider` lives in the
+// bundle only when it was built from `scripts/compiler-bundle-entry.ts`, and
+// the linked-provider lifecycle lives in the runtime bundle only when that was
+// built from `scripts/runtime-bundle-entry.ts`. Several helper scripts still
+// esbuild `src/index.ts` / `src/runtime.ts` directly; a named import of a
+// missing export is a LOAD-time error, which would take the whole sharded lane
+// down over an optional feature. Detected below, and absent ⇒ rows run
+// unlinked, exactly as they did before #5353.
+import * as compilerBundle from "./compiler-bundle.mjs";
+import * as runtimeBundle from "./runtime-bundle.mjs";
 import { buildImports, _resetIteratorRuntimeIntrinsicsForRealmIsolation } from "./runtime-bundle.mjs";
 import { poisonRecycleReason } from "./test262-poison-error.mjs";
 import { negativeCompileErrorMatches, negativeCompileSucceededVerdict } from "./negative-verdict.mjs";
@@ -30,6 +41,9 @@ import { SANDBOX_GLOBAL_NAMES } from "./test262-sandbox-globals.mjs";
 // the in-process lanes did not have it, so their standalone runs died at
 // instantiate and MASKED the tests' real error signatures.
 import { instantiateTest262Module } from "./test262-import-object.mjs";
+// (#5353) ONE gate + ONE pre-warm contract for the compiled `Temporal` global,
+// shared with tests/test262-runner.ts and tests/test262-shared.ts.
+import { readTemporalPrewarmStamp, temporalCacheDir, temporalProviderDisabled } from "./test262-temporal.mjs";
 
 // ── Bundle hash (#1521) ────────────────────────────────────────────────
 // Each cache entry written below carries a `bundle_hash` field. When the
@@ -1133,6 +1147,102 @@ function hasFixtureGraph(fixtureFiles) {
 // narrow: other resolution populations remain on their existing policy until
 // their own compiler support is verified (the #3491 TS2308 control).
 const FYI_NEGATIVE_FIXTURE_RESOLUTION_CODES = new Set([2459]);
+
+// ── (#5353) the compiled `Temporal` global, in the SHARDED lane ─────────
+//
+// #5248 wired the in-process runner and deliberately left this lane alone, so
+// the PUBLISHED conformance number contained no Temporal gain at all — the
+// committed baseline is produced exclusively by this worker. Two constraints
+// shape the wiring here, and neither applies to the in-process lane:
+//
+//  1. NO COLD BUILD, EVER. A fork is killed at 30 s; a cold provider build is
+//     ~40-65 s. So this worker refuses to call `buildTemporalProvider` unless
+//     `scripts/prewarm-temporal-provider.mjs` has already written a stamp whose
+//     key matches the provider it would ask for — then the call is the measured
+//     ~1 s cache read. Without the stamp the rows run UNLINKED (today's
+//     behaviour) instead of timing out one after another across the shard.
+//  2. HOST LANE ONLY. The provider is `--target gc` with the JS host adapter
+//     (`src/temporal-provider.ts` says so, and the linker's deferred provider
+//     export does not exist for WASI). Linking it under `--target standalone`
+//     would trip this worker's own #2961 guard — "standalone target emitted
+//     host imports" — and turn honest standalone failures into compile_errors,
+//     against the #1897 floor. The gate in tests/test262-shared.ts is therefore
+//     host-only; this worker double-checks rather than trusting the message.
+let temporalProviderPromise;
+let temporalUnavailableAnnounced = false;
+
+/** Say ONCE, on stderr, why this fork is running Temporal rows unlinked. */
+function announceTemporalUnavailable(reason) {
+  if (temporalUnavailableAnnounced) return;
+  temporalUnavailableAnnounced = true;
+  // Loud, because a silent null is indistinguishable from "the wiring did
+  // nothing" and would be read as a conformance result.
+  console.error(`[test262-worker] Temporal provider NOT linked (${reason}); rows keep the ambient lane`);
+}
+
+/**
+ * Are both halves of the wiring present in the bundles this worker loaded?
+ *
+ * `compiler-bundle.mjs` must come from `scripts/compiler-bundle-entry.ts` and
+ * `runtime-bundle.mjs` from `scripts/runtime-bundle-entry.ts`. A bundle built
+ * straight from `src/` lacks these and the feature degrades instead of failing.
+ */
+function temporalWiringAvailable() {
+  return (
+    typeof compilerBundle.buildTemporalProvider === "function" &&
+    typeof compilerBundle.compileWithTemporalGlobal === "function" &&
+    typeof compilerBundle.temporalProviderCacheKey === "function" &&
+    typeof runtimeBundle.instantiateLinkedProviders === "function" &&
+    typeof runtimeBundle.wireCompiledInstance === "function"
+  );
+}
+
+/** Build (or, in practice, cache-read) the provider once per fork. */
+async function getWorkerTemporalProvider() {
+  if (temporalProviderPromise) return temporalProviderPromise;
+  temporalProviderPromise = (async () => {
+    if (temporalProviderDisabled()) {
+      announceTemporalUnavailable("JS2WASM_TEST262_TEMPORAL=0");
+      return null;
+    }
+    if (!temporalWiringAvailable()) {
+      announceTemporalUnavailable("bundles do not export the provider wiring — rebuild from the bundle entries");
+      return null;
+    }
+    const cacheDir = temporalCacheDir();
+    const stamp = readTemporalPrewarmStamp(cacheDir);
+    if (!stamp) {
+      announceTemporalUnavailable(`no pre-warm stamp in ${cacheDir}`);
+      return null;
+    }
+    const { loadTemporalPolyfillSource } = await import("./test262-temporal.mjs");
+    const polyfillSource = await loadTemporalPolyfillSource();
+    const key = compilerBundle.temporalProviderCacheKey({ polyfillSource });
+    if (key !== stamp.key) {
+      // A stamp from a different polyfill (or different provider compile
+      // options) does not certify THIS provider, and building it here is the
+      // 30 s-timeout hazard. Refuse rather than gamble.
+      announceTemporalUnavailable(`pre-warm stamp key ${stamp.key.slice(0, 16)} != ${key.slice(0, 16)}`);
+      return null;
+    }
+    const provider = await compilerBundle.buildTemporalProvider({ polyfillSource, cacheDir });
+    console.error(
+      `[test262-worker] Temporal provider ${provider.namespace} (${provider.artifact.binary.length} B) ` +
+        `in ${provider.buildMs}ms cacheHit=${provider.cacheHit} from ${cacheDir}`,
+    );
+    if (!provider.cacheHit) {
+      // The stamp said it was warm and it was not. Not fatal (we already paid),
+      // but it is exactly the condition that makes a shard slow, so name it.
+      console.error("[test262-worker] WARNING: Temporal provider was built COLD despite a matching pre-warm stamp");
+    }
+    return provider;
+  })().catch((error) => {
+    announceTemporalUnavailable(String(error));
+    return null;
+  });
+  return temporalProviderPromise;
+}
+
 async function doCompile(
   source,
   sourceMapUrl,
@@ -1143,6 +1253,7 @@ async function doCompile(
   entryFile,
   isNegative,
   negativePhase,
+  temporal,
 ) {
   // Defence-in-depth: restore any poisoned builtins BEFORE each compile.
   // postCompileCleanup runs after the previous test, but under rare worker
@@ -1220,6 +1331,28 @@ async function doCompile(
       // (e.g. a fixture's missing export). Parse/early tests deliberately stop
       // before semantic analysis.
       skipSemanticDiagnostics: negativePhase !== "resolution",
+      target,
+      inferModuleStrictArguments,
+      ...deferOpt,
+    });
+  }
+  if (temporal && originalHarness && !hasFixtureGraph(fixtureFiles)) {
+    // (#5353) Same options as the literal-harness branch below, routed through
+    // `compileWithTemporalGlobal`: it prepends a ONE-line prelude binding bare
+    // `Temporal` to the provider export, adds the declaration-only stub to the
+    // graph, and publishes the provider in `result.linkedModules` for the
+    // shared instantiate seam. The test source is otherwise byte-unchanged.
+    //
+    // This leaves the incremental Language Service (compileMulti builds its own
+    // program), which is part of the per-row price #5248 measured; the
+    // alternative — prepending the polyfill to each body — costs ~32 s a row.
+    return compilerBundle.compileWithTemporalGlobal(source, temporal, {
+      allowJs: true,
+      fileName: "test.js",
+      sourceMap: true,
+      sourceMapUrl: sourceMapUrl || "test.wasm.map",
+      emitWat: false,
+      skipSemanticDiagnostics: true,
       target,
       inferModuleStrictArguments,
       ...deferOpt,
@@ -1561,6 +1694,17 @@ process.on("message", async (msg) => {
   // whose arrow was never invoked. No dynamic fixture is promoted to a static
   // compileMulti edge here.
 
+  // (#5353) The parent computes the PATH-or-`features:` gate (it is the side
+  // that knows both) and this worker double-checks the two conditions it owns:
+  // the host lane, and a provider that is actually available in this fork. A
+  // provider is at most ONE per fork; `getWorkerTemporalProvider` memoises the
+  // null too, so a fork without a pre-warm stamp asks once and then costs
+  // nothing per row.
+  let temporal = null;
+  if (msg.temporal === true && target === undefined && originalHarness) {
+    temporal = await getWorkerTemporalProvider();
+  }
+
   let result;
   try {
     result = await doCompile(
@@ -1573,6 +1717,7 @@ process.on("message", async (msg) => {
       msg.entryFile,
       isNegative,
       msg.negativePhase,
+      temporal,
     );
   } catch (err) {
     // Thrown exception may have poisoned the incremental compiler's internal
@@ -1857,6 +2002,13 @@ process.on("message", async (msg) => {
       instance = await instantiateTest262Module(result.binary, importObj, {
         target,
         providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
+        // (#5353) Empty on every non-Temporal row, so the shared finaliser
+        // takes its existing path byte-for-byte. `linkedRuntime` pins the
+        // provider registration to THIS worker's runtime copy — the one
+        // `buildImports` above came from; see the note in
+        // scripts/test262-import-object.mjs.
+        linkedModules: result.linkedModules ?? [],
+        linkedRuntime: runtimeBundle,
       });
     } catch (err) {
       const execMs = performance.now() - execStart;

@@ -116,3 +116,51 @@ After this slice, move this exact owner into the prepared compile-once route by
 allocating its canonical Promise result ABI during declaration planning. Then
 widen the plan producer from the one-await tail form to multiple states and
 spills before claiming `main` and the loop/combinator functions.
+
+
+## Implementation Plan — 2026-09-05 — Astra integration runtime repair
+
+The existing R7 async candidates exposed a quality-test failure in the
+host-free refusal control. This is consolidation under the parent
+`3518:integration-consolidation` claim, not expansion of async ownership.
+On main `b1537bbeca3858faf45fd89eff5506d21d1e230f`, the exact test fixture
+compiles successfully with IR on and off. Both binaries are byte-identical
+between flagged and unflagged Node runs, but Wasm validation succeeds only
+with `--experimental-wasm-exnref`; the unflagged error explicitly identifies
+opcode `0x1f` and that feature. The generic async cross-call equivalence
+regression is a separate compiler repair tracked in the R7 issue.
+
+1. Preserve the current compile options, ownership assertions, and all GC
+   execution controls in `tests/issue-4106-ir-async-fetch-user.test.ts`.
+   Change only validation of the already compiled host-free binary to use
+   the established test-scoped Node child convention. Pass the exact binary
+   bytes through stdin; do not recompile a substitute fixture in the child.
+2. Start the child using `process.execPath` and the explicit experimental
+   Wasm exnref flag. Require an ordinary successful exit and a non-vacuous
+   validation result; surface child error/signal/stderr. Invalid binaries
+   must still fail. Do not skip the test, weaken its assertions, modify
+   Vitest's global fork configuration, or add an environment opt-out.
+3. Exercise the helper against a deliberately invalid binary to prove it
+   can reject, then run the complete issue4106 suite using the ordinary
+   repository Vitest fork invocation. Typecheck and formatting must pass.
+   Parent will rerun against the combined initializer/async/linear candidate.
+4. Ownership is restricted to the host-free helper/call and this issue
+   record. The separate async lane owns any changes to generic-suspension
+   expectations in the same test file; preserve those changes at integration.
+   Keep the clean P2A commit as an ancestor, create a signed local repair
+   commit with normal hooks, and leave publication to the parent.
+
+## Astra integration runtime repair — implementation record
+
+- Added a test-scoped `process.execPath` child with
+  `--experimental-wasm-exnref` to validate the exact host-free compilation
+  bytes received through stdin. The helper reports child errors, signals,
+  stderr, exit status, and the boolean validation output.
+- Added a first-byte corruption control; the valid host-free binary returns
+  `true` and the corrupted copy returns `false` in the same flagged child
+  path. Existing compile, IR ownership, and GC execution assertions remain
+  unchanged.
+- `VITEST_FORK_MAX_OLD_SPACE_SIZE=4096 pnpm exec vitest run
+  tests/issue-4106-ir-async-fetch-user.test.ts --pool=forks
+  --poolOptions.forks.singleFork=true --no-file-parallelism` — 7/7 tests pass.
+- `pnpm run typecheck`, focused Prettier, and `git diff --check` pass.

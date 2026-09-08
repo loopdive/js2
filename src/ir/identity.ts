@@ -1,6 +1,34 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type {
+  IrSourceId,
+  IrUnitId,
+  IrClassId,
+  IrBindingId,
+  IrLexicalOwnerId,
+  IrFunctionIdentity,
+  IrSyntheticUnitRole,
+} from "../shared/contracts/ir-identity.js";
+export type {
+  IrSourceId,
+  IrUnitId,
+  IrClassId,
+  IrBindingId,
+  IrLexicalOwnerId,
+  IrFunctionIdentity,
+  IrSyntheticUnitRole,
+  CreateDerivedIrUnitIdInput,
+  CreateIrBindingIdInput,
+} from "../shared/contracts/ir-identity.js";
+
 import { ts } from "../ts-api.js";
+import {
+  createDerivedIrUnitId,
+  createIrBindingId,
+  canonicalIrIdentityNumber as canonicalNumber,
+  irIdentityComponent as identityComponent,
+} from "./identity-values.js";
+export { createDerivedIrUnitId, createIrBindingId } from "./identity-values.js";
 import type { CompilerSourceOrigin, CompilerSourceProducer } from "../position-map.js";
 import {
   boundedPreparedNestedOrdinaryClassBindingName,
@@ -8,32 +36,11 @@ import {
   isBoundedPreparedNestedOrdinaryClass,
   isNestedOrdinaryClassFieldCallInventoryCandidate,
 } from "./class-accessor-safety.js";
-import { collectModuleInitPopulation, MODULE_INIT_UNIT_NAME } from "./module-init.js";
+import { collectModuleInitPopulation, moduleInitExportAssignment, MODULE_INIT_UNIT_NAME } from "./module-init.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 
-declare const irSourceIdBrand: unique symbol;
-declare const irUnitIdBrand: unique symbol;
-declare const irClassIdBrand: unique symbol;
-declare const irBindingIdBrand: unique symbol;
-
-/** Canonical, program-relative identity for one compiler input source. */
-export type IrSourceId = string & { readonly [irSourceIdBrand]: "IrSourceId" };
-/** Canonical identity for one executable source or synthetic unit. */
-export type IrUnitId = string & { readonly [irUnitIdBrand]: "IrUnitId" };
-/** Canonical identity for one class declaration or expression. */
-export type IrClassId = string & { readonly [irClassIdBrand]: "IrClassId" };
-/** Canonical identity for one program ABI intention. */
-export type IrBindingId = string & { readonly [irBindingIdBrand]: "IrBindingId" };
-
-export type IrLexicalOwnerId = IrUnitId | IrClassId;
 export type IrSourceKind = "entry" | "source" | "library" | "synthetic";
-
-/** Structural function identity plus its temporary compatibility/reference label. */
-export interface IrFunctionIdentity {
-  readonly unitId: IrUnitId;
-  readonly name: string;
-}
 
 export interface IrLiftedFunctionArtifactIdentity extends IrFunctionIdentity {
   readonly parentId: IrUnitId;
@@ -67,13 +74,6 @@ export interface IrLiftedSourceUnitProvenance {
 
 export type IrDerivedUnitProvenance = IrSyntheticUnitProvenance | IrLiftedSourceUnitProvenance;
 
-/** Closed role families for compiler/pass-created executable units. */
-export type IrSyntheticUnitRole =
-  | `compiler-unit:${CompilerSourceProducer}:${string}`
-  | `stdlib-selfhost:${string}`
-  | "ir-async-state"
-  | "lifted-closure"
-  | "monomorphization-clone";
 /** Compiler-created class roles live in a namespace separate from source classes. */
 export type IrSyntheticClassRole = `compiler-class:${CompilerSourceProducer}:${string}`;
 
@@ -274,12 +274,6 @@ export interface CreateIrUnitIdInput {
   readonly ordinal: number;
 }
 
-export interface CreateDerivedIrUnitIdInput {
-  readonly parentId: IrSourceId | IrLexicalOwnerId;
-  readonly role: IrSyntheticUnitRole;
-  readonly ordinal: number;
-}
-
 export interface CreateIrClassIdInput {
   readonly sourceId: IrSourceId;
   readonly lexicalOwnerId: IrLexicalOwnerId | null;
@@ -293,22 +287,8 @@ export interface CreateDerivedIrClassIdInput {
   readonly ordinal: number;
 }
 
-export interface CreateIrBindingIdInput {
-  readonly ownerId: IrSourceId | IrUnitId | IrClassId;
-  readonly domain: "callable" | "global" | "type" | "export" | "class" | "support";
-  readonly role: string;
-  readonly ordinal?: number;
-}
-
-const identityComponent = (value: string): string => encodeURIComponent(value);
 const ownerComponent = (owner: IrLexicalOwnerId | null): string => (owner === null ? "root" : identityComponent(owner));
 const compareCanonicalText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-const canonicalNumber = (value: number, label: string): string => {
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new RangeError(`${label} must be a non-negative safe integer, received ${value}`);
-  }
-  return value.toString(10).padStart(16, "0");
-};
 
 export function createIrSourceId(input: CreateIrSourceIdInput): IrSourceId {
   return `ir-source:v1:${canonicalNumber(input.order, "source order")}:${input.kind}:${identityComponent(input.sourceKey)}` as IrSourceId;
@@ -319,9 +299,6 @@ export function createIrUnitId(input: CreateIrUnitIdInput): IrUnitId {
 }
 
 /** Derive a unit identity from semantic compiler role, never a display label. */
-export function createDerivedIrUnitId(input: CreateDerivedIrUnitIdInput): IrUnitId {
-  return `ir-unit:v1:derived:${identityComponent(input.parentId)}:${identityComponent(input.role)}:${canonicalNumber(input.ordinal, "derived unit ordinal")}` as IrUnitId;
-}
 
 /** Allocate a lifted artifact's label and structural identity from one ordinal. */
 export function allocateLiftedFunctionArtifact(
@@ -345,10 +322,6 @@ export function createIrClassId(input: CreateIrClassIdInput): IrClassId {
 /** Derive a compiler-created class identity from its parent and semantic role. */
 export function createDerivedIrClassId(input: CreateDerivedIrClassIdInput): IrClassId {
   return `ir-class:v1:derived:${identityComponent(input.parentId)}:${identityComponent(input.role)}:${canonicalNumber(input.ordinal, "derived class ordinal")}` as IrClassId;
-}
-
-export function createIrBindingId(input: CreateIrBindingIdInput): IrBindingId {
-  return `ir-binding:v1:${input.domain}:${identityComponent(input.ownerId)}:${identityComponent(input.role)}:${canonicalNumber(input.ordinal ?? 0, "binding ordinal")}` as IrBindingId;
 }
 
 export function compareIrIdentity(a: IrSourceId | IrUnitId | IrClassId | IrBindingId, b: typeof a): number {
@@ -907,8 +880,8 @@ class SourceInventoryBuilder {
       }
     }
 
-    if (modulePopulation.length > 0 || firstStaticInitialization) {
-      const anchor = modulePopulation[0] ?? firstStaticInitialization ?? this.sourceFile;
+    const anchor = modulePopulation[0] ?? firstStaticInitialization ?? moduleInitExportAssignment(this.sourceFile);
+    if (anchor) {
       const terminal = this.addTerminalUnit(
         "module-init",
         null,

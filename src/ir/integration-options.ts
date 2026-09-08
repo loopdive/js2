@@ -2,11 +2,15 @@
 
 import type { ts } from "../ts-api.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
+import type { IrIntegrationLoweringPlans } from "./ast-lowering-plans.js";
+import type { IrClassShape, IrType } from "./nodes.js";
+import type { IrSelection } from "./select.js";
 import type {
   PendingPreparedProgramComponentReceipt,
   PreparedComponentModuleCallableAliasDescriptor,
   PreparedComponentPublicationDraft,
 } from "./prepared-component-publication.js";
+import type { PreparedCallableBoundaryCandidate } from "./prepared-callable-boundary.js";
 
 /** Configuration shared by single-source and aggregate IR integration. */
 export interface IrIntegrationOptions {
@@ -24,6 +28,29 @@ export interface IrIntegrationOptions {
   readonly preparedBindingIdsByTerminalUnitId?: ReadonlyMap<IrUnitId, ReadonlySet<IrBindingId>>;
   /** Keep the exact aggregate scope open and return detached body patches. */
   readonly deferPreparedPublication?: boolean;
+  /**
+   * The initializer batch owns source-local module-init artifacts.  This
+   * keeps the detached receipt path's function-only compatibility preflight
+   * from rejecting an already exact [] -> [] initializer slot.
+   */
+  readonly preparedModuleInitBatch?: boolean;
+  /**
+   * Exact source-owned initializer inputs for one P2A build.  The integration
+   * pass lowers these entries into one shared BuiltFn vector before running
+   * any common passes or resource preparation; callers must provide the same
+   * identity inventory and semantic source order for every entry.
+   */
+  readonly preparedModuleInitBatchSources?: readonly {
+    readonly sourceFile: ts.SourceFile;
+    readonly selection: IrSelection;
+    readonly overrides?: {
+      readonly get: (
+        name: string,
+      ) => { readonly params: readonly IrType[]; readonly returnType: IrType | null } | undefined;
+    };
+    readonly classShapes?: ReadonlyMap<string, IrClassShape>;
+    readonly loweringPlans: IrIntegrationLoweringPlans;
+  }[];
   /** Sink used by the aggregate-only integration entry to receive a receipt. */
   readonly preparedComponentPublicationSink?: {
     readonly publish: (draft: PreparedComponentPublicationDraft) => PendingPreparedProgramComponentReceipt;
@@ -31,6 +58,8 @@ export interface IrIntegrationOptions {
   };
   /** Opaque module-callable-alias descriptor staged with the open scope. */
   readonly preparedModuleCallableAliasDescriptor?: PreparedComponentModuleCallableAliasDescriptor;
+  /** Source-qualified callable boundaries awaiting final pre-seal proof. */
+  readonly preparedCallableBoundaryCandidates?: ReadonlyMap<IrUnitId, PreparedCallableBoundaryCandidate>;
   /**
    * (#3523 R4 gap 3) Construct the module-init body around the reserved WASI
    * `__init_done` idempotence guard (`ctx.preparedWasiModuleInitGuard`).

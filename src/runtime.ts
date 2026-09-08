@@ -55,8 +55,9 @@ import { createCrossModuleStructOwners } from "./runtime/cross-module-struct-own
 import { decodeCompiledEntryPair } from "./runtime/compiled-entry-pair.js";
 import { isHostStringSymbolDispatch, makeHostStringPredicateAdapter } from "./runtime/string-predicate-adapter.js";
 import { fixedExternMethodCallArity, makeFixedExternMethodCall } from "./runtime/fixed-extern-method-call.js";
-import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod } from "./runtime/date-host-method.js";
+import { DATE_HOST_METHOD_UNHANDLED, tryCallWasmDateHostMethod, wasmDateHostView } from "./runtime/date-host-method.js";
 import { wasmCarrierBuiltinPrototype } from "./runtime/wasm-carrier-prototype.js"; // (#5325)
+import { compiledClassInstancePrototype } from "./runtime/compiled-class-prototype.js"; // (#5347)
 import { getWasmVecPrototypeMember as vecProtoGet, WASM_VEC_PROTOTYPE_MISS } from "./runtime/wasm-vec-prototype.js";
 import { fnctorInstanceofResult, fnctorOrNative, type FnctorIoHooks } from "./runtime/fnctor-instanceof.js";
 export { buildStringConstants, buildStringConstants16 };
@@ -78,6 +79,8 @@ import {
   vecForMirror,
   recordVecMirrorElements,
   vecMirrorElementsChanged,
+  isDetachedVecMirrorSource as vecMirrorDetached,
+  applyWithVecMirrorWriteback as applyVecMirror,
 } from "./runtime/vec-mirror-writeback.js"; // (#3603 S1) vec-mirror write-back; (#4531) mirror→vec mutation routing
 import {
   arrayIndexForPropertyKey as _asArrayIndex,
@@ -96,6 +99,11 @@ import { createBoundaryCallbackAdapter } from "./runtime/boundary-callback-adapt
 import { createBoundaryPromiseAdapter } from "./runtime/boundary-promise-adapter.js";
 import { createBoundaryValueAdapter, isBoundaryValueImportIntent } from "./runtime/boundary-value-adapter.js";
 import { createInstanceLifecycleAdapter } from "./runtime/instance-lifecycle-adapter.js";
+import {
+  installFreshDataStructAssociationToken,
+  sameAssociationToken,
+  sameExportedFunction,
+} from "./runtime/exported-function-identity.js";
 import { resolvePlatformCapabilityImport } from "./runtime/platform-capability-adapter.js";
 import {
   CLOCK_CAPABILITY_AUTHORITY,
@@ -116,6 +124,7 @@ import {
   callResolvedClassPrimitive,
   createClassMemberResolver,
   createResolvedClassMethodInvoker,
+  hasStructPrototypeMember, // (#5358)
 } from "./runtime/class-method-host-bridge.js";
 import { resolveSubclassParent } from "./runtime/class-method-host-bridge.js";
 import { createObjectCreateClassInstanceRuntime } from "./runtime/object-create-class-instance.js";
@@ -572,7 +581,6 @@ const _abHostBufferReverse = new WeakMap<ArrayBuffer, object>();
 const _compiledTypedArrayKinds = new WeakMap<object, number>();
 const _compiledTypedArrayMirrors = new WeakMap<object, ArrayBufferView>();
 const _compiledTypedArrayBuffers = new WeakMap<object, ArrayBuffer>();
-
 // Codegen contract: keep in lock-step with TYPED_ARRAY_HOST_TAGS in
 // expressions/typed-array-host-carrier.ts. Index zero is intentionally empty.
 const _COMPILED_TYPED_ARRAY_CTORS: ReadonlyArray<Function | undefined> = [
@@ -765,9 +773,59 @@ function _marshalHostConstructArg(
       const nm = typeof hostCallee.name === "string" && hostCallee.name ? hostCallee.name : "TypedArray";
       throw new TypeError(`cannot marshal opaque compiled value to host ${nm} constructor`);
     }
+    // (#5381) The DYNAMIC twin of the extern-class construct arm. `new
+    // (Intl as any).PluralRules("en-US", {type:"ordinal"})` does not resolve to
+    // a registered extern class — it lowers to `__construct` on the host
+    // function fetched off the `Intl` global (#5206) — so it never reached the
+    // options-bag marshalling and answered `select(2) === "other"` (node:
+    // "two"). Same defect, same fix: a compiled struct handed to a HOST
+    // constructor is a data bag, and the host can only read it through the
+    // `_wrapForHost` mirror. Measured with `Intl.RelativeTimeFormat`
+    // ({numeric:"auto"}, format(-1,"day")): "1 day ago" → "yesterday".
+    //
+    // Scoped the same way as the static arm: only when the callee is a host
+    // function, and never for the constructors that consume an argument by
+    // identity (`_structArgIdentityCtors` — `new WeakRef(obj).deref() === obj`
+    // must keep holding). The vec / ArrayBuffer / TypedArray probes above run
+    // first and still own their shapes, so this only sees what they declined.
+    if (
+      typeof hostCallee === "function" &&
+      !_structArgIdentityCtors.has(typeof hostCallee.name === "string" ? hostCallee.name : "")
+    ) {
+      const mirror = _wrapForHost(a, eff);
+      if (mirror !== a) return mirror;
+    }
   }
   return a;
 }
+
+/**
+ * (#5381) Extern-class constructors that consume a struct argument BY IDENTITY
+ * — they store it, return it, or hand it back — so the default "marshal every
+ * compiled struct through `_wrapForHost`" rule must not apply to them.
+ *
+ * `Object(x)` returns x itself (§7.1.18 ToObject on an object is the identity),
+ * `Array(x)` with one non-numeric argument yields `[x]`, `WeakRef(t)` hands `t`
+ * back from `deref()`, and `AggregateError`/`SuppressedError` expose their
+ * `errors`/`error`/`suppressed` arguments verbatim. Wrapping any of those would
+ * make the program observe a proxy where it stored a value, which is a
+ * strictly worse failure than the opaque struct it gets today (the opaque
+ * struct at least still compares equal to itself). `Function` is here for the
+ * separate reason that its arguments are ToString'd source text.
+ *
+ * The Error family, iterables, buffer consumers and the ToPrimitive family are
+ * excluded by their own flags at the construct site rather than by this set.
+ */
+const _structArgIdentityCtors = new Set([
+  "Object",
+  "Function",
+  "Array",
+  "WeakRef",
+  "FinalizationRegistry",
+  "AggregateError",
+  "SuppressedError",
+  "Test262Error",
+]);
 
 /** (#3335) Is `fn` a host %TypedArray% subclass constructor (Int8Array … BigUint64Array)? */
 const _HOST_TYPED_ARRAY_CTOR_NAMES = new Set([
@@ -1453,14 +1511,14 @@ function _dataStructHostBridgeMetadata(
   if (!_hasOwn(exports, tokenLogicalName)) return undefined;
   const token = _terminalHostBridgeAlias(exports, tokenPhysicalBase);
   if (!(token instanceof WebAssembly.Global)) return undefined;
-  if (expectedToken !== undefined && token !== expectedToken) return undefined;
+  if (expectedToken !== undefined && !sameAssociationToken(token, expectedToken)) return undefined;
 
   const helpers: (Function | undefined)[] = [];
   for (let bit = 0; bit < _DATA_STRUCT_HOST_BRIDGE_EXPORTS.length; bit++) {
     const [, physicalBase] = _DATA_STRUCT_HOST_BRIDGE_EXPORTS[bit]!;
     const helper = _terminalHostBridgeAlias(exports, physicalBase);
     if ((bits & (1 << bit)) !== 0) {
-      if (typeof helper !== "function" || helper !== bindings.get(bit)) return undefined;
+      if (typeof helper !== "function" || !sameExportedFunction(helper, bindings.get(bit))) return undefined;
       helpers.push(helper);
     } else {
       helpers.push(undefined);
@@ -1476,12 +1534,13 @@ function _dataStructHostBridgeMetadata(
       authority.marker !== marker ||
       authority.manifest !== manifest ||
       authority.bindings !== bindings ||
-      authority.token !== token
+      !sameAssociationToken(token, authority.token)
     ) {
       return undefined;
     }
     for (let bit = 0; bit < helpers.length; bit++) {
-      if (authority.helpers[bit] !== helpers[bit] || authority.helpers[bit] !== bindings.get(bit)) return undefined;
+      if (authority.helpers[bit] !== helpers[bit] || !sameExportedFunction(authority.helpers[bit], bindings.get(bit)))
+        return undefined;
     }
     return authority;
   }
@@ -1536,7 +1595,8 @@ function _hostBridgeExportView<T extends Record<string, any>>(exports: T, option
     let helper: unknown;
     if (closureMetadata !== undefined && (closureMetadata.bits & (1 << bit)) !== 0) {
       helper = _terminalHostBridgeAlias(exports, physicalBase);
-      if (typeof helper !== "function" || helper !== closureMetadata.bindings.get(bit)) helper = undefined;
+      if (typeof helper !== "function" || !sameExportedFunction(helper, closureMetadata.bindings.get(bit)))
+        helper = undefined;
     }
     if (exports[logicalName] === helper) continue;
     overrides.set(logicalName, helper);
@@ -1556,7 +1616,8 @@ function _hostBridgeExportView<T extends Record<string, any>>(exports: T, option
     let helper: unknown;
     if (dataStructMetadata !== undefined && (dataStructMetadata.bits & (1 << bit)) !== 0) {
       helper = _terminalHostBridgeAlias(exports, physicalBase);
-      if (typeof helper !== "function" || helper !== dataStructMetadata.bindings.get(bit)) helper = undefined;
+      if (typeof helper !== "function" || !sameExportedFunction(helper, dataStructMetadata.bindings.get(bit)))
+        helper = undefined;
     }
     if (exports[logicalName] === helper) continue;
     overrides.set(logicalName, helper);
@@ -1779,7 +1840,15 @@ function _applyWithPrefix(fn: Function, thisArg: any, prefix: ArrayLike<any>, su
 
 function _hostEqComparableValue(v: any): any {
   if (typeof v === "function") {
-    return _wasmClosureWrapperTargets.get(v as Function) ?? v;
+    // (#5377) A CALLABLE host mirror is a boundary view of a raw wasm value in
+    // exactly the way the object case below already canonicalizes — a compiled
+    // class object crosses as a constructible function mirror (#4618), and
+    // `i.constructor === C` compares that mirror against the raw class-object
+    // struct the bare `C` identifier resolves to. `_unwrapForHost` consults
+    // `_hostProxyReverse` first and then falls through to the same
+    // `_wasmClosureWrapperTargets` lookup this line used to do alone, so no
+    // previously-equal pair changes.
+    return _unwrapForHost(v);
   }
   // #1712: canonicalize identity-stable host proxies before reference comparison;
   // otherwise dynamic proxy and typed raw-struct reads of one object compare unequal.
@@ -3416,6 +3485,11 @@ function _toPrimitive(
   // Unwrap host proxy to raw WasmGC struct for sidecar lookups (#1090).
   // Proxies are created by _wrapForHost and _hostProxyReverse maps them back.
   const raw = _hostProxyReverse.get(obj) ?? obj;
+  // (#5374) Every probe below — `__sget_valueOf`, `__call_fn_method_0`,
+  // `__call_@@toPrimitive` — is an export of ONE module. See the note on the
+  // same redirect in `_hostToPrimitive` for why the whole walker is retargeted
+  // once, here, rather than per probe.
+  callbackState = _crossModuleCallbackState(raw, callbackState);
   // (#4616, cookie Expires family) The compiler-owned WasmGC Date carrier —
   // see _wasmDateToPrimitive.
   {
@@ -4031,6 +4105,14 @@ function _hostToPrimitive(
 
   // Check Symbol.toPrimitive via real JS property access (goes through proxy if applicable)
   const raw = _hostProxyReverse.get(obj) ?? obj;
+  // (#5374) The #5225 seam, one step past the field read: every arm below
+  // dispatches through an export of ONE module (`__sget_valueOf`,
+  // `__call_fn_method_0`, `__call_@@toPrimitive`, …) resolved from the module
+  // the coercion is RUNNING in — so a consumer-minted object coerced inside a
+  // linked provider found no method and bottomed out at "[object Object]".
+  // Retargeted once here, not per probe: the arms must agree on a module.
+  // Miss path only (the registry's `enabled` boolean). Detail in the issue.
+  callbackState = _crossModuleCallbackState(raw, callbackState);
   // (#4616) WasmGC Date carrier — see _wasmDateToPrimitive.
   {
     const dateMs = _wasmDateToPrimitive(raw, hint, callbackState);
@@ -4677,6 +4759,18 @@ function _wasmToPlain(val: any, exports: Record<string, Function> | undefined, s
   }
   if (!_isWasmStruct(val)) return val;
 
+  // (#5208) The Date carrier flattens to its HOST Date, not to its raw
+  // `{timestamp}` field list — `JSON.stringify({d: new Date(0)})` answered
+  // `{"d":{"timestamp":null}}`, the compiler's private carrier field leaked
+  // through the boundary. Handing back a real Date lets §25.5.2.4 step 2 find
+  // `Date.prototype.toJSON` on the host side, so nothing Date-specific has to
+  // be synthesised in compiled code. Ahead of the cycle bookkeeping: a Date is
+  // a leaf, it cannot participate in a cycle.
+  {
+    const hostDate = _marshalWasmDateForHost(val, exports);
+    if (hostDate !== _MISS) return hostDate;
+  }
+
   // (#2671) Cycle detection for the JSON.stringify flatten fast path. When a
   // `seen` ancestor set is supplied, a struct already on the current
   // serialization path is a circular reference — §25.5.2.5 / §25.5.2.6 step 1
@@ -5146,6 +5240,14 @@ function _serializeJSONProperty(
   const exports = callbackState?.getExports();
   // Step 1. Let value be ? Get(holder, key).
   let value = _liveGet(holder, key, exports);
+  // (#5208) The replacer/toJSON walk never reaches `_wasmToPlain`, so the Date
+  // carrier has to be marshalled here too — and BEFORE step 2, because step 2
+  // is `Get(value, "toJSON")` and an opaque carrier has no `toJSON` to find.
+  // With a real Date in hand the spec's own step 2 does the work.
+  {
+    const hostDate = _marshalWasmDateForHost(value, exports);
+    if (hostDate !== _MISS) value = hostDate;
+  }
   // Step 2. If Type(value) is Object or BigInt, try toJSON.
   if (value != null && (typeof value === "object" || typeof value === "bigint")) {
     const toJSON = _liveGet(value, "toJSON", exports);
@@ -5606,6 +5708,14 @@ function _safeGet(
     // JavaScript `undefined`; a real null sidecar/field still round-trips.
     const native = obj[key];
     return native === null ? undefined : native;
+  }
+  // (#5377) An externref-backed class instance is a REAL host object, so the
+  // direct read below finds the built-in that the class overrode — and, for
+  // `constructor`, the synthetic `Sub` rather than the class object. Same gate
+  // as #5373: a plain host object is never tagged and pays one `WeakMap.has`.
+  {
+    const own = _classChainRead(obj, key, marshalExports(callbackState));
+    if (own !== _MISS) return own;
   }
   const direct = obj[key];
   if (direct !== undefined) return direct;
@@ -6136,6 +6246,30 @@ export function registerLinkedConsumerModule(exports: Record<string, Function>):
 }
 
 /**
+ * (#5364) Retire the linked project that is no longer live, so the NEXT one
+ * starts from an empty registry.
+ *
+ * Both registries above are module-level singletons with no unregister path.
+ * That is correct while a process hosts one linked project, and wrong for a
+ * process that hosts many: `scripts/test262-worker.mjs` runs many rows per fork
+ * and since #5353 every Temporal row re-instantiates the SAME provider binary.
+ * Two instances of one binary share canonical WasmGC types, so project 1's
+ * `__struct_field_names` happily names a struct project 2 minted — and
+ * `_owningClassObject` (#5354) then answers with project 1's class-object
+ * singleton. Nothing throws; the consumer's live `C` and the instance's
+ * resolved constructor are simply two unrelated mirrors, so `x instanceof C`
+ * is false while `x.constructor.name` reads right.
+ *
+ * Call it BEFORE instantiating a project, not after tearing one down: "after"
+ * has no single owner (a row can throw out of instantiate) and would leave the
+ * stale entries live for exactly the window that matters.
+ */
+export function resetLinkedProjectRegistry(): void {
+  _crossModuleStructs.reset();
+  _linkedProviderMirrors.reset();
+}
+
+/**
  * (#5225) The exports that can DECODE `obj` — the reader's own, unless another
  * module of the same linked project minted it.
  *
@@ -6154,6 +6288,23 @@ function _decoderExportsFor(
   exports: Record<string, Function> | undefined,
 ): Record<string, Function> | undefined {
   return _crossModuleStructs.decoderFor(obj, exports) ?? exports;
+}
+
+/**
+ * (#5208) The compiler-owned WasmGC Date carrier as a real host `Date`, or
+ * `_MISS`. The view itself — and why it is identity-CACHED and yet RE-SYNCED on
+ * every crossing — lives in `runtime/date-host-method.ts`, which already owns
+ * the carrier protocol. This is only the binding of the three things that
+ * module cannot see: struct classification, the #5225 cross-module DECODER
+ * selection (without it a linked project's `ref.test` answers 0 and the carrier
+ * silently falls through to the generic proxy), and the reverse identity map.
+ */
+function _marshalWasmDateForHost(value: any, exports: Record<string, Function> | undefined): Date | typeof _MISS {
+  if (value == null || typeof value !== "object" || !_isWasmStruct(value) || !_canBeWeakKey(value)) return _MISS;
+  const hostDate = wasmDateHostView(value, _decoderExportsFor(value, exports), _isWasmStruct, (host, carrier) =>
+    _hostProxyReverse.set(host, carrier),
+  );
+  return hostDate ?? _MISS;
 }
 
 /** (#5225) `_decoderExportsFor` for the paths that thread a callback state. */
@@ -6348,7 +6499,12 @@ function _registerClassCtorHandler(
   if (classObj == null || typeof classObj !== "object") return;
   if (liveExportSource !== undefined) _classCtorCallbackStates.set(classObj, liveExportSource);
   if (ctorClosure != null && typeof ctorClosure === "object") _classCtorClosures.set(classObj, ctorClosure);
-  if (protoObj != null && typeof protoObj === "object") _classProtoStructs.set(classObj, protoObj);
+  if (protoObj != null && typeof protoObj === "object") {
+    _classProtoStructs.set(classObj, protoObj);
+    // (#5377) …and the reverse edge, so a struct-backed instance can reach its
+    // class object from the prototype carrier `__class_instance_proto` answers.
+    _classObjectByProtoStruct.set(protoObj, classObj);
+  }
   if (parentFnctor != null && typeof parentFnctor === "object") _classFnctorParents.set(classObj, parentFnctor);
   if (typeof classNameArg === "string" && classNameArg.length > 0)
     classStaticParent.registerClassObject(classObj, classNameArg);
@@ -6380,6 +6536,107 @@ function _classObjectPrototypeStruct(obj: any): any {
   if (obj == null || typeof obj !== "object") return undefined;
   const proto = _classProtoStructs.get(obj);
   return proto == null ? undefined : proto;
+}
+
+/**
+ * (#5354) Name of the owning-module export that answers "which class is this
+ * struct an instance of" — see src/codegen/class-object-of.ts.
+ */
+const CLASS_OBJECT_OF_EXPORT = "__class_object_of";
+const CLASS_PARENT_OF_EXPORT = "__class_parent_object_of";
+
+/**
+ * (#5354) Resolved owning class OBJECT per instance struct, or `null` for
+ * "asked, no answer". A struct's class never changes, so one question per
+ * struct is enough; `undefined` from the map means "never asked".
+ */
+const _instanceClassObject = new WeakMap<object, any>();
+
+/**
+ * (#5354) The class OBJECT `raw` is an instance of, asked of the module that
+ * OWNS the struct (#5225's minting-module rule — only that module has the type
+ * to read the `__tag` discriminator).
+ *
+ * The class object and the class prototype are carriers of the SAME struct type
+ * with the same `__tag` as an instance, so both answer the export. Neither is
+ * an instance of the class, and both identities are held right here — screening
+ * them on this side costs no wasm bytes and cannot go stale.
+ */
+function _owningClassObject(raw: any, exports: Record<string, Function> | undefined): any {
+  if (raw == null || typeof raw !== "object" || !_canBeWeakKey(raw)) return undefined;
+  const cached = _instanceClassObject.get(raw);
+  if (cached !== undefined) return cached ?? undefined;
+  const resolve = exports?.[CLASS_OBJECT_OF_EXPORT] as ((value: any) => any) | undefined;
+  // Deliberately NOT cached: a module compiled before #5354, or an export view
+  // that has not settled yet (the #5202 start-export registry), must be free to
+  // answer later.
+  if (typeof resolve !== "function") return undefined;
+  let classObj: any;
+  try {
+    classObj = resolve(raw);
+  } catch {
+    classObj = undefined;
+  }
+  if (
+    classObj == null ||
+    typeof classObj !== "object" ||
+    classObj === raw ||
+    _classProtoStructs.get(classObj) === raw ||
+    _prototypeMethodNames.has(raw)
+  ) {
+    _instanceClassObject.set(raw, null);
+    return undefined;
+  }
+  _instanceClassObject.set(raw, classObj);
+  return classObj;
+}
+
+/**
+ * (#5354) The class OBJECT of `classObj`'s `extends` parent, asked of the
+ * owning module. A STATIC heritage (`class B extends A` inside one module) is
+ * resolved wholly at compile time and registers nothing host-side, so this is
+ * the only record of it the boundary can consult.
+ */
+function _owningClassParentObject(classObj: any, exports: Record<string, Function> | undefined): any {
+  if (classObj == null || typeof classObj !== "object") return undefined;
+  const resolve = exports?.[CLASS_PARENT_OF_EXPORT] as ((value: any) => any) | undefined;
+  if (typeof resolve !== "function") return undefined;
+  try {
+    const parent = resolve(classObj);
+    return parent != null && typeof parent === "object" && parent !== classObj ? parent : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * (#5354) The host mirror of the class `raw` is an instance of — the object a
+ * consumer's `instance.constructor` must answer, and the same identity the
+ * consumer's `C` binding holds (`_wrapForHost` caches the mirror per class
+ * object).
+ */
+function _hostConstructorForInstance(raw: any, exports: Record<string, Function> | undefined): any {
+  const classObj = _owningClassObject(raw, exports);
+  if (classObj === undefined || !_classCtorClosures.has(classObj)) return undefined;
+  const mirror = _wrapForHost(classObj, exports);
+  return typeof mirror === "function" ? mirror : undefined;
+}
+
+/**
+ * (#5354) The host object that IS this instance's `[[Prototype]]` across the
+ * linked-provider seam: the class mirror's `.prototype` facade.
+ *
+ * This is the whole point of the issue. `C.prototype` read through the mirror
+ * answers that facade, so answering anything else here (the historical
+ * hardcoded `Object.prototype`) makes OrdinaryHasInstance walk a chain that can
+ * never meet `C.prototype` — `instanceof` false, `getPrototypeOf` unequal, and
+ * `constructor` unreachable, all from the one missing edge.
+ */
+function _hostPrototypeForInstance(raw: any, exports: Record<string, Function> | undefined): any {
+  const mirror = _hostConstructorForInstance(raw, exports);
+  if (mirror === undefined) return undefined;
+  const proto = (mirror as { prototype?: unknown }).prototype;
+  return proto != null && typeof proto === "object" ? proto : undefined;
 }
 
 /** (#4618) `__register_class_parent` import: dynamic `extends <value>`
@@ -6444,6 +6701,40 @@ function _registerClassParentRefHandler(className: any, obj: any, key: any, expo
  * `instance instanceof Sub` true.
  */
 const _subclassCtors = new Map<string, Function[]>();
+
+/**
+ * (#5377) Compiled class INSTANCE → the class-object singleton it was minted
+ * from. This is the identity `i.constructor` has to answer with, and it is
+ * keyed by the INSTANCE itself — never by class name.
+ *
+ * Two disjoint producers, one per backing:
+ *   - externref-backed (`class B extends Array`, i.e. jsbi's
+ *     `class JSBI extends Array`): recorded by `__set_subclass_proto`, which
+ *     now receives the class object as a fourth argument. Recording the
+ *     INSTANCE rather than the synthetic `Sub` is deliberate: jsbi's own
+ *     constructor runs `Object.setPrototypeOf(this, JSBI.prototype)` right
+ *     after `super(i)`, so a `Sub`-keyed link would be silently orphaned by
+ *     the very class this issue exists for.
+ *   - struct-backed (`class P {}`): resolved on demand through
+ *     `__class_instance_proto` → `_classObjectByProtoStruct` below, because a
+ *     WasmGC-struct instance never reaches a host import at construction.
+ *
+ * Why not the name-keyed `_subclassCtors` bucket beside it: class NAME is not
+ * an identity. Two classes named `P` in one module, or the same name across
+ * the ~hundreds of files one sharded test262 worker compiles in a process,
+ * collide — that is #5280, which parked three PRs on 2026-09-02. Object
+ * identity cannot collide, so this map needs no per-`instanceState` split and
+ * the `__instanceof` walk keeps its name-keyed bucket untouched.
+ */
+const _classObjectByInstance = new WeakMap<object, any>();
+
+/**
+ * (#5377) Class PROTOTYPE carrier → class-object singleton, the reverse of the
+ * `_classProtoStructs` link `__register_class_ctor` already records. Lets a
+ * struct-backed instance reach its class object in two identity hops:
+ * `__class_instance_proto(instance)` → prototype carrier → here.
+ */
+const _classObjectByProtoStruct = new WeakMap<object, any>();
 
 /**
  * (#1395) Cache of static-method-name → bridge JS function for class objects.
@@ -6859,6 +7150,143 @@ const _resolveClassMember = createClassMemberResolver({
   unwrapReceiver: (value) => _unwrapForHost(value),
 });
 const _invokeClassMethod = createResolvedClassMethodInvoker(_resolveClassMember, _MISS, _unwrapForHost);
+
+/**
+ * (#5373) Is `v` an instance of a COMPILED user class whose members live only in
+ * the module's `__class_call_*` bridges?
+ *
+ * `class B extends Array` (jsbi's `class JSBI extends Array`) is compiled
+ * externref-backed: the instance reaching the host is a REAL JS Array whose
+ * prototype chain carries the BUILT-IN `Array.prototype.toString`/`join`/
+ * `valueOf` and none of B's overrides — those are only reachable through
+ * `_resolveClassMember`. So every host path that reads a method off the
+ * receiver finds the built-in and the override is silently bypassed.
+ *
+ * This predicate is the gate for looking at the class chain FIRST. It answers
+ * "the receiver is a compiled class instance", NOT "the receiver looks like an
+ * array": a plain array (a WasmGC vec, never tagged) and a plain object both
+ * answer `false` on one `WeakMap.has`, so the array fast paths of #3903 keep
+ * their exact shape and cost.
+ */
+function _isTaggedUserClassInstance(v: unknown): boolean {
+  if (v === null || (typeof v !== "object" && typeof v !== "function")) return false;
+  return _userClassTags.has(v as object);
+}
+
+/**
+ * (#5373) The compiled override of `key` on a tagged class instance, or `_MISS`.
+ *
+ * Returns a callable bound to `v`; `_MISS` when `v` is not a compiled class
+ * instance or the class declares no such member — in which case the caller must
+ * keep its previous behaviour byte-for-byte (an inherited built-in the class did
+ * NOT override still wins, which is what the spec asks for).
+ */
+function _classChainMethod(v: any, key: string, exports: Record<string, Function> | undefined): any {
+  if (exports === undefined || !_isTaggedUserClassInstance(v)) return _MISS;
+  const member = _resolveClassMember(v, key, exports);
+  return typeof member === "function" ? member : _MISS;
+}
+
+/**
+ * (#5373) ToString of a tagged class instance through its OWN `toString`.
+ *
+ * Used by the string-coercion imports before they read `v.toString` off the
+ * host prototype chain. Only `toString` is consulted — promoting a compiled
+ * `valueOf` over an inherited built-in `toString` would break §7.1.1.1's
+ * string-hint order, which asks for `toString` first whether or not it is
+ * inherited.
+ */
+function _classChainToString(v: any, exports: Record<string, Function> | undefined): string | typeof _MISS {
+  const own = _classChainMethod(v, "toString", exports);
+  if (own === _MISS) return _MISS;
+  const prim = own.call(v);
+  if (prim != null && typeof prim === "object") return _MISS; // not a primitive — fall through
+  return String(prim);
+}
+
+/**
+ * (#5377) The class-object singleton `v` was constructed from, or `undefined`.
+ *
+ * Returns the RAW class-object struct, deliberately not a `_wrapForHost`
+ * mirror: compiled code reading the bare identifier `C` gets exactly that
+ * externref, so `i.constructor === C` has to hold by reference across the two
+ * lanes. This is the same reasoning `_classObjectPrototypeStruct` and
+ * `compiledClassInstancePrototype` (#5347) already give for `C.prototype`.
+ */
+/**
+ * (#5377) Was this class object minted by the module whose `exports` is asking?
+ *
+ * One process runs MANY module instantiations — test262 alone runs a sloppy
+ * pass and a strict rerun per file, hundreds of files per worker — and a value
+ * built by instantiation N can reach a host mirror that still dispatches
+ * through instantiation N-1's export map. Measured inside the linked Temporal
+ * provider (`.tmp/dbgM5.log`): a JSBI instance whose class object is
+ * `object#125` (instantiation 2) arriving with `exports=object#3`
+ * (instantiation 1), whose own `JSBI` global is `object#1`.
+ *
+ * In that state the identity is UNANSWERABLE: whatever we return, the compiled
+ * `C === ` on the other side reads the other instantiation's class object, so
+ * `===` is false no matter what. Both arms below therefore stand down to
+ * `_MISS` — the caller keeps its pre-#5377 behaviour — instead of answering a
+ * class object that cannot compare equal.
+ *
+ * This is load-bearing, not defensive: with the arms ungated, the member-READ
+ * arm resolved `i.valueOf` to jsbi's deliberately-throwing `valueOf` in exactly
+ * that cross-instantiation state, and 5 of the 481-row Temporal sample went
+ * pass→fail with `Convert JSBI instances to native numbers using toNumber`
+ * (`.tmp/diff-instzdt.txt`, measured 2026-09-07) — the regression PR #5685
+ * predicted and this issue exists to avoid.
+ *
+ * `undefined` on either side means "not knowable here" and is treated as
+ * owned, so the init window (where `getExports()` is still undefined, #1712)
+ * behaves exactly as before.
+ */
+function _classObjectOwnedBy(classObj: any, exports: Record<string, Function> | undefined): boolean {
+  if (exports === undefined) return true;
+  const owner = _classCtorCallbackStates.get(classObj as object)?.getExports();
+  return owner === undefined || owner === exports;
+}
+
+function _classObjectForInstance(v: any, exports: Record<string, Function> | undefined): any {
+  if (v === null || (typeof v !== "object" && typeof v !== "function")) return undefined;
+  if (!_canBeWeakKey(v)) return undefined;
+  const direct = _classObjectByInstance.get(v as object);
+  if (direct !== undefined) return direct;
+  if (!_isWasmStruct(v)) return undefined;
+  const proto = compiledClassInstancePrototype(v, exports);
+  if (proto == null || typeof proto !== "object") return undefined;
+  return _classObjectByProtoStruct.get(proto as object);
+}
+
+/**
+ * (#5377) The member READ on a compiled class instance, in the order the spec
+ * asks for. `_MISS` means the caller keeps its previous behaviour byte-for-byte.
+ *
+ * Two arms, both gated on "the receiver is a compiled class instance":
+ *
+ *  - `constructor` — the class object itself. Without this a struct-backed
+ *    instance answers `%Object%` (the ordinary-fields arm of `__extern_get`)
+ *    and an externref-backed one answers the synthetic `Sub` minted by
+ *    `__set_subclass_proto`, neither of which is the value the compiled `C`
+ *    identifier resolves to. `jsbi`'s `__isBigInt`/`__toPrimitive`/`BigInt`
+ *    all open with `x.constructor === JSBI`, so with that false every
+ *    `Instant.epochNanoseconds` read fell through to `__toPrimitive` on a raw
+ *    digit array (#5373's residual).
+ *
+ *  - any other key — #5373's `_classChainMethod`, ported here from the three
+ *    coercion/call sites to the member-READ path (`const f = x.toString`).
+ *    PR #5685 measured this arm ALONE regressing 9 `Temporal/Instant` rows,
+ *    because `i.valueOf` then resolves to jsbi's deliberately-throwing
+ *    `valueOf` — which node never reaches, thanks to the `constructor`
+ *    short-circuit above. The two arms are therefore one change, not two.
+ */
+function _classChainRead(v: any, key: any, exports: Record<string, Function> | undefined): any {
+  if (typeof key !== "string") return _MISS;
+  const classObj = _classObjectForInstance(v, exports);
+  if (classObj === undefined || !_classObjectOwnedBy(classObj, exports)) return _MISS;
+  if (key === "constructor") return _wrapForHost(classObj, exports);
+  return _classChainMethod(v, key, exports);
+}
 // (#3673) Hoisted from `_resolveHostField` — was a per-call closure on a hot
 // path (invoked for every dynamic field read that reaches the host resolver).
 // #1336 — accessor properties (Object.defineProperty(obj, k, {get})) must
@@ -7290,7 +7718,23 @@ function _resolveHostField(obj: any, key: any, exports: Record<string, Function>
         // __sget_<name> per-shape dispatcher yields null/undefined when the
         // receiver's struct shape doesn't carry the field at all.
         const v = getter(obj);
-        if (v !== undefined && v !== null) return v;
+        // (#5250) `0` is the shape-MISS default of a NUMERIC `__sget_<name>`
+        // exactly as `null` is for a ref-typed one, and the getter is
+        // module-GLOBAL — so one unrelated `{ month: 11 }` literal anywhere in
+        // the program made `month` read as a present `0` on EVERY struct here
+        // (and, since this resolver backs the host proxy's `has` trap, made
+        // `"month" in { year: 1994 }` true). Gate the miss-shaped values on
+        // the single-key field-name registry, and only when it positively says
+        // absent, so every other read keeps its old cost and answer. The
+        // `false` arm is defensive, not measured. Full measurement + controls:
+        // tests/issue-5250-sget-numeric-shape-miss.test.ts.
+        if (v !== undefined && v !== null) {
+          if ((v === 0 || v === false) && _structOwnFieldStatus(obj, String(key), exports) === false) {
+            // Shape miss: fall through to the prototype / sidecar walk below.
+          } else {
+            return v;
+          }
+        }
         // (#3051 Slice 3) `null` disambiguation: a compiled `null` literal is
         // stored as ref.null (reads back `null` — same as the dispatcher's
         // shape-miss), while compiled `undefined` is the distinguished host
@@ -8013,20 +8457,20 @@ function _wrapHostArrayElems(arr: any[], exports: Record<string, Function> | und
 function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): any {
   if (obj == null || typeof obj !== "object") return obj;
   if (!_isWasmStruct(obj)) return obj;
-
   // (#5225) A struct minted by another module of this linked project must be
   // mirrored against the exports that can DECODE it, not against whichever
   // module happens to be reading. Every trap below (field reads, key
   // enumeration, callable members) resolves through these exports.
   exports = _decoderExportsFor(obj, exports);
-
   const primitiveValue = _nativePrimitiveToHost(obj, exports);
   if (primitiveValue !== _MISS) return primitiveValue;
   const errorValue = _nativeErrorToHost(obj, exports);
   if (errorValue !== _MISS) return errorValue;
   const promiseValue = _nativePromiseToHost(obj, exports);
   if (promiseValue !== _MISS) return promiseValue;
-
+  // (#5362) Preserve a branded TypedArray host mirror before the generic vec facade/cache.
+  const mirror = _compiledTypedArrayKinds.has(obj) && _compiledTypedArrayMirror(obj, { getExports: () => exports });
+  if (mirror) return mirror;
   const cached = _hostProxyCache.get(obj);
   if (cached) {
     const slot = _hostProxyExportSlots.get(obj);
@@ -8306,6 +8750,15 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       ) {
         return (Object.prototype as Record<string, unknown>)[key as string];
       }
+      // (#5354) `instance.constructor` is an INHERITED read off the class
+      // prototype, which a get trap has to serve itself — the engine does not
+      // consult [[Prototype]] once a trap is installed. Same class identity the
+      // consumer's `C` binding holds, so `d.constructor === C` holds too. Own
+      // properties still shadow it (`val !== undefined` never reaches here).
+      if (val === undefined && key === "constructor" && !_wasmStructHasOwn(obj, key, currentExports())) {
+        const ctorMirror = _hostConstructorForInstance(obj, currentExports());
+        if (ctorMirror !== undefined) return ctorMirror;
+      }
       return val;
     },
     set(_t, key, val) {
@@ -8528,8 +8981,17 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
       }
       return desc;
     },
-    getPrototypeOf() {
-      return Object.prototype;
+    getPrototypeOf(_t) {
+      // (#5354) A compiled class INSTANCE inherits from its class's prototype,
+      // not straight from %Object.prototype%. Across the linked-provider seam
+      // the consumer's `C.prototype` IS the mirror's facade, so that is the
+      // object this must answer or `x instanceof C` can never be true.
+      //
+      // §10.5.1: once the target is non-extensible the trap result must be
+      // SameValue as the target's own [[Prototype]] — `preventExtensions` below
+      // pins the resolved answer onto the target precisely so that stays true.
+      if (!Reflect.isExtensible(_t)) return Reflect.getPrototypeOf(_t);
+      return _hostPrototypeForInstance(obj, currentExports()) ?? Object.prototype;
     },
     defineProperty(_t, key, descriptor) {
       // Route through sidecar descriptor validation so non-configurable/non-writable
@@ -8587,6 +9049,16 @@ function _wrapForHost(obj: any, exports: Record<string, Function> | undefined): 
         } catch {
           /* best-effort — an unmaterializable key keeps prior behavior */
         }
+      }
+      // (#5354) Pin the [[Prototype]] the `getPrototypeOf` trap answers onto
+      // the target BEFORE locking it: §10.5.1 requires the trap to report the
+      // target's own prototype once the target is non-extensible, and a
+      // null-proto target would otherwise make every post-freeze
+      // `instanceof` / `getPrototypeOf` throw the proxy invariant TypeError.
+      try {
+        Reflect.setPrototypeOf(t, _hostPrototypeForInstance(obj, currentExports()) ?? Object.prototype);
+      } catch {
+        /* exotic target — the trap's non-extensible arm serves whatever it has */
       }
       _wasmNonExtensibleObjs.add(obj);
       return Reflect.preventExtensions(t);
@@ -8717,18 +9189,37 @@ function _makeClassCtorMirrorForHost(
     const viaFnctor = _classFnctorParents.get(classObj);
     if (viaFnctor != null) return viaFnctor;
     if (className === "") return undefined;
-    return classStaticParent.getClassParent(className);
+    const registered = classStaticParent.getClassParent(className);
+    if (registered != null) return registered;
+    // (#5354) A STATIC `class B extends A` heritage is resolved entirely inside
+    // the compiler and registers nothing on the host, so neither record above
+    // has it. Ask the owning module (see codegen/class-object-of.ts).
+    return _owningClassParentObject(classObj, callbackState.getExports() ?? exports);
   };
   const resolveParentProto = (): any => {
     const pf = resolveParent();
     if (pf == null) return undefined;
     if (typeof pf === "function") return (pf as any).prototype;
+    // (#5354) A parent that is itself a registered compiled class answers its
+    // own MIRROR's facade — the same object the consumer's `A.prototype` reads
+    // — so the child facade's `[[Prototype]]` chain meets it and
+    // `new B() instanceof A` holds. The wrapped prototype struct below is a
+    // different object, which is exactly the identity split this issue is about.
+    if (typeof pf === "object" && _classCtorClosures.has(pf)) {
+      const parentMirror = _wrapForHost(pf, callbackState.getExports() ?? exports);
+      const parentProto = typeof parentMirror === "function" ? (parentMirror as any).prototype : undefined;
+      if (parentProto != null) return parentProto;
+    }
     if (typeof pf === "object" && _classProtoStructs.has(pf)) {
       const pp = _classProtoStructs.get(pf);
       return pp != null ? _wrapForHost(pp, exports) : undefined;
     }
     return _getOrVivifyFnPrototype(pf, callbackState);
   };
+  // (#5354) The mirror itself, needed by the prototype facade's `constructor`
+  // answer below. Assigned at the end of this function; every read of it
+  // happens inside a trap, i.e. strictly after that assignment.
+  let mirrorSelf: any;
   const protoStruct = _classProtoStructs.get(classObj);
   // (#4618) Install the prototype facade even when the proto struct did not
   // register (the react per-file batch crossed a null protoObj through the
@@ -8745,14 +9236,29 @@ function _makeClassCtorMirrorForHost(
           const own = (protoHost as any)[key];
           if (own !== undefined && own !== null) return _maybeWrapCallableUnknownArity(own, callbackState);
         }
+        // (#5354) §15.7.13: a class prototype's `constructor` is the class.
+        // The compiled prototype struct carries no such field, so the facade
+        // is the only place this edge can exist — and `d.constructor` (served
+        // by the instance mirror) must answer the SAME object.
+        if (key === "constructor" && mirrorSelf !== undefined) return mirrorSelf;
         const pp = resolveParentProto();
         if (pp == null) return undefined;
         return _maybeWrapCallableUnknownArity((pp as any)[key], callbackState);
       },
       has(_ft, key) {
         if (protoHost !== undefined && key in (protoHost as any)) return true;
+        if (key === "constructor" && mirrorSelf !== undefined) return true; // (#5354)
         const pp = resolveParentProto();
         return pp != null ? key in (pp as any) : false;
+      },
+      // (#5354) The facade is a prototype OBJECT, so its own [[Prototype]] is
+      // the parent class's prototype and, at the root, %Object.prototype%.
+      // Without this the target's null proto terminated the chain and
+      // `instance instanceof Object` — true for every object — answered false
+      // the moment instances started inheriting from the facade.
+      getPrototypeOf() {
+        const pp = resolveParentProto();
+        return pp != null && (typeof pp === "object" || typeof pp === "function") ? pp : Object.prototype;
       },
       // (#5237) Without this the facade reported ZERO own keys, because its
       // target is a bare `Object.create(null)` and only `get`/`has` were
@@ -8905,7 +9411,8 @@ function _makeClassCtorMirrorForHost(
       return Function.prototype;
     },
   };
-  return new Proxy(fnTarget, handler);
+  mirrorSelf = new Proxy(fnTarget, handler); // (#5354) see the facade's `constructor`
+  return mirrorSelf;
 }
 
 function _unwrapForHost(v: any, reader?: MarshalExportSource): any {
@@ -10785,6 +11292,12 @@ function resolveImport(
           ...(typeof Intl !== "undefined" && typeof Intl.NumberFormat !== "undefined"
             ? { NumberFormat: Intl.NumberFormat }
             : {}),
+          // (#5355) `Intl.DateTimeFormat` — the host-mirror bridge's constructor.
+          // Registered host-lane only (see extern-declarations.ts); standalone
+          // throws a TypeError instead of reaching any of this.
+          ...(typeof Intl !== "undefined" && typeof Intl.DateTimeFormat !== "undefined"
+            ? { DateTimeFormat: Intl.DateTimeFormat }
+            : {}),
           // (#1792) node:url — WHATWG URL / URLSearchParams globals (Node 18+ /
           // every browser). Registered as extern-class host constructors so
           // `new URL(...)` / `new URLSearchParams(...)` bind to the real host
@@ -10900,7 +11413,69 @@ function resolveImport(
         // data-struct proxy before Request/Response consume the dictionary.
         // Statically visible bags are materialized by codegen; this runtime
         // arm is the erased-value counterpart and runs after exports are live.
-        const webInitArgIndex = intent.className === "Request" || intent.className === "Response" ? 1 : undefined;
+        //
+        // (#5378) `Intl.DateTimeFormat(locales, options)` is the SAME shape and
+        // was missing from this list, which is what made every linked-Temporal
+        // `ZonedDateTime` field read throw `RangeError: infinity is out of
+        // range`. The chain, measured through the runner (probe ladder in the
+        // issue): `ZonedDateTime.prototype.year` → `GetISODateTimeFor` →
+        // `GetOffsetNanosecondsFor("UTC", ns)` → `GetNamedTimeZoneOffsetNanoseconds`,
+        // whose ONLY source of wall-clock parts is
+        //   `new Intl.DateTimeFormat("en-us", {timeZone, hour12:false, era:"short",
+        //      year/month/day/hour/minute/second:"numeric"}).format(date)`
+        // split into 7 `\w+` runs. The options struct reached V8 opaque, so the
+        // host constructor read NO properties from it and fell back to the
+        // en-US default (year/month/day only): the format string came back
+        // "1/1/2024" instead of "1/1/2024 AD, 12:34:00". The polyfill's parse
+        // then yields non-finite wall-clock fields, `offsetNanoseconds` reads
+        // `NaN`, and `BalanceISODate` rejects the NaN with that RangeError —
+        // several frames above the actual defect, which is why the throw site
+        // looked like a calendar bug. `epochMilliseconds` never touches the
+        // formatter, which is exactly why it stayed correct.
+        //
+        // (#5381) …and it stayed a per-class list for exactly one issue. The
+        // three names above were not three bugs: `Request`, `Response` and
+        // `DateTimeFormat` are three instances of ONE shape — a host
+        // constructor that READS PROPERTIES off an argument. Every other
+        // constructor in that shape lost its bag the same way and had to wait
+        // for someone to notice and add a fourth name (measured on this branch
+        // before the change: `new Intl.NumberFormat("en-US",{minimumFractionDigits:3})
+        // .format(1.5)` → "1.5", node "1.500"; `new Intl.ListFormat("en",
+        // {type:"disjunction"}).format(["a","b"])` → "a and b", node "a or b").
+        //
+        // So the rule is inverted: a compiled struct argument is marshalled
+        // through `_wrapForHost` by DEFAULT, and the exceptions are the
+        // constructors that consume an argument by a protocol OTHER than
+        // "read its properties" — every one of which already has its own arm
+        // a few lines above:
+        //   * `isWrapperCtor`        — String/Number/Boolean, arity-sensitive;
+        //   * `isIterableCtor`       — Map/Set/WeakMap/WeakSet, want the
+        //                              iteration protocol (`_convertIterableForHost`);
+        //   * `isBufferConsumer`     — DataView/TypedArrays, want real bytes;
+        //   * `coercesArgsToPrimitive` — RegExp/Date/String/Number, run
+        //                              ToPrimitive on the struct (#1716);
+        //   * the Error family       — arg 0 is ToString'd (#3481) and arg 1
+        //                              carries `cause`, whose OBJECT IDENTITY
+        //                              §20.5.8.1 preserves verbatim; a proxy
+        //                              there would break `e.cause === obj`;
+        //   * `isPromiseExecutorCtor` — arg 0 is a callable, not a bag;
+        //   * `_structArgIdentityCtors` — Object/Function/Array/WeakRef/…,
+        //                              which store or return the argument
+        //                              itself, so a proxy changes what the
+        //                              program observes.
+        // Anything else — every registered extern class, including ones nobody
+        // has written yet — gets the marshalling for free. Primitives and
+        // host externrefs are untouched: the guard is `_isWasmStruct`, and a
+        // host object never satisfies it.
+        const marshalsStructArgsForHost = !(
+          isWrapperCtor ||
+          isIterableCtor ||
+          isBufferConsumer ||
+          coercesArgsToPrimitive ||
+          isPromiseExecutorCtor ||
+          errorMessageArgIndex >= 0 ||
+          _structArgIdentityCtors.has(intent.className)
+        );
         return (...args: any[]) => {
           if (isPromiseExecutorCtor && args.length > 0) {
             args[0] = _maybeWrapCallable(args[0], 2, callbackState);
@@ -10910,13 +11485,16 @@ function resolveImport(
             while (len > 0 && args[len - 1] == null) len--;
             args = args.slice(0, len);
           }
-          if (
-            webInitArgIndex !== undefined &&
-            args.length > webInitArgIndex &&
-            args[webInitArgIndex] != null &&
-            _isWasmStruct(args[webInitArgIndex])
-          ) {
-            args[webInitArgIndex] = _wrapForHost(args[webInitArgIndex], callbackState?.getExports());
+          if (marshalsStructArgsForHost) {
+            let hostExports: Record<string, Function> | undefined;
+            for (let i = 0; i < args.length; i++) {
+              const a = args[i];
+              if (a == null || typeof a !== "object" || !_isWasmStruct(a)) continue;
+              // Resolve exports lazily: the common case has no struct argument
+              // at all, and `getExports()` is not free during module init.
+              if (hostExports === undefined) hostExports = callbackState?.getExports();
+              args[i] = _wrapForHost(a, hostExports);
+            }
           }
           if (
             errorMessageArgIndex >= 0 &&
@@ -11244,7 +11822,22 @@ function resolveImport(
                 continue;
               }
               const callable = _maybeWrapCallableUnknownArity(a, callbackState);
-              callArgs[i] = callable !== a ? callable : _wrapForHost(a, marshalExp);
+              if (callable !== a) {
+                callArgs[i] = callable;
+                continue;
+              }
+              // (#5208) THE measured crossing point. Instrumenting `_wrapForHost`
+              // and running the 123-row #5249 Temporal family provider-linked
+              // showed exactly ONE site where a compiled `Date` reaches a host
+              // function in the whole @js-temporal/polyfill: here, as the
+              // argument of `Intl_DateTimeFormat_formatToParts`, from
+              // `HelperBase_getCalendarParts` (and once from
+              // `ChineseBaseHelper_getMonthList`). The generic proxy made the
+              // host throw `RangeError: Invalid time value`, which the
+              // polyfill's own `catch` rewrote into `Invalid ISO date` — 68 of
+              // the 123 rows.
+              const hostDate = _marshalWasmDateForHost(a, marshalExp);
+              callArgs[i] = hostDate !== _MISS ? hostDate : _wrapForHost(a, marshalExp);
             }
           }
           // (#3903) Arity switch instead of `fn.call(self, ...callArgs)` — same
@@ -11869,6 +12462,14 @@ assert._isSameValue = isSameValue;
       }
       if (name === "__extern_get")
         return (obj: any, key: any) => {
+          // (#5377) A compiled class instance answers its OWN members before
+          // the built-in prototype chain the host would read them off. Ahead
+          // of the direct read below, because for an externref-backed instance
+          // (`class B extends Array`) that read is what wins today.
+          {
+            const own = _classChainRead(obj, key, callbackState?.getExports());
+            if (own !== _MISS) return own;
+          }
           // (#2743 a) A registered arguments object is an ordinary Object whose
           // `[[Prototype]]` is %Object.prototype%. The vec is opaque to the
           // host, so resolve the inherited members it would otherwise miss:
@@ -12510,10 +13111,7 @@ assert._isSameValue = isSameValue;
           // object never has `e`; the source struct's shape no longer leaks).
           if (typeof obj === "object" && _isWasmStruct(obj)) {
             if (_wasmStructHasOwn(obj, key, callbackState?.getExports())) return 1;
-            // (#1991) `in` walks the [[Prototype]] chain (§13.10.1 → §7.3.12):
-            // every object inherits the Object.prototype members.
-            if (typeof key === "string" && _OBJECT_PROTO_KEYS.has(key)) return 1;
-            return 0;
+            return hasStructPrototypeMember(obj, key, _OBJECT_PROTO_KEYS, () => marshalExports(callbackState)) ? 1 : 0;
           }
           // Plain JS object (or host-supplied object) — native HasProperty walks
           // its own prototype chain. HasProperty is value-independent (§7.3.12),
@@ -12626,6 +13224,17 @@ assert._isSameValue = isSameValue;
               return "[object Object]";
             }
           }
+          // (#5373) A compiled class that extends a builtin reaches here as a
+          // REAL host object (`class JSBI extends Array` → a JS Array), so the
+          // `v.toString` read below finds `Array.prototype.toString` and joins
+          // the elements — `String(jsbi)` answered "23396352,513294428,1"
+          // instead of the class's own radix-10 digits. Consult the class chain
+          // first; `_MISS` (plain array/object, or a class with no `toString`)
+          // leaves the path below untouched.
+          {
+            const own = _classChainToString(v, callbackState?.getExports());
+            if (own !== _MISS) return own;
+          }
           if (typeof v.toString === "function") return v.toString();
           if (typeof v === "object") {
             const prim = _toPrimitive(v, "string", callbackState);
@@ -12731,6 +13340,12 @@ assert._isSameValue = isSameValue;
               return "[object Object]";
             }
           }
+          // (#5373) Same ordering fix as `__extern_toString`, for a subclass
+          // instance appearing as an ELEMENT of the array being joined.
+          {
+            const own = _classChainToString(v, callbackState?.getExports());
+            if (own !== _MISS) return own;
+          }
           if (typeof v.toString === "function") return v.toString();
           if (typeof v === "object") {
             const prim = _toPrimitive(v, "string", callbackState);
@@ -12824,6 +13439,15 @@ assert._isSameValue = isSameValue;
       if (name === "__throw_reference_error")
         return (msg: any) => {
           throw new ReferenceError(msg == null ? "" : String(msg));
+        };
+      // (#5247) Export-boundary rethrow: the export wrapper
+      // (codegen/export-throw-boundary.ts) catches its own `__exn` tag and hands
+      // the payload here so this JS frame raises it by identity, instead of the
+      // caller seeing a bare `WebAssembly.Exception`. Deliberately NO coercion
+      // to Error — a compiled `throw { name, message }` must cross unchanged.
+      if (name === "__rethrow_host_exception")
+        return (payload: any): never => {
+          throw payload;
         };
       // __to_primitive: full ToPrimitive per ECMA-262 §7.1.1 (#1090)
       // Takes (externref obj, externref hint_string) → externref primitive
@@ -13717,7 +14341,10 @@ assert._isSameValue = isSameValue;
           // function"). Route through the manual per-key path that wraps wasm
           // closures to host callables (no-op for real JS functions). Gated on
           // detection so the common host-literal path is byte-identical.
-          if (_descsHaveWasmClosureAccessor(descsObj, callbackState)) {
+          // (#5357) HOST targets only: the raw `Object.defineProperty` below throws
+          // "WebAssembly objects are opaque" on a WasmGC `obj`, which takes the
+          // sidecar path in the catch arm instead (axios `freezeMethods` at init).
+          if (!_isWasmStruct(obj) && _descsHaveWasmClosureAccessor(descsObj, callbackState)) {
             const keys = getKeys(descsObj);
             const gathered: { key: string | symbol; desc: PropertyDescriptor }[] = [];
             for (const key of keys) {
@@ -13923,6 +14550,10 @@ assert._isSameValue = isSameValue;
             // runtime/wasm-carrier-prototype.ts for why and for what it declines.
             const carrierProto = wasmCarrierBuiltinPrototype(obj, exports);
             if (carrierProto !== undefined) return carrierProto;
+            // (#5347) …and neither is a compiled CLASS INSTANCE. The position
+            // IS the fix — see runtime/compiled-class-prototype.ts.
+            const classProto = compiledClassInstancePrototype(obj, exports);
+            if (classProto !== undefined) return classProto;
             const isDataStruct = exports?.__is_data_struct as ((value: any) => number) | undefined;
             if (typeof isDataStruct === "function") {
               try {
@@ -14060,7 +14691,7 @@ assert._isSameValue = isSameValue;
       // #1515: query whether a buffer is detached. Returns 1 if detached, 0 otherwise.
       if (name === "__is_detached_buffer")
         return (buf: any): number => {
-          if (buf != null && typeof buf === "object" && _detachedBuffers.has(buf)) return 1;
+          if (buf != null && typeof buf === "object" && (_detachedBuffers.has(buf) || vecMirrorDetached(buf))) return 1;
           return 0;
         };
       if (name === "__extern_method_call")
@@ -14147,6 +14778,31 @@ assert._isSameValue = isSameValue;
           const vecMutation = _tryWasmVecMutation(obj, method, args, exports);
           if (vecMutation.handled) return vecMutation.value;
 
+          // (#5373) A compiled class that extends a builtin is externref-backed:
+          // its instance reaches the host as a real Array/Map/Error whose
+          // prototype chain carries the BUILT-IN member and none of the class's
+          // overrides. `wrappedObj[method]` therefore finds e.g.
+          // `Array.prototype.toString` and the `typeof fn !== "function"`
+          // recovery below — the only place the class chain is consulted — never
+          // runs. Resolve the class chain FIRST, so an override wins over the
+          // inherited built-in (`jsbi.toString(10)` joined the digit array
+          // instead of formatting it, breaking every Temporal BigInt read).
+          //
+          // Gated on the user-class tag, NOT on "the receiver looks like an
+          // array": a plain vec is never tagged, so it skips on one
+          // `WeakMap.has` and the #3903 array fast path is unchanged. A class
+          // that does NOT declare `method` misses here and keeps the built-in,
+          // which is the spec-correct inherited lookup.
+          if (_isTaggedUserClassInstance(obj) || _isTaggedUserClassInstance(_unwrapForHost(obj))) {
+            const ownMember = _invokeClassMethod(
+              _unwrapForHost(obj),
+              method,
+              marshalExports(callbackState, exports),
+              wrappedObj,
+              wrappedArgs,
+            );
+            if (ownMember !== _MISS) return ownMember;
+          }
           // (#5237) Pass this module's callback state below to preserve provider-owned mirrors returned by methods.
           const fn = wrappedObj[method];
           // (#1320) Some chained `Array.from.call(C, items)` shapes lower as a
@@ -14326,9 +14982,7 @@ assert._isSameValue = isSameValue;
           // (#3603 S1) `Array.prototype.push.call(vec, x)` arrives as obj=push,
           // method="call", args[0]=the vec's `__make_iterable` mirror — bracket
           // the dispatch so the mutation reaches the vec (silent no-op before).
-          const mirrorSnaps = snapshotVecMirrors(dispatchRecv, wrappedArgs, exports);
-          const ret = Reflect.apply(fn, dispatchRecv, wrappedArgs);
-          reconcileVecMirrors(mirrorSnaps, exports, _unwrapForHost);
+          const ret = applyVecMirror(fn, dispatchRecv, wrappedArgs, exports, _unwrapForHost);
           // (#1333) Annex B — RegExp.prototype.exec/test post-match slot update.
           if (
             (method === "exec" || method === "test") &&
@@ -17360,9 +18014,17 @@ assert._isSameValue = isSameValue;
       // first call (idempotent), keyed by `name`, and reused thereafter so
       // `instance instanceof Sub` returns true (matched by `__instanceof`).
       if (name === "__set_subclass_proto")
-        return (instance: any, subName: string, parentName: string) => {
+        return (instance: any, subName: string, parentName: string, classObject?: any) => {
           if (instance == null || typeof subName !== "string" || typeof parentName !== "string") {
             return instance;
+          }
+          // (#5377) Record instance → class object while both are in hand. This
+          // is the only moment an externref-backed instance and its compiled
+          // class object meet, and it is keyed by instance identity so a later
+          // `Object.setPrototypeOf(this, C.prototype)` in the user constructor
+          // (jsbi does exactly that) cannot orphan the link.
+          if (classObject != null && typeof classObject === "object" && _canBeWeakKey(instance)) {
+            _classObjectByInstance.set(instance as object, classObject);
           }
           const Parent: any = resolveSubclassParent(parentName, deps, _resolveNamespacedClass);
           if (typeof Parent !== "function") {
@@ -17806,6 +18468,11 @@ assert._isSameValue = isSameValue;
       return (v: any) => (v ? 1 : 0);
     case "extern_get":
       return (obj: any, key: any) => {
+        // (#5377) Same ordering as the by-name `__extern_get` above.
+        {
+          const own = _classChainRead(obj, key, callbackState?.getExports());
+          if (own !== _MISS) return own;
+        }
         if (obj != null && typeof obj === "object") {
           if (key === "buffer") {
             const typedArrayBuffer = _compiledTypedArrayBuffer(obj, callbackState);
@@ -18589,6 +19256,7 @@ export function buildImports(
     // programs (an unused import namespace is ignored by V8).
     string_constants16: buildStringConstants16(stringPool),
   };
+  installFreshDataStructAssociationToken(result.string_constants, _DATA_STRUCT_HOST_BRIDGE_TOKEN_VALUE); // (#5337)
   const dataStructHostBridgeToken = result.string_constants[_DATA_STRUCT_HOST_BRIDGE_TOKEN_VALUE];
   // Always provide setExports — needed for callbacks, native string marshaling,
   // and struct field getter discovery (__sget_*). Raw records cannot establish

@@ -14,7 +14,7 @@ import { allocTempLocal, releaseTempLocal } from "../context/locals.js";
 import { rollbackSpeculative, snapshotSpeculative } from "../context/speculative.js";
 import type { CodegenContext, FunctionContext } from "../context/types.js";
 import type { InnerResult } from "../shared.js";
-import { compileExpression, VOID_RESULT } from "../shared.js";
+import { compileExpression, ensureLateImport, flushLateImportShifts, VOID_RESULT } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { resolveWasmType } from "../index.js";
 import { getFuncParamTypes, getWasmFuncReturnType, isEffectivelyVoidReturn, wasmFuncReturnsVoid } from "./helpers.js";
@@ -44,6 +44,73 @@ function armWideningKind(t: ValType): "convert" | "none" | "unrepresentable" {
 }
 
 /**
+ * (#5352) An `f64` arm can still reach an `externref` cascade — by BOXING.
+ *
+ * `armWideningKind` above answers "is there a free representation change", and
+ * for a number there is not: `f64` is not an `anyref` subtype. But the compiler
+ * already has a universal boxed-number representation (`__box_number`, the same
+ * one `coerceType` uses for every other f64→externref edge), so "no free
+ * widening" is not the same as "no widening". Treating the two as identical is
+ * what made a mixed numeric/ref cascade decline — and a decline is not neutral:
+ * the caller then static-binds the whole dispatch to `candidates[0]`.
+ *
+ * Deliberately `f64` ONLY. `i32` is also this compiler's BOOLEAN
+ * representation, and nothing in an arm's Wasm result type distinguishes
+ * `boolean` from a native-`i32` number, so `__box_number` would box half the
+ * i32 arms as the wrong JS type. An i32 arm therefore still declines.
+ */
+function armIsBoxableNumber(t: ValType): boolean {
+  return t.kind === "f64";
+}
+
+/**
+ * (#5352) Register the boxing helper BEFORE the emitter captures any function
+ * index — the ordering is the whole reason this is a separate pre-pass.
+ *
+ * `ensureLateImport` can add an import, and adding one shifts every DEFINED
+ * function index up by the number added. `emitVirtualMethodDispatchByTag`
+ * snapshots `candFinalIdx` into a plain `Map<number, number>` that no shift
+ * pass can reach, so a boxing helper registered after that capture would leave
+ * every arm calling one function too low. Running it here — before the
+ * speculative snapshot, before the receiver is compiled, before any index is
+ * read — means the shift lands while nothing is holding a stale index, and the
+ * arms read `ctx.funcMap.get("__box_number")` fresh at build time (funcMap IS
+ * shifted, so that read is always current).
+ *
+ * Only registers when the cascade would actually need it: at least one boxable
+ * numeric arm AND at least one arm already on the `any`/external side. An
+ * all-numeric cascade agrees on `f64` and must keep it; registering the helper
+ * for it would add a host import nothing calls.
+ *
+ * @returns true when `__box_number` is available for the arms to call
+ */
+function ensureCascadeNumericBoxing(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  candidates: readonly { className: string; funcIdx: number }[],
+  methodName: string,
+): boolean {
+  let hasBoxable = false;
+  let hasRefSide = false;
+  for (const cand of candidates) {
+    const ret = getWasmFuncReturnType(ctx, ctx.funcMap.get(`${cand.className}_${methodName}`) ?? cand.funcIdx);
+    // A void arm is a different (unrepresentable) divergence; boxing cannot
+    // help it, so do not pay for the helper.
+    if (ret === undefined) return false;
+    if (armIsBoxableNumber(ret)) {
+      hasBoxable = true;
+      continue;
+    }
+    if (armWideningKind(ret) === "unrepresentable") return false;
+    hasRefSide = true;
+  }
+  if (!hasBoxable || !hasRefSide) return false;
+  const boxIdx = ensureLateImport(ctx, "__box_number", [{ kind: "f64" }], [{ kind: "externref" }]);
+  flushLateImportShifts(ctx, fctx);
+  return boxIdx !== undefined;
+}
+
+/**
  * (#5178) Pick one block type for a tag cascade whose arms may not agree.
  *
  * Overrides do NOT have to share a Wasm RESULT type — the exact mirror of the
@@ -70,13 +137,27 @@ function armWideningKind(t: ValType): "convert" | "none" | "unrepresentable" {
  * "decline, use the static path", which replaces an invalid module rather than
  * a working one.
  *
+ * (#5352) `canBoxNumbers` OVERTURNS the "mixed numeric-and-ref" half of the
+ * paragraph above. Its reasoning was one step short: the hazard is not emitting
+ * a `call` inside an arm array, it is MINTING an import while doing so. Once
+ * `__box_number` has been registered up front (see `ensureCascadeNumericBoxing`)
+ * an `f64` arm CAN produce the widened `externref`, so that mix unifies instead
+ * of declining. And declining is not the neutral act the paragraph assumes —
+ * the caller's static path binds every receiver to `candidates[0]`, which for
+ * an OPEN receiver is a wrong-body call, not a conservative one. Measured: 120
+ * of 123 Temporal rows.
+ *
+ * Mixed void/value and `funcref` still decline; nothing here changes those.
+ *
  * @param proposed the caller's first-candidate/TS-signature guess
  * @param candRets each arm's own Wasm result, `undefined` for a void arm
+ * @param canBoxNumbers whether `__box_number` is available to the arms
  * @returns the unified block type, or `undefined` to decline
  */
 function unifyCascadeResultType(
   proposed: ValType | typeof VOID_RESULT,
   candRets: readonly (ValType | undefined)[],
+  canBoxNumbers: boolean,
 ): { resultType: ValType | typeof VOID_RESULT; widenArms: boolean } | undefined {
   const voidArms = candRets.filter((r) => r === undefined).length;
   // An `empty` block obliges every arm to leave the stack untouched; one
@@ -89,7 +170,9 @@ function unifyCascadeResultType(
   const matchesProposed = (t: ValType): boolean =>
     t.kind === proposed.kind && (t as { typeIdx?: number }).typeIdx === (proposed as { typeIdx?: number }).typeIdx;
   if (rets.every(matchesProposed)) return { resultType: proposed, widenArms: false };
-  if (!rets.every((t) => armWideningKind(t) !== "unrepresentable")) return undefined;
+  const reachesExternref = (t: ValType): boolean =>
+    armWideningKind(t) !== "unrepresentable" || (canBoxNumbers && armIsBoxableNumber(t));
+  if (!rets.every(reachesExternref)) return undefined;
   return { resultType: { kind: "externref" }, widenArms: true };
 }
 
@@ -147,11 +230,24 @@ function buildDispatchArmCall(
   body.push({ op: "call", funcIdx: finalIdx });
   // (#5178) Bring this arm's own result up to a widened cascade's block type.
   // `extern.convert_any` is a pure representation change with no import behind
-  // it, so it is safe to emit inside an arm array — boxing would not be.
+  // it, so it is safe to emit inside an arm array.
+  //
+  // (#5352) A boxing `call` is safe here TOO, but only because the helper was
+  // already registered by `ensureCascadeNumericBoxing` before this emission
+  // began. What the #5178 comment ruled out was *minting* an import while
+  // building an arm array — that shifts indices the fixup pass cannot reach,
+  // because the arm array is not in `fctx.body` yet. Calling an
+  // already-registered function does not mint anything, and the index is read
+  // from `funcMap` (which every shift pass updates) at the moment of use.
   if (env.widenArmsToExternref) {
     const ret = getWasmFuncReturnType(ctx, finalIdx);
     if (ret === undefined) return [];
     if (armWideningKind(ret) === "convert") body.push({ op: "extern.convert_any" });
+    else if (armIsBoxableNumber(ret)) {
+      const boxIdx = ctx.funcMap.get("__box_number");
+      if (boxIdx === undefined) return [];
+      body.push({ op: "call", funcIdx: boxIdx });
+    }
   }
   return body;
 }
@@ -186,6 +282,12 @@ export function emitVirtualMethodDispatchByTag(
   const firstCand = candidates[0]!;
   const firstParamTypes = getFuncParamTypes(ctx, firstCand.funcIdx);
   if (!firstParamTypes || firstParamTypes.length === 0) return undefined;
+
+  // (#5352) Register the numeric boxing helper HERE, before the snapshot and
+  // before any function index is captured — see `ensureCascadeNumericBoxing`
+  // for why the ordering is load-bearing. Nothing has been emitted yet, so an
+  // index shift at this point is harmless.
+  const canBoxNumbers = ensureCascadeNumericBoxing(ctx, fctx, candidates, propAccess.name.text);
 
   // EVERY bail-out from here on must be transactional. This function emits
   // into `fctx.body` as it probes, and returning `undefined` tells the caller
@@ -318,6 +420,7 @@ export function emitVirtualMethodDispatchByTag(
   const unified = unifyCascadeResultType(
     resultType,
     candidates.map((cand) => getWasmFuncReturnType(ctx, candFinalIdx.get(cand.funcIdx)!)),
+    canBoxNumbers,
   );
   if (unified === undefined) {
     rollbackSpeculative(ctx, fctx, snap);

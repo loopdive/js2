@@ -33,6 +33,7 @@ import {
 } from "../checker/type-mapper.js";
 import { structGrowsWithMetadata } from "./struct-carrier-growth.js"; // (#5180) builtin-carrier field-metadata divergence
 import { commonScalarFieldType, ensureScalarUnbox, symbolBrand } from "./symbol-field-carrier.js";
+import { isAdmissibleDynamicReadNarrowing } from "./dynamic-read-narrowing.js"; // (#5345) i32 cannot represent `undefined`
 import { emitDynGet, widenBooleanDynamicAccess } from "./dyn-read.js";
 import { expectedArgumentCountOfSignature } from "./function-expected-argument-count.js"; // (#4436) §15.1.5
 import { functionPrototypeMemberSpecLength } from "./function-prototype-callable.js"; // (§20.2.3)
@@ -212,6 +213,7 @@ import {
 import { tryEmitBuiltinStaticExpandoRead } from "./builtin-static-expando.js"; // (#4639 C2) ordinary [[Get]] tail
 import { emitRuntimeEvalSharedValueUnwrap, runtimeEvalSharedValueUnwrapInstrs } from "./global-environment.js";
 import { isInlineTaggedTemplateParameter } from "./tagged-template-parameter.js";
+import { emitDynamicTemplateRawRead, isDynamicTemplateRawRead } from "./template-raw-dynamic.js";
 
 /**
  * Sentinel returned by every dispatch helper to mean "this guard band did not
@@ -769,6 +771,32 @@ export function tryBuiltinNamespaceDeferredReads(
   return PA_FALLTHROUGH;
 }
 
+/**
+ * (#5349 r3) The `else` arm of the `byteLength` runtime probe for a statically
+ * "ArrayBuffer" receiver: consult the PACKED-BYTE view carrier before answering
+ * zero. Byte-inert when `$__vec_i8_byte` is not registered in the module (the
+ * whole JS-host lane, and any standalone module with no packed-byte view), so
+ * the arm keeps its previous single `i32.const 0`.
+ */
+function buildPackedByteLengthElse(ctx: CodegenContext, recvAnyLocal: number): Instr[] {
+  const i8VecIdx = ctx.vecTypeMap.get("i8_byte");
+  if (i8VecIdx === undefined) return [{ op: "i32.const", value: 0 }];
+  return [
+    { op: "local.get", index: recvAnyLocal },
+    { op: "ref.test", typeIdx: i8VecIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } as ValType },
+      then: [
+        { op: "local.get", index: recvAnyLocal },
+        { op: "ref.cast", typeIdx: i8VecIdx },
+        { op: "struct.get", typeIdx: i8VecIdx, fieldIdx: 0 },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
+}
+
 export function tryBufferViewAttributeReads(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -1096,7 +1124,15 @@ export function tryBufferViewAttributeReads(
             { op: "i32.ge_s" },
             { op: "select" },
           ],
-          else: [{ op: "i32.const", value: 0 }],
+          // (#5349 r3) A statically "ArrayBuffer" receiver whose runtime value is
+          // the packed-byte VIEW carrier. Until round 2 branded the two vec
+          // structs apart this hit the `then` arm by canonicalization and read
+          // the right number; now it misses and answers 0 where node answers the
+          // view's byte length (`var b=new ArrayBuffer(8); b=new Uint8Array(8);
+          // b.byteLength` → node 8, main 8, round 2 0). One byte per element, so
+          // field 0 IS the byte length. Emitted only when the carrier is already
+          // registered, so a module without one is byte-identical.
+          else: buildPackedByteLengthElse(ctx, lenTmpBL),
         });
         if (bytesPerElem !== 1) {
           fctx.body.push({ op: "i32.const", value: bytesPerElem });
@@ -3395,6 +3431,24 @@ export function tryLengthAndNameReads(
           // (sibling subtype of `$__vec_base`, not the vec) and returns 0.
           const exprTypeIdx = (exprResult as { typeIdx: number }).typeIdx;
           const exprTypeDef = ctx.mod.types[exprTypeIdx];
+          // (#5349 r3) A `$__ta_view_<name>` receiver is the same mismatch class
+          // as the `$__subview_<elem>` above — TS types `new Uint8Array(buf)` as
+          // the plain packed vec while the constructor emitted the shared-backing
+          // view. Its field 1 is `buf` (not `data`), so the struct-shape probe
+          // just below misses it and the `ref.test vecTypeIdx` ladder ALWAYS
+          // fails on it and answers 0 (`new Uint8Array(b).length` → 0, node 4).
+          // Read the view's effective length, which also honours the auto-length
+          // `-1` sentinel over a resizable buffer.
+          if (isTaViewTypeIdx(ctx, exprTypeIdx)) {
+            const tvTmp = allocLocal(fctx, `__len_tav_${fctx.locals.length}`, {
+              kind: "ref_null",
+              typeIdx: exprTypeIdx,
+            });
+            fctx.body.push({ op: "local.set", index: tvTmp });
+            pushTaViewEffectiveLen(ctx, fctx, tvTmp, exprTypeIdx);
+            if (!ctx.fast) fctx.body.push({ op: "f64.convert_i32_u" });
+            return ctx.fast ? { kind: "i32" } : { kind: "f64" };
+          }
           if (
             exprTypeDef?.kind === "struct" &&
             exprTypeDef.fields[0]?.name === "length" &&
@@ -3599,6 +3653,13 @@ export function tryNamespaceConstantAndSymbolReads(
       });
       fctx.body.push({ op: "local.get", index: rawTmp });
       return { kind: "ref_null", typeIdx: baseVecTypeIdx };
+    }
+    // (#5338) An ordinary named tag's strings parameter is a plain `externref`
+    // slot, so the static shapes above cannot claim it. Discriminate at runtime
+    // instead, keeping the generic dynamic get as the miss arm.
+    if (isDynamicTemplateRawRead(ctx, fctx, expr, propName)) {
+      const dynamicRaw = emitDynamicTemplateRawRead(ctx, fctx, expr);
+      if (dynamicRaw) return dynamicRaw;
     }
   }
 
@@ -3989,6 +4050,29 @@ export function tryStringLengthIteratorAndExternClassReads(
  * compiled type is `f64`/`i32` and `__box_number` resolved, which is the same
  * condition tested here.
  */
+/**
+ * (#5378) Does the checker's type for this access explicitly admit `undefined`
+ * ALONGSIDE something else — `number | undefined`, `string | undefined`, … ?
+ *
+ * This is the checker TELLING US the property may be absent. A scalar wasm
+ * representation cannot carry that answer, so a site that resolves such a union
+ * to a bare `f64`/`i32` has silently discarded the `undefined` arm. See the call
+ * site for the measured `@js-temporal/polyfill` case.
+ *
+ * A bare `undefined` (no other constituent) is NOT this shape — it has no scalar
+ * to launder into and resolves honestly on its own.
+ */
+function accessTypeAdmitsUndefined(accessType: ts.Type): boolean {
+  if (!accessType.isUnion()) return false;
+  let admitsUndefined = false;
+  let admitsValue = false;
+  for (const constituent of accessType.types) {
+    if ((constituent.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0) admitsUndefined = true;
+    else admitsValue = true;
+  }
+  return admitsUndefined && admitsValue;
+}
+
 function emitExternGetReceiverGuard(
   ctx: CodegenContext,
   fctx: FunctionContext,
@@ -4491,10 +4575,51 @@ export function finalizeStructAndDynamicMemberGet(
   // Keep the read as externref so an absent property is not unboxed through
   // the widened numeric field type before `=== undefined` / `typeof` sees it.
   const openObjectReceiver = ts.isIdentifier(expr.expression) && ctx.objectHashConsumerVars.has(expr.expression.text);
+  // (#5378) Third member of the same family as the two arms above: the wasm
+  // representation is not a sound carrier for the checker's own answer.
+  //
+  // Here the checker is RIGHT and we discard it. For a property that some shape
+  // in play does not carry, `getTypeAtLocation` answers `number | undefined` —
+  // and `resolveWasmType` collapses that to a bare `f64`, which has no
+  // `undefined`. The `__extern_get` miss arm below then feeds a real host
+  // `undefined` through `__unbox_number` and the read reports `typeof "number"`,
+  // `x !== undefined`, for a property that is genuinely absent. That is the
+  // #5251 laundering hazard reached through the STATIC door: the dynamic door
+  // (`accessWasm.kind === \"externref\"`) already brands its narrowed f64 as
+  // undefined-sentinel-carrying, but that whole block is guarded on the access
+  // being statically dynamic, which this one is not.
+  //
+  // Measured (#5378, through the test262 runner, provider linked). The
+  // `@js-temporal/polyfill`'s time-zone resolver returns one of two shapes —
+  //   `function Rt(e){ … return $t.test(e) ? {offsetMinutes: sr(e)/6e10} : {tzName:e} }`
+  // — and its caller is
+  //   `const n = Rt(e).offsetMinutes; return void 0 !== n ? 6e10*n : lr(e,t)`.
+  // For `\"UTC\"` the second shape is returned, `offsetMinutes` read as NaN
+  // instead of `undefined`, `void 0 !== NaN` took the fixed-OFFSET branch, and
+  // every `ZonedDateTime` offset became `6e10 * NaN`. Two frames later
+  // `BalanceISODate` rejected the resulting non-finite year with
+  // `RangeError: infinity is out of range` — which is why every ISO/UTC
+  // `year`/`month`/`day`/`daysInMonth`/`toPlainDate()` read threw while
+  // `epochMilliseconds` (which never consults a time-zone offset) stayed correct.
+  // The minimal repro is four lines and needs no Temporal at all:
+  //   `function f(k){ return k ? {a:1} : {b:2} } typeof f(0).a  // \"number\", NaN`
+  //
+  // Keeping the honest externref costs one box/unbox on reads the checker has
+  // ALREADY flagged as possibly-absent; the caller's own coercion re-narrows
+  // numeric consumers, exactly as the #4420 note above describes. Scoped to
+  // scalar access types because only f64/i32 can launder `undefined` —
+  // ref/externref results already carry it.
+  const optionalScalarAccess = accessTypeAdmitsUndefined(accessType);
+  const staticAccessWasm = symbolBrand(
+    accessType,
+    widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)),
+  );
   const accessWasm: ValType =
-    foreignReturnReceiver || openObjectReceiver
+    foreignReturnReceiver ||
+    openObjectReceiver ||
+    (optionalScalarAccess && (staticAccessWasm.kind === "f64" || staticAccessWasm.kind === "i32"))
       ? { kind: "externref" }
-      : symbolBrand(accessType, widenBooleanDynamicAccess(accessType, resolveWasmType(ctx, accessType)));
+      : staticAccessWasm;
 
   // For struct types with the property, try to compile the object and do struct.get
   // but NEVER for class struct types — their fields are fixed at collection time
@@ -4867,24 +4992,42 @@ export function finalizeStructAndDynamicMemberGet(
             );
             if (fieldKinds.size === 1 && !anyGeneratorSentinelCandidate) {
               const k = [...fieldKinds][0];
-              if (k === "f64" || k === "i32") {
-                // (#2938) Preserve the #2030/#2785 boolean BRAND through the
-                // Phase-3 narrowing. When EVERY candidate field is a boolean-
-                // branded i32 (e.g. the native generator result's `done`,
-                // generators-native.ts ensureNativeGeneratorResultType), the
-                // narrowed read result is boolean too — the caller's
-                // i32→externref boxing then routes through `__box_boolean`
-                // (coerceType's #2785 brand-aware arm), so the test262 harness
-                // shape `const d: any = g.next().done; d === true` holds. A
-                // fresh unbranded `{kind:"i32"}` here ERASED the brand: the
-                // value re-boxed as $BoxedNumber(1), the any-`===` typeof
-                // partition saw number-vs-boolean, fell to ref identity, and
-                // answered UNEQUAL (the residual wrong-value failure of the
-                // #2938 no-yield relax — generators/no-yield.js, return.js).
+              // (#5345) Only kinds that can REPRESENT the terminal's `undefined`
+              // may be narrowed to — `i32` cannot, and answered a definite
+              // `false` for an absent property. Rationale and the marked/acorn
+              // measurements live in `dynamic-read-narrowing.ts`.
+              if (k !== undefined && isAdmissibleDynamicReadNarrowing(k)) {
                 resultWasm = commonScalarFieldType(
                   k,
                   structCandidates.map((candidate) => candidate.fieldType),
                 );
+                // (#5251) The receiver here is DYNAMIC — the dispatcher's
+                // terminal is `__extern_get`, which answers `undefined` when the
+                // property is ABSENT. f64 cannot hold `undefined`, so narrowing
+                // to a bare f64 laundered every absent read into NaN-the-NUMBER
+                // (`typeof` "number", `x !== undefined`). Brand the narrowed f64
+                // as undefined-sentinel-carrying: the externref→f64 coercion
+                // encodes `undefined` as `UNDEF_F64_BITS` and the caller's
+                // f64→externref boxing resurrects it (type-coercion.ts's
+                // `undefSentinel` arms). Numeric consumers are untouched — they
+                // read a plain f64 and NaN is the correct ToNumber(undefined).
+                //
+                // i32 is deliberately left alone: it has no spare bit pattern,
+                // and its narrowing is boolean-brand territory (#2938).
+                if (resultWasm.kind === "f64" && resultWasm.undefSentinel !== true) {
+                  resultWasm = { kind: "f64", undefSentinel: true };
+                  // `canonicalUndefinedExternInstrs` is deliberately read-only
+                  // over funcMap (it must not shift funcidxs mid-body), so the
+                  // host lane's real `undefined` producer has to be registered
+                  // HERE or the resurrection falls back to a null externref —
+                  // which reads as JS `null`, not `undefined`. Same precedent as
+                  // `reserveMemberGetDispatch`'s `value` arm.
+                  if (!ctx.nativeStrings && !ctx.standalone) {
+                    ensureLateImport(ctx, "__get_undefined", [], [{ kind: "externref" }]);
+                    flushLateImportShifts(ctx, fctx);
+                    unboxIdx = undefined;
+                  }
+                }
                 if (unboxIdx === undefined) {
                   unboxIdx = ensureScalarUnbox(ctx, fctx, resultWasm);
                 }

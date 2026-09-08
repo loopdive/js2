@@ -62,6 +62,9 @@ export const INIT_MARSHAL_HELPERS: readonly string[] = [
   "__dv_byte_len",
   "__dv_byte_get",
   "__ab_max_len",
+  // (#5208) The Date carrier's classifier + reader — see the runtime twin.
+  "__\0js2_is_date",
+  "__\0js2_date_value",
 ];
 
 const REGISTER_IMPORT = "__register_init_export";
@@ -85,6 +88,25 @@ function usesDynamicExternMethodCall(ctx: CodegenContext): boolean {
   return ctx.mod.imports.some((imp) => imp.desc.kind === "func" && /^__extern_method_call(_[0-4])?$/.test(imp.name));
 }
 
+/**
+ * (#5208) Does this module own a `Date` carrier?
+ *
+ * A compiled `Date` reaches the host as an argument of a TYPED extern-class
+ * method (`Intl_DateTimeFormat_formatToParts`), which is neither a host
+ * construct bridge (#5193's trigger) nor `__extern_method_call` (#5209's) — so
+ * neither existing trigger fires, and a `new Date(…)` formatted at module top
+ * level stayed undecodable while the same code after init worked.
+ *
+ * Keyed on the carrier's own classifier export rather than on the import list:
+ * a module that never built a `$__Date` cannot leak one, and one that did can
+ * leak it through any host call, so this is both the necessary and the
+ * sufficient condition. Cost when it fires is two 3-instruction prologue
+ * entries.
+ */
+function ownsDateCarrier(ctx: CodegenContext): boolean {
+  return helperFunc(ctx, "__\0js2_is_date") !== undefined;
+}
+
 /** The defined function object exporting `name`, if this module emitted one. */
 function helperFunc(ctx: CodegenContext, name: string): WasmFunction | undefined {
   return ctx.mod.functions.find((fn) => fn.name === name);
@@ -98,7 +120,7 @@ function helperFunc(ctx: CodegenContext, name: string): WasmFunction | undefined
  * a JS-host module with a compiler-created module initializer.
  */
 export function emitInitMarshalHelperRegistration(ctx: CodegenContext, preferredUnitId?: IrUnitId): void {
-  if (!ctx.needsInitMarshalHelpers && !usesDynamicExternMethodCall(ctx)) return;
+  if (!ctx.needsInitMarshalHelpers && !usesDynamicExternMethodCall(ctx) && !ownsDateCarrier(ctx)) return;
   if (ctx.wasi || noJsHost(ctx)) return;
   // Same initializer selection as `finalizeInModuleInitFlag` (index.ts), so the
   // multi-source pipeline patches the exact prepared unit it owns.
