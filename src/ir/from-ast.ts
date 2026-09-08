@@ -4176,7 +4176,7 @@ function lowerExpr(expr: ts.Expression, cx: LowerCtx, hint: IrType): IrValueId {
     return lowerPropertyAccess(expr, cx);
   }
   if (ts.isObjectLiteralExpression(expr)) {
-    return lowerObjectLiteral(expr, cx);
+    return lowerObjectLiteral(expr, cx, hint);
   }
   // #3522 returned-closure ownership. A literal produced in expression
   // position retains the internal closure carrier until an exact callable
@@ -5542,7 +5542,7 @@ function lowerPropertyAccess(expr: ts.PropertyAccessExpression, cx: LowerCtx): I
  * compares equal across literals with different syntactic ordering. The
  * value list is reordered to match.
  */
-function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrValueId {
+function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx, hint?: IrType): IrValueId {
   // #4471 — an empty literal is admitted only when the selector proved it
   // INERT (`isInertEmptyObjectLiteral`), and lowers to a zero-field
   // `object.new`. The property loop below is already a no-op at zero
@@ -5574,7 +5574,9 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
         );
       }
       seen.add(name);
-      const v = lowerExpr(prop.initializer, cx, irVal({ kind: "f64" }));
+      const expected =
+        hint?.kind === "object" ? hint.shape.fields.find((field) => field.name === name)?.type : undefined;
+      const v = lowerExpr(prop.initializer, cx, expected ?? irVal({ kind: "f64" }));
       const type = cx.builder.typeOf(v);
       built.push({ name, type, value: v });
       continue;
@@ -5638,9 +5640,17 @@ function lowerObjectLiteral(expr: ts.ObjectLiteralExpression, cx: LowerCtx): IrV
     );
   }
   built.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  const shape: IrObjectShape = {
+  const inferredShape: IrObjectShape = {
     fields: built.map((b) => ({ name: b.name, type: b.type })),
   };
+  const shape =
+    hint?.kind === "object" &&
+    hint.shape.fields.length === built.length &&
+    built.every(
+      (field, i) => field.name === hint.shape.fields[i]!.name && irTypeEquals(field.type, hint.shape.fields[i]!.type),
+    )
+      ? hint.shape
+      : inferredShape;
   return cx.builder.emitObjectNew(
     shape,
     built.map((b) => b.value),
@@ -14592,8 +14602,9 @@ function closureParameterTypeToIr(node: ts.TypeNode, cx: LowerCtx, where: string
       seen.add(name);
       fields.push({ name, type: typeNodeToIr(member.type, `${where}.${name}`) });
     }
+    const fieldOrder = fields.map((field) => field.name);
     fields.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
-    return { kind: "object", shape: { fields } };
+    return { kind: "object", shape: { fields, fieldOrder } };
   }
   demoteToLegacy("type-resolution-unsupported", `ir/from-ast: unsupported closure parameter type (${where})`);
 }

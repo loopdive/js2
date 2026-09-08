@@ -67,6 +67,7 @@ import {
   type IrValueId,
 } from "../nodes.js";
 import type { ValType } from "../types.js";
+import { orderedObjectFields } from "../object-layout.js";
 import type { AllocSiteRegistry } from "../alloc-registry.js";
 import { createDerivedIrUnitId, type IrDerivedUnitProvenance, type IrUnitId } from "../identity.js";
 import { irUnitFuncRef } from "../callable-bindings.js";
@@ -509,7 +510,9 @@ function irTypeKey(t: IrType): string {
   if (t.kind === "string") return "s";
   if (t.kind === "vec") return `vec:${irTypeKey(t.elementType)}${t.nullable ? "?" : ""}`;
   if (t.kind === "object") {
-    return `o:{${t.shape.fields.map((f) => `${f.name}:${irTypeKey(f.type)}`).join(",")}}`;
+    return `o:{${orderedObjectFields(t.shape)
+      .map((f) => `${f.name}:${irTypeKey(f.type)}`)
+      .join(",")}}`;
   }
   if (t.kind === "closure") {
     const ps = t.signature.params.map(irTypeKey).join(",");

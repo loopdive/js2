@@ -61,14 +61,14 @@ export interface IrBoxedLowering {
  * `IrType.object` shape. The resolver memoizes one of these per shape.
  *
  * `fieldIdx(name)` returns the WasmGC struct's field index for the given
- * shape field name (in the shape's canonical order). It throws when the
+ * shape field name (which can differ from canonical logical order). It throws when the
  * name is not a member of the shape -- the lowerer catches via the
  * surrounding try/catch and emits a clean fall-back error.
  */
 export interface IrObjectStructLowering {
   /** WasmGC type index of the registered struct. */
   readonly typeIdx: number;
-  /** Field index for each field name in the shape's canonical order. */
+  /** Physical construction slot; the shape's fields must map to a permutation of 0..arity-1. */
   fieldIdx(name: string): number;
 }
 

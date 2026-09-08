@@ -85,6 +85,9 @@ import {
   TYPED_ARRAY_NAMES,
 } from "../codegen/index.js";
 import { ensureObjectRuntime } from "../codegen/object-runtime.js";
+import { orderedObjectFields } from "./object-layout.js";
+import { dataFieldsHashKey } from "../codegen/registry/data-fields-key.js";
+import { canonicalProgramAbiObjectShapeKey } from "../codegen/program-abi-type-planning.js";
 import { ensureMapHelpers } from "../codegen/map-runtime.js"; // (#4461) native $Map module-binding storage
 import {
   ensureIrNativeMapAdapters,
@@ -4890,6 +4893,9 @@ export function compileIrPathFunctions(
     if (func) ctx.irUnitFuncMap.set(entry.artifactUnitId, func);
   }
   const claimedIrFunctions = new Set(ctx.irUnitFuncMap.values());
+  // Late placeholders have no settled signature yet, even though their
+  // temporary type must be a valid function type for an owner withdrawal.
+  const unsettledLateCallableUnits = new Set<IrUnitId>();
   for (const entry of healthyForLower) {
     // Top-level (non-synthesized) functions already have a funcIdx
     // allocated by `compileDeclarations`. Skip them.
@@ -4915,7 +4921,10 @@ export function compileIrPathFunctions(
         ? named
         : {
             name: entry.name,
-            typeIdx: 0,
+            // A withdrawn owner may retain this empty placeholder. Type zero
+            // is not necessarily a function (standalone starts with a struct).
+            // Successful lowering replaces the temporary signature below.
+            typeIdx: addFuncType(ctx, [], []),
             locals: [],
             body: [],
             exported: false,
@@ -4931,6 +4940,7 @@ export function compileIrPathFunctions(
     }
     ctx.irUnitFuncMap.set(entry.artifactUnitId, func);
     claimedIrFunctions.add(func);
+    unsettledLateCallableUnits.add(entry.artifactUnitId);
     if (!ctx.programAbiSession) ctx.funcMap.set(entry.name, funcIdx);
     freshSlots.push({
       artifactUnitId: entry.artifactUnitId,
@@ -5078,7 +5088,9 @@ export function compileIrPathFunctions(
       );
     }
     ctx.irUnitFuncMap.set(ref.binding.unitId, defined);
-    const programAbiBindingId = preparedUnitProgramAbiBinding(ctx, ref, defined, preparedClosure?.preparedScopeLookup);
+    const programAbiBindingId = unsettledLateCallableUnits.has(ref.binding.unitId)
+      ? undefined
+      : preparedUnitProgramAbiBinding(ctx, ref, defined, preparedClosure?.preparedScopeLookup);
     unitCallableSlots.set(ref.binding.unitId, {
       funcIdx,
       physicalName,
@@ -5631,6 +5643,11 @@ export function compileIrPathFunctions(
     // IR typeIdx equals its legacy typeIdx), so keeping its legacy body changes
     // nothing about the ABI its own callers compiled against.
     if (abiDivergentUnitIds.size > 0) {
+      // Inlining can erase the call to an owner while retaining calls to its
+      // lifted artifacts. Those artifacts withdraw with the owner as well.
+      for (const entry of healthyForLower) {
+        if (abiDivergentUnitIds.has(entry.terminalOwnerUnitId)) abiDivergentUnitIds.add(entry.artifactUnitId);
+      }
       for (const patch of pendingPatches) {
         if (failedOwners.has(patch.entry.terminalOwnerUnitId)) continue;
         const referenced = findReferencedWithdrawnIrUnit(patch.entry.fn, abiDivergentUnitIds);
@@ -9666,7 +9683,7 @@ export function makeDynamicLowering(ctx: CodegenContext): IrDynamicLowering | nu
  * Hash-based registry for `IrObjectShape` → WasmGC struct mappings.
  *
  * Slice-2 invariants:
- *   - Same canonical shape always maps to the same struct typeIdx.
+ *   - Same field types, brands and declared order map to the same struct typeIdx.
  *   - The registry hashes shapes the same way as the legacy
  *     `fieldsHashKey` in `codegen/index.ts`, so a shape registered by
  *     legacy `ensureStructForType` and a shape registered through the IR
@@ -9688,7 +9705,7 @@ class ObjectStructRegistry {
   ) {}
 
   resolve(shape: IrObjectShape): IrObjectStructLowering | null {
-    const key = this.hashKey(shape);
+    const key = canonicalProgramAbiObjectShapeKey({ kind: "object", shape });
     const cached = this.cache.get(key);
     if (cached) return cached;
 
@@ -9696,24 +9713,19 @@ class ObjectStructRegistry {
     // can't lower, bail with null so the caller throws a clean error
     // and the function falls back to legacy.
     const fields: FieldDef[] = [];
-    for (const f of shape.fields) {
+    for (const f of orderedObjectFields(shape)) {
       let wasm: ValType;
       try {
         wasm = this.resolveValType(f.type);
       } catch {
         return null;
       }
-      // Widen non-null refs to ref_null so struct.new with default
-      // initialization works — matches `codegen/index.ts:4584-4589`.
-      if (wasm.kind === "ref") {
-        wasm = { kind: "ref_null", typeIdx: wasm.typeIdx };
-      }
       fields.push({ name: f.name, type: wasm, mutable: true });
     }
 
     // Reuse an existing anonymous struct with the same legacy hash key
     // if one was already registered (legacy↔IR convergence).
-    const legacyKey = legacyFieldsHashKey(fields);
+    const legacyKey = dataFieldsHashKey(fields);
     let structName = this.ctx.anonStructHash.get(legacyKey);
     let typeIdx: number;
     if (structName !== undefined) {
@@ -9721,6 +9733,11 @@ class ObjectStructRegistry {
       // The structFields entry already exists from the legacy
       // registration; reuse it rather than overwriting.
     } else {
+      // Hash the declared types first, then widen storage exactly as the
+      // source allocator does. Widening before hashing splits nested layouts.
+      for (const field of fields) {
+        if (field.type.kind === "ref") field.type = { kind: "ref_null", typeIdx: field.type.typeIdx };
+      }
       structName = `__anon_${this.ctx.anonTypeCounter++}`;
       typeIdx = this.ctx.mod.types.length;
       this.ctx.mod.types.push({
@@ -9749,35 +9766,6 @@ class ObjectStructRegistry {
     this.cache.set(key, lowering);
     return lowering;
   }
-
-  /**
-   * Canonical hash for a shape — names + recursive IR-type keys, joined
-   * with stable separators. Different shapes always hash differently;
-   * structurally identical shapes (already pre-sorted by name in the
-   * builder) always hash identically.
-   */
-  private hashKey(shape: IrObjectShape): string {
-    return shape.fields.map((f) => `${f.name}:${irTypeKey(f.type)}`).join("|");
-  }
-}
-
-/**
- * Mirror of `fieldsHashKey` in `src/codegen/index.ts`. Re-implemented
- * locally so the IR module doesn't pull on `codegen/index.ts`'s public
- * surface (which is large). The two implementations must stay in sync —
- * they're the legacy↔IR struct-dedup contract.
- */
-function legacyFieldsHashKey(fields: readonly FieldDef[]): string {
-  const parts: string[] = [];
-  for (const f of fields) {
-    const t = f.type;
-    if (t.kind === "ref" || t.kind === "ref_null") {
-      parts.push(`${f.name}:${t.kind}:${(t as { typeIdx: number }).typeIdx}`);
-    } else {
-      parts.push(`${f.name}:${t.kind}`);
-    }
-  }
-  return parts.join("|");
 }
 
 /**

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 import { ts, forEachChild } from "../ts-api.js";
+import { dataFieldsHashKey } from "./registry/data-fields-key.js";
 import { objectLiteralHasIndexedSpread } from "./indexed-object-spread.js";
 import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
@@ -1485,8 +1486,9 @@ function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type, onPath?: S
   } finally {
     path.delete(tsType);
   }
+  const fieldOrder = fields.map((field) => field.name);
   fields.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return { kind: "object", shape: { fields } };
+  return { kind: "object", shape: { fields, fieldOrder } };
 }
 
 /**
@@ -1497,7 +1499,7 @@ function objectIrTypeFromTsType(ctx: CodegenContext, tsType: ts.Type, onPath?: S
  */
 function tsTypeToFieldIr(ctx: CodegenContext, t: ts.Type, onPath?: Set<ts.Type>): IrType | null {
   if (t.flags & ts.TypeFlags.NumberLike) return irVal({ kind: "f64" });
-  if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32" });
+  if (t.flags & ts.TypeFlags.BooleanLike) return irVal({ kind: "i32", boolean: true });
   if (t.flags & ts.TypeFlags.StringLike) return { kind: "string" };
   // (#4019) thread the in-progress descent so a self-referential shape is
   // rejected instead of recursing until the stack dies.
@@ -12989,22 +12991,7 @@ export function resolveWasmTypeForClosureReturn(ctx: CodegenContext, retType: ts
  * Compute a hash key for a list of struct fields (for O(1) structural dedup).
  */
 export function fieldsHashKey(fields: FieldDef[]): string {
-  const parts: string[] = [];
-  for (const f of fields) {
-    const t = f.type;
-    if (t.kind === "ref" || t.kind === "ref_null") {
-      parts.push(`${f.name}:${t.kind}:${(t as { typeIdx: number }).typeIdx}`);
-    } else if (t.kind === "i32" && ((t as { boolean?: true }).boolean || t.symbol === true)) {
-      // (#1788) Keep boolean-branded i32 fields distinct from numeric i32 in the
-      // structural dedup key — they box differently (`__box_boolean` vs
-      // `__box_number`), so two shapes that differ only in boolean-vs-number must
-      // not collapse to one struct (which would inherit the wrong getter boxing).
-      parts.push(`${f.name}:i32:${t.symbol === true ? "sym" : "bool"}`);
-    } else {
-      parts.push(`${f.name}:${t.kind}`);
-    }
-  }
-  return parts.join("|");
+  return dataFieldsHashKey(fields);
 }
 
 /** Ensure the $__Date struct type exists in the module, return its type index. */

@@ -13,6 +13,9 @@ sprint: Backlog
 depends_on: [1042, 1044, 1046]
 required_by: [1059, 1066, 1165, 1584]
 loc-budget-allow:
+  # 2026-09-08: +5 lines declare source object field order and route shape
+  # equality through its shared validator; allocation logic remains in leaf modules.
+  - src/ir/nodes.ts
   # 2026-09-08: +2 lines each to import/call the shared declaration-only
   # return-suffix normalizer. Implementation stays in its own small IR module.
   - src/ir/select.ts
@@ -100,6 +103,9 @@ loc-budget-allow:
   # identity so parser metadata survives element-type widening.
   - src/runtime.ts
 func-budget-allow:
+  # 2026-09-08: +14 lines wire late-placeholder lifetime and withdrawn lifted
+  # family propagation into the existing allocation/patch transaction.
+  - src/ir/integration.ts::compileIrPathFunctions
   # 2026-09-08: one normalization call shared with the AST lowerer; no inline algorithm.
   - src/ir/select.ts::isPhase1StatementListInScope
   # Select the extracted native collection-size reader for an optional chain's saved receiver.
@@ -527,6 +533,130 @@ Next align nested optional signatures/capture storage with shared ABI planning,
 then remeasure the full-source ownership ledger before extending legacy code.
 
 ### IR named method-table boundary investigation (2026-09-08, in progress)
+
+Post-PR continuation: rerun the original full-source factory unit file against
+f350cf36dc5bbf (`.tmp/ts5-factory-after-pr5753.log`). In parallel investigate the
+IR failed-owner placeholder defect exposed by the method-table experiment:
+late synthetic allocations use type index zero, which may name a struct rather
+than a function. The cleanup deliberately declines non-function types, leaving
+an invalid retained artifact. Prove this with an unmodified-selector witness
+before changing placeholder allocation; keep ABI withdrawal intact.
+The fresh full-source run remains **0/3 Wasm, 3/3 native**, with a valid
+62,956,028-byte standalone module, zero imports and 152,298 ms compilation.
+The errors remain default-export parenthesizer null dereference, arrow factory
+illegal cast and enum-formatting null access; no factory-unit gain is claimed.
+
+Reduced withdrawal witness now reproduces the defect without extending the
+selector: an out-of-order numeric object return and captured nested `add`
+withdraw on ABI parity, stranding `make__nested_add_0` at a non-function type
+zero (`.tmp/ts5-ir-withdrawal-direct.log`). Fix uses a valid temporary empty
+function signature and an explicit unsettled-late-unit set to defer publication
+of that provisional signature. Merely making type zero valid was insufficient:
+it first falsely published the provisional source binding, then exposed an
+inlined caller using a withdrawn lifted callee and returning 3 instead of 5.
+The same source with IR disabled returns 5 (`.tmp/ts5-ir-withdrawal-ab.log`).
+
+The ABI-withdrawal set now includes the failed owner's lifted artifact units,
+so callers retaining such references after inlining withdraw together. This
+keeps the existing parity guard and healthy-owner behavior intact. Controls
+pass **26/26 across five files** (`.tmp/ts5-ir-withdrawal-family.log`), and the
+final 2/2 regression asserts both runtime parity and make/run withdrawal
+(`.tmp/ts5-ir-withdrawal-final.log`). The local patch is not yet published.
+
+Next IR prerequisite: object construction currently assumes canonical logical
+field order equals physical layout order, whereas get/set already consult the
+resolver. Test and correct construction using an explicit reversed layout,
+including mixed field types and observable operand order. Do not change
+anonymous-struct selection by guessing the first order-insensitive match:
+the registry also publishes declared shapes and method-signature metadata.
+Both closure preparation and final lowering will need the same exact source
+layout binding before the production factory can use this capability.
+The broader bytecode control exposed an outdated hand-built call reference
+without the now-required binding (the same dereference exists at HEAD).
+Update that fixture to an exact test unit reference without changing its
+expected opcode sequence; also exercise reordered objects through the real
+bytecode lowerer/VM, not just the emitter's primitive unit tests.
+
+IR construction now uses a validated physical-index permutation supplied by
+the resolver (`src/ir/object-construction-order.ts`); logical shape ordering
+and both production object registries are unchanged. The before-patch reduced
+Wasm witness returned `[23,17]` instead of `[17,23]` with equal field types and
+failed validation with mixed i32/f64 fields
+(`.tmp/ts5-ir-object-order-before.log`). Afterward the real IR lowerer passes
+reversed/canonical layouts, mixed types, repeated side-effectful calls,
+mutation, invalid indexes, and the bytecode VM: **13/13 new tests**.
+Combined controls pass **45/45 across four files**
+(`.tmp/ts5-ir-object-order-final.log`). Source typecheck, scoped lint/format,
+LOC/function budgets and diff checks pass. The selected standalone adapter
+remains **25/25, 251/256 files deferred**
+(`.tmp/ts5-ir-object-order-projected.log`); no new full-source factory gain is
+claimed. The factory's latest full-source measurement remains 0/3 Wasm vs
+3/3 native. These changes and the withdrawal fix remain local/uncommitted.
+
+Resume at the source-to-IR object carrier binding: `IrObjectShape` currently
+contains only canonical fields, while `ObjectStructRegistry` and
+`prepareClosureObjectType` independently choose an exact order-sensitive hash.
+Carry an exact source ABI layout through preparation into both resolvers;
+do not replace either with an ambiguous registry scan. The new construction
+permutation can then consume that layout without corrupting field values.
+
+Source-order experiment in progress: carry the exact declared data-field order
+beside canonical logical fields, use it in both existing order-sensitive
+allocation keys and callable support keys, and contextualize object literals
+from their expected object type. No registry scan, new checker query, or legacy
+emission change. Distinguish representation-incompatible orders in IR equality
+so an unconverted value cannot silently cross the boundary. Verify annotated
+returns, parameters, nested shapes and closure signatures; retain a genuinely
+late withdrawal witness for the earlier cleanup defect.
+
+Source-order checkpoint implemented (2026-09-08): `IrObjectShape.fieldOrder`
+retains declared data order while logical fields stay sorted. Both object
+allocators consume that order. IR equality, monomorphization keys and prepared
+object-support keys distinguish incompatible representations; the final object
+registry uses the same complete support key, including scalar brands.
+Contextual object literals inherit the declared shape, including nested fields.
+The shared source data-hash implementation moved unchanged to
+`src/codegen/registry/data-fields-key.ts`; both IR copies now use it. ABI debug
+proved two additional drifts: IR dropped boolean branding, and hashed nested
+references after widening them to nullable storage. Both are corrected on the
+IR path, with storage widening still performed after computing the source key.
+
+Five source-level regression fixtures (not upstream compiler tests) now execute
+their selected owner through IR: captured nested-function return, mixed-field
+argument, object captured by an explicitly typed escaped closure, nested
+layouts, and two different declared orders in one module. These are late IR
+overlays where indicated by the ledger, not a claim of zero direct emission.
+Metadata/key and malformed-order checks bring the new source-layout file to
+**7/7**. Final combined controls pass **56/56 across six files**
+(`.tmp/ts5-ir-source-order-final-verified.log`), including actual Wasm and
+bytecode execution. Typecheck completes successfully
+(`.tmp/ts5-ir-source-order-typecheck-final.log`); scoped lint/format,
+LOC/function budgets and the oracle ratchet pass without new checker-query
+allowances. The selected standalone upstream adapter remains **25/25 with
+251/256 files deferred** (`.tmp/ts5-ir-source-order-projected.log`).
+
+The original annotated withdrawal witness now succeeds in IR. An inferred
+return variant was rejected before lowering, and polymorphic variants either
+used early IR or converged; none was accepted as a withdrawal control. The
+regression now injects a valid-but-incompatible lowered signature for the
+late `make` owner only, leaving original source/runtime assertions unchanged.
+Removal controls prove it remains load-bearing: removing valid placeholder
+types causes the retained nested function to reference non-function type zero
+(`.tmp/ts5-ir-fault-withdrawal-no-valid-placeholder.log`); removing lifted-family
+withdrawal returns **3 instead of 5**
+(`.tmp/ts5-ir-fault-withdrawal-no-family.log`). Both implementations were
+restored before final validation.
+
+Fresh full-source factory run remains **0/3 Wasm vs 3/3 native**: valid
+62,956,028-byte standalone module, zero imports, 156,175 ms compile
+(`.tmp/ts5-ir-source-order-full-factory.log`). It began before the final
+object-cache-key consolidation, so this is that source-order checkpoint's
+measurement, not a full-suite claim for later edits. Errors remain the same
+default-export null dereference, arrow-function illegal cast and enum-format
+null access. Next: typed callable fields in returned method tables, exact
+callable packing/signature keys, then renewed real factory ownership/runtime
+measurement. Inferred object-return selection and unannotated arrow admission
+remain separate gaps; do not blanket-admit them or mark this issue complete.
 
 Final publication-query migration in progress: indexed record element facts now
 come from TypeOracle (property names, scalar/union facts and optionality; no

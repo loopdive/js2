@@ -4,6 +4,7 @@ import { irClassTypeRef, irFnctorLayoutTypeRef, irSupportTypeRef, irTypeBindingK
 import { irCallableBindingKey } from "../ir/callable-bindings.js";
 import type { IrBindingId, IrClassId, IrSourceId, IrUnitId } from "../ir/identity.js";
 import type { IrClosureSignature, IrType, IrTypeRef, IrVecLayoutRef } from "../ir/nodes.js";
+import { orderedObjectFields } from "../ir/object-layout.js";
 import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { FuncTypeDef, StructTypeDef, TypeDef, ValType } from "../ir/types.js";
@@ -165,7 +166,7 @@ function canonicalClosureSupportIrType(type: IrType, active: Set<object>): unkno
       case "object":
         return {
           kind: type.kind,
-          fields: type.shape.fields.map((field) => ({
+          fields: orderedObjectFields(type.shape).map((field) => ({
             name: field.name,
             type: canonicalClosureSupportIrType(field.type, active),
           })),

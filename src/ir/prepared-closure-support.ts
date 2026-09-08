@@ -10,7 +10,9 @@ import type {
   ProgramAbiRefCellSupportRequest,
 } from "../codegen/program-abi-type-planning.js";
 import { addFuncType } from "../codegen/registry/types.js";
+import { dataFieldsHashKey } from "../codegen/registry/data-fields-key.js";
 import { irTypeBindingKey } from "./abi-bindings.js";
+import { orderedObjectFields } from "./object-layout.js";
 import type { IrUnitId } from "./identity.js";
 import type { PreparedComponentClosureSupportEvidence } from "./prepared-component-dependencies.js";
 import { IrInvariantError } from "./outcomes.js";
@@ -40,14 +42,6 @@ export interface PreparedRefCellRegistry {
   resolveIr(inner: IrType): IrRefCellLowering | null;
 }
 
-function preparedObjectLegacyKey(fields: readonly FieldDef[]): string {
-  return fields
-    .map(({ name, type }) =>
-      type.kind === "ref" || type.kind === "ref_null" ? `${name}:${type.kind}:${type.typeIdx}` : `${name}:${type.kind}`,
-    )
-    .join("|");
-}
-
 /**
  * Allocate a closed object layout before closure signatures are frozen. This
  * mirrors ObjectStructRegistry's anonymous-struct contract, including nullable
@@ -60,12 +54,11 @@ function prepareClosureObjectType(
   refCells?: PreparedRefCellRegistry,
   closures?: PreparedClosureRegistry,
 ): ValType {
-  const fields: FieldDef[] = type.shape.fields.map((field) => {
-    let physical = lowerPreparedClosureSupportType(ctx, field.type, refCells, closures);
-    if (physical.kind === "ref") physical = { kind: "ref_null", typeIdx: physical.typeIdx };
+  const fields: FieldDef[] = orderedObjectFields(type.shape).map((field) => {
+    const physical = lowerPreparedClosureSupportType(ctx, field.type, refCells, closures);
     return { name: field.name, type: physical, mutable: true };
   });
-  const key = preparedObjectLegacyKey(fields);
+  const key = dataFieldsHashKey(fields);
   const existingName = ctx.anonStructHash.get(key);
   if (existingName !== undefined) {
     const existingIdx = ctx.structMap.get(existingName);
@@ -74,6 +67,9 @@ function prepareClosureObjectType(
   }
 
   const name = `__anon_${ctx.anonTypeCounter++}`;
+  for (const field of fields) {
+    if (field.type.kind === "ref") field.type = { kind: "ref_null", typeIdx: field.type.typeIdx };
+  }
   const typeIdx = ctx.mod.types.length;
   ctx.mod.types.push({ kind: "struct", name, fields } as StructTypeDef);
   ctx.structMap.set(name, typeIdx);

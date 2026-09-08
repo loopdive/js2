@@ -58,6 +58,7 @@ import type {
   IrVecLowering,
 } from "./backend/handles.js";
 import { WasmGcEmitter } from "./backend/wasmgc-emitter.js";
+import { objectConstructionValues } from "./object-construction-order.js";
 import {
   emitWasmInt32Coercion,
   emitWasmMathClz32,
@@ -2344,13 +2345,12 @@ export function lowerIrFunctionBody<S, Slot>(
         if (!obj) {
           throw new Error(`ir/lower: resolver cannot lower object<${describeShape(instr.shape)}> (${func.name})`);
         }
-        // Push values in canonical (sorted) field order — same order as
-        // shape.fields, which is also the WasmGC struct's declared field
-        // order. The builder enforces value-count parity with shape arity,
-        // so this loop always produces the right stack shape.
+        // SSA operands follow canonical logical order; the resolver owns
+        // physical field order. Effectful operands retain their scheduled
+        // definition order before these value loads.
         // (a2) struct/object family (#1584 §2a): route through emitAggregateNew
         // — byte-identical {op:"struct.new"} on WasmGC, OP.STRUCT_NEW on bytecode.
-        for (const v of instr.values) emitValue(v, out);
+        for (const v of objectConstructionValues(instr.shape, instr.values, obj)) emitValue(v, out);
         emitter.emitAggregateNew(obj, instr.values.length, out);
         return;
       }

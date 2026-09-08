@@ -14,6 +14,7 @@
 // Phase 2 & 3 widen the Instr and Terminator sets.
 
 import type { IrAsyncPlan, PreparedIrAsyncRuntime } from "./async-plan.js";
+import { orderedObjectFields } from "./object-layout.js";
 // #3954 phase 2 — the ECMAScript-specific instruction kinds. This is the ONE
 // sanctioned core->dialect import; `scripts/check-ir-dialect.mjs` fails the
 // build on any other. Type-only, so the core<->dialect cycle has no runtime edge.
@@ -184,18 +185,20 @@ export interface IrVecLayoutRef {
 
 /**
  * A canonical object shape — a sorted list of named fields with their IR
- * types. Equal shapes (same names, same types in the same canonical order)
+ * types. Equal shapes (same names, types and declared layout order)
  * resolve to the same WasmGC struct via the lowerer's resolver. Carrying
  * the field types as `IrType` (not `ValType`) lets a struct-of-string or
  * struct-of-object compose cleanly: the resolver recursively materializes
  * field types when registering the WasmGC struct.
  *
  * Names must be unique. The constructor in `from-ast.ts` sorts by name
- * before constructing the IrType so structurally-identical shapes compare
- * equal regardless of source order.
+ * before constructing the IrType. Optional fieldOrder retains the declared
+ * representation; incompatible layouts must not compare equal at a boundary.
  */
 export interface IrObjectShape {
   readonly fields: readonly { readonly name: string; readonly type: IrType }[];
+  /** Exact declared data-layout order; absent means canonical field order. */
+  readonly fieldOrder?: readonly string[];
 }
 
 /**
@@ -679,15 +682,17 @@ export function closureSignatureEquals(a: IrClosureSignature, b: IrClosureSignat
 }
 
 /**
- * Structural equality for object shapes. Field lists must be parallel
- * (same length, same order, same name and IrType per slot). Recursing
+ * Representation equality for object shapes. Physical field lists must be
+ * parallel (same length, order, name and IrType per slot). Recursing
  * via `irTypeEquals` lets nested object fields compare correctly.
  */
 export function objectShapeEquals(a: IrObjectShape, b: IrObjectShape): boolean {
   if (a.fields.length !== b.fields.length) return false;
+  const aFields = orderedObjectFields(a);
+  const bFields = orderedObjectFields(b);
   for (let i = 0; i < a.fields.length; i++) {
-    const fa = a.fields[i]!;
-    const fb = b.fields[i]!;
+    const fa = aFields[i]!;
+    const fb = bFields[i]!;
     if (fa.name !== fb.name) return false;
     if (!irTypeEquals(fa.type, fb.type)) return false;
   }

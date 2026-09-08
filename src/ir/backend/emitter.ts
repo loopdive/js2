@@ -262,7 +262,7 @@ export interface BackendEmitter<S = Instr[]> extends StringBackendEmitter<S> {
   // `{op:"struct.set"}`; Bytecode realizes `OP.STRUCT_NEW` / `STRUCT_GET` /
   // `STRUCT_SET` over a VM heap (struct ref ≡ f64(heapIndex), null ≡ f64(-1)).
   /** Allocate an aggregate from `fieldCount` values already on the stack
-   * (canonical field order, field0 deepest); leaves the new struct ref. */
+   * (layout.fieldIdx order, field0 deepest); leaves the new struct ref. */
   emitAggregateNew(layout: IrObjectStructLowering, fieldCount: number, out: S): void;
   /** struct ref on stack -> the named field's value. */
   emitFieldGet(layout: IrObjectStructLowering | IrClassLowering, name: string, out: S): void;
