@@ -247,9 +247,10 @@ function emitMemoizedNestedFnClosure(
     if (cap.mutable && cap.valType) {
       const refCellTypeIdx = getOrRegisterRefCellType(ctx, cap.valType);
       const boxGlobal = capUnresolvedHere ? ctx.capturedBoxGlobals?.get(cap.name) : undefined;
-      if (fctx.boxedCaptures?.has(cap.name)) {
-        const currentLocalIdx = fctx.localMap.get(cap.name)!;
-        fctx.body.push({ op: "local.get", index: currentLocalIdx });
+      // Method/accessor promotion retains box metadata but removes the local
+      // binding. In that case the shared cell must come from boxGlobal below.
+      if (liveBoxLocalIdx !== undefined && fctx.boxedCaptures?.has(cap.name)) {
+        fctx.body.push({ op: "local.get", index: liveBoxLocalIdx });
       } else if (boxGlobal !== undefined) {
         // Shared ref-cell box promoted to a module global — live
         // write-through semantics with the declaring function.
@@ -300,6 +301,16 @@ function emitMemoizedNestedFnClosure(
       fctx.body.push({ op: "global.get", index: ctx.capturedGlobals.get(cap.name)! });
       if (ctx.capturedGlobalsWidened.has(cap.name)) {
         fctx.body.push({ op: "ref.as_non_null" });
+      }
+      const promotedBox = ctx.capturedBoxGlobals?.get(cap.name);
+      if (
+        promotedBox?.valType &&
+        expectsBoxedCaptureValue(cap.valType, {
+          refCellTypeIdx: promotedBox.refCellTypeIdx,
+          valType: promotedBox.valType,
+        })
+      ) {
+        fctx.body.push({ op: "struct.get", typeIdx: promotedBox.refCellTypeIdx, fieldIdx: 0 });
       }
     } else {
       const capSourceIdx = captureSourceSlot(fctx, cap);
