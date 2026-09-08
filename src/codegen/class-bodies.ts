@@ -971,7 +971,21 @@ export function mintScopedClassIdentity(ctx: CodegenContext, decl: ts.ClassDecla
   return syntheticName;
 }
 
-/** Collect all function declarations and interfaces */
+function classParentStructType(ctx: CodegenContext, name: string): number | undefined {
+  const typeIdx = ctx.structMap.get(name);
+  // A prior source may register the shared native Map storage carrier.
+  // It is not a user-class layout. Preserve native collection construction,
+  // rather than installing an invalid nominal edge based on source order.
+  if (
+    ctx.nativeStrings &&
+    isNativeCollectionBuiltin(name) &&
+    typeIdx === ctx.mapTypeIdx &&
+    !ctx.classDeclarationMap.has(name)
+  )
+    return undefined;
+  return typeIdx;
+}
+
 /** Collect a class declaration or class expression: register struct type, constructor, and methods */
 export function collectClassDeclaration(
   ctx: CodegenContext,
@@ -1033,8 +1047,8 @@ export function collectClassDeclaration(
             parentClassName = undefined;
             break;
           }
-          parentStructTypeIdx = ctx.structMap.get(parentClassName);
-          parentFields = ctx.structFields.get(parentClassName) ?? [];
+          parentStructTypeIdx = classParentStructType(ctx, parentClassName);
+          parentFields = parentStructTypeIdx === undefined ? [] : (ctx.structFields.get(parentClassName) ?? []);
           // Record parent-child relationship
           ctx.classParentMap.set(className, parentClassName);
           // (#2620) A subclass of a native-collection builtin (Set/Map/WeakMap/
