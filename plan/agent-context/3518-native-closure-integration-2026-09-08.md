@@ -75,3 +75,17 @@ with the unchanged production's76 passing runtime controls (8 explicit skips)
 and221 passing boundary controls, this checkpoint is ready for normal
 publication checks. This is extraction/preservation evidence, not public
 IR-only cutover or direct-codegen retirement evidence.
+
+Publication correction: normal commit formatting changed only fixture JSON
+whitespace, from raw SHA25616d1ea63f62d793aac80739472e7ff551b73b826af38175de8081370578e1f87
+to be6904328b9bb25981ca9ae109c3526d86931832eeb433bce66af41f99b96575.
+Parsed JSON equality with the frozen original was verified, but that alone
+did not update the test's exact transport hash. Post-publication baseline
+run96621 exposed the mismatch at collection (Promise24 passed, closure suite
+failed before collecting tests). Update only the fixed transport hash;
+all embedded original donor text, hashes, populations and inverse checks
+remain unchanged. Focused rerun and normal publication checks follow.
+
+Rerun67996 exited0:86/86 passed (62 closure and24 Promise),14.88s.
+This restores the exact published-fixture test baseline without changing
+production or the embedded historical donor records.

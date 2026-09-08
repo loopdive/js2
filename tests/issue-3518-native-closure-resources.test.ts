@@ -20,7 +20,9 @@ import { emitBinary } from "../src/emit/binary.js";
 import { emitWat } from "../src/emit/wat.js";
 
 const base = "bfe31c8bd96d748e867562e3e9b78343b72d1877";
-const fixtureHash = "16d1ea63f62d793aac80739472e7ff551b73b826af38175de8081370578e1f87";
+// Prettier changed only the fixture's JSON whitespace at publication. All
+// embedded donor text/hashes remain unchanged; pin the formatted transport.
+const fixtureHash = "be6904328b9bb25981ca9ae109c3526d86931832eeb433bce66af41f99b96575";
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 interface Donor {
