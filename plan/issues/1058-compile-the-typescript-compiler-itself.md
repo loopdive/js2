@@ -13,6 +13,12 @@ sprint: Backlog
 depends_on: [1042, 1044, 1046]
 required_by: [1059, 1066, 1165, 1584]
 loc-budget-allow:
+  # 2026-09-08: +2 lines each to import/call the shared declaration-only
+  # return-suffix normalizer. Implementation stays in its own small IR module.
+  - src/ir/select.ts
+  - src/ir/from-ast.ts
+  # 2026-09-08: pass the existing ref-cell registry into prepared callable slots (+1 line).
+  - src/ir/integration.ts
   # Wire the receiver-aware variadic Function.prototype.call body.
   - src/codegen/array-object-proto.ts
   # Open index-signature objects must use runtime own-property enumeration.
@@ -94,6 +100,8 @@ loc-budget-allow:
   # identity so parser metadata survives element-type widening.
   - src/runtime.ts
 func-budget-allow:
+  # 2026-09-08: one normalization call shared with the AST lowerer; no inline algorithm.
+  - src/ir/select.ts::isPhase1StatementListInScope
   # Select the extracted native collection-size reader for an optional chain's saved receiver.
   - src/codegen/property-access.ts::compileOptionalPropertyAccess
   # Four additional hash instructions honor the string view's length/offset.
@@ -426,6 +434,195 @@ element-access alignment. All processes from this implementation turn are now
 terminal. Next isolate the actual full-source factory node/callback carrier,
 not the already-fixed reduced optional-parameter mismatch.
 
+### IR-first alignment directive (2026-09-08)
+
+User direction: align this work with the new IR path early to avoid duplicate
+implementation. Before the next compiler fix, identify which failing source
+functions are selected/prepared by IR and which fall back, including the reason
+for that fallback. The production compiler defaults `experimentalIR` on
+(`src/compiler.ts`), so existing source probes already enable the IR overlay;
+that does not prove a particular failing function is IR-owned.
+
+Prefer fixes in shared semantic/callable ABI planning or the prepared IR
+lowering path. Reuse exact prepared callable bindings and component ownership
+instead of adding another legacy dispatch heuristic. If a missing IR capability
+prevents the real TypeScript function from using that path, assess closing that
+gap before extending legacy emission. Keep a legacy-only change only where the
+measured current execution boundary requires it, and document why. Preserve the
+existing standalone no-import and upstream correctness oracles; do not equate
+enabling IR with proving its ownership or widening claims without preparation.
+Relevant integration points: `src/ir/prepared-callable-resolution.ts`,
+`src/ir/integration-options.ts`, and `src/codegen/ir-legacy-caller-abi.ts`.
+The latter deliberately excludes optional/default/rest signatures from its
+syntax-only cross-path ABI certification; do not relax that guard speculatively.
+
+IR ownership measurement is now wired into the source-build worker behind
+`JS2WASM_TYPESCRIPT_PROBE_IR_OUTCOMES=1`: it requests the compiler's existing
+`trackIrOutcomes` ledger and preserves the complete rows in the result. Missing
+ledger data is null, not a fabricated empty success. Acceptance logic is
+unchanged. A fresh run compares cached and freshly constructed parenthesizer
+rules (session 3860, `.tmp/ts5-factory-ir-ownership.log`) while collecting the
+source-qualified emission/refusal evidence. This run completed with a valid
+60,002,638-byte zero-import module (154,146 ms), but 0/4 checks pass: fresh rules
+and cached rules have identical concise-body cast and export null-pointer
+failures. The cache is not necessary to trigger the defect.
+
+The full-source ledger contains 607 rows, 578 reporting legacy body emission,
+and zero reporting IR body emission. `memoize` is rejected for type parameters;
+`createParenthesizerRules` and `createNodeFactory` report body-shape rejection,
+with direct-body=1 / IR-body=0. Nested parenthesizer functions have no separate
+rows here, so do not invent individual nested-unit ownership receipts. A
+standalone scalar positive control (`add(19,23)=42`) reports one prepared
+IR-emitted function, direct-body=0 / IR-body=1, validating that the observation
+path can report actual IR ownership (`.tmp/ts5-ir-ownership-positive.log`).
+
+Reduced shape diagnostics (`.tmp/ts5-reduced-ir-shape.log`) identify
+`nontail-unhandled-stmt:ReturnStatement` for createParenthesizerRules: returning
+the method table before nested declarations is outside the current sequential
+statement-list selection/lowering contract. createNodeFactory rejects at
+`closure-return-type:ArrowFunction`; memoize rejects generic parameters.
+`src/ir/select.ts` and `src/ir/from-ast.ts` currently process nested declarations
+in statement order. A safe IR-first next slice therefore needs matching
+declaration-hoisting/capture and selector/lowerer support, not merely removing
+the return rejection. Evaluate that slice before more legacy-specific fixes;
+retain the actual-source cached/fresh and no-wrap controls as correctness
+oracles. The current evidence does not yet identify the exact failing capture
+or return-carrier instruction.
+
+Harness verdict controls pass 18/18; formatting, scoped lint, and whitespace
+checks pass. All processes from this measurement turn are terminal. No new
+upstream unit passes or IR coverage gains claimed.
+
+### IR declaration-only return suffix (2026-09-08, uncommitted)
+
+Added shared `src/ir/tail-function-declarations.ts` ordering used by both
+selection and AST-to-IR lowering. A declaration-only function suffix following
+the final return is presented before that return, retaining original AST node
+identities and leaving every executable statement in order. This addresses the
+measured non-tail-return gate without changing legacy code or relaxing
+preparation proofs. It is not general declaration hoisting across executable
+statements.
+
+The standalone immutable-capture witness now returns 42 and records a prepared
+IR-emitted owner with no direct body emission. The mutable-local witness returns
+42 through the existing fallback: the builder refuses a slot capture as
+`captures non-local binding "offset"`. That unresolved capture-storage gap is
+explicitly tested, not replaced with an unsafe value snapshot. Added AST identity,
+idempotence, and executable-suffix controls. Existing returned/lifted closure
+ownership controls plus the initial witnesses pass 11/11 across three files.
+The final helper/runtime rerun passes 3/3, typecheck and scoped lint pass, and
+the projected standalone adapter remains 25/25 with 251/256 files deferred.
+Logs `.tmp/ts5-ir-tail-*` and `.tmp/ts5-projected-after-ir-tail.log`.
+Size gates initially rejected +2 integration lines in each large IR file and
++1 line in the selector function. Added explicit change-scoped allowances above
+for those import/call sites only; the algorithm lives in the new 15-line module.
+No baseline budget file was changed. Both gate reruns passed; all processes
+started in this IR implementation turn are terminal. Changes are uncommitted.
+
+The reduced actual parenthesizer shape advances beyond its non-tail-return
+refusal but is still rejected inside nested-function checking; its optional
+parameter and broader callable/object shape are not newly supported. No full
+TypeScript factory IR claim or upstream pass is inferred from this first slice.
+Next align nested optional signatures/capture storage with shared ABI planning,
+then remeasure the full-source ownership ledger before extending legacy code.
+
+### IR named method-table boundary investigation (2026-09-08, in progress)
+
+PR checkpoint (user request): new implementation belongs in IR wherever possible.
+Final checkpoint validation: **32/32 tests across six files** pass
+(`.tmp/ts5-ir-pr-verified.log`); typecheck, scoped lint, formatting, diff and
+both size gates pass after removing the experimental object-field changes.
+The experimental callable-object extension was removed before publication;
+it is not part of the verified closure slice. A single-method witness reached
+late IR emission after matching the legacy callable-signature suffix, but still
+compiled a direct body first (`return-signature-unstable`). A two-method witness
+failed ABI parity and stranded a placeholder function type. Logs:
+`.tmp/ts5-ir-method-fields-key.log`, `.tmp/ts5-ir-pr-controls.log` (30/32).
+The attempted source-order fix accidentally targeted the lattice resolver,
+not the checker object resolver; both it and all speculative field-admission,
+packing and key changes were removed. Next work must cover contextual field
+order, exact source layout identity, early preparation and failed-owner slot
+cleanup together. Keep the single- and multi-method runtime controls, without
+mislabeling their current legacy fallback as IR ownership.
+
+Publication gate rechecked: `.tmp/ts5-pr-oracle.log` rejects direct checker
+growth in expressions.ts, optional-native-set.ts, generic-scalar-union-result.ts,
+indexed-object-spread.ts, json-record-array.ts, optional-declaration-parameter.ts
+and uninitialised-variable-undefined.ts. These predate the IR slice. They need
+registry-free TypeOracle facts, not moved checker queries or new allowances.
+No gate bypass or new oracle exception is authorized by this handoff.
+
+Current continuation: admitting a function-typed object field as an internal
+`closure` reaches preparation but fails source ABI parity (`IR=140, legacy=45`),
+then exposes a retained lifted-function type error. Evidence:
+`.tmp/ts5-ir-method-fields.log`. Do not ship that representation. Testing the
+existing source `callable` carrier plus exact-signature packing when constructing
+a contextually typed object literal; this shares the established closure ABI.
+
+The next reduced witness returns `{ add }` where `add` is a trailing named
+function capturing a numeric parameter. Standalone execution returns 42 via
+legacy, but IR ownership is **0/1**: resolution rejects the annotated object
+because its function-valued field is not an IR object field type. Evidence:
+`.tmp/ts5-ir-method-table-before.log`. Address-taken function materialization
+alone does not change this result (`.tmp/ts5-ir-method-table-after.log`).
+Any implementation must resolve the callable field ABI and materialize the
+closure through the shared IR machinery, with runtime and ownership assertions;
+do not count legacy fallback as migration success.
+
+The bounded implementation now materializes an address-taken named declaration
+through the existing IR closure-expression path, preserving its original AST
+identity and the shared capture-cell machinery. Direct-only named functions
+retain their existing lifted-call path. Discovery uses exact checker symbols,
+including shorthand property symbols; missing checker evidence does not guess.
+This supports returning the function itself, without adding a second closure ABI.
+
+Validation: `.tmp/ts5-ir-named-final.log` passes **29/29 across six files**.
+The new named-function tests assert runtime values and actual IR ownership in
+both GC and standalone: immutable capture returns 42; escaped mutable closures
+remain live and isolated per factory instance (714). Only standalone asserts
+zero imports; GC uses the standard runtime imports. The method-table test is
+explicitly runtime-only and makes no IR ownership claim. The original table
+ownership failure above remains the next implementation boundary, not fixed by
+this slice. Typecheck, scoped lint, diff check, LOC and function gates pass.
+An additional binding-discovery test covers direct calls, shadowed references,
+shorthand fields and escaped values; see `.tmp/ts5-ir-named-discovery-final.log`.
+These changes remain local and uncommitted; no full-source factory gain or full
+upstream-suite completion is claimed.
+The post-change selected standalone adapter remains **25/25**, with **251/256
+upstream files deferred** (`.tmp/ts5-projected-after-ir-named-values.log`).
+
+### IR shared mutable captures (2026-09-08, uncommitted)
+
+The previous scalar slot-capture refusal is now addressed in IR. Mutable local
+declarations proven by checker binding identity to be captured by a nested
+function allocate the existing ref-cell storage from initialization, before
+any outer updates. This avoids converting an already-used slot into a snapshot
+at closure creation and lets sibling closures and the outer body share updates.
+Only scalar cells are admitted; unknown/shadowed bindings do not gain capture
+authority, and i32 slot promotion is disabled for this shared-cell binding.
+
+Named lifted functions initially exposed a preparation error: their signature
+allocator called `lowerPreparedClosureSupportType` without the ref-cell registry
+already used for dependency preparation. Threaded that exact registry through
+derived callable slot/type allocation; no parallel layout registry or runtime
+fallback was added. The signature and capture field now resolve the same cell.
+
+The formerly refused mutable return-suffix witness now records IR body emission
+with no direct body. New controls cover sibling writes/readback, closure
+creation before an outer update, loop updates, and lexical shadow identity.
+All 24 tests across five files pass, including existing returned/lifted/literal
+closure ownership tests in GC and standalone
+(`.tmp/ts5-ir-shared-cell-controls.log`). This supersedes the mutable fallback
+boundary in the preceding subsection. The helper's no-checker result remains
+conservative rather than guessing capture identity. Typecheck, scoped lint, and
+size gates pass; the selected standalone adapter remains 25/25
+(`.tmp/ts5-projected-after-ir-shared-cell.log`). Extracted cell installation to
+a small helper to keep lowerVarDecl within its function budget; the one-line
+integration registry argument has a documented file allowance above. Final
+focused tests pass 7/7 (`.tmp/ts5-ir-shared-cell-final.log`). All processes from
+this turn are terminal; these IR changes remain uncommitted.
+No full-source TypeScript factory or checker pass is claimed yet.
+
 ### Actual-source parenthesizer boundary probe (2026-09-08)
 
 Added `typescript-source-factory-parenthesizer-workload.ts` with six independent
@@ -440,8 +637,19 @@ Log `.tmp/ts5-factory-parenthesizer-source.log`. Thus neither upstream assertion
 formatting nor its test callback harness is necessary for these failures.
 Expanded the same fixture to ten cases: direct parenthesized node construction,
 getLeftmostExpression identity, skipPartiallyEmittedExpressions identity, and
-the no-parentheses-needed identifier path. Session 59274 is running, log
-`.tmp/ts5-factory-parenthesizer-source-expanded.log`.
+the no-parentheses-needed identifier path. The expanded probe completed 6/10:
+all four added checks pass, while the same four original wrapping checks fail.
+Valid 59,978,602-byte zero-import module, 156,217 ms compile. Log
+`.tmp/ts5-factory-parenthesizer-source-expanded.log`. This distinguishes the
+wrapping path from both traversal and no-wrap callback entry. Next compare
+fresh `createParenthesizerRules(ts.factory)` with the cached factory getter,
+then inspect the captured factory/method value and wrapping return carrier;
+do not infer that ordinary node allocation or traversal is broken.
+
+Signed implementation checkpoint: `2fbd0f2c7a3a2c7d6757d0c61c73d6efa235b341`.
+Signature verified in the commit object; pre-commit lint and size gates passed.
+All probe/test/commit processes from this turn are terminal. This paragraph's
+expanded-probe result was recorded after the checkpoint.
 
 Fresh namespace controls pass 21/21. The selected upstream adapter was first
 run in its default GC lane: 14/25 (compilerCore 5/11, convertToBase64 0/5;

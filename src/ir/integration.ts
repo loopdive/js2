@@ -1007,6 +1007,7 @@ function prepareClosureTransaction(input: {
     input.entries,
     input.originalArtifactUnitIds,
     registry,
+    refCells,
   );
   const classAccessorWritebacks = prepareClassAccessorWritebackEvidence(input.ctx, input.entries, input.inventory);
   const timerTransaction = prepareCompilerTimerShimLateSealTransaction({

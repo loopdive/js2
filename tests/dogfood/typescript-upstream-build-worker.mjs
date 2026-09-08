@@ -95,6 +95,7 @@ const options = {
   // can dominate the bounded worker budget.
   emitWat: false,
   sourceMap: process.env.JS2WASM_TYPESCRIPT_PROBE_SOURCE_MAP === "1",
+  trackIrOutcomes: process.env.JS2WASM_TYPESCRIPT_PROBE_IR_OUTCOMES === "1",
   ...(workerData.consumerDrivenBarrels ? { resolve: { consumerDrivenBarrels: true } } : {}),
 };
 const started = performance.now();
@@ -235,6 +236,7 @@ try {
     invocation,
     invocations,
     diagnosticArtifactCandidate,
+    ...(options.trackIrOutcomes ? { irOutcomes: result.irOutcomes ?? null } : {}),
     errors: typescriptBuildProbeErrorSummary(result.errors),
   };
   const transferList =

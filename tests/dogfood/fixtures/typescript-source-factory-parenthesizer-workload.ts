@@ -26,6 +26,18 @@ export function runDirectNoWrap(): number {
   return ts.factory.parenthesizer.parenthesizeExpressionOfExportDefault(node) === node ? 1 : 0;
 }
 
+export function runFreshConcise(): number {
+  const node = ts.factory.createObjectLiteralExpression();
+  const rules = ts.createParenthesizerRules(ts.factory);
+  return rules.parenthesizeConciseBodyOfArrowFunction(node).kind === ts.SyntaxKind.ParenthesizedExpression ? 1 : 0;
+}
+
+export function runFreshExport(): number {
+  const node = ts.factory.createClassExpression(undefined, "C", undefined, undefined, []);
+  const rules = ts.createParenthesizerRules(ts.factory);
+  return rules.parenthesizeExpressionOfExportDefault(node).kind === ts.SyntaxKind.ParenthesizedExpression ? 1 : 0;
+}
+
 export function runClass(): number {
   return ts.factory.createClassExpression(undefined, "C", undefined, undefined, []).kind ===
     ts.SyntaxKind.ClassExpression

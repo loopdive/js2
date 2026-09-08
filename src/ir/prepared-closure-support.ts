@@ -138,9 +138,10 @@ export function prepareDerivedCallableTypeIdx(
   ctx: CodegenContext,
   registry: PreparedClosureRegistry,
   fn: IrFunction,
+  refCells: PreparedRefCellRegistry,
 ): number {
   const lower = (type: IrType): ValType => {
-    if (type.kind !== "closure") return lowerPreparedClosureSupportType(ctx, type, undefined, registry);
+    if (type.kind !== "closure") return lowerPreparedClosureSupportType(ctx, type, refCells, registry);
     if (!registry.resolveBase(type.signature)) {
       throw new Error("prepared callable signature cannot allocate its closure type");
     }
@@ -175,6 +176,7 @@ export function allocatePreparedDerivedCallableSlots(
   }[],
   originalArtifactUnitIds: ReadonlySet<IrUnitId>,
   registry: PreparedClosureRegistry,
+  refCells: PreparedRefCellRegistry,
 ): readonly PreparedDerivedCallableSlot[] {
   const slots: PreparedDerivedCallableSlot[] = [];
   for (const entry of entries) {
@@ -186,7 +188,7 @@ export function allocatePreparedDerivedCallableSlots(
     const physicalName = ctx.funcMap.has(entry.name) ? `__\0js2_ir_prepared_derived_${slots.length}` : entry.name;
     const func: WasmFunction = {
       name: physicalName,
-      typeIdx: prepareDerivedCallableTypeIdx(ctx, registry, entry.fn),
+      typeIdx: prepareDerivedCallableTypeIdx(ctx, registry, entry.fn, refCells),
       locals: [],
       body: [],
       exported: entry.fn.exported,

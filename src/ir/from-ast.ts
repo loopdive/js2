@@ -37,6 +37,7 @@
 
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { ts, forEachChild } from "../ts-api.js";
+import { orderTailFunctionDeclarations } from "./tail-function-declarations.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
@@ -100,7 +101,7 @@ import {
 import { irCountedStringAppendSiteIdIsCurrent } from "./counted-string-append-provenance.js";
 import { timerArg, timerResult } from "./timer-shim-lowering.js";
 import { irBool, irTypeIsBoolean, lowerBooleanToString } from "./boolean-brand.js";
-import { collectOuterWrites } from "./closure-captures.js";
+import { collectOuterWrites, declarationHasNestedCapture, nestedFunctionUsedAsValue } from "./closure-captures.js";
 import { planArrayLiteralSpread } from "./array-spread-shape.js";
 import { objectLiteralDataPropertyName } from "./property-key-fold.js";
 import { collectDynamicStringLocalWidening } from "./dynamic-local-widening.js";
@@ -1611,6 +1612,7 @@ function denseArrayReductionPlan(stmts: readonly ts.Statement[]): DenseArrayRedu
 }
 
 function lowerStatementList(stmts: readonly ts.Statement[], cx: LowerCtx): void {
+  stmts = orderTailFunctionDeclarations(stmts);
   if (stmts.length < 1) {
     demoteToLegacy("body-shape-rejected", `ir/from-ast: empty statement list in ${cx.funcName}`);
   }
@@ -3476,7 +3478,9 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // Every other hint source wins: an explicit annotation, an empty-array
     // inference and a module binding each pin the representation.
     const widenDynamic = cx.dynamicStringLocals.has(name) || moduleBinding?.type.kind === "dynamic";
+    const sharedCapture = !isConst && cx.mutatedLets.has(name) && declarationHasNestedCapture(d, cx.checker);
     const promoteI32Slot =
+      !sharedCapture &&
       annotated === undefined &&
       inferredEmptyArrayHint === undefined &&
       moduleBinding === undefined &&
@@ -3596,6 +3600,7 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     // Logical string, dynamic, and vector values use resolver-selected
     // backend storage while identifier reads retain their logical IR type.
     if (!isConst && cx.mutatedLets.has(name)) {
+      if (sharedCapture && bindSharedScalarCapture(name, value, inferred, cx)) continue;
       const logicalType = inferred.kind === "dynamic" && widenDynamic ? irDynamic() : inferred;
       const representation = resolveIrSlotRepresentation(logicalType, cx.resolver, cx.funcName);
       if (representation) {
@@ -3624,6 +3629,15 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
     }
     cx.scope.set(name, { kind: "local", value, type: inferred, ...(stringEncoding ? { stringEncoding } : {}) });
   }
+}
+
+/** Install shared scalar storage before any outer or captured writes. */
+function bindSharedScalarCapture(name: string, value: IrValueId, type: IrType, cx: LowerCtx): boolean {
+  const scalar = asVal(type);
+  if (!scalar || (scalar.kind !== "f64" && scalar.kind !== "i32" && scalar.kind !== "i64")) return false;
+  const cell = cx.builder.emitRefCellNew(value, scalar);
+  cx.scope.set(name, { kind: "local", value: cell, type: { kind: "boxed", inner: type } });
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -14491,7 +14505,7 @@ function closureDefaultParamStart(
   return firstDefault;
 }
 
-type IrClosureLiteral = ts.ArrowFunction | ts.FunctionExpression | ts.MethodDeclaration;
+type IrClosureLiteral = ts.ArrowFunction | ts.FunctionExpression | ts.MethodDeclaration | ts.FunctionDeclaration;
 
 function lowerClosureExpression(expr: IrClosureLiteral, cx: LowerCtx): IrValueId {
   const defaultParamStart = closureDefaultParamStart(expr.parameters, cx.funcName, cx);
@@ -14757,6 +14771,11 @@ function lowerNestedFunctionDeclaration(fn: ts.FunctionDeclaration, cx: LowerCtx
     demoteToLegacy("body-shape-rejected", `ir/from-ast: nested function without name or body in ${cx.funcName}`);
   }
   const innerName = fn.name.text;
+  if (nestedFunctionUsedAsValue(fn, cx.checker)) {
+    const value = lowerClosureExpression(fn, cx);
+    cx.scope.set(innerName, { kind: "local", value, type: cx.builder.typeOf(value) });
+    return;
+  }
   const params: IrType[] = fn.parameters.map((p) => {
     if (!ts.isIdentifier(p.name) || !p.type) {
       demoteToLegacy(
