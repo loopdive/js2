@@ -51,6 +51,8 @@ const groups = {
     "intrinsic-contracts",
     "intrinsics",
     "callable-bindings",
+    "async-callables",
+    "vector-runtime",
   ].map((x) => `src/ir/core/${x}.ts`),
   "ir-analysis": ["contracts/allocations", "alloc-registry", "effects", "intrinsics", "async-plan"].map(
     (x) => `src/ir/analysis/${x}.ts`,
@@ -67,6 +69,8 @@ const groups = {
     "manifest",
     "async-attachment",
     "intrinsic-verification",
+    "native-async-callables",
+    "vector-callables",
   ].map((x) => `src/ir/runtime/${x}.ts`),
   "ir-program": [
     "abi-inventory",
@@ -87,6 +91,8 @@ const groups = {
   ),
 };
 const required = Object.values(groups).flat();
+const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
+const vectorAdditions = ["src/ir/core/vector-runtime.ts", "src/ir/runtime/vector-callables.ts"];
 const typeLayoutAdditions = ["src/wasm/physical/type-layout.ts"];
 const delayCombinatorAdditions = [
   "src/runtime/wasmgc/promise/delay-bodies.ts",
@@ -120,14 +126,39 @@ const additions = [
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
+  expect(history.slice(0, 2)).toEqual(
+    (["ir-core", "ir-runtime"] as const).map((layer) => ({
+      layer,
+      entries: groups[layer],
+      minModules: groups[layer].length,
+    })),
+  );
+  history = history.slice(2);
+  expect(history.slice(0, 2)).toEqual(
+    (["ir-core", "ir-runtime"] as const).map((layer) => ({
+      layer,
+      entries: groups[layer].filter((path) => !vectorAdditions.includes(path)),
+      minModules: groups[layer].length - 1,
+    })),
+  );
+  history = history.slice(2);
   expect(history[0]).toEqual({ layer: "wasm-physical", entries: groups["wasm-physical"], minModules: 5 });
   expect(history[1]).toEqual({ layer: "native-runtime", entries: groups["native-runtime"], minModules: 6 });
   expect(history.slice(2, 4)).toEqual(
     (["native-runtime", "wasm-physical"] as const).map((layer) => ({
       layer,
-      entries: groups[layer].filter((path) => ![...delayCombinatorAdditions, ...typeLayoutAdditions].includes(path)),
-      minModules: groups[layer].filter((path) => ![...delayCombinatorAdditions, ...typeLayoutAdditions].includes(path))
-        .length,
+      entries: groups[layer].filter(
+        (path) =>
+          ![...delayCombinatorAdditions, ...typeLayoutAdditions, ...callableAdditions, ...vectorAdditions].includes(
+            path,
+          ),
+      ),
+      minModules: groups[layer].filter(
+        (path) =>
+          ![...delayCombinatorAdditions, ...typeLayoutAdditions, ...callableAdditions, ...vectorAdditions].includes(
+            path,
+          ),
+      ).length,
     })),
   );
   expect(history.slice(4, 10)).toEqual(
@@ -135,10 +166,24 @@ function assertNewActivations(history: unknown[]) {
       (layer) => ({
         layer,
         entries: groups[layer].filter(
-          (path) => ![...frameAdditions, ...delayCombinatorAdditions, ...typeLayoutAdditions].includes(path),
+          (path) =>
+            ![
+              ...frameAdditions,
+              ...delayCombinatorAdditions,
+              ...typeLayoutAdditions,
+              ...callableAdditions,
+              ...vectorAdditions,
+            ].includes(path),
         ),
         minModules: groups[layer].filter(
-          (path) => ![...frameAdditions, ...delayCombinatorAdditions, ...typeLayoutAdditions].includes(path),
+          (path) =>
+            ![
+              ...frameAdditions,
+              ...delayCombinatorAdditions,
+              ...typeLayoutAdditions,
+              ...callableAdditions,
+              ...vectorAdditions,
+            ].includes(path),
         ).length,
       }),
     ),
@@ -216,9 +261,11 @@ function fixture() {
 }
 
 describe("semantic verification and provider ownership boundary", () => {
-  it("pins the original 65 modules plus the physical type-layout owner without relaxing historical policy", () => {
-    expect(required).toHaveLength(66);
-    expect(new Set(required).size).toBe(66);
+  it("pins the original 68 modules plus two canonical vector owners without relaxing historical policy", () => {
+    expect(required).toHaveLength(70);
+    expect(new Set(required).size).toBe(70);
+    expect(callableAdditions).toHaveLength(2);
+    expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
     expect(delayCombinatorAdditions).toHaveLength(2);
     expect(frameAdditions).toHaveLength(3);
@@ -233,6 +280,8 @@ describe("semantic verification and provider ownership boundary", () => {
             ...frameAdditions,
             ...delayCombinatorAdditions,
             ...typeLayoutAdditions,
+            ...callableAdditions,
+            ...vectorAdditions,
           ].includes(path),
       ),
     ).toHaveLength(56);
@@ -245,17 +294,19 @@ describe("semantic verification and provider ownership boundary", () => {
       ...frameAdditions,
       ...delayCombinatorAdditions,
       ...typeLayoutAdditions,
+      ...callableAdditions,
+      ...vectorAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(28);
-    expect(digest(p.activationHistory.slice(4))).toBe(
+    expect(p.activationHistory).toHaveLength(32);
+    expect(digest(p.activationHistory.slice(8))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(10))).toBe(
+    expect(digest(p.activationHistory.slice(14))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -272,12 +323,12 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(66);
+    expect(r.report.counts.total).toBe(70);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(214);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 152, runtime: 62 });
+    expect(r.report.resolvedEdgeCount).toBe(239);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 163, runtime: 76 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
@@ -300,6 +351,8 @@ describe("semantic verification and provider ownership boundary", () => {
     ...frameAdditions,
     ...delayCombinatorAdditions,
     ...typeLayoutAdditions,
+    ...callableAdditions,
+    ...vectorAdditions,
   ])("rejects deleting %s and its classification", (path) => {
     const f = fixture();
     rmSync(resolve(f.root, path));
@@ -318,6 +371,8 @@ describe("semantic verification and provider ownership boundary", () => {
     ...frameAdditions,
     ...delayCombinatorAdditions,
     ...typeLayoutAdditions,
+    ...callableAdditions,
+    ...vectorAdditions,
   ])("rejects an aliased frontend type dependency from %s", (path) => {
     const f = fixture();
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
@@ -341,6 +396,8 @@ describe("semantic verification and provider ownership boundary", () => {
       ...frameAdditions,
       ...delayCombinatorAdditions,
       ...typeLayoutAdditions,
+      ...callableAdditions,
+      ...vectorAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);
