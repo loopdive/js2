@@ -5166,3 +5166,79 @@ structural references from ordinary string/debug-label text equal to a unit ID;
 frame preservation tests must run self-contained in ordinary CI and keep the
 external-baseline comparison explicit, with no child timeout killing. These
 are repair requests, not approvals or measured failures of frozen candidates.
+
+### Native async frame ownership checkpoint (2026-09-08)
+
+The six production files from the approved frame-body plan are composed on
+settlement checkpoint `535ee6b6ba19239394ee50f8235e6c528212688b` in
+`codex/3518-frame-engine-integration-20260908`. The real prepared async caller
+still reaches the original context adapter, which now calls canonical runtime
+builders for step bodies, ordered state chains and exception dispatch. Native
+await bodies live under `src/runtime/wasmgc/async`; standardized exception-control
+algorithms live under `src/wasm/physical`. Old public exports forward the same
+function objects. No context, AST, allocator or emission callback moved into
+these canonical builders.
+
+The extraction preserves detached instruction-array identity, immediate state
+tracking, chain tracking before finalizers, late-import remapping, reservation
+and publication order, catch-route cloning, and original restoration/failure
+behavior. All three await declarations and six exception-control declarations
+retain their historical implementation; 44 other frame functions and the whole
+`ir-async-frame.ts` remain unchanged. The pre-existing EH algorithm is preserved,
+not repaired by this checkpoint.
+
+Validation history is retained rather than relabeled:
+
+- Revision 1: 46/50 new checks passed, terminal session 90694 exited 1. Three
+  tests incorrectly searched for an empty saved body; one expected the empty
+  parallel aggregate to settle before its required microtask drain. Failed
+  evidence remains in the worker's `.tmp/frame-body-preservation-KqyGEb`.
+- Six unchanged production files: 65/65 existing checks passed, session 33588
+  exited 0 (14 native family, 38 try/catch, seven finally, six multi-await).
+  Production blobs were verified before and after. Worker typecheck session
+  90572 exited 0.
+- Revision 2: 50/50 new checks passed, session 79128 exited 0. Explicit
+  historical comparison session 17907 exited 0: five artifacts and 12 executions
+  per root, including eight full-family scenarios, against immutable baseline
+  `0194b64c246d2b5beab2db00af33a73498e2eb6e`. The same 21 source-preservation
+  tests were rerun, not 21 additional controls. Worker evidence remains in
+  `.tmp/frame-body-preservation-Fk3s9C`.
+- The composed revision-2 checkpoint passed 50/50, session 3436 exited 0;
+  evidence is `.tmp/frame-body-preservation-QH8HUz` in the integration worktree.
+- Revision 3 additionally requires exact thrown-error identity and re-reads,
+  checks and records main's stdout after repeated timer delivery. High reviewed
+  these two test-only changes and approved bounded composition. Final composed
+  revision 3 passed 50/50 plus typecheck, session 55719 exited 0. Its explicit
+  historical pair matched five artifacts and 12 executions per root, including
+  post-redelivery stdout; both child terminals exited 0 without signals.
+  Evidence is `.tmp/frame-body-preservation-83o9aW` in the integration worktree.
+  SHA256 of `JSON.stringify(parsedReport)` is baseline
+  `496685275ae494f90e6b3ae2129e69763b492ab6f95bc3ceb1e38a731a2bea84`
+  and candidate
+  `d2a797bc7487571cb6bbd8eba40944fe2ccd24ead4a85d948e29cb6290a6948c`.
+  These are parsed-report hashes, not hashes of pretty-printed file bytes.
+- The boundary registry now requires 63 canonical modules with 207 resolved
+  edges (148 type-only, 59 runtime), adding three mandatory owners and twelve
+  negative controls. All 24 prior activation records and all allowed edges are
+  unchanged. The first 113-assertion run exited 1 due to a Vitest worker RPC
+  timeout; it is not a passing suite. An awaited event-loop yield after unchanged
+  cleanup addresses synchronous detector starvation without changing assertions
+  or timeouts. The clean rerun, session 96705, exited 0 with 113/113 controls.
+- Full inventory session 49315 exited 0 with
+  `inventory-valid-architecture-incomplete`: 1,308 modules (1,305 tracked,
+  three new at measurement), 63 clean, five compatibility adapters and 1,240
+  unmigrated; zero errors and zero unresolved edges. Four unknown dynamic imports
+  remain: Porffor loader lines 75/76, optimize line 384 and platform-capability
+  adapter line 151. This explicitly does not prove whole-compiler static closure.
+
+The source-admission revision is separate, not included here: its seven frozen
+files passed 86/86 controls in worker session 4669, with High approving the
+constructor/global ownership and retained certification-population repairs.
+Its integration, regressions and typecheck remain outstanding.
+
+Neither these preservation receipts nor source admission establish complete
+prepared async physical acceptance. Full-family logical vectors and real runtime
+declarations/providers, transported frame materialization, public IR-only
+cutover, static closure, direct-codegen retirement and the ABI30 witness remain
+required. All existing PR holds remain; no merge or auto-merge is authorized by
+this checkpoint record.
