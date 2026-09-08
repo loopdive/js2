@@ -34,7 +34,10 @@
 
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { compile } from "../src/index.js";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { compile, compileMulti, compileProject, instantiateLinkedProject } from "../src/index.js";
 import { standaloneIntlShimSource } from "../src/temporal-intl-shim.js";
 import { temporalProviderCacheKey } from "../src/temporal-provider.js";
 
@@ -590,5 +593,105 @@ describe("#5383 S2c — the shim re-keys the standalone provider and leaves the 
     // Collision safety against the bundle's 340 top-level bindings.
     expect(shim).toContain("__js2wasm_IntlDateTimeFormat");
     expect(shim).toContain("--target standalone");
+  });
+});
+
+// ── S2d — the standalone cross-module OBJECT boundary ───────────────────────
+//
+// The stop S2c measured: a value the provider mints reaches the consumer with
+// ZERO own keys and every read `undefined`, while the SAME read inside the
+// provider answers correctly. Two causes, both fixed here and both asserted
+// below on a throwaway package (nothing Temporal-specific about either):
+//
+//   1. the linker replaced the boundary value with a JS host MIRROR even for a
+//      provider compiled for a non-JavaScript environment — a mirror bound to
+//      `__struct_field_names` / `__sget_*` exports that a standalone binary does
+//      not have, handed to a consumer that is wasm and cannot read a JS proxy;
+//   2. with the raw struct passing through, the consumer's dynamic terminals
+//      are module-local `ref.test` ladders over the struct types THAT module
+//      declared, so a provider-minted struct misses every arm. The provider now
+//      publishes its own terminals (`standalone-link-boundary.ts`) and the
+//      consumer asks them on the paths where its own ladder has already missed.
+//
+// Base measurements for the assertions (this branch's merge base, host-free
+// standalone, `.tmp/s2d/probe3`): keys 0 / read `undefined` for ALL THREE
+// carrier shapes below. The `gc` control answered the post-fix values on base
+// already — that is what makes this standalone-specific.
+describe("#5383 S2d — a provider-minted object survives the standalone getter boundary", () => {
+  /** Three ways to build the same three-property object, three carriers. */
+  const CARRIERS: Record<string, string> = {
+    literal: `export const NS = { a: 1, b: 2, c: 3 };`,
+    "assigned own props": `const o = {}; o.a = 1; o.b = 2; o.c = 3; export const NS = o;`,
+    defineProperty: `const o = {};
+      Object.defineProperty(o, "a", { value: 1, enumerable: true, writable: true, configurable: true });
+      o.b = 2; o.c = 3; export const NS = o;`,
+  };
+
+  const CONSUMER = `
+    export function keysHere() { return Object.keys(NS).length; }
+    export function readA() { return NS.a === 1 ? 1 : (NS.a === undefined ? -1 : -2); }
+    export function readMissing() { return NS.zzz === undefined ? 1 : 0; }
+  `;
+
+  async function linkAndRun(providerSource: string, target: "standalone" | "gc") {
+    const root = mkdtempSync(join(tmpdir(), "issue-5383-s2d-"));
+    const packageRoot = join(root, "node_modules", "ns5383");
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "ns5383", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(join(packageRoot, "index.js"), providerSource);
+    const entry = join(root, "entry.js");
+    writeFileSync(entry, `import { NS } from "ns5383";\nexport function __probe() { return typeof NS; }\n`);
+    const standalone = target === "standalone" ? { target: "standalone" as const, hostBridge: "off" as const } : {};
+    const built = await compileProject(entry, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      packageCacheDir: join(root, "providers"),
+      ...standalone,
+    });
+    expect(built.success).toBe(true);
+    // Load-bearing: a `bundled` plan would inline the package and test nothing.
+    expect(built.linkPlan?.mode).toBe("separate");
+    const artifact = (built.linkedModules ?? []).find((entry) => entry.packageName === "ns5383")!;
+    const boundary = artifact.exportBoundaries?.NS;
+    expect(boundary?.kind).toBe("getter");
+    const field = boundary!.field;
+    const stub = "/__ns_stub.ts";
+    const consumerEntry = "/__main.js";
+    const result = await compileMulti(
+      {
+        [stub]: `export declare function ${field}(): any;\n`,
+        [consumerEntry]: `import { ${field} } from "/__ns_stub";\nconst NS = ${field}();\n${CONSUMER}`,
+      },
+      consumerEntry,
+      {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        canonicalRuntimeTypes: true,
+        sharedExceptionTag: true,
+        link: [artifact.namespace],
+        linkedPackageBindings: new Map([[field, { module: artifact.namespace, field }]]),
+        ...standalone,
+      },
+    );
+    (result as { linkedModules?: unknown[] }).linkedModules = [artifact];
+    expect(result.success).toBe(true);
+    // The EMPTY import object is the host-free contract: nothing below may
+    // depend on a JS host being present.
+    const { instance } = await instantiateLinkedProject(result, target === "standalone" ? {} : undefined);
+    const exports = instance.exports as unknown as Record<string, () => unknown>;
+    return { keysHere: exports.keysHere(), readA: exports.readA(), readMissing: exports.readMissing() };
+  }
+
+  for (const [name, source] of Object.entries(CARRIERS)) {
+    it(`host-free standalone: a ${name} carrier keeps its keys and values`, { timeout: 300_000 }, async () => {
+      expect(await linkAndRun(source, "standalone")).toEqual({ keysHere: 3, readA: 1, readMissing: 1 });
+    });
+  }
+
+  it("the gc control answers identically — the host mirror path is untouched", { timeout: 300_000 }, async () => {
+    expect(await linkAndRun(CARRIERS.literal, "gc")).toEqual({ keysHere: 3, readA: 1, readMissing: 1 });
   });
 });

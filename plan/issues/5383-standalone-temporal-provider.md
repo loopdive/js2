@@ -11,6 +11,20 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-08 (S2d) — the standalone cross-module OBJECT boundary. The whole
+  # mechanism lives in the new module src/codegen/standalone-link-boundary.ts;
+  # what lands in object-runtime.ts is the two places the mechanism has to be
+  # WIRED, and both are wired next to their JS-host twin on purpose:
+  #   object-runtime.ts  +24  the peer-terminal registration (beside the
+  #                           `__boundary_object_*` late imports, which must all
+  #                           exist before the #1984 index-space freeze), the
+  #                           `??`-fallback on the two arms that already ask
+  #                           "this carrier is not mine, who can decode it?",
+  #                           and the one call that emits the provider-side
+  #                           terminals. Moving any of it away from the arm it
+  #                           guards would hide the ordering constraint its
+  #                           comment exists to document.
+  - src/codegen/object-runtime.ts
   # 2026-09-08 (S2b) — the externref-backed-subclass family fix (own-field
   # write/read + dynamic method dispatch on `class B extends Array`). Every
   # entry is a net-new guarded arm plus the measurement that justifies it; the
@@ -55,6 +69,11 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-08 (S2d) — same wiring, same argument: `ensureObjectRuntime` is
+  # where every dynamic terminal is registered and where the late-import freeze
+  # point is, so the peer registration and the terminal emission cannot move out
+  # of it without moving away from the constraint they depend on.
+  - src/codegen/object-runtime.ts::ensureObjectRuntime
   # 2026-09-08 (S2b) — both grants are a guarded ARM added to an existing
   # dispatch cascade, in the one place the cascade's order is load-bearing: the
   # write redirect must sit between the externref-backed check and the struct
@@ -645,3 +664,115 @@ its `--target standalone` text, a prototype-method refusal, the `gc` cache key
 recomputed from the raw bundle (the host-lane no-change guard), standalone/wasi
 keys distinct from `gc`, and the shim's own shape (one `const Intl`, prefixed
 binding).
+
+## S2d findings (2026-09-08) — the getter boundary, root-caused and fixed; the stop moves INSIDE the provider
+
+The S2 smoke test is still **not** written, and the reason moved again. What is
+fixed: the cross-module object boundary, end to end, on a reduction. What now
+stops Temporal is a provider-INTERNAL read, measured from both sides.
+
+### R9 — why a provider-minted object arrived empty (two causes, not one)
+
+**Cause 1 — the linker handed the consumer a JS host MIRROR.**
+`instantiateLinkedProviders` wrapped every non-function boundary value in
+`wrapLinkedProviderValue` → `_wrapForHost`, unconditionally. That mirror is
+bound to the provider's `__struct_field_names` / `__sget_*` exports, which a
+standalone binary does not have (#4035 strips the host bridge), and it is handed
+to a consumer that is **wasm** and cannot read a JS proxy at all. Fixed by
+skipping the mirror when the provider's own `targetProfile.environment` is not
+`"javascript"` — the raw struct now crosses.
+
+**Cause 2 — nothing on a standalone value says what it is.** With the raw struct
+crossing, every read still answered `undefined`: standalone has no
+self-describing property bag. `__extern_get` / `__object_keys` are module-local
+`ref.test` ladders over the struct types THAT module declared (filled at
+finalize), so a provider-minted struct misses every arm. The JS lane hides this
+because #5225's `_crossModuleStructs` registry re-points a read at the module
+that can decode it; there is no standalone twin.
+
+Fixed by building that twin in pure wasm (`src/codegen/standalone-link-boundary.ts`):
+a standalone provider whose consumer is wasm (`exportsConsumedByWasm`) publishes
+`__js2wasm_link_member_get` / `__js2wasm_link_object_keys` / `__js2wasm_link_apply`,
+and the consumer calls them on the arms where its own ladder has ALREADY missed
+— the same two arms the host lane's `__boundary_object_get` /
+`__boundary_object_keys` occupy, so neither lane grows an arm and the
+single-module lane is untouched.
+
+The two published reads are **wrappers, not re-exports**: each normalises "I do
+not know this value" to `ref.null.extern`. Without that the consumer would have
+to trust another module's `undefined` singleton, and the peer's empty key-vec
+would out-rank the consumer's own carrier bags. Both normalisations are
+answer-preserving (a genuinely-`undefined` property and a genuinely-empty object
+fall back to the consumer's local miss, which answers the same).
+
+**Measured** (`.tmp/s2d/probe3`, host-free `instantiateLinkedProject(result, {})`,
+three carrier shapes — object literal, assigned own props, `defineProperty`):
+
+| probe | base | after |
+| --- | --- | --- |
+| `Object.keys(NS).length` | 0 | **3** |
+| `NS.a` | `undefined` | **1** |
+| `NS.zzz === undefined` | true | true |
+| gc control | 3 / 1 | unchanged |
+
+Four cases in `tests/issue-5383-standalone-temporal-provider.test.ts`.
+
+Two things the facade does NOT yet cover, both measured: **calling a
+provider-minted closure** (`keysOf(NS)` → `null`) and `hasOwnProperty` / `in` /
+`for-in` for the non-`defineProperty` carriers — those terminals have their own
+miss arms and were left for a follow-up rather than guessed at.
+
+### Where it stops NOW — inside the provider, not at the boundary
+
+Through the real provider the consumer still reads nothing, and the reason is no
+longer the boundary. Measured with the terminals called directly from JS on the
+EXACT value the consumer holds (identity checked, `.tmp/s2d/temporal-probe`):
+
+- `__js2wasm_link_object_keys(Temporal)` → **non-null** (the provider enumerates
+  its own namespace fine — 9 keys);
+- `__js2wasm_link_member_get(Temporal, <consumer-minted "PlainDate">)` → **null**,
+  and with the normalisation disabled it is the provider's own `undefined`
+  singleton (the consumer agrees — `x === undefined` answers true for it, so the
+  singleton itself crosses correctly).
+
+So the provider's own `__extern_get` answers `undefined` for `qi.PlainDate`
+while its own `__object_keys` lists all nine. That asymmetry is provider-local:
+driving the polyfill from INSIDE its own module (`compileMulti` of shim+bundle,
+`.tmp/s2d/in-provider`, referencing the bundle's real binding `qi` — a bare
+`Temporal` identifier is intercepted by the #661 compile-time lowering and tests
+nothing) answers `Object.keys(qi).length === 9`, `typeof qi.PlainDate ===
+"function"`, `qi["Plain"+"Date"]` resolvable, `"PlainDate" in qi` true. **Next
+lane's target: find which terminal serves the in-module read and why
+`__extern_get` — the one the boundary can call — does not.** A first reduction
+attempt (`.tmp/s2d/probe13`, an object literal whose values are classes) does
+NOT reproduce it: there `__extern_get` returns the right class by identity, it
+only mis-reports `typeof` as `"object"` instead of `"function"` (a separate,
+smaller defect worth its own reduction).
+
+### The other three stops, re-measured in-module (`.tmp/s2d/in-provider`)
+
+Messages read back through the #5384 renderer (`__exn_render_prepare` /
+`__exn_render_char`), host-free, zero imports:
+
+| probe | answer |
+| --- | --- |
+| `Object.keys(qi).length` | **9** |
+| `new qi.PlainDate(2024,1,1).day` | throws `invalid calendar identifier` |
+| `qi.Duration.from({hours:1}).total("minutes")` | throws `invalid receiver: method called with the wrong type of this-object` |
+| `qi.PlainDate.from("2024-01-01")` | throws `Unsupported dynamic regular expression pattern` → filed as **#5404** |
+| `qi.Now.timeZoneId()` | **no-throw** (must raise the shim's RangeError) |
+
+The last one is NOT a boundary artifact and NOT the "discarded result" shape the
+S2c note guessed at — ten isolated spellings of that guess (bare `new`, no-paren
+`new`, two-step, result used, result returned, result discarded, via a namespace
+object, on both lanes) all propagate the constructor's throw correctly
+(`.tmp/s2d/probe14`, `probe15`, `probe16`). The real trigger is narrower and
+worse, and it reproduces in ten lines on BOTH lanes: **a property read on the
+result of a `never`-returning call elides the entire receiver expression**, so
+`(new Intl.DateTimeFormat).resolvedOptions().timeZone` never runs the
+constructor at all (`ctorHits === 0`). Filed as **#5405** with the reduction and
+the shape of the fix. Every shim method has a `throw`-only body, which is why
+the shim is where it surfaced.
+
+`invalid calendar identifier` and `invalid receiver` remain unreduced — S2d
+spent its budget on the boundary and on root-causing the two above.
