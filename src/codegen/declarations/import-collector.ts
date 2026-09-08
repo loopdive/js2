@@ -59,6 +59,7 @@ import { emitNativeUriDecode, emitNativeUriEncode } from "../uri-encoding-native
 import type { ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { registerImportCollectorDelegates } from "../registry/import-collector-delegates.js";
+import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 
 /** Accumulated state for the single-pass collector */
 export interface UnifiedCollectorState {
@@ -471,7 +472,9 @@ export function unifiedVisitNode(ctx: CodegenContext, state: UnifiedCollectorSta
       const needed = state.consoleNeededByMethod.get(method)!;
       for (const arg of node.arguments) {
         const argType = ctx.checker.getTypeAtLocation(arg);
-        if (isStringType(argType)) {
+        if (expressionHasWidenedPropertyType(ctx, arg)) {
+          needed.add("externref");
+        } else if (isStringType(argType)) {
           needed.add("string");
         } else if (isBooleanType(argType)) {
           needed.add("bool");
