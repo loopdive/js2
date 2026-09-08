@@ -9,6 +9,8 @@ import type { IrPlanningIdentityContext } from "../ir/planning-identity.js";
 import { ProgramAbiInvariantError } from "../ir/program-abi.js";
 import type { FuncTypeDef, StructTypeDef, TypeDef, ValType } from "../ir/types.js";
 import { ts } from "../ts-api.js";
+import { describeProgramAbiSupportType } from "./program-abi-support-type-description.js";
+import type { PreparedProgramAbiProvisionalBinding } from "./program-abi-prepared-transaction.js";
 import type { CodegenContext } from "./context/types.js";
 // (#4241) The closure header layout is defined ONCE, in a leaf module both
 // this validator and the mint sites can import — see closure-header-layout.ts.
@@ -355,6 +357,24 @@ export class ProgramAbiTypeRegistry {
     readonly cell: ProgramAbiTypeCell;
   };
   private closureSupportBatchPlanned = false;
+  private readonly candidateSupportTypes = new Map<IrBindingId, PreparedProgramAbiProvisionalBinding>();
+  private readonly candidateTypeOwners = new Map<ProgramAbiTypeCell, IrBindingId>();
+
+  /** Read-only candidate view used before a prepared scope publishes ownership. */
+  provisionalSupportTypes(): readonly PreparedProgramAbiProvisionalBinding[] {
+    return [...this.candidateSupportTypes.values()];
+  }
+
+  private publishCandidateSupportRefs(refs: readonly IrTypeRef[]): void {
+    for (const ref of refs) {
+      const contribution = this.candidateSupportTypes.get(ref.binding.bindingId);
+      if (!contribution) continue;
+      this.session.ensurePlan(contribution.draft);
+      this.session.registerStructuralReference(contribution.draft.id, contribution.structuralReferenceKey!);
+      if (contribution.locator?.kind === "type-cell")
+        this.attachTypeLocator(contribution.draft.id, contribution.locator.cell);
+    }
+  }
   private refCellSupportBatchPlanned = false;
   private objectSupportBatchPlanned = false;
   private planned = false;
@@ -796,6 +816,7 @@ export class ProgramAbiTypeRegistry {
    */
   prepareClosureSupportLayouts(
     requests: readonly ProgramAbiClosureSupportLayoutRequest[],
+    provisional = false,
   ): readonly ProgramAbiClosureSupportLayout[] {
     if (this.planned) {
       throw new ProgramAbiInvariantError(
@@ -833,6 +854,13 @@ export class ProgramAbiTypeRegistry {
               "the canonical batch was planned",
           );
         }
+        if (!provisional)
+          this.publishCandidateSupportRefs([
+            observed.layout.wrapperRootRef,
+            observed.layout.allocationWrapperRef,
+            observed.layout.liftedFuncRef,
+            observed.layout.capturedSubtypeRef,
+          ]);
         return observed.layout;
       });
     }
@@ -891,13 +919,17 @@ export class ProgramAbiTypeRegistry {
 
     const signatureOrdinals = new Map([...bySignature.keys()].sort().map((key, index) => [key, index] as const));
     const layoutOrdinals = new Map([...byLayout.keys()].sort().map((key, index) => [key, index] as const));
-    const rootRef = this.planClosureSupportType({
-      semanticRole: "wrapper-root",
-      adapterName: "__ir_closure_wrapper_root",
-      type: first.request.wrapperRootType,
-      roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureWrapperRoot,
-      derivedOrdinal: 0,
-    });
+    const rootRef = this.closureSupportTypeRef(
+      {
+        semanticRole: "wrapper-root",
+        adapterName: "__ir_closure_wrapper_root",
+        type: first.request.wrapperRootType,
+        roleOrdinal: PROGRAM_ABI_TYPE_ROLE.closureWrapperRoot,
+        derivedOrdinal: 0,
+      },
+      true,
+      provisional,
+    );
 
     const resultByLayout = new Map<string, ProgramAbiClosureSupportLayout>();
     for (const [signatureKey, candidate] of [...bySignature].sort(([left], [right]) => left.localeCompare(right))) {
@@ -916,6 +948,7 @@ export class ProgramAbiTypeRegistry {
                 derivedOrdinal: signatureOrdinal,
               },
               allocatesSignature,
+              provisional,
             );
       const liftedFuncRef = this.closureSupportTypeRef(
         {
@@ -926,6 +959,7 @@ export class ProgramAbiTypeRegistry {
           derivedOrdinal: signatureOrdinal,
         },
         invokesSignature,
+        provisional,
       );
 
       for (const [layoutKey, layoutCandidate] of [...byLayout]
@@ -945,6 +979,7 @@ export class ProgramAbiTypeRegistry {
                   derivedOrdinal: layoutOrdinal,
                 },
                 allocatesLayout,
+                provisional,
               );
         resultByLayout.set(
           layoutKey,
@@ -977,6 +1012,7 @@ export class ProgramAbiTypeRegistry {
    */
   prepareRefCellSupportTypes(
     requests: readonly ProgramAbiRefCellSupportRequest[],
+    provisional = false,
   ): readonly ProgramAbiRefCellSupport[] {
     if (this.planned) {
       throw new ProgramAbiInvariantError("planning-sealed", "cannot prepare ref-cell support after retained planning");
@@ -1017,6 +1053,7 @@ export class ProgramAbiTypeRegistry {
             `ref-cell support ${semanticInnerTypeKey} maps to different physical type objects`,
           );
         }
+        if (!provisional) this.publishCandidateSupportRefs([observed.support.cellTypeRef]);
         return observed.support;
       });
     }
@@ -1045,7 +1082,14 @@ export class ProgramAbiTypeRegistry {
           ordinal,
         );
         const cell = this.session.typeCellFor(request.cellType) ?? this.session.createTypeCell(request.cellType);
-        this.planPreparedSupportType(cellTypeRef, request.cellType, cell, PROGRAM_ABI_TYPE_ROLE.refCell, ordinal);
+        this.planPreparedSupportType(
+          cellTypeRef,
+          request.cellType,
+          cell,
+          PROGRAM_ABI_TYPE_ROLE.refCell,
+          ordinal,
+          provisional,
+        );
         const support = Object.freeze({ semanticInnerTypeKey, cellTypeRef });
         this.refCellSupport.set(semanticInnerTypeKey, Object.freeze({ request, support }));
         supportByKey.set(semanticInnerTypeKey, support);
@@ -1055,7 +1099,10 @@ export class ProgramAbiTypeRegistry {
   }
 
   /** Plan closed object layouts referenced by prepared closure signatures. */
-  prepareObjectSupportTypes(requests: readonly ProgramAbiObjectSupportRequest[]): readonly ProgramAbiObjectSupport[] {
+  prepareObjectSupportTypes(
+    requests: readonly ProgramAbiObjectSupportRequest[],
+    provisional = false,
+  ): readonly ProgramAbiObjectSupport[] {
     if (this.planned) {
       throw new ProgramAbiInvariantError("planning-sealed", "cannot prepare object support after retained planning");
     }
@@ -1087,6 +1134,7 @@ export class ProgramAbiTypeRegistry {
             `object support ${semanticShapeKey} maps to different physical type objects`,
           );
         }
+        if (!provisional) this.publishCandidateSupportRefs([observed.support.objectTypeRef]);
         return observed.support;
       });
     }
@@ -1121,6 +1169,7 @@ export class ProgramAbiTypeRegistry {
           cell,
           PROGRAM_ABI_TYPE_ROLE.objectLayout,
           ordinal,
+          provisional,
         );
         const support = Object.freeze({ semanticShapeKey, objectTypeRef });
         this.objectSupport.set(semanticShapeKey, Object.freeze({ request, support }));
@@ -1240,26 +1289,24 @@ export class ProgramAbiTypeRegistry {
     cell: ProgramAbiTypeCell,
     roleOrdinal: number,
     derivedOrdinal: number,
+    provisional = false,
   ): void {
-    const entrySourceId = canonicalEntrySource(this.session);
-    const structuralReferenceKey = irTypeBindingKey(ref.binding);
-    this.session.ensurePlan({
-      id: ref.binding.bindingId,
-      structuralOrder: this.session.structuralOrder.forSource(entrySourceId, {
-        domain: "type",
-        roleOrdinal,
-        derivedOrdinal,
-      }),
-      structuralReferenceKey,
-      displayName: ref.name,
-      slotPolicy: "required",
-      slotSpace: "type",
-      intent: {
-        kind: "type",
-        shapeKey: canonicalProgramAbiTypeDef(type),
-      },
+    const contribution = describeProgramAbiSupportType({
+      session: this.session,
+      entrySourceId: canonicalEntrySource(this.session),
+      ref,
+      type,
+      cell,
+      roleOrdinal,
+      derivedOrdinal,
     });
-    this.session.registerStructuralReference(ref.binding.bindingId, structuralReferenceKey);
+    if (provisional) {
+      this.candidateSupportTypes.set(contribution.draft.id, contribution);
+      this.candidateTypeOwners.set(cell, contribution.draft.id);
+      return;
+    }
+    this.session.ensurePlan(contribution.draft);
+    this.session.registerStructuralReference(ref.binding.bindingId, contribution.structuralReferenceKey!);
     this.attachTypeLocator(ref.binding.bindingId, cell);
   }
 
@@ -1385,6 +1432,7 @@ export class ProgramAbiTypeRegistry {
       readonly derivedOrdinal: number;
     },
     plan = true,
+    provisional = false,
   ): IrTypeRef {
     const entrySourceId = canonicalEntrySource(this.session);
     const ref = irSupportTypeRef(
@@ -1395,9 +1443,10 @@ export class ProgramAbiTypeRegistry {
     );
     if (!plan) return ref;
     const cell = this.session.typeCellFor(input.type) ?? this.session.createTypeCell(input.type);
-    const previousOwner = this.session.locatorBindingId(cell);
+    const previousOwner = this.session.locatorBindingId(cell) ?? this.candidateTypeOwners.get(cell);
     if (previousOwner !== undefined && previousOwner !== ref.binding.bindingId) {
-      const previousDraft = this.session.getDraft(previousOwner);
+      const previousDraft =
+        this.session.getDraft(previousOwner) ?? this.candidateSupportTypes.get(previousOwner)?.draft;
       if (previousDraft?.intent.kind !== "type") {
         throw new ProgramAbiInvariantError(
           "type-remap-mismatch",
@@ -1416,17 +1465,7 @@ export class ProgramAbiTypeRegistry {
       }
       return canonicalRef;
     }
-    this.planPreparedSupportType(ref, input.type, cell, input.roleOrdinal, input.derivedOrdinal);
+    this.planPreparedSupportType(ref, input.type, cell, input.roleOrdinal, input.derivedOrdinal, provisional);
     return ref;
-  }
-
-  private planClosureSupportType(input: {
-    readonly semanticRole: string;
-    readonly adapterName: string;
-    readonly type: TypeDef;
-    readonly roleOrdinal: number;
-    readonly derivedOrdinal: number;
-  }): IrTypeRef {
-    return this.closureSupportTypeRef(input);
   }
 }

@@ -13,6 +13,9 @@ sprint: Backlog
 depends_on: [1042, 1044, 1046]
 required_by: [1059, 1066, 1165, 1584]
 loc-budget-allow:
+  # 2026-09-08: typed ref-cell construction keeps logical dynamic payloads
+  # intact until carrier resolution; the scalar API delegates to this builder.
+  - src/ir/builder.ts
   # 2026-09-08: +14 lines declare source object field order, callable-field
   # allocation metadata and equality; allocation logic remains in leaf modules.
   - src/ir/nodes.ts
@@ -103,8 +106,11 @@ loc-budget-allow:
   # identity so parser metadata survives element-type widening.
   - src/runtime.ts
 func-budget-allow:
-  # 2026-09-08: +14 lines wire late-placeholder lifetime and withdrawn lifted
-  # family propagation into the existing allocation/patch transaction.
+  # 2026-09-08: +9 lines detect/reserve the canonical undefined IR provider
+  # before lowering; its adapter implementation stays in a separate module.
+  - src/ir/integration.ts::preregisterDynamicSupport
+  # 2026-09-08: +29 lines wire late-placeholder lifetime, withdrawn lifted
+  # families and deferred binding of reused unpublished candidate slots.
   - src/ir/integration.ts::compileIrPathFunctions
   # 2026-09-08: one normalization call shared with the AST lowerer; no inline algorithm.
   - src/ir/select.ts::isPhase1StatementListInScope
@@ -750,6 +756,267 @@ numeric zero or erase their initialization semantics. Final typecheck,
 lint/format, LOC/function gates pass; final erasure/worker controls pass 10/10
 and the standalone selected adapter remains 25/25 with 251 files deferred.
 All processes from this erasure pass are terminal.
+
+Undefined-cache implementation pass (2026-09-08, in progress): the next gate
+requires several matched capabilities, not a removed initializer check.
+Current shared-capture installation accepts scalar cells only; native Map
+methods are module-binding/number-value specific; ordinary `void` lowering
+still uses a numeric approximation. First extend exact logical dynamic-cell
+storage through the existing canonical carrier/ref-cell registries, then
+materialize true undefined for uninitialized locals and preserve later writes.
+Do not claim native local Map support from the existing module-only adapter.
+
+Dynamic-cell substrate implemented, not yet source-admitted: the builder now
+has exact logical-payload construction, lowering resolves that payload for all
+new/get/set/signature paths, and prepared closure support uses the same
+`resolveIrDynamicCarrierType` as ordinary IR. No alternate ref-cell registry or
+raw module-index payload is introduced. The first source witness did not reach
+cell lowering: it was rejected at `param-type-not-resolvable`
+(`.tmp/ts5-ir-dynamic-capture-before.log`). Do not label that a cell regression
+or relax the dynamic-use selector just to accept the witness.
+
+Hand-built IR tests exercise actual zero-import Wasm with both canonical
+carriers: externref preserves JS undefined, a Map reference, strings/numbers,
+null and booleans; the native carrier preserves the real reserved undefined
+singleton distinctly from null. Reads before and after a second function's
+write retain order and share one cell across the call. These are storage tests,
+not source-level Map execution. Canonical dynamic-type/linear-plan controls
+pass **27/27**, and named/tail capture controls initially pass **20/20**.
+Source typecheck passes. Next wire true undefined production and captured
+local initialization/updates through this storage, with source-level controls
+before admitting the actual TypeScript cache declarations.
+Final storage/capture/type/allocation matrix passes **45/45 across five files**
+(`.tmp/ts5-ir-dynamic-cell-final.log`). The selected standalone adapter remains
+**25/25 with 251 upstream files deferred** (`.tmp/ts5-ir-dynamic-cell-projected.log`).
+Typecheck, formatting, scoped lint, LOC/function budgets and whitespace checks
+pass. This kernel does not yet change the source initializer/capture gates;
+the previous full factory 0/3 result remains the last original-source result.
+All processes are terminal; this dynamic-cell checkpoint remains local.
+
+Source initialization pass (2026-09-08, in progress): connect local lexical
+declarations without initializers to the existing undefined producer and a
+logical dynamic slot/cell. Preserve module-init ownership, const rejection,
+and temporal-dead-zone scope checks. First test true undefined observation,
+then assignment and shared closure writes before widening native Map calls.
+
+Source initialization checkpoint (2026-09-08, local and not ready to publish):
+canonical undefined now comes from an IR-owned runtime adapter, reserving the
+native singleton or the exact host provider before lowering. Flush host late
+imports before minting the adapter; otherwise GC function signatures/indices
+are corrupted. The unchanged source matrix passes **6/10** across GC and
+standalone: undefined observation, subsequent assignment, and strict null
+distinction pass in both lanes. Captured reads and writes remain red.
+The captured-write arithmetic classifier inspected the ref-cell storage kind
+instead of its logical payload; it now recognizes boxed dynamic locals and
+uses the existing runtime dynamic-add path. The failure consequently advances
+from `operand-coercion-unsupported` to the same retained-source-callable exact
+allocator error as captured reads (`.tmp/ts5-ir-capture-payload-dispatch.log`).
+No test assertions were weakened and this is not a source-capture success.
+
+Diagnostic instrumentation (removed after measurement) recorded incomplete
+early prepared dependencies: `__ir_undefined_value` has no prepared structural
+binding, and dynamic carrier/box/tag-test support lacks symbolic evidence
+(`.tmp/ts5-ir-capture-failure-trace.log`). Follow the prepared dependency and
+source-callable publication lifecycle; do not relax the exact allocator guard.
+Reusing an already observed source slot for every non-derived lift did not
+fix captures and additionally withdrew five previously passing returned-table
+owners on signature parity. That experiment was removed, not accepted as a
+fallback solution (`.tmp/ts5-ir-capture-exact-source-slot.log`: 36/45).
+The source typecheck passed (`.tmp/ts5-ir-uninitialized-typecheck.log`).
+After removing the slot-reuse experiment, the exact five-file storage,
+named-table, tail-declaration, allocation, and dynamic-type control matrix
+passes **45/45** (`.tmp/ts5-ir-capture-dispatch-final-controls.log`). This does
+not include or supersede the failing 6/10 source-initialization matrix.
+Formatting and whitespace checks pass; all processes from this checkpoint
+are terminal. Changes remain local pending correct prepared capture support.
+The original full factory remains last measured **0/3 Wasm vs 3/3 native**;
+no new full-factory run or publication is justified by these failing controls.
+
+Prepared capture ownership root cause confirmed (2026-09-08): the first
+registration of `run__closure_0` comes from
+`prepareDependencyCompletePreparedComponents`' pre-scope callable loop,
+via the early free-function preparation path. It calls
+`planProgramAbiUnitCallable` before dependency completeness is known
+(`.tmp/ts5-ir-capture-plan-stack.log`; temporary stack logging removed).
+Aborting the subsequent component scope does not undo those earlier writes.
+The new `issue-1058-ir-capture-preparation-abort.test.ts` observes actual scope
+aborts and checks the session at abort time, before fallback can legitimately
+replan. Both GC and standalone retain the exact source arrow binding when
+they should not: **0/2**, with the expected leaked binding printed in
+`.tmp/ts5-ir-capture-abort-baseline.log`. The test also requires successful
+fallback execution returning 12 and zero standalone imports once rollback is
+fixed; it does not treat compilation alone as correctness.
+
+Next implementation boundary: stage candidate source-callable contributions
+through the existing prepared-component planning overlay, rather than writing
+them into the live session before opening a scope. Dependency discovery needs
+the provisional draft and structural-reference view; successful sealing must
+publish the exact allocator and signature atomically with the rest of the
+component. Abort must leave existing source plans untouched and discard only
+the provisional contributions. The affected shared contracts are drafts,
+draft-order ownership, locators and reverse ownership, structural references,
+and callable type contracts (already grouped by
+`PreparedProgramAbiPlanningOverlay`). Extend that authenticated descriptor
+boundary; do not add an ad-hoc session snapshot, relax exact locator checks,
+or replace a retained source ABI with a different IR closure ABI.
+
+Transactional source-callable implementation, first part (2026-09-08):
+extracted `describeProgramAbiUnitCallable` from the existing publishing
+planner. It produces the same provisional draft, structural reference,
+allocator locator, and cloned signature without changing session state.
+The publishing API now consumes that description, preserving its exact-unit
+and conflicting-allocator checks. This is shared Program ABI planning for IR
+preparation, not a legacy AST code-generation extension. Three new controls
+check all absent session views with an actual publication as the positive
+control, independent cloned contracts, and rejection of unknown/non-unit or
+conflicting allocator ownership. Together with existing prepared-provider
+transaction tests, **24/24** pass (`.tmp/ts5-ir-callable-description.log`).
+This supplies the side-effect-free contribution needed by the authenticated
+scope descriptor; it does not yet replace the leaking pre-scope loop, so the
+two abort regressions and four source-capture failures remain unresolved.
+Existing callable-planning/session controls also pass **27/27**
+(`.tmp/ts5-ir-callable-description-abi-controls.log`), including production IR
+replacement-object publication. Source typecheck passes
+(`.tmp/ts5-ir-callable-description-typecheck.log`); scoped lint/format,
+whitespace and LOC/function gates pass. The function grant covers the measured
+nine-line undefined-provider preregistration growth, not a baseline edit.
+All processes from this checkpoint are terminal; no changes were published.
+
+Transactional candidate-callable wiring (2026-09-08, local): added an opaque
+`PreparedUnitCallableDescriptor` with authenticated session/terminal/allocator
+ownership, cloned signatures, one-shot claim/consume, and stale-state checks.
+The existing prepared batch now stages its drafts, locators, reverse ownership,
+structural references and contracts through the shared planning overlay.
+Dependency discovery sees provisional descriptions without writing the live
+session. Retained terminal/class/module callable reservations remain on their
+existing path: moving those too broke the ReferenceError setter controls,
+because direct fallback requires their pre-existing exact reservations.
+Only candidate nonterminal lifts use the new contribution. An allocated slot
+left by aborted early preparation also retains the late path's deferred-binding
+rule when reused; allocation alone is not proof of published source ownership.
+
+Measured result: captured writes now execute through IR and return 142 in both
+GC and standalone. The unchanged source initialization matrix is **8/10**;
+captured reads still fail. Their error has advanced from duplicate source
+callable ownership to an abandoned required closure-support type whose
+allocator is removed from the final module. Both forced-abort tests now pass
+their at-abort source-binding check but still fail the required successful
+runtime result for that type-lifecycle reason (**8/12** combined, not success;
+`.tmp/ts5-ir-unit-callable-transaction-final-source.log`). The abort test now
+derives exact arrow binding IDs from the scope's frozen inventory and requires
+an observed abort containing that arrow; it no longer depends on the old
+publishing method being called or on a display-name match.
+
+Descriptor tests cover abort/commit, consumed-token replay, forged tokens,
+stale exact allocators and no publication on failures. They pass together with
+returned-table and provider-transaction controls: **38/38**
+(`.tmp/ts5-ir-unit-callable-transaction-retained.log`). Source typecheck,
+scoped lint/format, whitespace and LOC/function gates pass. Next inspect
+`prepareDependencyCompleteClosureSupport` calling
+`prepareClosureSupportLayouts` and `prepareRefCellSupportTypes` before the
+candidate's dependency verdict. Their required type registrations are a
+separate lifecycle from callable ownership and must not survive an abandoned
+candidate merely because its types were allocated. Do not suppress the missing
+allocator assertion or preserve dead types as a substitute for exact ownership.
+No full factory rerun or push; original factory remains last measured 0/3.
+All processes from this checkpoint are terminal.
+
+Closure-type lifetime checkpoint (2026-09-08, local): the strengthened
+forced-abort regression records the actual captured-subtype references returned
+by `prepareClosureSupportLayouts` and checks their session ownership at abort.
+It floors both the observed arrow scope and allocated captured-type population.
+Source callable bindings are absent as intended, but the captured subtype is
+still required in both lanes: **0/2** at the new type assertion, not merely a
+later DCE error (`.tmp/ts5-ir-support-type-description.log`). No missing-type
+assertion was weakened and no dead type was pinned to manufacture validity.
+
+Extracted `describeProgramAbiSupportType` from the type registry's publishing
+helper. It produces the same draft, structural key and exact session-owned
+type-cell locator without marking the type as required. The old publishing
+helper consumes that description, preserving normal behavior. A new control
+checks every absent ownership view, then uses real publication as a positive
+control; foreign-session cells and mismatched allocator types are rejected.
+All seven description/transaction controls and all twelve existing closure
+support tests pass (**19/19**); the two intentional end-to-end abort regressions
+remain red. The next step is to stage closure/ref-cell/object support type
+descriptions via authenticated prepared-scope descriptors, keeping the stable
+batch keys/ordinals and canonical type-cell aliases. Merely adding provisional
+descriptions without changing the batch cache's immediate-publication behavior
+would not fix the leak: `closureSupportBatchPlanned`, `refCellSupportBatchPlanned`
+and `objectSupportBatchPlanned` also govern repeated requests and role expansion.
+Original source initialization remains last measured **8/10**, factory **0/3**;
+this refactoring alone claims no additional TypeScript test gain.
+Source typecheck, scoped lint/format, whitespace and LOC/function gates pass
+(`.tmp/ts5-ir-support-type-description-typecheck.log`, `-loc.log`, `-func.log`).
+All processes from this type-description checkpoint are terminal; changes
+remain local and unpublished.
+
+Undefined local/capture checkpoint completed (2026-09-08, local): closure,
+ref-cell and object support preparation now has a provisional mode. Candidate
+type descriptions and canonical type-cell aliases stay in the registry until
+an authenticated `PreparedSupportTypeDescriptor` stages exactly the component's
+referenced types through the existing prepared planning overlay. Committing
+publishes required ownership; abort consumes the descriptor without publishing
+it. Default immediate preparation remains available, including promotion of a
+previously described cached layout without changing its identity. Batch key
+ordering and refusal of later role/layout expansion remain unchanged.
+
+The unchanged source initialization/capture matrix now passes **10/10** through
+IR in GC/standalone, and both forced-abort controls pass their callable/type
+ownership checks and execute the fallback result 12 (**2/2**). Together with
+the closure-support and returned-table tests, this run passes **35/35**
+(`.tmp/ts5-ir-support-type-provisional-first.log`). A separate regression matrix
+passes **79/79 across seven files** (`.tmp/ts5-ir-uninitialized-final-controls.log`).
+Descriptor controls additionally cover commit/abort, a disjoint scope abort
+preserving an already committed shared type, default promotion after a
+provisional request, and stale type-shape rejection; the full description
+control file passes **10/10** (`.tmp/ts5-ir-support-type-descriptor-final.log`).
+Source typecheck, scoped lint/format, whitespace and LOC/function gates pass.
+
+Original factory remeasurement (`.tmp/ts5-ir-uninitialized-full-factory.log`):
+**0/3 Wasm vs 3/3 native**, valid 62,956,028-byte standalone module, zero imports,
+154,866 ms; 661 ownership rows, zero IR emissions, 633 legacy emissions.
+`createParenthesizerRules` advances from `vardecl-noinit:VariableDeclaration`
+to **`unattributed-arm:helper-internal`**. `createNodeFactory` remains at
+`expr-ident-not-in-scope:Identifier`. The three runtime failures are unchanged.
+The selected adapter still passes **25/25 with 251 upstream files deferred**
+(`.tmp/ts5-ir-uninitialized-projected.log`). Thus the source initializer gate
+is removed, not the full factory failure. Next give the helper-internal
+selector refusal an exact diagnostic and implement the actual original-source
+requirement it identifies; do not infer local Map/recursive Node support from
+the now-green scalar capture controls. No completion claim for the full goal.
+Oracle and coercion ratchets also pass (`.tmp/ts5-ir-uninitialized-oracle.log`,
+`.tmp/ts5-ir-uninitialized-coercions.log`), without new checker allowances or
+baseline edits. All processes from this checkpoint are terminal. The changes
+remain local pending publication review; PR #5753 has not been updated by this
+checkpoint.
+
+Original nested-helper attribution (2026-09-08): the nested-function selector
+now records exact first-wins labels for missing/unsupported return types,
+parameter shapes/types, modifiers, names and body failures. It does not change
+admission or generated code. Two focused tests prove those labels, preserve a
+deeper expression failure, and compare claims/reasons with diagnostics off.
+The older diagnostic control had stale expectations: the safe `for (var ...)`
+fixture is already admitted by HEAD's var proof, and the Promise fixture now
+fails at typed constructor capability rather than generic new-expression
+shape. Both fixtures remain, with current positive-admission/exact-reason
+assertions. Combined diagnostic controls pass **4/4**
+(`.tmp/ts5-ir-nested-shape-controls-verified.log`).
+
+The original factory retry confirms
+`createParenthesizerRules`: **`nested-function-return-type-missing:FunctionDeclaration`**
+(`.tmp/ts5-ir-nested-shape-full-factory.log`). The first source helper,
+`getParenthesizeLeftSideOfBinaryForOperator`, has an inferred return type and
+returns a callback cached in a local Map. Both `isPhase1NestedFunc` and
+`lowerNestedFunctionDeclaration` currently require an explicit return annotation;
+address-taken declarations also reach `lowerClosureExpression`'s explicit
+annotation gate. Matching signature inference must cover selector and both
+lowering paths, retain canonical callable/Node representations, and not invent
+a numeric signature for this higher-order return. Full factory remains **0/3
+Wasm vs 3/3 native**, valid zero-import 62,956,028 bytes, 146,541 ms, 661 ledger
+rows with zero IR bodies. `createNodeFactory` remains out-of-scope identifier.
+Publication preparation: PR #5753 was verified open, ready and not queued at
+head `a38afaea15187581c98e7a6c3cb4e8f962acb0b0`; no full-goal completion claim.
 
 Final publication-query migration in progress: indexed record element facts now
 come from TypeOracle (property names, scalar/union facts and optionality; no

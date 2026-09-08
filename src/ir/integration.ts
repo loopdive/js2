@@ -46,6 +46,7 @@ import {
   standaloneClockCapabilityImport,
 } from "../codegen/standalone-clock-capability.js";
 import { makeCalendarIrSelectionSupport } from "./calendar-selection-support.js";
+import { ensureIrUndefinedValueProvider, IR_UNDEFINED_VALUE_FN } from "./undefined-value-provider.js";
 import { makeIrStandaloneDomCapabilityPlan, type IrStandaloneDomCapabilityPlan } from "./dom-capability.js";
 import {
   projectIrBackendTargetProfile,
@@ -4897,6 +4898,21 @@ export function compileIrPathFunctions(
   // temporary type must be a valid function type for an owner withdrawal.
   const unsettledLateCallableUnits = new Set<IrUnitId>();
   for (const entry of healthyForLower) {
+    const allocated = ctx.irUnitFuncMap.get(entry.artifactUnitId);
+    if (
+      entry.synthesized &&
+      allocated &&
+      ctx.programAbiSession &&
+      !ctx.programAbiSession.hasPlan(irUnitCallableBindingId(entry.artifactUnitId)) &&
+      ctx.programAbiSourceCallables?.functionForUnit(entry.artifactUnitId) !== allocated
+    ) {
+      // An aborted early preparation can leave an allocated support slot, but
+      // it has not published ownership. Reusing it must retain the same
+      // deferred-binding rule as a fresh late slot below.
+      unsettledLateCallableUnits.add(entry.artifactUnitId);
+    }
+  }
+  for (const entry of healthyForLower) {
     // Top-level (non-synthesized) functions already have a funcIdx
     // allocated by `compileDeclarations`. Skip them.
     if (originalArtifactUnitIds.has(entry.artifactUnitId) && !entry.synthesized) continue;
@@ -9045,6 +9061,7 @@ function preregisterDynamicSupport(
   // (#3526 F3-S3) The frozen `%Function.prototype%` call arm, read ONCE.
   const functionPrototypeCallArm = preparedFunctionPrototypeCallProvider(prepared);
   let usesFunctionPrototypeCall = false;
+  let usesUndefinedValue = false;
   const nativeSemanticProviders = ctx.targetProfile.semanticProviders === "native-first";
   let usesDynamicOps = false;
   let usesEq = false;
@@ -9136,6 +9153,9 @@ function preregisterDynamicSupport(
           }
           if (i.kind === "call" && i.target.binding.kind === "runtime") {
             switch (i.target.binding.symbol) {
+              case IR_UNDEFINED_VALUE_FN:
+                usesUndefinedValue = true;
+                break;
               case "__new_plain_object":
               case "__extern_set":
               case "__to_primitive":
@@ -9228,6 +9248,11 @@ function preregisterDynamicSupport(
   }
   admitFunctionPrototypeCall(ctx, usesFunctionPrototypeCall, functionPrototypeCallArm);
   if (usesRuntimeUnboxNumber) addUnionImports(ctx);
+  if (usesUndefinedValue) {
+    ensureIrUndefinedValueProvider(ctx);
+    flushLateImportShifts(ctx, null);
+    observeNativeRuntimeProvider(ctx, IR_UNDEFINED_VALUE_FN);
+  }
   // (#4461) Reserve the native undefined predicate and the `$Map` adapters
   // BEFORE Phase 3. `ensureObjectRuntime` / `ensureIrNativeMapAdapters` are
   // both idempotent and both may add an import batch, so they flush here where

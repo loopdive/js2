@@ -905,8 +905,15 @@ export class IrFunctionBuilder {
    * unwraps it back to the ValType at lowering time.
    */
   emitRefCellNew(value: IrValueId, inner: ValType): IrValueId {
+    return this.emitTypedRefCellNew(value, irVal(inner));
+  }
+
+  /** Keep logical payload types until the backend resolves their storage carrier. */
+  emitTypedRefCellNew(value: IrValueId, inner: IrType): IrValueId {
+    if (!irTypeEquals(this.typeOf(value), inner))
+      throw new Error("refcell initializer must match its logical payload type");
     const result = this.allocator.fresh();
-    const resultType: IrType = { kind: "boxed", inner: irVal(inner) };
+    const resultType: IrType = { kind: "boxed", inner };
     this.valueTypes.set(result, resultType);
     const alloc = this.allocId("refcell", resultType);
     this.pushInstr({

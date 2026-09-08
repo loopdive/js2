@@ -38,6 +38,7 @@
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { isErasedLocalTypeDeclaration, orderTailFunctionDeclarations } from "./tail-function-declarations.js";
+import { IR_UNDEFINED_VALUE_FN } from "./undefined-value-provider.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
@@ -3386,10 +3387,8 @@ function lowerVarDecl(stmt: ts.VariableStatement, cx: LowerCtx): void {
       demoteToLegacy("body-shape-rejected", `ir/from-ast: redeclaration of '${name}' in ${cx.funcName}`);
     }
     if (!d.initializer) {
-      demoteToLegacy(
-        "body-shape-rejected",
-        `ir/from-ast: Phase 1 requires an initializer for '${name}' in ${cx.funcName}`,
-      );
+      lowerUninitializedLocal(d, name, cx);
+      continue;
     }
     if (
       ts.isClassExpression(d.initializer) &&
@@ -3638,6 +3637,31 @@ function bindSharedScalarCapture(name: string, value: IrValueId, type: IrType, c
   const cell = cx.builder.emitRefCellNew(value, scalar);
   cx.scope.set(name, { kind: "local", value: cell, type: { kind: "boxed", inner: type } });
   return true;
+}
+
+/** An uninitialized lexical local starts as undefined, never numeric zero/null. */
+function lowerUninitializedLocal(declaration: ts.VariableDeclaration, name: string, cx: LowerCtx): void {
+  const list = declaration.parent;
+  if (!ts.isVariableDeclarationList(list) || list.flags & ts.NodeFlags.Const || ts.isSourceFile(list.parent.parent)) {
+    demoteToLegacy(
+      "body-shape-rejected",
+      `ir/from-ast: uninitialized declaration is not a mutable local (${cx.funcName})`,
+    );
+  }
+  const raw = cx.builder.emitCall(irRuntimeFuncRef(IR_UNDEFINED_VALUE_FN), [], irVal({ kind: "externref" }));
+  if (raw === null) throw new Error("undefined producer returned void");
+  const type = irDynamic();
+  const value = cx.builder.emitBox(raw, type);
+  if (declarationHasNestedCapture(declaration, cx.checker)) {
+    const cell = cx.builder.emitTypedRefCellNew(value, type);
+    cx.scope.set(name, { kind: "local", value: cell, type: { kind: "boxed", inner: type } });
+    return;
+  }
+  const representation = resolveIrSlotRepresentation(type, cx.resolver, cx.funcName);
+  if (!representation) demoteToLegacy("type-resolution-unsupported", "uninitialized local needs a dynamic carrier");
+  const slotIndex = cx.builder.declareSlot(name, representation.storageType);
+  cx.builder.emitSlotWrite(slotIndex, value);
+  cx.scope.set(name, { kind: "slot", slotIndex, type: representation.bindingType, asType: type });
 }
 
 // ---------------------------------------------------------------------------
@@ -9663,6 +9687,14 @@ function coerceReturnValue(value: IrValueId, cx: LowerCtx, sourceExpression?: ts
   // now they lower like legacy.
   if (declared && declared.kind === "val" && declared.val.kind === "f64") {
     const actualT = cx.builder.typeOf(value);
+    if (
+      actualT.kind === "dynamic" &&
+      sourceExpression &&
+      cx.checker &&
+      makeIrPrimitiveExpressionClassifier(cx.checker)(sourceExpression) === "number"
+    ) {
+      return cx.builder.emitDynToNumber(value);
+    }
     const actualV = asVal(actualT);
     if (actualV && actualV.kind === "externref") {
       // (#4461 / #3526 F1-S1) Both lanes own a `__unbox_number` with the same
@@ -11701,7 +11733,10 @@ function lowerIdentifierAssignment(id: ts.Identifier, rhs: ts.Expression, cx: Lo
     return;
   }
   if (binding.kind === "local" && binding.type.kind === "boxed") {
-    const newValue = lowerExpr(rhs, cx, binding.type.inner);
+    let newValue = lowerExpr(rhs, cx, binding.type.inner);
+    if (binding.type.inner.kind === "dynamic" && cx.builder.typeOf(newValue).kind !== "dynamic") {
+      newValue = boxConcreteToDynamic(newValue, cx.builder.typeOf(newValue), rhs, cx) ?? newValue;
+    }
     const newType = cx.builder.typeOf(newValue);
     if (!irTypeAssignable(newType, binding.type.inner)) {
       demoteToLegacy(
@@ -13007,7 +13042,13 @@ function expressionProducesDynamic(expr: ts.Expression, cx: LowerCtx): boolean {
   if (ts.isIdentifier(candidate)) {
     const binding = cx.scope.get(candidate.text);
     if (!binding) return false;
-    if (binding.kind === "local" || binding.kind === "moduleGlobal") return binding.type.kind === "dynamic";
+    if (binding.kind === "local") {
+      // Identifier reads dereference captured cells. Dispatch on the payload,
+      // not the cell's storage type, so '+' retains runtime JS semantics.
+      const type = binding.type.kind === "boxed" ? binding.type.inner : binding.type;
+      return type.kind === "dynamic";
+    }
+    if (binding.kind === "moduleGlobal") return binding.type.kind === "dynamic";
     if (binding.kind === "slot") return (binding.asType ?? binding.type).kind === "dynamic";
     return false;
   }
@@ -14720,20 +14761,20 @@ function lowerClosureExpressionWithSignature(
     }
     if (cap.mutable) {
       const innerVal = asVal(cap.type);
-      if (!innerVal) {
+      if (!innerVal && cap.type.kind !== "dynamic") {
         demoteToLegacy(
           "body-shape-rejected",
           `ir/from-ast: mutable closure capture "${cap.name}" must be a primitive (${cx.funcName})`,
         );
       }
       // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
-      const fieldType: IrType = { kind: "boxed", inner: irVal(innerVal) };
+      const fieldType: IrType = { kind: "boxed", inner: cap.type };
       captureFieldTypes.push(fieldType);
       const live = cx.scope.get(cap.name);
       if (live?.kind === "local" && live.type.kind === "boxed") {
         captureArgs.push(live.value);
       } else if (live?.kind === "local") {
-        const cell = cx.builder.emitRefCellNew(live.value, innerVal);
+        const cell = cx.builder.emitTypedRefCellNew(live.value, cap.type);
         cx.scope.set(cap.name, { kind: "local", value: cell, type: fieldType });
         captureArgs.push(cell);
       } else {
@@ -14861,7 +14902,8 @@ function liftNestedFunction(
   for (const cap of captures) {
     const innerVal = asVal(cap.type);
     // #1926 — boxed.inner is an IrType; wrap the scalar ValType with irVal.
-    const paramType: IrType = cap.mutable && innerVal ? { kind: "boxed", inner: irVal(innerVal) } : cap.type;
+    const paramType: IrType =
+      cap.mutable && (innerVal || cap.type.kind === "dynamic") ? { kind: "boxed", inner: cap.type } : cap.type;
     const v = builder.addParam(cap.name, paramType);
     scope.set(cap.name, { kind: "local", value: v, type: paramType });
   }

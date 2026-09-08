@@ -11,6 +11,7 @@ import type {
 } from "../codegen/program-abi-type-planning.js";
 import { addFuncType } from "../codegen/registry/types.js";
 import { objectFieldsHashKey } from "./object-method-key.js";
+import { resolveIrDynamicCarrierType } from "../codegen/any-helpers.js";
 import { irTypeBindingKey } from "./abi-bindings.js";
 import { orderedObjectFields } from "./object-layout.js";
 import type { IrUnitId } from "./identity.js";
@@ -86,6 +87,7 @@ export function lowerPreparedClosureSupportType(
   closures?: PreparedClosureRegistry,
 ): ValType {
   if (type.kind === "val" && type.val.kind !== "ref" && type.val.kind !== "ref_null") return type.val;
+  if (type.kind === "dynamic") return resolveIrDynamicCarrierType(ctx);
   if (type.kind === "extern" || type.kind === "callable") return { kind: "externref" };
   if (type.kind === "string" && type.carrierRef && ctx.programAbiSession) {
     const ref = type.carrierRef;
@@ -343,7 +345,7 @@ export function prepareDependencyCompleteClosureSupport(
       );
     }
     const requests = [...objectTypes].map(([objectType, structType]) => ({ objectType, structType }));
-    const support = programAbiTypes.prepareObjectSupportTypes(requests);
+    const support = programAbiTypes.prepareObjectSupportTypes(requests, true);
     support.forEach((entry, index) => typeRefs.set(requests[index]!.objectType, [entry.objectTypeRef]));
   }
 
@@ -479,7 +481,10 @@ export function prepareDependencyCompleteClosureSupport(
         "prepared closure support requires one canonical Program ABI type registry",
       );
     }
-    const layouts = programAbiTypes.prepareClosureSupportLayouts(pending.map(({ request }) => request));
+    const layouts = programAbiTypes.prepareClosureSupportLayouts(
+      pending.map(({ request }) => request),
+      true,
+    );
     if (layouts.length !== pending.length) {
       throw new IrInvariantError(
         "selection-preparation-mismatch",
@@ -502,7 +507,10 @@ export function prepareDependencyCompleteClosureSupport(
         "prepared ref-cell support requires one canonical Program ABI type registry",
       );
     }
-    const support = programAbiTypes.prepareRefCellSupportTypes(pendingRefCells.map(({ request }) => request));
+    const support = programAbiTypes.prepareRefCellSupportTypes(
+      pendingRefCells.map(({ request }) => request),
+      true,
+    );
     support.forEach((entry, index) => pendingRefCells[index]!.publish(Object.freeze([entry.cellTypeRef])));
   }
   return Object.freeze({ typeRefs, instructionRefs, functionRefs });
