@@ -1,8 +1,13 @@
-import { expect, it } from "vitest";
+import { beforeAll, expect, it } from "vitest";
 import { compile } from "../src/index.js";
 
-// Known integration gap: independent graphs still own separate Symbol registries.
-it.fails("shares registered Symbols without merging fresh identities between linked graphs", async () => {
+type Exports = Record<string, (...args: any[]) => any>;
+let context: Exports;
+let a: Exports;
+let b: Exports;
+
+// Setup errors must fail the suite, never satisfy the expected identity failure.
+beforeAll(async () => {
   const options = {
     target: "standalone" as const,
     platform: "deno" as const,
@@ -30,13 +35,13 @@ it.fails("shares registered Symbols without merging fresh identities between lin
     e.__module_init?.();
     return e;
   }
-  const context = await instantiate(`
+  context = await instantiate(`
     export function __v8x_context_global_this():any {return globalThis;}
     export function __v8x_context_call(f:any,r:any,a:any):any{return f.apply(r,a);}
     export function same(a:any,b:any):number{return a===b?1:0;}
   `);
   const imports = { "v8x:context": context } as WebAssembly.Imports;
-  const a = await instantiate(
+  a = await instantiate(
     `
     Symbol.for('unrelated-first-allocation');
     export function registered():any {return Symbol.for('shared');}
@@ -46,7 +51,7 @@ it.fails("shares registered Symbols without merging fresh identities between lin
     true,
     imports,
   );
-  const b = await instantiate(
+  b = await instantiate(
     `
     export function registered():any {return Symbol.for('shared');}
     export function fresh():any {return Symbol('same');}
@@ -56,7 +61,17 @@ it.fails("shares registered Symbols without merging fresh identities between lin
     imports,
   );
   a.publish();
+});
+
+it("preserves published Symbol identity across linked graphs", () => {
   expect(context.same(a.registered(), b.published())).toBe(1);
+});
+
+it("does not merge fresh Symbol identities between linked graphs", () => {
   expect(context.same(a.fresh(), b.fresh())).toBe(0);
+});
+
+// Known integration gap: independent graphs still own separate Symbol registries.
+it.fails("shares registered Symbol identity between linked graphs", () => {
   expect(context.same(a.registered(), b.registered())).toBe(1);
 });
