@@ -66,6 +66,7 @@ import type { Instr, TypeDef, ValType, WasmFunction } from "../ir/types.js";
 import { addFuncType } from "./registry/types.js";
 import type { CodegenContext } from "./context/types.js";
 import { definedFuncAt, mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
+import { standaloneLinkBoundaryPeerIndex } from "./standalone-link-boundary.js"; // (#5383 S2f R12)
 import { RUNTIME_EVAL_INTERP_CALLBACK_BRAND_A, RUNTIME_EVAL_INTERP_CALLBACK_BRAND_B } from "./runtime-eval-boundary.js";
 
 const EXTERNREF: ValType = { kind: "externref" };
@@ -263,8 +264,15 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
     const objVecPushIdx = ctx.funcMap.get("__objvec_push");
     const proxyTypeIdx = ctx.objectRuntimeTypes?.proxyTypeIdx;
     const proxyConstructDispatchIdx = ctx.funcMap.get("__proxy_construct_dispatch");
-    const boundaryCallableKindIdx = ctx.funcMap.get("__boundary_object_callable_kind");
-    const boundaryConstructIdx = ctx.funcMap.get("__boundary_object_construct");
+    // (#5383 S2f R12) The standalone wasm→wasm peer publishes the SAME two
+    // terminals the JS-host lane imports, so a provider-owned class value
+    // reaches this already-correct arm instead of falling into the ordinary
+    // tail, where `Object.create(<foreign>.prototype)` and a module-local
+    // closure dispatch cannot see the peer's constructor at all.
+    const boundaryCallableKindIdx =
+      ctx.funcMap.get("__boundary_object_callable_kind") ?? standaloneLinkBoundaryPeerIndex(ctx, "callableKind");
+    const boundaryConstructIdx =
+      ctx.funcMap.get("__boundary_object_construct") ?? standaloneLinkBoundaryPeerIndex(ctx, "construct");
     const protoKeyInstrs = ctx.nativeConstructProtoKey.get(arity);
     if (externGetIdx === undefined || objectCreateIdx === undefined || protoKeyInstrs === undefined) {
       driver.body = [{ op: "ref.null.extern" }];
