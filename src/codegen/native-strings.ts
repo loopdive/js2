@@ -7,6 +7,7 @@
  */
 import type { Instr, ValType, WasmFunction } from "../ir/types.js";
 import { ensureAnyValueType } from "./any-helpers.js";
+import { emitToString } from "./coercion-engine.js";
 import { getArgumentsVecTypeIdx } from "./arguments-carrier-brand.js";
 import { ensureDateAnyToStringHelper } from "./date-any-to-string.js"; // (#4491 T4-B)
 import { emitNativeHtmlWrapperHelpers } from "./html-wrapper-native.js";
@@ -2532,8 +2533,8 @@ export function ensureStandaloneStdoutSink(ctx: CodegenContext): void {
  *
  * Lives in native-strings.ts (the coercion-engine-sanctioned owner of
  * `__any_to_string`) so the #2108 coercion-drift gate does not count this as a
- * new hand-rolled coercion site outside the engine. Bare scalars (f64/i32/i64 — a
- * number/boolean passed directly, never a marker) are dropped best-effort.
+ * new hand-rolled coercion site outside the engine. Primitive scalars use the
+ * same native formatter and boolean branding as other string conversions.
  */
 export function emitStandaloneStdoutAppendValue(
   ctx: CodegenContext,
@@ -2546,7 +2547,16 @@ export function emitStandaloneStdoutAppendValue(
     return;
   }
   if (valType === null) return; // void arg — nothing was pushed
-  if (valType.kind === "externref") {
+  if (valType.kind === "f64" || valType.kind === "i32" || valType.kind === "i64") {
+    // (#5392) A legacy body must preserve ordinary console arguments too, even when
+    // IR selection declines the module initializer. Use the runtime carrier's
+    // boolean brand, never an asserted checker type, to choose the rendering.
+    if (valType.kind !== "i32" || !valType.boolean) {
+      emitNativeNumberFormat(ctx, new Set(["number_toString"]));
+      flushLateImportShifts(ctx, fctx);
+    }
+    emitToString(ctx, fctx, valType, { kind: "unknown" }, "string");
+  } else if (valType.kind === "externref") {
     // externref is a separate hierarchy from anyref — convert first.
     fctx.body.push({ op: "any.convert_extern" });
   } else if (valType.kind !== "ref" && valType.kind !== "ref_null") {

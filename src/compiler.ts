@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { collectUnsafeTypeAssumptions } from "./compiler/semantic-safety.js";
 import { ts } from "./ts-api.js";
 import {
   analyzeFiles,
@@ -885,6 +886,8 @@ function buildCodegenOptions(
 
 /** #1927 — the shared pipeline core. See {@link runPipeline}. */
 interface PipelineInput {
+  /** Map new source-anchored diagnostics through single-source preprocessing. */
+  semanticDiagnosticLocation?: (node: ts.Node) => { line: number; column: number; file: string };
   /** Per-file user sources for early-error / safe / hardened passes. */
   userSourceFiles: ts.SourceFile[];
   /** The AST surface codegen + dts/wit consume (single = the file; multi = entry). */
@@ -994,6 +997,25 @@ function runPipeline(input: PipelineInput): CompileResult {
   // driver gated each pass only on that pass's fresh output; gating on the whole
   // array here would turn every tolerated non-hard TS error into a hard failure.
   const hasNewError = (added: { severity: string }[]) => added.some((e) => e.severity !== "warning");
+
+  // TypeScript intentionally admits values outside inferred/declared types.
+  // Refuse known lowering gaps rather than silently coerce those values.
+  const semanticErrors: CompileError[] = collectUnsafeTypeAssumptions(
+    entryAst.checker,
+    userSourceFiles,
+    targetProfile.target === "standalone",
+  ).map(({ node, id, message }) => {
+    const sf = node.getSourceFile();
+    const position = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+    const location = input.semanticDiagnosticLocation?.(node) ?? {
+      line: position.line + 1,
+      column: position.character + 1,
+      file: sf.fileName,
+    };
+    return { ...location, severity: "error", message: `[${id}] ${message}` };
+  });
+  errors.push(...semanticErrors);
+  if (hasNewError(semanticErrors)) return failResult(errors);
 
   // Step 1a: ES early-error detection — catch spec syntax errors TS misses, on
   // EVERY user source file (#1931). allowJs dependency files are skipped (their
@@ -1761,6 +1783,22 @@ export function compileSourceSync(
     ...(irInventory ? { irInventoryOptions: irInventory } : {}),
     sourcesContent,
     diagnosticAnchor: ast.sourceFile,
+    semanticDiagnosticLocation: (node) => {
+      const sf = node.getSourceFile();
+      const position = remapDiagnosticPosition(
+        {
+          file: sf,
+          start: node.getStart(sf),
+          length: node.getWidth(sf),
+          category: ts.DiagnosticCategory.Error,
+          code: 0,
+          messageText: "",
+        },
+        source,
+        positionMap,
+      );
+      return { line: position.line + 1, column: position.character + 1, file: effectiveFileName };
+    },
     // #1958 — single-source: the lone source is the entry, so always run ES
     // early-error detection (the `eval` host shim compiles with allowJs:true and
     // relies on it). The multi paths keep the allowJs-dependency skip.
