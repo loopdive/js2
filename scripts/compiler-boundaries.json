@@ -8108,6 +8108,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/async-prepare-ir.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-runtime",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the complete type closure of IR-only async preparation from mixed identity, runtime-policy and compatibility contracts before placement in ir-runtime."
+    },
+    {
       "path": "src/ir/async-prepare.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -9004,6 +9012,14 @@
       "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
     },
     {
+      "path": "src/ir/passes/gvn-core.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-passes",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the complete type closure of GVN and its dominance, effects and operand-renaming dependencies before placement in ir-passes."
+    },
+    {
       "path": "src/ir/passes/gvn.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
@@ -9234,6 +9250,14 @@
       "destination": "backend-wasmgc",
       "owner": "3518-coordinator",
       "nextBoundary": "Split standalone WasmGC acceptance/emission into backend/wasmgc/program; replace legacy CodegenContext/physical-registry dependencies with the approved Wasm physical reservation boundary. Preserve deferred host/linear routes outside that clean transaction."
+    },
+    {
+      "path": "src/ir/program-middleend-ir.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "ir-program",
+      "owner": "3518-coordinator",
+      "nextBoundary": "Separate the complete type closure of program optimization, producer population/provenance and allocation/analysis contracts before placement in ir-program."
     },
     {
       "path": "src/ir/program-middleend.ts",

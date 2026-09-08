@@ -156,6 +156,56 @@ The passing extraction verdict is not the failing retirement verdict.
 All type backedges, two strict unknown imports, the merge hold and complete
 retirement criteria remain in force. No new clean layer is certified.
 
+### B inventory correction and next A handoff
+
+The B source checkpoint is published at `f10ce7aeefd8c5d2bc1e2495a0339ef66006430a`
+on non-draft held PR #5745. All 14 changed root suites and normal commit/push
+hooks passed, including the final test-only `escapeAnalysis` namespace rename.
+CI quality then correctly rejected three new modules omitted from the exact
+compiler inventory. Job `101941618517` in run `34188522025` reports three
+`unclassified-module` and eight `unclassified-target` errors. The unchanged
+local checkpoint reproduces all eleven errors against the same immutable main
+base `16498efb481cb022ee5c4dcc9bb137b6d4c91a50`.
+
+The follow-up adds only those three records in `scripts/compiler-boundaries.json`
+as **unmigrated / mixed-needs-split**, with destinations `ir-runtime` (async),
+`ir-passes` (GVN) and `ir-program` (middle-end). Removing the three additions
+restores every prior policy field and record. No active layer, entry floor,
+evidence denominator, enforcement code, workflow or exemption changes.
+
+The actual detector now passes inventory mode (exit 0) and still fails complete
+mode (exit 1): **1,259 modules, 18 clean, five compatibility adapters, 1,236
+unmigrated, four unknown edges, zero inventory errors**. Classification restores
+the eight previously rejected incoming edges, making 9,811 resolved edges;
+all older source-reference rows remain unchanged. Receipts:
+`.tmp/typed-B-boundary-before-inventory.json`,
+`.tmp/typed-B-boundary-after-inventory.json` and
+`.tmp/typed-B-boundary-after-complete.json`. The Linux CI artifact is preserved
+under `.tmp/ci-B-boundary-34188522025/`; external dependency resolution paths
+differ because local worktrees share `node_modules`, not because source moved.
+All **42/42** existing boundary-detector controls pass, zero skipped, receipt
+`.tmp/typed-B-boundary-controls.json`. No detector test or enforcement code changed.
+
+A remains a separate uncommitted worker checkpoint at
+`/private/tmp/js2-3518-typed-preparation-source-20260908`, base `6ff05f6b` plus
+the exact ten B production files. Its current frozen manifest is
+`.tmp/typed-preparation-A-frozen-manifest-20260908.json` (eight production paths,
+four suites, three helpers). High's first review found incomplete global-owner
+joins, pre-admission getter reads and prototype-erased Date data loss. The
+repaired files pass **66/66** focused tests, **26/26** legacy compatibility tests
+and typecheck; High rechecked all 15 blobs and found no remaining concrete
+blocker within that repaired scope. The original lexical/TDZ and native async
+refusals remain counted. No independent historical artifact comparison or
+coordinator integration has yet accepted A.
+
+High approval is explicitly conditional on the pending input-contract decision:
+trusted compiler/decoder-produced data, or a broader authenticated-object
+construction design. Portable reflection is not universal hidden-state/Proxy
+authentication. The concrete Date rejection is not a claim that a finite
+blacklist establishes such authentication. No Node-specific classifier was added.
+After that decision, reconcile A's three new inventory records, independently
+compare historical artifacts, run integrated gates and publish a new checkpoint.
+
 Freeze the A/B contract below. The optional third counter argument is intentional: it preserves partial diagnostics when the **original exception escapes unchanged**, without callbacks or global effects in typed preparation.
 
 ### B-owned exports

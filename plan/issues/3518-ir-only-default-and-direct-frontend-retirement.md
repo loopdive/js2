@@ -152,6 +152,14 @@ messages on the unchanged prerequisite (11/15 in the two failing files); they
 remain documented, not waived. A's detached-input preparation and fresh-process
 acceptance are a separate pending checkpoint. This does not complete retirement.
 
+The B code checkpoint is `f10ce7aeef`. Its CI found three missing exact-inventory
+records; the follow-up records them as unmigrated debt, preserving every prior
+policy entry and gate. Inventory mode passes with all 1,259 modules counted;
+complete mode still fails. A's admission repairs now pass 66/66 focused and
+26/26 legacy controls with conditional High approval. Publication awaits the
+trusted-data versus authenticated-object contract decision and independent
+integration/artifact evidence; the linked plan records the exact frozen handoff.
+
 ### Complete semantic nodes checkpoint — structural checkpoint, 2026-09-08
 
 Published non-draft held PR 5744 now includes caller-proof follow-up
