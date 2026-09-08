@@ -1,3 +1,4 @@
+import { errorValueConstructArms } from "./registry/error-types.js";
 import { ordinaryConstructCall } from "./ordinary-new-target.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 /**
@@ -295,7 +296,7 @@ export function fillNativeConstructDrivers(ctx: CodegenContext): void {
       return instrs;
     };
 
-    const body: Instr[] = [];
+    const body: Instr[] = errorValueConstructArms(ctx, arity);
 
     // (#5196 R3-0) `Proxy` read as a VALUE — `var OProxy =
     // $262.createRealm().global.Proxy; new OProxy(t, h)` — materialises the
