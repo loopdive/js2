@@ -1,10 +1,10 @@
 {
   "id": "5383",
-  "assignee": "ttraenkler/dev-5383-s2b",
-  "requested_by": "ttraenkler/dev-5383-s2b",
+  "assignee": "ttraenkler/dev-5383-s2d",
+  "requested_by": "ttraenkler/dev-5383-s2d",
   "status": "in-progress",
-  "branch": "issue-5383-standalone-temporal-s2b",
-  "claimed_at": "2026-09-08T14:48:27Z",
-  "updated_at": "2026-09-08T14:48:27Z",
-  "write_id": "2126-cvp6tzxu"
+  "branch": "issue-5383-standalone-temporal-s2d",
+  "claimed_at": "2026-09-08T18:10:21Z",
+  "updated_at": "2026-09-08T18:10:21Z",
+  "write_id": "15609-jviss7h9"
 }
