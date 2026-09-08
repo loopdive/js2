@@ -687,6 +687,70 @@ runtime controls, richer callable signatures/recursive source carriers, then
 real factory ownership and original-assertion validation. Do not infer full
 TypeScript factory support from these primitive table witnesses.
 
+Next validation pass (2026-09-08, in progress): rerun the complete factory
+source graph with IR ownership reporting on the published callable-field
+checkpoint, retaining all three original assertions. Add an IR-enabled versus
+disabled receiver-sensitive table control before expanding callable admission.
+The complete run remains 0/3 Wasm versus 3/3 native (62,956,028 bytes,
+157,595 ms, valid, zero imports; `.tmp/ts5-ir-callable-full-factory.log`).
+Its ownership field was absent: the full-source unit driver uses
+`upstream-suite-compile-worker.mjs`, not the build-probe worker that already
+supports the opt-in flag. Wire the same existing compiler ledger into this
+driver, preserve null for unavailable data, and verify it with an actually
+IR-emitted positive control before rerunning the graph. No acceptance changes.
+
+Completed ledger retry: **661 rows, zero IR-emitted rows, 633 legacy-emitted
+rows**. The 607-row measurement above used a different triage entrypoint and
+is not the denominator for this original-unit graph. `memoize` and
+`memoizeOne` reject generic parameters; `createParenthesizerRules` and
+`createNodeFactory` reject body shape, all at selection. The complete factory
+again measures **0/3 Wasm vs 3/3 native**, valid 62,956,028 bytes, zero imports,
+155,936 ms (`.tmp/ts5-ir-source-ledger-factory.log`). Do not infer actual-source
+IR coverage from the primitive table controls. Next obtain the current precise
+shape-rejection arms for these original functions, then close their source
+carrier/signature preparation gaps rather than adding more primitive-only
+witnesses or another direct-emission workaround.
+
+The driver now requests/preserves the existing ledger in both source/project
+compilation modes only when opted in. Unavailable data stays null; default
+reports remain unchanged. An actual `upstreamTestCount` IR emission proves the
+project-worker reporting path. Worker and receiver controls pass **14/14**
+(`.tmp/ts5-ir-source-ledger-controls.log`); runner/protocol controls pass
+**25/25** (`.tmp/ts5-ir-source-ledger-protocol.log`). The receiver-sensitive
+table returns 42 with IR enabled and disabled; its owner safely declines IR.
+Formatting, scoped lint and whitespace checks pass. All processes are terminal.
+
+Precise original-source selection pass (2026-09-08, in progress): run the
+same factory driver with both the verified ownership ledger and
+`JS2WASM_IR_SHAPE_DIAG=1`. Check the actual first refusal before changing
+local interface erasure, uninitialized cache variables, or closure annotations;
+source-text candidates alone do not establish which transformed node is seen
+by the production selector.
+The measured first refusal is `nontail-unhandled-stmt:InterfaceDeclaration`
+for `createParenthesizerRules`; `createNodeFactory` first reports
+`expr-ident-not-in-scope:Identifier` (661 rows, 149,491 ms;
+`.tmp/ts5-ir-original-shape-factory.log`). Implement matched IR erasure for
+local interface/type-alias declarations without introducing value bindings or
+moving executable statements, then remeasure the next original-source gate.
+Implemented shared erasure before declaration-suffix ordering, plus matched
+selector/body-lowering no-ops for nested blocks. Only interface/type-alias
+statements are erased; enums and executable trailing statements remain in
+place. Original runtime node identities are retained and normalization is
+idempotent. The standalone control failed IR ownership before the fix and now
+returns 42 through IR with no direct body; it also checks a type alias sharing
+a runtime binding name. Initial focused controls pass 18/18. A full-source
+retry is in progress in `.tmp/ts5-ir-type-erasure-factory.log`.
+Retry completed: the original `createParenthesizerRules` now advances to
+`vardecl-noinit:VariableDeclaration`, confirming removal of its interface gate.
+`createNodeFactory` remains at `expr-ident-not-in-scope:Identifier`. Still
+**0/3 Wasm vs 3/3 native**, 661 rows with zero IR emissions, valid 62,956,028
+bytes, zero imports, 159,070 ms. Next represent the initially undefined cache
+locals and their later captured Map writes correctly in IR; do not substitute
+numeric zero or erase their initialization semantics. Final typecheck,
+lint/format, LOC/function gates pass; final erasure/worker controls pass 10/10
+and the standalone selected adapter remains 25/25 with 251 files deferred.
+All processes from this erasure pass are terminal.
+
 Final publication-query migration in progress: indexed record element facts now
 come from TypeOracle (property names, scalar/union facts and optionality; no
 checker types or Wasm indexes escape). JSON preflight uses source facts, then

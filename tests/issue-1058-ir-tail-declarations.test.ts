@@ -4,6 +4,31 @@ import { compile } from "../src/index.js";
 import { ts } from "../src/ts-api.js";
 import { orderTailFunctionDeclarations } from "../src/ir/tail-function-declarations.js";
 
+it("erases local type declarations without binding or reordering runtime values", async () => {
+  const result = await compile(
+    `
+    export function run(input: number): number {
+      interface BinaryPlusExpression { cachedLiteralKind: number; }
+      const offset = 2;
+      if (input > 0) { type offset = number; interface Local { value: number; } }
+      return add(input);
+      type Later = BinaryPlusExpression;
+      function add(value: number): number { return value + offset; }
+      interface Tail { value: number; }
+    }
+  `,
+    { target: "standalone", experimentalIR: true, trackIrOutcomes: true },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  const module = new WebAssembly.Module(result.binary);
+  expect(WebAssembly.Module.imports(module)).toEqual([]);
+  expect((new WebAssembly.Instance(module, {}).exports.run as (value: number) => number)(40)).toBe(42);
+  expect(
+    result.irOutcomes?.find((row) => row.displayName === "run"),
+    JSON.stringify(result.irOutcomes),
+  ).toMatchObject({ irBodyEmitted: true, legacyBodyEmitted: false });
+});
+
 it("retains source identities and never moves executable trailing statements", () => {
   const parse = (source: string) => ts.createSourceFile("case.ts", source, ts.ScriptTarget.Latest, true).statements;
   const statements = parse("const x = 2; return add(x); function add(n: number): number { return n; }");
@@ -13,6 +38,13 @@ it("retains source identities and never moves executable trailing statements", (
   expect(orderTailFunctionDeclarations(ordered)).toBe(ordered);
   const executable = parse("return add(); function add(): number { return 1; } sideEffect();");
   expect(orderTailFunctionDeclarations(executable)).toBe(executable);
+  const typed = parse("interface A {} return add(); type B = A; function add(): number { return 1; } interface C {}");
+  const erased = orderTailFunctionDeclarations(typed);
+  expect(erased).toEqual([typed[3], typed[1]]);
+  expect(erased[0]).toBe(typed[3]);
+  expect(orderTailFunctionDeclarations(erased)).toBe(erased);
+  const runtimeDeclaration = parse("return add(); function add(): number { return 1; } enum E { A }");
+  expect(orderTailFunctionDeclarations(runtimeDeclaration)).toBe(runtimeDeclaration);
 });
 
 it.each([false, true])("preserves captures in declarations after return (mutable=%s)", async (mutable) => {

@@ -10,6 +10,27 @@ async function run(result: CompileResult, value: number): Promise<number> {
   return (instance.exports.run as (value: number) => number)(value);
 }
 
+it.each([false, true])("preserves the receiver of a returned method table (IR=%s)", async (experimentalIR) => {
+  const result = await compile(
+    `
+    function make(offset: number): { offset: number; add(value: number): number } {
+      return { offset, add(value: number): number { return this.offset + value; } };
+    }
+    export function run(value: number): number { return make(2).add(value); }
+  `,
+    { target: "standalone", experimentalIR, trackIrOutcomes: true },
+  );
+  expect(result.success, JSON.stringify(result.errors)).toBe(true);
+  expect(WebAssembly.Module.imports(new WebAssembly.Module(result.binary))).toEqual([]);
+  expect(await run(result, 40)).toBe(42);
+  if (experimentalIR) {
+    expect(
+      result.irOutcomes?.find((row) => row.displayName === "make"),
+      JSON.stringify(result.irOutcomes),
+    ).toMatchObject({ irBodyEmitted: false });
+  }
+});
+
 it("preserves returned tables of captured named functions", async () => {
   const result = await compile(
     `

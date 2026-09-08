@@ -37,7 +37,7 @@
 
 import { IR_STRING_COMPARE_FN } from "./runtime-symbols.js";
 import { ts, forEachChild } from "../ts-api.js";
-import { orderTailFunctionDeclarations } from "./tail-function-declarations.js";
+import { isErasedLocalTypeDeclaration, orderTailFunctionDeclarations } from "./tail-function-declarations.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 
 import { TsCheckerOracle, type TypeOracle } from "../checker/oracle.js";
@@ -11120,6 +11120,7 @@ function inferVecDataValTypeFromContext(valTy: ValType, _cx: LowerCtx): ValType 
  * sense inside a non-terminating loop body.
  */
 function lowerStmt(stmt: ts.Statement, cx: LowerCtx): void {
+  if (isErasedLocalTypeDeclaration(stmt)) return;
   if (ts.isBlock(stmt)) {
     const childCx: LowerCtx = { ...cx, scope: new Map(cx.scope) };
     for (const s of stmt.statements) {

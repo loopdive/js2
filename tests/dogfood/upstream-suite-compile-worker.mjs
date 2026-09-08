@@ -15,7 +15,12 @@ import {
 const generatedPath = process.argv[2];
 const mode = process.argv[3] ?? "project";
 
-const emit = emitWorkerResult;
+const trackIrOutcomes = process.env.JS2WASM_TYPESCRIPT_PROBE_IR_OUTCOMES === "1";
+let irOutcomes = null;
+const emit = (message) =>
+  emitWorkerResult(
+    trackIrOutcomes && message.compile ? { ...message, compile: { ...message.compile, irOutcomes } } : message,
+  );
 
 function resolveDogfoodTarget(value) {
   if (value === undefined) return "gc";
@@ -258,6 +263,7 @@ async function main() {
         ? { allowFs: platform === "node" || process.env.DOGFOOD_NODE_HOST_DEPS === "1" }
         : {}),
       experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
+      trackIrOutcomes,
       ...(process.env.DOGFOOD_CONSUMER_DRIVEN_BARRELS === "1" ? { resolve: { consumerDrivenBarrels: true } } : {}),
       // The upstream compatibility lane only needs the binary. WAT is a
       // diagnostic artifact and can become quadratic for large generated
@@ -286,6 +292,7 @@ async function main() {
             fileName: generatedPath,
             skipSemanticDiagnostics: true,
             experimentalIR: process.env.DOGFOOD_REACT_DOM_LEGACY !== "1",
+            trackIrOutcomes,
             sourceMap: true,
             target: requestedTarget,
             ...(requestedTarget === "gc"
@@ -297,6 +304,7 @@ async function main() {
             deferTopLevelInit: true,
           })
         : await compileProject(generatedPath, projectOptions);
+    irOutcomes = result.irOutcomes ?? null;
   } catch (error) {
     emit({
       compile: {

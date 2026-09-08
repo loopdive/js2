@@ -104,13 +104,14 @@ describe("upstream suite standalone compile worker", () => {
         targetMatches: true,
       });
       expect(Array.isArray(gc.compile.moduleImports)).toBe(true);
+      expect(gc.compile).not.toHaveProperty("irOutcomes");
 
       const invalid = await withWorkerTsx(() =>
         compileSourceInWorker({
           generatedPath: join(root, "invalid.ts"),
           source: "export function canary(): number { return 7; }",
           timeoutMs: 60_000,
-          workerEnv: { DOGFOOD_TARGET: "wasi" },
+          workerEnv: { DOGFOOD_TARGET: "wasi", JS2WASM_TYPESCRIPT_PROBE_IR_OUTCOMES: "1" },
         }),
       );
       expect(invalid.compile).toMatchObject({
@@ -120,6 +121,7 @@ describe("upstream suite standalone compile worker", () => {
         actualTarget: null,
       });
       expect(invalid.compile.errors[0].message).toContain("DOGFOOD_TARGET expects gc or standalone");
+      expect(invalid.compile.irOutcomes).toBeNull();
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -141,6 +143,7 @@ export function cleanupUpstreamTestEnvironment(): void {}
           timeoutMs: 180_000,
           workerEnv: {
             DOGFOOD_TARGET: "standalone",
+            JS2WASM_TYPESCRIPT_PROBE_IR_OUTCOMES: "1",
             DOGFOOD_PLATFORM: undefined,
             DOGFOOD_NODE_HOST_DEPS: undefined,
             DOGFOOD_INSTALL_JSDOM: undefined,
@@ -160,6 +163,9 @@ export function cleanupUpstreamTestEnvironment(): void {}
         importPolicyMatches: true,
       });
       expect(result.wasm).toEqual({ count: 2, statuses: [true, true], errors: ["", ""] });
+      expect(result.compile.irOutcomes).toEqual(
+        expect.arrayContaining([expect.objectContaining({ displayName: "upstreamTestCount", irBodyEmitted: true })]),
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

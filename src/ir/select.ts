@@ -55,7 +55,7 @@
 //     `localClasses` set drives that exemption.
 
 import { ts, forEachChild } from "../ts-api.js";
-import { orderTailFunctionDeclarations } from "./tail-function-declarations.js";
+import { isErasedLocalTypeDeclaration, orderTailFunctionDeclarations } from "./tail-function-declarations.js";
 import { exactIndirectEvalStatement } from "../eval-call-shape.js";
 import { collectIrClassInstanceInitializers } from "./class-instance-initializers.js";
 import { literalComputedInstanceMethodKey } from "./class-method-names.js";
@@ -5026,6 +5026,7 @@ function isPhase1BodyStatement(
   // #2952 slice 4 — break-only scope (enclosing switch / labeled blocks).
   breaks: BreakScope = NO_BREAKS,
 ): boolean {
+  if (isErasedLocalTypeDeclaration(stmt)) return true;
   if (ts.isBlock(stmt)) {
     return withProjectionEvidenceScope(() =>
       withLexicalValueBindingScope(stmt.statements, () => {
