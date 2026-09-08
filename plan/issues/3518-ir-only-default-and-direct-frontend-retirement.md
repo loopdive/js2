@@ -4558,3 +4558,17 @@ controls run the identical registered loader in plain Node for those two suffix
 cases, separately from successful real-source admission and its in-process bare
 forbidden-facade control. All seven tests now pass with exact URL assertions.
 This is a loader-normalization control, not a claim that tsx preserves queries.
+
+The ownership implementation is committed as `a918265e40e35e0adb9b22d652a1a17e7b471345`.
+Main `ad9ea951a51c9bc7c9e6c2827c3bd38c62c2bd67` merged cleanly in
+`1e54e659761c697af3c182e7591c361d462094a3`, retaining its new mixed-module
+inventory classification. Post-sync inventory is valid with 1,289 tracked
+modules: 44 clean, 1,240 unmigrated and five adapters; architecture is incomplete.
+Post-sync boundary, fresh-process and standalone replay suites passed 120/120
+(105 + 7 + 8). Independent High review signed off the complete bounded checkpoint,
+including the final guard controls. No retirement/ABI acceptance or hold removal
+is implied. Native Low agents also returned source-derived next-split maps:
+async semantic verification and attachment authority must separate without
+duplicating their WeakMap; intrinsic signature verification must separate from
+provider target checks; prepared async-state traversal remains an explicit
+middle-end obligation. These are inputs to the next High spec, not tested closure.
