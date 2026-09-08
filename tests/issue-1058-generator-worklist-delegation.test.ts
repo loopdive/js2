@@ -85,6 +85,49 @@ export function runSuspendedCleanup(): number {
 }
 `;
 
+const objectWorklistSource = `
+interface Item { value: number; }
+function createElements<T extends Item>(items: Map<string, T | T[]>) {
+  return elements;
+  function* elements(): IterableIterator<T> {
+    for (const item of items.values()) {
+      if (Array.isArray(item)) yield* item;
+      else yield item;
+    }
+  }
+}
+export function runObjects(): number {
+  const first = { value: 1 };
+  const second = { value: 2 };
+  const third = { value: 3 };
+  const items = new Map<string, Item | Item[]>();
+  items.set("a", [first, second]);
+  items.set("b", third);
+  const elements = createElements(items);
+  let total = 0;
+  for (const item of elements()) {
+    total = total * 10 + item.value;
+    item.value += 10;
+  }
+  if (first.value !== 11 || second.value !== 12 || third.value !== 13) return -1;
+  return total;
+}
+export function runDirectObjects(): number {
+  const first = { value: 1 };
+  const second = { value: 2 };
+  const groups: Item[][] = [[first], [second]];
+  function* elements() {
+    for (const group of groups) yield* group;
+  }
+  let total = 0;
+  for (const item of elements()) {
+    total = total * 10 + item.value;
+    item.value += 10;
+  }
+  return first.value === 11 && second.value === 12 ? total : -1;
+}
+`;
+
 it.each([
   ["runAll", 123],
   ["runReturn", 1],
@@ -92,8 +135,15 @@ it.each([
   ["runCaughtThrow", 1],
   ["runThrowBeforeDelegate", 1],
   ["runSuspendedCleanup", 1],
+  ["runObjects", 123],
+  ["runDirectObjects", 12],
 ] as const)("runs %s with host-free delegation and IteratorClose", async (entry, expected) => {
-  const source = entry === "runAll" ? worklistSource : cleanupSource;
+  const source =
+    entry === "runAll"
+      ? worklistSource
+      : entry === "runObjects" || entry === "runDirectObjects"
+        ? objectWorklistSource
+        : cleanupSource;
   const native = { exports: {} as Record<string, () => number> };
   const js = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },

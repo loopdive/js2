@@ -212,6 +212,27 @@ oracle-ratchet-allow:
 
 ### Resumed optional-parameter investigation — 2026-09-08
 
+Typed-array delegation follow-up: the numeric-only slot registration hardcoded
+the f64 vector even though slots already record an element type. Resolve the
+source array's actual vector layout and coerce the loaded element to the
+generator result carrier. Include delegated array element facts in carrier
+selection (otherwise object-only `yield*` defaults to f64). The generic iterable
+admission query now uses the oracle's well-known iterator fact instead of raw
+checker property enumeration; this offsets the one layout-resolution query
+without adding a checker-usage exception.
+Fresh upstream run with typed slots reaches **19/25** tests, native 25/25,
+compilerCore 5/11 and zero generator imports. The six now-executing failures
+are illegal casts in mutation, resizing, clear, forEach, iteration and string
+hash code. Expanded worklist controls are **7/8**: direct object-array iteration
+returns 12 and writes back to both original objects; generic factory-backed
+`runObjects` still throws a WebAssembly exception. Existing array/iterable/
+try-region controls pass **32/32**. Logs: `.tmp/ts5-typed-delegate-carrier.log`,
+`.tmp/ts5-typed-delegate-stable-controls.log` and
+`.tmp/ts5-upstream-typed-delegate-final.log`. Typecheck/lint pass. Layout
+resolution was extracted into a helper to pass the function-size gate, without
+adding an exception. This is not a full-suite passing claim; 251 files remain
+deferred, and the newly executable createSet tests expose the next cast frontier.
+
 Generator frontier follow-up: fresh upstream adapter on `3e0d2386` still
 measures native 25/25, standalone 14/25, 251/256 files deferred. The worklist
 reduction reproduces generator imports (runAll) and rejected cleanup shapes
