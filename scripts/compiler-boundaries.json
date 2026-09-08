@@ -1,6 +1,6 @@
 {
   "schema": "compiler-boundaries-v1",
-  "description": "Exact compiler inventory with shared contracts and the bounded Wasm instruction, handle-primitive and native queue modules activated. Remaining model, allocator, runtime-value and compiler concerns stay migration debt.",
+  "description": "Exact compiler inventory with shared contracts, bounded Wasm instruction and handle-primitive leaves, the native microtask queue and the complete capability-record schema activated. Remaining IR, model, allocator, runtime/provider and compiler concerns stay migration debt.",
   "sourceRoot": "src",
   "tsconfig": "tsconfig.json",
   "requireGitProvenance": true,
@@ -100,10 +100,10 @@
     },
     {
       "id": "runtime-contracts",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/runtime/contracts"],
       "required": true,
-      "entries": ["src/runtime/contracts/index.ts"],
+      "entries": ["src/runtime/contracts/host-capability-schema.ts"],
       "minModules": 1
     },
     {
@@ -381,6 +381,11 @@
     {
       "layer": "native-runtime",
       "entries": ["src/runtime/wasmgc/async/microtask-queue-bodies.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "runtime-contracts",
+      "entries": ["src/runtime/contracts/host-capability-schema.ts"],
       "minModules": 1
     }
   ],
@@ -9352,9 +9357,9 @@
       "path": "src/ir/runtime-host-capabilities.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "runtime-contracts",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "The complete 25-type/14-constant record schema lives in runtime/contracts/host-capability-schema.ts. Catalog construction, validators, resolvers and compatibility exports remain here. Complete remaining runtime contracts and the originally planned runtime/contracts/index.ts boundary without moving selected provider attachments into IR core."
     },
     {
       "path": "src/ir/runtime-manifest.ts",
@@ -9788,6 +9793,11 @@
       "path": "src/runtime/boundary-value-adapter.ts",
       "state": "unmigrated",
       "layer": "legacy-host"
+    },
+    {
+      "path": "src/runtime/contracts/host-capability-schema.ts",
+      "state": "clean",
+      "layer": "runtime-contracts"
     },
     {
       "path": "src/runtime/builtins.ts",
