@@ -81,10 +81,80 @@ NODE_OPTIONS=--max-old-space-size=2048 VITEST_FORK_MAX_OLD_SPACE_SIZE=2048 VITES
 
 Runtime: Node v22.23.2, V8 12.4.254.21-node.56, ICU 78.2, locale en-US.
 These are baseline controls, not evidence that the new entry is implemented.
+The five files include historical host/linear compatibility fixtures; those
+results are not new standalone acceptance evidence.
 The recorded dispatch starts two active implementation workers; integration and
 new-boundary acceptance remain pending. Preserve all failures exposed later.
 
+The unchanged integration source also passes **12/12 public preservation runs**:
+scalar, vector, record, class, closure and loop programs under GVN off and on.
+Every binary validates with zero imports and returns its expected value twice;
+the exported `run` has one IR emission and zero direct emissions. Receipts:
+`.tmp/typed-public-base-off.json` and `.tmp/typed-public-base-on.json`.
+Both record all 1,256 source files with census SHA-256
+`208c8c063fa90806abdfd7451aeabc460f325a06318519cb3c46469e12f336e4`.
+These six programs have no GVN-mode binary difference, so this does not prove
+active GVN merging; B's dedicated merge/poison/counter controls remain required.
+The reports are preservation baselines, not evidence for the new typed entry.
+
 ## Frozen cross-worker API and lifecycle
+
+### B implementation checkpoint: resolved middle-end and IR-only async preparation
+
+PR #5745 now carries the reviewed B implementation: ten production paths and
+three focused suites plus their fixture helper. Existing source preparation
+continues through the historical optimizer, which delegates to the resolved
+implementation. The new A typed-input entry is a separate, still-unaccepted
+worker draft; this checkpoint does not claim its capture or source-free replay.
+
+The GVN algorithm retains its original increment sites, pass order and identity
+termination. Explicit controls are separated from the historical environment,
+import-time debug handler and once-only transaction publication. The async
+extraction retains all 18 moved declarations, including 13 function bodies,
+and the historical AST predicate. Derived identity construction uses the
+canonical value module. Astra High reviewed all ten frozen production blobs;
+the coordinator verified exact blob equality on integration.
+
+Measured B validation:
+
+- Three new focused suites pass **77/77**, zero skipped: 15 GVN diagnostic,
+  36 resolved-control and 26 async-extraction tests. This includes real merge
+  and poison operations, failure-path counts, nonempty async transformations
+  and child-process forbidden-load positive controls. Synthetic pass fixtures
+  are not substituted for the separate frontend-produced A acceptance corpus.
+- Typecheck passes with zero diagnostics.
+- Existing scoped compatibility controls: **280/284** pass across 23 files,
+  zero skipped. The four failures are retained, not waived: three #4113
+  telemetry-row assertions and one #4124 generic Promise closure assertion.
+- The two failing files run unchanged on pinned `6ff05f6b`: **11/15** pass,
+  with the same four full failure messages after worktree-path normalization.
+  No B-induced difference was observed in that comparison; it does not prove
+  those pre-existing failures harmless or grant merge clearance.
+
+Reproduction receipts are `.tmp/typed-middleend-frozen-handoff.json`,
+`.tmp/typed-middleend-focused-final.json` and
+`.tmp/typed-middleend-existing-controls.json` in the B worktree, and
+`.tmp/typed-middleend-existing-base-failures.json` in the prerequisite worktree.
+The B handoff records exact commands, all 14 path/blob pairs, the first focused
+test failure and its test-only correction, and the final measured denominators.
+No B production fix was made after the frozen High review.
+
+Integration public compile preservation passes **12/12 complete pairs** against
+the pre-split baseline: all six programs in each GVN mode have identical full
+binary bytes, WAT, imports, exports, string pools, IR outcomes and returned
+values. Candidate receipts `.tmp/typed-public-B-off.json` and
+`.tmp/typed-public-B-on.json` cover all 1,259 source files at census SHA-256
+`5f7be91f2ac323ddaaf50fea946404df66b08fdf3d79d2131cbf277e971f9670`.
+
+The actual package-equivalent caller-preservation check passes (exit 0), receipt
+`.tmp/typed-B-preservation.json`: N1 **6/6** full and dispatch-cut witnesses,
+core types **10/10** full and dispatch-cut references, and core nodes **12/12**
+observed public-compiler callers. Core-node dispatch-cut remains UNKNOWN.
+Strict modeled closure still fails on the same two nonliteral imports in
+`getBinaryenModule` and `resolvePlatformCapabilityImport`; no unknown is removed.
+The passing extraction verdict is not the failing retirement verdict.
+All type backedges, two strict unknown imports, the merge hold and complete
+retirement criteria remain in force. No new clean layer is certified.
 
 Freeze the A/B contract below. The optional third counter argument is intentional: it preserves partial diagnostics when the **original exception escapes unchanged**, without callbacks or global effects in typed preparation.
 

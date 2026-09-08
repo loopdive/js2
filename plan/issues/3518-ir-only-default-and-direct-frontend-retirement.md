@@ -144,6 +144,14 @@ Test262 campaign. Every implementation checkpoint goes to a non-draft upstream P
 The merge hold, two unresolved imports, full retirement criteria, pending ABI
 getter decision and prohibition on new host/linear work remain unchanged.
 
+Non-draft held PR #5745 carries the plan and B middle-end implementation
+checkpoint: explicit controls, transaction-owned GVN counters with historical
+reporting preserved, and IR-only async preparation. New focused tests pass 77/77;
+typecheck passes. Four failures in 284 existing controls reproduce with identical
+messages on the unchanged prerequisite (11/15 in the two failing files); they
+remain documented, not waived. A's detached-input preparation and fresh-process
+acceptance are a separate pending checkpoint. This does not complete retirement.
+
 ### Complete semantic nodes checkpoint — structural checkpoint, 2026-09-08
 
 Published non-draft held PR 5744 now includes caller-proof follow-up

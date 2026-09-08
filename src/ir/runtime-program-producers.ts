@@ -2,8 +2,8 @@
 
 /** Pure complete-program async production. Physical runtime helpers are allocated by the accepted backend. */
 import { createIrAsyncPlan, irAsyncPlanNeedsNumberBridge, verifyIrAsyncPlan } from "./async-plan.js";
-import { prepareSuspendingIrFunction } from "./async-prepare.js";
-import { createDerivedIrUnitId } from "./identity.js";
+import { prepareSuspendingIrFunction } from "./async-prepare-ir.js";
+import { createDerivedIrUnitId } from "../shared/contracts/identity-values.js";
 import { forEachInstrDeep, type IrFunction } from "./nodes.js";
 import { classifyIrFailure } from "./outcomes.js";
 import {

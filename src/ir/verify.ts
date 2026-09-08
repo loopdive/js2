@@ -340,6 +340,10 @@ function verifySymbolicReferences(func: IrFunction, errors: IrVerifyError[]): vo
   }
 }
 
+export interface IrVerificationOptions {
+  readonly verifyDominanceNaive: boolean;
+}
+
 /**
  * Structurally verify one `IrFunction`.
  *
@@ -364,6 +368,7 @@ export function verifyIrFunction(
   func: IrFunction,
   domain: TagDomain = defaultTagDomain(),
   declarations?: IrModuleDeclarations,
+  options?: IrVerificationOptions,
 ): IrVerifyError[] {
   const errors: IrVerifyError[] = [];
   const defs = new Set<IrValueId>();
@@ -425,7 +430,10 @@ export function verifyIrFunction(
   // #4418 — corpus-wide audit of the fast dominance analysis against the
   // naive reachability definition. Opt-in (quadratic per function); the unit
   // tests run the same cross-check on synthetic general graphs.
-  if (dominance && process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE === "1") {
+  if (
+    dominance &&
+    (options === undefined ? process.env.JS2WASM_IR_VERIFY_DOMINANCE_NAIVE === "1" : options.verifyDominanceNaive)
+  ) {
     for (const msg of crossCheckDominance(func, dominance)) {
       errors.push({ message: `dominance self-check: ${msg}`, func: func.name });
     }
