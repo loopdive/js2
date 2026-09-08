@@ -3,7 +3,7 @@ id: 1058
 title: "Compile the TypeScript compiler itself to Wasm — self-hosting stress test"
 status: in_progress
 created: 2026-04-11
-updated: 2026-09-06
+updated: 2026-09-08
 priority: high
 feasibility: hard
 model: fable
@@ -210,9 +210,27 @@ oracle-ratchet-allow:
 
 ## PR handoff — 2026-09-06
 
+2026-09-08: syncing this work branch with fetched `loopdive/js2` main
+`16498efb481cb022ee5c4dcc9bb137b6d4c91a50` (680 incoming commits).
+The pre-sync measurements below are not validation of the merged candidate.
+
 This is an incomplete checkpoint, not completion of the TypeScript 5 unit-suite
 or self-hosting goal. Work is paused at the user's request. This summary
 supersedes pending-run and binder-trap attribution in the chronological notes.
+
+**Publishing blocker:** signed checkpoint `1e18c20f9740220425c3eb94c86789d1cb7130f9`
+is local; no PR has been opened. Pre-push typecheck, lint and formatting pass,
+but the oracle ratchet rejects net new checker usage in eight paths:
+`expressions.ts`, `expressions/optional-native-set.ts`,
+`generic-scalar-union-result.ts`, `indexed-object-spread.ts`,
+`json-record-array.ts`, `optional-declaration-parameter.ts`,
+`source-function-call.ts`, and `uninitialised-variable-undefined.ts`
+(all under `src/codegen/`). The reported unallowed growth is five
+`getTypeAtLocation` and fifteen `ctx.checker` references. Migrate these to
+`ctx.oracle` while preserving source identity and ABI decisions, or obtain
+explicit user approval for issue-scoped exceptions. Automated safety review
+rejected adding those exceptions without approval; no exceptions were added
+and neither hooks nor signing were bypassed.
 
 ### Measured state
 
