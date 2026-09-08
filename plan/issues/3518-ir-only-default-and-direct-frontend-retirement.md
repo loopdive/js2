@@ -5129,3 +5129,40 @@ upstream write `79476-841vjtpq`, claim commit
 `57e7f2be986125df69c4d16bdbf282937a0272ea`. The claim hook completed and released
 the shared validation slot. The seven-file source-admission implementation is
 still pending and is not included in this documentation correction.
+
+### Complete native-family next dispatch (2026-09-08)
+
+The source-grounded High plan is
+`plan/agent-context/3518-complete-native-family-source-plan-2026-09-08.md`;
+the exact shared interface is
+`plan/agent-context/3518-native-family-logical-vector-interface-2026-09-08.md`.
+These describe the next dispatch, after current delay-admission and frame drafts
+freeze. They do not expand those workers' current write scopes.
+
+The connected source goal retains all five original functions: certified delay,
+fetchUser, sequential, parallel, and main. It includes array parameters,
+effectful Promise-vector push, awaited Promise.all number-vector results, and
+main's real clock/logging/string operations. Pure logical vector lowering must
+not fabricate physical indices, resolver flags, providers or continuation bodies.
+
+The frozen frontend interface is per-function `logicalVectorTypes`, keyed by
+exact original parameter/variable declarations and vector-valued expressions.
+Producer identity validation and lowerer assignability/type validation are both
+required; missing entries must not fall back to physical registration. The
+separate default-off `asyncFamilyProjection` requires explicit native delay
+selection and compatible standalone/WasmGC source/runtime projections. Neither
+selection is inferred from legacy fast/default settings.
+
+Immediate acceptance remains eight separately reported preparation runs
+(original/export-only source, original/decoded input, GVN off/on), complete
+support inventory, and five original await sites. These are not eight executions.
+Final native execution still requires all eight existing behavioral scenarios,
+the unchanged 14-case public-family suite, real runtime declarations/providers,
+vector layouts/growth, frame transport and full public cutover/retirement proof.
+
+Preliminary reviews of the current, still-unfrozen drafts identified two
+requirements for their handoff: source admission must distinguish actual
+structural references from ordinary string/debug-label text equal to a unit ID;
+frame preservation tests must run self-contained in ordinary CI and keep the
+external-baseline comparison explicit, with no child timeout killing. These
+are repair requests, not approvals or measured failures of frozen candidates.
