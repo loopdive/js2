@@ -1,7 +1,7 @@
 {
   "generated": "2026-09-08",
   "threshold": 1500,
-  "totalCeiling": 854355,
+  "totalCeiling": 854709,
   "files": {
     "src/codegen-linear/index.ts": 5791,
     "src/codegen-linear/runtime.ts": 4444,
@@ -47,7 +47,7 @@
     "src/codegen/generators-native-consumer.ts": 1594,
     "src/codegen/generators-native.ts": 5366,
     "src/codegen/generic-struct-factory.ts": 1865,
-    "src/codegen/index.ts": 15074,
+    "src/codegen/index.ts": 15080,
     "src/codegen/ir-prepared-free-functions.ts": 2332,
     "src/codegen/iterator-native.ts": 5689,
     "src/codegen/json-codec-native.ts": 4554,
@@ -63,7 +63,7 @@
     "src/codegen/object-runtime-descriptors.ts": 3593,
     "src/codegen/object-runtime-enumeration.ts": 1753,
     "src/codegen/object-runtime-proxy.ts": 2559,
-    "src/codegen/object-runtime.ts": 12597,
+    "src/codegen/object-runtime.ts": 12621,
     "src/codegen/parse-number-native.ts": 1927,
     "src/codegen/program-abi-session.ts": 3562,
     "src/codegen/promise-combinators.ts": 1954,
