@@ -6,17 +6,29 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { format, resolveConfig } from "prettier";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 const REPO = process.cwd();
 const SCRIPT = "scripts/check-ir-kind-neutrality.mjs";
 const BASELINE = "scripts/ir-kind-neutrality-baseline.json";
 const NODES = "src/ir/nodes.ts";
+const CORE_NODES = "src/ir/core/nodes.ts";
 const VALUE_REFERENCES = "src/ir/value-references.ts";
 const CORE_TYPES = "src/ir/core/types.ts";
 const CORE_VALUE_REFERENCES = "src/ir/core/value-references.ts";
 const DIALECT = "src/ir/dialect/js.ts";
-const SCANNED_FILES = [NODES, VALUE_REFERENCES, CORE_TYPES, CORE_VALUE_REFERENCES, DIALECT];
+const CORE_DIALECT = "src/ir/core/dialect/js.ts";
+const SCANNED_FILES = [NODES, CORE_NODES, VALUE_REFERENCES, CORE_TYPES, CORE_VALUE_REFERENCES, DIALECT, CORE_DIALECT];
+// Explicit relocation only: these reversible prefixes preserve the full
+// PR5742 record before recovering the earlier two shape-citation moves.
+const NODE_MOVES = [
+  ["src/ir/nodes.ts#", "src/ir/core/nodes.ts#", 116],
+  ["src/ir/dialect/js.ts#", "src/ir/core/dialect/js.ts#", 55],
+  ["src/ir/intrinsics.ts#", "src/ir/core/intrinsic-vocabulary.ts#", 2],
+  ["src/ir/string-runtime.ts#e6c839b278b4", "src/ir/core/string-types.ts#e6c839b278b4", 1],
+] as const;
+const PRE_NODE_BASELINE_BLOB = "6b2be2d5b198b8df35b97e6fa14275c73d29c19b";
 
 // Exact baseline blob at 25b9a41c3828dfb403797003dc6b66c72a2547ba. Pin the
 // entire pre-relocation record without requiring Git history in shallow CI.
@@ -67,13 +79,33 @@ function runGate(args: string[] = []): { code: number; out: string } {
   }
 }
 
-function originalBaselineText() {
-  let text = readIn(BASELINE);
+function beforeNodeMove(text: string) {
+  for (const [original, canonical, count] of NODE_MOVES) {
+    expect(text.split(canonical).length - 1).toBe(count);
+    expect(text).not.toContain(original);
+    text = text.replaceAll(canonical, original);
+  }
+  return text;
+}
+
+async function originalBaselineText() {
+  let text = beforeNodeMove(readIn(BASELINE));
+  const options = { ...(await resolveConfig(path.join(REPO, BASELINE))), filepath: BASELINE, parser: "json" };
+  // Longer canonical prefixes reflow a few arrays. Reverse only the explicit
+  // prefixes and deterministic formatting before checking the entire old blob.
+  text = await format(text, options);
+  expect(
+    createHash("sha1")
+      .update(`blob ${Buffer.byteLength(text)}\0`)
+      .update(text)
+      .digest("hex"),
+  ).toBe(PRE_NODE_BASELINE_BLOB);
   for (const { hash } of SHAPE_CITES) {
     const moved = `${CORE_TYPES}#${hash}`;
     expect(text.split(moved)).toHaveLength(2);
     text = text.replace(moved, `${NODES}#${hash}`);
   }
+  text = await format(text, options);
   const blob = createHash("sha1")
     .update(`blob ${Buffer.byteLength(text)}\0`)
     .update(text)
@@ -115,9 +147,9 @@ afterAll(() => {
 });
 
 describe("#3518 core type relocation preserves kind-neutrality evidence", () => {
-  it("changes exactly two citation file prefixes in the entire pinned baseline", () => {
-    const original = JSON.parse(originalBaselineText()) as GateRecord;
-    const candidate = JSON.parse(readIn(BASELINE)) as GateRecord;
+  it("retains the two earlier shape-citation moves after reversing the full-node relocation", async () => {
+    const original = JSON.parse(await originalBaselineText()) as GateRecord;
+    const candidate = JSON.parse(beforeNodeMove(readIn(BASELINE))) as GateRecord;
     const deltas: { kind: string; before: string; after: string }[] = [];
     for (const [kind, entry] of Object.entries(candidate.kinds)) {
       entry.evidence.forEach((cite, index) => {
@@ -137,11 +169,11 @@ describe("#3518 core type relocation preserves kind-neutrality evidence", () => 
     }
   });
 
-  it("computes the old counts, ratchets and verdicts on the actual composed source", () => {
-    const original = JSON.parse(originalBaselineText()) as GateRecord;
+  it("computes the old counts, ratchets and verdicts on the actual composed source", async () => {
+    const original = JSON.parse(await originalBaselineText()) as GateRecord;
     const result = runGate(["--json"]);
     expect(result.code, result.out).toBe(0);
-    const computed = JSON.parse(result.out) as GateRecord;
+    const computed = JSON.parse(beforeNodeMove(result.out)) as GateRecord;
     expect(computed.counts).toEqual(original.counts);
     expect(computed.ratchet).toEqual(original.ratchet);
     expect(computed.populationRule).toBe(original.populationRule);
@@ -167,7 +199,7 @@ describe("#3518 core type relocation preserves kind-neutrality evidence", () => 
     expect(human.out).toContain("3 symbolic-reference kinds excluded, 88 `readonly kind:` fields reconciled");
   });
 
-  it.each([CORE_TYPES, CORE_VALUE_REFERENCES])("requires canonical source %s", (file) => {
+  it.each([CORE_TYPES, CORE_VALUE_REFERENCES, CORE_NODES, CORE_DIALECT])("requires canonical source %s", (file) => {
     rmSync(path.join(sandbox, file));
     expectFailure(`${file}: required kind-population source is missing or unreadable`);
   });
@@ -222,8 +254,11 @@ describe("#3518 core type relocation preserves kind-neutrality evidence", () => 
 
   it.each(SCANNED_FILES)("still requires a verdict for a new instruction declared in %s", (file) => {
     writeIn(file, `${readIn(file)}\nexport interface IrInstrUnreviewed {\n  readonly kind: "unreviewed";\n}\n`);
-    expect(readIn(NODES)).toContain("export type IrInstr =");
-    writeIn(NODES, readIn(NODES).replace("export type IrInstr =", "export type IrInstr =\n  | IrInstrUnreviewed"));
+    expect(readIn(CORE_NODES)).toContain("export type IrInstr =");
+    writeIn(
+      CORE_NODES,
+      readIn(CORE_NODES).replace("export type IrInstr =", "export type IrInstr =\n  | IrInstrUnreviewed"),
+    );
     expectFailure('UNCLASSIFIED KIND "unreviewed"');
   });
 });

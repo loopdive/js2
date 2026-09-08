@@ -172,11 +172,14 @@ import { createHash } from "node:crypto";
 import { readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-const NODES = "src/ir/nodes.ts";
+const NODES = "src/ir/core/nodes.ts";
+const LEGACY_NODES = "src/ir/nodes.ts";
 const VALUE_REFERENCES = "src/ir/value-references.ts";
 const CORE_TYPES = "src/ir/core/types.ts";
 const CORE_VALUE_REFERENCES = "src/ir/core/value-references.ts";
-const DIALECT_DIR = path.join("src", "ir", "dialect");
+const DIALECT_DIR = path.join("src", "ir", "core", "dialect");
+const LEGACY_DIALECT_DIR = path.join("src", "ir", "dialect");
+const INTRINSIC_VOCABULARY = "src/ir/core/intrinsic-vocabulary.ts";
 const IR_DIR = path.join("src", "ir");
 const BASELINE = "scripts/ir-kind-neutrality-baseline.json";
 
@@ -233,8 +236,8 @@ const VERDICTS = {
       "former, the vocabulary (not the instruction) is what moves; if the latter, `intrinsic` is " +
       "neutral outright and `math.pow` needs an ECMAScript-specific sibling.",
     evidence: [
-      { file: "src/ir/intrinsics.ts", quote: "exact-arity f64 Math surface certified by" },
-      { file: "src/ir/intrinsics.ts", quote: '"math.pow"' },
+      { file: INTRINSIC_VOCABULARY, quote: "exact-arity f64 Math surface certified by" },
+      { file: INTRINSIC_VOCABULARY, quote: '"math.pow"' },
     ],
   },
   "global.get": {
@@ -384,7 +387,7 @@ const VERDICTS = {
       { file: NODES, quote: "field 0 is the UTF-16 code-unit length" },
       { file: "src/ir/backend/linear-integration.ts", quote: "__str_length_utf16" },
       {
-        file: "src/ir/string-runtime.ts",
+        file: "src/ir/core/string-types.ts",
         quote: 'export type IrStringEncoding = "ascii" | "utf8-guaranteed" | "wtf16";',
       },
     ],
@@ -971,13 +974,25 @@ function die() {
 // ── population ────────────────────────────────────────────────────────────
 const dialectFiles = (() => {
   try {
-    return walk(DIALECT_DIR);
+    return [...walk(DIALECT_DIR), ...walk(LEGACY_DIALECT_DIR)];
   } catch {
+    fail("Both canonical and compatibility dialect source directories are required.");
     return [];
   }
 })();
 // Canonical sources are mandatory, not optional fallbacks to the facades.
-const sourceFiles = [NODES, VALUE_REFERENCES, CORE_TYPES, CORE_VALUE_REFERENCES, ...dialectFiles];
+const sourceFiles = [
+  NODES,
+  LEGACY_NODES,
+  VALUE_REFERENCES,
+  CORE_TYPES,
+  CORE_VALUE_REFERENCES,
+  path.join(DIALECT_DIR, "js.ts"),
+  path.join(LEGACY_DIALECT_DIR, "js.ts"),
+  ...dialectFiles.filter(
+    (file) => ![path.join(DIALECT_DIR, "js.ts"), path.join(LEGACY_DIALECT_DIR, "js.ts")].includes(file),
+  ),
+];
 
 const declared = new Map(); // interface name -> {kind, file, line}
 for (const file of sourceFiles) {
@@ -1072,7 +1087,10 @@ if (grepCount !== population.size + excluded.length) {
 if (failures.length > 0) die();
 
 // ── R1 / R3: verdicts ─────────────────────────────────────────────────────
-const inDialect = (file) => path.normalize(file).startsWith(path.normalize(DIALECT_DIR) + path.sep);
+const inDialect = (file) =>
+  [DIALECT_DIR, LEGACY_DIALECT_DIR].some((directory) =>
+    path.normalize(file).startsWith(path.normalize(directory) + path.sep),
+  );
 
 const table = {}; // persisted: stable keys only (#5298)
 const report = {}; // console-only: current file:line for the same kinds

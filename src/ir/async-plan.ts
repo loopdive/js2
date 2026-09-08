@@ -43,25 +43,60 @@ import {
   type RuntimeProviderDefinition,
 } from "./runtime-manifest.js";
 
-export type IrAsyncStateId = number & { readonly __brand: "IrAsyncStateId" };
-export type IrAsyncHandlerId = number & { readonly __brand: "IrAsyncHandlerId" };
+import type { IrFunction as CoreIrFunction, IrModule as CoreIrModule } from "./core/nodes.js";
+import type {
+  IrAsyncStateId,
+  IrAsyncHandlerId,
+  IrCanonicalPromiseAbi,
+  IrAsyncRuntimeIntent,
+  IrAsyncPlanValue,
+  IrAsyncSpill,
+  IrAsyncSpillUpdate,
+  IrAsyncState,
+  IrAsyncHandler,
+  IrAsyncTerminator,
+  IrAsyncPlan,
+} from "./core/async-plan.js";
+export type {
+  IrAsyncStateId,
+  IrAsyncHandlerId,
+  IrCanonicalPromiseAbi,
+  IrAsyncRuntimeIntent,
+  IrAsyncPlanValue,
+  IrAsyncSpillStorage,
+  IrAsyncSpill,
+  IrAsyncResumeValue,
+  IrAsyncSpillUpdate,
+  IrAsyncState,
+  IrAsyncHandler,
+  IrAsyncSuspendTerminator,
+  IrAsyncGotoTerminator,
+  IrAsyncBranchTerminator,
+  IrAsyncResolveTerminator,
+  IrAsyncRejectTerminator,
+  IrAsyncCompleteTerminator,
+  IrAsyncTerminator,
+  IrAsyncPlan,
+} from "./core/async-plan.js";
 
+export interface PreparedIrFunction extends CoreIrFunction {
+  /**
+   * Lookup-only backend attachment added after runtime-manifest freeze. This
+   * is deliberately separate from `asyncPlan` so plan hashes stay target
+   * independent while Program ABI sealing can see exact adapter callables.
+   */
+  readonly asyncRuntime?: PreparedIrAsyncRuntime;
+}
+
+export interface PreparedIrModule extends CoreIrModule {
+  readonly functions: readonly PreparedIrFunction[];
+}
 export function asAsyncStateId(value: number): IrAsyncStateId {
   return value as IrAsyncStateId;
 }
 
 export function asAsyncHandlerId(value: number): IrAsyncHandlerId {
   return value as IrAsyncHandlerId;
-}
-
-/** One ABI for every prepared async function: callers always receive a Promise. */
-export interface IrCanonicalPromiseAbi {
-  readonly kind: "canonical-promise";
-  readonly version: 1;
-  readonly fulfillmentType: IrType | null;
-  readonly rejectionType: "dynamic";
-  readonly consumerContract: "promise-only";
-  readonly settlementTiming: "always-async";
 }
 
 export function canonicalPromiseAbi(fulfillmentType: IrType | null): IrCanonicalPromiseAbi {
@@ -73,123 +108,6 @@ export function canonicalPromiseAbi(fulfillmentType: IrType | null): IrCanonical
     consumerContract: "promise-only",
     settlementTiming: "always-async",
   });
-}
-
-/** Semantic requirements. A backend selects providers only after preparation. */
-export type IrAsyncRuntimeIntent = AsyncRuntimeFeature;
-
-export interface IrAsyncPlanValue {
-  readonly value: IrValueId;
-  readonly type: IrType;
-}
-
-export type IrAsyncSpillStorage = "ssa" | "slot" | "ref-cell" | "receiver";
-
-/**
- * One typed frame entry. The value identity is semantic; a backend chooses the
- * concrete field/local representation after the whole program ABI is sealed.
- */
-export interface IrAsyncSpill {
-  readonly value: IrValueId;
-  readonly type: IrType;
-  readonly storage: IrAsyncSpillStorage;
-}
-
-export interface IrAsyncResumeValue {
-  /** Successor-defined result of the preceding fulfillment/rejection edge. */
-  readonly value: IrValueId;
-  readonly type: IrType;
-  readonly source: "fulfilled" | "rejected";
-}
-
-/**
- * A typed assignment to a frame carrier performed after the state body and
- * before its terminator. This is the backend-neutral phi/update boundary for
- * loop-carried values: `value` remains ordinary SSA while `target` names the
- * stable spill identity observed by successor states.
- */
-export interface IrAsyncSpillUpdate {
-  readonly target: IrValueId;
-  readonly value: IrValueId;
-}
-
-export interface IrAsyncState {
-  readonly id: IrAsyncStateId;
-  /** At most one scheduler-delivered value is bound when this state begins. */
-  readonly resume?: IrAsyncResumeValue;
-  readonly body: readonly IrInstr[];
-  readonly updates?: readonly IrAsyncSpillUpdate[];
-  readonly terminator: IrAsyncTerminator;
-}
-
-export interface IrAsyncHandler {
-  readonly id: IrAsyncHandlerId;
-  readonly kind: "catch";
-  readonly entry: IrAsyncStateId;
-  readonly parent: IrAsyncHandlerId | null;
-}
-
-export interface IrAsyncSuspendTerminator {
-  readonly kind: "suspend";
-  readonly awaited: IrValueId;
-  readonly resume: {
-    readonly state: IrAsyncStateId;
-    /** Must be the target state's fulfilled resume value. */
-    readonly value: IrValueId;
-  };
-  readonly rejected: { readonly kind: "handler"; readonly handler: IrAsyncHandlerId } | { readonly kind: "reject" };
-  /** Exact values that must survive while the activation is suspended. */
-  readonly live: readonly IrValueId[];
-}
-
-export interface IrAsyncGotoTerminator {
-  readonly kind: "goto";
-  readonly target: IrAsyncStateId;
-}
-
-export interface IrAsyncBranchTerminator {
-  readonly kind: "branch";
-  readonly condition: IrValueId;
-  readonly ifTrue: IrAsyncStateId;
-  readonly ifFalse: IrAsyncStateId;
-}
-
-export interface IrAsyncResolveTerminator {
-  readonly kind: "resolve";
-  /** Absent for Promise<void>. */
-  readonly value?: IrValueId;
-}
-
-export interface IrAsyncRejectTerminator {
-  readonly kind: "reject";
-  readonly reason: IrValueId;
-}
-
-export interface IrAsyncCompleteTerminator {
-  readonly kind: "complete";
-}
-
-export type IrAsyncTerminator =
-  | IrAsyncSuspendTerminator
-  | IrAsyncGotoTerminator
-  | IrAsyncBranchTerminator
-  | IrAsyncResolveTerminator
-  | IrAsyncRejectTerminator
-  | IrAsyncCompleteTerminator;
-
-export interface IrAsyncPlan {
-  readonly schemaVersion: 1;
-  readonly ownerUnitId: IrUnitId;
-  readonly kind: "async-function";
-  readonly abi: IrCanonicalPromiseAbi;
-  readonly entry: IrAsyncStateId;
-  readonly params: readonly IrAsyncPlanValue[];
-  /** Exhaustive value/type table, including params, resumes, and body defs. */
-  readonly values: readonly IrAsyncPlanValue[];
-  readonly spills: readonly IrAsyncSpill[];
-  readonly states: readonly IrAsyncState[];
-  readonly handlers: readonly IrAsyncHandler[];
-  readonly runtimeIntents: readonly IrAsyncRuntimeIntent[];
 }
 
 /**

@@ -31,7 +31,7 @@ loc-budget-allow:
   - src/ir/from-ast.ts
   - src/ir/integration.ts
   - src/ir/lower.ts
-  - src/ir/nodes.ts
+  - src/ir/core/nodes.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
   - src/ir/verify.ts
@@ -120,6 +120,69 @@ the published F0 head is verified in upstream/main ancestry. The isolated ABI
 draft has 59/59 tests and typecheck passing, with parent composition and artifact
 parity still pending. The [lowering-cycle proposal](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
 is the next bounded plan, not a competing dispatch or completed dependency split.
+
+### Complete semantic nodes checkpoint — structural checkpoint, 2026-09-08
+
+The [Astra High full-node implementation contract and measured receipts](../agent-context/3518-core-nodes-checkpoint-plan-2026-09-08.md)
+retains PR 5742 ancestry at `acfd3e37b8765c4c4788c1fa94718d62c60e473c`.
+The non-draft held PR targets main to run the existing main-only PR CI; its
+cumulative diff includes that parent until the parent lands.
+It moves the complete semantic instruction/function closure, with prepared
+function/module compatibility types remaining beside the existing authenticated
+async runtime authority. This is not another helper-only slice and is not
+prepared-program completion or direct-codegen retirement.
+
+Two Astra Low native subagents own disjoint nodes/async/dialect and pure
+vocabulary/identity source slices. The parent integrates the source, boundary,
+kind, dialect and caller controls and publishes a single non-draft held PR.
+Claims `3518:core-nodes-separation` and `3518:core-vocabulary-separation` were
+verified on upstream's ledger, now `1aada624aa73f843511e7b4c41f84c0b9332490b`;
+all 815 previously held claims are preserved. No old P/C draft was changed:
+the 12-file P fingerprint remains
+`ecb33cddf6a6d0049b5c6d4b8440a2d95415ae60bf7a108172c396dc62816494`,
+and the five-file C fingerprint remains
+`73665f99262a0bae9dac0b48e21c1cbd0c1ec247b39885fc087e826c2047e73f`
+(SHA-256 of sorted JSON `{path,blob}` rows).
+
+Integrated source/seam/dialect/boundary/kind controls pass 168/168 and typecheck
+exits 0. Existing consumers pass 51/67; all 16 counted-string proof failures
+reproduce identically on the untouched parent (same 29 test names, outcomes and
+first error lines). No test is waived. All six paired standalone public compiler
+programs, including allocation and a loop, match the parent byte-for-byte and
+in WAT, descriptors, order, pools and outcomes; each validates, has zero imports
+and returns the expected value twice.
+
+The normal commit hook also caught an obsolete old-file declaration expectation
+in the parent core-type seam. Its replacement requires the unique canonical
+declarations and exact compatibility type forwarders; all 25 tests pass.
+
+The actual dependency inventory passes with 1,256 modules, 18 clean, five
+adapters, 1,233 unmigrated, 9,794 resolved edges, four unknowns and zero errors.
+Seven verified canonical destinations are activated under unchanged dependency
+permissions. Complete mode still fails. Exactly 174 kind-record path prefixes
+relocate (116 nodes, 55 dialect, two intrinsic vocabulary, one string encoding);
+reversing those and applying deterministic Prettier formatting recovers the
+entire PR 5742 baseline blob `6b2be2d5b198b8df35b97e6fa14275c73d29c19b`.
+No verdict, quote hash, counter or ratchet changed. LOC/function gates pass:
+the existing nodes LOC allowance transfers to the canonical path, with no new
+function allowance or budget baseline change.
+
+N1's six and the prior ten core caller obligations still pass both full and
+dispatch-cut paths; the dead-export ratchet remains exactly 25/25 and strict
+closure still fails on the same two dynamic imports. All 134 existing caller and
+open-extension controls pass unchanged. The new twelve-obligation
+node execution gate remains pending. Astra High approved actual function-object
+observations during public compilation instead of extending the incomplete
+static class interpreter. Its dispatch-cut result must remain explicitly unknown
+and its closure/retirement flags false. A prototype observes all twelve targets;
+the hardened gate, negative controls, explicit package requirement and review
+must land in a follow-up on the same held PR. No complete acceptance is claimed.
+
+PR 5743 independently finished green at `c2d900d4fa9811f3359c308369bfb2b4184e90a9`
+with 29 successful and 13 skipped checks, no unresolved review threads and no
+auto-merge request. It remains on hold: green PR-head checks do not resolve the
+inherited N1 host-CI/merge-queue incident. No CI/ruleset edits, hold removal or
+merge authorization are implied here.
 
 ### Core type construction checkpoint — 2026-09-08
 

@@ -154,7 +154,7 @@ describe("canonical IR core types", () => {
     expect(nodes.IR_CLASS_SHAPE_CELL).toBe(core.IR_CLASS_SHAPE_CELL);
     expect(domain.tagRefinementEquals).toBe(refinement.tagRefinementEquals);
     expect(Object.keys(core).sort()).toEqual([...runtimeNames, "IR_CLASS_SHAPE_CELL"].sort());
-    const variables = ["src/ir/nodes.ts", "src/ir/core/types.ts"].flatMap((path) =>
+    const variables = ["src/ir/nodes.ts", "src/ir/core/nodes.ts", "src/ir/core/types.ts"].flatMap((path) =>
       parse(path)
         .statements.filter(ts.isVariableStatement)
         .flatMap((node) => node.declarationList.declarations.map((entry) => entry.name.getText())),
@@ -166,10 +166,37 @@ describe("canonical IR core types", () => {
       expect(old.statements.some((node) => ts.isFunctionDeclaration(node) && node.name?.text === name)).toBe(true);
       expect(Object.keys(core)).not.toContain(name);
     }
-    expect(old.statements.some((node) => ts.isTypeAliasDeclaration(node) && node.name.text === "IrInstr")).toBe(true);
-    expect(old.statements.some((node) => ts.isInterfaceDeclaration(node) && node.name.text === "IrFunction")).toBe(
-      true,
-    );
+    const canonicalNodes = parse("src/ir/core/nodes.ts");
+    for (const [name, kind] of [
+      ["IrInstr", ts.SyntaxKind.TypeAliasDeclaration],
+      ["IrFunction", ts.SyntaxKind.InterfaceDeclaration],
+    ] as const) {
+      const declarations = (file: ts.SourceFile) =>
+        file.statements.filter(
+          (node) =>
+            (ts.isTypeAliasDeclaration(node) || ts.isInterfaceDeclaration(node)) &&
+            node.name.text === name &&
+            node.kind === kind,
+        );
+      expect(declarations(canonicalNodes)).toHaveLength(1);
+      expect(declarations(old)).toHaveLength(0);
+      const forwarders = old.statements.filter(
+        (node) =>
+          ts.isExportDeclaration(node) &&
+          node.isTypeOnly &&
+          node.moduleSpecifier &&
+          ts.isStringLiteral(node.moduleSpecifier) &&
+          node.moduleSpecifier.text === (name === "IrInstr" ? "./core/nodes.js" : "./async-plan.js") &&
+          node.exportClause &&
+          ts.isNamedExports(node.exportClause) &&
+          node.exportClause.elements.some(
+            (entry) =>
+              entry.name.text === name &&
+              (entry.propertyName?.text ?? entry.name.text) === (name === "IrInstr" ? name : "PreparedIrFunction"),
+          ),
+      );
+      expect(forwarders).toHaveLength(1);
+    }
   });
 
   it("resolves all eight canonical modules and twelve edges with only one runtime dependency", () => {

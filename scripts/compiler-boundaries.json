@@ -1,6 +1,6 @@
 {
   "schema": "compiler-boundaries-v1",
-  "description": "Exact compiler inventory with shared contracts, five pure IR type modules and bounded Wasm instruction, handle-primitive and native queue modules activated. Full IR nodes, remaining model, allocator, runtime-value and compiler concerns stay migration debt.",
+  "description": "Exact compiler inventory with shared contracts, the complete semantic IR node/function closure and bounded Wasm instruction, handle-primitive and native queue modules activated. Prepared runtime attachments, program preparation, remaining model, allocator, runtime-value and compiler concerns stay migration debt.",
   "sourceRoot": "src",
   "tsconfig": "tsconfig.json",
   "requireGitProvenance": true,
@@ -22,9 +22,10 @@
       "entries": [
         "src/shared/contracts/source-origin.ts",
         "src/shared/contracts/ir-identity.ts",
-        "src/shared/contracts/identity-values.ts"
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts"
       ],
-      "minModules": 3
+      "minModules": 4
     },
     {
       "id": "wasm-model",
@@ -68,9 +69,15 @@
         "src/ir/core/fnctor-shapes.ts",
         "src/ir/core/value-references.ts",
         "src/ir/core/capability-provenance.ts",
-        "src/ir/core/tag-refinement.ts"
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts"
       ],
-      "minModules": 5
+      "minModules": 11
     },
     {
       "id": "ir-analysis",
@@ -372,6 +379,33 @@
         "src/ir/core/fnctor-shapes.ts",
         "src/ir/core/value-references.ts",
         "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts"
+      ],
+      "minModules": 11
+    },
+    {
+      "layer": "foundation",
+      "entries": [
+        "src/shared/contracts/source-origin.ts",
+        "src/shared/contracts/ir-identity.ts",
+        "src/shared/contracts/identity-values.ts",
+        "src/shared/contracts/ir-counted-string-identity.ts"
+      ],
+      "minModules": 4
+    },
+    {
+      "layer": "ir-core",
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
         "src/ir/core/tag-refinement.ts"
       ],
       "minModules": 5
@@ -477,6 +511,13 @@
     }
   ],
   "files": [
+    { "path": "src/ir/core/nodes.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/dialect/js.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/async-plan.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/intrinsic-vocabulary.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/async-intents.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/string-types.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/shared/contracts/ir-counted-string-identity.ts", "state": "clean", "layer": "foundation" },
     { "path": "src/ir/core/types.ts", "state": "clean", "layer": "ir-core" },
     { "path": "src/ir/core/fnctor-shapes.ts", "state": "clean", "layer": "ir-core" },
     { "path": "src/ir/core/value-references.ts", "state": "clean", "layer": "ir-core" },
@@ -8436,11 +8477,11 @@
     },
     {
       "path": "src/ir/dialect/js.ts",
-      "state": "unmigrated",
+      "state": "compatibility-adapter",
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "All 27 unchanged dialect interfaces live in core/dialect/js.ts. Retain only the exact type-only compatibility forwarder until old imports retire; canonical nodes alone assembles the union."
     },
     {
       "path": "src/ir/dom-boundary.ts",
@@ -8904,7 +8945,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "Core type construction and equality live in the five activated core modules. The full src/ir/core/nodes.ts destination remains unfinished: split semantic async attachment data, provider-selection dependencies and dialect contracts before moving instructions/functions. irValSigned and isDynamic remain here with unresolved production-caller obligations."
+      "nextBoundary": "The complete semantic instruction/function closure lives in src/ir/core/nodes.ts and its activated pure dependencies. Retain old prepared-function aliases while prepared runtime attachments and program preparation remain mixed debt. irValSigned and isDynamic remain here with unresolved production-caller obligations."
     },
     {
       "path": "src/ir/number-to-string-provider.ts",
