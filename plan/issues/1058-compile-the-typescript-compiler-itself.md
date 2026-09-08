@@ -241,9 +241,15 @@ module and **zero imports**, in 461,664 ms (five warnings, zero errors).
 Evidence: `.tmp/ts5-parser-open-generator-method.log`.
 
 Requested main sync: fetched and independently checked live upstream main at
-`04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0` (six incoming commits). Checkpointing
-the generator-method changes before merging; no stash and no changes to the
-unrelated dirty main checkout.
+`04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0` (six incoming commits). Saved the
+generator-method changes in signed checkpoint `05a791a94bafcc`, then merged
+without conflicts in signed merge `8e29e3a4136e2b`. Verified upstream is an
+ancestor (zero commits behind). No manual stash or changes to the unrelated
+dirty main checkout. Post-merge controls pass **14/14 across three files**:
+open-object generator methods and the incoming conditional-alias property-write
+tests, including console coverage (`.tmp/ts5-main-sync-controls.log`). The full
+parser and selected upstream suite results above precede this merge; neither
+was rerun as part of this sync-only request. No push or PR was performed.
 
 Next-boundary investigation after checkpoint `9465e0c392cdd0`: the reduced real
 factory probe's `arrayFrom(set.values())` returns all three values (sum 6), while
