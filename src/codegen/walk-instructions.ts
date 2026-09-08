@@ -66,7 +66,7 @@ export function walkInstructionDag(
   walkInstructionArrays(instrs, visitor, visitedArrays);
 }
 
-/** Struct types that have a concrete allocation site in the completed module. */
+/** Struct types inhabited by a concrete allocation, including its supertypes. */
 export function allocatedStructTypeIndices(mod: WasmModule): ReadonlySet<number> {
   const out = new Set<number>();
   const visited = new WeakSet<Instr[]>();
@@ -78,6 +78,12 @@ export function allocatedStructTypeIndices(mod: WasmModule): ReadonlySet<number>
       },
       visited,
     );
+  // Split constructors allocate leaf layouts, but inherited fields remain on the base.
+  for (const typeIdx of out) {
+    const type = mod.types[typeIdx];
+    if (type?.kind === "struct" && type.superTypeIdx !== undefined && type.superTypeIdx >= 0)
+      out.add(type.superTypeIdx);
+  }
   return out;
 }
 
