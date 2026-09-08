@@ -105,3 +105,17 @@ flows are not newly covered.
   preserve-symlinks flags so it actually inspected this worktree; its direct
   invocation misreads the URL-encoded space in the checkout path and falls back
   to an unscoped baseline check.
+
+### PR #5746 CI follow-up
+
+The first CI run passed all eight equivalence shards and the equivalence gate,
+issue tests, linear tests, and smoke tests. Its quality job stopped at compiler
+inventory validation: the new `widened-property-return.ts` helper was absent
+from the compiler boundary inventory.
+
+Registered that helper as `unmigrated` / `mixed-needs-split`, destined for
+`backend-wasmgc`. The remaining separation is AST-based alias evidence versus
+physical return-carrier selection; this entry does not claim an activated
+architecture boundary. The inventory check against the preceding commit now
+reports `inventory-valid-architecture-incomplete` with zero errors. No runtime
+code, conformance baseline, or equivalence baseline changed.
