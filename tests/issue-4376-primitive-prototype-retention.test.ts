@@ -7,12 +7,15 @@ describe("runtime-eval primitive prototype companions", () => {
     ["6", '"6"'],
     ["true", '"true"'],
     ["false", '"false"'],
+    ['new Error("x")', '"Error: x"'],
+    ['new TypeError("x")', '"TypeError: x"'],
+    ['new RangeError("x")', '"RangeError: x"'],
   ])("reads the native toString through an erased receiver: %s", async (input, expected) => {
     const result = await compile(
       `
       const prototypes = new WeakMap<object, any>();
       function install(realm: object): void {
-        prototypes.set(realm, [String.prototype, Number.prototype, Boolean.prototype] as any[]);
+        prototypes.set(realm, [String.prototype, Number.prototype, Boolean.prototype, Error.prototype] as any[]);
       }
       function invoke(value:any, key:any):any {
         return Reflect.apply(value[key],value,[] as any[]);
