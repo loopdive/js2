@@ -9,6 +9,7 @@
  * Vitest runs chunks sequentially; fork dies between chunks for full
  * memory reclaim of the vitest process itself.
  */
+import { parseTest262SemanticProviders, test262ResultPrefix } from "../scripts/test262-lane.mjs";
 import { createHash } from "crypto";
 import {
   closeSync,
@@ -161,6 +162,7 @@ function parseTest262Target(): Test262CompileTarget | undefined {
 }
 
 const TEST262_TARGET = parseTest262Target();
+const TEST262_SEMANTIC_PROVIDERS = parseTest262SemanticProviders(process.env.TEST262_SEMANTIC_PROVIDERS);
 
 // #3462 — oracle LANE selection (the #3450 hybrid two-oracle pipeline). Two
 // oracles run under the same `ORACLE_VERSION`:
@@ -195,6 +197,7 @@ function getCachePaths(wrappedSource: string): { wasmPath: string; metaPath: str
     .update(wrappedSource)
     .update(compilerHash)
     .update(TEST262_TARGET ?? "gc")
+    .update(TEST262_SEMANTIC_PROVIDERS)
     .digest("hex");
   return {
     wasmPath: join(CACHE_DIR, `${hash}.wasm`),
@@ -250,7 +253,8 @@ mkdirSync(RESULTS_DIR, { recursive: true });
 // Timestamped filename — env var from run-test262-vitest.sh, or generate one
 const RUN_TIMESTAMP =
   process.env.RUN_TIMESTAMP || new Date().toISOString().replace(/[-:T]/g, "").replace(/\..+/, "").slice(0, 15);
-const RESULT_PREFIX = process.env.TEST262_RESULT_PREFIX || (TEST262_TARGET ? `test262-${TEST262_TARGET}` : "test262");
+const RESULT_PREFIX =
+  process.env.TEST262_RESULT_PREFIX || test262ResultPrefix(TEST262_TARGET ?? "gc", TEST262_SEMANTIC_PROVIDERS);
 const JSONL_PATH = join(RESULTS_DIR, `${RESULT_PREFIX}-results-${RUN_TIMESTAMP}.jsonl`);
 
 // Open results JSONL — each chunk appends independently
@@ -405,6 +409,7 @@ function recordResult(
     // (version, lane, fast_rev) tuple. Absent on pre-#3462 rows ⇒ treated as
     // "honest" (backward-compatible; existing honest baselines are unaffected).
     oracle_lane: ORACLE_LANE,
+    semantic_providers: TEST262_SEMANTIC_PROVIDERS,
     oracle_fast_rev: ORACLE_LANE === "fast-nativeharness" ? ORACLE_FAST_REV : undefined,
     file,
     category,
@@ -649,6 +654,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
       chunkIndex,
       chunkTotal: totalChunks,
       target: TEST262_TARGET ?? "gc",
+      semanticProviders: TEST262_SEMANTIC_PROVIDERS,
       registeredTests: registeredPaths.length,
       registeredPaths,
       // Keep recordedRows for the existing artifact readers while naming the
@@ -769,6 +775,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                 const result = await multiCompile(vfiles, fixtureGraph.entryFile, {
                   skipSemanticDiagnostics: true,
                   target: TEST262_TARGET,
+                  semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                   inferModuleStrictArguments,
                   // (#3049 C1 / #3123 / #2900) The FIXTURE compile defers
                   // top-level init, exactly like the worker's single-file path
@@ -897,6 +904,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   // interpreter globals never leak between fixtures.
                   const instance = await instantiateTest262Module(result.binary, importObj as any, {
                     target: TEST262_TARGET,
+                    semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                     providerLabel: RUNTIME_EVAL_PROVIDER_LABEL,
                   });
                   fixtureInstance = instance;
@@ -1117,6 +1125,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                   metaPath,
                   label,
                   target: TEST262_TARGET,
+                  semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                   inferModuleStrictArguments,
                   temporal: needsTemporal,
                   ...nativeHarnessOpts,
@@ -1191,6 +1200,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       metaPath,
                       label: relPath + " [poison retry]",
                       target: TEST262_TARGET,
+                      semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                       inferModuleStrictArguments,
                       temporal: needsTemporal,
                       ...nativeHarnessOpts,
@@ -1264,6 +1274,7 @@ export function runTest262Chunk(chunkIndex: number, totalChunks: number) {
                       metaPath,
                       label: relPath + " [retry]",
                       target: TEST262_TARGET,
+                      semanticProviders: TEST262_SEMANTIC_PROVIDERS,
                       inferModuleStrictArguments,
                       temporal: needsTemporal,
                       ...nativeHarnessOpts,
