@@ -1575,104 +1575,61 @@ export function compileNamespaceStaticCall(
       }
 
       if (reflectMethod === "setPrototypeOf" && expr.arguments.length >= 2) {
-        // (#2046 PR-C) Route Reflect.setPrototypeOf(target, proto) to the
-        // native __object_setPrototypeOf — the SAME helper backing standalone
-        // Object.setPrototypeOf (calls.ts ~5829). It performs the §10.1.2.1
-        // OrdinarySetPrototypeOf extensibility + cycle checks, writes
-        // $Object.$proto (field 0) on success, and returns `obj` (NOT a
-        // boolean). §28.1.14 Reflect.setPrototypeOf(target, proto):
-        //   step 1: target not an Object → throw a TypeError. The native
-        //     silently no-ops (returns obj) on a non-$Object receiver, so
-        //     enforce the step-1 throw at the CALL SITE with the shared
-        //     emitNonObjectArgGuard (statically-primitive / null / undefined
-        //     target).
-        //   step 2: proto not Object and not null → throw a TypeError. Reuse
-        //     the same static guard on the proto arg, but `null` is a LEGAL
-        //     proto here (unlike target), so only reject a statically-
-        //     primitive NON-null proto. A `null`/object proto passes;
-        //     undefined, number/string/boolean, and Symbol proto literals throw.
-        //   step 4: return the boolean [[SetPrototypeOf]] result. The native
-        //     has no failure channel (a refused set — non-extensible target or
-        //     a cycle — silently no-ops and still returns obj), so we drop obj
-        //     and return i32 `true`. KNOWN LIMITATION (identical to the
-        //     standalone Reflect.defineProperty arm above): a *refused* set
-        //     returns the spec's `true` instead of `false`. Faithful handling
-        //     needs a boolean failure channel in __object_setPrototypeOf and is
-        //     out of this slice; converting the common refusal→working path is
-        //     the win.
-        const targetArg = expr.arguments[0]!;
-        const protoArg = expr.arguments[1]!;
-        // §28.1.14 step 1: statically-non-object target → throw TypeError.
-        if (emitNonObjectArgGuard(ctx, fctx, targetArg, "Reflect.setPrototypeOf")) {
-          fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
-          return { kind: "i32" };
-        }
-        // §28.1.14 step 2: a statically-primitive proto that is not null is
-        // illegal. Only `null` is a legal primitive prototype; undefined and
-        // void expressions must take the shared TypeError guard below.
-        const protoIsNullish = protoArg.kind === ts.SyntaxKind.NullKeyword;
-        if (!protoIsNullish && emitNonObjectArgGuard(ctx, fctx, protoArg, "Reflect.setPrototypeOf")) {
-          fctx.body.push({ op: "i32.const", value: 0 }); // unreachable after throw
-          return { kind: "i32" };
-        }
-        // obj (externref)
-        const objType = compileExpression(ctx, fctx, targetArg, externRef);
-        if (!objType) {
-          fctx.body.push({ op: "i32.const", value: 1 });
-          return { kind: "i32" };
-        }
-        if (objType.kind !== "externref") coerceType(ctx, fctx, objType, externRef);
-        // (#5268 step 1, cluster B) Stash the operands so the §10.4.7
-        // immutable-prototype receiver can answer `false` instead of the
-        // KNOWN LIMITATION's unconditional `true`. The ordinary refusals
-        // (non-extensible, cycle) still return `true` — closing those needs the
-        // failure channel the limitation note describes, which is not this
-        // slice; `%Object.prototype%` is the one receiver whose refusal is a
-        // pure predicate on the receiver's identity.
-        const spoTargetLocal = allocTempLocal(fctx, externRef);
-        const spoProtoLocal = allocTempLocal(fctx, externRef);
-        fctx.body.push({ op: "local.tee", index: spoTargetLocal });
-        // proto (externref) — compileProtoArg reifies an inline-literal proto
-        // into a native $Object so __object_setPrototypeOf's `ref.test $Object`
-        // succeeds (the same #2580 M3 Stage A handling Object.setPrototypeOf
-        // uses); keeps the ordinary externref path for non-literal / null protos.
-        compileProtoArg(ctx, fctx, protoArg);
-        fctx.body.push({ op: "local.tee", index: spoProtoLocal });
-        const spoIdx = ensureLateImport(ctx, "__object_setPrototypeOf", [externRef, externRef], [externRef]);
+        // Keep the writer's internal permissive contract, but expose its real
+        // ordinary-object refusal status to Reflect callers.
+        ensureLateImport(ctx, "__object_setPrototypeOf", [externRef, externRef], [externRef]);
+        ensureLateImport(ctx, "__object_setPrototypeOf_status", [externRef, externRef], [i32Ty]);
         flushLateImportShifts(ctx, fctx);
-        if (spoIdx !== undefined) {
-          const immutable = objectPrototypeIsImmutableInstrs(ctx, spoTargetLocal);
-          if (immutable) {
-            // An immutable-prototype receiver must NOT be written and must
-            // answer `SameValue(V, current)` — `current` is null, so only a
-            // null proto succeeds.
-            fctx.body.push({ op: "drop" }); // proto
-            fctx.body.push({ op: "drop" }); // obj
-            fctx.body.push(...immutable);
-            fctx.body.push({
-              op: "if",
-              blockType: { kind: "val", type: i32Ty },
-              then: [{ op: "local.get", index: spoProtoLocal }, { op: "ref.is_null" }],
-              else: [
-                { op: "local.get", index: spoTargetLocal },
-                { op: "local.get", index: spoProtoLocal },
-                { op: "call", funcIdx: spoIdx },
-                { op: "drop" }, // native returns obj; Reflect wants a boolean
-                { op: "i32.const", value: 1 }, // success → true (see KNOWN LIMITATION)
-              ],
-            });
-          } else {
-            fctx.body.push({ op: "call", funcIdx: spoIdx });
-            fctx.body.push({ op: "drop" }); // native returns obj; Reflect wants a boolean
-            fctx.body.push({ op: "i32.const", value: 1 }); // success → true (see KNOWN LIMITATION)
-          }
-          releaseTempLocal(fctx, spoProtoLocal);
-          releaseTempLocal(fctx, spoTargetLocal);
-          return { kind: "i32" };
-        }
-        releaseTempLocal(fctx, spoProtoLocal);
-        releaseTempLocal(fctx, spoTargetLocal);
-        return fallbackReturn(0, "i32-true");
+        const targetLocal = allocTempLocal(fctx, externRef);
+        const protoLocal = allocTempLocal(fctx, externRef);
+        const targetType = compileExpression(ctx, fctx, expr.arguments[0]!, externRef);
+        if (targetType && targetType.kind !== "externref") coerceType(ctx, fctx, targetType, externRef);
+        else if (!targetType) fctx.body.push({ op: "ref.null.extern" });
+        fctx.body.push({ op: "local.set", index: targetLocal });
+        compileProtoArg(ctx, fctx, expr.arguments[1]!);
+        fctx.body.push({ op: "local.set", index: protoLocal });
+        guardNativeReflectTarget(targetLocal, "Reflect.setPrototypeOf target is not an object");
+        const beforeGuard = fctx.body.length;
+        guardNativeReflectTarget(protoLocal, "Object prototype may only be an Object or null");
+        const protoGuard = fctx.body.splice(beforeGuard);
+        fctx.body.push(
+          { op: "local.get", index: protoLocal },
+          { op: "ref.is_null" },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: protoGuard },
+        );
+        flushLateImportShifts(ctx, fctx);
+        const writer = ctx.funcMap.get("__object_setPrototypeOf")!;
+        const status = ctx.funcMap.get("__object_setPrototypeOf_status")!;
+        const ordinary: Instr[] = [
+          { op: "local.get", index: targetLocal },
+          { op: "local.get", index: protoLocal },
+          { op: "call", funcIdx: status },
+          {
+            op: "if",
+            blockType: { kind: "val", type: i32Ty },
+            then: [
+              { op: "local.get", index: targetLocal },
+              { op: "local.get", index: protoLocal },
+              { op: "call", funcIdx: writer },
+              { op: "drop" },
+              { op: "i32.const", value: 1 },
+            ],
+            else: [{ op: "i32.const", value: 0 }],
+          },
+        ];
+        const immutable = objectPrototypeIsImmutableInstrs(ctx, targetLocal);
+        if (immutable) {
+          fctx.body.push(...immutable, {
+            op: "if",
+            blockType: { kind: "val", type: i32Ty },
+            then: [{ op: "local.get", index: protoLocal }, { op: "ref.is_null" }],
+            else: ordinary,
+          });
+        } else fctx.body.push(...ordinary);
+        releaseTempLocal(fctx, protoLocal);
+        releaseTempLocal(fctx, targetLocal);
+        return { kind: "i32" };
       }
 
       if (reflectMethod === "isExtensible" && expr.arguments.length >= 1) {
