@@ -3,7 +3,7 @@ id: 4376
 title: "Spike v8x as a rusty_v8-compatible js2wasm backend for a compiler-free Deno runtime"
 status: in-progress
 created: 2026-08-12
-updated: 2026-08-31
+updated: 2026-09-08
 priority: high
 feasibility: hard
 reasoning_effort: max
@@ -565,3 +565,10 @@ tracked in
 [`codex/js2wasm-module-backend`](https://github.com/loopdive/v8x/tree/codex/js2wasm-module-backend)
 through commit `3095ded9b69055ecc936109cf71d270d4acf6c79`, which adds the strict
 unchanged-`deno_core` proof on top of the earlier public `Script::Run` bridge.
+
+
+## 2026-09-08 upstream-main sync
+
+The branch is synchronized with `loopdive/js2` main at `16498efb481cb022ee5c4dcc9bb137b6d4c91a50`. That sync exposed a reserved nested-parameter ABI regression in the Deno primordial graph: body compilation was re-registering a carrier already reserved by the hoist lane, changing an `externref` parameter to `ref_null`. The Deno-scoped guard in `src/codegen/statements/nested-declarations.ts` preserves the hoisted carrier order while leaving the general reservation fix enabled for other targets.
+
+The focused reservation and Deno bootstrap suite passes after the guard, and `pnpm run typecheck` passes.

@@ -1358,7 +1358,11 @@ function compileNestedFunctionDeclarationInScope(
   for (let pi = 0; pi < stmt.parameters.length; pi++) {
     const p = stmt.parameters[pi]!;
     const paramType = foreignEvalDeclaration ? undefined : ctx.checker.getTypeAtLocation(p);
-    if (paramType !== undefined) ensureStructForType(ctx, paramType);
+    // The Deno primordial graph registers these carriers in its hoist lane.
+    // A second registration while compiling the body can move the ref type
+    // after reservation and change an externref ABI into ref_null. Other
+    // targets still use the general pre-registration fix.
+    if (paramType !== undefined && ctx.targetProfile.ambientPlatform !== "deno") ensureStructForType(ctx, paramType);
     let wasmType: ValType =
       foreignEvalDeclaration || restBindingOverridesToExternref(p)
         ? { kind: "externref" }
