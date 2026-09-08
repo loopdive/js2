@@ -27,6 +27,8 @@
  */
 import { ts } from "../ts-api.js";
 import { symbolShadowsBuiltinGlobal } from "./builtin-shadow.js"; // (#5096) intrinsic-shadow claim gate
+import { higherOrderSignatureTypeFact } from "./higher-order-signature-fact.js";
+import { resolveCheckerSignaturePosition } from "./signature-position.js";
 
 /** JS runtime tag classification (aligned with the #2104 JsTag module). */
 export type JsTag = "number" | "string" | "boolean" | "bigint" | "symbol" | "undefined" | "object" | "function";
@@ -74,6 +76,16 @@ export type TypeFact =
  */
 export type OracleTypeKey = symbol & { readonly __brand: "OracleTypeKey" };
 
+/** Zero-based parameter index or return slot, descending through callable types. */
+export type SignaturePositionPath = readonly (number | "return")[];
+
+export interface SignaturePositionFact {
+  readonly fact: TypeFact;
+  readonly typeKey: OracleTypeKey;
+  /** Present only when this source annotation names the exact instantiated type. */
+  readonly annotation?: ts.TypeNode;
+}
+
 export interface TypeOracle {
   /** The workhorse: the registry-free fact for a node's type. */
   typeFactOf(node: ts.Node): TypeFact;
@@ -86,8 +98,14 @@ export interface TypeOracle {
   nullabilityOf(node: ts.Node): { nullable: boolean; undefinable: boolean };
   /** Union member facts (undefined when the type is not a union). */
   unionPartsOf(node: ts.Node): TypeFact[] | undefined;
-  /** Call signature fact (undefined when not callable / not resolvable). */
+  /**
+   * Call signature fact (undefined when not callable / not resolvable).
+   * Fixed-arity callable positions may contain bounded nested signatures;
+   * a function tag without one is not proof of a concrete closure ABI.
+   */
   signatureOf(node: ts.Node): SignatureFact | undefined;
+  /** Exact source type identity at an inferred or annotated callable position. */
+  signaturePositionOf(node: ts.Node, path: SignaturePositionPath): SignaturePositionFact | undefined;
   /** Fact for property `name` on the node's type. */
   propertyFactOf(node: ts.Node, name: string): TypeFact;
   /** Element fact for arrays/tuples. */
@@ -280,13 +298,31 @@ export class TsCheckerOracle implements TypeOracle {
       const t = this.checker.getTypeAtLocation(node);
       const sig = t?.getCallSignatures?.()[0];
       if (!sig) return undefined;
+      const positionFact = (type: ts.Type): TypeFact =>
+        higherOrderSignatureTypeFact(this.checker, type, (position) => this.factOfType(position, 0));
       return {
         params: sig.parameters.map((p) => {
           const d = p.valueDeclaration;
-          return d ? this.typeFactOf(d) : ({ kind: "unresolvable" } as TypeFact);
+          return d
+            ? positionFact(this.checker.getTypeOfSymbolAtLocation(p, d))
+            : ({ kind: "unresolvable" } as TypeFact);
         }),
-        returns: this.factOfType(this.checker.getReturnTypeOfSignature(sig), 0),
+        returns: positionFact(this.checker.getReturnTypeOfSignature(sig)),
         declaredArity: sig.parameters.length,
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
+  signaturePositionOf(node: ts.Node, path: SignaturePositionPath): SignaturePositionFact | undefined {
+    try {
+      const position = resolveCheckerSignaturePosition(this.checker, node, path);
+      if (!position) return undefined;
+      return {
+        fact: higherOrderSignatureTypeFact(this.checker, position.type, (type) => this.factOfType(type, 0)),
+        typeKey: this.internTypeKey(position.type),
+        ...(position.annotation ? { annotation: position.annotation } : {}),
       };
     } catch {
       return undefined;
@@ -373,7 +409,10 @@ export class TsCheckerOracle implements TypeOracle {
   }
 
   typeKeyOf(node: ts.Node): OracleTypeKey {
-    const t = this.checker.getTypeAtLocation(node) as unknown as object;
+    return this.internTypeKey(this.checker.getTypeAtLocation(node));
+  }
+
+  private internTypeKey(t: ts.Type): OracleTypeKey {
     let key = this.keyCache.get(t);
     if (!key) {
       key = Symbol(`oracle-type-${this.keyCounter++}`) as OracleTypeKey;

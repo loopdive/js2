@@ -1018,6 +1018,116 @@ rows with zero IR bodies. `createNodeFactory` remains out-of-scope identifier.
 Publication preparation: PR #5753 was verified open, ready and not queued at
 head `a38afaea15187581c98e7a6c3cb4e8f962acb0b0`; no full-goal completion claim.
 
+Higher-order signature continuation (2026-09-08, in progress): the checkpoint
+above is published as signed commit `5be04db2a76714911efbbf7e0c496c9cde2ff078`
+on PR #5753. The next IR prerequisite is retaining the returned callback's
+signature: `TsCheckerOracle.signatureOf` currently classifies its return as
+`{ kind: "function" }`, losing the `Expression -> Expression` boundary. Audit
+existing signature consumers before adding registry-free nested signature
+facts; do not substitute `dynamic` or a scalar signature for this source.
+Selection, direct-only nested lifting and address-taken closure lifting must
+ultimately consume the same exact source-owned plan. This prerequisite alone
+does not remove the local Map or recursive Node representation requirements.
+
+Implemented the fact prerequisite locally: signature positions retain nested
+fixed-arity callback signatures, using instantiated parameter symbols instead
+of their generic source declarations. Ordinary `typeFactOf` remains shallow;
+no source selection or direct-codegen emission was changed. Unsupported
+overloads, generic call signatures, optional/rest/default parameters, explicit
+receivers and constructor-only types retain a function tag **without** a
+signature. Expansion has an active-type cycle guard, depth ceiling six and
+64-signature budget; truncation likewise does not invent an ABI.
+
+Consumer audit: existing production `signatureOf` readers test availability,
+return kind or callable-boundary presence, rather than nested signatures.
+The new facts do not authorize those callers to allocate a carrier. The
+differential signature serializer did erase this new evidence via the shared
+`factKey`; it now includes nested signatures without changing `factKey`'s
+in-house join/intern semantics. Differing nested metadata is surfaced as a
+conservative disagreement (the string classifier does not yet distinguish
+missing callback metadata from a genuinely incompatible callable signature).
+
+Validation: the pre-change focused run had **4 failures / 10 tests**, all
+missing higher-order facts. Final bounded controls pass **33/33 across five
+files**, including **12/12** new controls, instantiated generics, conservative
+refusals, recursive and branching expansion and differential visibility
+(`.tmp/ts5-higher-order-facts-bounded.log`). Typecheck, scoped Biome/Prettier,
+LOC/function and oracle/coercion gates pass without new grants or baseline
+edits. Dead-export preservation passes **6/6 full + 6/6 cut**, still not a
+strict graph-closure or deletion certificate.
+
+The real source was inspected through `analyzeFiles` on the original factory
+entry, not an extracted replacement (`.tmp/ts5-original-signature-facts.mts`).
+Both cached helpers now report `(Expression) -> Expression` returned callbacks
+and non-nullish numeric enum unions of **42** parts for their operator input;
+`mixingBinaryOperatorsRequiresParentheses` reports two numeric enum unions of
+**360** parts and a boolean return. Class-name facts do **not** identify a
+canonical Node layout: the next IR step still needs source-position-owned
+carrier resolution shared across selector and both nested lowering routes.
+Do not register by spelling `Expression`, widen it to dynamic, or declare the
+factory admitted based only on these facts.
+
+Full-factory verification before adding the expansion-budget hardening remains
+**0/3 Wasm vs 3/3 native**, same 62,956,028-byte valid zero-import module,
+151,985 ms (`.tmp/ts5-higher-order-full-factory.log`). This is no factory
+runtime gain. The selected adapter remains **25/25**, with **251 upstream
+files deferred** (`.tmp/ts5-higher-order-projected.log`). The final bounded
+original-source fact probe and final typecheck/gates are recorded separately;
+do not mislabel the earlier full-module run as testing later edits.
+The bounded source probe matches the earlier three-helper facts byte for byte
+(`cmp` exit 0); final typecheck, LOC and function gates all terminate with
+exit 0 (`.tmp/ts5-higher-order-typecheck-final.log`,
+`.tmp/ts5-higher-order-loc-final.log`, `.tmp/ts5-higher-order-func-final.log`).
+All verification processes are terminal. These five files remain uncommitted
+on `codex/1058-typescript-standalone`; PR #5753 still contains `5be04db2`.
+
+Exact signature-position continuation (2026-09-08, in progress): add a
+registry-free oracle query for a parameter/return path through nested callable
+signatures. It must retain an opaque type identity and expose a source type
+annotation only when that annotation resolves to the **same instantiated
+type**, not merely the same name. This lets a later IR signature planner use
+the existing position resolver where proven and refuse missing recursive
+carrier evidence. In-house resolution must abstain where it cannot prove
+identity; neither a generic declaration's `T` nor a same-named interface from
+another scope is a valid substitute.
+
+The query is implemented as `signaturePositionOf(node, path)`, where a path
+uses zero-based parameter indexes and `"return"` steps. Checker types stay in
+the checker implementation; consumers receive a registry-free fact, an opaque
+key interned through the existing `typeKeyOf` cache, and an annotation only
+after exact type-identity verification. Empty/out-of-range/deep paths,
+non-callable intermediates, overload sets and unresolved generic signatures
+abstain. The in-house backend explicitly abstains rather than reusing its
+structural type interning as nominal/source identity. Differential queries
+return the primary key unchanged and compare facts/source coordinates rather
+than comparing generated symbol labels.
+
+Fresh original-source evidence: **6/6 requested positions** in the two cached
+parenthesizer helpers resolve to verified `BinaryOperator`/`Expression`
+annotations in `parenthesizerRules.ts`. All **4/4 callback input/result
+positions** share the same `Expression` type key
+(`.tmp/ts5-original-signature-positions.log`; probe exits 0 and asserts both
+denominators and identity equality). This is stronger than same-name evidence
+and does not claim an IR Node layout exists. New tests distinguish same-named
+types in separate scopes, reject a generic `T` annotation for an instantiated
+`number` position, check invalid paths and overload abstention, and retain the
+primary identity through differential mode. An initial parameterized invalid-
+path test accidentally spread path arrays into test arguments; it was corrected
+to use object rows before the final **44/44 across six files** run, including
+**11/11** signature-position controls (`.tmp/ts5-signature-position-verified.log`).
+
+Typecheck, scoped lint/format, LOC/function, oracle/coercion and dead-export
+preservation gates pass (`.tmp/ts5-signature-position-*.log`). No new checker
+allowances, baseline changes, source selection or legacy emitter edits. All
+verification processes are terminal. The eight-file combined fact/identity
+checkpoint is ready to commit. Next integrate one source-owned inferred
+signature plan into selection and both nested lowering routes, resolving
+nominal/recursive leaves only from exact prepared carrier ownership. The
+existing finite object expander rejects recursive shapes; merely feeding it
+the now-verified `Expression` annotation is not the remaining implementation.
+Local Map adapters are still needed, and the full standalone TypeScript goal
+remains incomplete.
+
 Final publication-query migration in progress: indexed record element facts now
 come from TypeOracle (property names, scalar/union facts and optionality; no
 checker types or Wasm indexes escape). JSON preflight uses source facts, then

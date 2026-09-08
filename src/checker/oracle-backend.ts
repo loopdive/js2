@@ -23,6 +23,8 @@ import {
   type JsTag,
   type OracleTypeKey,
   type SignatureFact,
+  type SignaturePositionFact,
+  type SignaturePositionPath,
   type ShapeFact,
   type TypeFact,
   type TypeOracle,
@@ -202,7 +204,11 @@ function describeFact(fact: TypeFact | undefined): string {
 
 function describeSignature(sig: SignatureFact | undefined): string {
   if (!sig) return "undefined";
-  return `(${sig.params.map(factKey).join(",")})->${factKey(sig.returns)}#${sig.declaredArity}`;
+  return `(${sig.params.map(describeSignaturePosition).join(",")})->${describeSignaturePosition(sig.returns)}#${sig.declaredArity}`;
+}
+
+function describeSignaturePosition(fact: TypeFact): string {
+  return fact.kind === "function" && fact.signature ? `function<${describeSignature(fact.signature)}>` : factKey(fact);
 }
 
 /**
@@ -288,6 +294,24 @@ export class DifferentialOracle implements TypeOracle {
 
   signatureOf(node: ts.Node): SignatureFact | undefined {
     return this.compare("signatureOf", node, (o) => o.signatureOf(node), describeSignature);
+  }
+
+  signaturePositionOf(node: ts.Node, path: SignaturePositionPath): SignaturePositionFact | undefined {
+    return this.compare(
+      `signaturePositionOf:${path.join("/")}`,
+      node,
+      (oracle) => oracle.signaturePositionOf(node, path),
+      (position) => {
+        if (!position) return "undefined";
+        const annotation = position.annotation;
+        const source = annotation?.getSourceFile();
+        // Tokens are intentionally local to each oracle; never compare their
+        // generated labels. Return the primary token unchanged to consumers.
+        return `${describeSignaturePosition(position.fact)}@${
+          annotation && source ? `${source.fileName}:${annotation.getStart(source)}:${annotation.end}` : "unwitnessed"
+        }`;
+      },
+    );
   }
 
   propertyFactOf(node: ts.Node, name: string): TypeFact {

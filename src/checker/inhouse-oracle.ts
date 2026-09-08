@@ -48,6 +48,8 @@ import {
   type JsTag,
   type OracleTypeKey,
   type SignatureFact,
+  type SignaturePositionFact,
+  type SignaturePositionPath,
   type TypeFact,
   type TypeOracle,
 } from "./oracle.js";
@@ -665,6 +667,11 @@ export class InHouseOracle implements TypeOracle {
   signatureOf(node: ts.Node): SignatureFact | undefined {
     const decl = this.functionLikeFor(node);
     return decl ? this.signatureOfDeclaration(decl, 0) : undefined;
+  }
+
+  signaturePositionOf(_node: ts.Node, _path: SignaturePositionPath): SignaturePositionFact | undefined {
+    // Structural interning cannot certify exact instantiated source identity.
+    return undefined;
   }
 
   private functionLikeFor(node: ts.Node): ts.SignatureDeclarationBase | undefined {
