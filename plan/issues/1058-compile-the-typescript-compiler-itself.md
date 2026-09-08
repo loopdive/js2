@@ -256,6 +256,26 @@ Log: `.tmp/ts5-source-factory-error-text.log`; persistent report:
 `tests/dogfood/report/typescript-source-unit-factory.json`. All compilation and
 typecheck processes from this expansion are terminal; no live handle to resume.
 
+Reduced the factory failure to a module exporting an accessor-bearing factory
+alongside an unrelated mutable export. Both direct and barrel namespace imports
+trap before the fix (**0/2**). Namespace-object materialization deliberately
+declines when it cannot publish live bindings, but static variable reads also
+declined source-module namespaces and fell through to a null receiver.
+`tryEmitRuntimeNamespaceVariableValue` now resolves exact source-module export
+declarations through the oracle and reads their program-ABI global, retaining
+the dynamic TDZ check. Ambient and non-top-level declarations still decline;
+the existing runtime-namespace ownership checks remain unchanged. The reduced
+cases now pass **2/2**, zero imports, and the LOC/function gates pass without
+new allowances. Added a same-named cross-module live-binding control as well.
+
+Real-source reruns are live: factory **74714**
+(`.tmp/ts5-source-factory-binding.log`), diagnostics **38802**
+(`.tmp/ts5-source-diagnostics-binding.log`). Namespace controls pass **19/19**
+(`.tmp/ts5-namespace-value-controls.log`), including exact cross-module identity,
+existing namespace constructor controls and TDZ. Typecheck and scoped lint pass
+(`.tmp/ts5-namespace-value-typecheck.log`). The two real-source handles supersede
+the terminal handles above; do not duplicate those runs.
+
 ### Source-defined collection carrier investigation (resumed)
 
 Generator-method follow-up after `085c67795aad5e`: WAT for the real `*entries()`

@@ -3861,9 +3861,8 @@ function tryEmitRuntimeNamespaceFunctionValue(
  * values live in the program ABI. Calls and function-value reads already
  * resolve through that ABI, but a data read such as `Debug.isDebugging` used to
  * compile the namespace identifier as null and then attempt a property read on
- * it. Resolve only named/local runtime namespaces here. A source-module
- * namespace (`import * as ns`) has different export ownership and keeps using
- * the ordinary module-namespace path.
+ * it. Source-module namespace reads resolve their exact exported top-level
+ * binding too, without materializing unrelated or mutable exports.
  *
  * Declaration and allocator identity make this fail closed for merged
  * namespaces and same-named exports. The TDZ check is deliberately dynamic:
@@ -3877,19 +3876,27 @@ function tryEmitRuntimeNamespaceVariableValue(
 ): ValType | undefined {
   if (!ts.isIdentifier(expr.expression) || ts.isPrivateIdentifier(expr.name)) return undefined;
   const receiver = runtimeNamespaceFunctionValueReceiver(ctx, expr.expression);
-  if (receiver === undefined || receiver.sourceModule) return undefined;
+  if (receiver === undefined) return undefined;
 
-  const declaration = ctx.oracle.valueDeclarationOf(expr.name);
+  const declaration = receiver.sourceModule
+    ? ctx.oracle.aliasedValueDeclarationOf(expr.name)
+    : ctx.oracle.valueDeclarationOf(expr.name);
   if (declaration === undefined || !ts.isVariableDeclaration(declaration)) return undefined;
 
-  let namespaceBlock: ts.ModuleBlock | undefined;
-  for (let current: ts.Node | undefined = declaration.parent; current; current = current.parent) {
-    if (ts.isModuleBlock(current)) {
-      namespaceBlock = current;
-      break;
+  if (receiver.sourceModule) {
+    const statement = declaration.parent.parent;
+    if (!ts.isVariableStatement(statement) || statement.parent !== declaration.getSourceFile()) return undefined;
+    if (isAmbientDeclarationContext(declaration)) return undefined;
+  } else {
+    let namespaceBlock: ts.ModuleBlock | undefined;
+    for (let current: ts.Node | undefined = declaration.parent; current; current = current.parent) {
+      if (ts.isModuleBlock(current)) {
+        namespaceBlock = current;
+        break;
+      }
     }
+    if (namespaceBlock === undefined || !receiver.moduleBlocks.has(namespaceBlock)) return undefined;
   }
-  if (namespaceBlock === undefined || !receiver.moduleBlocks.has(namespaceBlock)) return undefined;
 
   const binding = ctx.programAbiGlobals?.moduleBinding(declaration);
   if (binding === undefined) return undefined;
