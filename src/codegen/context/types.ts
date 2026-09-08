@@ -173,6 +173,8 @@ export interface CodegenOptions extends BodyRouteAudit.Options {
   standalone?: boolean;
   /** Linked zero-argument getter for a canonical standalone realm-global object. */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  /** Export or import the complete mutable Symbol state of a standalone realm. */
+  standaloneSymbolState?: "export" | { module: string };
   /** JS-host direct-eval lowering; see `CompileOptions.directEval`. */
   directEval?: "legacy" | "reified-host";
   /**
@@ -4036,6 +4038,8 @@ export interface CodegenContext extends StandaloneCapabilityDemandState, BodyRou
   standalone: boolean;
   /** Linked zero-argument getter for the canonical standalone realm-global object. */
   standaloneGlobalThisImport?: { module: string; name: string; call?: string };
+  /** Export or import the complete mutable Symbol state of a standalone realm. */
+  standaloneSymbolState?: "export" | { module: string };
   /** Resolved JS-host direct-eval lowering. */
   directEvalMode: "legacy" | "reified-host";
   /** Private externref-array carrier used only by reified JS-host direct eval. */

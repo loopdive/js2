@@ -1416,6 +1416,7 @@ async function main(): Promise<void> {
     emitWat: false,
     moduleName: "v8x-js2wasm-spike",
     externImportModule: "v8x:deno",
+    standaloneSymbolState: { module: "v8x:context" },
     standaloneGlobalThisImport: {
       module: "v8x:context",
       name: "__v8x_context_global_this",
