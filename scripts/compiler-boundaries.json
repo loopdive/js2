@@ -160,9 +160,10 @@
         "src/ir/program/errors.ts",
         "src/ir/program/data.ts",
         "src/ir/program/input.ts",
-        "src/ir/program/native-vector-resources.ts"
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts"
       ],
-      "minModules": 13
+      "minModules": 14
     },
     {
       "id": "runtime-contracts",
@@ -182,8 +183,8 @@
       "status": "active",
       "roots": ["src/backend/wasmgc"],
       "required": true,
-      "entries": ["src/backend/wasmgc/resources/native-vectors.ts"],
-      "minModules": 1
+      "entries": ["src/backend/wasmgc/resources/native-vectors.ts", "src/backend/wasmgc/resources/native-promises.ts"],
+      "minModules": 2
     },
     {
       "id": "native-runtime",
@@ -440,6 +441,31 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts"
+      ],
+      "minModules": 14
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-vectors.ts", "src/backend/wasmgc/resources/native-promises.ts"],
+      "minModules": 2
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -924,6 +950,8 @@
     }
   ],
   "files": [
+    { "path": "src/ir/program/native-promise-resources.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/backend/wasmgc/resources/native-promises.ts", "state": "clean", "layer": "backend-wasmgc" },
     { "path": "src/runtime/wasmgc/promise/resolution-bodies.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/runtime/wasmgc/promise/thenable-bodies.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/ir/program/native-vector-resources.ts", "state": "clean", "layer": "ir-program" },
