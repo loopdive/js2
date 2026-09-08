@@ -86,6 +86,7 @@ import { ANNEX_B_ACCESSOR_ARITY, emitObjectProtoAnnexBAccessorBody } from "./obj
 import { emitWrapperProtoValueOfBody, isWrapperBrandName } from "./wrapper-proto-value-of.js";
 import { emitWrapperProtoToStringBody } from "./wrapper-proto-to-string.js"; // (#4619)
 import { emitFunctionProtoApplyBody } from "./function-proto-apply.js";
+import { emitFunctionProtoCallBody } from "./function-proto-call.js";
 import { emitFunctionProtoToStringBody } from "./function-proto-to-string.js"; // (#4492 wave-5)
 import { emitArrayProtoToStringBody } from "./array-proto-tostring.js";
 import { emitObjectProtoValueOfBody } from "./object-proto-value-of.js"; // (#4492 wave-5)
@@ -2434,7 +2435,7 @@ function makeGlue(
     memberIsVariadic: (member) =>
       name === "Array" && (member === "join" || member === "push" || member === "unshift" || member === "concat")
         ? true
-        : name === "String" && member === "concat",
+        : (name === "String" && member === "concat") || (name === "Function" && member === "call"),
     // (#4485) §B.2.4.3 — `Date.prototype.toGMTString` IS `Date.prototype.
     // toUTCString` (one function object, asserted by test262 annexB
     // .../toGMTString/value.js). The Annex B String aliases have the same
@@ -2498,6 +2499,7 @@ function makeGlue(
       // decline leaves the ladder byte-identical.
       (name === "Function" && member === "toString" ? emitFunctionProtoToStringBody(c, fctx) : null) ??
       (name === "Function" && member === "apply" ? emitFunctionProtoApplyBody(c, fctx) : null) ??
+      (name === "Function" && member === "call" ? emitFunctionProtoCallBody(c, fctx) : null) ??
       // ES2015 §19.2.3.6 — the inherited `@@hasInstance` method. Its body is
       // shared with the standalone dynamic-instanceof substrate so ordinary
       // function receivers and direct `Function.prototype` reads use the same

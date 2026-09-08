@@ -1,3 +1,4 @@
+import { compileReflectArgumentValue } from "../reflect-argument-value.js";
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 //
 // Remaining built-in namespace static-method call dispatch extracted from the
@@ -885,19 +886,10 @@ export function compileNamespaceStaticCall(
     // legal. Compiling this one position as a vec keeps the literal's length.
     const emitReflectArgs = (count: number, argumentsListIndex?: number): void => {
       const externRef: ValType = { kind: "externref" };
-      const forceVecFlag = ctx as unknown as { _arrayLiteralForceVec?: boolean };
       for (let i = 0; i < count; i++) {
         const arg = expr.arguments[i];
         if (arg !== undefined) {
-          const forceVec = i === argumentsListIndex && ts.isArrayLiteralExpression(arg);
-          const previousForceVec = forceVecFlag._arrayLiteralForceVec;
-          if (forceVec) forceVecFlag._arrayLiteralForceVec = true;
-          let argTy: ValType | null;
-          try {
-            argTy = compileExpression(ctx, fctx, arg, externRef);
-          } finally {
-            if (forceVec) forceVecFlag._arrayLiteralForceVec = previousForceVec;
-          }
+          const argTy = compileReflectArgumentValue(ctx, fctx, arg, i === argumentsListIndex);
           if (argTy && argTy.kind !== "externref") {
             coerceType(ctx, fctx, argTy, externRef);
           } else if (argTy === null) {
@@ -914,10 +906,10 @@ export function compileNamespaceStaticCall(
     // Reflect builtin. Native get/has still need their arguments in locals so
     // the target can be validated after that evaluation, but before the native
     // helper performs ToPropertyKey (or consumes the optional receiver).
-    const emitReflectArgumentLocals = (): number[] => {
+    const emitReflectArgumentLocals = (argumentsListIndex?: number): number[] => {
       const argLocals: number[] = [];
-      for (const arg of expr.arguments) {
-        const argTy = compileExpression(ctx, fctx, arg, externRef);
+      for (const [index, arg] of expr.arguments.entries()) {
+        const argTy = compileReflectArgumentValue(ctx, fctx, arg, index === argumentsListIndex);
         if (argTy && argTy.kind !== "externref") {
           coerceType(ctx, fctx, argTy, externRef);
         } else if (argTy === null) {
@@ -1727,7 +1719,7 @@ export function compileNamespaceStaticCall(
       // list carrier) and carries the `$Proxy` front-guard, so a proxy target
       // routes into `__proxy_apply_dispatch` and runs its `apply` trap.
       if (reflectMethod === "apply" && !boundaryReflectInterop) {
-        const argLocals = emitReflectArgumentLocals();
+        const argLocals = emitReflectArgumentLocals(2);
         const targetLocal = argLocals[0];
         if (targetLocal === undefined) {
           emitThrowTypeError(ctx, fctx, "Reflect.apply called on non-object");
