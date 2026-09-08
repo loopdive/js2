@@ -121,12 +121,36 @@ draft has 59/59 tests and typecheck passing, with parent composition and artifac
 parity still pending. The [lowering-cycle proposal](../agent-context/3518-lowering-cycle-plan-2026-09-08.md)
 is the next bounded plan, not a competing dispatch or completed dependency split.
 
+### Source-free typed preparation — active checkpoint, 2026-09-08
+
+The [typed-preparation implementation plan](../agent-context/3518-typed-preparation-checkpoint-plan-2026-09-08.md)
+specifies the next connected step: detach source-produced IR and the complete
+allocation snapshot, run preparation with explicit controls and owned state,
+then preserve the existing source wrapper's diagnostics and observation lifecycle.
+It incorporates Astra High's five-control, lossless-capture and exact A/B API
+amendments. This is not a public-route switch or a clean-layer certification.
+
+The coordinator verified claim `3518:typed-program-preparation-boundary` at
+`ed53d4e1e9f4c9701212ed1d91957a5eebceefa0`; the new record is the only ledger change.
+All 16 open PRs were scanned for the 18 owned source paths, including the complete
+135-file large-PR page set; none overlaps. P/C drafts still match their recorded
+fingerprints and remain untouched. Existing historical claims are preserved.
+
+Two native Astra Low workers receive disjoint source and middle-end maps in fresh
+worktrees from `6ff05f6b5a197f8d0423036f7d171888ff99bd40`. Astra High reviews the
+integrated result; the coordinator owns shared docs, normal-hook publication and
+PR shepherding. Heavy checks stay serialized at 2 GiB with one fork and no local
+Test262 campaign. Every implementation checkpoint goes to a non-draft upstream PR.
+The merge hold, two unresolved imports, full retirement criteria, pending ABI
+getter decision and prohibition on new host/linear work remain unchanged.
+
 ### Complete semantic nodes checkpoint — structural checkpoint, 2026-09-08
 
-Published non-draft held PR 5744 at
-`8429806b2abb6a9f04160471170a0659c94bd335`. The next push adds the measured
-caller-execution requirement; neither checkpoint authorizes retirement or clears
-the existing merge hold.
+Published non-draft held PR 5744 now includes caller-proof follow-up
+`6ff05f6b5a197f8d0423036f7d171888ff99bd40` over structural checkpoint
+`8429806b2abb6a9f04160471170a0659c94bd335`. Fresh CI completed with 29 successful
+and 14 skipped checks, no unresolved review threads, and a mergeable head.
+Neither checkpoint authorizes retirement or clears the existing merge hold.
 
 The [Astra High full-node implementation contract and measured receipts](../agent-context/3518-core-nodes-checkpoint-plan-2026-09-08.md)
 retains PR 5742 ancestry at `acfd3e37b8765c4c4788c1fa94718d62c60e473c`.
