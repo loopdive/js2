@@ -212,6 +212,39 @@ oracle-ratchet-allow:
 
 ### Source-defined collection carrier investigation (resumed)
 
+Generator-method follow-up after `085c67795aad5e`: WAT for the real `*entries()`
+method shows an ordinary closure executing its loop and dropping each yield,
+then returning undefined. The open-object method path passes a MethodDeclaration
+through the function-expression closure API, whose generator checks only
+recognized FunctionExpression nodes. Testing recognition of MethodDeclaration
+at signature selection, closure registration, and native frame emission; a new
+regression checks lazy creation, captured state, tuple yields and exhaustion.
+This fix now passes **25/25 selected upstream tests**, **5/5 modules compiled
+and validated**, **zero imports** (`.tmp/ts5-upstream-all-selected.log`). This is
+still only **5/256 upstream files**; the 251 deferred files and full compiler /
+self-hosting acceptance remain open.
+
+Open-method `this` now uses the existing frame-carried dynamic receiver when
+there is no synthesized receiver parameter. Direct `.next()` also exposed a
+dead host import retained by `__any_iter_next`; its final fill now includes the
+legacy fallback only if a legacy generator factory actually emitted, matching
+the native generator dispatcher's existing rule.
+
+Focused final run: **24/24** across five files, including two new open-object
+generator tests, lazy generator expressions, destructuring methods, dynamic
+receiver capture, and collection iterator prototypes. Log:
+`.tmp/ts5-open-generator-final-controls.log`. Shared generator-node recognition
+was extracted into `closures/generator-declaration.ts` to keep the signature
+and body paths consistent and satisfy the function budget without allowances.
+Full parser recheck passed **3/3 exact fingerprints**, with a valid 80,351,322-byte
+module and **zero imports**, in 461,664 ms (five warnings, zero errors).
+Evidence: `.tmp/ts5-parser-open-generator-method.log`.
+
+Requested main sync: fetched and independently checked live upstream main at
+`04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0` (six incoming commits). Checkpointing
+the generator-method changes before merging; no stash and no changes to the
+unrelated dirty main checkout.
+
 Next-boundary investigation after checkpoint `9465e0c392cdd0`: the reduced real
 factory probe's `arrayFrom(set.values())` returns all three values (sum 6), while
 `forEach` throws `TypeError: Cannot access property on null or undefined` at the

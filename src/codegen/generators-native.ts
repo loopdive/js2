@@ -3325,11 +3325,14 @@ export function registerNativeGenerator(
   // (#5255) A free declaration can be invoked through a callable object field
   // (`{ g: g }.g()`), whose receiver is installed only while its factory call
   // runs. Native execution resumes later, so persist that dynamic receiver in
-  // the state frame. Methods already have their exact receiver as the leading
-  // synthetic wasm param; generator function expressions remain separately
-  // gated because their closure ABI supplies a different capture carrier.
+  // the state frame. Closed methods have a synthesized receiver param; open
+  // object methods instead arrive through the closure ABI and need this same
+  // snapshot. Generator function expressions remain separately gated.
   const capturesDynamicThis =
-    !synthesizedThis && ts.isFunctionDeclaration(decl) && decl.body !== undefined && bodyReferencesOwnThis(decl.body);
+    !synthesizedThis &&
+    (ts.isFunctionDeclaration(decl) || ts.isMethodDeclaration(decl)) &&
+    decl.body !== undefined &&
+    bodyReferencesOwnThis(decl.body);
   // (#2571) The synthetic `this` (when present) is the FIRST param name, aligned
   // with the caller's `paramTypes[0] === receiverType`. User params follow.
   // (#2920) A binding-pattern param has no source identifier; mint a unique

@@ -1727,7 +1727,7 @@ export function fillAnyIterNext(ctx: CodegenContext): void {
   if (!fn) return;
   const iterRecTypeIdx = ctx.structMap.get("__IterRec");
   const lazyTypeIdx = ctx.structMap.get("$LazyIterHelper");
-  const genNextIdx = ctx.funcMap.get("__gen_next");
+  const genNextIdx = ctx.legacyGenBufferEmitted === true ? ctx.funcMap.get("__gen_next") : undefined;
 
   // recognized = ref.test $IterRec ∨ ref.test $LazyIterHelper
   const recognized: Instr[] = [];
@@ -1737,7 +1737,7 @@ export function fillAnyIterNext(ctx: CodegenContext): void {
     if (recognized.length > 2) recognized.push({ op: "i32.or" });
   }
   if (recognized.length === 0) {
-    // Nothing native to recognize — behave exactly like the legacy route.
+    // Only an emitted legacy factory needs the host fallback, not a reserved import.
     fn.body =
       genNextIdx === undefined
         ? [{ op: "ref.null.extern" }]

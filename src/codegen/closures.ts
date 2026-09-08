@@ -83,6 +83,7 @@ import {
 } from "./destructuring-params.js";
 import { compileObjectLiteralAsExternref, objectLiteralForcesHostPath } from "./literals.js";
 import { sourceCollectionCallbackParameterIsErased } from "./source-collection-factory.js";
+import { isGeneratorClosureDeclaration } from "./closures/generator-declaration.js";
 import {
   cacheParamDefaultArgc,
   emitF64ParamSentinelCheck,
@@ -2011,7 +2012,7 @@ export function computeClosureWrapperSig(
   arrow: ts.ArrowFunction | ts.FunctionExpression | ts.FunctionDeclaration,
 ): { params: ValType[]; returnType: ValType | null; hasRestParam: boolean } {
   const isGenerator =
-    (ts.isFunctionExpression(arrow) || ts.isFunctionDeclaration(arrow)) && arrow.asteriskToken !== undefined;
+    isGeneratorClosureDeclaration(arrow) || (ts.isFunctionDeclaration(arrow) && arrow.asteriskToken !== undefined);
   const hasRestParam = runtimeParameters(arrow).some((param) => param.dotDotDotToken !== undefined);
 
   // (#4249) A foreign, never-bound declaration (an eval-inline splice) cannot be
@@ -3071,7 +3072,7 @@ export function compileLiftedClosureBody(
     isGenerator &&
     !isAsync &&
     (ctx.standalone || ctx.wasi) &&
-    ts.isFunctionExpression(arrow) &&
+    (ts.isFunctionExpression(arrow) || ts.isMethodDeclaration(arrow)) &&
     ts.isBlock(body) &&
     isNativeGeneratorCandidate(ctx, arrow)
   ) {
@@ -3130,14 +3131,14 @@ export function compileLiftedClosureBody(
     // the resume fn. TDZ-flagged captures store PARAM indices in
     // `boxedTdzFlags` (wrong in the resume fn's local layout) → legacy path.
     emitAsyncGenerator(ctx, liftedFctx, arrow);
-    // (#3683 S2) The trailing `ts.isFunctionExpression(arrow)` below is IMPLIED
-    // by a non-null `nativeGenExprInfo` (only the fn-expr arm above registers
-    // it); it is restated purely so TypeScript narrows `arrow` for
-    // `compileNativeGeneratorFunction`. Pre-extraction that narrowing came for
-    // free from the aliased-condition `const isGenerator =
-    // ts.isFunctionExpression(arrow) && …`, which no longer reaches this scope
-    // now that `isGenerator` arrives via `opts`.
-  } else if (isGenerator && ts.isBlock(body) && nativeGenExprInfo && ts.isFunctionExpression(arrow)) {
+    // The expression/method guard below is implied by native registration;
+    // restate it so TypeScript narrows the source node for frame emission.
+  } else if (
+    isGenerator &&
+    ts.isBlock(body) &&
+    nativeGenExprInfo &&
+    (ts.isFunctionExpression(arrow) || ts.isMethodDeclaration(arrow))
+  ) {
     // (#3164) Emit the native state-struct factory (mirrors the class-method /
     // object-literal wiring, #2571/#2581): construct `$GenState_<closure>` from
     // the lifted wasm params (param 0 = `__self`, threaded as a leading
@@ -3497,12 +3498,12 @@ export function compileArrowAsClosure(
   // `call_ref`. Ensure a function expression that reads its own `this` emits
   // the dynamic read even when the closure is created before the callback
   // method call (for example `const cb = function () { return this; }`).
-  if (ts.isFunctionExpression(arrow) && bodyReferencesOwnThis(body)) {
+  if ((ts.isFunctionExpression(arrow) || ts.isMethodDeclaration(arrow)) && bodyReferencesOwnThis(body)) {
     ensureCurrentThisGlobal(ctx);
   }
 
   // Check if this is a generator function expression (function*() { ... })
-  const isGenerator = ts.isFunctionExpression(arrow) && arrow.asteriskToken !== undefined;
+  const isGenerator = isGeneratorClosureDeclaration(arrow);
   if (isGenerator) ctx.generatorFunctions.add(closureName);
   // `isAsync` is still consumed below (generator-create name selection); the
   // return-type derivation moved into computeClosureWrapperSig.
