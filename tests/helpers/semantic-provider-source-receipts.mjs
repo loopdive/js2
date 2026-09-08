@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawn } from "node:child_process";
-import { readFileSync, readdirSync, realpathSync, mkdirSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, realpathSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
@@ -354,14 +354,42 @@ function launchIdentity() {
     ),
   };
 }
-async function loadArm(root, arm) {
+/** Fail explicitly when an awaited recorder operation outlives all event-loop
+ * work. No timer, polling, synthetic subscription, or process kill is added. */
+export async function awaitRecorderPromise(promise, context, observe = () => {}) {
+  observe({ kind: "await-start", ...context });
+  let rejectIdle;
+  const idle = new Promise((_, reject) => {
+    rejectIdle = reject;
+  });
+  const onIdle = () => {
+    const error = new Error(`recorder await became idle: ${context.phase}`);
+    error.code = "ERR_RECORDER_UNSETTLED_AWAIT";
+    error.context = context;
+    rejectIdle(error);
+  };
+  process.once("beforeExit", onIdle);
+  try {
+    const value = await Promise.race([promise, idle]);
+    observe({ kind: "await-completed", ...context });
+    return value;
+  } catch (error) {
+    observe({ kind: "await-failed", ...context, error: evidenceValue(error) });
+    throw error;
+  } finally {
+    process.removeListener("beforeExit", onIdle);
+  }
+}
+
+async function loadArm(root, arm, observe = () => {}) {
   assert(Object.hasOwn(ARM_PATHS, arm), "unknown compiler arm");
   const urls = Object.fromEntries(
     Object.entries(ARM_PATHS[arm]).map(([name, path]) => [name, pathToFileURL(join(root, path)).href]),
   );
   const api = {};
   // Normal bootstrap is explicit and precedes all phase imports.
-  for (const [name, url] of Object.entries(urls)) api[name] = await import(url);
+  for (const [name, url] of Object.entries(urls))
+    api[name] = await awaitRecorderPromise(import(url), { phase: "import", url, arm }, observe);
   return { api, urls };
 }
 function caught(phase, error) {
@@ -399,7 +427,7 @@ function joins(runtime, api) {
       };
     });
 }
-async function preparedEmission(program, fixture, api) {
+async function preparedEmission(program, fixture, api, observe) {
   let phase = "backend-acceptance";
   const receipt = {};
   try {
@@ -431,7 +459,11 @@ async function preparedEmission(program, fixture, api) {
     // The historical prepared replay contract supplies tags only. Other imports
     // retain an actual instantiation failure; never synthesize a runtime resolver.
     receipt.instantiatedBinary = Buffer.from(binary).toString("base64");
-    const { instance } = await WebAssembly.instantiate(binary, imports);
+    const { instance } = await awaitRecorderPromise(
+      WebAssembly.instantiate(binary, imports),
+      { fixtureId: fixture.id, phase: "prepared-instantiate" },
+      observe,
+    );
     receipt.exports = WebAssembly.Module.exports(new WebAssembly.Module(binary));
     phase = "execute";
     receipt.values = [];
@@ -447,8 +479,7 @@ async function preparedEmission(program, fixture, api) {
   }
 }
 
-async function nativeValues(result, api) {
-  const values = [];
+async function nativeValues(result, api, fixture, observe, values) {
   for (const action of ["suspension", "non-i31", "undefined"]) {
     const jobs = [],
       events = [];
@@ -460,16 +491,56 @@ async function nativeValues(result, api) {
           events.push(["fire", ordinal]);
           callback(...args);
         });
+        // Exact issue-4574 non-i31 harness contract: autoFireReverseAt: 1.
+        // Invoke the registered callback synchronously, before wrapExports
+        // sees the returned native Promise. Do not synthesize subscriptions.
+        if (action === "non-i31" && jobs.length === 1)
+          for (let index = jobs.length - 1; index >= 0; index--) jobs[index]();
         return ordinal + 1;
       },
     });
     const bytes = result.binary;
-    const { instance } = await WebAssembly.instantiate(bytes, imports);
+    const { instance } = await awaitRecorderPromise(
+      WebAssembly.instantiate(bytes, imports),
+      { fixtureId: fixture.id, phase: "native-instantiate", action },
+      observe,
+    );
     imports.setInstance?.(instance);
     const ex = instance.exports;
     for (const name of ["__promise_boundary_state", "__promise_boundary_value", "__drain_microtasks"])
       assert.equal(typeof ex[name], "function", `missing mandatory native export ${name}`);
-    const promise = action === "undefined" ? ex.main() : ex.fetchUser(action === "non-i31" ? 300_000_000 : 7);
+    const observerExportPresent = typeof ex.__promise_boundary_observe !== "undefined";
+    assert.equal(observerExportPresent, false, "standalone timer-only fixture must not invent an observer ABI");
+    if (action === "non-i31") {
+      const wrapped = api.runtime.wrapCompiledExports(result, instance);
+      const settled = wrapped.fetchUser(300_000_000);
+      const timerFiringsAtWrapperReturn = events.filter((event) => event[0] === "fire").length;
+      assert.equal(jobs.length, 1);
+      assert.equal(timerFiringsAtWrapperReturn, 1);
+      const value = await awaitRecorderPromise(
+        settled,
+        {
+          fixtureId: fixture.id,
+          phase: "native-non-i31-settled-readout",
+          action,
+          events: evidenceValue(events),
+          observerExportPresent,
+        },
+        observe,
+      );
+      assert.equal(value, 3_000_000_000);
+      values.push({
+        action,
+        value,
+        events,
+        observerExportPresent,
+        autoFireReverseAt: 1,
+        timerFiringsAtWrapperReturn,
+        instantiatedBinary: Buffer.from(bytes).toString("base64"),
+      });
+      continue;
+    }
+    const promise = action === "undefined" ? ex.main() : ex.fetchUser(7);
     const before = ex.__promise_boundary_state(promise);
     assert.equal(before, 0);
     assert.equal(jobs.length, 1);
@@ -495,22 +566,6 @@ async function nativeValues(result, api) {
         events,
         instantiatedBinary: Buffer.from(bytes).toString("base64"),
       });
-    } else if (action === "non-i31") {
-      // Use the existing real Promise boundary for the boxed-number readout.
-      const wrapped = api.runtime.wrapCompiledExports(result, instance);
-      const second = wrapped.fetchUser(300_000_000);
-      assert.equal(jobs.length, 2);
-      jobs[1]();
-      const unboxed = await second;
-      assert.equal(unboxed, 3_000_000_000);
-      values.push({
-        action,
-        before,
-        after,
-        value: unboxed,
-        events,
-        instantiatedBinary: Buffer.from(bytes).toString("base64"),
-      });
     } else {
       assert.equal(value, 70);
       values.push({ action, before, after, value, events, instantiatedBinary: Buffer.from(bytes).toString("base64") });
@@ -518,7 +573,7 @@ async function nativeValues(result, api) {
   }
   return values;
 }
-async function publicReceipt(fixture, api) {
+async function publicReceipt(fixture, api, observe) {
   // Public async execution is an independent control, not prepared replay.
   // Multi-source programs stay exclusively in the actual preparation recorder.
   if (Object.keys(fixture.files).length !== 1)
@@ -526,16 +581,20 @@ async function publicReceipt(fixture, api) {
   let phase = "public-compile";
   const receipt = { assessed: true };
   try {
-    const result = await api.bootstrap.compile(fixture.files["./entry.ts"], {
-      fileName: "semantic-provider-source.ts",
-      target: fixture.policy.target,
-      experimentalIR: true,
-      trackFallbacks: true,
-      trackIrOutcomes: true,
-      skipSemanticDiagnostics: true,
-      emitWat: true,
-      ...(fixture.native ? { hostBridge: "always" } : {}),
-    });
+    const result = await awaitRecorderPromise(
+      api.bootstrap.compile(fixture.files["./entry.ts"], {
+        fileName: "semantic-provider-source.ts",
+        target: fixture.policy.target,
+        experimentalIR: true,
+        trackFallbacks: true,
+        trackIrOutcomes: true,
+        skipSemanticDiagnostics: true,
+        emitWat: true,
+        ...(fixture.native ? { hostBridge: "always" } : {}),
+      }),
+      { fixtureId: fixture.id, phase },
+      observe,
+    );
     receipt.result = evidenceValue({
       success: result.success,
       errors: result.errors,
@@ -564,11 +623,20 @@ async function publicReceipt(fixture, api) {
         assert.equal(rows[0].irBodyEmitted, true);
         assert.equal(rows[0].legacyBodyEmitted, false);
       }
-      receipt.values = [await nativeValues(result, api), await nativeValues(result, api)];
+      receipt.values = [];
+      for (let run = 0; run < 2; run++) {
+        const values = [];
+        receipt.values.push(values);
+        await nativeValues(result, api, fixture, observe, values);
+      }
     } else {
       const imports = api.runtime.buildImports(result.imports, undefined, result.stringPool);
       receipt.instantiatedBinary = Buffer.from(result.binary).toString("base64");
-      const { instance } = await WebAssembly.instantiate(result.binary, imports);
+      const { instance } = await awaitRecorderPromise(
+        WebAssembly.instantiate(result.binary, imports),
+        { fixtureId: fixture.id, phase: "public-instantiate" },
+        observe,
+      );
       imports.setExports?.(instance.exports);
       receipt.values = fixture.calls.map((call) => {
         assert.equal(typeof instance.exports[call.name], "function");
@@ -590,7 +658,7 @@ async function publicReceipt(fixture, api) {
   }
 }
 
-async function rowReceipt(fixture, api) {
+async function rowReceipt(fixture, api, observe) {
   const row = {
     id: fixture.id,
     fixture,
@@ -633,8 +701,8 @@ async function rowReceipt(fixture, api) {
         joins: joins(projection.prepared, api),
       }));
       const replayJoins = decoded.runtime.map((projection) => joins(projection.prepared, api));
-      const original = await preparedEmission(program, fixture, api);
-      const replayed = await preparedEmission(decoded, fixture, api);
+      const original = await preparedEmission(program, fixture, api, observe);
+      const replayed = await preparedEmission(decoded, fixture, api, observe);
       row.preparation = {
         phase: "complete",
         kind: "prepared",
@@ -727,11 +795,11 @@ async function rowReceipt(fixture, api) {
       };
     else row.preparation = caught(phase, error);
   }
-  row.public = await publicReceipt(fixture, api);
+  row.public = await publicReceipt(fixture, api, observe);
   return { row, admission };
 }
 
-export async function runArm({ root, arm, mode }) {
+export async function runArm({ root, arm, mode, observe = () => {} }) {
   root = realpathSync(root);
   assert(["off", "on"].includes(mode));
   const before = sourceSnapshot(root),
@@ -747,13 +815,15 @@ export async function runArm({ root, arm, mode }) {
   assert.equal(process.env.TSX_TSCONFIG_PATH, join(root, "tsconfig.json"));
   assert.equal(process.env.TSX_DISABLE_CACHE, "1");
   assert.equal(process.env.NODE_OPTIONS, "--max-old-space-size=2048");
-  const { api, urls } = await loadArm(root, arm);
+  const { api, urls } = await loadArm(root, arm, observe);
   assert.deepEqual(api.controls.resolveIrPreparationControlsFromEnv(), controlsFor(mode));
   const rows = [],
     admissions = [];
   for (const fixture of matrix) {
-    const result = await rowReceipt(fixture, api);
+    observe({ kind: "row-start", fixtureId: fixture.id });
+    const result = await rowReceipt(fixture, api, observe);
     rows.push(result.row);
+    observe({ kind: "row-completed", fixtureId: fixture.id, row: result.row });
     if (result.admission) admissions.push(result.admission);
   }
   const after = sourceSnapshot(root);
@@ -897,6 +967,10 @@ export function validatePublicExecution(receipt, fixture) {
     receipt.imports.map(({ module, name }) => `${module}.${name}`),
     ["env.__timer_set_timeout"],
   );
+  assert.equal(
+    receipt.exports.some(({ name }) => name === "__promise_boundary_observe"),
+    false,
+  );
   for (const name of ["fetchUser", "fetchAllSequential", "fetchAllParallel", "main"]) {
     const owners = receipt.result.irOutcomes.filter((row) => row.unitKind === "function" && row.displayName === name);
     assert.equal(owners.length, 1);
@@ -913,14 +987,22 @@ export function validatePublicExecution(receipt, fixture) {
     );
     for (const record of run) {
       assert.equal(record.instantiatedBinary, receipt.binary, "native action binary mismatch");
-      assert.equal(record.before, 0);
-      assert.equal(record.after, 1);
+      if (record.action === "non-i31") {
+        assert.equal(record.observerExportPresent, false);
+        assert.equal(record.autoFireReverseAt, 1);
+        assert.equal(record.timerFiringsAtWrapperReturn, 1);
+        assert.equal(Object.hasOwn(record, "before"), false, "settled readout is not a pending-state measurement");
+        assert.equal(Object.hasOwn(record, "after"), false);
+      } else {
+        assert.equal(record.before, 0);
+        assert.equal(record.after, 1);
+      }
       assert.deepEqual(
         record.value,
         record.action === "undefined" ? { $undefined: true } : record.action === "non-i31" ? 3_000_000_000 : 70,
       );
       assert(Array.isArray(record.events));
-      const count = record.action === "undefined" ? 10 : record.action === "non-i31" ? 2 : 1;
+      const count = record.action === "undefined" ? 10 : 1;
       const starts = record.events.filter((event) => event[0] === "start");
       const fires = record.events.filter((event) => event[0] === "fire");
       assert.equal(record.events.length, count * 2);
@@ -1130,6 +1212,8 @@ async function child(root, arm, mode, directory) {
       ),
     },
   };
+  // Preserve launch expectations even when the compiler child never completes.
+  writeFileSync(join(directory, `${arm}-${mode}.expected.json`), JSON.stringify(expected, null, 2));
   const terminal = await new Promise((done) => {
     const proc = spawn(process.execPath, args, { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "",
@@ -1157,13 +1241,19 @@ async function child(root, arm, mode, directory) {
   const report = JSON.parse(readFileSync(path, "utf8"));
   terminal.reportSha256 = sha256(JSON.stringify(report));
   writeFileSync(terminalPath, JSON.stringify(terminal, null, 2));
-  writeFileSync(join(directory, `${arm}-${mode}.expected.json`), JSON.stringify(expected, null, 2));
   return { report, expected, terminal };
+}
+export function resolveRecorderDirectory(directory, baselineRoot) {
+  const absolute = resolve(directory);
+  const fromBaseline = relative(resolve(baselineRoot), absolute);
+  assert(fromBaseline === ".." || fromBaseline.startsWith("../"), "recorder must not write into the baseline checkout");
+  return absolute;
 }
 export async function runPair({ baselineRoot, candidateRoot, directory }) {
   baselineRoot = realpathSync(baselineRoot);
   candidateRoot = realpathSync(candidateRoot);
   assert.notEqual(baselineRoot, candidateRoot);
+  directory = resolveRecorderDirectory(directory, baselineRoot);
   mkdirSync(directory, { recursive: true });
   const comparisons = [];
   for (const mode of ["off", "on"]) {
@@ -1187,7 +1277,15 @@ if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.me
   if (mode === "--child") {
     assert.equal(args.length, 4);
     const [arm, root, gvn, output] = args;
-    const report = await runArm({ root, arm, mode: gvn });
+    assert.equal(output, resolve(output), "child evidence path must be absolute before changing cwd");
+    const report = await runArm({
+      root,
+      arm,
+      mode: gvn,
+      observe(event) {
+        appendFileSync(`${output}.progress.jsonl`, JSON.stringify(event) + "\n");
+      },
+    });
     writeFileSync(output, JSON.stringify(report, null, 2));
   } else if (mode === "--admission-payload") {
     assert.equal(args.length, 4, "--admission-payload ROOT ARM OUTPUT_JSON PRODUCER_JSON");

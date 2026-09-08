@@ -4865,3 +4865,29 @@ three genuine plain-Node suffix rejections through the same guard. The current
 1,303-file source census matches producer and child snapshots. This explicitly
 does not certify the full historical matrix, whole-program native async,
 post-attachment mutation, or direct-codegen retirement.
+
+### Historical source comparison completed (2026-09-08)
+
+Recorder revision 4 passes 87/87 focused controls. The non-i31 boundary now
+uses the existing issue-4574 synchronous registered-timer callback contract:
+without the observer export, wrapping a pending native Promise cannot observe
+later settlement. The recorder neither changes runtime behavior nor adds
+polling. It binds absolute child output paths and records unresolved awaits
+explicitly when the event loop becomes idle; partial journals never substitute
+for complete reports.
+
+The full historical run now completes all four children with exit zero, no
+signal or spawn error, and fifteen complete rows each: thirty rows per arm
+across GVN off/on. Both comparisons have zero raw differences and
+`preservationOK: true`; `acceptanceOK: false` remains explicit. Baseline source
+is unchanged b4c116639a7e146e83611a988a8da28d77de9368; candidate source remains
+the semantic/provider extraction, not the separate physical implementation.
+Reports, independent expected receipts, progress journals and terminal hashes
+are retained under `.tmp/semantic-provider-source-pair-revision4-20260908`.
+
+Independent native rows in both roots and both GVN settings execute 70, boxed
+3,000,000,000 and canonical undefined twice, with observer absence and the
+established auto-fire behavior recorded. The original whole-preparation,
+Math/TDZ physical-execution, boolean-host assertion and transformed async
+authentication gaps remain in the reports. Equal failures are preservation,
+not acceptance. Revision 3's exit13 remains documented above as failed evidence.

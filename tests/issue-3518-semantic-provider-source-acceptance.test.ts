@@ -16,6 +16,7 @@ import {
   childEnvironment,
   produceAdmission,
   postPassSatisfied,
+  resolveRecorderDirectory,
 } from "./helpers/semantic-provider-source-receipts.mjs";
 import {
   allowedCanonicalPath,
@@ -36,11 +37,16 @@ type Fixture = {
 function calibrationNative(binary: string) {
   return Array.from({ length: 2 }, () =>
     ["suspension", "non-i31", "undefined"].map((action) => {
-      const count = action === "undefined" ? 10 : action === "non-i31" ? 2 : 1;
+      const count = action === "undefined" ? 10 : 1;
       return {
         action,
-        before: 0,
-        after: 1,
+        ...(action === "non-i31"
+          ? {
+              observerExportPresent: false,
+              autoFireReverseAt: 1,
+              timerFiringsAtWrapperReturn: 1,
+            }
+          : { before: 0, after: 1 }),
         value: action === "undefined" ? { $undefined: true } : action === "non-i31" ? 3_000_000_000 : 70,
         events: [
           ...Array.from({ length: count }, (_, i) => ["start", i, 10]),
@@ -582,6 +588,92 @@ describe("source/provider receipt instrument (not acceptance by equal refusal)",
     expect(env.NODE_OPTIONS).toBe("--max-old-space-size=2048");
     expect(process.env).toEqual(before);
   });
+  it("binds relative report directories before a compiler child changes cwd, excluding baseline writes", () => {
+    const baseline = "/calibration/read-only-baseline";
+    expect(resolveRecorderDirectory(".tmp/pair-control", baseline)).toBe(resolve(".tmp/pair-control"));
+    expect(() => resolveRecorderDirectory(baseline, baseline)).toThrow(/baseline/);
+    expect(() => resolveRecorderDirectory(join(baseline, ".tmp/forbidden"), baseline)).toThrow(/baseline/);
+  });
+  it("rejects the old pending non-i31 recipe even when both arms report it identically", () => {
+    const pair = calibration();
+    for (const arm of [pair.baseline, pair.candidate]) {
+      const row = arm.report.rows.find((row) => row.fixture.native)!;
+      const runs = calibrationNative(row.public.binary);
+      for (const run of runs) Object.assign(run[1]!, { before: 0, after: 1, timerFiringsAtWrapperReturn: 0 });
+      row.public.values = runs;
+      arm.terminal.reportSha256 = sha256(JSON.stringify(arm.report));
+      expect(() => validateArm(arm.report, arm.expected, arm.terminal)).toThrow();
+    }
+    expect(() => compare(pair)).toThrow();
+  });
+  it.each(["fulfilled", "rejected", "unsettled"])(
+    "records %s promises explicitly in an isolated child without ambient timer polling",
+    async (mode) => {
+      const helper = pathToFileURL(join(root, "tests/helpers/semantic-provider-source-receipts.mjs")).href;
+      const script = `
+        import { awaitRecorderPromise, evidenceValue } from ${JSON.stringify(helper)};
+        const mode = ${JSON.stringify(mode)};
+        const before = process.listenerCount("beforeExit");
+        const events = [], rows = [];
+        const sentinel = new Error("explicit-rejection");
+        const promise = mode === "fulfilled" ? Promise.resolve(42) : mode === "rejected" ? Promise.reject(sentinel) : new Promise(() => {});
+        let sameRejection = false;
+        try {
+          const value = await awaitRecorderPromise(promise, { fixtureId: "instrument-only", phase: mode }, event => events.push(event));
+          rows.push({ id: "instrument-only", kind: "fulfilled", value });
+        } catch (error) {
+          sameRejection = error === sentinel;
+          rows.push({ id: "instrument-only", kind: "failed", error: evidenceValue(error) });
+        }
+        console.log(JSON.stringify({ rows, events, sameRejection, before, after: process.listenerCount("beforeExit") }));
+        process.exitCode = rows[0].kind === "fulfilled" ? 0 : 1;
+      `;
+      const terminal = await new Promise<{
+        code: number | null;
+        signal: string | null;
+        error: unknown;
+        stdout: string;
+        stderr: string;
+      }>((done) => {
+        const child = spawn(process.execPath, ["--input-type=module", "--eval", script], {
+          cwd: root,
+          env: childEnvironment(root, "off"),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "",
+          stderr = "",
+          error: unknown = null;
+        child.stdout.on("data", (chunk) => {
+          stdout += chunk;
+        });
+        child.stderr.on("data", (chunk) => {
+          stderr += chunk;
+        });
+        child.on("error", (value) => {
+          error = evidenceValue(value);
+        });
+        child.on("close", (code, signal) => done({ code, signal, error, stdout, stderr }));
+      });
+      expect(terminal.error).toBeNull();
+      expect(terminal.signal).toBeNull();
+      expect(terminal.code, terminal.stderr).toBe(mode === "fulfilled" ? 0 : 1);
+      expect(terminal.stderr).toBe("");
+      const report = JSON.parse(terminal.stdout);
+      expect(report.rows).toHaveLength(1);
+      expect(report.rows[0].id).toBe("instrument-only");
+      expect(report.after).toBe(report.before);
+      expect(report.events.map((event: { kind: string }) => event.kind)).toEqual([
+        "await-start",
+        mode === "fulfilled" ? "await-completed" : "await-failed",
+      ]);
+      if (mode === "fulfilled") expect(report.rows[0].value).toBe(42);
+      if (mode === "rejected") expect(report.sameRejection).toBe(true);
+      if (mode === "unsettled") {
+        expect(report.rows[0].error.code).toBe("ERR_RECORDER_UNSETTLED_AWAIT");
+        expect(report.rows[0].error.context).toEqual({ fixtureId: "instrument-only", phase: "unsettled" });
+      }
+    },
+  );
 });
 
 describe("new canonical-owner admission is distinct from full preparation closure", () => {
