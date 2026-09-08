@@ -240,6 +240,7 @@ import { overlayRouteActive } from "./typed-lane-overlay-route.js"; // (#4222) o
 import { backedBoundsGuard, canonicalIndexDigitStep } from "./vec-index-domain.js"; // (#4434) index domain + sparse tail
 import { buildVecIndexKeyPush, reserveVecIndexEnumerable } from "./vec-index-enumerable.js"; // (#4491) overlay-aware key flags
 import { fillHostArrayCarrierPredicate } from "./host-array-carrier.js"; // (#4649) js-host late-bound carrier test
+import { emitStandaloneLinkBoundaryTerminals, standaloneLinkBoundaryPeerIndices } from "./standalone-link-boundary.js"; // (#5383 S2d) wasm→wasm peer terminals
 import {
   buildOwnToPrimitiveOverridePresent,
   buildWrapperSlotShortCircuit,
@@ -1014,6 +1015,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
   const boundaryObjectSetPrototypeIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_set_prototype")
     : undefined;
+  // (#5383 S2d) The standalone twin of the two host-lane boundary reads above.
+  // Registered HERE, next to them, because both must exist before the index
+  // space freezes (#1984) and because they answer the same question — "this
+  // carrier is not mine; who can decode it?". On the host lane these stay
+  // undefined and every arm below is byte-identical.
+  const { memberGet: peerMemberGetIdx, objectKeys: peerObjectKeysIdx } = standaloneLinkBoundaryPeerIndices(ctx);
   const boundaryObjectGetOwnPropertyDescriptorIdx = boundaryObjectInterop
     ? ctx.funcMap.get("__boundary_object_get_own_property_descriptor")
     : undefined;
@@ -2393,11 +2400,17 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
           // fallback below. A present JS property whose value is `undefined`
           // returns the non-null native undefined carrier, so miss and value do
           // not alias.
-          ...(boundaryObjectGetIdx !== undefined
+          // (#5383 S2d) The standalone lane reaches the SAME arm with the peer
+          // provider's normalising terminal: "not a `$Object` of mine" is
+          // exactly the question, and the wrapper's null-for-a-miss contract is
+          // the same one this arm was written against. The closed-struct field
+          // ladder is unshifted onto the FRONT of this body at finalize, so a
+          // receiver this module can decode never gets here.
+          ...((boundaryObjectGetIdx ?? peerMemberGetIdx) !== undefined
             ? ([
                 { op: "local.get", index: 0 },
                 { op: "local.get", index: 1 },
-                { op: "call", funcIdx: boundaryObjectGetIdx },
+                { op: "call", funcIdx: (boundaryObjectGetIdx ?? peerMemberGetIdx)! },
                 { op: "local.tee", index: 6 },
                 { op: "ref.is_null" },
                 { op: "i32.eqz" },
@@ -6334,8 +6347,13 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     objVecPushIdx,
     objOrderedIdx,
     objOrderedAllIdx,
-    boundaryObjectKeysIdx,
-    boundaryObjectForInKeysIdx,
+    // (#5383 S2d) On the standalone lane the peer terminal takes the SAME arm:
+    // the arm's contract is "ask, and use the answer only when it is non-null",
+    // which is exactly what the provider's normalising wrapper guarantees. The
+    // two are mutually exclusive by construction (one needs a JS host, the
+    // other needs there not to be one), so neither lane grows an arm.
+    boundaryObjectKeysIdx: boundaryObjectKeysIdx ?? peerObjectKeysIdx,
+    boundaryObjectForInKeysIdx: boundaryObjectForInKeysIdx ?? peerObjectKeysIdx,
     FLAG_ENUMERABLE,
     FLAG_TOMBSTONE,
   });
@@ -6835,6 +6853,12 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
       }
     }
   }
+
+  // (#5383 S2d) A standalone provider publishes the same two reads to its WASM
+  // consumer that the block above publishes to a JS host. Emitted here, at the
+  // end of the object runtime, because both wrappers call terminals the block
+  // above has only just finished registering.
+  emitStandaloneLinkBoundaryTerminals(ctx, registerNative);
 
   // (#2175 V2-S3b-1) Build any `$NativeProto` companion seeders that were parked
   // because their proto materialized before `__defineProperty_value` existed

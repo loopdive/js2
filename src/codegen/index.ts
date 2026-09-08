@@ -179,6 +179,7 @@ import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./st
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
+import { publishStandaloneLinkBoundaryExports } from "./standalone-link-boundary.js"; // (#5383 S2d)
 import { eliminateDeadLayoutAndPlanProgramAbi } from "./program-abi-finalization.js";
 import { emitDataStructHostBridgeManifest } from "./data-struct-host-bridge.js";
 import { planProgramAbiFunctionValue, planProgramAbiGlobal, PROGRAM_ABI_GLOBAL_ROLE } from "./program-abi-planning.js";
@@ -7015,6 +7016,11 @@ function assertNoLeakedHostImports(ctx: CodegenContext, mod: WasmModule): void {
 function finalizeStandaloneTimerCallbackExports(ctx: CodegenContext): void {
   publishStandaloneTimerCallbackDispatch(ctx);
   stripHostBridgeExports(ctx);
+  // (#5383 S2d) AFTER the host-bridge strip, deliberately: the strip is what
+  // removes the JS-facing decoder family from a standalone binary, and these
+  // wasm-facing terminals are its replacement for a linked consumer. Publishing
+  // before it would leave the export to be stripped again.
+  publishStandaloneLinkBoundaryExports(ctx);
 }
 
 /**

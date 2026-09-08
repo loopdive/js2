@@ -48,8 +48,8 @@
   },
   {
     "edition": "ES2015",
-    "pass": 9943,
-    "fail": 1702,
+    "pass": 9944,
+    "fail": 1701,
     "ce": 59,
     "skip": 0,
     "total": 11704,
@@ -84,8 +84,8 @@
       },
       {
         "name": "TypedArray",
-        "pass": 888,
-        "fail": 162,
+        "pass": 889,
+        "fail": 161,
         "ce": 0,
         "skip": 0,
         "total": 1050,
