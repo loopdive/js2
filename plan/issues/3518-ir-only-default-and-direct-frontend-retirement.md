@@ -4455,3 +4455,13 @@ Both worktrees start at the published integration; all old dirty worktrees and
 claims are preserved. Worker implementations are pending, not validated here.
 The plan fixes lifecycle ordering, historical statement and boundary denominators,
 real source-produced admission/replay controls and remaining migration work.
+
+PR5747 CI on `3a119a88b2` passed all eight equivalence shards, their aggregate,
+issue tests, linear tests and sanitizer/parity jobs. Quality failed because the
+adoption-table generator still searched old `select.ts` for the moved fallback
+union. The follow-up redirects that tooling consumer to the canonical failure
+contract and updates three generated documentation references. The unchanged
+table still contains 58 kind rows and 35 buckets. Five focused controls pass,
+covering the real report and absent/empty/added/removed canonical reasons even
+when the old location contains a valid union. The exact freshness command now
+passes locally; new-head CI must still verify the correction.
