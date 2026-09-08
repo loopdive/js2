@@ -113,10 +113,22 @@ const promiseResourceAdditions = [
   "src/ir/program/native-promise-resources.ts",
   "src/backend/wasmgc/resources/native-promises.ts",
 ];
-const groups = {
+const promiseGroups = {
   ...resolutionGroups,
   "ir-program": [...resolutionGroups["ir-program"], promiseResourceAdditions[0]!],
   "backend-wasmgc": [...resolutionGroups["backend-wasmgc"], promiseResourceAdditions[1]!],
+};
+const stringErrorAdditions = [
+  "src/runtime/wasmgc/values/string-layouts.ts",
+  "src/runtime/wasmgc/values/string-literal-bodies.ts",
+  "src/runtime/wasmgc/values/error-bodies.ts",
+  "src/backend/wasmgc/resources/native-string-literals.ts",
+  "src/backend/wasmgc/resources/native-errors.ts",
+];
+const groups = {
+  ...promiseGroups,
+  "native-runtime": [...promiseGroups["native-runtime"], ...stringErrorAdditions.slice(0, 3)],
+  "backend-wasmgc": [...promiseGroups["backend-wasmgc"], ...stringErrorAdditions.slice(3)],
 };
 const required = Object.values(groups).flat();
 const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
@@ -155,16 +167,24 @@ const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compil
 const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 function assertNewActivations(history: unknown[]) {
   expect(history.slice(0, 2)).toEqual(
-    (["ir-program", "backend-wasmgc"] as const).map((layer) => ({
+    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
       layer,
       entries: groups[layer],
       minModules: groups[layer].length,
     })),
   );
   history = history.slice(2);
+  expect(history.slice(0, 2)).toEqual(
+    (["ir-program", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: promiseGroups[layer],
+      minModules: promiseGroups[layer].length,
+    })),
+  );
+  history = history.slice(2);
   expect(history[0]).toEqual({
     layer: "native-runtime",
-    entries: groups["native-runtime"],
+    entries: resolutionGroups["native-runtime"],
     minModules: 9,
   });
   history = history.slice(1);
@@ -311,9 +331,9 @@ function fixture() {
 }
 
 describe("semantic verification and provider ownership boundary", () => {
-  it("pins the original 70 modules plus three vector, two Promise body and two resource owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(77);
-    expect(new Set(required).size).toBe(77);
+  it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
+    expect(required).toHaveLength(82);
+    expect(new Set(required).size).toBe(82);
     expect(callableAdditions).toHaveLength(2);
     expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
@@ -335,6 +355,7 @@ describe("semantic verification and provider ownership boundary", () => {
             ...physicalVectorAdditions,
             ...resolutionAdditions,
             ...promiseResourceAdditions,
+            ...stringErrorAdditions,
           ].includes(path),
       ),
     ).toHaveLength(56);
@@ -352,17 +373,18 @@ describe("semantic verification and provider ownership boundary", () => {
       ...physicalVectorAdditions,
       ...resolutionAdditions,
       ...promiseResourceAdditions,
+      ...stringErrorAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(38);
-    expect(digest(p.activationHistory.slice(14))).toBe(
+    expect(p.activationHistory).toHaveLength(40);
+    expect(digest(p.activationHistory.slice(16))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(20))).toBe(
+    expect(digest(p.activationHistory.slice(22))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -379,12 +401,12 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(77);
+    expect(r.report.counts.total).toBe(82);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(286);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 187, runtime: 99 });
+    expect(r.report.resolvedEdgeCount).toBe(298);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 194, runtime: 104 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
@@ -415,6 +437,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...physicalVectorAdditions,
     ...resolutionAdditions,
     ...promiseResourceAdditions,
+    ...stringErrorAdditions,
   ])("rejects deleting %s and its classification", (path) => {
     const f = fixture();
     rmSync(resolve(f.root, path));
@@ -438,6 +461,7 @@ describe("semantic verification and provider ownership boundary", () => {
     ...physicalVectorAdditions,
     ...resolutionAdditions,
     ...promiseResourceAdditions,
+    ...stringErrorAdditions,
   ])("rejects an aliased frontend type dependency from %s", (path) => {
     const f = fixture();
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
@@ -466,6 +490,7 @@ describe("semantic verification and provider ownership boundary", () => {
       ...physicalVectorAdditions,
       ...resolutionAdditions,
       ...promiseResourceAdditions,
+      ...stringErrorAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);

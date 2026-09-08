@@ -183,8 +183,13 @@
       "status": "active",
       "roots": ["src/backend/wasmgc"],
       "required": true,
-      "entries": ["src/backend/wasmgc/resources/native-vectors.ts", "src/backend/wasmgc/resources/native-promises.ts"],
-      "minModules": 2
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts"
+      ],
+      "minModules": 4
     },
     {
       "id": "native-runtime",
@@ -200,9 +205,12 @@
         "src/runtime/wasmgc/promise/combinator-bodies.ts",
         "src/runtime/wasmgc/values/vector-grow-store.ts",
         "src/runtime/wasmgc/promise/resolution-bodies.ts",
-        "src/runtime/wasmgc/promise/thenable-bodies.ts"
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts"
       ],
-      "minModules": 9
+      "minModules": 12
     },
     {
       "id": "standalone-platform",
@@ -441,6 +449,34 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/async/microtask-queue-bodies.ts",
+        "src/runtime/wasmgc/promise/settlement-bodies.ts",
+        "src/runtime/wasmgc/async/frame-engine.ts",
+        "src/runtime/wasmgc/async/native-await.ts",
+        "src/runtime/wasmgc/promise/delay-bodies.ts",
+        "src/runtime/wasmgc/promise/combinator-bodies.ts",
+        "src/runtime/wasmgc/values/vector-grow-store.ts",
+        "src/runtime/wasmgc/promise/resolution-bodies.ts",
+        "src/runtime/wasmgc/promise/thenable-bodies.ts",
+        "src/runtime/wasmgc/values/string-layouts.ts",
+        "src/runtime/wasmgc/values/string-literal-bodies.ts",
+        "src/runtime/wasmgc/values/error-bodies.ts"
+      ],
+      "minModules": 12
+    },
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts"
+      ],
+      "minModules": 4
+    },
     {
       "layer": "ir-program",
       "entries": [
@@ -950,6 +986,11 @@
     }
   ],
   "files": [
+    { "path": "src/runtime/wasmgc/values/string-layouts.ts", "state": "clean", "layer": "native-runtime" },
+    { "path": "src/runtime/wasmgc/values/string-literal-bodies.ts", "state": "clean", "layer": "native-runtime" },
+    { "path": "src/runtime/wasmgc/values/error-bodies.ts", "state": "clean", "layer": "native-runtime" },
+    { "path": "src/backend/wasmgc/resources/native-string-literals.ts", "state": "clean", "layer": "backend-wasmgc" },
+    { "path": "src/backend/wasmgc/resources/native-errors.ts", "state": "clean", "layer": "backend-wasmgc" },
     { "path": "src/ir/program/native-promise-resources.ts", "state": "clean", "layer": "ir-program" },
     { "path": "src/backend/wasmgc/resources/native-promises.ts", "state": "clean", "layer": "backend-wasmgc" },
     { "path": "src/runtime/wasmgc/promise/resolution-bodies.ts", "state": "clean", "layer": "native-runtime" },
