@@ -11,6 +11,19 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-08 (S2b) — the externref-backed-subclass family fix (own-field
+  # write/read + dynamic method dispatch on `class B extends Array`). Every
+  # entry is a net-new guarded arm plus the measurement that justifies it; the
+  # dispatch machinery itself lives in the new module
+  # src/codegen/standalone-subclass-method-install.ts, not in these files.
+  #   assignment.ts             +29  the unknown-backing write redirect (R6)
+  #   property-access-dispatch  +20  its READ twin (R6)
+  #   property-access.ts         +3  the backing-override parameter (R6)
+  #   class-bodies.ts            +8  the one call into the new module (R7)
+  - src/codegen/expressions/assignment.ts
+  - src/codegen/property-access-dispatch.ts
+  - src/codegen/property-access.ts
+  - src/codegen/class-bodies.ts
   # 2026-09-07 (S2) — three more codegen fixes, each reduced from the exact
   # statement in the linked polyfill bundle that hit it (see "S2 findings"
   # below for the measurement behind each). Plain-path spelling: the gate's
@@ -42,6 +55,15 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-08 (S2b) — both grants are a guarded ARM added to an existing
+  # dispatch cascade, in the one place the cascade's order is load-bearing: the
+  # write redirect must sit between the externref-backed check and the struct
+  # path, and the read twin must sit between the own-field read and the struct
+  # ladder. Lifting either into a helper would move the arm away from the
+  # ordering constraint its comment exists to document, and would not shrink
+  # the cascade — the call would still be a line in the same place.
+  - src/codegen/expressions/assignment.ts::compilePropertyAssignment
+  - src/codegen/property-access-dispatch.ts::finalizeStructAndDynamicMemberGet
   - src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
   - path: src/codegen/builtin-value-read.ts::ensureStandaloneBuiltinStaticMethodClosure
     reason: "#5383 S2 R4 — the 8-line pre-registration hook plus its rationale; splitting a single call out of this dispatcher would hide the ordering constraint it exists to document."
@@ -374,3 +396,140 @@ The S2 smoke test from the plan (`buildTemporalProvider` +
 `Temporal.Duration.from({hours:1}).total("minutes") === 60`) is NOT written:
 it cannot pass while `__module_init` throws, and a skipped assertion would be
 worse than an honest gap.
+
+## S2b findings (2026-09-08) — the externref-backed subclass family, and the new stop
+
+The handover's suspect was right and INCOMPLETE. A property write on a
+`class … extends Array` instance does throw — that is R6 below — but fixing it
+alone changed nothing at the module level, because a second, larger defect sat
+behind it: **a user METHOD on such an instance is unreachable through any
+dynamic receiver**, and it fails SILENTLY, answering `null`. That silence is
+why `JSBI.subtract` was reached with a null: it is not where the null was made.
+
+Probe used throughout: the jsbi PREFIX of the linked bundle (28,942 B, up to
+`l=e.multiply(h,i);`) plus a handful of exported one-liners. It compiles in
+**5 s** against the whole file's ~45 s, exercises the same class, and is what
+made the iteration loop usable — the whole-file probe was only re-run to
+confirm each step.
+
+### R6 — own-field write/read on an externref-backed subclass instance
+
+`class B extends Array { constructor(n, s) { super(n); this.sign = s; } }`
+threw `TypeError: Cannot access property on null or undefined` at the write.
+
+Root cause: `compilePropertyAssignment` (`src/codegen/expressions/assignment.ts`)
+consults `externrefBackedOwnFieldBacking`, which knows two carriers —
+`$Error_struct` and a native `$Object` — and answers `undefined` for every
+other parent. On `undefined` the code FELL THROUGH to the struct.set path, and
+that path is unreachable-by-design here: the instance is a `$__vec_externref`
+and never a `$B`, so `ref.test $B` always misses, the receiver narrows to
+`ref.null $B`, and the #2084 null guard throws.
+
+The field only reaches that path because the constructor's own assignment
+FLOW-GROWS a `sign` slot onto the vestigial `$B` struct. The identical write
+from outside the class (`b.sign = 1`) finds no slot, takes the #4149
+`fieldIdx === -1` dynamic-store arm, and has always worked — so the class's own
+constructor was the one place the write failed. Fix: route the unknown-backing
+case to that SAME dynamic store, plus its read twin in
+`property-access-dispatch.ts` (scoped to keys that actually have a flow-grown
+slot, so a builtin member like `length` still reaches the array paths).
+
+### R7 — a method is unreachable through a dynamic receiver (the real blocker)
+
+| receiver spelling | `o.d(0)` before | after |
+| --- | --- | --- |
+| `var x = new B(1); x.d(0)` | 5 | 5 |
+| `function f(o) { return o.d(0); } f(b)` | **null** | 5 |
+| `new B(1).d(0)` | **null** | null (unchanged, see below) |
+
+A statically-typed receiver compiles to `call $B_d`. Anything the checker
+cannot pin — and jsbi's statics take UNANNOTATED parameters
+(`static toNumber(i) { … i.__unsignedDigit(0) … }`) — goes out through the
+dynamic terminal, which resolves a method by `ref.test`ing instance identity
+against each closed struct plus the open `$Object`. The carrier is none of
+those. The host lane's answer is `__set_subclass_proto`, a JS host import, so
+`emitSetSubclassProto` is a documented NO-OP standalone: nothing on the
+instance says "B".
+
+Measured consequence on the jsbi prefix, before the fix:
+`JSBI.toNumber(JSBI.BigInt(5))` → `null`, `JSBI.add(5,3)` → `null`,
+`JSBI.unaryMinus(x)` → `null`, `x.__copy()` → `null`. After: `5`, `8`,
+non-null, non-null. The polyfill's `Ne = xo(ke), xe = e.unaryMinus(Ne),
+Le = e.add(e.subtract(xe, l), n)` is one top-level statement; `unaryMinus`
+returned null and `subtract` reported it, five frames later.
+
+Two halves, both in the fix:
+
+1. **`standalone-subclass-method-install.ts` (new).** At construction, install
+   each declared instance method on the instance as an own data property at §17
+   attributes — the same closure singleton, `__defineProperty_value` and flags
+   `class-proto-object.ts` (#3976) uses for `C.prototype`. The dynamic
+   terminals already consult the carrier's own-property side table (#3537 vec
+   bag / #3468 closure bag).
+2. **The method trampoline's `this` slot** (`closures/method-trampolines.ts`).
+   Installing alone was not enough: the trampoline builds `this` by
+   `ref.test`ing `__current_this` against the method's object struct, so the
+   carrier failed that test too and every method ran with `this === null`
+   (`this[0]` threw, `this.sign` answered null). For a method whose declared
+   `this` is `externref` AND whose owner is externref-backed, the carrier is now
+   passed straight through. The #2025 absent-receiver TypeError is preserved and
+   tested.
+
+**Alternatives measured and rejected** (each would put the methods where the
+spec puts them, and each is a dead end today): `Object.setPrototypeOf(inst,
+B.prototype)` → the standalone dynamic member path does not consult an explicit
+prototype link on a non-`$Object` carrier, so the call still answers `null`;
+`inst.__proto__ = B.prototype` → same; leaning on `B.prototype` itself →
+`emitStandaloneClassProtoObject` explicitly DECLINES for a builtin-parent class,
+so it is still the legacy defaulted struct. The deviation shipped instead is
+that the methods are OWN rather than inherited (`hasOwnProperty("d")` answers
+`true`); they are non-enumerable, so `Object.keys` / `for-in` are unchanged.
+
+`extends Error` is EXCLUDED by measurement, not by policy: `__defineProperty_value`
+does not reach an `$Error_struct`'s `$props` side-slot, so such a class got
+5.8 kB of machinery and still answered "called value is not a function".
+Deleting that one line is the whole fix once the Error carrier's dynamic member
+path reads `$props`.
+
+### Byte A/B (`.tmp/ab-base.txt` vs `.tmp/ab-new2.txt`, sha256, 6 modules × 2 targets)
+
+**gc lane: all six byte-identical** (arith, plain class, `extends Array`,
+`extends Error`, object-literal method, Map/WeakMap). Standalone: **only the
+`extends Array` module changes**; arith, plain class, object-literal method,
+Map/WeakMap and — after the Error exclusion — `extends Error` are byte-identical.
+
+### Where `__module_init` stops NOW
+
+Not in jsbi any more. `TypeError: Cannot access property on null or undefined`
+at **4:94864**, which is
+`"formatToParts" in ai.prototype || delete DateTimeFormatImpl.prototype.formatToParts`
+— `ai` is `Intl.DateTimeFormat`, and standalone deliberately leaves the `Intl`
+identifier `ref.null.extern` (#5206: "a compiled shim for it is a separate, much
+larger gap"). The polyfill reads that namespace at top level in two places: the
+cache `ct = Intl.DateTimeFormat` at 4:10198 and this `.prototype` probe.
+
+An `Intl.<member>` → `undefined` arm was written and **reverted**: it clears the
+first read and the second one then throws on `.prototype`, so it moved the
+failure without removing it while changing standalone `Intl` semantics. Getting
+past this needs one of, in increasing order of honesty:
+
+1. the provider builder strips/stubs the Intl-dependent section of the polyfill
+   for standalone (a provider-side decision — the 66 Intl-dependent Temporal
+   rows are already out of scope per this issue's own plan);
+2. a standalone `Intl` namespace whose members are constructible refusal
+   closures carrying a real `.prototype` (the #5206 gap, properly);
+3. ICU in Wasm (out of scope, permanently, for this issue).
+
+Recommendation: **(1)**, as the S2 continuation — it is the only one that does
+not require deciding the `Intl` shim question to link Temporal.
+
+### Not reached (unchanged from S2)
+
+The S2 smoke test (`buildTemporalProvider` + `compileWithTemporalGlobal` +
+host-free `instantiateLinkedProject`) is still NOT written: `__module_init`
+still throws, and a skipped assertion is worse than an honest gap. Everything
+else in this slice is a test in
+`tests/issue-5383-standalone-temporal-provider.test.ts` (S2b R6 / S2b R7,
+9 cases, including the non-enumerability of the installed methods, the
+untouched element/length surface, an unaffected plain class, and the preserved
+absent-receiver TypeError).

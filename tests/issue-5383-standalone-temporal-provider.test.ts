@@ -277,3 +277,167 @@ describe("#5383 S2 R4 — `Math.<fn>` read as a VALUE, host-free", () => {
     expect(callExport(mod)).toBe(101.5);
   });
 });
+
+// ── S2b ──────────────────────────────────────────────────────────────────────
+//
+// Two defects in the EXTERNREF-BACKED subclass family (`class B extends Array`
+// — jsbi's `class JSBI extends Array`), both reduced from the standalone
+// polyfill's `__module_init` throw and both invisible in the JS-host lane,
+// where the real host prototype does this work.
+//
+//  R6  An own-field WRITE inside the constructor (`this.sign = s`). The
+//      constructor's own assignment flow-grows a `sign` slot onto the vestigial
+//      `$B` struct, and the write then took the struct.set path — but the
+//      instance is the parent's native carrier, never a `$B`, so the receiver
+//      narrowed to `ref.null $B` and the #2084 guard threw
+//      `TypeError: Cannot access property on null or undefined`. The same write
+//      from OUTSIDE the class always worked (no slot ⇒ the #4149 dynamic-store
+//      arm), so the class's own constructor was the one place it failed.
+//
+//  R7  A method call through a DYNAMIC receiver. Nothing on the carrier says
+//      "B", so the dynamic terminals (`__extern_method_call` /
+//      `__call_m_<name>`, which resolve by `ref.test`ing instance identity)
+//      missed and answered `null` — SILENTLY, which is why it survived. The
+//      host lane's answer, `__set_subclass_proto`, is a JS host import, so
+//      `emitSetSubclassProto` is a no-op standalone. Methods are now installed
+//      on the instance at §17 attributes, and the method trampoline binds
+//      `__current_this` as the carrier instead of `ref.null $B`.
+//
+// This is what stopped the compiled @js-temporal/polyfill: jsbi statics call
+// methods on their PARAMETERS (`static toNumber(i) { … i.__unsignedDigit(0) … }`),
+// every such call answered null, and the null surfaced five frames later as
+// `JSBI.subtract(null, …)`.
+
+describe("#5383 S2b R6 — own-field write/read on an externref-backed subclass instance", () => {
+  it("`this.<field> = v` in the constructor of a `class … extends Array`", async () => {
+    const mod = await compileStandalone(`
+      class B extends Array { constructor(n, s) { super(n); this.sign = s; } }
+      export function test() { var b = new B(2, true); return b.sign === true ? 1 : 0; }
+    `);
+    expect(callExport(mod)).toBe(1);
+  });
+
+  it("the jsbi shape — an instance minted by one static, read by another", async () => {
+    // `JSBI.subtract(i, _) { const t = i.sign; … }` with `i` from `JSBI.BigInt`.
+    const mod = await compileStandalone(`
+      class B extends Array {
+        constructor(n, s) { super(n); this.sign = s; }
+        static make(s) { return new B(2, s); }
+        static subtract(i, _) { const t = i.sign; return t === true ? 7 : 8; }
+      }
+      export function test() { return B.subtract(B.make(true), B.make(false)); }
+    `);
+    expect(callExport(mod)).toBe(7);
+  });
+
+  it("the element/length surface of the Array carrier is untouched", async () => {
+    // The write must land in the expando side table, never over the vec's own
+    // element storage or its length.
+    const mod = await compileStandalone(`
+      class B extends Array { constructor(n, s) { super(n); this.sign = s; } }
+      export function test() {
+        var b = new B(3, true);
+        b[0] = 9;
+        return b.length * 10 + b[0] + (b.sign === true ? 100 : 0);
+      }
+    `);
+    expect(callExport(mod)).toBe(139);
+  });
+
+  it("a plain class and an `extends Error` subclass are unaffected", async () => {
+    const mod = await compileStandalone(`
+      class P { constructor(n, s) { this.length = n; this.sign = s; } }
+      class E extends Error { constructor(m) { super(m); this.sign = true; } }
+      export function test() {
+        return (new P(2, true).sign === true ? 1 : 0) + (new E("m").sign === true ? 2 : 0);
+      }
+    `);
+    expect(callExport(mod)).toBe(3);
+  });
+});
+
+describe("#5383 S2b R7 — dynamic method dispatch on an externref-backed subclass instance", () => {
+  it("a method called through an untyped parameter runs, with `this` bound", async () => {
+    const mod = await compileStandalone(`
+      class B extends Array {
+        constructor(n, s) { super(n); this.sign = s; }
+        d(i) { return this[i]; }
+        static mk(n) { var b = new B(1, false); b[0] = n; return b; }
+      }
+      function callD(o) { return o.d(0); }
+      export function test() { return callD(B.mk(5)); }
+    `);
+    // Pre-fix: `null` — the dispatch missed entirely and nothing reported it.
+    expect(callExport(mod)).toBe(5);
+  });
+
+  it("`this` reaches elements, an own field, `.length` and a sibling method", async () => {
+    // Each is a separate `this` consumer inside the method body; the trampoline
+    // used to hand all four a null receiver (`ref.null $B`), so the element read
+    // threw and the field read answered null.
+    const mod = await compileStandalone(`
+      class B extends Array {
+        constructor(n, s) { super(n); this[0] = 4; this.sign = s; }
+        elem() { return this[0]; }
+        field() { return this.sign; }
+        len() { return this.length; }
+        sib() { return this.elem(); }
+      }
+      function call(o, which) {
+        return which === 0 ? o.elem() : which === 1 ? o.field() : which === 2 ? o.len() : o.sib();
+      }
+      export function test() {
+        var b = new B(2, 3);
+        return call(b, 0) + call(b, 1) + call(b, 2) + call(b, 3);
+      }
+    `);
+    // 4 + 3 + 2 + 4
+    expect(callExport(mod)).toBe(13);
+  });
+
+  it("the installed methods are NOT enumerable — `Object.keys` still sees only the elements", async () => {
+    // The install uses §17 method attributes (`{writable, !enumerable,
+    // configurable}`), the same flags `C.prototype` gets, so the method name
+    // must not appear in the enumerable own-key surface. Asserted as ABSENCE of
+    // the key rather than as a key COUNT: a standalone Array-subclass carrier
+    // answers `Object.keys(b).length === 0` for its elements too (measured on
+    // `origin/main`, unchanged by this PR and out of scope here), so a count
+    // would be asserting that unrelated gap rather than this property.
+    const mod = await compileStandalone(`
+      class B extends Array { constructor(n) { super(n); this[0] = 1; this[1] = 2; } d() { return 7; } }
+      function call(o) { return o.d(); }
+      export function test() {
+        var b = new B(2);
+        var keys = Object.keys(b);
+        var sawMethod = 0;
+        for (var i = 0; i < keys.length; i++) if (keys[i] === "d") sawMethod = 1;
+        return call(b) + 100 * sawMethod;
+      }
+    `);
+    expect(callExport(mod)).toBe(7);
+  });
+
+  it("a plain class's dynamic dispatch keeps working (the struct arm is untouched)", async () => {
+    const mod = await compileStandalone(`
+      class P { constructor(v) { this.v = v; } d() { return this.v; } }
+      function callD(o) { return o.d(); }
+      export function test() { return callD(new P(5)); }
+    `);
+    expect(callExport(mod)).toBe(5);
+  });
+
+  it("an extracted method still sees an absent receiver — the #2025 TypeError is preserved", async () => {
+    const mod = await compileStandalone(`
+      class B extends Array { constructor(n) { super(n); this[0] = 4; } d() { return this[0]; } }
+      export function test() {
+        var b = new B(1);
+        var f = b.d;
+        try { f(); } catch (e) { return e instanceof TypeError ? 1 : 2; }
+        return 0;
+      }
+    `);
+    // 1 = calling the extracted method with no receiver threw a CATCHABLE
+    // TypeError rather than trapping or silently answering.
+    expect(callExport(mod)).toBe(1);
+  });
+});
