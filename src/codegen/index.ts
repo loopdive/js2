@@ -174,7 +174,7 @@ import {
   removeMultiIrAttemptedCallableUnits,
 } from "./multi-prepared-callable-orchestration.js";
 import { createCodegenContext } from "./context/create-context.js";
-import { markIndexedPropertyStale } from "./strict-eq-stale-type.js";
+import { expressionHasWidenedPropertyType, markIndexedPropertyStale } from "./strict-eq-stale-type.js";
 import { ProgramAbiSession, type PublishedProgramAbi } from "./program-abi-session.js";
 import { sourceFunctionHandleForDeclaration } from "./program-abi-source-callable-planning.js";
 import { stripHostBridgeExports } from "./host-bridge-exports.js";
@@ -13932,7 +13932,11 @@ function hoistVarDecl(
     // mixed-assignment demotion does not — a positive unboxing proof outranks
     // it (see `numericProofOverridesMixedCarrier`).
     const hardForcesExternref =
-      initForcesExternref || realmStructuralCarrier || forInTargetForcesExternref || transferredArrayLikeResult;
+      initForcesExternref ||
+      realmStructuralCarrier ||
+      forInTargetForcesExternref ||
+      transferredArrayLikeResult ||
+      (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
     const usageF64 = hardForcesExternref
       ? null
       : mixedAssignmentCarrier
@@ -14740,7 +14744,10 @@ function walkStmtForLetConst(ctx: CodegenContext, fctx: FunctionContext, stmt: t
           ? numericProofOverridesMixedCarrier(usageInferredLocalType(ctx, decl))
           : null;
         const carrierForcesExternref =
-          initForcesExternref || realmStructuralCarrier || (mixedAssignmentCarrier && !mixedCarrierProvenF64);
+          initForcesExternref ||
+          realmStructuralCarrier ||
+          (mixedAssignmentCarrier && !mixedCarrierProvenF64) ||
+          (!!decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer));
         // (#4616) Empty-array (or Array<any>) initializer: use the SAME
         // usage-based vec inference `compileVariableStatement` applies
         // (`inferArrayVecType`, mirroring the var hoister above). Without it

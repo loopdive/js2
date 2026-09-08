@@ -5,6 +5,8 @@
  *
  * Extracted from codegen/index.ts (#1013).
  */
+import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
+import { functionReturnsWidenedProperty } from "./declarations/widened-property-return.js";
 import { ts, forEachChild } from "../ts-api.js";
 import {
   isBigIntType,
@@ -1829,15 +1831,15 @@ function registerBodylessFunctionDeclaration(
     }
     const rUnwrapped = isAsync ? unwrapPromiseType(retType, ctx.checker) : retType;
     const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-    const withScopedReturn = functionReturnsThroughWithScope(ctx, stmt);
-    const inferredNumericRet = withScopedReturn
+    const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedProperty(ctx, stmt);
+    const inferredNumericRet = dynamicReturn
       ? null
       : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
     if (inferredNumericRet) {
       results = [inferredNumericRet];
-    } else if (withScopedReturn) {
-      // The checker's return type came from the SHADOWED outer binding; the real
-      // value is whatever the `with` receiver holds. Carry it as `any`.
+    } else if (dynamicReturn) {
+      // A routed or alias-mutated value can differ from the checker's
+      // inferred return type. Preserve its runtime tag.
       results = [{ kind: "externref" }];
     } else {
       results = isVoidType(rUnwrapped)
@@ -2956,19 +2958,18 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         // return type if every param is numeric and the body is a pure
         // numeric kernel (catches e.g. recursive `function fib(n) {...}`).
         const isImplicitAnyReturn = (rUnwrapped.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0;
-        const withScopedReturn = functionReturnsThroughWithScope(ctx, stmt);
+        const dynamicReturn = functionReturnsThroughWithScope(ctx, stmt) || functionReturnsWidenedProperty(ctx, stmt);
         const preInitVarReturn = functionReturnsPreInitVarValue(ctx, stmt);
-        const inferredNumericRet = withScopedReturn
+        const inferredNumericRet = dynamicReturn
           ? null
           : inferredNumericResultType(ctx, name, isAsync, isImplicitAnyReturn, params);
         if (nativeTaViewReturn !== null) {
           results = [nativeTaViewReturn];
         } else if (inferredNumericRet) {
           results = [inferredNumericRet];
-        } else if (withScopedReturn || preInitVarReturn) {
-          // See `functionReturnsThroughWithScope`: the checker resolved the
-          // returned name against the SHADOWED outer binding, so the inferred
-          // type describes the wrong value. Carry it as `any`.
+        } else if (dynamicReturn || preInitVarReturn) {
+          // Routed, pre-init and alias-mutated values can disagree with the
+          // checker's inferred return type. Preserve the runtime value.
           results = [{ kind: "externref" }];
         } else {
           results = isVoidType(rUnwrapped)
@@ -3477,6 +3478,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
    * let/const pass so both scopes register the same type.
    */
   function moduleGlobalWasmType(decl: ts.VariableDeclaration, varType: ts.Type): ValType {
+    if (decl.initializer && !decl.type && expressionHasWidenedPropertyType(ctx, decl.initializer)) {
+      return { kind: "externref" };
+    }
     if (proxyOrTransferredResultNeedsExternref(ctx, decl)) return { kind: "externref" };
     // A host builtin static read (`Date.now`, `Object.hasOwn`, …) is a genuine
     // JS function, not a Wasm closure struct.  Conditional/short-circuit
