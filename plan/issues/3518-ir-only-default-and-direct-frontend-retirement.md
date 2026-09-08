@@ -4572,3 +4572,29 @@ async semantic verification and attachment authority must separate without
 duplicating their WeakMap; intrinsic signature verification must separate from
 provider target checks; prepared async-state traversal remains an explicit
 middle-end obligation. These are inputs to the next High spec, not tested closure.
+
+### Verification/provider split baseline (2026-09-08)
+
+Published PR5749 is now based on main `2f5b7a7904c19382828b8c1e4f4d248758081493`
+through merge `3e0bea4e6c82b9cde9f85c0d80f454e2e7324903`. The upstream update
+contains baseline/report changes only. Normal push hooks passed, including
+TypeScript, lint, formatting, numeric-local parity 18/18 and issue integrity.
+
+Before the next implementation split, the existing async-plan and runtime-manifest
+suites pass 20/20 (12 + 8) on that source revision. The async suite includes real
+two-suspension execution and the existing playground async-family IR coverage
+control. This is a bounded pre-change baseline, not original-population conformance
+or public-retirement evidence. The High implementation specification remains pending.
+
+The [High semantic/provider ownership specification](../agent-context/3518-semantic-provider-ownership-plan-2026-09-08.md)
+is now complete and source-reviewed by the coordinator. Semantic lane A owns
+eleven production files plus its focused test; provider lane B owns twelve
+production files plus its focused test. Their writesets are disjoint, including
+explicit ownership of the old async facades by B. The shared catalog stays one
+object with its existing runtime compatibility type; provider-only features
+remain represented. The parent owns four consumer rewires and preservation
+integration. The next checkpoint adds twelve mandatory canonical modules without
+changing allowed edges; full mixed verifier and native/public cutover obligations
+remain explicit. Existing 224/118 retained and 135 moved-declaration ledgers must
+be reconstructed rather than reseeded. Slice locks and isolated writer dispatch
+are being prepared; no new implementation is claimed here.
