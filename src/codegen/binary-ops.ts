@@ -4,6 +4,7 @@
  * Handles binary expression compilation including numeric, i32, i64,
  * bitwise, modulo, boolean, and any-typed binary operations.
  */
+import { expressionHasWidenedPropertyType } from "./strict-eq-stale-type.js";
 import { ts } from "../ts-api.js";
 import type { TypeFact } from "../checker/oracle.js";
 import {
@@ -668,10 +669,14 @@ export function compileBinaryExpression(
   // ToPrimitive; sending that operand through the ordinary numeric hint would
   // eagerly apply ToNumber and turn `(function (x) { return x + arguments[1] })
   // (1, "1")` into `2` instead of `"11"`.
+  // The same rule applies to properties widened after writes through an
+  // object alias: their checker type still describes the original value.
   if (
     op === ts.SyntaxKind.PlusToken &&
     [expr.left, expr.right].some(
-      (operand) => ts.isIdentifier(operand) && fctx.rawArgumentsParamNames?.has(operand.text),
+      (operand) =>
+        (ts.isIdentifier(operand) && fctx.rawArgumentsParamNames?.has(operand.text)) ||
+        expressionHasWidenedPropertyType(ctx, operand),
     )
   ) {
     return emitAnyAdd(ctx, fctx, expr);
