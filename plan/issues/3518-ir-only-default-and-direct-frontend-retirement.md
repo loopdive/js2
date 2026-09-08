@@ -5046,8 +5046,9 @@ implementation status must be verified separately, not inferred from dispatch.
 The independent source-admission prerequisite is recorded in
 `plan/agent-context/3518-certified-delay-source-admission-plan-2026-09-08.md`.
 Fresh whole-program probes refuse the unchanged certified delay at unknown
-Promise construction, and the complete async family at the array-returning
-signature. Existing public-route success does not remove either gap. Preserve
+Promise construction, and the complete async family at the `number[]` parameter
+of `fetchAllSequential(ids: number[]): Promise<number>`. Existing public-route
+success does not remove either gap. Preserve
 the exact closure inventory while wiring certification; logical vector/await
 typing and all runtime/physical/public-cutover requirements remain in scope.
 
@@ -5109,3 +5110,22 @@ The frame worker's scoped claim was independently verified upstream with owner
 `67945-bzg89dfn`, claim commit `178447ad6adedc33d882ab35f412f7c5b495caa6`.
 Its hook process completed and released the serialized test slot; static
 implementation proceeds separately. No frame implementation is implied here.
+
+### Full-family signature attribution corrected (2026-09-08)
+
+The unchanged playground source declares both sequential and parallel functions
+as `(ids: number[]): Promise<number>`. The earlier array-returning-signature
+description was incorrect. A direct invocation of the current `typeNodeToIr`
+on the exact parsed annotations rejects both `number[]` parameters with
+`type-resolution-unsupported`, while both unwrapped `number` returns lower to
+f64. This is a signature-lowering probe, not successful whole-program preparation.
+Parallel additionally requires its original `Promise<number>[]` local and
+the `number[]` result of `await Promise.all(pending)`; neither is removed from
+the full-family scope.
+
+Source-admission implementation is now claimed separately by
+`ttraenkler/codex-astra-certified-delay-source-admission-20260908`, verified
+upstream write `79476-841vjtpq`, claim commit
+`57e7f2be986125df69c4d16bdbf282937a0272ea`. The claim hook completed and released
+the shared validation slot. The seven-file source-admission implementation is
+still pending and is not included in this documentation correction.

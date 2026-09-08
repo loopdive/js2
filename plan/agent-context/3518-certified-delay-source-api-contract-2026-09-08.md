@@ -86,4 +86,4 @@ Required new controls: default-off versus explicit-on; invalid/cross-policy requ
 
 The immediate expected progress is **source preparation and typed capture**, not successful whole preparation: the canonical runtime catalog currently lacks `__ir_promise_delay_native`, so retain the located `unknown-function-ref`/`resolve` failure until its separate declaration/provider implementation lands.
 
-Full-family `Promise<number[]>` signature and await/vector preparation remain distinct mandatory prerequisites. This contract neither substitutes scalar delay for that family nor changes ABI30, physical acceptance or retirement criteria.
+Full-family array-parameter and await/vector preparation remain distinct mandatory prerequisites. In the unchanged fixture, both sequential and parallel owners accept `number[]` and return `Promise<number>`; parallel also needs a local `Promise<number>[]` and the `number[]` result of awaiting `Promise.all`. This contract neither substitutes scalar delay for that family nor changes ABI30, physical acceptance or retirement criteria.
