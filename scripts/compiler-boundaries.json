@@ -75,9 +75,10 @@
         "src/ir/core/async-plan.ts",
         "src/ir/core/intrinsic-vocabulary.ts",
         "src/ir/core/async-intents.ts",
-        "src/ir/core/string-types.ts"
+        "src/ir/core/string-types.ts",
+        "src/ir/core/binding-key-primitives.ts"
       ],
-      "minModules": 11
+      "minModules": 12
     },
     {
       "id": "ir-analysis",
@@ -105,18 +106,18 @@
     },
     {
       "id": "ir-program",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/ir/program"],
       "required": true,
-      "entries": ["src/ir/program/index.ts"],
-      "minModules": 1
+      "entries": ["src/ir/program/abi-inventory.ts", "src/ir/program/abi.ts", "src/ir/program/startup.ts"],
+      "minModules": 3
     },
     {
       "id": "runtime-contracts",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/runtime/contracts"],
       "required": true,
-      "entries": ["src/runtime/contracts/index.ts"],
+      "entries": ["src/runtime/contracts/host-capability-schema.ts"],
       "minModules": 1
     },
     {
@@ -373,6 +374,16 @@
   ],
   "activationHistory": [
     {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/abi-inventory.ts", "src/ir/program/abi.ts", "src/ir/program/startup.ts"],
+      "minModules": 3
+    },
+    {
+      "layer": "runtime-contracts",
+      "entries": ["src/runtime/contracts/host-capability-schema.ts"],
+      "minModules": 1
+    },
+    {
       "layer": "ir-core",
       "entries": [
         "src/ir/core/types.ts",
@@ -511,6 +522,11 @@
     }
   ],
   "files": [
+    { "path": "src/ir/core/binding-key-primitives.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/program/abi-inventory.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/abi.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/startup.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/runtime/contracts/host-capability-schema.ts", "state": "clean", "layer": "runtime-contracts" },
     { "path": "src/ir/core/nodes.ts", "state": "clean", "layer": "ir-core" },
     { "path": "src/ir/core/dialect/js.ts", "state": "clean", "layer": "ir-core" },
     { "path": "src/ir/core/async-plan.ts", "state": "clean", "layer": "ir-core" },
@@ -7897,7 +7913,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-core",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Four validation primitives and source-global key grammar now live in the clean core leaf; remaining binding-reference factories and node/type/runtime contracts still need separation."
     },
     {
       "path": "src/ir/alloc-registry.ts",
@@ -8927,9 +8943,9 @@
       "path": "src/ir/module-init-plan.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "frontend-ts",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Pure startup data lives in ir/program/startup.ts. Separate the remaining AST/checker builder and source verifier from the legacy parity observer before frontend placement; preserve algorithms and old type exports."
     },
     {
       "path": "src/ir/module-init.ts",
@@ -9199,9 +9215,9 @@
       "path": "src/ir/program-abi.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "legacy-ir-bridge",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Canonical ABI types/state machine are in ir/program/abi.ts. The old rich-inventory constructor specialization and name-based LegacyAbiAdapter remain a mixed compatibility boundary, never an import of the clean authority."
     },
     {
       "path": "src/ir/program-allocations.ts",
@@ -9377,7 +9393,7 @@
       "layer": "mixed-needs-split",
       "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Extract pure prepared data/ABI into ir/program only after splitting frontend inventory/module-init/outcome edges, backend acceptance and emission contracts, and deferred LinearOptions. Preserve runtime validation/transaction behavior through explicit boundaries; no whole-file relocation or clean declaration."
+      "nextBoundary": "Complete src/ir/program/index.ts with pure prepared data/ABI only after splitting frontend inventory/module-init/outcome edges, backend acceptance and emission contracts, and deferred LinearOptions. Preserve runtime validation/transaction behavior through explicit boundaries; no whole-file relocation or clean declaration."
     },
     {
       "path": "src/ir/promise-delay-lowering.ts",
@@ -9463,9 +9479,9 @@
       "path": "src/ir/runtime-host-capabilities.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "runtime-contracts",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "The complete 25-type/14-constant record schema lives in runtime/contracts/host-capability-schema.ts. Catalog construction, validators, resolvers and compatibility exports remain here. Complete remaining runtime contracts and the originally planned runtime/contracts/index.ts boundary without moving selected provider attachments into IR core."
     },
     {
       "path": "src/ir/runtime-manifest.ts",

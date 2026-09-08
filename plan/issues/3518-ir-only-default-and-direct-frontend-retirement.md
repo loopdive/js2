@@ -4342,3 +4342,47 @@ integration. It also sequences native and linear resource materialization,
 public metadata/cutover, original-population evidence and eventual deletion.
 This is specification only: no source implementation, gate relaxation,
 claim release or migration-complete declaration is included.
+
+### Connected program-data contract checkpoint (2026-09-08)
+
+The [Astra High implementation plan](../agent-context/3518-program-data-contract-checkpoint-plan-2026-09-08.md)
+is published through PR5745 at `f95d8a0bf318e857d981863b1018a9d776483a46`.
+Two existing native Astra Low agents implement disjoint program-data and
+runtime-data slices under verified `3518:program-data-contracts` and
+`3518:runtime-data-contracts` claims. The coordinator owns prerequisite
+composition, real consumer rewiring, shared boundary policy, serialized tests
+and held non-draft PR publication. No public route or retirement criterion is
+changed by these assignments.
+
+The coordinator's isolated integration checkout starts from that plan commit
+and reuses fifteen source/test files byte-for-byte from the published held
+ABI PR5739 (`c3afa4389469e55d434c0715698dc59c6caa9120`), startup PR5741
+(`7b37b23c72af84a1e336cebce2954942408ecea6`) and capability-schema PR5743
+(`c2d900d4fa9811f3359c308369bfb2b4184e90a9`), plus the startup import redirect
+in `program.ts`. Existing drafts are not overwritten. Older policy files are
+not copied wholesale; existing active roots and allowed edges remain intact.
+
+Final architecture clarification supersedes the plan's restrictive ABI
+declaration-only wording: the complete existing canonical ABI implementation
+may be reused unchanged as a source prerequisite. The getter's missing rooted
+caller evidence remains an unresolved acceptance obligation, with the fixed
+thirty-target denominator and preliminary 29/30 public full/cut witnesses.
+Neither reuse nor downstream type references establish the missing witness.
+There is no getter modification, fabricated caller or gate waiver.
+
+Initial composed inventory validation accounted for 1,267 modules, including
+23 clean modules, with no inventory errors and `architectureComplete: false`.
+The first six-suite prerequisite run passed 132/133 tests. Its one failure
+correctly detected that combined policy metadata omitted the explicit
+`src/ir/program/index.ts` completion obligation. The obligation was restored;
+the unchanged startup-boundary suite then passed 12/12. The complete corrected
+six-suite rerun passed 133/133, with no skipped tests. This proves the scoped
+prerequisite combination, not the new worker implementations or retirement.
+The composed prerequisite typecheck also exited successfully.
+
+Typed preparation's implementation dependency graph remains unfinished,
+including verifier-to-AST provenance and mixed semantic/provider validation.
+Executed native allocation, complete physical reservation, public cutover,
+original-population conformance and final direct-codegen retirement remain
+required. Host/linear implementation stays deferred, not removed from the
+overall migration obligations. All holds remain in place.
