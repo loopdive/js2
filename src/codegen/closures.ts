@@ -82,6 +82,7 @@ import {
   structHintForBindingPattern,
 } from "./destructuring-params.js";
 import { compileObjectLiteralAsExternref, objectLiteralForcesHostPath } from "./literals.js";
+import { sourceCollectionCallbackParameterIsErased } from "./source-collection-factory.js";
 import {
   cacheParamDefaultArgc,
   emitF64ParamSentinelCheck,
@@ -2048,6 +2049,7 @@ export function computeClosureWrapperSig(
           ? EXTERNREF_PARAM
           : resolveWasmType(ctx, paramType);
     if (ts.isFunctionDeclaration(arrow)) wasmType = preserveOptionalDeclarationParameter(ctx, p, wasmType);
+    if (sourceCollectionCallbackParameterIsErased(ctx, arrow, runtimeIndex)) wasmType = EXTERNREF_PARAM;
     // JSDoc optional parameters (for example `@param {number=} size`) are
     // commonly exported from JavaScript modules and called from a different
     // source file. The local call-site scan cannot see those callers, so a

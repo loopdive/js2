@@ -212,6 +212,44 @@ oracle-ratchet-allow:
 
 ### Source-defined collection carrier investigation (resumed)
 
+Next-boundary investigation after checkpoint `9465e0c392cdd0`: the reduced real
+factory probe's `arrayFrom(set.values())` returns all three values (sum 6), while
+`forEach` throws `TypeError: Cannot access property on null or undefined` at the
+callback invocation in release-core line 152. A separate native-Set callback
+with three supplied arguments and a one-parameter consumer passes. These are
+diagnostic controls, not evidence that the two remaining upstream cases share
+a cause. Diagnostic logs: `.tmp/ts5-custom-set-error.log` and
+`.tmp/ts5-collection-callback-minimal.log`.
+
+The decisive reduction is a multi-file source `createSet<T, H>` with a captured
+element and a `forEach(action)` method. The number-typed consumer failed while
+an otherwise identical `any` consumer passed. Preserve the callback parameter
+as externref only when the source factory method itself declares that callback
+parameter using a type parameter owned by the factory. Inspect the source
+method, not merely the ambient Set interface: the latter incorrectly widened
+a non-generic source-method control. No new raw-checker query or shared mutable
+registry is introduced.
+
+Verified result after this follow-up: **24/25 original admitted tests pass**,
+compilerCore **10/11**, all **5/5 modules compile and validate with zero imports**.
+Only upstream `iteration` remains failing in this selected set. `forEach` now
+passes unchanged; the adapter regenerated the release projection, removing all
+temporary diagnostic edits before this run. Log:
+`.tmp/ts5-upstream-source-callback-proof.log`. Scope remains 5/256 files admitted,
+251 deferred; this is not completion of the standalone compiler/unit-suite goal.
+
+Focused controls: **16/16** across the new five-case collection-callback test,
+four collection-carrier checks, and seven optional standalone Set checks. The
+callback cases include native and non-generic source controls plus later-module
+number/any/Boolean consumers. Log: `.tmp/ts5-source-callback-final-controls.log`.
+Format/lint and LOC/function budgets pass without new allowances. Full parser,
+binder, checker and all-unit-suite acceptance have not been rerun or established.
+The next reduced failure is `arrayFrom(set.entries())`: it throws
+`TypeError: value is not iterable`, while `arrayFrom(set.values())` and `forEach`
+each return all three values (sum 6) in the same real-factory probe. Inspect the
+`*entries()` method's nested `getElementIterator()` loop next. Log:
+`.tmp/ts5-custom-set-entries.log`; probe `.tmp/ts5-custom-set-probe.ts`.
+
 The real `createSet` factory returns an open object, not native Set storage.
 Reduced standalone probes now preserve initial size, mutation, and `return this`
 identity. Added a durable four-case native-vs-Wasm regression covering a direct

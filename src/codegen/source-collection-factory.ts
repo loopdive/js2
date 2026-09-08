@@ -22,3 +22,51 @@ export function sourceCollectionFactoryUsesObjectCarrier(ctx: CodegenContext, ex
   const signature = getFuncSignature(ctx, handle);
   return signature?.results.length === 1 && signature.results[0]?.kind === "externref";
 }
+
+/** A source collection's generic callback boundary transports T as a JS value. */
+export function sourceCollectionCallbackParameterIsErased(
+  ctx: CodegenContext,
+  callback: ts.FunctionLikeDeclaration,
+  index: number,
+): boolean {
+  const call = callback.parent;
+  if (!call || !ts.isCallExpression(call) || !ts.isPropertyAccessExpression(call.expression)) return false;
+  const receiver = call.expression.expression;
+  if (!ts.isIdentifier(receiver)) return false;
+  const binding = ctx.oracle.valueDeclarationOf(receiver);
+  if (
+    !binding ||
+    !ts.isVariableDeclaration(binding) ||
+    !binding.initializer ||
+    !sourceCollectionFactoryUsesObjectCarrier(ctx, binding.initializer)
+  )
+    return false;
+  if (!ts.isCallExpression(binding.initializer)) return false;
+  const callee = binding.initializer.expression;
+  const name = ts.isPropertyAccessExpression(callee) ? callee.name : callee;
+  let factory = ctx.oracle.aliasedValueDeclarationOf(name);
+  if (factory && ts.isShorthandPropertyAssignment(factory))
+    factory = ctx.oracle.aliasedValueDeclarationOf(factory.name);
+  if (!factory || !ts.isFunctionDeclaration(factory) || !factory.body) return false;
+  const argumentIndex = call.arguments.indexOf(callback as ts.Expression);
+  if (argumentIndex < 0) return false;
+  const methodName = call.expression.name.text;
+  const answers: boolean[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isMethodDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === methodName) {
+      const type = node.parameters[argumentIndex]?.type;
+      const parameterType = type && ts.isFunctionTypeNode(type) ? type.parameters[index]?.type : undefined;
+      answers.push(
+        !!parameterType &&
+          ts.isTypeReferenceNode(parameterType) &&
+          ctx.oracle
+            .declarationsOf(parameterType.typeName)
+            .some((decl) => ts.isTypeParameterDeclaration(decl) && decl.parent === factory),
+      );
+    }
+    if (ts.isFunctionLike(node)) return;
+    ts.forEachChild(node, visit);
+  };
+  visit(factory.body);
+  return answers.length > 0 && answers.every(Boolean);
+}
