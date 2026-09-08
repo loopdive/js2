@@ -6368,3 +6368,34 @@ and `plan/agent-context/3518-native-promise-resource-checkpoint-handoff-2026-09-
 
 The requested unsealed-program control subsequently passed with all24/24
 resource tests in13.76s; session2053 also passed composed TS7 and exited0.
+
+## Capture-once Promise integration (2026-09-08)
+
+The ordinary then getter defect is repaired in canonical runtime bodies and
+their legacy callers: resolution returns callability plus the first captured
+function, stores that function in the existing callback field, and the queued
+job invokes it with the original receiver. Compiled-method dispatch retains
+its existing null-capture path. The native resource pack reserves and fills
+the matching two-result lookup without replacing the legacy classifier.
+
+Pauli's isolated explicit-mode suite passed63/63 (49 historical preservation
+controls plus7 runtime cases in each of direct and experimental-IR modes).
+Parent composed TS7 and87/87 tests passed twice:38918 before budget helpers,
+96871 after them. The second run took22.78s. No size allowance was added.
+High approved production changes, resource adaptation and private helpers.
+
+The requested two additional historical signature/fill cases are integrated
+with exact worker hash03091b33df320d43edd63b64fbebc293b5b2fb81a93388ef6b19c35244a8b271.
+Their positive-first4 signature and5 actual-fill mutants still need a terminal
+composed result. Boundary regression and the independent public comparison
+also remain pending. Original donor hashes and failing baseline receipts are
+preserved; this is not full native resource execution or retirement.
+
+Final proof and boundary run31410 passed TS7 and259/259 tests in117.47s.
+High approved the added independent body oracle and all scoped changes.
+Public repair comparison94830 exited0: all24 candidate cases passed their
+semantic expectations, all14 comparator controls passed, and the baseline
+reproduced its exact20 known gaps. Both arms completed48 compiles,96 instances
+and184 observations. Raw outputs differ; baseline/candidate equality is not
+the criterion for correcting the defect. Exact frozen-source scope, hashes
+and limitations are retained in the adjacent agent-context result/handoff.

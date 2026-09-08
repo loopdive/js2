@@ -41,6 +41,8 @@ import {
 import {
   buildPromisePeelValue,
   buildPromiseThenableClassifier,
+  buildPromiseThenableLookup,
+  type PromiseThenableInventory,
 } from "../../../runtime/wasmgc/promise/thenable-bodies.js";
 
 type Tag = TagReservation | TagImportReservation;
@@ -84,6 +86,7 @@ export interface NativePromiseReservations {
     readonly resolveValue: FunctionReservation;
     readonly peel: FunctionReservation;
     readonly classifier: FunctionReservation;
+    readonly lookupThen: FunctionReservation;
     readonly thenableJob: FunctionReservation;
     readonly resolveClosure: FunctionReservation;
     readonly rejectClosure: FunctionReservation;
@@ -290,6 +293,7 @@ export function reserveNativePromiseResources(
   const rejectClosure = reserve("reject-closure", "__promise_reject_cl", trampoline);
   const peel = reserve("peel", "__promise_peel_value", { params: [EXTERN], results: [EXTERN] });
   const classifier = reserve("classifier", "__promise_has_callable_then", { params: [EXTERN], results: [I32] });
+  const lookupThen = reserve("lookup-then", "__promise_lookup_then", { params: [EXTERN], results: [I32, EXTERN] });
   const thenableJob = reserve("thenable-job", "__promise_thenable_job", callbackSignature);
   const result: NativePromiseReservations = Object.freeze({
     types: Object.freeze({
@@ -320,6 +324,7 @@ export function reserveNativePromiseResources(
       resolveValue,
       peel,
       classifier,
+      lookupThen,
       thenableJob,
       resolveClosure,
       rejectClosure,
@@ -343,6 +348,25 @@ export function reserveNativePromiseResources(
     filled: false,
   });
   return result;
+}
+
+function promiseQueueReservations(
+  tx: PhysicalModuleReservations,
+  pack: NativePromiseReservations,
+): PreparedNativeMicrotaskReservations {
+  const t = pack.types;
+  return {
+    types: {
+      functions: { kind: "type", index: t.functions.typeIndex },
+      arguments: { kind: "type", index: t.arguments.typeIndex },
+      callback: { kind: "type", index: t.callbackSignature },
+    },
+    globals: Object.fromEntries(
+      Object.entries(pack.globals).map(([name, token]) => [name, { kind: "global", index: tx.physicalIndex(token) }]),
+    ) as PreparedNativeMicrotaskReservations["globals"],
+    grow: { kind: "function", index: pack.functions.grow.handle },
+    initialCapacity: 8192,
+  };
 }
 
 /** No fallback: resolution/classification/value dependencies must all be real same-ledger reservations. */
@@ -519,18 +543,7 @@ export function fillNativePromiseResources(
   }
   const f = pack.functions,
     t = pack.types;
-  const queue: PreparedNativeMicrotaskReservations = {
-    types: {
-      functions: { kind: "type", index: t.functions.typeIndex },
-      arguments: { kind: "type", index: t.arguments.typeIndex },
-      callback: { kind: "type", index: t.callbackSignature },
-    },
-    globals: Object.fromEntries(
-      Object.entries(pack.globals).map(([name, token]) => [name, { kind: "global", index: tx.physicalIndex(token) }]),
-    ) as PreparedNativeMicrotaskReservations["globals"],
-    grow: { kind: "function", index: f.grow.handle },
-    initialCapacity: 8192,
-  };
+  const queue = promiseQueueReservations(tx, pack);
   const cap = {
     capTypeIdx: t.settleCapture.typeIndex,
     capMetaTypeIdx: owner.dependencies.settleMetadata.typeIndex,
@@ -554,6 +567,7 @@ export function fillNativePromiseResources(
     capsFields: { callback: 0, chained: 1 },
     thenable: {
       hasCallableThenFuncIdx: f.classifier.handle,
+      lookupThenFuncIdx: f.lookupThen.handle,
       thenableJobFuncIdx: f.thenableJob.handle,
       peelValueFuncIdx: f.peel.handle,
       newTypeErrorFuncIdx: newTypeError,
@@ -567,7 +581,7 @@ export function fillNativePromiseResources(
     typeofFunctionIdx: typeofFunction,
     callableRootTypeIdx: owner.dependencies.closureRoot.typeIndex,
   });
-  const classifier = buildPromiseThenableClassifier({
+  const thenableInventory: PromiseThenableInventory = {
     finalized: true,
     peelFuncIdx: f.peel.handle,
     methodTypeIdxs: methods,
@@ -576,7 +590,9 @@ export function fillNativePromiseResources(
     fields,
     closureWrapperTypeIdxs: closures,
     openObject: { typeIdx: objectType, externGetFuncIdx: objectGet, thenStringInstrs: thenString },
-  });
+  };
+  const classifier = buildPromiseThenableClassifier(thenableInventory);
+  const lookupThen = buildPromiseThenableLookup(thenableInventory);
   const job = buildPromiseThenableJob({
     target,
     promiseTypeIdx: t.promise.typeIndex,
@@ -637,6 +653,7 @@ export function fillNativePromiseResources(
     buildPromisePeelValue({ typeIdx: anyType, tagFieldIdx: av.tag, refFieldIdx: av.ref, externFieldIdx: av.extern }),
   );
   tx.fillFunction(f.classifier, classifier);
+  tx.fillFunction(f.lookupThen, lookupThen);
   tx.fillFunction(f.thenableJob, job);
   tx.fillFunction(f.resolveClosure, { locals: [], body: buildPromiseSettleClosureBody(cap, f.resolveValue.handle) });
   tx.fillFunction(f.rejectClosure, { locals: [], body: buildPromiseSettleClosureBody(cap, f.reject.handle) });

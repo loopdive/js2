@@ -97,6 +97,24 @@ export function buildPromiseThenableClassifier(resources: PromiseThenableInvento
   locals: LocalDef[];
   body: Instr[];
 } {
+  return buildThenableLookup(resources, false);
+}
+
+/** Return (callable, capturedThen); null captures denote compiled-method dispatch. */
+export function buildPromiseThenableLookup(resources: PromiseThenableInventory): {
+  locals: LocalDef[];
+  body: Instr[];
+} {
+  return buildThenableLookup(resources, true);
+}
+
+function buildThenableLookup(
+  resources: PromiseThenableInventory,
+  capture: boolean,
+): {
+  locals: LocalDef[];
+  body: Instr[];
+} {
   if (
     resources.finalized !== true ||
     !Array.isArray(resources.methodTypeIdxs) ||
@@ -120,6 +138,14 @@ export function buildPromiseThenableClassifier(resources: PromiseThenableInvento
   const peeledLocalIdx = 1; // param 0 = value externref
   const anyLocalIdx = 2;
   const thenAnyLocalIdx = 3;
+  const capturedThenLocalIdx = 4;
+  const verdict = (callable: 0 | 1, captured = false): Instr[] => [
+    { op: "i32.const", value: callable },
+    ...(capture
+      ? [captured ? ({ op: "local.get", index: capturedThenLocalIdx } as Instr) : ({ op: "ref.null.extern" } as Instr)]
+      : []),
+    { op: "return" },
+  ];
   const body: Instr[] = [
     // peeled = __promise_peel_value(value) — classify the RAW payload.
     { op: "local.get", index: 0 },
@@ -131,7 +157,7 @@ export function buildPromiseThenableClassifier(resources: PromiseThenableInvento
     {
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "i32.const", value: 0 }, { op: "return" }],
+      then: verdict(0),
     },
     { op: "local.get", index: peeledLocalIdx },
     { op: "any.convert_extern" },
@@ -142,15 +168,15 @@ export function buildPromiseThenableClassifier(resources: PromiseThenableInvento
   // base wrappers; 1 on a hit, else 0.
   const closureTest = (loadThen: Instr[]): Instr[] => [
     ...loadThen,
+    ...(capture ? [{ op: "local.tee", index: capturedThenLocalIdx } as Instr] : []),
     { op: "any.convert_extern" },
     { op: "local.set", index: thenAnyLocalIdx },
     ...closureWrapperTypeIdxs.flatMap((typeIdx): Instr[] => [
       { op: "local.get", index: thenAnyLocalIdx },
       { op: "ref.test", typeIdx },
-      { op: "if", blockType: { kind: "empty" }, then: [{ op: "i32.const", value: 1 }, { op: "return" }] },
+      { op: "if", blockType: { kind: "empty" }, then: verdict(1, true) },
     ]),
-    { op: "i32.const", value: 0 },
-    { op: "return" },
+    ...verdict(0),
   ];
 
   // Closed-struct METHOD arms — a compiled `then` method is always callable.
@@ -163,7 +189,7 @@ export function buildPromiseThenableClassifier(resources: PromiseThenableInvento
     body.push({
       op: "if",
       blockType: { kind: "empty" },
-      then: [{ op: "i32.const", value: 1 }, { op: "return" }],
+      then: verdict(1),
     });
   }
 
@@ -239,10 +265,12 @@ export function buildPromiseThenableClassifier(resources: PromiseThenableInvento
   }
 
   body.push({ op: "i32.const", value: 0 });
+  if (capture) body.push({ op: "ref.null.extern" });
   const locals: LocalDef[] = [
     { name: "__peeled", type: { kind: "externref" } },
     { name: "__any", type: { kind: "anyref" } },
     { name: "__thenAny", type: { kind: "anyref" } },
   ];
+  if (capture) locals.push({ name: "__capturedThen", type: { kind: "externref" } });
   return { locals, body };
 }
