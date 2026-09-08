@@ -23,3 +23,12 @@ export const ASYNC_OPTIONAL_RUNTIME_FEATURES = Object.freeze(["value.undefined",
 export type AsyncRuntimeFeature =
   | (typeof ASYNC_RUNTIME_FEATURES)[number]
   | (typeof ASYNC_OPTIONAL_RUNTIME_FEATURES)[number];
+
+const ASYNC_RUNTIME_FEATURE_SET: ReadonlySet<string> = new Set([
+  ...ASYNC_RUNTIME_FEATURES,
+  ...ASYNC_OPTIONAL_RUNTIME_FEATURES,
+]);
+
+export function isAsyncRuntimeFeature(value: string): value is AsyncRuntimeFeature {
+  return ASYNC_RUNTIME_FEATURE_SET.has(value);
+}

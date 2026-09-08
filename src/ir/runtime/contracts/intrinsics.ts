@@ -1,7 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type { IntrinsicId, IntrinsicSignatureVersion } from "../../core/intrinsic-vocabulary.js";
-import type { IrType } from "../../core/types.js";
+import type { IntrinsicDefinition as CoreIntrinsicDefinition } from "../../core/intrinsic-contracts.js";
+export type {
+  IntrinsicSignature,
+  IntrinsicSourceLocation,
+  IntrinsicUse,
+  IntrinsicVerificationCode,
+  IntrinsicVerificationFailure,
+} from "../../core/intrinsic-contracts.js";
 
 /**
  * Provider requirements reachable from the thirty-three intrinsic entry points.
@@ -85,40 +91,4 @@ export const PURE_MATH_HOST_CAPABILITIES = Object.freeze([] as const);
 
 export type HostCapability = (typeof PURE_MATH_HOST_CAPABILITIES)[number];
 
-export interface IntrinsicSignature {
-  readonly version: IntrinsicSignatureVersion;
-  readonly params: readonly IrType[];
-  readonly result: IrType;
-}
-
-export interface IntrinsicSourceLocation {
-  readonly file: string;
-  readonly line: number;
-  readonly column: number;
-}
-
-export interface IntrinsicUse {
-  readonly id: IntrinsicId;
-  readonly version: IntrinsicSignatureVersion;
-  readonly argumentTypes: readonly IrType[];
-  readonly resultType: IrType;
-  readonly location: IntrinsicSourceLocation;
-}
-
-export interface IntrinsicDefinition {
-  readonly id: IntrinsicId;
-  readonly signature: IntrinsicSignature;
-  readonly feature: RuntimeFeature;
-}
-
-export type IntrinsicVerificationCode =
-  | "unknown-intrinsic"
-  | "invalid-intrinsic-location"
-  | "intrinsic-version-mismatch"
-  | "intrinsic-signature-mismatch"
-  | "intrinsic-effect-mismatch";
-
-export interface IntrinsicVerificationFailure {
-  readonly code: IntrinsicVerificationCode;
-  readonly detail: string;
-}
+export type IntrinsicDefinition = CoreIntrinsicDefinition<RuntimeFeature>;

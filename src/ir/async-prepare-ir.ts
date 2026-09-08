@@ -1,13 +1,13 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import { ASYNC_RUNTIME_FEATURES } from "./async-runtime-providers.js";
+import { ASYNC_RUNTIME_FEATURES } from "./core/async-intents.js";
 import { IR_ASYNC_CLOCK_SNAPSHOT_FN } from "./async-semantic-runtime.js";
-import { asAsyncStateId, canonicalPromiseAbi, createIrAsyncPlan } from "./async-plan.js";
-import { irUnitFuncRef } from "./callable-bindings.js";
+import { asAsyncStateId, canonicalPromiseAbi, createIrAsyncPlan } from "./analysis/async-plan.js";
+import { irUnitFuncRef } from "./core/callable-bindings.js";
 import { createDerivedIrUnitId } from "../shared/contracts/identity-values.js";
 import type { IrDerivedUnitProvenance } from "./identity.js";
-import { INTRINSIC_SIGNATURE_VERSION } from "./intrinsics.js";
-import { NUMBER_BOUNDARY_POLICY_DISABLED, type NumberBoundaryPolicy } from "./runtime-manifest.js";
+import { INTRINSIC_SIGNATURE_VERSION } from "./core/intrinsic-vocabulary.js";
+import { NUMBER_BOUNDARY_POLICY_DISABLED, type NumberBoundaryPolicy } from "./runtime/manifest.js";
 import { prepareLinearSuspendingIrFunction } from "./async-linear-prepare.js";
 import {
   asBlockId,

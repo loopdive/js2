@@ -78,17 +78,32 @@
         "src/ir/core/intrinsic-vocabulary.ts",
         "src/ir/core/async-intents.ts",
         "src/ir/core/string-types.ts",
-        "src/ir/core/binding-key-primitives.ts"
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/callable-bindings.ts"
       ],
-      "minModules": 12
+      "minModules": 15
     },
     {
       "id": "ir-analysis",
       "status": "active",
-      "roots": ["src/ir/analysis/contracts", "src/ir/analysis/alloc-registry.ts"],
+      "roots": [
+        "src/ir/analysis/contracts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts"
+      ],
       "required": true,
-      "entries": ["src/ir/analysis/contracts/allocations.ts", "src/ir/analysis/alloc-registry.ts"],
-      "minModules": 2
+      "entries": [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts"
+      ],
+      "minModules": 5
     },
     {
       "id": "ir-passes",
@@ -107,9 +122,15 @@
         "src/ir/runtime/index.ts",
         "src/ir/runtime/contracts/intrinsics.ts",
         "src/ir/runtime/contracts/manifest.ts",
-        "src/ir/runtime/contracts/prepared.ts"
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts",
+        "src/ir/runtime/async-attachment.ts",
+        "src/ir/runtime/intrinsic-verification.ts"
       ],
-      "minModules": 4
+      "minModules": 10
     },
     {
       "id": "ir-program",
@@ -399,6 +420,54 @@
   ],
   "activationHistory": [
     {
+      "layer": "ir-core",
+      "entries": [
+        "src/ir/core/types.ts",
+        "src/ir/core/fnctor-shapes.ts",
+        "src/ir/core/value-references.ts",
+        "src/ir/core/capability-provenance.ts",
+        "src/ir/core/tag-refinement.ts",
+        "src/ir/core/nodes.ts",
+        "src/ir/core/dialect/js.ts",
+        "src/ir/core/async-plan.ts",
+        "src/ir/core/intrinsic-vocabulary.ts",
+        "src/ir/core/async-intents.ts",
+        "src/ir/core/string-types.ts",
+        "src/ir/core/binding-key-primitives.ts",
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/callable-bindings.ts"
+      ],
+      "minModules": 15
+    },
+    {
+      "layer": "ir-analysis",
+      "entries": [
+        "src/ir/analysis/contracts/allocations.ts",
+        "src/ir/analysis/alloc-registry.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts"
+      ],
+      "minModules": 5
+    },
+    {
+      "layer": "ir-runtime",
+      "entries": [
+        "src/ir/runtime/index.ts",
+        "src/ir/runtime/contracts/intrinsics.ts",
+        "src/ir/runtime/contracts/manifest.ts",
+        "src/ir/runtime/contracts/prepared.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts",
+        "src/ir/runtime/async-attachment.ts",
+        "src/ir/runtime/intrinsic-verification.ts"
+      ],
+      "minModules": 10
+    },
+    {
       "layer": "ir-analysis",
       "entries": ["src/ir/analysis/contracts/allocations.ts", "src/ir/analysis/alloc-registry.ts"],
       "minModules": 2
@@ -641,6 +710,18 @@
     { "path": "src/shared/contracts/ir-unit-inventory.ts", "state": "clean", "layer": "foundation" },
     { "path": "src/ir/analysis/contracts/allocations.ts", "state": "clean", "layer": "ir-analysis" },
     { "path": "src/ir/analysis/alloc-registry.ts", "state": "clean", "layer": "ir-analysis" },
+    { "path": "src/ir/core/intrinsic-contracts.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/intrinsics.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/core/callable-bindings.ts", "state": "clean", "layer": "ir-core" },
+    { "path": "src/ir/analysis/effects.ts", "state": "clean", "layer": "ir-analysis" },
+    { "path": "src/ir/analysis/intrinsics.ts", "state": "clean", "layer": "ir-analysis" },
+    { "path": "src/ir/analysis/async-plan.ts", "state": "clean", "layer": "ir-analysis" },
+    { "path": "src/ir/runtime/host-capabilities.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/async-providers.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/callable-declarations.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/manifest.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/async-attachment.ts", "state": "clean", "layer": "ir-runtime" },
+    { "path": "src/ir/runtime/intrinsic-verification.ts", "state": "clean", "layer": "ir-runtime" },
     { "path": "src/ir/passes/contracts/gvn.ts", "state": "clean", "layer": "ir-passes" },
     { "path": "src/ir/runtime/index.ts", "state": "clean", "layer": "ir-runtime" },
     { "path": "src/ir/runtime/contracts/intrinsics.ts", "state": "clean", "layer": "ir-runtime" },

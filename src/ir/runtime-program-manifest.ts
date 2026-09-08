@@ -3,9 +3,9 @@
 /** Source-free runtime preparation and validated replay attachment. Physical helpers remain backend-owned. */
 import {
   assertPreparedIrAsyncRuntimeCurrent,
-  irAsyncPlanNeedsNumberBridge,
   preparedIrAsyncFrameCapabilityFailure,
-} from "./async-plan.js";
+} from "./runtime/async-attachment.js";
+import { irAsyncPlanNeedsNumberBridge } from "./analysis/async-plan.js";
 import type { IrUnitId } from "../shared/contracts/ir-identity.js";
 import {
   IrRuntimeFunctionPreparationError,
@@ -13,8 +13,8 @@ import {
   type IrRuntimeManifestDemands,
 } from "./intrinsic-support.js";
 import type { PreparedIrRuntimeManifest } from "./runtime/contracts/prepared.js";
-import { INTRINSIC_DEFINITIONS } from "./intrinsics.js";
-import type { IntrinsicSourceLocation } from "./runtime/contracts/intrinsics.js";
+import { INTRINSIC_DEFINITIONS } from "./core/intrinsics.js";
+import type { IntrinsicSourceLocation } from "./core/intrinsic-contracts.js";
 import { forEachInstrDeep } from "./nodes.js";
 import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
 import { classifyIrFailure, IrInvariantError } from "./outcomes.js";
@@ -22,7 +22,7 @@ import type { IrPreparationFailure } from "../shared/contracts/ir-preparation-fa
 import { PreparedIrProgramInvariantError, preparedIrProgramOwner, preparedIrReadonlyMap } from "./program.js";
 import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./program/prepared-contracts.js";
 import { assertPreparedIrProgramPopulation } from "./program-population.js";
-import { irRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
+import { irRuntimeCallableDeclaration } from "./runtime/callable-declarations.js";
 import {
   FUNCTION_PROTOTYPE_CALL_RUNTIME_FEATURES,
   GENERATOR_NUMBER_BOX_RUNTIME_FEATURES,
@@ -35,7 +35,7 @@ import {
   STRING_EQ_RUNTIME_FEATURES,
   STRING_LEN_RUNTIME_FEATURES,
   RuntimeManifestInvariantError,
-} from "./runtime-manifest.js";
+} from "./runtime/manifest.js";
 import type { RuntimeFeature } from "./runtime/contracts/manifest.js";
 
 type ProducerInput = PreparedIrProgramProducerInput;

@@ -40,8 +40,8 @@ import type { ValType } from "./types.js";
 // belongs to another producer.
 import { defaultTagDomain } from "./producer.js";
 import type { TagDomain } from "./tag-domain.js";
-import { verifyIrIntrinsicInstruction } from "./intrinsic-support.js";
-import { verifyIrAsyncPlan } from "./async-plan.js";
+import { verifyIrIntrinsicInstruction } from "./runtime/intrinsic-verification.js";
+import { verifyIrAsyncPlan } from "./analysis/async-plan.js";
 import { irFnctorShapeEquals, validateIrFnctorShape } from "./fnctor-abi.js";
 import {
   IR_COUNTED_STRING_REPEAT_I32_MAX,

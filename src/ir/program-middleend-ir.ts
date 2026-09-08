@@ -13,7 +13,7 @@ import { inlineSmall } from "./passes/inline-small.js";
 import { monomorphize } from "./passes/monomorphize.js";
 import { runTaggedUnions } from "./passes/tagged-unions.js";
 import { batchStringConcat } from "./passes/batch-string-concat.js";
-import { stringConcatManyArityCap } from "./runtime-manifest.js";
+import { stringConcatManyArityCap } from "./runtime/manifest.js";
 import { verifyIrFunction } from "./verify.js";
 import { assertFinalAllocProvenance } from "./verify-alloc.js";
 import { assertPreparedIrProgramPopulation } from "./program-population.js";

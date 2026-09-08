@@ -32,6 +32,7 @@ loc-budget-allow:
   - src/ir/integration.ts
   - src/ir/lower.ts
   - src/ir/core/nodes.ts
+  - src/ir/runtime/manifest.ts
   - src/ir/prepared-component-dependencies.ts
   - src/ir/select.ts
   - src/ir/verify.ts
@@ -4598,3 +4599,149 @@ changing allowed edges; full mixed verifier and native/public cutover obligation
 remain explicit. Existing 224/118 retained and 135 moved-declaration ledgers must
 be reconstructed rather than reseeded. Slice locks and isolated writer dispatch
 are being prepared; no new implementation is claimed here.
+
+The specification is published at `b4c116639a7e146e83611a988a8da28d77de9368`
+in non-draft PR5749. Two isolated native Astra Low writers have been authorized
+from that exact commit. Remote assignment records independently confirm
+`3518:semantic-verification-ownership` for
+`ttraenkler/codex-astra-semantic-verification-20260908` (write `67416-31jdr4mp`)
+and `3518:provider-verification-ownership` for
+`ttraenkler/codex-astra-provider-verification-20260908` (write `67413-z3mk47rx`).
+Parent integration uses a third isolated worktree/branch; all earlier worktrees
+remain untouched. Implementation and composed validation are pending. Writers
+must freeze their export interfaces and source manifests before parent composition;
+heavy tests remain serialized and no completed migration is implied.
+
+Coordinator integration now redirects the four specified production consumers;
+their complete non-import source text matches `b4c116639a` byte-for-byte. The
+draft policy adds exactly twelve canonical paths (core 15, analysis 5, runtime
+10; clean total 56) while preserving all allowed edges and complete historical
+activation records. The new semantic/provider boundary suite has 56 cases; only
+its fixed-population/policy test has run (1 passed, 55 unrun). The added controls
+require every new owner to report unknown dynamic imports and unresolved type
+exports, and reject runtime provider imports from all three new semantic analysis
+owners. Formatting and diff whitespace checks pass. Full graph and
+mutation checks await composed implementations; the initial edge-floor check
+must receive an exact composed census before checkpoint approval.
+
+A has reported frozen canonical export interfaces and is drafting its tests;
+these interfaces have been forwarded to B. The coordinator has now adopted all
+eleven A production files from its frozen manifest, independently re-reading and
+matching every SHA256 (11/11). B's production freeze remains pending; no combined
+typecheck/replay success is claimed for this next checkpoint.
+
+Provisional High source review found no concrete production blocker: all 224
+historical declarations were accounted for (221 exact, three approved intrinsic
+specialization/composition differences), along with 37 retained intrinsic-support
+declarations. The reviewer checked export classifications, catalog identity,
+private members, initializer order and the single async attachment WeakMap.
+This is source review only, not frozen-checkpoint approval or execution evidence.
+Historical forty-/forty-four-module fixture reconstruction remains required;
+the new core contract must not silently enlarge those original denominators.
+
+A-only runtime smoke checks in the composed parent tree confirm identity of the
+single 38-row intrinsic catalog across the old and canonical exports, exact ID
+coverage and feature identity for all 38 rows, retention of the provider-only
+`math.reduce-trig` feature, and forwarding identity for all five effect runtime
+exports and twelve callable runtime exports. This does not exercise compiler
+execution or the pending B implementation. No heavy process was started.
+
+Both production lanes are now composed. All thirteen B file blobs (twelve
+production plus its focused test) matched the frozen handoff. The first composed
+TypeScript 7 check found a missing `IrType` import in A's core intrinsic catalog;
+the coordinator added that type-only import and notified A to refresh its frozen
+manifest. The complete TypeScript 7 check then passed. No runtime body changed.
+
+The provider suite passes 47/47 and the new canonical boundary suite passes
+56/56, serialized under the 2 GiB limit. The complete 56-module fixture measures
+193 resolved edges: 137 type-only and 56 runtime, with no unknown, unresolved,
+forbidden or transitive violations. Its prior provisional edge-floor assertion
+has been replaced by these exact counts, and the strengthened closure test passes.
+A's focused test handoff, historical fixture/ledger reconstruction, compiler
+replay and final review remain pending. No whole-compiler closure, native/public
+cutover, retirement acceptance or new PR publication is claimed by these results.
+
+A's refreshed full manifest now matches the composed production, including the
+type-only import correction. Its focused suite passes 34/34, including the actual
+TypeScript identity/negative controls. Existing source-produced program replay
+passes 8/8 across GVN off/on and both source orders; fresh-process typed
+preparation and forbidden-load controls pass 7/7. These checks preserve callable
+aliases, live global startup and allocation ownership; they do not stand in for
+the remaining math/boundary/native-async physical acceptance cases. The native
+Low provider agent is implementing High's historical reconstruction specification
+in its isolated worktree, limited to test helpers and three historical test files.
+High is independently reviewing the composed new tests and consumer rewires.
+
+Broader existing coverage measures 55/56: async-plan 12/12, manifest 8/8,
+source Math integration 3/3, number boundary 17/17 and boolean boundary 15/16.
+The boolean host-lane exact-import assertion at line 476 reports an extra
+`__host_eq` import. Running that identical test on unchanged checkpoint
+`b4c116639a7e146e83611a988a8da28d77de9368` reproduces the same failure and
+six-entry import vector (one failed, fifteen unselected). This demonstrates
+the assertion failure predates the composed extraction; it is not a green
+host-behavior result because the assertion prevents later value checks. The
+original assertion is unchanged. No unrelated host implementation fix or
+merge/retirement approval is implied.
+
+High review identified a preservation-test gap: B's named declaration lookup
+can reconstruct historical order even if the current canonical file was
+reordered. The provider agent is assigned exact current-owner order assertions
+and a mutation control that reorders live declarations and must fail, in addition
+to the historical receipt reconstruction. The existing passing tests do not
+prove that missing order obligation. Production remains unchanged. Historical
+writer dispatch required a claim-helper metadata correction: its isolated helper
+copy may change only the stale High model trailer to the actual Low effort,
+retaining normal hooks and the compliant push command.
+
+The new boundary suite now has eighty cases. Its additional twenty-four controls
+are not yet run: twelve actual historical-facade runtime imports, and twelve
+compiler/backend/physical/program dependency cases covering named imports,
+star exports, type queries and value exports across the three canonical layers.
+The prior 56/56 result applies only to the earlier cases. Formatting and diff
+whitespace checks pass; policy edges and exact 56-module/193-edge census are
+unchanged. Heavy validation awaits release of the agent's claim-only hook slot.
+
+The historical-receipt claim is independently verified on the remote assignment
+branch: `3518-historical-runtime-receipts.json`, assignee
+`ttraenkler/codex-astra-historical-runtime-receipts-20260908`, branch
+`codex/3518-provider-verification-20260908`, write `78729-iqotx3ma`.
+The claim process has finished and parent validation resumed.
+
+The boundary suite now contains 85 cases. Exact new activation-prefix checks and
+five corruption controls preserve the old suffix hash. Group deletion/demotion
+now requires the specific `activation-demoted` error and exact layer ID in both
+inventory and complete modes, rather than accepting unrelated missing-import
+errors. All 33 selected new/strengthened controls pass (52 unchanged cases not
+rerun in this selection), including the twenty-four facade/syntax additions.
+Provider canonical-order and distinct-manifest rollback controls remain with B.
+
+Existing standalone native async-family coverage passes 14/14 on the composed
+candidate and 14/14 on unchanged `b4c116639a`, using the same suite and serialized
+2 GiB configuration. This includes real timer suspension, non-i31 fulfillment,
+aggregate scheduling, undefined completion and direct-emitter poison controls.
+These are public compiler observations, not whole-program async materialization.
+A is assigned three isolated source-acceptance files to retain paired root-bound
+prepared/provider/binary/refusal receipts and fresh canonical-owner admission.
+The existing whole-program scheduler/promise-materialization refusal and the
+distinction between pre-attachment concat rewriting and mutation of an already
+authenticated body remain explicit; neither may be converted into a passing
+physical acceptance claim by comparing equal refusals.
+
+Upstream was fetched at `04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0`.
+Its change since the checkpoint's main ancestor is limited to six npm-compat
+benchmark/report artifacts; compiler source is unchanged. The working branch
+has not yet merged that tip because the composed checkpoint is still uncommitted.
+High is tracing the actual native async emitter and physical resource requirements
+behind `program-physical-plan.ts`'s async rejection, to specify the next real
+materialization implementation without merely removing its guard or treating
+the existing public compiler's success as whole-program acceptance.
+
+Read-only inspection of B's draft historical helper against composed source
+matches five original receipt hashes: intrinsic contracts 20 declarations,
+async providers 26, runtime manifest 85, intrinsics 24 and async plan 48.
+The remaining intrinsic-support hash mismatch was traced to row 4's JSDoc:
+the original `b4c116639a` verifier does retain its documentation, contrary to
+the earlier reconstruction specification. Its reconstructed function text is
+byte-identical (2,496 characters); the omitted documentation is the only mismatch
+across all 41 tuples. B is instructed to retain that validated documentation and
+the original hash. No draft helper has yet been adopted into this checkpoint.

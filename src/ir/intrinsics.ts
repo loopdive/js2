@@ -1,12 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import type {
-  RuntimeFeature,
-  IntrinsicSignature,
-  IntrinsicUse,
-  IntrinsicDefinition,
-  IntrinsicVerificationFailure,
-} from "./runtime/contracts/intrinsics.js";
+import type { IntrinsicDefinition } from "./runtime/contracts/intrinsics.js";
+import type { IntrinsicId } from "./core/intrinsic-vocabulary.js";
+import { INTRINSIC_DEFINITIONS as canonicalIntrinsicDefinitions } from "./core/intrinsics.js";
 export {
   PURE_MATH_RUNTIME_FEATURES,
   NUMERIC_COERCION_RUNTIME_FEATURES,
@@ -31,11 +27,6 @@ export type {
   IntrinsicVerificationCode,
   IntrinsicVerificationFailure,
 } from "./runtime/contracts/intrinsics.js";
-
-import { effectsArePure, effectsOf } from "./effects.js";
-import { irTypeEquals, type IrInstr, type IrType } from "./nodes.js";
-
-import { INTRINSIC_IDS, INTRINSIC_SIGNATURE_VERSION, type IntrinsicId } from "./core/intrinsic-vocabulary.js";
 export {
   PURE_MATH_INTRINSIC_IDS,
   NUMERIC_COERCION_INTRINSIC_IDS,
@@ -52,287 +43,21 @@ export type {
   IntrinsicId,
   IntrinsicSignatureVersion,
 } from "./core/intrinsic-vocabulary.js";
+export {
+  F64_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+  EXTERNREF_TO_F64_INTRINSIC_SIGNATURE,
+  I32_TO_EXTERNREF_INTRINSIC_SIGNATURE,
+  EXTERNREF_TO_I32_INTRINSIC_SIGNATURE,
+  EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE,
+  EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE,
+  EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE,
+  EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE,
+  F64_TO_U32_INTRINSIC_SIGNATURE,
+  F64_UNARY_INTRINSIC_SIGNATURE,
+  F64_BINARY_INTRINSIC_SIGNATURE,
+  isIntrinsicId,
+} from "./core/intrinsics.js";
+export { IntrinsicEffectEvidence, intrinsicEffectEvidence, verifyIntrinsicUse } from "./analysis/intrinsics.js";
 
-const F64_TYPE = Object.freeze({
-  kind: "val" as const,
-  val: Object.freeze({ kind: "f64" as const }),
-});
-
-/**
- * (#3526 F1-S2) The boolean carrier's PARAMETER type. `valTypeEquals` compares
- * only the ValType `kind`, so the `boolean` brand (#4503) is erasable here: the
- * signature accepts the branded carrier the from-ast arm passes without the
- * brand having to appear in the ABI. The brand stays the arm's own TYPE GATE.
- */
-const I32_TYPE = Object.freeze({
-  kind: "val" as const,
-  val: Object.freeze({ kind: "i32" as const }),
-});
-
-const U32_TYPE = Object.freeze({
-  kind: "val" as const,
-  val: Object.freeze({ kind: "i32" as const }),
-  signed: false as const,
-});
-
-const EXTERNREF_TYPE = Object.freeze({
-  kind: "val" as const,
-  val: Object.freeze({ kind: "externref" as const }),
-});
-
-/** `(f64) -> externref` — the exact ABI of the `__box_number` carrier. */
-export const F64_TO_EXTERNREF_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([F64_TYPE]),
-  result: EXTERNREF_TYPE,
-});
-
-/** `(externref) -> f64` — the exact ABI of the `__unbox_number` carrier. */
-export const EXTERNREF_TO_F64_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([EXTERNREF_TYPE]),
-  result: F64_TYPE,
-});
-
-/** `(i32) -> externref` — the exact ABI of the `__box_boolean` carrier. */
-export const I32_TO_EXTERNREF_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([I32_TYPE]),
-  result: EXTERNREF_TYPE,
-});
-
-/**
- * `(externref) -> i32` — the exact ABI of the `__extern_is_undefined` probe,
- * shared by its host import and its host-free Wasm function (#4461 registered
- * both under exactly this signature).
- */
-export const EXTERNREF_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([EXTERNREF_TYPE]),
-  result: I32_TYPE,
-});
-
-/**
- * `(externref, externref) -> i32` — the exact ABI of the string relational
- * compare helper, shared by the `env.string_compare` host import and the
- * host-free `__str_compare` Wasm helper. Both answer a -1/0/1 lexicographic
- * sign; #3526 F2-S1 made the manifest the authority over which one answers.
- */
-export const EXTERNREF_PAIR_TO_I32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([EXTERNREF_TYPE, EXTERNREF_TYPE]),
-  result: I32_TYPE,
-});
-
-/**
- * (#3526 F2-S5) A non-null `(ref extern)` result. `wasm:js-string.concat`
- * returns a non-nullable external reference, not a nullable `externref` — the
- * distinction the host-capability catalogue's value union had to grow for in
- * F2-S2, and the reason the concat seam cannot reuse any existing signature.
- */
-const REF_EXTERN_TYPE = Object.freeze({
-  kind: "val" as const,
-  val: Object.freeze({ kind: "ref_extern" as const }),
-});
-
-/**
- * `(externref, externref) -> (ref extern)` — the exact ABI of the string
- * CONCATENATION seam, shared by the `wasm:js-string.concat` builtin import and
- * the host-free `__str_concat` / `__str_concat_owned` Wasm helpers. The two
- * native helpers physically take and return `ref $AnyString`; the signature
- * states the seam's SEMANTIC shape (two strings in, one string out), exactly as
- * `native.js.string.eq` reuses the externref pair for `__str_equals`.
- * #3526 F2-S5 made the manifest the authority over which one answers.
- */
-export const EXTERNREF_PAIR_TO_REF_EXTERN_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([EXTERNREF_TYPE, EXTERNREF_TYPE]),
-  result: REF_EXTERN_TYPE,
-});
-
-/**
- * `(externref, i32) -> f64` — the exact SEMANTIC shape of the guarded
- * `charCodeAt` read: a string and a UTF-16 index in, a code unit or `NaN` out.
- *
- * (#3526 F2-S7) The first row in the catalogue whose signature is deliberately
- * NOT its capability record's ABI. `wasm:js-string.charCodeAt` is
- * `(externref, i32) -> i32` and TRAPS out of range (#2003); the seam both
- * authorities implement is the guarded f64 that answers `NaN` instead, and the
- * providers are defined helpers over that builtin (`__jsstr_charCodeAt`) or
- * over the native carrier (`__str_charCodeAt`) rather than the builtin itself.
- * The native helper physically takes `(ref $AnyString, i32)`; the signature
- * states the seam's shape, exactly as `native.js.string.eq` reuses the
- * externref pair for `__str_equals`.
- */
-export const EXTERNREF_I32_TO_F64_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([EXTERNREF_TYPE, I32_TYPE]),
-  result: F64_TYPE,
-});
-
-/**
- * `() -> externref` — the seam shape of a string LITERAL's storage.
- *
- * (#3526 F2-S8) The catalogue's first and only signature with NO parameters,
- * and the one place the family's callable-shaped `IntrinsicSignature` is bent
- * to describe a VALUE rather than a call: a `string.const` is answered by a
- * global (an imported `string_constants.<literal>` externref on the host lane,
- * an interned `__strlit_N` defined global natively), never by a function.
- *
- * Nominal, exactly as `native.js.string.len` reuses
- * {@link EXTERNREF_TO_I32_INTRINSIC_SIGNATURE} for a `struct.get`: the rows it
- * carries state "one string comes out, nothing goes in". The alternative — a
- * `valueType` field on `RuntimeProvider` — would have changed every projection
- * in the catalogue for one seam, and was rejected in the plan for that reason.
- */
-export const EXTERNREF_GLOBAL_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([] as readonly IrType[]),
-  result: EXTERNREF_TYPE,
-});
-
-export const F64_TO_U32_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([F64_TYPE]),
-  result: U32_TYPE,
-});
-
-export const F64_UNARY_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([F64_TYPE]),
-  result: F64_TYPE,
-});
-
-export const F64_BINARY_INTRINSIC_SIGNATURE: IntrinsicSignature = Object.freeze({
-  version: INTRINSIC_SIGNATURE_VERSION,
-  params: Object.freeze([F64_TYPE, F64_TYPE]),
-  result: F64_TYPE,
-});
-
-function definition(id: IntrinsicId, signature: IntrinsicSignature, feature: RuntimeFeature = id): IntrinsicDefinition {
-  return Object.freeze({ id, signature, feature });
-}
-
-/** Exhaustive entry contract. Record typing makes an added ID fail closed. */
-export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefinition>> = Object.freeze({
-  "js.to_uint32": definition("js.to_uint32", F64_TO_U32_INTRINSIC_SIGNATURE),
-  "js.number.box": definition("js.number.box", F64_TO_EXTERNREF_INTRINSIC_SIGNATURE),
-  "js.number.unbox": definition("js.number.unbox", EXTERNREF_TO_F64_INTRINSIC_SIGNATURE),
-  "js.boolean.box": definition("js.boolean.box", I32_TO_EXTERNREF_INTRINSIC_SIGNATURE),
-  "js.extern.is_undefined": definition("js.extern.is_undefined", EXTERNREF_TO_I32_INTRINSIC_SIGNATURE),
-  "math.abs": definition("math.abs", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.acos": definition("math.acos", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.acosh": definition("math.acosh", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.asin": definition("math.asin", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.asinh": definition("math.asinh", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.atan": definition("math.atan", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.atan2": definition("math.atan2", F64_BINARY_INTRINSIC_SIGNATURE),
-  "math.atanh": definition("math.atanh", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.cbrt": definition("math.cbrt", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.ceil": definition("math.ceil", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.clz32": definition("math.clz32", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.cos": definition("math.cos", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.cosh": definition("math.cosh", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.exp": definition("math.exp", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.expm1": definition("math.expm1", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.floor": definition("math.floor", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.fround": definition("math.fround", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.imul": definition("math.imul", F64_BINARY_INTRINSIC_SIGNATURE),
-  "math.log": definition("math.log", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.log10": definition("math.log10", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.log1p": definition("math.log1p", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.log2": definition("math.log2", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.max": definition("math.max", F64_BINARY_INTRINSIC_SIGNATURE),
-  "math.min": definition("math.min", F64_BINARY_INTRINSIC_SIGNATURE),
-  "math.pow": definition("math.pow", F64_BINARY_INTRINSIC_SIGNATURE),
-  "math.round": definition("math.round", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.sign": definition("math.sign", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.sin": definition("math.sin", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.sinh": definition("math.sinh", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.sqrt": definition("math.sqrt", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.tan": definition("math.tan", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.tanh": definition("math.tanh", F64_UNARY_INTRINSIC_SIGNATURE),
-  "math.trunc": definition("math.trunc", F64_UNARY_INTRINSIC_SIGNATURE),
-});
-
-const INTRINSIC_ID_SET: ReadonlySet<string> = new Set(INTRINSIC_IDS);
-
-export function isIntrinsicId(value: string): value is IntrinsicId {
-  return INTRINSIC_ID_SET.has(value);
-}
-
-/**
- * Opaque proof that effect classification came from the existing `effectsOf`
- * authority. R6 does not grow a second throw/allocate/suspend table beside it.
- * The future intrinsic IR node can use this seam once M1 owns nodes/effects.
- */
-export class IntrinsicEffectEvidence {
-  readonly #pure: boolean;
-
-  private constructor(instruction: IrInstr) {
-    this.#pure = effectsArePure(effectsOf(instruction));
-    Object.freeze(this);
-  }
-
-  static fromInstruction(instruction: IrInstr): IntrinsicEffectEvidence {
-    return new IntrinsicEffectEvidence(instruction);
-  }
-
-  isPure(): boolean {
-    return this.#pure;
-  }
-}
-
-export function intrinsicEffectEvidence(instruction: IrInstr): IntrinsicEffectEvidence {
-  return IntrinsicEffectEvidence.fromInstruction(instruction);
-}
-
-function signatureMismatch(use: IntrinsicUse, signature: IntrinsicSignature): string | undefined {
-  if (use.argumentTypes.length !== signature.params.length) {
-    return `${use.id} expects ${signature.params.length} argument(s), received ${use.argumentTypes.length}`;
-  }
-  for (let index = 0; index < signature.params.length; index++) {
-    if (!irTypeEquals(use.argumentTypes[index]!, signature.params[index]!)) {
-      return `${use.id} argument ${index} does not match its v${signature.version} signature`;
-    }
-  }
-  if (!irTypeEquals(use.resultType, signature.result)) {
-    return `${use.id} result does not match its v${signature.version} signature`;
-  }
-  return undefined;
-}
-
-/** Verify one semantic use before it is admitted to the manifest builder. */
-export function verifyIntrinsicUse(
-  use: IntrinsicUse,
-  effects: IntrinsicEffectEvidence,
-): IntrinsicVerificationFailure | undefined {
-  if (!isIntrinsicId(use.id)) {
-    return { code: "unknown-intrinsic", detail: `unknown intrinsic ${String(use.id)}` };
-  }
-  if (
-    use.location.file.length === 0 ||
-    !Number.isInteger(use.location.line) ||
-    use.location.line < 1 ||
-    !Number.isInteger(use.location.column) ||
-    use.location.column < 0
-  ) {
-    return { code: "invalid-intrinsic-location", detail: `${use.id} has an invalid source location` };
-  }
-  const definition = INTRINSIC_DEFINITIONS[use.id];
-  if (use.version !== definition.signature.version) {
-    return {
-      code: "intrinsic-version-mismatch",
-      detail: `${use.id} uses signature v${use.version}; expected v${definition.signature.version}`,
-    };
-  }
-  const mismatch = signatureMismatch(use, definition.signature);
-  if (mismatch) return { code: "intrinsic-signature-mismatch", detail: mismatch };
-  if (!(effects instanceof IntrinsicEffectEvidence) || !effects.isPure()) {
-    return {
-      code: "intrinsic-effect-mismatch",
-      detail: `${use.id} is certified pure but its IR effect authority reports observable effects`,
-    };
-  }
-  return undefined;
-}
+/** Historical runtime-feature view of the single canonical semantic table. */
+export const INTRINSIC_DEFINITIONS: Readonly<Record<IntrinsicId, IntrinsicDefinition>> = canonicalIntrinsicDefinitions;
