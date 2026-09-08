@@ -3905,7 +3905,7 @@ function compileArrayIncludes(
   });
 
   fctx.body.push({ op: "local.get", index: resTmp });
-  return { kind: "i32" };
+  return { kind: "i32", boolean: true };
 }
 
 /**
@@ -8594,7 +8594,7 @@ function compileArraySome(
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.some")) {
     fctx.body.push({ op: "unreachable" });
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
 
   const bridge = referenceElementBridgeName(ctx, elemType, true);
@@ -8642,7 +8642,7 @@ function compileArraySome(
   emitArrayLoop(fctx, loopBody);
 
   fctx.body.push({ op: "local.get", index: resTmp });
-  return { kind: "i32" };
+  return { kind: "i32", boolean: true };
 }
 
 /**
@@ -8661,7 +8661,7 @@ function compileArrayEvery(
   // ES spec: throw TypeError if callback is not a function
   if (emitCallbackTypeCheck(ctx, fctx, callExpr, "Array.prototype.every")) {
     fctx.body.push({ op: "unreachable" });
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
 
   const bridge = referenceElementBridgeName(ctx, elemType, true);
@@ -8709,7 +8709,7 @@ function compileArrayEvery(
   emitArrayLoop(fctx, loopBody);
 
   fctx.body.push({ op: "local.get", index: resTmp });
-  return { kind: "i32" };
+  return { kind: "i32", boolean: true };
 }
 
 /**

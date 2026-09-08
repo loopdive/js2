@@ -27,6 +27,7 @@ import { isStaticNaN, tryStaticToNumber } from "./misc.js";
 import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 import { objectCoercionPreservesDate } from "../object-ctor-primitive-receiver.js";
 import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
+import { compileGroupedHostConsole } from "../console-call-group.js";
 
 // ── Builtins ─────────────────────────────────────────────────────────
 
@@ -79,6 +80,11 @@ function compileConsoleCall(
       emitStandaloneStdoutAppendValue(ctx, fctx, compileExpression(ctx, fctx, arg));
     }
     appendLiteral("\n");
+    return VOID_RESULT;
+  }
+
+  if (expr.arguments.length !== 1 || expr.arguments.some(ts.isSpreadElement)) {
+    compileGroupedHostConsole(ctx, fctx, expr, method);
     return VOID_RESULT;
   }
 
@@ -3674,6 +3680,24 @@ function compileMathCall(
     // passthrough in compileExpressionInner unwraps `...arr` to `arr`, and the
     // array coerces to NaN. (#2054)
     if (expr.arguments.some((a) => ts.isSpreadElement(a))) {
+      // An inline literal may have a contextual tuple carrier. Its elements
+      // are already source expressions in evaluation order, so use the normal
+      // scalar fold instead of assuming that carrier has vec length/data.
+      const expanded = expr.arguments.flatMap((arg) =>
+        ts.isSpreadElement(arg) &&
+        ts.isArrayLiteralExpression(arg.expression) &&
+        !arg.expression.elements.some(ts.isOmittedExpression)
+          ? [...arg.expression.elements]
+          : [arg],
+      );
+      if (expanded.some((arg, index) => arg !== expr.arguments[index]) || expanded.length !== expr.arguments.length) {
+        return compileMathCall(
+          ctx,
+          fctx,
+          method,
+          ts.factory.updateCallExpression(expr, expr.expression, expr.typeArguments, expanded),
+        );
+      }
       const spreadResult = compileMathMinMaxSpread(ctx, fctx, expr, method);
       if (spreadResult) return spreadResult;
       // Fall through to the legacy path only if every spread resolved to a

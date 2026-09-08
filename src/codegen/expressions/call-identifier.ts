@@ -957,7 +957,8 @@ export function compileIdentifierCall(
       // Symbol. The `n !== n` lowering below reads the symbol's `i32` id as an
       // ordinary number, so `isNaN(Symbol())` answered `false`
       // (built-ins/isNaN/return-abrupt-from-tonumber-number-symbol.js).
-      if (emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments[0]!, "number")) return { kind: "i32" };
+      if (emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments[0]!, "number"))
+        return { kind: "i32", boolean: true };
       // isNaN(n) → n !== n
       compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
       const tmp = allocLocal(fctx, `__isnan_${fctx.locals.length}`, {
@@ -966,13 +967,14 @@ export function compileIdentifierCall(
       fctx.body.push({ op: "local.tee", index: tmp });
       fctx.body.push({ op: "local.get", index: tmp });
       fctx.body.push({ op: "f64.ne" });
-      return { kind: "i32" };
+      return { kind: "i32", boolean: true };
     }
 
     if (funcName === "isFinite" && expr.arguments.length >= 1) {
       // (#3481) §19.2.2 step 1 — same `? ToNumber(number)` Symbol throw as
       // `isNaN` above (built-ins/isFinite/return-abrupt-from-tonumber-number-symbol.js).
-      if (emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments[0]!, "number")) return { kind: "i32" };
+      if (emitSymbolOperandCoercionThrow(ctx, fctx, expr.arguments[0]!, "number"))
+        return { kind: "i32", boolean: true };
       // isFinite(n) → n - n === 0.0  (Infinity - Infinity = NaN, NaN - NaN = NaN, finite - finite = 0)
       compileExpression(ctx, fctx, expr.arguments[0]!, { kind: "f64" });
       const tmp = allocLocal(fctx, `__isfin_${fctx.locals.length}`, {
@@ -983,7 +985,7 @@ export function compileIdentifierCall(
       fctx.body.push({ op: "f64.sub" });
       fctx.body.push({ op: "f64.const", value: 0 });
       fctx.body.push({ op: "f64.eq" });
-      return { kind: "i32" };
+      return { kind: "i32", boolean: true };
     }
 
     // parseInt(s, radix?) and parseFloat(s) — host imports
@@ -1405,6 +1407,11 @@ export function compileIdentifierCall(
       if (argType === null) {
         // String(void-expr) → "undefined"
         return compileStringLiteral(ctx, fctx, "undefined", strArg0) ?? { kind: "externref" };
+      }
+
+      if (argType?.kind === "i64") {
+        // #5399: String(BigInt) must format the integer before console sees it.
+        return emitToString(ctx, fctx, argType, { kind: "bigint" }, "string");
       }
 
       if (argType?.kind === "i32") {

@@ -53,6 +53,6 @@ describe("#5392: standalone scalar console arguments", () => {
     `,
         false,
       ),
-    ).toBe("3\n-2.5\nNaN\nInfinity\n-Infinity\n0\ntrue\nfalse\ntrue\n3\nok\nvalue 7 false\n");
+    ).toBe("3\n-2.5\nNaN\nInfinity\n-Infinity\n-0\ntrue\nfalse\ntrue\n3\nok\nvalue 7 false\n");
   });
 });

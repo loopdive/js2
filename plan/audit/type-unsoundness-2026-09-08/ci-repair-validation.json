@@ -158,5 +158,80 @@
     "matches": 19,
     "diagnostics": 33,
     "failures": 0
+  },
+  "remoteRepairValidation": {
+    "head": "f816631c2ee108bd75ae916f94aac4f9ef9abcf5",
+    "checks": [
+      {
+        "name": "changes",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978375560"
+      },
+      {
+        "name": "quality",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978375985"
+      },
+      {
+        "name": "issue-tests",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597761"
+      },
+      {
+        "name": "linear-tests",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597672"
+      },
+      {
+        "name": "equivalence-shard (1)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597860"
+      },
+      {
+        "name": "equivalence-shard (2)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597819"
+      },
+      {
+        "name": "equivalence-shard (3)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597883"
+      },
+      {
+        "name": "equivalence-shard (4)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597927"
+      },
+      {
+        "name": "equivalence-shard (5)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597893"
+      },
+      {
+        "name": "equivalence-shard (6)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597812"
+      },
+      {
+        "name": "equivalence-shard (7)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597969"
+      },
+      {
+        "name": "equivalence-shard (8)",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101978597997"
+      },
+      {
+        "name": "Cancel Test262 after quality failure",
+        "conclusion": "SKIPPED",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101981312699"
+      },
+      {
+        "name": "equivalence-gate",
+        "conclusion": "SUCCESS",
+        "url": "https://github.com/loopdive/js2/actions/runs/34200636573/job/101979619557"
+      }
+    ]
   }
 }

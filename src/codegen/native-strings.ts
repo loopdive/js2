@@ -2555,11 +2555,34 @@ export function emitStandaloneStdoutAppendValue(
       emitNativeNumberFormat(ctx, new Set(["number_toString"]));
       flushLateImportShifts(ctx, fctx);
     }
+    // Console inspects primitive numbers: unlike String(), it preserves -0
+    // and adds the BigInt suffix. Classify the emitted carrier, never TS types.
+    const numberLocal =
+      valType.kind === "f64" ? allocLocal(fctx, `__console_number_${fctx.locals.length}`, valType) : undefined;
+    if (numberLocal !== undefined) fctx.body.push({ op: "local.tee", index: numberLocal });
     emitToString(ctx, fctx, valType, { kind: "unknown" }, "string");
+    if (numberLocal !== undefined) {
+      const rendered = allocLocal(fctx, `__console_rendered_${fctx.locals.length}`, nativeStringType(ctx));
+      fctx.body.push({ op: "local.set", index: rendered });
+      fctx.body.push({ op: "local.get", index: numberLocal });
+      fctx.body.push({ op: "i64.reinterpret_f64" });
+      fctx.body.push({ op: "i64.const", value: -9223372036854775808n });
+      fctx.body.push({ op: "i64.eq" });
+      fctx.body.push({
+        op: "if",
+        blockType: { kind: "val", type: nativeStringType(ctx) },
+        then: nativeStringLiteralInstrs(ctx, "-0"),
+        else: [{ op: "local.get", index: rendered }],
+      });
+    }
+    if (valType.kind === "i64" && valType.bigint === true) {
+      fctx.body.push(...nativeStringLiteralInstrs(ctx, "n"));
+      fctx.body.push({ op: "call", funcIdx: ctx.nativeStrHelpers.get("__str_concat")! });
+    }
   } else if (valType.kind === "externref") {
     // externref is a separate hierarchy from anyref — convert first.
     fctx.body.push({ op: "any.convert_extern" });
-  } else if (valType.kind !== "ref" && valType.kind !== "ref_null") {
+  } else if (valType.kind !== "ref" && valType.kind !== "ref_null" && valType.kind !== "anyref") {
     fctx.body.push({ op: "drop" }); // scalar — best-effort, never a marker
     return;
   }

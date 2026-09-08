@@ -3368,7 +3368,7 @@ export function tryCompileStandaloneRegExpTest(
       inputOverride: () => undefinedSubjectOverride(ctx, fctx),
     });
     if (emitted0 === null) return null;
-    return { kind: "i32" };
+    return { kind: "i32", boolean: true };
   }
   if (expr.arguments.length !== 1) {
     reportStandaloneRegExpUnsupported(ctx, expr, "RegExp.prototype.test arities other than one string argument");
@@ -3396,7 +3396,7 @@ export function tryCompileStandaloneRegExpTest(
     readLastIndex: true,
   });
   if (emitted === null) return null;
-  return { kind: "i32" };
+  return { kind: "i32", boolean: true };
 }
 
 function flagsHaveGlobalOrSticky(flags: string): boolean {

@@ -38,6 +38,7 @@ import {
 } from "../shared.js";
 import { pushDefaultValue } from "../type-coercion.js";
 import { getFuncParamTypes } from "./helpers.js";
+import { compileArrayLiteral } from "../literals.js";
 import { tupleStructFields } from "./spread-arguments-call.js";
 
 export function findExternInfoForMember(
@@ -951,42 +952,35 @@ function compileSpreadCallArgs(
   const paramTypes = getFuncParamTypes(ctx, funcIdx);
 
   if (restInfo) {
-    // Calling a rest-param function with spread — compile non-rest args normally,
-    // then for the rest portion, if it's a single spread of an array, pass directly
-    let argIdx = 0;
+    // Bind the fixed prefix, then materialize a fresh rest array in the
+    // callee's element representation. A spread source can be a tuple or a
+    // differently typed vec; passing its carrier directly traps (#5396).
     for (let i = 0; i < restInfo.restIndex; i++) {
-      if (argIdx < expr.arguments.length) {
-        compileExpression(ctx, fctx, expr.arguments[argIdx]!, paramTypes?.[paramOffset + i]);
-        argIdx++;
+      const arg = expr.arguments[i];
+      if (arg && ts.isSpreadElement(arg)) {
+        reportError(
+          ctx,
+          arg,
+          "[JS2WASM_UNSUPPORTED_REST_PREFIX_SPREAD] A spread that supplies fixed parameters before a rest parameter is not supported. Pass the fixed arguments explicitly.",
+        );
+        return;
       }
+      if (arg) compileExpression(ctx, fctx, arg, paramTypes?.[paramOffset + i]);
+      else pushDefaultValue(fctx, paramTypes?.[paramOffset + i] ?? { kind: "externref" }, ctx);
     }
-    // Remaining args should be a single spread element — pass the vec directly
-    if (argIdx < expr.arguments.length) {
-      const restArg = expr.arguments[argIdx]!;
-      if (ts.isSpreadElement(restArg)) {
-        // The spread source is already a vec struct — pass directly
-        compileExpression(ctx, fctx, restArg.expression);
-      } else {
-        // Single non-spread arg as rest — wrap in vec struct { 1, [val] }
-        fctx.body.push({ op: "i32.const", value: 1 });
-        compileExpression(ctx, fctx, restArg, restInfo.elemType);
-        fctx.body.push({
-          op: "array.new_fixed",
-          typeIdx: restInfo.arrayTypeIdx,
-          length: 1,
-        });
-        fctx.body.push({ op: "struct.new", typeIdx: restInfo.vecTypeIdx });
-      }
-    } else {
-      // No rest args provided — pass empty vec struct { 0, [] }
-      fctx.body.push({ op: "i32.const", value: 0 });
-      fctx.body.push({
-        op: "array.new_fixed",
-        typeIdx: restInfo.arrayTypeIdx,
-        length: 0,
-      });
-      fctx.body.push({ op: "struct.new", typeIdx: restInfo.vecTypeIdx });
+    const restArray = ts.factory.createArrayLiteralExpression(expr.arguments.slice(restInfo.restIndex));
+    (restArray as unknown as { parent: ts.Node }).parent = expr;
+    const carrierContext = ctx as unknown as { _arrayLiteralForceVec?: boolean };
+    const previousForceVec = carrierContext._arrayLiteralForceVec;
+    let actual: ValType | null;
+    try {
+      carrierContext._arrayLiteralForceVec = true;
+      actual = compileArrayLiteral(ctx, fctx, restArray, restInfo.elemType);
+    } finally {
+      carrierContext._arrayLiteralForceVec = previousForceVec;
     }
+    const expected: ValType = { kind: "ref", typeIdx: restInfo.vecTypeIdx };
+    if (actual && !valTypesMatch(actual, expected)) coerceType(ctx, fctx, actual, expected);
     return;
   }
 
