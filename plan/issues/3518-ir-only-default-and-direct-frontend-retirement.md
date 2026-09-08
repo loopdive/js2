@@ -5242,3 +5242,112 @@ declarations/providers, transported frame materialization, public IR-only
 cutover, static closure, direct-codegen retirement and the ABI30 witness remain
 required. All existing PR holds remain; no merge or auto-merge is authorized by
 this checkpoint record.
+
+### Certified native delay source admission integration (2026-09-08)
+
+The seven reviewed revision-2 source-admission files are composed on frame PR
+#5755, commit `9505d0860529cf6bedf887d68c2670130d8422b3`, in
+`codex/3518-delay-admission-integration-20260908`. Exact worker SHA256s were
+verified after transfer. The new shared `planning-sites.ts` remains classified
+as unmigrated frontend work: AST ownership validation is not a pure IR contract.
+No canonical clean-module population or allowed-edge rule is relaxed.
+
+The source request is explicitly default-off:
+`promiseDelayProjection: "standalone-native"` requires standalone WasmGC source
+and runtime projections. Exact original AST/checker identities select certified
+delay bodies and retain both original executor/timer support records. The shared
+four validator declarations retain their historical text after export-only
+normalization; the legacy overlay imports the same implementation. Source
+selection is consumed before typed capture and does not add transport authority.
+
+Post-lowering checks preserve the pre-lowering certification population, map
+objects, exact key/plan identities and returned support records. Schema-specific
+references to elided support are rejected, including constructor ownership and
+global binding owners. Ordinary string/debug data equal to a support ID remains
+valid. Initially empty certification remains valid; deleted certification does
+not masquerade as an initially empty population.
+
+High approved revision 2 after its two findings were repaired. Parent worker-root
+session 4669 passed 86/86 controls (41 admission, 45 identity/relocation).
+Composed session 45233 passed 144/144 across seven suites: the 86 new controls,
+30 typed-preparation, 12 native delay, four plan-identity, four closure
+compile-once and eight data-contract replay controls. Its following typecheck
+failed on a nullable derived-owner assignment. The integration normalizes that
+diagnostic cursor with `unit.terminalOwnerId ?? undefined`; every reference and
+population check remains unchanged. All seven reviewed files are exact apart
+from that one line. An initial mistargeted correction was removed; session
+53343 still failed typecheck and ran no tests. Corrected session 40713 passed
+typecheck and reran all 86 focused controls successfully. These reruns do not
+increase the distinct-test denominator. The exercised whole-program boundary
+still refuses the authentic
+missing `__ir_promise_delay_native` declaration at `unknown-function-ref` /
+`resolve`, with original source ownership. No placeholder declaration/provider
+or physical acceptance claim is introduced to bypass it.
+
+Final public-family regression session 35884 passed the unchanged 14/14 cases
+with exit 0. Final scoped Prettier and Biome lint checks pass. The parent frame
+PR #5755 remains mergeable with successful checks and its hold retained; upstream
+main is still `04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0` and is an ancestor of
+this stack.
+
+Full inventory session 23708 exited 0 with
+`inventory-valid-architecture-incomplete`: 1,309 modules (1,308 tracked and one
+new at measurement), 63 clean, five compatibility adapters and 1,241 unmigrated.
+There are zero inventory errors and zero unresolved edges. The same four unknown
+dynamic imports remain at Porffor loader 75/76, optimize 384 and platform
+capability adapter 151; this checkpoint does not claim static closure.
+
+Next implementation is split by the published complete-family plan and frozen
+`logicalVectorTypes` interface: the existing Low B agent owns allocation-free
+vector and prepared main-operation lowering; Low A will own source-bound family
+certification and logical type facts after this source checkpoint is validated.
+Keep all five original functions, five await sites, eight separately reported
+preparation runs and all eight final execution scenarios. Remaining native
+runtime declarations/materializers, public cutover, closure, retirement and
+ABI30 obligations are unchanged.
+
+The logical-vector worker's disjoint claim is independently verified upstream:
+`3518:logical-vector-lowering`, owner
+`ttraenkler/codex-astra-logical-vector-lowering-20260908`, write
+`14408-9k4zqvng`, commit `dcec29e63710f2fcd9242716286672797a460469`.
+Its normal claim finished with exit 0 and released the shared hook slot. The
+worker now implements only the two lowerer files and two focused tests from the
+published plan; the coordinator retains integration, validation and publication.
+
+Publication attempt 6025 stopped at the normal function-budget hook: source
+preparation grew to 482 lines, crossing the 300-line limit. No commit was created
+and no allowance or baseline override was added. A scoped helper extraction is
+in progress; all prior test receipts apply to the pre-extraction revision until
+the refactor is frozen and revalidated. Parent pre-freeze review caught and sent
+back a diagnostic-cursor shadowing error before accepting the refactor.
+
+The next grounded High plan is
+`plan/agent-context/3518-native-family-callables-and-providers-plan-2026-09-08.md`.
+It covers all six native-family logical bindings, ordinary and attached-state
+demands, real delay/combinator implementation movement, timer-service ownership
+and ordered physical binding. Complete vector/main source production is its
+prerequisite. Native formatting/string materialization and frame/vector delivery
+are explicit dependent work, not claims of completion from declaration rows.
+Physical refusal remains until those resources and carriers are actually wired.
+
+The revision-3 helper refactor is now frozen and integrated at source blob
+`543aa6d670311d985bd58aeb8e741134a7b1f5bd`; all six other source/test files
+remain exact. Source selection, native planning and post-lowering validation
+are separate 15/45/152-line helpers; the main source producer is 298 lines.
+The unchanged function-budget gate passed in session 80810. High independently
+verified the exact parent/worker blob, original helper-call ordering, map/array
+identity, owner-cursor propagation and corrected catch-local naming.
+
+Parent executed the worker's static reconstruction checker successfully. Inlining
+the three helper bodies, restoring the original map bindings and alpha-renaming
+the diagnostic cursor reconstructs the original main function exactly, with only
+the approved nullable-owner correction. The reconstruction SHA256 is
+`f77a77eefc4e6029ef6df386245cf384633f0c3c77c5f48b025e0d3c86c19dec`.
+All four historical relocation receipts and all 86 authored controls remain
+unchanged. Runtime validation of this exact revision remains separately recorded.
+
+Final composed revision-3 session 60182 exited 0: typecheck followed by 158/158
+tests across eight suites (41 admission, 45 identity, 30 typed preparation,
+eight data-contract replay, 14 public native family, 12 native delay, four
+closure compile-once and four planning identity). No suite was omitted or
+rebaselined to admit the refactor. Publication uses the normal hooks again.

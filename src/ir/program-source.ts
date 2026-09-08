@@ -31,6 +31,14 @@ import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy
 import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";
+import { makeIrPromiseDelayResolver } from "./promise-delay.js";
+import {
+  collectIrPromiseDelayOwners,
+  buildIrPromiseDelayLoweringPlans,
+  validateNativePromiseDelaySupportByIdentity,
+  type IrPromiseDelayLoweringPlan,
+  type IrPromiseDelayLoweringPlans,
+} from "./promise-delay-lowering.js";
 
 export interface IrProgramSourceInput {
   readonly sourceFiles: readonly ts.SourceFile[];
@@ -40,6 +48,11 @@ export interface IrProgramSourceInput {
   readonly inventoryOptions?: BuildIrUnitInventoryOptions;
   readonly policy: RuntimeManifestPolicy;
   readonly deferTopLevelInit: boolean;
+  /**
+   * Explicit frontend lowering selection; not provider availability or
+   * permission to emit. Omission preserves historical source lowering.
+   */
+  readonly promiseDelayProjection?: "disabled" | "standalone-native";
 }
 
 /** Frontend-only carrier; declarations never cross into PreparedIrProgram. */
@@ -144,10 +157,251 @@ function storageType(identity: IrModuleBindingIdentity): IrType {
   }
 }
 
+/** Validate the explicit source request before inventory construction or source planning. */
+function selectNativePromiseDelaySourceProjection(
+  input: Pick<IrProgramSourceInput, "promiseDelayProjection" | "policy">,
+): boolean {
+  const projection = input.promiseDelayProjection;
+  const nativeDelay = projection === "standalone-native";
+  if (
+    (projection !== undefined && projection !== "disabled" && !nativeDelay) ||
+    (nativeDelay && (input.policy.backend !== "wasmgc" || input.policy.target !== "standalone"))
+  )
+    throw new PreparedIrProgramInvariantError(
+      "invalid-prepared-data",
+      "Promise-delay source projection requires an explicit standalone-native request with wasmgc:standalone policy",
+    );
+  return nativeDelay;
+}
+
+/** Mutable diagnostic cursor shared by source planning and its validation helpers. */
+interface SourceDiagnosticOwner {
+  active: IrUnitId | undefined;
+}
+
+/** Frontend-only certificates and independent pre-lowering identity receipts. */
+interface NativePromiseDelaySourcePlans {
+  readonly promiseDelaysBySource: Map<ts.SourceFile, IrPromiseDelayLoweringPlans>;
+  readonly promiseDelayPopulations: Map<
+    ts.SourceFile,
+    {
+      readonly maps: IrPromiseDelayLoweringPlans;
+      readonly constructions: readonly (readonly [ts.NewExpression, IrPromiseDelayLoweringPlan])[];
+      readonly timers: readonly (readonly [ts.CallExpression, IrPromiseDelayLoweringPlan])[];
+      readonly resolves: readonly (readonly [ts.CallExpression, IrPromiseDelayLoweringPlan])[];
+      readonly support: ReturnType<typeof validateNativePromiseDelaySupportByIdentity>;
+    }
+  >;
+  readonly certifiedDelays: Map<IrUnitId, IrPromiseDelayLoweringPlan>;
+  readonly supportReceipts: Map<IrUnitId, readonly (readonly [string, unknown])[]>;
+}
+
+/** Certify exact native-delay owners and retain their original maps and support population. */
+function prepareNativePromiseDelaySourcePlans(
+  checker: ts.TypeChecker,
+  sourceFiles: readonly ts.SourceFile[],
+  inventory: IrUnitInventory,
+  identity: ReturnType<typeof buildIrPlanningIdentityContext>,
+  delayPlans: NativePromiseDelaySourcePlans,
+  diagnostic: SourceDiagnosticOwner,
+): void {
+  const { promiseDelaysBySource, promiseDelayPopulations, certifiedDelays, supportReceipts } = delayPlans;
+  const delayResolver = makeIrPromiseDelayResolver(checker);
+  for (const sourceFile of sourceFiles) {
+    const sourceId = identity.sourceIdBySourceFile.get(sourceFile)!;
+    const selected = new Set(
+      inventory.terminalUnits
+        .filter((unit) => {
+          const declaration = identity.declarationByUnitId.get(unit.id);
+          return (
+            unit.sourceId === sourceId &&
+            unit.kind !== "module-init" &&
+            declaration !== undefined &&
+            ts.isFunctionDeclaration(declaration) &&
+            declaration.parent === sourceFile &&
+            declaration.body !== undefined
+          );
+        })
+        .map((unit) => unit.id),
+    );
+    diagnostic.active = selected.values().next().value ?? identity.moduleInitUnitIdBySourceFile.get(sourceFile);
+    const owners = collectIrPromiseDelayOwners(sourceFile, selected, delayResolver, identity);
+    const plans = buildIrPromiseDelayLoweringPlans(owners, selected, identity, "standalone-native");
+    const support = validateNativePromiseDelaySupportByIdentity(sourceFile, identity, plans);
+    promiseDelaysBySource.set(sourceFile, plans);
+    // Snapshot the admitted population independently of the mutable maps
+    // passed to lowering. Revalidating emptied maps alone proves nothing.
+    promiseDelayPopulations.set(sourceFile, {
+      maps: { constructions: plans.constructions, timers: plans.timers, resolves: plans.resolves },
+      constructions: [...plans.constructions],
+      timers: [...plans.timers],
+      resolves: [...plans.resolves],
+      support: [...support],
+    });
+    for (const plan of plans.constructions.values()) certifiedDelays.set(plan.ownerUnitId, plan);
+    for (const unit of support) supportReceipts.set(unit.id, Object.entries(unit));
+  }
+}
+
+/** Revalidate certificates after lowering, then reject semantic references to elided support. */
+function validateNativePromiseDelaySourceLowering(
+  identity: ReturnType<typeof buildIrPlanningIdentityContext>,
+  delayPlans: NativePromiseDelaySourcePlans,
+  lowered: Omit<IrProgramSourcePreparation, "kind" | "inventory" | "ir"> & {
+    readonly functions: readonly IrFunction[];
+  },
+  diagnostic: SourceDiagnosticOwner,
+): void {
+  const { promiseDelaysBySource, promiseDelayPopulations, certifiedDelays, supportReceipts } = delayPlans;
+  const { functions, derivedUnits, callables, startup, globals, allocations } = lowered;
+  for (const [source, plans] of promiseDelaysBySource) {
+    const saved = promiseDelayPopulations.get(source)!;
+    const requireRetainedPlans = <TNode extends ts.Node>(
+      current: ReadonlyMap<TNode, IrPromiseDelayLoweringPlan>,
+      original: ReadonlyMap<TNode, IrPromiseDelayLoweringPlan>,
+      entries: readonly (readonly [TNode, IrPromiseDelayLoweringPlan])[],
+    ): void => {
+      diagnostic.active = entries[0]?.[1].ownerUnitId ?? identity.moduleInitUnitIdBySourceFile.get(source);
+      if (current !== original || current.size !== entries.length)
+        throw new PreparedIrProgramInvariantError(
+          "invalid-prepared-data",
+          "certified Promise-delay plan population changed during lowering",
+        );
+      for (const [key, plan] of entries) {
+        diagnostic.active = plan.ownerUnitId;
+        if (current.get(key) !== plan)
+          throw new PreparedIrProgramInvariantError(
+            "invalid-prepared-data",
+            "certified Promise-delay plan identity changed during lowering",
+          );
+      }
+    };
+    requireRetainedPlans(plans.constructions, saved.maps.constructions, saved.constructions);
+    requireRetainedPlans(plans.timers, saved.maps.timers, saved.timers);
+    requireRetainedPlans(plans.resolves, saved.maps.resolves, saved.resolves);
+    const retainedSupport = validateNativePromiseDelaySupportByIdentity(source, identity, plans);
+    if (
+      retainedSupport.length !== saved.support.length ||
+      retainedSupport.some((unit, index) => unit !== saved.support[index])
+    )
+      throw new PreparedIrProgramInvariantError(
+        "invalid-prepared-data",
+        "certified Promise-delay support population changed during lowering",
+      );
+    for (const unit of retainedSupport) {
+      diagnostic.active = unit.terminalOwnerId;
+      const before = supportReceipts.get(unit.id);
+      const after = Object.entries(unit);
+      if (
+        !before ||
+        before.length !== after.length ||
+        before.some(([key, value], index) => after[index]?.[0] !== key || after[index]?.[1] !== value)
+      )
+        throw new PreparedIrProgramInvariantError(
+          "invalid-prepared-data",
+          `native Promise-delay support ${unit.id} changed during lowering`,
+        );
+    }
+  }
+  const forbidden = new Set<string>(supportReceipts.keys());
+  for (const plan of certifiedDelays.values()) {
+    for (const target of [plan.executorTarget, plan.timerTarget]) {
+      if (target.binding.kind === "unit") forbidden.add(target.binding.unitId);
+    }
+  }
+  // Walk the complete graph (including nested/provider references), but only
+  // interpret structural unit bindings and explicit ownership/provenance
+  // positions as references. String constants and diagnostic names are data.
+  const seen = new Set<object>();
+  const reference = (value: unknown): void => {
+    if (typeof value === "string" && forbidden.has(value))
+      throw new PreparedIrProgramInvariantError(
+        "invalid-prepared-data",
+        `native Promise-delay retains a reference to elided support ${value}`,
+      );
+  };
+  const inspect = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    const fields = Object.getOwnPropertyDescriptors(value);
+    const children: unknown[] = [];
+    for (const key of Reflect.ownKeys(fields)) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)!;
+      if (!("value" in descriptor))
+        throw new PreparedIrProgramInvariantError(
+          "invalid-prepared-data",
+          "native Promise-delay semantic graph contains an accessor",
+        );
+      children.push(descriptor.value);
+    }
+    if (fields.kind?.value === "unit") reference(fields.unitId?.value);
+    if (fields.kind?.value === "async-function") reference(fields.ownerUnitId?.value);
+    if (fields.kind?.value === "fnctor-shape") {
+      reference(fields.constructorUnitId?.value);
+      const constructorIdentity = fields.constructorIdentity?.value;
+      if (constructorIdentity !== null && typeof constructorIdentity === "object")
+        reference(Object.getOwnPropertyDescriptor(constructorIdentity, "unitId")?.value);
+    }
+    // IrClassMethodDescriptor.placement and IrDomCallbackAuthority are
+    // typed ownership records, unlike the surrounding compatibility names.
+    for (const [key, ownerKey] of [
+      ["placement", "unitId"],
+      ["domCallbackAuthority", "ownerUnitId"],
+    ] as const) {
+      const record = fields[key]?.value;
+      if (record !== null && typeof record === "object")
+        reference(Object.getOwnPropertyDescriptor(record, ownerKey)?.value);
+    }
+    if (value instanceof Map)
+      for (const [key, item] of value) {
+        inspect(key);
+        inspect(item);
+      }
+    if (value instanceof Set) for (const item of value) inspect(item);
+    for (const child of children) inspect(child);
+  };
+  for (const fn of functions) {
+    diagnostic.active = fn.unitId;
+    reference(fn.unitId);
+    inspect(fn);
+  }
+  for (const unit of derivedUnits) {
+    diagnostic.active = unit.terminalOwnerId ?? undefined;
+    reference(unit.id);
+    reference(unit.parentId);
+    reference(unit.terminalOwnerId);
+    if (certifiedDelays.has(unit.parentId))
+      throw new PreparedIrProgramInvariantError(
+        "invalid-prepared-data",
+        `certified native Promise-delay ${unit.parentId} fabricated support provenance`,
+      );
+    inspect(unit);
+  }
+  for (const binding of callables) {
+    diagnostic.active = binding.targetUnitId;
+    reference(binding.targetUnitId);
+  }
+  for (const plan of startup) {
+    diagnostic.active = plan.unitId ?? undefined;
+    reference(plan.unitId);
+    for (const seed of plan.liveSeeds) reference(seed.unitId);
+  }
+  for (const global of globals) {
+    diagnostic.active = global.identity.storageOwnerUnitId;
+    reference(global.identity.ownerUnitId);
+    reference(global.identity.storageOwnerUnitId);
+    reference(global.binding.ownerUnitId);
+    inspect(global.binding);
+  }
+  diagnostic.active ??= certifiedDelays.keys().next().value;
+  inspect(allocations.snapshot());
+}
+
 /** Build each original source body once, before any backend context or allocator exists. */
 export function prepareIrProgramSources(
   input: IrProgramSourceInput,
 ): IrProgramSourcePreparation | PreparedIrProgramFailure {
+  const nativeDelay = selectNativePromiseDelaySourceProjection(input);
   const inventory = buildIrUnitInventory(input.sourceFiles, {
     ...input.inventoryOptions,
     entrySource: input.entrySource,
@@ -163,7 +417,14 @@ export function prepareIrProgramSources(
   const globalByDeclaration = new Map<ts.Declaration, IrProgramSourcePreparation["globals"][number]>();
   const signatures = new Map<IrUnitId, { params: readonly IrType[]; returnType: IrType | null }>();
   const bodyResults = new Map<IrUnitId, IrType | null>();
-  let active: IrUnitId | undefined;
+  const delayPlans: NativePromiseDelaySourcePlans = {
+    promiseDelaysBySource: new Map(),
+    promiseDelayPopulations: new Map(),
+    certifiedDelays: new Map(),
+    supportReceipts: new Map(),
+  };
+  const { promiseDelaysBySource, certifiedDelays } = delayPlans;
+  const diagnostic: SourceDiagnosticOwner = { active: undefined };
   try {
     const types = buildIrUnitTypeMap(sourceFiles, input.checker, identity);
     const callGraph = buildIrProgramCallableBindingGraph({
@@ -183,7 +444,7 @@ export function prepareIrProgramSources(
       identity,
     );
     for (const sourceFile of sourceFiles) {
-      active = identity.moduleInitUnitIdBySourceFile.get(sourceFile);
+      diagnostic.active = identity.moduleInitUnitIdBySourceFile.get(sourceFile);
       startup.push(
         buildIrModuleInitPlan({
           sourceFile,
@@ -195,7 +456,7 @@ export function prepareIrProgramSources(
       );
     }
     const entryId = identity.sourceIdBySourceFile.get(input.entrySource)!;
-    active = undefined;
+    diagnostic.active = undefined;
     const postStartupUnits = postStartupCallableUnits(input.checker, identity, startup);
     const exportedBindings = new Set(
       startup
@@ -209,8 +470,10 @@ export function prepareIrProgramSources(
     );
     for (const unit of inventory.terminalUnits)
       if (exportedBindings.has(irUnitCallableBindingId(unit.id))) exportedUnits.add(unit.id);
+    if (nativeDelay)
+      prepareNativePromiseDelaySourcePlans(input.checker, sourceFiles, inventory, identity, delayPlans, diagnostic);
     for (const unit of inventory.terminalUnits) {
-      active = unit.id;
+      diagnostic.active = unit.id;
       if (unit.kind === "module-init") continue;
       const declaration = identity.declarationByUnitId.get(unit.id);
       if (!declaration || !ts.isFunctionDeclaration(declaration) || !declaration.body)
@@ -227,8 +490,9 @@ export function prepareIrProgramSources(
         unsupported(`function ${unit.displayName} has an unresolved parameter contract`);
       const isAsync = declaration.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword);
       const returnNode = isAsync ? unwrapPromiseTypeNode(declaration.type) : declaration.type;
-      const result: IrType | null =
-        returnNode?.kind === ts.SyntaxKind.VoidKeyword
+      const result: IrType | null = certifiedDelays.has(unit.id)
+        ? { kind: "extern", className: "Promise" }
+        : returnNode?.kind === ts.SyntaxKind.VoidKeyword
           ? null
           : !isAsync &&
               returnNode &&
@@ -252,14 +516,14 @@ export function prepareIrProgramSources(
       for (const statement of source.statements) {
         if (!ts.isVariableStatement(statement)) continue;
         for (const declaration of statement.declarationList.declarations) {
-          active = requireIrPlanningOwnerUnitId(identity, declaration);
+          diagnostic.active = requireIrPlanningOwnerUnitId(identity, declaration);
           if (!ts.isIdentifier(declaration.name))
             unsupported("whole-program binding pattern requires the existing destructuring producer");
           const inspected = moduleResolver.inspectDirectBinding(declaration.name);
           if (inspected.kind !== "supported")
             unsupported(`module binding ${declaration.name.text} has no exact typed storage: ${inspected.kind}`);
           const global = inspected.identity;
-          active = global.storageOwnerUnitId;
+          diagnostic.active = global.storageOwnerUnitId;
           const lexical = (statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) !== 0;
           const binding: ModuleBindingGlobal = {
             ownerUnitId: global.ownerUnitId,
@@ -277,7 +541,7 @@ export function prepareIrProgramSources(
     }
     const directCalls = new Map<ts.CallExpression, IrDirectCallLoweringPlan>();
     for (const use of callGraph.uses) {
-      active = use.ownerUnitId;
+      diagnostic.active = use.ownerUnitId;
       const signature = signatures.get(use.targetUnitId);
       const target = identity.terminalByUnitId.get(use.targetUnitId);
       if (!signature || !target) unsupported(`direct call ${use.bindingId} has no complete target contract`);
@@ -290,7 +554,7 @@ export function prepareIrProgramSources(
     const callableResolver = makeIrIdentityImportedFunctionResolver(input.checker, sourceFiles, identity);
     for (const plan of startup) {
       if (!plan.unitId) continue;
-      active = plan.unitId;
+      diagnostic.active = plan.unitId;
       const ownerUnitId = plan.unitId;
       const visit = (node: ts.Node): void => {
         if (ts.isFunctionLike(node)) return;
@@ -316,7 +580,7 @@ export function prepareIrProgramSources(
         visit(statement);
     }
     for (const unit of inventory.terminalUnits) {
-      active = unit.id;
+      diagnostic.active = unit.id;
       if (functions.some((fn) => fn.unitId === unit.id)) continue;
       const resolveBinding = (node: ts.Identifier, writeValue?: ts.Expression): ModuleBindingGlobal | undefined => {
         let symbol = input.checker.getSymbolAtLocation(node);
@@ -362,6 +626,7 @@ export function prepareIrProgramSources(
         allocRegistry: allocations,
         directCalls,
         resolver,
+        ...(nativeDelay ? { promiseDelays: promiseDelaysBySource.get(source) } : {}),
         ...(moduleInit
           ? {
               moduleInitUnit: true,
@@ -379,6 +644,11 @@ export function prepareIrProgramSources(
             ? "number"
             : undefined,
       });
+      if (certifiedDelays.has(unit.id) && (lowered.lifted.length !== 0 || lowered.liftedUnitProvenance.length !== 0))
+        throw new PreparedIrProgramInvariantError(
+          "invalid-prepared-data",
+          `certified native Promise-delay ${unit.id} fabricated support bodies or provenance`,
+        );
       functions.push(lowered.main, ...lowered.lifted);
       for (const provenance of lowered.liftedUnitProvenance) {
         if ("sourceUnit" in provenance) {
@@ -396,6 +666,13 @@ export function prepareIrProgramSources(
         } else derivedUnits.push({ ...provenance, sourceId: unit.sourceId, terminalOwnerId: unit.id });
       }
     }
+    if (nativeDelay)
+      validateNativePromiseDelaySourceLowering(
+        identity,
+        delayPlans,
+        { functions, derivedUnits, callables: callGraph.records, startup, globals, allocations },
+        diagnostic,
+      );
     return {
       kind: "prepared",
       inventory,
@@ -407,13 +684,15 @@ export function prepareIrProgramSources(
       allocations,
     };
   } catch (error) {
-    const owner = active ? preparedIrProgramOwner({ inventory, derivedUnits }, active) : undefined;
+    const owner = diagnostic.active
+      ? preparedIrProgramOwner({ inventory, derivedUnits }, diagnostic.active)
+      : undefined;
     if (!owner)
       throw new PreparedIrProgramInvariantError(
         "invalid-prepared-data",
         `source preparation failed without an original owner: ${String(error)}`,
       );
-    const { cause: _cause, ...diagnostic } = classifyIrFailure(error, "build");
-    return { ...diagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile };
+    const { cause: _cause, ...failureDiagnostic } = classifyIrFailure(error, "build");
+    return { ...failureDiagnostic, unitId: owner.unitId, location: owner.location, sourceFile: owner.sourceFile };
   }
 }
