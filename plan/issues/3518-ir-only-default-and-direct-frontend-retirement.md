@@ -4790,3 +4790,35 @@ non-async, non-generator semantic verifier. Four live-source mutation controls
 reject generator/async/export changes rather than erasing them during historical
 reassembly. Targeted reconstruction and runtime suites pass 133/133 (58 + 75)
 after this repair. Original hashes and production code remain unchanged.
+
+### Physical completion implementation handoff (2026-09-08)
+
+The historical follow-up is published in PR5751 at
+`09b7ae5857472a0e8d4c9a197d9b7ac7a6d8b390`; its final High review has no
+remaining findings. The scoped runs cover 322 distinct historical tests
+(58 reconstruction, 57 provider ownership, 105 historical boundary, 75 runtime
+contracts, 27 capability schema), not a single new full-suite run. A fresh PR
+read at that head found no unresolved review threads, no reported failed checks,
+and the quality job still running; the PR remains held and is not merge-ready.
+
+The [physical module completion contract](../agent-context/3518-physical-module-completion-contract-2026-09-08.md)
+refines the next production prerequisite. It preserves the existing allocator's
+stable handles and ordinal-to-position authority and adds explicit reservation,
+fill and seal states over the actual module objects. A nonempty placeholder is
+not proof of completion, and a valid empty void body is not proof of omission.
+The existing ABI map remains authoritative; the new ledger must not create a
+parallel ABI identity system. Native scheduler, Promise, frame and platform
+resources remain required before whole-program async can be admitted.
+
+Work is assigned to the existing native Astra Low subagents, with Astra High
+specification and review. The provider worker owns the physical kernel, fifteen
+physical record declarations and narrow legacy forwarding surfaces; the parent
+owns its integration into the real program consumer. The semantic worker first
+repairs three peer-reviewed source-evidence gaps: independent public execution
+validation, producer-bound source-free admission, and nonempty authenticated
+post-pass ownership joins. Its three-file draft is not yet adopted or measured.
+All thirty paired rows and complete located refusals remain required. Equal
+refusals establish preservation only, never physical acceptance or retirement.
+
+No direct-codegen retirement, public IR-only default, ABI30 getter witness, or
+native async materialization completion is claimed by these checkpoints.
