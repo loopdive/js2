@@ -61,6 +61,20 @@ export class UnsupportedNodeError extends Error {
 /** ESTree nodes are read dynamically (compiled-acorn `$Object`s in E2). */
 type Node = any;
 
+/** Parameters without expressions share the ordinary function environment.
+ * Defaults/computed keys need a distinct parameter environment; keep refusing
+ * those until its TDZ and body-binding isolation are implemented. */
+function validateObjectParameter(pattern: Node): void {
+  if (pattern.type === "Identifier") return;
+  if (pattern.type !== "ObjectPattern")
+    throw new UnsupportedNodeError("parameter binding " + pattern.type, pattern.type);
+  for (const property of pattern.properties) {
+    if (property.type !== "Property" || property.computed)
+      throw new UnsupportedNodeError("parameter property " + property.type, property.type);
+    validateObjectParameter(property.value);
+  }
+}
+
 /** A lexical loop/switch target for break/continue back-patching. */
 interface LoopCtx {
   label: string | null;
@@ -237,6 +251,12 @@ class FunctionEmitter {
     this.enc.emitReg(Op.Star, registersReg);
     this.enc.emitCallBuiltin(BUILTIN_PUSH_FUNCTION_ENV, base, 2);
     this.release(m);
+    for (let index = 0; index < this.params.length; index += 1) {
+      const parameter = this.params[index];
+      if (parameter.type === "Identifier") continue;
+      this.enc.emitReg(Op.Ldar, index + 1);
+      this.emitBindingPattern(parameter, false);
+    }
   }
 
   // ── entry ──────────────────────────────────────────────────────────────────
@@ -244,11 +264,17 @@ class FunctionEmitter {
     // 1. Bind params to regs[1..1+paramCount).
     let paramCount = 0;
     for (const p of this.params) {
-      if (p.type !== "Identifier") {
-        throw new UnsupportedNodeError(`non-identifier parameter (${p.type})`, p.type);
-      }
-      this.bindParameter(p.name);
+      validateObjectParameter(p);
+      if (p.type === "Identifier") this.bindParameter(p.name);
+      else this.allocReg();
       paramCount += 1;
+    }
+    // Reserve all positional inputs before allocating destructured bindings.
+    for (const p of this.params) {
+      if (p.type === "Identifier") continue;
+      const names: string[] = [];
+      appendPatternBoundNames(p, names);
+      for (const name of names) this.bind(name);
     }
 
     // 2. Script/eval body: allocate the completion register (seeded undefined).
@@ -754,6 +780,13 @@ class FunctionEmitter {
       const objectMark = this.mark();
       const objectReg = this.allocReg();
       this.enc.emitReg(Op.Star, objectReg);
+      // RequireObjectCoercible applies even to an empty object pattern.
+      this.enc.emit0(Op.LdaNull);
+      this.enc.emitReg(Op.Eq, objectReg);
+      const nonNullish = this.enc.emitJump(Op.JumpIfFalse);
+      this.enc.emitCallBuiltin(Builtin.TypeError, 0, 0);
+      this.enc.emit0(Op.Throw);
+      this.enc.patch(nonNullish, this.enc.here());
       for (const property of pattern.properties) {
         if (property.type === "RestElement") {
           throw new UnsupportedNodeError("object binding rest", property.type);
