@@ -4945,3 +4945,72 @@ physical materialization. The final boundary rerun passes 97/97. High source
 review approves the exact final guard blobs and finds no remaining blocker
 from the five original findings. Publication is a bounded physical reservation
 checkpoint, not acceptance of the still-unsupported native resources.
+
+The semantic source-evidence revision 2 was adopted byte-for-byte from the
+worker's frozen three-file manifest and measured: 57/59 focused tests pass,
+and TypeScript 7 passes. Both failures originate in the recorder's rejection
+of Node 22's native lazy `Error.stack` accessor; the last forbidden-query
+child exits nonzero before writing its report for the same reason. The agent
+is repairing that distinction without permitting arbitrary diagnostic getters.
+The retained positive child report independently records twelve loaded roots,
+38 intrinsic definitions, 32 capabilities, two source-derived async states and
+one instruction, with true manifest/plan/provider joins. It explicitly leaves
+compiler-closure and retirement certification false. These are admission
+observations, not whole-program physical execution or a passing 59-test suite.
+
+The next physical integration work is isolated at
+`/private/tmp/js2-3518-physical-module-completion-20260908`, based on `e3de0f3ff7`.
+Its source changes must not contaminate this checkpoint's paired preservation
+measurement. The original source candidate remains unchanged.
+
+Revision 3 of the three source-evidence files is adopted with exact frozen
+Git blobs verified. The focused suite now passes 82/82 with a clean terminal
+exit. It adds exact native Error accessor handling without invoking custom
+getters, plain-Node query/fragment rejection witnesses through the same guard,
+transformed-to-returned semantic-plan equality, and independent prepared
+byte/call/twice-executed-value checks. Prior 57/59 results remain recorded above;
+they are superseded by this measured repair, not erased.
+
+The full thirty-row-per-arm historical comparison stopped in its first baseline
+child with Node exit 13 (unsettled top-level await), before producing a complete
+report. It is not implied by the 82 focused controls. Its terminal receipt is
+retained in `.tmp/semantic-provider-source-pair-revision3-20260908`; the source
+worker is diagnosing the recorder without reducing the matrix. Physical source changes remain in
+the separate worktree. A fresh PR5751 read at e3de0f3ff7 found MERGEABLE/CLEAN,
+no unresolved review threads and completed successful quality checks; the PR
+is still non-draft with auto-merge disabled. This is not retirement approval.
+
+Final High review approves the bounded source-evidence checkpoint, with no
+remaining concrete instrument-control finding. Independent receipt inspection
+confirms twelve roots, 38 definitions, 32 capabilities, two states and one
+instruction; all five forbidden URLs have exact denied census rows, including
+three genuine plain-Node suffix rejections through the same guard. The current
+1,303-file source census matches producer and child snapshots. This explicitly
+does not certify the full historical matrix, whole-program native async,
+post-attachment mutation, or direct-codegen retirement.
+
+### Historical source comparison completed (2026-09-08)
+
+Recorder revision 4 passes 87/87 focused controls. The non-i31 boundary now
+uses the existing issue-4574 synchronous registered-timer callback contract:
+without the observer export, wrapping a pending native Promise cannot observe
+later settlement. The recorder neither changes runtime behavior nor adds
+polling. It binds absolute child output paths and records unresolved awaits
+explicitly when the event loop becomes idle; partial journals never substitute
+for complete reports.
+
+The full historical run now completes all four children with exit zero, no
+signal or spawn error, and fifteen complete rows each: thirty rows per arm
+across GVN off/on. Both comparisons have zero raw differences and
+`preservationOK: true`; `acceptanceOK: false` remains explicit. Baseline source
+is unchanged b4c116639a7e146e83611a988a8da28d77de9368; candidate source remains
+the semantic/provider extraction, not the separate physical implementation.
+Reports, independent expected receipts, progress journals and terminal hashes
+are retained under `.tmp/semantic-provider-source-pair-revision4-20260908`.
+
+Independent native rows in both roots and both GVN settings execute 70, boxed
+3,000,000,000 and canonical undefined twice, with observer absence and the
+established auto-fire behavior recorded. The original whole-preparation,
+Math/TDZ physical-execution, boolean-host assertion and transformed async
+authentication gaps remain in the reports. Equal failures are preservation,
+not acceptance. Revision 3's exit13 remains documented above as failed evidence.
