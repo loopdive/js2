@@ -4258,6 +4258,12 @@ export function compileExternPropertyGet(
 ): ValType | null {
   const className = hostMapCarrierClassName(ctx, objType) ?? objType.getSymbol()?.name;
   if (!className) return null;
+  if (
+    ["Set", "Map", "WeakMap", "WeakSet"].includes(className) &&
+    ts.isIdentifier(expr.expression) &&
+    ctx.externrefAccessorVars.has(expr.expression.text)
+  )
+    return null;
 
   // (#1103a) Native Map `.size` accessor in standalone / nativeStrings mode →
   // `__map_size` instead of the `Map_get_size` host import. Mirrors the method

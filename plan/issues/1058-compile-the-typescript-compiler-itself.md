@@ -208,6 +208,56 @@ oracle-ratchet-allow:
 ---
 # #1058 — Compile the TypeScript compiler to Wasm (self-hosting stress test)
 
+## Main synchronization check — 2026-09-08
+
+### Source-defined collection carrier investigation (resumed)
+
+The real `createSet` factory returns an open object, not native Set storage.
+Reduced standalone probes now preserve initial size, mutation, and `return this`
+identity. Added a durable four-case native-vs-Wasm regression covering a direct
+factory, native Set, asserted object literal, and a shorthand callable property
+inside a callback; all four pass with zero imports
+(`.tmp/ts5-source-collection-test5.log`). Type assertions also need unwrapping
+when selecting the local's physical carrier. The final four-case run also
+exercises the source-defined `forEach` callback
+(`.tmp/ts5-collection-foreach-controls.log`, 4/4 passing).
+
+The selected upstream adapter creates `const ts = { createSet, ... }`, rather
+than a module namespace. Its callable-property result ABI was still casting
+the factory result to native Set. Resolving the shorthand through oracle
+declarations and retaining an externref result exposed a compile-time stack
+imbalance: the array `forEach` fast path tried to construct a five-field Map
+using a two-field array layout. Declining array/native collection dispatch for
+the source-object carrier resolves that compile failure.
+
+Final upstream run: **23/25 passing, 5/5 modules compiled and validated, zero
+imports**, up from **19/25** on the previous checkpoint. CompilerCore is **9/11**;
+mutation, resizing, clear, and string-hash tests now pass. `forEach` and
+`iteration` still throw opaque Wasm exceptions. The suite still admits only
+5/256 upstream files; 251 remain deferred. See
+`.tmp/ts5-upstream-source-collection-no-array.log` and the generated report.
+No assertions or compiler verification gates were weakened. Full parser/binder
+checks have not been rerun on this candidate.
+
+Ancillary controls: Date/accessor-import files pass; the accessor-widening file
+passes 13/14, with its GC-only data-property control returning 0 instead of 1.
+That failure has not been A/B-attributed to this change. All seven standalone
+cases in that file pass. Typecheck, scoped lint, LOC and function budgets pass;
+no new allowance was added. Temporary stack-balance tracing was removed.
+Additional collection/call controls pass 18/20: optional-method padding 7/7,
+optional standalone Set 7/7, optional Map-size 3/4, Proxy carrier 1/2.
+The remaining failures are GC Map-size (-1 vs 256) and a Proxy-global shape
+assertion expecting a non-externref slot; neither is A/B-attributed here.
+Log: `.tmp/ts5-collection-native-controls.log`.
+
+Fetched `main` directly from `https://github.com/loopdive/js2.git` and
+independently verified its live ref as
+`16498efb481cb022ee5c4dcc9bb137b6d4c91a50`. The TypeScript worktree branch
+`codex/1058-typescript-standalone` at `5e7d1d1302178a` already contains that
+commit (8 commits ahead, 0 behind), so no merge was necessary. Preserved the
+four uncommitted source-collection carrier investigation files unchanged.
+This synchronization check does not constitute new compiler/test validation.
+
 ## PR handoff — 2026-09-06
 
 ### Resumed optional-parameter investigation — 2026-09-08

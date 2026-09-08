@@ -843,6 +843,9 @@ export function compileReceiverMethodCall(
   const receiverTagExpr = skipTransparentExpressions(propAccess.expression);
   const receiverIsExternrefTagged =
     ts.isIdentifier(receiverTagExpr) && ctx.externrefAccessorVars.has(receiverTagExpr.text);
+  const receiverIsSourceCollection =
+    receiverIsExternrefTagged &&
+    ["Set", "Map", "WeakMap", "WeakSet"].includes(ctx.oracle.builtinReceiverOf(receiverTagExpr) ?? "");
 
   // (#4449) Dynamic TypedArray producer methods must be recognized before the
   // generic native-string ladder below: `any` receivers are intentionally
@@ -1033,7 +1036,10 @@ export function compileReceiverMethodCall(
     }
   }
 
-  if (isExternalDeclaredClass(receiverType, ctx.checker) || hostMapCarrierClassName(ctx, receiverType) !== undefined) {
+  if (
+    !receiverIsSourceCollection &&
+    (isExternalDeclaredClass(receiverType, ctx.checker) || hostMapCarrierClassName(ctx, receiverType) !== undefined)
+  ) {
     const externResult = compileExternMethodCall(ctx, fctx, propAccess, expr);
     // undefined means method not found in extern class hierarchy — fall through to generic handlers
     if (externResult !== undefined) {
@@ -2647,6 +2653,7 @@ export function compileReceiverMethodCall(
   if (vecPrototypeCall !== undefined) return vecPrototypeCall;
   if (
     !receiverIsTypedArrayIntrinsicProto &&
+    !receiverIsSourceCollection &&
     !(
       ctx.targetProfile.semanticProviders === "native-first" &&
       (receiverType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0
@@ -3886,7 +3893,7 @@ export function compileReceiverMethodCall(
           : undefined;
         const preferOpenBuiltinNamespace =
           builtinNamespace !== undefined && isSupportedBuiltinStaticProperty(builtinNamespace, methodName);
-        if (!preferOpenBuiltinNamespace) {
+        if (!preferOpenBuiltinNamespace && !receiverIsSourceCollection) {
           const externResult = tryExternClassMethodOnAny(ctx, fctx, expr, propAccess, methodName);
           if (externResult !== null) return externResult;
         }

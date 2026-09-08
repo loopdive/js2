@@ -81,7 +81,7 @@ import {
   widenUndefinedDefaultParamSlot,
   structHintForBindingPattern,
 } from "./destructuring-params.js";
-import { compileObjectLiteralAsExternref } from "./literals.js";
+import { compileObjectLiteralAsExternref, objectLiteralForcesHostPath } from "./literals.js";
 import {
   cacheParamDefaultArgc,
   emitF64ParamSentinelCheck,
@@ -338,6 +338,10 @@ function closureReturnsExternrefBinding(
       ts.isSatisfiesExpression(current)
     ) {
       current = current.expression;
+    }
+    if (current.kind === ts.SyntaxKind.ThisKeyword && !ts.isArrowFunction(fn)) {
+      const owner = fn.parent;
+      if (owner && ts.isObjectLiteralExpression(owner) && objectLiteralForcesHostPath(ctx, owner)) return true;
     }
     return ts.isIdentifier(current) && ctx.externrefAccessorVars.has(current.text);
   };

@@ -103,6 +103,7 @@ import { addStringConstantGlobal } from "../registry/imports.js";
 import type { ObjectLiteralMethodReceiverBind } from "../object-literal-method-receiver.js";
 import { programDeclaresClassMethod, receiverOriginRejectsExternBinding } from "../class-instance-method-names.js";
 import { sourceAssignsAliasedFunctionMember, sourceDefinesFunctionMember } from "../source-function-members.js";
+import { sourceCollectionFactoryUsesObjectCarrier } from "../source-collection-factory.js";
 import {
   captureObjectLiteralMethodReceiver,
   emitObjectLiteralMethodThisInstall,
@@ -1579,7 +1580,10 @@ export function compileCallablePropertyCall(
   const sigParameters = runtimeSignatureParameters(sig);
   const sigParamCount = sigParameters.length;
   const sigRetType = ctx.checker.getReturnTypeOfSignature(sig);
-  const sigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
+  const resolvedSigRetWasm = isVoidType(sigRetType) ? null : resolveWasmType(ctx, sigRetType);
+  const sigRetWasm = sourceCollectionFactoryUsesObjectCarrier(ctx, expr)
+    ? { kind: "externref" as const }
+    : resolvedSigRetWasm;
   const sigParamWasmTypes: ValType[] = [];
   for (let i = 0; i < sigParamCount; i++) {
     const paramType = ctx.checker.getTypeOfSymbol(sigParameters[i]!);
