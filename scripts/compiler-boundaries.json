@@ -6821,6 +6821,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/symbol-description.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "4376-deno",
+      "nextBoundary": "Separate semantic Symbol description from backend table lookup."
+    },
+    {
       "path": "src/codegen/symbol-field-carrier.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

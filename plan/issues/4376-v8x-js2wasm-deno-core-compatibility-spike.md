@@ -17,6 +17,8 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-09-08: preserve Symbol brand and validate erased Symbol.keyFor arguments.
+  - src/codegen/expressions/call-namespace-static.ts
   # 2026-09-08: immutable native Error construction identity and generic prototype hook.
   - src/codegen/registry/types.ts
   - src/codegen/registry/error-types.ts
@@ -85,6 +87,8 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # 2026-09-08: validated native Symbol carrier unboxing for keyFor.
+  - src/codegen/expressions/call-namespace-static.ts::compileNamespaceStaticCall
   # 2026-09-08: initialize the appended immutable Error identity field.
   - src/codegen/registry/types.ts::getOrRegisterErrorStructType
   - src/codegen/registry/error-types.ts::emitErrorStructConstructor
@@ -1158,3 +1162,39 @@ Post-merge compiler-only reduction61195 confirms the native Error prototype defe
 Baseline merged1bfe7c prototype suite39657 fails8/9 with the ordinary/null-object control passing. Candidate99560 passes9/9. Eight-suite43963 reports62/62:61 ordinary cases plus the existing expected shadow failure. Typecheck43199 passes. New immutable intrinsicTag field6 separates construction identity from mutable name and preserves Test262Error as -1 rather than confusing its shared Error instanceof tag. All four identified Error construction sites initialize the field, including Promise.any AggregateError and both SuppressedError constructors. Existing instance field indices remain stable, but Wasm structural ABI changes, so old artifacts must be rebuilt.
 
 New fillErrorPrototypeArms dispatches native builtins through canonical prototypes and walks native Error prototype parents. User-subclass defaults, prototype overrides, AggregateError/SuppressedError reflection and full shared-realm subtype behavior are still open and must not be reported as complete. No Deno edits. New fixture generation31068 passes; Rust test54706 passes1/1 for native Error constructor/message/identity/stable prototype with context-error-prototypes.wasm. The configured older provider was not used to create or round-trip that Error, so this focused test is not cross-version artifact compatibility evidence. Full core/provider recompilation and native replay remain pending.
+
+
+Compiler signed checkpoint a994605f4faaa34829d3cd92f6d84faa5669cf17 contains the Error reflection candidate. Additional renamed-harness separation control passes: prototype suite70403 now10/10; this control proves non-conflation, not complete user-subclass reflection. Runtime signed checkpoint d6481ce928f4a0769740303c30c8ac513e49727f adopts native Errors and adds retained-callback tests. Selected runtime5063 passes35/35,5 artifact-specific tests filtered. Compiler-free check36321 passes. Compiler gates6366 pass LOC/function/coercion/oracle; dead-export command exits0 but existing dynamic-import evidence remains OPEN/strict FAIL, no retirement certification. Nothing pushed.
+
+Clean detached build inputs under /private/tmp/deno-error-prototype-build.4UZS08/{js2,v8x,deno} at those compiler/runtime hashes and Deno1d4e6c1. Raw builder7289 exits0 including five provider canaries and raw cross-module initialization. Core7640532bytes SHA25672008c6727f02a7d3c5c62e6b18aa30c2c3a8a37efca3b1723463854646770c4; provider25463095bytes SHA256bda61f11d0c95344d15c7541a4489c289bedfc6303fb8e7cf0983d872e4c11ba. Exact source records in provenance.json, build.log retained. Clean compiler node_modules symlinks the existing dependency installation; actual optimizer is bundled Binaryen125, not a newly installed toolchain.
+
+Optimization session65276 currently LIVE: optimizeBinaryAsync(level3,preserveNamestrue) processes core/provider sequentially and requires optimized=true plus WebAssembly.validate before writing core-O3.wasm/provider-O3.wasm. Process67564 confirmed running bundled wasm-opt at98percent CPU. Native example rebuild28599 exits0 for disable_ops and hello_world with runtime compilation disabled, libs/core diff empty. These rebuilt binaries have not yet run against new artifacts. Next: wait same optimizer handle, validate provider canaries on optimized bytes, precompile both with release Wasmtime, and replay disable_ops/hello_world. Do not report native formatting fixed until those runs finish.
+
+
+Optimization65276 TERMINAL exit0. Core-O3.wasm5403915bytes SHA2566aba79ddf87138e6191fda199330a627e4835a3b2c8513422556bcc4e291fa13; provider-O3.wasm15833595bytes SHA2569b3a1f22427c735c8c331cb1adfa83063a362566536214dd836ba4fbf5320b15. Bundled wasm-opt125 -O3, no-inline, all-features except custom descriptors, preserve names. Core release precompile40100 passes1/1 in27.58s, output core-O3.cwasm. Raw-provider control precompile39999 passes1/1 in140.89s, provider-raw.cwasm. Optimized-provider precompile21108 remains LIVE.
+
+Optimized Node check3390 printed all five passing canaries and deferred core link initialization, then TERMINAL exit133 with V8 background WasmGC optimizer Zone OOM. NOT a clean pass. Repeated identical canaries/link checks with locally verified --liftoff-only flag exits0 (tool a4b4fe); this avoids Node TurboFan tier-up and is not an optimizer performance claim. Native Wasmtime remains independent validation. Runtime full constructor-chain test24289 passes1/1, checkpointc89c95d adds the regression without production changes. Initial patch attempt68329 made no edit because formatting changed; its pass was only the old test, superseded by24289.
+
+Compiler-free native disable_ops control55878 currently LIVE using core-O3.cwasm plus new-layout unoptimized provider-raw.cwasm. Logs disable-control.stdout/stderr in build root. No old-layout artifacts used. Wait the same handle; empty logs during initial store boot are not a completed test. Next use provider-O3.cwasm after21108 completes and run both disable_ops and hello_world.
+
+
+### Optimized compiler-free native replay confirms Error prototype repair
+
+Optimized-provider precompile21108 TERMINAL exit0,1/1 in134.78s. Native optimized hello8691 TERMINAL EXIT0 with both core-O3.cwasm/provider-O3.cwasm. Independent Node assertions5f483d verify exact prior six-line sum/exception stdout and exactly11 callback-only stderr lines, with no conversion diagnostics. No runtime compiler enabled, libs/core unchanged.
+
+Both disable_ops control55878 and fully optimized22663 TERMINAL exit101 at libs/core/examples/disable_ops.rs:28:6 (the example unwrap), NOT libs/core/error.rs:1294. Both render JsError name Error, message op is disabled, exception_message Uncaught Error: op is disabled, no aggregate. The operation is intentionally disabled; zero exit is not the correct expectation for this unchanged example. This verifies the repaired native Error prototype path in Deno itself. Logs retained as disable-control.*, disable-O3.*, hello-O3.* under build root.
+
+Remaining extra diagnostic in BOTH disabled-op variants: host value conversion to the compiled realm is not implemented for this type. Deno error.rs1152 creates Symbol.for("errorAdditionalPropertyKeys") and reads it from the exception. into_realm has no Symbol arm. New uncommitted Rust regression native_errors_accept_registered_symbol_property_keys reproduces absence returningNone rather thanSome(undefined):52634 TERMINAL fails1/1 at tests/js2wasm_spike.rs2655. Later set/read assertions were not reached. No fake success or empty-value fallback implemented.
+
+Next implement bidirectional native/realm Symbol transfer preserving identity and distinguishing registered Symbols, fresh Symbols with equal descriptions, absent vs empty descriptions and well-known Symbol.iterator. Native SymbolState currently stores only description; isolate symbol_registry and iterator_symbol retain membership identity, so a description string alone is NOT proof of registry or well-known status. Realm from_realm also lacks kind8 transfer. Add JS-side registry roundtrip controls before claiming Symbol.for compatibility. Full core/provider need regeneration after bridge export changes.
+
+All optimizer/build/precompile/native processes in this continuation are terminal. Compiler source clean at a994605f apart from this handover. Runtime HEADc89c95d is test-only over productiond6481ce; only the new failing Symbol regression is dirty. No push/PR. Full integration goal remains active; unchanged op2 has not been rebuilt against the new Error structural ABI.
+
+
+### Symbol bridge and compiler prerequisites
+
+Native registered-key test98375 passes1/1 after adding native/realm Symbol transfer, but roundtrip23946 fails: registeredSymbol is a Number. Node inspection15e31c proves baseline Symbol.for publication kind3 and fresh description missing. Native registry lookup must not be inferred from equal descriptions. Added bridge exports create/kind/text, per-owner Symbol bindings, native registry/iterator pointer membership, and inverse kind8 transfer; simple/native-host graph leaves now admit Symbol values. Host object Symbol-key enumeration remains separately unsupported.
+
+Compiler candidate preserves symbol:true on native Symbol.for return; generic Symbol.description reads the native table; narrowed Symbol.description uses branded i32 coercion; Symbol.keyFor validates and unboxes native Symbol carriers rather than numerical coercion. Initial brand-only/fill candidate still fails roundtrip14986 because narrowed reads/keyFor used number unboxing. Final fixture context-symbols-fixed2.wasm and Rust98298 pass1/1 across native/compiled values: global registry identity, distinct fresh symbols, absent/empty descriptions, iterator identity, native-fresh roundtrip, JavaScript reading the native Error registered key. This is ONE compiled realm, not multiple Contexts or independent graph registry unification.
+
+Compiler two-entrypath tests initially hit Vitest opaque-Wasm-value rendering in not.toBe. Raw boolean identity assertion retains the same distinctness requirement and passes; there was no demonstrated symbol allocation reuse. Two suites16404 pass2/2 and typecheck0. Five suites74329 pass44/44:43 ordinary tests plus existing shadowed-globalThis expected failure, including invalid dynamic Symbol.keyFor arguments producing TypeError. Candidate source files and runtime source remain uncommitted. Current selected37-case runtime run is LIVE with newly generated Symbol bootstrap/linked fixtures. Full native artifacts still need rebuild for new bridge exports; prior native replay validated Error changes, not these Symbol changes.

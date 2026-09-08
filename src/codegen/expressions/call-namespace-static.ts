@@ -651,7 +651,7 @@ export function compileNamespaceStaticCall(
         }
         fctx.body.push({ op: "ref.as_non_null" });
         fctx.body.push({ op: "call", funcIdx: forIdx });
-        return { kind: "i32" };
+        return { kind: "i32", symbol: true };
       }
       // (#3676) JS-host mode: return the module's CANONICAL i32 symbol id, not a
       // raw host Symbol. A symbol VALUE is an i32 id everywhere else in the
@@ -703,8 +703,24 @@ export function compileNamespaceStaticCall(
         }
         ensureNativeSymbolBoundaryBridge(ctx);
         const { keyForIdx } = ensureSymbolRegistry(ctx);
-        const symType = compileExpression(ctx, fctx, keyForArg, { kind: "i32" });
-        if (symType && symType.kind !== "i32") coerceType(ctx, fctx, symType, { kind: "i32" });
+        const symbolTypeIdx = ensureSymbolCarrier(ctx);
+        const symType = compileExpression(ctx, fctx, keyForArg, { kind: "externref" });
+        if (symType && symType.kind !== "externref") coerceType(ctx, fctx, symType, { kind: "externref" });
+        const symbolLocal = allocLocal(fctx, "__keyfor_symbol", { kind: "externref" });
+        const throwStart = fctx.body.length;
+        emitThrowTypeError(ctx, fctx, "Symbol.keyFor requires a symbol");
+        const throwBody = fctx.body.splice(throwStart);
+        fctx.body.push(
+          { op: "local.tee", index: symbolLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.test", typeIdx: symbolTypeIdx },
+          { op: "i32.eqz" },
+          { op: "if", blockType: { kind: "empty" }, then: throwBody },
+          { op: "local.get", index: symbolLocal },
+          { op: "any.convert_extern" },
+          { op: "ref.cast", typeIdx: symbolTypeIdx },
+          { op: "struct.get", typeIdx: symbolTypeIdx, fieldIdx: 0 },
+        );
         fctx.body.push({ op: "call", funcIdx: keyForIdx });
         return { kind: "ref_null", typeIdx: ctx.anyStrTypeIdx };
       }
