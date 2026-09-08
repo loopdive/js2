@@ -920,3 +920,101 @@ Temporal method call, in-provider AND through the boundary), the class-value
 boundary crossing (blocks `new Temporal.PlainDate` from a consumer), and #5405
 (`Now.timeZoneId()`, already filed, deliberately out of scope). #5404 (dynamic
 RegExp) remains why the smoke test must not use the string form of `from`.
+
+## S2f findings (2026-09-08) — the `typeof "function"` stop root-caused and fixed
+
+### R11 — two independent "make the struct shape unique" fixes landed on the SAME shape
+
+S2e narrowed the first stop to one sentence: *a polyfill class instance reports
+`typeof "function"` once it crosses a call boundary*, with the discriminator
+"declared in the polyfill" vs "declared in the probe section" — i.e. a
+whole-module property. It is struct-type canonicalisation, exactly as
+hypothesised, and the colliding pair can be named:
+
+| type | shape | declared by |
+| --- | --- | --- |
+| `$__ta_ctor` (a TypedArray CONSTRUCTOR value) | `(struct (field kind i32) (field brand i32))`, both immutable | `registry/types.ts`, widened from ONE field by **#5194 r3 F1** precisely to dodge a canonicalisation collision with `__box_boolean_struct` |
+| an empty class ROOT | `(struct (field $__tag i32) (field $__shape_brand i32))`, both immutable | `class-bodies.ts`, widened from ONE field by **#2158/#2009** precisely to dodge a canonicalisation collision with `$AnyString` |
+
+WasmGC canonicalises structurally-identical struct types, so in any module that
+BOTH holds a TypedArray constructor value AND declares a field-less class, every
+instance of that class passes `ref.test $__ta_ctor`. The standalone `typeof`
+natives (`__typeof_function` / `__typeof_object` / `__typeof`) all consult that
+`ref.test` through `buildTaCtorBrandTestArm` (`builtin-callable-brand.ts`), so
+they answered `"function"` — and the polyfill's own brand check
+`ne(e,...t){ if (!e || "object" != typeof e) return !1; … }` therefore rejected
+every Temporal receiver, which is where `invalid receiver` came from.
+
+**How it was identified** (measurement, not deduction). The `typeof` natives'
+callable ladder was instrumented so each arm returns a DISTINCT integer, and the
+real provider was compiled and driven in-module:
+
+| probe (in-provider, `--target standalone`, `hostBridge:"off"`) | arm |
+| --- | --- |
+| `typeof zv === "function"` for `new qi.Duration(0,0,0,0,1)` | **13** = the builtin-callable arm |
+| the same for `new qi.PlainDate(2024,1,1)` | **13** |
+| `{a:1}` · a probe-section class instance | 0 (no arm) |
+
+Arm 13 is `taArm + $Object-flag arm`. Replacing the `$Object` half with a
+`flags`-dump answered 0 for the Duration instance (so it is not a `$Object` at
+all) and `1000` for `{a:1}` — which isolates the `$__ta_ctor` half. Dumping that
+struct's two fields for the matched value gave **`{35, 0}`** for `Duration` and
+**`{33, 0}`** for `PlainDate`: a class TAG and a `__shape_brand`, not
+`{kind, TA_CTOR_BRAND}` (`TA_CTOR_BRAND` is `0x5441`).
+
+**Fix** — `taCtorIdentityTestInstrs` (`src/codegen/registry/types.ts`): the
+identity test is `ref.test $__ta_ctor` **plus** `struct.get brand == TA_CTOR_BRAND`.
+Widening the shape a third time would only move the collision to the next
+two-i32 struct; the brand VALUE is the discriminator that no other type's field 1
+holds by accident, and #5194 r3 F1 already WROTE that brand at both mint sites —
+it was simply never READ. Answer-preserving for a genuine `$__ta_ctor`, so the
+change can only ever REMOVE a false positive.
+
+Wired at the `typeof`/`IsConstructor` classifier (`builtin-callable-brand.ts`
+`buildTaCtorBrandTestArm`, shared by all three `typeof` natives and by
+`__reflect_is_constructor`) and in `reflect-construct-native.ts`.
+
+Measured before → after, in-provider on the real bundle:
+
+| probe | base | after |
+| --- | --- | --- |
+| `typeof d` for `d = new qi.Duration(0,0,0,0,1)`, read inside `function tp(zv){return typeof zv}` | `"function"` | `"object"` |
+| `typeof zv === "function"` for `new qi.PlainDate(2024,1,1)` | 1 | 0 |
+| `__module_init` | returns | returns |
+
+Reduction (now a test, `#5383 S2f R11`): a module that mentions
+`[Uint8Array, Int16Array]` as a VALUE and declares `class Empty {}` — base
+answers `typeof new Empty() === "function"`, fixed answers `"object"`, and the
+genuine `Uint8Array` keeps `typeof === "function"` with
+`Int16Array.BYTES_PER_ELEMENT === 2`. **The `$__ta_ctor` VALUE is what makes it
+reproduce in a small module** — that is why S2e's eight small shapes did not.
+
+**JS-host (`gc`) lane byte-identical**: sha256 A/B over five modules
+(`202a326e4eef0a7d`, `ab176f739049e143`, `5ffd7f1204da40dd`, `9c1160cd685343f1`,
+`e8e39fd373135946`) — same before and after, same byte lengths. Under
+`--target standalone` only the two modules that hold a TypedArray constructor
+value change; `classes`, `reflectCtor` and `plain` are byte-identical there too.
+
+### The same `ref.test` is used as an identity test at 14 more sites — 11 deferred
+
+`ref.test $__ta_ctor` appears at 16 sites. All 16 were converted and measured;
+the TypedArray suites (`#2175 S3b-3`, `#3054 D/E`, `#3054 B1/C`, `#5194 r2/r3`,
+`#3239`, 39 tests) stay green with the full conversion, but on the real provider
+converting `ta-ctor-meta.ts` and/or `dataview-native.ts` moves `__module_init`
+to a NEW stop — `TypeError: Cannot access property on null or undefined at
+19:128628` — which this slice does not have the budget to chase. Bisected: the
+classifier (`builtin-callable-brand.ts`) plus `reflect-construct-native.ts` keeps
+`__module_init` returning AND fixes the `typeof` answer, so only those two ship
+here. The other 11 sites (`ta-ctor-meta.ts` ×2, `dataview-native.ts` ×5,
+`expressions/{calls,new-super×2,call-receiver-method}.ts`,
+`property-access-dispatch.ts`) still ask a structural question and remain a real
+— but narrower — false-positive channel: they only misfire where a TypedArray
+constructor is already expected. The converted-everything patch and the exact
+next stop are recorded here so the follow-up starts from the measurement rather
+than re-deriving it.
+
+**Pre-existing red, NOT caused by this change:** `tests/issue-3610-…` "a
+reflective `.call` on a real instance is NOT gated" fails identically on the S2e
+base (`(Uint8Array.prototype.join as any).call(a, "-")` answers 2 = caught a
+TypeError, expected 1). Verified by running that single case with the three
+changed files reverted.

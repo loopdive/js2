@@ -5,7 +5,7 @@
  * This module owns function-type caches plus reusable GC array/vec/ref-cell
  * registrations so leaf modules can depend on a narrow type-registry surface.
  */
-import type { ArrayTypeDef, FieldDef, FuncTypeDef, StructTypeDef, ValType } from "../../ir/types.js";
+import type { ArrayTypeDef, FieldDef, FuncTypeDef, Instr, StructTypeDef, ValType } from "../../ir/types.js";
 import type { CodegenContext } from "../context/types.js";
 import { getArgumentsVecTypeIdx } from "../arguments-carrier-brand.js";
 import { closureBagField } from "../closures/closure-header-layout.js"; // (#4241)
@@ -578,6 +578,60 @@ export function getOrRegisterTaCtorType(ctx: CodegenContext): number {
   ctx.typeIdxToStructName.set(idx, name);
   ctx.structFields.set(name, fields);
   return idx;
+}
+
+/**
+ * (#5383 S2f R11) The `$__ta_ctor` IDENTITY test — `ref.test` **plus** the
+ * `brand` VALUE — leaving i32 (1 = this really is a TypedArray constructor).
+ * `pushAnyValue` is the (side-effect-free, re-emittable) instruction sequence
+ * that pushes the value as an anyref — a `local.get`, or the `local.get` +
+ * `any.convert_extern` pair the externref call sites already used. It is
+ * emitted twice, which every call site could already do.
+ *
+ * `ref.test` alone asks a STRUCTURAL question and WasmGC canonicalizes
+ * structurally-identical struct types, so it cannot answer a NOMINAL one.
+ * #5194 r3 F1 met this once already (the one-field shape was also
+ * `__box_boolean_struct`, so `typeof true === "function"`) and answered it by
+ * widening the struct to two immutable i32 fields — which is EXACTLY the shape
+ * #2158/#2009 gives an empty class ROOT (`(field $__tag i32)` +
+ * `(field $__shape_brand i32)`, see `class-bodies.ts`). Two independent
+ * "make the shape unique" fixes landed on the same shape, so in any module that
+ * both holds a TypedArray constructor value and declares a field-less class,
+ * every instance of that class passes `ref.test $__ta_ctor`.
+ *
+ * Measured 2026-09-08 on the standalone `@js-temporal/polyfill` provider
+ * (`--target standalone`, `hostBridge:"off"`): `typeof` through a one-parameter
+ * indirection answered `"function"` for `new qi.Duration(0,0,0,0,1)` and
+ * `new qi.PlainDate(2024,1,1)`; dumping the matched struct's two fields gave
+ * `{35, 0}` and `{33, 0}` — the class TAG and the `__shape_brand`, not
+ * `{kind, TA_CTOR_BRAND}`. The polyfill's own brand check
+ * (`if (!e || "object" != typeof e) return !1`) then rejected every Temporal
+ * receiver, so every Temporal method and accessor threw `invalid receiver`.
+ *
+ * Widening the shape a third time would only move the collision, so the
+ * discriminator has to be the brand VALUE, which no other type's field 1 holds
+ * by accident. Answer-preserving for a genuine `$__ta_ctor` (both mint sites
+ * write `TA_CTOR_BRAND`); it can only ever REMOVE a false positive.
+ */
+export function taCtorIdentityTestInstrs(ctx: CodegenContext, pushAnyValue: Instr[]): Instr[] {
+  const taCtorTypeIdx = ctx.taCtorTypeIdx;
+  if (taCtorTypeIdx === undefined || taCtorTypeIdx < 0) return [{ op: "i32.const", value: 0 }];
+  return [
+    ...pushAnyValue,
+    { op: "ref.test", typeIdx: taCtorTypeIdx },
+    {
+      op: "if",
+      blockType: { kind: "val", type: { kind: "i32" } },
+      then: [
+        ...pushAnyValue,
+        { op: "ref.cast", typeIdx: taCtorTypeIdx },
+        { op: "struct.get", typeIdx: taCtorTypeIdx, fieldIdx: 1 },
+        { op: "i32.const", value: TA_CTOR_BRAND },
+        { op: "i32.eq" },
+      ],
+      else: [{ op: "i32.const", value: 0 }],
+    },
+  ];
 }
 
 /**

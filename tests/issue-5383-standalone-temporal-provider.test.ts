@@ -749,3 +749,55 @@ describe("#5383 S2e R10 — a defineProperty sidecar key is scoped to its own bi
     expect(callExport(mod)).toBe(1);
   });
 });
+
+// ── S2f R11 — `ref.test $__ta_ctor` is a STRUCTURAL test used as a NOMINAL one ─
+//
+// `$__ta_ctor` is `(struct (field kind i32) (field brand i32))`, both immutable
+// (#5194 r3 F1 widened it from one field exactly to dodge a canonicalization
+// collision with `__box_boolean_struct`). #2158/#2009 gives an empty class ROOT
+// the SAME shape — `(field $__tag i32)` + `(field $__shape_brand i32)`. WasmGC
+// canonicalizes structurally-identical types, so in any module that both holds
+// a TypedArray constructor VALUE and declares a field-less class, every
+// instance of that class passes `ref.test $__ta_ctor` — and the standalone
+// `typeof` natives answered `"function"` for it.
+//
+// Measured 2026-09-08 on the compiled `@js-temporal/polyfill` under
+// `--target standalone`, `hostBridge:"off"`: `typeof` through a one-parameter
+// indirection said `"function"` for `new qi.Duration(0,0,0,0,1)` and
+// `new qi.PlainDate(2024,1,1)`; the matched struct's two fields dumped as
+// `{35, 0}` and `{33, 0}` — a class TAG and a `__shape_brand`, not
+// `{kind, TA_CTOR_BRAND}`. The polyfill's own brand check
+// `ne(e,…){ if (!e || "object" != typeof e) return !1; … }` therefore rejected
+// every Temporal receiver, so every Temporal method and accessor threw
+// `invalid receiver`. The fix checks the brand VALUE, not the shape
+// (`taCtorIdentityTestInstrs`, `registry/types.ts`).
+describe("#5383 S2f R11 — a field-less class instance is not a TypedArray constructor", () => {
+  const MODULE = `
+    const ctors = [Uint8Array, Int16Array];
+    class Empty {}
+    class Slots { constructor() { Slots.seen = 1; } }
+    function tof(v) { return typeof v; }
+    function isFn(v) { return typeof v === "function" ? 1 : 0; }
+    export function test() { return tof(new Empty()) === "object" ? 1 : 0; }
+    export function emptyIsFn() { return isFn(new Empty()); }
+    export function slotsIsFn() { return isFn(new Slots()); }
+    export function objIsFn() { return isFn({ a: 1 }); }
+    export function ctorIsFn() { return isFn(ctors[0]); }
+    export function bpe() { return ctors[1].BYTES_PER_ELEMENT; }
+  `;
+
+  it("`typeof` through a call boundary says `object`, not `function`", async () => {
+    const mod = await compileStandalone(MODULE);
+    // Base (before this fix) answered 0 here and 1 for `emptyIsFn`.
+    expect(callExport(mod)).toBe(1);
+    expect(callExport(mod, "emptyIsFn")).toBe(0);
+    expect(callExport(mod, "slotsIsFn")).toBe(0);
+    expect(callExport(mod, "objIsFn")).toBe(0);
+  });
+
+  it("a GENUINE TypedArray constructor keeps both answers", async () => {
+    const mod = await compileStandalone(MODULE);
+    expect(callExport(mod, "ctorIsFn")).toBe(1);
+    expect(callExport(mod, "bpe")).toBe(2);
+  });
+});
