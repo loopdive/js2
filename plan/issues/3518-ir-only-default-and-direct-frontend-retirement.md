@@ -4436,3 +4436,22 @@ new execution replay suite and fresh-process source-free suite passed 104/104
 sign-off with no remaining blockers. Emitted JavaScript ASTs for all nine
 consumer integrations remain identical to prerequisite `e90f2a14`; full-repo
 lint exits zero. These are bounded preservation receipts, not retirement proof.
+
+### Next executable ownership split (2026-09-08)
+
+The [Astra High executable ownership plan](../agent-context/3518-preparation-ownership-implementation-plan-2026-09-08.md)
+is grounded on published integration `3a119a88b28bb347f4faaaa2146bd991acf61228`.
+The existing native Astra Low agents now own isolated runtime implementation
+slices: complete allocation capture/restore/registry, and complete program data
+freezing/error/input admission. Their exact source sets are disjoint. The parent
+owns four real consumer integrations, boundary activation and preservation tests.
+
+Remote `issue-assignments` records independently confirm
+`3518:allocation-ownership-runtime` for
+`ttraenkler/codex-astra-allocation-ownership-20260908` (write `34529-rzivb817`)
+and `3518:program-ownership-runtime` for
+`ttraenkler/codex-astra-program-ownership-20260908` (write `34718-qohac24f`).
+Both worktrees start at the published integration; all old dirty worktrees and
+claims are preserved. Worker implementations are pending, not validated here.
+The plan fixes lifecycle ordering, historical statement and boundary denominators,
+real source-produced admission/replay controls and remaining migration work.
