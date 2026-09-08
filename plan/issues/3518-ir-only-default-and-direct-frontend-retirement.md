@@ -6474,3 +6474,65 @@ Reservation-phase producer authentication is separate from completed-fill
 attestation: reserve-all-before-freeze cannot require completed dependencies.
 Neither accessor establishes whole-program execution. Actual scanner,
 flattening, resource-chain execution, replay and retirement remain open.
+
+### Scanner materialization integration — 2026-09-09
+
+The pending scanner checkpoint now lives on its own branch,
+codex/3518-native-scanner-materialization-20260909, based on #5775; it must
+not overwrite the already-published producer-authentication checkpoint.
+Canonical flatten/decoder/scanner resources and genuine owned native-value
+joins are integrated. The generic instruction walker now has canonical
+ownership while legacy callers retain the shared algorithm.
+
+StringToNumber malformed exponents previously returned1 for `1e` and `1e+`.
+The shared scanner now rejects missing exponent digits; parseFloat's prefix
+grammar remains unchanged. High approved exact semantic-delta accounting,
+original13-function/34-constant donor reconstruction and the expanded156
+UTF/view recipes. Candidate and immutable baseline public source controls
+each passed43/43; this is not yet paired byte-preservation proof.
+
+Current blocker: composed R3 run97437 passed139/185 and failed46/185, all
+rooted in the shared UTF8 decoder trapping on a nonzero-offset whitespace
+view. The declared `Utf8String.off` field is not consumed by the decoder.
+Keep those genuine offset probes; repair the shared production algorithm
+after contract review, explicitly account for the semantic delta in both
+donor and public projection proofs, then rerun the whole recipe population.
+Do not remove coverage or claim that a static check proves execution.
+
+Public three-arm proof has22 passing guard controls; the full66-scenario
+run is not yet executed. Bounded compiler ownership has237 passing controls.
+Full-family execution, replay acceptance, public IR-only cutover and strict
+direct-codegen retirement remain required. Detailed failure and revision
+provenance lives in agent-context/3518-native-scanner-integration-2026-09-08.md.
+
+The reviewed shared-decoder repair is now integrated: byte cursor starts at
+`off` and ends at `off + byteLen`, without changing allocation or decoding
+branches. Targeted5/5 and full scanner/value-chain/walker159/159 pass,
+including all156 original expanded recipes. This fixes the46 failures above;
+it does not erase their provenance. Decoder-specific mixed-width controls,
+the second exact preservation delta, public three-arm pairing and final
+composed typecheck remain before publication.
+
+Subsequent proof execution closes the runtime items above:71/71 flatten and
+public-preservation tests pass, including66 programs in each of three child
+runs,132 calls per run and zero baseline-versus-projection differences.
+The untouched candidate produces NaN for malformed exponents while original
+baseline results remain recorded separately. Direct decoder27/27 controls
+also pass, including18 windows and7 semantic mutants. Post-repair bounded
+compiler ownership237/237 passes. Final review and composed typecheck remain
+publication prerequisites; full migration acceptance is still open.
+
+Final scanner checkpoint validation is complete:286/286 combined focused
+unit controls,237/237 bounded ownership controls and final composed TS7
+pass. High's four harness findings were repaired and approved. Ordinary
+unit tests need no external checkout variables; the dedicated verifier
+retains mandatory66-row/three-arm execution with authenticated native
+loader identity, and completed with zero preservation differences.
+The two intentional semantic corrections remain explicit: malformed
+exponents yield NaN, and valid UTF8 views honor their byte offset/end.
+
+Publication does not establish public cutover. The current production
+compiler still calls direct generateModule/generateMultiModule, and the
+prepared-program emitter has not yet wired these string/value producers.
+See agent-context/3518-native-string-consumer-census-2026-09-09.md for the
+next required production integration boundary and ownership coordination.

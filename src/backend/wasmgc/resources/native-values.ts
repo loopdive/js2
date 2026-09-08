@@ -1,6 +1,12 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
 import type { ValType } from "../../../wasm/model/instructions.js";
+import type { NativeStringLiteralReservations } from "./native-string-literals.js";
+import {
+  requireNativeStringNumberReservations,
+  requireCompletedNativeStringNumber,
+  type NativeStringNumberReservations,
+} from "./native-string-number.js";
 import type {
   PhysicalModuleReservations,
   TypeReservation,
@@ -28,7 +34,11 @@ import {
 } from "../../../runtime/wasmgc/values/number-bodies.js";
 
 export type NativeValueStringDependency =
-  | { readonly kind: "native-string"; readonly anyString: TypeReservation; readonly toNumber: FunctionReservation }
+  | {
+      readonly kind: "native-string";
+      readonly stringPack: NativeStringLiteralReservations;
+      readonly scanner: NativeStringNumberReservations;
+    }
   | { readonly kind: "absent" };
 export interface NativeValueDependencies {
   readonly strings: NativeValueStringDependency;
@@ -63,6 +73,7 @@ function same(actual: unknown, expected: unknown, detail: string): void {
 }
 
 function requireDependency(
+  tx: PhysicalModuleReservations,
   requirements: NativeValueResourcePlan,
   dependencies: NativeValueDependencies,
 ): NativeValueStringDependency {
@@ -73,24 +84,7 @@ function requireDependency(
     fail("selected native strings require the actual StringToNumber dependency");
   }
   if (strings.kind === "native-string") {
-    if (
-      !strings.anyString ||
-      !strings.toNumber ||
-      strings.anyString.kind !== "type" ||
-      strings.toNumber.kind !== "function"
-    )
-      fail("missing actual native scanner reservations");
-    same(
-      strings.anyString.object,
-      {
-        kind: "struct",
-        name: "AnyString",
-        fields: [{ name: "len", type: I32, mutable: false }],
-        superTypeIdx: -1,
-      },
-      "noncanonical native string scanner layout",
-    );
-    if (strings.toNumber.object.name !== "__str_to_number") fail("wrong native StringToNumber target");
+    requireNativeStringNumberReservations(tx, strings.scanner, requirements, strings.stringPack);
   }
   return strings;
 }
@@ -102,7 +96,7 @@ export function reserveNativeValueResources(
   dependencies: NativeValueDependencies,
 ): NativeValueReservations {
   assertNativeValueResourcePlan(requirements);
-  const strings = requireDependency(requirements, dependencies);
+  const strings = requireDependency(tx, requirements, dependencies);
   const key = (role: string) => "physical:values:" + JSON.stringify(requirements.anchor) + ":" + role;
   const anyValue = tx.reserveType(key("any"), buildAnyValueType());
   const undefinedValue = tx.reserveGlobal(
@@ -132,7 +126,7 @@ export function reserveNativeValueResources(
     dependency:
       strings.kind === "absent"
         ? Object.freeze({ kind: "absent" })
-        : Object.freeze({ kind: "native-string", anyString: strings.anyString, toNumber: strings.toNumber }),
+        : Object.freeze({ kind: "native-string", stringPack: strings.stringPack, scanner: strings.scanner }),
   });
   return result;
 }
@@ -146,13 +140,13 @@ export function fillNativeValueResources(
   const owner = owners.get(reservations);
   if (!owner || owner.tx !== tx) fail("foreign native value reservations");
   assertNativeValueResourcePlan(owner.requirements);
-  const strings = requireDependency(owner.requirements, dependencies);
+  const strings = requireDependency(tx, owner.requirements, dependencies);
   if (
     strings.kind !== owner.dependency.kind ||
     (strings.kind === "native-string" &&
       (owner.dependency.kind !== "native-string" ||
-        strings.anyString !== owner.dependency.anyString ||
-        strings.toNumber !== owner.dependency.toNumber))
+        strings.stringPack !== owner.dependency.stringPack ||
+        strings.scanner !== owner.dependency.scanner))
   )
     fail("substituted native string conversion dependency");
   const { anyValue, boxedNumber, boxedBoolean } = reservations.types;
@@ -168,20 +162,11 @@ export function fillNativeValueResources(
   tx.physicalIndex(reservations.globals.undefined);
   let conversion: NativeNumberStringConversion;
   if (strings.kind === "native-string") {
-    if (tx.physicalIndex(strings.anyString) !== strings.anyString.typeIndex) fail("stale native string layout");
-    tx.physicalIndex(strings.toNumber);
-    // Cache-only after freeze, so this can never synthesize a missing signature.
-    if (strings.toNumber.object.typeIdx !== tx.internFunctionType([EXTERN], [F64]))
-      fail("native scanner signature differs");
-    if (
-      !strings.toNumber.object.body.length ||
-      strings.toNumber.object.body.every((instr) => instr.op === "unreachable")
-    )
-      fail("native scanner body is still a reservation, not an implementation");
+    const scanner = requireCompletedNativeStringNumber(tx, strings.scanner, owner.requirements, strings.stringPack);
     conversion = {
       kind: "native-string",
-      anyStringTypeIdx: strings.anyString.typeIndex,
-      toNumber: strings.toNumber.handle,
+      anyStringTypeIdx: strings.stringPack.layout.anyStrTypeIdx,
+      toNumber: scanner.toNumber.handle,
     };
   } else {
     conversion = { kind: "absent", evidence: "selected-primitive-only" };
