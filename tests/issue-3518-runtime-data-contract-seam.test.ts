@@ -2,7 +2,7 @@
 
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as asyncSchema from "../src/runtime/contracts/async-provider-schema.js";
@@ -33,6 +33,13 @@ import { asValueId, irVal } from "../src/ir/core/nodes.js";
 import type { IrTypeRef, IrVecLayoutRef } from "../src/ir/core/types.js";
 import { createIrBindingId } from "../src/shared/contracts/identity-values.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+import {
+  acceptedHistoricalDeclarations,
+  assertIntrinsicSpecialization,
+  assertNamedForward,
+  currentDeclarations,
+  receiptRows,
+} from "./helpers/ir-historical-runtime-reconstruction.js";
 
 const root = resolve(import.meta.dirname, "..");
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
@@ -369,7 +376,13 @@ function authenticatedFixture() {
 
 describe("#3518 canonical runtime data-contract seam", () => {
   it.each(movedReceipts)("preserves every $path declaration and attached documentation", (receipt) => {
-    const file = parse(receipt.path),
+    const reconstructed =
+      receipt.path === "src/ir/runtime/contracts/intrinsics.ts"
+        ? acceptedHistoricalDeclarations(receipt.path, read)
+        : undefined;
+    const file = reconstructed
+        ? parse(receipt.path, reconstructed.map((row) => (row.doc ? row.doc + "\n" : "") + row.text).join("\n\n"))
+        : parse(receipt.path),
       rows = declarationRows(file, receipt.path.endsWith("/prepared.ts"));
     expect(rows.map(([name]) => name)).toEqual(receipt.names);
     expect(
@@ -391,10 +404,10 @@ describe("#3518 canonical runtime data-contract seam", () => {
   });
 
   it.each(retainedReceipts)("leaves every retained $path declaration, body and catalog unchanged", (receipt) => {
-    const file = parse(receipt.path),
-      rows = declarationRows(file);
+    const records = acceptedHistoricalDeclarations(receipt.path, read),
+      rows = receiptRows(records);
     expect(rows).toHaveLength(receipt.declarations);
-    expect(file.statements.filter(ts.isFunctionDeclaration)).toHaveLength(receipt.functions);
+    expect(records.filter((record) => ts.isFunctionDeclaration(record.node))).toHaveLength(receipt.functions);
     expect(hash(rows)).toBe(receipt.hash);
     expect(hash(rows.slice(1))).not.toBe(receipt.hash);
     expect(read(receipt.path).match(/Copyright \(c\) 2026 Loopdive/g)).toHaveLength(1);
@@ -406,10 +419,17 @@ describe("#3518 canonical runtime data-contract seam", () => {
     expect(retainedReceipts.reduce((count, receipt) => count + receipt.functions, 0)).toBe(118);
     expect(valueCases).toHaveLength(52);
     const old = parse("src/ir/async-plan.ts");
-    expect(old.statements.filter(ts.isFunctionDeclaration)).toHaveLength(39);
-    expect(declarationRows(old).filter(([name]) => name === "preparedManifestByPlan")).toHaveLength(1);
-    expect(read("src/ir/async-plan.ts").match(/Backend-neutral async suspension plan\./g)).toHaveLength(1);
-    expect(read("src/ir/runtime-manifest.ts").match(/Deterministic R6 semantic-runtime manifest/g)).toHaveLength(1);
+    const historical = acceptedHistoricalDeclarations("src/ir/async-plan.ts", read);
+    expect(historical.filter((row) => ts.isFunctionDeclaration(row.node))).toHaveLength(39);
+    const authority = currentDeclarations("src/ir/runtime/async-attachment.ts", read);
+    expect(authority.filter((row) => row.name === "preparedManifestByPlan")).toHaveLength(1);
+    expect(read("src/ir/runtime/async-attachment.ts").match(/new WeakMap/g)).toHaveLength(1);
+    for (const path of ["src/ir/async-plan.ts", "src/ir/analysis/async-plan.ts"]) {
+      expect(read(path)).not.toContain("new WeakMap");
+      expect(declarationRows(parse(path)).some(([name]) => name === "preparedManifestByPlan")).toBe(false);
+    }
+    expect(read("src/ir/analysis/async-plan.ts").match(/Backend-neutral async suspension plan\./g)).toHaveLength(1);
+    expect(read("src/ir/runtime/manifest.ts").match(/Deterministic R6 semantic-runtime manifest/g)).toHaveLength(1);
     for (const receipt of movedReceipts) {
       expect(read(receipt.path)).not.toContain("new WeakMap");
     }
@@ -433,28 +453,23 @@ describe("#3518 canonical runtime data-contract seam", () => {
     for (const name of receipt.names) {
       if (name === "PreparedIrAsyncRuntimeBase" || name === "PreparedIrAsyncRuntimeInput") continue;
       const oldPath = name === "PreparedIrRuntimeManifest" ? "src/ir/intrinsic-support.ts" : receipt.oldPath;
-      const forwards = parse(oldPath)
-        .statements.filter(ts.isExportDeclaration)
-        .flatMap((node) => {
-          if (!node.exportClause || !ts.isNamedExports(node.exportClause)) return [];
-          const module = node.moduleSpecifier;
-          if (!module || !ts.isStringLiteral(module)) return [];
-          return node.exportClause.elements
-            .filter((entry) => entry.name.text === name)
-            .map((entry) => ({
-              target: resolve(dirname(resolve(root, oldPath)), module.text.replace(/\.js$/, ".ts")),
-              original: entry.propertyName?.text ?? entry.name.text,
-              typeOnly: node.isTypeOnly || entry.isTypeOnly,
-            }));
-        });
-      expect(forwards, oldPath + "#" + name).toEqual([
-        {
-          target: resolve(root, receipt.path),
-          original: name,
-          typeOnly: name !== name.toUpperCase(),
-        },
-      ]);
-      expect(declarationRows(parse(oldPath)).some(([declared]) => declared === name)).toBe(false);
+      const chain = [oldPath];
+      if (oldPath === "src/ir/async-runtime-providers.ts") chain.push("src/ir/runtime/async-providers.ts");
+      if (oldPath === "src/ir/runtime-manifest.ts") chain.push("src/ir/runtime/manifest.ts");
+      chain.push(receipt.path);
+      if (
+        [
+          "IntrinsicSignature",
+          "IntrinsicSourceLocation",
+          "IntrinsicUse",
+          "IntrinsicVerificationCode",
+          "IntrinsicVerificationFailure",
+        ].includes(name)
+      )
+        chain.push("src/ir/core/intrinsic-contracts.ts");
+      for (let hop = 0; hop < chain.length - 1; hop++)
+        assertNamedForward(chain[hop]!, chain[hop + 1]!, name, name !== name.toUpperCase(), read);
+      if (name === "IntrinsicDefinition") assertIntrinsicSpecialization(read);
     }
   });
 

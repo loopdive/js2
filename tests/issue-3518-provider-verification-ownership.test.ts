@@ -28,6 +28,7 @@ import { createIrBindingId } from "../src/shared/contracts/identity-values.js";
 import type { IntrinsicId } from "../src/ir/core/intrinsic-vocabulary.js";
 import type { PreparedIrAsyncRuntime, PreparedIrAsyncRuntimeInput } from "../src/ir/runtime/contracts/prepared.js";
 import { createTestIrFunctionIdentityFactory } from "./helpers/ir-identities.js";
+import { currentDeclarations, historicalIntrinsicVerifier } from "./helpers/ir-historical-runtime-reconstruction.js";
 
 const root = resolve(import.meta.dirname, "..");
 const read = (path: string): string => readFileSync(resolve(root, path), "utf8");
@@ -397,12 +398,17 @@ function nameOf(node: ts.Statement, file: ts.SourceFile): string {
   throw new Error("unnamed declaration in " + file.fileName);
 }
 
-function originalIntrinsicVerifier(node: ts.Statement, file: ts.SourceFile): string {
+function originalIntrinsicVerifier(
+  node: ts.Statement,
+  file: ts.SourceFile,
+  overrides: ReadonlyMap<string, string>,
+): string {
+  historicalIntrinsicVerifier((path) => overrides.get(path) ?? read(path));
   if (!ts.isFunctionDeclaration(node) || !node.body) throw new Error("missing combined verifier body");
   const first = node.body.statements[0]!;
   if (first.getText(file) !== "const errors = [...verifyIrIntrinsicSignature(instr, typeOf)];")
     throw new Error("combined verifier no longer invokes the exact semantic prefix");
-  const semanticFile = parse("src/ir/analysis/intrinsics.ts");
+  const semanticFile = parse("src/ir/analysis/intrinsics.ts", overrides);
   const matches = semanticFile.statements.filter(
     (entry) => ts.isFunctionDeclaration(entry) && entry.name?.text === "verifyIrIntrinsicSignature",
   );
@@ -423,6 +429,10 @@ function originalIntrinsicVerifier(node: ts.Statement, file: ts.SourceFile): str
 }
 
 function verifyLedger(receipt: (typeof receipts)[number], overrides: ReadonlyMap<string, string> = new Map()): void {
+  // Reject source-order changes before the historical inter-owner projection.
+  // These paths, kinds and overload ordinals are pinned in the shared helper.
+  for (const path of destinations[receipt.name]!)
+    currentDeclarations(path, (file) => overrides.get(file) ?? read(file));
   const files = destinations[receipt.name]!.map((path) => parse(path, overrides));
   const candidates = files.flatMap((file) =>
     declarations(file).map((node) => ({ file, node, name: nameOf(node, file) })),
@@ -434,7 +444,7 @@ function verifyLedger(receipt: (typeof receipts)[number], overrides: ReadonlyMap
     const entry = remaining.splice(at, 1)[0]!;
     const text =
       receipt.name === "intrinsic-support" && name === "verifyIrIntrinsicInstruction"
-        ? originalIntrinsicVerifier(entry.node, entry.file)
+        ? originalIntrinsicVerifier(entry.node, entry.file, overrides)
         : entry.node.getFullText(entry.file).trim();
     return { ...entry, text };
   });
@@ -500,6 +510,34 @@ describe("provider ownership source receipts", () => {
       expect(() => verifyLedger(receipt, new Map([[path, changed]]))).toThrow();
     },
   );
+
+  it.each(Object.values(destinations).flat())(
+    "rejects reordered live declarations in %s before reconstructing history",
+    (path) => {
+      const file = parse(path),
+        original = read(path),
+        nodes = declarations(file);
+      const first = nodes[0]!,
+        second = nodes[1]!;
+      const changed =
+        original.slice(0, first.getFullStart()) +
+        second.getFullText(file) +
+        first.getFullText(file) +
+        original.slice(second.end);
+      expect(changed).not.toBe(original);
+      const receipt = receipts.find((entry) => destinations[entry.name]!.includes(path))!;
+      expect(() => verifyLedger(receipt, new Map([[path, changed]]))).toThrow(/current declaration order/);
+    },
+  );
+
+  it("rejects removal of failed-first-registration rollback cleanup from live source", () => {
+    const path = "src/ir/runtime/async-attachment.ts",
+      original = read(path);
+    const changed = original.replace("if (!previous) preparedManifestByPlan.delete(input.plan);", "");
+    expect(changed).not.toBe(original);
+    const receipt = receipts.find((entry) => entry.name === "async-plan")!;
+    expect(() => verifyLedger(receipt, new Map([[path, changed]]))).toThrow(/declaration receipt changed/);
+  });
 
   it("rejects an empty-success combined verifier independently of historical reconstruction", () => {
     const receipt = receipts.find((entry) => entry.name === "intrinsic-support")!;
@@ -994,13 +1032,37 @@ describe("one authenticated async attachment authority", () => {
   it("rolls back failed first registration, permits retry and preserves an existing association on failure", () => {
     const { input } = runtimeFixture();
     const plan = semanticPlan.createIrAsyncPlan(input.plan);
-    const valid = { ...input, plan };
-    expect(() => attachment.createPreparedIrAsyncRuntime({ ...valid, providers: Object.freeze([]) })).toThrow(
+    const rejected = { ...input, plan };
+    expect(() => attachment.createPreparedIrAsyncRuntime({ ...rejected, providers: Object.freeze([]) })).toThrow(
       /exact providers/,
     );
+    const retryBuilder = new manifest.RuntimeManifestBuilder({ target: "standalone", backend: "wasmgc" });
+    for (const intent of plan.runtimeIntents) retryBuilder.requestFeature(intent);
+    const retryManifest = retryBuilder.freeze();
+    const retryProviders = Object.freeze(
+      retryManifest.providers.filter((provider) => plan.runtimeIntents.some((intent) => intent === provider.feature)),
+    );
+    expect(retryManifest).not.toBe(rejected.manifest);
+    expect(retryManifest).toEqual(rejected.manifest);
+    const valid = {
+      ...rejected,
+      manifest: retryManifest,
+      providers: retryProviders,
+      backendRequirements: manifest.projectRuntimeBackendRequirements(retryProviders),
+    };
     const runtime = attachment.createPreparedIrAsyncRuntime(valid);
     const current = () => attachment.assertPreparedIrAsyncRuntimeCurrent(plan.ownerUnitId, "retry", plan, runtime);
     expect(current()).toBe(runtime);
+    expect(runtime.manifest).toBe(retryManifest);
+    expect(runtime.providers).toBe(retryProviders);
+    expect(() =>
+      attachment.assertPreparedIrAsyncRuntimeCurrent(
+        plan.ownerUnitId,
+        "rejected",
+        plan,
+        Object.freeze({ ...runtime, manifest: rejected.manifest }),
+      ),
+    ).toThrow(/authenticated frozen manifest/);
     expect(() => attachment.createPreparedIrAsyncRuntime({ ...valid, providers: Object.freeze([]) })).toThrow(
       /exact providers/,
     );

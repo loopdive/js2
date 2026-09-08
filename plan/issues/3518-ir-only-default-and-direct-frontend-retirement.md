@@ -4745,3 +4745,48 @@ the earlier reconstruction specification. Its reconstructed function text is
 byte-identical (2,496 characters); the omitted documentation is the only mismatch
 across all 41 tuples. B is instructed to retain that validated documentation and
 the original hash. No draft helper has yet been adopted into this checkpoint.
+
+### Published semantic/provider checkpoint and follow-up (2026-09-08)
+
+The user requested publication before the remaining validation work finishes.
+Non-draft [PR5751](https://github.com/loopdive/js2/pull/5751) now contains source
+commit `545923d1c9` and main-sync commit
+`87435a9ef1f31821b0467561e167868fedbf3e0b`. It remains held, with no auto-merge.
+Normal commit and push hooks passed, including TypeScript, lint, formatting,
+ratchets, numeric-local parity 18/18 and issue integrity. The manifest LOC
+allowance records the unchanged 85-declaration implementation's relocation to
+`src/ir/runtime/manifest.ts`, not a relaxed gate or new runtime algorithm.
+The completed new boundary suite passes 85/85.
+
+The six-file historical follow-up is now composed and matches every frozen Git
+blob. Its full focused validation and High review are running. It retains the
+original hashes and fixes canonical-order/rollback controls; no outcome is yet
+claimed for this newly composed follow-up. A's paired source-acceptance work is
+still isolated and pending. The [next native async physical cutover plan](../agent-context/3518-native-async-physical-cutover-plan-2026-09-08.md)
+records the actual resource reservation, ABI, lowering and completion obligations;
+it does not authorize deleting the existing materialization refusal prematurely.
+
+Historical follow-up validation: the four shorter suites pass 213/213
+(reconstruction 54, runtime contracts 75, capability schema 27, provider ownership
+57). The initial mutation test selected the first helper function instead of
+`verifyIrIntrinsicInstruction`; it now selects that exact function and checks
+the four-statement/two-provider-branch shape before mutating it.
+
+The historical boundary suite's 105 assertions pass, but two complete runs ended
+with a Vitest `onTaskUpdate` RPC timeout after roughly seventy seconds of
+synchronous checker children. Those are not clean runs. The parent added an
+event-loop yield in fixture cleanup so runner messages can be handled between
+tests, without raising limits or weakening checks. A complete rerun is pending.
+
+The complete rerun now passes 105/105 with a clean terminal exit and no runner
+error. Combined with the four shorter suites, the historical follow-up passes
+318/318. The event-loop yield preserves every assertion and population. High
+review remains in progress; paired source-acceptance implementation is still
+pending in A's isolated worktree.
+
+Final High review found a normalization gap for function modifiers. The helper
+now requires an ordinary non-generator `definition` and exactly a named-export,
+non-async, non-generator semantic verifier. Four live-source mutation controls
+reject generator/async/export changes rather than erasing them during historical
+reassembly. Targeted reconstruction and runtime suites pass 133/133 (58 + 75)
+after this repair. Original hashes and production code remain unchanged.

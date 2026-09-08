@@ -5,7 +5,9 @@ import { createHash } from "node:crypto";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
+import { historicalIntrinsicSource, liveSourceReader } from "./helpers/ir-historical-runtime-reconstruction.js";
 
 const repository = resolve(import.meta.dirname, "..");
 // Independent, fixed population: never derive required files from discovered
@@ -63,7 +65,7 @@ const ownershipModules = [
   "src/ir/program/data.ts",
   "src/ir/program/input.ts",
 ];
-const currentGroups = {
+const ownershipGroups = {
   ...groups,
   "ir-analysis": [...groups["ir-analysis"], "src/ir/analysis/alloc-registry.ts"],
   "ir-program": [
@@ -71,6 +73,31 @@ const currentGroups = {
     "src/ir/program/errors.ts",
     "src/ir/program/data.ts",
     "src/ir/program/input.ts",
+  ],
+};
+// These twelve additions describe today's policy, not either historical fixture.
+const currentGroups = {
+  ...ownershipGroups,
+  "ir-core": [
+    ...groups["ir-core"],
+    "src/ir/core/intrinsic-contracts.ts",
+    "src/ir/core/intrinsics.ts",
+    "src/ir/core/callable-bindings.ts",
+  ],
+  "ir-analysis": [
+    ...ownershipGroups["ir-analysis"],
+    "src/ir/analysis/effects.ts",
+    "src/ir/analysis/intrinsics.ts",
+    "src/ir/analysis/async-plan.ts",
+  ],
+  "ir-runtime": [
+    ...groups["ir-runtime"],
+    "src/ir/runtime/host-capabilities.ts",
+    "src/ir/runtime/async-providers.ts",
+    "src/ir/runtime/callable-declarations.ts",
+    "src/ir/runtime/manifest.ts",
+    "src/ir/runtime/async-attachment.ts",
+    "src/ir/runtime/intrinsic-verification.ts",
   ],
 };
 const allocation = groups["ir-analysis"][0]!;
@@ -84,8 +111,10 @@ const newModules = [
 ];
 const policy = () => JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
 const scratch: string[] = [];
-afterEach(() => {
+afterEach(async () => {
   for (const root of scratch.splice(0)) rmSync(root, { recursive: true, force: true });
+  // Synchronous checker children must not starve the runner's task-update RPC.
+  await setImmediate();
 });
 
 function fixture() {
@@ -116,7 +145,13 @@ function fixture() {
   p.nonModules = [];
   p.externalPackages = [];
   p.externalAssets = [];
-  for (const path of clean) put(path, readFileSync(resolve(repository, path), "utf8"));
+  for (const path of clean)
+    put(
+      path,
+      path === "src/ir/runtime/contracts/intrinsics.ts"
+        ? historicalIntrinsicSource(liveSourceReader(repository))
+        : readFileSync(resolve(repository, path), "utf8"),
+    );
   put(
     "tsconfig.json",
     JSON.stringify({
@@ -165,7 +200,7 @@ function ownershipFixture() {
     f.p.files.push({ path, layer, state: "clean" });
   }
   for (const id of ["ir-analysis", "ir-program"] as const) {
-    const entries = currentGroups[id];
+    const entries = ownershipGroups[id];
     const layer = f.p.layers.find((row: { id: string }) => row.id === id);
     layer.entries = entries;
     layer.minModules = entries.length;
@@ -177,7 +212,7 @@ function ownershipFixture() {
 
 describe("canonical executable ownership boundary", () => {
   it("pins the exact four additions independently of discovered imports", () => {
-    const current = Object.values(currentGroups).flat();
+    const current = Object.values(ownershipGroups).flat();
     const added = current.filter((path) => !clean.includes(path));
     expect(added.sort()).toEqual([...ownershipModules].sort());
     expect(added.sort()).toEqual([
@@ -188,7 +223,7 @@ describe("canonical executable ownership boundary", () => {
     ]);
   });
 
-  it("checks all forty-four actual modules without changing earlier policy edges", () => {
+  it("checks the historical forty-four-module graph reconstructed from live declarations", () => {
     const r = ownershipFixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
     expect(r.report.counts.total).toBe(44);
@@ -324,28 +359,56 @@ describe("complete canonical program-data dependency boundary", () => {
       ].sort(),
     );
     const p = policy();
-    expect(Object.values(currentGroups).flat()).toHaveLength(44);
-    expect(new Set(Object.values(currentGroups).flat()).size).toBe(44);
+    expect(Object.values(ownershipGroups).flat()).toHaveLength(44);
+    expect(new Set(Object.values(ownershipGroups).flat()).size).toBe(44);
+    expect(Object.values(currentGroups).flat()).toHaveLength(56);
+    expect(new Set(Object.values(currentGroups).flat()).size).toBe(56);
+    expect(
+      Object.values(currentGroups)
+        .flat()
+        .filter((path) => !Object.values(ownershipGroups).flat().includes(path))
+        .sort(),
+    ).toEqual(
+      [
+        "src/ir/core/intrinsic-contracts.ts",
+        "src/ir/core/intrinsics.ts",
+        "src/ir/core/callable-bindings.ts",
+        "src/ir/analysis/effects.ts",
+        "src/ir/analysis/intrinsics.ts",
+        "src/ir/analysis/async-plan.ts",
+        "src/ir/runtime/host-capabilities.ts",
+        "src/ir/runtime/async-providers.ts",
+        "src/ir/runtime/callable-declarations.ts",
+        "src/ir/runtime/manifest.ts",
+        "src/ir/runtime/async-attachment.ts",
+        "src/ir/runtime/intrinsic-verification.ts",
+      ].sort(),
+    );
     expect(ownershipModules).toHaveLength(4);
     expect(new Set(ownershipModules).size).toBe(4);
     for (const [id, entries] of Object.entries(currentGroups)) {
       const layer = p.layers.find((x: { id: string }) => x.id === id);
       expect(layer).toMatchObject({ status: "active", required: true, minModules: entries.length });
       expect([...layer.entries].sort()).toEqual([...entries].sort());
-      expect(p.activationHistory).toContainEqual(
-        expect.objectContaining({ layer: id, minModules: entries.length, entries: expect.arrayContaining(entries) }),
+      const history = p.activationHistory.filter(
+        (row: { layer: string; minModules: number }) => row.layer === id && row.minModules === entries.length,
       );
+      expect(history).toHaveLength(1);
+      expect([...history[0].entries].sort()).toEqual([...entries].sort());
       for (const path of entries)
         expect(p.files.filter((x: { path: string }) => x.path === path)).toEqual([{ path, layer: id, state: "clean" }]);
     }
     expect(p.layers.find((x: { id: string }) => x.id === "ir-analysis").roots).toEqual([
       "src/ir/analysis/contracts",
       "src/ir/analysis/alloc-registry.ts",
+      "src/ir/analysis/effects.ts",
+      "src/ir/analysis/intrinsics.ts",
+      "src/ir/analysis/async-plan.ts",
     ]);
     expect(p.layers.find((x: { id: string }) => x.id === "ir-passes").roots).toEqual(["src/ir/passes/contracts"]);
   });
 
-  it("checks the actual forty-module type-and-value closure", () => {
+  it("checks the historical forty-module graph reconstructed from live declarations", () => {
     const result = fixture().run();
     expect(result.status, JSON.stringify(result.report.errors)).toBe(0);
     expect(result.report.counts.total).toBe(40);

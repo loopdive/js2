@@ -3,16 +3,18 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import * as schema from "../src/runtime/contracts/host-capability-schema.js";
 import * as catalog from "../src/ir/runtime-host-capabilities.js";
 import { ASYNC_HOST_CAPABILITY_RECORDS, asAsyncHostAdapter } from "../src/ir/async-runtime-providers.js";
+import { assertNamedForward } from "./helpers/ir-historical-runtime-reconstruction.js";
 
 const root = resolve(import.meta.dirname, "..");
 const schemaPath = "src/runtime/contracts/host-capability-schema.ts";
 const oldPath = "src/ir/runtime-host-capabilities.ts";
+const canonicalPath = "src/ir/runtime/host-capabilities.ts";
 const read = (path: string) => readFileSync(resolve(root, path), "utf8");
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -193,7 +195,7 @@ describe("capability schema relocation", () => {
   });
 
   it("leaves all 48 catalog/private/function declarations and their documentation unchanged", () => {
-    const file = parse(oldPath);
+    const file = parse(canonicalPath);
     const declarations = file.statements.filter((node) => declarationName(node) !== undefined);
     expect(declarations).toHaveLength(48);
     expect(declarations.filter(ts.isFunctionDeclaration)).toHaveLength(28);
@@ -211,11 +213,43 @@ describe("capability schema relocation", () => {
     const exports = file.statements.filter(ts.isExportDeclaration);
     expect(exports).toHaveLength(2);
     for (const node of exports) {
-      expect(node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text).toBe(
-        "../runtime/contracts/host-capability-schema.js",
+      expect(node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)).toBe(true);
+      if (!node.moduleSpecifier || !ts.isStringLiteral(node.moduleSpecifier)) throw Error("missing schema owner");
+      expect(resolve(dirname(resolve(root, canonicalPath)), node.moduleSpecifier.text.replace(/\.js$/, ".ts"))).toBe(
+        resolve(root, schemaPath),
       );
       expect(node.exportClause && ts.isNamedExports(node.exportClause)).toBe(true);
     }
+    for (const name of typeNames) assertNamedForward(canonicalPath, schemaPath, name, true, read);
+    for (const name of constantNames) assertNamedForward(canonicalPath, schemaPath, name, false, read);
+    const facade = parse(oldPath);
+    expect(facade.statements).toHaveLength(2);
+    expect(facade.statements.every(ts.isExportDeclaration)).toBe(true);
+    const names = [
+      ...typeNames.map((name) => ({ name, typeOnly: true })),
+      ...constantNames.map((name) => ({ name, typeOnly: false })),
+      ...declarations
+        .filter(
+          (node) =>
+            ts.canHaveModifiers(node) &&
+            ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword),
+        )
+        .map((node) => ({
+          name: declarationName(node)!,
+          typeOnly: ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node),
+        })),
+    ];
+    for (const { name, typeOnly } of names) assertNamedForward(oldPath, canonicalPath, name, typeOnly, read);
+    expect(
+      facade.statements
+        .filter(ts.isExportDeclaration)
+        .flatMap((node) =>
+          node.exportClause && ts.isNamedExports(node.exportClause)
+            ? node.exportClause.elements.map((entry) => entry.name.text)
+            : [],
+        )
+        .sort(),
+    ).toEqual(names.map(({ name }) => name).sort());
   });
 
   it("loads the import-free schema alone in a fresh process", () => {
