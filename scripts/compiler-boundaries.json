@@ -1,6 +1,6 @@
 {
   "schema": "compiler-boundaries-v1",
-  "description": "Exact compiler inventory with shared contracts and the bounded Wasm instruction, handle-primitive and native queue modules activated. Remaining model, allocator, runtime-value and compiler concerns stay migration debt.",
+  "description": "Exact compiler inventory with shared contracts, bounded Wasm/queue foundations and the pure startup-plan data contract activated. The prepared program, frontend, allocator and runtime implementation boundaries remain migration debt.",
   "sourceRoot": "src",
   "tsconfig": "tsconfig.json",
   "requireGitProvenance": true,
@@ -92,10 +92,10 @@
     },
     {
       "id": "ir-program",
-      "status": "planned",
+      "status": "active",
       "roots": ["src/ir/program"],
       "required": true,
-      "entries": ["src/ir/program/index.ts"],
+      "entries": ["src/ir/program/startup.ts"],
       "minModules": 1
     },
     {
@@ -359,6 +359,11 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/startup.ts"],
+      "minModules": 1
+    },
     {
       "layer": "foundation",
       "entries": [
@@ -8856,9 +8861,9 @@
       "path": "src/ir/module-init-plan.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
-      "destination": "ir-core",
+      "destination": "frontend-ts",
       "owner": "3518-coordinator",
-      "nextBoundary": "Separate pure IR contracts from frontend inventory and physical/backend dependencies."
+      "nextBoundary": "Pure startup data now lives in ir/program/startup.ts. Move the remaining AST/checker builder and source verification to frontend only after separating its legacy parity observer; preserve current algorithms and the old type export surface."
     },
     {
       "path": "src/ir/module-init.ts",
@@ -9266,7 +9271,12 @@
       "layer": "mixed-needs-split",
       "destination": "ir-program",
       "owner": "3518-coordinator",
-      "nextBoundary": "Extract pure prepared data/ABI into ir/program only after splitting frontend inventory/module-init/outcome edges, backend acceptance and emission contracts, and deferred LinearOptions. Preserve runtime validation/transaction behavior through explicit boundaries; no whole-file relocation or clean declaration."
+      "nextBoundary": "The startup data leaf is active, but the required src/ir/program/index.ts prepared-schema extraction remains pending. Split remaining frontend inventory/outcome edges, backend acceptance and emission contracts, and deferred LinearOptions. Preserve runtime validation/transaction behavior; no whole-file relocation or clean declaration."
+    },
+    {
+      "path": "src/ir/program/startup.ts",
+      "state": "clean",
+      "layer": "ir-program"
     },
     {
       "path": "src/ir/promise-delay-lowering.ts",

@@ -14,7 +14,7 @@ import {
 import type { ProgramAbiCallableSignature, ProgramAbiDerivedUnitRecord, ProgramAbiPlanEntry } from "./program-abi.js";
 import type { IrCanonicalPromiseAbi } from "./async-plan.js";
 import type { PreparedIrRuntimeManifest } from "./intrinsic-support.js";
-import type { IrModuleInitPlan } from "./module-init-plan.js";
+import type { IrModuleInitPlan } from "./program/startup.js";
 import type { IrPreparationFailure } from "./outcomes.js";
 import type { PreparedComponentAbiLookup } from "./prepared-component-dependencies.js";
 import type { RuntimeManifestPolicy } from "./runtime-manifest.js";
