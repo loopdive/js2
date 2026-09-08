@@ -64,6 +64,18 @@ export const LINK_BOUNDARY_EXPORTS = Object.freeze({
   // was simply never given anything to put in them.
   callableKind: "__js2wasm_link_callable_kind",
   construct: "__js2wasm_link_construct",
+  // (#5383 S2h) `recv.name(args)` where the RECEIVER is provider-owned.
+  //
+  // Not derivable from `memberGet` + `apply`, which is why it is its own
+  // terminal: the read half now crosses correctly (S2h part a), but the value
+  // it hands back is the provider's method-closure singleton, whose trampoline
+  // resolves `this` from the PROVIDER's `__current_this` global. The consumer
+  // has its own copy of that global, so invoking the closure from the consumer
+  // side binds nothing — measured: `f = d.sum; f.call(d, 1)` answered **null**,
+  // and `d.sum(1)` threw "is not a function". Handing the whole call to the
+  // owning module keeps resolution AND receiver binding on the side that owns
+  // both.
+  methodCall: "__js2wasm_link_method_call",
 } as const);
 
 /** The internal terminal each boundary name wraps, and its signature. */
@@ -80,6 +92,11 @@ const TERMINALS: ReadonlyArray<{ export: string; internal: string; params: ValTy
   {
     export: LINK_BOUNDARY_EXPORTS.construct,
     internal: LINK_BOUNDARY_EXPORTS.construct,
+    params: [EXTERNREF, EXTERNREF, EXTERNREF],
+  },
+  {
+    export: LINK_BOUNDARY_EXPORTS.methodCall,
+    internal: LINK_BOUNDARY_EXPORTS.methodCall,
     params: [EXTERNREF, EXTERNREF, EXTERNREF],
   },
 ];
@@ -139,6 +156,62 @@ export function emitStandaloneLinkBoundaryTerminals(ctx: CodegenContext, registe
       ],
     );
   }
+  // (#5383 S2h) `__js2wasm_link_method_call` is a WRAPPER, not a re-export of
+  // `__extern_method_call`, and the difference is the whole reason the terminal
+  // works. That native gates its resolve-then-apply on `ref.test $Object`; a
+  // provider's own CLASS INSTANCE is a closed `$ClassName` struct, so it takes
+  // the non-`$Object` else arm and the provider throws "is not a function" —
+  // measured, and it is the same answer the provider gives for a method call on
+  // its own instance through a dynamic receiver it has no `__call_m_<name>`
+  // dispatcher for (those are reserved per NAME, at a CALL SITE, and a provider
+  // has no call site for a method only its consumer calls).
+  //
+  // Resolve-then-apply directly instead. Both halves are already correct on
+  // this side: `__extern_get` reaches the prototype since S2h part (a), and
+  // `__apply_closure` binds `this` through the PROVIDER's `__current_this` —
+  // the global the consumer cannot write, which is why the call has to happen
+  // here rather than on a closure shipped across.
+  //
+  // A null/undefined resolution answers `ref.null.extern` = "not mine", so the
+  // consumer keeps its own local answer, exactly like the `memberGet` wrapper.
+  const applyClosure = ctx.funcMap.get("__apply_closure");
+  if (
+    externGet !== undefined &&
+    isUndefined !== undefined &&
+    applyClosure !== undefined &&
+    !ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.methodCall)
+  ) {
+    registerNative(
+      LINK_BOUNDARY_EXPORTS.methodCall,
+      [EXTERNREF, EXTERNREF, EXTERNREF],
+      [EXTERNREF],
+      [{ name: "m", type: EXTERNREF }],
+      [
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 1 },
+        { op: "call", funcIdx: externGet },
+        { op: "local.tee", index: 3 },
+        { op: "ref.is_null" },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "ref.null.extern" }, { op: "return" }],
+        },
+        { op: "local.get", index: 3 },
+        { op: "call", funcIdx: isUndefined },
+        {
+          op: "if",
+          blockType: { kind: "empty" },
+          then: [{ op: "ref.null.extern" }, { op: "return" }],
+        },
+        { op: "local.get", index: 3 },
+        { op: "local.get", index: 0 },
+        { op: "local.get", index: 2 },
+        { op: "call", funcIdx: applyClosure },
+      ],
+    );
+  }
+
   const objectKeys = ctx.funcMap.get("__object_keys");
   const externLength = ctx.funcMap.get("__extern_length");
   if (objectKeys !== undefined && externLength !== undefined && !ctx.funcMap.has(LINK_BOUNDARY_EXPORTS.objectKeys)) {
@@ -344,6 +417,7 @@ export function publishStandaloneLinkBoundaryExports(ctx: CodegenContext): void 
 export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
   memberGet?: number;
   objectKeys?: number;
+  methodCall?: number;
 } {
   const namespace = peerNamespaces(ctx)[0];
   if (namespace === undefined) return {};
@@ -361,6 +435,7 @@ export function standaloneLinkBoundaryPeerIndices(ctx: CodegenContext): {
   return {
     memberGet: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.memberGet),
     objectKeys: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.objectKeys),
+    methodCall: ctx.funcMap.get(LINK_BOUNDARY_EXPORTS.methodCall),
   };
 }
 

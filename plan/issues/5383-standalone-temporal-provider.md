@@ -11,6 +11,24 @@ reasoning_effort: high
 requested_by: ttraenkler/fable-lead
 created: 2026-09-07
 loc-budget-allow:
+  # 2026-09-08 (S2h) — the runtime-key PROTOTYPE-member read, standalone. The
+  # mechanism is the new module src/codegen/standalone-class-dyn-member.ts;
+  # what lands in these files is only the wiring, and each line has to sit
+  # exactly where it does:
+  #   context/types.ts  +10  the `standaloneRuntimeKeyClassProtos` field. It is
+  #     a ctx field, so it can only live in the ctx type; the doc block is what
+  #     records that this set being EMPTY is the whole byte-neutrality argument
+  #     (a reader who trims it loses the reason the field is never populated
+  #     under a JS host).
+  #   property-access.ts  +8  the two runtime-key read sites, each beside its
+  #     #5358 host-lane twin — the two demands are lane-disjoint and drift
+  #     apart the moment they are recorded in different places.
+  #   index.ts  +16  the mint call at BOTH finalize sites, ahead of the
+  #     closure-dispatcher emission rather than beside the lookup fill it
+  #     serves. That position is counter-intuitive and measured (an accessor
+  #     read answered `undefined` from the other one), so the comment stating
+  #     why is load-bearing.
+  - src/codegen/context/types.ts
   # 2026-09-08 (S2g) — the standalone construct-from-a-class-VALUE path. The
   # mechanism itself is two NEW modules (src/codegen/standalone-class-construct.ts
   # and src/codegen/extern-arg-marshal.ts, the latter an extraction that makes
@@ -97,6 +115,22 @@ loc-budget-allow:
     lines: 20
     reason: "#5383 S2 R4 — pre-register the `Math.<fn>` value-read substrate before the closure is built (#2704 forbids a first registration mid-body), which is why every Math value read kept the refusal body."
 func-budget-allow:
+  # 2026-09-08 (S2h) — the runtime-key prototype-member read. Four call-site
+  # growths, all one-liners plus the comment that makes them auditable; the
+  # mechanism itself is a new module (standalone-class-dyn-member.ts):
+  #   index.ts::generateModule / ::generateMultiModule  +13 / +2  the
+  #     `mintStandaloneClassProtoBuilders` call at each finalize site. Its
+  #     POSITION is the finding (ahead of the closure-dispatcher emission, not
+  #     beside the lookup fill it feeds), so the comment stating why travels
+  #     with the call — extracting the pair into a helper would put the reason
+  #     one indirection away from the ordering it constrains.
+  #   binary-ops-in.ts::compileInOperator  +5  the `k in c` twin of the read
+  #     demand, on the same guarded arm as its #5358 host-lane sibling.
+  #   create-context.ts::createCodegenContext  +1  the field initializer.
+  - src/codegen/index.ts::generateModule
+  - src/codegen/index.ts::generateMultiModule
+  - src/codegen/binary-ops-in.ts::compileInOperator
+  - src/codegen/context/create-context.ts::createCodegenContext
   # 2026-09-08 (S2g) — +5 lines in `compileNewExpression`: the one `if` that
   # lets a MEMBER callee reach the native construct driver under standalone.
   # It is a condition on the existing dispatch `if`, not a block — there is
@@ -1292,3 +1326,173 @@ this. The next slice is therefore: (a) make the generic dynamic member read
 consult the class prototype (own-field ladder → prototype accessors/methods),
 and (b) add the `method_call` terminal to `standalone-link-boundary.ts` beside
 `memberGet`/`apply`, wired into the consumer's `__extern_method_call` miss path.
+
+## S2h findings (2026-09-08) — the prototype-member read fixed, module-locally and across the boundary; the stop moves to STATICS
+
+### R15 — a runtime-key read now consults the class PROTOTYPE (standalone)
+
+S2g's six-line reduction (`.tmp/r6.js`) reproduces exactly as recorded. The fix
+is three separate pieces, and each one was independently necessary — measured in
+this order, because each only became visible once the previous was in place.
+
+| # | missing piece | where it was |
+| --- | --- | --- |
+| 1 | the lookup only knew classes with a RUNTIME-KEYED member | `class-proto-lookup.ts::classesNeedingLookup` seeds from `ctx.classDynamicMembers` only |
+| 2 | for every other class `__proto_<C>` is LAZY, so a widened lookup answers **null** | ClassDefinitionEvaluation force-builds the prototype `$Object` only for a #5195 seed |
+| 3 | the delegation ran the getter with the **PROTOTYPE** as `this` | `__extern_get(proto, key)` — §6.2.5.5 threads the RECEIVER, not the walk cursor |
+
+Piece 2 is #5195's own deferred "Step 4.3 needs the force-init question answered
+for the general case first", and it is why widening ALONE measures as **zero**:
+
+| `.tmp/r6.js` probe (`--target standalone`, `hostBridge:"off"`) | base | widen only | + builder | + receiver |
+| --- | --- | --- | --- | --- |
+| `readDyn(new PlainDate(7), "day")` — prototype ACCESSOR | −1 | −1 | THROW | **7** |
+| `readDyn(new PlainDate(7), "sum")` — prototype METHOD value | 0 | 0 | **1** | 1 |
+| `f = readDyn(…, "sum"); f.call(new PlainDate(3), 1)` | −1 | −1 | **4** | 4 |
+| `readDyn(new PlainDate(7), "_d")` — OWN field (control) | 7 | 7 | 7 | 7 |
+| `new PlainDate(7).sum(1)` — closed dispatcher (control) | 8 | 8 | 8 | 8 |
+| `o[k](2)` — dynamic method CALL (control) | 9 | 9 | 9 | 9 |
+
+The THROW column is the whole argument for piece 3 and it was only observable
+after piece 2: with the prototype built but the delegation left as a plain
+`__extern_get(proto, key)`, `get day() { return this._d; }` ran against an
+`$Object` that has no fields. `__reflect_get_receiver(proto, key, recv)` — the
+runtime's existing one-shot explicit-receiver channel, already consumed at the
+top of `__extern_get` for `Reflect.get` — is the fix, and it needed no new
+machinery. A METHOD read is insensitive to it (a data property does not read
+`this`), which is exactly what made the accessor miss look like an
+accessor-INSTALL bug for a while.
+
+**The mechanism** — `src/codegen/standalone-class-dyn-member.ts`:
+
+```
+read site (o[k], k not numeric, standalone)  ->  record the class family in
+                                                 ctx.standaloneRuntimeKeyClassProtos
+finalize                                     ->  mint __class_proto_build_<C>()
+                                                 ( = emitLazyProtoGet + drop )
+__class_proto_lookup arm                     ->  if __proto_<C> is null: call the builder
+__extern_get delegating arm                  ->  __reflect_get_receiver(proto, key, recv)
+```
+
+Demand-recording mirrors #5358's host-lane twin
+(`recordRuntimeKeyClassMethodRead`) arm for arm, and the two are lane-disjoint —
+that one returns early under standalone, this one under a JS host — so a read
+site calls both unconditionally.
+
+**Two ordering findings, both silent when wrong.**
+
+- The builder must be minted **before the `__call_fn_method_<N>` dispatchers are
+  emitted**, not beside the lookup fill it feeds. The builder creates the
+  getter's canonical closure singleton, and `__call_accessor_get` dispatches
+  through `__call_fn_method_<arity>`; minting later left the accessor's arity
+  with no dispatcher, so `fillAccessorDrivers` used its return-undefined
+  fallback. The prototype object itself was **correct** the whole time — the
+  accessor property WAS installed, `__reflect_get_receiver` DID resolve — and
+  the read still answered `undefined`.
+- `index.ts` has **two** finalize blocks and they order these two phases
+  **oppositely**: `generateModule` runs the closure exports first and the lookup
+  fill much later; `generateMultiModule` runs the lookup fill first. So "before
+  the dispatchers" and "before the fill" are different positions, and only the
+  earlier of the two satisfies both. Getting this wrong cost a full
+  measure-and-re-measure cycle: every single-module probe passed while every
+  BOUNDARY probe answered `undefined`, because in the multi-module path the fill
+  saw an empty demand set.
+
+**Byte A/B** (sha256, 7 modules × {gc, standalone}, `.tmp/ab-base.txt` vs
+`.tmp/ab-new2.txt`): **13 of 14 identical**. The gc lane is identical for all
+seven, INCLUDING the module that has the dynamic read. The one that moves is
+`m7-dynread.js` under standalone (138,874 -> 146,074 B) — a standalone module
+that actually performs a runtime-key read, which is exactly the gate. The corpus
+spans: no class at all, class+methods, class+accessors, inheritance,
+array/string, an object literal, and the dynamic-read module.
+
+### R16 — `__js2wasm_link_method_call`, and why `memberGet` + `apply` is not enough
+
+With R15 in place the boundary READ crosses, and the CALL still did not:
+
+| consumer probe on a provider-owned value (`.tmp/linkprobe.mts`) | S2g base | after R15 | after R16 |
+| --- | --- | --- | --- |
+| `d.y` — own field | 2024 | 2024 | 2024 |
+| `d.day` — prototype ACCESSOR | −1 | **1** | 1 |
+| `typeof d.sum` — prototype METHOD value | 0 | **1** | 1 |
+| `d.sum(1)` — prototype METHOD call | throws "is not a function" | throws | **2025** |
+| `f = d.sum; f.call(d, 1)` — extracted | null | null | routes through the terminal |
+| `Object.keys(NS).length` | 2 | 2 | 2 |
+
+The read handing back a working value did **not** make the call work, and the
+reason is worth not re-deriving: what crosses is the provider's method-closure
+SINGLETON, whose trampoline resolves `this` from the **provider's**
+`__current_this` global. The consumer has its own copy of that global, so
+invoking the closure on the consumer side binds nothing — `f.call(d, 1)`
+answered **null**, not a wrong number. The call has to happen on the side that
+owns the receiver binding.
+
+`__js2wasm_link_method_call(recv, name, args)` is that terminal, wired into the
+consumer's `__extern_method_call` miss path exactly where the host lane's
+`__boundary_object_call` sits (`boundaryObjectCallIdx ?? peerMethodCallIdx`), so
+no consumer arm changed shape.
+
+It is a **wrapper, not a re-export of `__extern_method_call`** — measured, after
+publishing that native directly first. The native gates its resolve-then-apply
+on `ref.test $Object`; a provider's own class instance is a closed `$ClassName`
+struct, so it takes the non-`$Object` else arm and **the provider itself** threw
+"is not a function". A provider has no `__call_m_<name>` dispatcher for the
+method either: those are reserved per NAME at a CALL SITE, and a provider has no
+call site for a method only its consumer calls. The wrapper does
+resolve-then-apply directly (`__extern_get` -> `__apply_closure`), both halves
+being correct on that side, and normalises a null/undefined resolution to
+`ref.null.extern` = "not mine" so the consumer keeps its local answer — the same
+contract the `memberGet` wrapper uses.
+
+A provider also has no read site of its own to record R15's demand (the read
+happens in the OTHER module), so a wasm-consumed provider seeds every class it
+owns. That is the same argument the terminals themselves rest on: the provider
+cannot know which key will be asked.
+
+### The NEW stop — a STATIC method on a class VALUE
+
+Not fixed, and **not regressed** — measured both ways by file-copy revert
+(`.tmp/r7.js`, identical answers on the S2g base and on this branch):
+
+| probe | module-local | across the boundary |
+| --- | --- | --- |
+| `typeof PlainDate.mk` via a runtime key | `"undefined"` | `"undefined"` |
+| `K.mk(7)` through a dynamic receiver | throws "is not a function" | throws, same |
+| `PlainDate[k](5)` with `k = "mk"` | `undefined` | — |
+
+The class OBJECT is a `$ClassName` struct (#3976 deliberately did not convert
+it: `emitDynamicNewFallback` `ref.test`s that value), so its static surface
+lives in the #5195 Step 2 static **sidecar** — which is built only for a class
+with a RUNTIME-KEYED static. `__class_proto_lookup`'s class-object arm already
+routes a class-value receiver to that sidecar and answers **null** when there is
+none, so widening is a self-contained next step rather than a new mechanism.
+
+Widening is the rest of #5195 cluster B and is **not** free: the sidecar carries
+static METHODS and ACCESSORS but deliberately not static FIELDS (mirroring a
+mutable slot would create two sources of truth), so routing every class-value
+read through it would shadow the `staticProps` lowering for a static field. That
+precedence question has to be answered before the widening, which is why it is
+its own slice.
+
+**Consequence for the S2 smoke test:** two of the three assertions are now
+reachable and one is not.
+
+| assertion | state |
+| --- | --- |
+| `Object.keys(Temporal).length === 9` | passed before this slice |
+| `new Temporal.PlainDate(2024,1,1).day === 1` | the prototype-ACCESSOR read this slice fixes (R15, proven on the reduction and through a real linked provider) |
+| `Temporal.Duration.from({hours:1}).total("minutes") === 60` | **still blocked** — needs the static read above |
+
+So the three-assertion smoke test is not writable as a whole, and asserting only
+the passing subset would hide exactly the stop that is left. What is committed
+instead is the reduction-level guard for both halves that now work —
+module-local (accessor / method value / method `.call`, plus the three controls)
+and host-free across a real linked provider (accessor, method value, method
+CALL, own field, key count) — with the static case as an `it.todo` naming the
+stop.
+
+**Pre-existing red, NOT caused by this slice** (measured both ways, base = this
+branch with the four touched files reverted by file copy): `tests/issue-2151.test.ts`
+(1, "wasi: custom iterable driven via any-method .next()") and
+`tests/issue-2151-mixed-spread.test.ts` (1, "empty dynamic spread: trailing
+numeric param reads 0") fail **identically — the same 2 — before and after**.

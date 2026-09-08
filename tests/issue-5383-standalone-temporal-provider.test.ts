@@ -1045,3 +1045,146 @@ describe("#5383 S2g R14 — `new` on a provider-owned class, host-free", () => {
     expect({ day: ex.day(), year: ex.year(), b: ex.b() }).toEqual({ day: 1, year: 2024, b: 2 });
   });
 });
+
+describe("#5383 S2h — a runtime-key read reaches the class PROTOTYPE (standalone)", () => {
+  // The S2g reduction, verbatim. `_d` (an own field) and `o.sum(1)` (the
+  // `__call_m_sum_1` closed dispatcher) already worked; the accessor and the
+  // method VALUE did not, because `__extern_get`'s ladder serves a closed
+  // `$ClassName` struct's own fields and has no notion of its prototype.
+  const REDUCTION = `
+    class PlainDate {
+      constructor(d) { this._d = d; }
+      get day() { return this._d; }
+      sum(k) { return this._d + k; }
+    }
+    function readDyn(o, k) { return o[k]; }
+  `;
+
+  it("a prototype ACCESSOR read under a runtime key answers, with the INSTANCE as `this`", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const v = readDyn(new PlainDate(7), "day");
+        return typeof v === "number" ? v : -1;
+      }
+    `);
+    // Base: -1 (`undefined`). The receiver half matters independently — with the
+    // prototype built but the delegation done as a plain `__extern_get(proto,
+    // key)`, the getter ran with the PROTOTYPE as `this` and THREW.
+    expect(callExport(mod)).toBe(7);
+  });
+
+  it("a prototype METHOD read under a runtime key answers a callable bound by the call site", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const f = readDyn(new PlainDate(7), "sum");
+        if (typeof f !== "function") return -1;
+        return f.call(new PlainDate(3), 1) * 10 + 1;
+      }
+    `);
+    // Base: -1 — `typeof o["sum"]` was `"undefined"`. 4 = 3 + 1: the explicit
+    // receiver wins, so the value is the canonical UNBOUND method singleton.
+    expect(callExport(mod)).toBe(41);
+  });
+
+  it("an OWN field and a dynamic method CALL keep their answers", async () => {
+    const mod = await compileStandalone(`${REDUCTION}
+      export function test() {
+        const own = readDyn(new PlainDate(7), "_d");
+        const called = new PlainDate(7).sum(1);
+        const o = new PlainDate(7);
+        const k = "sum";
+        const computed = o[k](2);
+        return own * 100 + called * 10 + computed;
+      }
+    `);
+    // 7 / 8 / 9 — all three answered correctly BEFORE this slice, and the
+    // `__hasOwnProperty` guard on the new delegation is what keeps the own
+    // field from being shadowed by the prototype.
+    expect(callExport(mod)).toBe(789);
+  });
+});
+
+describe("#5383 S2h — prototype members of a PROVIDER-owned instance, host-free", () => {
+  const PROVIDER = `class PlainDate {
+      constructor(y, m, d) { this.y = y; this.m = m; this.d = d; }
+      get day() { return this.d; }
+      sum(k) { return this.y + k; }
+    }
+    export const NS = Object.freeze({ __proto__: null, PlainDate, b: 2 });`;
+
+  const CONSUMER = `
+    export function ownField() { const d = new NS.PlainDate(2024, 1, 1); return d.y; }
+    export function protoAccessor() { const d = new NS.PlainDate(2024, 1, 1); const v = d.day; return typeof v === "number" ? v : -1; }
+    export function protoMethodTypeof() { const d = new NS.PlainDate(2024, 1, 1); return typeof d.sum === "function" ? 1 : 0; }
+    export function protoMethodCall() { const d = new NS.PlainDate(2024, 1, 1); return d.sum(1); }
+    export function keys() { return Object.keys(NS).length; }
+  `;
+
+  it("the accessor, the method value and the method CALL all cross", { timeout: 300_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), "issue-5383-s2h-"));
+    const packageRoot = join(root, "node_modules", "ns5383h");
+    mkdirSync(packageRoot, { recursive: true });
+    writeFileSync(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "ns5383h", version: "0.0.0", main: "index.js" }),
+    );
+    writeFileSync(join(packageRoot, "index.js"), PROVIDER);
+    const entry = join(root, "entry.js");
+    writeFileSync(entry, `import { NS } from "ns5383h";\nexport function __probe() { return typeof NS; }\n`);
+    const standalone = { target: "standalone" as const, hostBridge: "off" as const };
+    const built = await compileProject(entry, {
+      allowJs: true,
+      skipSemanticDiagnostics: true,
+      packageCacheDir: join(root, "providers"),
+      ...standalone,
+    });
+    expect(built.success).toBe(true);
+    const artifact = (built.linkedModules ?? []).find((e) => e.packageName === "ns5383h")!;
+    const field = artifact.exportBoundaries!.NS!.field;
+    const consumerEntry = "/__main.js";
+    const result = await compileMulti(
+      {
+        "/__ns_stub.ts": `export declare function ${field}(): any;\n`,
+        [consumerEntry]: `import { ${field} } from "/__ns_stub";\nconst NS = ${field}();\n${CONSUMER}`,
+      },
+      consumerEntry,
+      {
+        allowJs: true,
+        skipSemanticDiagnostics: true,
+        canonicalRuntimeTypes: true,
+        sharedExceptionTag: true,
+        link: [artifact.namespace],
+        linkedPackageBindings: new Map([[field, { module: artifact.namespace, field }]]),
+        ...standalone,
+      },
+    );
+    (result as { linkedModules?: unknown[] }).linkedModules = [artifact];
+    expect(result.success).toBe(true);
+    const { instance } = await instantiateLinkedProject(result, {});
+    const ex = instance.exports as unknown as Record<string, () => unknown>;
+    // Base (the S2g branch): accessor -1, typeof 0, and `d.sum(1)` threw
+    // "is not a function". The own field and the key count (2 — `PlainDate`
+    // and `b`; `__proto__: null` is not an own key) already crossed.
+    expect({
+      ownField: ex.ownField(),
+      protoAccessor: ex.protoAccessor(),
+      protoMethodTypeof: ex.protoMethodTypeof(),
+      protoMethodCall: ex.protoMethodCall(),
+      keys: ex.keys(),
+    }).toEqual({ ownField: 2024, protoAccessor: 1, protoMethodTypeof: 1, protoMethodCall: 2025, keys: 2 });
+  });
+
+  // STILL OPEN — the remaining S2h stop, measured on this branch
+  // (`.tmp/linkprobe.mts`): a STATIC method read off a class VALUE.
+  // `typeof NS.PlainDate.mk` is `"undefined"` and `NS.PlainDate.mk(7)` throws
+  // "is not a function", module-locally as well as across the boundary
+  // (`.tmp/r7.js` answers the same three ways on the S2g base and on this
+  // branch — this slice neither fixes nor regresses it). The class OBJECT is a
+  // `$ClassName` struct whose static surface lives in the #5195 Step 2 static
+  // SIDECAR, and that sidecar is built only for a class with a RUNTIME-KEYED
+  // static. Widening it is the rest of #5195 cluster B and carries a known
+  // static-FIELD-vs-sidecar precedence residual, so it is its own slice.
+  // This is what still blocks `Temporal.Duration.from({hours:1}).total(…)`,
+  // and it is why the three-assertion S2 smoke test is not yet writable.
+  it.todo("a STATIC method on a provider-owned class value is callable (#5195 cluster B)");
+});

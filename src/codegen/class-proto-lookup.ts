@@ -47,6 +47,7 @@ import { addFuncType } from "./registry/types.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js";
 import { standaloneClassProtoObjectApplies } from "./class-proto-object.js";
 import { classStaticSidecarApplies } from "./class-static-sidecar.js"; // (#5195 Step 2)
+import { classProtoBuilderName } from "./standalone-class-dyn-member.js"; // (#5383 S2h)
 
 const LOOKUP_NAME = "__class_proto_lookup";
 
@@ -75,6 +76,15 @@ interface ProtoLookupEntry {
    * it is the same object `__proto_D` would have been linked to.
    */
   protoGlobalIdxs: number[];
+  /**
+   * (#5383 S2h) The class each `protoGlobalIdxs` entry belongs to, positionally.
+   * A class force-built at ClassDefinitionEvaluation has a non-null global by
+   * the time any read runs; one admitted by the runtime-key demand does NOT, so
+   * its arm calls `__class_proto_build_<C>` first. The builder is resolved BY
+   * NAME at fill time (funcMap is shift-maintained) and is simply absent for
+   * the #5195 seeds, which keeps their arms byte-identical.
+   */
+  protoClassNames: string[];
   /** Inheritance depth — arms are emitted most-derived first (see below). */
   depth: number;
   /** (#5195 Step 2) The static sidecar `$Object`, when this class has one. */
@@ -96,6 +106,13 @@ interface ProtoLookupEntry {
  */
 function classesNeedingLookup(ctx: CodegenContext): Set<string> {
   const seeds = new Set(ctx.classDynamicMembers.keys());
+  // (#5383 S2h) …plus every class a RUNTIME-key read may land on. That read has
+  // no name, so the demand is recorded coarsely at the read site
+  // (`standalone-class-dyn-member.ts`) and the prototype singleton is
+  // force-built by the per-class builder the arm below calls. This is #5195's
+  // deferred Step 4.3: the force-init question the original scope could not
+  // answer for the general case.
+  for (const className of ctx.standaloneRuntimeKeyClassProtos) seeds.add(className);
   if (seeds.size === 0) return seeds;
   const out = new Set(seeds);
   for (const className of ctx.classSet) {
@@ -126,6 +143,7 @@ function collectEntries(ctx: CodegenContext): ProtoLookupEntry[] {
     // one. Decline rather than risk answering another class's prototype.
     if (tagFieldIdx < 0 || tagValue === undefined) continue;
     const protoGlobalIdxs: number[] = [];
+    const protoClassNames: string[] = [];
     let walkDepth = 0;
     for (
       let current: string | undefined = className;
@@ -134,7 +152,10 @@ function collectEntries(ctx: CodegenContext): ProtoLookupEntry[] {
     ) {
       if (!standaloneClassProtoObjectApplies(ctx, current)) continue;
       const idx = ctx.protoGlobals.get(current);
-      if (idx !== undefined) protoGlobalIdxs.push(idx);
+      if (idx !== undefined) {
+        protoGlobalIdxs.push(idx);
+        protoClassNames.push(current);
+      }
     }
     if (protoGlobalIdxs.length === 0) continue;
     let depth = 0;
@@ -160,6 +181,7 @@ function collectEntries(ctx: CodegenContext): ProtoLookupEntry[] {
       tagFieldIdx,
       tagValue,
       protoGlobalIdxs,
+      protoClassNames,
       depth,
       // (#5195 F2) The class-object global is recorded whenever the class HAS
       // one, independently of whether a sidecar exists: the identity test is
@@ -259,10 +281,25 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
           ...classObjectArm,
           // Nearest built prototype wins; a null one means that class was never
           // force-built and carries nothing this lookup could answer with.
-          ...entry.protoGlobalIdxs.flatMap((protoGlobalIdx, position): Instr[] =>
-            position === entry.protoGlobalIdxs.length - 1
-              ? [{ op: "global.get", index: protoGlobalIdx }, { op: "return" }]
+          // (#5383 S2h) …unless a BUILDER exists for it, in which case "not
+          // built yet" is not an answer — it is a class the runtime-key demand
+          // admitted, whose prototype ClassDefinitionEvaluation left lazy. Call
+          // the builder once and re-read. The call is emitted only for such a
+          // class, so a #5195 seed's arm is byte-identical.
+          ...entry.protoGlobalIdxs.flatMap((protoGlobalIdx, position): Instr[] => {
+            const builderIdx = ctx.funcMap.get(classProtoBuilderName(entry.protoClassNames[position]!));
+            const build: Instr[] =
+              builderIdx === undefined
+                ? []
+                : [
+                    { op: "global.get", index: protoGlobalIdx },
+                    { op: "ref.is_null" },
+                    { op: "if", blockType: { kind: "empty" }, then: [{ op: "call", funcIdx: builderIdx }] },
+                  ];
+            return position === entry.protoGlobalIdxs.length - 1
+              ? [...build, { op: "global.get", index: protoGlobalIdx }, { op: "return" }]
               : [
+                  ...build,
                   { op: "global.get", index: protoGlobalIdx },
                   { op: "ref.is_null" },
                   { op: "i32.eqz" },
@@ -271,8 +308,8 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
                     blockType: { kind: "empty" },
                     then: [{ op: "global.get", index: protoGlobalIdx }, { op: "return" }],
                   },
-                ],
-          ),
+                ];
+          }),
         ],
       },
     );
@@ -364,6 +401,18 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
 
   const scratch = 2 + externGetFn.locals.length;
   externGetFn.locals.push({ name: "__class_proto_target", type: { kind: "externref" } });
+  // (#5383 S2h) The delegate call binds the ORIGINAL receiver as the accessor's
+  // `this`. §6.2.5.5 OrdinaryGet threads the RECEIVER, not the prototype the
+  // walk is standing on, and `__reflect_get_receiver` is the runtime's existing
+  // channel for exactly that (it save/restores the one-shot receiver globals
+  // `__extern_get` already consumes). A plain `__extern_get(proto, key)` ran the
+  // getter with the PROTOTYPE as `this`: measured on `.tmp/r6b.js`, a class
+  // whose prototype was already built answered its METHOD correctly and THREW
+  // on its ACCESSOR (`this._d` off a prototype that has no fields). Methods are
+  // unaffected — a data property does not read `this` — so the fallback below
+  // is the pre-S2h behaviour for a provider that somehow lacks the helper.
+  const delegateIdx = ctx.funcMap.get("__reflect_get_receiver") ?? externGetIdx;
+  const delegateReceiverOperand: Instr[] = delegateIdx === externGetIdx ? [] : [{ op: "local.get", index: 0 }];
   externGetFn.body.unshift(
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: lookupIdx },
@@ -386,7 +435,8 @@ export function fillClassProtoLookupArm(ctx: CodegenContext): void {
             // `$Object` branch and cannot reach this arm again.
             { op: "local.get", index: scratch },
             { op: "local.get", index: 1 },
-            { op: "call", funcIdx: externGetIdx },
+            ...delegateReceiverOperand,
+            { op: "call", funcIdx: delegateIdx },
             { op: "return" },
           ],
         },
