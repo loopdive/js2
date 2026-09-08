@@ -26,6 +26,7 @@ import { emitThrowRangeError, emitThrowTypeError } from "./helpers.js";
 import { isStaticNaN, tryStaticToNumber } from "./misc.js";
 import { sourceOverridesMethodOnReceiver } from "./member-override-scan.js";
 import { objectCoercionPreservesDate } from "../object-ctor-primitive-receiver.js";
+import { expressionHasWidenedPropertyType } from "../strict-eq-stale-type.js";
 
 // ── Builtins ─────────────────────────────────────────────────────────
 
@@ -83,8 +84,11 @@ function compileConsoleCall(
 
   for (const arg of expr.arguments) {
     const argType = ctx.checker.getTypeAtLocation(arg);
+    // An alias write can invalidate the checker type; match the collector
+    // and preserve the runtime value through the externref console import.
+    const stale = expressionHasWidenedPropertyType(ctx, arg);
 
-    if (isStringType(argType)) {
+    if (!stale && isStringType(argType)) {
       compileExpression(ctx, fctx, arg);
       // Fast mode: flatten + marshal native string to externref before passing to host
       if (ctx.nativeStrings && ctx.nativeStrTypeIdx >= 0) {
@@ -103,7 +107,7 @@ function compileConsoleCall(
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
       }
-    } else if (isBooleanType(argType)) {
+    } else if (!stale && isBooleanType(argType)) {
       // (#2788) Coerce the argument to the console import's param ValType (i32).
       // The static-type-selected variant fixes the import signature; passing the
       // expected ValType makes compileExpression reconcile any mismatch (e.g. a
@@ -113,7 +117,7 @@ function compileConsoleCall(
       if (funcIdx !== undefined) {
         fctx.body.push({ op: "call", funcIdx });
       }
-    } else if (isNumberType(argType)) {
+    } else if (!stale && isNumberType(argType)) {
       // (#2788) Coerce to f64 — fixes `console.log(a[i])` where the bounds-checked
       // element read (#2760) widened a `number[]` element to an `externref`
       // (OOB→undefined) but the `console_${method}_number` import expects f64.
