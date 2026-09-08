@@ -40,6 +40,28 @@ export function configuredUpstreamTestTimeoutMs(env = process.env) {
   return Number.isFinite(configured) && configured > 0 ? configured : 0;
 }
 
+/** Optional raw numeric exports expose guest errors without a host string bridge. */
+export function readStandaloneGuestError(exports) {
+  if (
+    typeof exports?.upstreamStandaloneErrorLength !== "function" ||
+    typeof exports?.upstreamStandaloneErrorCodeUnit !== "function"
+  )
+    return "";
+  try {
+    const length = exports.upstreamStandaloneErrorLength();
+    if (!Number.isSafeInteger(length) || length < 1 || length > 16_384) return "";
+    let message = "";
+    for (let index = 0; index < length; index++) {
+      const code = exports.upstreamStandaloneErrorCodeUnit(index);
+      if (!Number.isInteger(code) || code < 0 || code > 65_535) return "";
+      message += String.fromCharCode(code);
+    }
+    return message;
+  } catch {
+    return "";
+  }
+}
+
 export async function withUpstreamTestTimeout(run, timeoutMs, label) {
   if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) return run();
   let timer;

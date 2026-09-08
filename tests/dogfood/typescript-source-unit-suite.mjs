@@ -16,6 +16,20 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FILES = { factory: 3, diagnosticCollection: 5 };
 
+export const SOURCE_UNIT_DIAGNOSTIC_EXPORTS = String.raw`
+let __sourceUnitError = "";
+export function runStandaloneUpstreamTest(index: number): number {
+  __sourceUnitError = "";
+  try { return runSourceUnitTestBody(index); }
+  catch (error) {
+    __sourceUnitError = String((error as Error).message || error);
+    throw error;
+  }
+}
+export function upstreamStandaloneErrorLength(): number { return __sourceUnitError.length; }
+export function upstreamStandaloneErrorCodeUnit(index: number): number { return __sourceUnitError.charCodeAt(index); }
+`;
+
 export async function runSourceUnitFile(name) {
   if (!Object.hasOwn(FILES, name)) throw new Error(`Unsupported source unit file: ${name}`);
   const suite = setupTypescriptUpstreamSuite();
@@ -29,7 +43,8 @@ export async function runSourceUnitFile(name) {
   // Both files use compiler APIs only. Redirect the harness-wide namespace to
   // its compiler re-export; all original declarations and assertions remain.
   const transformed = original.replace(importPattern, `import * as ts from ${JSON.stringify(`./${namespace}`)};`);
-  const source = `${UPSTREAM_TEST_SHIM}\nconst assert = __qunitAssert;\n${transformed}\n${UPSTREAM_TEST_EXPORTS}\n${TYPESCRIPT_STANDALONE_TEST_EXPORTS}`;
+  const testBody = TYPESCRIPT_STANDALONE_TEST_EXPORTS.replace("runStandaloneUpstreamTest", "runSourceUnitTestBody");
+  const source = `${UPSTREAM_TEST_SHIM}\nconst assert = __qunitAssert;\n${transformed}\n${UPSTREAM_TEST_EXPORTS}\n${testBody}\n${SOURCE_UNIT_DIAGNOSTIC_EXPORTS}`;
   // Upstream's cyclic namespace graph relies on bundled initialization and
   // const-enum folding. Use the same source for the native reference, bundled
   // independently; Wasm still compiles the original source module graph.

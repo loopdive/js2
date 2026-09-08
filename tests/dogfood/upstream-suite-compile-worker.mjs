@@ -7,6 +7,7 @@ import { getWebHostConstructors } from "../../src/runtime/web-host-constructors.
 import {
   configuredUpstreamTestTimeoutMs,
   emitWorkerResult,
+  readStandaloneGuestError,
   runSequentialUpstreamTests,
   signalWorkerCompileComplete,
 } from "./upstream-suite-worker-protocol.mjs";
@@ -460,7 +461,10 @@ async function main() {
           return value;
         },
         timeoutMs: testTimeoutMs,
-        thrownText: (error) => errorText(error, instance),
+        thrownText: (error) => {
+          const guestMessage = readStandaloneGuestError(exports);
+          return `${errorText(error, instance)}${guestMessage ? `\nguest: ${guestMessage}` : ""}`;
+        },
         failureText: (index) =>
           `standalone callback ${index} returned ${String(rawValues.get(index))}; expected numeric 1`,
       });

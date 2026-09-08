@@ -227,15 +227,34 @@ callbacks. The new verdict rejects partial callbacks, wrong target, failed
 validation, and entry or linked-module imports. Harness controls pass **24/24**
 (`.tmp/ts5-source-suite-controls.log`); the final verdict-only rerun passes 3/3.
 
-Full-source Wasm runs are still live, not accepted: factory session **84142**
-(`.tmp/ts5-source-factory.log`) and diagnostics session **68213**
-(`.tmp/ts5-source-diagnostics.log`). Last process check confirmed both workers
-CPU-active at roughly five and three minutes respectively. Typecheck passed
-(`.tmp/ts5-source-suite-typecheck.log`, session **91783**, exit 0). Re-poll the
-compile handles rather than duplicating the runs. The running drivers predate the final
-CLI report-writing/fail-closed-exit additions, but use the final source input and
-zero-import verdict. Reports from these runs are in their stdout logs; subsequent
-runs also persist `report/typescript-source-unit-<name>.json`.
+Both initial full-source runs completed: factory compiles and validates at
+**63,631,844 bytes / zero imports / 408,182 ms**, but **0/3 Wasm tests pass**;
+diagnostic collection compiles and validates at **89,253,806 bytes / zero imports
+/ 399,899 ms**, but **0/5 Wasm tests pass**. Logs are
+`.tmp/ts5-source-factory.log` and `.tmp/ts5-source-diagnostics.log`; both drivers
+exit 1. All eight throw opaque WebAssembly exceptions, not assertion passes.
+These source results do not increase the accepted 25-test count.
+
+Checkpoint `07a6a23cadc41e` records the new runner. Typecheck passed before the
+diagnostic addition (`.tmp/ts5-source-suite-typecheck.log`). The next run adds
+guest-side message capture, rethrows the same exception, and exposes text through
+bounded numeric UTF-16 exports. No host imports or assertion changes. Its raw
+Wasm sentinel verifies that the exception still escapes and its exact message
+is readable; the diagnostic/worker controls pass **10/10**
+(`.tmp/ts5-source-error-controls.log`). Typecheck after the diagnostic addition
+also passes (`.tmp/ts5-source-errors-typecheck.log`).
+
+Instrumented factory run completed in **158,195 ms**, valid **63,632,570-byte**
+standalone module, **zero imports**, still **0/3 Wasm / 3/3 native**. Each guest
+message says `Cannot access property on null or undefined`, at generated
+819:27, 849:23, and 860:25: respectively the FIRST `ts.factory` access in each
+callback (`createClassExpression`, `createObjectLiteralExpression`, and
+`createIdentifier`). This is before any parenthesizing assertion. Next reduce
+the namespace-imported exported factory value/initialization path; do not infer
+the diagnostic-collection failure has the same cause without its own evidence.
+Log: `.tmp/ts5-source-factory-error-text.log`; persistent report:
+`tests/dogfood/report/typescript-source-unit-factory.json`. All compilation and
+typecheck processes from this expansion are terminal; no live handle to resume.
 
 ### Source-defined collection carrier investigation (resumed)
 
