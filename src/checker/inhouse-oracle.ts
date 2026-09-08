@@ -101,6 +101,18 @@ function unwrapExpression(expr: ts.Expression): ts.Expression {
 }
 
 export class InHouseOracle implements TypeOracle {
+  indexedElementShapeOf(_node: ts.Node): undefined {
+    return undefined;
+  }
+  typeDeclarationsOf(_node: ts.Node): readonly ts.Declaration[] {
+    return [];
+  }
+  resolvedCallDeclarationOf(_node: ts.CallExpression): ts.Signature["declaration"] {
+    return undefined;
+  }
+  hasIndexSignature(_node: ts.Node): boolean | undefined {
+    return undefined;
+  }
   private readonly factCache = new WeakMap<ts.Node, TypeFact>();
   private readonly inFlight = new Set<ts.Node>();
   private readonly keyCache = new Map<string, OracleTypeKey>();

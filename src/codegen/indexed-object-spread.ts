@@ -6,7 +6,6 @@ import type { CodegenContext } from "./context/types.js";
 export function objectLiteralHasIndexedSpread(ctx: CodegenContext, expr: ts.ObjectLiteralExpression): boolean {
   return expr.properties.some((property) => {
     if (!ts.isSpreadAssignment(property)) return false;
-    const type = ctx.checker.getNonNullableType(ctx.checker.getTypeAtLocation(property.expression));
-    return type.getStringIndexType() !== undefined || type.getNumberIndexType() !== undefined;
+    return ctx.oracle.hasIndexSignature(property.expression) !== false;
   });
 }

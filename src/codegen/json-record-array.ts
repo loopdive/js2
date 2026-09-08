@@ -3,7 +3,9 @@ import { ts } from "../ts-api.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import { allocLocal } from "./context/locals.js";
 import { pushBody, popBody } from "./context/bodies.js";
-import { resolveWasmType } from "./index.js";
+import type { ValType } from "../ir/types.js";
+import type { TypeFact } from "../checker/oracle.js";
+import { withSpeculativeCompile } from "./context/speculative.js";
 import { compileExpression, coerceType } from "./shared.js";
 import { getVecInfo } from "./type-coercion.js";
 import { materializeStructAsDynamicObject } from "./literals.js";
@@ -12,35 +14,48 @@ import { canonicalUndefinedExternInstrs } from "./any-helpers.js";
 import { addStringConstantGlobal } from "./registry/imports.js";
 import { stringConstantExternrefInstrs } from "./native-strings.js";
 
-/** The compact JSON route can safely snapshot flat, data-only record fields. */
-export function jsonRecordArrayLayout(ctx: CodegenContext, value: ts.Expression) {
+function recordElementShape(ctx: CodegenContext, value: ts.Expression) {
   while (ts.isAsExpression(value) || ts.isTypeAssertionExpression(value) || ts.isParenthesizedExpression(value)) {
     value = value.expression;
   }
-  const sourceType = ctx.checker.getTypeAtLocation(value);
-  const type = resolveWasmType(ctx, sourceType);
+  return ctx.oracle.indexedElementShapeOf(value);
+}
+
+function scalarJsonFact(fact: TypeFact): boolean {
+  if (fact.kind === "union") return fact.parts.every(scalarJsonFact);
+  return (
+    fact.kind === "number" ||
+    fact.kind === "string" ||
+    fact.kind === "boolean" ||
+    fact.kind === "null" ||
+    fact.kind === "undefined"
+  );
+}
+
+/** Source-only eligibility; actual storage is checked after compiling the value. */
+export function isJsonRecordArrayCandidate(ctx: CodegenContext, value: ts.Expression): boolean {
+  const shape = recordElementShape(ctx, value);
+  return (
+    !!shape?.props.length &&
+    shape.props.every(
+      (property) => property.name !== "toJSON" && !property.name.startsWith("__") && scalarJsonFact(property.fact),
+    )
+  );
+}
+
+/** The compact JSON route can safely snapshot flat, data-only record fields. */
+function jsonRecordArrayLayout(ctx: CodegenContext, value: ts.Expression, type: ValType) {
   if (type.kind !== "ref" && type.kind !== "ref_null") return undefined;
   const vec = getVecInfo(ctx, type.typeIdx);
   if (!vec || (vec.elemType.kind !== "ref" && vec.elemType.kind !== "ref_null")) return undefined;
   const name = ctx.typeIdxToStructName.get(vec.elemType.typeIdx);
   if (name !== undefined && ctx.classSet.has(name)) return undefined;
   const fields = name === undefined ? undefined : ctx.structFields.get(name);
-  const sourceElement = sourceType.getNumberIndexType();
+  const sourceElement = recordElementShape(ctx, value);
   const scalarProperty = (name: string): boolean => {
-    const property = sourceElement?.getProperty(name);
+    const property = sourceElement?.props.find((property) => property.name === name);
     if (!property) return false;
-    const propertyType = ctx.checker.getTypeOfSymbolAtLocation(property, value);
-    const variants = propertyType.isUnion() ? propertyType.types : [propertyType];
-    return variants.every(
-      (type) =>
-        (type.flags &
-          (ts.TypeFlags.StringLike |
-            ts.TypeFlags.NumberLike |
-            ts.TypeFlags.BooleanLike |
-            ts.TypeFlags.Null |
-            ts.TypeFlags.Undefined)) !==
-        0,
-    );
+    return scalarJsonFact(property.fact);
   };
   if (
     !fields?.length ||
@@ -61,26 +76,41 @@ export function jsonRecordArrayLayout(ctx: CodegenContext, value: ts.Expression)
   const undefinedStringFields = fields.flatMap((field, index) => {
     if ((field.type.kind !== "ref_null" && field.type.kind !== "ref") || field.type.typeIdx !== ctx.anyStrTypeIdx)
       return [];
-    const property = sourceElement?.getProperty(field.name);
+    const property = sourceElement?.props.find((property) => property.name === field.name);
     if (!property) return [];
-    const propertyType = ctx.checker.getTypeOfSymbolAtLocation(property, value);
-    const variants = propertyType.isUnion() ? propertyType.types : [propertyType];
-    return ((property.flags & ts.SymbolFlags.Optional) !== 0 ||
-      variants.some((type) => (type.flags & ts.TypeFlags.Undefined) !== 0)) &&
-      !variants.some((type) => (type.flags & ts.TypeFlags.Null) !== 0)
-      ? [{ name: field.name, index }]
-      : [];
+    const fact = property.fact;
+    const undefinable = property.optional || fact.kind === "undefined" || (fact.kind === "union" && fact.undefinable);
+    const nullable = fact.kind === "null" || (fact.kind === "union" && fact.nullable);
+    return undefinable && !nullable ? [{ name: field.name, index }] : [];
   });
   return { type, arrTypeIdx: vec.arrTypeIdx, elementType: vec.elemType, undefinedStringFields };
 }
 
 /** Leave an ObjVec of open records on the stack; evaluate the array only once. */
-export function emitJsonRecordArray(ctx: CodegenContext, fctx: FunctionContext, value: ts.Expression): boolean {
-  const layout = jsonRecordArrayLayout(ctx, value);
-  if (!layout) return false;
-  ensureObjVecBuilders(ctx);
+export function emitJsonRecordArray(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  value: ts.Expression,
+  declaredType?: ValType,
+): boolean {
+  if (!isJsonRecordArrayCandidate(ctx, value)) return false;
+  return withSpeculativeCompile(ctx, fctx, () => {
+    const emitted = emitCompiledJsonRecordArray(ctx, fctx, value, declaredType);
+    return { value: emitted, commit: emitted };
+  });
+}
+
+function emitCompiledJsonRecordArray(
+  ctx: CodegenContext,
+  fctx: FunctionContext,
+  value: ts.Expression,
+  declaredType?: ValType,
+): boolean {
   const actual = compileExpression(ctx, fctx, value);
   if (!actual) return false;
+  const layout = jsonRecordArrayLayout(ctx, value, declaredType ?? actual);
+  if (!layout) return false;
+  ensureObjVecBuilders(ctx);
   const nullableVec = { kind: "ref_null" as const, typeIdx: layout.type.typeIdx };
   coerceType(ctx, fctx, actual, nullableVec);
   const vec = allocLocal(fctx, `__json_records_${fctx.locals.length}`, nullableVec);

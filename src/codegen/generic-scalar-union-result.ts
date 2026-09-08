@@ -6,19 +6,15 @@ import { ensureAnyFromExternHelper } from "./any-helpers.js";
 /** Recover scalar tags after a generic call's erased externref result. */
 export function emitGenericScalarUnionResult(ctx: CodegenContext, fctx: FunctionContext, expr: ts.Expression): boolean {
   if (!ctx.nativeStrings || !ts.isCallExpression(expr)) return false;
-  const signature = ctx.checker.getResolvedSignature(expr);
-  if (!signature?.declaration?.typeParameters?.length) return false;
-  const type = ctx.checker.getTypeAtLocation(expr);
-  if (!type.isUnion()) return false;
-  const scalarFlags = ts.TypeFlags.StringLike | ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike;
-  if (!type.types.every((part) => (part.flags & scalarFlags) !== 0)) return false;
+  const declaration = ctx.oracle.resolvedCallDeclarationOf(expr);
+  if (!declaration?.typeParameters?.length) return false;
+  const type = ctx.oracle.typeFactOf(expr);
+  if (type.kind !== "union" || type.nullable || type.undefinable) return false;
+  if (!type.parts.every((part) => part.kind === "string" || part.kind === "number" || part.kind === "boolean"))
+    return false;
   // Boolean itself is true|false in the checker. Single-brand unions already
   // have a scalar ABI; only heterogeneous primitives require a tagged result.
-  const brands = new Set(
-    type.types.map((part) =>
-      part.flags & ts.TypeFlags.StringLike ? "string" : part.flags & ts.TypeFlags.NumberLike ? "number" : "boolean",
-    ),
-  );
+  const brands = new Set(type.parts.map((part) => part.kind));
   if (brands.size < 2) return false;
   const helper = ensureAnyFromExternHelper(ctx, { forceHonest: true });
   if (helper === undefined) return false;

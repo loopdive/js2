@@ -44,9 +44,7 @@ export function compileOptionalNativeCollectionLookup(
   if (!map && !set) return false;
   if (methodName !== "has" && methodName !== "delete" && !(map && methodName === "get")) return false;
   const receiver = (expr.expression as ts.PropertyAccessExpression).expression;
-  const declarations = ctx.checker
-    .getNonNullableType(ctx.checker.getTypeAtLocation(receiver))
-    .getSymbol()?.declarations;
+  const declarations = ctx.oracle.typeDeclarationsOf(receiver);
   if (!declarations?.length || declarations.some((declaration) => !declaration.getSourceFile().isDeclarationFile))
     return false;
   if (expr.arguments.some(ts.isSpreadElement)) return false;

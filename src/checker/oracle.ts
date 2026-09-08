@@ -38,7 +38,7 @@ export interface SignatureFact {
 }
 
 export interface ShapeFact {
-  props: { name: string; fact: TypeFact }[];
+  props: { name: string; fact: TypeFact; optional?: boolean }[];
 }
 
 /**
@@ -161,6 +161,14 @@ export interface TypeOracle {
   aliasedValueDeclarationOf(id: ts.Node): ts.Declaration | undefined;
   /** All declarations for an exact binding, without exposing its Symbol. */
   declarationsOf(node: ts.Node): readonly ts.Declaration[];
+  /** Declarations of the non-nullish receiver type, not its variable binding. */
+  typeDeclarationsOf(node: ts.Node): readonly ts.Declaration[];
+  /** Exact overload selected for a call; unavailable when resolution fails. */
+  resolvedCallDeclarationOf(node: ts.CallExpression): ts.Signature["declaration"];
+  /** Index signature presence on the non-nullish type; unknown is not absent. */
+  hasIndexSignature(node: ts.Node): boolean | undefined;
+  /** Data properties of an indexed record element; no class/accessor layout claims. */
+  indexedElementShapeOf(node: ts.Node): ShapeFact | undefined;
   /**
    * Variable declaration for a plain identifier binding. Returning the AST
    * declaration (rather than the checker Symbol) keeps binding-identity
@@ -222,6 +230,10 @@ export class TsCheckerOracle implements TypeOracle {
   // cached too.
   private readonly valueDeclCache = new WeakMap<ts.Node, ts.Declaration | null>();
   private readonly declarationsCache = new WeakMap<ts.Node, readonly ts.Declaration[]>();
+  private readonly typeDeclarationsCache = new WeakMap<ts.Node, readonly ts.Declaration[]>();
+  private readonly resolvedCallCache = new WeakMap<ts.CallExpression, ts.Signature["declaration"]>();
+  private readonly indexSignatureCache = new WeakMap<ts.Node, boolean | undefined>();
+  private readonly indexedElementShapeCache = new WeakMap<ts.Node, ShapeFact | undefined>();
   private keyCounter = 0;
 
   constructor(private readonly checker: ts.TypeChecker) {}
@@ -479,6 +491,82 @@ export class TsCheckerOracle implements TypeOracle {
     }
     this.declarationsCache.set(node, decls);
     return decls;
+  }
+
+  typeDeclarationsOf(node: ts.Node): readonly ts.Declaration[] {
+    const cached = this.typeDeclarationsCache.get(node);
+    if (cached) return cached;
+    let declarations: readonly ts.Declaration[] = [];
+    try {
+      const type = this.checker.getNonNullableType(this.checker.getTypeAtLocation(node));
+      declarations = [...(type.getSymbol()?.declarations ?? [])];
+    } catch {
+      /* Missing provenance must not authorize an intrinsic. */
+    }
+    this.typeDeclarationsCache.set(node, declarations);
+    return declarations;
+  }
+
+  resolvedCallDeclarationOf(node: ts.CallExpression): ts.Signature["declaration"] {
+    if (this.resolvedCallCache.has(node)) return this.resolvedCallCache.get(node);
+    let declaration: ts.Signature["declaration"];
+    try {
+      declaration = this.checker.getResolvedSignature(node)?.declaration;
+    } catch {
+      /* unknown */
+    }
+    this.resolvedCallCache.set(node, declaration);
+    return declaration;
+  }
+
+  hasIndexSignature(node: ts.Node): boolean | undefined {
+    if (this.indexSignatureCache.has(node)) return this.indexSignatureCache.get(node);
+    let result: boolean | undefined;
+    try {
+      const sourceType = this.checker.getTypeAtLocation(node);
+      if (!(sourceType.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.TypeParameter))) {
+        const type = this.checker.getNonNullableType(sourceType);
+        result = type.getStringIndexType() !== undefined || type.getNumberIndexType() !== undefined;
+        // A union may hide a constituent's open signature at its common-type
+        // surface. Without checking every arm, absence is not a closed proof.
+        if (type.isUnion() && result === false) result = undefined;
+      }
+    } catch {
+      /* Unknown is distinct from a proven closed shape. */
+    }
+    this.indexSignatureCache.set(node, result);
+    return result;
+  }
+
+  indexedElementShapeOf(node: ts.Node): ShapeFact | undefined {
+    if (this.indexedElementShapeCache.has(node)) return this.indexedElementShapeCache.get(node);
+    let result: ShapeFact | undefined;
+    try {
+      const element = this.checker.getTypeAtLocation(node).getNumberIndexType();
+      const properties = element?.getProperties();
+      if (
+        element &&
+        !element.isClass() &&
+        properties?.length &&
+        !properties.some((property) =>
+          property.declarations?.some(
+            (declaration) => ts.isGetAccessorDeclaration(declaration) || ts.isSetAccessorDeclaration(declaration),
+          ),
+        )
+      ) {
+        result = {
+          props: properties.map((property) => ({
+            name: property.name,
+            fact: this.factOfType(this.checker.getTypeOfSymbolAtLocation(property, node), 0),
+            optional: (property.flags & ts.SymbolFlags.Optional) !== 0,
+          })),
+        };
+      }
+    } catch {
+      /* Unavailable shape never authorizes a closed record snapshot. */
+    }
+    this.indexedElementShapeCache.set(node, result);
+    return result;
   }
 
   /** Internal: classify a checker type into a registry-free fact. */

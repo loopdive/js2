@@ -62,7 +62,7 @@ import {
 } from "../json-standalone.js";
 import { canonicalUndefinedExternInstrs } from "../any-helpers.js";
 import { compileObjectLiteralAsExternref, materializeStructAsDynamicObject } from "../literals.js";
-import { emitJsonRecordArray, jsonRecordArrayLayout } from "../json-record-array.js";
+import { emitJsonRecordArray, isJsonRecordArrayCandidate } from "../json-record-array.js";
 import { compileInternalCallArgument } from "./internal-call-argument.js";
 import { emitCollectionIteratorVec } from "../map-runtime.js";
 import { nativeStringLiteralInstrs, stringConstantExternrefInstrs } from "../native-strings.js";
@@ -383,11 +383,11 @@ function emitJsonCodecValueAsAnyref(
   ctx: CodegenContext,
   fctx: FunctionContext,
   value: ts.Expression,
-  opts?: { materializeClosedStruct?: boolean; materializeRecordArray?: boolean },
+  opts?: { materializeClosedStruct?: boolean; materializeRecordArray?: boolean; recordArrayType?: ValType },
 ): boolean {
   const unwrapped = unwrapReflectConstructExpr(value);
   let valueType: ValType | null = { kind: "externref" };
-  if (opts?.materializeRecordArray && emitJsonRecordArray(ctx, fctx, value)) {
+  if (opts?.materializeRecordArray && emitJsonRecordArray(ctx, fctx, value, opts.recordArrayType)) {
     valueType = { kind: "externref" };
   } else if (ts.isArrayLiteralExpression(unwrapped) && !unwrapped.elements.some(ts.isSpreadElement)) {
     emitJsonArrayLiteralAsObjVec(ctx, fctx, unwrapped);
@@ -3199,9 +3199,14 @@ export function compileNamespaceStaticCall(
             (!isArrayLike ||
               arrayLiteralForCodec !== undefined ||
               proxyShapedValue ||
-              jsonRecordArrayLayout(ctx, expr.arguments[0]!) !== undefined)
+              isJsonRecordArrayCandidate(ctx, expr.arguments[0]!))
           ) {
-            if (!emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!, { materializeRecordArray: true }))
+            if (
+              !emitJsonCodecValueAsAnyref(ctx, fctx, expr.arguments[0]!, {
+                materializeRecordArray: true,
+                recordArrayType: isArrayLike ? resolveWasmType(ctx, arg0Type) : undefined,
+              })
+            )
               return null;
             emitJsonStringifyValue(ctx);
             flushLateImportShifts(ctx, fctx);

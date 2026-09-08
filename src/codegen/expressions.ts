@@ -1178,11 +1178,7 @@ function compileExpressionInner(
     return { kind: "externref" };
   }
 
-  if (
-    ts.isIdentifier(expr) &&
-    expr.text === "undefined" &&
-    (ctx.checker.getTypeAtLocation(expr).flags & ts.TypeFlags.Undefined) !== 0
-  ) {
+  if (ts.isIdentifier(expr) && expr.text === "undefined" && ctx.oracle.typeFactOf(expr).kind === "undefined") {
     emitUndefined(ctx, fctx);
     return { kind: "externref" };
   }

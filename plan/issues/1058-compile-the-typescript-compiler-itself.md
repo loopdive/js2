@@ -528,6 +528,50 @@ then remeasure the full-source ownership ledger before extending legacy code.
 
 ### IR named method-table boundary investigation (2026-09-08, in progress)
 
+Final publication-query migration in progress: indexed record element facts now
+come from TypeOracle (property names, scalar/union facts and optionality; no
+checker types or Wasm indexes escape). JSON preflight uses source facts, then
+the emitter validates the expression's actual compiled storage. The existing
+speculative transaction rolls back a declined storage path; successful
+materialization compiles/evaluates the input once. Validate nullable/optional
+fields, field order, classes/accessors and observable evaluation count before
+calling this publication-ready.
+The oracle ratchet now passes with no new exemptions or baseline edits
+(`.tmp/ts5-json-oracle-ratchet.log`: +0 getTypeAtLocation, -1 ctxChecker after
+the branch's pre-existing allowances). The namespace legend required the
+dispatcher's already-resolved declared array carrier for an erased value;
+that carrier is threaded into JSON materialization without another checker
+query. All seven tracing/JSON standalone tests pass, including single
+evaluation, null arrays/elements, optional-field omission, type assertions and
+namespace declaration ordering (`.tmp/ts5-json-oracle-carrier.log`).
+Final broader controls pass **40/40 across seven files**
+(`.tmp/ts5-oracle-json-broad.log`), and the corrected typecheck completes
+successfully (`.tmp/ts5-oracle-json-typecheck.log`). Scoped lint, formatting,
+diff, LOC and function gates pass. This supersedes the earlier pending
+typechecks and seven-file publication-blocker notes, which remain historical.
+
+Second oracle migration slice: add registry-free exact call-declaration,
+non-nullish type-declaration and tri-state index-signature queries. Differential
+mode compares these facts; the in-house oracle explicitly reports unavailable
+information rather than claiming a type is closed. Generic scalar result tags,
+optional native collection provenance and spread enumeration consume these
+queries. In particular unknown spread shape must retain dynamic enumeration.
+Validation now passes **17/17 across four files**
+(`.tmp/ts5-oracle-second-verified.log`). Exact-fact tests cover overload selection,
+non-nullish receiver declarations, any/unknown and a mixed open/closed union,
+plus checker/in-house/differential behavior. The index query checks unknown
+before non-nullish narrowing (which otherwise turns unknown into `{}`), and
+declines to prove a type-parameter or ambiguous union closed. Resolved-call
+declarations include JSDoc signatures in their AST-only return type.
+The ratchet now flags only json-record-array.ts (+1 getTypeAtLocation, +2 net
+ctxChecker; `.tmp/ts5-oracle-second-ratchet.log`). Formatting and lint pass.
+The pre-correction typecheck completed with the JSDocSignature return-type
+omission (`.tmp/ts5-oracle-second-last-typecheck.log`). After it became terminal,
+started validation of the corrected AST return type (session 69630,
+`.tmp/ts5-oracle-second-corrected-typecheck.log`); observe this same handle.
+JSON must separate source field facts from allocated
+Wasm layouts; do not return checker types from TypeOracle to clear the gate.
+
 PR checkpoint (user request): new implementation belongs in IR wherever possible.
 Final checkpoint validation: **32/32 tests across six files** pass
 (`.tmp/ts5-ir-pr-verified.log`); typecheck, scoped lint, formatting, diff and
@@ -551,6 +595,24 @@ indexed-object-spread.ts, json-record-array.ts, optional-declaration-parameter.t
 and uninitialised-variable-undefined.ts. These predate the IR slice. They need
 registry-free TypeOracle facts, not moved checker queries or new allowances.
 No gate bypass or new oracle exception is authorized by this handoff.
+
+Oracle migration continuation: replace undefined-identifier and uninitialized
+binding queries with existing TypeOracle facts and exact declaration lookups.
+Reuse the native-annotation resolver with oracle declaration lookup rather than
+duplicating its alias proof. Unknown facts must decline the optimization.
+This slice removes three of the seven flagged files without exemptions:
+expressions.ts, optional-declaration-parameter.ts and
+uninitialised-variable-undefined.ts. The remaining ratchet is +4 direct
+getTypeAtLocation / +8 ctxChecker, in optional-native-set,
+generic-scalar-union-result, indexed-object-spread and json-record-array
+(`.tmp/ts5-oracle-first-ratchet.log`). The native-annotation helper accepts
+oracle declaration lookup while retaining the existing checker API for older
+callers; it does not duplicate native alias resolution.
+Validation: 16/16 compiler controls across four files, plus 1/1 exact-binding
+oracle test covering nullable/optional/unknown/any/initialized locals, shadowed
+undefined and native annotation parity. Logs `.tmp/ts5-oracle-first-controls.log`
+and `.tmp/ts5-oracle-boundary.log`. Scoped lint, formatting, diff and size gates
+pass. Changes remain local pending the rest of the publication migration.
 
 Current continuation: admitting a function-typed object field as an internal
 `closure` reaches preparation but fails source ABI parity (`IR=140, legacy=45`),

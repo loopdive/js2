@@ -21,7 +21,7 @@ export function preserveOptionalDeclarationParameter(
   return parameter.initializer === undefined &&
     optional &&
     (type.kind === "f64" || (type.kind === "i32" && type.boolean === true)) &&
-    nativeTypeOfDeclaration(ctx.checker, parameter) === null
+    nativeTypeOfDeclaration(ctx.oracle, parameter) === null
     ? { kind: "externref" }
     : type;
 }
