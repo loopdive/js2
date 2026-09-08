@@ -6289,3 +6289,36 @@ Detailed limits and provenance are in
 Promise resolution and same-ledger Promise resources are the next active
 implementation slices. Full frame/timer/string execution, public IR-only
 cutover, strict closure and the ABI30 witness remain outstanding.
+
+## Promise resolution extraction after PR #5764
+
+The next checkpoint extracts resolution, thenable jobs, settle closures and
+finalized classifier body construction into two canonical native runtime
+modules. Legacy adapters retain allocation/cache/finalization ordering and
+compatibility paths. Completed native callers must provide the real captured
+then invocation binding and authenticated complete resource inventories.
+
+High review found and the worker repaired two test defects: reliance on Git
+history during shallow-checkout collection, and opcode-only closure checks.
+The repaired self-contained fixture authenticates six original declarations;
+24 independent coordinate combinations yield48 complete resolve/reject
+comparisons with48 wrong-field and48 wrong-target controls. Worker TS7 and
+49/49 tests passed. High approved the exact repaired files. None of these
+checks establishes public source execution or whole-family native execution.
+
+Parent integrated all four production files and both repaired test files by
+verified SHA256. Composed TS7 passed. The active closure now contains75 modules
+and263 edges (176 type-only,87 runtime), with no reported closure errors.
+Prior activation records, allowed dependency rules and historical hashes are
+unchanged. The first composed suite passed209/210; the only failure was a
+stale unique-module assertion expecting73 instead of75. It was corrected and
+full rerun5973 remains live. Do not report that rerun as passed yet.
+
+Detailed evidence and outstanding limits are recorded in
+`plan/agent-context/3518-promise-resolution-checkpoint-handoff-2026-09-08.md`.
+The vector-comparison instrument and reproducibility handoff are also retained
+under plan/agent-context. Public Promise comparisons are being prepared;
+Promise resource materialization is a separate concurrent implementation.
+
+Composed rerun5973 subsequently exited0:210/210 tests across2/2 files passed
+in96.37s. This supersedes its pending status, not the execution limitations.
