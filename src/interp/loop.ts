@@ -176,6 +176,7 @@ const RUNTIME_FUNCTION_HOOKS: WeakMap<object, RuntimeFunctionHook> = new WeakMap
 const RUNTIME_DYNAMIC_IMPORT_HOOKS: WeakMap<object, RuntimeDynamicImportHook> = new WeakMap();
 const RUNTIME_ARRAY_PROTOTYPES: WeakMap<object, JSValue> = new WeakMap();
 const RUNTIME_PROMISE_PROTOTYPES: WeakMap<object, JSValue> = new WeakMap();
+const RUNTIME_PRIMITIVE_PROTOTYPES: WeakMap<object, JSValue> = new WeakMap();
 
 /** Install or replace the loader for one runtime-eval realm. Replacing is
  * intentional: repeated script entries share a realm, while an embedder may
@@ -207,6 +208,10 @@ export function installRuntimeEvalRealm(
   // Retain the intrinsic prototype so standalone provider compilation emits
   // and seeds its native-prototype companion just as it does for arrays.
   RUNTIME_PROMISE_PROTOTYPES.set(key, Promise.prototype);
+  // Computed reads on interpreted primitives need their own methods, not the
+  // Object.prototype fallback. Keep all wrapper companions in the provider,
+  // even when its source has no statically typed call to those methods.
+  RUNTIME_PRIMITIVE_PROTOTYPES.set(key, [String.prototype, Number.prototype, Boolean.prototype] as JSValue[]);
   const realmFunction = __runtime_eval_wrap_intrinsic_function_callback(intrinsicFunction, "Function", 1);
   const realmEval = __runtime_eval_wrap_intrinsic_callback(intrinsicEval, "eval", 1, realmFunction);
   RUNTIME_EVAL_INTRINSICS.set(key, realmEval);
