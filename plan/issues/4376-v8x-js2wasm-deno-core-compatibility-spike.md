@@ -17,6 +17,8 @@ horizon: xl
 related: [1584, 1662, 1772, 2525, 2658, 2928, 2997, 3571, 3731, 4377, 4378, 4380]
 origin: "Project-lead request to determine whether js2wasm can run behind v8x and preserve Deno APIs without V8, JSC, or QuickJS"
 loc-budget-allow:
+  # 2026-09-08: delegate linked publication literal construction to shared-carrier proof.
+  - src/codegen/literals.ts
   # 2026-09-08: delegate ordinary new.target reads to the per-frame value.
   - src/codegen/binary-ops.ts
   - src/codegen/typeof-delete.ts
@@ -78,6 +80,9 @@ loc-budget-allow:
   - src/codegen/expressions/late-imports.ts
   - src/codegen/async-scheduler.ts
 func-budget-allow:
+  # 2026-09-08: publication construction/signature hooks; proof lives in linked-realm-literal.ts.
+  - src/codegen/literals.ts::compileObjectLiteral
+  - src/codegen/index.ts::resolveWasmType
   # 2026-09-08: frame initialization/read hooks and native driver save/restore;
   # implementation lives in ordinary-new-target.ts, class handling unchanged.
   - src/codegen/native-construct.ts::fillNativeConstructDrivers
@@ -1068,3 +1073,32 @@ Unchanged op2 built successfully but replay52208 aborted134 after the three norm
 Candidate first-class Function.prototype.call uses the receiver-aware variadic native closure ABI, retaining all arguments and delegating to the ordinary apply bridge. Updated context fixture .tmp/context-call-candidate.wasm fixes the formerly failing Rust nested-callback test1/1. Full selected context suite9972 passes28/28 (five artifact/graph-specific tests explicitly filtered, not claimed). Focused compiler tests initially6/7: an extracted Reflect.apply case lost arguments. Reduced direct Reflect.apply also returnedNaN independently of Function.prototype.call, proving the remaining issue is not only the new method. Native Reflect.apply's local-argument emitter skipped the force-vector rule already used in the host-facing argument emitter, allowing contextual tuple layouts for array literals. Candidate shared compileReflectArgumentValue preserves literal list length at both paths, with try/finally restoring the flag; all four reduced expressions now return42 and initial focused7/7passes. Changes remain uncommitted pending wider gates and baseline controls.
 
 Final call/Reflect verification: focused9/9 passes; unchanged compilerf5b174ed4310c0 baseline fails5/9, passes4controls, and both candidate files restored in finally. Wider run initially48passes/8missing-file failures; existing primary-checkout Test262 test and harness directories were linked into the previously empty local test262 directory (no fetch or corpus sweep), then the same five-suite selection passed56/56 including all eight exact referenced upstream rows. TypeScript7 typecheck and LOC/function/coercion/oracle gates pass. Dead-export command's incomplete-evidence/strict-closure FAIL remains explicitly open. Updated context fixture passes28/28 Rust tests, not a full Deno test suite. Native examples above still use the clean f5b174ed compiler artifact; the new call changes require a subsequent pin/artifact refresh before claiming them in native Deno. All native runs are terminal; op2 graph packaging plus Private::ForApi error handling are the next executed boundaries.
+
+
+### Main synchronization and extension graph packaging continuation
+
+Fresh fetch of https://github.com/loopdive/js2.git main returned 04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0; merge on codex/4376-deno-realm-main-sync reports already up to date. Compiler HEAD remains bbb5f3987f836036774660e204870a4ee94d37ea. Primary workspace changes preserved.
+
+Runtime candidate adds isolate-private key storage and content-addressed multi-graph package directories. Private keys are separate from public properties and are tested for interning, hidden enumeration, explicit undefined presence, deletion, non-inheritance and compiled-realm handle identity. Graph package binding tests reject entry/source/byte mismatches. Final selected runtime suite47702 passes31/31, with5 explicitly filtered artifact-specific cases; no full Deno suite claim. Changes remain uncommitted in /private/tmp/v8x-deno-followup-20260908.
+
+Build-time op2 packaging11575 exited1, but produced two native packages and graph binding sidecars in /private/tmp/deno-op2-packages.p7w5OR. After core bootstrap and extension initialization, application __module_init throws TypeError: called value is not a function in __extern_method_call. This replaces the earlier missing-artifact failure. Private-only replay previously reached Deno error.rs:1294 constructor-to-object unwrap; that error-formatting defect remains open.
+
+Build-time runner temporarily enabled js2wasm_runtime_compile and upgraded its local workspace semver pin from1.0.25 to1.0.28 for Wasmtime47 compiler dependencies. Compiler feature has now been removed again; offline compiler-free op2 rebuild52836 passed, with only owned Cargo.toml/Cargo.lock changes and no libs/core edits. Compiler-free replay99003 uses V8X_JS2WASM_AOT_GRAPH_DIR and the same working directory as packaging; running at this checkpoint, not claimed successful.
+
+Reduced three-module Node probe .tmp/probe-op2-shared.mjs reproduced the same TypeError without Deno: independent context provider, extension publishing an object with a closure, and application calling that method. First two probe attempts were invalid harnesses (inferred provider ABI, then TypeScript annotations in .js); corrected .ts provider plus .js consumers initialized the extension and failed in the application. This narrows investigation to the shared compiled-module boundary, but does not yet distinguish object member representation from callable dispatch. Full integration remains open.
+
+
+Compiler-free replay99003 reached the same __extern_method_call TypeError after the three normal bootstrap callbacks, using only the two directory packages plus the precompiled core/provider, with no runtime compiler feature or compiler environment variables. This verifies package selection/load through actual module execution, not successful op2 completion. libs/core diff remains empty. Existing standalone shared-global import control suite9125 passes3/3; the failing three-module producer/application shape is not covered by those two-module provider/reader controls. An explicitly open dictionary variant of the reduced producer also fails, so merely replacing the object literal with an any-typed dictionary is not a fix. No source workaround applied to Deno.
+
+
+### Linked literal publication: field visibility and inferred return ABI
+
+Three-module reduction now proves object identity survives while producer-only closed-struct field metadata does not. Both context and consumer read undefined for use_state and NaN for marker7; the producer reads both successfully, even when all readers use the producer's own string key. Replacing construction with Object.create(null) makes all three read correctly. This excludes key-string provenance as the cause. Scratch .tmp/probe-op2-properties.mjs and .tmp/probe-op2-shared.mjs retained.
+
+Candidate linked-realm-literal.ts recognizes fresh literals published directly into the unshadowed linked global, including nested property literals and transparent wrappers. literals.ts constructs an open object at creation, avoiding identity-breaking copies. resolveWasmType must recognize the same literal's inferred type: construction-only fixed application calls but regressed the producer's inferred object return to null. Signature routing now preserves the raw shared carrier too. Aliased publications, arbitrary escaped class/struct instances and complete structural compatibility remain open, not claimed by this scoped proof.
+
+Baseline29698 with both source hooks replaced by unchanged bbb5f398 (restored in finally) fails all three publication tests. Flat cases fail marker7 as NaN; nested case cannot preserve the expected nested reference. Candidate publication tests pass3/3 and shared-global controls pass3/3. A fourth test exposed an independent pre-existing shadowed-globalThis read: unchanged baseline also invokes the linked getter from a function-local shadow. Recorded explicitly as it.fails, not counted as working behavior. Final five-suite1634 reports33 passing test cases:32 ordinary passing cases and1 expected-failure case; tests cover inferred producer return identity, dot/bracket/nested literals, actual invocation, missing-method TypeError, ordinary typed local control, existing realm carriers, call bridge and graph preparation. Initial shadow control failed first on missing imports, then on an unexpected linked getter with fail-fast imports; no claim of fixed shadow behavior.
+
+Native candidate packaging5228 TERMINAL exit1. Both packages in /private/tmp/deno-op2-publication.GVGy5Z were written19:46:21 and19:46:32, BEFORE baseline source substitution/test at19:46:46. This timing check matters: candidate packaging and later baseline testing shared the compiler directory. No future overlap should be scheduled; pin clean immutable inputs for release verification. Native trace gets past publication and through __call_m_op_use_state_1 into the host-function closure, then fails converting a value with __v8x_value_utf16_length: TypeError expected string handle. There is no op_use_state callback trace yet, so Rust op execution is NOT proved. New boundary likely involves callback argument conversion; inspect actual values before attributing the cause.
+
+Compiler-free op2 rebuilt after removing js2wasm_runtime_compile again (offline build exit0). Replay3328 is LIVE using only the new package directory and precompiled core/provider; no success claim until terminal. Native libs/core remains untouched. TypeScript7 check passes after explicit Expression typing in the helper. LOC/function/coercion/oracle gates pass with dated hook-growth grants; dead-export command exits0 but reports the existing production-evidence incomplete / strict modeled closure FAIL. Nothing pushed; full goal remains active.

@@ -1,4 +1,5 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
+import { isLinkedRealmPublicationType } from "./linked-realm-literal.js";
 import { ts, forEachChild } from "../ts-api.js";
 import { propertyValueIsAccessorObjectLiteral } from "./accessor-value-field.js";
 import { registerAnnexBGlobalLiveBindings } from "./annexb-global-live-binding.js";
@@ -12421,6 +12422,7 @@ export function hostMapCarrierClassName(ctx: CodegenContext, type: ts.Type): "Ma
  * Use this instead of mapTsTypeToWasm in the codegen to get real type indices.
  */
 export function resolveWasmType(ctx: CodegenContext, tsType: ts.Type, _depth = 0, _visited?: Set<ts.Type>): ValType {
+  if (isLinkedRealmPublicationType(ctx, tsType)) return { kind: "externref" };
   // Guard against infinite recursion (can happen with skipSemanticDiagnostics
   // when getTypeArguments returns the container type itself)
   if (_depth > 10) return { kind: "externref" };

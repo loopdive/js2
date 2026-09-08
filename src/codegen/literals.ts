@@ -8,6 +8,7 @@
  * widened and closed-struct object carriers.
  */
 
+import { isLinkedRealmPublicationLiteral } from "./linked-realm-literal.js";
 import ts from "typescript";
 import { hoistFunctionDeclarations } from "./statements/nested-declarations.js";
 import { isStringType, isVoidType, unwrapPromiseType } from "../checker/type-mapper.js";
@@ -2250,6 +2251,9 @@ export function compileObjectLiteral(
   // (#2127) Accessor-bearing spreads need host CopyDataProperties [[Get]].
   if (expr.properties.length > 0 && _hasAccessorSpreadSource(ctx, expr)) {
     return compileObjectLiteralWithAccessors(ctx, fctx, expr);
+  }
+  if (isLinkedRealmPublicationLiteral(ctx, fctx, expr)) {
+    return compileObjectLiteralAsExternref(ctx, fctx, expr);
   }
   // (#3633) Foreign eval literals lack checker types and require the open representation.
   if (isForeignEvalNode(expr)) return compileObjectLiteralAsExternref(ctx, fctx, expr);
