@@ -4822,3 +4822,46 @@ refusals establish preservation only, never physical acceptance or retirement.
 
 No direct-codegen retirement, public IR-only default, ABI30 getter witness, or
 native async materialization completion is claimed by these checkpoints.
+
+The semantic source-evidence revision 2 was adopted byte-for-byte from the
+worker's frozen three-file manifest and measured: 57/59 focused tests pass,
+and TypeScript 7 passes. Both failures originate in the recorder's rejection
+of Node 22's native lazy `Error.stack` accessor; the last forbidden-query
+child exits nonzero before writing its report for the same reason. The agent
+is repairing that distinction without permitting arbitrary diagnostic getters.
+The retained positive child report independently records twelve loaded roots,
+38 intrinsic definitions, 32 capabilities, two source-derived async states and
+one instruction, with true manifest/plan/provider joins. It explicitly leaves
+compiler-closure and retirement certification false. These are admission
+observations, not whole-program physical execution or a passing 59-test suite.
+
+The next physical integration work is isolated at
+`/private/tmp/js2-3518-physical-module-completion-20260908`, based on `e3de0f3ff7`.
+Its source changes must not contaminate this checkpoint's paired preservation
+measurement. The original source candidate remains unchanged.
+
+Revision 3 of the three source-evidence files is adopted with exact frozen
+Git blobs verified. The focused suite now passes 82/82 with a clean terminal
+exit. It adds exact native Error accessor handling without invoking custom
+getters, plain-Node query/fragment rejection witnesses through the same guard,
+transformed-to-returned semantic-plan equality, and independent prepared
+byte/call/twice-executed-value checks. Prior 57/59 results remain recorded above;
+they are superseded by this measured repair, not erased.
+
+The full thirty-row-per-arm historical comparison stopped in its first baseline
+child with Node exit 13 (unsettled top-level await), before producing a complete
+report. It is not implied by the 82 focused controls. Its terminal receipt is
+retained in `.tmp/semantic-provider-source-pair-revision3-20260908`; the source
+worker is diagnosing the recorder without reducing the matrix. Physical source changes remain in
+the separate worktree. A fresh PR5751 read at e3de0f3ff7 found MERGEABLE/CLEAN,
+no unresolved review threads and completed successful quality checks; the PR
+is still non-draft with auto-merge disabled. This is not retirement approval.
+
+Final High review approves the bounded source-evidence checkpoint, with no
+remaining concrete instrument-control finding. Independent receipt inspection
+confirms twelve roots, 38 definitions, 32 capabilities, two states and one
+instruction; all five forbidden URLs have exact denied census rows, including
+three genuine plain-Node suffix rejections through the same guard. The current
+1,303-file source census matches producer and child snapshots. This explicitly
+does not certify the full historical matrix, whole-program native async,
+post-attachment mutation, or direct-codegen retirement.
