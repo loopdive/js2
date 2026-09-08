@@ -2993,17 +2993,11 @@ export function ensureObjectRuntime(ctx: CodegenContext): ObjectRuntimeTypes {
     );
   }
 
-  // __new_String(externref) -> externref : the value is already a string
-  // externref; wrap it directly (param 0 is the value local).
-  {
+  // Preserve an existing primitive carrier in its internal wrapper slot.
+  // String construction and ToObject share this representation-preserving tail.
+  for (const name of ["__new_String", "__wrap_primitive_value"]) {
     const body: Instr[] = emitWrapperBuildTail(0, 1);
-    registerNative(
-      "__new_String",
-      [{ kind: "externref" }],
-      [{ kind: "externref" }],
-      [{ name: "o", type: objRef }],
-      body,
-    );
+    registerNative(name, [{ kind: "externref" }], [{ kind: "externref" }], [{ name: "o", type: objRef }], body);
   }
 
   // __new_Boolean(f64) -> externref : ToBoolean(arg) — the call sites coerce the
