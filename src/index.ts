@@ -543,11 +543,12 @@ export interface CompileOptions {
   /**
    * Explicit Wasm-to-Wasm Symbol state sharing. Use "export" on a realm owner
    * and { module } on its consumers; the provider must be listed in link.
+   * Set reexport:true on a consumer that forwards the same globals to peers.
    * Counter, descriptions, registry and boxed identities are shared together.
    * Owner and consumers must use compatible compiler ABIs and one Wasm store.
    * Only valid for target standalone. Omission preserves module-local state.
    */
-  standaloneSymbolState?: "export" | { module: string };
+  standaloneSymbolState?: "export" | { module: string; reexport?: boolean };
   /**
    * Dynamic direct-eval lowering for the WasmGC JavaScript-host target.
    *

@@ -4942,6 +4942,10 @@ function finalizeLeafStructTypes(ctx: CodegenContext): void {
   // gate makes host byte-identical to main again.
   const abVecIdx = ctx.wasi || ctx.standalone ? ctx.vecTypeMap.get("i32_byte") : undefined;
   if (abVecIdx !== undefined) keepOpenTypeIdxs.add(abVecIdx);
+  // The shared externref vector is an ABI root: providers may subtype it
+  // for arguments/template arrays even when a consumer has no such subtype.
+  const sharedVecIdx = ctx.standalone ? ctx.vecTypeMap.get("externref") : undefined;
+  if (sharedVecIdx !== undefined) keepOpenTypeIdxs.add(sharedVecIdx);
   const finalizedTypeIndices = markLeafStructsFinal(ctx.mod, ctx.wasi, keepOpenTypeIdxs);
   ctx.programAbiSession?.recordLeafTypeFinalization(finalizedTypeIndices);
 }
@@ -6012,7 +6016,9 @@ export function generateModule(
     // and IR bodies have settled their type slots. Prepending it during the
     // syntax scan shifts the legacy type indices underneath IR-first's parity
     // check for otherwise ordinary numeric AOT functions.
-    if (ctx.runtimeEvalCallableBoundaryEnabled) {
+    // An explicit standalone host bridge can receive a callable from a linked
+    // eval-bearing module even when this owner has no local eval syntax.
+    if (ctx.runtimeEvalCallableBoundaryEnabled || (ctx.standalone && ctx.emitHostBridge)) {
       ensureRuntimeEvalAotCallableCarrierTypes(ctx);
     }
 

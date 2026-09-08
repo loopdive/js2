@@ -34,6 +34,7 @@ export function allocateSymbolState(ctx: CodegenContext, global: GlobalDef): num
       if (entry.desc.kind !== "global") continue;
       if (entry.module === state.module && entry.name === global.name) {
         entry.desc.type = global.type;
+        if (state.reexport) ctx.mod.exports.push({ name: global.name, desc: { kind: "global", index } });
         return index;
       }
       index++;

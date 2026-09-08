@@ -604,6 +604,8 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
     return;
   }
 
+  const canonicalizeKey = (): Instr[] => standaloneMemberReadKeyConversion(ctx);
+
   function addHelper(
     name: string,
     params: ValType[],
@@ -791,6 +793,7 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
       { op: "call", funcIdx: peelIdx },
       { op: "local.get", index: 1 },
       { op: "call", funcIdx: anyToExternIdx },
+      ...canonicalizeKey(),
       { op: "call", funcIdx: externGetIdx },
       { op: "call", funcIdx: honestIdx },
     ];
@@ -849,6 +852,7 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
     { op: "local.get", index: 0 },
     { op: "call", funcIdx: peelHostIdx },
     { op: "local.get", index: 1 },
+    ...canonicalizeKey(),
     { op: "call", funcIdx: externGetIdx },
   ];
   const dmgHostIdx = addHelper("__dyn_member_get", [externref, externref], [externref], dmgHostBody);
@@ -858,6 +862,15 @@ export function ensureDynMemberGet(ctx: CodegenContext): void {
     return;
   }
   if (forceSelfTest) emitDynMemberGetSelfTestHost(ctx, dmgHostIdx);
+}
+
+function standaloneMemberReadKeyConversion(ctx: CodegenContext): Instr[] {
+  // Standalone named-property readers require ToPropertyKey; the host owns
+  // conversion on its lane. Leave the separate WASI lowering unchanged.
+  if (!ctx.standalone) return [];
+  const index = ctx.funcMap.get("__to_property_key");
+  if (index === undefined) throw new Error("Standalone dynamic reads require ToPropertyKey support.");
+  return [{ op: "call", funcIdx: index }];
 }
 
 /**
