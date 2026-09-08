@@ -85,6 +85,7 @@ import { emitObjectProtoIsPrototypeOfBody } from "./object-proto-is-prototype-of
 import { ANNEX_B_ACCESSOR_ARITY, emitObjectProtoAnnexBAccessorBody } from "./object-proto-annex-b-accessors.js";
 import { emitWrapperProtoValueOfBody, isWrapperBrandName } from "./wrapper-proto-value-of.js";
 import { emitWrapperProtoToStringBody } from "./wrapper-proto-to-string.js"; // (#4619)
+import { emitFunctionProtoApplyBody } from "./function-proto-apply.js";
 import { emitFunctionProtoToStringBody } from "./function-proto-to-string.js"; // (#4492 wave-5)
 import { emitObjectProtoValueOfBody } from "./object-proto-value-of.js"; // (#4492 wave-5)
 import { emitStringConcatMemberBody } from "./string-proto-concat.js";
@@ -2494,6 +2495,7 @@ function makeGlue(
       // VALUE. Same "ask first, emit second" contract as the two arms above, so a
       // decline leaves the ladder byte-identical.
       (name === "Function" && member === "toString" ? emitFunctionProtoToStringBody(c, fctx) : null) ??
+      (name === "Function" && member === "apply" ? emitFunctionProtoApplyBody(c, fctx) : null) ??
       // ES2015 §19.2.3.6 — the inherited `@@hasInstance` method. Its body is
       // shared with the standalone dynamic-instanceof substrate so ordinary
       // function receivers and direct `Function.prototype` reads use the same

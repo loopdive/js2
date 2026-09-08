@@ -3845,6 +3845,14 @@
       "nextBoundary": "Separate AST/context-driven generation, physical resources and generated native runtime."
     },
     {
+      "path": "src/codegen/function-proto-apply.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "4376-deno-integration",
+      "nextBoundary": "Separate native callable semantics from physical Wasm emission."
+    },
+    {
       "path": "src/codegen/function-proto-has-instance.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",

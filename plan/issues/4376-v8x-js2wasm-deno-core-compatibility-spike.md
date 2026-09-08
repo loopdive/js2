@@ -816,3 +816,55 @@ New four-test regression measured 2/4 passing before the fix (unpromoted control
 While building the staging fixture, assigning an exported function declaration directly to globalThis produced ReferenceError: moduleAnswer is not defined. The fixture uses an ordinary function expression for its test-only global accessor. This separate compiler defect remains unaddressed; do not mistake that fixture change for a compiler fix. Exploratory function-valued class/object capture examples also produced incorrect numeric results and need separate reduction before any broad closure-conformance claim.
 
 Next: commit/pin the compiler correction, rebuild the exact full runtime artifact from clean pinned inputs, precompile using release Wasmtime, then run the unchanged Deno hello_world. The old debug precompile session 4443 remains CPU work in progress and must not be killed or restarted solely for slowness.
+
+### Exact staged artifact built; real Deno reaches async-op registration
+
+Compiler correction committed and signed as d5e89399007ace10620be180224c36d0bdcd511a. TypeScript 7 typecheck, LOC/function-budget hooks and lint-staged passed. Active compiler checkout remains /private/tmp/js2-deno-main-sync-20260908, branch codex/4376-deno-realm-main-sync. Clean pinned compiler inputs are /private/tmp/js2-deno-staged-pinned-20260908 at that SHA, with ignored node_modules symlink to /private/tmp/js2-poc-fixed2/node_modules.
+
+Active v8x branch now has signed commits 357e231f2caf0d68594b27c94e691afcfcfd3160 (synchronized compiler pins) and 8896bef29e16f8d67601dc03df546cb9a0f4b52f (remove eager duplicate inputs). The first pin-only rebuild still ran the original scripts: compileMulti includes all supplied sources, so simply deleting imports was insufficient. Runtime graph now deletes the separate core/*.js entries after embedding their unchanged bodies into staged-core.ts. Clean builder checkout /private/tmp/v8x-deno-staged-pinned-20260908 is detached at 8896bef.
+
+Strict full runtime builder SUCCEEDED from those clean v8x/js2 inputs and clean pinned Deno 1d4e6c1cb855b62a7fb572c6c138e4e8b4e7fa44. Artifacts:
+- /private/tmp/deno-staged-artifacts.dLlzUS/core.wasm: 7,004,455 bytes, SHA256 1f3b4aaef6afd72590b5a8097a863e1910c715290bb24509422e052a3635f125
+- /private/tmp/deno-staged-artifacts.dLlzUS/provider.wasm: 25,312,089 bytes, SHA256 efebe30fdbee030c22f5fe746924707a50bf5d41102900c95fd4fb7d233f29ad
+- provenance.json in that directory records the exact graph and pins.
+- core-release.cwasm and provider-release.cwasm: new release precompilation session 81595 finished, 2/2 passed in 170.28 seconds.
+- Old debug session 4443 finally finished, 2/2 passed in 4208.54 seconds. It is terminal; do not poll/restart it.
+
+Raw Wasm check: __module_init leaves __v8x_deno_script_phase at 0; running script phase 0 returns 1. This is real compiled primordials execution, not full native-host boot.
+
+The unchanged native Deno example now passes primordials AND infrastructure and reaches libs/core/runtime/bindings.rs:585, where native async-op registration calls compiled Deno.core.setUpAsyncStub. This call returns an empty handle after a compiled exception. Added uncommitted diagnostics in v8x src/js2wasm_realm_values.rs (render pending realm-call exceptions through existing render exports) and src/js2wasm/realm_objects.rs (log report() errors only with V8X_JS2WASM_TRACE_HOST). The actual decoded failure is:
+TypeError: Function.prototype.apply is not yet implemented in --target standalone
+Backtrace: __runtime_eval_unwrap_call_result -> __apply_closure -> __closure_method_call -> __extern_method_call -> __call_m_apply_2 -> __v8x_value_call.
+Do NOT attribute the current failure to op argument length without stronger evidence.
+
+Latest exact native command, cwd /private/tmp/deno-realm-run-20260908:
+V8X_JS2WASM_TRACE_HOST=1 V8X_JS2WASM_DENO_CORE_AOT_MODULE=/private/tmp/deno-staged-artifacts.dLlzUS/core-release.cwasm V8X_JS2WASM_RUNTIME_EVAL_AOT_MODULE=/private/tmp/deno-staged-artifacts.dLlzUS/provider-release.cwasm /private/tmp/v8x-deno-followup-20260908/target/debug/examples/hello_world
+It exits 101 with the decoded error above. Deno libs/core remains unchanged; only Cargo.toml/lock are patched. Both fresh AOT artifacts were used in this latest run. An earlier run reused the previous byte-identical provider AOT while fresh provider precompilation was still running; it reached the same native unwrap panic.
+
+Next compiler task: implement the real first-class Function.prototype.apply native method body, not a syntax-only special case or a bypass of the realm call.
+- src/codegen/array-object-proto.ts around2496 wires Function prototype toString and @@hasInstance but no apply native body.
+- src/codegen/native-proto.ts around1118 generates the exact refusal above when glue.emitMemberBody returns null.
+- Existing reserveApplyClosure(ctx) in object-runtime.ts around7357 provides (fn, receiver, argVector) -> externref with compiled/interpreter/proxy dispatch. This is the call target to reuse, not recursively invoking property .apply.
+- call-namespace-static.ts around1865 contains Reflect.apply array-like-list materialization; reuse appropriate helpers/semantics, including IsCallable and CreateListFromArrayLike, null/undefined -> empty list for Function.prototype.apply, getter order, receiver preservation and thrown-value propagation.
+- Native-prototype closure ABI: local0=self, local1=target function (method this), local2=thisArg, local3=argArray. Look at function-proto-has-instance.ts for wiring style.
+- Existing context-value bridge uses callable.apply(receiver,args). It worked before primordials materialized Function.prototype's first-class methods. Do not hide the missing intrinsic by changing that bridge to a special-case call.
+
+Separate confirmed future gap by source inspection: v8__FunctionTemplate__New and v8__Function__New currently ignore their _length argument; allocate_function supplies name but no length property. Deno's setUpAsyncStub selects originalOp.length - 1. Fix and regression-test native function arity, including preservation across realm transfer, once the current apply refusal is resolved. No arity fix was made yet.
+
+No PR pushed/opened during this continuation. Full Deno integration is NOT complete. Do not mark goal complete; no external-authority blocker exists.
+
+### First-class apply continuation after verified main sync
+
+Fetched https://github.com/loopdive/js2.git main again: 04c8e72156cf576cf584a3ed3a5a66ec5a2b91b0 is already an ancestor of the continuation HEAD d5e89399007ace10620be180224c36d0bdcd511a. No additional merge or stash was necessary. Main workspace unrelated edits remain untouched.
+
+Implemented Function.prototype.apply as a native first-class closure through reserveApplyClosure. It validates the callable first, admits null/undefined as empty argument lists, materializes array-like arguments before invocation, and propagates getter/target exceptions. Registered the helper in compiler-boundaries.json as unmigrated mixed-needs-split; this is not architecture closure. The existing apply arity was already 2.
+
+Focused standalone suite: 12/12 passed using a Node child with --experimental-wasm-exnref. Tests cover receiver and arguments, null/undefined lists, getter order, five primitive list brands, non-callable target ordering, getter throws and target throws. Typecheck passed. LOC/function/coercion/oracle ratchets returned success. Dead-export command returned zero but explicitly reports preservation-only 6/6 and open production-rooted architecture; do not call that architecture complete.
+
+Separate unresolved defect found while isolating the intrinsic: Reflect.apply(a, fn, [null, [42]]) returns NaN where the explicit array-typed form Reflect.apply(a, fn, [null, [42]] as any[]) returns 42, with a = Function.prototype.apply and fn = function(x:number){return x;}. The heterogeneous untyped argument literal is emitted as a tuple carrier that the existing generic call bridge does not read correctly. The focused suite uses an invoke(target:any, receiver:any, args:any[]) helper to isolate the intrinsic, not to claim tuple support. Preserve this defect as follow-up work; do not treat the 12/12 result as coverage of all array representations.
+
+The first adjacent run was 25/37: eight absent test262 files and four exception-support failures. A self-contained rerun was 22/26 because vitest.config.ts overrides fork execArgv, stripping parent flags. Use startVitest with explicit poolOptions.forks.execArgv including --experimental-wasm-exnref for those existing suites. Do not alter global test configuration or fetch/run a Test262 sweep for this check.
+
+Full Deno artifacts have NOT been rebuilt with this apply implementation. Last actual native bootstrap remains the apply refusal at async-op registration described above. Next: finish adjacent checks, commit/pin this compiler checkpoint, update v8x compiler pins, build clean exact artifacts and rerun unchanged Deno. Native function length and tuple-carrier handling remain separate follow-ups.
+
+Worker-level exception-flag override completed: 26/26 tests passed across five self-contained suites (first-class apply, promoted function values, Function.prototype @@hasInstance, callable Function.prototype, Reflect/Proxy review regressions). This replaces the instrument-limited 22/26 result, not the missing external Test262 rows.
