@@ -26,6 +26,7 @@
  *     (try/finally without catch is, as in Phase 1).
  */
 import { ts } from "../ts-api.js";
+import { emitVecDelegationAbrupt } from "./generator-vec-abrupt.js";
 import { mintDefinedFunc, pushDefinedFunc } from "./func-space.js"; // (#1916 S3b) stable-regime minting
 import {
   isBooleanType,
@@ -903,11 +904,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
     // value of `yield*` consumed, a non-native inner) still bails to the host
     // path / scoped diagnostic.
     if (yieldExpr.asteriskToken) {
-      // (#3050) `yield*` inside a NEW try-region is not modeled — the
-      // delegation states ignore the resume mode, so an abrupt completion
-      // could not be routed into the region's catch/finally. Bail to the host
-      // path (legacy replay-only regions keep today's behavior).
-      if (unwind.some((e) => e.kind !== "replay")) return fail();
+      // Numeric array delegates route return/throw into the region unwind.
+      // Other delegates still need full protocol forwarding (including a
+      // return/throw result with done=false), so keep their admission guarded.
+      const structuredUnwind = unwind.some((e) => e.kind !== "replay");
+      if (structuredUnwind && (!yieldExpr.expression || !isNumericIterableDelegate(ctx, yieldExpr.expression)))
+        return fail();
       // (#2864 D2) A yield-star terminator SELF-SUSPENDS (its yield arm re-enters
       // the SAME state on the next resume), so it must live in a DEDICATED state:
       //  (a) empty prelude / no resume bindings — otherwise the prelude statements
@@ -927,10 +929,12 @@ function buildNativeGeneratorPlan(ctx: CodegenContext, decl: GeneratorDecl): Nat
         finishState(curId, { kind: "jump", next: starId });
         resetCursor(starId);
       }
-      curAbrupt = {
-        finalizers: unwind.map((e) => [...(e as { statements: readonly ts.Statement[] }).statements]).reverse(),
-      };
-      curUnwind = undefined;
+      curAbrupt = structuredUnwind
+        ? undefined
+        : {
+            finalizers: unwind.map((e) => [...(e as { statements: readonly ts.Statement[] }).statements]).reverse(),
+          };
+      curUnwind = structuredUnwind ? [...unwind].reverse() : undefined;
       const subject = yieldExpr.expression;
       const innerName = subject ? nativeGeneratorDelegationName(subject) : undefined;
       if (subject && innerName === undefined) {
@@ -4103,6 +4107,9 @@ function compileState(
     const abruptBody: Instr[] = [];
     const savedAbrupt = fctx.body;
     fctx.body = abruptBody;
+    if (state.terminator.kind === "yield-star" && state.terminator.delegationKind === "vec") {
+      emitVecDelegationAbrupt(ctx, fctx, info, state.terminator.vecSiteIndex, selfLocal);
+    }
     emitUnwindWalk(ctx, fctx, info, state.unwind, {
       selfLocal,
       resultLocal,

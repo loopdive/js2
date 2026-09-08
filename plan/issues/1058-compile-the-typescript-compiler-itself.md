@@ -212,6 +212,27 @@ oracle-ratchet-allow:
 
 ### Resumed optional-parameter investigation — 2026-09-08
 
+Generator frontier follow-up: fresh upstream adapter on `3e0d2386` still
+measures native 25/25, standalone 14/25, 251/256 files deferred. The worklist
+reduction reproduces generator imports (runAll) and rejected cleanup shapes
+(runReturn/runThrow). Implementing structured unwind for numeric-vector
+delegation, preserving the guard for generic/native-generator delegates until
+their full return/throw/done-false forwarding is implemented. Array delegation
+must replace a thrown value with TypeError when its iterator lacks `throw`,
+then run enclosing cleanup; removing the admission guard alone is unsound.
+The new path passes **6/6** standalone/native-oracle checks: complete worklist,
+outer iterator close on return, missing-throw TypeError and cleanup, caught
+TypeError followed by a yield, original thrown value before delegation starts,
+and finally suspension with done=false before resuming the pending return.
+The last case's generator declares a numeric return via `return 0` so its
+`.return(9)` call is type-correct; expected native/standalone behavior is 1.
+The existing array/generic iterable/try-region controls pass 32/32 separately.
+Fresh upstream rerun remains **14/25**: compilerCore still imports four host
+generator helpers. Its `getElementIterator` delegates generic `TElement[]`
+after `isArray(value)`; widening typed vector delegation beyond numeric storage
+and implementing general iterator protocol forwarding remain the next steps.
+Do not claim the reduced numeric worklist resolves compilerCore yet.
+
 The merged optional-vector reduction still returns `[7, 7, 8]` instead of
 `[17, 7, 8]`. Its emitted WAT declares `wrap` with parameters `(ref null 50),
 i32`, while nested `make` takes `(ref null 50), externref`: the omitted optional
@@ -224,9 +245,14 @@ The expanded factory file plus generic identity/callback and main's dynamic
 result/rest-callable controls pass **107/107**. Nested optional-parameter and
 rest-vector controls measured **11/13** before the new tests: only the two
 already documented absent optional-array-field assertions fail.
-Full standalone parser acceptance is rerunning on this post-sync candidate;
-local log: `.tmp/ts5-parser-main-sync-optional.log`. No new passing claim until
-its three original fingerprints have actually executed.
+Full standalone parser acceptance on `3e0d2386f83a30` now passes **3/3**:
+performance 49645738923599, builder 13386537220945, core 40098163538143.
+The binary is **80,351,322 bytes**, validates and executes with **zero imports**.
+Elapsed wall time 255,164 ms; five diagnostics are warnings, not errors.
+Local log: `.tmp/ts5-parser-main-sync-optional.log`; process completed normally.
+Typecheck, lint, formatting and file/function size gates pass. Full binder and
+upstream unit-suite coverage still require fresh post-sync verification; the
+next broad frontier remains generator support and expansion beyond 5/256 files.
 
 2026-09-08: merging this work branch with fetched `loopdive/js2` main
 `16498efb481cb022ee5c4dcc9bb137b6d4c91a50` (680 incoming commits).

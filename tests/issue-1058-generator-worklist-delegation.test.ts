@@ -45,12 +45,53 @@ export function runThrow(): number {
   if (iterator.next().done !== true) return -4;
   return closed;
 }
+export function runCaughtThrow(): number {
+  closed = 0;
+  function* caught() {
+    try { yield* [1, 2]; }
+    catch (error) { yield error instanceof TypeError ? 7 : -1; }
+    finally { closed++; }
+  }
+  const iterator = caught();
+  if (iterator.next().value !== 1) return -1;
+  const result = iterator.throw(9);
+  if (result.done !== false || result.value !== 7 || closed !== 0) return -2;
+  if (iterator.next().done !== true) return -3;
+  return closed;
+}
+export function runThrowBeforeDelegate(): number {
+  function* caught() {
+    try { yield 0; yield* [1, 2]; }
+    catch (error) { return error === 9 ? 7 : -1; }
+  }
+  const iterator = caught();
+  if (iterator.next().value !== 0) return -1;
+  const result = iterator.throw(9);
+  return result.done === true && result.value === 7 ? 1 : -2;
+}
+export function runSuspendedCleanup(): number {
+  closed = 0;
+  function* cleanup() {
+    try { yield* [1, 2]; }
+    finally { closed++; yield 8; }
+    return 0;
+  }
+  const iterator = cleanup();
+  if (iterator.next().value !== 1) return -1;
+  const result = iterator.return(9);
+  if (result.done !== false || result.value !== 8 || closed !== 1) return -2;
+  const end = iterator.next();
+  return end.done === true && end.value === 9 ? 1 : -3;
+}
 `;
 
 it.each([
   ["runAll", 123],
   ["runReturn", 1],
   ["runThrow", 1],
+  ["runCaughtThrow", 1],
+  ["runThrowBeforeDelegate", 1],
+  ["runSuspendedCleanup", 1],
 ] as const)("runs %s with host-free delegation and IteratorClose", async (entry, expected) => {
   const source = entry === "runAll" ? worklistSource : cleanupSource;
   const native = { exports: {} as Record<string, () => number> };
