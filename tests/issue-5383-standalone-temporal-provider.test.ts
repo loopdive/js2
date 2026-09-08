@@ -32,8 +32,11 @@
 // The whole polyfill is not compiled here (~60 s, 2.9 MB): `.tmp/sa-temporal/`
 // carries that probe. These are the reductions.
 
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { compile } from "../src/index.js";
+import { standaloneIntlShimSource } from "../src/temporal-intl-shim.js";
+import { temporalProviderCacheKey } from "../src/temporal-provider.js";
 
 interface StandaloneModule {
   binary: Uint8Array;
@@ -67,6 +70,16 @@ async function compileStandalone(source: string): Promise<StandaloneModule> {
 
 function callExport(mod: StandaloneModule, name = "test"): unknown {
   return (mod.instance.exports as Record<string, () => unknown>)[name]!();
+}
+
+/**
+ * (#5383 S2c) Compile with the standalone provider's `Intl` shim ahead of the
+ * source — the exact text `buildTemporalProvider` prepends for
+ * `target: "standalone" | "wasi"`, so these cases exercise the shipped shim
+ * rather than a copy of it.
+ */
+function withIntlShim(source: string): string {
+  return `${standaloneIntlShimSource()}\n${source}`;
 }
 
 describe("#5383 S1 R1 — ToBoolean of an anyref (WeakMap/Map `get` as a condition)", () => {
@@ -439,5 +452,143 @@ describe("#5383 S2b R7 — dynamic method dispatch on an externref-backed subcla
     // 1 = calling the extracted method with no receiver threw a CATCHABLE
     // TypeError rather than trapping or silently answering.
     expect(callExport(mod)).toBe(1);
+  });
+});
+
+// ── S2c ──────────────────────────────────────────────────────────────────────
+//
+// With S2b's subclass family fixed, the standalone `__module_init` stopped in
+// the polyfill's `Intl` section: standalone deliberately leaves the `Intl`
+// IDENTIFIER null (#5206 — there is no ICU in pure Wasm), and the polyfill
+// reads that namespace at MODULE TOP LEVEL, so init threw at
+// `"formatToParts" in ai.prototype` before any Temporal object existed.
+//
+// The fix is provider-local and lexical, not a codegen change: the #5383 S2c
+// shim (`src/temporal-intl-shim.ts`) is prepended to the polyfill SOURCE for
+// the standalone / WASI provider builds only. An `Intl.<member>` → `undefined`
+// codegen arm was written and REVERTED in S2b — it moved the failure to the
+// next line and changed what every standalone program sees.
+//
+// These cases pin the contract the shim has to meet, which is dictated by the
+// polyfill's own eager uses:
+//   * every EAGER use evaluates without throwing (init must RETURN), and
+//   * every LAZY use throws a RangeError that NAMES the target.
+//
+// Measured with the shim in place (whole linked bundle, `--target standalone`,
+// `hostBridge: "off"`, 2026-09-08): compiles in 44 s to 2.96 MB with ZERO
+// imports, and `__module_init` RETURNS. Where it stops next is recorded in the
+// issue file (S2c findings) — the `Temporal` namespace does not survive the
+// linked-provider getter boundary, so the S2 smoke test is still not written.
+
+describe("#5383 S2c — the standalone provider's `Intl` refusal shim", () => {
+  it("every EAGER use the polyfill makes at module top level evaluates", async () => {
+    // The shapes, verbatim in structure from the bundle:
+    //   ct = Intl.DateTimeFormat                                  (cache)
+    //   const ai = Intl.DateTimeFormat
+    //   "formatToParts" in ai.prototype || delete Impl.prototype.formatToParts
+    //   di.supportedLocalesOf = ai.supportedLocalesOf
+    //   const {format,formatToParts} = Intl.DurationFormat?.prototype ?? {}
+    const mod = await compileStandalone(
+      withIntlShim(`
+        const ct = Intl.DateTimeFormat;
+        const ai = Intl.DateTimeFormat;
+        class DateTimeFormatImpl { formatToParts() { return 1; } }
+        "formatToParts" in ai.prototype || delete DateTimeFormatImpl.prototype.formatToParts;
+        const di = {};
+        di.supportedLocalesOf = ai.supportedLocalesOf;
+        const durationProto = Intl.DurationFormat?.prototype;
+        const tz = Intl.supportedValuesOf?.("timeZone");
+        export function test() {
+          var bits = 0;
+          if (typeof ct === "function") bits += 1;
+          // TRUE keeps the polyfill's own formatToParts — the delete branch
+          // must not run, or its DateTimeFormat surface loses a method.
+          if ("formatToParts" in ai.prototype) bits += 2;
+          if (durationProto === undefined) bits += 4;
+          if (tz === undefined) bits += 8;
+          if (new DateTimeFormatImpl().formatToParts() === 1) bits += 16;
+          return bits;
+        }
+      `),
+    );
+    expect(callExport(mod)).toBe(31);
+  });
+
+  it("a LAZY use throws a catchable RangeError that names the target", async () => {
+    // `Temporal.Now.timeZoneId()` is `(new Intl.DateTimeFormat).resolvedOptions().timeZone`
+    // in the bundle. The refusal has to be nameable — not a trap, not a wrong
+    // answer. The 66 Intl-dependent Temporal rows are out of scope for #5383
+    // and this is what they will report.
+    const mod = await compileStandalone(
+      withIntlShim(`
+        export function test() {
+          try {
+            const f = new Intl.DateTimeFormat("en-US-u-ca-gregory", { day: "numeric" });
+            return 0;
+          } catch (e) {
+            if (!(e instanceof RangeError)) return 1;
+            return e.message.indexOf("--target standalone") >= 0 ? 2 : 3;
+          }
+        }
+      `),
+    );
+    expect(callExport(mod)).toBe(2);
+  });
+
+  it("a method on the refusal class throws the same way, so `in`-probing it is safe", async () => {
+    const mod = await compileStandalone(
+      withIntlShim(`
+        const ai = Intl.DateTimeFormat;
+        export function test() {
+          const proto = ai.prototype;
+          try { proto.formatToParts(); } catch (e) { return e instanceof RangeError ? 1 : 2; }
+          return 0;
+        }
+      `),
+    );
+    expect(callExport(mod)).toBe(1);
+  });
+});
+
+describe("#5383 S2c — the shim re-keys the standalone provider and leaves the host lane alone", () => {
+  const polyfillSource = "export const Temporal = { PlainDate: 1 };\n";
+
+  it("the `gc` key is the fingerprint of the BUNDLE — the host provider is unaffected", () => {
+    // The same two-part fingerprint `temporalProviderCacheKey` computes, with
+    // the source NOT wrapped. If a future edit ever prepends anything on the
+    // host lane this is what fails, and the host artifact sha would move with
+    // it (measured identical across S2c: key 372a41be…, sha baff93a9…).
+    const optionFingerprint = JSON.stringify({
+      target: "gc",
+      fast: false,
+      nativeStrings: false,
+      utf8Storage: false,
+      semanticProviders: "auto",
+      hostBridge: "auto",
+      platform: "web",
+    });
+    const hash = createHash("sha256");
+    for (const part of [polyfillSource, optionFingerprint]) {
+      hash.update(String(part.length));
+      hash.update(":");
+      hash.update(part);
+      hash.update("\n");
+    }
+    expect(temporalProviderCacheKey({ polyfillSource })).toBe(hash.digest("hex"));
+  });
+
+  it("standalone and wasi keys differ from `gc` and from each other", () => {
+    const gc = temporalProviderCacheKey({ polyfillSource });
+    const standalone = temporalProviderCacheKey({ polyfillSource, compileOptions: { target: "standalone" } as never });
+    const wasi = temporalProviderCacheKey({ polyfillSource, compileOptions: { target: "wasi" } as never });
+    expect(new Set([gc, standalone, wasi]).size).toBe(3);
+  });
+
+  it("the shim declares `Intl` once and prefixes its own binding", () => {
+    const shim = standaloneIntlShimSource();
+    expect(shim.match(/\bconst Intl\b/g)).toHaveLength(1);
+    // Collision safety against the bundle's 340 top-level bindings.
+    expect(shim).toContain("__js2wasm_IntlDateTimeFormat");
+    expect(shim).toContain("--target standalone");
   });
 });

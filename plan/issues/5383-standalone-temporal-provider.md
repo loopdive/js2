@@ -533,3 +533,115 @@ else in this slice is a test in
 9 cases, including the non-enumerability of the installed methods, the
 untouched element/length surface, an unaffected plain class, and the preserved
 absent-receiver TypeError).
+
+## S2c findings (2026-09-08) — the Intl shim; `__module_init` RETURNS; the stop moves to the getter boundary
+
+`__module_init` now **returns** under `--target standalone`, both as a plain
+`compileMulti` of the bundle and through `buildTemporalProvider`'s real link
+path. The S2 smoke test is still **not** written, and the reason is new and
+elsewhere: the `Temporal` object does not survive the linked-provider **getter
+boundary** on this lane.
+
+### R8 — the `Intl` refusal shim (`src/temporal-intl-shim.ts`, provider-local)
+
+S2b stopped at `"formatToParts" in ai.prototype`, because standalone leaves the
+`Intl` identifier null by decision (#5206). The fix is **lexical and
+provider-local**, not a codegen change: `buildTemporalProvider` writes the
+synthetic package's `index.js` as `<shim>\n<bundle>` when
+`compileOptions.target` is `standalone` or `wasi`, and verbatim otherwise.
+
+The shape is dictated by the polyfill's own EAGER uses, each measured:
+
+| polyfill line (top level) | what the shim must provide |
+| --- | --- |
+| `ct = Intl.DateTimeFormat`, `const ai = Intl.DateTimeFormat` | a constructor VALUE (`typeof === "function"`) |
+| `"formatToParts" in ai.prototype \|\| delete DateTimeFormatImpl.prototype.formatToParts` (and the `formatRangeToParts` twin) | a real `.prototype` carrying both names, so the answer is TRUE and the polyfill does **not** delete its own methods |
+| `di.supportedLocalesOf = ai.supportedLocalesOf` | any value; a static is fine (measured: a class static read as a VALUE answers `undefined` on this lane — harmless here, noted below) |
+| `const {format,formatToParts} = Intl.DurationFormat?.prototype ?? …` and `Intl.DurationFormat?.prototype && (…)` | `DurationFormat: undefined`, so both short-circuit |
+| `Intl.supportedValuesOf?.("timeZone")` (lazy, `hr`) | `supportedValuesOf: undefined` → the polyfill's own fallback, not a throw |
+
+Everything else — the constructor and every method on the prototype — throws a
+`RangeError` naming `--target standalone`. `DurationFormat`/`supportedValuesOf`
+are deliberately `undefined` rather than throwing bodies: every use of them is
+behind `?.` or `typeof … === "function"`, so a body would convert a graceful
+degradation (`Duration.prototype.toLocaleString` falls back to the ISO string)
+into a throw.
+
+**A module-scoped `const Intl` DOES shadow the builtin on this lane** — measured
+first, because the whole design depends on it: with the shim prepended,
+`typeof ct === "function"`, `"formatToParts" in ai.prototype` is `true`, and
+`new Intl.DateTimeFormat()` throws the shim's RangeError rather than reaching
+`tryCompileIntlHostOnlyNew` (#5355). Standalone `Intl` semantics for user code
+are unchanged: the binding lives in ONE compilation unit.
+
+The shim text is part of the provider's identity: `temporalProviderCacheKey`
+now fingerprints the EFFECTIVE source, so editing the shim re-keys the
+standalone artifact and a stale binary cannot be served. **Host lane A/B, run
+both ways in this worktree** (`.tmp/gc-ab.mts`, fresh cache per side):
+key `372a41be…`, artifact sha256 `acd6ff4d…`, 1,701,105 B — **identical** before
+and after.
+
+Whole-bundle measurement with the shim (`--target standalone`,
+`hostBridge: "off"`, `deferTopLevelInit: true`): 158,585 B of source (shim
+1,043 B + bundle 157,541 B) compiles in **44 s**; through `buildTemporalProvider`
+the artifact is **3,167,456 B** with an **empty** import list, and
+`__module_init` **RETURNS**.
+
+### Where it stops now — the getter boundary, not the polyfill
+
+Measured two ways, which is what localises it:
+
+| probe | `Object.keys(Temporal).length` |
+| --- | --- |
+| inside the standalone module itself (`Object.keys(qi)` appended to the bundle, after `__module_init`) | **9** |
+| through `compileWithTemporalGlobal` + `instantiateLinkedProject(result, {})`, standalone | **0** |
+| the same consumer probe on the host `gc` lane (control) | **9** (`Duration,Instant,Now,PlainDate,…`) |
+
+So the standalone consumer receives an object (`typeof` `"object"`,
+`String(...)` `[object Object]`, not null) with no own properties, and
+`Temporal.PlainDate` is `undefined` — hence
+`TypeError: Cannot read properties of undefined (reading 'from')` for both smoke
+assertions. `__module_init` ran (the linker calls it in `wireProviderInstance`)
+and the namespace IS populated inside the provider. **This is a standalone
+cross-module object-boundary defect and it is the next slice (S2d).**
+
+Two further stops sit BEHIND that one, found by driving the polyfill from
+inside its own module (so they are real, not boundary artifacts):
+
+- `Temporal.PlainDate.from("2024-01-01")` → `TypeError: Unsupported dynamic
+  regular expression pattern` — the polyfill parses ISO strings with a
+  dynamically-built RegExp, which the standalone RegExp backend refuses.
+- `Temporal.Duration.from({hours:1}).total("minutes")` and the
+  `new Temporal.Duration(…)` spelling → `TypeError: invalid receiver: method
+  called with the wrong type of this-object`.
+- `new Temporal.PlainDate(2024,1,1)` → `RangeError: invalid calendar identifier`.
+
+Fixing the boundary alone therefore will NOT make the two smoke assertions pass;
+S2d needs all three. Recording them now so the next lane does not re-derive them
+at 45 s per compile.
+
+### Two small measured facts worth not re-deriving
+
+- **A class STATIC read as a value answers `undefined`** on this lane
+  (`ai.supportedLocalesOf` where `ai` is a class with `static
+  supportedLocalesOf(){…}`). Harmless for the polyfill (it just copies the
+  value onto its own object), but it is not what the spec says.
+- **`Temporal.Now.timeZoneId()` answers `null` instead of throwing the shim's
+  RangeError.** The polyfill's `Uo()` is
+  `(new Intl.DateTimeFormat).resolvedOptions().timeZone`, and an isolated
+  reduction of that exact spelling — a `new`-expression chain whose result is
+  discarded by the caller — also swallowed the constructor's throw. The
+  direct spellings (`new Intl.DateTimeFormat()`, `const f = new …; f.m()`,
+  via an alias, with arguments) all throw correctly and are tests. The
+  swallowing shape is NOT fixed here; it is filed with the S2d work above,
+  and it is why the smoke test's "`Now.timeZoneId()` throws" assertion is not
+  written either.
+
+### Tests
+
+`tests/issue-5383-standalone-temporal-provider.test.ts` gains six S2c cases:
+the eager-use bitmask (all five shapes in one module), the lazy RangeError with
+its `--target standalone` text, a prototype-method refusal, the `gc` cache key
+recomputed from the raw bundle (the host-lane no-change guard), standalone/wasi
+keys distinct from `gc`, and the shim's own shape (one `const Intl`, prefixed
+binding).
