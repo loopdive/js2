@@ -166,7 +166,7 @@ describe("#3518 core types retain an enforced dependency boundary", () => {
   it("pins five actual activations, narrow model access and the unfinished full-node destination", () => {
     const policy = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
     expect(policy.layers.find((layer: { id: string }) => layer.id === "ir-core")).toEqual(
-      expect.objectContaining({ status: "active", entries: expect.arrayContaining(core), minModules: 11 }),
+      expect.objectContaining({ status: "active", entries: expect.arrayContaining(core), minModules: 12 }),
     );
     expect(policy.activationHistory).toContainEqual(
       expect.objectContaining({ layer: "ir-core", entries: core, minModules: 5 }),

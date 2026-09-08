@@ -3,7 +3,9 @@
 import { irCallableBindingKey, irUnitCallableBindingId } from "./callable-bindings.js";
 import { irGlobalBindingKey, irTypeBindingKey } from "./abi-bindings.js";
 import { irBindingKey } from "./declared-types.js";
-import { forEachInstrDeep, type IrDeclaredSignature, type IrType } from "./nodes.js";
+import { forEachInstrDeep } from "./nodes.js";
+import type { IrDeclaredSignature } from "./core/nodes.js";
+import type { IrType } from "./core/types.js";
 import { ProgramAbiMap } from "./program-abi.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
 import {
@@ -13,12 +15,8 @@ import {
   preparedIrTypeKey,
 } from "./program-abi-contracts.js";
 import { assertPreparedIrProgramPopulation } from "./program-population.js";
-import {
-  preparedIrDataMismatch,
-  PreparedIrProgramInvariantError,
-  type PreparedIrAbiEntry,
-  type PreparedIrProgram,
-} from "./program.js";
+import { preparedIrDataMismatch, PreparedIrProgramInvariantError } from "./program.js";
+import type { PreparedIrAbiEntry, PreparedIrProgram } from "./program/prepared-contracts.js";
 import {
   prepareIrProgramRuntimeCallables,
   preparedIrRuntimeAbiAnchor,

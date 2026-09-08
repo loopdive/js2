@@ -79,8 +79,7 @@ import { forEachNestedBuffer, mapNestedBuffers } from "../nodes.js";
 import { dominanceOf } from "../analysis/dominance.js";
 import { effectsArePure, effectsOf, type IrEffects } from "../effects.js";
 import { renameInstrOperands } from "./inline-small.js";
-
-export type IrGvnMode = "off" | "on" | "poison";
+export type { IrGvnMode } from "./contracts/gvn.js";
 
 export interface GvnCounters {
   functions: number;

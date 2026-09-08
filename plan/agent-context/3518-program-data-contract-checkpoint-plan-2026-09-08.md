@@ -1,5 +1,51 @@
 # Next checkpoint: canonical whole-program data boundary
 
+## Current implementation authority — supersedes historical ABI restrictions below
+
+The parent composed the complete published ABI implementation from PR5739
+(`c3afa4389469e55d434c0715698dc59c6caa9120`), startup from PR5741
+(`7b37b23c72af84a1e336cebce2954942408ecea6`), and capability schema from PR5743
+(`c2d900d4fa9811f3359c308369bfb2b4184e90a9`). The prerequisite checkpoint is
+`e90f2a14aa263084cf94449b706b3df07bf30d71`, published in non-draft, held PR5747.
+
+The declaration-only ABI restriction in the historical amendments below was
+superseded before implementation dispatch. Reuse the single published canonical
+implementation unchanged; do not create a second declaration-only variant or
+move the runtime class back. Source reuse is distinct from accepting its caller
+proof. The original thirty obligations remain fixed: preliminary public-root
+evidence covers 29/30, and `planningSealed` still lacks a public-root witness.
+Neither downstream type imports nor clean contract dependencies resolve that
+pending acceptance question or prove direct-codegen retirement.
+
+Worker A's frozen scope is 21 files with 41 moved declarations. Worker B's frozen
+scope is 14 files with 135 moved declarations. Their source manifests are
+integration inputs, not substitutes for compiled, boundary or replay tests.
+The parent owns nine consumer import integrations and the complete mandatory
+boundary activation and replay controls described below. All merge holds remain.
+
+### Analysis data-foundation correction
+
+Actual inventory validation of the composed source found three forbidden
+transitive paths from `ir/analysis/contracts/allocations.ts`, through canonical
+core nodes/types, to `wasm/model/instructions.ts`. All 1,284 modules and 40 clean
+modules were counted; no source or classification was missing. The earlier
+claim that no allowed-edge amendment was necessary was incorrect.
+
+The approved standalone layering plan identifies Wasm model as a data foundation
+and explicitly permits existing IR representation to use it. Allocation-site
+contracts belong to general analysis, not solely to program preparation. Parent
+review therefore accepts one explicit correction: `ir-analysis` may depend on
+`wasm-model`, directly or transitively through core. This is a layer-wide pure
+data permission, including existing value and instruction vocabulary, not a
+symbol-only exemption. It grants no physical allocation, emission, backend,
+runtime implementation, frontend, or program dependency. No other allowed-edge
+list or checker traversal changes. Preserve negative controls for those forbidden
+layers, including dependencies hidden behind model/barrel intermediaries.
+
+The analogous pure-foundation requirement must be revisited when real pass
+implementations are activated; the current GVN mode leaf does not need another
+permission. Contract activation does not complete the analysis or pass layers.
+
 Proposed against `19971c634b920f4a6a3fe058dfc3437be3a499ea`; prerequisite PR5745 remains held. Astra High implementation specification with final amendments and coordinator reconciliation below. Approved for plan publication; exact ownership reconciliation remains mandatory before implementation dispatch.
 
 ## Decision and scope

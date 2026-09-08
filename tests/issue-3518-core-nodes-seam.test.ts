@@ -351,11 +351,38 @@ describe("complete canonical IR node seam", () => {
       "338b54988868255f918a13e89b86b9b8d2851d4a3b328f9b0bf67ddd48cfa9e6",
     );
     const oldAsync = parse("src/ir/async-plan.ts");
-    const retained = oldAsync.statements.filter(
-      (node) => !["PreparedIrFunction", "PreparedIrModule"].includes(name(node) ?? ""),
-    );
-    expect(retained.filter(ts.isFunctionDeclaration)).toHaveLength(39);
-    const rows = declarationRows(ts.factory.updateSourceFile(oldAsync, retained));
+    const prepared = parse("src/ir/runtime/contracts/prepared.ts");
+    const movedNames = [
+      "PreparedIrAsyncHostAdapter",
+      "PreparedIrAsyncRuntimeBase",
+      "PreparedIrAsyncRuntime",
+      "CurrentPreparedIrAsyncRuntime",
+      "PreparedIrAsyncRuntimeInput",
+    ];
+    const retainedRows = declarationRows(oldAsync);
+    const movedRows = declarationRows(prepared)
+      .filter(([name]) => movedNames.includes(name ?? ""))
+      .map(([name, doc, text]) => [
+        name,
+        doc,
+        // Only the canonical module exports this formerly private helper for
+        // the retained implementation's import; the old API does not.
+        name === "PreparedIrAsyncRuntimeInput" ? text?.replace(/^export /, "") : text,
+      ]);
+    expect(oldAsync.statements.filter(ts.isFunctionDeclaration)).toHaveLength(39);
+    expect(prepared.statements.filter(ts.isFunctionDeclaration)).toHaveLength(0);
+    expect(retainedRows).toHaveLength(48);
+    expect(retainedRows.some(([name]) => movedNames.includes(name ?? ""))).toBe(false);
+    expect(movedRows.map(([name]) => name)).toEqual(movedNames);
+    expect(retainedRows.slice(0, 3).map(([name]) => name)).toEqual([
+      "asAsyncStateId",
+      "asAsyncHandlerId",
+      "canonicalPromiseAbi",
+    ]);
+    // Reconstruct the original order and denominator, not a reduced receipt.
+    // PreparedIrFunction/Module were already outside this historical receipt
+    // and have their own full relocation receipt in the runtime seam suite.
+    const rows = [...retainedRows.slice(0, 3), ...movedRows, ...retainedRows.slice(3)];
     expect(rows).toHaveLength(53);
     expect(sha(JSON.stringify(rows))).toBe("2ccf5dd886dc8c510eb60d908a7af81f6c982b265065c451f7cf3a92018b0223");
     expect(rows.filter(([name]) => name === "preparedManifestByPlan")).toHaveLength(1);

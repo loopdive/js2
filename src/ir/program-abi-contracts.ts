@@ -2,17 +2,21 @@
 
 import { createIrBindingId } from "./identity-values.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
-import type { IrBindingId, IrSourceId, IrUnitId, IrUnitInventory } from "./identity.js";
+import type { IrBindingId, IrSourceId, IrUnitId } from "../shared/contracts/ir-identity.js";
+import type { IrUnitInventory } from "../shared/contracts/ir-unit-inventory.js";
 import { irCallableBindingKey, irUnitCallableBindingId, irUnitFuncRef } from "./callable-bindings.js";
 import { irGlobalBindingKey } from "./abi-bindings.js";
-import type { IrClassShape, IrGlobalRef, IrModule, IrType } from "./nodes.js";
+import type { PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
+import type { IrClassShape, IrType } from "./core/types.js";
+import type { IrGlobalRef } from "./core/value-references.js";
 import { irTypeKey } from "./type-key.js";
-import type { IrModuleInitPlan } from "./module-init-plan.js";
-import type { ProgramAbiCallableSignature, ProgramAbiDerivedUnitRecord } from "./program-abi.js";
-import type { PreparedComponentAbiLookup } from "./prepared-component-dependencies.js";
-import { PreparedIrProgramInvariantError, type PreparedIrAbiEntry } from "./program.js";
-import type { TypedIrProgramGlobal } from "./program-input.js";
-import type { IrProgramCallableBindingRecord } from "./program-callable-bindings.js";
+import type { IrModuleInitPlan } from "./program/startup.js";
+import type { ProgramAbiCallableSignature, ProgramAbiDerivedUnitRecord } from "./program/abi.js";
+import type { PreparedComponentAbiLookup } from "./program/abi-lookup.js";
+import { PreparedIrProgramInvariantError } from "./program.js";
+import type { PreparedIrAbiEntry } from "./program/prepared-contracts.js";
+import type { TypedIrProgramGlobal } from "./program/input-contracts.js";
+import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 import type { IrRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
 import {
   assertPreparedIrRuntimeCallableDeclaration,

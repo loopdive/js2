@@ -6,23 +6,21 @@ import {
   irAsyncPlanNeedsNumberBridge,
   preparedIrAsyncFrameCapabilityFailure,
 } from "./async-plan.js";
-import type { IrUnitId } from "./identity.js";
+import type { IrUnitId } from "../shared/contracts/ir-identity.js";
 import {
   IrRuntimeFunctionPreparationError,
   prepareIrRuntimeManifest,
   type IrRuntimeManifestDemands,
-  type PreparedIrRuntimeManifest,
 } from "./intrinsic-support.js";
-import { INTRINSIC_DEFINITIONS, type IntrinsicSourceLocation } from "./intrinsics.js";
-import { forEachInstrDeep, type IrFunction } from "./nodes.js";
-import { classifyIrFailure, IrInvariantError, type IrPreparationFailure } from "./outcomes.js";
-import {
-  PreparedIrProgramInvariantError,
-  preparedIrProgramOwner,
-  preparedIrReadonlyMap,
-  type PreparedIrProgramFailure,
-  type PreparedIrProgramProducerInput,
-} from "./program.js";
+import type { PreparedIrRuntimeManifest } from "./runtime/contracts/prepared.js";
+import { INTRINSIC_DEFINITIONS } from "./intrinsics.js";
+import type { IntrinsicSourceLocation } from "./runtime/contracts/intrinsics.js";
+import { forEachInstrDeep } from "./nodes.js";
+import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
+import { classifyIrFailure, IrInvariantError } from "./outcomes.js";
+import type { IrPreparationFailure } from "../shared/contracts/ir-preparation-failure.js";
+import { PreparedIrProgramInvariantError, preparedIrProgramOwner, preparedIrReadonlyMap } from "./program.js";
+import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./program/prepared-contracts.js";
 import { assertPreparedIrProgramPopulation } from "./program-population.js";
 import { irRuntimeCallableDeclaration } from "./runtime-callable-declarations.js";
 import {
@@ -37,8 +35,8 @@ import {
   STRING_EQ_RUNTIME_FEATURES,
   STRING_LEN_RUNTIME_FEATURES,
   RuntimeManifestInvariantError,
-  type RuntimeFeature,
 } from "./runtime-manifest.js";
+import type { RuntimeFeature } from "./runtime/contracts/manifest.js";
 
 type ProducerInput = PreparedIrProgramProducerInput;
 

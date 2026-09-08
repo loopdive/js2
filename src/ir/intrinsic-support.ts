@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
+import type { PreparedIrRuntimeManifest } from "./runtime/contracts/prepared.js";
+export type { PreparedIrRuntimeManifest } from "./runtime/contracts/prepared.js";
+
 import { irImportFuncRef, irIntrinsicFuncRef, irRuntimeFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
 import { createIrAsyncPlan, createPreparedIrAsyncRuntime, type IrAsyncPlan } from "./async-plan.js";
 import {
@@ -52,20 +55,12 @@ import {
   RuntimeManifestBuilder,
   projectRuntimeBackendRequirements,
   RUNTIME_PROVIDERS,
-  type FrozenRuntimeManifest,
   type RuntimeFeature,
   type RuntimeManifestPolicy,
   type RuntimeProviderDefinition,
   type RuntimeProviderPlan,
   type StringConstRuntimeFeature,
 } from "./runtime-manifest.js";
-
-export interface PreparedIrRuntimeManifest {
-  readonly functions: readonly IrFunction[];
-  readonly manifest: FrozenRuntimeManifest;
-  /** Lookup-only handle retained after freeze for verifier/lowering adapters. */
-  readonly providers: ReadonlyMap<IrInstrIntrinsic["id"], RuntimeProviderPlan>;
-}
 
 const BACKEND_COMPOSITE_BY_INTRINSIC: Readonly<Partial<Record<IrInstrIntrinsic["id"], IrIntrinsicBackendComposite>>> =
   Object.freeze({

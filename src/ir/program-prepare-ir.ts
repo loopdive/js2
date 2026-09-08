@@ -1,11 +1,7 @@
 // Copyright (c) 2026 Loopdive GmbH. Licensed under Apache-2.0 WITH LLVM-exception.
 
-import {
-  ownTypedIrProgramInput,
-  ownTypedIrProgramOptions,
-  type TypedIrProgramInput,
-  type TypedIrProgramOptions,
-} from "./program-input.js";
+import { ownTypedIrProgramInput, ownTypedIrProgramOptions } from "./program-input.js";
+import type { TypedIrProgramInput, TypedIrProgramOptions } from "./program/input-contracts.js";
 import { createGvnCounters, type GvnCounters } from "./passes/gvn-core.js";
 import { optimizePreparedIrProgramIr } from "./program-middleend-ir.js";
 import { prepareIrProgramAbiEntries, preparedIrDraftAbiLookup } from "./program-abi-contracts.js";
@@ -19,10 +15,12 @@ import {
   freezePreparedIrRuntimeValue,
   preparedIrReadonlyMap,
   PreparedIrProgramInvariantError,
-  type IrProgramPreparationResult,
-  type PreparedIrProgram,
-  type PreparedIrProgramRuntimeProjection,
 } from "./program.js";
+import type {
+  IrProgramPreparationResult,
+  PreparedIrProgram,
+  PreparedIrProgramRuntimeProjection,
+} from "./program/prepared-contracts.js";
 
 function assertCounters(counters: GvnCounters): void {
   const keys = ["functions", "merged", "poisoned"];

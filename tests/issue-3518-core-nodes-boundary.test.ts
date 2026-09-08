@@ -166,8 +166,8 @@ describe("#3518 complete semantic nodes has no prepared/provider dependency", ()
   it("pins every production activation while preserving narrower historical receipts", () => {
     const policy = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
     for (const [id, entries, minimum] of [
-      ["ir-core", core, 11],
-      ["foundation", foundation, 4],
+      ["ir-core", core, 12],
+      ["foundation", foundation, 6],
     ] as const) {
       expect(policy.layers.find((layer: { id: string }) => layer.id === id)).toEqual(
         expect.objectContaining({ status: "active", entries: expect.arrayContaining(entries), minModules: minimum }),

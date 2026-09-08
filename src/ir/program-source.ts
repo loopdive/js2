@@ -2,33 +2,31 @@
 
 import { ts } from "../ts-api.js";
 import { preparedIrProgramCallableResults } from "./program-callable-contract.js";
-import type { TypedIrProgramInput } from "./program-input.js";
+import type { TypedIrProgramInput } from "./program/input-contracts.js";
 import type { TypeOracle } from "../checker/oracle.js";
 import { AllocSiteRegistry } from "./alloc-registry.js";
 import { irSourceGlobalRef } from "./abi-bindings.js";
 import { irUnitFuncRef, irUnitCallableBindingId } from "./callable-bindings.js";
 import { lowerFunctionAstToIr, typeNodeToIr, type IrFromAstResolver } from "./from-ast.js";
-import {
-  buildIrUnitInventory,
-  type BuildIrUnitInventoryOptions,
-  type IrUnitId,
-  type IrUnitInventory,
-} from "./identity.js";
+import { buildIrUnitInventory, type BuildIrUnitInventoryOptions } from "./identity.js";
+import type { IrUnitId } from "../shared/contracts/ir-identity.js";
+import type { IrUnitInventory } from "../shared/contracts/ir-unit-inventory.js";
 import { buildIrPlanningIdentityContext, requireIrPlanningOwnerUnitId } from "./planning-identity.js";
-import {
-  buildIrProgramCallableBindingGraph,
-  type IrProgramCallableBindingRecord,
-} from "./program-callable-bindings.js";
+import { buildIrProgramCallableBindingGraph } from "./program-callable-bindings.js";
+import type { IrProgramCallableBindingRecord } from "./program/callable-bindings.js";
 import { buildIrUnitTypeMap, lowerTypeToIrType } from "./propagate.js";
-import { buildIrModuleInitPlan, type IrModuleInitPlan } from "./module-init-plan.js";
+import { buildIrModuleInitPlan } from "./module-init-plan.js";
+import type { IrModuleInitPlan } from "./program/startup.js";
 import { makeModuleInitSynthetic } from "./module-init.js";
 import { makeIrIdentityModuleBindingResolver, type IrModuleBindingIdentity } from "./module-bindings.js";
 import type { IrDirectCallLoweringPlan, ModuleBindingGlobal } from "./ast-lowering-plans.js";
-import type { IrFunction, IrModule, IrType } from "./nodes.js";
+import type { PreparedIrFunction as IrFunction, PreparedIrModule as IrModule } from "./runtime/contracts/prepared.js";
+import type { IrType } from "./core/types.js";
 import { classifyIrFailure, IrUnsupportedError } from "./outcomes.js";
-import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
-import { preparedIrProgramOwner, PreparedIrProgramInvariantError, type PreparedIrProgramFailure } from "./program.js";
-import type { RuntimeManifestPolicy } from "./runtime-manifest.js";
+import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
+import { preparedIrProgramOwner, PreparedIrProgramInvariantError } from "./program.js";
+import type { PreparedIrProgramFailure } from "./program/prepared-contracts.js";
+import type { RuntimeManifestPolicy } from "../runtime/contracts/provider-policy.js";
 import { unwrapPromiseTypeNode } from "./async-static.js";
 import { postStartupCallableUnits } from "./program-startup-proof.js";
 import { makeIrIdentityImportedFunctionResolver } from "./imported-functions.js";

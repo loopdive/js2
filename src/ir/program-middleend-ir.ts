@@ -23,14 +23,8 @@ import {
   type PreparedIrProgramProducerInput,
 } from "./program.js";
 import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
-
-export interface IrPreparationControls {
-  readonly gvnMode: IrGvnMode;
-  readonly ownership: boolean;
-  readonly escape: boolean;
-  readonly verifyIntermediateAllocations: boolean;
-  readonly verifyDominanceNaive: boolean;
-}
+import type { IrPreparationControls } from "./program/controls.js";
+export type { IrPreparationControls } from "./program/controls.js";
 
 export interface IrProgramOptimizationResult {
   readonly ir: IrModule;

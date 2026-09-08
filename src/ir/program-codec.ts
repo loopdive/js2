@@ -37,9 +37,8 @@ import {
   freezePreparedIrValue,
   preparedIrDataMismatch,
   PreparedIrProgramInvariantError,
-  type PreparedIrProgram,
-  type PreparedIrProgramRuntimeProjection,
 } from "./program.js";
+import type { PreparedIrProgram, PreparedIrProgramRuntimeProjection } from "./program/prepared-contracts.js";
 import { preparedIrDraftAbiLookup } from "./program-abi-contracts.js";
 import { irProgramRuntimeDemands } from "./program-runtime-demands.js";
 import { assertPreparedIrProgram } from "./program-validation.js";

@@ -4,14 +4,12 @@
 import { createIrAsyncPlan, irAsyncPlanNeedsNumberBridge, verifyIrAsyncPlan } from "./async-plan.js";
 import { prepareSuspendingIrFunction } from "./async-prepare-ir.js";
 import { createDerivedIrUnitId } from "../shared/contracts/identity-values.js";
-import { forEachInstrDeep, type IrFunction } from "./nodes.js";
+import { forEachInstrDeep } from "./nodes.js";
+import type { PreparedIrFunction as IrFunction } from "./runtime/contracts/prepared.js";
 import { classifyIrFailure } from "./outcomes.js";
-import {
-  preparedIrProgramOwner,
-  type PreparedIrProgramFailure,
-  type PreparedIrProgramProducerInput,
-} from "./program.js";
-import type { ProgramAbiDerivedUnitRecord } from "./program-abi.js";
+import { preparedIrProgramOwner } from "./program.js";
+import type { PreparedIrProgramFailure, PreparedIrProgramProducerInput } from "./program/prepared-contracts.js";
+import type { ProgramAbiDerivedUnitRecord } from "./program/abi.js";
 import { assertPreparedIrProgramPopulation } from "./program-population.js";
 import { checkFunctionPopulation, invariant, locatedFailure } from "./runtime-program-manifest.js";
 

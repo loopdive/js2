@@ -4386,3 +4386,53 @@ Executed native allocation, complete physical reservation, public cutover,
 original-population conformance and final direct-codegen retirement remain
 required. Host/linear implementation stays deferred, not removed from the
 overall migration obligations. All holds remain in place.
+
+### Program and runtime data integration receipts (2026-09-08)
+
+PR5747's next checkpoint composes the two reviewed native Astra Low slices:
+41 program-data declarations and 135 runtime-data declarations, with nine real
+consumer files importing their canonical owners. Runtime implementation stays
+in its existing owners; contract extraction does not claim source-free
+preparation implementation or direct-codegen retirement.
+
+The complete source inventory now accounts for 1,284 modules: 40 clean,
+1,239 unmigrated and five compatibility adapters. Inventory validation exits
+zero with no errors; `architectureComplete` remains false. Seventeen added
+canonical modules account for the increase from the prerequisite population.
+The independently fixed 40-module closure contains exactly 109 resolved edges
+(99 type-only, ten runtime), with no unknown, unresolved or forbidden edges.
+The sole allowed-edge amendment permits analysis contracts to use the existing
+pure Wasm model data foundation; physical allocation, emission, backend,
+frontend and runtime implementation dependencies remain forbidden. The plan
+records the three original transitive errors and the architectural rationale.
+
+The composed program seam and boundary run passed 131/131 tests (38 compiled
+identity/seam tests and 93 boundary controls). The compiled probe uses the real
+project's complete configured roots, preserving ambient declarations, in an
+awaited 2-GiB child process. Earlier failures exposed an omitted ambient root
+population and two incorrect expected TypeScript diagnostic codes; these were
+corrected without filtering diagnostics or changing the production types.
+Independent review additionally required the exact unique 17-owner control
+population to be asserted outside the parameterized tests; that correction is
+included. Existing runtime seam controls passed 75/75 in the composed checkout.
+
+Eight executed replay cases cover callable aliases and ordered variable startup,
+GVN enabled/disabled and normal/reversed source order. They compare canonical
+transport, typed preparation versus the existing wrapper, codec replay, complete
+Wasm bytes/text, imports, emitted units and actual returned values. The separate
+86/86 typed-preparation/codec/allocation replay receipt retains unsupported and
+fresh-process negative controls; neither count is a whole-corpus result.
+
+Next implementation remains the preparation implementation's dependency split,
+then native physical reservation/materialization and public IR cutover under the
+original population and retirement gates. The ABI denominator remains 30,
+with the missing public-root `planningSealed` witness unresolved. Strict compiler
+closure and direct-codegen retirement remain unproven. Do not treat green
+checkpoint checks or skipped Test262 jobs as proof of regression resolution.
+
+After the final denominator correction and formatting, the full boundary suite,
+new execution replay suite and fresh-process source-free suite passed 104/104
+(93 + 8 + 3), with no skipped tests. The independent reviewer granted source
+sign-off with no remaining blockers. Emitted JavaScript ASTs for all nine
+consumer integrations remain identical to prerequisite `e90f2a14`; full-repo
+lint exits zero. These are bounded preservation receipts, not retirement proof.

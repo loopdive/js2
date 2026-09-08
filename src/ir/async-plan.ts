@@ -14,36 +14,35 @@
  * consume an IrAsyncPlan.
  */
 
+import type {
+  PreparedIrAsyncRuntime,
+  CurrentPreparedIrAsyncRuntime,
+  PreparedIrAsyncRuntimeInput,
+} from "./runtime/contracts/prepared.js";
+export type {
+  PreparedIrFunction,
+  PreparedIrModule,
+  PreparedIrAsyncHostAdapter,
+  PreparedIrAsyncRuntime,
+  CurrentPreparedIrAsyncRuntime,
+} from "./runtime/contracts/prepared.js";
 import {
   ASYNC_HOST_ADAPTERS,
   ASYNC_RUNTIME_FEATURES,
   assertCanonicalPreparedAsyncHostCapabilityRecord,
   isAsyncRuntimeFeature,
-  type PreparedAsyncHostAdapter,
-  type PreparedAsyncHostCapabilityId,
   type AsyncRuntimeFeature,
 } from "./async-runtime-providers.js";
 import { irImportFuncRef, sameIrCallableBinding } from "./callable-bindings.js";
 import { asCallableRuntimeHostCapabilityRecord } from "./runtime-host-capabilities.js";
 import type { IrUnitId } from "./identity.js";
-import {
-  collectUses,
-  forEachInstrDeep,
-  irTypeEquals,
-  type IrFuncRef,
-  type IrInstr,
-  type IrType,
-  type IrVecLayoutRef,
-  type IrValueId,
-} from "./nodes.js";
+import { collectUses, forEachInstrDeep, irTypeEquals, type IrInstr, type IrType, type IrValueId } from "./nodes.js";
 import {
   projectRuntimeBackendRequirements,
   type FrozenRuntimeManifest,
-  type RuntimeBackendRequirement,
   type RuntimeProviderDefinition,
 } from "./runtime-manifest.js";
 
-import type { IrFunction as CoreIrFunction, IrModule as CoreIrModule } from "./core/nodes.js";
 import type {
   IrAsyncStateId,
   IrAsyncHandlerId,
@@ -79,18 +78,6 @@ export type {
   IrAsyncPlan,
 } from "./core/async-plan.js";
 
-export interface PreparedIrFunction extends CoreIrFunction {
-  /**
-   * Lookup-only backend attachment added after runtime-manifest freeze. This
-   * is deliberately separate from `asyncPlan` so plan hashes stay target
-   * independent while Program ABI sealing can see exact adapter callables.
-   */
-  readonly asyncRuntime?: PreparedIrAsyncRuntime;
-}
-
-export interface PreparedIrModule extends CoreIrModule {
-  readonly functions: readonly PreparedIrFunction[];
-}
 export function asAsyncStateId(value: number): IrAsyncStateId {
   return value as IrAsyncStateId;
 }
@@ -109,76 +96,6 @@ export function canonicalPromiseAbi(fulfillmentType: IrType | null): IrCanonical
     settlementTiming: "always-async",
   });
 }
-
-/**
- * Backend attachment created only after the semantic runtime manifest freezes.
- * The plan above stays target-neutral; this lookup-only record gives prepared
- * component sealing exact symbolic dependencies for the selected adapter.
- */
-export interface PreparedIrAsyncHostAdapter {
-  readonly capability: PreparedAsyncHostCapabilityId;
-  readonly target: IrFuncRef;
-  /** Exact canonical capability record selected by the frozen manifest. */
-  readonly record: PreparedAsyncHostAdapter;
-}
-
-interface PreparedIrAsyncRuntimeBase {
-  // Optional in the structural type only for legacy generic-pass fixtures that
-  // model a pre-manifest placeholder. Production consumers must call
-  // `assertPreparedIrAsyncRuntimeCurrent`, which requires all four fields.
-  /** Exact semantic plan authenticated when this backend decision was attached. */
-  readonly plan?: IrAsyncPlan;
-  /** Exact frozen whole-program manifest used to select this owner's providers. */
-  readonly manifest?: FrozenRuntimeManifest;
-  /** Exact manifest provider objects selected for this owner, in manifest order. */
-  readonly providers?: readonly RuntimeProviderDefinition[];
-  /** Closed, canonical backend reservations projected from `providers`. */
-  readonly backendRequirements?: readonly RuntimeBackendRequirement[];
-  /** Backend-only layouts keyed by the exact logical types in `asyncPlan`. */
-  readonly typeLayouts?: readonly {
-    readonly logicalType: IrType;
-    readonly layout: IrVecLayoutRef;
-    /** Present only for a host-fulfilled resume value that crosses representations. */
-    readonly fromExtern?: IrFuncRef;
-  }[];
-  /** State bodies with post-freeze intrinsic provider attachments. */
-  readonly states: readonly IrAsyncState[];
-}
-
-export type PreparedIrAsyncRuntime =
-  | (PreparedIrAsyncRuntimeBase & {
-      readonly kind: "host-wasmgc";
-      readonly adapters: readonly PreparedIrAsyncHostAdapter[];
-    })
-  | (PreparedIrAsyncRuntimeBase & {
-      readonly kind: "standalone-native-wasmgc";
-      readonly adapters: readonly [];
-    });
-
-export type CurrentPreparedIrAsyncRuntime = PreparedIrAsyncRuntime & {
-  readonly plan: IrAsyncPlan;
-  readonly manifest: FrozenRuntimeManifest;
-  readonly providers: readonly RuntimeProviderDefinition[];
-  readonly backendRequirements: readonly RuntimeBackendRequirement[];
-};
-
-type PreparedIrAsyncRuntimeInput = {
-  readonly plan: IrAsyncPlan;
-  readonly manifest: FrozenRuntimeManifest;
-  readonly providers: readonly RuntimeProviderDefinition[];
-  readonly backendRequirements: readonly RuntimeBackendRequirement[];
-  readonly states: readonly IrAsyncState[];
-  readonly typeLayouts?: PreparedIrAsyncRuntimeBase["typeLayouts"];
-} & (
-  | {
-      readonly kind: "host-wasmgc";
-      readonly adapters: readonly PreparedIrAsyncHostAdapter[];
-    }
-  | {
-      readonly kind: "standalone-native-wasmgc";
-      readonly adapters: readonly [];
-    }
-);
 
 const preparedManifestByPlan = new WeakMap<IrAsyncPlan, FrozenRuntimeManifest>();
 
