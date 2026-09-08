@@ -210,6 +210,24 @@ oracle-ratchet-allow:
 
 ## PR handoff — 2026-09-06
 
+### Resumed optional-parameter investigation — 2026-09-08
+
+The merged optional-vector reduction still returns `[7, 7, 8]` instead of
+`[17, 7, 8]`. Its emitted WAT declares `wrap` with parameters `(ref null 50),
+i32`, while nested `make` takes `(ref null 50), externref`: the omitted optional
+boolean is already false before the factory sees it. Both resolved-generic
+registration paths in `declarations.ts` bypass the existing optional declaration
+parameter helper. Applying that helper to copied resolved parameter arrays
+fixes both original failing cases without changing their expected values.
+Added explicit-undefined boolean and optional-number controls in both lanes.
+The expanded factory file plus generic identity/callback and main's dynamic
+result/rest-callable controls pass **107/107**. Nested optional-parameter and
+rest-vector controls measured **11/13** before the new tests: only the two
+already documented absent optional-array-field assertions fail.
+Full standalone parser acceptance is rerunning on this post-sync candidate;
+local log: `.tmp/ts5-parser-main-sync-optional.log`. No new passing claim until
+its three original fingerprints have actually executed.
+
 2026-09-08: merging this work branch with fetched `loopdive/js2` main
 `16498efb481cb022ee5c4dcc9bb137b6d4c91a50` (680 incoming commits).
 The pre-sync measurements below are not validation of the merged candidate.

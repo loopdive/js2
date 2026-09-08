@@ -6,6 +6,7 @@
  * Extracted from codegen/index.ts (#1013).
  */
 import { ts, forEachChild } from "../ts-api.js";
+import { preserveOptionalDeclarationParameter } from "./optional-declaration-parameter.js";
 import { objectLiteralHasIndexedSpread } from "./indexed-object-spread.js";
 import { registerResolvedRestParameter } from "./resolved-rest-parameter.js";
 import {
@@ -1851,7 +1852,9 @@ function registerBodylessFunctionDeclaration(
     const nativeGenerator = registerNativeGenerator(ctx, stmt, name, params);
     results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }];
   } else if (resolved) {
-    params = resolved.params;
+    params = resolved.params.map((type, index) =>
+      stmt.parameters[index] ? preserveOptionalDeclarationParameter(ctx, stmt.parameters[index]!, type) : type,
+    );
     results = resolved.results;
     registerResolvedRestParameter(ctx, stmt, name, params);
   } else {
@@ -2971,7 +2974,9 @@ export function collectDeclarations(ctx: CodegenContext, sourceFile: ts.SourceFi
         results = nativeGenerator ? [{ kind: "ref", typeIdx: nativeGenerator.stateTypeIdx }] : [{ kind: "externref" }]; // JS-host fallback returns a Generator object
       } else if (resolved) {
         // Use call-site resolved types for generic functions
-        params = resolved.params;
+        params = resolved.params.map((type, index) =>
+          stmt.parameters[index] ? preserveOptionalDeclarationParameter(ctx, stmt.parameters[index]!, type) : type,
+        );
         results = resolved.results;
         registerResolvedRestParameter(ctx, stmt, name, params);
       } else {
