@@ -6536,3 +6536,14 @@ compiler still calls direct generateModule/generateMultiModule, and the
 prepared-program emitter has not yet wired these string/value producers.
 See agent-context/3518-native-string-consumer-census-2026-09-09.md for the
 next required production integration boundary and ownership coordination.
+
+### Native string type reservation for real consumer integration
+
+The independent type-split draft now preserves a types-first import window,
+authenticates single-use literal ownership and exposes a complete private-chunk
+inventory. Revised TS7 and 54/54 focused tests pass; final review has no blockers
+and 188/188 existing flatten/scanner/value caller regressions pass. Exact provenance and
+limitations are recorded in
+agent-context/3518-native-string-types-split-2026-09-09.md. This is a prerequisite
+for actual prepared-consumer wiring, not evidence that the public direct path
+has been replaced. Paused P/C async drafts remain untouched.
