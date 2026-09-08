@@ -23,6 +23,7 @@
  */
 
 import { ts } from "../ts-api.js";
+import { isStaticEnumReceiver } from "./static-enum-receiver.js";
 import type { FieldDef, Instr, ValType } from "../ir/types.js";
 import type { CodegenContext, FunctionContext } from "./context/types.js";
 import {
@@ -2002,8 +2003,8 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
     }
   }
 
-  // Check for enum member access: EnumName.Member
-  if (ts.isIdentifier(expr.expression)) {
+  // Exact const enum members also support static namespace qualification.
+  if (isStaticEnumReceiver(ctx, expr.expression)) {
     // Resolve function-local const enums by declaration identity before the
     // legacy flat name map. This keeps a nested `const enum E` from reading an
     // unrelated top-level `E.Member`, and does not fold ordinary nested enums
@@ -2026,7 +2027,9 @@ export function tryIdentifierNamespaceAndStaticReceiverRead(
         return compileStringLiteral(ctx, fctx, scopedEnumValue);
       }
     }
+  }
 
+  if (ts.isIdentifier(expr.expression)) {
     const objName = expr.expression.text;
     const enumKey = `${objName}.${propName}`;
     const enumVal = ctx.enumValues.get(enumKey);

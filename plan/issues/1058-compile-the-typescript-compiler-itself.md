@@ -268,13 +268,85 @@ the existing runtime-namespace ownership checks remain unchanged. The reduced
 cases now pass **2/2**, zero imports, and the LOC/function gates pass without
 new allowances. Added a same-named cross-module live-binding control as well.
 
-Real-source reruns are live: factory **74714**
-(`.tmp/ts5-source-factory-binding.log`), diagnostics **38802**
-(`.tmp/ts5-source-diagnostics-binding.log`). Namespace controls pass **19/19**
+Namespace fix checkpoint: `59dad92583ede4`. Real-source reruns are terminal:
+factory **74714** (`.tmp/ts5-source-factory-binding.log`) compiles/validates in
+184,181 ms at 63,616,239 bytes, zero imports, still **0/3 Wasm / 3/3 native**.
+Its first/third failures moved past the initial factory reads to
+`ts.SyntaxKind.StaticKeyword` (generated 820:78) and `ts.SyntaxKind.CommaToken`
+(874:22). The second advances into `createArrowFunction`, where it traps with
+an illegal cast (wasm-function 3010 at 0xdd4e8d, through
+`__fn_tramp_createArrowFunction_1383`). Diagnostics **38802**
+(`.tmp/ts5-source-diagnostics-binding.log`) compiles/validates in 236,473 ms at
+89,255,662 bytes, zero imports, still **0/5 Wasm / 5/5 native**. All five fail
+at `ts.ScriptTarget.ESNext` on the first `createSourceFile` call (generated
+808:73, 830:73, 862:73, 885:73, 904:73). Next reduce qualified namespace enum
+reads, then the arrow-factory cast separately. No imported-factory failure
+remains at the original three sites; no new upstream pass is claimed.
+
+Namespace controls pass **19/19**
 (`.tmp/ts5-namespace-value-controls.log`), including exact cross-module identity,
 existing namespace constructor controls and TDZ. Typecheck and scoped lint pass
-(`.tmp/ts5-namespace-value-typecheck.log`). The two real-source handles supersede
-the terminal handles above; do not duplicate those runs.
+(`.tmp/ts5-namespace-value-typecheck.log`). All runs from this expansion are now
+terminal. The qualified enum dispatch currently calls `getConstantValue` in
+`property-access-dispatch.ts`; inspect its receiver guard before changing it.
+
+### Qualified const enum reads — 2026-09-08
+
+Both direct and barrel imports of `ts.Kind.Next` / `ts.Kind.Text` reproduce
+the null-namespace failure (**0/2 before**). The exact const-enum member branch
+was enclosed in an identifier-only receiver guard, excluding `ts.SyntaxKind`.
+It now accepts statically proven namespace qualification via
+`static-enum-receiver.ts`. Qualification must resolve to namespace imports or
+module declarations, not calls, getters or ordinary object bindings; the
+existing exact const-enum declaration check and constant-value emission remain.
+Direct/barrel reductions plus the existing nested const enum test pass **3/3**;
+LOC/function gates pass without new allowances.
+
+The enum-fixed source runs completed. Factory compiles/validates at 63,606,833
+bytes, zero imports, 172,239 ms, still **0/3 Wasm / 3/3 native**. Its first case
+now reaches a null dereference in the parenthesizer trampoline, the second still
+traps inside `createArrowFunction`, and the third reaches `ts.Debug.formatSyntaxKind`
+(generated 806:60), another nested namespace value path. Log:
+`.tmp/ts5-source-factory-enum.log`. Diagnostics now fails compilation after
+179,705 ms with `Maximum call stack size exceeded (at src/codegen/fixups.ts:207:17)`
+(`.tmp/ts5-source-diagnostics-enum.log`); no binary or new pass is claimed.
+Expanded enum/worker controls pass **12/12**, and typecheck passes.
+
+The fixup recursion independently reproduces at 20,000 nested shared instruction
+bodies (the 28-level and cross-function safety controls pass before the fix).
+`repairBody` now uses an explicit child-first stack and a separate unchanged
+pattern scan. It marks physical arrays on entry, preserves first-owner order,
+and retains the cross-function refusal/diagnostic before traversal. Its child
+enumerator is shared with the ownership scan and also covers `catchAll`.
+Initial fixup controls pass **16/16**, including the deep graph; function/LOC
+gates pass without new allowances. Added idempotence and catch-all coverage.
+
+Both full-source retries completed, confirming stack-safe diagnostic compilation:
+**89,252,855 bytes / validates / zero imports / 220,668 ms**, but still **0/5 Wasm
+/ 5/5 native**. All five now reach `createDiagnosticForNode` and null-dereference;
+the nearest source mapping is utilities.ts:2364 (`getSourceFileOfNode(node)`).
+Log: `.tmp/ts5-source-diagnostics-stack-safe.log`. Next distinguish an absent
+statement from a broken parent chain or diagnostic argument carrier; the shared
+error signature alone does not prove which value is null.
+
+Factory remains **0/3 Wasm / 3/3 native**, with a valid zero-import 63,606,837-byte
+module in 164,782 ms (`.tmp/ts5-source-factory-locations.log`). The arrow cast
+maps to nodeFactory.ts:3260, the parenthesizer call/body assignment. The first
+failure is in `__fn_tramp_parenthesizeExpressionOfExportDefault_675`; its mapping
+lands on parenthesizerRules.ts:668 (a different sibling), so treat that source
+location as approximate rather than attributing the failure to that statement.
+The third still fails at the original assertion's `ts.Debug.formatSyntaxKind`
+read (generated 806:60). Investigate qualified runtime namespace function reads
+and the lazily created parenthesizer's captured factory independently.
+
+Final controls pass **21/21**, and typecheck passes (logs
+`.tmp/ts5-enum-stack-final-controls.log`, `.tmp/ts5-enum-stack-typecheck.log`).
+The final catch-all fixture/idempotence rerun passes **4/4**
+(`.tmp/ts5-fixups-last-controls.log`). Source and regression formatting, scoped
+lint, and function/LOC gates pass. No allowances or upstream assertions changed.
+All handles from this turn are terminal. No additional upstream passes claimed;
+the established projected suite remains the previously verified 25/25, with the
+remaining full 256-file requirement and self-hosting goal still open.
 
 ### Source-defined collection carrier investigation (resumed)
 

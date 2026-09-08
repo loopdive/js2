@@ -66,6 +66,7 @@ export async function runSourceUnitFile(name) {
     workerEnv: {
       DOGFOOD_TARGET: "standalone",
       DOGFOOD_CONSUMER_DRIVEN_BARRELS: "1",
+      DOGFOOD_SOURCE_DIAG: "1",
       DOGFOOD_PLATFORM: undefined,
       DOGFOOD_NODE_HOST_DEPS: undefined,
       DOGFOOD_INSTALL_JSDOM: undefined,

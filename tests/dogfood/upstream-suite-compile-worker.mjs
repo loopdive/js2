@@ -463,7 +463,8 @@ async function main() {
         timeoutMs: testTimeoutMs,
         thrownText: (error) => {
           const guestMessage = readStandaloneGuestError(exports);
-          return `${errorText(error, instance)}${guestMessage ? `\nguest: ${guestMessage}` : ""}`;
+          const location = sourceLocationForWasmError(error, result.sourceMap);
+          return `${errorText(error, instance)}${guestMessage ? `\nguest: ${guestMessage}` : ""}${location ? `\nsource: ${location}` : ""}`;
         },
         failureText: (index) =>
           `standalone callback ${index} returned ${String(rawValues.get(index))}; expected numeric 1`,
