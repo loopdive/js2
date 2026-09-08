@@ -5014,3 +5014,39 @@ established auto-fire behavior recorded. The original whole-preparation,
 Math/TDZ physical-execution, boolean-host assertion and transformed async
 authentication gaps remain in the reports. Equal failures are preservation,
 not acceptance. Revision 3's exit13 remains documented above as failed evidence.
+
+### Native settlement measured and next implementation dispatched (2026-09-08)
+
+The five-file native Promise-settlement worker draft is frozen at
+`/private/tmp/js2-3518-native-promise-settlement-20260908`, based on
+`e3de0f3ff7d7828c66b3fea7946f08e593bf77d8`. Parent verified every recorded
+SHA256 and measured 100/100 focused tests (89 ownership plus 11 source controls),
+45/45 existing regression tests across five suites, and TS7 typecheck exit zero.
+Implementation publication and independent review remain pending; this entry
+does not imply those worker files are included in this documentation checkpoint.
+
+An independently clean exact-e3de worktree and the frozen candidate completed
+the historical eight-row comparison with zero differences and zero pending
+rows. Both child processes exited zero, with no signal or spawn error. Reports
+are retained in the worker's `.tmp/native-promise-settlement-historical-r1`:
+baseline SHA256 `a50049048ed5de0a97bc39fbe977556eb8479cd42b3ed4d3e9404fd789ab829e`,
+candidate SHA256 `718c85a33339e1338fa5755ea3b9ea1b0cb50d4687c61fda907e8f82f38bbca4`.
+The instrument's acceptance flag applies only to these eight public source rows:
+four standalone rows and four separately labelled legacy WASI preservation rows.
+It is not whole-program async acceptance, compiler closure, or retirement proof.
+
+The High-authored frame-body plan is recorded in
+`plan/agent-context/3518-native-async-frame-body-plan-2026-09-08.md` and assigned
+to the existing Astra Low worker in isolated
+`/private/tmp/js2-3518-native-async-frame-bodies-20260908`, based on physical
+checkpoint `0194b64c246d2b5beab2db00af33a73498e2eb6e`. Its six production and
+two test paths are disjoint from settlement and source admission. Claim and
+implementation status must be verified separately, not inferred from dispatch.
+
+The independent source-admission prerequisite is recorded in
+`plan/agent-context/3518-certified-delay-source-admission-plan-2026-09-08.md`.
+Fresh whole-program probes refuse the unchanged certified delay at unknown
+Promise construction, and the complete async family at the array-returning
+signature. Existing public-route success does not remove either gap. Preserve
+the exact closure inventory while wiring certification; logical vector/await
+typing and all runtime/physical/public-cutover requirements remain in scope.
