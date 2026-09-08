@@ -50,6 +50,8 @@ export interface NativeStringLiteralReservations {
 }
 interface LiteralOwner {
   readonly tx: PhysicalModuleReservations;
+  readonly utf8Storage: boolean;
+  readonly bindings: ReadonlyMap<string, NativeStringLiteralBinding>;
   readonly globals: readonly { readonly token: GlobalReservation; readonly init: Instr[] }[];
   readonly functions: readonly {
     readonly token: FunctionReservation;
@@ -128,7 +130,7 @@ export function reserveNativeStringLiteralResources(
   };
   const literals = requirements.literals.map(({ value, encoding }) => literal(value, encoding));
   const pack = Object.freeze({ layout, types: Object.freeze(types), literals: Object.freeze(literals) });
-  owners.set(pack, { tx, globals, functions, filled: false });
+  owners.set(pack, { tx, utf8Storage: requirements.utf8Storage, bindings: cache, globals, functions, filled: false });
   return pack;
 }
 
@@ -137,15 +139,34 @@ export function requireNativeStringLiteral(
   tx: PhysicalModuleReservations,
   pack: NativeStringLiteralReservations,
   text: string,
+  encoding?: StringEncoding,
 ): NativeStringLiteralBinding {
   const owner = owners.get(pack);
   if (!owner || owner.tx !== tx) throw new Error("native strings: foreign or forged resource owner");
   if (tx.state !== "reserving") {
     for (const token of pack.types) tx.physicalIndex(token);
   }
-  const binding = pack.literals.find((row) => row.text === text);
+  const selected =
+    encoding === undefined
+      ? undefined
+      : owner.bindings.get(planNativeStringLiteral(pack.layout, owner.utf8Storage, text, encoding).key);
+  const binding = pack.literals.find((row) => (encoding === undefined ? row.text === text : row === selected));
   if (!binding) throw new Error(`native strings: missing literal ${JSON.stringify(text)}`);
   return binding;
+}
+
+/** Attest actual canonical fills through this owner's existing ledger, not a body-name heuristic. */
+export function requireCompletedNativeStringLiterals(
+  tx: PhysicalModuleReservations,
+  pack: NativeStringLiteralReservations,
+): NativeStringLiteralReservations {
+  const owner = owners.get(pack);
+  if (!owner || owner.tx !== tx) throw new Error("native strings: foreign or forged resource owner");
+  if (!owner.filled) throw new Error("native strings: incomplete literal resources");
+  for (const token of pack.types) tx.physicalIndex(token);
+  for (const row of owner.globals) tx.physicalIndex(row.token);
+  for (const row of owner.functions) tx.physicalIndex(row.token);
+  return pack;
 }
 
 export function fillNativeStringLiteralResources(

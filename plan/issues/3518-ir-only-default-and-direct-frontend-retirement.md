@@ -6453,3 +6453,24 @@ fresh-process replay, cutover, strict closure and retirement remain open.
 
 Expanded boundary suite86860 subsequently exited0:205/205 passed in132.76s.
 The full High native-value implementation plan is included in agent-context.
+
+## Native scanner dependency authentication — 2026-09-08
+
+On #5774, parent added encoding-specific literal lookup through existing
+interning identities and completed-string attestation through the existing
+physical ledger. This lets flattening require the genuine UTF16 empty global
+even when an equal UTF8 literal was demanded first. Old text-only lookup is
+unchanged. Forged/foreign owners, incomplete fills and changed completed
+global/function contents are rejected by the new completion accessor.
+
+TS7 and34/34 focused tests passed in96731 (5 new completion controls and29
+unchanged literal/error cases). Independent review and publication pending.
+The full frozen scanner implementation plan is included in agent-context.
+Hilbert owns flatten/copy/optionalUTF8decode; Maxwell owns StringToNumber and
+grammar/power resources. Parent owns string authentication and the subsequent
+owned-scanner dependency in native values. Euclid owns disjoint ObjVec work.
+
+Reservation-phase producer authentication is separate from completed-fill
+attestation: reserve-all-before-freeze cannot require completed dependencies.
+Neither accessor establishes whole-program execution. Actual scanner,
+flattening, resource-chain execution, replay and retirement remain open.
