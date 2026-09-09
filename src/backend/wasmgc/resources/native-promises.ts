@@ -34,6 +34,7 @@ import type { NativePromiseResourcePlan, NativePromiseOwner } from "../../../ir/
 import { resolveNativeVectorForElement, type NativeVectorTypeReservations } from "./native-vectors.js";
 import {
   requireNativeClosureReservations,
+  requireNativeClosureReservationPrefix,
   type NativeClosureReservations,
   type NativeClosureMetadataBinding,
 } from "./native-closures.js";
@@ -314,8 +315,14 @@ function structFields(token: TypeReservation) {
   if (token.object.kind !== "struct") fail("expected concrete struct reservation");
   return token.object.fields;
 }
-function requireSettleMetadata(tx: PhysicalModuleReservations, dependencies: NativePromiseReservationDependencies) {
-  const closures = requireNativeClosureReservations(tx, dependencies.closures);
+function requireSettleMetadata(
+  tx: PhysicalModuleReservations,
+  dependencies: NativePromiseReservationDependencies,
+  allowPrefix = false,
+) {
+  const closures = allowPrefix
+    ? requireNativeClosureReservationPrefix(tx, dependencies.closures, dependencies.settleMetadataRequestId)
+    : requireNativeClosureReservations(tx, dependencies.closures);
   const rows = closures.metadata.filter((row) => row.id === dependencies.settleMetadataRequestId);
   if (rows.length !== 1) fail("missing or ambiguous settle metadata request");
   const binding = rows[0]!.binding;
@@ -339,7 +346,7 @@ export function reserveNativePromiseResources(
   expectedPlan?: NativePromiseDeclarationPlan,
 ): NativePromiseReservations {
   if (!plan.required || !plan.anchor) fail("missing required native Promise plan");
-  const settleMetadata = requireSettleMetadata(tx, dependencies);
+  const settleMetadata = requireSettleMetadata(tx, dependencies, true);
   const closureRoot = dependencies.closures.root;
   const layout = resolveNativeVectorForElement(dependencies.vectors, EXTERN);
   const argumentArray = dependencies.vectors.layouts.find((row) => row.element === "externref")?.array;
@@ -526,7 +533,8 @@ export function nativePromiseReservationInventory(
   // this borrowed prerequisite; exact association is retained here, with
   // ledger provenance authenticated once final coordinates are available.
   if (tx.state !== "reserving") tx.physicalIndex(owner.dependencies.exceptionTag);
-  if (requireSettleMetadata(tx, owner.dependencies) !== owner.settleMetadata) fail("changed settle metadata binding");
+  if (requireSettleMetadata(tx, owner.dependencies, tx.state === "reserving") !== owner.settleMetadata)
+    fail("changed settle metadata binding");
   const argumentArray = owner.dependencies.vectors.layouts.find((row) => row.element === "externref")?.array;
   if (!argumentArray || argumentArray !== pack.types.arguments) fail("changed shared argument array");
   resolveNativeVectorForElement(owner.dependencies.vectors, EXTERN);

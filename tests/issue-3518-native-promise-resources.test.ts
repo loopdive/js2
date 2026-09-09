@@ -15,6 +15,9 @@ import { deriveNativeVectorResourcePlan } from "../src/ir/program/native-vector-
 import { reserveNativeVectorTypes } from "../src/backend/wasmgc/resources/native-vectors.js";
 import {
   reserveNativeClosureResources,
+  declareNativeClosureResources,
+  reserveNativeClosureResourcesPrefix,
+  resumeNativeClosureResources,
   type NativeClosureRequirements,
 } from "../src/backend/wasmgc/resources/native-closures.js";
 import {
@@ -424,6 +427,67 @@ describe("native Promise resource requirements, not whole-family materialization
 });
 
 describe("reservation-only Promise pack controls; missing native dependencies remain a gap", () => {
+  it("admits genuine settle prefix only for reserve/inventory and demands complete closures at fill", () => {
+    const absent = undefined as unknown as NativePromiseFillDependencies;
+    const control = reserve();
+    expect(nativePromiseReservationInventory(control.tx, control.pack, control.declaration)).toHaveLength(
+      control.declaration.declarations.length,
+    );
+    expect(() => fillNativePromiseResources(control.tx, control.pack, absent)).toThrow(
+      "complete native dependencies are missing",
+    );
+    for (const freezeEarly of [false, true]) {
+      const { plan, vectorPlan } = actual(),
+        module = createEmptyModule(),
+        tx = new PhysicalModuleReservations(module);
+      const exceptionTag = tx.reserveTag(
+        "tag",
+        { params: [{ kind: "externref" }], results: [] },
+        { kind: "defined", name: "__exn" },
+      );
+      const vectors = reserveNativeVectorTypes(tx, vectorPlan);
+      const requests = [
+        { kind: "signature", id: "settle", params: [{ kind: "externref" }], results: [], allocationMode: "ordinary" },
+        { kind: "metadata", id: "settle-meta", signatureId: "settle", key: "promise:settle", name: "", length: 1 },
+        { kind: "signature", id: "delay", params: [], results: [], allocationMode: "host-one-shot" },
+      ] as const;
+      const closurePlan = declareNativeClosureResources({
+        key: "staged",
+        startingClosureCounter: 0,
+        requests,
+        referenceTypeKeys: [],
+      });
+      const closures = reserveNativeClosureResourcesPrefix(
+        tx,
+        { key: "staged", startingClosureCounter: 0, requests, referenceTypes: [] },
+        closurePlan,
+        2,
+      );
+      const metadata = closures.metadata[0]!.binding;
+      const declaration = declareNativePromiseResources(plan, {
+        argumentArrayKey: vectors.layouts.find((row) => row.element === "externref")!.array.key,
+        closureRootKey: closures.root.key,
+        settleMetadataKey: metadata.type.key,
+      });
+      const pack = reserveNativePromiseResources(
+        tx,
+        plan,
+        { vectors, exceptionTag, closures, settleMetadataRequestId: "settle-meta" },
+        declaration,
+      );
+      expect(nativePromiseReservationInventory(tx, pack, declaration)).toHaveLength(declaration.declarations.length);
+      if (freezeEarly) tx.freezeReservations();
+      expect(() => fillNativePromiseResources(tx, pack, absent)).toThrow(
+        freezeEarly ? "unfinished closure pack" : "incomplete closure reservation population",
+      );
+      if (!freezeEarly) {
+        resumeNativeClosureResources(tx, closures, 3);
+        expect(closures.metadata[0]!.binding).toBe(metadata);
+        expect(nativePromiseReservationInventory(tx, pack, declaration)).toHaveLength(declaration.declarations.length);
+        expect(() => fillNativePromiseResources(tx, pack, absent)).toThrow("complete native dependencies are missing");
+      }
+    }
+  });
   it("joins genuine metadata while preserving an alternate first-signature root", () => {
     const a = reserve();
     expect(a.dependencies.closures.root).toBe(a.dependencies.closures.signatures[0]!.binding.type);
@@ -522,7 +586,7 @@ describe("reservation-only Promise pack controls; missing native dependencies re
           : mutation === "stale"
             ? "stale closure request sequence"
             : mutation === "missing-request"
-              ? "missing or ambiguous settle metadata request"
+              ? "missing or future closure request"
               : "invalid settle metadata";
       expect(() => reserveNativePromiseResources(tx, plan, dependencies)).toThrow(error);
       assertUnchanged();

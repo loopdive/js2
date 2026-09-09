@@ -130,9 +130,24 @@ accumulator global; append; flat global; prepare; char. Omit undemanded groups.
 Full-family output has five functions and two globals. Use existing recipe
 intern/reserve semantics, preserving named stdout signatures
 `$stdout_append_type`, `$stdout_prepare_type`, `$stdout_char_type` and optional
-name presence. Do not explicitly and implicitly intern the same reservation.
+name presence. For each of these three stdout functions, use one explicit named
+`intern-signature` step followed by its function reservation. The existing ledger
+always performs an unnamed intern lookup inside `reserveFunction`: this is two
+actual calls, but only one type allocation on a cold miss and none on a preseeded
+hit. Preserve first-allocation naming; do not rename an existing matching type.
+Binary/batch reservations retain only their implicit lookup. Do not add a ledger
+API, schema change or duplicate ABI type entry to hide the second call.
 Pin the complete operation trace. This deterministic new aggregate order is not
 a claim of equality with every legacy lazy-registration interleaving.
+
+This narrow Astra High correction supersedes the original contradictory
+no-explicit-plus-implicit sentence. Exact stdout order is accumulator global,
+named append intern, append reservation/implicit lookup, flat global, named
+prepare intern, prepare reservation/implicit lookup, named char intern, char
+reservation/implicit lookup. Tests must pin both calls and argument presence,
+cold/preseeded cache behavior, names, indices and allocation order; do not claim
+donor-identical intern invocation counts. Parent verified the actual ledger,
+recipe executor and three named legacy stdout declarations before adoption.
 
 All type references are symbolic issued string-type keys before allocation:
 

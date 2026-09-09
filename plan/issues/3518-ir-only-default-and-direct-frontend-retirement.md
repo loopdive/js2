@@ -7039,3 +7039,68 @@ bodies, and explicit default-true empty-identity options without ambient reads.
 Preserve old no-output recipes and bytes. Resource proof does not complete native
 async invocation/frames/Promise fill, canonical main undefined, public cutover,
 ABI30 planningSealed evidence or strict direct-codegen retirement.
+
+### Same-owner staged closure reservation checkpoint (2026-09-09)
+
+The bounded closure resource producer now supports one issued owner and pack
+across a settle-metadata prefix, actual Promise reservation, and signature-only
+suffix. Complete preflight and all metadata precede the first pause; the legacy
+atomic API and complete frozen shape remain. Promise reserve/reserving inventory
+accept the authenticated prefix, while fill still requires completion.
+
+High statically approved production and final proof repairs. Focused rerun4029
+exited0 with 172/172 across four suites. Earlier33713 exited1 with 170/172;
+the surviving physical-only preflight mutant was still blocked by the canonical
+walk, and one expected missing-request diagnostic needed the new prefix guard.
+Both are retained distinctly in the handoff. TS740649 exited0 before those two
+test-only repairs. Final TS711727 exited0 after those repairs and scoped
+production formatting; normal publication remains pending.
+
+Original/decoded actual-source Promise interleaving, fresh/cached suffixes,
+three lazy-observer timings, full donor receipts, live mutants and allocator
+ordering controls establish this reservation prerequisite only. Complete Promise
+fill, full native async execution, public cutover and retirement remain open.
+See agent-context/3518-staged-closure-reservations-implementation-2026-09-09.md.
+
+### Delay/timer implementation contract frozen (2026-09-09)
+
+The reviewed Astra High contract is
+`agent-context/3518-lane-b-delay-timer-implementation-contract-2026-09-09.md`,
+SHA256 ad198d26d678e93a365ca2515561f29cd64b3e1b845cd7a79caa3cc268a58848.
+It uses published same-owner staged closures rather than obsolete atomic-only
+assumptions. Canonical legacy-used layout factories and timer export planning
+have disjoint proposed writer scopes; active legacy-file ownership must be
+checked before dispatch. Copying this contract grants no overlap release.
+
+Parent retains selected import authority, complete ordered export occupancy,
+physical scheduling and consumer integration. Resource fill/publication still
+requires genuine C1/C2 invocation/classification and directCall0 ownership,
+plus actual rejection-tracking ownership when selected. Signature-compatible
+stand-ins, missing-hook fallbacks and hand-written dispatchers cannot satisfy
+those dependencies. Tables and elements remain typed publication obligations,
+not fabricated function ABI slots. Whole-family execution remains required.
+
+Predispatch audit read upstream assignment head
+`a6bd497f7c91ee841a63698df831a962b055e69e` twice unchanged. B1's three
+legacy adapters overlap active `3518:native-delay-combinator-bodies`, owner
+`ttraenkler/codex-astra-native-delay-combinator-bodies-20260908`, write ID
+`57815-2v4g2ji4`. B2's closure-exports.ts overlaps active
+`3520:c31-closure-host-bridge`, owner `ttraenkler/codex-r1-c31`, with C38
+publication history also requiring reconciliation. No explicit release for
+these new factoring scopes was found; neither writer was dispatched. The
+separate preserved P/C file inventories do not grant release of these owners.
+Timer-contract and new-path ownership also require verification before claims.
+
+### E2 named-signature correction (2026-09-09)
+
+Parent and Astra High verified the actual ledger always performs an unnamed
+intern lookup inside function reservation. Preserving each of the three stdout
+signature names therefore requires an earlier explicit named intern step:
+two calls, one allocation on a cold miss, none on a preseeded hit. Existing
+matching types retain their first-allocation names. Binary/batch functions keep
+implicit-only interning. No duplicate ABI type entry or ledger/schema change.
+The corrected contract SHA256 is
+`d65b993cfc014277e4c4f6c0903b919a6cbdc962002257b6333e7618759665e4`;
+this narrowly supersedes the earlier no-explicit-plus-implicit sentence, not
+the full requirements or physical phase order. Maxwell received the correction
+and must pin actual calls, optional arguments, names, indices and cache behavior.

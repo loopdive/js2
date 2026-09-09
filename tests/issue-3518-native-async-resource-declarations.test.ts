@@ -10,6 +10,10 @@ import {
   instantiateNativeClosureRequirements,
   reserveNativeClosureResources,
   nativeClosureReservationInventory,
+  nativeClosureReservationStepEnd,
+  reserveNativeClosureResourcesPrefix,
+  resumeNativeClosureResources,
+  requireNativeClosureReservationPrefix,
   type NativeClosureDeclarationRequirements,
 } from "../src/backend/wasmgc/resources/native-closures.js";
 import {
@@ -61,6 +65,73 @@ function closure() {
 }
 
 describe("shared async declarations on existing reservation producers", () => {
+  it.each(["copied-token", "foreign-token", "descriptor"] as const)(
+    "reauthenticates staged external prerequisite %s before the suffix",
+    (mutation) => {
+      const original = requirements();
+      const plan = declareNativeClosureResources({
+        ...original,
+        requests: [
+          ...original.requests,
+          { kind: "signature", id: "delay", params: [], results: [], allocationMode: "host-one-shot" },
+        ],
+      });
+      const a = fixture(),
+        physical = instantiateNativeClosureRequirements(a.tx, plan, a.types);
+      const pack = reserveNativeClosureResourcesPrefix(a.tx, physical, plan, 6);
+      expect(requireNativeClosureReservationPrefix(a.tx, pack, "settle-meta")).toBe(pack);
+      if (mutation === "copied-token") Object.assign(physical, { referenceTypes: [{ ...a.external }] });
+      if (mutation === "foreign-token") Object.assign(physical, { referenceTypes: [fixture().external] });
+      if (mutation === "descriptor") Object.assign(a.external.object, { name: "changed-external" });
+      const before = structuredClone(a.module);
+      expect(() => resumeNativeClosureResources(a.tx, pack, 7)).toThrow(
+        mutation === "descriptor" ? /reservation|changed|mutat|type/i : "stale external type tokens",
+      );
+      expect(a.module).toStrictEqual(before);
+    },
+  );
+  it("derives request offsets from the canonical walk including zero-operation cache hits", () => {
+    const input = requirements(),
+      plan = declareNativeClosureResources(input);
+    expect(nativeClosureReservationStepEnd(plan, 6)).toBe(6);
+    // Each of these cuts leaves a genuine metadata occurrence pending.
+    for (const cut of [1, 2, 3, 4, 5])
+      expect(() => nativeClosureReservationStepEnd(plan, cut)).toThrow("metadata cannot remain");
+    const suffix = declareNativeClosureResources({
+      ...input,
+      requests: [
+        ...input.requests,
+        {
+          kind: "signature",
+          id: "cached-suffix",
+          params: [{ kind: "externref" }],
+          results: [],
+          allocationMode: "host-one-shot",
+        },
+      ],
+    });
+    expect(nativeClosureReservationStepEnd(suffix, 6)).toBe(6);
+    expect(nativeClosureReservationStepEnd(suffix, 7)).toBe(6);
+    expect(() =>
+      nativeClosureReservationStepEnd({ ...suffix, reservationSteps: [...suffix.reservationSteps].reverse() }, 6),
+    ).toThrow("substituted");
+  });
+  it.each([2, 3, 5])("rejects metadata remaining after cut %i before consuming any ordinals", (cut) => {
+    const control = closure();
+    expect(nativeClosureReservationInventory(control.tx, control.pack, control.plan)).toHaveLength(4);
+    const input = fixture(),
+      plan = declareNativeClosureResources(requirements());
+    const physical = instantiateNativeClosureRequirements(input.tx, plan, input.types);
+    const before = structuredClone(input.module);
+    expect(() => reserveNativeClosureResourcesPrefix(input.tx, physical, plan, cut)).toThrow("metadata cannot remain");
+    expect(input.module).toStrictEqual(before);
+    const twin = fixture();
+    const probe = (tx: PhysicalModuleReservations) => [
+      tx.reserveType("probe", { kind: "struct", name: "probe", fields: [] }).typeIndex,
+      tx.reserveFunction("fn", "fn", { params: [], results: [] }).handle,
+    ];
+    expect(probe(input.tx)).toEqual(probe(twin.tx));
+  });
   it("rejects late malformed physical requests before consuming reservation ordinals", () => {
     const positive = closure();
     expect(nativeClosureReservationInventory(positive.tx, positive.pack, positive.plan)).toHaveLength(4);
