@@ -519,6 +519,7 @@ function recordEmissionObservation(
 function physicalSignatureConverter(
   vectorTypes: ReturnType<typeof reserveNativeVectorTypes>,
   stringTypes: ReturnType<typeof reserveNativeStringLiteralTypes> | undefined,
+  formatterScratch: NonNullable<PhysicalSetupPlan["nativeStrings"]>["formatterScratch"],
 ) {
   const physicalSignature = (signature: {
     readonly params: readonly PhysicalSignatureType[];
@@ -526,6 +527,11 @@ function physicalSignatureConverter(
   }) => {
     const convert = (types: readonly PhysicalSignatureType[]): ValType[] =>
       types.map((type) => {
+        if (type.kind === "support-ref") {
+          if (!stringTypes || !formatterScratch || preparedIrDataMismatch(type, formatterScratch) !== undefined)
+            emissionFailed("support signature is not the accepted formatter scratch type");
+          return { kind: type.nullable ? "ref_null" : "ref", typeIdx: stringTypes.layout.nativeStrDataTypeIdx };
+        }
         if (type.kind === "string") {
           if (!stringTypes) emissionFailed("logical string signature has no accepted string resources");
           return { kind: "ref", typeIdx: stringTypes.layout.anyStrTypeIdx };
@@ -578,7 +584,7 @@ function materializePhysicalProgram(
         native.resources.literalRequirements.utf8Storage,
       )
     : undefined;
-  const physicalSignature = physicalSignatureConverter(vectorTypes, stringTypes);
+  const physicalSignature = physicalSignatureConverter(vectorTypes, stringTypes, native?.formatterScratch);
 
   for (const imported of plan.importedFunctions) {
     const reserved = reservations.reserveFunctionImport(

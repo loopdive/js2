@@ -34,6 +34,8 @@ import {
   type NativeStringValueReservationInput,
 } from "../backend/wasmgc/program/native-string-values.js";
 import type { NativeStringValueDeclaration } from "../runtime/wasmgc/values/native-resource-declaration-types.js";
+import { deriveNativeNumberFormatRequirements } from "./program/native-number-format-requirements.js";
+import { planNativeNumberFormatScratch } from "../backend/wasmgc/program/native-number-format.js";
 import type { IrBindingId, IrUnitId } from "./identity.js";
 import { forEachInstrDeep, type IrFunction, type IrType } from "./nodes.js";
 import type { IrPreparationFailure } from "./outcomes.js";
@@ -63,7 +65,7 @@ import {
 } from "./program/native-promise-resources.js";
 
 /** Vector/string carriers stay logical until the consumer reserves their shared types. */
-export type PhysicalSignatureType = ValType | Extract<IrType, { kind: "vec" | "string" }>;
+export type PhysicalSignatureType = ValType | Extract<IrType, { kind: "vec" | "string" | "support-ref" }>;
 
 export interface NativeStringValueAbiBinding {
   readonly resourceKey: string;
@@ -74,6 +76,7 @@ export interface NativeStringValueAbiBinding {
 export interface PhysicalNativeStringSetup {
   readonly resources: NativeStringValuePhysicalPlan;
   readonly bindings: readonly NativeStringValueAbiBinding[];
+  readonly formatterScratch?: Extract<IrType, { kind: "support-ref" }>;
 }
 
 export interface PhysicalFunctionSlot {
@@ -581,6 +584,7 @@ function nativeStringSetup(
   if (!Number.isSafeInteger(baseOrder) || !Number.isSafeInteger(baseOrder + input.plan.declarations.length))
     nativeInvalid("supplemental declaration order overflows safe integers");
   const bindings: NativeStringValueAbiBinding[] = [];
+  let formatterScratch: Extract<IrType, { kind: "support-ref" }> | undefined;
   const owners = new Map<string, IrBindingId>(),
     keys = new Map<IrBindingId, string>();
   const add = (binding: NativeStringValueAbiBinding) => {
@@ -599,6 +603,27 @@ function nativeStringSetup(
     )
       bindings.push(binding);
   };
+  if (program.runtimeSupport !== undefined) {
+    const integerBeforeScratch = options.numberFormat?.integerBeforeScratch;
+    if (typeof integerBeforeScratch !== "boolean")
+      nativeInvalid("formatter scratch requires an explicitly resolved formatter option");
+    const requirements = deriveNativeNumberFormatRequirements({ program, projection, integerBeforeScratch });
+    if (!requirements) nativeInvalid("formatter support has no current requirements");
+    const scratch = planNativeNumberFormatScratch(requirements, input.plan.literalRequirements.key, input.plan);
+    formatterScratch = requirements.batch.scratch.type;
+    if (scratch.entry.structuralReferenceKey !== irTypeBindingKey(scratch.reference.binding))
+      nativeInvalid("scratch required root has a noncanonical structural reference key");
+    const index = input.plan.declarations.indexOf(scratch.declaration);
+    if (index < 0) nativeInvalid("scratch declaration is detached from the accepted string recipe");
+    const internal = internalNativeBinding(program, scratch.declaration, baseOrder + index);
+    const previous = context.entries.get(internal.entry.id);
+    if (previous && context.abi.canonicalId(previous.plan.id) !== scratch.entry.id)
+      nativeInvalid("independent string-data required root conflicts with formatter scratch");
+    // Both resolver references point to the existing semantic root. No new ABI
+    // alias or second required declaration is manufactured after planning.
+    add({ resourceKey: scratch.declaration.key, entry: scratch.entry, reference: scratch.reference });
+    add({ ...internal, entry: scratch.entry });
+  }
   for (const use of input.plan.literalUses) {
     const demand = input.demands.literals[use.demandIndex]!;
     if (demand.kind !== "string.const") nativeInvalid("nonliteral in executable string binding population");
@@ -651,7 +676,7 @@ function nativeStringSetup(
   for (const [id] of keys)
     if (!context.entries.has(id)) joined.plan(bindings.find((row) => row.entry.id === id)!.entry);
   joined.sealPlan();
-  return { resources: input.plan, bindings };
+  return { resources: input.plan, bindings, ...(formatterScratch ? { formatterScratch } : {}) };
 }
 
 function physicalSignatureConverter(
@@ -678,6 +703,14 @@ function physicalSignatureConverter(
     const out: PhysicalSignatureType[] = [];
     for (const type of types) {
       const value = scalar(type);
+      if (
+        type.kind === "support-ref" &&
+        native?.formatterScratch &&
+        preparedIrDataMismatch(type, native.formatterScratch) === undefined
+      ) {
+        out.push(type);
+        continue;
+      }
       if (
         context &&
         (type.kind === "string" || (type.kind === "val" && (type.val.kind === "ref" || type.val.kind === "ref_null")))
