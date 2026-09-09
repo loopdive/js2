@@ -1307,6 +1307,16 @@
   ],
   "files": [
     {
+      "path": "src/runtime/wasmgc/values/string-concat-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
+      "path": "src/runtime/wasmgc/values/stdout-bodies.ts",
+      "state": "clean",
+      "layer": "native-runtime"
+    },
+    {
       "path": "src/runtime/wasmgc/values/closure-layouts.ts",
       "state": "clean",
       "layer": "native-runtime"
