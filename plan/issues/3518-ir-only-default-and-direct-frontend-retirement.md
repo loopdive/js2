@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-08
+updated: 2026-09-09
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -6567,3 +6567,45 @@ original/decoded execution, public cutover and direct retirement remain open.
 Final composed validation passes 281/281 (241 boundary controls, 40 collector
 tests), with an exact bounded census of 95 modules and 345 imports. This does
 not establish strict whole-compiler closure or direct-codegen retirement.
+
+### Explicit native string-number source admission — 2026-09-09
+
+High approved the three production changes and the revision-3 source tests
+in the isolated source-admission branch, based on
+`31e4e232eb16804afc1577055d33d1c6530c0e22`. This is an explicit, default-off
+frontend selection: `nativeStringValueProjection: "standalone-native"`
+requires the source policy and every requested runtime projection to be
+standalone WasmGC before lowering. It forwards `stringNumericCoercion:
+"number-boundary"` into ordinary and lifted AST contexts. Only statically
+string-typed unary plus/minus selects externref coercion followed by
+provider-free `js.number.unbox`; omission retains the historical route.
+Existing Number-wrapper certification, signatures, async plans and codecs
+are unchanged. P explicitly released only this additive source boundary;
+its paused work remains preserved.
+
+The focused source suite passed **36/36** (session `36081`, exit 0), followed
+sequentially by TS7 with no diagnostics (session `54752`, exit 0), under
+2 GiB limits and one Vitest fork. The original r1 30/30 and TS7 receipts
+remain retained. Initial review-test r2 passed 34/36: both failures were the
+test reporter eagerly serializing a successful frontend carrier containing
+circular AST-backed global bindings. R3 only avoids that success-path
+serialization; all failure diagnostics, 36 cases and approved production
+hashes remain unchanged.
+
+The added controls establish one actual side-effecting string-returning
+source call under each unary operator, complete checker-certified Number
+wrapper preservation, shadowed Number binding preservation, and successful
+whole-program preparation for a valid explicit numeric request. The real
+`parse(s: string): number { return +s; }` source also reaches `prepared` with
+an explicitly selected native-unbox policy and a `native.js.number.unbox`
+runtime attachment. Only the `prepared` observation occurred: backend
+acceptance, physical allocation/emission and execution were not attempted.
+
+Static inventory review found all three modified production paths already
+registered as unmigrated debt, with unchanged dependency syntax and no new
+source modules. No boundary policy, baseline, allowance or status reduction
+is introduced. Normal publication hooks and a non-draft held PR remain
+pending the serialized slot; this section does not claim publication or
+completion of the epic. Exact hashes, commands, failure history and remaining
+obligations are in the
+[source-admission handoff](../agent-context/3518-native-string-source-admission-handoff-2026-09-09.md).
