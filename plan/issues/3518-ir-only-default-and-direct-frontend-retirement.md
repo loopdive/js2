@@ -7256,3 +7256,12 @@ No normalization, omitted fields, replacement fixtures or automatic baseline
 expansion is allowed. Literal repair patches and the additive driver require
 an independently reviewed execution manifest before any run. PR5798 remains
 held, and issue5807's Linux regression evidence is not waived.
+
+The user subsequently approved bounded implementation, but not the comparison
+run or merge. Literal four-file repair patches now exist for both historical
+roots, including P7; fresh isolated copies reproduce their complete postimage
+censuses. The additive driver and its synthetic/syntax-only tests are recorded
+in [the implementation checkpoint](../agent-context/3518-three-arm-repair-artifacts/IMPLEMENTATION.md).
+No historical arm has run. Independent admission review, remaining mutation
+controls and the complete execution-manifest review remain required before
+requesting run approval. Original failures, fixtures and PR5798's hold remain.
