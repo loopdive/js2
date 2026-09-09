@@ -144,3 +144,49 @@ requirements suites passed in 83.29 seconds. Inventory session 65114 exited zero
 with no errors and `inventoryValid: true`, but `graphComplete: false` and
 `inventory-valid-architecture-incomplete`. This does not certify direct-codegen
 retirement or full async admission. Normal merge publication hooks remain pending.
+
+## Formatter composition and next consumer join
+
+The Ryū composition was published as 445f65523b9b8023339ef344e0eed7a62e1a7bcb
+on #5798: commit 87938 and push 17108 exited zero, including 18/18 numeric
+parity tests. The changed-root hook skipped 100 files; that is not extra test
+coverage. GitHub subsequently recorded #5799 merged into this stacked base,
+not into main.
+
+Parent now locally includes formatter merge acf37ffbeb10ba91cfc9baf922cf141d77c93fa0
+(implementation f4536c6fd6 plus the published Ryū composition). The formatter
+worker retains ownership of its publication and live validation 16745. Parent
+adds three required boundary roots and their delete/demote/type/value-import
+controls, retaining all previous activation history and allowed edges. These
+new parent controls have not been executed yet; no expanded pass count is
+claimed. Parent publication waits for the worker's PR and normal validation.
+
+The remaining consumer join must authenticate a string-layout dependency even
+when the source has no string literals, preserve that dependency through input
+currentness checks, preplan every formatter ABI row, reserve all resources
+before the single freeze, and lower the genuine prepared radix support body.
+Resource tests alone do not provide that whole-program connection. Existing
+async admission and retirement refusals remain unchanged.
+
+The formatter worker subsequently published non-draft #5800 at
+a7bee804437858a7038ea03e1e4a3c6635e8b37a. Its combined run 16745 passed
+131/131 tests and normal push 36814 passed, including 18/18 numeric tests.
+Parent composed the final receipt commit too. The initially missing hold label
+was restored by parent (REST session 32748, exit zero); this remains stacked
+work, not main or async acceptance.
+
+The frozen 252-line consumer integration delta is preserved beside this file.
+Its first aggregate layer is implemented: an independent empty literal/type
+layout and the complete canonical formatter recipe, preserving the actual
+scratch declaration and semantic ABI-entry identities. High approved helper
+SHA256 31dea95f3d5f121d3ccb665e1bb0d6ca513b22b56f564c081570d08f92cf5b40
+and tests f54739e639cea2d8c456d76f08202b8ab27b879c4fae49669528ab2e99b90ca1.
+The four new original/decoded controls are dependency tests, not successful
+consumer execution or an independent UTF/fastpath cross-product.
+
+Parent validation 66647 exited zero: formatting, source TS7 and 126/126 tests
+across requirements and boundary suites passed in 85.91 seconds. Inventory
+13540 exited zero with no errors, inventoryValid true and graphComplete false.
+These results include the three newly mandatory formatter roots and their
+controls. Parent commit/push of these additions remains pending; the heavy slot
+was released to E1 publication after both validation processes terminated.

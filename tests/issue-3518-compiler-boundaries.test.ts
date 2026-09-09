@@ -195,7 +195,11 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
     ["ir-core", ["src/ir/core/type-references.ts"]],
     [
       "backend-wasmgc",
-      ["src/backend/wasmgc/program/native-number-format.ts", "src/backend/wasmgc/resources/native-number-ryu.ts"],
+      [
+        "src/backend/wasmgc/program/native-number-format.ts",
+        "src/backend/wasmgc/resources/native-number-ryu.ts",
+        "src/backend/wasmgc/resources/native-number-format.ts",
+      ],
     ],
     [
       "native-runtime",
@@ -205,6 +209,8 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
         "src/runtime/wasmgc/values/number-ryu-digits.ts",
         "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
         "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+        "src/runtime/wasmgc/values/number-format-bodies.ts",
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts",
       ],
     ],
     [
@@ -220,7 +226,7 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
     expect(layer).toMatchObject({ status: "active", required: true });
     expect(layer.entries).toEqual(expect.arrayContaining(paths));
     expect(layer.minModules).toBeGreaterThanOrEqual(
-      layerId === "backend-wasmgc" ? 13 : layerId === "native-runtime" ? 27 : 18,
+      layerId === "backend-wasmgc" ? 14 : layerId === "native-runtime" ? 29 : 18,
     );
     if (layerId === "ir-program") expect(layer.minModules).toBeGreaterThanOrEqual(19);
     for (const path of paths) {
@@ -250,11 +256,14 @@ for (const [layerId, path] of [
   ["ir-program", "src/ir/program/native-number-format-requirements.ts"],
   ["backend-wasmgc", "src/backend/wasmgc/program/native-number-format.ts"],
   ["backend-wasmgc", "src/backend/wasmgc/resources/native-number-ryu.ts"],
+  ["backend-wasmgc", "src/backend/wasmgc/resources/native-number-format.ts"],
   ["native-runtime", "src/runtime/wasmgc/values/number-ryu-tables.ts"],
   ["native-runtime", "src/runtime/wasmgc/values/number-ryu-bodies.ts"],
   ["native-runtime", "src/runtime/wasmgc/values/number-ryu-digits.ts"],
   ["native-runtime", "src/runtime/wasmgc/values/number-ryu-to-buffer.ts"],
   ["native-runtime", "src/runtime/wasmgc/values/number-ryu-signatures.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/number-format-bodies.ts"],
+  ["native-runtime", "src/runtime/wasmgc/values/number-format-radix-bodies.ts"],
 ] as const) {
   it.each(["delete", "demote", "type-import", "value-import"] as const)(
     `formatter boundary ${path} rejects %s after its positive control`,

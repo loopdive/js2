@@ -206,9 +206,10 @@
         "src/backend/wasmgc/resources/native-argument-vectors.ts",
         "src/backend/wasmgc/resources/native-closures.ts",
         "src/backend/wasmgc/program/native-number-format.ts",
-        "src/backend/wasmgc/resources/native-number-ryu.ts"
+        "src/backend/wasmgc/resources/native-number-ryu.ts",
+        "src/backend/wasmgc/resources/native-number-format.ts"
       ],
-      "minModules": 13
+      "minModules": 14
     },
     {
       "id": "native-runtime",
@@ -242,9 +243,11 @@
         "src/runtime/wasmgc/values/number-ryu-bodies.ts",
         "src/runtime/wasmgc/values/number-ryu-digits.ts",
         "src/runtime/wasmgc/values/number-ryu-to-buffer.ts",
-        "src/runtime/wasmgc/values/number-ryu-signatures.ts"
+        "src/runtime/wasmgc/values/number-ryu-signatures.ts",
+        "src/runtime/wasmgc/values/number-format-bodies.ts",
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts"
       ],
-      "minModules": 27
+      "minModules": 29
     },
     {
       "id": "standalone-platform",
@@ -483,6 +486,19 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/resources/native-number-format.ts"],
+      "minModules": 1
+    },
+    {
+      "layer": "native-runtime",
+      "entries": [
+        "src/runtime/wasmgc/values/number-format-bodies.ts",
+        "src/runtime/wasmgc/values/number-format-radix-bodies.ts"
+      ],
+      "minModules": 2
+    },
     {
       "layer": "backend-wasmgc",
       "entries": ["src/backend/wasmgc/resources/native-number-ryu.ts"],

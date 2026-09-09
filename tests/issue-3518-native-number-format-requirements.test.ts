@@ -6,8 +6,20 @@ import { decodePreparedIrProgram, encodePreparedIrProgram } from "../src/ir/prog
 import { assertPreparedIrProgram } from "../src/ir/program-validation.js";
 import { acceptPreparedIrProgram } from "../src/ir/program-consumer.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
-import { planNativeNumberFormatScratch } from "../src/backend/wasmgc/program/native-number-format.js";
-import { declareNativeStringLiteralTypes } from "../src/backend/wasmgc/resources/native-string-literals.js";
+import {
+  planNativeNumberFormatScratch,
+  planNativeNumberFormatStringLayout,
+  planNativeNumberFormatPhysical,
+} from "../src/backend/wasmgc/program/native-number-format.js";
+import {
+  declareNativeStringLiteralTypes,
+  reserveNativeStringLiteralTypes,
+  reserveNativeStringLiteralResources,
+  nativeStringLiteralReservationInventory,
+} from "../src/backend/wasmgc/resources/native-string-literals.js";
+import { declareNativeNumberFormatResources } from "../src/backend/wasmgc/resources/native-number-format.js";
+import { PhysicalModuleReservations } from "../src/wasm/physical/module-reservations.js";
+import { createEmptyModule } from "../src/ir/types.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
 import { irNativeAsyncCallableDeclaration } from "../src/ir/runtime/native-async-callables.js";
 import {
@@ -37,6 +49,50 @@ function actual() {
 }
 
 describe("complete prepared formatter demand joins", () => {
+  for (const decoded of [false, true])
+    it.each([false, true])(`plans an independent empty formatter layout, decoded=${decoded}, utf8=%s`, (utf8) => {
+      const original = actual();
+      const program = decoded ? decodePreparedIrProgram(encodePreparedIrProgram(original)) : original;
+      const requirements = deriveNativeNumberFormatRequirements({
+        program,
+        projection: program.runtime[0]!,
+        integerBeforeScratch: utf8,
+      })!;
+      const layout = planNativeNumberFormatStringLayout(requirements, utf8);
+      expect(layout.mode).toBe("formatter-layout");
+      expect(layout.literalRequirements.literals).toEqual([]);
+      expect(layout.literalUses).toEqual([]);
+      expect(layout.declarations.length).toBeGreaterThan(0);
+      expect(layout.declarations.every((row) => row.space === "type")).toBe(true);
+      expect(Object.isFrozen(layout.literalRequirements.literals)).toBe(true);
+      const module = createEmptyModule();
+      const tx = new PhysicalModuleReservations(module);
+      const types = reserveNativeStringLiteralTypes(tx, layout.key, utf8);
+      const strings = reserveNativeStringLiteralResources(tx, layout.literalRequirements, types);
+      const inventory = nativeStringLiteralReservationInventory(tx, strings);
+      expect(inventory.typePack).toBe(types);
+      expect(inventory.requests).toEqual([]);
+      expect(inventory.globals).toEqual([]);
+      expect(inventory.functions).toEqual([]);
+      expect(module.globals).toEqual([]);
+      expect(module.functions).toEqual([]);
+      const formatter = planNativeNumberFormatPhysical(requirements, layout.key, layout);
+      expect(formatter.supportUnitId).toBe(requirements.batch.implementation.body.unitId);
+      expect(formatter.scratch.declaration).toBe(layout.declarations[0]);
+      expect(formatter.input.stringKey).toBe(layout.key);
+      expect(formatter.input.integerBeforeScratch).toBe(utf8);
+      expect(formatter.declarations).toHaveLength(16);
+      expect(formatter.declarations.filter((row) => row.space === "function")).toHaveLength(13);
+      expect(formatter.declarations.filter((row) => row.space === "global")).toHaveLength(2);
+      expect(formatter.declarations.filter((row) => row.space === "type")).toHaveLength(1);
+      expect(formatter.declarations).toEqual(declareNativeNumberFormatResources(formatter.input).declarations);
+      expect(formatter.reservationSteps).toEqual(declareNativeNumberFormatResources(formatter.input).reservationSteps);
+      expect(() => planNativeNumberFormatStringLayout(requirements, undefined as unknown as boolean)).toThrow(
+        /invalid UTF8/,
+      );
+      expect(() => planNativeNumberFormatPhysical(requirements, "foreign-strings", layout)).toThrow(/different owner/);
+    });
+
   it("joins scratch to exactly the canonical string-data declaration and prepared root", () => {
     const program = actual();
     const requirements = deriveNativeNumberFormatRequirements({
