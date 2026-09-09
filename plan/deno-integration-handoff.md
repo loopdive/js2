@@ -46,4 +46,10 @@ The detailed history is in [the integration issue](issues/4376-v8x-js2wasm-deno-
 
 ## Publishing and measurement status
 
-Compiler PR: https://github.com/loopdive/js2/pull/5784\n\nRuntime PR: https://github.com/loopdive/v8x/pull/2\n\n[Measured Deno-core process comparison](https://github.com/loopdive/v8x/blob/codex/4376-deno-realm-bootstrap/tools/deno/results/2026-09-09-core-processes.md): seven runs per engine, all21 correct. V8/QuickJS/js2wasm deployment payload37.3/5.4/546.1MiB, peak RSS20.2/17.6/494.3MiB, median launch-through-exit57.7/44.8/13482.2ms. This is the unchanged hello_world on the last fully paired bda15/0eaa build, not warm execution, additional-instance density, latest-ac17 artifacts, or full Deno CLI support. The report includes substantial timing ranges and raw hashes/results. Earlier engine-only benchmark numbers must not be substituted for these full-core observations.\n\nThe requested wrap-up stops implementation at this checkpoint. General async and remaining integration work are handed off, not completed. No active build or measurement remains; preserve old unrelated idle processes and all worktrees.
+Compiler PR: https://github.com/loopdive/js2/pull/5784
+
+Runtime PR: https://github.com/loopdive/v8x/pull/2
+
+[Measured Deno-core process comparison](https://github.com/loopdive/v8x/blob/codex/4376-deno-realm-bootstrap/tools/deno/results/2026-09-09-core-processes.md): seven runs per engine, all 21 correct. V8/QuickJS/js2wasm deployment payload 37.3 / 5.4 / 546.1 MiB, peak RSS 20.2 / 17.6 / 494.3 MiB, median launch-through-exit 57.7 / 44.8 / 13,482.2 ms. This is the unchanged hello_world on the last fully paired bda15/0eaa build, not warm execution, additional-instance density, latest-ac17 artifacts, or full Deno CLI support. The report includes substantial timing ranges and raw hashes/results. Earlier engine-only benchmark numbers must not be substituted for these full-core observations.
+
+The requested wrap-up stops implementation at this checkpoint. General async and remaining integration work are handed off, not completed. No active build or measurement remains; preserve old unrelated idle processes and all worktrees.
