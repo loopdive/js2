@@ -170,9 +170,10 @@
         "src/ir/program/native-value-resources.ts",
         "src/ir/program/native-string-value-demands.ts",
         "src/ir/program/runtime-support.ts",
-        "src/ir/program/formatter-support.ts"
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/native-number-format-requirements.ts"
       ],
-      "minModules": 18
+      "minModules": 19
     },
     {
       "id": "runtime-contracts",
@@ -475,6 +476,11 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "ir-program",
+      "entries": ["src/ir/program/native-number-format-requirements.ts"],
+      "minModules": 1
+    },
     {
       "layer": "frontend-ts",
       "entries": ["src/frontend/builtins/contracts.ts"],
@@ -1432,6 +1438,11 @@
     },
     {
       "path": "src/ir/program/formatter-support.ts",
+      "state": "clean",
+      "layer": "ir-program"
+    },
+    {
+      "path": "src/ir/program/native-number-format-requirements.ts",
       "state": "clean",
       "layer": "ir-program"
     },

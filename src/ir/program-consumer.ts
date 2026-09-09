@@ -129,7 +129,7 @@ function selectProjection(
   );
 }
 
-/** Exact option data: no own `linear` property unless one was supplied. */
+/** Exact option data: optional physical policies are retained only when supplied. */
 function canonicalOptions(options: PreparedIrBackendOptions): PreparedIrBackendOptions {
   const base = {
     backend: options.backend,
@@ -138,6 +138,11 @@ function canonicalOptions(options: PreparedIrBackendOptions): PreparedIrBackendO
     utf8Storage: options.utf8Storage,
     sourceMap: options.sourceMap,
     moduleName: options.moduleName,
+    ...(options.numberFormat === undefined
+      ? {}
+      : {
+          numberFormat: Object.freeze({ integerBeforeScratch: options.numberFormat.integerBeforeScratch }),
+        }),
   };
   return Object.freeze(options.linear === undefined ? base : { ...base, linear: Object.freeze({ ...options.linear }) });
 }
@@ -157,6 +162,21 @@ export function acceptPreparedIrProgram(
   options: PreparedIrBackendOptions,
 ): PreparedIrBackendAcceptance {
   assertPreparedIrProgram(program);
+  if (
+    options.numberFormat !== undefined &&
+    (options.backend !== "wasmgc" ||
+      options.target !== "standalone" ||
+      options.numberFormat === null ||
+      typeof options.numberFormat !== "object" ||
+      Object.keys(options.numberFormat).length !== 1 ||
+      !Object.hasOwn(options.numberFormat, "integerBeforeScratch") ||
+      typeof options.numberFormat.integerBeforeScratch !== "boolean")
+  ) {
+    programInvariant(
+      "invalid-prepared-data",
+      "number formatter options require standalone WasmGC and one resolved boolean",
+    );
+  }
   if (options.linear !== undefined && options.backend !== "linear") {
     programInvariant("invalid-prepared-data", `linear physical options were supplied for backend ${options.backend}`);
   }

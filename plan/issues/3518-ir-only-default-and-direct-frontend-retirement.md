@@ -6833,3 +6833,26 @@ authenticated only after freeze using the existing ledger. This limitation is
 explicit, not a claim of preallocation tag authentication. The full async
 consumer, staged cross-producer closure scheduling, complete runtime fills,
 public cutover and retirement remain unfinished.
+
+### Formatter requirements and physical option checkpoint (2026-09-09)
+
+The D2 requirements collector retains all eight formatter call occurrences from
+the actual async example (two continuation owners, two calls each, both prepared
+views). Separate support traversal retains 31 buffers and four inline-WTF16
+literals with their original allocation, canonical allocation and metadata
+identity. No ordinary source population or existing demand scanner is changed.
+The consumer retains an explicitly supplied immutable integer-before-scratch
+option without adding an environment read or a no-demand default.
+
+Run 76460 passed 80/80 requirements and boundary tests with no skips, including
+fixed call/literal coordinates and rejection of stale allocations and detached
+support evidence. Post-change TS7 succeeded in 18552. Inventory is valid but its
+graph remains incomplete. Earlier consumer blast-radius run 65740 passed 79/79;
+resource prerequisite composition run 30810 passed 194/194.
+
+This is descriptive preallocation evidence, not a new acceptance capability.
+Complete formatter resources, scratch-root binding, prepared radix emission and
+single-ledger integration remain in progress under the frozen D2 High contract.
+The async refusal stays in place; public cutover and retirement remain open.
+See agent-context/3518-number-format-consumer-progress-2026-09-09.md for receipts
+and agent-context/3518-formatter-d2-high-contract-2026-09-09.md for implementation.

@@ -193,12 +193,20 @@ it("keeps formatter support contracts and the canonical type factory mandatory",
   const policy = JSON.parse(readFileSync(resolve(repository, "scripts/compiler-boundaries.json"), "utf8"));
   for (const [layerId, paths] of [
     ["ir-core", ["src/ir/core/type-references.ts"]],
-    ["ir-program", ["src/ir/program/runtime-support.ts", "src/ir/program/formatter-support.ts"]],
+    [
+      "ir-program",
+      [
+        "src/ir/program/runtime-support.ts",
+        "src/ir/program/formatter-support.ts",
+        "src/ir/program/native-number-format-requirements.ts",
+      ],
+    ],
   ] as const) {
     const layer = policy.layers.find((item: { id: string }) => item.id === layerId);
     expect(layer).toMatchObject({ status: "active", required: true });
     expect(layer.entries).toEqual(expect.arrayContaining(paths));
     expect(layer.minModules).toBeGreaterThanOrEqual(18);
+    if (layerId === "ir-program") expect(layer.minModules).toBeGreaterThanOrEqual(19);
     for (const path of paths) {
       expect(policy.files.find((item: { path: string }) => item.path === path)).toEqual({
         path,
@@ -223,6 +231,7 @@ for (const [layerId, path] of [
   ["ir-core", "src/ir/core/type-references.ts"],
   ["ir-program", "src/ir/program/runtime-support.ts"],
   ["ir-program", "src/ir/program/formatter-support.ts"],
+  ["ir-program", "src/ir/program/native-number-format-requirements.ts"],
 ] as const) {
   it.each(["delete", "demote", "type-import", "value-import"] as const)(
     `formatter boundary ${path} rejects %s after its positive control`,
