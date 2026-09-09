@@ -6532,3 +6532,27 @@ do not duplicate Promise capture ownership. Full object/callable dispatch,
 whole-family execution, replay, public IR-only cutover and strict static
 closure/direct-codegen retirement remain open. This checkpoint does not
 claim those acceptance conditions.
+
+### Native Promise / closure producer join — 2026-09-09
+
+High approved the implementation specification in
+agent-context/3518-native-promise-closure-join-high-plan-2026-09-09.md.
+Euclid owns exactly native-promises.ts and its existing resource test,
+based on closure PR #5778. Replace independent raw root/metadata tokens
+with the issued closure pack and metadata request ID. Authenticate before
+allocations and again before fills, preserving genuine cache aliases,
+lazy-arity semantics and existing Promise capture/runtime ownership.
+Parent owns boundary updates, integration checks and non-draft publication.
+
+This is a producer-provenance join, not complete Promise execution. Full
+carrier inventory, callable dispatch, fill dependencies, native-family
+execution, public cutover and the ABI30 planningSealed witness remain open.
+
+The bounded join is implemented and independently approved after two R2
+repairs: inherited metadata field descriptors are copied as in the donor;
+rejection proofs preserve lossless data, object identities and future
+reservation ordinals. Composed Promise/closure95/95 tests and221/221
+boundary controls pass. The single new runtime import links the existing
+Promise and closure owners; no boundary permissions were relaxed. Final
+post-repair typecheck and normal publication checks remain next. See
+agent-context/3518-native-promise-closure-join-integration-2026-09-09.md.

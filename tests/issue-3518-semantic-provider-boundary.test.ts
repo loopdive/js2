@@ -465,8 +465,8 @@ describe("semantic verification and provider ownership boundary", () => {
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(325);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 210, runtime: 115 });
+    expect(r.report.resolvedEdgeCount).toBe(326);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 210, runtime: 116 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
