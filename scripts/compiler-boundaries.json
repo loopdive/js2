@@ -461,6 +461,30 @@
   ],
   "files": [
     {
+      "path": "src/codegen/function-proto-call.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "4376-deno-runtime",
+      "nextBoundary": "Separate callable semantics from physical vector representation, runtime reservations, local allocation and instruction emission."
+    },
+    {
+      "path": "src/codegen/linked-realm-literal.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "4376-deno-runtime",
+      "nextBoundary": "Separate AST and oracle publication evidence from context-dependent realm and backend carrier policy."
+    },
+    {
+      "path": "src/codegen/reflect-argument-value.ts",
+      "state": "unmigrated",
+      "layer": "mixed-needs-split",
+      "destination": "backend-wasmgc",
+      "owner": "4376-deno-runtime",
+      "nextBoundary": "Separate AST argument-list evidence from mutable carrier flags and legacy expression lowering."
+    },
+    {
       "path": "src/codegen/factory-constructor-value.ts",
       "state": "unmigrated",
       "layer": "mixed-needs-split",
