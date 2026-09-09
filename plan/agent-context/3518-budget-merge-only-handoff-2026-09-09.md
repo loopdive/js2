@@ -98,3 +98,48 @@ Prepared synchronous consumer evidence exists. Complete prepared native async,
 all owner body fills, timer/frame handling, public default/ABI and strict direct
 codegen retirement remain unfinished. No complete end-to-end IR program is
 certified by this handoff. New migration work is paused by user instruction.
+
+## Latest resume: historical gate results and attribution
+
+This section supersedes the earlier UNRUN statements. Public PR5798 head at
+review is `b2af7c32353df0f138b72608835ff5288cb41603`, CLEAN/MERGEABLE but held;
+its base is still the runtime-support transport branch, not main. There are
+35 open PRs in the refreshed inventory. No new migration scope is authorized.
+
+Composed batches A/B/C/D passed 2650/2650 tests across 47 files. The no-demand
+three-arm and scanner three-arm checks passed. The Promise historical pair
+passed repair acceptance (20 baseline semantic gaps, zero candidate gaps),
+not preservation. Compiler source tree is `360f3b82efb0a1aee71233122f9c8dd92e9331ef`.
+
+Delay exact preservation did not pass: both children exited zero, but the
+outer worker exhausted its heap; saved artifacts differ in all 11 rows.
+Frame exact preservation failed normally: 20/21 tests pass, with the paired
+row comparison failing; four of five artifact rows differ. The late-import
+row remains exactly equal. Do not rerun solely to hide these mismatches.
+
+Astra High completed bounded saved-artifact attribution. All 31 recorded
+observations agree excluding instantiated bytes, and all 16 rows have verified
+type mappings within the analyzer's bounded search. It explains 1281 WAT forms
+by explicit reference mapping and 17 by local declaration renames. Remaining:
+41 function forms, 52 export forms, and six start forms. These include string
+numeric scanner guards, Promise resolution changes, and eight family
+`ref.as_non_null` additions; the Promise repair is not the sole explanation.
+Binary sections and encodings are inventoried, not fully reconciled. Original
+exact-parity failures remain failures; no acceptance gate or baseline changed.
+
+Receipts in this integration worktree:
+- `.tmp/queue-drain-frame-pair-b2af7c32.json` (session93831 EXIT1);
+- `.tmp/frame-body-preservation-ObO2Sg/`;
+- `.tmp/delay-combinator-preservation-uGms5w/`;
+- `.tmp/attribution-9qxM8J/summary.json` and `attribution-v2.json`.
+The detailed attribution SHA256 is
+`9593ec6d38588d5c182d36c2f69fc7ac338795418cf57ff3c090041b43bd2f9c`.
+The older `attribution.json` draft is superseded. No analyzer process remains.
+
+Next: account for residual source changes and export/start/binary differences
+before proposing acceptance; retain issue5807's two genuine Linux CI
+regressions as unresolved despite local non-reproduction. PR5808's data-only
+refresh reached main at `cbb227e10547f5d3befc4021a7fe5b2775c5060c`, already
+incorporated here. No additional PR reached main in this resume pass.
+Independent PR5400 and PR5397 are conflicting and explicitly unfinished in
+their own descriptions; their documentation-like titles are not merge clearance.
