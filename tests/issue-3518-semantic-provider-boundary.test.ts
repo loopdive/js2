@@ -152,13 +152,36 @@ const scannerAdditions = [
   "src/backend/wasmgc/resources/native-string-number.ts",
   "src/backend/wasmgc/resources/native-string-flatten.ts",
 ];
-const demandAdditions = ["src/ir/program/native-string-value-demands.ts"];
-const groups = {
+const scannerGroups = {
   ...nativeValueGroups,
-  "ir-program": [...nativeValueGroups["ir-program"], ...demandAdditions],
   "wasm-model": [...nativeValueGroups["wasm-model"], scannerAdditions[0]!],
   "native-runtime": [...nativeValueGroups["native-runtime"], ...scannerAdditions.slice(1, 6)],
   "backend-wasmgc": [...nativeValueGroups["backend-wasmgc"], ...scannerAdditions.slice(6)],
+};
+const argumentVectorAdditions = [
+  "src/runtime/wasmgc/values/argument-vector-bodies.ts",
+  "src/backend/wasmgc/resources/native-argument-vectors.ts",
+];
+const argumentVectorGroups = {
+  ...nativeValueGroups,
+  "native-runtime": [...nativeValueGroups["native-runtime"], argumentVectorAdditions[0]!],
+  "backend-wasmgc": [...nativeValueGroups["backend-wasmgc"], argumentVectorAdditions[1]!],
+};
+const closureAdditions = [
+  "src/runtime/wasmgc/values/closure-layouts.ts",
+  "src/backend/wasmgc/resources/native-closures.ts",
+];
+const closureGroups = {
+  ...argumentVectorGroups,
+  "native-runtime": [...argumentVectorGroups["native-runtime"], closureAdditions[0]!],
+  "backend-wasmgc": [...argumentVectorGroups["backend-wasmgc"], closureAdditions[1]!],
+};
+const demandAdditions = ["src/ir/program/native-string-value-demands.ts"];
+const groups = {
+  ...scannerGroups,
+  "ir-program": [...scannerGroups["ir-program"], ...demandAdditions],
+  "native-runtime": [...scannerGroups["native-runtime"], argumentVectorAdditions[0]!, closureAdditions[0]!],
+  "backend-wasmgc": [...scannerGroups["backend-wasmgc"], argumentVectorAdditions[1]!, closureAdditions[1]!],
 };
 const required = Object.values(groups).flat();
 const callableAdditions = ["src/ir/core/async-callables.ts", "src/ir/runtime/native-async-callables.ts"];
@@ -210,6 +233,30 @@ function assertNewActivations(history: unknown[]) {
     })),
   );
   history = history.slice(3);
+  expect(history.slice(0, 3)).toEqual(
+    (["wasm-model", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: scannerGroups[layer],
+      minModules: scannerGroups[layer].length,
+    })),
+  );
+  history = history.slice(3);
+  expect(history.slice(0, 2)).toEqual(
+    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: closureGroups[layer],
+      minModules: closureGroups[layer].length,
+    })),
+  );
+  history = history.slice(2);
+  expect(history.slice(0, 2)).toEqual(
+    (["native-runtime", "backend-wasmgc"] as const).map((layer) => ({
+      layer,
+      entries: argumentVectorGroups[layer],
+      minModules: argumentVectorGroups[layer].length,
+    })),
+  );
+  history = history.slice(2);
   expect(history.slice(0, 3)).toEqual(
     (["ir-program", "native-runtime", "backend-wasmgc"] as const).map((layer) => ({
       layer,
@@ -384,8 +431,8 @@ function fixture() {
 
 describe("semantic verification and provider ownership boundary", () => {
   it("pins the original 70 modules plus seven Promise/vector and five string/error owners without relaxing historical policy", () => {
-    expect(required).toHaveLength(95);
-    expect(new Set(required).size).toBe(95);
+    expect(required).toHaveLength(99);
+    expect(new Set(required).size).toBe(99);
     expect(callableAdditions).toHaveLength(2);
     expect(vectorAdditions).toHaveLength(2);
     expect(typeLayoutAdditions).toHaveLength(1);
@@ -411,6 +458,8 @@ describe("semantic verification and provider ownership boundary", () => {
             ...nativeValueAdditions,
             ...scannerAdditions,
             ...demandAdditions,
+            ...argumentVectorAdditions,
+            ...closureAdditions,
           ].includes(path),
       ),
     ).toHaveLength(56);
@@ -432,17 +481,19 @@ describe("semantic verification and provider ownership boundary", () => {
       ...nativeValueAdditions,
       ...scannerAdditions,
       ...demandAdditions,
+      ...argumentVectorAdditions,
+      ...closureAdditions,
     ])
       expect(required).toContain(path);
     const p = policy();
     assertNewActivations(p.activationHistory);
-    expect(p.activationHistory).toHaveLength(47);
-    expect(digest(p.activationHistory.slice(23))).toBe(
+    expect(p.activationHistory).toHaveLength(54);
+    expect(digest(p.activationHistory.slice(30))).toBe(
       "3437a59aacf39df9dffcafa8099ac9f47c0f43a7a0ecc423df4c1fe3e638f002",
     );
     expect(digest(p.allowedEdges)).toBe("efe7e7ed8dee1a009d2bef3ff36dba80df1a805cd3f5b7b472e62ec6dcff64c7");
     // Exact full activation history at b4c116639a, not a selected subset.
-    expect(digest(p.activationHistory.slice(29))).toBe(
+    expect(digest(p.activationHistory.slice(36))).toBe(
       "a6d07b900b0837832707ce083202ab6ffa40f0bbe6bfce25f3062270882b26da",
     );
     for (const [id, entries] of Object.entries(groups)) {
@@ -459,12 +510,12 @@ describe("semantic verification and provider ownership boundary", () => {
   it("loads the complete actual canonical type-and-value closure", () => {
     const r = fixture().run();
     expect(r.status, JSON.stringify(r.report.errors)).toBe(0);
-    expect(r.report.counts.total).toBe(95);
+    expect(r.report.counts.total).toBe(99);
     expect(r.report.errors).toEqual([]);
     for (const field of ["unknownEdges", "unresolvedEdges", "forbiddenEdges", "transitiveViolations"])
       expect(r.report[field]).toEqual([]);
-    expect(r.report.resolvedEdgeCount).toBe(345);
-    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 222, runtime: 123 });
+    expect(r.report.resolvedEdgeCount).toBe(357);
+    expect(r.report.counts.resolvedEdgesByType).toEqual({ typeOnly: 229, runtime: 128 });
   });
 
   it.each(["delete", "reorder", "layer", "entries", "minimum"] as const)(
@@ -499,6 +550,8 @@ describe("semantic verification and provider ownership boundary", () => {
     ...nativeValueAdditions,
     ...scannerAdditions,
     ...demandAdditions,
+    ...argumentVectorAdditions,
+    ...closureAdditions,
   ])("rejects deleting %s and its classification", (path) => {
     const f = fixture();
     rmSync(resolve(f.root, path));
@@ -526,6 +579,8 @@ describe("semantic verification and provider ownership boundary", () => {
     ...nativeValueAdditions,
     ...scannerAdditions,
     ...demandAdditions,
+    ...argumentVectorAdditions,
+    ...closureAdditions,
   ])("rejects an aliased frontend type dependency from %s", (path) => {
     const f = fixture();
     f.put("src/forbidden.ts", "export interface Hidden { value: number }");
@@ -558,6 +613,8 @@ describe("semantic verification and provider ownership boundary", () => {
       ...nativeValueAdditions,
       ...scannerAdditions,
       ...demandAdditions,
+      ...argumentVectorAdditions,
+      ...closureAdditions,
     ])(`reports ${field} from %s instead of treating it as closed`, (path) => {
       const f = fixture();
       f.append(path, source);
