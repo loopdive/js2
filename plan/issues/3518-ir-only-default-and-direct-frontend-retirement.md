@@ -7202,3 +7202,38 @@ fresh exact-candidate merge-group comparison with verified baseline provenance;
 any demonstrated new candidate regression blocks it. Full native async execution,
 ABI30/public caller proof and strict retirement remain separate unfinished work.
 No older PR closes until its actual content is verified on main.
+
+### Cumulative historical validation at 1fc56e20 (2026-09-09)
+
+The published cumulative PR5798 remains held. Its four composed batches passed
+2650 tests across47 files, with no failed/pending tests. Historical no-demand
+three-arm validation passed, including the original vector defect reproduction:
+five source executions, one exact source refusal and one producer-IR execution
+are distinct categories. Promise repair validation passed48 rows/96 instances/
+184 observations and14 negative controls, reproducing the baseline getter
+defect and observing no candidate semantic gaps. Neither result certifies full
+native async execution or direct-codegen retirement.
+
+The explicit delay historical pair against1cb0f5c7 did NOT pass. Candidate and
+baseline children both exited0 with11 executed artifacts each, but all11 rows
+differ in binary, WAT, result metadata and instantiated-byte records. Non-binary
+observed value fields match. The outer Vitest worker then exhausted its default
+512MiB heap while handling the large comparison. This is not merely a resource
+failure: the retained artifacts establish a real exact-parity mismatch.
+Evidence: `.tmp/delay-combinator-preservation-uGms5w` and
+`.tmp/queue-drain-delay-pair-1fc56e20.log` in the cumulative integration tree.
+
+Next action: attribute complete artifact differences to their source changes
+before considering any narrower acceptance claim. Preserve both original arms,
+all test populations and the failed receipt; do not waive a mismatch or rewrite
+a historical expected result to make the cumulative root pass. Scanner/frame
+pairs and the separate landed BigInt regressions tracked in5807 remain open.
+
+The scanner three-arm run subsequently passed at the same1fc56e20 source pin:
+66 executed rows and132 observations in each of baseline/candidate/projection,
+with zero comparison differences. Exactly four authenticated transformations
+ran in the projection and zero in the other arms. Baseline-versus-projection
+byte parity and actual-candidate semantic correctness are separate claims.
+Receipts: `.tmp/native-scanner-source-pair-a1Lq22`. This does not resolve the
+delay mismatch or5807. Frame baseline0194 is clean; its paired run remains
+unexecuted while cumulative artifact attribution is reviewed.
