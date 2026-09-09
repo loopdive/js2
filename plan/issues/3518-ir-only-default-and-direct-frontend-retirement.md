@@ -6856,3 +6856,15 @@ single-ledger integration remain in progress under the frozen D2 High contract.
 The async refusal stays in place; public cutover and retirement remain open.
 See agent-context/3518-number-format-consumer-progress-2026-09-09.md for receipts
 and agent-context/3518-formatter-d2-high-contract-2026-09-09.md for implementation.
+
+The subsequent physical scratch join is drafted in the formatter backend
+aggregate and physical planner. It assigns the canonical string-data resource
+to the existing prepared scratch required root and rejects conflicting owners.
+Boundary validation passed 72/72; requirements/scratch tests passed 14/14 and
+TS7 passed after moving the structural-key check out of the clean aggregate.
+The real inventory reports zero errors but graphComplete:false. Exact scratch
+signature conversion subsequently passed TS7 and 14/14 focused tests (97644).
+The existing native-string consumer execution suite passed 68/68 (9217),
+covering original/decoded programs, optimization/storage modes and startup
+ordering. This protects existing paths; it does not prove actual formatter
+support-body execution or full async admission.

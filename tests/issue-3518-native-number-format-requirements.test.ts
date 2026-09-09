@@ -6,6 +6,8 @@ import { decodePreparedIrProgram, encodePreparedIrProgram } from "../src/ir/prog
 import { assertPreparedIrProgram } from "../src/ir/program-validation.js";
 import { acceptPreparedIrProgram } from "../src/ir/program-consumer.js";
 import { AllocSiteRegistry } from "../src/ir/analysis/alloc-registry.js";
+import { planNativeNumberFormatScratch } from "../src/backend/wasmgc/program/native-number-format.js";
+import { declareNativeStringLiteralTypes } from "../src/backend/wasmgc/resources/native-string-literals.js";
 import { collectNativeStringValueDemands } from "../src/ir/program/native-string-value-demands.js";
 import { irNativeAsyncCallableDeclaration } from "../src/ir/runtime/native-async-callables.js";
 import {
@@ -35,6 +37,46 @@ function actual() {
 }
 
 describe("complete prepared formatter demand joins", () => {
+  it("joins scratch to exactly the canonical string-data declaration and prepared root", () => {
+    const program = actual();
+    const requirements = deriveNativeNumberFormatRequirements({
+      program,
+      projection: program.runtime[0]!,
+      integerBeforeScratch: false,
+    })!;
+    const strings = declareNativeStringLiteralTypes("formatter-scratch-control", false);
+    const plan = planNativeNumberFormatScratch(requirements, "formatter-scratch-control", strings);
+    expect(plan.declaration).toBe(strings.declarations[0]);
+    expect(plan.entry).toBe(program.abi.entries.find((row) => row.plan.id === plan.reference.binding.bindingId)!.plan);
+    expect(plan.entry.slotPolicy).toBe("required");
+    expect(() => planNativeNumberFormatScratch(requirements, "foreign-owner", strings)).toThrow(/different owner/);
+    expect(() =>
+      planNativeNumberFormatScratch(requirements, "formatter-scratch-control", {
+        ...strings,
+        declarations: strings.declarations.slice(1),
+      }),
+    ).toThrow(/missing or duplicate string-data/);
+    expect(() =>
+      planNativeNumberFormatScratch(requirements, "formatter-scratch-control", {
+        ...strings,
+        declarations: [...strings.declarations, plan.declaration],
+      }),
+    ).toThrow(/missing or duplicate string-data/);
+    expect(() =>
+      planNativeNumberFormatScratch(requirements, "formatter-scratch-control", {
+        ...strings,
+        declarations: strings.declarations.map((row) =>
+          row === plan.declaration
+            ? {
+                ...plan.declaration,
+                shape: { kind: "array" as const, element: { kind: "i16" as const }, mutable: false },
+              }
+            : row,
+        ),
+      }),
+    ).toThrow(/canonical mutable i16 array/);
+  });
+
   it.each([false, true])(
     "borrows both primary views and separate support with fast path %s",
     (integerBeforeScratch) => {

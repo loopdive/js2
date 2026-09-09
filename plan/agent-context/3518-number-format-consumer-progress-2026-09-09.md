@@ -85,3 +85,43 @@ Normal publication hooks remain required for these uncommitted changes.
 Published #5798 currently
 contains only the prerequisite composition, not these requirements changes.
 These receipts do not prove that the unfinished physical integration executes.
+
+## Next physical scratch join (uncommitted)
+
+Published requirements checkpoint: #5798 at
+56d9922bc85a0bf1ffb105746b5926a3f0dca9a6. Normal commit 16447 and push 30198
+exited zero; push hooks included 18/18 numeric-local tests. The worktree was
+clean after publication. The following changes are subsequent drafts.
+
+The new backend formatter aggregate validates the canonical mutable i16 string
+data declaration against the prepared scratch contract and its existing required
+ABI root. Native string planning maps both scratch and canonical string-data
+resolver references to that root before assigning supplemental declarations,
+rejecting an existing incompatible independent root. No ABI aliases are created
+after planning and no allocation/emission authority is introduced by this join.
+
+Run 16244 passed 14/14 requirements/scratch tests followed by TS7 before the
+planner hook. Run 87023 passed TS7 and 14/14 requirements after the hook, but
+boundary tests passed only 70/72: the two new import mutations used the wrong
+relative depth and reached missing modules rather than forbidden dependencies.
+The fixture paths are corrected; full boundary rerun 23251 passed 72/72 in
+35.80 seconds, exit zero. Real inventory run 29000 then rejected a mixed
+ir/abi-bindings dependency from the clean aggregate. The structural-key check
+now resides in the existing mixed planner, using its existing canonical import;
+the clean aggregate retains its semantic and storage checks. Inventory rerun
+20972 exited zero with no errors, inventoryValid:true and graphComplete:false.
+After that dependency correction, run 18869 exited zero: TS7 passed followed
+by 14/14 requirements/scratch tests in 21.44 seconds.
+Subsequent work carries the exact accepted scratch support-ref in
+the native string setup and converts only that matching signature leaf through
+the issued string pack's data type, preserving nullability. Other support refs
+remain unsupported. Run 97644 covered these later edits: formatting and TS7
+passed, followed by 14/14 requirements/scratch tests in 22.62 seconds. High
+approved the restricted conversion statically. Consumer regression run 9217
+exited zero: 68/68 in 337.22 seconds, covering original/decoded programs,
+GVN and UTF8 modes, aliases, startup and dependency initialization order.
+Actual formatter signature/support-body execution remains required; this suite
+protects the already-supported no-formatter paths, not full async admission.
+Boundary activation adds one required backend module and retains all old
+activation history and allowed edges. Actual full consumer execution of this
+hook remains unproven while the existing async admission refusal remains.

@@ -204,9 +204,10 @@
         "src/backend/wasmgc/resources/native-resource-declarations.ts",
         "src/backend/wasmgc/program/native-string-values.ts",
         "src/backend/wasmgc/resources/native-argument-vectors.ts",
-        "src/backend/wasmgc/resources/native-closures.ts"
+        "src/backend/wasmgc/resources/native-closures.ts",
+        "src/backend/wasmgc/program/native-number-format.ts"
       ],
-      "minModules": 11
+      "minModules": 12
     },
     {
       "id": "native-runtime",
@@ -476,6 +477,11 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "backend-wasmgc",
+      "entries": ["src/backend/wasmgc/program/native-number-format.ts"],
+      "minModules": 1
+    },
     {
       "layer": "ir-program",
       "entries": ["src/ir/program/native-number-format-requirements.ts"],
@@ -1463,6 +1469,11 @@
     },
     {
       "path": "src/backend/wasmgc/program/native-string-values.ts",
+      "state": "clean",
+      "layer": "backend-wasmgc"
+    },
+    {
+      "path": "src/backend/wasmgc/program/native-number-format.ts",
       "state": "clean",
       "layer": "backend-wasmgc"
     },
