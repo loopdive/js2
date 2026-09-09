@@ -3,7 +3,7 @@ id: 3518
 title: "IR-only default and direct front-end retirement"
 status: in-progress
 created: 2026-07-21
-updated: 2026-09-08
+updated: 2026-09-09
 priority: critical
 feasibility: hard
 reasoning_effort: max
@@ -6548,6 +6548,68 @@ agent-context/3518-native-string-types-split-2026-09-09.md. This is a prerequisi
 for actual prepared-consumer wiring, not evidence that the public direct path
 has been replaced. Paused P/C async drafts remain untouched.
 
+### Native string/value demand census checkpoint (2026-09-09)
+
+The provider-free collector now preserves the exact ordered owner, buffer,
+instruction, intrinsic and literal populations across program/projection and
+async views. It preserves borrowed allocation metadata and presence semantics;
+it is not an acceptance authority. High review approved the source and focused
+tests after local validation, exact occurrence controls and a non-number
+intrinsic control were added. The final focused suite passes 40/40 and TS7
+passes. See agent-context/3518-native-string-value-demands-2026-09-09.md for
+hashes and the retained initial fixture failure.
+
+The collector is registered as a mandatory clean ir-program module without
+changing allowed edges or historical activation records. This is preparatory
+work: shared symbolic producer declarations, actual prepared-consumer wiring,
+original/decoded execution, public cutover and direct retirement remain open.
+
+Final composed validation passes 281/281 (241 boundary controls, 40 collector
+tests), with an exact bounded census of 95 modules and 345 imports. This does
+not establish strict whole-compiler closure or direct-codegen retirement.
+
+### Explicit native string-number source admission — 2026-09-09
+
+High approved the three production changes and the revision-3 source tests
+in the isolated source-admission branch, based on
+`31e4e232eb16804afc1577055d33d1c6530c0e22`. This is an explicit, default-off
+frontend selection: `nativeStringValueProjection: "standalone-native"`
+requires the source policy and every requested runtime projection to be
+standalone WasmGC before lowering. It forwards `stringNumericCoercion:
+"number-boundary"` into ordinary and lifted AST contexts. Only statically
+string-typed unary plus/minus selects externref coercion followed by
+provider-free `js.number.unbox`; omission retains the historical route.
+Existing Number-wrapper certification, signatures, async plans and codecs
+are unchanged. P explicitly released only this additive source boundary;
+its paused work remains preserved.
+
+The focused source suite passed **36/36** (session `36081`, exit 0), followed
+sequentially by TS7 with no diagnostics (session `54752`, exit 0), under
+2 GiB limits and one Vitest fork. The original r1 30/30 and TS7 receipts
+remain retained. Initial review-test r2 passed 34/36: both failures were the
+test reporter eagerly serializing a successful frontend carrier containing
+circular AST-backed global bindings. R3 only avoids that success-path
+serialization; all failure diagnostics, 36 cases and approved production
+hashes remain unchanged.
+
+The added controls establish one actual side-effecting string-returning
+source call under each unary operator, complete checker-certified Number
+wrapper preservation, shadowed Number binding preservation, and successful
+whole-program preparation for a valid explicit numeric request. The real
+`parse(s: string): number { return +s; }` source also reaches `prepared` with
+an explicitly selected native-unbox policy and a `native.js.number.unbox`
+runtime attachment. Only the `prepared` observation occurred: backend
+acceptance, physical allocation/emission and execution were not attempted.
+
+Static inventory review found all three modified production paths already
+registered as unmigrated debt, with unchanged dependency syntax and no new
+source modules. No boundary policy, baseline, allowance or status reduction
+is introduced. Normal publication hooks and a non-draft held PR remain
+pending the serialized slot; this section does not claim publication or
+completion of the epic. Exact hashes, commands, failure history and remaining
+obligations are in the
+[source-admission handoff](../agent-context/3518-native-string-source-admission-handoff-2026-09-09.md).
+
 ### Shared native resource declarations (2026-09-09)
 
 String, flatten, scanner and primitive-value producers now share symbolic
@@ -6571,6 +6633,46 @@ The clean producer checkpoint now also passes 250/250 full boundary controls
 and unfiltered TS7 (session 54286 exit 0). Full caller revalidation passed
 322/322 across eight suites (session 46568 exit 0). Checkpoint validation is
 complete; this is not a migration-completion claim.
+
+### Real native-string prepared-consumer integration (2026-09-09)
+
+The composed consumer now accepts native string/value demands, seals their
+typed ABI before allocation, uses canonical resource declarations and owned
+reservations, and binds final indices after the single physical freeze.
+Original and decoded prepared programs execute through the real consumer;
+68/68 execution cases passed (handle 69379, exit 0). These include numeric
+edge cases, large/private-chunk literals, encoding checks on actual module
+objects, startup modes, aliases, and dependency initialization order.
+
+The first combined run failed 69/129: one ABI countermodel was unchanged and
+all 68 execution fixtures omitted explicit native string storage. Both are
+test-only repairs; no production policy or validator was relaxed. Follow-up
+ABI controls, no-demand old/new parity, full composed typecheck/boundaries and
+normal publication hooks remain pending. Exact hashes, preserved failures,
+dependency merge receipts and review scope are recorded in
+agent-context/3518-native-string-value-consumer-integration-2026-09-09.md.
+
+Public compilation still uses direct generateModule/generateMultiModule.
+Native-string execution does not satisfy the remaining native families,
+async/ABI30, cross-backend, fail-closed default, strict closure, or retirement
+requirements; every outstanding epic acceptance criterion stays open.
+
+Follow-up validation completed: ABI 61/61, boundary 258/258, materialization/
+codec/module regressions 51/51, and full TS7 exit zero. The three-arm comparison
+(76083, exit zero) reproduces the original vector CompileError, then proves
+complete repaired-baseline/candidate artifact and value parity for five source
+executions, one exact source refusal and one canonical-producer IR execution.
+The vector repair is published separately as #5792; ordinary vector source
+admission is still unsupported. All three arm receipts, runtime/input hashes,
+original/decoded versions and retained binaries/WAT are documented in the
+consumer integration handoff. No original-baseline vector success is claimed.
+
+The next complete native async-consumer implementation plan is recorded in
+agent-context/3518-native-async-consumer-implementation-spec-2026-09-09.md,
+including frame/state lowering, delay/combinator publication, real object and
+closure invocation dependencies, complete number formatting and string output.
+The ordinary-vector source proposal and explicit P/C scope releases are also
+preserved in the handoffs. These plans are not execution or retirement proof.
 
 ### Isolated vector construction nullability repair (2026-09-09)
 

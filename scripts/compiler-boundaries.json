@@ -166,9 +166,10 @@
         "src/ir/program/input.ts",
         "src/ir/program/native-vector-resources.ts",
         "src/ir/program/native-promise-resources.ts",
-        "src/ir/program/native-value-resources.ts"
+        "src/ir/program/native-value-resources.ts",
+        "src/ir/program/native-string-value-demands.ts"
       ],
-      "minModules": 15
+      "minModules": 16
     },
     {
       "id": "runtime-contracts",
@@ -196,9 +197,10 @@
         "src/backend/wasmgc/resources/native-values.ts",
         "src/backend/wasmgc/resources/native-string-number.ts",
         "src/backend/wasmgc/resources/native-string-flatten.ts",
-        "src/backend/wasmgc/resources/native-resource-declarations.ts"
+        "src/backend/wasmgc/resources/native-resource-declarations.ts",
+        "src/backend/wasmgc/program/native-string-values.ts"
       ],
-      "minModules": 8
+      "minModules": 9
     },
     {
       "id": "native-runtime",
@@ -466,6 +468,43 @@
     }
   ],
   "activationHistory": [
+    {
+      "layer": "backend-wasmgc",
+      "entries": [
+        "src/backend/wasmgc/resources/native-vectors.ts",
+        "src/backend/wasmgc/resources/native-promises.ts",
+        "src/backend/wasmgc/resources/native-string-literals.ts",
+        "src/backend/wasmgc/resources/native-errors.ts",
+        "src/backend/wasmgc/resources/native-values.ts",
+        "src/backend/wasmgc/resources/native-string-number.ts",
+        "src/backend/wasmgc/resources/native-string-flatten.ts",
+        "src/backend/wasmgc/resources/native-resource-declarations.ts",
+        "src/backend/wasmgc/program/native-string-values.ts"
+      ],
+      "minModules": 9
+    },
+    {
+      "layer": "ir-program",
+      "entries": [
+        "src/ir/program/abi-inventory.ts",
+        "src/ir/program/abi.ts",
+        "src/ir/program/startup.ts",
+        "src/ir/program/abi-lookup.ts",
+        "src/ir/program/callable-bindings.ts",
+        "src/ir/program/controls.ts",
+        "src/ir/program/index.ts",
+        "src/ir/program/input-contracts.ts",
+        "src/ir/program/prepared-contracts.ts",
+        "src/ir/program/errors.ts",
+        "src/ir/program/data.ts",
+        "src/ir/program/input.ts",
+        "src/ir/program/native-vector-resources.ts",
+        "src/ir/program/native-promise-resources.ts",
+        "src/ir/program/native-value-resources.ts",
+        "src/ir/program/native-string-value-demands.ts"
+      ],
+      "minModules": 16
+    },
     {
       "layer": "native-runtime",
       "entries": [
@@ -1193,9 +1232,11 @@
       "layer": "backend-wasmgc"
     },
     { "path": "src/ir/program/native-value-resources.ts", "state": "clean", "layer": "ir-program" },
+    { "path": "src/ir/program/native-string-value-demands.ts", "state": "clean", "layer": "ir-program" },
     { "path": "src/runtime/wasmgc/values/primitive-layouts.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/runtime/wasmgc/values/number-bodies.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/backend/wasmgc/resources/native-values.ts", "state": "clean", "layer": "backend-wasmgc" },
+    { "path": "src/backend/wasmgc/program/native-string-values.ts", "state": "clean", "layer": "backend-wasmgc" },
     { "path": "src/runtime/wasmgc/values/string-layouts.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/runtime/wasmgc/values/string-literal-bodies.ts", "state": "clean", "layer": "native-runtime" },
     { "path": "src/runtime/wasmgc/values/error-bodies.ts", "state": "clean", "layer": "native-runtime" },
