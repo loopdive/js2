@@ -176,8 +176,13 @@ describe("#3518 capability schema compiler boundaries", () => {
       status: "active",
       roots: ["src/runtime/contracts"],
       required: true,
-      entries: [schema],
-      minModules: 1,
+      entries: [
+        schema,
+        "src/runtime/contracts/async-provider-schema.ts",
+        "src/runtime/contracts/provider-policy.ts",
+        "src/runtime/contracts/index.ts",
+      ],
+      minModules: 4,
     });
     expect(productionPolicy.files.filter((file) => file.path === schema)).toEqual([
       expect.objectContaining({ state: "clean", layer: "runtime-contracts" }),
